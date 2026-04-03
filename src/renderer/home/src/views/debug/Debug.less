@@ -1,0 +1,35 @@
+.debug {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.debug__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.debug__section__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: oklch(0.37 0.013 285.75);
+}
+
+.debug__section__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.debug__path {
+  color: oklch(0.55 0.15 250);
+  cursor: pointer;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.debug__path:hover {
+  color: oklch(0.45 0.2 250);
+}

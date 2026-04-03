@@ -1,0 +1,122 @@
+.message-search {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: calc(80vh - 60px);
+}
+
+.message-search__input {
+  padding: 16px;
+  border-bottom: 1px solid oklch(0.9 0.01 264);
+  flex-shrink: 0;
+}
+
+.message-search__results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.message-search__item {
+  padding: 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background-color: oklch(0.98 0.01 264);
+  cursor: pointer;
+  transition: background-color 0.2s;
+  height: 90px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.message-search__item:hover {
+  background-color: #6366f1;
+  color: #ffffff;
+}
+
+.message-search__item:hover .message-search__item-role {
+  color: oklch(0.9 0.01 264);
+}
+
+.message-search__item:hover .message-search__item-content {
+  color: #ffffff;
+}
+
+.message-search__item:hover .message-search__item-time {
+  color: oklch(0.85 0.01 264);
+}
+
+.message-search__item--active {
+  background-color: #6366f1;
+  color: #ffffff;
+}
+
+.message-search__item--active .message-search__item-role {
+  color: oklch(0.9 0.01 264);
+}
+
+.message-search__item--active .message-search__item-content {
+  color: #ffffff;
+}
+
+.message-search__item--active .message-search__item-time {
+  color: oklch(0.85 0.01 264);
+}
+
+.message-search__item-role {
+  font-size: 12px;
+  font-weight: 600;
+  color: oklch(0.5 0.02 264);
+  margin-bottom: 4px;
+  text-transform: capitalize;
+}
+
+.message-search__item-content {
+  font-size: 14px;
+  color: oklch(0.3 0.02 264);
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.6;
+}
+
+.message-search__highlight {
+  background-color: #4f46e5;
+  color: #ffffff;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.message-search__item-time {
+  font-size: 12px;
+  color: oklch(0.6 0.01 264);
+}
+
+.message-search__loading {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+}
+
+.message-search__see-more {
+  text-align: center;
+  padding: 12px;
+  color: oklch(0.45 0.15 264);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.message-search__see-more:hover {
+  color: oklch(0.35 0.15 264);
+}
+
+.message-search__empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: oklch(0.6 0.01 264);
+  font-size: 14px;
+}

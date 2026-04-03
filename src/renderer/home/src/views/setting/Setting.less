@@ -1,0 +1,47 @@
+.setting__header {
+  padding: 8px 0 0 8px;
+}
+
+.setting__title {
+  font-size: 20px;
+  font-weight: 600;
+  color: oklch(0.269 0.005 286.033);
+  margin: 0;
+}
+
+.setting__body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.setting__sidebar {
+  width: 200px;
+  padding: 12px 0;
+  border-right: 1px solid oklch(0.9 0 0);
+  flex-shrink: 0;
+}
+
+.setting__nav-item {
+  padding: 12px 24px;
+  cursor: pointer;
+  font-size: 14px;
+  color: oklch(0.4 0 0);
+  transition: all 0.2s;
+
+  &:hover {
+    background-color: oklch(0.95 0 0);
+    color: oklch(0.2 0 0);
+  }
+
+  &--active {
+    background-color: oklch(0.9 0 0);
+    color: oklch(0.2 0 0);
+    font-weight: 500;
+  }
+}
+
+.setting__content {
+  flex: 1;
+  overflow-y: auto;
+}

@@ -1,0 +1,24 @@
+.arco-modal-wrapper:not(.arco-modal-fullscreen) {
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arco-modal:not(.arco-modal-fullscreen) {
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  .arco-modal-header{
+    padding:8px 12px;
+  }
+  .arco-modal-body {
+    overflow-y: auto;
+    flex: 1;
+    padding: 12px;
+  }
+  .arco-modal-footer{
+    padding: 8px 12px;
+  }
+}

@@ -1,0 +1,11 @@
+{
+  dependencies: {
+//    'electron-xpc': {
+//      dev: true,
+//      name: 'electron-xpc',
+//      source: 'git@github.com:FlashHand/electron-xpc.git',
+//      version: '1.0.11'
+//    }
+  }
+}
+

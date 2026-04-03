@@ -1,0 +1,6 @@
+@reference "tailwindcss";
+
+.home-menu {
+  @apply flex flex-col items-center justify-center h-full;
+  gap: 12px;
+}

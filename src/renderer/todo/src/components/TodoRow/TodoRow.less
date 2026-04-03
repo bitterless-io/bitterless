@@ -1,0 +1,122 @@
+.todo-row {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background-color: oklch(1 0 0);
+  cursor: pointer;
+  gap: 8px;
+  transition: box-shadow 0.15s;
+}
+
+.todo-row:hover {
+  box-shadow: 0 1px 4px oklch(0 0 0 / 0.08);
+}
+
+.todo-row__checkbox {
+  flex-shrink: 0;
+}
+
+.todo-row__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.todo-row__title-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.todo-row__title {
+  font-size: 13px;
+  color: oklch(0.25 0 0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+  padding: 1px 3px;
+  border-radius: 3px;
+  max-width: 100%;
+}
+
+.todo-row__title:hover {
+  background-color: oklch(0.95 0 0);
+}
+
+.todo-row__title--completed {
+  text-decoration: line-through;
+  color: oklch(0.6 0 0);
+}
+
+.todo-row__title-input {
+  font-size: 13px;
+  color: oklch(0.25 0 0);
+  border: none;
+  background-color: oklch(1 0 0);
+  outline: none;
+  padding: 1px 3px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px oklch(0.7 0.1 250);
+  min-width: 40px;
+  max-width: 200px;
+}
+
+.todo-row__title-sizer {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  font-size: 13px;
+  padding: 1px 3px;
+  pointer-events: none;
+}
+
+.todo-row__subtitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: oklch(0.55 0 0);
+}
+
+.todo-row__subtodo-progress {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.todo-row__due-date {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.todo-row__due-date--overdue {
+  color: #ef4444;
+}
+
+.todo-row__due-date--future {
+  color: #3b82f6;
+}
+
+.todo-row__star {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: oklch(0.7 0 0);
+  transition: color 0.15s;
+}
+
+.todo-row__star:hover {
+  color: oklch(0.7 0.18 80);
+}
+
+.todo-row__star--active {
+  color: #4f46e5;
+}

@@ -1,0 +1,79 @@
+.todo-app {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background-color: oklch(0.985 0 0);
+}
+
+.todo-app__toolbar {
+  height: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background-color: oklch(0.606 0.041 264.052);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.todo-app__toolbar--mac {
+  padding: 0 12px 0 78px;
+}
+
+.todo-app__toolbar--win {
+  padding: 0 12px;
+}
+
+.todo-app__toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.95 0 0);
+}
+
+.todo-app__toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.todo-app__toolbar-actions .arco-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  color: oklch(0.95 0 0);
+}
+
+.todo-app__toolbar-actions .arco-btn:hover {
+  background-color: oklch(0.5 0.041 264.052);
+}
+
+.todo-app__toolbar-actions .arco-btn .arco-icon {
+  font-size: 16px;
+}
+
+.todo-app__board {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.todo-app__board-scroll {
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+}
+
+.todo-app__board-draggable {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}

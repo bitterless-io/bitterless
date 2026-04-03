@@ -1,0 +1,68 @@
+.menu-bar {
+  height: 32px;
+  background-color: #4e5882;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 80px;
+  padding-right: 12px;
+  -webkit-app-region: drag;
+  user-select: none;
+  //box-shadow: 0 2px 6px oklch(1 0.05 277 / 0.3);
+}
+
+.menu-bar__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff7ed;
+}
+
+.menu-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menu-bar__update {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  background-color: oklch(75.8% 0.169 70.8);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  -webkit-app-region: no-drag;
+}
+
+.menu-bar__update:hover {
+  background-color: oklch(70% 0.18 70.8);
+}
+
+.menu-bar__update-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: oklch(25.7% 0.09 281.288);
+}
+
+.menu-bar__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: oklch(1 0 0 / 0.6);
+  border-radius: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.menu-bar__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: oklch(79.2% 0.209 151.711);
+}
+
+.menu-bar__status-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: oklch(25.7% 0.09 281.288);
+}

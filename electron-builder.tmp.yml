@@ -1,0 +1,66 @@
+appId: io.bitterless.app
+productName: Bitterless
+directories:
+  buildResources: build
+files:
+  - '!src/*'
+  - '!scripts/*'
+  - '!doc/*'
+  - '!rig_dev/*'
+  - '!rig_indies/*'
+  - '!snapshots/*'
+  - '!asar_unpacked/*'
+  - '!local/*'
+  - '!downloads/*'
+  - '!external_resources/*'
+  - '!electron-builder.tmp.yml'
+  - '!dump/*'
+  - '!.vscode/*'
+  - '!resources/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{postcss.config.js,theme.ts,electron.vite.spec.md}'
+  - '!{package.rig.json5,env.rig.json5}'
+  - '!{.qdrant-initialized,bitterless-bot.memory-card.json}'
+  - '!**/*.md'
+extraResources:
+  - from: asar_unpacked
+    to: app.asar.unpacked
+win:
+  executableName: ${name}
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  perMachine: true
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    - NSDesktopFolderUsageDescription: Application requests access to the user's Desktop folder.
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: electronjs.org
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+publish:
+  provider: generic
+  url: https://example.com/auto-updates
+#electronDownload:
+#  mirror: https://npmmirror.com/mirrors/electron/

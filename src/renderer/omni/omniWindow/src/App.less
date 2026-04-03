@@ -1,0 +1,67 @@
+.omni-menubar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  background: #4e5882;
+  border-bottom: 1px solid #3d4666;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.omni-menubar--mac {
+  padding: 0 12px 0 78px;
+}
+
+.omni-menubar--win {
+  padding: 0 12px;
+}
+
+.omni-menubar__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  flex: 1;
+}
+
+.omni-menubar__actions {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.omni-menubar__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  font-size: 12px;
+  color: #ffffff;
+  transition: background 0.15s ease;
+}
+
+.omni-menubar__btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.omni-menubar__btn:active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.omni-menubar__btn--active {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.omni-menubar__btn--active:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.omni-menubar__btn--active:active {
+  background: rgba(255, 255, 255, 0.35);
+}

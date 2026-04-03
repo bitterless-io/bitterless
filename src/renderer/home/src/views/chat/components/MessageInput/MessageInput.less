@@ -1,0 +1,56 @@
+.message-input {
+  padding: 12px 0;
+  background: oklch(1 0 0);
+}
+
+.message-input__body {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.message-input__editor {
+  flex: 1;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.message-input__actions {
+  flex-shrink: 0;
+  padding-bottom: 4px;
+}
+
+.message-input__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.message-input__btn--send {
+  background: oklch(0.511 0.262 276.966);
+  color: oklch(1 0 0);
+}
+
+.message-input__btn--send:hover:not(:disabled) {
+  background: oklch(0.457 0.24 277.023);
+}
+
+.message-input__btn--send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.message-input__btn--stop {
+  background: transparent;
+  color: #71717a;
+}
+
+.message-input__btn--stop:hover {
+  background: oklch(0.967 0.003 264.542);
+}

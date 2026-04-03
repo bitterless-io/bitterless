@@ -1,0 +1,54 @@
+.feishu-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background: oklch(0.97 0.01 240);
+    border-radius: 4px;
+  }
+
+  &__header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__header-right {
+    display: flex;
+    align-items: center;
+  }
+
+  &__error {
+    color: oklch(0.55 0.22 25);
+    font-size: 12px;
+  }
+
+  &__form {
+    margin-top: 12px;
+  }
+
+  &__actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  &__loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    
+    p {
+      margin: 0;
+      color: oklch(0.6 0.05 240);
+    }
+  }
+}

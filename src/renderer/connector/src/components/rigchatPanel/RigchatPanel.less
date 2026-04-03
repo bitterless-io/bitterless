@@ -1,0 +1,72 @@
+.rigchat-panel {
+  padding: 16px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.rigchat-panel__header {
+  margin-bottom: 16px;
+}
+
+.rigchat-panel__error {
+  color: oklch(0.577 0.245 27.325);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.rigchat-panel__qrcode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.rigchat-panel__qrcode p {
+  color: oklch(0.554 0 0);
+  margin-bottom: 12px;
+}
+
+.rigchat-panel__qrcode img {
+  width: 240px;
+  height: 240px;
+  border-radius: 8px;
+  border: 1px solid oklch(0.922 0 0);
+}
+
+.rigchat-panel__messages {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.rigchat-panel__message-item {
+  padding: 6px 0;
+  border-bottom: 1px solid oklch(0.95 0 0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rigchat-panel__message-time {
+  color: oklch(0.637 0 0);
+  margin-right: 8px;
+  font-size: 12px;
+}
+
+.rigchat-panel__message-talker {
+  color: oklch(0.488 0.243 264.376);
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+.rigchat-panel__message-content {
+  color: oklch(0.269 0 0);
+  word-break: break-all;
+}
+
+.rigchat-panel__message-image {
+  display: block;
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
