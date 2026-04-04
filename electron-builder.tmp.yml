@@ -25,13 +25,14 @@ files:
   - '!{package.rig.json5,env.rig.json5}'
   - '!{.qdrant-initialized,bitterless-bot.memory-card.json}'
   - '!**/*.md'
+  - '!**/node-pty/prebuilds/win32*/**'
 extraResources:
   - from: asar_unpacked
     to: app.asar.unpacked
 win:
   executableName: ${name}
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: ${productName}VITE_ENV_PART-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -48,16 +49,7 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
     - NSDesktopFolderUsageDescription: Application requests access to the user's Desktop folder.
 dmg:
-  artifactName: ${name}-${version}.${ext}
-linux:
-  target:
-    - AppImage
-    - snap
-    - deb
-  maintainer: electronjs.org
-  category: Utility
-appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${productName}VITE_ENV_PART-${version}.${ext}
 npmRebuild: false
 publish:
   provider: generic

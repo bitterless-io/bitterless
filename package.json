@@ -16,11 +16,13 @@
     "typecheck": "yarn typecheck:node && yarn typecheck:web",
     "start": "electron-vite preview",
     "dev": "rig --env debug_dev && node scripts/before.js && electron-vite dev",
+    "dev:prod": "rig --env debug_prod && node scripts/before.js && electron-vite dev",
     "build": " electron-vite build",
     "postinstall": "electron-builder install-app-deps && rig postinstall",
     "build:unpack": "yarn build && electron-builder --dir",
-    "build:win": "yarn build && electron-builder --win",
-    "build:mac_arm": "yarn build && node scripts/signedBuild.js --mac --arm64",
+    "build:win": "rig --env release_prod && node scripts/before.js && yarn build && node scripts/signedBuild.js --win --x64",
+    "build:mac_arm": "rig --env release_prod && node scripts/before.js && yarn build && node scripts/signedBuild.js --mac --arm64",
+    "build:mac_x64": "rig --env release_prod && node scripts/before.js && yarn build && node scripts/signedBuild.js --mac --x64",
     "build:mac_intel": "yarn build && node scripts/signedBuild.js --mac --x64",
     "build:linux": "yarn build && electron-builder --linux",
     "build_dev:mac_arm": "rig --env release_dev && node scripts/before.js && yarn build && node scripts/signedBuild.js --mac --arm64",
@@ -49,6 +51,7 @@
     "@qdrant/js-client-rest": "^1.16.2",
     "@sapphire/snowflake": "^3.5.5",
     "@vueuse/core": "^14.2.1",
+    "adm-zip": "^0.5.17",
     "axios": "^1.13.5",
     "better-sqlite3-multiple-ciphers": "12.6.2",
     "cheerio": "^1.2.0",
@@ -95,6 +98,7 @@
     "@electron-toolkit/eslint-config-prettier": "3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
+    "@types/adm-zip": "^0.5.8",
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^22.19.1",
     "@types/node-fetch": "2",
@@ -124,5 +128,5 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEV"
+  "name": "bitterless_dev"
 }

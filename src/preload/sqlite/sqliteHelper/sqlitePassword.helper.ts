@@ -13,14 +13,14 @@ class SqlitePasswordHelper {
   private passwordEmitter = createXpcPreloadEmitter<SqlitePasswordHandlerType>('SqlitePasswordHandler');
 
   async getOrCreatePassword(): Promise<string> {
-    const viteEnv = import.meta.env.VITE_ENV;
-    
-    if (viteEnv === 'dev') {
-      console.log('[sqlitePassword] using hardcoded password for dev environment');
+    const viteMode = import.meta.env.VITE_MODE;
+
+    if (viteMode === 'debug') {
+      console.log('[sqlitePassword] using hardcoded password for debug mode');
       return DEV_PASSWORD;
     }
 
-    console.log('[sqlitePassword] production environment detected, using encrypted password');
+    console.log('[sqlitePassword] release mode detected, using encrypted password');
     
     const encryptedPassword = localStorage.getItem(STORAGE_KEY);
     

@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, screen, session } from 'electron';
+import { BaseWindow, WebContentsView, screen, session, shell } from 'electron';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
 import { throttle } from 'es-toolkit';
@@ -312,6 +312,12 @@ export class OmniWindowHelper {
     });
     browser.webContents.setUserAgent(CHROME_USER_AGENT);
     this.baseWindow.contentView.addChildView(browser);
+
+    // Open new windows/tabs in default browser instead of creating new Electron windows
+    browser.webContents.setWindowOpenHandler((details) => {
+      shell.openExternal(details.url);
+      return { action: 'deny' };
+    });
 
     // Listen for navigation events to update cell menubar
     browser.webContents.on('did-navigate', (_e, navUrl) => {

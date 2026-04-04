@@ -17,7 +17,11 @@ onUnmounted(() => destroySearchShortcut());
         <HomeMenu />
       </a-layout-sider>
       <a-layout-content class="layout__content">
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <keep-alive>
+            <component :is="Component" />
+          </keep-alive>
+        </RouterView>
       </a-layout-content>
     </a-layout>
     <MessageSearch />

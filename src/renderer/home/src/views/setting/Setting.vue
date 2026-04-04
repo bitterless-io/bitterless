@@ -1,8 +1,5 @@
 <template>
   <div class="bl-full-container setting">
-    <div class="setting__header">
-      <h2 class="setting__title">{{ i18nHelper.setting.title }}</h2>
-    </div>
     <div class="setting__body">
       <div class="setting__sidebar">
         <div 
