@@ -1,5 +1,7 @@
 import fetch from 'node-fetch';
-import * as cheerio from 'cheerio';
+import { parseHTML } from 'linkedom';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import type { ProxyConfig } from '../langGraph/model.adaptor';
 
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
@@ -41,31 +43,34 @@ class SearchHelper {
       } as any);
       clearTimeout(timeout);
 
-      console.log('[searchHelper] searchBaidu, status:', response.status);
+        console.log('[searchHelper] searchBaidu, status:', response.status);
       const html = await response.text();
       console.log('[searchHelper] searchBaidu, html sample:', html.slice(0, 2000));
-      const $ = cheerio.load(html);
+      const { document } = parseHTML(html);
 
       const results: SearchResult[] = [];
+      const resultEls = Array.from(document.querySelectorAll('[class*="result"]'));
 
-      $('[class*="result"]').each((i, el) => {
-        if (results.length >= maxResults) return false;
-        const titleEl = $(el).find('h3 a').first();
-        const title = titleEl.text().trim();
-        let href = titleEl.attr('href') ?? '';
+      for (let i = 0; i < resultEls.length; i++) {
+        if (results.length >= maxResults) break;
+        const el = resultEls[i];
+        const titleEl = el.querySelector('h3 a');
+        const title = titleEl?.textContent?.trim() ?? '';
+        let href = titleEl?.getAttribute('href') ?? '';
 
         console.log(`[searchHelper] searchBaidu, result[${i}] title="${title}" href="${href}"`);
 
-        if (!title || !href) return;
+        if (!title || !href) continue;
 
         if (href.startsWith('/')) {
           href = `https://www.baidu.com${href}`;
         }
 
-        const snippet = $(el).find('[class*="abstract"], [class*="content"], [class*="desc"]').first().text().trim();
+        const snippetEl = el.querySelector('[class*="abstract"], [class*="content"], [class*="desc"]');
+        const snippet = snippetEl?.textContent?.trim() ?? '';
 
         results.push({ title, url: href, snippet });
-      });
+      }
 
       console.log('[searchHelper] searchBaidu, results count:', results.length);
       return results;
@@ -79,7 +84,7 @@ class SearchHelper {
     }
   }
 
-  async searchDdg(query: string, maxResults: number): Promise<SearchResult[]> {
+  async searchDdg(query: string, maxResults: number, proxy?: ProxyConfig): Promise<SearchResult[]> {
     const searchUrl = 'https://html.duckduckgo.com/html/';
     console.log('[searchHelper] searchDdg, query:', query);
 
@@ -89,7 +94,7 @@ class SearchHelper {
     try {
       const formData = `q=${encodeURIComponent(query)}&b=&kl=&df=`;
 
-      const response = await fetch(searchUrl, {
+      const fetchOptions: any = {
         method: 'POST',
         headers: {
           'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -110,37 +115,47 @@ class SearchHelper {
         },
         body: formData,
         signal: controller.signal,
-      } as any);
+      };
+
+      if (proxy?.ip && proxy?.port) {
+        const agent = new HttpsProxyAgent(`http://${proxy.ip}:${proxy.port}`);
+        fetchOptions.agent = agent;
+        console.log('[searchHelper] searchDdg, using proxy:', `${proxy.ip}:${proxy.port}`);
+      }
+
+      const response = await fetch(searchUrl, fetchOptions);
       clearTimeout(timeout);
 
       console.log('[searchHelper] searchDdg, status:', response.status);
       const html = await response.text();
       console.log('[searchHelper] searchDdg, html sample:', html.slice(0, 2000));
-      const $ = cheerio.load(html);
+      const { document: ddgDoc } = parseHTML(html);
 
       const results: SearchResult[] = [];
+      const resultEls = Array.from(ddgDoc.querySelectorAll('.result'));
 
-      $('.result').each((i, el) => {
-        if (results.length >= maxResults) return false;
+      for (let i = 0; i < resultEls.length; i++) {
+        if (results.length >= maxResults) break;
 
-        const $el = $(el);
-        if ($el.hasClass('result--ad')) {
+        const el = resultEls[i];
+        if (el.classList.contains('result--ad')) {
           console.log(`[searchHelper] searchDdg, skipping ad result[${i}]`);
-          return;
+          continue;
         }
 
-        const titleEl = $el.find('h2.result__title a.result__a').first();
-        const title = titleEl.text().trim();
-        const href = titleEl.attr('href') ?? '';
+        const titleEl = el.querySelector('h2.result__title a.result__a');
+        const title = titleEl?.textContent?.trim() ?? '';
+        const href = titleEl?.getAttribute('href') ?? '';
 
         console.log(`[searchHelper] searchDdg, result[${i}] title="${title}" href="${href}"`);
 
-        if (!title || !href) return;
+        if (!title || !href) continue;
 
-        const snippet = $el.find('a.result__snippet').first().text().trim();
+        const snippetEl = el.querySelector('a.result__snippet');
+        const snippet = snippetEl?.textContent?.trim() ?? '';
 
         results.push({ title, url: href, snippet });
-      });
+      }
 
       console.log('[searchHelper] searchDdg, results count:', results.length);
       return results;

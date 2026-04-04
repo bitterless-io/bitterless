@@ -13,14 +13,14 @@ function generateEnvDefines() {
   const envRigPath = resolve('env.rig.json5');
   const envRigContent = readFileSync(envRigPath, 'utf-8');
   const envRigConfig = JSON5.parse(envRigContent);
-  
+
   const debugDevKeys = Object.keys(envRigConfig.debug_dev || {});
   const defines: Record<string, string> = {};
-  
+
   for (const key of debugDevKeys) {
     defines[`import.meta.env.${key}`] = JSON.stringify(process.env[key]);
   }
-  
+
   return defines;
 }
 

@@ -33,11 +33,18 @@ export const en = {
   },
   setting: {
     title: 'Settings',
-    language: {
-      tabTitle: 'Language',
-      label: 'Display Language',
-      zh: '简体中文',
-      en: 'English',
+    general: {
+      tabTitle: 'General',
+      language: {
+        label: 'Display Language',
+        zh: '简体中文',
+        en: 'English',
+      },
+      searchEngine: {
+        label: 'Search Engine',
+        baidu: 'Baidu',
+        duckduckgo: 'DuckDuckGo',
+      },
       save: 'Save',
       saveSuccess: 'Saved successfully',
       saveFailed: 'Save failed',

@@ -15,12 +15,19 @@ export interface ChatMessageInput {
   content: string;
 }
 
+export interface PerformanceEntry {
+  type: 'tool' | 'callModel';
+  time: number;
+  name?: string;
+}
+
 class LangGraphHelper {
   private currentConfig: ModelConfig | null = null;
 
   private buildGraph(
     config: ModelConfig,
     skillNames: string[],
+    timings: PerformanceEntry[],
     proxy?: ProxyConfig,
     onToolCall?: (name: string, input: Record<string, unknown>) => void,
     signal?: AbortSignal,
@@ -48,7 +55,10 @@ ${SKILL_PROMPT}`);
         const toolCallId = (m as any).tool_call_id ? ` tool_call_id:${(m as any).tool_call_id}` : '';
         console.log(`  [${type}]${toolCallId}${toolCalls} ${content}`);
       }
+      const startTime = Date.now();
       const response = await modelWithTools.invoke(msgs);
+      const elapsed = Date.now() - startTime;
+      timings.push({ type: 'callModel', time: elapsed });
 
       return { messages: [response] };
     };
@@ -97,8 +107,17 @@ ${SKILL_PROMPT}`);
       .addEdge(START, 'callModel');
 
     if (hasTools && toolNode) {
+      const timedToolNode = async (state: typeof MessagesAnnotation.State) => {
+        const startTime = Date.now();
+        const result = await toolNode.invoke(state);
+        const elapsed = Date.now() - startTime;
+        const lastMessage = state.messages[state.messages.length - 1] as AIMessage;
+        const toolName = lastMessage.tool_calls?.[0]?.name || 'unknown';
+        timings.push({ type: 'tool', time: elapsed, name: toolName });
+        return result;
+      };
       graph
-        .addNode('tools', toolNode)
+        .addNode('tools', timedToolNode)
         .addConditionalEdges('callModel', shouldContinue)
         .addEdge('tools', 'callModel');
     } else {
@@ -125,6 +144,7 @@ ${SKILL_PROMPT}`);
     options: {
       onChunk: (token: string) => void;
       onToolCall?: (name: string, input: Record<string, unknown>) => void;
+      onFinished?: (timings: PerformanceEntry[]) => void;
       config: ModelConfig;
       signal?: AbortSignal;
     },
@@ -134,9 +154,10 @@ ${SKILL_PROMPT}`);
 
     const proxy = effectiveConfig.proxy;
     const totalT0 = Date.now();
+    const timings: PerformanceEntry[] = [];
     console.log('[langGraph] building graph with all skills:', allSkillNames);
 
-    const graph = this.buildGraph(effectiveConfig, [...allSkillNames], proxy, options.onToolCall, options.signal);
+    const graph = this.buildGraph(effectiveConfig, [...allSkillNames], timings, proxy, options.onToolCall, options.signal);
     let fullContent = '';
 
     const finalMessages = this.toMessages(messages);
@@ -161,6 +182,20 @@ ${SKILL_PROMPT}`);
       }
     }
     console.log(`[streamChat] stream finished, fullContent length: ${fullContent.length}, total elapsed: ${Date.now() - totalT0}ms`);
+
+    if (options.onFinished) {
+      options.onFinished(timings);
+    }
+
+    if (timings.length > 0) {
+      console.log('[langGraph] Performance Summary:');
+      for (const entry of timings) {
+        const label = entry.name ? `[${entry.type}:${entry.name}]` : `[${entry.type}]`;
+        console.log(`  ${label} ${entry.time}ms`);
+      }
+      const total = timings.reduce((sum, entry) => sum + entry.time, 0);
+      console.log(`Total: ${total}ms`);
+    }
 
     return fullContent;
   }

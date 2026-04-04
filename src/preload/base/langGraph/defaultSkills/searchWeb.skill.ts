@@ -7,7 +7,7 @@ import { pathHelper } from '@shared/pathHelper/preload/pathPreload.helper';
 import type { ProxyConfig } from '../model.adaptor';
 import { searchHelper } from '@preload/base/searchHelper/search.helper';
 import type { SearchResult } from '@preload/base/searchHelper/search.helper';
-import * as cheerio from 'cheerio';
+import { settingDao } from '../../../sqlite/dao/setting.dao';
 
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -44,9 +44,12 @@ const extractContentFromHtml = (html: string): string => {
     return cleaned;
   }
 
-  const $ = cheerio.load(html);
-  $('script, style, nav, header, footer, aside, iframe, noscript, [class*="ad"], [id*="ad"], [class*="banner"], [class*="sidebar"]').remove();
-  return cleanText($('body').text());
+  const { document: fallbackDoc } = parseHTML(html);
+  const toRemove = fallbackDoc.querySelectorAll('script, style, nav, header, footer, aside, iframe, noscript, [class*="ad"], [id*="ad"], [class*="banner"], [class*="sidebar"]');
+  for (const el of Array.from(toRemove)) {
+    el.remove();
+  }
+  return cleanText(fallbackDoc.body?.textContent ?? '');
 };
 
 const fetchSinglePage = async (url: string): Promise<string> => {
@@ -102,7 +105,16 @@ export const createSearchWebSkill = (proxy?: ProxyConfig) => tool(
   }) => {
     console.log('[skill] search_web, query:', query);
     try {
-      const results = await searchHelper.searchBaidu(query, maxResults);
+      const searchEngine = await settingDao.get<string>({ key: 'general', sub_key: 'searchEngine' });
+      const engine = searchEngine || 'baidu';
+      console.log('[skill] search_web, using search engine:', engine);
+
+      let results: SearchResult[];
+      if (engine === 'duckduckgo') {
+        results = await searchHelper.searchDdg(query, maxResults, proxy);
+      } else {
+        results = await searchHelper.searchBaidu(query, maxResults);
+      }
       if (results.length === 0) {
         return JSON.stringify({ message: 'No results found', query });
       }
@@ -147,7 +159,7 @@ export const createSearchWebSkill = (proxy?: ProxyConfig) => tool(
   {
     name: 'search_web',
     description:
-      'Search Baidu and automatically fetch full page content from all search results. ' +
+      'Search the web using the configured search engine (Baidu or DuckDuckGo) and automatically fetch full page content from all search results. ' +
       'Returns search results with title, URL, snippet, and extracted page content (pageContent field). ' +
       'Only returns results where page content was successfully extracted (minimum 100 characters). ' +
       'This is a one-step tool that combines search and content extraction — no need to call any other tool afterward.',

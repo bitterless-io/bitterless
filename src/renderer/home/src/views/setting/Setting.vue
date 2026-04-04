@@ -11,10 +11,10 @@
         </div>
         <div 
           class="setting__nav-item" 
-          :class="{ 'setting__nav-item--active': activeTab === 'language' }"
-          @click="onNavClick('language')"
+          :class="{ 'setting__nav-item--active': activeTab === 'general' }"
+          @click="onNavClick('general')"
         >
-          {{ i18nHelper.setting.language.tabTitle }}
+          {{ i18nHelper.setting.general.tabTitle }}
         </div>
         <div 
           class="setting__nav-item" 
@@ -40,7 +40,7 @@
       </div>
       <div class="setting__content">
         <ProxySetting v-if="activeTab === 'proxy'" />
-        <LanguageSetting v-if="activeTab === 'language'" />
+        <GeneralSetting v-if="activeTab === 'general'" />
         <LLMSetting v-if="activeTab === 'llm'" />
         <SystemPromptSetting v-if="activeTab === 'systemPrompt'" />
         <About v-if="activeTab === 'about'" />
@@ -54,15 +54,15 @@ import { ref } from 'vue';
 import LLMSetting from './components/LLMSetting/LLMSetting.vue';
 import SystemPromptSetting from './components/SystemPromptSetting/SystemPromptSetting.vue';
 import ProxySetting from './components/ProxySetting/ProxySetting.vue';
-import LanguageSetting from './components/LanguageSetting/LanguageSetting.vue';
+import GeneralSetting from './components/GeneralSetting/GeneralSetting.vue';
 import About from './components/About/About.vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { loadProxySetting } from './components/ProxySetting/proxySetting.store';
 import { loadSystemPromptSetting } from './components/SystemPromptSetting/systemPromptSetting.store';
 
-const activeTab = ref<'proxy' | 'language' | 'llm' | 'systemPrompt' | 'about'>('proxy');
+const activeTab = ref<'proxy' | 'general' | 'llm' | 'systemPrompt' | 'about'>('proxy');
 
-const onNavClick = (key: 'proxy' | 'language' | 'llm' | 'systemPrompt' | 'about'): void => {
+const onNavClick = (key: 'proxy' | 'general' | 'llm' | 'systemPrompt' | 'about'): void => {
   activeTab.value = key;
   
   if (key === 'proxy') {

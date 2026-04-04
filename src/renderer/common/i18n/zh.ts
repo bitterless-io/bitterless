@@ -35,11 +35,18 @@ export const zh: typeof en = {
   },
   setting: {
     title: '设置',
-    language: {
-      tabTitle: '语言',
-      label: '显示语言',
-      zh: '简体中文',
-      en: 'English',
+    general: {
+      tabTitle: '通用',
+      language: {
+        label: '显示语言',
+        zh: '简体中文',
+        en: 'English',
+      },
+      searchEngine: {
+        label: '搜索引擎',
+        baidu: '百度',
+        duckduckgo: 'DuckDuckGo',
+      },
       save: '保存',
       saveSuccess: '保存成功',
       saveFailed: '保存失败',

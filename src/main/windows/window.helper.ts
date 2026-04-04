@@ -38,7 +38,8 @@ export abstract class WindowHelper {
 
     this.browserWindow.on('ready-to-show', () => {
       this.browserWindow?.show();
-      if (import.meta.env.VITE_MODE !== 'release') {
+      const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
+      if (shouldOpenDevTools) {
         this.browserWindow?.webContents.openDevTools();
       }
     });

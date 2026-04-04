@@ -111,4 +111,4 @@ const copyChromium = () => {
   console.log(`[before.js] ✅ ${zipFileName} copied successfully`);
 };
 
-// copyChromium();
+copyChromium();
