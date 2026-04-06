@@ -7,7 +7,7 @@
   "repository": "git@github.com:FlashHand/bitterless.git",
   "author": "WangBo <ralwayne@163.com>",
   "license": "MIT",
-  "homepage": "https://electron-vite.org",
+  "homepage": "https://bitterless.io",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",

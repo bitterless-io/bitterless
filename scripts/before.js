@@ -25,15 +25,14 @@ const viteMode = envVars.VITE_MODE || '';
 
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 const baseName = pkg._name;
-const baseLower = baseName.toLowerCase();
 
 const isDebug = viteMode === 'debug';
 const isDev = viteEnv === 'dev';
 
 if (isDev) {
-  pkg.name = isDebug ? `${baseLower}_dev_debug` : `${baseLower}_dev`;
+  pkg.name = isDebug ? `${baseName}_DEV_DEBUG` : `${baseName}_DEV`;
 } else {
-  pkg.name = isDebug ? `${baseLower}_debug` : baseLower;
+  pkg.name = isDebug ? `${baseName}_DEBUG` : baseName;
 }
 
 if (pkg._version) {
