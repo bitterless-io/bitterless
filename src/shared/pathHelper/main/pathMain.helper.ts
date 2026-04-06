@@ -48,7 +48,7 @@ export class PathMainHelper extends XpcMainHandler {
       const appPath = app.getAppPath();
       const isRelease = process.env.VITE_MODE === 'release';
       if (isRelease) {
-        chromiumPath = path.join(path.dirname(appPath), 'app.asar.unpacked', 'chrome-win', 'chrome.exe');
+        chromiumPath = path.join(appPath, '..', 'app.asar.unpacked', 'chrome-win', 'chrome.exe');
       } else {
         chromiumPath = path.join(appPath, 'asar_unpacked', 'chrome-win', 'chrome.exe');
       }
