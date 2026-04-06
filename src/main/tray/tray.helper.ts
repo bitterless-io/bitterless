@@ -70,6 +70,10 @@ class TrayHelper {
   }
 
   private async requestQuit(): Promise<void> {
+    if (process.platform === 'darwin') {
+      app.quit();
+      return;
+    }
     const shouldQuit = await dialogHelper.showQuitConfirmDialog();
     if (shouldQuit) {
       app.quit();
