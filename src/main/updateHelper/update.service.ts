@@ -134,7 +134,6 @@ class UpdateService {
 
       const updateEndpoint = this.constructUpdateEndpoint(manifest.downloadUrl);
       console.log('[UpdateService] Update endpoint:', updateEndpoint);
-      autoUpdater.channel = String(manifest.versionCode);
       autoUpdater.setFeedURL({
         provider: 'generic',
         url: manifest.downloadUrl
