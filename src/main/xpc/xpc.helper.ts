@@ -2,6 +2,7 @@ import { xpcCenter } from 'electron-xpc/main';
 import { initTestHandler } from './test.handler';
 import { initTestSubscriber } from './test.subscriber';
 import { initLanguageSubscriber } from './language.subscriber';
+import { initUpdateHandler } from './update.handler';
 import './pluginTest.handler';
 import './todoWindow.handler';
 import './omniWindow.handler';
@@ -15,6 +16,7 @@ export const initXpc = (): void => {
   initTestHandler();
   initTestSubscriber();
   initLanguageSubscriber();
+  initUpdateHandler();
 
   // ptyManager.init().catch((err) => {
   //   console.error('[xpc] ptyManager init failed:', err);

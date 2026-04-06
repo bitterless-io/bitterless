@@ -33,7 +33,8 @@ class LlamaWindowHelper {
 
     this.browserWindow = new BrowserWindow(options);
 
-    if (isDev && import.meta.env.VITE_MODE !== 'release') {
+    const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
+    if (shouldOpenDevTools) {
       this.browserWindow.webContents.openDevTools();
     }
 

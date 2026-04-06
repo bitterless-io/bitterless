@@ -49,7 +49,8 @@ const handleUrlUpdate = (nodeId: string, url: string) => {
   layoutStore.syncLayout();
 };
 
-const handleClose = (nodeId: string) => {
+const handleClose = async (nodeId: string) => {
+  await nextTick();
   layoutStore.removePane(nodeId);
   layoutStore.syncLayout();
 };
@@ -76,6 +77,7 @@ const handleClose = (nodeId: string) => {
     <template v-else-if="node.type === 'split' && node.children">
       <Splitpanes
         :horizontal="!isHorizontal"
+        :maximize-panes="false"
         class="omni-pane__splitpanes"
         @resize="onResize"
         @resized="onResizeEnd"

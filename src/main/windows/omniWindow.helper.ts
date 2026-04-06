@@ -195,7 +195,8 @@ export class OmniWindowHelper {
     this.updateMenubarBounds();
     this.updateControlBounds();
 
-    if (is.dev && import.meta.env.VITE_MODE !== 'release') {
+    const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
+    if (shouldOpenDevTools) {
       this.menubarView.webContents.openDevTools({ mode: 'detach' });
     }
 
@@ -211,7 +212,8 @@ export class OmniWindowHelper {
       this.baseWindow.contentView.addChildView(this.controlView);
       this.controlView.setVisible(true);
       this.updateControlBounds();
-      if (is.dev && import.meta.env.VITE_MODE !== 'release') {
+      const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
+      if (shouldOpenDevTools) {
         this.controlView.webContents.openDevTools({ mode: 'detach' });
       }
     } else {

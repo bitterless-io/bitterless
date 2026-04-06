@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { xpcRenderer } from 'electron-xpc/renderer';
 import { loadProxySetting } from '@/views/setting/components/ProxySetting/proxySetting.store';
 import { extraResource } from './contextBridge/extraResource.bridge';
 
@@ -7,6 +8,7 @@ const showResourceModal = ref(false);
 
 onMounted(async () => {
   loadProxySetting();
+  xpcRenderer.send('update/startPolling');
 
   const needsExtract = await extraResource.checkNeedsExtract();
   if (needsExtract) {

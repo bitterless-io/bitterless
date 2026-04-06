@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 import { parseHTML } from 'linkedom';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import type { ProxyConfig } from '../langGraph/model.adaptor';
+import type { ProxyConfig } from './model.adaptor';
 
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
@@ -23,10 +23,10 @@ export interface SearchResult {
   pageContent?: string;
 }
 
-class SearchHelper {
+class SearchAdaptor {
   async searchBaidu(query: string, maxResults: number): Promise<SearchResult[]> {
     const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(query)}&rn=${maxResults}&ie=utf-8`;
-    console.log('[searchHelper] searchBaidu, url:', searchUrl);
+    console.log('[searchAdaptor] searchBaidu, url:', searchUrl);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -43,9 +43,9 @@ class SearchHelper {
       } as any);
       clearTimeout(timeout);
 
-        console.log('[searchHelper] searchBaidu, status:', response.status);
+        console.log('[searchAdaptor] searchBaidu, status:', response.status);
       const html = await response.text();
-      console.log('[searchHelper] searchBaidu, html sample:', html.slice(0, 2000));
+      console.log('[searchAdaptor] searchBaidu, html sample:', html.slice(0, 2000));
       const { document } = parseHTML(html);
 
       const results: SearchResult[] = [];
@@ -58,7 +58,7 @@ class SearchHelper {
         const title = titleEl?.textContent?.trim() ?? '';
         let href = titleEl?.getAttribute('href') ?? '';
 
-        console.log(`[searchHelper] searchBaidu, result[${i}] title="${title}" href="${href}"`);
+        console.log(`[searchAdaptor] searchBaidu, result[${i}] title="${title}" href="${href}"`);
 
         if (!title || !href) continue;
 
@@ -72,12 +72,12 @@ class SearchHelper {
         results.push({ title, url: href, snippet });
       }
 
-      console.log('[searchHelper] searchBaidu, results count:', results.length);
+      console.log('[searchAdaptor] searchBaidu, results count:', results.length);
       return results;
     } catch (err: any) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') {
-        console.warn('[searchHelper] searchBaidu, timeout');
+        console.warn('[searchAdaptor] searchBaidu, timeout');
         return [];
       }
       throw err;
@@ -86,7 +86,7 @@ class SearchHelper {
 
   async searchDdg(query: string, maxResults: number, proxy?: ProxyConfig): Promise<SearchResult[]> {
     const searchUrl = 'https://html.duckduckgo.com/html/';
-    console.log('[searchHelper] searchDdg, query:', query);
+    console.log('[searchAdaptor] searchDdg, query:', query);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -120,15 +120,15 @@ class SearchHelper {
       if (proxy?.ip && proxy?.port) {
         const agent = new HttpsProxyAgent(`http://${proxy.ip}:${proxy.port}`);
         fetchOptions.agent = agent;
-        console.log('[searchHelper] searchDdg, using proxy:', `${proxy.ip}:${proxy.port}`);
+        console.log('[searchAdaptor] searchDdg, using proxy:', `${proxy.ip}:${proxy.port}`);
       }
 
       const response = await fetch(searchUrl, fetchOptions);
       clearTimeout(timeout);
 
-      console.log('[searchHelper] searchDdg, status:', response.status);
+      console.log('[searchAdaptor] searchDdg, status:', response.status);
       const html = await response.text();
-      console.log('[searchHelper] searchDdg, html sample:', html.slice(0, 2000));
+      console.log('[searchAdaptor] searchDdg, html sample:', html.slice(0, 2000));
       const { document: ddgDoc } = parseHTML(html);
 
       const results: SearchResult[] = [];
@@ -139,7 +139,7 @@ class SearchHelper {
 
         const el = resultEls[i];
         if (el.classList.contains('result--ad')) {
-          console.log(`[searchHelper] searchDdg, skipping ad result[${i}]`);
+          console.log(`[searchAdaptor] searchDdg, skipping ad result[${i}]`);
           continue;
         }
 
@@ -147,7 +147,7 @@ class SearchHelper {
         const title = titleEl?.textContent?.trim() ?? '';
         const href = titleEl?.getAttribute('href') ?? '';
 
-        console.log(`[searchHelper] searchDdg, result[${i}] title="${title}" href="${href}"`);
+        console.log(`[searchAdaptor] searchDdg, result[${i}] title="${title}" href="${href}"`);
 
         if (!title || !href) continue;
 
@@ -157,12 +157,12 @@ class SearchHelper {
         results.push({ title, url: href, snippet });
       }
 
-      console.log('[searchHelper] searchDdg, results count:', results.length);
+      console.log('[searchAdaptor] searchDdg, results count:', results.length);
       return results;
     } catch (err: any) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') {
-        console.warn('[searchHelper] searchDdg, timeout');
+        console.warn('[searchAdaptor] searchDdg, timeout');
         return [];
       }
       throw err;
@@ -170,4 +170,4 @@ class SearchHelper {
   }
 }
 
-export const searchHelper = new SearchHelper();
+export const searchAdaptor = new SearchAdaptor();

@@ -1,12 +1,13 @@
+import 'reflect-metadata';
+import { injectable, inject } from 'inversify';
 import { StateGraph, MessagesAnnotation, START, END } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { HumanMessage, SystemMessage, AIMessageChunk } from '@langchain/core/messages';
 import type { AIMessage } from '@langchain/core/messages';
+import { iocHelper } from '@shared/iocHelper/ioc.helper';
 import { createModel } from './model.adaptor';
-import type { ModelConfig } from './model.adaptor';
-import { createAllSkills, allSkillNames, SKILL_PROMPT } from './defaultSkills/skill.registry';
-import { defaultPrompt } from './defaultPrompt';
-import type { ProxyConfig } from './model.adaptor';
+import type { ModelConfig, ProxyConfig } from './model.adaptor';
+import { SkillService } from './skill.service';
 
 export type { ModelConfig };
 
@@ -21,8 +22,16 @@ export interface PerformanceEntry {
   name?: string;
 }
 
-class LangGraphHelper {
+const defaultPrompt = `You are a helpful AI assistant.`;
+
+@injectable()
+class MaestroAgentController {
   private currentConfig: ModelConfig | null = null;
+
+  constructor(
+    @inject(Symbol.for(SkillService.name))
+    private readonly skillService: SkillService,
+  ) {}
 
   private buildGraph(
     config: ModelConfig,
@@ -33,7 +42,7 @@ class LangGraphHelper {
     signal?: AbortSignal,
   ) {
     const model = createModel(config);
-    const allSkills = createAllSkills(proxy);
+    const allSkills = this.skillService.createTools(proxy);
     const selectedSkills = skillNames.map((name) => allSkills[name]).filter(Boolean);
     const hasTools = selectedSkills.length > 0;
     const modelWithTools = hasTools ? model.bindTools(selectedSkills) : model;
@@ -41,7 +50,7 @@ class LangGraphHelper {
 
     const TOOL_SYSTEM = new SystemMessage(`${defaultPrompt}
 
-${SKILL_PROMPT}`);
+${this.skillService.getSkillPrompt()}`);
 
     const callModel = async (state: typeof MessagesAnnotation.State) => {
       const msgs = state.messages[0]?._getType() === 'system'
@@ -155,9 +164,10 @@ ${SKILL_PROMPT}`);
     const proxy = effectiveConfig.proxy;
     const totalT0 = Date.now();
     const timings: PerformanceEntry[] = [];
-    console.log('[langGraph] building graph with all skills:', allSkillNames);
+    const allSkillNames = this.skillService.getAllSkillNames();
+    console.log('[maestroAgent] building graph with all skills:', allSkillNames);
 
-    const graph = this.buildGraph(effectiveConfig, [...allSkillNames], timings, proxy, options.onToolCall, options.signal);
+    const graph = this.buildGraph(effectiveConfig, allSkillNames, timings, proxy, options.onToolCall, options.signal);
     let fullContent = '';
 
     const finalMessages = this.toMessages(messages);
@@ -188,7 +198,7 @@ ${SKILL_PROMPT}`);
     }
 
     if (timings.length > 0) {
-      console.log('[langGraph] Performance Summary:');
+      console.log('[maestroAgent] Performance Summary:');
       for (const entry of timings) {
         const label = entry.name ? `[${entry.type}:${entry.name}]` : `[${entry.type}]`;
         console.log(`  ${label} ${entry.time}ms`);
@@ -201,4 +211,9 @@ ${SKILL_PROMPT}`);
   }
 }
 
-export const langGraphHelper = new LangGraphHelper();
+const maestroAgentInstance = iocHelper.bind({
+  controller: MaestroAgentController,
+  services: [SkillService],
+});
+
+export const maestroAgent = maestroAgentInstance;

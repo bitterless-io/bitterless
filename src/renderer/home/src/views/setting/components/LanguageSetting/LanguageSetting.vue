@@ -5,8 +5,8 @@
     </div>
     <div class="language-setting__body">
       <a-radio-group v-model="languageSettingStore.currentLanguage" direction="vertical" @change="onLanguageChange">
-        <a-radio value="zh">{{ i18nHelper.setting.language.zh }}</a-radio>
         <a-radio value="en">{{ i18nHelper.setting.language.en }}</a-radio>
+        <a-radio value="zh">{{ i18nHelper.setting.language.zh }}</a-radio>
       </a-radio-group>
     </div>
   </div>

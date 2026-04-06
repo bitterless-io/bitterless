@@ -1,7 +1,7 @@
 import { messageDao } from '../dao/message.dao';
 import { settingDao } from '../dao/setting.dao';
 import { langGraphHelper } from '../../base/langGraph/langGraph.helper';
-import type { ChatMessageInput, ModelConfig } from '../../base/langGraph/langGraph.helper';
+import type { ChatMessageInput, ModelConfig, PerformanceEntry } from '../../base/langGraph/langGraph.helper';
 import type { ProxyConfig } from '../../base/langGraph/model.adaptor';
 import { xpcRenderer } from 'electron-xpc/preload';
 import { sqliteManager } from '../sqliteHelper/sqlite.manager';
@@ -67,6 +67,9 @@ const sendMessage = async (sessionId: string): Promise<void> => {
       onChunk: (chunk) => {
         if (signal.aborted) throw new Error('AbortError');
         xpcRenderer.send('chat/stream/chunk', { sessionId, chunk });
+      },
+      onFinished: (timings: PerformanceEntry[]) => {
+        console.log('[messageServer] Performance timings:', JSON.stringify(timings, null, 2));
       },
       config: { ...llmConfig as ModelConfig, ...(proxy ? { proxy } : {}) },
       signal,

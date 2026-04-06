@@ -35,8 +35,12 @@ if (isDev) {
   pkg.name = isDebug ? `${baseLower}_debug` : baseLower;
 }
 
+if (pkg._version && pkg.versionCode) {
+  pkg.version = `${pkg._version}+${pkg.versionCode}`;
+}
+
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8');
-console.log(`[before.js] VITE_ENV=${viteEnv}, VITE_MODE=${viteMode}, package.json name set to: ${pkg.name}`);
+console.log(`[before.js] VITE_ENV=${viteEnv}, VITE_MODE=${viteMode}, package.json name set to: ${pkg.name}, version set to: ${pkg.version}`);
 
 // Generate electron-builder.yml from template
 const productName = isDev ? `${baseName}_DEV` : baseName;
@@ -47,8 +51,7 @@ let builderContent = fs.readFileSync(builderTmpPath, 'utf-8');
 builderContent = builderContent.replace(/^appId:.*$/m, `appId: ${appId}`);
 builderContent = builderContent.replace(/^productName:.*$/m, `productName: ${productName}`);
 builderContent = builderContent.replace(/^(\s+executableName:).*$/m, `$1 ${executableName}`);
-const viteEnvPart = viteEnv === 'prod' ? '' : `-${viteEnv}`;
-builderContent = builderContent.replace(/VITE_ENV_PART/g, viteEnvPart);
+builderContent = builderContent.replace(/VITE_ENV_PART/g, '');
 
 fs.writeFileSync(builderOutPath, builderContent, 'utf-8');
 console.log(`[before.js] electron-builder.yml generated: appId=${appId}, productName=${productName}, executableName=${executableName}, viteEnv=${viteEnv}`);
@@ -67,10 +70,10 @@ if (viteMode === 'release') {
 const copyChromium = () => {
   const platform = process.platform;
   const arch = process.arch;
-  
+
   let chromiumSourceFile = null;
   let zipFileName = null;
-  
+
   if (platform === 'darwin') {
     if (arch === 'arm64') {
       zipFileName = 'chrome-macarm.zip';
@@ -83,32 +86,32 @@ const copyChromium = () => {
     zipFileName = 'chrome-win.zip';
     chromiumSourceFile = path.join(rootDir, 'external_resources', 'chromium', 'win', zipFileName);
   }
-  
+
   if (!chromiumSourceFile || !zipFileName) {
     console.log(`[before.js] ⚠️  No Chromium configuration for platform=${platform}, arch=${arch}`);
     return;
   }
-  
+
   const asarUnpackedDir = path.join(rootDir, 'asar_unpacked');
   const chromiumDestFile = path.join(asarUnpackedDir, zipFileName);
-  
+
   if (!fs.existsSync(asarUnpackedDir)) {
     fs.mkdirSync(asarUnpackedDir, { recursive: true });
   }
-  
+
   if (fs.existsSync(chromiumDestFile)) {
     console.log(`[before.js] ✅ ${zipFileName} already exists in asar_unpacked, skipping copy`);
     return;
   }
-  
+
   if (!fs.existsSync(chromiumSourceFile)) {
     console.warn(`[before.js] ⚠️  Warning: ${zipFileName} not found at ${chromiumSourceFile}`);
     return;
   }
-  
+
   console.log(`[before.js] Copying ${zipFileName} from ${chromiumSourceFile} to ${chromiumDestFile}...`);
   fs.copyFileSync(chromiumSourceFile, chromiumDestFile);
   console.log(`[before.js] ✅ ${zipFileName} copied successfully`);
 };
 
-// copyChromium();
+copyChromium();
