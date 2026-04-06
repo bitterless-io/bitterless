@@ -7,6 +7,7 @@ const mainWindowEmitter = createXpcRendererEmitter<MainWindowHandler>('MainWindo
 
 class MenuBarState {
   isWindows: boolean = homeEnv.platform === 'win32';
+  isMac: boolean = homeEnv.platform === 'darwin';
   maximized: boolean = false;
 
   async init(): Promise<void> {

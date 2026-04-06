@@ -7,6 +7,7 @@ class DebugStore {
   env = import.meta.env.VITE_ENV || '';
   appPath = '';
   userDataPath = '';
+  chromiumPath = '';
 }
 
 const store = reactive<DebugStore>(new DebugStore());
@@ -14,6 +15,7 @@ const store = reactive<DebugStore>(new DebugStore());
 onMounted(async () => {
   store.appPath = await pathHelper.getAppPath();
   store.userDataPath = await pathHelper.getUserDataPath();
+  store.chromiumPath = (await pathHelper.getChromiumPath()) || '(not found)';
   xpcRenderer.handle('renderer/hello', async (payload) => {
     console.log(payload);
     return 'hello from renderer';
@@ -81,9 +83,10 @@ const openFolder = async (path: string) => {
           <span class="debug__path" @click="openFolder(store.appPath)">{{ store.appPath }}</span>
         </a-descriptions-item>
         <a-descriptions-item label="User Data Path">
-          <span class="debug__path" @click="openFolder(store.userDataPath)">{{
-            store.userDataPath
-          }}</span>
+          <span class="debug__path" @click="openFolder(store.userDataPath)">{{ store.userDataPath }}</span>
+        </a-descriptions-item>
+        <a-descriptions-item label="Chromium Path">
+          <span class="debug__path">{{ store.chromiumPath }}</span>
         </a-descriptions-item>
       </a-descriptions>
     </div>

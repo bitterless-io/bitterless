@@ -22,10 +22,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="menu-bar" @dblclick="handleDblClick">
+  <div :class="['menu-bar', { 'menu-bar--mac': menuBarStore.isMac }]" @dblclick="handleDblClick">
     <div class="menu-bar__left">
       <span class="menu-bar__title">{{ title }}</span>
-      <div class="menu-bar__actions">
+      <div v-if="menuBarStore.isWindows" class="menu-bar__actions">
         <div v-if="updateStore.updateAvailable" class="menu-bar__update" @click="handleRestartUpdate">
           <span class="menu-bar__update-text">Restart to Update</span>
         </div>
@@ -33,6 +33,15 @@ onMounted(() => {
           <span class="menu-bar__status-dot"></span>
           <span class="menu-bar__status-text">Proxy</span>
         </div>
+      </div>
+    </div>
+    <div v-if="menuBarStore.isMac" class="menu-bar__actions">
+      <div v-if="updateStore.updateAvailable" class="menu-bar__update" @click="handleRestartUpdate">
+        <span class="menu-bar__update-text">Restart to Update</span>
+      </div>
+      <div v-if="proxySettingStore.activeSetting.switch" class="menu-bar__status">
+        <span class="menu-bar__status-dot"></span>
+        <span class="menu-bar__status-text">Proxy</span>
       </div>
     </div>
     <div v-if="menuBarStore.isWindows" class="menu-bar__win-controls">
