@@ -35,8 +35,8 @@ if (isDev) {
   pkg.name = isDebug ? `${baseLower}_debug` : baseLower;
 }
 
-if (pkg._version && pkg.versionCode) {
-  pkg.version = `${pkg._version}-${pkg.versionCode}`;
+if (pkg._version) {
+  pkg.version = pkg._version;
 }
 
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8');
