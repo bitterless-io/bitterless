@@ -26,3 +26,4 @@ local
 snapshots
 asar_unpacked
 .upload_checkpoint
+build/installer.nsh
