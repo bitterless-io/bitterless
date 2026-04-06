@@ -24,6 +24,7 @@ import './dao/domain.dao';
 import './dao/todo.dao';
 import './dao/subTodo.dao';
 import './handler/language.handler';
+import './handler/searchEngine.handler';
 import { initQdrant } from './qdrantHelper/qdrant.helper';
 import { pathHelper } from '@shared/pathHelper/preload/pathPreload.helper';
 import * as path from 'path';

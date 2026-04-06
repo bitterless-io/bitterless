@@ -1,7 +1,7 @@
 {
   "_name": "Bitterless",
-  "version": "0.0.1",
-  "versionCode": 2026032801,
+  "_version": "0.0.1",
+  "versionCode": 26040601,
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -30,7 +30,8 @@
     "extract:asar": "node scripts/extract_asar.js",
     "convert:icon": "node scripts/save_and_convert_icon.js",
     "generate:icons": "node scripts/generate_app_icons.mjs",
-    "publish_dev:mac_arm": "yarn build:mac_arm && node scripts/publish.js --env dev --platform mac_arm",
+    "publish_dev": "node scripts/publish.js --env dev --platform mac_arm",
+    "publish_dev:mac_arm": "node scripts/publish.js --env dev --platform mac_arm",
     "publish_dev:mac_intel": "yarn build:mac_intel && node scripts/publish.js --env dev --platform mac_intel",
     "publish_dev:win": "yarn build:win && node scripts/publish.js --env dev --platform win64",
     "publish_prod:mac_arm": "yarn build:mac_arm && node scripts/publish.js --env prod --platform mac_arm",
@@ -83,7 +84,7 @@
     "reflect-metadata": "^0.2.2",
     "shiki": "^3.22.0",
     "simple-git": "^3.31.1",
-    "splitpanes": "^4.0.4",
+    "splitpanes": "4.0.1",
     "stream-markdown": "^0.0.14",
     "stream-monaco": "^0.0.18",
     "tar": "^7.5.13",
@@ -130,5 +131,6 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "bitterless_dev_debug"
+  "name": "bitterless_dev",
+  "version": "0.0.1+26040601"
 }

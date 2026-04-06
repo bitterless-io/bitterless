@@ -61,7 +61,8 @@ const closePane = () => {
         @focus="onInputFocus"
       />
     </div>
-    <button class="omni-pane-menubar__btn omni-pane-menubar__btn--close" title="关闭" @click="closePane">✕</button>
+    <button class="omni-pane-menubar__btn omni-pane-menubar__btn--close" title="关闭"
+            @click.stop="closePane">✕</button>
   </div>
 </template>
 

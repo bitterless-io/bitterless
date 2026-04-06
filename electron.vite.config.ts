@@ -31,7 +31,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           'app.main': resolve('src/main/app.main.ts'),
-          test: resolve('src/utility/test/test.main.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp']
       },

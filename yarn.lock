@@ -6934,10 +6934,10 @@ speakingurl@^14.0.1:
   resolved "https://registry.npmmirror.com/speakingurl/-/speakingurl-14.0.1.tgz#f37ec8ddc4ab98e9600c1c9ec324a8c48d772a53"
   integrity sha512-1POYv7uv2gXoyGFpBCmpDVSNV74IfsWlDW216UPjbWufNf+bSU6GdbDsxdcxtfwb4xlI3yxzOTKClUosxARYrQ==
 
-splitpanes@^4.0.4:
-  version "4.0.4"
-  resolved "https://registry.npmmirror.com/splitpanes/-/splitpanes-4.0.4.tgz#e8dfbbef4e93853ea336dc43f903e20946b42c1d"
-  integrity sha512-RbysugZhjbCw5fgplvk3hOXr41stahQDtZhHVkhnnJI6H4wlGDhM2kIpbehy7v92duy9GnMa8zIhHigIV1TWtg==
+splitpanes@4.0.0:
+  version "4.0.0"
+  resolved "https://registry.npmmirror.com/splitpanes/-/splitpanes-4.0.0.tgz#c6c7b8791d8a54c73d8c3aee8e5de48112a251ce"
+  integrity sha512-jQZHekeS6D7KwIuFm9OijRkA0teJGGV8HWEjtQHGqn+25sXLpMpYI9EBxb/eTt0yQMjb8qxiexvQyDQ5KJht3A==
 
 sprintf-js@^1.1.2:
   version "1.1.3"

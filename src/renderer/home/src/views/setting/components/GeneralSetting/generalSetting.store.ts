@@ -1,13 +1,12 @@
 import { reactive } from 'vue';
 import { switchLanguage } from '@renderer/common/i18n/i18n.helper';
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { LanguageHandler } from '@renderer/sqlite/src/xpc/language.handler';
+import type { LanguageHandler } from '@preload/sqlite/handler/language.handler';
+import type { SearchEngineHandler } from '@preload/sqlite/handler/searchEngine.handler';
 import { xpcRenderer } from 'electron-xpc/renderer';
-import { createXpcPreloadEmitter } from 'electron-xpc/renderer';
-import type { SettingHandler } from '@renderer/sqlite/src/xpc/setting.handler';
 
 const languageEmitter = createXpcRendererEmitter<LanguageHandler>('LanguageHandler');
-const settingEmitter = createXpcPreloadEmitter<SettingHandler>('SettingHandler');
+const searchEngineEmitter = createXpcRendererEmitter<SearchEngineHandler>('SearchEngineHandler');
 
 type SearchEngine = 'baidu' | 'duckduckgo';
 
@@ -15,14 +14,13 @@ class GeneralSettingState {
   currentLanguage: 'en' | 'zh' = 'en';
   currentSearchEngine: SearchEngine = 'baidu';
   loading = false;
-  saveStatus: 'idle' | 'success' | 'failed' = 'idle';
 
   async loadSettings(): Promise<void> {
     const lang = await languageEmitter.getLanguage();
     this.currentLanguage = lang as 'en' | 'zh';
     switchLanguage(this.currentLanguage);
 
-    const searchEngine = await settingEmitter.get({ key: 'general', sub_key: 'searchEngine' });
+    const searchEngine = await searchEngineEmitter.getSearchEngine();
     this.currentSearchEngine = (searchEngine as SearchEngine) || 'baidu';
   }
 
@@ -34,24 +32,15 @@ class GeneralSettingState {
 
   changeSearchEngine(engine: SearchEngine): void {
     this.currentSearchEngine = engine;
+    this.persistSearchEngine(engine);
   }
 
-  async saveSettings(): Promise<void> {
+  private async persistSearchEngine(engine: SearchEngine): Promise<void> {
     this.loading = true;
-    this.saveStatus = 'idle';
     try {
-      await this.persistLanguage(this.currentLanguage);
-      await settingEmitter.upsert({ key: 'general', sub_key: 'searchEngine', value: this.currentSearchEngine });
-      this.saveStatus = 'success';
-      setTimeout(() => {
-        this.saveStatus = 'idle';
-      }, 3000);
+      await searchEngineEmitter.setSearchEngine({ engine });
     } catch (err) {
-      console.error('[GeneralSettingState] Failed to save settings:', err);
-      this.saveStatus = 'failed';
-      setTimeout(() => {
-        this.saveStatus = 'idle';
-      }, 3000);
+      console.error('[GeneralSettingState] Failed to save search engine:', err);
     } finally {
       this.loading = false;
     }

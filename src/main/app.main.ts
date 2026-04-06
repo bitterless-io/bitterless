@@ -10,8 +10,6 @@ import { initDirectory } from './directoryHelper/directory.helper';
 import { llamaWindowHelper } from './windows/llamaWindow.helper';
 import { fsWindowHelper } from './windows/fsWindow.helper';
 import * as path from 'path';
-import { updateService } from './updateHelper/update.service';
-import './updateHelper/update.handler';
 import { trayHelper } from './tray/tray.helper';
 import { dialogHelper } from './dialog/dialog.helper';
 import './xpc/app.handler';
@@ -46,9 +44,6 @@ app.whenReady().then(async () => {
 
   // 初始化系统托盘 (仅 Windows)
   trayHelper.init(mainWindowHelper);
-
-  // 启动自动更新轮询
-  updateService.startPolling();
 
   app.on('activate', () => {
     // macOS: 点击 dock 图标显示主窗口

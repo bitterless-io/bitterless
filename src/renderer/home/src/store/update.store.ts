@@ -21,13 +21,13 @@ class UpdateState {
 
   async restartAndUpdate(): Promise<void> {
     console.log('[UpdateStore] Restarting to apply update...');
-    const updateEmitter = createXpcRendererEmitter<typeof UpdateHandler>('UpdateHandler');
+    const updateEmitter = createXpcRendererEmitter<UpdateHandler>('UpdateHandler');
     await updateEmitter.quitAndInstall();
   }
 
   async checkForUpdates(): Promise<void> {
     console.log('[UpdateStore] Manually checking for updates...');
-    const updateEmitter = createXpcRendererEmitter<typeof UpdateHandler>('UpdateHandler');
+    const updateEmitter = createXpcRendererEmitter<UpdateHandler>('UpdateHandler');
     await updateEmitter.checkForUpdates();
   }
 }

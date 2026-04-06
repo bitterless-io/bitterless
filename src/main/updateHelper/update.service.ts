@@ -77,7 +77,7 @@ class UpdateService {
     autoUpdater.on('update-downloaded', (info) => {
       console.log('[UpdateService] Update downloaded:', info);
       this.isDownloading = false;
-      
+
       this.notifyUpdateReady({
         version: info.version,
         versionCode: 0,
@@ -131,17 +131,16 @@ class UpdateService {
 
     if (manifest.versionCode > this.currentVersionCode) {
       console.log('[UpdateService] Update available, downloading...');
-      
+
       const updateEndpoint = this.constructUpdateEndpoint(manifest.downloadUrl);
       console.log('[UpdateService] Update endpoint:', updateEndpoint);
-
       autoUpdater.setFeedURL({
         provider: 'generic',
         url: manifest.downloadUrl
       });
 
       this.isDownloading = true;
-      
+
       try {
         await autoUpdater.checkForUpdates();
         if (this.updateAvailable) {
@@ -158,14 +157,14 @@ class UpdateService {
 
   private notifyUpdateReady(updateInfo: UpdateInfo): void {
     console.log('[UpdateService] Notifying update ready:', updateInfo);
-    xpcMain.emit('app/updated', updateInfo);
+    xpcMain.broadcast('app/updated', updateInfo);
   }
 
   public startPolling(): void {
-    if (this.viteMode !== 'release') {
-      console.log('[UpdateService] Not in release mode, skipping auto-update polling');
-      return;
-    }
+    // if (this.viteMode !== 'release') {
+    //   console.log('[UpdateService] Not in release mode, skipping auto-update polling');
+    //   return;
+    // }
 
     console.log('[UpdateService] Starting update polling (every 60 seconds)...');
     console.log('[UpdateService] Platform:', this.platform);

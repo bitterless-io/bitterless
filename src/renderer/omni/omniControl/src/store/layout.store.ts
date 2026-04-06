@@ -85,6 +85,8 @@ class LayoutStore {
     const result = this.removeNodeFromTree(this.tree, nodeId);
     if (result === null) {
       this.tree = createLeaf();
+    } else {
+      this.tree = result;
     }
   }
 
@@ -135,16 +137,21 @@ class LayoutStore {
     const origCount = (node.children || []).length;
     const newChildren: OmniPaneNode[] = [];
     for (const child of node.children || []) {
-      const kept = this.removeNodeFromTree(child, id);
+      let kept = null;
+      kept = this.removeNodeFromTree(child, id);
       if (kept !== null) newChildren.push(kept);
     }
 
-    if (newChildren.length === 0) return null;
 
-    // Only update children/sizes when a direct child was removed
-    // (avoids mutating grandparent sizes for deeper removals)
+    if (newChildren?.length === 0) return null;
+
+    // Collapse: promote the single remaining child upward
+    if (newChildren?.length === 1) {
+      return newChildren[0];
+    }
+
+    node.children = newChildren;
     if (newChildren.length !== origCount) {
-      node.children = newChildren;
       node.sizes = newChildren.map(() => 100 / newChildren.length);
     }
     return node;
