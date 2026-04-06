@@ -1,6 +1,5 @@
 import { reactive } from 'vue';
-import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { UpdateHandler } from '@main/updateHelper/update.handler';
+import { xpcRenderer } from 'electron-xpc/renderer';
 
 interface UpdateInfo {
   version: string;
@@ -21,14 +20,12 @@ class UpdateState {
 
   async restartAndUpdate(): Promise<void> {
     console.log('[UpdateStore] Restarting to apply update...');
-    const updateEmitter = createXpcRendererEmitter<UpdateHandler>('UpdateHandler');
-    await updateEmitter.quitAndInstall();
+    await xpcRenderer.send('UpdateHandler/quitAndInstall');
   }
 
   async checkForUpdates(): Promise<void> {
     console.log('[UpdateStore] Manually checking for updates...');
-    const updateEmitter = createXpcRendererEmitter<UpdateHandler>('UpdateHandler');
-    await updateEmitter.checkForUpdates();
+    await xpcRenderer.send('UpdateHandler/checkForUpdates');
   }
 }
 

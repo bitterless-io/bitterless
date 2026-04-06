@@ -1,18 +1,16 @@
 import { xpcMain } from 'electron-xpc/main';
 import { updateService } from '../updateHelper/update.service';
 
-let pollingStarted = false;
-
 export const initUpdateHandler = (): void => {
-  xpcMain.handle('update/startPolling', async () => {
-    if (pollingStarted) {
-      return;
-    }
-    pollingStarted = true;
+  xpcMain.handle('UpdateHandler/startPolling', async () => {
     updateService.startPolling();
   });
 
-  xpcMain.handle('update/quitAndInstall', async () => {
+  xpcMain.handle('UpdateHandler/checkForUpdates', async () => {
+    await updateService.manualCheck();
+  });
+
+  xpcMain.handle('UpdateHandler/quitAndInstall', async () => {
     updateService.quitAndInstall();
   });
 };

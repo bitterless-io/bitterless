@@ -8,7 +8,7 @@ const showResourceModal = ref(false);
 
 onMounted(async () => {
   loadProxySetting();
-  xpcRenderer.send('update/startPolling');
+  xpcRenderer.send('UpdateHandler/startPolling');
 
   const needsExtract = await extraResource.checkNeedsExtract();
   if (needsExtract) {

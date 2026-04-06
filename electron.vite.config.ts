@@ -122,7 +122,7 @@ export default defineConfig({
     },
     plugins: [
       vue(),
-      monacoEditorPlugin({ workerOutputPath: resolve('out/renderer/monacoeditorwork') })
+      monacoEditorPlugin({ customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork') })
     ],
     css: {
       preprocessorOptions: {
