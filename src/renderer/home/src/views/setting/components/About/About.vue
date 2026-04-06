@@ -29,8 +29,13 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { aboutStore } from './about.store';
+
+onMounted(() => {
+  aboutStore.init();
+});
 
 const handleOpenWebsite = (): void => {
   aboutStore.openWebsite();

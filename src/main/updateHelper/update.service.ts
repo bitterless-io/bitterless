@@ -193,7 +193,17 @@ class UpdateService {
 
   public quitAndInstall(): void {
     console.log('[UpdateService] Quitting and installing update...');
-    autoUpdater.quitAndInstall(false, true);
+    try {
+      autoUpdater.quitAndInstall(false, true);
+    } catch (err) {
+      console.error('[UpdateService] quitAndInstall failed, forcing relaunch:', err);
+    }
+
+    setTimeout(() => {
+      console.warn('[UpdateService] App did not restart after quitAndInstall, forcing relaunch...');
+      app.relaunch();
+      app.exit(0);
+    }, 3000);
   }
 }
 
