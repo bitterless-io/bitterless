@@ -152,8 +152,9 @@ export class OmniWindowHelper {
       minHeight: 600,
       title: 'Omni Browser',
       show: false,
-      titleBarStyle: 'hiddenInset',
-      trafficLightPosition: { x: 12, y: 8 },
+      ...(process.platform === 'darwin'
+        ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 8 } }
+        : { frame: false }),
     };
 
     if (savedLayout) {

@@ -50,6 +50,32 @@ class OmniWindowHandler extends XpcMainHandler {
     omniWindowHelper.toggleControl();
   }
 
+  async minimize(): Promise<void> {
+    omniWindowHelper.baseWindow?.minimize();
+  }
+
+  async toggleMaximize(): Promise<void> {
+    const win = omniWindowHelper.baseWindow;
+    if (!win || win.isDestroyed()) return;
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+  }
+
+  async close(): Promise<void> {
+    omniWindowHelper.baseWindow?.close();
+  }
+
+  async isMaximized(): Promise<boolean> {
+    const win = omniWindowHelper.baseWindow;
+    if (win && !win.isDestroyed()) {
+      return win.isMaximized();
+    }
+    return false;
+  }
+
   async saveLayout(params: { config: OmniLayoutConfig }): Promise<void> {
     console.log('[OmniWindowHandler] saveLayout called');
     omniWindowHelper.setLayoutTree(params.config.tree);

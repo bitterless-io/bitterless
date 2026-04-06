@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   height: 32px;
-  padding: 0 12px;
+  padding: 0 0 0 12px;
   background: #4e5882;
   border-bottom: 1px solid #3d4666;
   -webkit-app-region: drag;
@@ -13,21 +13,56 @@
   padding: 0 12px 0 78px;
 }
 
-.omni-menubar--win {
-  padding: 0 12px;
+.omni-menubar__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
 }
 
 .omni-menubar__title {
   font-size: 13px;
   font-weight: 600;
   color: #ffffff;
-  flex: 1;
+  flex-shrink: 0;
 }
 
 .omni-menubar__actions {
   display: flex;
   gap: 4px;
   -webkit-app-region: no-drag;
+}
+
+.omni-menubar__win-controls {
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.omni-menubar__win-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  color: oklch(0.92 0.01 274);
+  transition: background-color 0.15s;
+  padding: 0;
+}
+
+.omni-menubar__win-btn:hover {
+  background-color: oklch(0.54 0.08 274 / 0.5);
+}
+
+.omni-menubar__win-btn--close:hover {
+  background-color: oklch(0.54 0.08 274 / 0.7);
 }
 
 .omni-menubar__btn {

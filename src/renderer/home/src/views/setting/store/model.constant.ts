@@ -4,14 +4,15 @@ export interface ModelDef {
 }
 
 export const MODEL_LIST: ModelDef[] = [
-  { provider: 'openai', name: 'gpt-5.2' },
-  { provider: 'anthropic', name: 'claude-opus-4.5' },
-  { provider: 'anthropic', name: 'claude-sonnet-4.5' },
-  { provider: 'google', name: 'gemini-3-flash-preview' },
-  { provider: 'google', name: 'gemini-3-pro-preview' },
+  // { provider: 'openai', name: 'gpt-5.2' },
+  // { provider: 'anthropic', name: 'claude-opus-4.5' },
+  // { provider: 'anthropic', name: 'claude-sonnet-4.5' },
+  // { provider: 'google', name: 'gemini-3-flash-preview' },
+  // { provider: 'google', name: 'gemini-3-pro-preview' },
   { provider: 'openrouter', name: 'claude-sonnet-4.5' },
-  { provider: 'openrouter', name: 'google/gemini-3-flash-preview' },
   { provider: 'openrouter', name: 'deepseek/deepseek-v3.2' },
+  { provider: 'openrouter', name: 'google/gemini-3-flash-preview' },
+  { provider: 'openrouter', name: 'moonshotai/kimi-k2.5' },
 ];
 
 export const PROVIDER_LIST: string[] = [...new Set(MODEL_LIST.map((m) => m.provider))];

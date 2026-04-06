@@ -10,7 +10,7 @@ const SETTING_KEY_LLM = 'LLM';
 class LLMSettingStore {
   llmSetting: LLMSetting = {
     provider: 'openrouter',
-    model: 'google/gemini-3-flash-preview',
+    model: 'moonshotai/kimi-k2.5',
     apiKey: '',
     endpoint: 'https://openrouter.ai/api/v1',
   };
@@ -29,7 +29,7 @@ export const loadLLMSetting = async (): Promise<void> => {
     if (result) {
       const data = result as any;
       llmSettingStore.llmSetting.provider = data.provider || 'openrouter';
-      llmSettingStore.llmSetting.model = data.model || 'google/gemini-flash-1.5-8b';
+      llmSettingStore.llmSetting.model = data.model || 'moonshotai/kimi-k2.5';
       llmSettingStore.llmSetting.apiKey = data.apiKey || '';
       llmSettingStore.llmSetting.endpoint = data.baseURL || data.endpoint || 'https://openrouter.ai/api/v1';
     }
