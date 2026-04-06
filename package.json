@@ -26,6 +26,7 @@
     "build:mac_intel": "yarn build && node scripts/signedBuild.js --mac --x64",
     "build:linux": "yarn build && electron-builder --linux",
     "build_dev:mac_arm": "rig --env release_dev && node scripts/before.js && yarn build && node scripts/signedBuild.js --mac --arm64",
+    "build_dev:win": "rig --env release_dev && node scripts/before.js && yarn build && node scripts/signedBuild.js --win --x64",
     "preinstall": "rig preinstall",
     "extract:asar": "node scripts/extract_asar.js",
     "convert:icon": "node scripts/save_and_convert_icon.js",
