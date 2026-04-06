@@ -13,6 +13,7 @@ import * as path from 'path';
 import { trayHelper } from './tray/tray.helper';
 import { dialogHelper } from './dialog/dialog.helper';
 import './xpc/app.handler';
+import { updateService } from '@main/updateHelper/update.service';
 
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron');
@@ -52,57 +53,65 @@ app.whenReady().then(async () => {
 });
 
 let isQuitting = false;
+
 let hasShownQuitDialog = false;
 
 function cleanupResources(): void {
   console.log('[app] Cleaning up resources...');
-  
+
   try {
     mainWindowHelper.destroy();
   } catch (err) {
     console.error('[app] Error destroying mainWindow:', err);
   }
-  
+
   try {
     sqliteWindowHelper.destroy();
   } catch (err) {
     console.error('[app] Error destroying sqliteWindow:', err);
   }
-  
+
   try {
     fsWindowHelper.destroy();
   } catch (err) {
     console.error('[app] Error destroying fsWindow:', err);
   }
-  
+
   try {
     llamaWindowHelper.destroy();
   } catch (err) {
     console.error('[app] Error destroying llamaWindow:', err);
   }
-  
+
   try {
     connectorWindowHelper.destroy();
   } catch (err) {
     console.error('[app] Error destroying connectorWindow:', err);
   }
-  
+
   try {
     trayHelper.destroy();
   } catch (err) {
     console.error('[app] Error destroying tray:', err);
   }
-  
+
   console.log('[app] Cleanup complete');
 }
 
 app.on('before-quit', async (event) => {
   if (isQuitting) return;
-  
+
+  // 新增：如果是更新导致的退出，直接放行
+  if (updateService.isUpdating) {
+    isQuitting = true;
+    cleanupResources();
+    return;   // 不要 preventDefault，让 quitAndInstall 继续执行
+  }
+
   if (process.platform === 'darwin' && !hasShownQuitDialog) {
     event.preventDefault();
     hasShownQuitDialog = true;
-    
+
     const shouldQuit = await dialogHelper.showQuitConfirmDialog();
     if (shouldQuit) {
       isQuitting = true;
@@ -115,6 +124,9 @@ app.on('before-quit', async (event) => {
 });
 
 app.on('will-quit', (event) => {
+  if (updateService.isUpdating || isQuitting) {
+    return;   // 更新时不要干预
+  }
   if (!isQuitting) {
     event.preventDefault();
     isQuitting = true;

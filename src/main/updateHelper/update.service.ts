@@ -13,7 +13,7 @@ class UpdateService {
   private viteMode: string;
   private isDownloading = false;
   private updateAvailable = false;
-
+  isUpdating = false;
   constructor() {
     this.currentVersionCode = this.getCurrentVersionCode();
     this.platform = this.detectPlatform();
@@ -81,7 +81,7 @@ class UpdateService {
       this.notifyUpdateReady({
         version: info.version,
         versionCode: 0,
-        releaseNotes: info.releaseNotes as string || '',
+        releaseNotes: (info.releaseNotes as string) || '',
         downloadUrl: ''
       });
     });
@@ -192,6 +192,7 @@ class UpdateService {
   }
 
   public quitAndInstall(): void {
+    this.isUpdating = true;
     console.log('[UpdateService] Quitting and installing update...');
     app.relaunch();
     setTimeout(() => {

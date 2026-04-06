@@ -9,26 +9,36 @@ class TrayHelper {
   private mainWindowHelper: MainWindowHelper | null = null;
 
   init(mainWindowHelper: MainWindowHelper): void {
-    if (process.platform !== 'win32') {
+    if (process.platform !== 'win32' && process.platform !== 'darwin') {
       return;
     }
 
     this.mainWindowHelper = mainWindowHelper;
-    
-    const iconPath = app.isPackaged
-      ? join(process.resourcesPath, 'build', 'icon.png')
-      : join(__dirname, '../../build/icon.png');
-    
-    const icon = nativeImage.createFromPath(iconPath);
-    this.tray = new Tray(icon.resize({ width: 16, height: 16 }));
-    
+
+    const isWin = process.platform === 'win32';
+    let iconPath: string;
+
+    if (app.isPackaged) {
+      const unpacked = join(app.getAppPath(), '..', 'app.asar.unpacked', 'icons');
+      iconPath = isWin ? join(unpacked, 'icon.ico') : join(unpacked, 'icon.png');
+    } else {
+      iconPath = join(__dirname, '../../build', isWin ? 'icon.ico' : 'icon.png');
+    }
+
+    let icon = nativeImage.createFromPath(iconPath);
+    if (process.platform === 'darwin') {
+      icon = icon.resize({ width: 16, height: 16 });
+    }
+
+    this.tray = new Tray(icon);
+
     this.updateMenu();
-    
+
     this.tray.on('click', () => {
       this.showMainWindow();
     });
-    
-    console.log('[TrayHelper] Tray initialized');
+
+    console.log('[TrayHelper] Tray initialized, iconPath:', iconPath);
   }
 
   updateMenu(): void {
