@@ -132,6 +132,6 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "bitterless_dev_debug",
+  "name": "bitterless",
   "version": "0.0.1"
 }

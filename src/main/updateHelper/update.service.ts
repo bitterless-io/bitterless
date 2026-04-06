@@ -194,7 +194,7 @@ class UpdateService {
   public quitAndInstall(): void {
     this.isUpdating = true;
     console.log('[UpdateService] Quitting and installing update...');
-    app.relaunch();
+    autoUpdater.quitAndInstall(false, true);
     setTimeout(() => {
       app.exit(0);
     }, 3000);
