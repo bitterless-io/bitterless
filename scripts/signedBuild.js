@@ -24,7 +24,11 @@ const loadSigningEnv = () => {
 
 const signingEnv = loadSigningEnv();
 const env = { ...process.env, ...signingEnv };
-
+if (process.platform === 'win32') {
+  delete env.CSC_LINK;
+  delete env.CSC_KEY_PASSWORD;
+  console.log('[signedBuild.js] ⚠️  Windows platform: skipped macOS signing env vars');
+}
 const args = process.argv.slice(2);
 console.log(`[signedBuild.js] Running: electron-builder ${args.join(' ')}`);
 
