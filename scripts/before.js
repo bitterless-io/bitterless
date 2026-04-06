@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const AdmZip = require('adm-zip');
 
 const rootDir = path.resolve(__dirname, '..');
 const envRigPath = path.join(rootDir, '.env.rig');
@@ -99,11 +100,31 @@ const copyChromium = () => {
   }
 
   const asarUnpackedDir = path.join(rootDir, 'asar_unpacked');
-  const chromiumDestFile = path.join(asarUnpackedDir, zipFileName);
 
   if (!fs.existsSync(asarUnpackedDir)) {
     fs.mkdirSync(asarUnpackedDir, { recursive: true });
   }
+
+  if (platform === 'win32') {
+    const chromiumExePath = path.join(asarUnpackedDir, 'chrome-win', 'chrome.exe');
+    if (fs.existsSync(chromiumExePath)) {
+      console.log(`[before.js] ✅ chrome-win already extracted in asar_unpacked, skipping`);
+      return;
+    }
+
+    if (!fs.existsSync(chromiumSourceFile)) {
+      console.warn(`[before.js] ⚠️  Warning: ${zipFileName} not found at ${chromiumSourceFile}`);
+      return;
+    }
+
+    console.log(`[before.js] Extracting ${zipFileName} to ${asarUnpackedDir}...`);
+    const zip = new AdmZip(chromiumSourceFile);
+    zip.extractAllTo(asarUnpackedDir, true);
+    console.log(`[before.js] ✅ chrome-win extracted successfully to ${asarUnpackedDir}`);
+    return;
+  }
+
+  const chromiumDestFile = path.join(asarUnpackedDir, zipFileName);
 
   if (fs.existsSync(chromiumDestFile)) {
     console.log(`[before.js] ✅ ${zipFileName} already exists in asar_unpacked, skipping copy`);

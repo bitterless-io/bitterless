@@ -23,6 +23,11 @@ class ExtraResourceHelper {
     try {
       console.log('[ExtraResourceHelper] Checking if extraction is needed...');
 
+      if (process.platform === 'win32') {
+        console.log('[ExtraResourceHelper] Windows platform - chromium is pre-extracted in asar_unpacked, skipping check');
+        return false;
+      }
+
       const userDataPath = await this.pathMainHelperEmitter.getUserDataPath();
       const extraDir = path.join(userDataPath, 'extra');
 
@@ -75,6 +80,11 @@ class ExtraResourceHelper {
   async startExtract(): Promise<void> {
     try {
       console.log('[ExtraResourceHelper] Starting extraction...');
+
+      if (process.platform === 'win32') {
+        console.log('[ExtraResourceHelper] Windows platform - chromium is pre-extracted in asar_unpacked, skipping extraction');
+        return;
+      }
 
       const userDataPath = await this.pathMainHelperEmitter.getUserDataPath();
       const extraDir = path.join(userDataPath, 'extra');
