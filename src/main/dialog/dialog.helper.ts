@@ -2,6 +2,22 @@ import { dialog, BrowserWindow } from 'electron';
 import { i18nHelper } from '../i18n/i18n.helper';
 
 class DialogHelper {
+  async showKeychainAccessDeniedDialog(): Promise<void> {
+    const messages = i18nHelper.getMessages();
+
+    const options = {
+      type: 'warning' as const,
+      title: messages.app.keychainDeniedTitle,
+      message: messages.app.keychainDeniedMessage,
+      buttons: [messages.app.keychainDeniedCancel, messages.app.keychainDeniedOk],
+      defaultId: 0,
+      cancelId: 0,
+    };
+
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    await dialog.showMessageBox(focusedWindow || BrowserWindow.getAllWindows()[0], options);
+  }
+
   async showQuitConfirmDialog(): Promise<boolean> {
     const messages = i18nHelper.getMessages();
     const platform = process.platform;

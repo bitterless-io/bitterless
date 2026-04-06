@@ -6,6 +6,10 @@ export const en = {
     quitConfirmMessage: 'Are you sure you want to quit?',
     quitConfirmOk: 'Quit',
     quitConfirmCancel: 'Cancel',
+    keychainDeniedTitle: 'Keychain Access Required',
+    keychainDeniedMessage: 'To protect your data security, this application requires access to the system Keychain for encryption. Please allow access in the system dialog.',
+    keychainDeniedOk: 'Deny',
+    keychainDeniedCancel: 'Cancel',
   },
   omni: {
     title: 'Omni Browser',

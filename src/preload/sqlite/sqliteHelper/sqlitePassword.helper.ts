@@ -9,19 +9,25 @@ interface SqlitePasswordHandlerType {
   decryptPassword(params: { encrypted: string }): Promise<string>;
 }
 
+export interface SqlitePasswordResult {
+  password: string;
+  isReset: boolean;
+}
+
 class SqlitePasswordHelper {
   private passwordEmitter = createXpcPreloadEmitter<SqlitePasswordHandlerType>('SqlitePasswordHandler');
 
-  async getOrCreatePassword(): Promise<string> {
+  async getOrCreatePassword(): Promise<SqlitePasswordResult> {
     const viteMode = import.meta.env.VITE_MODE;
 
     if (viteMode === 'debug') {
       console.log('[sqlitePassword] using hardcoded password for debug mode');
-      return DEV_PASSWORD;
+      return { password: DEV_PASSWORD, isReset: false };
     }
 
     console.log('[sqlitePassword] release mode detected, using encrypted password');
     
+    let isReset = false;
     const encryptedPassword = localStorage.getItem(STORAGE_KEY);
     
     if (encryptedPassword) {
@@ -29,21 +35,22 @@ class SqlitePasswordHelper {
       try {
         const password = await this.passwordEmitter.decryptPassword({ encrypted: encryptedPassword });
         console.log('[sqlitePassword] password decrypted successfully');
-        return password;
+        return { password, isReset: false };
       } catch (err: any) {
-        console.error('[sqlitePassword] failed to decrypt password:', err.message);
-        throw new Error('Failed to decrypt SQLite password. Please contact support.');
+        console.error('[sqlitePassword] failed to decrypt password, clearing invalid ciphertext:', err.message);
+        localStorage.removeItem(STORAGE_KEY);
+        isReset = true;
       }
     }
 
-    console.log('[sqlitePassword] no existing password found, generating new UUID password...');
+    console.log('[sqlitePassword] generating new UUID password...');
     const newPassword = uuidv4();
     
     try {
       const encrypted = await this.passwordEmitter.encryptPassword({ password: newPassword });
       localStorage.setItem(STORAGE_KEY, encrypted);
       console.log('[sqlitePassword] new password generated, encrypted, and stored');
-      return newPassword;
+      return { password: newPassword, isReset };
     } catch (err: any) {
       console.error('[sqlitePassword] failed to encrypt password:', err.message);
       throw new Error('Failed to encrypt SQLite password. Please contact support.');

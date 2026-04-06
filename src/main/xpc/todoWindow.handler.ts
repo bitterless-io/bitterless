@@ -147,9 +147,6 @@ class TodoWindowHandler extends XpcMainHandler {
 
     this.standaloneWindow = new BrowserWindow(windowOptions);
 
-    const windowId = this.standaloneWindow.id;
-    this.standaloneWindow.webContents.executeJavaScript(`window.__WINDOW_ID__ = ${windowId};`);
-
     this.standaloneWindow.on('ready-to-show', () => {
       this.standaloneWindow?.show();
     });
@@ -171,6 +168,9 @@ class TodoWindowHandler extends XpcMainHandler {
     } else {
       await this.standaloneWindow.loadFile(join(__dirname, '../renderer/todo/index.html'));
     }
+
+    const windowId = this.standaloneWindow.id;
+    await this.standaloneWindow.webContents.executeJavaScript(`window.__WINDOW_ID__ = ${windowId};`);
 
     if (is.dev && import.meta.env.VITE_MODE !== 'release') {
       this.standaloneWindow.webContents.openDevTools({ mode: 'detach' });

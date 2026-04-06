@@ -142,3 +142,29 @@ const copyChromium = () => {
 };
 
 copyChromium();
+
+// Write version_info.json to dist/
+const writeVersionInfo = () => {
+  const distDir = path.join(rootDir, 'dist');
+  if (!fs.existsSync(distDir)) {
+    fs.mkdirSync(distDir, { recursive: true });
+  }
+
+  const releaseNotePath = path.join(rootDir, 'build', 'release_note.md');
+  let releaseNotes = '';
+  if (fs.existsSync(releaseNotePath)) {
+    releaseNotes = fs.readFileSync(releaseNotePath, 'utf-8').trim();
+  }
+
+  const versionInfo = {
+    version: pkg.version,
+    versionCode: pkg.versionCode,
+    releaseNotes,
+  };
+
+  const versionInfoPath = path.join(distDir, 'version_info.json');
+  fs.writeFileSync(versionInfoPath, JSON.stringify(versionInfo, null, 2) + '\n', 'utf-8');
+  console.log(`[before.js] ✅ version_info.json written to dist/ (version=${pkg.version}, versionCode=${pkg.versionCode})`);
+};
+
+writeVersionInfo();

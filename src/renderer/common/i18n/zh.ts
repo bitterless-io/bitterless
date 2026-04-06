@@ -8,6 +8,10 @@ export const zh: typeof en = {
     quitConfirmMessage: '确定要退出应用吗？',
     quitConfirmOk: '退出',
     quitConfirmCancel: '取消',
+    keychainDeniedTitle: '需要钥匙串访问权限',
+    keychainDeniedMessage: '为保障数据安全，应用需要访问系统钥匙串进行加密存储，请在系统弹窗中允许访问。',
+    keychainDeniedOk: '拒绝',
+    keychainDeniedCancel: '取消',
   },
   omni: {
     title: '全能浏览器',

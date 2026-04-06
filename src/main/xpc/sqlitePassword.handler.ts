@@ -1,9 +1,13 @@
 import { XpcMainHandler } from 'electron-xpc/main';
 import { safeStorage } from 'electron';
+import { dialogHelper } from '../dialog/dialog.helper';
 
 class SqlitePasswordHandler extends XpcMainHandler {
   async encryptPassword(params: { password: string }): Promise<string> {
     if (!safeStorage.isEncryptionAvailable()) {
+      if (process.platform === 'darwin') {
+        await dialogHelper.showKeychainAccessDeniedDialog();
+      }
       throw new Error('[sqlitePassword] safeStorage encryption is not available on this platform');
     }
 
@@ -15,6 +19,9 @@ class SqlitePasswordHandler extends XpcMainHandler {
 
   async decryptPassword(params: { encrypted: string }): Promise<string> {
     if (!safeStorage.isEncryptionAvailable()) {
+      if (process.platform === 'darwin') {
+        await dialogHelper.showKeychainAccessDeniedDialog();
+      }
       throw new Error('[sqlitePassword] safeStorage decryption is not available on this platform');
     }
 

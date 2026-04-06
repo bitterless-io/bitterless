@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { rmSync, mkdirSync } from 'fs';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { packageHelper } from '../../../shared/packageHelper/preload/packagePreload.helper';
 import type { BaseTable } from '../dao/base.table';
@@ -76,7 +77,15 @@ class SqliteManager {
 
     console.log('[sqlite] opening database:', dbPath);
 
-    const password = await sqlitePasswordHelper.getOrCreatePassword();
+    const { password, isReset } = await sqlitePasswordHelper.getOrCreatePassword();
+
+    if (isReset) {
+      const dbDir = dirname(dbPath);
+      console.log('[sqlite] password was reset, removing old db directory:', dbDir);
+      rmSync(dbDir, { recursive: true, force: true });
+      mkdirSync(dbDir, { recursive: true });
+      console.log('[sqlite] db directory recreated');
+    }
 
     this._db = new Database(dbPath);
 
