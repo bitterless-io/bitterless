@@ -32,3 +32,5 @@ BitterLess is an out-of-the-box self-evolving agent app built with **Electron**.
 ## License
 
 MIT
+https://assets.terncloud.com/bitterless/distro/prod/mac_arm/manifest.json
+https://assets.terncloud.com/bitterless/distro/prod/mac_arm/manifest.json

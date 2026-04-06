@@ -25,3 +25,4 @@ publish.js
 local
 snapshots
 asar_unpacked
+.upload_checkpoint
