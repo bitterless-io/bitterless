@@ -33,11 +33,11 @@
     "generate:icons": "node scripts/generate_app_icons.mjs",
     "publish_dev": "node scripts/publish.js --env dev --platform mac_arm",
     "publish_dev:mac_arm": "node scripts/publish.js --env dev --platform mac_arm",
-    "publish_dev:mac_intel": "yarn build:mac_intel && node scripts/publish.js --env dev --platform mac_intel",
-    "publish_dev:win": "yarn build:win && node scripts/publish.js --env dev --platform win64",
-    "publish:mac_arm": "yarn build:mac_arm && node scripts/publish.js --env prod --platform mac_arm",
-    "publish:mac_intel": "yarn build:mac_intel && node scripts/publish.js --env prod --platform mac_intel",
-    "publish:win": "yarn build:win && node scripts/publish.js --env prod --platform win64"
+    "publish_dev:mac_intel": "node scripts/publish.js --env dev --platform mac_intel",
+    "publish_dev:win": "node scripts/publish.js --env dev --platform win64",
+    "publish:mac_arm": "node scripts/publish.js --env prod --platform mac_arm",
+    "publish:mac_intel": "node scripts/publish.js --env prod --platform mac_intel",
+    "publish:win": "node scripts/publish.js --env prod --platform win64"
   },
   "dependencies": {
     "@arco-design/web-vue": "^2.57.0",
