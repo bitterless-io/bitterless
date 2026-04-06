@@ -8,6 +8,7 @@ import './todoWindow.handler';
 import './omniWindow.handler';
 import './shell.handler';
 import './sqlitePassword.handler';
+import './mainWindow.handler';
 // import { ptyManager } from '../ptyHelper/ptyManager';
 // import { PtyService } from '../ptyHelper/ptyXpc';
 

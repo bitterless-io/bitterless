@@ -120,23 +120,20 @@ app.on('before-quit', async (event) => {
     } else {
       hasShownQuitDialog = false;
     }
+    return;
+  }
+
+  // Windows: 正常退出流程，清理资源后放行
+  if (process.platform !== 'darwin') {
+    isQuitting = true;
+    cleanupResources();
   }
 });
 
-app.on('will-quit', (event) => {
-  if (updateService.isUpdating || isQuitting) {
-    return;   // 更新时不要干预
-  }
-  if (!isQuitting) {
-    event.preventDefault();
-    isQuitting = true;
-    cleanupResources();
-    app.exit(0);
-  }
+app.on('will-quit', () => {
+  // 更新和正常退出均不干预，让系统正常退出
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' && isQuitting) {
-    app.quit();
-  }
+  // 不自动退出，保留 tray 功能，由用户主动触发退出
 });

@@ -4,23 +4,63 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-left: 80px;
-  padding-right: 12px;
+  padding-left: 12px;
+  padding-right: 0;
   -webkit-app-region: drag;
   user-select: none;
   //box-shadow: 0 2px 6px oklch(1 0.05 277 / 0.3);
+}
+
+.menu-bar__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
 }
 
 .menu-bar__title {
   font-size: 15px;
   font-weight: 600;
   color: #fff7ed;
+  flex-shrink: 0;
 }
 
 .menu-bar__actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.menu-bar__win-controls {
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.menu-bar__win-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  color: oklch(0.92 0.01 274);
+  transition: background-color 0.15s;
+  padding: 0;
+}
+
+.menu-bar__win-btn:hover {
+  background-color: oklch(0.54 0.08 274 / 0.5);
+}
+
+.menu-bar__win-btn--close:hover {
+  background-color: oklch(0.54 0.08 274 / 0.7);
 }
 
 .menu-bar__update {

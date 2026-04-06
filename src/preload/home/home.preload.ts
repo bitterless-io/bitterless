@@ -16,3 +16,13 @@ const extraResourceApi: ExtraResourceApi = {
 };
 
 contextBridge.exposeInMainWorld('extraResource', extraResourceApi);
+
+export interface HomeEnvApi {
+  platform: string;
+}
+
+const homeEnvApi: HomeEnvApi = {
+  platform: process.platform,
+};
+
+contextBridge.exposeInMainWorld('homeEnv', homeEnvApi);
