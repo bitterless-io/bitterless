@@ -45,7 +45,7 @@ class UpdateService {
 
   private getManifestUrl(): string {
     const baseUrl = 'https://assets.terncloud.com/bitterless/distro';
-    return `${baseUrl}/${this.viteEnv}/${this.platform}/manifest.json`;
+    return `${baseUrl}/${this.viteEnv}/${this.platform}/version_info.json`;
   }
 
   private setupAutoUpdater(): void {
