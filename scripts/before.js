@@ -56,6 +56,12 @@ builderContent = builderContent.replace(/VITE_ENV_PART/g, '');
 fs.writeFileSync(builderOutPath, builderContent, 'utf-8');
 console.log(`[before.js] electron-builder.yml generated: appId=${appId}, productName=${productName}, executableName=${executableName}, viteEnv=${viteEnv}`);
 
+// Generate installer.nsh with the actual executable name
+const installerNshPath = path.join(rootDir, 'build', 'installer.nsh');
+const installerNshContent = `!macro preInit\n  ; Kill existing process before installation to avoid file lock\n  nsExec::ExecToLog 'taskkill /F /IM "${executableName}.exe" /T'\n  Sleep 1000\n!macroend\n`;
+fs.writeFileSync(installerNshPath, installerNshContent, 'utf-8');
+console.log(`[before.js] installer.nsh generated: executableName=${executableName}`);
+
 // Validate release_note.md exists for release builds
 if (viteMode === 'release') {
   const releaseNotePath = path.join(rootDir, 'build', 'release_note.md');

@@ -53,6 +53,11 @@ app.whenReady().then(async () => {
 
 let isQuitting = false;
 let hasShownQuitDialog = false;
+export let isUpdateRestart = false;
+
+export function setUpdateRestart(): void {
+  isUpdateRestart = true;
+}
 
 function cleanupResources(): void {
   console.log('[app] Cleaning up resources...');
