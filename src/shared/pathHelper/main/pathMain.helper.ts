@@ -40,18 +40,21 @@ export class PathMainHelper extends XpcMainHandler {
     console.log('[PathMainHelper] userDataPath:', userDataPath);
 
     let chromiumPath: string;
-
+    console.log('platform', platform, 'arch:', arch);
     if (platform === 'darwin') {
       const chromeName = arch === 'arm64' ? 'chrome-macarm' : 'chrome-mac';
       chromiumPath = path.join(userDataPath, 'extra', chromeName, 'Chromium.app', 'Contents', 'MacOS', 'Chromium');
     } else if (platform === 'win32') {
       const appPath = app.getAppPath();
+      console.log('[PathMainHelper] appPath:', appPath);
       const isRelease = process.env.VITE_MODE === 'release';
       if (isRelease) {
         chromiumPath = path.join(appPath, '..', 'app.asar.unpacked', 'chrome-win', 'chrome.exe');
+        console.log('[PathMainHelper] chromiumPath:', chromiumPath);
       } else {
         chromiumPath = path.join(appPath, 'asar_unpacked', 'chrome-win', 'chrome.exe');
       }
+      console.log('[PathMainHelper] chromiumPath:', chromiumPath);
     } else {
       console.error('[PathMainHelper] Unsupported platform:', platform);
       return null;
