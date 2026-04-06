@@ -53,13 +53,8 @@ app.whenReady().then(async () => {
 
 let isQuitting = false;
 let hasShownQuitDialog = false;
-export let isUpdateRestart = false;
 
-export const setUpdateRestart = (): void => {
-  isUpdateRestart = true;
-};
-
-const cleanupResources = (): void => {
+function cleanupResources(): void {
   console.log('[app] Cleaning up resources...');
   
   try {
@@ -102,7 +97,7 @@ const cleanupResources = (): void => {
 }
 
 app.on('before-quit', async (event) => {
-  if (isQuitting || isUpdateRestart) return;
+  if (isQuitting) return;
   
   if (process.platform === 'darwin' && !hasShownQuitDialog) {
     event.preventDefault();
@@ -120,7 +115,7 @@ app.on('before-quit', async (event) => {
 });
 
 app.on('will-quit', (event) => {
-  if (!isQuitting && !isUpdateRestart) {
+  if (!isQuitting) {
     event.preventDefault();
     isQuitting = true;
     cleanupResources();
