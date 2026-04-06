@@ -1,5 +1,6 @@
 import { autoUpdater } from 'electron-updater';
 import { app } from 'electron';
+import { setUpdateRestart } from '../app.main';
 import { xpcMain } from 'electron-xpc/main';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -193,8 +194,8 @@ class UpdateService {
 
   public quitAndInstall(): void {
     console.log('[UpdateService] Quitting and installing update...');
-    app.relaunch();
-    app.exit(0);
+    setUpdateRestart();
+    autoUpdater.quitAndInstall(true, true);
   }
 }
 

@@ -55,11 +55,11 @@ let isQuitting = false;
 let hasShownQuitDialog = false;
 export let isUpdateRestart = false;
 
-export function setUpdateRestart(): void {
+export const setUpdateRestart = (): void => {
   isUpdateRestart = true;
-}
+};
 
-function cleanupResources(): void {
+const cleanupResources = (): void => {
   console.log('[app] Cleaning up resources...');
   
   try {
@@ -102,7 +102,7 @@ function cleanupResources(): void {
 }
 
 app.on('before-quit', async (event) => {
-  if (isQuitting) return;
+  if (isQuitting || isUpdateRestart) return;
   
   if (process.platform === 'darwin' && !hasShownQuitDialog) {
     event.preventDefault();
@@ -120,7 +120,7 @@ app.on('before-quit', async (event) => {
 });
 
 app.on('will-quit', (event) => {
-  if (!isQuitting) {
+  if (!isQuitting && !isUpdateRestart) {
     event.preventDefault();
     isQuitting = true;
     cleanupResources();
