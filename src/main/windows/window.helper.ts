@@ -9,6 +9,7 @@ export abstract class WindowHelper {
   protected abstract preloadFile: string;
   protected abstract rendererPath: string;
   protected abstract windowOptions: Partial<BrowserWindowConstructorOptions>;
+  protected showOnReady = true;
 
   create(): BrowserWindow {
     const primaryDisplay = screen.getPrimaryDisplay();
@@ -37,7 +38,9 @@ export abstract class WindowHelper {
     this.browserWindow = new BrowserWindow(options);
 
     this.browserWindow.on('ready-to-show', () => {
-      this.browserWindow?.show();
+      if (this.showOnReady) {
+        this.browserWindow?.show();
+      }
       const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
       if (shouldOpenDevTools) {
         this.browserWindow?.webContents.openDevTools();

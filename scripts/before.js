@@ -36,7 +36,7 @@ if (isDev) {
 }
 
 if (pkg._version && pkg.versionCode) {
-  pkg.version = `${pkg._version}+${pkg.versionCode}`;
+  pkg.version = `${pkg._version}-${pkg.versionCode}`;
 }
 
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8');
