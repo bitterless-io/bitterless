@@ -32,9 +32,11 @@
     "convert:icon": "node scripts/save_and_convert_icon.js",
     "generate:icons": "node scripts/generate_app_icons.mjs",
     "publish_dev": "node scripts/publish.js --env dev --platform mac_arm",
+    "publish_dev:mac": "node scripts/publish.js --env dev --platform mac_arm && node scripts/publish.js --env dev --platform mac_intel",
     "publish_dev:mac_arm": "node scripts/publish.js --env dev --platform mac_arm",
     "publish_dev:mac_intel": "node scripts/publish.js --env dev --platform mac_intel",
     "publish_dev:win": "node scripts/publish.js --env dev --platform win64",
+    "publish:mac": "node scripts/publish.js --env prod --platform mac_arm && node scripts/publish.js --env prod --platform mac_intel",
     "publish:mac_arm": "node scripts/publish.js --env prod --platform mac_arm",
     "publish:mac_intel": "node scripts/publish.js --env prod --platform mac_intel",
     "publish:win": "node scripts/publish.js --env prod --platform win64"
@@ -134,5 +136,5 @@
     "rig_dev/*"
   ],
   "name": "Bitterless_DEV_DEBUG",
-  "version": "0.0.1"
+  "version": "0.0.2"
 }
