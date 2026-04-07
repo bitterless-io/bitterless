@@ -17,6 +17,9 @@ import { updateService } from '@main/updateHelper/update.service';
 
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron');
+  if (process.platform === 'darwin') {
+    app.dock.setBadge('');
+  }
   initXpc();
 
   packageMainHelper.init();

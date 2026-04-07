@@ -18,7 +18,7 @@ class TrayHelper {
     const isWin = process.platform === 'win32';
     let iconPath: string;
 
-    if (app.isPackaged) {
+    if (import.meta.env.VITE_MODE === 'release') {
       const unpacked = join(app.getAppPath(), '..', 'app.asar.unpacked', 'icons');
       iconPath = isWin ? join(unpacked, 'icon.ico') : join(unpacked, 'icon.png');
     } else {
@@ -28,6 +28,7 @@ class TrayHelper {
     let icon = nativeImage.createFromPath(iconPath);
     if (process.platform === 'darwin') {
       icon = icon.resize({ width: 16, height: 16 });
+      icon.setTemplateImage(true);
     }
 
     this.tray = new Tray(icon);
