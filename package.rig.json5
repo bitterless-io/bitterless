@@ -1,4 +1,5 @@
 {
+  tag_template: '_version-versionCode',
   dependencies: {
 //    'electron-xpc': {
 //      dev: true,
