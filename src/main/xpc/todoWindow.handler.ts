@@ -169,12 +169,35 @@ class TodoWindowHandler extends XpcMainHandler {
       await this.standaloneWindow.loadFile(join(__dirname, '../renderer/todo/index.html'));
     }
 
-    const windowId = this.standaloneWindow.id;
-    await this.standaloneWindow.webContents.executeJavaScript(`window.__WINDOW_ID__ = ${windowId};`);
-
     if (is.dev && import.meta.env.VITE_MODE !== 'release') {
       this.standaloneWindow.webContents.openDevTools({ mode: 'detach' });
     }
+  }
+
+  async minimize(): Promise<void> {
+    this.standaloneWindow?.minimize();
+  }
+
+  async toggleMaximize(): Promise<void> {
+    const win = this.standaloneWindow;
+    if (!win || win.isDestroyed()) return;
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+  }
+
+  async close(): Promise<void> {
+    this.standaloneWindow?.close();
+  }
+
+  async isMaximized(): Promise<boolean> {
+    const win = this.standaloneWindow;
+    if (win && !win.isDestroyed()) {
+      return win.isMaximized();
+    }
+    return false;
   }
 
   async reloadTodoData(): Promise<void> {

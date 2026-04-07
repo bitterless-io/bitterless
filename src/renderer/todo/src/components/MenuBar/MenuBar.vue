@@ -50,8 +50,6 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoSettingStore } from '../../store/todoSetting.store';
 import { todoStore } from '../../store/todo.store';
 import { todoWindowEmitter } from '../../emitter/todoWindow.emitter';
-import { windowControlEmitter } from '../../emitter/windowControl.emitter';
-import { todoEnv } from '../../contextBridge/todoEnv.bridge';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 
 const props = defineProps<{
@@ -82,31 +80,19 @@ const handleOpenInWindow = () => {
 
 const handleDoubleClick = async () => {
   if (!props.isStandalone) return;
-  const windowId = todoEnv.getWindowId();
-  if (windowId) {
-    await windowControlEmitter.maximizeWindow({ windowId });
-  }
+  await todoWindowEmitter.toggleMaximize();
 };
 
 const handleMinimize = async () => {
-  const windowId = todoEnv.getWindowId();
-  if (windowId) {
-    await windowControlEmitter.minimizeWindow({ windowId });
-  }
+  await todoWindowEmitter.minimize();
 };
 
 const handleMaximize = async () => {
-  const windowId = todoEnv.getWindowId();
-  if (windowId) {
-    await windowControlEmitter.maximizeWindow({ windowId });
-  }
+  await todoWindowEmitter.toggleMaximize();
 };
 
 const handleClose = async () => {
-  const windowId = todoEnv.getWindowId();
-  if (windowId) {
-    await windowControlEmitter.closeWindow({ windowId });
-  }
+  await todoWindowEmitter.close();
 };
 </script>
 
