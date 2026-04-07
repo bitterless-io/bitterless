@@ -45,10 +45,15 @@
 
 .todo-detail__subtodo-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 4px;
   border-radius: 4px;
+}
+
+.todo-detail__subtodo-item .arco-checkbox {
+  padding-top: 4px;
+  align-self: flex-start;
 }
 
 .todo-detail__subtodo-item:hover {
@@ -64,17 +69,18 @@
   outline: none;
   padding: 2px 4px;
   border-radius: 4px;
-  min-width: 40px;
-  max-width: 200px;
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.5;
+  font-family: inherit;
+  field-sizing: content;
 }
 
-.todo-detail__subtodo-title-sizer {
-  position: absolute;
-  visibility: hidden;
-  white-space: nowrap;
-  font-size: 13px;
-  padding: 2px 4px;
-  pointer-events: none;
+.todo-detail__subtodo-title::placeholder {
+  color: oklch(0.7 0 0);
+  font-size: 12px;
 }
 
 .todo-detail__subtodo-title:focus {

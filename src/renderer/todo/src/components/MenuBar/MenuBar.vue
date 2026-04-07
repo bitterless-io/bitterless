@@ -2,6 +2,11 @@
   <div class="menubar" :class="menubarClass" @dblclick="handleDoubleClick">
     <span class="menubar__title">{{ i18nHelper.todo.title }}</span>
     <div class="menubar__actions">
+      <a-button size="mini" type="text" :title="i18nHelper.todo.refresh" @click="handleRefresh">
+        <template #icon>
+          <icon-refresh />
+        </template>
+      </a-button>
       <a-dropdown trigger="click" position="br">
         <a-button size="mini" type="text">
           <template #icon>
@@ -40,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { IconLaunch, IconSettings, IconMinus, IconExpand, IconClose } from '@arco-design/web-vue/es/icon';
+import { IconLaunch, IconSettings, IconMinus, IconExpand, IconClose, IconRefresh } from '@arco-design/web-vue/es/icon';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoSettingStore } from '../../store/todoSetting.store';
 import { todoStore } from '../../store/todo.store';
@@ -61,6 +66,10 @@ const menubarClass = computed(() => {
   if (isWindows) return 'menubar--win';
   return '';
 });
+
+const handleRefresh = async () => {
+  await todoWindowEmitter.reloadTodoData();
+};
 
 const handleToggleShowCompleted = async () => {
   await todoSettingStore.toggleShowCompleted();

@@ -177,6 +177,15 @@ class TodoWindowHandler extends XpcMainHandler {
     }
   }
 
+  async reloadTodoData(): Promise<void> {
+    if (this.standaloneWindow && !this.standaloneWindow.isDestroyed()) {
+      this.standaloneWindow.webContents.reload();
+    }
+    if (this.todoView && !this.todoView.webContents.isDestroyed()) {
+      this.todoView.webContents.reload();
+    }
+  }
+
   private updateBounds(mainWindow: BrowserWindow): void {
     if (!this.todoView || this.todoView.webContents.isDestroyed()) return;
     const [contentWidth, contentHeight] = mainWindow.getContentSize();

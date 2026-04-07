@@ -173,6 +173,9 @@ export const en = {
     deleteDomain: 'Delete domain',
     deleteTodo: 'Delete task',
     deleteStep: 'Delete step',
+    stepPlaceholder: 'enter to save',
+    emptyDomain: 'Drop tasks here from other lists',
+    refresh: 'Refresh',
   },
   common: {
     confirm: 'Confirm',

@@ -36,14 +36,15 @@
                   size="mini"
                   @change="todoStore.toggleSubTodoStatus(element.id, { wasCompleted: element.status === 1 })"
                 />
-                <input
+                <textarea
                   class="todo-detail__subtodo-title"
                   :class="{ 'todo-detail__subtodo-title--completed': element.status === 1 }"
                   :value="subTodoEditingTexts[element.id] ?? element.title"
-                  :style="{ width: (subTodoWidths[element.id] ?? 40) + 'px' }"
+                  :placeholder="i18nHelper.todo.stepPlaceholder"
+                  rows="1"
                   @blur="(e) => onSubTitleBlur(e, element.id)"
-                  @input="(e) => setSubTitleValue(element.id, (e.target as HTMLInputElement).value)"
-                  @keydown.enter="($event.target as HTMLInputElement)?.blur()"
+                  @input="(e) => { setSubTitleValue(element.id, (e.target as HTMLTextAreaElement).value); autoResize(e.target as HTMLTextAreaElement); }"
+                  @keydown.enter.exact.prevent="onSubTitleEnter($event, element.id)"
                 />
                 <a-button
                   class="todo-detail__subtodo-delete"
@@ -60,7 +61,6 @@
             </template>
           </draggable>
         </div>
-        <span ref="subTodoSizerRef" class="todo-detail__subtodo-title-sizer"></span>
         <div v-if="!addingStep" class="todo-detail__add-step" @click="startAddStep">
           <icon-plus :size="14" />
           <span>Add step</span>
@@ -70,7 +70,7 @@
             ref="addStepInputRef"
             v-model="newStepTitle"
             size="mini"
-            placeholder="Step title..."
+            :placeholder="i18nHelper.todo.stepPlaceholder"
             @press-enter="handleAddStep"
             @blur="handleAddStepBlur"
           />
@@ -176,29 +176,27 @@ import {
 import { todoStore } from '../../store/todo.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
-const subTodoSizerRef = ref<HTMLSpanElement | null>(null);
-const subTodoWidths = reactive<Record<number, number>>({});
 const subTodoEditingTexts = reactive<Record<number, string>>({});
 
-const measureSubTodoWidth = (id: number, text: string) => {
-  nextTick(() => {
-    if (!subTodoSizerRef.value) return;
-    subTodoSizerRef.value.textContent = text || '';
-    const measured = subTodoSizerRef.value.offsetWidth + 8;
-    subTodoWidths[id] = Math.min(Math.max(measured, 40), 200);
-  });
+const autoResize = (el: HTMLTextAreaElement) => {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
 };
 
 const setSubTitleValue = (id: number, value: string) => {
   subTodoEditingTexts[id] = value;
-  measureSubTodoWidth(id, value);
 };
 
 watch(() => todoStore.subTodos, (subs) => {
   for (const sub of subs) {
     subTodoEditingTexts[sub.id] = sub.title;
-    measureSubTodoWidth(sub.id, sub.title);
   }
+  nextTick(() => {
+    const textareas = document.querySelectorAll<HTMLTextAreaElement>('.todo-detail__subtodo-title');
+    for (const ta of textareas) {
+      autoResize(ta);
+    }
+  });
 }, { immediate: true });
 
 const addingStep = ref(false);
@@ -235,10 +233,28 @@ const onTitleBlur = (e: FocusEvent) => {
   }
 };
 
+const STEP_MAX_LENGTH = 200;
+
+const onSubTitleEnter = async (e: KeyboardEvent, id: number) => {
+  const ta = e.target as HTMLTextAreaElement;
+  ta.blur();
+  await nextTick();
+  const allTextareas = Array.from(
+    document.querySelectorAll<HTMLTextAreaElement>('.todo-detail__subtodo-title'),
+  );
+  const idx = allTextareas.findIndex((el) => el === ta);
+  if (idx !== -1 && idx + 1 < allTextareas.length) {
+    allTextareas[idx + 1].focus();
+  } else {
+    startAddStep();
+  }
+};
+
 const onSubTitleBlur = (e: FocusEvent, id: number) => {
-  const value = (e.target as HTMLInputElement).value.trim();
-  if (value) {
-    todoStore.updateSubTodoTitle(id, value);
+  const trimmed = (e.target as HTMLTextAreaElement).value.trim().slice(0, STEP_MAX_LENGTH);
+  subTodoEditingTexts[id] = trimmed;
+  if (trimmed) {
+    todoStore.updateSubTodoTitle(id, trimmed);
   }
 };
 

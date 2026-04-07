@@ -29,6 +29,7 @@
         group="todos"
         item-key="id"
         :animation="200"
+        @add="onTodoAdd"
         @end="onTodoDragEnd"
         @update:model-value="onTodoListUpdate"
       >
@@ -36,6 +37,9 @@
           <TodoRow :todo="element" />
         </template>
       </draggable>
+      <div v-if="todoList.length === 0" class="domain-column__empty">
+        {{ i18nHelper.todo.emptyDomain }}
+      </div>
       <!-- Completed section -->
       <div v-if="todoSettingStore.showCompleted && completedTodoList.length > 0" class="domain-column__completed-section">
         <div class="domain-column__completed-divider">
@@ -195,6 +199,14 @@ const handleAddTodo = () => {
 
 const onTodoListUpdate = (newList: any[]) => {
   todoStore.todosByDomain[props.domain.id] = newList;
+};
+
+const onTodoAdd = async (evt: any) => {
+  const currentList = todoStore.todosByDomain[props.domain.id] ?? [];
+  const moved = currentList[evt.newIndex];
+  if (moved && moved.domain_id !== props.domain.id) {
+    await todoStore.moveTodoToDomain(moved.id, moved.domain_id, props.domain.id);
+  }
 };
 
 const onTodoDragEnd = () => {

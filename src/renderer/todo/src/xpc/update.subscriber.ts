@@ -11,4 +11,5 @@ export const initTodoSubscriber = () => {
     await todoSettingStore.load();
     await todoStore.loadAll();
   });
+
 };

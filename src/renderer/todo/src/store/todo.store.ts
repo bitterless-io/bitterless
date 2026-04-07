@@ -259,6 +259,13 @@ class TodoState {
     this.broadcastDataUpdated();
   }
 
+  async moveTodoToDomain(id: number, fromDomainId: number, toDomainId: number): Promise<void> {
+    await todoEmitter.moveToDomain({ id, domainId: toDomainId });
+    await this.loadTodosForDomain(fromDomainId);
+    await this.loadTodosForDomain(toDomainId);
+    this.broadcastDataUpdated();
+  }
+
   async saveTodoOrder(domainId: number, order: number[]): Promise<void> {
     const sortKey = `todo__${domainId}`;
     await todoEmitter.setSortOrder({ key: sortKey, order });

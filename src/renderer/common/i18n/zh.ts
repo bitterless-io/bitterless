@@ -175,6 +175,9 @@ export const zh: typeof en = {
     deleteDomain: '删除分组',
     deleteTodo: '删除任务',
     deleteStep: '删除步骤',
+    stepPlaceholder: 'enter 保存',
+    emptyDomain: '可将其他列表的任务拖拽到此处',
+    refresh: '刷新',
   },
   common: {
     confirm: '确定',
