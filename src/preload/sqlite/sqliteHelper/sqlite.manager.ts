@@ -41,28 +41,31 @@ class SqliteManager {
   }
 
   private runMigrations(currentVersionCode: number): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS migration (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        version_code INTEGER NOT NULL UNIQUE,
-        executed_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
+    const lastRow = this.db
+      .prepare('SELECT MAX(version_code) as last FROM migration')
+      .get() as { last: number | null };
+    let lastVersionCode = lastRow?.last ?? null;
 
-    const executed = this.db
-      .prepare('SELECT version_code FROM migration')
-      .all()
-      .map((row: any) => row.version_code as number);
+    const insertMigration = this.db.prepare('INSERT OR IGNORE INTO migration (version_code) VALUES (?)');
 
+    if (lastVersionCode === null) {
+      // First run: mark all known migrations + currentVersionCode as executed, skip SQL
+      insertMigration.run(currentVersionCode);
+      lastVersionCode = currentVersionCode;
+    }
+
+    // Existing DB: run migrations with versionCode > lastVersionCode
     const pending = this.migrations
-      .filter((m) => m.versionCode <= currentVersionCode && !executed.includes(m.versionCode))
+      .filter((m) => m.versionCode > lastVersionCode)
       .sort((a, b) => a.versionCode - b.versionCode);
-
-    const insertMigration = this.db.prepare('INSERT INTO migration (version_code) VALUES (?)');
 
     for (const m of pending) {
       console.log('[sqlite] running migration:', m.versionCode);
-      this.db.exec(m.sql);
+      try {
+        this.db.exec(m.sql);
+      } catch (err: any) {
+        console.warn(`[sqlite] migration ${m.versionCode} failed (skipped):`, err.message);
+      }
       insertMigration.run(m.versionCode);
     }
 

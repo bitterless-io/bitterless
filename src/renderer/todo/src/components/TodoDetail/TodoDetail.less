@@ -1,27 +1,122 @@
-.todo-detail__header-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: oklch(0.25 0 0);
-  border: none;
-  background: transparent;
-  outline: none;
-  flex: 1;
-  min-width: 0;
-  padding: 2px 4px;
-  border-radius: 4px;
+.todo-detail__panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 100%;
+  background-color: oklch(1 0 0);
+  border-left: 1px solid oklch(0.92 0 0);
+  box-shadow: -2px 0 8px oklch(0 0 0 / 0.06);
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+  overflow: hidden;
 }
 
-.todo-detail__header-title:focus {
-  background-color: oklch(0.98 0 0);
-  box-shadow: 0 0 0 1px oklch(0.7 0.1 250);
+.todo-detail-slide-enter-active,
+.todo-detail-slide-leave-active {
+  transition: transform 0.2s ease;
+}
+
+.todo-detail-slide-enter-from,
+.todo-detail-slide-leave-to {
+  transform: translateX(100%);
+}
+
+.todo-detail__content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.todo-detail__custom-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 12px 8px 8px 8px;
+  flex-shrink: 0;
+}
+
+.todo-detail__close-btn {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.todo-detail__title-row {
+  flex: 1;
+  min-width: 0;
+  max-width: 280px;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.todo-detail__header-checkbox {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.todo-detail__header-title-display {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.25 0 0);
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+  padding: 1px 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  line-height: 1.4;
+  display: block;
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-detail__header-title-display--completed {
+  text-decoration: line-through;
+  color: oklch(0.6 0 0);
+}
+
+.todo-detail__header-title-display:hover {
+  background-color: oklch(0.95 0 0);
+}
+
+.todo-detail__header-title--completed {
+  text-decoration: line-through;
+  color: oklch(0.6 0 0);
+}
+
+.todo-detail__header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.25 0 0);
+  border: 1px solid oklch(0.7 0.1 250);
+  background-color: oklch(1 0 0);
+  outline: none;
+  margin: 0;
+  padding: 1px 3px;
+  border-radius: 3px;
+  width: 100%;
+  resize: none;
+  line-height: 1.4;
+  font-family: inherit;
+  field-sizing: content;
+  box-sizing: border-box;
 }
 
 .todo-detail__body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 100%;
-  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px;
 }
 
 .todo-detail__section {
@@ -75,7 +170,6 @@
   overflow: hidden;
   line-height: 1.5;
   font-family: inherit;
-  field-sizing: content;
 }
 
 .todo-detail__subtodo-title::placeholder {
@@ -180,12 +274,26 @@
   color: oklch(0.65 0 0);
 }
 
+.todo-detail__complete-time {
+  font-size: 11px;
+  color: oklch(0.6 0 0);
+  flex: 1;
+  text-align: center;
+}
+
 .todo-detail__footer {
-  padding: 8px 0;
-  margin-top: auto;
+  padding: 8px 12px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.todo-detail__footer .arco-btn-text .arco-icon {
+  color: oklch(0.47 0.07 274);
+}
+
+.todo-detail__footer .arco-btn-text.arco-btn-status-danger .arco-icon {
+  color: inherit;
 }

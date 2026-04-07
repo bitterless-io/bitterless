@@ -177,6 +177,8 @@ export const zh: typeof en = {
     deleteStep: '删除步骤',
     stepPlaceholder: 'enter 保存',
     emptyDomain: '可将其他列表的任务拖拽到此处',
+    todoLimitReached: '单个分组最多创建 77 个未完成任务',
+    domainLimitReached: '最多可以创建 17 个分组',
     refresh: '刷新',
   },
   common: {

@@ -15,6 +15,7 @@ import { domainTable } from './dao/domain.table';
 import { todoTable } from './dao/todo.table';
 import { subTodoTable } from './dao/subTodo.table';
 import { sortTable } from './dao/sort.table';
+import { migrationTable } from './dao/migration.table';
 // Dao imports trigger singleton creation -> auto-register xpc handlers via BaseDao
 import './dao/setting.dao';
 import './dao/message.dao';
@@ -38,38 +39,17 @@ sqliteManager.addTable(domainTable);
 sqliteManager.addTable(todoTable);
 sqliteManager.addTable(subTodoTable);
 sqliteManager.addTable(sortTable);
+sqliteManager.addTable(migrationTable);
 
-// Migrations
-sqliteManager.addMigration(2026032801, `ALTER TABLE todos ADD COLUMN note TEXT NOT NULL DEFAULT '';`);
-
-sqliteManager.addMigration(2026040201, `
-  -- Create new setting table with sub_key support
-  CREATE TABLE IF NOT EXISTS setting_new (
-    key TEXT NOT NULL,
-    sub_key TEXT NOT NULL DEFAULT '',
-    value TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT '',
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (key, sub_key)
-  );
-  
-  -- Copy existing data from old table (set sub_key to empty string)
-  INSERT INTO setting_new (key, sub_key, value, category, updated_at)
-  SELECT key, '', value, category, updated_at FROM setting;
-  
-  -- Drop old table
-  DROP TABLE setting;
-  
-  -- Rename new table to original name
-  ALTER TABLE setting_new RENAME TO setting;
-`);
+// Migrations versioncode 来源于当前的 package.json versioncode
+sqliteManager.addMigration(26040704, `ALTER TABLE todos ADD COLUMN note TEXT NOT NULL DEFAULT '';`);
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {
     const appPath = await pathHelper.getAppPath();
     const tiktokenPath = path.join(appPath, 'external_resources', 'gpt2.json');
     console.log('[sqlite.preload] loading local tiktoken from:', tiktokenPath);
-    
+
     if (fs.existsSync(tiktokenPath)) {
       const tiktokenData = fs.readFileSync(tiktokenPath, 'utf-8');
       const encoding = JSON.parse(tiktokenData);

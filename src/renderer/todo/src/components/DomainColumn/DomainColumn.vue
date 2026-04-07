@@ -1,5 +1,8 @@
 <template>
-  <div class="domain-column">
+  <div
+    class="domain-column"
+    :data-domain-id="domain.id"
+  >
     <div
       class="domain-column__header"
       @contextmenu.prevent="onHeaderContextMenu"
@@ -22,33 +25,32 @@
       <span ref="sizerRef" class="domain-column__header-title-sizer">{{ titleInput }}</span>
       <span v-if="todoList.length > 0" class="domain-column__header-count">{{ todoList.length }}</span>
     </div>
-    <div class="domain-column__body">
-      <draggable
-        class="domain-column__todo-list"
-        :model-value="todoList"
-        group="todos"
-        item-key="id"
-        :animation="200"
-        @add="onTodoAdd"
-        @end="onTodoDragEnd"
-        @update:model-value="onTodoListUpdate"
-      >
-        <template #item="{ element }">
-          <TodoRow :todo="element" />
-        </template>
-      </draggable>
-      <div v-if="todoList.length === 0" class="domain-column__empty">
-        {{ i18nHelper.todo.emptyDomain }}
-      </div>
-      <!-- Completed section -->
-      <div v-if="todoSettingStore.showCompleted && completedTodoList.length > 0" class="domain-column__completed-section">
-        <div class="domain-column__completed-divider">
-          <span class="domain-column__completed-label">{{ i18nHelper.todo.completed }}</span>
-          <span class="domain-column__completed-count">{{ completedTodoList.length }}</span>
+    <div class="domain-column__body" ref="bodyRef" @scroll="onBodyScroll">
+      <div class="domain-column__todo-list">
+        <draggable
+          class="domain-column__draggable"
+          :model-value="todoList"
+          group="todos"
+          item-key="id"
+          :animation="200"
+          @add="onTodoAdd"
+          @end="onTodoDragEnd"
+          @update:model-value="onTodoListUpdate"
+        >
+          <template #item="{ element }">
+            <TodoRow :todo="element" />
+          </template>
+        </draggable>
+        <div v-if="todoList.length === 0" class="domain-column__empty">
+          {{ i18nHelper.todo.emptyDomain }}
         </div>
-        <div class="domain-column__completed-list">
+        <template v-if="todoSettingStore.showCompleted && completedTodoList.length > 0">
+          <div class="domain-column__completed-divider">
+            <span class="domain-column__completed-label">{{ i18nHelper.todo.completed }}</span>
+            <span class="domain-column__completed-count">{{ completedTodoList.length }}</span>
+          </div>
           <TodoRow v-for="todo in completedTodoList" :key="todo.id" :todo="todo" />
-        </div>
+        </template>
       </div>
     </div>
     <div class="domain-column__footer">
@@ -78,6 +80,11 @@
         <span>Delete</span>
       </div>
     </ContextMenu>
+    <transition name="back-to-top">
+      <button v-if="showBackToTop" class="domain-column__back-to-top" @click="scrollToTop">
+        <icon-arrow-up :size="14" />
+      </button>
+    </transition>
   </div>
 </template>
 
@@ -85,7 +92,7 @@
 import { ref, computed, nextTick } from 'vue';
 import { Modal } from '@arco-design/web-vue';
 import draggable from 'vuedraggable';
-import { IconDelete, IconPlus } from '@arco-design/web-vue/es/icon';
+import { IconDelete, IconPlus, IconArrowUp } from '@arco-design/web-vue/es/icon';
 import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import TodoRow from '../TodoRow/TodoRow.vue';
 import { todoStore } from '../../store/todo.store';
@@ -107,6 +114,16 @@ const contextMenuVisible = ref(false);
 const contextAnchorEl = ref<HTMLElement | null>(null);
 const contextOffsetX = ref(0);
 const contextOffsetY = ref(0);
+const bodyRef = ref<HTMLElement | null>(null);
+const showBackToTop = ref(false);
+
+const onBodyScroll = () => {
+  showBackToTop.value = (bodyRef.value?.scrollTop ?? 0) > 150;
+};
+
+const scrollToTop = () => {
+  bodyRef.value?.scrollTo({ top: 0, behavior: 'smooth' });
+};
 
 const todoList = computed(() => {
   return todoStore.todosByDomain[props.domain.id] ?? [];
@@ -190,11 +207,13 @@ const handleDeleteDomain = () => {
   document.addEventListener('keydown', onKeydown);
 };
 
-const handleAddTodo = () => {
+const handleAddTodo = async () => {
   const title = newTodoTitle.value.trim();
   if (!title) return;
-  todoStore.createTodo(props.domain.id, title);
   newTodoTitle.value = '';
+  await todoStore.createTodo(props.domain.id, title);
+  await nextTick();
+  bodyRef.value?.scrollTo({ top: bodyRef.value.scrollHeight, behavior: 'smooth' });
 };
 
 const onTodoListUpdate = (newList: any[]) => {
@@ -205,7 +224,8 @@ const onTodoAdd = async (evt: any) => {
   const currentList = todoStore.todosByDomain[props.domain.id] ?? [];
   const moved = currentList[evt.newIndex];
   if (moved && moved.domain_id !== props.domain.id) {
-    await todoStore.moveTodoToDomain(moved.id, moved.domain_id, props.domain.id);
+    const targetOrder = currentList.map((t) => t.id);
+    await todoStore.moveTodoToDomain(moved.id, moved.domain_id, props.domain.id, { targetOrder });
   }
 };
 

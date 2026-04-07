@@ -3,8 +3,10 @@ import { xpcRenderer } from 'electron-xpc/renderer';
 import { domainEmitter } from '../emitter/domain.emitter';
 import { todoEmitter } from '../emitter/todo.emitter';
 import { subTodoEmitter } from '../emitter/subTodo.emitter';
+import { Message } from '@arco-design/web-vue';
 import { playSuccessSound } from '@renderer/common/utils/sound.util';
 import { todoSettingStore } from './todoSetting.store';
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
 export interface DomainItem {
   id: number;
@@ -54,6 +56,7 @@ class TodoState {
   subTodos: SubTodoItem[] = [];
   subTodoCounts: Record<number, { total: number; done: number }> = {};
   detailVisible = false;
+  newlyCreatedTodoId: number | null = null;
 
   async loadAll(): Promise<void> {
     this.loading = true;
@@ -95,7 +98,6 @@ class TodoState {
     const sortOrder = (await todoEmitter.getSortOrder({ key: sortKey })) ?? [];
 
     const sortFn = (a: TodoItem, b: TodoItem) => {
-      if (a.important !== b.important) return b.important - a.important;
       if (sortOrder.length > 0) {
         const orderMap = new Map<number, number>();
         for (let i = 0; i < sortOrder.length; i++) {
@@ -138,6 +140,10 @@ class TodoState {
   }
 
   async createDomain(title?: string): Promise<void> {
+    if (this.domainList.length >= 17) {
+      Message.warning(i18nHelper.todo.domainLimitReached);
+      return;
+    }
     const domain = await domainEmitter.create({ title: title ?? 'Untitled' });
     if (domain) {
       this.domainList.push(domain);
@@ -157,6 +163,7 @@ class TodoState {
 
   async deleteDomain(id: number): Promise<void> {
     await domainEmitter.hardDelete({ id });
+    await this._writeSortOrder(id, []);
     this.domainList = this.domainList.filter((d) => d.id !== id);
     delete this.todosByDomain[id];
     delete this.completedTodosByDomain[id];
@@ -169,9 +176,21 @@ class TodoState {
   }
 
   async createTodo(domainId: number, title: string): Promise<void> {
+    const activeCount = (this.todosByDomain[domainId] ?? []).length;
+    if (activeCount >= 77) {
+      Message.warning(i18nHelper.todo.todoLimitReached);
+      return;
+    }
     const todo = await todoEmitter.create({ domainId, title });
     if (todo) {
-      await this.loadTodosForDomain(domainId);
+      await this._appendToSortOrder(domainId, todo.id);
+      const activeList = this.todosByDomain[domainId] ?? [];
+      activeList.push(todo);
+      this.todosByDomain[domainId] = activeList;
+      this.newlyCreatedTodoId = todo.id;
+      setTimeout(() => {
+        if (this.newlyCreatedTodoId === todo.id) this.newlyCreatedTodoId = null;
+      }, 1500);
       this.broadcastDataUpdated();
     }
   }
@@ -180,7 +199,19 @@ class TodoState {
     const result = await todoEmitter.completeTodo({ id });
     if (result) {
       playSuccessSound();
-      await this.loadTodosForDomain(result.domain_id);
+      if (result.status === 0) {
+        // repeat todo: stays in active list, just update in place
+        this._replaceInActiveList(result);
+      } else {
+        // non-repeat: remove from sort, move to completed list
+        await this._removeFromSortOrder(result.domain_id, id);
+        this._removeFromActiveList(result.domain_id, id);
+        if (todoSettingStore.showCompleted) {
+          const completedList = this.completedTodosByDomain[result.domain_id] ?? [];
+          completedList.unshift(result);
+          this.completedTodosByDomain[result.domain_id] = completedList;
+        }
+      }
       if (this.selectedTodo?.id === id) {
         this.selectedTodo = result;
       }
@@ -191,7 +222,11 @@ class TodoState {
   async uncompleteTodo(id: number): Promise<void> {
     const result = await todoEmitter.uncompleteTodo({ id });
     if (result) {
-      await this.loadTodosForDomain(result.domain_id);
+      await this._appendToSortOrder(result.domain_id, id);
+      this._removeFromCompletedList(result.domain_id, id);
+      const activeList = this.todosByDomain[result.domain_id] ?? [];
+      activeList.push(result);
+      this.todosByDomain[result.domain_id] = activeList;
       if (this.selectedTodo?.id === id) {
         this.selectedTodo = result;
       }
@@ -202,7 +237,32 @@ class TodoState {
   async toggleImportant(id: number): Promise<void> {
     const result = await todoEmitter.toggleImportant({ id });
     if (result) {
-      await this.loadTodosForDomain(result.domain_id);
+      const domainId = result.domain_id;
+      if (result.important === 1) {
+        await this._prependToSortOrder(domainId, id);
+      } else {
+        // Insert after the last important=1 item in sort order
+        const order = await this._readSortOrder(domainId);
+        const list = this.todosByDomain[domainId] ?? [];
+        const idMap = new Map<number, TodoItem>();
+        for (const t of list) idMap.set(t.id, t);
+        // Find the last important=1 item's id in the order (excluding current id)
+        let lastImportantId: number | null = null;
+        for (let i = 0; i < order.length; i++) {
+          const t = idMap.get(order[i]);
+          if (t && t.important === 1 && order[i] !== id) lastImportantId = order[i];
+        }
+        const filtered = order.filter((x) => x !== id);
+        // Find insertion index in filtered array
+        const insertIdx = lastImportantId !== null
+          ? filtered.indexOf(lastImportantId) + 1
+          : 0;
+        filtered.splice(insertIdx, 0, id);
+        await this._writeSortOrder(domainId, filtered);
+      }
+      this._replaceInActiveList(result);
+      const sortOrder = await this._readSortOrder(domainId);
+      this._sortActiveListByOrder(domainId, sortOrder);
       if (this.selectedTodo?.id === id) {
         this.selectedTodo = result;
       }
@@ -215,11 +275,13 @@ class TodoState {
     title?: string;
     due_at?: number | null;
     remind_at?: number | null;
+    note?: string;
     important?: number;
   }): Promise<void> {
     const result = await todoEmitter.update(params);
     if (result) {
-      await this.loadTodosForDomain(result.domain_id);
+      this._replaceInActiveList(result);
+      this._replaceInCompletedList(result);
       if (this.selectedTodo?.id === params.id) {
         this.selectedTodo = result;
       }
@@ -230,7 +292,8 @@ class TodoState {
   async updateRepeatType(id: number, repeatType: string | null): Promise<void> {
     const result = await todoEmitter.updateRepeatType({ id, repeatType });
     if (result) {
-      await this.loadTodosForDomain(result.domain_id);
+      this._replaceInActiveList(result);
+      this._replaceInCompletedList(result);
       if (this.selectedTodo?.id === id) {
         this.selectedTodo = result;
       }
@@ -241,7 +304,7 @@ class TodoState {
   async skipToCurrent(id: number): Promise<void> {
     const result = await todoEmitter.skipToCurrent({ id });
     if (result) {
-      await this.loadTodosForDomain(result.domain_id);
+      this._replaceInActiveList(result);
       if (this.selectedTodo?.id === id) {
         this.selectedTodo = result;
       }
@@ -249,18 +312,98 @@ class TodoState {
     }
   }
 
+  private _replaceInActiveList(result: TodoItem): void {
+    const list = this.todosByDomain[result.domain_id];
+    if (!list) return;
+    const idx = list.findIndex((t) => t.id === result.id);
+    if (idx !== -1) list[idx] = result;
+  }
+
+  private _replaceInCompletedList(result: TodoItem): void {
+    const list = this.completedTodosByDomain[result.domain_id];
+    if (!list) return;
+    const idx = list.findIndex((t) => t.id === result.id);
+    if (idx !== -1) list[idx] = result;
+  }
+
+  private _removeFromActiveList(domainId: number, id: number): void {
+    const list = this.todosByDomain[domainId];
+    if (!list) return;
+    this.todosByDomain[domainId] = list.filter((t) => t.id !== id);
+  }
+
+  private _removeFromCompletedList(domainId: number, id: number): void {
+    const list = this.completedTodosByDomain[domainId];
+    if (!list) return;
+    this.completedTodosByDomain[domainId] = list.filter((t) => t.id !== id);
+  }
+
+  private _sortActiveListByOrder(domainId: number, sortOrder: number[]): void {
+    const list = this.todosByDomain[domainId];
+    if (!list) return;
+    if (sortOrder.length === 0) return;
+    const orderMap = new Map<number, number>();
+    for (let i = 0; i < sortOrder.length; i++) orderMap.set(sortOrder[i], i);
+    list.sort((a, b) => {
+      const aIdx = orderMap.get(a.id);
+      const bIdx = orderMap.get(b.id);
+      if (aIdx !== undefined && bIdx !== undefined) return aIdx - bIdx;
+      if (aIdx !== undefined) return -1;
+      if (bIdx !== undefined) return 1;
+      return b.created_at - a.created_at;
+    });
+  }
+
+  private async _readSortOrder(domainId: number): Promise<number[]> {
+    const sortKey = `todo__${domainId}`;
+    return (await todoEmitter.getSortOrder({ key: sortKey })) ?? [];
+  }
+
+  private async _writeSortOrder(domainId: number, order: number[]): Promise<void> {
+    const sortKey = `todo__${domainId}`;
+    await todoEmitter.setSortOrder({ key: sortKey, order });
+  }
+
+  private async _appendToSortOrder(domainId: number, todoId: number): Promise<void> {
+    const order = await this._readSortOrder(domainId);
+    const filtered = order.filter((id) => id !== todoId);
+    filtered.push(todoId);
+    await this._writeSortOrder(domainId, filtered);
+  }
+
+  private async _removeFromSortOrder(domainId: number, todoId: number): Promise<void> {
+    const order = await this._readSortOrder(domainId);
+    const filtered = order.filter((id) => id !== todoId);
+    await this._writeSortOrder(domainId, filtered);
+  }
+
+  private async _prependToSortOrder(domainId: number, todoId: number): Promise<void> {
+    const order = await this._readSortOrder(domainId);
+    const filtered = order.filter((id) => id !== todoId);
+    filtered.unshift(todoId);
+    await this._writeSortOrder(domainId, filtered);
+  }
+
   async deleteTodo(id: number, domainId: number): Promise<void> {
     await todoEmitter.hardDelete({ id });
+    await this._removeFromSortOrder(domainId, id);
     if (this.selectedTodo?.id === id) {
       this.selectedTodo = null;
       this.detailVisible = false;
     }
-    await this.loadTodosForDomain(domainId);
+    this._removeFromActiveList(domainId, id);
+    this._removeFromCompletedList(domainId, id);
     this.broadcastDataUpdated();
   }
 
-  async moveTodoToDomain(id: number, fromDomainId: number, toDomainId: number): Promise<void> {
+  async moveTodoToDomain(id: number, fromDomainId: number, toDomainId: number, options?: { targetOrder?: number[] }): Promise<void> {
     await todoEmitter.moveToDomain({ id, domainId: toDomainId });
+    await this._removeFromSortOrder(fromDomainId, id);
+    if (options?.targetOrder) {
+      await this.saveTodoOrder(toDomainId, options.targetOrder);
+    } else {
+      await this._appendToSortOrder(toDomainId, id);
+    }
     await this.loadTodosForDomain(fromDomainId);
     await this.loadTodosForDomain(toDomainId);
     this.broadcastDataUpdated();
@@ -276,6 +419,33 @@ class TodoState {
     this.selectedTodo = todo;
     this.detailVisible = true;
     await this.loadSubTodos(todo.id);
+    this.locateTodo(todo.id, todo.domain_id);
+  }
+
+  locateTodo(todoId: number, domainId: number): void {
+    const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
+    if (!boardScroll) return;
+
+    const columnEl = boardScroll.querySelector<HTMLElement>(`.domain-column[data-domain-id="${domainId}"]`);
+    if (!columnEl) return;
+
+    const detailWidth = 320;
+    const visibleWidth = boardScroll.clientWidth - detailWidth;
+    const columnOffsetLeft = columnEl.offsetLeft;
+    const columnWidth = columnEl.offsetWidth;
+    const targetScrollLeft = columnOffsetLeft - (visibleWidth - columnWidth) / 2;
+
+    boardScroll.scrollTo({ left: Math.max(0, targetScrollLeft), behavior: 'smooth' });
+
+    const todoRowEl = columnEl.querySelector<HTMLElement>(`[data-todo-id="${todoId}"]`);
+    const columnBody = columnEl.querySelector<HTMLElement>('.domain-column__body');
+    if (todoRowEl && columnBody) {
+      const rowOffsetTop = todoRowEl.offsetTop;
+      const rowHeight = todoRowEl.offsetHeight;
+      const bodyHeight = columnBody.clientHeight;
+      const targetScrollTop = rowOffsetTop - (bodyHeight - rowHeight) / 2;
+      columnBody.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' });
+    }
   }
 
   closeDetail(): void {

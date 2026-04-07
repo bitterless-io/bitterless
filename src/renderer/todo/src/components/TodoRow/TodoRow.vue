@@ -1,6 +1,11 @@
 <template>
   <div
     class="todo-row"
+    :class="{
+      'todo-row--active': todoStore.detailVisible && todoStore.selectedTodo?.id === todo.id,
+      'todo-row--new': todoStore.newlyCreatedTodoId === todo.id,
+    }"
+    :data-todo-id="todo.id"
     @click="handleRowClick"
     @contextmenu.prevent="onContextMenu"
   >
@@ -16,20 +21,25 @@
         <span
           v-if="!editing"
           class="todo-row__title"
-          :class="{ 'todo-row__title--completed': todo.status === 1 }"
-          @click.stop="startEditing"
+          :class="{
+            'todo-row__title--completed': todo.status === 1,
+            'todo-row__title--text-cursor': todoStore.detailVisible && todoStore.selectedTodo?.id === todo.id,
+          }"
+          @click.stop="handleTitleClick"
         >{{ todo.title }}</span>
-        <input
+        <textarea
           v-else
           ref="titleInputRef"
-          class="todo-row__title-input"
           v-model="titleInput"
-          :style="{ width: inputWidth + 'px' }"
+          maxlength="250"
+          class="todo-row__title-input"
+          :class="{ 'todo-row__title-input--completed': todo.status === 1 }"
+          rows="1"
           @blur="onTitleBlur"
-          @keydown.enter="($event.target as HTMLInputElement)?.blur()"
+          @keydown.enter.exact.prevent="($event.target as HTMLTextAreaElement)?.blur()"
+          @pointerdown.stop
           @click.stop
         />
-        <span ref="sizerRef" class="todo-row__title-sizer">{{ titleInput }}</span>
       </div>
       <div v-if="hasSubtitle" class="todo-row__subtitle">
         <span v-if="subTodoProgress" class="todo-row__subtodo-progress">
@@ -93,9 +103,7 @@ const props = defineProps<{
 
 const editing = ref(false);
 const _editingText = ref('');
-const titleInputRef = ref<HTMLInputElement | null>(null);
-const sizerRef = ref<HTMLSpanElement | null>(null);
-const inputWidth = ref(40);
+const titleInputRef = ref<HTMLTextAreaElement | null>(null);
 const contextMenuVisible = ref(false);
 const contextAnchorEl = ref<HTMLElement | null>(null);
 const contextOffsetX = ref(0);
@@ -132,20 +140,10 @@ const hasSubtitle = computed(() => {
   return !!subTodoProgress.value || !!dueDateText.value;
 });
 
-const measureWidth = () => {
-  nextTick(() => {
-    if (sizerRef.value) {
-      const measured = sizerRef.value.offsetWidth + 8;
-      inputWidth.value = Math.min(Math.max(measured, 40), 200);
-    }
-  });
-};
-
 const titleInput = computed({
   get: () => _editingText.value,
   set: (value: string) => {
     _editingText.value = value;
-    measureWidth();
   },
 });
 
@@ -153,7 +151,6 @@ const startEditing = async () => {
   _editingText.value = props.todo.title;
   editing.value = true;
   await nextTick();
-  measureWidth();
   titleInputRef.value?.focus();
   titleInputRef.value?.select();
 };
@@ -164,6 +161,14 @@ const onTitleBlur = () => {
     todoStore.updateTodo({ id: props.todo.id, title: value });
   }
   editing.value = false;
+};
+
+const handleTitleClick = () => {
+  if (!todoStore.detailVisible || todoStore.selectedTodo?.id !== props.todo.id) {
+    todoStore.selectTodo(props.todo);
+  } else {
+    startEditing();
+  }
 };
 
 const handleRowClick = () => {

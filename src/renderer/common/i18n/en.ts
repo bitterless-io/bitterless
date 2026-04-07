@@ -175,6 +175,8 @@ export const en = {
     deleteStep: 'Delete step',
     stepPlaceholder: 'enter to save',
     emptyDomain: 'Drop tasks here from other lists',
+    todoLimitReached: 'A domain can have at most 77 incomplete tasks',
+    domainLimitReached: 'You can create at most 17 domains',
     refresh: 'Refresh',
   },
   common: {

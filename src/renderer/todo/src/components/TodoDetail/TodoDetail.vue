@@ -1,24 +1,48 @@
 <template>
-  <a-drawer
-    :visible="todoStore.detailVisible && !!todoStore.selectedTodo"
-    :width="320"
-    placement="right"
-    :footer="false"
-    :mask="true"
-    :mask-closable="true"
-    unmount-on-close
-    popup-container=".todo-app__board"
-    @cancel="todoStore.closeDetail()"
-  >
-    <template #title>
-      <input
-        class="todo-detail__header-title"
-        :value="todoStore.selectedTodo?.title"
-        @blur="onTitleBlur"
-        @keydown.enter="($event.target as HTMLInputElement)?.blur()"
-      />
-    </template>
-    <div v-if="todoStore.selectedTodo" class="todo-detail__body">
+  <transition name="todo-detail-slide">
+    <div
+      v-if="todoStore.detailVisible && !!todoStore.selectedTodo"
+      class="todo-detail__panel"
+    >
+    <div class="todo-detail__content">
+      <div class="todo-detail__custom-header">
+        <div class="todo-detail__title-row">
+          <a-checkbox
+            class="todo-detail__header-checkbox"
+            :model-value="todoStore.selectedTodo.status === 1"
+            size="mini"
+            @change="handleToggleStatus"
+          />
+          <span
+            v-if="!headerEditing"
+            class="todo-detail__header-title-display"
+            :class="{ 'todo-detail__header-title-display--completed': todoStore.selectedTodo.status === 1 }"
+            @click="startHeaderEditing"
+          >{{ todoStore.selectedTodo.title }}</span>
+          <textarea
+            v-else
+            ref="headerTitleRef"
+            v-model="headerTitleInput"
+            maxlength="250"
+            class="todo-detail__header-title"
+            :class="{ 'todo-detail__header-title--completed': todoStore.selectedTodo.status === 1 }"
+            rows="1"
+            @blur="onTitleBlur"
+            @keydown.enter.exact.prevent="($event.target as HTMLTextAreaElement)?.blur()"
+          />
+        </div>
+        <a-button
+          class="todo-detail__close-btn"
+          size="mini"
+          type="text"
+          @click="todoStore.closeDetail()"
+        >
+          <template #icon>
+            <icon-close :size="16" />
+          </template>
+        </a-button>
+      </div>
+      <div class="todo-detail__body">
       <!-- Sub-todos section -->
       <div class="todo-detail__section">
         <span class="todo-detail__section-label">Steps</span>
@@ -43,7 +67,7 @@
                   :placeholder="i18nHelper.todo.stepPlaceholder"
                   rows="1"
                   @blur="(e) => onSubTitleBlur(e, element.id)"
-                  @input="(e) => { setSubTitleValue(element.id, (e.target as HTMLTextAreaElement).value); autoResize(e.target as HTMLTextAreaElement); }"
+                  @input="(e) => { onSubTitleInput(element.id, e.target as HTMLTextAreaElement); }"
                   @keydown.enter.exact.prevent="onSubTitleEnter($event, element.id)"
                 />
                 <a-button
@@ -139,13 +163,27 @@
         <span class="todo-detail__section-label">Note</span>
         <textarea
           class="todo-detail__note"
-          :value="todoStore.selectedTodo.note"
+          :value="_noteText"
           placeholder="Add a note..."
+          @input="onNoteInput"
           @blur="onNoteBlur"
         />
       </div>
+      </div>
 
       <div class="todo-detail__footer">
+        <a-button
+          size="mini"
+          type="text"
+          @click="handleLocate"
+        >
+          <template #icon>
+            <icon-location :size="14" />
+          </template>
+        </a-button>
+        <span v-if="todoStore.selectedTodo.status === 1 && todoStore.selectedTodo.last_complete_at" class="todo-detail__complete-time">
+          {{ moment(todoStore.selectedTodo.last_complete_at).format('YYYY-MM-DD HH:mm:ss') }}
+        </span>
         <a-button
           size="mini"
           type="text"
@@ -159,23 +197,31 @@
         </a-button>
       </div>
     </div>
-  </a-drawer>
+    </div>
+  </transition>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, watch } from 'vue';
+import { ref, reactive, computed, nextTick, watch, onUnmounted } from 'vue';
+import { throttle } from 'es-toolkit';
 import { Modal } from '@arco-design/web-vue';
 import dayjs from 'dayjs';
+import moment from 'moment';
 import draggable from 'vuedraggable';
 import {
   IconClose,
   IconPlus,
   IconDelete,
   IconForward,
+  IconLocation,
 } from '@arco-design/web-vue/es/icon';
 import { todoStore } from '../../store/todo.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
+const TITLE_MAX_LENGTH = 250;
+const headerTitleRef = ref<HTMLTextAreaElement | null>(null);
+const _headerTitleText = ref('');
+const headerEditing = ref(false);
 const subTodoEditingTexts = reactive<Record<number, string>>({});
 
 const autoResize = (el: HTMLTextAreaElement) => {
@@ -183,8 +229,28 @@ const autoResize = (el: HTMLTextAreaElement) => {
   el.style.height = el.scrollHeight + 'px';
 };
 
-const setSubTitleValue = (id: number, value: string) => {
-  subTodoEditingTexts[id] = value;
+const headerTitleInput = computed({
+  get: () => _headerTitleText.value,
+  set: (value: string) => {
+    _headerTitleText.value = value;
+  },
+});
+
+const startHeaderEditing = async () => {
+  _headerTitleText.value = todoStore.selectedTodo?.title ?? '';
+  headerEditing.value = true;
+  await nextTick();
+  headerTitleRef.value?.focus();
+  headerTitleRef.value?.select();
+};
+
+const onSubTitleInput = (id: number, el: HTMLTextAreaElement) => {
+  const value = el.value;
+  subTodoEditingTexts[id] = value.length > TITLE_MAX_LENGTH ? value.slice(0, TITLE_MAX_LENGTH) : value;
+  if (value.length > TITLE_MAX_LENGTH) {
+    el.value = subTodoEditingTexts[id];
+  }
+  autoResize(el);
 };
 
 watch(() => todoStore.subTodos, (subs) => {
@@ -227,13 +293,24 @@ const remindDateValue = computed(() => {
 });
 
 const onTitleBlur = (e: FocusEvent) => {
-  const value = (e.target as HTMLInputElement).value.trim();
+  const value = (e.target as HTMLTextAreaElement).value.trim();
   if (value && todoStore.selectedTodo && value !== todoStore.selectedTodo.title) {
     todoStore.updateTodo({ id: todoStore.selectedTodo.id, title: value });
   }
+  headerEditing.value = false;
 };
 
-const STEP_MAX_LENGTH = 200;
+watch(() => todoStore.selectedTodo?.title, () => {
+  headerEditing.value = false;
+}, { immediate: true });
+
+const _noteText = ref('');
+watch(() => todoStore.selectedTodo?.id, (newId) => {
+  if (newId !== undefined) {
+    _noteText.value = todoStore.selectedTodo?.note ?? '';
+  }
+}, { immediate: true });
+
 
 const onSubTitleEnter = async (e: KeyboardEvent, id: number) => {
   const ta = e.target as HTMLTextAreaElement;
@@ -251,7 +328,7 @@ const onSubTitleEnter = async (e: KeyboardEvent, id: number) => {
 };
 
 const onSubTitleBlur = (e: FocusEvent, id: number) => {
-  const trimmed = (e.target as HTMLTextAreaElement).value.trim().slice(0, STEP_MAX_LENGTH);
+  const trimmed = (e.target as HTMLTextAreaElement).value.trim();
   subTodoEditingTexts[id] = trimmed;
   if (trimmed) {
     todoStore.updateSubTodoTitle(id, trimmed);
@@ -306,13 +383,27 @@ const onRemindChange = (value: string | Date | undefined) => {
   todoStore.updateTodo({ id: todoStore.selectedTodo.id, remind_at: ts });
 };
 
-const onNoteBlur = (e: FocusEvent) => {
-  const value = (e.target as HTMLTextAreaElement).value;
+const _saveNote = throttle((id: number, value: string) => {
+  todoStore.updateTodo({ id, note: value.trim() });
+}, 150, { trailing: true });
+
+const onNoteInput = (e: Event) => {
   if (!todoStore.selectedTodo) return;
-  if (value !== todoStore.selectedTodo.note) {
-    todoStore.updateTodo({ id: todoStore.selectedTodo.id, note: value });
-  }
+  const value = (e.target as HTMLTextAreaElement).value;
+  _noteText.value = value;
+  _saveNote(todoStore.selectedTodo.id, value);
 };
+
+const onNoteBlur = (e: FocusEvent) => {
+  if (!todoStore.selectedTodo) return;
+  const value = (e.target as HTMLTextAreaElement).value;
+  _noteText.value = value;
+  _saveNote.flush();
+};
+
+onUnmounted(() => {
+  _saveNote.flush();
+});
 
 const handleDeleteSubTodo = (id: number) => {
   const doAction = () => todoStore.deleteSubTodo(id);
@@ -342,6 +433,15 @@ const handleDeleteSubTodo = (id: number) => {
   });
 
   document.addEventListener('keydown', onKeydown);
+};
+
+const handleToggleStatus = () => {
+  if (!todoStore.selectedTodo) return;
+  if (todoStore.selectedTodo.status === 1) {
+    todoStore.uncompleteTodo(todoStore.selectedTodo.id);
+  } else {
+    todoStore.completeTodo(todoStore.selectedTodo.id);
+  }
 };
 
 const handleDelete = () => {
@@ -381,6 +481,11 @@ const onSubTodoDragEnd = () => {
   if (!todoStore.selectedTodo) return;
   const order = todoStore.subTodos.map((s) => s.id);
   todoStore.saveSubTodoOrder(todoStore.selectedTodo.id, order);
+};
+
+const handleLocate = () => {
+  if (!todoStore.selectedTodo) return;
+  todoStore.locateTodo(todoStore.selectedTodo.id, todoStore.selectedTodo.domain_id);
 };
 </script>
 

@@ -127,6 +127,8 @@ class TodoWindowHandler extends XpcMainHandler {
     const windowOptions: any = {
       width: savedLayout?.width ?? 900,
       height: savedLayout?.height ?? 670,
+      minWidth: 800,
+      minHeight: 600,
       title: 'Todo',
       autoHideMenuBar: true,
       titleBarStyle: 'hidden',

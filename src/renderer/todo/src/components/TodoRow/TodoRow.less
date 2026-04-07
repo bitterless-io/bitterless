@@ -1,13 +1,28 @@
 .todo-row {
   display: flex;
   align-items: center;
-  height: 48px;
-  padding: 0 8px;
+  min-height: 48px;
+  padding: 8px;
   border-radius: 6px;
   background-color: oklch(1 0 0);
   cursor: pointer;
   gap: 8px;
   transition: box-shadow 0.15s;
+  flex-shrink: 0;
+}
+
+.todo-row--active {
+  background-color: oklch(0.94 0.02 274);
+}
+
+@keyframes todo-row-flash {
+  0%   { background-color: oklch(0.84 0.03 274); }
+  60%  { background-color: oklch(0.84 0.03 274); }
+  100% { background-color: oklch(1 0 0); }
+}
+
+.todo-row--new {
+  animation: todo-row-flash 1.5s ease-out forwards;
 }
 
 .todo-row:hover {
@@ -24,32 +39,38 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
+  gap: 4px;
 }
 
 .todo-row__title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   min-width: 0;
+  width: 100%;
 }
 
 .todo-row__title {
   font-size: 13px;
   color: oklch(0.25 0 0);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: text;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: pointer;
   padding: 1px 3px;
   border-radius: 3px;
+  line-height: 1.4;
   max-width: 100%;
 }
 
-.todo-row__title:hover {
-  background-color: oklch(0.95 0 0);
+.todo-row__title--text-cursor {
+  cursor: text;
 }
 
 .todo-row__title--completed {
+  text-decoration: line-through;
+  color: oklch(0.6 0 0);
+}
+
+.todo-row__title-input--completed {
   text-decoration: line-through;
   color: oklch(0.6 0 0);
 }
@@ -63,17 +84,11 @@
   padding: 1px 3px;
   border-radius: 3px;
   box-shadow: 0 0 0 1px oklch(0.7 0.1 250);
-  min-width: 40px;
-  max-width: 200px;
-}
-
-.todo-row__title-sizer {
-  position: absolute;
-  visibility: hidden;
-  white-space: nowrap;
-  font-size: 13px;
-  padding: 1px 3px;
-  pointer-events: none;
+  max-width: 100%;
+  resize: none;
+  line-height: 1.4;
+  font-family: inherit;
+  field-sizing: content;
 }
 
 .todo-row__subtitle {

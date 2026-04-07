@@ -16,6 +16,7 @@ class TodoTable extends BaseTable {
       week_day INTEGER,
       monthly_day INTEGER,
       yearly_day INTEGER,
+      note TEXT NOT NULL DEFAULT '',
       is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
