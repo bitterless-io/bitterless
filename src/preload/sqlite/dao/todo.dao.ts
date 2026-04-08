@@ -161,7 +161,7 @@ class TodoDao extends BaseDao {
     const values: any[] = [now, now];
 
     if (todo.repeat_type && todo.due_at) {
-      const nextDue = this.computeNextDate(todo.due_at, now, {
+      const nextDue = this.computeNextDueAfterComplete(todo.due_at, {
         repeatType: todo.repeat_type,
         weekDay: todo.week_day,
         monthlyDay: todo.monthly_day,
@@ -172,14 +172,9 @@ class TodoDao extends BaseDao {
 
       // Also advance remind_at if set
       if (todo.remind_at) {
-        const nextRemind = this.computeNextDate(todo.remind_at, now, {
-          repeatType: todo.repeat_type,
-          weekDay: todo.week_day,
-          monthlyDay: todo.monthly_day,
-          yearlyDay: todo.yearly_day,
-        });
+        const remindOffset = todo.remind_at - todo.due_at;
         updates.push('remind_at = ?', 'last_remind_at = ?');
-        values.push(nextRemind, todo.remind_at);
+        values.push(nextDue + remindOffset, todo.remind_at);
       }
     }
 
@@ -287,6 +282,43 @@ class TodoDao extends BaseDao {
       values,
     );
     return this.getById({ id: params.id });
+  }
+
+  private computeNextDueAfterComplete(
+    dueAt: number,
+    options: {
+      repeatType: string;
+      weekDay: number | null;
+      monthlyDay: number | null;
+      yearlyDay: number | null;
+    },
+  ): number {
+    const { repeatType, weekDay, monthlyDay, yearlyDay } = options;
+    const originalDay = moment(dueAt).startOf('day');
+
+    if (repeatType === 'daily') {
+      return moment(originalDay).add(1, 'day').startOf('day').valueOf();
+    }
+
+    if (repeatType === 'weekly') {
+      return moment(originalDay).add(7, 'days').startOf('day').valueOf();
+    }
+
+    if (repeatType === 'monthly') {
+      const targetDay = monthlyDay ?? moment(dueAt).date();
+      const candidate = moment(originalDay).add(1, 'month').startOf('month');
+      return candidate.date(Math.min(targetDay, candidate.daysInMonth())).startOf('day').valueOf();
+    }
+
+    if (repeatType === 'yearly') {
+      const originalMoment = moment(dueAt);
+      const targetMonth = originalMoment.month();
+      const targetDay = yearlyDay ?? originalMoment.date();
+      const candidate = moment(originalDay).add(1, 'year').month(targetMonth).startOf('month');
+      return candidate.date(Math.min(targetDay, candidate.daysInMonth())).startOf('day').valueOf();
+    }
+
+    return moment(originalDay).add(1, 'day').startOf('day').valueOf();
   }
 
   private computeNearestFutureDue(
