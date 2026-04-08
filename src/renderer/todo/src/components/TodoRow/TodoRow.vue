@@ -118,7 +118,7 @@ const subTodoProgress = computed(() => {
 const dueDateText = computed(() => {
   if (!props.todo.due_at) return '';
   const due = dayjs(props.todo.due_at);
-  const today = dayjs().startOf('day');
+  const today = todoStore.currentTime.startOf('day');
   const tomorrow = today.add(1, 'day');
 
   if (due.isSame(today, 'day')) return 'Today';
@@ -128,7 +128,7 @@ const dueDateText = computed(() => {
 
 const isOverdue = computed(() => {
   if (!props.todo.due_at) return false;
-  return dayjs(props.todo.due_at).isBefore(dayjs().startOf('day'));
+  return dayjs(props.todo.due_at).isBefore(todoStore.currentTime.startOf('day'));
 });
 
 const isFutureOrToday = computed(() => {
@@ -188,7 +188,7 @@ const onContextMenu = (e: MouseEvent) => {
 
 const canSkipToCurrent = computed(() => {
   if (!props.todo.repeat_type || !props.todo.due_at) return false;
-  return dayjs(props.todo.due_at).startOf('day').isBefore(dayjs().startOf('day'));
+  return dayjs(props.todo.due_at).startOf('day').isBefore(todoStore.currentTime.startOf('day'));
 });
 
 const handleSkipToCurrent = () => {

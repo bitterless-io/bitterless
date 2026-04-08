@@ -1,5 +1,7 @@
 import { reactive } from 'vue';
 import { xpcRenderer } from 'electron-xpc/renderer';
+import dayjs from 'dayjs';
+import type { Dayjs } from 'dayjs';
 import { domainEmitter } from '../emitter/domain.emitter';
 import { todoEmitter } from '../emitter/todo.emitter';
 import { subTodoEmitter } from '../emitter/subTodo.emitter';
@@ -49,6 +51,20 @@ export interface SubTodoItem {
 
 class TodoState {
   loading = false;
+  currentTime: Dayjs = dayjs();
+  private _timerStarted = false;
+
+  constructor() {
+    this.startCurrentTimeLoop();
+  }
+
+  startCurrentTimeLoop(): void {
+    if (this._timerStarted) return;
+    this._timerStarted = true;
+    setInterval(() => {
+      this.currentTime = dayjs();
+    }, 1000);
+  }
   domainList: DomainItem[] = [];
   todosByDomain: Record<number, TodoItem[]> = {};
   completedTodosByDomain: Record<number, TodoItem[]> = {};

@@ -350,6 +350,18 @@ export class OmniWindowHelper {
       this.broadcastActiveCell(id);
     });
 
+    // Block remote pages from setting app badge (e.g. Telegram Web)
+    browser.webContents.on('dom-ready', () => {
+      browser.webContents.executeJavaScript(`
+        if ('setAppBadge' in navigator) {
+          navigator.setAppBadge = () => Promise.resolve();
+        }
+        if ('clearAppBadge' in navigator) {
+          navigator.clearAppBadge = () => Promise.resolve();
+        }
+      `).catch(() => {});
+    });
+
     if (url) {
       browser.webContents.loadURL(url).catch(() => {});
     }

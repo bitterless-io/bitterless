@@ -278,7 +278,7 @@ const canSkipToCurrent = computed(() => {
   const todo = todoStore.selectedTodo;
   if (!todo || !todo.repeat_type || !todo.due_at) return false;
   const dueDate = dayjs(todo.due_at).startOf('day');
-  const today = dayjs().startOf('day');
+  const today = todoStore.currentTime.startOf('day');
   return dueDate.isBefore(today);
 });
 
