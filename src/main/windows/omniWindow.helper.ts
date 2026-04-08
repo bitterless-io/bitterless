@@ -13,9 +13,10 @@ const WINDOW_LAYOUT_SUB_KEY = 'omni';
 const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
 
 class Semaphore {
+  private _capacity: number;
   private _count: number;
   private _queue: Array<() => void> = [];
-  constructor(capacity: number) { this._count = capacity; }
+  constructor(capacity: number) { this._capacity = capacity; this._count = capacity; }
   acquire(): Promise<void> {
     if (this._count > 0) { this._count--; return Promise.resolve(); }
     return new Promise<void>((resolve) => { this._queue.push(resolve); });
@@ -26,6 +27,12 @@ class Semaphore {
     } else {
       this._count++;
     }
+  }
+  /** Flush all pending waiters and reset to full capacity — call on cleanup to unblock queued loadURLs */
+  drain(): void {
+    const pending = this._queue.splice(0);
+    for (const resolve of pending) resolve();
+    this._count = this._capacity;
   }
 }
 
@@ -109,6 +116,7 @@ export class OmniWindowHelper {
   private _throttledSaveLayoutToDaoFn: (() => void) | null = null;
   private _creating = false;
   private _loadSemaphore = new Semaphore(3);
+  private _abortTokens = new Set<{ abort: () => void }>();
 
   get isCreating(): boolean {
     return this._creating;
@@ -157,6 +165,11 @@ export class OmniWindowHelper {
   }
 
   private cleanupAllViews(): void {
+    // Abort all pending loadURL acquire() calls and flush the semaphore queue
+    for (const token of this._abortTokens) token.abort();
+    this._abortTokens.clear();
+    this._loadSemaphore.drain();
+
     // Detach controlView from baseWindow before destroying (preserve singleton)
     if (this.controlView && this.baseWindow && !this.baseWindow.isDestroyed()) {
       try {
@@ -494,9 +507,15 @@ export class OmniWindowHelper {
     });
 
     if (url) {
-      // Semaphore (capacity 3): stagger concurrent URL loads to avoid overwhelming the shared session
+      // Semaphore (capacity 3): stagger concurrent URL loads to avoid overwhelming the shared session.
+      // aborted is set to true by drain() path — checked after acquire() resolves to skip destroyed views.
+      let aborted = false;
+      const abortToken = { abort: () => { aborted = true; } };
+      this._abortTokens.add(abortToken);
+
       this._loadSemaphore.acquire().then(() => {
-        if (!this.isWebContentsAlive(browser.webContents)) {
+        this._abortTokens.delete(abortToken);
+        if (aborted || !this.isWebContentsAlive(browser.webContents)) {
           this._loadSemaphore.release();
           return;
         }
