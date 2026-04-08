@@ -587,7 +587,6 @@ export class OmniWindowHelper {
     } catch (err) {
       console.error('[OmniWindowHelper] Failed to restore saved layout:', err);
     }
-    xpcMain.broadcast('omni/allCellAdded', {});
   }
 
   async saveLayoutToDao(): Promise<void> {

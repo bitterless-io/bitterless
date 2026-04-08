@@ -94,6 +94,12 @@ class LayoutStore {
     return flattenTree(this.tree, 0, 0, 100, 100);
   }
 
+  async applyLayout(): Promise<void> {
+    const cells = this.getFlatLayout();
+    const tree: OmniPaneNode = JSON.parse(JSON.stringify(this.tree));
+    await xpcRenderer.send('OmniWindowHandler/updateLayout', { cells, tree });
+  }
+
   async syncLayout(): Promise<void> {
     const cells = this.getFlatLayout();
     const tree: OmniPaneNode = JSON.parse(JSON.stringify(this.tree));

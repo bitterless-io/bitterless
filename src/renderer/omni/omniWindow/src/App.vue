@@ -11,12 +11,6 @@ const controlVisible = ref(false);
 const isMac = ref(uaHelper.isMac);
 const isWindows = ref(uaHelper.isWindows);
 const maximized = ref(false);
-const cellsLoading = ref(true);
-
-xpcRenderer.subscribe('omni/allCellAdded', () => {
-  cellsLoading.value = false;
-});
-
 const menubarClass = computed(() => {
   if (isMac.value) return 'omni-menubar--mac';
   if (isWindows.value) return 'omni-menubar--win';
@@ -55,16 +49,13 @@ onMounted(async () => {
     <div class="omni-menubar__left">
       <span class="omni-menubar__title">{{ i18nHelper.omni.title }}</span>
       <div class="omni-menubar__actions">
-        <a-spin :loading="cellsLoading" size="mini">
-          <button
-            class="omni-menubar__btn"
-            :class="{ 'omni-menubar__btn--active': controlVisible }"
-            :disabled="cellsLoading"
-            @click="toggleControl"
-          >
-            ⊞ {{ i18nHelper.omni.layout }}
-          </button>
-        </a-spin>
+        <button
+          class="omni-menubar__btn"
+          :class="{ 'omni-menubar__btn--active': controlVisible }"
+          @click="toggleControl"
+        >
+          ⊞ {{ i18nHelper.omni.layout }}
+        </button>
       </div>
     </div>
     <div v-if="isWindows" class="omni-menubar__win-controls">

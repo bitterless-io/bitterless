@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue';
+import { useThrottleFn } from '@vueuse/core';
 import { Splitpanes, Pane } from 'splitpanes';
 import 'splitpanes/dist/splitpanes.css';
 import OmniPaneMenuBar from './OmniPaneMenuBar.vue';
@@ -18,13 +19,17 @@ onMounted(() => {
   setTimeout(() => { isMounted.value = true; }, 200);
 });
 
+const throttledApplyLayout = useThrottleFn(() => {
+  layoutStore.applyLayout();
+}, 50, { leading: false, trailing: true });
+
 const onResize = (event: { panes: { min: number; max: number; size: number }[] }) => {
   if (!isMounted.value) return;
   if (layoutStore.splitting) return;
   if (!event?.panes || !Array.isArray(event.panes)) return;
   const sizes = event.panes.map((p) => p.size);
   layoutStore.updateSizes(props.node.id, sizes);
-  // Only update sizes in-memory during drag; XPC sync happens on drag end
+  throttledApplyLayout();
 };
 
 const onResizeEnd = (event: { panes: { min: number; max: number; size: number }[] }) => {
