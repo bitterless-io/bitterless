@@ -5,7 +5,7 @@ import { layoutStore } from './store/layout.store';
 
 onMounted(async () => {
   await layoutStore.loadLayout();
-  await layoutStore.syncLayout();
+  // syncLayout() removed — main process restoreSavedLayout() already applies the layout on open
 });
 </script>
 

@@ -163,5 +163,5 @@ export const layoutStore = reactive(new LayoutStore()) as LayoutStore;
 xpcRenderer.subscribe('omniControl/cellUrlChanged', (payload) => {
   const data = payload.params as { cellId: string; url: string };
   layoutStore.updateUrl(data.cellId, data.url);
-  layoutStore.saveConfig();
+  // saveConfig() removed — main process already persists via throttledSaveLayoutToDao
 });

@@ -76,6 +76,7 @@ interface CellViewPair {
   id: string;
   menubar: WebContentsView;
   browser: WebContentsView;
+  lastUrl: string;
 }
 
 export class OmniWindowHelper {
@@ -270,6 +271,14 @@ export class OmniWindowHelper {
       this.controlView.setBackgroundColor('#00000000');
       console.log('[OmniWindowHelper] controlView singleton created');
     }
+    // Set proper bounds even when hidden — prevents splitpanes layout thrashing in a 0×0 container
+    const [cvWidth, cvHeight] = this.baseWindow.getContentSize();
+    this.controlView.setBounds({
+      x: 0,
+      y: MENUBAR_HEIGHT,
+      width: cvWidth,
+      height: Math.max(cvHeight - MENUBAR_HEIGHT, 0),
+    });
 
     const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
     if (shouldOpenDevTools) {
@@ -451,7 +460,7 @@ export class OmniWindowHelper {
       browser.webContents.loadURL(url).catch(() => {});
     }
 
-    this.cells.push({ id, menubar, browser });
+    this.cells.push({ id, menubar, browser, lastUrl: url || '' });
 
     // Ensure control overlay stays on top
     if (this.controlVisible && this.controlView) {
@@ -476,6 +485,10 @@ export class OmniWindowHelper {
   private notifyCellUrl(cellId: string, url: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
     if (!cell) return;
+    // Skip if URL unchanged — SPA replaceState may fire did-navigate-in-page with the same URL
+    if (cell.lastUrl === url) return;
+    cell.lastUrl = url;
+
     xpcMain.broadcast('omniCell/urlChanged', { cellId, url });
     this.notifyControlUrlChanged(cellId, url);
 
