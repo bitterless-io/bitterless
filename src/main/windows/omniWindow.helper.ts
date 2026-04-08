@@ -190,6 +190,11 @@ export class OmniWindowHelper {
       this.baseWindow.destroy();
     }
     this.baseWindow = null;
+
+    // Clear ServiceWorkers so a stuck SW from this session doesn't survive into the next open
+    session.fromPartition(OMNI_PARTITION)
+      .clearStorageData({ storages: ['serviceworkers'] })
+      .catch((err) => console.warn('[OmniWindowHelper] Failed to clear SW:', err));
   }
 
   private async saveWindowLayout(): Promise<void> {
