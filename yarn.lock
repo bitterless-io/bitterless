@@ -1792,6 +1792,11 @@
   resolved "https://registry.npmmirror.com/@rig-lib/semaphore/-/semaphore-1.0.2.tgz#f35ed95b166534f098313b5c21a284d60dac1c3b"
   integrity sha512-3T1yYzSv45NNJJa3rwYiGPT/JhfI0nFFQtfGcjW9NZlI7R+shslszCYHSHBzW5CxgcaMKlXaBuVvFX+9orPf8A==
 
+"@rig-lib/semaphore@^1.0.5":
+  version "1.0.5"
+  resolved "https://registry.npmmirror.com/@rig-lib/semaphore/-/semaphore-1.0.5.tgz#9684055e4c9550a08d47aa1d2270421c58521876"
+  integrity sha512-5HSPTqtpROXjMYR4TC0RNe2iwVD6uQlaKB8ZxN0N/D78tCBZCPeGsY1zU8e4UwbqfVuU1Bj/mMwpFfiOl5twHA==
+
 "@rolldown/pluginutils@1.0.0-rc.2":
   version "1.0.0-rc.2"
   resolved "https://registry.npmmirror.com/@rolldown/pluginutils/-/pluginutils-1.0.0-rc.2.tgz#10324e74cb3396cb7b616042ea7e9e6aa7d8d458"

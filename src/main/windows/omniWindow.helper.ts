@@ -12,6 +12,23 @@ const WINDOW_LAYOUT_KEY = 'window_layout';
 const WINDOW_LAYOUT_SUB_KEY = 'omni';
 const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
 
+class Semaphore {
+  private _count: number;
+  private _queue: Array<() => void> = [];
+  constructor(capacity: number) { this._count = capacity; }
+  acquire(): Promise<void> {
+    if (this._count > 0) { this._count--; return Promise.resolve(); }
+    return new Promise<void>((resolve) => { this._queue.push(resolve); });
+  }
+  release(): void {
+    if (this._queue.length > 0) {
+      this._queue.shift()!();
+    } else {
+      this._count++;
+    }
+  }
+}
+
 const MENUBAR_HEIGHT = 32;
 const CELL_MENUBAR_HEIGHT = 36;
 const DIVIDER_SIZE = 4;
@@ -91,6 +108,7 @@ export class OmniWindowHelper {
   private _throttledSaveWindowLayoutFn: (() => void) | null = null;
   private _throttledSaveLayoutToDaoFn: (() => void) | null = null;
   private _creating = false;
+  private _loadSemaphore = new Semaphore(3);
 
   get isCreating(): boolean {
     return this._creating;
@@ -471,7 +489,25 @@ export class OmniWindowHelper {
     });
 
     if (url) {
-      browser.webContents.loadURL(url).catch(() => {});
+      // Semaphore (capacity 3): stagger concurrent URL loads to avoid overwhelming the shared session
+      this._loadSemaphore.acquire().then(() => {
+        if (!this.isWebContentsAlive(browser.webContents)) {
+          this._loadSemaphore.release();
+          return;
+        }
+        let released = false;
+        const releaseOnce = () => {
+          if (released) return;
+          released = true;
+          setTimeout(() => this._loadSemaphore.release(), 1000);
+        };
+        const timeoutId = setTimeout(releaseOnce, 30_000);
+        browser.webContents.once('did-finish-load', () => { clearTimeout(timeoutId); releaseOnce(); });
+        browser.webContents.once('did-fail-load', () => { clearTimeout(timeoutId); releaseOnce(); });
+        browser.webContents.once('did-fail-provisional-load', () => { clearTimeout(timeoutId); releaseOnce(); });
+        browser.webContents.once('render-process-gone', () => { clearTimeout(timeoutId); releaseOnce(); });
+        browser.webContents.loadURL(url).catch(() => {});
+      });
     }
 
     this.cells.push({ id, menubar, browser, lastUrl: url || '' });
@@ -546,6 +582,7 @@ export class OmniWindowHelper {
     } catch (err) {
       console.error('[OmniWindowHelper] Failed to restore saved layout:', err);
     }
+    xpcMain.broadcast('omni/allCellAdded', {});
   }
 
   async saveLayoutToDao(): Promise<void> {

@@ -1,7 +1,7 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.8",
-  "versionCode": 26040809,
+  "_version": "0.0.9",
+  "versionCode": 26040810,
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -51,6 +51,7 @@
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "@mozilla/readability": "^0.6.0",
     "@qdrant/js-client-rest": "^1.16.2",
+    "@rig-lib/semaphore": "^1.0.5",
     "@sapphire/snowflake": "^3.5.5",
     "@vueuse/core": "^14.2.1",
     "adm-zip": "^0.5.17",
@@ -134,5 +135,5 @@
     "rig_dev/*"
   ],
   "name": "Bitterless_DEV_DEBUG",
-  "version": "0.0.8"
+  "version": "0.0.9"
 }
