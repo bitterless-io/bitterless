@@ -90,6 +90,11 @@ export class OmniWindowHelper {
   private _throttledApplyLayoutFn: (() => void) | null = null;
   private _throttledSaveWindowLayoutFn: (() => void) | null = null;
   private _throttledSaveLayoutToDaoFn: (() => void) | null = null;
+  private _creating = false;
+
+  get isCreating(): boolean {
+    return this._creating;
+  }
 
   private throttledApplyLayout(): void {
     if (!this._throttledApplyLayoutFn) {
@@ -204,7 +209,13 @@ export class OmniWindowHelper {
   }
 
   async create(): Promise<BaseWindow> {
+    if (this._creating) {
+      console.log('[OmniWindowHelper] create() already in progress, skipping');
+      return this.baseWindow!;
+    }
+    this._creating = true;
     console.log('[OmniWindowHelper] create() called');
+    try {
     this.cleanupAllViews();
 
     const primaryDisplay = screen.getPrimaryDisplay();
@@ -289,6 +300,9 @@ export class OmniWindowHelper {
     await this.restoreSavedLayout();
 
     return this.baseWindow;
+    } finally {
+      this._creating = false;
+    }
   }
 
   toggleControl(): void {

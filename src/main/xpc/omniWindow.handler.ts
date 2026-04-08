@@ -14,6 +14,10 @@ class OmniWindowHandler extends XpcMainHandler {
       omniWindowHelper.baseWindow.focus();
       return;
     }
+    if (omniWindowHelper.isCreating) {
+      console.log('[OmniWindowHandler] create already in progress, ignoring duplicate open');
+      return;
+    }
     console.log('[OmniWindowHandler] creating new omni window');
     await omniWindowHelper.create();
     console.log('[OmniWindowHandler] omni window created');
