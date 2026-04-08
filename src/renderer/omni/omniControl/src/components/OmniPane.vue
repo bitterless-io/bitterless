@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick } from 'vue';
-import { useThrottleFn } from '@vueuse/core';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { Splitpanes, Pane } from 'splitpanes';
 import 'splitpanes/dist/splitpanes.css';
 import OmniPaneMenuBar from './OmniPaneMenuBar.vue';
@@ -13,16 +12,19 @@ const props = defineProps<{
 
 const isHorizontal = computed(() => props.node.direction === 'h');
 
-const throttledSyncLayout = useThrottleFn(() => {
-  layoutStore.syncLayout();
-}, 100, { leading: false, trailing: true });
+// Suppress spurious @resize events fired during splitpanes initial mount/render
+const isMounted = ref(false);
+onMounted(() => {
+  setTimeout(() => { isMounted.value = true; }, 200);
+});
 
 const onResize = (event: { panes: { min: number; max: number; size: number }[] }) => {
+  if (!isMounted.value) return;
   if (layoutStore.splitting) return;
   if (!event?.panes || !Array.isArray(event.panes)) return;
   const sizes = event.panes.map((p) => p.size);
   layoutStore.updateSizes(props.node.id, sizes);
-  throttledSyncLayout();
+  // Only update sizes in-memory during drag; XPC sync happens on drag end
 };
 
 const onResizeEnd = (event: { panes: { min: number; max: number; size: number }[] }) => {
@@ -46,7 +48,8 @@ const handleSplit = async (nodeId: string, direction: 'h' | 'v', position: 'befo
 const handleUrlUpdate = (nodeId: string, url: string) => {
   layoutStore.updateUrl(nodeId, url);
   layoutStore.navigateCell(nodeId, url);
-  layoutStore.syncLayout();
+  // syncLayout() removed: navigateCell drives main process navigation; URL is reflected back
+  // via omniControl/cellUrlChanged subscriber without needing a full layout sync
 };
 
 const handleClose = async (nodeId: string) => {
