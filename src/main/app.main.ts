@@ -9,6 +9,7 @@ import { initXpc } from './xpc/xpc.helper';
 import { initDirectory } from './directoryHelper/directory.helper';
 import { llamaWindowHelper } from './windows/llamaWindow.helper';
 import { fsWindowHelper } from './windows/fsWindow.helper';
+import { omniWindowHelper } from './windows/omniWindow.helper';
 import * as path from 'path';
 import { trayHelper } from './tray/tray.helper';
 import { dialogHelper } from './dialog/dialog.helper';
@@ -90,6 +91,12 @@ function cleanupResources(): void {
     connectorWindowHelper.destroy();
   } catch (err) {
     console.error('[app] Error destroying connectorWindow:', err);
+  }
+
+  try {
+    omniWindowHelper.destroy();
+  } catch (err) {
+    console.error('[app] Error destroying omniWindow:', err);
   }
 
   try {

@@ -63,6 +63,15 @@ function flattenTreePixels(
   return results;
 }
 
+function extractTreeLeaves(node: OmniPaneNode): Array<{ id: string; url: string }> {
+  if (node.type === 'leaf') return [{ id: node.id, url: node.url || '' }];
+  const results: Array<{ id: string; url: string }> = [];
+  for (const child of node.children || []) {
+    results.push(...extractTreeLeaves(child));
+  }
+  return results;
+}
+
 interface CellViewPair {
   id: string;
   menubar: WebContentsView;
@@ -79,6 +88,7 @@ export class OmniWindowHelper {
   private currentLayoutTree: OmniPaneNode | null = null;
   private _throttledApplyLayoutFn: (() => void) | null = null;
   private _throttledSaveWindowLayoutFn: (() => void) | null = null;
+  private _throttledSaveLayoutToDaoFn: (() => void) | null = null;
 
   private throttledApplyLayout(): void {
     if (!this._throttledApplyLayoutFn) {
@@ -96,6 +106,66 @@ export class OmniWindowHelper {
       }, 100, { trailing: true });
     }
     this._throttledSaveWindowLayoutFn();
+  }
+
+  private throttledSaveLayoutToDao(): void {
+    if (!this._throttledSaveLayoutToDaoFn) {
+      this._throttledSaveLayoutToDaoFn = throttle(() => {
+        this.saveLayoutToDao();
+      }, 500, { trailing: true });
+    }
+    this._throttledSaveLayoutToDaoFn();
+  }
+
+  private isWebContentsAlive(wc: Electron.WebContents): boolean {
+    return !wc.isDestroyed() && !wc.isCrashed();
+  }
+
+  private closeWebContentsView(view: WebContentsView | null): void {
+    if (!view) return;
+    try {
+      if (this.isWebContentsAlive(view.webContents)) {
+        view.webContents.close();
+      }
+    } catch {
+      // already destroyed
+    }
+  }
+
+  private cleanupAllViews(): void {
+    // Detach controlView from baseWindow before destroying (preserve singleton)
+    if (this.controlView && this.baseWindow && !this.baseWindow.isDestroyed()) {
+      try {
+        if (this.controlVisible) {
+          this.baseWindow.contentView.removeChildView(this.controlView);
+        }
+      } catch {}
+    }
+    this.controlVisible = false;
+
+    for (const cell of this.cells) {
+      try {
+        if (this.baseWindow && !this.baseWindow.isDestroyed()) {
+          this.baseWindow.contentView.removeChildView(cell.menubar);
+          this.baseWindow.contentView.removeChildView(cell.browser);
+        }
+        this.closeWebContentsView(cell.menubar);
+        this.closeWebContentsView(cell.browser);
+      } catch {
+        // view may already be destroyed
+      }
+    }
+    this.cells = [];
+
+    this.closeWebContentsView(this.menubarView);
+    this.menubarView = null;
+    this.currentLayout = [];
+    this.currentLayoutTree = null;
+
+    if (this.baseWindow && !this.baseWindow.isDestroyed()) {
+      this.baseWindow.destroy();
+    }
+    this.baseWindow = null;
   }
 
   private async saveWindowLayout(): Promise<void> {
@@ -134,9 +204,7 @@ export class OmniWindowHelper {
 
   async create(): Promise<BaseWindow> {
     console.log('[OmniWindowHelper] create() called');
-    this.cells = [];
-    this.currentLayout = [];
-    this.controlVisible = false;
+    this.cleanupAllViews();
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
@@ -170,16 +238,16 @@ export class OmniWindowHelper {
     this.baseWindow.contentView.addChildView(this.menubarView);
     console.log('[OmniWindowHelper] menubarView added');
 
-    // Create control overlay (hidden initially, transparent background for see-through)
-    this.controlView = this.createWebContentsView('omniControl');
-    this.controlView.setBackgroundColor('#00000000');
-    this.controlView.setVisible(false);
-
     // BaseWindow does not emit 'ready-to-show' (that is a BrowserWindow event).
     // Show the window once the menubar webContents finishes loading instead.
     this.menubarView.webContents.on('did-finish-load', () => {
       console.log('[OmniWindowHelper] menubar did-finish-load, showing window');
       this.baseWindow?.show();
+    });
+
+    this.baseWindow.on('closed' as any, () => {
+      console.log('[OmniWindowHelper] baseWindow closed, cleaning up');
+      this.cleanupAllViews();
     });
 
     this.baseWindow.on('resize' as any, () => {
@@ -196,27 +264,32 @@ export class OmniWindowHelper {
     this.updateMenubarBounds();
     this.updateControlBounds();
 
+    // Create controlView singleton (reuse across window open/close cycles)
+    if (!this.controlView || !this.isWebContentsAlive(this.controlView.webContents)) {
+      this.controlView = this.createWebContentsView('omniControl');
+      this.controlView.setBackgroundColor('#00000000');
+      console.log('[OmniWindowHelper] controlView singleton created');
+    }
+
     const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
     if (shouldOpenDevTools) {
       this.menubarView.webContents.openDevTools({ mode: 'detach' });
     }
 
+    // Restore saved cell layout so cells appear immediately on window open
+    await this.restoreSavedLayout();
+
     return this.baseWindow;
   }
 
   toggleControl(): void {
-    if (!this.controlView || !this.baseWindow) return;
+    if (!this.baseWindow || this.baseWindow.isDestroyed() || !this.controlView) return;
 
     this.controlVisible = !this.controlVisible;
     if (this.controlVisible) {
-      // Add on top of everything
       this.baseWindow.contentView.addChildView(this.controlView);
       this.controlView.setVisible(true);
       this.updateControlBounds();
-      const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
-      if (shouldOpenDevTools) {
-        this.controlView.webContents.openDevTools({ mode: 'detach' });
-      }
     } else {
       this.controlView.setVisible(false);
       this.baseWindow.contentView.removeChildView(this.controlView);
@@ -254,27 +327,29 @@ export class OmniWindowHelper {
 
   navigateCell(cellId: string, url: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
-    if (!cell) return;
+    if (!cell || !this.isWebContentsAlive(cell.browser.webContents)) return;
     cell.browser.webContents.loadURL(url).catch(() => {});
   }
 
   cellGoBack(cellId: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
-    if (cell?.browser.webContents.canGoBack()) {
+    if (cell && this.isWebContentsAlive(cell.browser.webContents) && cell.browser.webContents.canGoBack()) {
       cell.browser.webContents.goBack();
     }
   }
 
   cellGoForward(cellId: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
-    if (cell?.browser.webContents.canGoForward()) {
+    if (cell && this.isWebContentsAlive(cell.browser.webContents) && cell.browser.webContents.canGoForward()) {
       cell.browser.webContents.goForward();
     }
   }
 
   cellRefresh(cellId: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
-    cell?.browser.webContents.reload();
+    if (cell && this.isWebContentsAlive(cell.browser.webContents)) {
+      cell.browser.webContents.reload();
+    }
   }
 
   closeCell(cellId: string): void {
@@ -286,13 +361,9 @@ export class OmniWindowHelper {
   }
 
   destroy(): void {
-    for (const cell of this.cells) {
-      this.removeCellViews(cell);
-    }
-    this.cells = [];
-    this.baseWindow?.destroy();
-    this.baseWindow = null;
-    this.menubarView = null;
+    this.cleanupAllViews();
+    // Destroy the singleton controlView only on full destroy (app quit)
+    this.closeWebContentsView(this.controlView);
     this.controlView = null;
   }
 
@@ -324,15 +395,19 @@ export class OmniWindowHelper {
 
     // Listen for navigation events to update cell menubar
     browser.webContents.on('did-navigate', (_e, navUrl) => {
+      if (!this.isWebContentsAlive(browser.webContents)) return;
       this.notifyCellUrl(id, navUrl);
     });
     browser.webContents.on('did-navigate-in-page', (_e, navUrl) => {
+      if (!this.isWebContentsAlive(browser.webContents)) return;
       this.notifyCellUrl(id, navUrl);
     });
 
     // After menubar finishes loading, send the current browser URL to it
     // (did-navigate may have already fired before the menubar's Vue app mounted)
     menubar.webContents.on('did-finish-load', () => {
+      if (!this.isWebContentsAlive(menubar.webContents)) return;
+      if (!this.isWebContentsAlive(browser.webContents)) return;
       const currentUrl = browser.webContents.getURL();
       if (currentUrl) {
         xpcMain.broadcast('omniCell/urlChanged', { cellId: id, url: currentUrl });
@@ -344,14 +419,17 @@ export class OmniWindowHelper {
 
     // Track active cell on browser focus
     browser.webContents.on('focus' as any, () => {
+      if (!this.isWebContentsAlive(browser.webContents)) return;
       this.broadcastActiveCell(id);
     });
     menubar.webContents.on('focus' as any, () => {
+      if (!this.isWebContentsAlive(menubar.webContents)) return;
       this.broadcastActiveCell(id);
     });
 
     // Block remote pages from setting app badge (e.g. Telegram Web)
     browser.webContents.on('dom-ready', () => {
+      if (!this.isWebContentsAlive(browser.webContents)) return;
       browser.webContents.executeJavaScript(`
         if ('setAppBadge' in navigator) {
           navigator.setAppBadge = () => Promise.resolve();
@@ -360,6 +438,13 @@ export class OmniWindowHelper {
           navigator.clearAppBadge = () => Promise.resolve();
         }
       `).catch(() => {});
+    });
+
+    // Auto-cleanup crashed cell
+    browser.webContents.on('render-process-gone', (_e, details) => {
+      console.warn(`[OmniWindowHelper] Cell ${id} renderer crashed:`, details.reason);
+      this.removeCellViews({ id, menubar, browser });
+      this.cells = this.cells.filter((c) => c.id !== id);
     });
 
     if (url) {
@@ -376,12 +461,13 @@ export class OmniWindowHelper {
   }
 
   private removeCellViews(cell: CellViewPair): void {
-    if (!this.baseWindow) return;
     try {
-      this.baseWindow.contentView.removeChildView(cell.menubar);
-      this.baseWindow.contentView.removeChildView(cell.browser);
-      cell.menubar.webContents.close();
-      cell.browser.webContents.close();
+      if (this.baseWindow && !this.baseWindow.isDestroyed()) {
+        this.baseWindow.contentView.removeChildView(cell.menubar);
+        this.baseWindow.contentView.removeChildView(cell.browser);
+      }
+      this.closeWebContentsView(cell.menubar);
+      this.closeWebContentsView(cell.browser);
     } catch {
       // view may already be destroyed
     }
@@ -393,9 +479,9 @@ export class OmniWindowHelper {
     xpcMain.broadcast('omniCell/urlChanged', { cellId, url });
     this.notifyControlUrlChanged(cellId, url);
 
-    // Update tree and save to SettingDao
+    // Update tree and save to SettingDao (throttled to avoid excessive writes from SPA navigations)
     if (this.updateTreeUrl(this.currentLayoutTree, cellId, url)) {
-      this.saveLayoutToDao();
+      this.throttledSaveLayoutToDao();
     }
   }
 
@@ -419,6 +505,20 @@ export class OmniWindowHelper {
       }
     }
     return false;
+  }
+
+  private async restoreSavedLayout(): Promise<void> {
+    try {
+      const config = await settingEmitter.get<OmniLayoutConfig>({ key: LAYOUT_KEY });
+      if (config?.tree) {
+        const leaves = extractTreeLeaves(config.tree);
+        const cells: OmniCellLayout[] = leaves.map((l) => ({ id: l.id, url: l.url, x: 0, y: 0, width: 100, height: 100 }));
+        this.updateLayout(cells, config.tree);
+        console.log('[OmniWindowHelper] Restored saved layout with', leaves.length, 'cells');
+      }
+    } catch (err) {
+      console.error('[OmniWindowHelper] Failed to restore saved layout:', err);
+    }
   }
 
   async saveLayoutToDao(): Promise<void> {
