@@ -90,8 +90,6 @@ class UpdateService {
   private async fetchManifest(): Promise<ManifestData | null> {
     try {
       const manifestUrl = this.getManifestUrl();
-      console.log('[UpdateService] Fetching manifest from:', manifestUrl);
-
       const response = await fetch(manifestUrl);
       if (!response.ok) {
         console.error('[UpdateService] Failed to fetch manifest:', response.status);

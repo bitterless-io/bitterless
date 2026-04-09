@@ -53,12 +53,12 @@
           {{ i18nHelper.todo.emptyDomain }}
         </div>
       </div>
+      <transition name="back-to-top">
+        <button v-if="showBackToTop" class="focused-column__back-to-top" @click="scrollToTop">
+          <icon-arrow-up :size="14" />
+        </button>
+      </transition>
     </div>
-    <transition name="back-to-top">
-      <button v-if="showBackToTop" class="focused-column__back-to-top" @click="scrollToTop">
-        <icon-arrow-up :size="14" />
-      </button>
-    </transition>
   </div>
 </template>
 

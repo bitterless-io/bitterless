@@ -5,6 +5,7 @@ import { settingEmitter } from '../emitter/setting.emitter';
 const SETTING_KEY = 'todo_setting';
 const SHOW_FOCUSED_SUB_KEY = 'show_focused';
 const FOCUSED_FILTERS_SUB_KEY = 'focused_filters';
+const ALWAYS_ON_TOP_SUB_KEY = 'always_on_top';
 
 export interface FocusedFilters {
   important: boolean;
@@ -18,6 +19,7 @@ class TodoSettingState {
   showCompleted = false;
   showFocused = false;
   focusedFilters: FocusedFilters = { ...DEFAULT_FILTERS };
+  alwaysOnTop = false;
 
   async load(): Promise<void> {
     this.showCompleted = false;
@@ -25,6 +27,8 @@ class TodoSettingState {
     this.showFocused = savedFocused ?? false;
     const savedFilters = await settingEmitter.get<FocusedFilters>({ key: SETTING_KEY, sub_key: FOCUSED_FILTERS_SUB_KEY });
     this.focusedFilters = savedFilters ?? { ...DEFAULT_FILTERS };
+    const savedAlwaysOnTop = await settingEmitter.get<boolean>({ key: SETTING_KEY, sub_key: ALWAYS_ON_TOP_SUB_KEY });
+    this.alwaysOnTop = savedAlwaysOnTop ?? false;
   }
 
   async toggleShowCompleted(): Promise<void> {
@@ -41,6 +45,11 @@ class TodoSettingState {
   async setFocusedFilters(filters: FocusedFilters): Promise<void> {
     this.focusedFilters = filters;
     await settingEmitter.upsert({ key: SETTING_KEY, sub_key: FOCUSED_FILTERS_SUB_KEY, value: filters });
+  }
+
+  async setAlwaysOnTop(enable: boolean): Promise<void> {
+    this.alwaysOnTop = enable;
+    await settingEmitter.upsert({ key: SETTING_KEY, sub_key: ALWAYS_ON_TOP_SUB_KEY, value: enable });
   }
 }
 

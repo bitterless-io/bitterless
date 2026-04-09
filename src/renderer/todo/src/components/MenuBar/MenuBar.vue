@@ -28,7 +28,7 @@
         </template>
       </a-button>
       <a-tooltip v-if="isStandalone && isMac" :content="i18nHelper.todo.pinOnTop" position="br" mini>
-        <a-button size="mini" type="text" :class="{ 'menubar__pin-btn--active': isPinned }" @click="handleTogglePin">
+        <a-button size="mini" type="text" :class="{ 'menubar__pin-btn--active': todoSettingStore.alwaysOnTop }" @click="handleTogglePin">
           <template #icon>
             <icon-to-top />
           </template>
@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick } from 'vue';
+import { computed, nextTick, onMounted } from 'vue';
 import { IconLaunch, IconSettings, IconMinus, IconExpand, IconClose, IconRefresh, IconToTop } from '@arco-design/web-vue/es/icon';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoSettingStore } from '../../store/todoSetting.store';
@@ -114,12 +114,16 @@ const handleClose = async () => {
   await todoWindowEmitter.close();
 };
 
-const isPinned = ref(false);
-
 const handleTogglePin = async () => {
-  isPinned.value = !isPinned.value;
-  await todoWindowEmitter.setAlwaysOnTop({ enable: isPinned.value });
+  await todoSettingStore.setAlwaysOnTop(!todoSettingStore.alwaysOnTop);
+  await todoWindowEmitter.setAlwaysOnTop({ enable: todoSettingStore.alwaysOnTop });
 };
+
+onMounted(async () => {
+  if (props.isStandalone && isMac && todoSettingStore.alwaysOnTop) {
+    await todoWindowEmitter.setAlwaysOnTop({ enable: true });
+  }
+});
 </script>
 
 <style lang="less">
