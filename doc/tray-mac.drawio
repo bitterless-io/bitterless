@@ -1,0 +1,22 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.2.15 Chrome/134.0.6998.205 Electron/35.2.1 Safari/537.36" version="26.2.15">
+  <diagram name="Page-1" id="TUuisLswghAMgqpzFmGv">
+    <mxGraphModel dx="1719" dy="1219" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="AT6M4A7G40q8nVLJBaVh-2" value="" style="rounded=1;whiteSpace=wrap;html=1;gradientColor=none;sketch=1;curveFitting=1;jiggle=2;glass=0;shadow=0;strokeWidth=24;dashed=1;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="320" y="550" width="480" height="480" as="geometry" />
+        </mxCell>
+        <mxCell id="AT6M4A7G40q8nVLJBaVh-5" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="410" y="700" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="AT6M4A7G40q8nVLJBaVh-7" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="520" y="830" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="AT6M4A7G40q8nVLJBaVh-8" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="620" y="700" width="140" height="70" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -20,9 +20,9 @@ class TrayHelper {
 
     if (import.meta.env.VITE_MODE === 'release') {
       const unpacked = join(app.getAppPath(), '..', 'app.asar.unpacked', 'icons');
-      iconPath = isWin ? join(unpacked, 'icon.ico') : join(unpacked, 'icon.png');
+      iconPath = isWin ? join(unpacked, 'icon.ico') : join(unpacked, 'tray-mac@2x.png');
     } else {
-      iconPath = join(__dirname, '../../build', isWin ? 'icon.ico' : 'icon.png');
+      iconPath = join(__dirname, '../../build', isWin ? 'icon.ico' : 'tray-mac@2x.png');
     }
 
     let icon = nativeImage.createFromPath(iconPath);
@@ -44,7 +44,7 @@ class TrayHelper {
 
   updateMenu(): void {
     if (!this.tray) return;
-    
+
     const messages = i18nHelper.getMessages();
     const contextMenu = Menu.buildFromTemplate([
       {
@@ -59,7 +59,7 @@ class TrayHelper {
         click: () => this.requestQuit(),
       },
     ]);
-    
+
     this.tray.setContextMenu(contextMenu);
     this.tray.setToolTip('Bitterless');
   }
