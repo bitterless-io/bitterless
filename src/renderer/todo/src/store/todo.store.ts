@@ -151,6 +151,34 @@ class TodoState {
     }
   }
 
+  get focusedTodoList(): TodoItem[] {
+    const todayStart = dayjs().startOf('day').valueOf();
+    const todayEnd = dayjs().endOf('day').valueOf();
+    const filters = todoSettingStore.focusedFilters;
+    const result: TodoItem[] = [];
+    for (const domainId in this.todosByDomain) {
+      const list = this.todosByDomain[domainId];
+      for (const todo of list) {
+        if (todo.status !== 0) continue;
+        const isImportant = filters.important && todo.important === 1;
+        const isOverdue = filters.overdue && todo.due_at !== null && todo.due_at < todayStart;
+        const isDueToday = filters.today && todo.due_at !== null && todo.due_at >= todayStart && todo.due_at <= todayEnd;
+        if (isImportant || isOverdue || isDueToday) {
+          result.push(todo);
+        }
+      }
+    }
+    result.sort((a, b) => {
+      if (a.important !== b.important) return b.important - a.important;
+      const aHasDue = a.due_at !== null ? 1 : 0;
+      const bHasDue = b.due_at !== null ? 1 : 0;
+      if (aHasDue !== bHasDue) return bHasDue - aHasDue;
+      if (a.due_at !== null && b.due_at !== null) return a.due_at - b.due_at;
+      return b.created_at - a.created_at;
+    });
+    return result;
+  }
+
   broadcastDataUpdated(): void {
     xpcRenderer.broadcast('todo/data_updated');
   }
@@ -436,6 +464,14 @@ class TodoState {
     this.detailVisible = true;
     await this.loadSubTodos(todo.id);
     this.locateTodo(todo.id, todo.domain_id);
+  }
+
+  async selectTodoFromFocused(todo: TodoItem): Promise<void> {
+    this.selectedTodo = todo;
+    this.detailVisible = true;
+    await this.loadSubTodos(todo.id);
+    const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
+    boardScroll?.scrollTo({ left: 0, behavior: 'smooth' });
   }
 
   locateTodo(todoId: number, domainId: number): void {

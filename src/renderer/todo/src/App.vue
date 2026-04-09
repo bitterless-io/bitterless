@@ -3,6 +3,7 @@
     <MenuBar :is-standalone="isStandalone" />
     <div class="todo-app__board">
       <div class="todo-app__board-scroll" @click="onBoardClick">
+        <FocusedColumn v-if="todoSettingStore.showFocused" />
         <draggable
           v-model="todoStore.domainList"
           group="domains"
@@ -29,6 +30,7 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import draggable from 'vuedraggable';
 import DomainColumn from './components/DomainColumn/DomainColumn.vue';
+import FocusedColumn from './components/FocusedColumn/FocusedColumn.vue';
 import AddDomainButton from './components/AddDomainButton/AddDomainButton.vue';
 import TodoDetail from './components/TodoDetail/TodoDetail.vue';
 import MenuBar from './components/MenuBar/MenuBar.vue';
@@ -41,7 +43,7 @@ const isStandalone = ref(false);
 
 const onBoardClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement;
-  if (!target.closest('.domain-column') && !target.closest('.todo-detail__panel')) {
+  if (!target.closest('.domain-column') && !target.closest('.focused-column') && !target.closest('.todo-detail__panel')) {
     todoStore.closeDetail();
   }
 };

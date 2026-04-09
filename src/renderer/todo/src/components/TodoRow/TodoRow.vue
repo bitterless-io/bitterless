@@ -99,6 +99,7 @@ import type { TodoItem } from '../../store/todo.store';
 
 const props = defineProps<{
   todo: TodoItem;
+  overrideSelect?: () => void;
 }>();
 
 const editing = ref(false);
@@ -121,8 +122,8 @@ const dueDateText = computed(() => {
   const today = todoStore.currentTime.startOf('day');
   const tomorrow = today.add(1, 'day');
 
-  if (due.isSame(today, 'day')) return 'Today';
-  if (due.isSame(tomorrow, 'day')) return 'Tomorrow';
+  if (due.isSame(today, 'day')) return i18nHelper.todo.today;
+  if (due.isSame(tomorrow, 'day')) return i18nHelper.todo.tomorrow;
   return due.format('ddd, MMM D');
 });
 
@@ -165,7 +166,11 @@ const onTitleBlur = () => {
 
 const handleTitleClick = () => {
   if (!todoStore.detailVisible || todoStore.selectedTodo?.id !== props.todo.id) {
-    todoStore.selectTodo(props.todo);
+    if (props.overrideSelect) {
+      props.overrideSelect();
+    } else {
+      todoStore.selectTodo(props.todo);
+    }
   } else {
     startEditing();
   }
@@ -173,7 +178,11 @@ const handleTitleClick = () => {
 
 const handleRowClick = () => {
   if (!editing.value) {
-    todoStore.selectTodo(props.todo);
+    if (props.overrideSelect) {
+      props.overrideSelect();
+    } else {
+      todoStore.selectTodo(props.todo);
+    }
   }
 };
 

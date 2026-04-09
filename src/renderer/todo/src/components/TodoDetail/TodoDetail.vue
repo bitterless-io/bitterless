@@ -101,9 +101,9 @@
         </div>
       </div>
 
-      <!-- Remind section -->
-      <div class="todo-detail__section">
-        <span class="todo-detail__section-label">Remind</span>
+      <!-- Remind section (hidden, reserved for future use) -->
+      <!-- <div class="todo-detail__section">
+        <span class="todo-detail__section-label">{{ i18nHelper.todo.remind }}</span>
         <div class="todo-detail__field-row">
           <a-date-picker
             :model-value="remindDateValue"
@@ -111,20 +111,23 @@
             style="width: 100%"
             show-time
             format="YYYY-MM-DD HH:mm"
+            :ok-text="i18nHelper.todo.remindConfirm"
+            :shortcuts="remindShortcuts"
             @change="onRemindChange"
             allow-clear
           />
         </div>
-      </div>
+      </div> -->
 
       <!-- Due date section -->
       <div class="todo-detail__section">
-        <span class="todo-detail__section-label">Due date</span>
+        <span class="todo-detail__section-label">{{ i18nHelper.todo.dueDate }}</span>
         <div class="todo-detail__field-row">
           <a-date-picker
             :model-value="dueDateValue"
             size="mini"
             style="width: 100%"
+            :shortcuts="dueDateShortcuts"
             @change="onDueDateChange"
             allow-clear
           />
@@ -268,6 +271,16 @@ watch(() => todoStore.subTodos, (subs) => {
 const addingStep = ref(false);
 const newStepTitle = ref('');
 const addStepInputRef = ref<any>(null);
+
+const dueDateShortcuts = computed(() => [
+  { label: i18nHelper.todo.today, value: () => dayjs().toDate() },
+  { label: i18nHelper.todo.tomorrow, value: () => dayjs().add(1, 'day').toDate() },
+  { label: i18nHelper.todo.nextWeek, value: () => dayjs().add((8 - dayjs().day()) % 7 || 7, 'day').startOf('day').toDate() },
+]);
+
+const remindShortcuts = computed(() => [
+  { label: i18nHelper.todo.remindNow, value: () => dayjs().toDate() },
+]);
 
 const dueDateValue = computed(() => {
   if (!todoStore.selectedTodo?.due_at) return undefined;

@@ -17,6 +17,9 @@
           <a-doption @click="handleToggleShowCompleted">
             {{ todoSettingStore.showCompleted ? i18nHelper.todo.hideCompleted : i18nHelper.todo.showCompleted }}
           </a-doption>
+          <a-doption @click="handleToggleShowFocused">
+            {{ todoSettingStore.showFocused ? i18nHelper.todo.hideFocused : i18nHelper.todo.showFocused }}
+          </a-doption>
         </template>
       </a-dropdown>
       <a-button v-if="!isStandalone" size="mini" type="text" @click="handleOpenInWindow">
@@ -24,6 +27,13 @@
           <icon-launch />
         </template>
       </a-button>
+      <a-tooltip v-if="isStandalone && isMac" :content="i18nHelper.todo.pinOnTop" position="br" mini>
+        <a-button size="mini" type="text" :class="{ 'menubar__pin-btn--active': isPinned }" @click="handleTogglePin">
+          <template #icon>
+            <icon-to-top />
+          </template>
+        </a-button>
+      </a-tooltip>
       <a-button v-if="isStandalone && isWindows" size="mini" type="text" @click="handleMinimize">
         <template #icon>
           <icon-minus />
@@ -44,8 +54,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import { IconLaunch, IconSettings, IconMinus, IconExpand, IconClose, IconRefresh } from '@arco-design/web-vue/es/icon';
+import { computed, ref, nextTick } from 'vue';
+import { IconLaunch, IconSettings, IconMinus, IconExpand, IconClose, IconRefresh, IconToTop } from '@arco-design/web-vue/es/icon';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoSettingStore } from '../../store/todoSetting.store';
 import { todoStore } from '../../store/todo.store';
@@ -74,6 +84,15 @@ const handleToggleShowCompleted = async () => {
   await todoStore.loadAll();
 };
 
+const handleToggleShowFocused = async () => {
+  await todoSettingStore.toggleShowFocused();
+  if (todoSettingStore.showFocused) {
+    await nextTick();
+    const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
+    boardScroll?.scrollTo({ left: 0, behavior: 'smooth' });
+  }
+};
+
 const handleOpenInWindow = () => {
   todoWindowEmitter.openTodoWindow();
 };
@@ -93,6 +112,13 @@ const handleMaximize = async () => {
 
 const handleClose = async () => {
   await todoWindowEmitter.close();
+};
+
+const isPinned = ref(false);
+
+const handleTogglePin = async () => {
+  isPinned.value = !isPinned.value;
+  await todoWindowEmitter.setAlwaysOnTop({ enable: isPinned.value });
 };
 </script>
 

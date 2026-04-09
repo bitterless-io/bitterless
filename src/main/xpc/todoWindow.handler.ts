@@ -202,6 +202,18 @@ class TodoWindowHandler extends XpcMainHandler {
     return false;
   }
 
+  async setAlwaysOnTop(params: { enable: boolean }): Promise<void> {
+    const win = this.standaloneWindow;
+    if (!win || win.isDestroyed()) return;
+    if (params.enable) {
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      win.setAlwaysOnTop(true, 'screen-saver', 1);
+    } else {
+      win.setAlwaysOnTop(false);
+      win.setVisibleOnAllWorkspaces(false);
+    }
+  }
+
   async reloadTodoData(): Promise<void> {
     if (this.standaloneWindow && !this.standaloneWindow.isDestroyed()) {
       this.standaloneWindow.webContents.reload();
