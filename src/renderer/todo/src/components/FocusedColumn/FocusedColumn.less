@@ -13,11 +13,17 @@
 
 .focused-column__header {
   display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  gap: 8px;
+  flex-direction: column;
+  padding: 8px 12px 6px;
+  gap: 4px;
   user-select: none;
   cursor: default;
+}
+
+.focused-column__header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .focused-column__header-title {
@@ -38,22 +44,22 @@
   flex-shrink: 0;
 }
 
-.focused-column__filter-btn {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  color: oklch(0.5 0.08 60);
-  margin-left: auto;
+.focused-column__filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.focused-column__filter-btn--active {
-  color: oklch(0.45 0.14 60);
-  background-color: oklch(0.85 0.06 60 / 0.6);
+.focused-column__filter-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 
-.focused-column__filter-placeholder {
-  display: inline-block;
-  width: 12px;
+.focused-column__filter-label {
+  font-size: 12px;
+  color: oklch(0.45 0.06 60);
 }
 
 .focused-column__body {
