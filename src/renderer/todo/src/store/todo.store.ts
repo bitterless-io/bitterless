@@ -55,7 +55,7 @@ class TodoState {
   private _timerStarted = false;
 
   constructor() {
-    this.startCurrentTimeLoop();
+    // this.startCurrentTimeLoop();
   }
 
   startCurrentTimeLoop(): void {
@@ -578,3 +578,4 @@ class TodoState {
 }
 
 export const todoStore = reactive(new TodoState()) as TodoState;
+todoStore.startCurrentTimeLoop();

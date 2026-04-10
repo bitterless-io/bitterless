@@ -3,7 +3,7 @@
     class="todo-row"
     :class="{
       'todo-row--active': todoStore.detailVisible && todoStore.selectedTodo?.id === todo.id,
-      'todo-row--new': todoStore.newlyCreatedTodoId === todo.id,
+      'todo-row--new': todoStore.newlyCreatedTodoId === todo.id
     }"
     :data-todo-id="todo.id"
     @click="handleRowClick"
@@ -23,10 +23,12 @@
           class="todo-row__title"
           :class="{
             'todo-row__title--completed': todo.status === 1,
-            'todo-row__title--text-cursor': todoStore.detailVisible && todoStore.selectedTodo?.id === todo.id,
+            'todo-row__title--text-cursor':
+              todoStore.detailVisible && todoStore.selectedTodo?.id === todo.id
           }"
           @click.stop="handleTitleClick"
-        >{{ todo.title }}</span>
+          >{{ todo.title }}</span
+        >
         <textarea
           v-else
           ref="titleInputRef"
@@ -51,7 +53,7 @@
           class="todo-row__due-date"
           :class="{
             'todo-row__due-date--overdue': isOverdue,
-            'todo-row__due-date--future': isFutureOrToday,
+            'todo-row__due-date--future': isFutureOrToday
           }"
         >
           <icon-calendar :size="12" />
@@ -75,7 +77,11 @@
       :offset-y="contextOffsetY"
       @update:visible="contextMenuVisible = $event"
     >
-      <div v-if="canSkipToCurrent" class="context-menu__item context-menu__item--skip" @click="handleSkipToCurrent">
+      <div
+        v-if="canSkipToCurrent"
+        class="context-menu__item context-menu__item--skip"
+        @click="handleSkipToCurrent"
+      >
         <icon-forward :size="14" />
         <span>Skip to current</span>
       </div>
@@ -91,7 +97,14 @@
 import { ref, computed, nextTick } from 'vue';
 import { Modal } from '@arco-design/web-vue';
 import dayjs from 'dayjs';
-import { IconList, IconCalendar, IconStar, IconStarFill, IconDelete, IconForward } from '@arco-design/web-vue/es/icon';
+import {
+  IconList,
+  IconCalendar,
+  IconStar,
+  IconStarFill,
+  IconDelete,
+  IconForward
+} from '@arco-design/web-vue/es/icon';
 import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import { todoStore } from '../../store/todo.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
@@ -117,6 +130,7 @@ const subTodoProgress = computed(() => {
 });
 
 const dueDateText = computed(() => {
+  console.log('todoStore.currentTime', todoStore.currentTime);
   if (!props.todo.due_at) return '';
   const due = dayjs(props.todo.due_at);
   const today = todoStore.currentTime.startOf('day');
@@ -145,7 +159,7 @@ const titleInput = computed({
   get: () => _editingText.value,
   set: (value: string) => {
     _editingText.value = value;
-  },
+  }
 });
 
 const startEditing = async () => {
@@ -229,8 +243,11 @@ const handleDelete = () => {
     escToClose: true,
     okButtonProps: { status: 'danger', size: 'mini' },
     cancelButtonProps: { size: 'mini' },
-    onOk: () => { cleanup(); doAction(); },
-    onCancel: cleanup,
+    onOk: () => {
+      cleanup();
+      doAction();
+    },
+    onCancel: cleanup
   });
 
   document.addEventListener('keydown', onKeydown);

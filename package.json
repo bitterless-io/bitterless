@@ -1,7 +1,7 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.13",
-  "versionCode": 26040904,
+  "_version": "0.0.15",
+  "versionCode": 26041002,
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -37,7 +37,9 @@
     "publish_dev:win": "node scripts/publish.js --env dev --platform win64",
     "publish:mac_arm": "node scripts/publish.js --env prod --platform mac_arm",
     "publish:mac_intel": "node scripts/publish.js --env prod --platform mac_intel",
-    "publish:win": "node scripts/publish.js --env prod --platform win64"
+    "publish:win": "node scripts/publish.js --env prod --platform win64",
+    "patch": "node scripts/patch.js",
+    "deliver": "node scripts/patch.js && git add . && git commit -m 'nm' && git push"
   },
   "dependencies": {
     "@arco-design/web-vue": "^2.57.0",
@@ -135,5 +137,5 @@
     "rig_dev/*"
   ],
   "name": "Bitterless_DEV_DEBUG",
-  "version": "0.0.12"
+  "version": "0.0.13"
 }
