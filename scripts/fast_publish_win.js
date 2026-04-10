@@ -13,4 +13,4 @@ const branch = execSync('git branch --show-current').toString().trim();
 run('git restore .');
 run(`git pull --no-edit origin ${branch}`);
 run('yarn build:win');
-run('yarn publish:win');
+run('node scripts/publish.js --env prod --platform win64');

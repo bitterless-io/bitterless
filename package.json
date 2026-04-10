@@ -1,7 +1,7 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.19",
-  "versionCode": 26041006,
+  "_version": "0.0.20",
+  "versionCode": 26041007,
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -42,7 +42,7 @@
     "deliver": "node scripts/patch.js && git add . && git commit -m 'nm' && node scripts/git_push.js",
     "fast_publish:mac_arm": "node scripts/git_pull.js && yarn build:mac_arm && yarn publish:mac_arm",
     "fast_publish:mac_intel": "node scripts/git_pull.js && yarn build:mac_intel && yarn publish:mac_intel",
-    "fast_publish:win": "node scripts/git_pull.js && yarn build:win && yarn publish:win",
+    "fast_publish:win": "node scripts/fast_publish_win.js",
     "deliver:win": "node scripts/deliver_win.js",
     "fast_publish_win:win": "node scripts/fast_publish_win.js"
   },
