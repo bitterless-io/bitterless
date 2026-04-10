@@ -2,7 +2,7 @@
   <div class="todo-app">
     <MenuBar :is-standalone="isStandalone" />
     <div class="todo-app__board">
-      <div class="todo-app__board-scroll" @click="onBoardClick">
+      <div class="todo-app__board-scroll" ref="boardScrollRef" @scroll="onBoardScroll" @click="onBoardClick">
         <FocusedColumn v-if="todoSettingStore.showFocused" />
         <draggable
           v-model="todoStore.domainList"
@@ -21,6 +21,11 @@
         <AddDomainButton />
         <div v-if="todoStore.detailVisible" class="todo-app__detail-spacer" />
       </div>
+      <transition name="scroll-to-left">
+        <button v-if="showScrollToLeft" class="todo-app__scroll-to-left" @click="scrollToLeft">
+          <icon-left :size="14" />
+        </button>
+      </transition>
       <TodoDetail />
     </div>
   </div>
@@ -29,6 +34,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import draggable from 'vuedraggable';
+import { IconLeft } from '@arco-design/web-vue/es/icon';
 import DomainColumn from './components/DomainColumn/DomainColumn.vue';
 import FocusedColumn from './components/FocusedColumn/FocusedColumn.vue';
 import AddDomainButton from './components/AddDomainButton/AddDomainButton.vue';
@@ -40,6 +46,16 @@ import { initTodoSubscriber } from './xpc/update.subscriber';
 import { todoEnv } from './contextBridge/todoEnv.bridge';
 
 const isStandalone = ref(false);
+const boardScrollRef = ref<HTMLElement | null>(null);
+const showScrollToLeft = ref(false);
+
+const onBoardScroll = () => {
+  showScrollToLeft.value = (boardScrollRef.value?.scrollLeft ?? 0) > 150;
+};
+
+const scrollToLeft = () => {
+  boardScrollRef.value?.scrollTo({ left: 0, behavior: 'smooth' });
+};
 
 const onBoardClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement;

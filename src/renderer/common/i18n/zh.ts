@@ -190,6 +190,7 @@ export const zh: typeof en = {
     focusedFilterImportant: '重要',
     focusedFilterOverdue: '已过期',
     focusedFilterToday: '今天',
+    scrollToFocused: '滚动到专注',
   },
   common: {
     confirm: '确定',

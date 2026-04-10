@@ -207,7 +207,7 @@ class TodoWindowHandler extends XpcMainHandler {
     if (!win || win.isDestroyed()) return;
     if (params.enable) {
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      win.setAlwaysOnTop(true, 'screen-saver', 1);
+      win.setAlwaysOnTop(true, 'floating');
     } else {
       win.setAlwaysOnTop(false);
       win.setVisibleOnAllWorkspaces(false);

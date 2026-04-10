@@ -12,6 +12,7 @@
   flex: 1;
   overflow: hidden;
   position: relative;
+  -webkit-app-region: no-drag;
 }
 
 .todo-app__board-scroll {
@@ -34,4 +35,38 @@
 .todo-app__detail-spacer {
   flex-shrink: 0;
   width: 320px;
+}
+
+.todo-app__scroll-to-left {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 20;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background-color: oklch(0.553 0.195 38.402);
+  color: oklch(1 0 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.18);
+  padding: 0;
+}
+
+.todo-app__scroll-to-left:hover {
+  background-color: oklch(0.47 0.157 37.304);
+}
+
+.scroll-to-left-enter-active,
+.scroll-to-left-leave-active {
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.scroll-to-left-enter-from,
+.scroll-to-left-leave-to {
+  opacity: 0;
+  transform: translateX(8px);
 }

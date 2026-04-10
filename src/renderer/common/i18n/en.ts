@@ -188,6 +188,7 @@ export const en = {
     focusedFilterImportant: 'Important',
     focusedFilterOverdue: 'Overdue',
     focusedFilterToday: 'Today',
+    scrollToFocused: 'Scroll to focused',
   },
   common: {
     confirm: 'Confirm',
