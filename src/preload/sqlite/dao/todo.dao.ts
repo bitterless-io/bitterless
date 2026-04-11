@@ -80,6 +80,23 @@ class TodoDao extends BaseDao {
     if (params.due_at !== undefined) {
       fields.push('due_at = ?');
       values.push(params.due_at);
+
+      if (params.due_at !== null) {
+        const todo = await this.getById({ id: params.id });
+        if (todo?.repeat_type) {
+          const dueMoment = moment(params.due_at);
+          if (todo.repeat_type === 'weekly') {
+            fields.push('week_day = ?');
+            values.push(dueMoment.isoWeekday());
+          } else if (todo.repeat_type === 'monthly') {
+            fields.push('monthly_day = ?');
+            values.push(dueMoment.date());
+          } else if (todo.repeat_type === 'yearly') {
+            fields.push('yearly_day = ?');
+            values.push(dueMoment.date());
+          }
+        }
+      }
     }
     if (params.remind_at !== undefined) {
       fields.push('remind_at = ?');
