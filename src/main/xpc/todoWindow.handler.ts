@@ -172,7 +172,7 @@ class TodoWindowHandler extends XpcMainHandler {
     }
 
     if (is.dev && import.meta.env.VITE_MODE !== 'release') {
-      this.standaloneWindow.webContents.openDevTools({ mode: 'detach' });
+      this.standaloneWindow.webContents.openDevTools({ mode: 'right' });
     }
   }
 

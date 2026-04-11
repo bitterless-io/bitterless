@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted } from 'vue';
+import { computed, nextTick } from 'vue';
 import { IconLaunch, IconSettings, IconMinus, IconExpand, IconClose, IconRefresh, IconToTop } from '@arco-design/web-vue/es/icon';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoSettingStore } from '../../store/todoSetting.store';
@@ -119,11 +119,6 @@ const handleTogglePin = async () => {
   await todoWindowEmitter.setAlwaysOnTop({ enable: todoSettingStore.alwaysOnTop });
 };
 
-onMounted(async () => {
-  if (props.isStandalone && isMac && todoSettingStore.alwaysOnTop) {
-    await todoWindowEmitter.setAlwaysOnTop({ enable: true });
-  }
-});
 </script>
 
 <style lang="less">

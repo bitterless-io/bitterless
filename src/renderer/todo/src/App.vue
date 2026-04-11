@@ -22,9 +22,11 @@
         <div v-if="todoStore.detailVisible" class="todo-app__detail-spacer" />
       </div>
       <transition name="scroll-to-left">
-        <button v-if="showScrollToLeft" class="todo-app__scroll-to-left" @click="scrollToLeft">
-          <icon-left :size="14" />
-        </button>
+        <a-badge v-if="showScrollToLeft" class="todo-app__scroll-to-left-badge" :count="todoStore.focusedTodoList.length" :max-count="99">
+          <button class="todo-app__scroll-to-left" @click="scrollToLeft">
+            <icon-left :size="14" />
+          </button>
+        </a-badge>
       </transition>
       <TodoDetail />
     </div>
@@ -44,6 +46,8 @@ import { todoStore } from './store/todo.store';
 import { todoSettingStore } from './store/todoSetting.store';
 import { initTodoSubscriber } from './xpc/update.subscriber';
 import { todoEnv } from './contextBridge/todoEnv.bridge';
+import { todoWindowEmitter } from './emitter/todoWindow.emitter';
+import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 
 const isStandalone = ref(false);
 const boardScrollRef = ref<HTMLElement | null>(null);
@@ -80,6 +84,9 @@ onMounted(async () => {
   initTodoSubscriber();
   await todoSettingStore.load();
   await todoStore.loadAll();
+  if (isStandalone.value && uaHelper.isMac && todoSettingStore.alwaysOnTop) {
+    await todoWindowEmitter.setAlwaysOnTop({ enable: true });
+  }
   document.addEventListener('keydown', onKeydown);
 });
 
