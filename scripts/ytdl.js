@@ -93,13 +93,27 @@ function buildYtdlpArgs(url, downloadDir, format) {
     ];
 }
 
+let lastProgressMsg = '';
+
+function printProgress(msg) {
+    lastProgressMsg = msg;
+    process.stdout.write(`\r${msg}`);
+}
+
+function printNormal(msg) {
+    if (lastProgressMsg) {
+        process.stdout.write(`\r${' '.repeat(lastProgressMsg.length)}\r`);
+    }
+    process.stdout.write(`${msg}\n`);
+}
+
 function spawnDownload(bin, url, downloadDir, format) {
+    lastProgressMsg = '';
     return new Promise((resolve) => {
         const args = buildYtdlpArgs(url, downloadDir, format);
         const child = spawn(bin, args);
 
-        // yt-dlp writes progress to stdout when --newline is used
-        [child.stdout, child.stderr].forEach((stream) => {
+        function processStream(stream) {
             let buf = '';
             stream.on('data', (chunk) => {
                 buf += chunk.toString();
@@ -112,10 +126,14 @@ function spawnDownload(bin, url, downloadDir, format) {
             stream.on('end', () => {
                 if (buf.trim()) handleLine(buf.trim());
             });
-        });
+        }
+
+        processStream(child.stdout);
+        processStream(child.stderr);
 
         child.on('close', (code) => {
-            process.stdout.write('\n');
+            if (lastProgressMsg) process.stdout.write('\n');
+            lastProgressMsg = '';
             if (code === 0) {
                 console.log('✅ 下载完成！');
                 resolve(true);
@@ -140,32 +158,32 @@ function handleLine(line) {
         const filled = Math.round(pct / 5);
         const bar = '#'.repeat(filled) + '-'.repeat(20 - filled);
         const etaPart = eta ? `  ETA ${eta}` : '';
-        const msg = `\r  📥 [${bar}] ${percent.padStart(6)}%  ${totalSize.trim().padEnd(12)}  ${speed.trim().padEnd(14)}${etaPart}   `;
-        process.stdout.write(msg);
+        const msg = `  📥 [${bar}] ${percent.padStart(6)}%  ${totalSize.trim().padEnd(12)}  ${speed.trim().padEnd(14)}${etaPart}   `;
+        printProgress(msg);
         return;
     }
 
     // Merger / post-processing lines
     if (/\[Merger\]|\[ffmpeg\]|\[ExtractAudio\]|Deleting original file/.test(line)) {
-        process.stdout.write(`\n  🔧 ${line}\n`);
+        printNormal(`  🔧 ${line}`);
         return;
     }
 
     // Destination line
     if (/\[download\] Destination:/.test(line)) {
-        console.log(`  📁 ${line}`);
+        printNormal(`  📁 ${line}`);
         return;
     }
 
     // Already downloaded
     if (/\[download\].*has already been downloaded/.test(line)) {
-        console.log(`  ✔️  ${line}`);
+        printNormal(`  ✔️  ${line}`);
         return;
     }
 
     // Print other informational lines that are not suppressed
     if (!/^\s*$/.test(line) && !/WARNING|\[debug\]/.test(line)) {
-        console.log(`  ${line}`);
+        printNormal(`  ${line}`);
     }
 }
 
