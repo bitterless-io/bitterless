@@ -136,8 +136,11 @@ function handleLine(line) {
     );
     if (progressMatch) {
         const [, percent, totalSize, speed, eta] = progressMatch;
+        const pct = parseFloat(percent);
+        const filled = Math.round(pct / 5);
+        const bar = '#'.repeat(filled) + '-'.repeat(20 - filled);
         const etaPart = eta ? `  ETA ${eta}` : '';
-        const msg = `\r  📥 ${percent.padStart(6)}%  总大小: ${totalSize.trim().padEnd(12)}  速度: ${speed.trim().padEnd(14)}${etaPart}   `;
+        const msg = `\r  📥 [${bar}] ${percent.padStart(6)}%  ${totalSize.trim().padEnd(12)}  ${speed.trim().padEnd(14)}${etaPart}   `;
         process.stdout.write(msg);
         return;
     }
