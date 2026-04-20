@@ -1,6 +1,7 @@
 const youtubedl = require('youtube-dl-exec');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 
 const QUALITY_FORMATS = [
@@ -24,7 +25,7 @@ async function getVideoInfo(url) {
 }
 
 async function downloadYouTube(url) {
-    const downloadDir = path.join(__dirname, 'downloads');
+    const downloadDir = path.join(os.homedir(), 'Downloads');
     if (!fs.existsSync(downloadDir)) {
         fs.mkdirSync(downloadDir, { recursive: true });
     }
