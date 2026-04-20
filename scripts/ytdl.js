@@ -19,7 +19,7 @@ async function getVideoInfo(url) {
     const info = await youtubedl(url, {
         dumpSingleJson: true,
         noWarnings: true,
-        noCallHome: true,
+        cookiesFromBrowser: 'chrome',
     });
     return info;
 }
@@ -89,6 +89,7 @@ function buildYtdlpArgs(url, downloadDir, format) {
         '--merge-output-format', 'mp4',
         '--no-warnings',
         '--newline',
+        '--cookies-from-browser', 'chrome',
     ];
 }
 
