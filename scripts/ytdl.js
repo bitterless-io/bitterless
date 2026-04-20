@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
+const cliProgress = require('cli-progress');
 
 const QUALITY_FORMATS = [
     {
@@ -93,22 +94,38 @@ function buildYtdlpArgs(url, downloadDir, format) {
     ];
 }
 
-let lastProgressMsg = '';
+let progressBar = null;
 
-function printProgress(msg) {
-    lastProgressMsg = msg;
-    process.stdout.write(`\r${msg}`);
+function createProgressBar() {
+    progressBar = new cliProgress.SingleBar({
+        format: '  📥 [{bar}] {percentage}%  {size}  {speed}  ETA {eta_formatted}',
+        barCompleteChar: '#',
+        barIncompleteChar: '-',
+        hideCursor: true,
+        clearOnComplete: false,
+        barsize: 20,
+    });
+    progressBar.start(100, 0, { size: '', speed: '' });
+}
+
+function updateProgress(percent, size, speed, eta) {
+    if (!progressBar) createProgressBar();
+    progressBar.update(parseFloat(percent), { size, speed, eta_formatted: eta || '' });
+}
+
+function stopProgressBar() {
+    if (progressBar) {
+        progressBar.stop();
+        progressBar = null;
+    }
 }
 
 function printNormal(msg) {
-    if (lastProgressMsg) {
-        process.stdout.write(`\r${' '.repeat(lastProgressMsg.length)}\r`);
-    }
-    process.stdout.write(`${msg}\n`);
+    stopProgressBar();
+    console.log(msg);
 }
 
 function spawnDownload(bin, url, downloadDir, format) {
-    lastProgressMsg = '';
     return new Promise((resolve) => {
         const args = buildYtdlpArgs(url, downloadDir, format);
         const child = spawn(bin, args);
@@ -132,8 +149,7 @@ function spawnDownload(bin, url, downloadDir, format) {
         processStream(child.stderr);
 
         child.on('close', (code) => {
-            if (lastProgressMsg) process.stdout.write('\n');
-            lastProgressMsg = '';
+            stopProgressBar();
             if (code === 0) {
                 console.log('✅ 下载完成！');
                 resolve(true);
@@ -154,12 +170,7 @@ function handleLine(line) {
     );
     if (progressMatch) {
         const [, percent, totalSize, speed, eta] = progressMatch;
-        const pct = parseFloat(percent);
-        const filled = Math.round(pct / 5);
-        const bar = '#'.repeat(filled) + '-'.repeat(20 - filled);
-        const etaPart = eta ? `  ETA ${eta}` : '';
-        const msg = `  📥 [${bar}] ${percent.padStart(6)}%  ${totalSize.trim().padEnd(12)}  ${speed.trim().padEnd(14)}${etaPart}   `;
-        printProgress(msg);
+        updateProgress(percent, totalSize.trim(), speed.trim(), eta);
         return;
     }
 

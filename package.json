@@ -64,6 +64,8 @@
     "adm-zip": "^0.5.17",
     "axios": "^1.13.5",
     "better-sqlite3-multiple-ciphers": "12.6.2",
+    "chalk": "4",
+    "cli-progress": "^3.12.0",
     "commander": "^14.0.3",
     "dayjs": "^1.11.19",
     "diff-match-patch-es": "^1.0.1",
