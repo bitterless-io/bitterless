@@ -130,7 +130,6 @@ const subTodoProgress = computed(() => {
 });
 
 const dueDateText = computed(() => {
-  console.log('todoStore.currentTime', todoStore.currentTime);
   if (!props.todo.due_at) return '';
   const due = dayjs(props.todo.due_at);
   const today = todoStore.currentTime.startOf('day');

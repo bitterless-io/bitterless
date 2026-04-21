@@ -151,6 +151,30 @@
             <a-option value="yearly">Yearly</a-option>
           </a-select>
         </div>
+        <div v-if="todoStore.selectedTodo.repeat_type" class="todo-detail__interval-row">
+          <span class="todo-detail__interval-label">{{ i18nHelper.todo.repeatEvery }}</span>
+          <div class="todo-detail__interval-picker" ref="intervalPickerRef">
+            <input
+              class="todo-detail__interval-input"
+              :value="intervalInputText"
+              maxlength="3"
+              @focus="onIntervalFocus"
+              @blur="onIntervalBlur"
+              @input="onIntervalInput"
+            />
+            <div v-if="intervalDropdownVisible" class="todo-detail__interval-dropdown">
+              <div
+                v-for="n in 999"
+                :key="n"
+                class="todo-detail__interval-option"
+                :class="{ 'todo-detail__interval-option--active': n === (todoStore.selectedTodo?.repeat_interval ?? 1) }"
+                :ref="(el) => { if (n === (todoStore.selectedTodo?.repeat_interval ?? 1)) intervalActiveRef = el as HTMLElement; }"
+                @mousedown.prevent="selectInterval(n)"
+              >{{ n }}</div>
+            </div>
+          </div>
+          <span class="todo-detail__interval-unit">{{ repeatUnitLabel }}</span>
+        </div>
         <div
           v-if="canSkipToCurrent"
           class="todo-detail__skip-btn"
@@ -380,10 +404,63 @@ const onDueDateChange = (value: string | Date | undefined) => {
   todoStore.updateTodo({ id: todoStore.selectedTodo.id, due_at: ts });
 };
 
+const repeatUnitLabel = computed(() => {
+  const type = todoStore.selectedTodo?.repeat_type;
+  const interval = todoStore.selectedTodo?.repeat_interval ?? 1;
+  if (type === 'daily') return interval === 1 ? 'day' : 'days';
+  if (type === 'weekly') return interval === 1 ? 'week' : 'weeks';
+  if (type === 'monthly') return interval === 1 ? 'month' : 'months';
+  if (type === 'yearly') return interval === 1 ? 'year' : 'years';
+  return '';
+});
+
 const onRepeatChange = (value: string | number | boolean | Record<string, any> | (string | number | boolean | Record<string, any>)[]) => {
   if (!todoStore.selectedTodo) return;
   const repeatType = value === 'none' ? null : (value as string);
   todoStore.updateRepeatType(todoStore.selectedTodo.id, repeatType);
+};
+
+const intervalPickerRef = ref<HTMLElement | null>(null);
+const intervalActiveRef = ref<HTMLElement | null>(null);
+const intervalDropdownVisible = ref(false);
+const intervalInputText = computed(() => String(todoStore.selectedTodo?.repeat_interval ?? 1));
+
+const onIntervalFocus = () => {
+  intervalDropdownVisible.value = true;
+  nextTick(() => {
+    intervalActiveRef.value?.scrollIntoView({ block: 'center' });
+  });
+};
+
+const onIntervalBlur = (e: FocusEvent) => {
+  const raw = (e.target as HTMLInputElement).value.trim();
+  const parsed = parseInt(raw, 10);
+  const clamped = Number.isFinite(parsed) ? Math.max(1, Math.min(999, parsed)) : 1;
+  if (todoStore.selectedTodo && clamped !== todoStore.selectedTodo.repeat_interval) {
+    todoStore.updateRepeatInterval(todoStore.selectedTodo.id, clamped);
+  }
+  intervalDropdownVisible.value = false;
+};
+
+const _saveRepeatInterval = throttle((id: number, interval: number) => {
+  todoStore.updateRepeatInterval(id, interval);
+}, 300, { trailing: true });
+
+const onIntervalInput = (e: Event) => {
+  const input = e.target as HTMLInputElement;
+  const raw = input.value.replace(/[^0-9]/g, '');
+  input.value = raw;
+  const parsed = parseInt(raw, 10);
+  if (Number.isFinite(parsed) && parsed >= 1 && todoStore.selectedTodo) {
+    const clamped = Math.min(999, parsed);
+    _saveRepeatInterval(todoStore.selectedTodo.id, clamped);
+  }
+};
+
+const selectInterval = (n: number) => {
+  if (!todoStore.selectedTodo) return;
+  todoStore.updateRepeatInterval(todoStore.selectedTodo.id, n);
+  intervalDropdownVisible.value = false;
 };
 
 const onRemindChange = (value: string | Date | undefined) => {

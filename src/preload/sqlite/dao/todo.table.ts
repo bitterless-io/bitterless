@@ -10,6 +10,7 @@ class TodoTable extends BaseTable {
       important INTEGER NOT NULL DEFAULT 0,
       due_at INTEGER,
       repeat_type TEXT,
+      repeat_interval INTEGER NOT NULL DEFAULT 1,
       remind_at INTEGER,
       last_remind_at INTEGER,
       last_complete_at INTEGER,

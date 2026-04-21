@@ -215,6 +215,81 @@
   width: 100%;
 }
 
+.todo-detail__interval-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.todo-detail__interval-label {
+  font-size: 12px;
+  color: oklch(0.5 0 0);
+  flex-shrink: 0;
+}
+
+.todo-detail__interval-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.todo-detail__interval-input {
+  width: 44px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: oklch(0.25 0 0);
+  background: oklch(1 0 0);
+  border: 1px solid oklch(0.85 0 0);
+  border-radius: 4px;
+  outline: none;
+  text-align: center;
+  box-sizing: border-box;
+  cursor: text;
+}
+
+.todo-detail__interval-input:focus {
+  border-color: oklch(0.54 0.08 274);
+}
+
+.todo-detail__interval-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 60px;
+  height: 200px;
+  overflow-y: auto;
+  background: oklch(1 0 0);
+  border: 1px solid oklch(0.88 0 0);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px oklch(0 0 0 / 0.12);
+  z-index: 200;
+}
+
+.todo-detail__interval-option {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: oklch(0.25 0 0);
+  cursor: pointer;
+  text-align: center;
+}
+
+.todo-detail__interval-option:hover {
+  background: oklch(0.95 0.01 274);
+}
+
+.todo-detail__interval-option--active {
+  background: oklch(0.92 0.03 274);
+  color: oklch(0.47 0.07 274);
+  font-weight: 600;
+}
+
+.todo-detail__interval-unit {
+  font-size: 12px;
+  color: oklch(0.5 0 0);
+  flex-shrink: 0;
+}
+
 .todo-detail__skip-btn {
   display: flex;
   align-items: center;

@@ -43,6 +43,7 @@ sqliteManager.addTable(migrationTable);
 
 // Migrations versioncode 来源于当前的 package.json versioncode
 sqliteManager.addMigration(26040705, `ALTER TABLE todos ADD COLUMN note TEXT NOT NULL DEFAULT '';`);
+sqliteManager.addMigration(26042101, `ALTER TABLE todos ADD COLUMN repeat_interval INTEGER NOT NULL DEFAULT 1;`);
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {

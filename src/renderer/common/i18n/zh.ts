@@ -167,6 +167,7 @@ export const zh: typeof en = {
     repeatWeekly: '每周',
     repeatMonthly: '每月',
     repeatYearly: '每年',
+    repeatEvery: '每隔',
     openInWindow: '在新窗口中打开',
     important: '重要',
     completed: '已完成',

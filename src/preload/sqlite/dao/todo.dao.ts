@@ -10,6 +10,7 @@ export interface TodoRow {
   important: number;
   due_at: number | null;
   repeat_type: string | null;
+  repeat_interval: number;
   remind_at: number | null;
   last_remind_at: number | null;
   last_complete_at: number | null;
@@ -133,13 +134,16 @@ class TodoDao extends BaseDao {
     const values: any[] = [params.repeatType, now];
 
     if (params.repeatType && !todo.repeat_type) {
-      // Activating repeat — set due_at to today 00:00 if not set
+      // Activating repeat — set due_at to today 00:00 if not set, reset interval to 1
       let dueAt = todo.due_at;
       if (!dueAt) {
         dueAt = moment().startOf('day').valueOf();
         updates.push('due_at = ?');
         values.push(dueAt);
       }
+
+      updates.push('repeat_interval = ?');
+      values.push(1);
 
       const dueMoment = moment(dueAt);
 
@@ -157,14 +161,23 @@ class TodoDao extends BaseDao {
     }
 
     if (!params.repeatType) {
-      // Clearing repeat — reset helper fields
-      updates.push('week_day = NULL', 'monthly_day = NULL', 'yearly_day = NULL');
+      // Clearing repeat — reset helper fields and interval
+      updates.push('week_day = NULL', 'monthly_day = NULL', 'yearly_day = NULL', 'repeat_interval = 1');
     }
 
     values.push(params.id);
     await sqliteHelper.safeRun(
       `UPDATE todos SET ${updates.join(', ')} WHERE id = ?`,
       values,
+    );
+    return this.getById({ id: params.id });
+  }
+
+  async updateRepeatInterval(params: { id: number; interval: number }): Promise<TodoRow | undefined> {
+    const interval = Math.max(1, Math.min(999, Math.floor(params.interval)));
+    await sqliteHelper.safeRun(
+      'UPDATE todos SET repeat_interval = ?, updated_at = ? WHERE id = ?',
+      [interval, Date.now(), params.id],
     );
     return this.getById({ id: params.id });
   }
@@ -180,6 +193,7 @@ class TodoDao extends BaseDao {
     if (todo.repeat_type && todo.due_at) {
       const nextDue = this.computeNextDueAfterComplete(todo.due_at, {
         repeatType: todo.repeat_type,
+        repeatInterval: todo.repeat_interval ?? 1,
         weekDay: todo.week_day,
         monthlyDay: todo.monthly_day,
         yearlyDay: todo.yearly_day,
@@ -277,6 +291,7 @@ class TodoDao extends BaseDao {
 
     const nearestDue = this.computeNearestFutureDue(todo.due_at, {
       repeatType: todo.repeat_type,
+      repeatInterval: todo.repeat_interval ?? 1,
       weekDay: todo.week_day,
       monthlyDay: todo.monthly_day,
       yearlyDay: todo.yearly_day,
@@ -305,25 +320,27 @@ class TodoDao extends BaseDao {
     dueAt: number,
     options: {
       repeatType: string;
+      repeatInterval: number;
       weekDay: number | null;
       monthlyDay: number | null;
       yearlyDay: number | null;
     },
   ): number {
-    const { repeatType, weekDay, monthlyDay, yearlyDay } = options;
+    const { repeatType, repeatInterval, weekDay, monthlyDay, yearlyDay } = options;
+    const interval = Math.max(1, repeatInterval);
     const originalDay = moment(dueAt).startOf('day');
 
     if (repeatType === 'daily') {
-      return moment(originalDay).add(1, 'day').startOf('day').valueOf();
+      return moment(originalDay).add(interval, 'day').startOf('day').valueOf();
     }
 
     if (repeatType === 'weekly') {
-      return moment(originalDay).add(7, 'days').startOf('day').valueOf();
+      return moment(originalDay).add(interval * 7, 'days').startOf('day').valueOf();
     }
 
     if (repeatType === 'monthly') {
       const targetDay = monthlyDay ?? moment(dueAt).date();
-      const candidate = moment(originalDay).add(1, 'month').startOf('month');
+      const candidate = moment(originalDay).add(interval, 'month').startOf('month');
       return candidate.date(Math.min(targetDay, candidate.daysInMonth())).startOf('day').valueOf();
     }
 
@@ -331,64 +348,66 @@ class TodoDao extends BaseDao {
       const originalMoment = moment(dueAt);
       const targetMonth = originalMoment.month();
       const targetDay = yearlyDay ?? originalMoment.date();
-      const candidate = moment(originalDay).add(1, 'year').month(targetMonth).startOf('month');
+      const candidate = moment(originalDay).add(interval, 'year').month(targetMonth).startOf('month');
       return candidate.date(Math.min(targetDay, candidate.daysInMonth())).startOf('day').valueOf();
     }
 
-    return moment(originalDay).add(1, 'day').startOf('day').valueOf();
+    return moment(originalDay).add(interval, 'day').startOf('day').valueOf();
   }
 
   private computeNearestFutureDue(
     dueAt: number,
     options: {
       repeatType: string;
+      repeatInterval: number;
       weekDay: number | null;
       monthlyDay: number | null;
       yearlyDay: number | null;
     },
   ): number {
     const today = moment().startOf('day');
-    const { repeatType, weekDay, monthlyDay, yearlyDay } = options;
+    const { repeatType, repeatInterval, weekDay, monthlyDay, yearlyDay } = options;
+    const interval = Math.max(1, repeatInterval);
 
     if (repeatType === 'daily') {
-      return today.valueOf();
+      // Walk forward from dueAt in steps of interval until >= today
+      let candidate = moment(dueAt).startOf('day');
+      while (candidate.isBefore(today)) {
+        candidate = candidate.add(interval, 'day');
+      }
+      return candidate.valueOf();
     }
 
     if (repeatType === 'weekly') {
-      const targetDay = weekDay ?? moment(dueAt).isoWeekday();
-      const todayDay = today.isoWeekday();
-      let daysUntil = targetDay - todayDay;
-      if (daysUntil < 0) daysUntil += 7;
-      return moment(today).add(daysUntil, 'days').startOf('day').valueOf();
+      let candidate = moment(dueAt).startOf('day');
+      while (candidate.isBefore(today)) {
+        candidate = candidate.add(interval * 7, 'days');
+      }
+      return candidate.valueOf();
     }
 
     if (repeatType === 'monthly') {
       const targetDay = monthlyDay ?? moment(dueAt).date();
-      let candidate = moment(today).startOf('month');
-      const maxDay = candidate.daysInMonth();
-      const clampedDay = Math.min(targetDay, maxDay);
-      candidate = candidate.date(clampedDay);
-      if (candidate.isBefore(today)) {
-        candidate = moment(today).add(1, 'month').startOf('month');
-        const nextMaxDay = candidate.daysInMonth();
-        candidate = candidate.date(Math.min(targetDay, nextMaxDay));
+      let candidate = moment(dueAt).startOf('day');
+      while (candidate.isBefore(today)) {
+        candidate = candidate.add(interval, 'month').startOf('month');
+        const maxDay = candidate.daysInMonth();
+        candidate = candidate.date(Math.min(targetDay, maxDay)).startOf('day');
       }
-      return candidate.startOf('day').valueOf();
+      return candidate.valueOf();
     }
 
     if (repeatType === 'yearly') {
       const originalMoment = moment(dueAt);
       const targetMonth = originalMoment.month();
       const targetDay = yearlyDay ?? originalMoment.date();
-      let candidate = moment(today).month(targetMonth).startOf('month');
-      const maxDay = candidate.daysInMonth();
-      candidate = candidate.date(Math.min(targetDay, maxDay));
-      if (candidate.isBefore(today)) {
-        candidate = moment(today).add(1, 'year').month(targetMonth).startOf('month');
-        const nextMaxDay = candidate.daysInMonth();
-        candidate = candidate.date(Math.min(targetDay, nextMaxDay));
+      let candidate = moment(dueAt).startOf('day');
+      while (candidate.isBefore(today)) {
+        candidate = candidate.add(interval, 'year').month(targetMonth).startOf('month');
+        const maxDay = candidate.daysInMonth();
+        candidate = candidate.date(Math.min(targetDay, maxDay)).startOf('day');
       }
-      return candidate.startOf('day').valueOf();
+      return candidate.valueOf();
     }
 
     return today.valueOf();
@@ -401,32 +420,33 @@ class TodoDao extends BaseDao {
     baseTime: number,
     options: {
       repeatType: string;
+      repeatInterval: number;
       weekDay: number | null;
       monthlyDay: number | null;
       yearlyDay: number | null;
     },
   ): number {
     const base = moment(baseTime);
-    const { repeatType, weekDay, monthlyDay, yearlyDay } = options;
+    const { repeatType, repeatInterval, weekDay, monthlyDay, yearlyDay } = options;
+    const interval = Math.max(1, repeatInterval);
 
     if (repeatType === 'daily') {
-      return moment(base).add(1, 'day').startOf('day').valueOf();
+      return moment(base).add(interval, 'day').startOf('day').valueOf();
     }
 
     if (repeatType === 'weekly') {
       const targetDay = weekDay ?? moment(currentDate).isoWeekday();
       let next = moment(base).startOf('day');
-      // Move to next occurrence of targetDay
       const currentDay = next.isoWeekday();
       let daysUntil = targetDay - currentDay;
-      if (daysUntil <= 0) daysUntil += 7;
+      if (daysUntil <= 0) daysUntil += interval * 7;
       next = next.add(daysUntil, 'days');
       return next.startOf('day').valueOf();
     }
 
     if (repeatType === 'monthly') {
       const targetDay = monthlyDay ?? moment(currentDate).date();
-      let next = moment(base).add(1, 'month').startOf('month');
+      let next = moment(base).add(interval, 'month').startOf('month');
       const maxDay = next.daysInMonth();
       const clampedDay = Math.min(targetDay, maxDay);
       next = next.date(clampedDay);
@@ -437,7 +457,7 @@ class TodoDao extends BaseDao {
       const originalMoment = moment(currentDate);
       const targetMonth = originalMoment.month(); // 0-indexed
       const targetDay = yearlyDay ?? originalMoment.date();
-      let next = moment(base).add(1, 'year').month(targetMonth).startOf('month');
+      let next = moment(base).add(interval, 'year').month(targetMonth).startOf('month');
       const maxDay = next.daysInMonth();
       const clampedDay = Math.min(targetDay, maxDay);
       next = next.date(clampedDay);
@@ -445,7 +465,7 @@ class TodoDao extends BaseDao {
     }
 
     // Fallback
-    return moment(base).add(1, 'day').startOf('day').valueOf();
+    return moment(base).add(interval, 'day').startOf('day').valueOf();
   }
 }
 

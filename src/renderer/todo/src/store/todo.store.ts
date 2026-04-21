@@ -27,6 +27,7 @@ export interface TodoItem {
   important: number;
   due_at: number | null;
   repeat_type: string | null;
+  repeat_interval: number;
   remind_at: number | null;
   last_remind_at: number | null;
   last_complete_at: number | null;
@@ -335,6 +336,18 @@ class TodoState {
 
   async updateRepeatType(id: number, repeatType: string | null): Promise<void> {
     const result = await todoEmitter.updateRepeatType({ id, repeatType });
+    if (result) {
+      this._replaceInActiveList(result);
+      this._replaceInCompletedList(result);
+      if (this.selectedTodo?.id === id) {
+        this.selectedTodo = result;
+      }
+      this.broadcastDataUpdated();
+    }
+  }
+
+  async updateRepeatInterval(id: number, interval: number): Promise<void> {
+    const result = await todoEmitter.updateRepeatInterval({ id, interval });
     if (result) {
       this._replaceInActiveList(result);
       this._replaceInCompletedList(result);

@@ -165,6 +165,7 @@ export const en = {
     repeatWeekly: 'Weekly',
     repeatMonthly: 'Monthly',
     repeatYearly: 'Yearly',
+    repeatEvery: 'Every',
     openInWindow: 'Open in window',
     important: 'Important',
     completed: 'Completed',
