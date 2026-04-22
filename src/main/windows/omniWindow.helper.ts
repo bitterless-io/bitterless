@@ -332,6 +332,27 @@ export class OmniWindowHelper {
       this.menubarView.webContents.openDevTools({ mode: 'detach' });
     }
 
+    // Permission handler: deny notifications for specific domains (e.g. larksuite.com),
+    // allow for all others so the executeJavaScript override can intercept them instead.
+    const NOTIFICATION_BLOCKED_DOMAINS = ['larksuite.com'];
+    session.fromPartition(OMNI_PARTITION).setPermissionRequestHandler((webContents, permission, callback) => {
+      if (permission === 'notifications') {
+        try {
+          const hostname = new URL(webContents.getURL()).hostname;
+          const blocked = NOTIFICATION_BLOCKED_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+          if (blocked) {
+            console.log(`[OmniWindowHelper] Notification permission denied for ${hostname}`);
+            callback(false);
+            return;
+          }
+        } catch {
+          callback(false);
+          return;
+        }
+      }
+      callback(true);
+    });
+
     // Restore saved cell layout so cells appear immediately on window open
     await this.restoreSavedLayout();
 
