@@ -13,6 +13,7 @@ interface MessageRow {
   search_text: string;
   platform: string;
   created_at: number;
+  type: string;
 }
 
 export interface MessageInsertParams {
@@ -20,6 +21,7 @@ export interface MessageInsertParams {
   role: string;
   content: string;
   platform?: string;
+  type?: string;
 }
 
 export class MessageDao extends BaseDao {
@@ -28,9 +30,10 @@ export class MessageDao extends BaseDao {
     const id = snowflake.generate().toString().padStart(19, '0');
     const searchText = generateSearchText(params.content);
     const createdAt = Date.now();
+    const type = params.type ?? 'text';
     await sqliteHelper.safeRun(
-      'INSERT INTO message (id, session_id, role, content, search_text, platform, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, params.sessionId, params.role, params.content, searchText, params.platform ?? 'bitterless', createdAt],
+      'INSERT INTO message (id, session_id, role, content, search_text, platform, created_at, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, params.sessionId, params.role, params.content, searchText, params.platform ?? 'bitterless', createdAt, type],
     );
     return {
       id,
@@ -40,6 +43,7 @@ export class MessageDao extends BaseDao {
       search_text: searchText,
       platform: params.platform ?? 'bitterless',
       created_at: createdAt,
+      type,
     };
   }
 

@@ -14,10 +14,12 @@ class MessageTable extends BaseTable {
       outer_to_id TEXT NOT NULL DEFAULT '',
       mention_list TEXT NOT NULL DEFAULT '',
       is_group INTEGER NOT NULL DEFAULT 0,
-      outer_session_id TEXT NOT NULL DEFAULT ''
+      outer_session_id TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL DEFAULT 'text'
     );
     CREATE INDEX IF NOT EXISTS idx_message_session ON message(session_id);
     CREATE INDEX IF NOT EXISTS idx_message_search ON message(search_text);
+    CREATE INDEX IF NOT EXISTS idx_message_type ON message(type);
   `;
 }
 

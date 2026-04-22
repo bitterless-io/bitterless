@@ -20,8 +20,9 @@ export class MessageController {
   isResponding = false;
   currentTitle = '';
   inputContent = '';
+  streamingContent = '';
   placeholder = i18nHelper.chat.inputPlaceHolder;
-  scrollStatus = {}
+  scrollStatus = {};
 
   setMessageListRef(el: HTMLElement | null): void {
     _messageListRef = el;
@@ -54,7 +55,7 @@ export class MessageController {
       sessionId,
       role: 'assistant',
       content: '',
-      createdAt: Date.now(),
+      createdAt: Date.now()
     };
   }
 
@@ -74,7 +75,7 @@ export class MessageController {
 
     const insertedMessage = await xpcRenderer.send('chat/send', {
       sessionId: sessionStore.currentSessionId,
-      content: trimmedContent,
+      content: trimmedContent
     });
 
     if (insertedMessage) {
@@ -83,7 +84,7 @@ export class MessageController {
         sessionId: insertedMessage.session_id,
         role: insertedMessage.role,
         content: insertedMessage.content,
-        createdAt: moment(insertedMessage.created_at).format('YYYY-MM-DD HH:mm:ss'),
+        createdAt: moment(insertedMessage.created_at).format('YYYY-MM-DD HH:mm:ss')
       });
 
       const streamingMsg = this.createStreamingMsg(sessionStore.currentSessionId!);
@@ -93,13 +94,17 @@ export class MessageController {
   }
   async stopResponse(): Promise<void> {
     await xpcRenderer.send('chat/stop', {
-      sessionId: sessionStore.currentSessionId,
+      sessionId: sessionStore.currentSessionId
     });
+    this.isStreaming = false;
+    this.isResponding = false;
+    await this.messageListService.tryClearLast();
+    this.focusMessageInput();
   }
 
   constructor(
     @inject(Symbol.for(MessageListService.name))
-    public readonly messageListService: MessageListService,
+    public readonly messageListService: MessageListService
   ) {
     this.messageListService.setState(this);
   }

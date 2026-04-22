@@ -229,6 +229,26 @@ export class MessageListService extends CommonService<MessageController> {
     this.hasNew = false;
   }
 
+  async tryClearLast(): Promise<void> {
+    const list = this._state.showedMessageList;
+    if (list.length === 0) return;
+    const last = list[list.length - 1];
+    if (last.id || last.role !== 'assistant') return;
+    if (!last.content.trim()) {
+      list.pop();
+    } else {
+      const inserted = await messageEmitter.insert({
+        sessionId: last.sessionId,
+        role: last.role,
+        content: last.content,
+      });
+      if (inserted) {
+        last.id = inserted.id;
+        last.createdAt = inserted.created_at;
+      }
+    }
+  }
+
   scrollToBottom(): void {
     const el = this._state.getMessageListRef();
     if (!el) return;

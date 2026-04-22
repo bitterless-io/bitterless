@@ -332,6 +332,17 @@ export class OmniWindowHelper {
       this.menubarView.webContents.openDevTools({ mode: 'detach' });
     }
 
+    // Allow notification permission so the 'notification' event fires on browser cells
+    // (event.preventDefault() in the handler suppresses the actual system popup)
+    const omniSession = session.fromPartition(OMNI_PARTITION);
+    omniSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      if (permission === 'notifications') {
+        callback(true);
+      } else {
+        callback(false);
+      }
+    });
+
     // Restore saved cell layout so cells appear immediately on window open
     await this.restoreSavedLayout();
 
@@ -484,6 +495,19 @@ export class OmniWindowHelper {
     menubar.webContents.on('focus' as any, () => {
       if (!this.isWebContentsAlive(menubar.webContents)) return;
       this.broadcastActiveCell(id);
+    });
+
+    // Intercept web notifications from browser cells — suppress system popups, log content
+    browser.webContents.on('notification' as any, (event: any, options: any) => {
+      event.preventDefault();
+      console.log(`[OmniWindowHelper] Cell ${id} notification intercepted:`, {
+        title: options.title,
+        body: options.body,
+        icon: options.icon,
+        tag: options.tag,
+        silent: options.silent,
+        time: new Date().toISOString(),
+      });
     });
 
     // Block remote pages from setting app badge (e.g. Telegram Web)
