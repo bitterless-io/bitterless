@@ -62,7 +62,8 @@ export default defineConfig({
           llama: resolve('src/preload/llama/llama.preload.ts'),
           fs: resolve('src/preload/fs/fs.preload.ts'),
           todo: resolve('src/preload/todo/todo.preload.ts'),
-          omni: resolve('src/preload/omni/omni.preload.ts')
+          omni: resolve('src/preload/omni/omni.preload.ts'),
+          omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp', /tiktoken/, /js-tiktoken/, 'linkedom', '@mozilla/readability', 'playwright', 'playwright-core']
       }

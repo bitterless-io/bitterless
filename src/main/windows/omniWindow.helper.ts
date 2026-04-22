@@ -433,11 +433,12 @@ export class OmniWindowHelper {
     const menubar = this.createWebContentsView('omniCell', [`--cellId=${id}`, `--initialUrl=${url || ''}`]);
     this.baseWindow.contentView.addChildView(menubar);
 
-    // Browser view (no preload — raw web content, shared session)
+    // Browser view (raw web content, shared session)
     const omniSession = session.fromPartition(OMNI_PARTITION);
     const browser = new WebContentsView({
       webPreferences: {
-        sandbox: true,
+        preload: join(__dirname, '../preload/omniCellContent.js'),
+        sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
         session: omniSession,
