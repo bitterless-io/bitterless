@@ -488,6 +488,8 @@ export class OmniWindowHelper {
     });
 
     // Block remote pages from setting app badge (e.g. Telegram Web)
+    // Also override Notification in the main world (executeJavaScript runs in main world,
+    // bypassing contextIsolation — preload-level assignment only affects the isolated world).
     browser.webContents.on('dom-ready', () => {
       if (!this.isWebContentsAlive(browser.webContents)) return;
       browser.webContents.executeJavaScript(`
@@ -496,6 +498,34 @@ export class OmniWindowHelper {
         }
         if ('clearAppBadge' in navigator) {
           navigator.clearAppBadge = () => Promise.resolve();
+        }
+
+        // Layer 1: override window.Notification in main world
+        window.Notification = class InterceptedNotification {
+          static permission = 'granted';
+          static requestPermission() { return Promise.resolve('granted'); }
+          constructor(title, options) {
+            console.log('[OmniCell] Notification intercepted:', { title, body: options && options.body, tag: options && options.tag, time: new Date().toISOString() });
+          }
+          addEventListener() {} removeEventListener() {} dispatchEvent() { return false; } close() {}
+        };
+
+        // Layer 2: override ServiceWorker showNotification (handles SW-triggered notifications)
+        function patchSWRegistration(reg) {
+          reg.showNotification = function(title, options) {
+            console.log('[OmniCell] SW showNotification intercepted:', { title, body: options && options.body, tag: options && options.tag, time: new Date().toISOString() });
+            return Promise.resolve();
+          };
+        }
+        if (navigator.serviceWorker) {
+          navigator.serviceWorker.ready.then(patchSWRegistration).catch(function(){});
+          var _origRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+          navigator.serviceWorker.register = function() {
+            return _origRegister.apply(null, arguments).then(function(reg) {
+              patchSWRegistration(reg);
+              return reg;
+            });
+          };
         }
       `).catch(() => {});
     });
