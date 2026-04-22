@@ -44,28 +44,33 @@
       </div>
       <div class="todo-detail__body">
       <!-- Sub-todos section -->
-      <div class="todo-detail__section">
+      <div class="todo-detail__section todo-detail__subtodo">
         <span class="todo-detail__section-label">Steps</span>
         <div class="todo-detail__subtodo-list">
           <draggable
             v-model="todoStore.subTodos"
             item-key="id"
+            handle=".todo-detail__subtodo-handle"
             :animation="200"
             @end="onSubTodoDragEnd"
           >
             <template #item="{ element }">
-              <div class="todo-detail__subtodo-item">
+              <div class="todo-detail__subtodo-item" @click="activateSubTodo($event, element.id)">
+                <span class="todo-detail__subtodo-handle">⠿</span>
                 <a-checkbox
                   :model-value="element.status === 1"
                   size="mini"
+                  @click.stop
                   @change="todoStore.toggleSubTodoStatus(element.id, { wasCompleted: element.status === 1 })"
                 />
                 <textarea
                   class="todo-detail__subtodo-title"
-                  :class="{ 'todo-detail__subtodo-title--completed': element.status === 1 }"
+                  :class="{ 'todo-detail__subtodo-title--completed': element.status === 1, 'todo-detail__subtodo-title--active': activeSubTodoId === element.id }"
                   :value="subTodoEditingTexts[element.id] ?? element.title"
                   :placeholder="i18nHelper.todo.stepPlaceholder"
                   rows="1"
+                  @click.stop
+                  @focus="activeSubTodoId = element.id"
                   @blur="(e) => onSubTitleBlur(e, element.id)"
                   @input="(e) => { onSubTitleInput(element.id, e.target as HTMLTextAreaElement); }"
                   @keydown.enter.exact.prevent="onSubTitleEnter($event, element.id)"
@@ -364,7 +369,20 @@ const onSubTitleEnter = async (e: KeyboardEvent, id: number) => {
   }
 };
 
+const activeSubTodoId = ref<number | null>(null);
+
+const activateSubTodo = async (e: MouseEvent, id: number) => {
+  if (activeSubTodoId.value === id) return;
+  activeSubTodoId.value = id;
+  await nextTick();
+  const allItems = document.querySelectorAll<HTMLTextAreaElement>('.todo-detail__subtodo-title--active');
+  if (allItems.length > 0) {
+    allItems[0].focus();
+  }
+};
+
 const onSubTitleBlur = (e: FocusEvent, id: number) => {
+  activeSubTodoId.value = null;
   const trimmed = (e.target as HTMLTextAreaElement).value.trim();
   subTodoEditingTexts[id] = trimmed;
   if (trimmed) {
