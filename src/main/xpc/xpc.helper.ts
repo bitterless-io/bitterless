@@ -9,6 +9,7 @@ import './omniWindow.handler';
 import './shell.handler';
 import './sqlitePassword.handler';
 import './mainWindow.handler';
+import './auth.handler';
 // import { ptyManager } from '../ptyHelper/ptyManager';
 // import { PtyService } from '../ptyHelper/ptyXpc';
 

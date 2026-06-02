@@ -1,0 +1,111 @@
+.login-view {
+  min-height: 100vh;
+  width: 100vw;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    linear-gradient(120deg, rgba(8, 24, 36, 0.92), rgba(12, 32, 42, 0.86)),
+    radial-gradient(circle at 18% 24%, rgba(53, 187, 165, 0.28), transparent 34%),
+    radial-gradient(circle at 82% 72%, rgba(246, 180, 82, 0.28), transparent 28%), #0c1d25;
+  padding: 32px;
+}
+
+.login-view__panel {
+  width: min(420px, calc(100vw - 40px));
+  padding: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(250, 252, 247, 0.96);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+}
+
+.login-view__mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #14232b;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin-bottom: 28px;
+}
+
+.login-view__mark-line {
+  display: block;
+  width: 32px;
+  height: 2px;
+  border-radius: 999px;
+  background: #2aa78f;
+}
+
+.login-view__copy {
+  margin-bottom: 24px;
+
+  h1 {
+    margin: 0;
+    color: #0f1f26;
+    font-size: 30px;
+    line-height: 1.18;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  p {
+    margin: 10px 0 0;
+    color: #607078;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+}
+
+.login-view__form {
+  .arco-form-item {
+    margin-bottom: 18px;
+  }
+
+  .arco-form-item-label {
+    color: #314149;
+    font-weight: 600;
+  }
+
+  .arco-input-wrapper {
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .arco-btn-primary {
+    margin-top: 6px;
+    border-radius: 8px;
+    background: #0d6f62;
+    border-color: #0d6f62;
+    font-weight: 700;
+
+    &:hover {
+      background: #0f8273;
+      border-color: #0f8273;
+    }
+  }
+}
+
+.login-view__footer {
+  margin-top: 18px;
+  color: #718088;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .login-view {
+    padding: 20px;
+  }
+
+  .login-view__panel {
+    padding: 26px;
+  }
+
+  .login-view__copy h1 {
+    font-size: 26px;
+  }
+}

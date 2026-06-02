@@ -3,9 +3,20 @@ import { onMounted, onUnmounted } from 'vue';
 import HomeMenu from './components/homeMenu/HomeMenu.vue';
 import MenuBar from '../../components/MenuBar/MenuBar.vue';
 import MessageSearch from '../chat/components/MessageSearch/MessageSearch.vue';
-import { initSearchShortcut, destroySearchShortcut } from '../chat/components/MessageSearch/messageSearch.store';
+import {
+  initSearchShortcut,
+  destroySearchShortcut
+} from '../chat/components/MessageSearch/messageSearch.store';
+import { loadProxySetting } from '@/views/setting/components/ProxySetting/proxySetting.store';
+import { initConnectors } from '../connector/connector.init';
 
-onMounted(() => initSearchShortcut());
+onMounted(() => {
+  initSearchShortcut();
+  loadProxySetting();
+  initConnectors().catch((err) => {
+    console.error('[layout] failed to initialize connectors:', err);
+  });
+});
 onUnmounted(() => destroySearchShortcut());
 </script>
 

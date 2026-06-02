@@ -8,33 +8,33 @@ const baseRoutes: RouteRecordRaw[] = [
     name: 'chat',
     component: () => import('@/views/chat/Chat.vue'),
     meta: {
-      icon: 'chat.png',
-    },
+      icon: 'chat.png'
+    }
   },
   {
     path: 'mini-app',
     name: 'miniApp',
     component: () => import('@/views/miniApp/MiniApp.vue'),
     meta: {
-      icon: 'mini-app.png',
-    },
+      icon: 'mini-app.png'
+    }
   },
   {
     path: 'connector',
     name: 'connector',
     component: () => import('@/views/connector/Connector.vue'),
     meta: {
-      icon: 'connector.png',
-    },
+      icon: 'connector.png'
+    }
   },
   {
     path: 'setting',
     name: 'setting',
     component: () => import('@/views/setting/Setting.vue'),
     meta: {
-      icon: 'setting.png',
-    },
-  },
+      icon: 'setting.png'
+    }
+  }
 ];
 
 const devRoutes: RouteRecordRaw[] = [
@@ -43,24 +43,36 @@ const devRoutes: RouteRecordRaw[] = [
     name: 'debug',
     component: () => import('@/views/debug/Debug.vue'),
     meta: {
-      icon: 'debug.png',
-    },
+      icon: 'debug.png'
+    }
   },
   {
     path: 'plugin-test',
     name: 'pluginTest',
     component: () => import('@/views/plugins/pluginTest/PluginTest.vue'),
     meta: {
-      icon: 'plugin.png',
-    },
-  },
+      icon: 'plugin.png'
+    }
+  }
 ];
 
 export const defaultRoutes: RouteRecordRaw[] = [
   {
+    path: '/login',
+    name: 'login',
+    component: () => import('@/views/login/Login.vue'),
+    meta: {
+      public: true
+    }
+  },
+  {
     path: '/',
     component: () => import('@/views/layout/Layout.vue'),
     redirect: '/chat',
-    children: [...baseRoutes, ...(isDev ? devRoutes : [])],
+    children: [...baseRoutes, ...(isDev ? devRoutes : [])]
   },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/chat'
+  }
 ];

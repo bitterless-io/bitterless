@@ -1,13 +1,21 @@
 import { wechatStore } from './wechat/wechat.store';
 
+let initPromise: Promise<void> | null = null;
+
 /**
  * Initialize all connectors on app startup.
  * This function should be called once during app initialization.
  */
 export const initConnectors = async (): Promise<void> => {
-  console.log('[connectors] initializing all connectors...');
+  if (initPromise) return initPromise;
 
-  await wechatStore.init();
+  initPromise = (async () => {
+    console.log('[connectors] initializing all connectors...');
 
-  console.log('[connectors] all connectors initialized');
+    await wechatStore.init();
+
+    console.log('[connectors] all connectors initialized');
+  })();
+
+  return initPromise;
 };

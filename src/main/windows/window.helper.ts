@@ -12,6 +12,8 @@ export abstract class WindowHelper {
   protected showOnReady = true;
 
   create(): BrowserWindow {
+    this.isQuitting = false;
+
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
     

@@ -46,6 +46,13 @@ class LlamaWindowHelper {
 
     return this.browserWindow;
   }
+
+  destroy(): void {
+    if (this.browserWindow && !this.browserWindow.isDestroyed()) {
+      this.browserWindow.destroy();
+    }
+    this.browserWindow = null;
+  }
 }
 
 export const llamaWindowHelper = new LlamaWindowHelper();

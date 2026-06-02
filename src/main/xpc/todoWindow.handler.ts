@@ -194,6 +194,28 @@ class TodoWindowHandler extends XpcMainHandler {
     this.standaloneWindow?.close();
   }
 
+  async _destroyForAuth(): Promise<void> {
+    const mainWindow = mainWindowHelper.browserWindow;
+
+    if (this.resizeHandler && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.removeListener('resize', this.resizeHandler);
+      this.resizeHandler = null;
+    }
+
+    if (this.todoView && !this.todoView.webContents.isDestroyed()) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.contentView.removeChildView(this.todoView);
+      }
+      this.todoView.webContents.close();
+    }
+    this.todoView = null;
+
+    if (this.standaloneWindow && !this.standaloneWindow.isDestroyed()) {
+      this.standaloneWindow.destroy();
+    }
+    this.standaloneWindow = null;
+  }
+
   async isMaximized(): Promise<boolean> {
     const win = this.standaloneWindow;
     if (win && !win.isDestroyed()) {

@@ -68,6 +68,18 @@ class PluginTestHandler extends XpcMainHandler {
 
     await this.optionWindow.loadURL(params.url);
   }
+
+  async _destroyForAuth(): Promise<void> {
+    if (this.contentWindow && !this.contentWindow.isDestroyed()) {
+      this.contentWindow.destroy();
+    }
+    this.contentWindow = null;
+
+    if (this.optionWindow && !this.optionWindow.isDestroyed()) {
+      this.optionWindow.destroy();
+    }
+    this.optionWindow = null;
+  }
 }
 
 export const pluginTestHandler = new PluginTestHandler();
