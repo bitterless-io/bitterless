@@ -6,7 +6,6 @@ out
 *.log*
 .idea
 .vscode
-.windsurf
 rigs/*
 rig_dev/*
 .env.rig
