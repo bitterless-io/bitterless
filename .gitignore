@@ -21,6 +21,7 @@ dump/*
 !dump/.gitkeep
 electron-builder.yml
 publish.js
+!scripts/publish.js
 local
 snapshots
 asar_unpacked

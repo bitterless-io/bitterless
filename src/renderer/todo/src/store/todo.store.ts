@@ -13,11 +13,14 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 export interface DomainItem {
   id: number;
   title: string;
+  description: string;
   is_deleted: number;
   archived: number;
   created_at: number;
   updated_at: number;
 }
+
+export type TodoSource = 'human' | 'ai';
 
 export interface TodoItem {
   id: number;
@@ -35,6 +38,7 @@ export interface TodoItem {
   monthly_day: number | null;
   yearly_day: number | null;
   note: string;
+  source: TodoSource;
   is_deleted: number;
   created_at: number;
   updated_at: number;
@@ -49,6 +53,20 @@ export interface SubTodoItem {
   created_at: number;
   updated_at: number;
 }
+
+const toInlineMarkdownText = (value: string): string => {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(' ');
+};
+
+const toBlockMarkdownText = (value: string): string => {
+  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+};
 
 class TodoState {
   loading = false;
@@ -67,6 +85,7 @@ class TodoState {
     }, 1000);
   }
   domainList: DomainItem[] = [];
+  archivedDomainList: DomainItem[] = [];
   todosByDomain: Record<number, TodoItem[]> = {};
   completedTodosByDomain: Record<number, TodoItem[]> = {};
   selectedTodo: TodoItem | null = null;
@@ -78,7 +97,11 @@ class TodoState {
   async loadAll(): Promise<void> {
     this.loading = true;
     try {
-      const domains = await domainEmitter.getAll();
+      const allDomains = await domainEmitter.getAll();
+      const domains = allDomains.filter((domain) => domain.is_deleted === 0 && domain.archived === 0);
+      this.archivedDomainList = allDomains
+        .filter((domain) => domain.is_deleted === 0 && domain.archived === 1)
+        .sort((a, b) => b.updated_at - a.updated_at);
       const domainOrder = (await todoEmitter.getSortOrder({ key: 'domain' })) ?? [];
 
       // Sort domains by sort order, unordered ones at end by created_at ASC
@@ -98,6 +121,13 @@ class TodoState {
       }
 
       this.domainList = domains;
+      this.todosByDomain = {};
+      this.completedTodosByDomain = {};
+      this.subTodoCounts = {};
+      const activeDomainIds = new Set(domains.map((domain) => domain.id));
+      if (this.selectedTodo && !activeDomainIds.has(this.selectedTodo.domain_id)) {
+        this.closeDetail();
+      }
 
       // Load todos for each domain
       for (const domain of domains) {
@@ -106,6 +136,13 @@ class TodoState {
     } finally {
       this.loading = false;
     }
+  }
+
+  async loadArchivedDomains(): Promise<void> {
+    const domains = await domainEmitter.getAll();
+    this.archivedDomainList = domains
+      .filter((domain) => domain.is_deleted === 0 && domain.archived === 1)
+      .sort((a, b) => b.updated_at - a.updated_at);
   }
 
   async loadTodosForDomain(domainId: number): Promise<void> {
@@ -206,12 +243,38 @@ class TodoState {
     this.broadcastDataUpdated();
   }
 
+  async updateDomainDescription(id: number, description: string): Promise<void> {
+    await domainEmitter.updateDescription({ id, description });
+    const domain = this.domainList.find((d) => d.id === id);
+    if (domain) {
+      domain.description = description;
+    }
+    this.broadcastDataUpdated();
+  }
+
   async deleteDomain(id: number): Promise<void> {
     await domainEmitter.hardDelete({ id });
     await this._writeSortOrder(id, []);
     this.domainList = this.domainList.filter((d) => d.id !== id);
     delete this.todosByDomain[id];
     delete this.completedTodosByDomain[id];
+    this.broadcastDataUpdated();
+  }
+
+  async archiveDomain(id: number): Promise<void> {
+    await domainEmitter.setArchived({ id, archived: 1 });
+    const domain = this.domainList.find((d) => d.id === id);
+    if (domain) {
+      domain.archived = 1;
+      domain.updated_at = Date.now();
+      this.archivedDomainList.unshift(domain);
+    }
+    this.domainList = this.domainList.filter((d) => d.id !== id);
+    delete this.todosByDomain[id];
+    delete this.completedTodosByDomain[id];
+    if (this.selectedTodo?.domain_id === id) {
+      this.closeDetail();
+    }
     this.broadcastDataUpdated();
   }
 
@@ -520,6 +583,65 @@ class TodoState {
   }
 
   async loadSubTodos(todoId: number): Promise<void> {
+    this.subTodos = await this._loadSortedSubTodos(todoId);
+  }
+
+  async copyTodoTitle(todo: TodoItem): Promise<void> {
+    await this._copyMarkdownText(toInlineMarkdownText(todo.title));
+  }
+
+  async copyTodoWithSteps(todo: TodoItem): Promise<void> {
+    const markdown = await this._buildTodoMarkdown(todo, { includeNote: false });
+    await this._copyMarkdownText(markdown);
+  }
+
+  async copyTodoAll(todo: TodoItem): Promise<void> {
+    const markdown = await this._buildTodoMarkdown(todo, { includeNote: true });
+    await this._copyMarkdownText(markdown);
+  }
+
+  private async _buildTodoMarkdown(todo: TodoItem, options: { includeNote: boolean }): Promise<string> {
+    const lines: string[] = [];
+    const title = toInlineMarkdownText(todo.title);
+    const steps = await this._loadSortedSubTodos(todo.id);
+
+    lines.push(`# ${title}`);
+    lines.push('');
+    lines.push(`## ${i18nHelper.todo.copyStepsHeading}`);
+    lines.push('');
+
+    if (steps.length === 0) {
+      lines.push(i18nHelper.todo.copyNoSteps);
+    } else {
+      for (const step of steps) {
+        const statusText = step.status === 1
+          ? i18nHelper.todo.copyStepCompleted
+          : i18nHelper.todo.copyStepIncomplete;
+        const checkbox = step.status === 1 ? '[x]' : '[ ]';
+        lines.push(`- ${checkbox} ${statusText}: ${toInlineMarkdownText(step.title)}`);
+      }
+    }
+
+    if (options.includeNote) {
+      lines.push('');
+      lines.push(`## ${i18nHelper.todo.copyNoteHeading}`);
+      lines.push('');
+      lines.push(toBlockMarkdownText(todo.note) || i18nHelper.todo.copyNoNote);
+    }
+
+    return lines.join('\n');
+  }
+
+  private async _copyMarkdownText(markdown: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(markdown);
+      Message.success(i18nHelper.todo.copyDone);
+    } catch {
+      Message.warning(i18nHelper.todo.copyFailed);
+    }
+  }
+
+  private async _loadSortedSubTodos(todoId: number): Promise<SubTodoItem[]> {
     const subs = await subTodoEmitter.getByTodoId({ todoId });
     const sortKey = `subtodo__${todoId}`;
     const sortOrder = (await todoEmitter.getSortOrder({ key: sortKey })) ?? [];
@@ -539,7 +661,7 @@ class TodoState {
       });
     }
 
-    this.subTodos = subs;
+    return subs;
   }
 
   async refreshSubTodoCounts(todoId: number): Promise<void> {

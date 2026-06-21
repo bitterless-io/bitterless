@@ -18,6 +18,7 @@ class TodoTable extends BaseTable {
       monthly_day INTEGER,
       yearly_day INTEGER,
       note TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'human',
       is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL

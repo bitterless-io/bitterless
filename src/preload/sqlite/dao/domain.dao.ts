@@ -4,18 +4,19 @@ import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
 export interface DomainRow {
   id: number;
   title: string;
+  description: string;
   is_deleted: number;
   archived: number;
   created_at: number;
   updated_at: number;
 }
 
-class DomainDao extends BaseDao {
-  async create(params: { title?: string }): Promise<DomainRow | undefined> {
+export class DomainDao extends BaseDao {
+  async create(params: { title?: string; description?: string }): Promise<DomainRow | undefined> {
     const now = Date.now();
     const result = await sqliteHelper.safeRun(
-      'INSERT INTO domain (title, created_at, updated_at) VALUES (?, ?, ?)',
-      [params.title ?? 'Untitled', now, now],
+      'INSERT INTO domain (title, description, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      [params.title ?? 'Untitled', params.description ?? '', now, now],
     );
     return sqliteHelper.safeGet<DomainRow>(
       'SELECT * FROM domain WHERE id = ?',
@@ -41,6 +42,13 @@ class DomainDao extends BaseDao {
     await sqliteHelper.safeRun(
       'UPDATE domain SET title = ?, updated_at = ? WHERE id = ?',
       [params.title, Date.now(), params.id],
+    );
+  }
+
+  async updateDescription(params: { id: number; description: string }): Promise<void> {
+    await sqliteHelper.safeRun(
+      'UPDATE domain SET description = ?, updated_at = ? WHERE id = ?',
+      [params.description, Date.now(), params.id],
     );
   }
 

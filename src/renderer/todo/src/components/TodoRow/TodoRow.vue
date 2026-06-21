@@ -17,6 +17,9 @@
       @click.stop
     />
     <div class="todo-row__content">
+      <div v-if="isAiTodo" class="todo-row__meta">
+        <span class="todo-row__source-tag">{{ i18nHelper.todo.aiSourceTag }}</span>
+      </div>
       <div class="todo-row__title-row">
         <span
           v-if="!editing"
@@ -77,6 +80,18 @@
       :offset-y="contextOffsetY"
       @update:visible="contextMenuVisible = $event"
     >
+      <div class="context-menu__item" @click="handleCopyTitle">
+        <icon-copy :size="14" />
+        <span>{{ i18nHelper.todo.copyTitle }}</span>
+      </div>
+      <div class="context-menu__item" @click="handleCopyWithSteps">
+        <icon-list :size="14" />
+        <span>{{ i18nHelper.todo.copyWithSteps }}</span>
+      </div>
+      <div class="context-menu__item" @click="handleCopyAll">
+        <icon-copy :size="14" />
+        <span>{{ i18nHelper.todo.copyAll }}</span>
+      </div>
       <div
         v-if="canSkipToCurrent"
         class="context-menu__item context-menu__item--skip"
@@ -103,7 +118,8 @@ import {
   IconStar,
   IconStarFill,
   IconDelete,
-  IconForward
+  IconForward,
+  IconCopy
 } from '@arco-design/web-vue/es/icon';
 import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import { todoStore } from '../../store/todo.store';
@@ -152,6 +168,10 @@ const isFutureOrToday = computed(() => {
 
 const hasSubtitle = computed(() => {
   return !!subTodoProgress.value || !!dueDateText.value;
+});
+
+const isAiTodo = computed(() => {
+  return props.todo.source === 'ai';
 });
 
 const titleInput = computed({
@@ -216,6 +236,21 @@ const canSkipToCurrent = computed(() => {
 const handleSkipToCurrent = () => {
   contextMenuVisible.value = false;
   todoStore.skipToCurrent(props.todo.id);
+};
+
+const handleCopyTitle = () => {
+  contextMenuVisible.value = false;
+  todoStore.copyTodoTitle(props.todo);
+};
+
+const handleCopyWithSteps = () => {
+  contextMenuVisible.value = false;
+  todoStore.copyTodoWithSteps(props.todo);
+};
+
+const handleCopyAll = () => {
+  contextMenuVisible.value = false;
+  todoStore.copyTodoAll(props.todo);
 };
 
 const handleDelete = () => {

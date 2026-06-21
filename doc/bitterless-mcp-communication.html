@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bitterless MCP 通信机制</title>
+  <style>
+    :root {
+      --ink: #14201c;
+      --muted: #5c6a64;
+      --page: #eef3ef;
+      --panel: #fbfcfb;
+      --line: #c9d5cf;
+      --green: #237a61;
+      --green-soft: #d9eee6;
+      --blue: #24578c;
+      --blue-soft: #dbe8f5;
+      --red: #b94b44;
+      --red-soft: #f3dedb;
+      --gold: #936d1f;
+      --gold-soft: #f2e8c9;
+      --code: #101614;
+      --code-ink: #d7f4e6;
+      --shadow: 0 18px 50px rgba(19, 32, 28, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(35, 122, 97, 0.08) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(36, 87, 140, 0.06) 1px, transparent 1px),
+        var(--page);
+      background-size: 42px 42px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 64px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 24px;
+      align-items: stretch;
+      min-height: 420px;
+      padding: 22px 0 20px;
+    }
+
+    .hero-copy {
+      padding: 34px 0 24px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 24px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 32px;
+      height: 2px;
+      background: var(--green);
+      display: inline-block;
+    }
+
+    h1 {
+      max-width: 780px;
+      margin: 0;
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+      font-size: clamp(44px, 7vw, 92px);
+      line-height: 0.94;
+      font-weight: 680;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 700px;
+      margin: 28px 0 0;
+      font-size: 18px;
+      color: var(--muted);
+    }
+
+    .hero-panel {
+      display: grid;
+      align-content: stretch;
+      gap: 14px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      background: rgba(251, 252, 251, 0.86);
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+    }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .status {
+      min-height: 88px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+    }
+
+    .status strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    .status span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .route-map {
+      position: relative;
+      min-height: 270px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 30% 12%, rgba(35, 122, 97, 0.13), transparent 28%),
+        linear-gradient(135deg, #ffffff 0%, #eef5f1 100%);
+      overflow: hidden;
+    }
+
+    .route-lane {
+      display: grid;
+      grid-template-columns: 1fr 34px 1fr 34px 1fr;
+      gap: 10px;
+      align-items: center;
+      height: 100%;
+    }
+
+    .node {
+      min-height: 98px;
+      padding: 15px;
+      border: 1px solid rgba(20, 32, 28, 0.18);
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 8px;
+    }
+
+    .node small {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--green);
+      font-weight: 800;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .node b {
+      display: block;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .node p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .arrow {
+      color: var(--green);
+      font-size: 28px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .section {
+      margin-top: 28px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(251, 252, 251, 0.94);
+      box-shadow: 0 8px 24px rgba(19, 32, 28, 0.06);
+    }
+
+    .section-title {
+      display: flex;
+      gap: 14px;
+      align-items: baseline;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 14px;
+    }
+
+    .section-title code {
+      color: var(--green);
+      font-weight: 800;
+      background: transparent;
+    }
+
+    h2 {
+      margin: 0;
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+      font-size: clamp(26px, 4vw, 42px);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .tile {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .tile p,
+    .callout p,
+    .step p {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      margin-bottom: 12px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .tag.green {
+      color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .tag.blue {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .tag.red {
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .tag.gold {
+      color: var(--gold);
+      background: var(--gold-soft);
+    }
+
+    .steps {
+      display: grid;
+      gap: 12px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 14px;
+      align-items: start;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .step-num {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      color: white;
+      background: var(--green);
+      font-weight: 900;
+    }
+
+    .callout {
+      padding: 18px;
+      border-left: 5px solid var(--green);
+      background: #fff;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .callout.warning {
+      border-left-color: var(--red);
+    }
+
+    pre {
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      color: var(--code-ink);
+      background: var(--code);
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.55;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.94em;
+    }
+
+    .inline-code {
+      padding: 2px 6px;
+      color: var(--ink);
+      background: #e2ebe6;
+      border-radius: 5px;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: 170px repeat(3, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .matrix > div {
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    .matrix > div:nth-child(4n) {
+      border-right: 0;
+    }
+
+    .matrix .head {
+      font-weight: 800;
+      background: #e7eee9;
+    }
+
+    .matrix .good {
+      color: var(--green);
+      font-weight: 800;
+    }
+
+    .matrix .watch {
+      color: var(--gold);
+      font-weight: 800;
+    }
+
+    .sequence {
+      display: grid;
+      gap: 8px;
+      padding: 4px 0;
+    }
+
+    .packet {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .packet .from {
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .footer {
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .grid-2,
+      .grid-3 {
+        grid-template-columns: 1fr;
+      }
+
+      .status-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .route-lane {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        transform: rotate(90deg);
+      }
+
+      .matrix,
+      .packet {
+        grid-template-columns: 1fr;
+      }
+
+      .matrix > div {
+        border-right: 0;
+      }
+
+      .section {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Bitterless · MCP · local only</div>
+        <h1>Todo 通信机制：不开放端口的 MCP 接入</h1>
+        <p class="lead">
+          目标是让其他 agent 应用通过 MCP 增删改查 Bitterless todo，同时不启动 HTTP 服务、不监听 TCP 端口，并继续复用当前 Electron 应用的 SQLite、加密和 UI 刷新机制。
+        </p>
+      </div>
+
+      <aside class="hero-panel" aria-label="architecture summary">
+        <div class="status-strip">
+          <div class="status">
+            <strong>对外协议</strong>
+            <span>MCP stdio，JSON-RPC，经由子进程 stdin/stdout。</span>
+          </div>
+          <div class="status">
+            <strong>本机桥接</strong>
+            <span>Unix domain socket 或 Windows named pipe，不占端口。</span>
+          </div>
+          <div class="status">
+            <strong>数据归属</strong>
+            <span>Bitterless GUI/main 继续持有 SQLite 访问权。</span>
+          </div>
+        </div>
+
+        <div class="route-map">
+          <div class="route-lane">
+            <div class="node">
+              <small>client</small>
+              <b>Agent app</b>
+              <p>启动桌面端生成的 <code>bitterless-mcp</code> helper。</p>
+            </div>
+            <div class="arrow">→</div>
+            <div class="node">
+              <small>stdio server</small>
+              <b>bitterless-mcp</b>
+              <p>对外承接 MCP stdio，对内连接本机 bridge。</p>
+            </div>
+            <div class="arrow">→</div>
+            <div class="node">
+              <small>owner process</small>
+              <b>Bitterless GUI</b>
+              <p>通过本机 pipe 接收请求并调用 todo DAO。</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>01</code>
+        <h2>核心结论</h2>
+      </div>
+
+      <div class="grid-3">
+        <div class="tile">
+          <span class="tag green">推荐</span>
+          <h3>同一个安装包，专用 helper 入口</h3>
+          <p>Bitterless 桌面端在 userData 下生成 <code class="inline-code">bin/bitterless-mcp</code> 或 <code class="inline-code">bin/bitterless-mcp.cmd</code>。外部 agent 只配置这个 helper，不直接指向 app bundle。</p>
+        </div>
+        <div class="tile">
+          <span class="tag blue">启动</span>
+          <h3>由 MCP host 启动子进程</h3>
+          <p>其他 agent 应用只配置 command。它们不是连接一个端口，而是拉起 helper 子进程并通过 stdin/stdout 发 JSON-RPC。</p>
+        </div>
+        <div class="tile">
+          <span class="tag red">边界</span>
+          <h3>stdio 不能直连已运行 GUI</h3>
+          <p>stdio 是父子进程通信，不是 app-to-app socket。要和已运行 Bitterless 通信，需要在本机再做一层 pipe 或 named pipe。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>02</code>
+        <h2>运行时链路</h2>
+      </div>
+
+      <div class="sequence">
+        <div class="packet">
+          <div class="from">Agent app</div>
+          <div>读取 MCP 配置，启动桌面端弹窗复制出来的 <code class="inline-code">bitterless-mcp</code> helper 路径。</div>
+        </div>
+        <div class="packet">
+          <div class="from">MCP stdio</div>
+          <div>Agent 通过 stdin/stdout 调用 <code class="inline-code">domain.list</code>、<code class="inline-code">todo.create</code>、<code class="inline-code">todo.update</code>、<code class="inline-code">todo.list</code>、<code class="inline-code">todo.status</code> 等 tools。</div>
+        </div>
+        <div class="packet">
+          <div class="from">bitterless-mcp</div>
+          <div>校验 schema，然后把请求转发到本机 pipe：macOS/Linux 使用 userData/mcp/bridge.sock，Windows 使用 named pipe。</div>
+        </div>
+        <div class="packet">
+          <div class="from">Bitterless GUI</div>
+          <div>main 进程接管请求，转给现有 sqliteWindow / TodoDao，并在写操作后广播 <code class="inline-code">todo/data_updated</code>。</div>
+        </div>
+        <div class="packet">
+          <div class="from">Renderer</div>
+          <div>todo 页面收到更新广播后重新加载数据，保持外部 agent 写入和 UI 一致。</div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <h3>为什么第一版不直接 headless 读 SQLite</h3>
+        <p>当前 SQLite 初始化在 preload 侧，release 模式密码依赖 Electron safeStorage 和 renderer localStorage。让外部 MCP 子进程直接读 DB 会过早碰到密码、迁移、并发锁和 UI 刷新问题。先桥接到已运行的 Bitterless GUI，风险更低。</p>
+      </div>
+
+      <div class="callout">
+        <h3>sock 性能与体积</h3>
+        <p><code class="inline-code">bridge.sock</code> 只是 userData 下的本机 IPC 入口节点，不是日志、队列或数据库文件。请求体不会写进这个文件，数据走内核 socket 缓冲；文件大小通常为 0 或极小的 socket 节点。todo CRUD 这种低频请求的瓶颈更可能是 SQLite 写入和 UI 刷新，而不是 Unix socket / named pipe。实现层会限制单次本机 RPC 帧最大 8 MiB，避免异常客户端把进程内存撑大；<code class="inline-code">todo.list</code> 默认只返回未归档 domain 下的未完成 todo，不读取已完成历史，避免列表体积膨胀。agent 已知一组 todo ID 时，用 <code class="inline-code">todo.status</code> 批量读取 <code class="inline-code">active</code> / <code class="inline-code">completed</code> / <code class="inline-code">deleted</code> / <code class="inline-code">missing</code>，不需要扫描全部完成记录。多个 agent 会话共享同一个 app-wide sock，不能也不需要按会话创建 sock；每个会话用自己的 <code class="inline-code">lastEventId</code> cursor 区分读取进度。</p>
+      </div>
+
+      <div class="callout">
+        <h3>Domain 与 Focus 规则</h3>
+        <p>MCP 只允许 agent 读取未归档 domain 列表和描述，不允许创建或修改 domain。Agent 创建 todo 前先调用 <code class="inline-code">domain.list</code>，按 domain 描述选择已有 domain；没有合适项时使用人类维护的 <code class="inline-code">Others</code>。Focus 不是独立 domain，而是由重要/星标的未完成 todo 派生出来的优先视图。打星标等于 <code class="inline-code">important=true</code>：只有当前 agent 会话被人类下一步动作卡住时才打星；能延后几天的普通跟进不打星。</p>
+      </div>
+
+      <div class="callout">
+        <h3>轮询，不做通知</h3>
+        <p>人类在 UI 中完成、移动、删除或修改 todo 时，Bitterless 写入 append-only 的 <code class="inline-code">todo_events</code>。Agent 恢复会话或被问到下一步时，用 <code class="inline-code">event.list</code> 按 cursor 查一次；如果正在等待人类完成一个阻塞任务，用 <code class="inline-code">event.wait</code> 做有限时长的长轮询。若 agent 手里已有自己创建或正在跟踪的 todo ID，再调用 <code class="inline-code">todo.status</code> 精确确认这些任务是未完成、已完成、已删除还是不存在。当前设计不依赖 MCP push notification。</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>03</code>
+        <h2>打包方式</h2>
+      </div>
+
+      <div class="grid-2">
+        <div class="tile">
+          <span class="tag green">方案 A</span>
+          <h3>推荐：userData helper shim</h3>
+          <p>桌面端通过 XPC 生成稳定 helper 路径。helper 内部才调用 Electron 的 <code class="inline-code">--mcp-helper</code> 模式；外部应用看不到 app bundle 内部路径。</p>
+          <pre><code>// macOS / Linux
+~/Library/Application Support/Bitterless/bin/bitterless-mcp
+
+// Windows
+%APPDATA%\Bitterless\bin\bitterless-mcp.cmd</code></pre>
+        </div>
+
+        <div class="tile">
+          <span class="tag gold">内部实现</span>
+          <h3>Electron 只作为 helper runtime</h3>
+          <p>shim 脚本由正在运行的 Bitterless 写入，使用当前安装位置的 <code class="inline-code">process.execPath</code>。应用迁移位置后，下次打开弹窗会刷新 shim。</p>
+          <pre><code>#!/bin/sh
+exec "$BITTERLESS_EXEC_PATH" --mcp-helper "$@"</code></pre>
+        </div>
+      </div>
+
+      <div class="callout warning">
+        <h3>不要暴露 app bundle 路径</h3>
+        <p>agent 配置里不写 <code class="inline-code">/Applications/Bitterless.app/Contents/MacOS/Bitterless</code>。统一复制桌面端弹窗提供的 helper command。</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>04</code>
+        <h2>MCP host 配置</h2>
+      </div>
+
+      <div class="grid-2">
+        <div class="tile">
+          <span class="tag blue">macOS</span>
+          <h3>复制桌面端生成的 helper 路径</h3>
+          <pre><code>{
+  "mcpServers": {
+    "bitterless": {
+      "command": "/Users/&lt;you&gt;/Library/Application Support/Bitterless/bin/bitterless-mcp"
+    }
+  }
+}</code></pre>
+        </div>
+
+        <div class="tile">
+          <span class="tag blue">Windows</span>
+          <h3>复制桌面端生成的 .cmd 路径</h3>
+          <pre><code>{
+  "mcpServers": {
+    "bitterless": {
+      "command": "C:\\Users\\&lt;you&gt;\\AppData\\Roaming\\Bitterless\\bin\\bitterless-mcp.cmd"
+    }
+  }
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>05</code>
+        <h2>Tool schema 草案</h2>
+      </div>
+
+      <div class="grid-3">
+        <div class="tile">
+          <span class="tag blue">轮询 tool</span>
+          <h3><code>event.list</code></h3>
+          <pre><code>{
+  "name": "event.list",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "afterEventId": { "type": "integer", "minimum": 0 },
+      "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+    }
+  }
+}</code></pre>
+        </div>
+
+        <div class="tile">
+          <span class="tag blue">长轮询 tool</span>
+          <h3><code>event.wait</code></h3>
+          <pre><code>{
+  "name": "event.wait",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "afterEventId": { "type": "integer", "minimum": 0 },
+      "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+      "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 30000 }
+    }
+  }
+}</code></pre>
+        </div>
+
+        <div class="tile">
+          <span class="tag blue">读取 tool</span>
+          <h3><code>domain.list</code></h3>
+          <pre><code>{
+  "name": "domain.list",
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "returns": {
+    "note": "Only unarchived domains are returned.",
+    "domains": [
+      { "id": 1, "title": "Bitterless", "description": "..." }
+    ],
+    "focus": {
+      "title": "Focus",
+      "description": "Important/starred active todos appear here.",
+      "rule": "Star only live-session human blockers; do not star deferrable follow-ups."
+    }
+  }
+}</code></pre>
+        </div>
+
+        <div class="tile">
+          <span class="tag green">写入 tool</span>
+          <h3><code>todo.create</code></h3>
+          <pre><code>{
+  "name": "todo.create",
+  "inputSchema": {
+    "type": "object",
+    "required": ["domainId", "title"],
+    "properties": {
+      "domainId": { "type": "integer", "minimum": 1 },
+      "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+      "dueAt": { "type": ["integer", "null"] },
+      "important": {
+        "type": "boolean",
+        "description": "true only when current agent work is blocked on immediate human action"
+      },
+      "note": { "type": "string", "maxLength": 10000 }
+    }
+  }
+}</code></pre>
+        </div>
+
+        <div class="tile">
+          <span class="tag blue">读取 tool</span>
+          <h3><code>todo.list</code></h3>
+          <pre><code>{
+  "name": "todo.list",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "domainId": { "type": "integer", "minimum": 1 }
+    }
+  },
+  "returns": {
+    "note": "Only incomplete todos from unarchived domains are returned."
+  }
+}</code></pre>
+        </div>
+
+        <div class="tile">
+          <span class="tag blue">状态 tool</span>
+          <h3><code>todo.status</code></h3>
+          <pre><code>{
+  "name": "todo.status",
+  "inputSchema": {
+    "type": "object",
+    "required": ["ids"],
+    "properties": {
+      "ids": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "returns": {
+    "note": "Batch status lookup for known todo IDs.",
+    "states": ["active", "completed", "deleted", "missing"]
+  }
+}</code></pre>
+        </div>
+      </div>
+
+      <p class="footer">
+        返回值使用 MCP 的 structured content：一份机器可读 JSON，加一段简短 text，方便不同 agent host 同时兼容。Domain 的创建、重命名和描述编辑只在人类 UI 中完成。
+      </p>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>06</code>
+        <h2>启动与发现策略</h2>
+      </div>
+
+      <div class="matrix" role="table" aria-label="startup strategy matrix">
+        <div class="head">场景</div>
+        <div class="head">Bitterless GUI 状态</div>
+        <div class="head">MCP 行为</div>
+        <div class="head">结果</div>
+
+        <div>GUI 已运行</div>
+        <div class="good">可用</div>
+        <div>连接本机 pipe，转发 MCP tools。</div>
+        <div>完整 CRUD + UI 自动刷新。</div>
+
+        <div>GUI 未运行</div>
+        <div class="watch">未准备</div>
+        <div>返回明确错误：需要先启动 Bitterless。</div>
+        <div>第一版简单可靠。</div>
+
+        <div>未来 headless</div>
+        <div class="good">可选</div>
+        <div><code>--mcp-helper</code> 自行初始化 DB service。</div>
+        <div>无需 GUI，但要先完成 DB service 抽离。</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>07</code>
+        <h2>实现清单</h2>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div>
+            <h3>新增 helper mode</h3>
+            <p>在 main 入口根据 <code class="inline-code">--mcp-helper</code> 分流，helper 模式只保留 stdio server 和 stderr 日志。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div>
+            <h3>新增本机 bridge server</h3>
+            <p>GUI main 进程启动 Unix socket / named pipe，提供内部 JSON-RPC 或轻量 RPC，方法名对齐 todo/domain DAO。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div>
+            <h3>注册 MCP tools</h3>
+            <p>以 schema 约束输入，限制写入权限，返回结构化内容，并把错误映射为 MCP tool error。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div>
+            <h3>写操作后刷新 UI</h3>
+            <p>GUI 侧完成 create/update/delete/complete 后广播 <code class="inline-code">todo/data_updated</code>，复用现有 renderer subscriber。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">5</div>
+          <div>
+            <h3>加权限和审计</h3>
+            <p>默认只读；写入需要 Bitterless 设置或环境变量启用。记录 tool 名称、调用时间和简短 payload 摘要。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <code>08</code>
+        <h2>参考规范</h2>
+      </div>
+      <p>
+        MCP stdio transport 的要点是：server 从 stdin 读取消息、向 stdout 写消息，日志写 stderr；tools 通过 schema 描述输入输出。当前设计按这些约束组织。
+      </p>
+      <p>
+        规范入口：
+        <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports">MCP Transports</a>、
+        <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic">MCP Basic Protocol</a>、
+        <a href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools">MCP Tools</a>。
+      </p>
+      <p class="footer">最后更新：2026-06-19 · 目标分支：release/2604</p>
+    </section>
+  </main>
+</body>
+</html>

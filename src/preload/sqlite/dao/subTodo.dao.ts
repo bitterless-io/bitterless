@@ -11,7 +11,7 @@ export interface SubTodoRow {
   updated_at: number;
 }
 
-class SubTodoDao extends BaseDao {
+export class SubTodoDao extends BaseDao {
   async create(params: { todoId: number; title: string }): Promise<SubTodoRow | undefined> {
     const now = Date.now();
     const result = await sqliteHelper.safeRun(

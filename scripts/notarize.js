@@ -4,7 +4,8 @@
  * notarize.js
  * Usage: node scripts/notarize.js [--dist <path>]
  *
- * Reads Apple credentials from local/signing.env, zips the .app bundle,
+ * Reads Apple credentials from local/signing.env or the overmind keychain fallback,
+ * zips the .app bundle,
  * submits it to Apple notarytool (with auto-retry on network errors),
  * waits for the result (with auto-retry on signal/timeout), then staples
  * the ticket to the .app and any .dmg found in the same dist directory.
@@ -17,21 +18,26 @@ const fs = require('fs');
 const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
+const keychainDir = process.env.BITTERLESS_KEYCHAIN_DIR || '/Users/ral/Documents/projects/overmind/areas/keychain/bitterless';
+const keychainSigningEnvPath = process.env.BITTERLESS_SIGNING_ENV || path.join(keychainDir, 'signing.env');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 const loadSigningEnv = () => {
-  const envPath = path.join(rootDir, 'local', 'signing.env');
+  const localEnvPath = path.join(rootDir, 'local', 'signing.env');
+  const envPath = fs.existsSync(localEnvPath)
+    ? localEnvPath
+    : keychainSigningEnvPath;
   if (!fs.existsSync(envPath)) {
-    console.error('❌  local/signing.env not found');
+    console.error('❌  signing env not found');
     process.exit(1);
   }
   const result = {};
   for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
     const match = line.match(/^\s*([\w]+)\s*=\s*(.*?)\s*$/);
-    if (match) result[match[1]] = match[2];
+    if (match) result[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
   }
   return result;
 };
@@ -112,7 +118,7 @@ const WAIT_MAX_RETRIES = 15;
 const WAIT_RETRY_DELAY_S = 30;
 
 const waitWithRetry = (submissionId, appleId, appPassword, teamId) => {
-  console.log(`\nℹ️   Manual re-check: xcrun notarytool wait ${submissionId} --apple-id ${appleId} --password ${appPassword} --team-id ${teamId}`);
+  console.log(`\nℹ️   Manual re-check: xcrun notarytool wait ${submissionId} --apple-id ${appleId} --password <redacted> --team-id ${teamId}`);
 
   for (let attempt = 1; attempt <= WAIT_MAX_RETRIES; attempt++) {
     console.log(`\n▶  [wait ${attempt}/${WAIT_MAX_RETRIES}] xcrun notarytool wait ${submissionId}`);
@@ -221,7 +227,7 @@ const main = () => {
   const teamId = env.APPLE_TEAM_ID;
 
   if (!appleId || !appPassword || !teamId) {
-    console.error('❌  Missing one of APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID in local/signing.env');
+    console.error('❌  Missing one of APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID in signing env');
     process.exit(1);
   }
 

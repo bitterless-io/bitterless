@@ -15,7 +15,7 @@
 .domain-column__header {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 8px 12px 4px;
   gap: 8px;
   cursor: grab;
   user-select: none;
@@ -67,6 +67,40 @@
   color: #6366f1;
   flex-shrink: 0;
   margin-left: auto;
+}
+
+.domain-column__description {
+  padding: 0 12px 8px;
+}
+
+.domain-column__description-input {
+  width: 100%;
+  min-height: 36px;
+  max-height: 72px;
+  resize: vertical;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: none;
+  padding: 4px 6px;
+  background: transparent;
+  color: oklch(0.42 0 0);
+  font-size: 12px;
+  line-height: 1.35;
+  font-family: inherit;
+}
+
+.domain-column__description-input::placeholder {
+  color: oklch(0.66 0 0);
+}
+
+.domain-column__description-input:hover {
+  background: oklch(0.98 0 0);
+}
+
+.domain-column__description-input:focus {
+  border-color: oklch(0.7 0.1 250);
+  background: oklch(1 0 0);
+  box-shadow: 0 0 0 1px oklch(0.7 0.1 250);
 }
 
 .domain-column__body {

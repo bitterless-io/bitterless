@@ -1,7 +1,7 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.30",
-  "versionCode": 26042206,
+  "_version": "0.0.32",
+  "versionCode": 26062002,
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -38,6 +38,12 @@
     "publish:mac_arm": "node scripts/publish.js --env prod --platform mac_arm",
     "publish:mac_intel": "node scripts/publish.js --env prod --platform mac_intel",
     "publish:win": "node scripts/publish.js --env prod --platform win64",
+    "release:mac_arm": "node scripts/publish.js --env prod --platform mac_arm --build",
+    "release:mac_intel": "node scripts/publish.js --env prod --platform mac_intel --build",
+    "release:win": "node scripts/publish.js --env prod --platform win64 --build",
+    "release_dev:mac_arm": "node scripts/publish.js --env dev --platform mac_arm --build",
+    "release_dev:mac_intel": "node scripts/publish.js --env dev --platform mac_intel --build",
+    "release_dev:win": "node scripts/publish.js --env dev --platform win64 --build",
     "patch": "node scripts/patch.js",
     "deliver": "node scripts/patch.js && git add . && git commit -m 'nm' && node scripts/git_push.js",
     "fast_publish:mac_arm": "node scripts/git_pull.js && yarn build:mac_arm && yarn publish:mac_arm",
@@ -146,6 +152,6 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEV_DEBUG",
-  "version": "0.0.23"
+  "name": "Bitterless",
+  "version": "0.0.32"
 }

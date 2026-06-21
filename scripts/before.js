@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const AdmZip = require('adm-zip');
 
 const rootDir = path.resolve(__dirname, '..');
 const envRigPath = path.join(rootDir, '.env.rig');
@@ -73,76 +72,6 @@ if (viteMode === 'release') {
     console.log('[before.js] ✅ release_note.md found');
   }
 }
-
-// Copy platform-specific Chromium zip files to asar_unpacked directory
-const copyChromium = () => {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  let chromiumSourceFile = null;
-  let zipFileName = null;
-
-  if (platform === 'darwin') {
-    if (arch === 'arm64') {
-      zipFileName = 'chrome-macarm.zip';
-      chromiumSourceFile = path.join(rootDir, 'external_resources', 'chromium', 'mac_arm', zipFileName);
-    } else if (arch === 'x64') {
-      zipFileName = 'chrome-mac.zip';
-      chromiumSourceFile = path.join(rootDir, 'external_resources', 'chromium', 'mac_x64', zipFileName);
-    }
-  } else if (platform === 'win32') {
-    zipFileName = 'chrome-win.zip';
-    chromiumSourceFile = path.join(rootDir, 'external_resources', 'chromium', 'win', zipFileName);
-  }
-
-  if (!chromiumSourceFile || !zipFileName) {
-    console.log(`[before.js] ⚠️  No Chromium configuration for platform=${platform}, arch=${arch}`);
-    return;
-  }
-
-  const asarUnpackedDir = path.join(rootDir, 'asar_unpacked');
-
-  if (!fs.existsSync(asarUnpackedDir)) {
-    fs.mkdirSync(asarUnpackedDir, { recursive: true });
-  }
-
-  if (platform === 'win32') {
-    const chromiumExePath = path.join(asarUnpackedDir, 'chrome-win', 'chrome.exe');
-    if (fs.existsSync(chromiumExePath)) {
-      console.log(`[before.js] ✅ chrome-win already extracted in asar_unpacked, skipping`);
-      return;
-    }
-
-    if (!fs.existsSync(chromiumSourceFile)) {
-      console.warn(`[before.js] ⚠️  Warning: ${zipFileName} not found at ${chromiumSourceFile}`);
-      return;
-    }
-
-    console.log(`[before.js] Extracting ${zipFileName} to ${asarUnpackedDir}...`);
-    const zip = new AdmZip(chromiumSourceFile);
-    zip.extractAllTo(asarUnpackedDir, true);
-    console.log(`[before.js] ✅ chrome-win extracted successfully to ${asarUnpackedDir}`);
-    return;
-  }
-
-  const chromiumDestFile = path.join(asarUnpackedDir, zipFileName);
-
-  if (fs.existsSync(chromiumDestFile)) {
-    console.log(`[before.js] ✅ ${zipFileName} already exists in asar_unpacked, skipping copy`);
-    return;
-  }
-
-  if (!fs.existsSync(chromiumSourceFile)) {
-    console.warn(`[before.js] ⚠️  Warning: ${zipFileName} not found at ${chromiumSourceFile}`);
-    return;
-  }
-
-  console.log(`[before.js] Copying ${zipFileName} from ${chromiumSourceFile} to ${chromiumDestFile}...`);
-  fs.copyFileSync(chromiumSourceFile, chromiumDestFile);
-  console.log(`[before.js] ✅ ${zipFileName} copied successfully`);
-};
-
-copyChromium();
 
 // Write version_info.json to dist/
 const writeVersionInfo = () => {

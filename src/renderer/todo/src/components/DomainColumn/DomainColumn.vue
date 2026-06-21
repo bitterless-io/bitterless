@@ -25,6 +25,17 @@
       <span ref="sizerRef" class="domain-column__header-title-sizer">{{ titleInput }}</span>
       <span v-if="todoList.length > 0" class="domain-column__header-count">{{ todoList.length }}</span>
     </div>
+    <div class="domain-column__description">
+      <textarea
+        class="domain-column__description-input"
+        v-model="_descriptionText"
+        :placeholder="i18nHelper.todo.domainDescriptionPlaceholder"
+        rows="2"
+        maxlength="500"
+        @blur="onDescriptionBlur"
+        @click.stop
+      />
+    </div>
     <div class="domain-column__body" ref="bodyRef" @scroll="onBodyScroll">
       <div class="domain-column__todo-list">
         <draggable
@@ -75,9 +86,13 @@
       :offset-y="contextOffsetY"
       @update:visible="contextMenuVisible = $event"
     >
+      <div class="context-menu__item" @click="handleArchiveDomain">
+        <icon-archive :size="14" />
+        <span>{{ i18nHelper.todo.archiveDomain }}</span>
+      </div>
       <div class="context-menu__item context-menu__item--danger" @click="handleDeleteDomain">
         <icon-delete :size="14" />
-        <span>Delete</span>
+        <span>{{ i18nHelper.todo.deleteDomain }}</span>
       </div>
     </ContextMenu>
     <transition name="back-to-top">
@@ -89,10 +104,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue';
+import { ref, computed, nextTick, watch } from 'vue';
 import { Modal } from '@arco-design/web-vue';
 import draggable from 'vuedraggable';
-import { IconDelete, IconPlus, IconArrowUp } from '@arco-design/web-vue/es/icon';
+import { IconArchive, IconDelete, IconPlus, IconArrowUp } from '@arco-design/web-vue/es/icon';
 import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import TodoRow from '../TodoRow/TodoRow.vue';
 import { todoStore } from '../../store/todo.store';
@@ -107,6 +122,7 @@ const props = defineProps<{
 const newTodoTitle = ref('');
 const editing = ref(false);
 const _editingText = ref('');
+const _descriptionText = ref(props.domain.description ?? '');
 const titleInputRef = ref<HTMLInputElement | null>(null);
 const sizerRef = ref<HTMLSpanElement | null>(null);
 const inputWidth = ref(40);
@@ -131,6 +147,10 @@ const todoList = computed(() => {
 
 const completedTodoList = computed(() => {
   return todoStore.completedTodosByDomain[props.domain.id] ?? [];
+});
+
+watch(() => props.domain.description, (description) => {
+  _descriptionText.value = description ?? '';
 });
 
 const measureWidth = () => {
@@ -167,6 +187,13 @@ const onTitleBlur = () => {
   editing.value = false;
 };
 
+const onDescriptionBlur = () => {
+  const value = _descriptionText.value.trim();
+  if (value !== (props.domain.description ?? '')) {
+    todoStore.updateDomainDescription(props.domain.id, value);
+  }
+};
+
 const onHeaderContextMenu = (e: MouseEvent) => {
   const target = e.currentTarget as HTMLElement;
   const rect = target.getBoundingClientRect();
@@ -174,6 +201,11 @@ const onHeaderContextMenu = (e: MouseEvent) => {
   contextOffsetX.value = e.clientX - rect.left;
   contextOffsetY.value = e.clientY - rect.top;
   contextMenuVisible.value = true;
+};
+
+const handleArchiveDomain = () => {
+  contextMenuVisible.value = false;
+  todoStore.archiveDomain(props.domain.id);
 };
 
 const handleDeleteDomain = () => {

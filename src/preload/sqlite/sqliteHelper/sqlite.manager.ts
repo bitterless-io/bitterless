@@ -1,14 +1,16 @@
 import { ipcRenderer } from 'electron';
 import { join, dirname } from 'path';
-import { rmSync, mkdirSync } from 'fs';
+import { rmSync, mkdirSync, existsSync } from 'fs';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { packageHelper } from '../../../shared/packageHelper/preload/packagePreload.helper';
 import type { BaseTable } from '../dao/base.table';
 import { sqlitePasswordHelper } from './sqlitePassword.helper';
 
+type MigrationRunner = string | ((db: Database.Database) => void);
+
 interface MigrationEntry {
   versionCode: number;
-  sql: string;
+  runner: MigrationRunner;
 }
 
 class SqliteManager {
@@ -27,8 +29,8 @@ class SqliteManager {
     this.tables.push(table);
   }
 
-  addMigration(versionCode: number, sql: string): void {
-    this.migrations.push({ versionCode, sql });
+  addMigration(versionCode: number, runner: MigrationRunner): void {
+    this.migrations.push({ versionCode, runner });
   }
 
   private runTables(): void {
@@ -40,7 +42,7 @@ class SqliteManager {
     }
   }
 
-  private runMigrations(currentVersionCode: number): void {
+  private runMigrations(currentVersionCode: number, dbExistedBeforeOpen: boolean): void {
     const lastRow = this.db
       .prepare('SELECT MAX(version_code) as last FROM migration')
       .get() as { last: number | null };
@@ -49,9 +51,13 @@ class SqliteManager {
     const insertMigration = this.db.prepare('INSERT OR IGNORE INTO migration (version_code) VALUES (?)');
 
     if (lastVersionCode === null) {
-      // First run: mark all known migrations + currentVersionCode as executed, skip SQL
-      insertMigration.run(currentVersionCode);
-      lastVersionCode = currentVersionCode;
+      if (dbExistedBeforeOpen) {
+        lastVersionCode = 0;
+      } else {
+        // New database: tables were just created with the latest schema, so old ALTER migrations are unnecessary.
+        insertMigration.run(currentVersionCode);
+        lastVersionCode = currentVersionCode;
+      }
     }
 
     // Existing DB: run migrations with versionCode > lastVersionCode
@@ -62,7 +68,11 @@ class SqliteManager {
     for (const m of pending) {
       console.log('[sqlite] running migration:', m.versionCode);
       try {
-        this.db.exec(m.sql);
+        if (typeof m.runner === 'string') {
+          this.db.exec(m.runner);
+        } else {
+          m.runner(this.db);
+        }
       } catch (err: any) {
         console.warn(`[sqlite] migration ${m.versionCode} failed (skipped):`, err.message);
       }
@@ -77,6 +87,7 @@ class SqliteManager {
   async init(): Promise<void> {
     const bitterlessPath = await ipcRenderer.invoke('bitterless:get-userdata-path');
     const dbPath = join(bitterlessPath, 'db', 'main.db');
+    let dbExistedBeforeOpen = existsSync(dbPath);
 
     console.log('[sqlite] opening database:', dbPath);
 
@@ -87,6 +98,7 @@ class SqliteManager {
       console.log('[sqlite] password was reset, removing old db directory:', dbDir);
       rmSync(dbDir, { recursive: true, force: true });
       mkdirSync(dbDir, { recursive: true });
+      dbExistedBeforeOpen = false;
       console.log('[sqlite] db directory recreated');
     }
 
@@ -105,7 +117,7 @@ class SqliteManager {
     console.log('[sqlite] current versionCode:', currentVersionCode);
 
     this.runTables();
-    this.runMigrations(currentVersionCode);
+    this.runMigrations(currentVersionCode, dbExistedBeforeOpen);
 
     console.log('[sqlite] database initialized');
   }

@@ -6,30 +6,35 @@
     >
     <div class="todo-detail__content">
       <div class="todo-detail__custom-header">
-        <div class="todo-detail__title-row">
-          <a-checkbox
-            class="todo-detail__header-checkbox"
-            :model-value="todoStore.selectedTodo.status === 1"
-            size="mini"
-            @change="handleToggleStatus"
-          />
-          <span
-            v-if="!headerEditing"
-            class="todo-detail__header-title-display"
-            :class="{ 'todo-detail__header-title-display--completed': todoStore.selectedTodo.status === 1 }"
-            @click="startHeaderEditing"
-          >{{ todoStore.selectedTodo.title }}</span>
-          <textarea
-            v-else
-            ref="headerTitleRef"
-            v-model="headerTitleInput"
-            maxlength="250"
-            class="todo-detail__header-title"
-            :class="{ 'todo-detail__header-title--completed': todoStore.selectedTodo.status === 1 }"
-            rows="1"
-            @blur="onTitleBlur"
-            @keydown.enter.exact.prevent="($event.target as HTMLTextAreaElement)?.blur()"
-          />
+        <div class="todo-detail__header-main">
+          <div v-if="selectedTodoIsAi" class="todo-detail__meta">
+            <span class="todo-detail__source-tag">{{ i18nHelper.todo.aiSourceTag }}</span>
+          </div>
+          <div class="todo-detail__title-row">
+            <a-checkbox
+              class="todo-detail__header-checkbox"
+              :model-value="todoStore.selectedTodo.status === 1"
+              size="mini"
+              @change="handleToggleStatus"
+            />
+            <span
+              v-if="!headerEditing"
+              class="todo-detail__header-title-display"
+              :class="{ 'todo-detail__header-title-display--completed': todoStore.selectedTodo.status === 1 }"
+              @click="startHeaderEditing"
+            >{{ todoStore.selectedTodo.title }}</span>
+            <textarea
+              v-else
+              ref="headerTitleRef"
+              v-model="headerTitleInput"
+              maxlength="250"
+              class="todo-detail__header-title"
+              :class="{ 'todo-detail__header-title--completed': todoStore.selectedTodo.status === 1 }"
+              rows="1"
+              @blur="onTitleBlur"
+              @keydown.enter.exact.prevent="($event.target as HTMLTextAreaElement)?.blur()"
+            />
+          </div>
         </div>
         <a-button
           class="todo-detail__close-btn"
@@ -322,6 +327,10 @@ const canSkipToCurrent = computed(() => {
   const dueDate = dayjs(todo.due_at).startOf('day');
   const today = todoStore.currentTime.startOf('day');
   return dueDate.isBefore(today);
+});
+
+const selectedTodoIsAi = computed(() => {
+  return todoStore.selectedTodo?.source === 'ai';
 });
 
 const handleSkipToCurrent = () => {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app } from 'electron';
 import { electronApp, optimizer } from '@electron-toolkit/utils';
 import { packageMainHelper } from '../shared/packageHelper/main/package.helper';
 import { pathMainHelper } from '../shared/pathHelper/main/pathMain.helper';
@@ -10,13 +10,58 @@ import { initDirectory } from './directoryHelper/directory.helper';
 import { llamaWindowHelper } from './windows/llamaWindow.helper';
 import { fsWindowHelper } from './windows/fsWindow.helper';
 import { omniWindowHelper } from './windows/omniWindow.helper';
-import * as path from 'path';
 import { trayHelper } from './tray/tray.helper';
 import { dialogHelper } from './dialog/dialog.helper';
 import './xpc/app.handler';
 import { updateService } from '@main/updateHelper/update.service';
+import { mcpBridgeServer } from './mcp/mcpBridge.server';
+import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
+
+const isMcpHelperMode = process.argv.includes('--mcp-helper');
+
+let isQuitting = false;
+let hasShownQuitDialog = false;
+
+const redirectConsoleToStderr = (): void => {
+  const write = (level: string, args: unknown[]): void => {
+    process.stderr.write(`[${level}] ${args.map((arg) => {
+      if (typeof arg === 'string') return arg;
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    }).join(' ')}\n`);
+  };
+
+  console.log = (...args: unknown[]) => write('log', args);
+  console.info = (...args: unknown[]) => write('info', args);
+  console.warn = (...args: unknown[]) => write('warn', args);
+  console.error = (...args: unknown[]) => write('error', args);
+};
+
+function cleanupResources(): void {
+  try { console.log('[app] Cleaning up resources...'); } catch {}
+
+  try { mcpBridgeServer.stop(); } catch {}
+  try { mainWindowHelper.destroy(); } catch {}
+  try { sqliteWindowHelper.destroy(); } catch {}
+  try { fsWindowHelper.destroy(); } catch {}
+  try { llamaWindowHelper.destroy(); } catch {}
+  try { connectorWindowHelper.destroy(); } catch {}
+  try { omniWindowHelper.destroy(); } catch {}
+  try { trayHelper.destroy(); } catch {}
+
+  try { console.log('[app] Cleanup complete'); } catch {}
+}
 
 app.whenReady().then(async () => {
+  if (isMcpHelperMode) {
+    redirectConsoleToStderr();
+    await startBitterlessMcpStdioServer();
+    return;
+  }
+
   electronApp.setAppUserModelId('com.electron');
   if (process.platform === 'darwin') {
     app.dock.setBadge('');
@@ -39,6 +84,12 @@ app.whenReady().then(async () => {
     });
   });
 
+  try {
+    await mcpBridgeServer.start();
+  } catch (err) {
+    console.warn('[app] MCP bridge failed to start:', err);
+  }
+
   // 启动 FS 进程
   fsWindowHelper.create();
 
@@ -56,26 +107,13 @@ app.whenReady().then(async () => {
   });
 });
 
-let isQuitting = false;
-
-let hasShownQuitDialog = false;
-
-function cleanupResources(): void {
-  try { console.log('[app] Cleaning up resources...'); } catch {}
-
-  try { mainWindowHelper.destroy(); } catch {}
-  try { sqliteWindowHelper.destroy(); } catch {}
-  try { fsWindowHelper.destroy(); } catch {}
-  try { llamaWindowHelper.destroy(); } catch {}
-  try { connectorWindowHelper.destroy(); } catch {}
-  try { omniWindowHelper.destroy(); } catch {}
-  try { trayHelper.destroy(); } catch {}
-
-  try { console.log('[app] Cleanup complete'); } catch {}
-}
-
 app.on('before-quit', async (event) => {
   if (isQuitting) return;
+
+  if (isMcpHelperMode) {
+    isQuitting = true;
+    return;
+  }
 
   // 新增：如果是更新导致的退出，直接放行
   if (updateService.isUpdating) {
