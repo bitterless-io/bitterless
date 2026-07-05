@@ -14,7 +14,7 @@
         </div>
         <a-button size="mini" type="text" @click="handleClose">
           <template #icon>
-            <icon-close />
+            <IconX />
           </template>
         </a-button>
       </div>
@@ -26,7 +26,7 @@
           <span>{{ i18nHelper.todo.mcpCommandPath }}</span>
           <a-button size="mini" type="outline" @click="copyText(info?.commandPath ?? '')">
             <template #icon>
-              <icon-copy />
+              <IconCopy />
             </template>
             {{ i18nHelper.todo.mcpCopy }}
           </a-button>
@@ -39,7 +39,7 @@
           <span>{{ i18nHelper.todo.mcpConfig }}</span>
           <a-button size="mini" type="outline" @click="copyText(info?.configJson ?? '')">
             <template #icon>
-              <icon-copy />
+              <IconCopy />
             </template>
             {{ i18nHelper.todo.mcpCopy }}
           </a-button>
@@ -52,7 +52,7 @@
           <span>{{ i18nHelper.todo.mcpAgentPrompt }}</span>
           <a-button size="mini" type="primary" @click="copyText(info?.instruction ?? '')">
             <template #icon>
-              <icon-copy />
+              <IconCopy />
             </template>
             {{ i18nHelper.todo.mcpCopyAgentPrompt }}
           </a-button>
@@ -65,7 +65,7 @@
 
 <script setup lang="ts">
 import { Message } from '@arco-design/web-vue';
-import { IconClose, IconCopy } from '@arco-design/web-vue/es/icon';
+import { IconCopy, IconX } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
 

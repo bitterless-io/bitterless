@@ -20,7 +20,7 @@
           status="danger"
           @click="removeRow(key)"
         >
-          <icon-delete />
+          <IconTrash />
         </a-button>
       </div>
     </div>
@@ -48,7 +48,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { IconDelete } from '@arco-design/web-vue/es/icon';
+import { IconTrash } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
 interface Props {

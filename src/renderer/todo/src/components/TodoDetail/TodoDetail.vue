@@ -43,7 +43,7 @@
           @click="todoStore.closeDetail()"
         >
           <template #icon>
-            <icon-close :size="16" />
+            <IconX :size="16" />
           </template>
         </a-button>
       </div>
@@ -88,7 +88,7 @@
                   @click="handleDeleteSubTodo(element.id)"
                 >
                   <template #icon>
-                    <icon-close :size="12" />
+                    <IconX :size="12" />
                   </template>
                 </a-button>
               </div>
@@ -96,7 +96,7 @@
           </draggable>
         </div>
         <div v-if="!addingStep" class="todo-detail__add-step" @click="startAddStep">
-          <icon-plus :size="14" />
+          <IconPlus :size="14" />
           <span>Add step</span>
         </div>
         <div v-else class="todo-detail__add-step-input">
@@ -190,7 +190,7 @@
           class="todo-detail__skip-btn"
           @click="handleSkipToCurrent"
         >
-          <icon-forward :size="14" />
+          <IconPlayerSkipForward :size="14" />
           <span>Skip to current</span>
         </div>
       </div>
@@ -215,7 +215,7 @@
           @click="handleLocate"
         >
           <template #icon>
-            <icon-location :size="14" />
+            <IconMapPin :size="14" />
           </template>
         </a-button>
         <span v-if="todoStore.selectedTodo.status === 1 && todoStore.selectedTodo.last_complete_at" class="todo-detail__complete-time">
@@ -228,7 +228,7 @@
           @click="handleDelete"
         >
           <template #icon>
-            <icon-delete />
+            <IconTrash />
           </template>
           Delete
         </a-button>
@@ -245,13 +245,7 @@ import { Modal } from '@arco-design/web-vue';
 import dayjs from 'dayjs';
 import moment from 'moment';
 import draggable from 'vuedraggable';
-import {
-  IconClose,
-  IconPlus,
-  IconDelete,
-  IconForward,
-  IconLocation,
-} from '@arco-design/web-vue/es/icon';
+import { IconMapPin, IconPlayerSkipForward, IconPlus, IconTrash, IconX } from '@tabler/icons-vue';
 import { todoStore } from '../../store/todo.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 

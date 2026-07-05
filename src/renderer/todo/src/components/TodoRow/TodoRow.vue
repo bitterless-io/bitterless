@@ -48,7 +48,7 @@
       </div>
       <div v-if="hasSubtitle" class="todo-row__subtitle">
         <span v-if="subTodoProgress" class="todo-row__subtodo-progress">
-          <icon-list :size="12" />
+          <IconList :size="12" />
           {{ subTodoProgress }}
         </span>
         <span
@@ -59,7 +59,7 @@
             'todo-row__due-date--future': isFutureOrToday
           }"
         >
-          <icon-calendar :size="12" />
+          <IconCalendar :size="12" />
           {{ dueDateText }}
         </span>
       </div>
@@ -69,8 +69,8 @@
       :class="{ 'todo-row__star--active': todo.important === 1 }"
       @click.stop="handleToggleImportant"
     >
-      <icon-star-fill v-if="todo.important === 1" :size="14" />
-      <icon-star v-else :size="14" />
+      <IconStarFilled v-if="todo.important === 1" :size="14" />
+      <IconStar v-else :size="14" />
     </div>
 
     <ContextMenu
@@ -81,15 +81,15 @@
       @update:visible="contextMenuVisible = $event"
     >
       <div class="context-menu__item" @click="handleCopyTitle">
-        <icon-copy :size="14" />
+        <IconCopy :size="14" />
         <span>{{ i18nHelper.todo.copyTitle }}</span>
       </div>
       <div class="context-menu__item" @click="handleCopyWithSteps">
-        <icon-list :size="14" />
+        <IconList :size="14" />
         <span>{{ i18nHelper.todo.copyWithSteps }}</span>
       </div>
       <div class="context-menu__item" @click="handleCopyAll">
-        <icon-copy :size="14" />
+        <IconCopy :size="14" />
         <span>{{ i18nHelper.todo.copyAll }}</span>
       </div>
       <div
@@ -97,11 +97,11 @@
         class="context-menu__item context-menu__item--skip"
         @click="handleSkipToCurrent"
       >
-        <icon-forward :size="14" />
+        <IconPlayerSkipForward :size="14" />
         <span>Skip to current</span>
       </div>
       <div class="context-menu__item context-menu__item--danger" @click="handleDelete">
-        <icon-delete :size="14" />
+        <IconTrash :size="14" />
         <span>Delete</span>
       </div>
     </ContextMenu>
@@ -113,14 +113,14 @@ import { ref, computed, nextTick } from 'vue';
 import { Modal } from '@arco-design/web-vue';
 import dayjs from 'dayjs';
 import {
-  IconList,
   IconCalendar,
+  IconCopy,
+  IconList,
+  IconPlayerSkipForward,
   IconStar,
-  IconStarFill,
-  IconDelete,
-  IconForward,
-  IconCopy
-} from '@arco-design/web-vue/es/icon';
+  IconStarFilled,
+  IconTrash
+} from '@tabler/icons-vue';
 import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import { todoStore } from '../../store/todo.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';

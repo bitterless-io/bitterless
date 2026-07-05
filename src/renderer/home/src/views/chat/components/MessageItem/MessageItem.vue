@@ -8,8 +8,8 @@
     }"
   >
     <div class="message-item__avatar">
-      <icon-robot v-if="role === 'assistant'" />
-      <icon-user v-else />
+      <IconRobot v-if="role === 'assistant'" />
+      <IconUser v-else />
     </div>
     <div class="message-item__body">
       <div class="message-item__content">
@@ -33,12 +33,12 @@
           @click="onRecall"
         >
           <template #icon>
-            <icon-undo />
+            <IconArrowBackUp />
           </template>
         </a-button>
         <a-button type="text" size="mini" @click="onCopy">
           <template #icon>
-            <icon-copy />
+            <IconCopy />
           </template>
         </a-button>
       </div>
@@ -47,7 +47,7 @@
 </template>
  
 <script setup lang="ts">
-import { IconCopy, IconRobot, IconUser, IconUndo } from '@arco-design/web-vue/es/icon';
+import { IconArrowBackUp, IconCopy, IconRobot, IconUser } from '@tabler/icons-vue';
 import MarkdownRender from 'markstream-vue';
 
 interface Props {

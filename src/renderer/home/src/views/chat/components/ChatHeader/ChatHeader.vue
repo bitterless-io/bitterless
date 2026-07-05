@@ -4,18 +4,18 @@
       <a-tooltip :content="searchTooltip" position="bl">
         <a-button type="text" size="small" @click="emit('toggle-search')">
           <template #icon>
-            <icon-search />
+            <IconSearch />
           </template>
         </a-button>
       </a-tooltip>
       <a-button type="text" size="small" @click="emit('toggle-history')">
         <template #icon>
-          <icon-menu />
+          <IconMenu2 />
         </template>
       </a-button>
       <a-button type="text" size="small" :disabled="!sessionStore.currentSessionId" @click="onNewChat">
         <template #icon>
-          <icon-plus />
+          <IconPlus />
         </template>
       </a-button>
     </div>
@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { IconMenu, IconPlus, IconSearch } from '@arco-design/web-vue/es/icon';
+import { IconMenu2, IconPlus, IconSearch } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { currentSession, sessionStore, startNewSession } from '../../store/session.store';
 import { messageStore } from '../../store/message.store';

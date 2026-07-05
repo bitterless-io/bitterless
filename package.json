@@ -66,6 +66,7 @@
     "@qdrant/js-client-rest": "^1.16.2",
     "@rig-lib/semaphore": "^1.0.5",
     "@sapphire/snowflake": "^3.5.5",
+    "@tabler/icons-vue": "^3.44.0",
     "@vueuse/core": "^14.2.1",
     "adm-zip": "^0.5.17",
     "axios": "^1.13.5",

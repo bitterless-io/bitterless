@@ -14,7 +14,7 @@
         </div>
         <a-button size="mini" type="text" @click="handleClose">
           <template #icon>
-            <icon-close />
+            <IconX />
           </template>
         </a-button>
       </div>
@@ -27,7 +27,7 @@
         :placeholder="i18nHelper.todo.archivedDomainSearchPlaceholder"
       >
         <template #prefix>
-          <icon-search />
+          <IconSearch />
         </template>
       </a-input>
 
@@ -38,7 +38,7 @@
           class="archived-domains__item"
         >
           <div class="archived-domains__item-main">
-            <icon-archive class="archived-domains__item-icon" :size="15" />
+            <IconArchive class="archived-domains__item-icon" :size="15" />
             <div class="archived-domains__item-text">
               <div class="archived-domains__item-title">{{ domain.title }}</div>
               <div class="archived-domains__item-meta">
@@ -64,7 +64,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import dayjs from 'dayjs';
-import { IconArchive, IconClose, IconSearch } from '@arco-design/web-vue/es/icon';
+import { IconArchive, IconSearch, IconX } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoStore } from '../../store/todo.store';
 

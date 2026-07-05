@@ -25,7 +25,7 @@ export interface MessageInsertParams {
 export class MessageDao extends BaseDao {
   /** Insert a new message, returns the inserted message data */
   async insert(params: MessageInsertParams): Promise<MessageRow> {
-    const id = snowflake.generate().toString().padStart(19, '0');
+    const id = snowflake.generate().toString().padStart(20, '0');
     const searchText = generateSearchText(params.content);
     const createdAt = Date.now();
     await sqliteHelper.safeRun(

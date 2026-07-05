@@ -73,7 +73,7 @@
           @press-enter="handleAddTodo"
         >
           <template #prefix>
-            <icon-plus />
+            <IconPlus />
           </template>
         </a-input>
       </div>
@@ -87,17 +87,17 @@
       @update:visible="contextMenuVisible = $event"
     >
       <div class="context-menu__item" @click="handleArchiveDomain">
-        <icon-archive :size="14" />
+        <IconArchive :size="14" />
         <span>{{ i18nHelper.todo.archiveDomain }}</span>
       </div>
       <div class="context-menu__item context-menu__item--danger" @click="handleDeleteDomain">
-        <icon-delete :size="14" />
+        <IconTrash :size="14" />
         <span>{{ i18nHelper.todo.deleteDomain }}</span>
       </div>
     </ContextMenu>
     <transition name="back-to-top">
       <button v-if="showBackToTop" class="domain-column__back-to-top" @click="scrollToTop">
-        <icon-arrow-up :size="14" />
+        <IconArrowUp :size="14" />
       </button>
     </transition>
   </div>
@@ -107,7 +107,7 @@
 import { ref, computed, nextTick, watch } from 'vue';
 import { Modal } from '@arco-design/web-vue';
 import draggable from 'vuedraggable';
-import { IconArchive, IconDelete, IconPlus, IconArrowUp } from '@arco-design/web-vue/es/icon';
+import { IconArchive, IconArrowUp, IconPlus, IconTrash } from '@tabler/icons-vue';
 import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import TodoRow from '../TodoRow/TodoRow.vue';
 import { todoStore } from '../../store/todo.store';

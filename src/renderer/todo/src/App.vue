@@ -24,7 +24,7 @@
       <transition name="scroll-to-left">
         <a-badge v-if="showScrollToLeft" class="todo-app__scroll-to-left-badge" :count="todoStore.focusedTodoList.length" :max-count="99">
           <button class="todo-app__scroll-to-left" @click="scrollToLeft">
-            <icon-left :size="14" />
+            <IconArrowLeft :size="14" />
           </button>
         </a-badge>
       </transition>
@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import draggable from 'vuedraggable';
-import { IconLeft } from '@arco-design/web-vue/es/icon';
+import { IconArrowLeft } from '@tabler/icons-vue';
 import DomainColumn from './components/DomainColumn/DomainColumn.vue';
 import FocusedColumn from './components/FocusedColumn/FocusedColumn.vue';
 import AddDomainButton from './components/AddDomainButton/AddDomainButton.vue';

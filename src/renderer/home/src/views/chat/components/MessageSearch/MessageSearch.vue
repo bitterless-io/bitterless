@@ -19,7 +19,7 @@
           @keydown="onKeydown"
         >
           <template #prefix>
-            <icon-search />
+            <IconSearch />
           </template>
         </a-input>
       </div>
@@ -55,7 +55,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick } from 'vue';
-import { IconSearch } from '@arco-design/web-vue/es/icon';
+import { IconSearch } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import moment from 'moment';
 import {

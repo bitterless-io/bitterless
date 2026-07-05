@@ -5,26 +5,26 @@
       <a-tooltip :content="i18nHelper.todo.archivedDomains" position="br" mini>
         <a-button size="mini" type="text" @click="handleOpenArchivedDomains">
           <template #icon>
-            <icon-delete />
+            <IconTrash />
           </template>
         </a-button>
       </a-tooltip>
       <a-tooltip :content="i18nHelper.todo.mcpTitle" position="br" mini>
         <a-button size="mini" type="text" @click="handleOpenMcpGuide">
           <template #icon>
-            <icon-robot />
+            <IconRobot />
           </template>
         </a-button>
       </a-tooltip>
       <a-button size="mini" type="text" :title="i18nHelper.todo.refresh" @click="handleRefresh">
         <template #icon>
-          <icon-refresh />
+          <IconRefresh />
         </template>
       </a-button>
       <a-dropdown trigger="click" position="br">
         <a-button size="mini" type="text">
           <template #icon>
-            <icon-settings />
+            <IconSettings />
           </template>
         </a-button>
         <template #content>
@@ -38,29 +38,29 @@
       </a-dropdown>
       <a-button v-if="!isStandalone" size="mini" type="text" @click="handleOpenInWindow">
         <template #icon>
-          <icon-launch />
+          <IconExternalLink />
         </template>
       </a-button>
       <a-tooltip v-if="isStandalone && isMac" :content="i18nHelper.todo.pinOnTop" position="br" mini>
         <a-button size="mini" type="text" :class="{ 'menubar__pin-btn--active': todoSettingStore.alwaysOnTop }" @click="handleTogglePin">
           <template #icon>
-            <icon-to-top />
+            <IconPinned />
           </template>
         </a-button>
       </a-tooltip>
       <a-button v-if="isStandalone && isWindows" size="mini" type="text" @click="handleMinimize">
         <template #icon>
-          <icon-minus />
+          <IconMinus />
         </template>
       </a-button>
       <a-button v-if="isStandalone && isWindows" size="mini" type="text" @click="handleMaximize">
         <template #icon>
-          <icon-expand />
+          <IconMaximize />
         </template>
       </a-button>
       <a-button v-if="isStandalone && isWindows" size="mini" type="text" @click="handleClose">
         <template #icon>
-          <icon-close />
+          <IconX />
         </template>
       </a-button>
     </div>
@@ -79,7 +79,17 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
 import { Message } from '@arco-design/web-vue';
-import { IconDelete, IconLaunch, IconSettings, IconMinus, IconExpand, IconClose, IconRefresh, IconToTop, IconRobot } from '@arco-design/web-vue/es/icon';
+import {
+  IconExternalLink,
+  IconMaximize,
+  IconMinus,
+  IconPinned,
+  IconRefresh,
+  IconRobot,
+  IconSettings,
+  IconTrash,
+  IconX
+} from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoSettingStore } from '../../store/todoSetting.store';
 import { todoStore } from '../../store/todo.store';

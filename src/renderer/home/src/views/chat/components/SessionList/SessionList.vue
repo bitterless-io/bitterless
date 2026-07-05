@@ -2,7 +2,7 @@
   <div class="session-list">
     <div class="session-list__search-bar">
       <div class="session-list__search-input" @click="emit('toggle-search')">
-        <icon-search class="session-list__search-icon" />
+        <IconSearch class="session-list__search-icon" />
         <span class="session-list__search-placeholder">{{ i18nHelper.chat.searchPlaceholder }}</span>
       </div>
     </div>
@@ -26,7 +26,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { IconSearch } from '@arco-design/web-vue/es/icon';
+import { IconSearch } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { sessionStore, selectSession, type SessionItem } from '../../store/session.store';
 import { messageStore } from '../../store/message.store';

@@ -20,7 +20,7 @@
       :title="svc.hasNew ? i18nHelper.chat.newResponse : undefined"
       @click="svc.hasNew ? onClickNewResponse() : svc.scrollToBottom()"
     >
-      <icon-to-bottom />
+      <IconArrowDown />
     </div>
   </div>
 </template>
@@ -28,7 +28,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue';
 import { useScroll } from '@vueuse/core';
-import { IconRobot, IconToBottom } from '@arco-design/web-vue/es/icon';
+import { IconArrowDown } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { messageStore, recallMessage } from '../../store/message.store';
 import { sessionStore } from '../../store/session.store';

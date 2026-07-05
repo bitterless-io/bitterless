@@ -19,7 +19,7 @@
           class="message-input__btn message-input__btn--stop"
           @click="handleStop"
         >
-          <icon-record-stop :size="20" />
+          <IconPlayerStop :size="20" />
         </button>
         <button
           v-else
@@ -27,7 +27,7 @@
           :disabled="!messageStore.inputContent.trim()"
           @click="handleSendClick"
         >
-          <icon-send :size="20" />
+          <IconSend :size="20" />
         </button>
       </div>
     </div>
@@ -39,7 +39,7 @@ import { ref, watch, onMounted, onUnmounted } from 'vue';
 import QuillEditor from '@/components/QuillEditor/QuillEditor.vue';
 import { messageStore } from '../../store/message.store';
 import { sessionStore } from '../../store/session.store';
-import { IconSend, IconRecordStop } from '@arco-design/web-vue/es/icon';
+import { IconPlayerStop, IconSend } from '@tabler/icons-vue';
 
 const emit = defineEmits<{ sent: [] }>();
 

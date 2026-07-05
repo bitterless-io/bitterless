@@ -48,7 +48,7 @@
       </div>
       <transition name="back-to-top">
         <button v-if="showBackToTop" class="focused-column__back-to-top" @click="scrollToTop">
-          <icon-arrow-up :size="14" />
+          <IconArrowUp :size="14" />
         </button>
       </transition>
     </div>
@@ -57,7 +57,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { IconArrowUp } from '@arco-design/web-vue/es/icon';
+import { IconArrowUp } from '@tabler/icons-vue';
 import TodoRow from '../TodoRow/TodoRow.vue';
 import { todoStore } from '../../store/todo.store';
 import { todoSettingStore } from '../../store/todoSetting.store';
