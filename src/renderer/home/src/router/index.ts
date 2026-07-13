@@ -23,6 +23,10 @@ router.beforeEach(async (to) => {
     }
   }
 
+  if (authStore.current?.must_set_password) {
+    return { name: 'login', query: { redirect: to.fullPath } };
+  }
+
   return true;
 });
 

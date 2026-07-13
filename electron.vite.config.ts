@@ -60,7 +60,6 @@ export default defineConfig({
           sqlite: resolve('src/preload/sqlite/sqlite.preload.ts'),
           connector: resolve('src/preload/connector/connector.preload.ts'),
           llama: resolve('src/preload/llama/llama.preload.ts'),
-          fs: resolve('src/preload/fs/fs.preload.ts'),
           todo: resolve('src/preload/todo/todo.preload.ts'),
           omni: resolve('src/preload/omni/omni.preload.ts'),
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts')
@@ -92,7 +91,6 @@ export default defineConfig({
           sqlite: resolve('src/renderer/sqlite/index.html'),
           connector: resolve('src/renderer/connector/index.html'),
           llama: resolve('src/renderer/llama/index.html'),
-          fs: resolve('src/renderer/fs/index.html'),
           todo: resolve('src/renderer/todo/index.html'),
           'omni/omniCell': resolve('src/renderer/omni/omniCell/index.html'),
           'omni/omniControl': resolve('src/renderer/omni/omniControl/index.html'),

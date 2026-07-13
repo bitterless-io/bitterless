@@ -35,7 +35,7 @@ class LlamaWindowHelper {
 
     const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
     if (shouldOpenDevTools) {
-      this.browserWindow.webContents.openDevTools();
+      this.browserWindow.webContents.openDevTools({ mode: 'detach' });
     }
 
     if (isDev && process.env['ELECTRON_RENDERER_URL']) {

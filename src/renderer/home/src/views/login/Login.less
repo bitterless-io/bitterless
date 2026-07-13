@@ -3,7 +3,7 @@
   width: 100vw;
   display: grid;
   place-items: center;
-  overflow: hidden;
+  overflow: auto;
   background:
     linear-gradient(120deg, rgba(8, 24, 36, 0.92), rgba(12, 32, 42, 0.86)),
     radial-gradient(circle at 18% 24%, rgba(53, 187, 165, 0.28), transparent 34%),
@@ -59,6 +59,42 @@
   }
 }
 
+.login-view__account {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.login-view__password-modal {
+  > p {
+    margin: 0 0 8px;
+    color: #607078;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .login-view__account {
+    margin-bottom: 20px;
+    color: #314149;
+    font-weight: 600;
+  }
+}
+
+.login-view__password-dialog,
+.login-view__password-dialog .arco-modal-body {
+  background: #f8faf6;
+}
+
+.login-view__modes {
+  width: 100%;
+  margin-bottom: 22px;
+
+  .arco-radio-button {
+    flex: 1;
+    text-align: center;
+  }
+}
+
 .login-view__form {
   .arco-form-item {
     margin-bottom: 18px;
@@ -88,6 +124,17 @@
   }
 }
 
+.login-view__otp-field {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px;
+
+  .arco-btn {
+    width: 112px;
+  }
+}
+
 .login-view__footer {
   margin-top: 18px;
   color: #718088;
@@ -107,5 +154,13 @@
 
   .login-view__copy h1 {
     font-size: 26px;
+  }
+
+  .login-view__otp-field {
+    grid-template-columns: minmax(0, 1fr) 104px;
+
+    .arco-btn {
+      width: 104px;
+    }
   }
 }

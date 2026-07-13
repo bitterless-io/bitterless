@@ -26,7 +26,7 @@ class PluginTestHandler extends XpcMainHandler {
     this.contentWindow.on('ready-to-show', () => {
       this.contentWindow?.show();
       if (import.meta.env.VITE_MODE !== 'release') {
-        this.contentWindow?.webContents.openDevTools();
+        this.contentWindow?.webContents.openDevTools({ mode: 'detach' });
       }
     });
 
@@ -58,7 +58,7 @@ class PluginTestHandler extends XpcMainHandler {
     this.optionWindow.on('ready-to-show', () => {
       this.optionWindow?.show();
       if (import.meta.env.VITE_MODE !== 'release') {
-        this.optionWindow?.webContents.openDevTools();
+        this.optionWindow?.webContents.openDevTools({ mode: 'detach' });
       }
     });
 

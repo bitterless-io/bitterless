@@ -1,7 +1,15 @@
 import { reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { authEmitter } from '@/emitter/auth.emitter';
-import { loginApi, logoutApi, meApi, type CurrentCustomer } from '@/networking/auth.api';
+import {
+  changePasswordApi,
+  loginApi,
+  logoutApi,
+  meApi,
+  sendOtpApi,
+  verifyOtpApi,
+  type CurrentCustomer
+} from '@/networking/auth.api';
 
 const TOKEN_KEY = 'bitterless-desktop-token';
 const DEVICE_SEED_KEY = 'bitterless-desktop-device-seed';
@@ -64,6 +72,7 @@ const decodeJwtPayload = (token: string): { sub?: number; scope?: string } | nul
 class AuthStore {
   current: CurrentCustomer | null = null;
   loading = false;
+  sendingOtp = false;
   checking = false;
 
   isAuthenticated = (): boolean => !!getToken();
@@ -76,6 +85,16 @@ class AuthStore {
     return localStorage.getItem(DEVICE_ID_KEY) || '';
   }
 
+  private async activateToken(token: string, deviceId: string): Promise<CurrentCustomer> {
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+    setToken(token);
+    const current = await this.fetchMe();
+    if (!current.must_set_password) {
+      await authEmitter.activateSession();
+    }
+    return current;
+  }
+
   loginWithPassword = async (email: string, password: string): Promise<void> => {
     this.loading = true;
     try {
@@ -85,9 +104,7 @@ class AuthStore {
       const customerId = payload?.scope === 'customer' ? payload.sub : undefined;
 
       if (!customerId) {
-        setToken(bootstrapLogin.token);
-        await this.fetchMe();
-        await authEmitter.activateSession();
+        await this.activateToken(bootstrapLogin.token, bootstrapDeviceId);
         return;
       }
 
@@ -96,12 +113,56 @@ class AuthStore {
 
       await logoutApi(bootstrapLogin.token).catch(() => undefined);
 
-      localStorage.setItem(DEVICE_ID_KEY, customerDeviceId);
-      setToken(finalLogin.token);
-      await this.fetchMe();
-      await authEmitter.activateSession();
+      await this.activateToken(finalLogin.token, customerDeviceId);
     } catch (err: any) {
       Message.error(err?.message || '登录失败');
+      throw err;
+    } finally {
+      this.loading = false;
+    }
+  };
+
+  sendOtp = async (email: string): Promise<void> => {
+    this.sendingOtp = true;
+    try {
+      await sendOtpApi({ email });
+    } catch (err: any) {
+      Message.error(err?.message || '验证码发送失败');
+      throw err;
+    } finally {
+      this.sendingOtp = false;
+    }
+  };
+
+  loginWithOtp = async (email: string, code: string): Promise<void> => {
+    this.loading = true;
+    try {
+      const bootstrapDeviceId = getBootstrapDeviceId();
+      const result = await verifyOtpApi({ email, code, device_id: bootstrapDeviceId });
+      await this.activateToken(result.token, bootstrapDeviceId);
+    } catch (err: any) {
+      Message.error(err?.message || '验证码登录失败');
+      throw err;
+    } finally {
+      this.loading = false;
+    }
+  };
+
+  changePassword = async (newPassword: string): Promise<void> => {
+    const token = getToken();
+    if (!token) throw new Error('Missing token');
+
+    this.loading = true;
+    try {
+      await changePasswordApi(token, { new_password: newPassword });
+      if (this.current) {
+        this.current.status = 'active';
+        this.current.has_password = true;
+        this.current.must_set_password = false;
+      }
+      await authEmitter.activateSession();
+    } catch (err: any) {
+      Message.error(err?.message || '密码设置失败');
       throw err;
     } finally {
       this.loading = false;

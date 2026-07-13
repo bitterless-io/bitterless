@@ -68,8 +68,9 @@ Minimum keys:
 
 ## Human/backend support needed
 
-- Current temporary desktop core API is `https://bl-test-api.terncloud.com`; keep
-  `VITE_BITTERLESS_CORE_URL` aligned when the final domain is ready.
+- The development desktop Core API is `https://bl-test-api.terncloud.com`; production and
+  `yarn dev:prod` use `https://api.bitterless.io`. Keep `VITE_BITTERLESS_CORE_URL` aligned
+  across the environment profiles and renderer fallback.
 - Create or invite the real customer accounts in `bitterless-private`.
 - Add backend device APIs:
   - `POST /auth/login` returns `{ token, customer, device }` and generates device id server-side.

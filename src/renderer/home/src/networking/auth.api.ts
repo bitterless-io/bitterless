@@ -1,7 +1,8 @@
 import { authEmitter } from '@/emitter/auth.emitter';
 
 const TEST_CORE_URL = 'https://bl-test-api.terncloud.com';
-const DEFAULT_PROD_CORE_URL = TEST_CORE_URL;
+const PROD_CORE_URL = 'https://api.bitterless.io';
+const DEFAULT_PROD_CORE_URL = PROD_CORE_URL;
 const DEFAULT_DEV_CORE_URL = TEST_CORE_URL;
 const TOKEN_HEADER = '-x-bl-token';
 
@@ -16,7 +17,9 @@ export interface CurrentCustomer {
   email: string;
   nickname?: string;
   scope: 'customer';
+  status: 'invited' | 'active' | 'disabled';
   has_password: boolean;
+  must_set_password: boolean;
 }
 
 const getBaseUrl = (): string => {
@@ -88,9 +91,35 @@ export const loginApi = (data: {
     body: JSON.stringify({ ...data, scope: 'customer' })
   });
 
+export const sendOtpApi = (data: { email: string }): Promise<{ ok: true }> =>
+  request<{ ok: true }>('/auth/send-otp', {
+    method: 'POST',
+    body: JSON.stringify({ ...data, purpose: 'login' })
+  });
+
+export const verifyOtpApi = (data: {
+  email: string;
+  code: string;
+  device_id: string;
+}): Promise<AuthLoginResult> =>
+  request<AuthLoginResult>('/auth/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify({ ...data, purpose: 'login' })
+  });
+
 export const meApi = (token: string): Promise<CurrentCustomer> =>
   request<CurrentCustomer>('/auth/me', {
     method: 'GET',
+    token
+  });
+
+export const changePasswordApi = (
+  token: string,
+  data: { new_password: string }
+): Promise<{ ok: true }> =>
+  request<{ ok: true }>('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify(data),
     token
   });
 

@@ -2,7 +2,6 @@ import { BrowserWindow } from 'electron';
 import { XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import type { AuthInvalidationPayload } from '@shared/auth/auth.type';
 import { connectorWindowHelper } from '@main/windows/connectorWindow.helper';
-import { fsWindowHelper } from '@main/windows/fsWindow.helper';
 import { llamaWindowHelper } from '@main/windows/llamaWindow.helper';
 import { mainWindowHelper } from '@main/windows/mainWindow.helper';
 import { omniWindowHelper } from '@main/windows/omniWindow.helper';
@@ -15,7 +14,6 @@ class AuthHandler extends XpcMainHandler {
 
   async activateSession(): Promise<void> {
     await this._ensureSqliteWindow();
-    this._ensureFsWindow();
   }
 
   async invalidateSession(params: AuthInvalidationPayload = {}): Promise<void> {
@@ -70,12 +68,6 @@ class AuthHandler extends XpcMainHandler {
     });
   }
 
-  private _ensureFsWindow(): void {
-    const current = fsWindowHelper.browserWindow;
-    if (current && !current.isDestroyed()) return;
-    fsWindowHelper.create();
-  }
-
   private async _closeSecondaryWindows(): Promise<void> {
     await todoWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy todo window:', err);
@@ -93,7 +85,6 @@ class AuthHandler extends XpcMainHandler {
     const preservedWindows = new Set<BrowserWindow | null>([
       mainWindowHelper.browserWindow,
       sqliteWindowHelper.browserWindow,
-      fsWindowHelper.browserWindow,
       connectorWindowHelper.browserWindow,
       llamaWindowHelper.browserWindow
     ]);
