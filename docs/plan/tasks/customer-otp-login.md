@@ -62,6 +62,8 @@ for an invited account that has not set a password.
 - The production Core URL is allowed by the renderer CSP.
 - Electron flow passed with API responses mocked at the renderer boundary: send OTP, verify an
   invited customer, show the first-password modal, set the password, and route to `/chat`.
+- Delayed-response checks confirm all four request buttons show an Arco spinner and loading class,
+  become disabled, and block re-entry: send OTP, password login, OTP login, and set password.
 - Escape and mask clicks do not dismiss the modal; direct navigation to `/chat` returns to login
   while `must_set_password` is true.
 - The detached-DevTools debug viewport (`756x474`) keeps the complete modal reachable without
