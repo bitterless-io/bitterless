@@ -14,4 +14,13 @@ export interface ManifestData {
   updatedAt: string;
 }
 
+export type UpdateCheckStatus = 'available' | 'latest' | 'disabled' | 'error';
+
+export interface UpdateCheckResult {
+  status: UpdateCheckStatus;
+  currentVersionCode: number;
+  info?: UpdateInfo;
+  error?: string;
+}
+
 export type PlatformType = 'mac_arm' | 'mac_intel' | 'win64';

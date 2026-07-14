@@ -5,6 +5,7 @@
         <a-card
           v-for="app in miniApps"
           :key="app.id"
+          :data-mini-app-id="app.id"
           class="mini-app-page__card"
         >
           <template #title>
@@ -32,6 +33,7 @@ import { computed } from 'vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoWindowEmitter } from '@/emitter/todoWindow.emitter';
 import { omniWindowEmitter } from '@/emitter/omniWindow.emitter';
+import { coworkWindowEmitter } from '@/emitter/coworkWindow.emitter';
 import { createMiniApps } from './miniApps.constant';
 
 const openTodo = () => {
@@ -42,7 +44,11 @@ const openOmniBrowser = async () => {
   await omniWindowEmitter.openOmniWindow();
 };
 
-const miniApps = computed(() => createMiniApps(openTodo, openOmniBrowser, i18nHelper));
+const openCowork = async () => {
+  await coworkWindowEmitter.openCoworkWindow();
+};
+
+const miniApps = computed(() => createMiniApps(openTodo, openCowork, openOmniBrowser, i18nHelper));
 </script>
 
 <style lang="less">

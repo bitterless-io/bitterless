@@ -8,12 +8,14 @@ import { omniWindowHelper } from '@main/windows/omniWindow.helper';
 import { sqliteWindowHelper } from '@main/windows/sqliteWindow.helper';
 import { pluginTestHandler } from './pluginTest.handler';
 import { todoWindowHandler } from './todoWindow.handler';
+import { coworkWindowHandler } from './coworkWindow.handler';
 
 class AuthHandler extends XpcMainHandler {
   private invalidating = false;
 
   async activateSession(): Promise<void> {
     await this._ensureSqliteWindow();
+    await coworkWindowHandler.prepareForAuthenticatedSession();
   }
 
   async invalidateSession(params: AuthInvalidationPayload = {}): Promise<void> {
@@ -71,6 +73,9 @@ class AuthHandler extends XpcMainHandler {
   private async _closeSecondaryWindows(): Promise<void> {
     await todoWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy todo window:', err);
+    });
+    await coworkWindowHandler._destroyForAuth().catch((err) => {
+      console.warn('[AuthHandler] Failed to destroy Cowork window:', err);
     });
     await pluginTestHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy plugin test windows:', err);

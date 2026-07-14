@@ -146,6 +146,10 @@ export const zh: typeof en = {
       name: '待办',
       subtitle: '任务管理与组织',
     },
+    cowork: {
+      name: 'Cowork',
+      subtitle: '浏览器自动化、智能体、操作录制与工作台',
+    },
     omniBrowser: {
       name: '全能浏览器',
       subtitle: '多窗格网页浏览器',

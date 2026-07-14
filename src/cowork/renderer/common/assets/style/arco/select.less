@@ -1,0 +1,11 @@
+/* Arco Select — global left/right padding override.
+ *
+ * Arco's default select-view box uses 12px left/right padding (both single and
+ * multiple); this trims it to 8px everywhere. Imported through the common style
+ * theme after arco.css so it wins; !important beats Arco's own non-important
+ * rules. */
+.arco-select-view,
+.arco-select-view-multiple {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}

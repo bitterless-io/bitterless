@@ -1,0 +1,36 @@
+{
+  "name": "@micromeet/cli",
+  "version": "0.0.2",
+  "private": true,
+  "description": "Micromeet command line interface.",
+  "bin": {
+    "micromeet": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/fix-bin-mode.cjs",
+    "dev": "yarn build && node dist/cli.js",
+    "manual": "yarn build && node dist/cli.js manual",
+    "package": "yarn build && node scripts/package.cjs",
+    "package:mac-arm": "yarn package mac_arm",
+    "package:mac-intel": "yarn package mac_intel",
+    "package:linux-arm": "yarn package linux_arm",
+    "package:linux-x64": "yarn package linux_x64",
+    "package:win64": "yarn package win64",
+    "check:auth": "yarn build && node scripts/check-auth.cjs",
+    "check:help": "yarn build && node scripts/check-help.cjs",
+    "smoke": "yarn build && node scripts/check-auth.cjs && node scripts/check-help.cjs && node dist/cli.js crms auth status && node dist/cli.js sys auth status && node dist/cli.js manual --plain && node dist/cli.js curl --help"
+  },
+  "files": [
+    "dist",
+    "MANUAL.md",
+    "README.md"
+  ],
+  "dependencies": {
+    "axios": "^1.13.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "bun": "^1.3.14",
+    "typescript": "^5.5.2"
+  }
+}

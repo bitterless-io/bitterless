@@ -144,6 +144,10 @@ export const en = {
       name: 'Todo',
       subtitle: 'Task management and organization',
     },
+    cowork: {
+      name: 'Cowork',
+      subtitle: 'Browser automation, agents, capture, and Workbench',
+    },
     omniBrowser: {
       name: 'Omni Browser',
       subtitle: 'Multi-pane web browser',

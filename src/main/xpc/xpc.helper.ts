@@ -11,11 +11,14 @@ import './sqlitePassword.handler';
 import './mainWindow.handler';
 import './auth.handler';
 import './mcp.handler';
+import './coworkWindow.handler';
+import { initCoworkXpc } from '@cowork-main/xpc/xpc.helper';
 // import { ptyManager } from '../ptyHelper/ptyManager';
 // import { PtyService } from '../ptyHelper/ptyXpc';
 
 export const initXpc = (): void => {
   xpcCenter.init();
+  initCoworkXpc();
   initTestHandler();
   initTestSubscriber();
   initLanguageSubscriber();

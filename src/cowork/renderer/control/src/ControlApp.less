@@ -1,0 +1,115 @@
+.coach-control {
+  background: #f8fafc;
+}
+
+.coach-control .arco-btn {
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.coach-control .arco-btn-size-mini {
+  height: 28px;
+}
+
+.coach-control .arco-btn-secondary,
+.coach-control .arco-btn-outline {
+  border-color: #d8e2ed;
+  background: #ffffff;
+  color: #465467;
+}
+
+.coach-control .arco-btn-secondary:hover,
+.coach-control .arco-btn-outline:hover {
+  border-color: rgba(22, 93, 255, 0.35);
+  background: #f3f7ff;
+  color: #165dff;
+}
+
+.coach-control .arco-btn-primary {
+  border-color: #165dff;
+  background: #165dff;
+  color: #ffffff;
+}
+
+.coach-control .arco-btn-primary:hover {
+  border-color: #0f50dc;
+  background: #0f50dc;
+}
+
+.coach-control .control-llm-text-btn {
+  display: inline-flex;
+  height: 28px;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0 6px;
+  color: #465467;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.12s ease;
+}
+
+.coach-control .control-llm-text-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #1f2937;
+}
+
+.coach-control .control-llm-text-btn:active {
+  transform: scale(0.96);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.coach-control .control-llm-text-btn:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
+  transform: none;
+}
+
+.coach-control .control-llm-text-btn:disabled:hover {
+  background: transparent;
+}
+
+.coach-control .control-message-item {
+  align-items: flex-start;
+}
+
+.coach-control .control-message-bubble {
+  min-height: 0;
+  align-self: flex-start;
+  line-height: 1.5;
+}
+
+.coach-control .control-message-markdown {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.coach-control .control-message-markdown .markdown-renderer {
+  contain: content;
+  content-visibility: visible;
+  contain-intrinsic-size: 0 0;
+}
+
+.coach-control .control-message-markdown .paragraph-node {
+  margin: 0 0 8px;
+}
+
+.coach-control .control-message-markdown .paragraph-node:first-child {
+  margin-top: 0;
+}
+
+.coach-control .control-message-markdown .paragraph-node:last-child {
+  margin-bottom: 0;
+}

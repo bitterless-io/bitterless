@@ -13,6 +13,7 @@ files:
   - '!local/*'
   - '!downloads/*'
   - '!external_resources/*'
+  - '!packages/micromeet-cli/**'
   - '!electron-builder.tmp.yml'
   - '!dump/*'
   - '!.vscode/*'
@@ -29,6 +30,8 @@ files:
 extraResources:
   - from: asar_unpacked
     to: app.asar.unpacked
+  - from: build/cowork-tools
+    to: cowork-tools
 win:
   executableName: ${name}
 nsis:
@@ -39,6 +42,8 @@ nsis:
   perMachine: true
   include: build/installer.nsh
 mac:
+  binaries:
+    - Contents/Resources/cowork-tools/micromeet
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false

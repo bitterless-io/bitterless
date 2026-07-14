@@ -3,24 +3,26 @@ import { app } from 'electron';
 import { xpcMain } from 'electron-xpc/main';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { UpdateInfo, ManifestData, PlatformType } from './update.type';
+import type { UpdateInfo, ManifestData, PlatformType, UpdateCheckResult } from './update.type';
 
 class UpdateService {
   private pollingInterval: NodeJS.Timeout | null = null;
   private currentVersionCode: number;
-  private platform: PlatformType;
+  private platform: PlatformType | null;
   private viteEnv: string;
   private viteMode: string;
+  private disabledForE2E: boolean;
   private isDownloading = false;
   private updateAvailable = false;
   isUpdating = false;
   constructor() {
-    this.currentVersionCode = this.getCurrentVersionCode();
-    this.platform = this.detectPlatform();
+    this.disabledForE2E = process.env.BITTERLESS_E2E === '1';
+    this.currentVersionCode = this.disabledForE2E ? 0 : this.getCurrentVersionCode();
+    this.platform = this.disabledForE2E ? null : this.detectPlatform();
     this.viteEnv = import.meta.env.VITE_ENV || 'dev';
     this.viteMode = import.meta.env.VITE_MODE || 'debug';
 
-    this.setupAutoUpdater();
+    if (!this.disabledForE2E) this.setupAutoUpdater();
   }
 
   private getCurrentVersionCode(): number {
@@ -113,15 +115,22 @@ class UpdateService {
     return downloadUrl;
   }
 
-  private async checkAndDownloadUpdate(): Promise<void> {
+  private async checkAndDownloadUpdate(): Promise<UpdateCheckResult> {
+    if (this.disabledForE2E) {
+      return { status: 'disabled', currentVersionCode: this.currentVersionCode };
+    }
     if (this.isDownloading) {
       console.log('[UpdateService] Already downloading update, skipping...');
-      return;
+      return { status: 'available', currentVersionCode: this.currentVersionCode };
     }
 
     const manifest = await this.fetchManifest();
     if (!manifest) {
-      return;
+      return {
+        status: 'error',
+        currentVersionCode: this.currentVersionCode,
+        error: 'Failed to fetch the Bitterless update manifest'
+      };
     }
 
     console.log('[UpdateService] Current versionCode:', this.currentVersionCode);
@@ -129,6 +138,14 @@ class UpdateService {
 
     if (manifest.versionCode > this.currentVersionCode) {
       console.log('[UpdateService] Update available, downloading...');
+
+      const updateInfo: UpdateInfo = {
+        version: manifest.version,
+        versionCode: manifest.versionCode,
+        releaseNotes: manifest.releaseNotes,
+        downloadUrl: manifest.downloadUrl
+      };
+      xpcMain.broadcast('coach/update-available', updateInfo);
 
       const updateEndpoint = this.constructUpdateEndpoint(manifest.downloadUrl);
       console.log('[UpdateService] Update endpoint:', updateEndpoint);
@@ -147,18 +164,40 @@ class UpdateService {
       } catch (error) {
         console.error('[UpdateService] Error during update check/download:', error);
         this.isDownloading = false;
+        return {
+          status: 'error',
+          currentVersionCode: this.currentVersionCode,
+          info: updateInfo,
+          error: error instanceof Error ? error.message : String(error)
+        };
       }
+      return { status: 'available', currentVersionCode: this.currentVersionCode, info: updateInfo };
     } else {
       console.log('[UpdateService] No update available');
+      return {
+        status: 'latest',
+        currentVersionCode: this.currentVersionCode,
+        info: {
+          version: manifest.version,
+          versionCode: manifest.versionCode,
+          releaseNotes: manifest.releaseNotes,
+          downloadUrl: manifest.downloadUrl
+        }
+      };
     }
   }
 
   private notifyUpdateReady(updateInfo: UpdateInfo): void {
     console.log('[UpdateService] Notifying update ready:', updateInfo);
     xpcMain.broadcast('app/updated', updateInfo);
+    xpcMain.broadcast('coach/update-downloaded', updateInfo);
   }
 
   public startPolling(): void {
+    if (this.disabledForE2E) {
+      console.log('[UpdateService] Disabled for isolated E2E');
+      return;
+    }
     // if (this.viteMode !== 'release') {
     //   console.log('[UpdateService] Not in release mode, skipping auto-update polling');
     //   return;
@@ -184,14 +223,30 @@ class UpdateService {
     }
   }
 
-  public async manualCheck(): Promise<void> {
+  public async manualCheck(): Promise<UpdateCheckResult> {
+    if (this.disabledForE2E) {
+      return { status: 'disabled', currentVersionCode: this.currentVersionCode };
+    }
     console.log('[UpdateService] Manual update check triggered');
-    await this.checkAndDownloadUpdate();
+    return await this.checkAndDownloadUpdate();
   }
 
   public quitAndInstall(): void {
+    if (this.disabledForE2E) {
+      console.warn('[UpdateService] Install ignored during isolated E2E');
+      return;
+    }
     this.isUpdating = true;
-    console.log('[UpdateService] Quitting and installing update...');
+    console.log('[UpdateService] Requesting update install after host cleanup...');
+    app.quit();
+  }
+
+  public installAfterCleanup(): void {
+    if (this.disabledForE2E) {
+      console.warn('[UpdateService] Post-cleanup install ignored during isolated E2E');
+      return;
+    }
+    console.log('[UpdateService] Host cleanup complete; quitting and installing update...');
     autoUpdater.quitAndInstall(false, true);
     setTimeout(() => {
       app.exit(0);
