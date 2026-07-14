@@ -135,7 +135,6 @@ const onSetPassword = async (): Promise<void> => {
       </div>
 
       <div name="login__copy" class="login-view__copy">
-        <h1>登录后继续</h1>
         <p>使用你的 Bitterless customer 账号进入桌面工作区。</p>
       </div>
 
