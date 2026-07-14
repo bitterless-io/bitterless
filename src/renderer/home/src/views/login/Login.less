@@ -11,6 +11,15 @@
   padding: 32px;
 }
 
+.login-view__drag-region {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1;
+  height: 40px;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
 .login-view__panel {
   width: min(420px, calc(100vw - 40px));
   padding: 34px;

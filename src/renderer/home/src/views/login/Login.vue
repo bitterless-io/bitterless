@@ -64,6 +64,8 @@ onBeforeUnmount(() => {
 });
 
 const onSendOtp = async (): Promise<void> => {
+  if (authStore.sendingOtp) return;
+
   if (!email.value) {
     Message.warning('请输入邮箱');
     return;
@@ -124,6 +126,8 @@ const onSetPassword = async (): Promise<void> => {
 
 <template>
   <main name="login" class="login-view">
+    <div name="login__drag-region" class="login-view__drag-region" aria-hidden="true"></div>
+
     <section name="login__panel" class="login-view__panel">
       <div class="login-view__mark">
         <span class="login-view__mark-line"></span>
@@ -175,10 +179,10 @@ const onSetPassword = async (): Promise<void> => {
             <a-button
               size="large"
               :loading="authStore.sendingOtp"
-              :disabled="cooldown > 0"
+              :disabled="authStore.sendingOtp || cooldown > 0"
               @click="onSendOtp"
             >
-              {{ cooldown > 0 ? `${cooldown}s` : '发送验证码' }}
+              {{ authStore.sendingOtp ? '发送中...' : cooldown > 0 ? `${cooldown}s` : '发送验证码' }}
             </a-button>
           </div>
         </a-form-item>

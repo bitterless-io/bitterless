@@ -25,11 +25,11 @@ export abstract class WindowHelper {
     const options: BrowserWindowConstructorOptions = {
       show: false,
       autoHideMenuBar: true,
-      ...this.windowOptions,
       width: windowWidth,
       height: windowHeight,
       x: x,
       y: y,
+      ...this.windowOptions,
       webPreferences: {
         preload: join(__dirname, `../preload/${this.preloadFile}`),
         sandbox: false,

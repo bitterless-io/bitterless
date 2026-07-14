@@ -1,6 +1,6 @@
 import { BrowserWindowConstructorOptions } from 'electron';
 import { WindowHelper } from './window.helper';
-import { throttle } from 'es-toolkit';
+import { debounce } from 'es-toolkit';
 import { createXpcMainEmitter } from 'electron-xpc/main';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
@@ -27,15 +27,15 @@ class MainWindowHelper extends WindowHelper {
       webSecurity: false,
     }
   };
-  private _throttledSaveLayoutFn: (() => void) | null = null;
+  private _debouncedSaveLayoutFn: (() => void) | null = null;
 
-  private throttledSaveLayout(): void {
-    if (!this._throttledSaveLayoutFn) {
-      this._throttledSaveLayoutFn = throttle(() => {
-        this.saveLayout();
-      }, 100, { trailing: true });
+  private debouncedSaveLayout(): void {
+    if (!this._debouncedSaveLayoutFn) {
+      this._debouncedSaveLayoutFn = debounce(() => {
+        void this.saveLayout();
+      }, 300);
     }
-    this._throttledSaveLayoutFn();
+    this._debouncedSaveLayoutFn();
   }
 
   private async saveLayout(): Promise<void> {
@@ -87,11 +87,11 @@ class MainWindowHelper extends WindowHelper {
     const window = super.create();
 
     window.on('move', () => {
-      this.throttledSaveLayout();
+      this.debouncedSaveLayout();
     });
 
     window.on('resize', () => {
-      this.throttledSaveLayout();
+      this.debouncedSaveLayout();
     });
 
     return window;

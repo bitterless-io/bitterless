@@ -122,7 +122,7 @@ class AuthStore {
     }
   };
 
-  sendOtp = async (email: string): Promise<void> => {
+  async sendOtp(email: string): Promise<void> {
     this.sendingOtp = true;
     try {
       await sendOtpApi({ email });
@@ -132,7 +132,7 @@ class AuthStore {
     } finally {
       this.sendingOtp = false;
     }
-  };
+  }
 
   loginWithOtp = async (email: string, code: string): Promise<void> => {
     this.loading = true;
