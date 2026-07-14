@@ -80,6 +80,8 @@ const onSendOtp = async (): Promise<void> => {
 };
 
 const onSubmit = async (): Promise<void> => {
+  if (authStore.loading) return;
+
   if (!email.value) {
     Message.warning('请输入邮箱');
     return;
@@ -106,6 +108,8 @@ const onSubmit = async (): Promise<void> => {
 };
 
 const onSetPassword = async (): Promise<void> => {
+  if (authStore.loading) return;
+
   if (newPassword.value.length < 8) {
     Message.warning('密码至少 8 位');
     return;
@@ -186,7 +190,14 @@ const onSetPassword = async (): Promise<void> => {
           </div>
         </a-form-item>
 
-        <a-button long type="primary" size="large" :loading="authStore.loading" @click="onSubmit">
+        <a-button
+          long
+          type="primary"
+          size="large"
+          :loading="authStore.loading"
+          :disabled="authStore.loading"
+          @click="onSubmit"
+        >
           {{ mode === 'password' ? '登录' : '验证并登录' }}
         </a-button>
       </a-form>
@@ -235,6 +246,7 @@ const onSetPassword = async (): Promise<void> => {
             type="primary"
             size="large"
             :loading="authStore.loading"
+            :disabled="authStore.loading"
             @click="onSetPassword"
           >
             设置密码并继续

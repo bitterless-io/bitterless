@@ -75,7 +75,9 @@ class AuthStore {
   sendingOtp = false;
   checking = false;
 
-  isAuthenticated = (): boolean => !!getToken();
+  isAuthenticated(): boolean {
+    return !!getToken();
+  }
 
   get token(): string | null {
     return getToken();
@@ -95,7 +97,7 @@ class AuthStore {
     return current;
   }
 
-  loginWithPassword = async (email: string, password: string): Promise<void> => {
+  async loginWithPassword(email: string, password: string): Promise<void> {
     this.loading = true;
     try {
       const bootstrapDeviceId = getBootstrapDeviceId();
@@ -120,7 +122,7 @@ class AuthStore {
     } finally {
       this.loading = false;
     }
-  };
+  }
 
   async sendOtp(email: string): Promise<void> {
     this.sendingOtp = true;
@@ -134,7 +136,7 @@ class AuthStore {
     }
   }
 
-  loginWithOtp = async (email: string, code: string): Promise<void> => {
+  async loginWithOtp(email: string, code: string): Promise<void> {
     this.loading = true;
     try {
       const bootstrapDeviceId = getBootstrapDeviceId();
@@ -146,9 +148,9 @@ class AuthStore {
     } finally {
       this.loading = false;
     }
-  };
+  }
 
-  changePassword = async (newPassword: string): Promise<void> => {
+  async changePassword(newPassword: string): Promise<void> {
     const token = getToken();
     if (!token) throw new Error('Missing token');
 
@@ -167,9 +169,9 @@ class AuthStore {
     } finally {
       this.loading = false;
     }
-  };
+  }
 
-  fetchMe = async (): Promise<CurrentCustomer> => {
+  async fetchMe(): Promise<CurrentCustomer> {
     const token = getToken();
     if (!token) {
       throw new Error('Missing token');
@@ -186,14 +188,14 @@ class AuthStore {
     } finally {
       this.checking = false;
     }
-  };
+  }
 
-  clearLocalSession = (): void => {
+  clearLocalSession(): void {
     clearToken();
     this.current = null;
-  };
+  }
 
-  logout = async (): Promise<void> => {
+  async logout(): Promise<void> {
     const token = getToken();
     try {
       if (token) {
@@ -203,7 +205,7 @@ class AuthStore {
       // Local logout should still complete when the server token is already gone.
     }
     this.clearLocalSession();
-  };
+  }
 }
 
 export const authStore = reactive<AuthStore>(new AuthStore());

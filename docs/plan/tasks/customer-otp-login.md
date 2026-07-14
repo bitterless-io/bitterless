@@ -20,7 +20,6 @@ for an invited account that has not set a password.
 ```text
 +------------------------------+
 | Bitterless                   |
-| 登录后继续                    |
 | [密码登录] [邮箱验证码]        |
 | Email                        |
 | Code              [发送验证码] |
@@ -43,6 +42,8 @@ for an invited account that has not set a password.
 ## Contract
 
 - Password and OTP are mutually exclusive login modes.
+- Every request-triggering button shows a loading state and blocks duplicate submission until its
+  request settles: send OTP, password/OTP login, and first-password setup.
 - OTP login uses the same customer JWT storage and XPC session activation as password login.
 - Home renderer CSP permits connections only to the production and development Bitterless Core domains.
 - An invited customer may request and verify a login OTP because the customer row was created by
