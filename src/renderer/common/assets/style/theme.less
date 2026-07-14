@@ -1,33 +1,44 @@
 @import './arco/form.less';
-@import "./arco/description.less";
+@import './arco/description.less';
 @import './arco/card.less';
-@import "./arco/modal.less";
-@import "./arco/menu.less";
-@import "./arco/btn.less";
+@import './arco/modal.less';
+@import './arco/menu.less';
+@import './arco/btn.less';
+@import './arco/input.less';
+@import './arco/select.less';
+@import './arco/textarea.less';
+@import './arco/dropdown.less';
+@import './arco/pagination.less';
+
 *,
 *::before,
 *::after {
   box-sizing: border-box;
   margin: 0;
-  font-weight: normal;
 }
 
-//layout container default style
+// Default desktop content shell: compact, predictable, and owned by the page.
 .bl-full-container {
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   background-color: #fff;
-  padding: 8px;
-  //border-radius: 8px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: auto;
 }
-body{
+
+body {
   font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue',
+    sans-serif;
 }
-.paragraph-node{
-  margin: 0.5rem!important;
+
+.paragraph-node {
+  margin: 0.5rem !important;
 }
 
 // Global scrollbar styling - 8px overlay, Windows and Mac compatible
