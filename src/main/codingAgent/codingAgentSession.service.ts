@@ -339,40 +339,32 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
   async applyHookEvent(event: CodingAgentHookEvent): Promise<CodingAgentSessionRecord> {
     const evidence = normalizeCodingAgentHookEvent(event);
     const rows = await this.dependencies.repository.list({ includeUnknown: true });
-    const observableSurfaces = evidence.provider === 'codex'
-      ? ['codex-managed-app-server', 'codex-desktop'] as const
-      : ['claude-code-background', 'claude-code-cli'] as const;
-    const existing = observableSurfaces
-      .map((surface) => rows.find(
-        (row) => row.provider === evidence.provider &&
-          row.surface === surface &&
-          row.externalSessionId === evidence.externalSessionId
-      ))
-      .find((row) => row !== undefined);
-    const surface = existing?.surface ?? (
-      evidence.provider === 'codex' ? 'codex-desktop' : 'claude-code-cli'
+    const surface = evidence.provider === 'codex' ? 'codex-desktop' : 'claude-code-cli';
+    const existing = rows.find(
+      (row) => row.provider === evidence.provider &&
+        row.surface === surface &&
+        row.externalSessionId === evidence.externalSessionId
     );
+    const now = this.now();
+    const higherRankIsCurrent = existing !== undefined &&
+      statusSourceRank(existing.statusSource) > statusSourceRank(evidence.statusSource) &&
+      this.hasCurrentRuntimeObservation(existing) &&
+      existing.statusFreshUntil !== null &&
+      now <= existing.statusFreshUntil;
+    const observationIsOlder = existing?.statusObservedAt !== null &&
+      existing?.statusObservedAt !== undefined &&
+      existing.statusObservedAt > evidence.observedAt;
     if (
       existing &&
       (
-        statusSourceRank(existing.statusSource) > statusSourceRank(evidence.statusSource) ||
-        (statusSourceRank(existing.statusSource) === statusSourceRank(evidence.statusSource) &&
-          existing.statusObservedAt !== null &&
-          existing.statusObservedAt > evidence.observedAt)
+        higherRankIsCurrent ||
+        observationIsOlder
       )
     ) {
       return this.effectiveRecord(existing);
     }
 
-    const row = await this.dependencies.repository.upsert({
-      id: existing?.id ?? this.idFactory(),
-      provider: evidence.provider,
-      surface,
-      externalSessionId: evidence.externalSessionId,
-      runtimeJobId: existing?.runtimeJobId ?? null,
-      title: existing?.title ?? null,
-      titleIsCustom: existing?.titleIsCustom ?? false,
-      cwd: evidence.cwd ?? existing?.cwd ?? null,
+    const status = {
       state: evidence.state,
       lastTurnState: evidence.lastTurnState ?? existing?.lastTurnState ?? 'unknown',
       providerState: evidence.providerState,
@@ -382,7 +374,20 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
         ? null
         : evidence.observedAt + HOOK_FRESHNESS_MS,
       isProcessAlive: null
-    });
+    } as const;
+    const row = existing
+      ? await this.dependencies.repository.updateStatus({ id: existing.id, ...status })
+      : await this.dependencies.repository.upsert({
+          id: this.idFactory(),
+          provider: evidence.provider,
+          surface,
+          externalSessionId: evidence.externalSessionId,
+          runtimeJobId: null,
+          title: null,
+          titleIsCustom: false,
+          cwd: evidence.cwd,
+          ...status
+        });
     if (
       row.statusSource === evidence.statusSource &&
       row.statusObservedAt === evidence.observedAt

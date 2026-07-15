@@ -423,14 +423,17 @@ Bitterless-owned hook definitions into the user's Claude settings and subscribe 
 - `SessionStart`
 - `UserPromptSubmit`
 - `PermissionRequest`
-- `Notification` for `permission_prompt` and `idle_prompt`
+- `Notification` for the installed CLI's old/new lifecycle names:
+  `permission_prompt`, `idle_prompt`, `agent_needs_input`, and `agent_completed`
 - `Stop`
 - `StopFailure`
 - `SessionEnd`
 
 The helper forwards the same minimal envelope as the Codex helper. It does not read the supplied
 `transcript_path`. Back up the settings file before the first merge, preserve unrelated settings and
-hooks byte-for-byte where possible, and make install/remove idempotent.
+hooks byte-for-byte where possible, and make install/remove idempotent. Claude handlers use the
+documented exec form (`command` plus an argument array) on both platforms; this avoids shell
+quoting and does not treat Claude Desktop as a status source.
 
 ## Local event bridge
 
@@ -451,9 +454,13 @@ Protocol requirements:
 - Queue in memory only for the short bridge-to-DAO gap. Provider sessions continue normally if
   Bitterless is not running.
 
-The generated hook helper should live under the active profile's `userData/bin`, matching the Todo
-MCP helper lifecycle. It contains a pinned endpoint and no credentials. Regeneration on app update
-must preserve the integration installation ID.
+Codex uses a generated shim under the active profile's `userData/bin`, matching the Todo MCP helper
+lifecycle. Claude Code invokes the same Bitterless helper mode directly with exec-form arguments.
+Both forms pin the profile endpoint and installation ID and contain no credentials. A current-build
+hash/handler comparison must expose stale definitions as repairable after an app move or update.
+Before writing the first backup, shim, or settings edit, persist pending ownership; interrupted
+installs may resume or remove only while the recorded paths, immutable backup, and owned artifacts
+still match.
 
 ## Persistence
 

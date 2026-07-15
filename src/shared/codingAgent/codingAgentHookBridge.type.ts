@@ -28,7 +28,11 @@ export type ClaudeHookEventName =
   | 'SessionEnd';
 
 export type CodingAgentHookEventName = CodexHookEventName | ClaudeHookEventName;
-export type CodingAgentHookNotificationType = 'permission_prompt' | 'idle_prompt';
+export type CodingAgentHookNotificationType =
+  | 'permission_prompt'
+  | 'idle_prompt'
+  | 'agent_needs_input'
+  | 'agent_completed';
 
 export interface CodingAgentHookEvent {
   schemaVersion: 1;

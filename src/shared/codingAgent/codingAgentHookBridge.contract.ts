@@ -39,7 +39,9 @@ const CLAUDE_EVENTS = new Set<CodingAgentHookEventName>([
 ]);
 const NOTIFICATION_TYPES = new Set<CodingAgentHookNotificationType>([
   'permission_prompt',
-  'idle_prompt'
+  'idle_prompt',
+  'agent_needs_input',
+  'agent_completed'
 ]);
 const CONTROL_CHARACTER_PATTERN = /[\0\r\n]/;
 
@@ -235,8 +237,14 @@ export const normalizeCodingAgentHookEvent = (
     state = 'ended';
     lastTurnState = null;
   } else if (
+    hookEventName === 'Notification' && notificationType === 'agent_needs_input'
+  ) {
+    state = 'waiting_input';
+    lastTurnState = 'in_progress';
+  } else if (
     hookEventName === 'Stop' ||
-    (hookEventName === 'Notification' && notificationType === 'idle_prompt')
+    (hookEventName === 'Notification' &&
+      (notificationType === 'idle_prompt' || notificationType === 'agent_completed'))
   ) {
     state = 'idle';
     lastTurnState = 'completed';
@@ -267,12 +275,18 @@ const windowsBatchQuote = (value: string): string => {
   return `"${safe.replace(/%/g, '%%')}"`;
 };
 
+const windowsCommandQuote = (value: string): string => {
+  const safe = assertSafeArgument(value, 'Windows hook command');
+  if (safe.includes('"')) throw new Error('Windows hook commands cannot contain double quotes');
+  return `"${safe}"`;
+};
+
 export const createCodingAgentHookCommand = (
   shimPath: string,
   platform: NodeJS.Platform = process.platform
-): string => platform === 'win32' ? windowsBatchQuote(shimPath) : shellQuote(shimPath);
+): string => platform === 'win32' ? windowsCommandQuote(shimPath) : shellQuote(shimPath);
 
-const helperArguments = (
+export const createCodingAgentHookHelperArguments = (
   provider: CodingAgentProvider,
   endpointPath: string,
   installationId: string
@@ -296,7 +310,7 @@ export const createPosixCodingAgentHookShim = (params: {
   const command = [
     shellQuote(params.execPath),
     ...(params.appPath ? [shellQuote(params.appPath)] : []),
-    ...helperArguments(
+    ...createCodingAgentHookHelperArguments(
       params.provider,
       params.endpointPath,
       params.installationId
@@ -315,7 +329,7 @@ export const createWindowsCodingAgentHookShim = (params: {
   const command = [
     windowsBatchQuote(params.execPath),
     ...(params.appPath ? [windowsBatchQuote(params.appPath)] : []),
-    ...helperArguments(
+    ...createCodingAgentHookHelperArguments(
       params.provider,
       params.endpointPath,
       params.installationId

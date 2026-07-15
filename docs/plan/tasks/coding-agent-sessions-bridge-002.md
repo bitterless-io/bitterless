@@ -9,9 +9,9 @@ depends-on: [coding-agent-sessions-core-001]
 
 ## Objective
 
-Implement a profile-isolated local event bridge, privacy-minimal helper mode, generated Codex/Claude
-hook shims, reversible settings merge/remove, bridge status/drift reporting, app startup/cleanup,
-and XPC integration. Do not read or forward transcript/prompt/tool content.
+Implement a profile-isolated local event bridge, privacy-minimal helper mode, generated Codex shim,
+Claude exec-form handler, reversible settings merge/remove, bridge status/drift reporting, app
+startup/cleanup, and XPC integration. Do not read or forward transcript/prompt/tool content.
 
 ## Context
 
