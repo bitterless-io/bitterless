@@ -1,7 +1,7 @@
 ---
 id: coding-agent-sessions-core-001
 scope: provider-neutral storage, discovery, status normalization, and safe opening
-status: in-progress
+status: done
 depends-on: []
 ---
 
