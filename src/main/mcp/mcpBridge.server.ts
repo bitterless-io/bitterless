@@ -959,11 +959,10 @@ export class McpBridgeServer {
       throw new Error(`Cannot create domain: the active domain limit is ${MCP_MAX_ACTIVE_DOMAINS}`);
     }
 
-    const createdDomain = await domainEmitter.create({ title, description });
-    if (!createdDomain) {
-      throw new Error(`Cannot create domain: the active domain limit is ${MCP_MAX_ACTIVE_DOMAINS}`);
-    }
-    const domain = requireDomainRow(createdDomain, 'DomainDao.create');
+    const domain = requireDomainRow(
+      await domainEmitter.create({ title, description }),
+      'DomainDao.create',
+    );
     if (
       domain.title !== title ||
       domain.description !== description ||

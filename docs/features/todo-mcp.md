@@ -7,6 +7,11 @@ development Bitterless instances to run at the same time. Real agent work must t
 development instances are explicit test targets and must never replace or infer the production
 route.
 
+Bitterless Todo is a personal, multi-device-synchronized Todo manager. The production MCP writes
+to the user's real personal Todo store; Bitterless, rather than the MCP helper, owns account and
+device synchronization. Agents must treat these records as durable personal follow-ups, not as a
+project issue tracker or scratch space for steps the agent can complete itself.
+
 ## Instance routing
 
 ```text
@@ -80,6 +85,36 @@ command = "/Users/ral/Library/Application Support/Bitterless/bin/bitterless-mcp"
 command = "/Users/ral/Library/Application Support/Bitterless_DEBUG/bin/bitterless-mcp"
 ```
 
+## Portable agent skill
+
+The repository owns a portable skill source at `skills/bitterless-todo/`. One package works for
+both Codex and Claude Code:
+
+```text
+bitterless-todo/
+├── SKILL.md
+├── agents/openai.yaml
+└── references/
+    ├── mcp-setup.md
+    └── tools.md
+```
+
+`agents/openai.yaml` declares the production `bitterless` MCP dependency for Codex and is harmless
+when Claude Code loads the same folder. `references/mcp-setup.md` explains installation and MCP
+registration for both agents. The skill must describe Bitterless as personal multi-device Todo,
+permit judgment-based creation only for concrete user-owned follow-ups worth persisting, avoid
+duplicates, and never place real work in a DEBUG instance.
+
+Export the distributable archive with:
+
+```bash
+yarn mcp:todo:skill:export
+```
+
+The archive contains one top-level `bitterless-todo/` directory and no credentials, user data, or
+machine-specific helper path. The workspace `.agents/skills/`, `.claude/skills/`, and
+`~/.codex/skills/` copies must remain byte-identical to this portable source.
+
 ## Compatibility and safety
 
 - The production key `bitterless`, existing tool names, schemas, and structured responses do not
@@ -87,3 +122,5 @@ command = "/Users/ral/Library/Application Support/Bitterless_DEBUG/bin/bitterles
 - Production acceptance is read-only. Full smoke writes and cleanup run only against DEBUG unless
   Ral explicitly authorizes a production write test.
 - Helper routing is local-only. No network port or SQLite access is exposed to MCP hosts.
+- The skill package contains only instructions and MCP metadata. It never contains Todo data or
+  authentication material.
