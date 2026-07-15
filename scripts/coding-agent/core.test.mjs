@@ -30,6 +30,8 @@ const loadTypeScriptModule = async (name, entry) => {
 const ID_1 = '11111111-1111-4111-8111-111111111111';
 const ID_2 = '22222222-2222-4222-8222-222222222222';
 const ID_3 = '33333333-3333-4333-8333-333333333333';
+const ID_4 = '55555555-5555-4555-8555-555555555555';
+const ID_5 = '66666666-6666-4666-8666-666666666666';
 const CODEX_ID = '019f653a-2ef7-7031-8f6b-c770bacffbb2';
 const CLAUDE_ID = '44444444-4444-4444-8444-444444444444';
 
@@ -53,6 +55,17 @@ const makeRecord = (overrides = {}) => ({
   updatedAt: 1,
   ...overrides
 });
+
+const deferred = () => {
+  let resolvePromise;
+  const promise = new Promise((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: (value) => resolvePromise(value)
+  };
+};
 
 try {
   const contract = await loadTypeScriptModule(
@@ -564,6 +577,10 @@ try {
     'store',
     'src/preload/sqlite/dao/codingAgentSession.store.ts'
   );
+  const migrationModule = await loadTypeScriptModule(
+    'migration',
+    'src/preload/sqlite/dao/codingAgentSession.migration.ts'
+  );
   const database = new DatabaseSync(':memory:');
   database.exec(tableModule.codingAgentSessionTable.createSql);
   const sql = {
@@ -646,6 +663,114 @@ try {
   );
   assert.notEqual(rawRows[0].delete_flag, '0');
   database.close();
+
+  const legacyDatabase = new DatabaseSync(':memory:');
+  legacyDatabase.exec(`
+    CREATE TABLE coding_agent_session (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      surface TEXT NOT NULL,
+      external_session_id TEXT NOT NULL,
+      runtime_job_id TEXT,
+      title TEXT,
+      cwd TEXT,
+      state TEXT NOT NULL DEFAULT 'unknown',
+      last_turn_state TEXT NOT NULL DEFAULT 'unknown',
+      provider_state TEXT,
+      status_source TEXT NOT NULL DEFAULT 'none',
+      status_observed_at INTEGER,
+      status_fresh_until INTEGER,
+      is_process_alive INTEGER,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      delete_flag TEXT NOT NULL DEFAULT '0',
+      deleted_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE (provider, surface, external_session_id, delete_flag)
+    );
+  `);
+  const insertLegacyTitle = legacyDatabase.prepare(`
+    INSERT INTO coding_agent_session (
+      id, provider, surface, external_session_id, runtime_job_id, title, cwd,
+      state, last_turn_state, provider_state, status_source, status_observed_at,
+      status_fresh_until, is_process_alive, is_deleted, delete_flag, deleted_at,
+      created_at, updated_at
+    ) VALUES (?, 'codex', 'codex-desktop', ?, NULL, ?, ?, 'unknown', 'unknown',
+      'notLoaded', 'none', NULL, NULL, NULL, 0, '0', NULL, 1, 1)
+  `);
+  insertLegacyTitle.run(ID_1, CODEX_ID, 'Legacy user rename', projectRoot);
+  insertLegacyTitle.run(ID_2, ID_3, null, projectRoot);
+  migrationModule.migrateLegacyCodingAgentSessionTitleOwnership(legacyDatabase);
+  assert.deepEqual(
+    legacyDatabase
+      .prepare(
+        `SELECT title, provider_title, custom_title
+         FROM coding_agent_session ORDER BY id`
+      )
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      { title: 'Legacy user rename', provider_title: null, custom_title: 1 },
+      { title: null, provider_title: null, custom_title: 1 }
+    ]
+  );
+
+  const legacySql = {
+    get: async (sql, params = []) => legacyDatabase.prepare(sql).get(...params),
+    all: async (sql, params = []) => legacyDatabase.prepare(sql).all(...params),
+    run: async (sql, params = []) => legacyDatabase.prepare(sql).run(...params)
+  };
+  const legacyStore = new storeModule.CodingAgentSessionStore(legacySql, () => 2);
+  const legacyRename = await legacyStore.upsert({
+    ...draft,
+    id: ID_4,
+    externalSessionId: CODEX_ID,
+    title: 'Provider rename refresh'
+  });
+  const legacyClear = await legacyStore.upsert({
+    ...draft,
+    id: ID_5,
+    externalSessionId: ID_3,
+    title: 'Provider clear refresh'
+  });
+  assert.equal(legacyRename.title, 'Legacy user rename');
+  assert.equal(legacyRename.titleIsCustom, true);
+  assert.equal(legacyClear.title, null);
+  assert.equal(legacyClear.titleIsCustom, true);
+  const migratedTitles = legacyDatabase
+    .prepare(
+      `SELECT external_session_id, title, provider_title, custom_title
+       FROM coding_agent_session ORDER BY id`
+    )
+    .all();
+  assert.deepEqual(
+    migratedTitles.map((row) => ({ ...row })),
+    [
+      {
+        external_session_id: CODEX_ID,
+        title: 'Legacy user rename',
+        provider_title: 'Provider rename refresh',
+        custom_title: 1
+      },
+      {
+        external_session_id: ID_3,
+        title: null,
+        provider_title: 'Provider clear refresh',
+        custom_title: 1
+      }
+    ]
+  );
+
+  const newProviderRow = await legacyStore.upsert({
+    ...draft,
+    id: ID_4,
+    externalSessionId: ID_5,
+    title: 'New provider title'
+  });
+  assert.equal(newProviderRow.titleIsCustom, false);
+  migrationModule.migrateLegacyCodingAgentSessionTitleOwnership(legacyDatabase);
+  assert.equal((await legacyStore.getById({ id: ID_4 })).titleIsCustom, false);
+  legacyDatabase.close();
 
   const serviceModule = await loadTypeScriptModule(
     'service',
@@ -912,6 +1037,80 @@ try {
     null
   );
   assert.equal((await integrationService.open({ id: ID_1 })).kind, 'unavailable');
+
+  integrationNow = 5260;
+  const firstClaudeProbe = deferred();
+  const secondClaudeProbe = deferred();
+  let claudeProbeCount = 0;
+  const coalescedBroadcasts = [];
+  const liveConcurrentResult = {
+    provider: 'claude',
+    sessions: [
+      {
+        id: ID_4,
+        provider: 'claude',
+        surface: 'claude-code-cli',
+        externalSessionId: CLAUDE_ID,
+        runtimeJobId: null,
+        title: 'Concurrent live title',
+        titleIsCustom: false,
+        cwd: projectRoot,
+        state: 'unknown',
+        lastTurnState: 'unknown',
+        providerState: 'interactive',
+        statusSource: 'none',
+        statusObservedAt: null,
+        statusFreshUntil: null,
+        isProcessAlive: true
+      }
+    ],
+    issues: [],
+    snapshot: { status: 'success', observedAt: 5260, freshUntil: 5360 }
+  };
+  const staleEmptyResult = {
+    provider: 'claude',
+    sessions: [],
+    issues: [],
+    snapshot: { status: 'success', observedAt: 5260, freshUntil: 5360 }
+  };
+  const coalescingService = new serviceModule.CodingAgentSessionService({
+    repository: integrationStore,
+    codexDiscovery: {
+      discover: async () => ({
+        provider: 'codex',
+        sessions: [],
+        issues: [],
+        snapshot: { status: 'failed' }
+      })
+    },
+    claudeDiscovery: {
+      discover: () => {
+        claudeProbeCount += 1;
+        return claudeProbeCount === 1 ? firstClaudeProbe.promise : secondClaudeProbe.promise;
+      }
+    },
+    openExternal: async () => {},
+    broadcastChanged: (ids, revision) => coalescedBroadcasts.push({ ids, revision }),
+    now: () => integrationNow,
+    idFactory: () => ID_5
+  });
+  const coalescedProviderRefresh = coalescingService.refresh({ provider: 'claude' });
+  const allProvidersRefresh = coalescingService.refresh();
+  await Promise.resolve();
+  if (claudeProbeCount > 1) {
+    secondClaudeProbe.resolve(liveConcurrentResult);
+    await allProvidersRefresh;
+    assert.equal((await coalescingService.open({ id: ID_1 })).kind, 'already-open');
+    firstClaudeProbe.resolve(staleEmptyResult);
+    await coalescedProviderRefresh;
+  } else {
+    firstClaudeProbe.resolve(liveConcurrentResult);
+    await Promise.all([coalescedProviderRefresh, allProvidersRefresh]);
+  }
+  const finalConcurrentOpen = await coalescingService.open({ id: ID_1 });
+  assert.equal(finalConcurrentOpen.kind, 'already-open');
+  assert.equal(claudeProbeCount, 1, 'overlapping refreshes must share one Claude probe');
+  assert.equal(coalescedBroadcasts.length, 1);
   integrationDatabase.close();
 
   const handlerSource = readFileSync(

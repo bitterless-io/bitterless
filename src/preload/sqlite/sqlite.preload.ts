@@ -18,6 +18,7 @@ import { todoEventTable } from './dao/todoEvent.table';
 import { sortTable } from './dao/sort.table';
 import { migrationTable } from './dao/migration.table';
 import { codingAgentSessionTable } from './dao/codingAgentSession.table';
+import { migrateLegacyCodingAgentSessionTitleOwnership } from './dao/codingAgentSession.migration';
 // Dao imports trigger singleton creation -> auto-register xpc handlers via BaseDao
 import './dao/setting.dao';
 import './dao/message.dao';
@@ -78,15 +79,7 @@ sqliteManager.addMigration(26062002, (db) => {
   addColumnIfMissing(db, 'domain', 'description', `TEXT NOT NULL DEFAULT ''`);
   addColumnIfMissing(db, 'domain', 'archived', 'INTEGER NOT NULL DEFAULT 0');
 });
-sqliteManager.addMigration(26071501, (db) => {
-  addColumnIfMissing(db, 'coding_agent_session', 'provider_title', 'TEXT');
-  addColumnIfMissing(db, 'coding_agent_session', 'custom_title', 'INTEGER NOT NULL DEFAULT 0');
-  db.prepare(
-    `UPDATE coding_agent_session
-     SET provider_title = title
-     WHERE provider_title IS NULL AND custom_title = 0`
-  ).run();
-});
+sqliteManager.addMigration(26071501, migrateLegacyCodingAgentSessionTitleOwnership);
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {

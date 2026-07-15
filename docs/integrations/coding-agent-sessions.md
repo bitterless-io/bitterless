@@ -383,6 +383,11 @@ background interval otherwise. Coalesce overlapping polls, cap output size, and 
 If the command fails, retain the discovered records but clear foreground process-liveness authority
 to `unknown`; never turn a failed poll into an inactive/resumable verdict.
 
+Refresh coalescing is keyed by provider and covers the complete discovery, merge, reconciliation,
+and change-broadcast operation. Therefore `refresh()` and `refresh({ provider })` share the same
+in-flight provider operation when they overlap; an older completion cannot replace newer liveness
+evidence or emit a duplicate change broadcast.
+
 Agent view is a research preview. Capability probing must check command support and field presence;
 unknown fields are ignored and missing required fields produce `unknown`, not a guessed mapping.
 
@@ -491,6 +496,12 @@ Provider refresh updates both only while `custom_title = 0`. `rename` sets `cust
 when the requested title is `null`; therefore an explicit user rename or title clear survives every
 later provider refresh. This precedence is represented by metadata and must not use `COALESCE`,
 because `null` is a meaningful user override.
+
+The legacy-table migration treats every row that existed before the `custom_title` column as
+user-owned, including rows whose displayed `title` is `null`, because its original provenance is
+unknowable. It detects that legacy state before adding the column and sets `custom_title = 1` only
+for those existing rows. Re-running the migration helper after the column exists is a no-op for
+ownership, so provider-owned rows created under the new schema are not reclassified.
 
 Do not persist raw hook payloads. A small diagnostic ring buffer may hold redacted event names and
 validation errors in memory; production logs must not include session prompts, transcripts, or

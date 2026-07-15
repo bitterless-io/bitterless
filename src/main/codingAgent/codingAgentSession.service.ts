@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  CodingAgentDiscoveryIssue,
   CodingAgentDiscoveryResult,
   CodingAgentProvider,
   CodingAgentSessionApi,
@@ -41,6 +42,12 @@ interface RuntimeObservationEvidence {
   observedAt: number;
 }
 
+interface ProviderRefreshOutcome {
+  discoveredCount: number;
+  importedCount: number;
+  issues: CodingAgentDiscoveryIssue[];
+}
+
 export interface CodingAgentSessionServiceDependencies {
   repository: CodingAgentSessionDaoApi;
   codexDiscovery: DiscoveryAdapter;
@@ -57,6 +64,10 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
   private readonly startedAt: number;
   private claudeCliLiveness = new Map<string, ClaudeCliLivenessEvidence>();
   private readonly currentRuntimeObservations = new Map<string, RuntimeObservationEvidence>();
+  private readonly providerRefreshes = new Map<
+    CodingAgentProvider,
+    Promise<ProviderRefreshOutcome>
+  >();
   private revision = 0;
 
   constructor(private readonly dependencies: CodingAgentSessionServiceDependencies) {
@@ -137,6 +148,85 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
     this.dependencies.broadcastChanged([...new Set(ids)], this.revision);
   }
 
+  private async performProviderRefresh(
+    provider: CodingAgentProvider
+  ): Promise<ProviderRefreshOutcome> {
+    const result = await (provider === 'codex'
+      ? this.dependencies.codexDiscovery.discover()
+      : this.dependencies.claudeDiscovery.discover());
+    if (result.provider !== provider) {
+      throw new Error(`Coding-agent ${provider} discovery returned ${result.provider}`);
+    }
+
+    let importedCount = 0;
+    let importFailed = false;
+    const changedIds: string[] = [];
+    const issues = [...result.issues];
+    for (const session of result.sessions) {
+      try {
+        const row = await this.dependencies.repository.upsert(session);
+        if (
+          session.statusObservedAt !== null &&
+          row.statusSource === session.statusSource &&
+          row.statusObservedAt === session.statusObservedAt
+        ) {
+          this.currentRuntimeObservations.set(row.id, {
+            statusSource: row.statusSource,
+            observedAt: session.statusObservedAt
+          });
+        }
+        changedIds.push(row.id);
+        importedCount += 1;
+      } catch (error) {
+        importFailed = true;
+        issues.push({
+          provider,
+          code: 'invalid-entry',
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    if (provider === 'claude') {
+      if (importFailed) {
+        this.claudeCliLiveness.clear();
+      } else {
+        try {
+          await this.reconcileClaudeCliLiveness(result);
+        } catch (error) {
+          this.claudeCliLiveness.clear();
+          issues.push({
+            provider: 'claude',
+            code: 'invalid-entry',
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+
+    this.notify(changedIds);
+    return {
+      discoveredCount: result.sessions.length,
+      importedCount,
+      issues
+    };
+  }
+
+  private refreshProvider(provider: CodingAgentProvider): Promise<ProviderRefreshOutcome> {
+    const active = this.providerRefreshes.get(provider);
+    if (active) return active;
+
+    const operation = this.performProviderRefresh(provider);
+    this.providerRefreshes.set(provider, operation);
+    const clear = (): void => {
+      if (this.providerRefreshes.get(provider) === operation) {
+        this.providerRefreshes.delete(provider);
+      }
+    };
+    void operation.then(clear, clear);
+    return operation;
+  }
+
   async list(params?: { includeUnknown?: boolean }): Promise<CodingAgentSessionRecord[]> {
     const value = parseCodingAgentListParams(params);
     const rows = await this.dependencies.repository.list({ includeUnknown: true });
@@ -180,68 +270,12 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
       value.provider === undefined
         ? (['codex', 'claude'] as CodingAgentProvider[])
         : [value.provider];
-    const results: CodingAgentDiscoveryResult[] = [];
-    for (const provider of providers) {
-      results.push(
-        await (provider === 'codex'
-          ? this.dependencies.codexDiscovery.discover()
-          : this.dependencies.claudeDiscovery.discover())
-      );
-    }
-
-    let importedCount = 0;
-    const changedIds: string[] = [];
-    const issues = results.flatMap((result) => result.issues);
-    const failedProviders = new Set<CodingAgentProvider>();
-    for (const result of results) {
-      for (const session of result.sessions) {
-        try {
-          const row = await this.dependencies.repository.upsert(session);
-          if (
-            session.statusObservedAt !== null &&
-            row.statusSource === session.statusSource &&
-            row.statusObservedAt === session.statusObservedAt
-          ) {
-            this.currentRuntimeObservations.set(row.id, {
-              statusSource: row.statusSource,
-              observedAt: session.statusObservedAt
-            });
-          }
-          changedIds.push(row.id);
-          importedCount += 1;
-        } catch (error) {
-          failedProviders.add(result.provider);
-          issues.push({
-            provider: result.provider,
-            code: 'invalid-entry',
-            message: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
-    }
-    for (const result of results) {
-      if (result.provider !== 'claude') continue;
-      if (failedProviders.has('claude')) {
-        this.claudeCliLiveness.clear();
-        continue;
-      }
-      try {
-        await this.reconcileClaudeCliLiveness(result);
-      } catch (error) {
-        this.claudeCliLiveness.clear();
-        issues.push({
-          provider: 'claude',
-          code: 'invalid-entry',
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-    this.notify(changedIds);
+    const outcomes = await Promise.all(providers.map((provider) => this.refreshProvider(provider)));
     return {
       providers,
-      discoveredCount: results.reduce((count, result) => count + result.sessions.length, 0),
-      importedCount,
-      issues
+      discoveredCount: outcomes.reduce((count, result) => count + result.discoveredCount, 0),
+      importedCount: outcomes.reduce((count, result) => count + result.importedCount, 0),
+      issues: outcomes.flatMap((result) => result.issues)
     };
   }
 
