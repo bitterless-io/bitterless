@@ -727,6 +727,14 @@ export class CodingAgentStatusBridgeService {
     }
 
     const snapshot = readSettings(layout.settingsPath, provider);
+    const inspection = inspectConfig(snapshot, provider, definition);
+    if (inspection.status !== 'absent' && inspection.status !== 'exact') {
+      return this.response(
+        provider,
+        'drifted',
+        inspection.reason || 'Pending hook configuration changed externally'
+      );
+    }
     const nextSettings = removeHooks(snapshot.text, provider, definition);
     const nextValue = parseSettingsText(nextSettings, provider);
     if (!install.originalExisted && Object.keys(nextValue).length === 0) {

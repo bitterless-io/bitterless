@@ -730,6 +730,46 @@ try {
   assert.equal(tamperedRetry.remove('codex').configuration, 'drifted');
   assert.equal(readFileSync(tamperedPendingShim, 'utf8'), 'third-party replacement');
 
+  const tamperedCodexSettingsSetup = makeStatusService(
+    statusModule,
+    'codex-pending-tampered-settings',
+    {
+      installCheckpoint: (_provider, checkpoint) => {
+        if (checkpoint === 'settings') throw new Error('fixture-tampered-settings');
+      }
+    }
+  );
+  assert.throws(
+    () => tamperedCodexSettingsSetup.service.install('codex'),
+    /fixture-tampered-settings/
+  );
+  const tamperedCodexSettingsPath = join(
+    tamperedCodexSettingsSetup.homePath,
+    '.codex',
+    'hooks.json'
+  );
+  const tamperedCodexSettings = JSON.parse(
+    readFileSync(tamperedCodexSettingsPath, 'utf8')
+  );
+  tamperedCodexSettings.hooks.Stop[0].hooks[0].timeout = 9;
+  writeFileSync(
+    tamperedCodexSettingsPath,
+    `${JSON.stringify(tamperedCodexSettings, null, 2)}\n`
+  );
+  const tamperedCodexRemoval = new statusModule.CodingAgentStatusBridgeService({
+    homePath: tamperedCodexSettingsSetup.homePath,
+    userDataPath: tamperedCodexSettingsSetup.userDataPath,
+    execPath: '/Applications/Bitterless App.app/Contents/MacOS/Bitterless',
+    appPath: '/Applications/Bitterless App.app',
+    platform: 'darwin'
+  });
+  assert.equal(tamperedCodexRemoval.remove('codex').configuration, 'drifted');
+  assert.equal(
+    JSON.parse(readFileSync(tamperedCodexSettingsPath, 'utf8')).hooks.Stop[0].hooks[0].timeout,
+    9,
+    'pending remove must preserve a tampered Codex handler'
+  );
+
   // Claude JSONC keeps comments/trailing commas and is correctly labeled as CLI, not Desktop.
   const claudeSpecialRoot = tempRoot('claude-special-paths');
   const claudeUserData = join(claudeSpecialRoot, 'User Data %&');
@@ -888,6 +928,46 @@ try {
       }
     }
   }
+
+  const tamperedClaudeSettingsSetup = makeStatusService(
+    statusModule,
+    'claude-pending-tampered-settings',
+    {
+      installCheckpoint: (_provider, checkpoint) => {
+        if (checkpoint === 'settings') throw new Error('claude-fixture-tampered-settings');
+      }
+    }
+  );
+  assert.throws(
+    () => tamperedClaudeSettingsSetup.service.install('claude'),
+    /claude-fixture-tampered-settings/
+  );
+  const tamperedClaudeSettingsPath = join(
+    tamperedClaudeSettingsSetup.homePath,
+    '.claude',
+    'settings.json'
+  );
+  const tamperedClaudeSettings = JSON.parse(
+    readFileSync(tamperedClaudeSettingsPath, 'utf8')
+  );
+  tamperedClaudeSettings.hooks.Stop[0].hooks[0].args.push('--third-party-change');
+  writeFileSync(
+    tamperedClaudeSettingsPath,
+    `${JSON.stringify(tamperedClaudeSettings, null, 2)}\n`
+  );
+  const tamperedClaudeRemoval = new statusModule.CodingAgentStatusBridgeService({
+    homePath: tamperedClaudeSettingsSetup.homePath,
+    userDataPath: tamperedClaudeSettingsSetup.userDataPath,
+    execPath: '/Applications/Bitterless App.app/Contents/MacOS/Bitterless',
+    appPath: '/Applications/Bitterless App.app',
+    platform: 'darwin'
+  });
+  assert.equal(tamperedClaudeRemoval.remove('claude').configuration, 'drifted');
+  assert.ok(
+    JSON.parse(readFileSync(tamperedClaudeSettingsPath, 'utf8'))
+      .hooks.Stop[0].hooks[0].args.includes('--third-party-change'),
+    'pending remove must preserve a tampered Claude handler'
+  );
 
   // Windows Codex schema includes commandWindows and safely quoted special characters.
   const windowsRoot = tempRoot('windows-install');
