@@ -91,7 +91,12 @@ export class ClaudeDiscoveryAdapter {
     try {
       help = await this.execute(this.invocation(['agents', '--help']));
     } catch (error) {
-      return { provider: 'claude', sessions: [], issues: [issueFromCommand(error)] };
+      return {
+        provider: 'claude',
+        sessions: [],
+        issues: [issueFromCommand(error)],
+        snapshot: { status: 'failed' }
+      };
     }
     if (!/(^|\s)--json(?:\s|,|$)/m.test(help.stdout)) {
       return {
@@ -104,6 +109,7 @@ export class ClaudeDiscoveryAdapter {
             message: 'Installed Claude Code CLI does not advertise agents --json'
           }
         ],
+        snapshot: { status: 'failed' },
         supportsCompletedSessions: false
       };
     }
@@ -117,6 +123,7 @@ export class ClaudeDiscoveryAdapter {
         provider: 'claude',
         sessions: [],
         issues: [issueFromCommand(error)],
+        snapshot: { status: 'failed' },
         supportsCompletedSessions
       };
     }
@@ -135,6 +142,7 @@ export class ClaudeDiscoveryAdapter {
             message: 'claude agents --json returned invalid JSON'
           }
         ],
+        snapshot: { status: 'failed' },
         supportsCompletedSessions
       };
     }
@@ -149,6 +157,7 @@ export class ClaudeDiscoveryAdapter {
             message: 'claude agents --json must return a JSON array'
           }
         ],
+        snapshot: { status: 'failed' },
         supportsCompletedSessions
       };
     }
@@ -232,15 +241,20 @@ export class ClaudeDiscoveryAdapter {
         });
         continue;
       }
-      if (entry.pid !== undefined && entry.pid !== null && parsePid(entry.pid) === null) {
+      const isInteractive = isForegroundInteractiveKind(entry.kind);
+      const isProcessAlive = parsePid(entry.pid);
+      const hasBackgroundPid = entry.pid !== undefined && entry.pid !== null;
+      if (isProcessAlive === null && (isInteractive || hasBackgroundPid)) {
         issues.push({
           provider: 'claude',
           code: 'invalid-entry',
-          message: 'Claude agents entry has an invalid pid',
+          message: isInteractive
+            ? 'Claude interactive agents entry is missing a valid live pid'
+            : 'Claude agents entry has an invalid pid',
           entryIndex
         });
       }
-      if (isForegroundInteractiveKind(entry.kind)) {
+      if (isInteractive) {
         sessions.push({
           id: this.idFactory(),
           provider: 'claude',
@@ -248,6 +262,7 @@ export class ClaudeDiscoveryAdapter {
           externalSessionId,
           runtimeJobId: null,
           title,
+          titleIsCustom: false,
           cwd,
           state: 'unknown',
           lastTurnState: 'unknown',
@@ -255,7 +270,7 @@ export class ClaudeDiscoveryAdapter {
           statusSource: 'none',
           statusObservedAt: null,
           statusFreshUntil: null,
-          isProcessAlive: parsePid(entry.pid)
+          isProcessAlive
         });
         continue;
       }
@@ -289,7 +304,7 @@ export class ClaudeDiscoveryAdapter {
           entryIndex
         });
       }
-      const isProcessAlive =
+      const backgroundProcessAlive =
         entry.pid === undefined || entry.pid === null ? false : parsePid(entry.pid);
       sessions.push({
         id: this.idFactory(),
@@ -298,6 +313,7 @@ export class ClaudeDiscoveryAdapter {
         externalSessionId,
         runtimeJobId,
         title,
+        titleIsCustom: false,
         cwd,
         state: normalized.state,
         lastTurnState: normalized.lastTurnState,
@@ -305,9 +321,18 @@ export class ClaudeDiscoveryAdapter {
         statusSource: 'claude-agents-cli',
         statusObservedAt: observedAt,
         statusFreshUntil: observedAt + this.freshnessMs,
-        isProcessAlive
+        isProcessAlive: backgroundProcessAlive
       });
     }
-    return { provider: 'claude', sessions, issues, supportsCompletedSessions };
+    return {
+      provider: 'claude',
+      sessions,
+      issues,
+      snapshot:
+        issues.length === 0
+          ? { status: 'success', observedAt, freshUntil: observedAt + this.freshnessMs }
+          : { status: 'failed' },
+      supportsCompletedSessions
+    };
   }
 }

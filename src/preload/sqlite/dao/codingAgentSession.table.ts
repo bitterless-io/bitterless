@@ -9,6 +9,8 @@ export class CodingAgentSessionTable extends BaseTable {
       external_session_id TEXT NOT NULL,
       runtime_job_id TEXT,
       title TEXT,
+      provider_title TEXT,
+      custom_title INTEGER NOT NULL DEFAULT 0,
       cwd TEXT,
       state TEXT NOT NULL DEFAULT 'unknown',
       last_turn_state TEXT NOT NULL DEFAULT 'unknown',

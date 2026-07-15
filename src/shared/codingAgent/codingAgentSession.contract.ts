@@ -324,10 +324,39 @@ export const normalizeClaudeBackgroundState = (
 };
 
 export const effectiveRuntimeState = (
-  record: Pick<CodingAgentSessionRecord, 'state' | 'statusFreshUntil'>,
-  now: number
+  record: Pick<CodingAgentSessionRecord, 'state' | 'statusObservedAt' | 'statusFreshUntil'>,
+  now: number,
+  observedAfter = -1,
+  observedInCurrentProcess = false
 ): CodingAgentRuntimeState => {
   if (terminalRuntimeStates.has(record.state) || record.state === 'unknown') return record.state;
+  if (
+    record.statusObservedAt === null ||
+    (!observedInCurrentProcess && record.statusObservedAt <= observedAfter)
+  ) {
+    return 'unknown';
+  }
   if (record.statusFreshUntil === null || now > record.statusFreshUntil) return 'unknown';
   return record.state;
+};
+
+export const effectiveProcessLiveness = (
+  record: Pick<
+    CodingAgentSessionRecord,
+    'isProcessAlive' | 'statusObservedAt' | 'statusFreshUntil'
+  >,
+  now: number,
+  observedAfter = -1,
+  observedInCurrentProcess = false
+): boolean | null => {
+  if (
+    record.isProcessAlive === null ||
+    record.statusObservedAt === null ||
+    (!observedInCurrentProcess && record.statusObservedAt <= observedAfter) ||
+    record.statusFreshUntil === null ||
+    now > record.statusFreshUntil
+  ) {
+    return null;
+  }
+  return record.isProcessAlive;
 };

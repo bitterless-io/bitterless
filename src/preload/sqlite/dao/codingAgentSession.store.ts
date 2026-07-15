@@ -23,6 +23,8 @@ interface CodingAgentSessionRow {
   external_session_id: string;
   runtime_job_id: string | null;
   title: string | null;
+  provider_title: string | null;
+  custom_title: number;
   cwd: string | null;
   state: string;
   last_turn_state: string;
@@ -60,6 +62,12 @@ const parseNullableBoolean = (value: unknown, label: string): boolean | null => 
   throw new Error(`${label} must be a boolean or null`);
 };
 
+const parseBoolean = (value: unknown, label: string): boolean => {
+  const parsed = parseNullableBoolean(value, label);
+  if (parsed === null) throw new Error(`${label} must be a boolean`);
+  return parsed;
+};
+
 const validateStatusTimes = (observedAt: number | null, freshUntil: number | null): void => {
   if (freshUntil !== null && observedAt === null) {
     throw new Error('statusFreshUntil requires statusObservedAt');
@@ -87,6 +95,7 @@ const normalizeDraft = (draft: CodingAgentSessionDraft): CodingAgentSessionDraft
     externalSessionId: parseUuid(draft.externalSessionId, 'externalSessionId'),
     runtimeJobId,
     title: parseNullableText(draft.title, 'title', 300),
+    titleIsCustom: parseBoolean(draft.titleIsCustom, 'titleIsCustom'),
     cwd: parsePathText(draft.cwd),
     state: parseRuntimeState(draft.state),
     lastTurnState: parseTurnState(draft.lastTurnState),
@@ -112,6 +121,7 @@ const toRecord = (row: CodingAgentSessionRow): CodingAgentSessionRecord => {
     externalSessionId: parseUuid(row.external_session_id, 'external_session_id'),
     runtimeJobId: row.runtime_job_id === null ? null : parseClaudeJobId(row.runtime_job_id),
     title: parseNullableText(row.title, 'title', 300),
+    titleIsCustom: parseBoolean(row.custom_title, 'custom_title'),
     cwd: parsePathText(row.cwd),
     state: parseRuntimeState(row.state),
     lastTurnState: parseTurnState(row.last_turn_state),
@@ -142,6 +152,7 @@ export class CodingAgentSessionStore {
   async upsert(draft: CodingAgentSessionDraft): Promise<CodingAgentSessionRecord> {
     const value = normalizeDraft(draft);
     const now = this.now();
+    const providerTitle = value.titleIsCustom ? null : value.title;
     const sourceRank = (source: string): string => `CASE ${source}
       WHEN 'codex-app-server' THEN 3
       WHEN 'claude-agents-cli' THEN 3
@@ -154,14 +165,28 @@ export class CodingAgentSessionStore {
         AND COALESCE(excluded.status_observed_at, 0) >= COALESCE(coding_agent_session.status_observed_at, 0)))`;
     await this.sql.run(
       `INSERT INTO coding_agent_session (
-        id, provider, surface, external_session_id, runtime_job_id, title, cwd,
-        state, last_turn_state, provider_state, status_source, status_observed_at,
-        status_fresh_until, is_process_alive, is_deleted, delete_flag, deleted_at,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '0', NULL, ?, ?)
+        id, provider, surface, external_session_id, runtime_job_id, title,
+        provider_title, custom_title, cwd, state, last_turn_state, provider_state,
+        status_source, status_observed_at, status_fresh_until, is_process_alive,
+        is_deleted, delete_flag, deleted_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '0', NULL, ?, ?)
       ON CONFLICT(provider, surface, external_session_id, delete_flag) DO UPDATE SET
         runtime_job_id = excluded.runtime_job_id,
-        title = excluded.title,
+        provider_title = CASE
+          WHEN excluded.custom_title = 0 AND excluded.status_source <> 'manual'
+            THEN excluded.provider_title
+          ELSE coding_agent_session.provider_title
+        END,
+        title = CASE
+          WHEN coding_agent_session.custom_title = 1 THEN coding_agent_session.title
+          WHEN excluded.custom_title = 1 THEN excluded.title
+          WHEN excluded.status_source = 'manual' THEN coding_agent_session.title
+          ELSE excluded.provider_title
+        END,
+        custom_title = CASE
+          WHEN coding_agent_session.custom_title = 1 OR excluded.custom_title = 1 THEN 1
+          ELSE 0
+        END,
         cwd = excluded.cwd,
         state = CASE WHEN ${acceptIncomingStatus} THEN excluded.state ELSE coding_agent_session.state END,
         last_turn_state = CASE WHEN ${acceptIncomingStatus} THEN excluded.last_turn_state ELSE coding_agent_session.last_turn_state END,
@@ -179,6 +204,8 @@ export class CodingAgentSessionStore {
         value.externalSessionId,
         value.runtimeJobId,
         value.title,
+        providerTitle,
+        Number(value.titleIsCustom),
         value.cwd,
         value.state,
         value.lastTurnState,
@@ -224,7 +251,9 @@ export class CodingAgentSessionStore {
     const id = parseUuid(params.id, 'id');
     const title = parseNullableText(params.title, 'title', 300);
     await this.sql.run(
-      'UPDATE coding_agent_session SET title = ?, updated_at = ? WHERE id = ? AND is_deleted = 0',
+      `UPDATE coding_agent_session
+       SET title = ?, custom_title = 1, updated_at = ?
+       WHERE id = ? AND is_deleted = 0`,
       [title, this.now(), id]
     );
     return requireRecord(

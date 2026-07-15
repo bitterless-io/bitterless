@@ -191,6 +191,7 @@ interface CodingAgentSessionRecord {
   externalSessionId: string;
   runtimeJobId: string | null;
   title: string | null;
+  titleIsCustom: boolean;
   cwd: string | null;
   state: CodingAgentRuntimeState;
   lastTurnState: CodingAgentTurnState;
@@ -285,11 +286,17 @@ Evidence precedence is:
 Rules:
 
 - App Server status is fresh only while its initialized transport is connected.
-- A `claude agents --json` snapshot is fresh until the next successful poll plus the configured
-  grace period. A failed poll does not convert missing rows to `ended`.
+- A complete, successful `claude agents --json` snapshot owns CLI process liveness only for its
+  configured grace period. A valid interactive PID means live; a registered CLI conversation
+  omitted from that complete snapshot means inactive for the same lease and may be resumed.
+- A failed or partially invalid Claude snapshot never guesses that an omitted CLI process exited:
+  foreground process liveness becomes `unknown`, while the persisted session metadata remains.
 - Hook observations use a short lease. Terminal events (`failed`, `stopped`, `ended`) remain as the
   last observed result; non-terminal states become `unknown` when the lease expires.
-- On Bitterless startup, every persisted non-terminal status begins as `unknown` until refreshed.
+- On Bitterless startup, every persisted non-terminal status and process-liveness observation begins
+  as `unknown` until this service instance records new evidence. The implementation tracks
+  same-millisecond refreshes explicitly rather than treating a persisted timestamp equal to startup
+  time as current-process evidence.
 - A missing hook heartbeat, application crash, machine sleep, provider update, or bridge outage is
   not evidence of completion.
 - Store observation timestamps, not an artificial percentage.
@@ -360,18 +367,21 @@ Poll the allowlisted Claude Code CLI executable with an argument array and `shel
 claude agents --json
 ```
 
-Validate the complete JSON result before merging it. Background entries provide a supervisor job
-ID and normalized `state`; current foreground interactive entries use `kind="interactive"` and
-provide a process/session reference but no runtime state in the locally verified version. Accept
-legacy preview `kind="foreground"` only as an explicitly tested compatibility alias.
+Validate the complete JSON result before using omission as process-liveness evidence. Background
+entries provide a supervisor job ID and normalized `state`; a missing background PID is a valid
+inactive observation. Current foreground interactive entries use `kind="interactive"`, must carry
+a valid live PID, and provide no runtime state in the locally verified version. Accept legacy
+preview `kind="foreground"` only as an explicitly tested compatibility alias. Foreground discovery
+uses `statusSource="none"`, so it cannot outrank a lifecycle hook.
 
 At startup, inspect `claude agents --help`. Append `--all` only when that installed version lists the
 option; this allows newer CLIs to include completed background jobs while keeping `2.1.161`
 compatible. The option probe is a CLI capability check, not version-string comparison.
 
 Use a modest foreground refresh interval while the sessions surface is visible and a slower
-background interval otherwise. Coalesce overlapping polls, cap output size, enforce a timeout, and
-retain the last snapshot as stale if the command fails.
+background interval otherwise. Coalesce overlapping polls, cap output size, and enforce a timeout.
+If the command fails, retain the discovered records but clear foreground process-liveness authority
+to `unknown`; never turn a failed poll into an inactive/resumable verdict.
 
 Agent view is a research preview. Capability probing must check command support and field presence;
 unknown fields are ignored and missing required fields produce `unknown`, not a guessed mapping.
@@ -453,6 +463,8 @@ CREATE TABLE coding_agent_session (
   external_session_id TEXT NOT NULL,
   runtime_job_id TEXT,
   title TEXT,
+  provider_title TEXT,
+  custom_title INTEGER NOT NULL DEFAULT 0,
   cwd TEXT,
   state TEXT NOT NULL DEFAULT 'unknown',
   last_turn_state TEXT NOT NULL DEFAULT 'unknown',
@@ -474,6 +486,12 @@ Deletion is soft: set `is_deleted = 1`, `deleted_at = now`, and
 `delete_flag = String(Date.now())`. Default reads explicitly filter `is_deleted = 0`. This permits a
 previously removed external session to be registered again without colliding with its tombstone.
 
+`provider_title` stores the latest discovered name independently from the displayed `title`.
+Provider refresh updates both only while `custom_title = 0`. `rename` sets `custom_title = 1`, even
+when the requested title is `null`; therefore an explicit user rename or title clear survives every
+later provider refresh. This precedence is represented by metadata and must not use `COALESCE`,
+because `null` is a meaningful user override.
+
 Do not persist raw hook payloads. A small diagnostic ring buffer may hold redacted event names and
 validation errors in memory; production logs must not include session prompts, transcripts, or
 credential-bearing environment variables.
@@ -488,7 +506,7 @@ interface CodingAgentSessionXpcHandler {
   register(params: RegisterCodingAgentSessionParams): Promise<CodingAgentSessionRecord>;
   refresh(params?: { provider?: CodingAgentProvider }): Promise<RefreshResult>;
   open(params: { id: string }): Promise<OpenResult>;
-  rename(params: { id: string; title: string | null }): Promise<void>;
+  rename(params: { id: string; title: string | null }): Promise<CodingAgentSessionRecord>;
   remove(params: { id: string }): Promise<void>;
   getIntegrationStatus(params: { provider: CodingAgentProvider }): Promise<IntegrationStatus>;
   installStatusBridge(params: { provider: CodingAgentProvider }): Promise<IntegrationStatus>;
@@ -524,7 +542,7 @@ not carry provider hook payloads.
 | Codex managed App Server exits | mark its non-terminal statuses `unknown`; reconnect with backoff |
 | Separate Codex App Server reports `notLoaded` | display `unknown`; do not override fresher hook evidence |
 | Claude CLI missing or command unsupported | disable discovery/attach; retain manually registered records |
-| `claude agents --json` timeout/invalid JSON | retain stale snapshot visibly; do not delete rows |
+| `claude agents --json` timeout/invalid JSON | retain rows; set foreground process liveness to `unknown`; do not infer inactive or delete rows |
 | Hook helper cannot reach Bitterless | exit quickly and successfully so provider flow is not blocked |
 | Hook settings changed externally | report drift; require explicit repair instead of overwriting |
 | Duplicate/stale event | ignore using event identity and observation timestamp |

@@ -5,11 +5,13 @@ import type {
   CodingAgentSessionApi,
   CodingAgentSessionDaoApi,
   CodingAgentSessionRecord,
+  CodingAgentStatusSource,
   OpenCodingAgentSessionResult,
   RefreshCodingAgentSessionsResult,
   RegisterCodingAgentSessionParams
 } from '@shared/codingAgent/codingAgentSession.type';
 import {
+  effectiveProcessLiveness,
   effectiveRuntimeState,
   parseCodingAgentIdParams,
   parseCodingAgentListParams,
@@ -28,6 +30,17 @@ interface DiscoveryAdapter {
   discover(): Promise<CodingAgentDiscoveryResult>;
 }
 
+interface ClaudeCliLivenessEvidence {
+  isProcessAlive: boolean;
+  observedAt: number;
+  freshUntil: number;
+}
+
+interface RuntimeObservationEvidence {
+  statusSource: CodingAgentStatusSource;
+  observedAt: number;
+}
+
 export interface CodingAgentSessionServiceDependencies {
   repository: CodingAgentSessionDaoApi;
   codexDiscovery: DiscoveryAdapter;
@@ -41,11 +54,81 @@ export interface CodingAgentSessionServiceDependencies {
 export class CodingAgentSessionService implements CodingAgentSessionApi {
   private readonly now: () => number;
   private readonly idFactory: () => string;
+  private readonly startedAt: number;
+  private claudeCliLiveness = new Map<string, ClaudeCliLivenessEvidence>();
+  private readonly currentRuntimeObservations = new Map<string, RuntimeObservationEvidence>();
   private revision = 0;
 
   constructor(private readonly dependencies: CodingAgentSessionServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
     this.idFactory = dependencies.idFactory ?? randomUUID;
+    this.startedAt = this.now();
+  }
+
+  private hasCurrentRuntimeObservation(record: CodingAgentSessionRecord): boolean {
+    const evidence = this.currentRuntimeObservations.get(record.id);
+    return (
+      (evidence !== undefined &&
+        evidence.statusSource === record.statusSource &&
+        evidence.observedAt === record.statusObservedAt) ||
+      (record.statusObservedAt !== null && record.statusObservedAt > this.startedAt)
+    );
+  }
+
+  private effectiveRecord(
+    record: CodingAgentSessionRecord,
+    now = this.now()
+  ): CodingAgentSessionRecord {
+    const observedInCurrentProcess = this.hasCurrentRuntimeObservation(record);
+    let isProcessAlive: boolean | null;
+    if (record.surface === 'claude-code-cli') {
+      const evidence = this.claudeCliLiveness.get(record.externalSessionId);
+      isProcessAlive =
+        evidence !== undefined &&
+        evidence.observedAt >= this.startedAt &&
+        now <= evidence.freshUntil
+          ? evidence.isProcessAlive
+          : null;
+    } else {
+      isProcessAlive = effectiveProcessLiveness(
+        record,
+        now,
+        this.startedAt,
+        observedInCurrentProcess
+      );
+    }
+    return {
+      ...record,
+      state: effectiveRuntimeState(record, now, this.startedAt, observedInCurrentProcess),
+      isProcessAlive
+    };
+  }
+
+  private async reconcileClaudeCliLiveness(result: CodingAgentDiscoveryResult): Promise<void> {
+    if (result.provider !== 'claude') return;
+    if (result.snapshot.status !== 'success') {
+      this.claudeCliLiveness.clear();
+      return;
+    }
+
+    const liveSessionIds = new Set(
+      result.sessions
+        .filter(
+          (session) => session.surface === 'claude-code-cli' && session.isProcessAlive === true
+        )
+        .map((session) => session.externalSessionId)
+    );
+    const rows = await this.dependencies.repository.list({ includeUnknown: true });
+    const nextLiveness = new Map<string, ClaudeCliLivenessEvidence>();
+    for (const row of rows) {
+      if (row.provider !== 'claude' || row.surface !== 'claude-code-cli') continue;
+      nextLiveness.set(row.externalSessionId, {
+        isProcessAlive: liveSessionIds.has(row.externalSessionId),
+        observedAt: result.snapshot.observedAt,
+        freshUntil: result.snapshot.freshUntil
+      });
+    }
+    this.claudeCliLiveness = nextLiveness;
   }
 
   private notify(ids: string[]): void {
@@ -58,10 +141,7 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
     const value = parseCodingAgentListParams(params);
     const rows = await this.dependencies.repository.list({ includeUnknown: true });
     const now = this.now();
-    const effectiveRows = rows.map((row) => ({
-      ...row,
-      state: effectiveRuntimeState(row, now)
-    }));
+    const effectiveRows = rows.map((row) => this.effectiveRecord(row, now));
     return value.includeUnknown === false
       ? effectiveRows.filter((row) => row.state !== 'unknown')
       : effectiveRows;
@@ -78,6 +158,7 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
       externalSessionId: value.externalSessionId,
       runtimeJobId: null,
       title: value.title ?? null,
+      titleIsCustom: Object.prototype.hasOwnProperty.call(params, 'title'),
       cwd,
       state: 'unknown',
       lastTurnState: 'unknown',
@@ -111,19 +192,48 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
     let importedCount = 0;
     const changedIds: string[] = [];
     const issues = results.flatMap((result) => result.issues);
+    const failedProviders = new Set<CodingAgentProvider>();
     for (const result of results) {
       for (const session of result.sessions) {
         try {
           const row = await this.dependencies.repository.upsert(session);
+          if (
+            session.statusObservedAt !== null &&
+            row.statusSource === session.statusSource &&
+            row.statusObservedAt === session.statusObservedAt
+          ) {
+            this.currentRuntimeObservations.set(row.id, {
+              statusSource: row.statusSource,
+              observedAt: session.statusObservedAt
+            });
+          }
           changedIds.push(row.id);
           importedCount += 1;
         } catch (error) {
+          failedProviders.add(result.provider);
           issues.push({
             provider: result.provider,
             code: 'invalid-entry',
             message: error instanceof Error ? error.message : String(error)
           });
         }
+      }
+    }
+    for (const result of results) {
+      if (result.provider !== 'claude') continue;
+      if (failedProviders.has('claude')) {
+        this.claudeCliLiveness.clear();
+        continue;
+      }
+      try {
+        await this.reconcileClaudeCliLiveness(result);
+      } catch (error) {
+        this.claudeCliLiveness.clear();
+        issues.push({
+          provider: 'claude',
+          code: 'invalid-entry',
+          message: error instanceof Error ? error.message : String(error)
+        });
       }
     }
     this.notify(changedIds);
@@ -137,8 +247,11 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
 
   async open(params: { id: string }): Promise<OpenCodingAgentSessionResult> {
     const { id } = parseCodingAgentIdParams(params);
-    const record = await this.dependencies.repository.getById({ id });
-    if (!record) return { kind: 'unavailable', reason: 'Coding-agent session was not found' };
+    const persistedRecord = await this.dependencies.repository.getById({ id });
+    if (!persistedRecord) {
+      return { kind: 'unavailable', reason: 'Coding-agent session was not found' };
+    }
+    const record = this.effectiveRecord(persistedRecord);
 
     if (record.provider === 'codex') {
       const url = buildCodexThreadDeepLink(record.externalSessionId);
@@ -162,7 +275,7 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
     const { id, title } = parseCodingAgentRenameParams(params);
     const row = await this.dependencies.repository.rename({ id, title });
     this.notify([id]);
-    return row;
+    return this.effectiveRecord(row);
   }
 
   async remove(params: { id: string }): Promise<boolean> {

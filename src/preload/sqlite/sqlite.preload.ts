@@ -78,6 +78,15 @@ sqliteManager.addMigration(26062002, (db) => {
   addColumnIfMissing(db, 'domain', 'description', `TEXT NOT NULL DEFAULT ''`);
   addColumnIfMissing(db, 'domain', 'archived', 'INTEGER NOT NULL DEFAULT 0');
 });
+sqliteManager.addMigration(26071501, (db) => {
+  addColumnIfMissing(db, 'coding_agent_session', 'provider_title', 'TEXT');
+  addColumnIfMissing(db, 'coding_agent_session', 'custom_title', 'INTEGER NOT NULL DEFAULT 0');
+  db.prepare(
+    `UPDATE coding_agent_session
+     SET provider_title = title
+     WHERE provider_title IS NULL AND custom_title = 0`
+  ).run();
+});
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {

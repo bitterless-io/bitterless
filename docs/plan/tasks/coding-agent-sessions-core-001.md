@@ -34,7 +34,11 @@ XPC service. Do not install hooks or add renderer UI in this task.
 ## Verification
 
 - Contract tests cover ID/path validation, every normalized provider state, unknown variants,
-  freshness, Codex `notLoaded`, Claude interactive/legacy-foreground versus background distinction, command timeout/output
-  caps, and fixed open/attach/resume targets.
-- Repository tests cover create/upsert/list/rename/status/soft-delete/re-register.
+  freshness and service-restart invalidation, Codex `notLoaded`, Claude
+  interactive/legacy-foreground versus background distinction, command timeout/output caps, and
+  fixed open/attach/resume targets.
+- Repository tests cover create/upsert/list/rename/status/soft-delete/re-register, including custom
+  title and explicit title-clear survival across provider refresh.
+- A real adapter -> service -> SQLite -> open-target test covers Claude live -> absent -> resume,
+  failed poll -> unknown, lease expiry -> unknown, and same-millisecond startup observations.
 - Run the focused test script, `yarn typecheck:node`, and `git diff --check`.

@@ -40,6 +40,7 @@ const makeRecord = (overrides = {}) => ({
   externalSessionId: CLAUDE_ID,
   runtimeJobId: null,
   title: null,
+  titleIsCustom: false,
   cwd: projectRoot,
   state: 'unknown',
   lastTurnState: 'unknown',
@@ -189,20 +190,64 @@ try {
     recognized: false
   });
   assert.equal(
-    contract.effectiveRuntimeState({ state: 'working', statusFreshUntil: 200 }, 200),
+    contract.effectiveRuntimeState(
+      { state: 'working', statusObservedAt: 100, statusFreshUntil: 200 },
+      200,
+      100,
+      true
+    ),
     'working'
   );
   assert.equal(
-    contract.effectiveRuntimeState({ state: 'working', statusFreshUntil: 200 }, 201),
+    contract.effectiveRuntimeState(
+      { state: 'working', statusObservedAt: 100, statusFreshUntil: 200 },
+      201,
+      100,
+      true
+    ),
     'unknown'
   );
   assert.equal(
-    contract.effectiveRuntimeState({ state: 'failed', statusFreshUntil: 200 }, 999),
+    contract.effectiveRuntimeState(
+      { state: 'working', statusObservedAt: 100, statusFreshUntil: 200 },
+      100,
+      100
+    ),
+    'unknown',
+    'a nonterminal observation from before this service instance must be unknown'
+  );
+  assert.equal(
+    contract.effectiveRuntimeState(
+      { state: 'failed', statusObservedAt: 99, statusFreshUntil: 200 },
+      999,
+      100
+    ),
     'failed'
   );
   assert.equal(
-    contract.effectiveRuntimeState({ state: 'ended', statusFreshUntil: null }, 999),
+    contract.effectiveRuntimeState(
+      { state: 'ended', statusObservedAt: null, statusFreshUntil: null },
+      999,
+      100
+    ),
     'ended'
+  );
+  assert.equal(
+    contract.effectiveProcessLiveness(
+      { isProcessAlive: true, statusObservedAt: 99, statusFreshUntil: 200 },
+      100,
+      100
+    ),
+    null
+  );
+  assert.equal(
+    contract.effectiveProcessLiveness(
+      { isProcessAlive: false, statusObservedAt: 100, statusFreshUntil: 200 },
+      200,
+      100,
+      true
+    ),
+    false
   );
 
   const targets = await loadTypeScriptModule(
@@ -329,7 +374,7 @@ try {
     {
       kind: 'background',
       id: 'job-123',
-      pid: 72,
+      pid: null,
       cwd: projectRoot,
       startedAt: 101,
       sessionId: ID_3,
@@ -365,10 +410,17 @@ try {
   assert.equal(claudeDiscovery.sessions[0].providerState, 'interactive');
   assert.equal(claudeDiscovery.sessions[0].statusSource, 'none');
   assert.equal(claudeDiscovery.sessions[0].isProcessAlive, true);
+  assert.equal(claudeDiscovery.sessions[0].titleIsCustom, false);
   assert.equal(claudeDiscovery.sessions[1].surface, 'claude-code-background');
   assert.equal(claudeDiscovery.sessions[1].runtimeJobId, 'job-123');
   assert.equal(claudeDiscovery.sessions[1].state, 'waiting_approval');
   assert.equal(claudeDiscovery.sessions[1].statusFreshUntil, 1500);
+  assert.equal(claudeDiscovery.sessions[1].isProcessAlive, false);
+  assert.deepEqual(claudeDiscovery.snapshot, {
+    status: 'success',
+    observedAt: 1000,
+    freshUntil: 1500
+  });
 
   const allInvocations = [];
   await new claude.ClaudeDiscoveryAdapter({
@@ -416,6 +468,7 @@ try {
     ),
     'unknown Claude agents kinds must be rejected explicitly'
   );
+  assert.equal(compatibilityDiscovery.snapshot.status, 'failed');
   const invalidClaude = await new claude.ClaudeDiscoveryAdapter({
     execute: async (params) =>
       params.args[1] === '--help'
@@ -444,6 +497,7 @@ try {
       params.args[1] === '--help' ? { stdout: '--json\n', stderr: '' } : { stdout: '{', stderr: '' }
   }).discover();
   assert.equal(invalidClaudeJson.issues[0].code, 'invalid-output');
+  assert.equal(invalidClaudeJson.snapshot.status, 'failed');
 
   const codex = await loadTypeScriptModule(
     'codex-discovery',
@@ -498,7 +552,9 @@ try {
     ['unknown', 'unknown', 'unknown']
   );
   assert.ok(codexDiscovery.sessions.every((session) => session.statusSource === 'none'));
+  assert.ok(codexDiscovery.sessions.every((session) => session.titleIsCustom === false));
   assert.ok(codexDiscovery.issues.some((issue) => issue.code === 'unsupported-entry'));
+  assert.equal(codexDiscovery.snapshot.status, 'failed');
 
   const tableModule = await loadTypeScriptModule(
     'table',
@@ -524,6 +580,7 @@ try {
     externalSessionId: CODEX_ID,
     runtimeJobId: null,
     title: 'Task',
+    titleIsCustom: false,
     cwd: projectRoot,
     state: 'unknown',
     lastTurnState: 'unknown',
@@ -539,8 +596,26 @@ try {
   const updated = await store.upsert({ ...draft, id: ID_2, title: 'Updated task' });
   assert.equal(updated.id, ID_1, 'upsert must retain the active row identity');
   assert.equal(updated.title, 'Updated task');
+  const manualWithoutTitle = await store.upsert({
+    ...draft,
+    id: ID_2,
+    title: null,
+    statusSource: 'manual'
+  });
+  assert.equal(manualWithoutTitle.title, 'Updated task');
   assert.equal((await store.list()).length, 1);
-  assert.equal((await store.rename({ id: ID_1, title: 'Renamed' })).title, 'Renamed');
+  const renamed = await store.rename({ id: ID_1, title: 'Renamed' });
+  assert.equal(renamed.title, 'Renamed');
+  assert.equal(renamed.titleIsCustom, true);
+  const providerRefresh = await store.upsert({ ...draft, id: ID_2, title: 'Provider refresh' });
+  assert.equal(providerRefresh.title, 'Renamed');
+  assert.equal(providerRefresh.titleIsCustom, true);
+  const clearedTitle = await store.rename({ id: ID_1, title: null });
+  assert.equal(clearedTitle.title, null);
+  assert.equal(clearedTitle.titleIsCustom, true);
+  const afterClearRefresh = await store.upsert({ ...draft, id: ID_2, title: 'Provider again' });
+  assert.equal(afterClearRefresh.title, null);
+  assert.equal(afterClearRefresh.titleIsCustom, true);
   await store.updateStatus({
     id: ID_1,
     state: 'working',
@@ -600,7 +675,7 @@ try {
     list: async () => [...records.values()],
     getById: async ({ id }) => records.get(id),
     rename: async ({ id, title }) => {
-      const record = { ...records.get(id), title };
+      const record = { ...records.get(id), title, titleIsCustom: true };
       records.set(id, record);
       return record;
     },
@@ -611,8 +686,22 @@ try {
   };
   const service = new serviceModule.CodingAgentSessionService({
     repository,
-    codexDiscovery: { discover: async () => ({ provider: 'codex', sessions: [], issues: [] }) },
-    claudeDiscovery: { discover: async () => ({ provider: 'claude', sessions: [], issues: [] }) },
+    codexDiscovery: {
+      discover: async () => ({
+        provider: 'codex',
+        sessions: [],
+        issues: [],
+        snapshot: { status: 'failed' }
+      })
+    },
+    claudeDiscovery: {
+      discover: async () => ({
+        provider: 'claude',
+        sessions: [],
+        issues: [],
+        snapshot: { status: 'failed' }
+      })
+    },
     openExternal: async (url) => opened.push(url),
     broadcastChanged: (ids, revision) => changed.push({ ids, revision }),
     idFactory: () => ID_3,
@@ -634,6 +723,196 @@ try {
     changed.map((event) => event.revision),
     [1, 2, 3]
   );
+
+  const integrationDatabase = new DatabaseSync(':memory:');
+  integrationDatabase.exec(tableModule.codingAgentSessionTable.createSql);
+  const integrationSql = {
+    get: async (sql, params = []) => integrationDatabase.prepare(sql).get(...params),
+    all: async (sql, params = []) => integrationDatabase.prepare(sql).all(...params),
+    run: async (sql, params = []) => integrationDatabase.prepare(sql).run(...params)
+  };
+  let integrationNow = 5000;
+  const integrationStore = new storeModule.CodingAgentSessionStore(
+    integrationSql,
+    () => integrationNow
+  );
+  await integrationStore.upsert({
+    id: ID_1,
+    provider: 'claude',
+    surface: 'claude-code-cli',
+    externalSessionId: CLAUDE_ID,
+    runtimeJobId: null,
+    title: 'Persisted provider title',
+    titleIsCustom: false,
+    cwd: projectRoot,
+    state: 'idle',
+    lastTurnState: 'completed',
+    providerState: 'idle',
+    statusSource: 'claude-hook',
+    statusObservedAt: 5000,
+    statusFreshUntil: 9000,
+    isProcessAlive: true
+  });
+  await integrationStore.upsert({
+    id: ID_2,
+    provider: 'codex',
+    surface: 'codex-desktop',
+    externalSessionId: CODEX_ID,
+    runtimeJobId: null,
+    title: 'Terminal task',
+    titleIsCustom: false,
+    cwd: projectRoot,
+    state: 'failed',
+    lastTurnState: 'failed',
+    providerState: 'systemError',
+    statusSource: 'codex-hook',
+    statusObservedAt: 5000,
+    statusFreshUntil: 9000,
+    isProcessAlive: false
+  });
+
+  let integrationClaudeFails = false;
+  let integrationClaudeOutput = [
+    {
+      kind: 'interactive',
+      pid: 9001,
+      cwd: projectRoot,
+      startedAt: 5000,
+      sessionId: CLAUDE_ID,
+      name: 'Provider one'
+    },
+    {
+      kind: 'background',
+      id: 'same-millisecond-job',
+      pid: null,
+      cwd: projectRoot,
+      startedAt: 5000,
+      sessionId: ID_3,
+      name: 'Same millisecond background',
+      state: 'working'
+    }
+  ];
+  const integrationClaudeAdapter = new claude.ClaudeDiscoveryAdapter({
+    execute: async (params) => {
+      if (params.args[1] === '--help') {
+        return { stdout: '--json\n', stderr: '' };
+      }
+      if (integrationClaudeFails) throw new Error('Claude poll failed');
+      return { stdout: JSON.stringify(integrationClaudeOutput), stderr: '' };
+    },
+    now: () => integrationNow,
+    freshnessMs: 100
+  });
+  const integrationService = new serviceModule.CodingAgentSessionService({
+    repository: integrationStore,
+    codexDiscovery: {
+      discover: async () => ({
+        provider: 'codex',
+        sessions: [],
+        issues: [],
+        snapshot: { status: 'failed' }
+      })
+    },
+    claudeDiscovery: integrationClaudeAdapter,
+    openExternal: async () => {},
+    now: () => integrationNow,
+    idFactory: () => ID_3
+  });
+
+  const startupRows = await integrationService.list();
+  const startupCli = startupRows.find((row) => row.id === ID_1);
+  const startupTerminal = startupRows.find((row) => row.id === ID_2);
+  assert.equal(startupCli.state, 'unknown');
+  assert.equal(startupCli.lastTurnState, 'completed');
+  assert.equal(startupCli.isProcessAlive, null);
+  assert.equal(startupTerminal.state, 'failed');
+  assert.equal(startupTerminal.lastTurnState, 'failed');
+  assert.equal((await integrationService.open({ id: ID_1 })).kind, 'unavailable');
+
+  await integrationService.refresh({ provider: 'claude' });
+  const sameMillisecondBackground = (await integrationService.list()).find(
+    (row) => row.externalSessionId === ID_3
+  );
+  assert.equal(sameMillisecondBackground.state, 'working');
+  assert.equal(sameMillisecondBackground.isProcessAlive, false);
+
+  integrationNow = 5100;
+  await integrationService.refresh({ provider: 'claude' });
+  const liveCli = (await integrationService.list()).find((row) => row.id === ID_1);
+  assert.equal(liveCli.state, 'unknown');
+  assert.equal(liveCli.isProcessAlive, true);
+  assert.equal(liveCli.title, 'Provider one');
+  assert.equal((await integrationStore.getById({ id: ID_1 })).statusSource, 'claude-hook');
+  assert.equal((await integrationService.open({ id: ID_1 })).kind, 'already-open');
+
+  await integrationService.rename({ id: ID_1, title: 'Custom title' });
+  integrationClaudeOutput = [
+    {
+      ...integrationClaudeOutput[0],
+      name: 'Provider two'
+    }
+  ];
+  integrationNow = 5110;
+  await integrationService.refresh({ provider: 'claude' });
+  const customTitleCli = (await integrationService.list()).find((row) => row.id === ID_1);
+  assert.equal(customTitleCli.title, 'Custom title');
+  assert.equal(customTitleCli.titleIsCustom, true);
+
+  await integrationService.rename({ id: ID_1, title: null });
+  integrationClaudeOutput = [
+    {
+      ...integrationClaudeOutput[0],
+      name: 'Provider three'
+    }
+  ];
+  integrationNow = 5120;
+  await integrationService.refresh({ provider: 'claude' });
+  const clearedTitleCli = (await integrationService.list()).find((row) => row.id === ID_1);
+  assert.equal(clearedTitleCli.title, null);
+  assert.equal(clearedTitleCli.titleIsCustom, true);
+  const persistedTitles = integrationDatabase
+    .prepare('SELECT title, provider_title, custom_title FROM coding_agent_session WHERE id = ?')
+    .get(ID_1);
+  assert.equal(persistedTitles.title, null);
+  assert.equal(persistedTitles.provider_title, 'Provider three');
+  assert.equal(persistedTitles.custom_title, 1);
+
+  integrationClaudeOutput = [];
+  integrationNow = 5130;
+  await integrationService.refresh({ provider: 'claude' });
+  const absentCli = (await integrationService.list()).find((row) => row.id === ID_1);
+  assert.equal(absentCli.isProcessAlive, false);
+  assert.deepEqual(await integrationService.open({ id: ID_1 }), {
+    kind: 'terminal-command',
+    target: {
+      kind: 'claude-resume',
+      executable: 'claude',
+      args: ['--resume', CLAUDE_ID],
+      cwd: projectRoot
+    }
+  });
+
+  integrationClaudeFails = true;
+  integrationNow = 5140;
+  const failedRefresh = await integrationService.refresh({ provider: 'claude' });
+  assert.ok(failedRefresh.issues.some((issue) => issue.code === 'command-failed'));
+  assert.equal(
+    (await integrationService.list()).find((row) => row.id === ID_1).isProcessAlive,
+    null
+  );
+  assert.equal((await integrationService.open({ id: ID_1 })).kind, 'unavailable');
+
+  integrationClaudeFails = false;
+  integrationNow = 5150;
+  await integrationService.refresh({ provider: 'claude' });
+  assert.equal((await integrationService.open({ id: ID_1 })).kind, 'terminal-command');
+  integrationNow = 5251;
+  assert.equal(
+    (await integrationService.list()).find((row) => row.id === ID_1).isProcessAlive,
+    null
+  );
+  assert.equal((await integrationService.open({ id: ID_1 })).kind, 'unavailable');
+  integrationDatabase.close();
 
   const handlerSource = readFileSync(
     join(projectRoot, 'src/main/xpc/codingAgentSession.handler.ts'),

@@ -22,6 +22,7 @@ interface CodexAppServerOptions {
 
 export interface CodexDiscoveryOptions extends CodexAppServerOptions {
   listThreads?: () => Promise<unknown[]>;
+  now?: () => number;
   idFactory?: () => string;
 }
 
@@ -206,10 +207,12 @@ export const listCodexThreadsViaAppServer = (
 
 export class CodexDiscoveryAdapter {
   private readonly listThreads: () => Promise<unknown[]>;
+  private readonly now: () => number;
   private readonly idFactory: () => string;
 
   constructor(options: CodexDiscoveryOptions = {}) {
     this.listThreads = options.listThreads ?? (() => listCodexThreadsViaAppServer(options));
+    this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? randomUUID;
   }
 
@@ -227,7 +230,8 @@ export class CodexDiscoveryAdapter {
             code: 'command-failed',
             message: error instanceof Error ? error.message : String(error)
           }
-        ]
+        ],
+        snapshot: { status: 'failed' }
       };
     }
     const sessions: CodingAgentSessionDraft[] = [];
@@ -260,6 +264,7 @@ export class CodexDiscoveryAdapter {
           externalSessionId,
           runtimeJobId: null,
           title: parseNullableText(entry.name, 'Codex thread name', 300),
+          titleIsCustom: false,
           cwd: parsePathText(entry.cwd),
           state: 'unknown',
           lastTurnState: 'unknown',
@@ -278,6 +283,15 @@ export class CodexDiscoveryAdapter {
         });
       }
     }
-    return { provider: 'codex', sessions, issues };
+    const observedAt = this.now();
+    return {
+      provider: 'codex',
+      sessions,
+      issues,
+      snapshot:
+        issues.length === 0
+          ? { status: 'success', observedAt, freshUntil: observedAt }
+          : { status: 'failed' }
+    };
   }
 }

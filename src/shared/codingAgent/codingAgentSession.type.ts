@@ -40,6 +40,7 @@ export interface CodingAgentSessionRecord {
   externalSessionId: string;
   runtimeJobId: string | null;
   title: string | null;
+  titleIsCustom: boolean;
   cwd: string | null;
   state: CodingAgentRuntimeState;
   lastTurnState: CodingAgentTurnState;
@@ -59,6 +60,7 @@ export interface CodingAgentSessionDraft {
   externalSessionId: string;
   runtimeJobId: string | null;
   title: string | null;
+  titleIsCustom: boolean;
   cwd: string | null;
   state: CodingAgentRuntimeState;
   lastTurnState: CodingAgentTurnState;
@@ -114,6 +116,13 @@ export interface CodingAgentDiscoveryResult {
   provider: CodingAgentProvider;
   sessions: CodingAgentSessionDraft[];
   issues: CodingAgentDiscoveryIssue[];
+  snapshot:
+    | {
+        status: 'success';
+        observedAt: number;
+        freshUntil: number;
+      }
+    | { status: 'failed' };
   supportsCompletedSessions?: boolean;
 }
 
