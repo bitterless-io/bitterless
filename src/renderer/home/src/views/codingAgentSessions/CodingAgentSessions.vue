@@ -80,7 +80,7 @@
     >
       <IconInfoCircle :size="16" aria-hidden="true" />
       <div>
-        <strong>{{ providerUnavailable(notice.provider) }}</strong>
+        <strong>{{ providerNoticeHeading(notice.provider) }}</strong>
         <span>{{ notice.message }}</span>
       </div>
       <a-button size="mini" @click="store.refresh(notice.provider)">
@@ -177,9 +177,12 @@ const filterLabel = (filter: FilterLabel, count: number): string => {
   return i18nHelper.codingAgentSessions.filters[filter].replace('{count}', String(count));
 };
 
-const providerUnavailable = (provider: CodingAgentProvider): string => {
+const providerNoticeHeading = (provider: CodingAgentProvider): string => {
   const name = i18nHelper.codingAgentSessions.providers[provider];
-  return i18nHelper.codingAgentSessions.messages.providerUnavailable.replace('{provider}', name);
+  if (store.discoveryAvailability[provider] === 'unavailable') {
+    return i18nHelper.codingAgentSessions.messages.providerUnavailable.replace('{provider}', name);
+  }
+  return `${name} · ${i18nHelper.codingAgentSessions.messages.providerError}`;
 };
 
 const providerNotices = computed(() => {
