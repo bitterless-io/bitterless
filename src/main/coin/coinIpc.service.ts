@@ -5,19 +5,32 @@ import {
   type CoinWindowSnapshot,
 } from '@shared/coin/coinBridge.type';
 import type { ApplicationLanguageSnapshot } from '@shared/i18n/applicationLanguage';
+import type { CoinResourceService } from './resources/coinResource.service';
+import type { CoinDataService } from './data/coinData.service';
+import type { CoinStateService } from './state/coinState.service';
+import type { CoinStrategyService } from './strategy/coinStrategy.service';
+import type { CoinAiAnalysisService } from './ai/coinAiAnalysis.service';
 import { assertCoinIpcSender } from './coinSender.guard';
 
 export interface CoinIpcDependencies {
   getWindow(): BrowserWindow | null;
   getLanguage(): ApplicationLanguageSnapshot;
+  resources: CoinResourceService;
+  data: CoinDataService;
+  state: CoinStateService;
+  strategy: CoinStrategyService;
+  ai: CoinAiAnalysisService;
 }
 
-const shellStatus = (): CoinShellStatus => ({
-  schema: 'coin-shell-v1',
-  shell: 'ready',
-  analysis: 'unavailable',
-  codex: 'unavailable',
-});
+const shellStatus = async (resources: CoinResourceService): Promise<CoinShellStatus> => {
+  const codex = await resources.getCodexStatus();
+  return {
+    schema: 'coin-shell-v1',
+    shell: 'ready',
+    analysis: 'ready',
+    codex: codex.errorCode ? 'error' : codex.connected ? 'connected' : 'disconnected',
+  };
+};
 
 const windowSnapshot = (window: BrowserWindow): CoinWindowSnapshot => ({
   maximized: window.isMaximized(),
@@ -36,42 +49,141 @@ export const registerCoinIpc = (dependencies: CoinIpcDependencies): void => {
   if (registered) return;
   registered = true;
 
-  ipcMain.handle(COIN_IPC_CHANNELS.shellGetStatus, (event) => {
-    withCoinWindow(COIN_IPC_CHANNELS.shellGetStatus, event, dependencies.getWindow);
-    return shellStatus();
+  const scopedHandle = (
+    channel: string,
+    listener: (window: BrowserWindow, value?: unknown) => unknown,
+  ): void => {
+    ipcMain.handle(channel, (event, value) => {
+      const window = withCoinWindow(channel, event, dependencies.getWindow);
+      return listener(window, value);
+    });
+  };
+
+  const sendToLiveCoin = (
+    owner: BrowserWindow,
+    channel: string,
+    value: unknown,
+  ): void => {
+    if (
+      dependencies.getWindow() !== owner ||
+      owner.isDestroyed() ||
+      owner.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    owner.webContents.send(channel, value);
+  };
+
+  scopedHandle(COIN_IPC_CHANNELS.shellGetStatus, async () =>
+    await shellStatus(dependencies.resources));
+
+  scopedHandle(COIN_IPC_CHANNELS.resourcesGetStatus, async () =>
+    await dependencies.resources.getStatus());
+
+  scopedHandle(COIN_IPC_CHANNELS.codexGetStatus, async () =>
+    await dependencies.resources.getCodexStatus());
+
+  scopedHandle(COIN_IPC_CHANNELS.codexConnect, async (window, value) => {
+    const result = await dependencies.resources.connectCodex(value, {
+      onDeviceCode: (notice) =>
+        sendToLiveCoin(window, COIN_IPC_CHANNELS.codexDeviceCode, notice),
+    });
+    sendToLiveCoin(window, COIN_IPC_CHANNELS.codexDeviceCode, null);
+    return result;
   });
 
-  ipcMain.handle(COIN_IPC_CHANNELS.languageGetCurrent, (event) => {
-    withCoinWindow(COIN_IPC_CHANNELS.languageGetCurrent, event, dependencies.getWindow);
-    return dependencies.getLanguage();
+  scopedHandle(COIN_IPC_CHANNELS.codexDisconnect, async (window) => {
+    dependencies.ai.stopAll();
+    const result = await dependencies.resources.disconnectCodex();
+    sendToLiveCoin(window, COIN_IPC_CHANNELS.codexDeviceCode, null);
+    return result;
   });
 
-  ipcMain.handle(COIN_IPC_CHANNELS.windowMinimize, (event) => {
-    const window = withCoinWindow(
-      COIN_IPC_CHANNELS.windowMinimize,
-      event,
-      dependencies.getWindow,
-    );
+  scopedHandle(COIN_IPC_CHANNELS.gmgnDetect, async () =>
+    await dependencies.resources.detectGmgn());
+
+  scopedHandle(COIN_IPC_CHANNELS.gmgnSaveApiKey, async (_window, value) =>
+    await dependencies.resources.saveGmgnApiKey(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.gmgnVerify, async () =>
+    await dependencies.resources.verifyGmgn());
+
+  scopedHandle(COIN_IPC_CHANNELS.gmgnCancelVerify, () =>
+    dependencies.resources.cancelGmgnVerify());
+
+  scopedHandle(COIN_IPC_CHANNELS.gmgnOpenOfficialLink, async (_window, value) =>
+    await dependencies.resources.openGmgnOfficialLink(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.alchemySave, async (_window, value) =>
+    await dependencies.resources.saveAlchemy(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.alchemyTest, async (_window, value) =>
+    await dependencies.resources.testAlchemy(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.serviceSave, async (_window, value) =>
+    await dependencies.resources.saveService(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.stateLoad, () => dependencies.state.load());
+
+  scopedHandle(COIN_IPC_CHANNELS.stateSave, async (_window, value) =>
+    await dependencies.state.save(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.stateRecover, async () =>
+    await dependencies.state.recover());
+
+  scopedHandle(COIN_IPC_CHANNELS.dataGetSources, async () =>
+    await dependencies.data.getSources());
+
+  scopedHandle(COIN_IPC_CHANNELS.dataMonitor, async (window, value) =>
+    await dependencies.data.monitor(value, (event) =>
+      sendToLiveCoin(window, COIN_IPC_CHANNELS.dataMonitorEvent, event)));
+
+  scopedHandle(COIN_IPC_CHANNELS.dataRefreshMonitor, async (_window, value) =>
+    await dependencies.data.refreshMonitor(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.dataParseScreener, async (_window, value) =>
+    await dependencies.data.parseScreener(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.dataScreen, async (_window, value) =>
+    await dependencies.data.screen(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.dataAnalyzeMeme, async (_window, value) =>
+    await dependencies.data.analyzeMeme(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.dataStartDiscover, async (window, value) =>
+    await dependencies.data.startDiscover(value, (snapshot) =>
+      sendToLiveCoin(window, COIN_IPC_CHANNELS.dataDiscoverEvent, snapshot)));
+
+  scopedHandle(COIN_IPC_CHANNELS.dataStopDiscover, () =>
+    dependencies.data.stopDiscover());
+
+  scopedHandle(COIN_IPC_CHANNELS.dataCancel, (_window, value) =>
+    dependencies.data.cancel(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.strategyEvaluate, (_window, value) =>
+    dependencies.strategy.evaluate(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.aiAnalyze, async (_window, value) =>
+    await dependencies.ai.analyze(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.aiCancel, (_window, value) =>
+    dependencies.ai.cancel(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.languageGetCurrent, () => dependencies.getLanguage());
+
+  scopedHandle(COIN_IPC_CHANNELS.windowMinimize, (window) => {
     window.minimize();
   });
 
-  ipcMain.handle(COIN_IPC_CHANNELS.windowToggleMaximize, (event) => {
-    const window = withCoinWindow(
-      COIN_IPC_CHANNELS.windowToggleMaximize,
-      event,
-      dependencies.getWindow,
-    );
+  scopedHandle(COIN_IPC_CHANNELS.windowToggleMaximize, (window) => {
     if (window.isMaximized()) window.unmaximize();
     else window.maximize();
     return windowSnapshot(window);
   });
 
-  ipcMain.handle(COIN_IPC_CHANNELS.windowClose, (event) => {
-    const window = withCoinWindow(
-      COIN_IPC_CHANNELS.windowClose,
-      event,
-      dependencies.getWindow,
-    );
+  scopedHandle(COIN_IPC_CHANNELS.windowClose, (window) => {
+    dependencies.ai.stopAll();
+    dependencies.data.stopAll();
     window.close();
   });
 };

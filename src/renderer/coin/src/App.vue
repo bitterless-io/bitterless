@@ -16,11 +16,15 @@ import { coinShellStore } from './coinShell.store';
 import CoinAnalysisPane from './components/CoinAnalysisPane.vue';
 import CoinStatusBar from './components/CoinStatusBar.vue';
 import CoinWindowHeader from './components/CoinWindowHeader.vue';
+import { coinWorkspaceStore } from './views/analysis/coinWorkspace.store';
 
 const platform = window.coin.platform;
 
 onMounted(() => {
-  void coinShellStore.initialize();
+  void Promise.all([
+    coinShellStore.initialize(),
+    coinWorkspaceStore.initialize(),
+  ]);
 });
 </script>
 

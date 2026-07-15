@@ -1,0 +1,15 @@
+{
+  "schema": "coin-ai-analysis-v1",
+  "summary": "The deterministic result is supported by the submitted market and risk evidence.",
+  "attentionThesis": [
+    "Attention is supported only by the bounded signal snapshot."
+  ],
+  "risks": [
+    "Execution remains subject to the deterministic risk gates."
+  ],
+  "evidenceRefs": [
+    "owner:market"
+  ],
+  "unsupportedClaims": [],
+  "confidence": 0.74
+}

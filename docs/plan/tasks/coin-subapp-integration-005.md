@@ -1,7 +1,7 @@
 ---
 id: coin-subapp-integration-005
 scope: Coin end-to-end integration, acceptance, and sync readiness
-status: pending
+status: owner-verification-pending
 depends-on: [coin-ai-analysis-004]
 ---
 
@@ -9,8 +9,10 @@ depends-on: [coin-ai-analysis-004]
 
 ## Objective
 
-Verify the full feature through the real Bitterless host boundary, close contract gaps, and produce
-lifecycle, resource-security, data, AI, visual, and second-machine setup evidence.
+Exercise the full feature through the real Bitterless host boundary, close contract gaps, and
+produce lifecycle, resource-security, data, AI, visual, and second-machine setup evidence. Per the
+owner's 2026-07-15 direction, this runtime pass is owner-executed; no additional agent-side E2E,
+build, typecheck, or visual verification is authorized for this handoff.
 
 ## Contract
 
@@ -41,9 +43,25 @@ lifecycle, resource-security, data, AI, visual, and second-machine setup evidenc
 
 ## Verification
 
-- Run focused unit/contract tests, Electron Playwright, Maestro lifecycle checks,
-  `yarn check:maestro`, node/renderer typechecks, `yarn build`, and `git diff --check`.
+- Owner runs `yarn dev` for local/debug sources or `yarn dev:prod` for production sources after
+  completing the GMGN and Alchemy setup guides.
+- Owner may run focused unit/contract tests, Electron Playwright, Maestro lifecycle checks,
+  `yarn check:maestro`, node/renderer typechecks, and `yarn build` when a full verification pass is
+  wanted.
 - Capture every analysis tab, Resources, Sources, and AI state at `1360x860` and `800x600`; inspect
   overflow, overlap, loading stability, and Royal Blue consistency.
 - Write an independent requirement matrix with automated check, screenshot, manual observation, or
   explicit production credential gate for every contract item.
+
+## Owner Run Order
+
+1. Follow `docs/guides/gmgn-cli.md`, then configure the personal key and run the fixed read-only
+   probe from Coin → Resources.
+2. Follow `docs/guides/coin-data-sources.md`, adding separate mainnet HTTPS endpoints for Robinhood
+   Chain, BSC, and Solana; add WSS endpoints when the Alchemy app exposes them.
+3. Start Bitterless with `yarn dev`, log in, open Coin, and confirm Resources reports the selected
+   providers without exposing credentials.
+4. Exercise Monitor, Screener, Meme Discover/Analyze, Strategy (including a complete existing
+   position for HOLD), History restore, Sources, and Codex Analyze with AI/Cancel.
+5. Close and reopen Coin, then restart Bitterless and confirm geometry, persisted results, resource
+   readiness, and validated AI receipts restore without chat or trading controls.

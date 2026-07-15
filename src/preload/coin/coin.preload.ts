@@ -6,6 +6,7 @@ import {
   type CoinShellStatus,
   type CoinWindowSnapshot,
 } from '@shared/coin/coinBridge.type';
+import type { CoinCodexDeviceCodeNotice } from '@shared/coin/coinResource.type';
 import type { ApplicationLanguageSnapshot } from '@shared/i18n/applicationLanguage';
 
 const hostPlatform = (): CoinHostPlatform => {
@@ -16,6 +17,97 @@ const hostPlatform = (): CoinHostPlatform => {
 const shell = Object.freeze({
   getStatus: async (): Promise<CoinShellStatus> =>
     await ipcRenderer.invoke(COIN_IPC_CHANNELS.shellGetStatus),
+});
+
+const codex = Object.freeze({
+  getStatus: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.codexGetStatus),
+  connect: async (params: Parameters<CoinBridge['codex']['connect']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.codexConnect, params),
+  disconnect: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.codexDisconnect),
+  onDeviceCode: (
+    listener: (notice: CoinCodexDeviceCodeNotice | null) => void,
+  ): (() => void) => {
+    const handleNotice = (_event: Electron.IpcRendererEvent, notice: unknown): void => {
+      listener(notice as CoinCodexDeviceCodeNotice | null);
+    };
+    ipcRenderer.on(COIN_IPC_CHANNELS.codexDeviceCode, handleNotice);
+    return () => ipcRenderer.removeListener(COIN_IPC_CHANNELS.codexDeviceCode, handleNotice);
+  },
+});
+
+const resources = Object.freeze({
+  getStatus: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.resourcesGetStatus),
+  detectGmgn: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.gmgnDetect),
+  saveGmgnApiKey: async (params: Parameters<CoinBridge['resources']['saveGmgnApiKey']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.gmgnSaveApiKey, params),
+  verifyGmgn: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.gmgnVerify),
+  cancelGmgnVerify: async () =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.gmgnCancelVerify),
+  openGmgnOfficialLink: async (
+    params: Parameters<CoinBridge['resources']['openGmgnOfficialLink']>[0],
+  ) => await ipcRenderer.invoke(COIN_IPC_CHANNELS.gmgnOpenOfficialLink, params),
+  saveAlchemy: async (params: Parameters<CoinBridge['resources']['saveAlchemy']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.alchemySave, params),
+  testAlchemy: async (params: Parameters<CoinBridge['resources']['testAlchemy']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.alchemyTest, params),
+  saveService: async (params: Parameters<CoinBridge['resources']['saveService']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.serviceSave, params),
+});
+
+const state = Object.freeze({
+  load: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.stateLoad),
+  save: async (params: Parameters<CoinBridge['state']['save']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.stateSave, params),
+  recover: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.stateRecover),
+});
+
+const data = Object.freeze({
+  getSources: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataGetSources),
+  monitor: async (params: Parameters<CoinBridge['data']['monitor']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataMonitor, params),
+  refreshMonitor: async (params: Parameters<CoinBridge['data']['refreshMonitor']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataRefreshMonitor, params),
+  parseScreener: async (params: Parameters<CoinBridge['data']['parseScreener']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataParseScreener, params),
+  screen: async (params: Parameters<CoinBridge['data']['screen']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataScreen, params),
+  analyzeMeme: async (params: Parameters<CoinBridge['data']['analyzeMeme']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataAnalyzeMeme, params),
+  startDiscover: async (params: Parameters<CoinBridge['data']['startDiscover']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataStartDiscover, params),
+  stopDiscover: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataStopDiscover),
+  cancel: async (params: Parameters<CoinBridge['data']['cancel']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataCancel, params),
+  onMonitorEvent: (
+    listener: Parameters<CoinBridge['data']['onMonitorEvent']>[0],
+  ): (() => void) => {
+    const handleEvent = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+      listener(value as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on(COIN_IPC_CHANNELS.dataMonitorEvent, handleEvent);
+    return () => ipcRenderer.removeListener(COIN_IPC_CHANNELS.dataMonitorEvent, handleEvent);
+  },
+  onDiscoverEvent: (
+    listener: Parameters<CoinBridge['data']['onDiscoverEvent']>[0],
+  ): (() => void) => {
+    const handleEvent = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+      listener(value as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on(COIN_IPC_CHANNELS.dataDiscoverEvent, handleEvent);
+    return () => ipcRenderer.removeListener(COIN_IPC_CHANNELS.dataDiscoverEvent, handleEvent);
+  },
+});
+
+const strategy = Object.freeze({
+  evaluate: async (params: Parameters<CoinBridge['strategy']['evaluate']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.strategyEvaluate, params),
+});
+
+const ai = Object.freeze({
+  analyze: async (params: Parameters<CoinBridge['ai']['analyze']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.aiAnalyze, params),
+  cancel: async (params: Parameters<CoinBridge['ai']['cancel']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.aiCancel, params),
 });
 
 const language = Object.freeze({
@@ -42,9 +134,15 @@ const windowControls = Object.freeze({
 });
 
 const coinBridge: CoinBridge = Object.freeze({
+  ai,
   platform: hostPlatform(),
+  codex,
+  data,
   language,
+  resources,
   shell,
+  state,
+  strategy,
   window: windowControls,
 });
 

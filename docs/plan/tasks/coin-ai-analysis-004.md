@@ -1,7 +1,7 @@
 ---
 id: coin-ai-analysis-004
 scope: Background Codex structured analysis
-status: pending
+status: implemented-owner-verification-pending
 depends-on: [coin-analysis-workspace-003]
 ---
 
@@ -43,10 +43,6 @@ a chat interface.
 
 ## Verification
 
-- Prove Coin uses the shared credential but cannot mutate Maestro provider/model/session state.
-- Verify bounded context, tool disabling, strict output validation, unsupported evidence rejection,
-  cancellation, stale-run rejection, error redaction, and persisted receipt restore.
-- Audit source/bundle/accessibility output for absence of chat/composer/provider/tool surfaces.
-- Run focused Coin/Maestro tests, `yarn check:maestro`, node/renderer typechecks, build, diff check,
-  and AI connected/disconnected/running/error screenshots.
-
+Implementation is complete and focused tests were authored, but none were executed at the owner's
+request. Exact owner exercise steps, the changed surface, and unverified risks are recorded in
+[`../results/coin-ai-analysis-004.md`](../results/coin-ai-analysis-004.md).

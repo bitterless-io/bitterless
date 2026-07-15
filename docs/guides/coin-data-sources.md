@@ -2,24 +2,25 @@
 
 Status: Human setup guide
 
-Coin can ship and be tested with typed local fixtures, but production analysis is enabled only when
-the corresponding source reports **ready**. Missing credentials or endpoints remain visible as
-unavailable; Bitterless never invents a result or silently switches to sample data.
+Coin enables an action only when its explicitly selected source mode reports **ready**. Missing
+credentials or endpoints remain visible as unavailable; Bitterless never invents a result, changes
+source mode after a failure, or silently switches to sample data.
 
 ## Prepare first
 
 | Resource | Required for | Owner action |
 |---|---|---|
-| Alchemy account and applications | EVM/Solana holder, transfer, and activity collection | Create read-only endpoints for every supported chain and run the capability probe below. |
-| GMGN personal API credential | Meme wallet labels and GMGN-derived rates | Obtain a credential whose terms allow the planned personal analysis workload. |
+| Alchemy account and applications | local chain identity/contract/account checks and future activity collection | Create read-only endpoints for every supported chain and run the capability probe below. |
+| GMGN personal API credential | local Meme discovery, token metadata, security, holders, traders, and concepts | Obtain a credential whose terms allow the planned personal analysis workload. |
 | Curated wallet cohort dataset | high-profit, Robinhood, BSC, PVP overlap scoring | Supply reviewed addresses, chain, label, provenance, confidence, and version. |
-| Coin source services | desktop Monitor, Screener, and Meme requests | Deploy the backend services and provide their public API bases. |
+| Coin source services | desktop Monitor/Screener and optional preferred Meme service requests | Deploy the applicable backend services and provide their public API bases. |
 | Position data | position-aware `HOLD` decisions | Supply entry price, remaining amount, invested amount, and risk inputs for each analysis. |
 
 Do not put API keys, RPC URLs containing keys, wallet lists with private annotations, or production
 credentials in this repository. Bitterless is a `projects/` submodule and must be treated as public.
-Store them in the private parent workspace under `areas/keychain/` or `ops/bitterless/`, then inject
-them only into the backend service environment.
+Store service credentials in the private parent workspace under `areas/keychain/` or
+`ops/bitterless/`. Per-machine GMGN/Alchemy values may instead be entered through Resources, where
+the main process stores them outside the repository.
 
 For local desktop setup, use Coin's Resources page. It stores GMGN in the standard owner-only GMGN
 config and encrypts Alchemy values with Electron `safeStorage`; neither credential is synchronized
@@ -31,12 +32,13 @@ with Git. See the full [GMGN CLI setup guide](gmgn-cli.md).
 2. Create separate applications/endpoints for BSC, Solana, and Robinhood Chain when each network is
    available to the account. Separate apps make quota, failures, and later credential rotation
    attributable by chain.
-3. Choose the production network for each chain. Record the HTTPS endpoint and, when required by the
-   collection service, the WebSocket endpoint in the private Bitterless ops inventory.
-4. Keep the key server-side. The desktop renderer and any `VITE_*` value must never contain an
-   Alchemy endpoint with a secret.
-5. From the future Meme collection service, run read-only probes for chain identity, latest block or
-   slot, token transfers, token balances/holders, transaction history, and request-rate behavior.
+3. Choose the production network for each chain. Enter the HTTPS endpoint through Resources for
+   local mode, or record it in the private Bitterless ops inventory for a deployed service.
+4. Keep the key in the main process. Resources encrypts the endpoint with Electron `safeStorage`;
+   the renderer receives only masked readiness metadata, and no `VITE_*` value may contain it.
+5. The implemented local adapter performs read-only chain identity plus contract/account checks
+   where supported: `eth_chainId` and `eth_getCode` for EVM chains, and Solana health/account-info
+   calls for Solana. Holder/activity coverage still comes from GMGN or a deployed Meme service.
 6. Record each capability as `supported`, `unsupported`, or `degraded`, with the observed timestamp
    and error. An RPC that answers a health call is not proof that it can produce the holder metrics.
 7. For Robinhood Chain, collect at least seven days of sample density, transfer coverage, and rate
@@ -57,8 +59,9 @@ it must not require a desktop release.
    entrapment evidence, wallet PnL/position evidence, timestamps, and pagination completeness.
 5. Map absent fields to `null + reason`. Do not derive a zero from a missing label or incomplete
    page.
-6. Add bounded concurrency, cooldown, retry-after handling, and source receipts before enabling the
-   discover/recently-filled polling loop.
+6. Coin's local adapter already enforces one GMGN process at a time, fixed command templates,
+   timeout/output caps, cooldown/retry-after handling, cancellation, and source receipts. Discover
+   additionally enforces a 60-second minimum interval and one trenches call per poll.
 
 ## Wallet cohorts
 
@@ -91,20 +94,37 @@ VITE_COIN_SCREEN_API_BASE
 VITE_COIN_MEME_API_BASE
 ```
 
-The monitor and screen services may be enabled independently. The Meme service is ready only when
-its health/status response identifies supported chains, enabled providers, cohort version, latest
-successful observation, and unavailable dimensions. Production APIs use `GET` without request
-parameters and `POST` with a JSON body.
+The monitor and screen services may be enabled independently. A configured Meme service is the
+preferred explicit mode, but it is optional: explicit local mode uses configured GMGN CLI plus the
+selected chain's Alchemy endpoint. There is no service-to-local fallback after a failed request.
+
+The desktop currently calls these service contracts:
+
+```text
+GET  /binance/futures/symbol-feature-states?symbols=...
+POST /binance/futures/symbol-feature-states/refresh
+WS   configured monitor WebSocket base with selected symbols
+POST /api/coin-filter/parse
+POST /api/coin-filter/screen
+POST /api/meme/discover
+POST /api/meme/analyze
+```
+
+Screener `sample` is sent only after explicit selection. Meme service responses must identify
+unsupported dimensions so the renderer can display `null + reason` rather than a zero.
 
 ## Readiness checklist
 
 - [ ] Private ops inventory names the `ral` owner for every credential and deployed resource.
-- [ ] Alchemy endpoints are server-only and capability probes are recorded per chain.
+- [ ] Alchemy endpoints are main-process-only or server-only and capability probes are recorded per chain.
 - [ ] GMGN terms/rate limits and required fields are verified.
 - [ ] `gmgn-cli` is installed, the personal key is configured with mode `0600`, and the read-only
       probe passes without `GMGN_PRIVATE_KEY`.
 - [ ] A reviewed, versioned wallet cohort is deployed.
-- [ ] Monitor, Screener, and Meme bases expose health/status and use HTTPS in production.
+- [ ] Monitor and Screener bases use HTTPS in production; the optional Meme base does the same when selected.
 - [ ] Missing source data returns `null + reason`, never a fabricated zero.
 - [ ] Polling respects provider cooldowns and can be stopped without losing the last valid receipt.
 - [ ] No wallet signing, swap, exchange order, or private key is available to Coin.
+
+Implementation is complete for the desktop adapters, but every item above and every live response
+shape remains owner-verification pending for `coin-analysis-workspace-003`.

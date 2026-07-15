@@ -13,8 +13,8 @@ type MessageSchema = typeof en;
 const localeMap: Record<AppLanguage, MessageSchema> = { en, zh };
 let appliedLanguage: AppLanguage | null = null;
 
-// Vue i18n requires a construction locale. No renderer mounts with this placeholder: every
-// first-party entry awaits initializeRendererLanguage(), which applies main's snapshot first.
+// Vue i18n requires a construction locale. Renderers normally apply main's snapshot before mount;
+// English is also the explicit degraded-bootstrap fallback when language IPC is unavailable.
 export const i18nMessages: MessageSchema = reactive({ ...en }) as MessageSchema;
 
 export const i18nHelper: MessageSchema = i18nMessages;

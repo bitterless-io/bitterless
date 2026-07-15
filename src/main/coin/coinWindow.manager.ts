@@ -29,6 +29,7 @@ class CoinWindowManager {
   private currentWindow: BrowserWindow | null = null;
   private stateStore: CoinWindowStateStore | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private closeCleanup: (() => void) | null = null;
 
   get browserWindow(): BrowserWindow | null {
     return this.currentWindow;
@@ -36,6 +37,10 @@ class CoinWindowManager {
 
   isDestroyed(window: BrowserWindow): boolean {
     return window.isDestroyed();
+  }
+
+  setCloseCleanup(cleanup: () => void): void {
+    this.closeCleanup = cleanup;
   }
 
   async create(signal: AbortSignal): Promise<BrowserWindow> {
@@ -89,8 +94,12 @@ class CoinWindowManager {
     window.on('resize', scheduleGeometrySave);
     window.on('maximize', scheduleGeometrySave);
     window.on('unmaximize', scheduleGeometrySave);
-    window.on('close', () => this.flushGeometry(window));
+    window.on('close', () => {
+      this.closeCleanup?.();
+      this.flushGeometry(window);
+    });
     window.on('closed', () => {
+      this.closeCleanup?.();
       signal.removeEventListener('abort', abortStartup);
       this.clearSaveTimer();
       if (this.currentWindow === window) this.currentWindow = null;

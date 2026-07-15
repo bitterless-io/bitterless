@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from '../../maestro/fixtures/bitterlessApp.fixture';
 
@@ -121,8 +121,13 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
     requireType: typeof (globalThis as { require?: unknown }).require,
     processType: typeof (globalThis as { process?: unknown }).process,
     bridgeKeys: Object.keys(window.coin).sort(),
+    codexKeys: Object.keys(window.coin.codex).sort(),
+    dataKeys: Object.keys(window.coin.data).sort(),
     languageKeys: Object.keys(window.coin.language).sort(),
+    resourceKeys: Object.keys(window.coin.resources).sort(),
     shellKeys: Object.keys(window.coin.shell).sort(),
+    stateKeys: Object.keys(window.coin.state).sort(),
+    strategyKeys: Object.keys(window.coin.strategy).sort(),
     windowKeys: Object.keys(window.coin.window).sort(),
     hasXpc: 'xpcRenderer' in globalThis,
     iframeCount: document.querySelectorAll('iframe, webview').length,
@@ -130,9 +135,36 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   expect(bridgeShape).toEqual({
     requireType: 'undefined',
     processType: 'undefined',
-    bridgeKeys: ['language', 'platform', 'shell', 'window'],
+    bridgeKeys: ['codex', 'data', 'language', 'platform', 'resources', 'shell', 'state', 'strategy', 'window'],
+    codexKeys: ['connect', 'disconnect', 'getStatus', 'onDeviceCode'],
+    dataKeys: [
+      'analyzeMeme',
+      'cancel',
+      'getSources',
+      'monitor',
+      'onDiscoverEvent',
+      'onMonitorEvent',
+      'parseScreener',
+      'refreshMonitor',
+      'screen',
+      'startDiscover',
+      'stopDiscover',
+    ],
     languageKeys: ['getCurrent', 'onChanged'],
+    resourceKeys: [
+      'cancelGmgnVerify',
+      'detectGmgn',
+      'getStatus',
+      'openGmgnOfficialLink',
+      'saveAlchemy',
+      'saveGmgnApiKey',
+      'saveService',
+      'testAlchemy',
+      'verifyGmgn',
+    ],
     shellKeys: ['getStatus'],
+    stateKeys: ['load', 'recover', 'save'],
+    strategyKeys: ['evaluate'],
     windowKeys: ['close', 'minimize', 'toggleMaximize'],
     hasXpc: false,
     iframeCount: 0,
@@ -154,10 +186,26 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   const activeTabPanel = coinPage.locator(
     '.coin-analysis-tabs .arco-tabs-content-item-active .arco-tabs-pane',
   );
-  await expect(activeTabPanel.getByText('No supported read-only source is connected.')).toBeVisible();
+  await expect(activeTabPanel.getByText('Local CLI + RPC · read-only', { exact: true })).toBeVisible();
+  await expect(activeTabPanel.getByText(/Local mode requires both the read-only GMGN CLI and Alchemy/)).toBeVisible();
   await activeTabPanel.locator('.arco-radio-button').filter({ hasText: 'Analyze' }).click();
   await expect(activeTabPanel.getByText('Contract address')).toBeVisible();
+  await expect(activeTabPanel.getByRole('button', { name: 'Analyze', exact: true })).toBeDisabled();
+
+  await coinTab(coinPage, 'Screener').click();
+  await expect(activeTabPanel.getByPlaceholder('Describe the market conditions to screen')).toBeEditable();
+  await activeTabPanel.locator('.arco-radio-button').filter({ hasText: 'Sample' }).click();
+  await expect(activeTabPanel.getByText(/Sample mode is explicit test data/)).toBeVisible();
+
+  await coinTab(coinPage, 'Strategy').click();
+  await expect(activeTabPanel.getByRole('button', { name: 'Evaluate', exact: true })).toBeEnabled();
+  await expect(activeTabPanel.getByText(/No order or signed transaction is created/)).toHaveCount(0);
+
+  await coinTab(coinPage, 'History').click();
+  await expect(activeTabPanel.getByText('No stored analyses', { exact: true })).toBeVisible();
   await coinTab(coinPage, 'Monitor').click();
+  await expect(activeTabPanel.getByPlaceholder('BTCUSDT, ETHUSDT')).toBeEditable();
+  await expect(activeTabPanel.getByRole('button', { name: 'Load', exact: true })).toBeEnabled();
   await expect(coinPage.getByText('Shell ready')).toBeVisible();
 
   const forbiddenSurface = await coinPage.evaluate(() => ({
@@ -182,17 +230,112 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   await expect(coinPage.getByText('yarn global add gmgn-cli', { exact: true })).toBeVisible();
   await expect(coinPage.getByText('Alchemy BSC', { exact: true })).toBeVisible();
   await expect(coinPage.getByText('Monitor API', { exact: true })).toBeVisible();
-  await expect(coinPage.getByRole('button', { name: 'Connect Codex' })).toBeDisabled();
+  await expect(coinPage.getByRole('button', { name: 'Connect in browser' })).toBeEnabled();
   await expect(resourcesNav).toHaveAttribute('aria-pressed', 'true');
   await expect(aiStatusButton).toHaveAttribute('aria-pressed', 'true');
+
+  mkdirSync(screenshotRoot, { recursive: true });
+  await expectStableLayout(coinPage);
+  await coinPage.screenshot({
+    path: join(screenshotRoot, 'coin-resources-missing-1360x860.png'),
+    animations: 'disabled',
+  });
+
+  const gmgnKeyRow = coinPage.locator('[name="coin__resources__gmgnKey"]');
+  await gmgnKeyRow.getByRole('button', { name: 'Configure', exact: true }).click();
+  const gmgnKeyInput = coinPage.getByLabel('GMGN_API_KEY');
+  await gmgnKeyInput.fill('gmgn_e2e_transient_not_saved_12345');
+  await coinPage.keyboard.press('Escape');
+  await expect(gmgnKeyInput).toHaveCount(0);
+  await gmgnKeyRow.getByRole('button', { name: 'Configure', exact: true }).click();
+  await expect(coinPage.getByLabel('GMGN_API_KEY')).toHaveValue('');
+  const gmgnFixtureKey = 'gmgn_e2e_fixture_api_key_12345';
+  await coinPage.getByLabel('GMGN_API_KEY').fill(gmgnFixtureKey);
+  await coinPage.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(coinPage.getByRole('dialog')).toHaveCount(0);
+  await expect(gmgnKeyRow).toContainText('Configured');
+  const gmgnCredentialPath = join(
+    dirname(bitterless.userDataDir),
+    'home',
+    '.config',
+    'gmgn',
+    '.env',
+  );
+  await expect.poll(() => readFileSync(gmgnCredentialPath, 'utf8')).toBe(
+    `GMGN_API_KEY=${gmgnFixtureKey}\n`,
+  );
+  if (process.platform !== 'win32') {
+    expect(statSync(dirname(gmgnCredentialPath)).mode & 0o777).toBe(0o700);
+    expect(statSync(gmgnCredentialPath).mode & 0o777).toBe(0o600);
+  }
+
+  const alchemySecret = 'alchemy-e2e-secret-path';
+  const bscRow = coinPage.locator('[name="coin__resources__chainRow"]').filter({
+    hasText: 'Alchemy BSC',
+  });
+  const safeStorageUnavailable = await bscRow
+    .getByText('System secure storage is unavailable.')
+    .isVisible()
+    .catch(() => false);
+  if (!safeStorageUnavailable) {
+    await bscRow.getByRole('button', { name: 'Configure', exact: true }).click();
+    const dialog = coinPage.getByRole('dialog');
+    await dialog.getByLabel('HTTP endpoint').fill(`${bitterless.mockOrigin}/${alchemySecret}`);
+    await dialog
+      .getByLabel('WebSocket endpoint')
+      .fill(`${bitterless.mockOrigin.replace('http:', 'ws:')}/${alchemySecret}`);
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(bscRow).toContainText('/***');
+    await expect(bscRow).not.toContainText(alchemySecret);
+
+    const encryptedPath = join(bitterless.userDataDir, 'coin', 'resources.enc');
+    await expect.poll(() => existsSync(encryptedPath)).toBe(true);
+    const ciphertext = readFileSync(encryptedPath);
+    expect(ciphertext.toString('utf8')).not.toContain(alchemySecret);
+    if (process.platform !== 'win32') {
+      expect(statSync(encryptedPath).mode & 0o777).toBe(0o600);
+    }
+  }
+
+  const serviceSecret = 'service-e2e-secret-path';
+  const monitorRow = coinPage.locator('[name="coin__resources__serviceRow"]').filter({
+    hasText: 'Monitor API',
+  });
+  await monitorRow.getByRole('button', { name: 'Configure', exact: true }).click();
+  const serviceDialog = coinPage.getByRole('dialog');
+  await serviceDialog
+    .getByLabel('HTTP base URL')
+    .fill(`${bitterless.mockOrigin}/${serviceSecret}`);
+  await serviceDialog
+    .getByLabel('WebSocket base URL')
+    .fill(`${bitterless.mockOrigin.replace('http:', 'ws:')}/${serviceSecret}`);
+  await serviceDialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(serviceDialog).toHaveCount(0);
+  await expect(monitorRow).toContainText(new URL(bitterless.mockOrigin).host);
+  await expect(monitorRow).not.toContainText(serviceSecret);
+
+  const rendererResourceStatus = await coinPage.evaluate(async () =>
+    JSON.stringify(await window.coin.resources.getStatus()),
+  );
+  expect(rendererResourceStatus).not.toContain(gmgnFixtureKey);
+  expect(rendererResourceStatus).not.toContain(alchemySecret);
+  expect(rendererResourceStatus).not.toContain(serviceSecret);
+  await coinPage.screenshot({
+    path: join(screenshotRoot, 'coin-resources-configured-1360x860.png'),
+    animations: 'disabled',
+  });
+
   await coinTab(coinPage, 'Monitor').click();
   await expect(coinPage.locator('[name="coin__resourcesPage"]')).toHaveCount(0);
 
   await coinPage.locator('[name="coin__windowHeader__sources"]').click();
   const drawer = coinPage.locator('.arco-drawer');
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByText('Binance monitor')).toBeVisible();
-  await expect(drawer.getByText('Codex AI')).toBeVisible();
+  await expect(drawer.getByText('Monitor HTTP', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('Monitor WebSocket', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('Deterministic strategy v1', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('Yes', { exact: true })).toBeVisible();
   const readDrawerPlacement = () => coinPage.evaluate(() => {
     const drawer = document.querySelector('.arco-drawer')!.getBoundingClientRect();
     const analysis = document.querySelector('.coin-analysis-pane')!.getBoundingClientRect();
@@ -211,7 +354,6 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   expect(drawerPlacement.drawerLeft).toBeGreaterThanOrEqual(drawerPlacement.analysisLeft - 1);
   await drawer.getByRole('button', { name: 'Close', exact: true }).click();
 
-  mkdirSync(screenshotRoot, { recursive: true });
   await expectStableLayout(coinPage);
   await coinPage.screenshot({
     path: join(screenshotRoot, 'coin-1360x860.png'),

@@ -1,0 +1,90 @@
+{
+  "chain": "bsc",
+  "contractAddress": "0x1111111111111111111111111111111111111111",
+  "info": {
+    "data": {
+      "name": "Fixture Signal",
+      "symbol": "FIX",
+      "launch_stage": "graduated",
+      "price_usd": 0.0012,
+      "market_cap_usd": 1200000,
+      "liquidity_usd": 180000
+    }
+  },
+  "security": {
+    "data": {
+      "is_honeypot": false,
+      "is_mintable": false,
+      "buy_tax": 1,
+      "sell_tax": 1
+    }
+  },
+  "holders": {
+    "data": {
+      "holder_count": 3,
+      "fresh_wallet_rate_pct": 27.36,
+      "bot_degen_rate_pct": 14.78,
+      "holders": [
+        {
+          "rank": 1,
+          "address": "0x0000000000000000000000000000000000000001",
+          "holding_percentage": 10,
+          "amount": 1000000,
+          "label": "observed-early-buyer",
+          "wallet_score": 88
+        },
+        {
+          "rank": 2,
+          "address": "0x0000000000000000000000000000000000000002",
+          "holding_percentage": 5,
+          "amount": 500000
+        },
+        {
+          "rank": 3,
+          "address": "0x0000000000000000000000000000000000000003",
+          "holding_percentage": 2,
+          "amount": 200000
+        }
+      ]
+    }
+  },
+  "traders": {
+    "data": {
+      "entrapment_trader_rate_pct": 39.72,
+      "traders": []
+    }
+  },
+  "hotSearches": {
+    "data": [
+      {
+        "name": "Fixture Signal",
+        "symbol": "FIX",
+        "address": "0x1111111111111111111111111111111111111111",
+        "attention_score": 84,
+        "growth_score": 82,
+        "novelty_score": 71,
+        "saturation_score": 48,
+        "rank_change": 2
+      }
+    ]
+  },
+  "trending": {
+    "data": [
+      {
+        "name": "Observed Without Scores",
+        "symbol": "OBS",
+        "address": "0x2222222222222222222222222222222222222222",
+        "rank_change": 0
+      }
+    ]
+  },
+  "alchemy": {
+    "chainIdentityVerified": true,
+    "assetAccountVerified": true,
+    "holderKinds": {
+      "0x0000000000000000000000000000000000000001": "wallet",
+      "0x0000000000000000000000000000000000000002": "wallet",
+      "0x0000000000000000000000000000000000000003": "contract"
+    }
+  }
+}

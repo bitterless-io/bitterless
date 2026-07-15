@@ -36,6 +36,7 @@ import {
 } from './llmModels'
 import { maestroAuthPath, maestroModelsPath } from './llmPaths'
 import { buildAiCrmsPiProviderConfig } from '@maestro-main/networking/api/aiCrmsRelay.api'
+import { codexCredentialService } from '../../codex/codexCredential.runtime'
 
 const configStore = createXpcMainEmitter<ConfigApi>('ConfigDao')
 const aiCrmsSession = createXpcMainEmitter<SessionApi>('MaestroSessionDao')
@@ -82,8 +83,6 @@ export interface MaestroLlmServiceState {
 @injectable()
 export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   private activeLlmLoginProvider = ''
-  private codexIpv6Server: ReturnType<typeof createServer> | null = null
-  private codexCaptureResolve: ((url: string) => void) | null = null
   private anthropicIpv6Server: ReturnType<typeof createServer> | null = null
   private anthropicCaptureResolve: ((url: string) => void) | null = null
 
@@ -155,6 +154,9 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     if (provider === 'ai-crms') {
       const session = await aiCrmsSession.getSession().catch(() => null)
       return Boolean(session?.jwt_token) && (await this.syncAiCrmsProviderModels(session))
+    }
+    if (provider === 'openai-codex') {
+      return (await codexCredentialService.getStatus()).connected
     }
     try {
       const pi = await loadPiAuthModule()
@@ -240,27 +242,6 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     return await this.getAndBroadcastLlmConfig()
   }
 
-  private ensureCodexIpv6Server(): void {
-    if (this.codexIpv6Server) return
-    const server = createServer((req, res) => {
-      if ((req.url || '').startsWith('/auth/callback')) {
-        res.statusCode = 200
-        res.setHeader('Content-Type', 'text/html; charset=utf-8')
-        res.end('<html><body>OpenAI sign-in complete — you can close this tab.</body></html>')
-        this.codexCaptureResolve?.('http://localhost:1455' + (req.url || ''))
-      } else {
-        res.statusCode = 404
-        res.end()
-      }
-    })
-    server.on('error', (err) => {
-      this._state.emitTrace({ kind: 'info', msg: 'codex login (ipv6 callback unavailable): ' + err.message, ts: Date.now() })
-      this.codexIpv6Server = null
-    })
-    server.listen(1455, '::1')
-    this.codexIpv6Server = server
-  }
-
   private ensureAnthropicIpv6Server(): void {
     if (this.anthropicIpv6Server) return
     const server = createServer((req, res) => {
@@ -309,6 +290,21 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
       return await this.getAndBroadcastLlmConfig()
     }
     try {
+      if (provider === 'openai-codex') {
+        await codexCredentialService.connect({
+          method,
+          onDeviceCode: (info) => {
+            this._state.emitTrace({ kind: 'info', msg: `codex device login: enter code ${info.userCode} at ${info.verificationHost}`, ts: Date.now() })
+            xpcMain.broadcast('coach/codex-device', {
+              userCode: info.userCode,
+              verificationUri: `https://${info.verificationHost}/codex/device`
+            })
+          },
+          onProgress: (message) => this._state.emitTrace({ kind: 'info', msg: `OpenAI Codex (ChatGPT) login: ${message}`, ts: Date.now() })
+        })
+        xpcMain.broadcast('coach/codex-device', null)
+        return await this.getAndBroadcastLlmConfig()
+      }
       const pi = await loadPiAuthModule()
       mkdirSync(dirname(maestroAuthPath()), { recursive: true })
       const auth = pi.AuthStorage.create(maestroAuthPath())
@@ -317,13 +313,8 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
         captureResolve = resolve
       })
       if (method === 'browser') {
-        if (provider === 'anthropic') {
-          this.ensureAnthropicIpv6Server()
-          this.anthropicCaptureResolve = captureResolve ?? null
-        } else {
-          this.ensureCodexIpv6Server()
-          this.codexCaptureResolve = captureResolve ?? null
-        }
+        this.ensureAnthropicIpv6Server()
+        this.anthropicCaptureResolve = captureResolve ?? null
       }
       const timeoutMs = method === 'device_code' ? 16 * 60_000 : 180_000
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -350,7 +341,6 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
         ])
       } finally {
         if (timer) clearTimeout(timer)
-        this.codexCaptureResolve = null
         this.anthropicCaptureResolve = null
       }
     } catch (err) {
@@ -387,8 +377,12 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
       return next
     }
     try {
-      const pi = await loadPiAuthModule()
-      pi.AuthStorage.create(maestroAuthPath()).logout(provider)
+      if (provider === 'openai-codex') {
+        await codexCredentialService.disconnect()
+      } else {
+        const pi = await loadPiAuthModule()
+        pi.AuthStorage.create(maestroAuthPath()).logout(provider)
+      }
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: providerLabel(provider) + ' logout failed: ' + (err as Error).message, ts: Date.now() })
     }

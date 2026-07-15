@@ -76,3 +76,5 @@ Verification:
 - `git diff --check` and the production Coin no-chat source audit passed.
 - Screenshots: `out/playwright/coin/screenshots/coin-1360x860.png`,
   `coin-resources-1360x860.png`, `coin-800x600.png`, and `coin-resources-800x600.png`.
+- Independent review passed after fixing and re-verifying the rapid repeated-Open boot race; see
+  [`coin-subapp-shell-001.md`](../reviews/coin-subapp-shell-001.md).

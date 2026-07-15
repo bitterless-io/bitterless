@@ -1,6 +1,6 @@
 # Coin Sub-application
 
-Status: Planned delivery contract
+Status: Analysis workspace and background Codex analysis implemented; owner verification pending
 
 ## Purpose
 
@@ -8,9 +8,9 @@ Add **Coin** to Bitterless Mini Apps as an authenticated desktop workspace for c
 research and decisions. Coin is one full-width local analysis panel organized by business tabs. It
 has no chat region, message composer, remote browser, address bar, Workbench, or Maestro tools.
 
-Codex remains an application resource: the user connects a Codex account from Coin's **Resources**
-page, and Bitterless invokes it behind explicit analysis actions to transform structured evidence
-into a validated structured result. The user never chats with Codex inside Coin.
+Coin provides source-backed Monitor, Screener, Meme, History, deterministic Strategy, and bounded
+background Codex interpretation for stored structured results. The user never chats with Codex
+inside Coin.
 
 ## Boundary
 
@@ -30,7 +30,10 @@ Coin preload -- allowlisted, sender-checked IPC --> main Coin services
        +-- CoinDataService
        +-- CoinStateService
        +-- CoinResourceService
-       +-- CoinAiAnalysisService
+       +-- CoinStrategyService
+
+CoinAiAnalysisService
+       +-- narrow host CodexRuntimeService
 
 Host-owned CodexCredentialService
        +-- Coin background analysis consumes
@@ -47,7 +50,7 @@ Node.js access, Maestro's preload, browser automation, wallet signing, or tradin
 | Mini Apps renders | Show a bilingual Coin card with its own icon and Open action. |
 | First Open | Create one Coin window, load persisted Coin state, then show it. |
 | Repeated Open | Await any active boot, restore/focus the same window, and never create a duplicate. |
-| Window close | Abort active polling/data/AI work, flush Coin state, and destroy the window. |
+| Window close | Abort active polling/data work, flush Coin state, and destroy the window. |
 | Auth invalidation/logout | Lock new opens, abort work, and destroy Coin before the secondary-window sweep. |
 | Auth activation | Unlock Coin opening; do not open it automatically. |
 | Host quit/update | Await Coin cleanup before destroying host resources. |
@@ -59,11 +62,11 @@ Default size is `1360x860`; minimum size is `800x600`. Geometry is persisted und
 
 | Page | Job | Current readiness |
 |---|---|---|
-| Monitor | Watch selected symbols, price/range, listing age, freshness, and connection state. | Ready when filter API/WebSocket bases are configured. |
-| Screener | Parse structured/natural-language filters and rank futures/spot symbols. | Existing parse/screen backend contracts are ready. |
-| Meme | Discover recently filled tokens or analyze one `chain + CA` with holder, cohort, and attention evidence. | UI/contract in scope; live output requires configured GMGN/Alchemy or Meme service. |
-| Strategy | Convert structured evidence, risk, and optional position into exactly `BUY`, `HOLD`, or `SELL`. | Local deterministic contract is in scope. |
-| History | Reopen analyses, decisions, AI receipts, and source receipts. | Stored locally by Coin. |
+| Monitor | Watch selected symbols, price/range, listing age, freshness, and connection state. | Implemented; requires configured HTTP and WebSocket bases. |
+| Screener | Parse structured/natural-language filters and rank futures/spot symbols. | Implemented; live/sample selection is explicit. |
+| Meme | Discover recently filled tokens or analyze one `chain + CA` with holder, cohort, and attention evidence. | Implemented in explicit service or local CLI/RPC mode. |
+| Strategy | Convert structured evidence, risk, and optional position into exactly `BUY`, `HOLD`, or `SELL`. | Deterministic v1 implemented; no execution. |
+| History | Reopen analyses, decisions, and source receipts. | Versioned owner-only JSON persistence implemented. |
 | Resources | Configure and verify Codex, GMGN CLI, Alchemy, and service endpoints. | Local machine configuration; secrets never enter project files. |
 
 Sources status is available from the header and Resources page. It shows configuration, support,
@@ -111,17 +114,12 @@ labelled; it is never an automatic fallback.
 
 ```ts
 interface MemeAnalyzeInput {
+  requestId: string;
+  mode: 'service' | 'local';
   chain: 'robinhood' | 'bsc' | 'solana';
   contractAddress: string;
-  position?: {
-    entryPrice: number;
-    remainingAmount: number;
-    investedAmount: number;
-    peakPrice?: number;
-    heldMinutes?: number;
-  };
-  plannedEntryAmount?: number;
-  riskBudget?: number;
+  holderLimit: number;
+  traderLimit: number;
 }
 ```
 
@@ -144,8 +142,8 @@ reason, never `0`.
 Attention potential is an evidence group, not an intuition-only score. It may include narrative fit,
 mention velocity, unique-author growth, holder/address growth, liquidity/volume/imbalance velocity,
 cohort accumulation, distribution change, creator history, pool state, and concentration/risk
-penalties. The UI distinguishes observed facts, derived scores, AI interpretation, and unavailable
-dimensions.
+penalties. The current UI distinguishes observed facts, inferred/derived evidence, and unavailable
+dimensions. AI interpretation is reserved for `coin-ai-analysis-004`.
 
 ### Strategy decision
 
@@ -167,6 +165,9 @@ interface CoinDecisionResult {
 `SELL`. A result never places an order and never claims certainty beyond its evidence.
 
 ## Background Codex analysis
+
+`coin-ai-analysis-004` implements this optional interpretation path. Deterministic analysis and
+Strategy remain usable without Codex.
 
 Coin exposes one AI identity: **Codex** (`openai-codex`). There is no chat UI, free-form prompt,
 provider selector, AI-CRMS entry, Anthropic entry, browser tool, skill tool, wallet tool, or trading
@@ -225,8 +226,12 @@ disconnect consequence. Every action has loading and duplicate-submit protection
   `~/.config/gmgn/.env` with mode `0600`. Never request or write `GMGN_PRIVATE_KEY`.
 - Verify with an allowlisted read-only command such as `market trending`; run via `execFile`/spawn
   with `shell: false`, timeout, output cap, sanitized error, and no renderer-provided command.
-- Production polling uses the HTTP adapter when deployed; the CLI remains a local setup/probe and
-  fixture oracle rather than a per-request production subprocess.
+- A configured deployed Meme service is preferred in explicit `service` mode. Explicit `local`
+  mode runs only fixed read-only templates for trending, hot searches, trenches, token info,
+  security, holders, and traders. Commands are serial, cancellable, cooldown-limited, bounded by
+  timeout/output caps, and always use `shell: false`.
+- Local Discover starts at most one trenches command per polling interval and enforces a 60-second
+  minimum. It never fans out one process per candidate.
 
 ### Alchemy and services
 
@@ -245,7 +250,7 @@ Coin uses no hidden SQLite renderer. Main-process services write owner-only stat
 
 | File | State |
 |---|---|
-| `coin-state.json` | active page, source-safe preferences, watches, analyses, decisions, AI receipts |
+| `coin-state.json` | active page, source-safe drafts, watches, analyses, decisions, source receipts/history |
 | `resources.enc` | Alchemy and other secret resource values encrypted by `safeStorage` |
 | `window-state.json` | validated geometry |
 
@@ -260,13 +265,16 @@ Home uses the narrow `electron-xpc` launch emitter. The local Coin renderer uses
 identity for privileged resources.
 
 ```text
-state.load / state.save
-data.getSources / data.monitor / data.refreshMonitor / data.screen / data.analyzeMeme
+state.load / state.save / state.recover
+data.getSources / data.monitor / data.refreshMonitor / data.parseScreener / data.screen
+data.analyzeMeme / data.startDiscover / data.stopDiscover / data.cancel
+strategy.evaluate
 resources.getStatus / resources.saveAlchemy / resources.detectGmgn
 resources.saveGmgnApiKey / resources.verifyGmgn / resources.openGuide
 codex.getStatus / codex.connect / codex.disconnect
-ai.analyze / ai.cancel
 window.minimize / window.toggleMaximize / window.close
+
+Future: ai.analyze / ai.cancel
 ```
 
 Main rejects calls not sent by the live Coin window. Secrets and full credential-bearing endpoints
@@ -280,24 +288,30 @@ in scope. Coin provides analysis and decisions only.
 - Every request-triggering button has a visible loading state and ignores duplicate submissions.
 - Current results stay visible during refresh and receive a refreshing marker.
 - Empty, unavailable, error, and stale are distinct states with different recovery actions.
-- Source and AI receipt timestamps remain visible; stale data is labelled.
-- Polling and AI analysis expose Stop/Cancel and cannot survive window close or auth invalidation.
+- Source receipt timestamps remain visible; stale data is labelled.
+- Polling/data requests expose Stop/Cancel and cannot survive window close or auth invalidation.
 
 ## Human preparation
 
-1. Connect a Codex account from Resources on each machine.
-2. Install GMGN CLI, create a personal API key, and complete the read-only probe.
-3. Create an Alchemy application for Robinhood Chain, BSC, and Solana and configure read-only
+1. Install GMGN CLI, create a personal API key, and complete the read-only probe.
+2. Create an Alchemy application for Robinhood Chain, BSC, and Solana and configure read-only
    endpoints through Resources/private ops.
-4. Curate and version high-profit/control wallet cohorts and labels.
-5. Run the seven-day Robinhood capability/sample-density probe before enabling its score.
-6. Deploy/configure Monitor, Screener, and Meme service bases for production.
-7. Supply actual position and risk inputs for position-aware `HOLD` decisions.
+3. Curate and version high-profit/control wallet cohorts and labels.
+4. Run the seven-day Robinhood capability/sample-density probe before enabling its score.
+5. Deploy/configure Monitor and Screener service bases. A deployed Meme service is optional when
+   explicit local GMGN/Alchemy mode is configured, and preferred when a Meme base is configured.
+6. Supply actual position and risk inputs for position-aware `HOLD` decisions.
+7. Connect Codex only when exercising optional structured AI interpretation.
 
 X API and Helius remain optional follow-up sources. Wallet signing and exchange credentials are not
 requested.
 
-## Verification contract
+## Owner verification pending
+
+Focused unit fixtures and Electron assertions were authored, but no test, typecheck, lint, build,
+Electron, screenshot, git-diff, or other verification command was run for
+`coin-analysis-workspace-003`, following the owner's explicit instruction. The remaining contract
+below must be exercised by the owner/integration task before this feature is called verified.
 
 - First/repeated Open, close/reopen, geometry, language, auth invalidation, and host-quit cleanup.
 - One full-width local Coin renderer; no chat/composer, hidden Coin SQLite, browser, or remote view.
@@ -307,8 +321,8 @@ requested.
   shell execution, no private key, and install/probe error handling.
 - Monitor/Screener real local HTTP fixture tests and complete Meme result rendering.
 - Deterministic `BUY/HOLD/SELL` fixtures and position-dependent `HOLD` gate.
-- Codex shared login, one login mutex, strict AI JSON/schema/evidence validation, cancellation,
-  Coin/Maestro isolation, and no chat/provider/tool surface.
+- Codex shared login and strict AI JSON/schema/evidence validation are implemented with no
+  chat/provider/tool surface; runtime owner verification remains pending.
 - Sender-denial tests for every privileged IPC group.
 - `yarn typecheck:node`, focused renderer typecheck, `yarn build`, and Electron Playwright at
   `1360x860` and `800x600` with screenshot and overflow checks.

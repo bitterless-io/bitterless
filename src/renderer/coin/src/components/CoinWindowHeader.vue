@@ -21,13 +21,14 @@
           :class="{ 'coin-window-header__status-button--active': store.sourcesVisible }"
           type="button"
           :aria-pressed="store.sourcesVisible"
-          :disabled="store.statusLoading"
+          :disabled="sourceLoading"
           @click="store.openSources()"
         >
-          <a-spin v-if="store.statusLoading" :size="12" />
+          <a-spin v-if="sourceLoading" :size="12" />
+          <IconDatabase v-else-if="sourceReadyCount" :size="16" stroke-width="1.8" aria-hidden="true" />
           <IconDatabaseOff v-else :size="16" stroke-width="1.8" aria-hidden="true" />
-          <span>{{ i18nHelper.coin.sources }}</span>
-          <span class="coin-window-header__status-dot" aria-hidden="true"></span>
+          <span>{{ sourceStatusLabel }}</span>
+          <span class="coin-window-header__status-dot" :class="sourceDotClass" aria-hidden="true"></span>
         </button>
       </a-tooltip>
 
@@ -40,9 +41,10 @@
           :aria-pressed="store.resourcesActive"
           @click="store.openResources()"
         >
-          <IconBrandOpenai :size="16" stroke-width="1.8" aria-hidden="true" />
-          <span>{{ i18nHelper.coin.aiStatusSignIn }}</span>
-          <span class="coin-window-header__status-dot" aria-hidden="true"></span>
+          <a-spin v-if="resources.statusLoading || resources.codexLoading || workspace.aiLoading" :size="12" />
+          <IconBrandOpenai v-else :size="16" stroke-width="1.8" aria-hidden="true" />
+          <span>{{ aiStatusLabel }}</span>
+          <span class="coin-window-header__status-dot" :class="aiDotClass" aria-hidden="true"></span>
         </button>
       </a-tooltip>
 
@@ -92,9 +94,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import {
   IconBrandOpenai,
   IconCoins,
+  IconDatabase,
   IconDatabaseOff,
   IconMinus,
   IconSquare,
@@ -102,8 +106,33 @@ import {
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { coinShellStore as store } from '../coinShell.store';
+import { coinWorkspaceStore as workspace } from '../views/analysis/coinWorkspace.store';
+import { coinResourcesStore as resources } from '../views/resources/coinResources.store';
 
 defineProps<{
   platform: 'darwin' | 'win32' | 'other';
 }>();
+
+const sourceTotal = computed(() => workspace.sourceStatuses.filter((source) => source.configured).length);
+const sourceReadyCount = computed(() => workspace.sourceStatuses.filter((source) => source.configured && ['ready', 'partial', 'stale'].includes(source.state)).length);
+const sourceLoading = computed(() => workspace.sourceLoading || store.statusLoading || resources.statusLoading);
+const sourceStatusLabel = computed(() =>
+  i18nHelper.coin.sourceStatusSummary
+    .replace('{ready}', String(sourceReadyCount.value))
+    .replace('{total}', String(sourceTotal.value)),
+);
+const sourceDotClass = computed(() => ({
+  'coin-window-header__status-dot--ready': sourceTotal.value > 0 && sourceReadyCount.value === sourceTotal.value,
+  'coin-window-header__status-dot--danger': Boolean(workspace.sourceError || resources.statusError),
+}));
+const aiStatusLabel = computed(() => {
+  if (workspace.aiLoading) return i18nHelper.coin.aiStatusRunning;
+  if (resources.status?.codex.errorCode) return i18nHelper.coin.aiStatusError;
+  if (resources.status?.codex.connected) return i18nHelper.coin.aiStatusConnected;
+  return i18nHelper.coin.aiStatusSignIn;
+});
+const aiDotClass = computed(() => ({
+  'coin-window-header__status-dot--ready': Boolean(resources.status?.codex.connected || workspace.aiLoading),
+  'coin-window-header__status-dot--danger': Boolean(resources.status?.codex.errorCode),
+}));
 </script>

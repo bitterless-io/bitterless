@@ -33,13 +33,14 @@ export class CoinWindowLifecycle<TWindow> {
     await this.cleanupPromise;
     this.assertCanOpen();
 
-    const current = this.port.getCurrent();
-    if (current && !this.port.isDestroyed(current)) {
-      this.port.showAndFocus(current);
-      return;
-    }
+    let pendingBoot = this.bootPromise;
+    if (!pendingBoot) {
+      const current = this.port.getCurrent();
+      if (current && !this.port.isDestroyed(current)) {
+        this.port.showAndFocus(current);
+        return;
+      }
 
-    if (!this.bootPromise) {
       const controller = new AbortController();
       this.bootController = controller;
       const boot = this.port.create(controller.signal);
@@ -48,9 +49,10 @@ export class CoinWindowLifecycle<TWindow> {
         if (this.bootController === controller) this.bootController = null;
       });
       this.bootPromise = tracked;
+      pendingBoot = tracked;
     }
 
-    const window = await this.bootPromise;
+    const window = await pendingBoot;
     this.assertCanOpen();
     if (this.port.isDestroyed(window)) {
       throw new Error('[coin] window closed before startup completed');

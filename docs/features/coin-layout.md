@@ -1,6 +1,6 @@
 # Coin Layout
 
-Status: Planned delivery contract
+Status: Analysis workspace implemented; owner verification pending
 
 ## Design principles
 
@@ -14,7 +14,7 @@ comparison, and decisive actions over illustration or marketing composition.
 - Use green only for `BUY`/positive evidence, amber for `HOLD`/stale evidence, and red for
   `SELL`/risk/error.
 - Keep evidence receipts visible while results change. The signature element is the evidence strip:
-  source, freshness, support, deterministic score, AI status, and confidence.
+  source, freshness, support, deterministic score, and confidence. AI output is follow-up scope.
 - Coin contains no chat pane, messages, prompt composer, or draggable split.
 - Font size is fixed by role, never viewport-scaled. Letter spacing is `0`.
 
@@ -90,8 +90,8 @@ in both evidence strip and result header.
 Meme uses a local segmented control for `Discover` and `Analyze`.
 
 ```text
-Chain [BSC]  Contract address [0x...]        [Analyze] [Analyze with AI]
-Evidence: GMGN ready | Alchemy ready | age 18s | deterministic 72 | AI current
+Mode [Service | Local CLI/RPC]  Chain [BSC]  Contract address [0x...]  [Analyze] [Cancel]
+Evidence: GMGN ready | Alchemy ready | age 18s | deterministic 72
 Overview  Cohort overlap  EOA-only  Attention  Risks
 
 Core distribution
@@ -125,20 +125,20 @@ Polling is opt-in per window session and stops on close/logout.
 Asset / chain | analysis receipt | strategy v1
 Market + risk inputs                     Position (optional)
 price / liquidity / score / budget       entry / amount / peak / held
-[Evaluate] [Analyze reasoning with AI]
+[Evaluate]
 Decision: BUY | 78/100 | confidence 0.72
 Reasons with evidence references
 Invalidation conditions
 ```
 
 Inputs use numeric fields, steppers, selects, and switches. `HOLD` is not a possible result until a
-valid position is supplied. AI may explain evidence but cannot bypass deterministic risk gates.
+valid position is supplied. Deterministic risk gates can force `SELL`; no action places an order.
 
 ### History
 
 ```text
 Type [All]  Chain [All]  Search [symbol / CA]  Date range
-Time   Type   Asset   Result   AI receipt   Sources   Open
+Time   Type   Asset   Result   Sources   Open
 ```
 
 Opening a record restores its result without issuing a request. History deletion is out of initial
@@ -189,11 +189,10 @@ Sources opens as an Arco drawer below the header over the workspace:
 Source             Configured   Support     Freshness    Last error
 Binance filter     yes          read-only   4s           —
 Coin screen        yes          read-only   2m           —
-GMGN CLI/API       no           unavailable —            API key required
+GMGN CLI           no           unavailable —            API key required
 Alchemy BSC        yes          read-only   18s          —
 Alchemy Solana     yes          read-only   22s          —
 Robinhood Chain    probing      partial     —            capability gate
-Codex AI           yes          analysis    3m           —
 ```
 
 It contains diagnostics only. Credentials and complete secret-bearing endpoints are never shown.

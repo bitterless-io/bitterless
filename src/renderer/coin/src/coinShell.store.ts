@@ -3,6 +3,7 @@ import { Message } from '@arco-design/web-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { CoinShellStatus } from '@shared/coin/coinBridge.type';
 import type { CoinMemeMode, CoinTab, CoinWindowAction } from './coinShell.type';
+import { coinResourcesStore } from './views/resources/coinResources.store';
 
 class CoinShellStore {
   activeTab: CoinTab = 'monitor';
@@ -13,14 +14,29 @@ class CoinShellStore {
   statusLoading = false;
   statusError = '';
   pendingWindowAction: CoinWindowAction | null = null;
+  private initializationErrorLogged = false;
 
   async initialize(): Promise<void> {
-    await this.refreshStatus();
+    const results = await Promise.allSettled([
+      this.refreshStatus(),
+      coinResourcesStore.initialize(),
+    ]);
+    if (!results.some((result) => result.status === 'rejected')) return;
+
+    document.documentElement.dataset.coinBootstrap = 'degraded';
+    if (!this.statusError) this.statusError = i18nHelper.coin.errors.shellStatus;
+    if (!this.initializationErrorLogged) {
+      this.initializationErrorLogged = true;
+      console.error('[Coin] Status initialization failed; continuing with unavailable state.');
+    }
   }
 
   async openSources(): Promise<void> {
     this.sourcesVisible = true;
-    if (!this.status) await this.refreshStatus();
+    await Promise.all([
+      this.status ? Promise.resolve() : this.refreshStatus(),
+      coinResourcesStore.initialize(),
+    ]);
   }
 
   openTab(tab: CoinTab): void {
@@ -49,6 +65,10 @@ class CoinShellStore {
     } finally {
       this.statusLoading = false;
     }
+  }
+
+  async refreshStatuses(): Promise<void> {
+    await Promise.all([this.refreshStatus(), coinResourcesStore.refreshAll()]);
   }
 
   async minimize(): Promise<void> {

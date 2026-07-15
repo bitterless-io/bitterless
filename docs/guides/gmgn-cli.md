@@ -1,6 +1,6 @@
 # GMGN CLI Setup Guide
 
-Last verified: 2026-07-15 (`gmgn-cli` `1.5.2`)
+Implementation baseline: 2026-07-15 (`gmgn-cli` `1.5.2` target); owner verification pending
 
 This guide configures GMGN as a **read-only local research source** for Bitterless Coin. Do not
 configure swap, order, cooking, wallet signing, or `GMGN_PRIVATE_KEY`.
@@ -121,13 +121,11 @@ until the seven-day coverage gate passes.
 
 ## 6. Allowed and forbidden capability
 
-Initial allowlist:
+Implemented desktop allowlist:
 
 ```text
-market trending / trenches / hot-searches / signal / kline
-token info / security / pool / holders / traders
-track kol / smartmoney
-portfolio activity / stats / token-balance / created-tokens
+market trending / trenches / hot-searches
+token info / security / holders / traders
 ```
 
 The application must reject:
@@ -141,9 +139,17 @@ portfolio holdings / info
 any command requiring signed auth or GMGN_PRIVATE_KEY
 ```
 
-Production polling should use a bounded GMGN OpenAPI adapter. The CLI is for setup, read-only
-capability probes, schema discovery, and regression fixtures; do not spawn one process per production
-poll request.
+Coin supports this allowlist as an explicit local analysis mode. It never switches to local mode
+after a deployed Meme service error. Local Analyze performs a serial bounded read set through one
+process at a time: 25-second timeout, 512 KiB output cap, 750 ms minimum spacing between starts,
+bounded queue, cancellation, sanitized errors, and a 30-second cooldown after rate limiting.
+
+Local Discover performs one `market trenches` command per polling interval, enforces a 60-second
+minimum interval, and updates candidate scores from successive observations. It does not spawn
+per-candidate processes. A configured deployed Meme service remains the preferred explicit mode.
+
+No renderer caller can provide a command, executable path, environment, raw argument list, or
+unbounded output request. Coin maps typed chain/address/limit fields to the fixed templates above.
 
 ## 7. Move to another computer
 

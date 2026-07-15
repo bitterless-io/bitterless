@@ -1,5 +1,7 @@
 # Coin Sub-application Analysis
 
+Status: shell/resources/analysis/background AI implemented; owner verification and integration pending
+
 ## Goal decomposition
 
 Delivery is complete when an authenticated user can open one Coin desktop window, use a full-width
@@ -15,7 +17,7 @@ cleanup, source truthfulness, credential isolation, and machine portability are 
 | Coin scoped bridge | typed local requests + sender identity | allowlisted replies/events | Electron IPC/contextBridge | all tasks |
 | Renderer shell | locale, active page, source/AI status | full-width tabbed console | Arco, Royal Blue | `coin-subapp-shell-001` |
 | Resource configuration | Codex login, GMGN key/CLI, Alchemy values | masked readiness/probe receipts | safeStorage, filesystem, execFile | `coin-resource-settings-002` |
-| Coin state | preferences, records, AI receipts | atomic owner-only state | `userData/coin` | `coin-analysis-workspace-003` |
+| Coin state | drafts, watches, analyses, decisions, source receipts/history | atomic owner-only state | `userData/coin` | `coin-analysis-workspace-003` |
 | Source adapters | configured sources + structured requests | typed results/unavailable/errors | filter/screen/meme/GMGN/Alchemy | `coin-analysis-workspace-003` |
 | Strategy engine | evidence, risk, optional position | deterministic BUY/HOLD/SELL | versioned contract | `coin-analysis-workspace-003` |
 | Codex credentials | browser/device login | app-wide auth state | Pi AuthStorage | `coin-ai-analysis-004` |
@@ -34,7 +36,7 @@ cleanup, source truthfulness, credential isolation, and machine portability are 
 | filter monitor endpoints | typed host adapter |
 | coin-filter parse/screen endpoints | typed host adapter |
 | `areas/earn/meme/strategy` contracts | result/decision fixtures and source boundaries |
-| official `gmgn-cli` | local installation/probe oracle; no production per-request spawn |
+| official `gmgn-cli` | fixed serial read-only templates for explicit local analysis/discovery mode |
 | Electron `safeStorage` pattern | encrypted Alchemy/resource values in owner-only Coin state |
 
 ## Rejected architectures

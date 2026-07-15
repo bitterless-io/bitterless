@@ -8,12 +8,37 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": "../..",
+    "paths": {
+      "@main/*": ["src/main/*"],
+      "@shared/*": ["src/shared/*"]
+    }
   },
   "include": [
+    "../../src/main/codex/codexCallbackCapture.ts",
+    "../../src/main/codex/codexCredential.service.ts",
+    "../../src/main/codex/codexPaths.ts",
+    "../../src/main/codex/codexRuntime.service.ts",
+    "../../src/main/coin/ai/**/*.ts",
     "../../src/main/coin/coinSender.guard.ts",
     "../../src/main/coin/coinWindow.lifecycle.ts",
     "../../src/main/coin/coinWindowState.ts",
+    "../../src/main/coin/data/**/*.ts",
+    "../../src/main/coin/resources/alchemyResource.service.ts",
+    "../../src/main/coin/resources/coinProcess.runner.ts",
+    "../../src/main/coin/resources/coinResource.service.ts",
+    "../../src/main/coin/resources/gmgnCli.service.ts",
+    "../../src/main/coin/resources/resourceSecret.store.ts",
+    "../../src/main/coin/resources/resourceValidation.ts",
+    "../../src/main/coin/resources/serviceEndpoint.service.ts",
+    "../../src/main/coin/resources/serviceEndpoint.store.ts",
+    "../../src/main/coin/state/**/*.ts",
+    "../../src/main/coin/strategy/**/*.ts",
+    "../../src/shared/coin/coinAnalysis.type.ts",
+    "../../src/shared/coin/coinBridge.type.ts",
+    "../../src/shared/coin/coinResource.type.ts",
+    "../../src/shared/i18n/applicationLanguage.ts",
     "./unit/**/*.ts"
   ]
 }

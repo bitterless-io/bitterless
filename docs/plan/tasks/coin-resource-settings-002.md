@@ -1,7 +1,7 @@
 ---
 id: coin-resource-settings-002
 scope: Coin Resources page, secure configuration, and local GMGN probe
-status: pending
+status: implemented-owner-verification-pending
 depends-on: [coin-subapp-shell-001]
 ---
 
@@ -55,3 +55,19 @@ the renderer.
 - Run focused tests, Coin renderer typecheck, `yarn typecheck:node`, `yarn check:maestro`, `yarn build`,
   `git diff --check`, and Resources screenshots at both target sizes.
 
+## Result
+
+- Added the shared Codex credential service and Maestro delegation while preserving the compatibility
+  auth path and non-Codex provider behavior.
+- Added sender-scoped Resources IPC, GMGN detection/key storage/fixed read-only probe, encrypted
+  Alchemy endpoints/probes, validated service endpoints, masked status contracts, responsive
+  bilingual UI, installation guide, and request loading states.
+- Focused resource tests passed `31/31`; Coin renderer/Node/i18n checks and production build passed
+  before the owner stopped further self-testing. `yarn check:maestro` retained six pre-existing alias
+  findings in unchanged Maestro renderer files.
+- The interrupted Electron run loaded Coin HTML but did not mount `.coin-app`. Static hardening now
+  bounds language initialization to five seconds, mounts with an explicit degraded fallback instead
+  of a blank window, and makes store/listener failures visible. Per owner instruction, no test command
+  was run after this change.
+- Final Electron/Resources verification is intentionally assigned to the owner's configured local
+  run after GMGN and Alchemy setup.

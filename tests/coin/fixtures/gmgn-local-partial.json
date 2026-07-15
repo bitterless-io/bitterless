@@ -1,0 +1,19 @@
+{
+  "chain": "solana",
+  "contractAddress": "11111111111111111111111111111111",
+  "info": {
+    "data": {
+      "name": "Partial Fixture",
+      "symbol": "PART"
+    }
+  },
+  "hotSearches": {
+    "data": [
+      {
+        "name": "Observed Rank Only",
+        "symbol": "RANK",
+        "address": "So11111111111111111111111111111111111111112"
+      }
+    ]
+  }
+}

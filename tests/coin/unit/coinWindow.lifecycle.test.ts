@@ -86,13 +86,29 @@ test('requires activation and shares one boot across repeated Open calls', async
 
   await lifecycle.prepareForAuthenticatedSession();
   const firstOpen = lifecycle.open();
-  const repeatedOpen = lifecycle.open();
   await Promise.resolve();
   assert.equal(fake.createCount, 1);
+
+  const repeatedOpen = lifecycle.open();
+  let repeatedOpenSettled = false;
+  void repeatedOpen.then(
+    () => {
+      repeatedOpenSettled = true;
+    },
+    () => {
+      repeatedOpenSettled = true;
+    },
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(fake.createCount, 1);
+  assert.equal(fake.showCount, 0);
+  assert.equal(repeatedOpenSettled, false);
 
   const window = fake.current!;
   fake.pendingCreate.resolve(window);
   await Promise.all([firstOpen, repeatedOpen]);
+  assert.equal(repeatedOpenSettled, true);
   assert.equal(fake.showCount, 2);
 
   await lifecycle.open();
