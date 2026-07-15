@@ -49,16 +49,28 @@ try {
     'terminal',
     'src/main/codingAgent/codingAgentTerminal.service.ts'
   );
+  const resolverModule = await loadTypeScriptModule(
+    'claude-executable-resolver',
+    'src/main/codingAgent/claudeExecutable.resolver.ts'
+  );
+  const claude = await loadTypeScriptModule(
+    'claude-discovery',
+    'src/main/codingAgent/claudeDiscovery.adapter.ts'
+  );
   const appPath = join(fixtureRoot, 'app');
   const userDataPath = join(fixtureRoot, 'user-data');
+  const homePath = join(fixtureRoot, 'home');
   const externalBinPath = join(fixtureRoot, 'external-bin');
   const pathBinPath = join(fixtureRoot, 'path-bin');
-  const internalPathBin = join(fixtureRoot, 'internal-path-bin');
+  const projectPath = join(fixtureRoot, 'project');
+  const projectBinPath = join(projectPath, 'bin');
   const cwd = join(fixtureRoot, "work's 100% ! & ($HOME)");
   mkdirSync(join(appPath, 'bin'), { recursive: true });
+  mkdirSync(homePath, { recursive: true });
   mkdirSync(externalBinPath, { recursive: true });
   mkdirSync(pathBinPath, { recursive: true });
-  mkdirSync(internalPathBin, { recursive: true });
+  mkdirSync(join(projectPath, '.git'), { recursive: true });
+  mkdirSync(projectBinPath, { recursive: true });
   mkdirSync(cwd, { recursive: true });
 
   const executable = join(externalBinPath, 'claude');
@@ -75,36 +87,93 @@ try {
     { mode: 0o700 }
   );
   chmodSync(executable, 0o700);
-  symlinkSync(executable, join(pathBinPath, 'claude'));
+  const configuredExecutable = join(pathBinPath, 'claude');
+  symlinkSync(executable, configuredExecutable);
+
+  const projectExecutable = join(projectBinPath, 'claude');
+  symlinkSync(executable, projectExecutable);
   assert.equal(
-    terminal.resolveClaudeExecutable({
-      platform: 'darwin',
-      pathValue: pathBinPath,
-      appPath
-    }),
-    realpathSync(executable)
+    (() => {
+      const finderHomePath = join(fixtureRoot, 'finder-home');
+      const nativeCandidate = join(finderHomePath, '.local', 'bin', 'claude');
+      mkdirSync(dirname(nativeCandidate), { recursive: true });
+      symlinkSync(executable, nativeCandidate);
+      return new resolverModule.CanonicalClaudeExecutableResolver({
+        appPath,
+        homePath: finderHomePath,
+        pathValue: '/usr/bin:/bin:/usr/sbin:/sbin',
+        platform: 'darwin',
+        trustedCandidatePaths: [nativeCandidate]
+      }).resolve();
+    })(),
+    realpathSync(executable),
+    'Finder-like minimal PATH must still resolve a fixed trusted install candidate'
   );
+  assert.throws(
+    () =>
+      new resolverModule.CanonicalClaudeExecutableResolver({
+        appPath,
+        homePath,
+        pathValue: projectBinPath,
+        platform: 'darwin',
+        trustedCandidatePaths: []
+      }).resolve(),
+    /executable is unavailable/,
+    'an arbitrary project PATH candidate must never be scanned'
+  );
+  assert.throws(
+    () =>
+      new resolverModule.CanonicalClaudeExecutableResolver({
+        appPath,
+        homePath,
+        configuredPath: projectExecutable,
+        pathValue: '',
+        platform: 'darwin',
+        trustedCandidatePaths: []
+      }).resolve(),
+    /executable is unavailable/,
+    'an explicitly configured executable inside a git worktree must be rejected'
+  );
+
+  const executableProvider = new resolverModule.CanonicalClaudeExecutableResolver({
+    appPath,
+    homePath,
+    configuredPath: configuredExecutable,
+    pathValue: projectBinPath,
+    platform: 'darwin',
+    trustedCandidatePaths: []
+  });
+  assert.equal(
+    executableProvider.resolve(),
+    realpathSync(executable),
+    'the configured executable must be canonicalized'
+  );
+  rmSync(configuredExecutable);
+  const discoveryExecutables = [];
+  const discovery = await new claude.ClaudeDiscoveryAdapter({
+    executableProvider,
+    execute: async (invocation) => {
+      discoveryExecutables.push(invocation.executable);
+      return invocation.args[1] === '--help'
+        ? { stdout: '--json\n', stderr: '' }
+        : { stdout: '[]', stderr: '' };
+    }
+  }).discover();
+  assert.equal(discovery.snapshot.status, 'success');
+  assert.deepEqual(discoveryExecutables, [realpathSync(executable), realpathSync(executable)]);
 
   const internalExecutable = join(appPath, 'bin', 'claude');
   writeFileSync(internalExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
   chmodSync(internalExecutable, 0o700);
-  symlinkSync(internalExecutable, join(internalPathBin, 'claude'));
   assert.throws(
     () =>
-      terminal.resolveClaudeExecutable({
+      new resolverModule.CanonicalClaudeExecutableResolver({
+        appPath,
+        homePath,
+        configuredPath: internalExecutable,
         platform: 'darwin',
-        pathValue: internalPathBin,
-        appPath
-      }),
-    /executable is unavailable/
-  );
-  assert.throws(
-    () =>
-      terminal.resolveClaudeExecutable({
-        platform: 'darwin',
-        pathValue: 'relative-path-entry',
-        appPath
-      }),
+        trustedCandidatePaths: []
+      }).resolve(),
     /executable is unavailable/
   );
 
@@ -118,7 +187,7 @@ try {
     },
     platform: 'darwin',
     idFactory: () => LAUNCH_ID,
-    resolveClaudeExecutable: () => join(pathBinPath, 'claude')
+    executableProvider
   });
   assert.equal(
     await launcher.launch({
@@ -135,6 +204,10 @@ try {
   assert.equal(lstatSync(launchPath).mode & 0o777, 0o700);
   const launchScript = readFileSync(launchPath, 'utf8');
   assert.ok(launchScript.indexOf('rm -f -- "$0"') < launchScript.indexOf('exec '));
+  assert.ok(
+    launchScript.includes(realpathSync(executable)),
+    'discovery and launcher must use the same canonical executable'
+  );
   assert.match(launchScript, /--resume/);
   assert.match(launchScript, new RegExp(RESUME_ID));
 
@@ -169,7 +242,7 @@ try {
     },
     platform: 'darwin',
     idFactory: () => CLEANUP_ID,
-    resolveClaudeExecutable: () => executable,
+    executableProvider,
     now: () => Date.now()
   });
   assert.equal(
@@ -193,7 +266,7 @@ try {
     openPath: async () => 'No application can open this file',
     platform: 'darwin',
     idFactory: () => ERROR_ID,
-    resolveClaudeExecutable: () => executable
+    executableProvider
   });
   await assert.rejects(
     failedLauncher.launch({
@@ -219,7 +292,13 @@ try {
     openPath: async () => '',
     platform: 'darwin',
     idFactory: () => ERROR_ID,
-    resolveClaudeExecutable: () => join(internalPathBin, 'claude')
+    executableProvider: new resolverModule.CanonicalClaudeExecutableResolver({
+      appPath,
+      homePath,
+      configuredPath: internalExecutable,
+      platform: 'darwin',
+      trustedCandidatePaths: []
+    })
   });
   await assert.rejects(
     internalLauncher.launch({
@@ -228,6 +307,35 @@ try {
       cwd
     }),
     /executable is unavailable/
+  );
+
+  const targetCwd = join(fixtureRoot, 'target-with-claude');
+  mkdirSync(targetCwd, { recursive: true });
+  const targetExecutable = join(targetCwd, 'claude');
+  writeFileSync(targetExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  chmodSync(targetExecutable, 0o700);
+  const targetExecutableLauncher = new terminal.CodingAgentTerminalLauncher({
+    userDataPath,
+    appPath,
+    openPath: async () => '',
+    platform: 'darwin',
+    idFactory: () => ERROR_ID,
+    executableProvider: new resolverModule.CanonicalClaudeExecutableResolver({
+      appPath,
+      homePath,
+      configuredPath: targetExecutable,
+      platform: 'darwin',
+      trustedCandidatePaths: []
+    })
+  });
+  await assert.rejects(
+    targetExecutableLauncher.launch({
+      kind: 'claude-resume',
+      sessionId: RESUME_ID,
+      cwd: targetCwd
+    }),
+    /executable is unavailable/,
+    'the launcher must reject its canonical executable inside the target cwd'
   );
 
   const windowsScript = terminal.createWindowsClaudeTerminalScript({

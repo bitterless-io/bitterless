@@ -14,6 +14,11 @@ import {
   parseUuid
 } from '@shared/codingAgent/codingAgentSession.contract';
 import { CommandFailure, runCommand, type RunCommandResult } from './commandRunner';
+import {
+  ClaudeExecutableUnavailableError,
+  unavailableClaudeExecutableProvider,
+  type ClaudeExecutableProvider
+} from './claudeExecutable.resolver';
 
 interface CommandInvocation {
   executable: string;
@@ -25,7 +30,7 @@ interface CommandInvocation {
 type CommandExecutor = (params: CommandInvocation) => Promise<RunCommandResult>;
 
 export interface ClaudeDiscoveryOptions {
-  executable?: string;
+  executableProvider?: ClaudeExecutableProvider;
   timeoutMs?: number;
   maxOutputBytes?: number;
   freshnessMs?: number;
@@ -35,7 +40,9 @@ export interface ClaudeDiscoveryOptions {
 }
 
 const issueFromCommand = (error: unknown): CodingAgentDiscoveryIssue => {
-  const unavailable = error instanceof CommandFailure && error.code === 'spawn_failed';
+  const unavailable =
+    error instanceof ClaudeExecutableUnavailableError ||
+    (error instanceof CommandFailure && error.code === 'spawn_failed');
   return {
     provider: 'claude',
     code: unavailable ? 'cli-unavailable' : 'command-failed',
@@ -59,7 +66,7 @@ const isForegroundInteractiveKind = (kind: unknown): kind is 'interactive' | 'fo
 };
 
 export class ClaudeDiscoveryAdapter {
-  private readonly executable: string;
+  private readonly executableProvider: ClaudeExecutableProvider;
   private readonly timeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly freshnessMs: number;
@@ -68,7 +75,7 @@ export class ClaudeDiscoveryAdapter {
   private readonly idFactory: () => string;
 
   constructor(options: ClaudeDiscoveryOptions = {}) {
-    this.executable = options.executable ?? 'claude';
+    this.executableProvider = options.executableProvider ?? unavailableClaudeExecutableProvider;
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.maxOutputBytes = options.maxOutputBytes ?? 1024 * 1024;
     this.freshnessMs = options.freshnessMs ?? 15_000;
@@ -79,7 +86,7 @@ export class ClaudeDiscoveryAdapter {
 
   private invocation(args: readonly string[]): CommandInvocation {
     return {
-      executable: this.executable,
+      executable: this.executableProvider.resolve(),
       args,
       timeoutMs: this.timeoutMs,
       maxOutputBytes: this.maxOutputBytes

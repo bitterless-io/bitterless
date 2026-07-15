@@ -361,6 +361,15 @@ authoritatively working forever.
 
 ### Discover and observe
 
+Discovery and terminal attach/resume share one main-process executable resolver. An explicit
+`BITTERLESS_CLAUDE_CLI_PATH` override is checked first. Without it, `PATH` may only order the exact
+trusted install directories; arbitrary entries are ignored. Remaining macOS fallback candidates
+are `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, then
+`~/.local/bin/claude`; Windows falls back to `%USERPROFILE%\.local\bin\claude.exe`. This fixed
+fallback keeps Finder/minimal-`PATH` launches working. A successful result is canonicalized and
+cached. Candidates inside the Bitterless app, a Git worktree, or the target session `cwd` are
+rejected.
+
 Poll the allowlisted Claude Code CLI executable with an argument array and `shell: false`:
 
 ```text
@@ -561,8 +570,9 @@ not carry provider hook payloads.
 - Allowlist `codex:`, `claude:`, and exact `https://claude.ai/code/...` routes used by the adapter;
   reject credentials, fragments, unexpected hosts, and prompt/path query parameters for existing-
   session actions.
-- Resolve `codex` and `claude` executables through an explicit detected configuration. Never execute
-  a path supplied by the renderer or discovered in a project repository.
+- Resolve `codex` and `claude` executables through an explicit detected configuration. Claude
+  discovery and launching share the same canonical cached resolver; never execute a path supplied
+  by the renderer or discovered in a project repository.
 - Use `shell: false` for non-terminal probes. Terminal launching uses fixed, platform-reviewed
   templates and validated scalar arguments.
 - Hook installation is opt-in, previewed, reversible, and limited to Bitterless-owned entries.
@@ -657,6 +667,9 @@ OpenAI:
 
 Anthropic:
 
+- [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
+- [Install Claude Code](https://code.claude.com/docs/en/installation)
+- [Troubleshoot Claude Code installation](https://code.claude.com/docs/en/troubleshoot-install)
 - [Launch Claude Code sessions from links](https://code.claude.com/docs/en/deep-links)
 - [Manage Claude Code sessions](https://code.claude.com/docs/en/sessions)
 - [Manage multiple agents with agent view](https://code.claude.com/docs/en/agent-view)

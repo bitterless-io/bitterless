@@ -34,6 +34,7 @@ const ID_4 = '55555555-5555-4555-8555-555555555555';
 const ID_5 = '66666666-6666-4666-8666-666666666666';
 const CODEX_ID = '019f653a-2ef7-7031-8f6b-c770bacffbb2';
 const CLAUDE_ID = '44444444-4444-4444-8444-444444444444';
+const testClaudeExecutableProvider = { resolve: () => process.execPath };
 
 const makeRecord = (overrides = {}) => ({
   id: ID_1,
@@ -395,6 +396,7 @@ try {
     }
   ];
   const adapter = new claude.ClaudeDiscoveryAdapter({
+    executableProvider: testClaudeExecutableProvider,
     execute: async (params) => {
       invocations.push(params);
       return params.args[1] === '--help'
@@ -435,6 +437,7 @@ try {
 
   const allInvocations = [];
   await new claude.ClaudeDiscoveryAdapter({
+    executableProvider: testClaudeExecutableProvider,
     execute: async (params) => {
       allInvocations.push(params.args);
       return params.args[1] === '--help'
@@ -444,6 +447,7 @@ try {
   }).discover();
   assert.deepEqual(allInvocations[1], ['agents', '--json', '--all']);
   const compatibilityDiscovery = await new claude.ClaudeDiscoveryAdapter({
+    executableProvider: testClaudeExecutableProvider,
     execute: async (params) =>
       params.args[1] === '--help'
         ? { stdout: '--json\n', stderr: '' }
@@ -481,6 +485,7 @@ try {
   );
   assert.equal(compatibilityDiscovery.snapshot.status, 'failed');
   const invalidClaude = await new claude.ClaudeDiscoveryAdapter({
+    executableProvider: testClaudeExecutableProvider,
     execute: async (params) =>
       params.args[1] === '--help'
         ? { stdout: '--json\n', stderr: '' }
@@ -504,11 +509,21 @@ try {
   assert.ok(invalidClaude.issues.some((issue) => issue.code === 'invalid-entry'));
   assert.ok(invalidClaude.issues.some((issue) => issue.code === 'unsupported-entry'));
   const invalidClaudeJson = await new claude.ClaudeDiscoveryAdapter({
+    executableProvider: testClaudeExecutableProvider,
     execute: async (params) =>
       params.args[1] === '--help' ? { stdout: '--json\n', stderr: '' } : { stdout: '{', stderr: '' }
   }).discover();
   assert.equal(invalidClaudeJson.issues[0].code, 'invalid-output');
   assert.equal(invalidClaudeJson.snapshot.status, 'failed');
+  let unavailableExecuted = false;
+  const unavailableClaude = await new claude.ClaudeDiscoveryAdapter({
+    execute: async () => {
+      unavailableExecuted = true;
+      return { stdout: '', stderr: '' };
+    }
+  }).discover();
+  assert.equal(unavailableExecuted, false, 'discovery must not fall back to a bare claude command');
+  assert.equal(unavailableClaude.issues[0].code, 'cli-unavailable');
 
   const codex = await loadTypeScriptModule(
     'codex-discovery',
@@ -933,6 +948,7 @@ try {
     }
   ];
   const integrationClaudeAdapter = new claude.ClaudeDiscoveryAdapter({
+    executableProvider: testClaudeExecutableProvider,
     execute: async (params) => {
       if (params.args[1] === '--help') {
         return { stdout: '--json\n', stderr: '' };

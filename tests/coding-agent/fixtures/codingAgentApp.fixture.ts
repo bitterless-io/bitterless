@@ -238,6 +238,10 @@ const isolatedLaunchEnv = (paths: {
     BITTERLESS_E2E_USER_DATA_DIR: paths.userDataDir,
     BITTERLESS_E2E_MOCK_ORIGIN: paths.mockOrigin,
     BITTERLESS_E2E_PROVIDER_STATE: paths.providerStatePath,
+    BITTERLESS_CLAUDE_CLI_PATH: join(
+      paths.binDir,
+      process.platform === 'win32' ? 'claude.cmd' : 'claude'
+    ),
     COACH_OPEN_DEVTOOLS: '0',
     COACH_WORKBENCH_DEVTOOLS: '0',
     COACH_DEVTOOLS: '0',

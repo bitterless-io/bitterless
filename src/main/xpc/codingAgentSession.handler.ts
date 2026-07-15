@@ -17,8 +17,15 @@ import { CodingAgentStatusBridgeService } from '../codingAgent/codingAgentStatus
 import { agentSessionEventBridgeServer } from '../codingAgent/agentSessionEventBridge.server';
 import { getCodingAgentBridgeEndpoint } from '@shared/codingAgent/codingAgentHookBridge.contract';
 import { CodingAgentTerminalLauncher } from '../codingAgent/codingAgentTerminal.service';
+import { CanonicalClaudeExecutableResolver } from '../codingAgent/claudeExecutable.resolver';
 
 const repository = createXpcMainEmitter<CodingAgentSessionDaoApi>('CodingAgentSessionDao');
+const claudeExecutableProvider = new CanonicalClaudeExecutableResolver({
+  appPath: app.getAppPath(),
+  homePath: app.getPath('home'),
+  configuredPath: process.env.BITTERLESS_CLAUDE_CLI_PATH,
+  pathValue: process.env.PATH
+});
 const codingAgentStatusBridgeService = new CodingAgentStatusBridgeService({
   userDataPath: app.getPath('userData'),
   homePath: app.getPath('home'),
@@ -32,12 +39,15 @@ const codingAgentStatusBridgeService = new CodingAgentStatusBridgeService({
 const codingAgentTerminalLauncher = new CodingAgentTerminalLauncher({
   userDataPath: app.getPath('userData'),
   appPath: app.getAppPath(),
-  openPath: async (path) => await shell.openPath(path)
+  openPath: async (path) => await shell.openPath(path),
+  executableProvider: claudeExecutableProvider
 });
 const codingAgentSessionService = new CodingAgentSessionService({
   repository,
   codexDiscovery: new CodexDiscoveryAdapter(),
-  claudeDiscovery: new ClaudeDiscoveryAdapter(),
+  claudeDiscovery: new ClaudeDiscoveryAdapter({
+    executableProvider: claudeExecutableProvider
+  }),
   openExternal: async (url) => await shell.openExternal(url),
   launchTerminal: async (target) => await codingAgentTerminalLauncher.launch(target),
   broadcastChanged: (ids, revision) => {

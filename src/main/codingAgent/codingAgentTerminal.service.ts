@@ -1,27 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import {
-  accessSync,
-  chmodSync,
-  constants,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-  unlinkSync,
-  writeFileSync
-} from 'node:fs';
-import { delimiter, posix, win32 } from 'node:path';
-import {
-  parseClaudeJobId,
-  parsePathText,
-  parseUuid
-} from '@shared/codingAgent/codingAgentSession.contract';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { posix, win32 } from 'node:path';
+import { parseClaudeJobId, parseUuid } from '@shared/codingAgent/codingAgentSession.contract';
 import type { CodingAgentTerminalAction } from '@shared/codingAgent/codingAgentSession.type';
 import {
   requireExistingAbsoluteDirectory,
   type CodingAgentTerminalTarget
 } from './codingAgentTarget';
+import {
+  unavailableClaudeExecutableProvider,
+  validateClaudeExecutableForTarget,
+  type ClaudeExecutableProvider
+} from './claudeExecutable.resolver';
 
 interface ResolvedTerminalTarget {
   action: CodingAgentTerminalAction;
@@ -34,10 +24,8 @@ export interface CodingAgentTerminalLauncherDependencies {
   appPath: string;
   openPath: (path: string) => Promise<string>;
   platform?: NodeJS.Platform;
-  pathValue?: string;
-  pathExtValue?: string;
   idFactory?: () => string;
-  resolveClaudeExecutable?: () => string;
+  executableProvider?: ClaudeExecutableProvider;
   now?: () => number;
 }
 
@@ -55,98 +43,6 @@ const assertSingleLine = (value: string, label: string): string => {
 
 const platformPath = (platform: NodeJS.Platform): typeof posix | typeof win32 => {
   return platform === 'win32' ? win32 : posix;
-};
-
-const isInside = (root: string, candidate: string, platform: NodeJS.Platform): boolean => {
-  const path = platformPath(platform);
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-};
-
-const resolveApplicationRoot = (appPath: string, platform: NodeJS.Platform): string => {
-  const resolved = realpathSync(appPath);
-  return statSync(resolved).isDirectory() ? resolved : platformPath(platform).dirname(resolved);
-};
-
-const executableCandidates = (
-  directory: string,
-  platform: NodeJS.Platform,
-  pathExtValue: string
-): string[] => {
-  const path = platformPath(platform);
-  if (platform !== 'win32') return [path.join(directory, 'claude')];
-  const extensions = pathExtValue
-    .split(';')
-    .map((value) => value.trim().toLowerCase())
-    .filter((value) => ['.exe', '.cmd', '.bat', '.com'].includes(value));
-  const uniqueExtensions = [
-    ...new Set(extensions.length > 0 ? extensions : ['.exe', '.cmd', '.bat'])
-  ];
-  return uniqueExtensions.map((extension) => path.join(directory, `claude${extension}`));
-};
-
-const validateClaudeExecutable = (params: {
-  executable: string;
-  platform: NodeJS.Platform;
-  appPath: string;
-}): string => {
-  const executable = parsePathText(params.executable, 'Claude executable');
-  const path = platformPath(params.platform);
-  if (executable === null || !path.isAbsolute(executable)) {
-    throw new Error('Claude Code CLI executable is unavailable');
-  }
-  try {
-    if (!statSync(executable).isFile()) {
-      throw new Error('not a file');
-    }
-    accessSync(executable, params.platform === 'win32' ? constants.F_OK : constants.X_OK);
-    const resolvedExecutable = realpathSync(executable);
-    const applicationRoot = resolveApplicationRoot(params.appPath, params.platform);
-    if (isInside(applicationRoot, resolvedExecutable, params.platform)) {
-      throw new Error('inside application path');
-    }
-    return resolvedExecutable;
-  } catch {
-    throw new Error('Claude Code CLI executable is unavailable');
-  }
-};
-
-export const resolveClaudeExecutable = (params: {
-  platform?: NodeJS.Platform;
-  pathValue?: string;
-  pathExtValue?: string;
-  appPath: string;
-}): string => {
-  const platform = params.platform ?? process.platform;
-  if (platform !== 'darwin' && platform !== 'win32') {
-    throw new Error('Claude terminal launching is supported only on macOS and Windows');
-  }
-  const path = platformPath(platform);
-  const separator = platform === 'win32' ? ';' : delimiter;
-  const applicationRoot = resolveApplicationRoot(params.appPath, platform);
-  const pathEntries = (params.pathValue ?? process.env.PATH ?? '')
-    .split(separator)
-    .map((value) => value.trim().replace(/^"|"$/g, ''))
-    .filter((value) => value.length > 0 && path.isAbsolute(value));
-
-  for (const directory of pathEntries) {
-    for (const candidate of executableCandidates(
-      directory,
-      platform,
-      params.pathExtValue ?? process.env.PATHEXT ?? ''
-    )) {
-      try {
-        if (!statSync(candidate).isFile()) continue;
-        accessSync(candidate, platform === 'win32' ? constants.F_OK : constants.X_OK);
-        const resolved = realpathSync(candidate);
-        if (isInside(applicationRoot, resolved, platform)) continue;
-        return resolved;
-      } catch {
-        // Continue through the explicit PATH candidates without invoking a shell.
-      }
-    }
-  }
-  throw new Error('Claude Code CLI executable is unavailable');
 };
 
 const normalizeTarget = (target: CodingAgentTerminalTarget): ResolvedTerminalTarget => {
@@ -254,18 +150,13 @@ export class CodingAgentTerminalLauncher {
       throw new Error('Claude terminal launching is supported only on macOS and Windows');
     }
     const target = normalizeTarget(targetValue);
-    const executableCandidate =
-      this.dependencies.resolveClaudeExecutable?.() ??
-      resolveClaudeExecutable({
-        platform: this.platform,
-        pathValue: this.dependencies.pathValue,
-        pathExtValue: this.dependencies.pathExtValue,
-        appPath: this.dependencies.appPath
-      });
-    const executablePath = validateClaudeExecutable({
-      executable: executableCandidate,
+    const executablePath = validateClaudeExecutableForTarget({
+      executable: (
+        this.dependencies.executableProvider ?? unavailableClaudeExecutableProvider
+      ).resolve(),
       platform: this.platform,
-      appPath: this.dependencies.appPath
+      appPath: this.dependencies.appPath,
+      cwd: target.cwd
     });
     const path = platformPath(this.platform);
 
