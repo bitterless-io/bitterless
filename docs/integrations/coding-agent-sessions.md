@@ -74,7 +74,7 @@ Support levels:
 | Bitterless-managed Codex App Server | `thread/list`, `thread/read` | same deep link, or resume through the managed client | `thread/status/changed`, `turn/started`, `turn/completed` | documented protocol; installed schema is versioned |
 | External Codex Desktop/CLI task | hook events reveal IDs after setup | desktop deep link when the ID is known | lifecycle inferred from hook events; waiting-for-input is not fully observable | documented hooks, bounded observation |
 | Claude Code CLI/Agent View background job | `claude agents --json`; optionally `--all` when supported | `claude attach <job-id>` in a terminal | `working`, `blocked`, `done`, `failed`, `stopped`; `waitingFor` may refine blocked | documented CLI; agent view is research preview; not Claude Desktop |
-| Claude Code foreground CLI | live entries appear in `claude agents --json`, with `sessionId` and `cwd` | do not auto-resume while its PID is alive; resume an inactive known session with `claude --resume <session-id>` | JSON listing has no state for foreground entries; hooks provide bounded observation | documented CLI/hooks; local JSON shape verified |
+| Claude Code foreground CLI | live entries appear in `claude agents --json` with current `kind="interactive"`, `sessionId`, and `cwd`; legacy preview output may use `kind="foreground"` | do not auto-resume while its PID is alive; resume an inactive known session with `claude --resume <session-id>` | JSON listing has no runtime `state` for interactive/foreground entries; hooks provide bounded observation | documented CLI/hooks; local JSON shape verified |
 | Claude Desktop chat/project | no local global listing contract | `claude://claude.ai/chat/<id>` or `/project/<id>` | no public local live-status API | documented links; status unsupported |
 | Claude Desktop/Claude Code cloud session | no local global listing contract | `https://claude.ai/code/<session-id>`; `claude://code/<session-id>` is documented for mobile | no public local live-status API | universal link documented; custom existing-session route is not a Desktop contract |
 
@@ -97,7 +97,7 @@ requirements:
 |---|---|
 | ChatGPT/Codex Desktop `26.707.72221` | registers `codex://`; `codex://threads/<id>` opens the matching local task |
 | Codex CLI `0.137.0` | generated schema includes `thread/list`, `thread/status/changed`, `turn/started`, `turn/completed`, and the status types below |
-| Claude Code CLI `2.1.161` | `claude agents --json` returns live CLI entries; foreground entries contain `sessionId` and `cwd` but no runtime `state`; this version rejects `--all` |
+| Claude Code CLI `2.1.161` | `claude agents --json` returns live CLI entries; current foreground interactive entries use `kind="interactive"` and contain `sessionId` and `cwd` but no runtime `state`; this version rejects `--all` |
 | Claude Desktop `1.21459.0` | registers `claude://`; existing local CLI resume remains a CLI operation, not a documented Desktop route |
 
 Every adapter must probe capabilities at runtime. Versions in this table are evidence, not hardcoded
@@ -361,8 +361,9 @@ claude agents --json
 ```
 
 Validate the complete JSON result before merging it. Background entries provide a supervisor job
-ID and normalized `state`; foreground interactive entries provide a process/session reference but
-no runtime state in the locally verified version.
+ID and normalized `state`; current foreground interactive entries use `kind="interactive"` and
+provide a process/session reference but no runtime state in the locally verified version. Accept
+legacy preview `kind="foreground"` only as an explicitly tested compatibility alias.
 
 At startup, inspect `claude agents --help`. Append `--all` only when that installed version lists the
 option; this allows newer CLIs to include completed background jobs while keeping `2.1.161`

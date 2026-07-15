@@ -13,7 +13,7 @@ state, open/attach safely, and install/remove privacy-minimal lifecycle bridges.
 | Shared contract | provider records, status evidence | strict types/validators | none | core-001 |
 | SQLite repository | validated records/status mutations | active rows and soft delete | hidden SQLite preload | core-001 |
 | Codex discovery/opening | installed CLI, thread store, validated ID | metadata rows, canonical deep link | short-lived App Server, Electron shell | core-001 |
-| Claude discovery/opening | installed CLI, Agent View JSON | foreground/background rows, attach/resume | execFile, terminal launcher | core-001 |
+| Claude discovery/opening | installed CLI, Agent View JSON | interactive/legacy-foreground and background rows, attach/resume | execFile, terminal launcher | core-001 |
 | Lifecycle event bridge | provider hook JSON | minimal normalized events | local socket/named pipe, SQLite DAO | bridge-002 |
 | Hook settings installer | explicit user action | merged/removable provider hooks | user config, generated pinned shims | bridge-002 |
 | Home renderer | XPC records/events | filters, rows, dialogs, actions | Arco, i18n | ui-003 |
@@ -25,7 +25,7 @@ state, open/attach safely, and install/remove privacy-minimal lifecycle bridges.
 |---|---|---|
 | hidden SQLite bootstrap -> table/DAO -> main XPC | persisted row survives renderer reload | core/integration |
 | Refresh -> Codex App Server `thread/list` -> DAO | IDs/titles import; `notLoaded` stays unknown | core/integration |
-| Refresh -> `claude agents --json` -> DAO | background state and foreground no-state are distinct | core/integration |
+| Refresh -> `claude agents --json` -> DAO | background state and `kind="interactive"` (legacy `foreground`) no-state entries are distinct | core/integration |
 | Open -> provider adapter -> OS | exact Codex URL; validated Claude attach/resume template | core/integration |
 | provider hook -> generated shim -> local bridge -> DAO | state changes without transcript content | bridge/integration |
 | Install/remove -> provider settings | only Bitterless-owned hook entries change | bridge/integration |

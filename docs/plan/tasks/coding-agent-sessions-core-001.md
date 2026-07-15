@@ -34,7 +34,7 @@ XPC service. Do not install hooks or add renderer UI in this task.
 ## Verification
 
 - Contract tests cover ID/path validation, every normalized provider state, unknown variants,
-  freshness, Codex `notLoaded`, Claude foreground/background distinction, command timeout/output
+  freshness, Codex `notLoaded`, Claude interactive/legacy-foreground versus background distinction, command timeout/output
   caps, and fixed open/attach/resume targets.
 - Repository tests cover create/upsert/list/rename/status/soft-delete/re-register.
 - Run the focused test script, `yarn typecheck:node`, and `git diff --check`.

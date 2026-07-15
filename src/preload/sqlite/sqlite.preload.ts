@@ -17,6 +17,7 @@ import { subTodoTable } from './dao/subTodo.table';
 import { todoEventTable } from './dao/todoEvent.table';
 import { sortTable } from './dao/sort.table';
 import { migrationTable } from './dao/migration.table';
+import { codingAgentSessionTable } from './dao/codingAgentSession.table';
 // Dao imports trigger singleton creation -> auto-register xpc handlers via BaseDao
 import './dao/setting.dao';
 import './dao/message.dao';
@@ -26,6 +27,7 @@ import './dao/domain.dao';
 import './dao/todo.dao';
 import './dao/subTodo.dao';
 import './dao/todoEvent.dao';
+import './dao/codingAgentSession.dao';
 import './handler/language.handler';
 import './handler/searchEngine.handler';
 import { initQdrant } from './qdrantHelper/qdrant.helper';
@@ -64,6 +66,7 @@ sqliteManager.addTable(subTodoTable);
 sqliteManager.addTable(todoEventTable);
 sqliteManager.addTable(sortTable);
 sqliteManager.addTable(migrationTable);
+sqliteManager.addTable(codingAgentSessionTable);
 
 // Migrations versioncode 来源于当前的 package.json versioncode
 sqliteManager.addMigration(26040705, `ALTER TABLE todos ADD COLUMN note TEXT NOT NULL DEFAULT '';`);

@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/env.d.ts",
+    "../../src/main/env.d.ts",
+    "../../src/preload/env.d.ts",
+    "../../src/shared/codingAgent/**/*.ts",
+    "../../src/main/codingAgent/**/*.ts",
+    "../../src/main/xpc/codingAgentSession.handler.ts",
+    "../../src/preload/sqlite/dao/codingAgentSession.*.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noCheck": false,
+    "noEmit": true
+  }
+}

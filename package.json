@@ -16,6 +16,8 @@
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "yarn typecheck:node && yarn typecheck:web",
     "check:renderer-i18n": "node scripts/renderer-i18n/check-renderer-i18n.mjs",
+    "test:coding-agent:core": "node scripts/coding-agent/core.test.mjs",
+    "typecheck:coding-agent:core": "tsc -p scripts/coding-agent/tsconfig.strict.json",
     "check:maestro": "node scripts/maestro/check-maestro.mjs",
     "mcp:todo:smoke": "node scripts/mcp/todo-smoke.mjs",
     "mcp:todo:smoke:debug": "node scripts/mcp/todo-smoke.mjs --profile debug",
