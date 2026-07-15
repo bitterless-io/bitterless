@@ -28,6 +28,14 @@ const baseRoutes: RouteRecordRaw[] = [
     }
   },
   {
+    path: 'coding-agents',
+    name: 'codingAgentSessions',
+    component: () => import('@/views/codingAgentSessions/CodingAgentSessions.vue'),
+    meta: {
+      icon: 'coding-agents.svg'
+    }
+  },
+  {
     path: 'setting',
     name: 'setting',
     component: () => import('@/views/setting/Setting.vue'),

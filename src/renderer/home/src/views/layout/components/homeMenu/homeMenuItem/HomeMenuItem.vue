@@ -8,6 +8,7 @@ import connectorIcon from '@renderer/common/assets/icons/menu-icons/connector.pn
 import settingIcon from '@renderer/common/assets/icons/menu-icons/setting.png';
 import debugIcon from '@renderer/common/assets/icons/menu-icons/debug.png';
 import pluginIcon from '@renderer/common/assets/icons/menu-icons/plugin.png';
+import codingAgentsIcon from '@renderer/common/assets/icons/menu-icons/coding-agents.svg';
 import chatIconActive from '@renderer/common/assets/icons/menu-icons/chat_active.png';
 import todoIconActive from '@renderer/common/assets/icons/menu-icons/todo_active.png';
 import miniAppIconActive from '@renderer/common/assets/icons/menu-icons/mini-app_active.png';
@@ -15,6 +16,7 @@ import connectorIconActive from '@renderer/common/assets/icons/menu-icons/connec
 import settingIconActive from '@renderer/common/assets/icons/menu-icons/setting_active.png';
 import debugIconActive from '@renderer/common/assets/icons/menu-icons/debug_active.png';
 import pluginIconActive from '@renderer/common/assets/icons/menu-icons/plugin_active.png';
+import codingAgentsIconActive from '@renderer/common/assets/icons/menu-icons/coding-agents_active.svg';
 
 const iconMap: Record<string, string> = {
   'chat.png': chatIcon,
@@ -24,6 +26,7 @@ const iconMap: Record<string, string> = {
   'setting.png': settingIcon,
   'debug.png': debugIcon,
   'plugin.png': pluginIcon,
+  'coding-agents.svg': codingAgentsIcon
 };
 
 const activeIconMap: Record<string, string> = {
@@ -34,6 +37,7 @@ const activeIconMap: Record<string, string> = {
   'setting.png': settingIconActive,
   'debug.png': debugIconActive,
   'plugin.png': pluginIconActive,
+  'coding-agents.svg': codingAgentsIconActive
 };
 
 const props = defineProps<{
