@@ -9,6 +9,16 @@
       <IconActivity :size="14" stroke-width="1.8" aria-hidden="true" />
       {{ i18nHelper.coin.noActiveJobs }}
     </span>
+    <span class="coin-status-bar__separator" aria-hidden="true"></span>
+    <button
+      name="coin__statusBar__ai"
+      class="coin-status-bar__action"
+      type="button"
+      @click="store.openResources()"
+    >
+      <IconBrandOpenai :size="14" stroke-width="1.8" aria-hidden="true" />
+      {{ i18nHelper.coin.aiStatusSignIn }}
+    </button>
     <span class="coin-status-bar__spacer"></span>
     <span v-if="store.statusError" class="coin-status-bar__error">{{ store.statusError }}</span>
     <span v-else-if="store.statusLoading" class="coin-status-bar__item">
@@ -23,7 +33,12 @@
 </template>
 
 <script setup lang="ts">
-import { IconActivity, IconCircleCheck, IconDatabaseOff } from '@tabler/icons-vue';
+import {
+  IconActivity,
+  IconBrandOpenai,
+  IconCircleCheck,
+  IconDatabaseOff,
+} from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { coinShellStore as store } from '../coinShell.store';
 </script>

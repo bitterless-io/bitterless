@@ -3,7 +3,7 @@
     v-model:visible="store.sourcesVisible"
     class="coin-sources-drawer"
     placement="right"
-    :width="'min(520px, 100%)'"
+    :width="'min(720px, 100%)'"
     :footer="false"
     :mask-closable="true"
     popup-container="#coin-analysis-pane"
@@ -96,6 +96,11 @@ const sources = computed(() => [
     id: 'robinhood-chain',
     name: i18nHelper.coin.sourceDrawer.robinhood,
     reason: i18nHelper.coin.sourceDrawer.capabilityGate,
+  },
+  {
+    id: 'codex-ai',
+    name: i18nHelper.coin.sourceDrawer.codex,
+    reason: i18nHelper.coin.sourceDrawer.signInRequired,
   },
 ]);
 </script>
