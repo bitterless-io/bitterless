@@ -2,7 +2,7 @@
 
 Tasks are executed serially in the existing working directory because this Electron project shares a
 large native dependency installation and the current branch contains an unrelated in-progress
-Electron/SQLite pin. Development and verification are performed by different agents.
+Electron/SQLite pin. Coin runtime verification is currently handed to the owner by request.
 
 ## Active delivery
 
@@ -21,15 +21,15 @@ Electron/SQLite pin. Development and verification are performed by different age
 | [todo-archived-domains-modal-refresh](tasks/todo-archived-domains-modal-refresh.md) | compact Archived domains management and restore flow | done | renderer-arco-bem-controls |
 | [renderer-i18n-sync](tasks/renderer-i18n-sync.md) | main-owned language state, live renderer updates, and correct recreated-window locale | done | — |
 | [customer-account-recovery](tasks/customer-account-recovery.md) | customer recovery, lifecycle enforcement, and Royal Blue home surface | done | — |
-| [coin-subapp-shell-001](tasks/coin-subapp-shell-001.md) | Coin singleton window, scoped bridge, and full-width analysis shell | in-progress | — |
-| [coin-resource-settings-002](tasks/coin-resource-settings-002.md) | Codex/GMGN/Alchemy/service configuration and secure local probes | pending | coin-subapp-shell-001 |
-| [coin-analysis-workspace-003](tasks/coin-analysis-workspace-003.md) | Coin analysis tabs, truthful source adapters, persistence, and decisions | pending | coin-resource-settings-002 |
-| [coin-ai-analysis-004](tasks/coin-ai-analysis-004.md) | background Codex structured analysis without chat UI | pending | coin-analysis-workspace-003 |
-| [coin-subapp-integration-005](tasks/coin-subapp-integration-005.md) | end-to-end lifecycle, resources, data, AI, and visual acceptance | pending | coin-ai-analysis-004 |
-| [coding-agent-sessions-core-001](tasks/coding-agent-sessions-core-001.md) | storage, Codex/Claude discovery, normalization, and safe opening | ready | — |
-| [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | pending | coding-agent-sessions-core-001 |
-| [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | pending | coding-agent-sessions-bridge-002 |
-| [coding-agent-sessions-integration-004](tasks/coding-agent-sessions-integration-004.md) | real-boundary and Electron acceptance | pending | coding-agent-sessions-ui-003 |
+| [coin-subapp-shell-001](tasks/coin-subapp-shell-001.md) | Coin singleton window, scoped bridge, and full-width analysis shell | done | — |
+| [coin-resource-settings-002](tasks/coin-resource-settings-002.md) | Codex/GMGN/Alchemy/service configuration and secure local probes | implemented; owner verification pending | coin-subapp-shell-001 |
+| [coin-analysis-workspace-003](tasks/coin-analysis-workspace-003.md) | Coin analysis tabs, truthful source adapters, persistence, and decisions | implemented; owner verification pending | coin-resource-settings-002 |
+| [coin-ai-analysis-004](tasks/coin-ai-analysis-004.md) | background Codex structured analysis without chat UI | implemented; owner verification pending | coin-analysis-workspace-003 |
+| [coin-subapp-integration-005](tasks/coin-subapp-integration-005.md) | end-to-end lifecycle, resources, data, AI, and visual acceptance | owner verification pending | coin-ai-analysis-004 |
+| [coding-agent-sessions-core-001](tasks/coding-agent-sessions-core-001.md) | storage, Codex/Claude discovery, normalization, and safe opening | done | — |
+| [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | done | coding-agent-sessions-core-001 |
+| [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | done | coding-agent-sessions-bridge-002 |
+| [coding-agent-sessions-integration-004](tasks/coding-agent-sessions-integration-004.md) | real-boundary and Electron acceptance | done | coding-agent-sessions-ui-003 |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [Coin sub-application](analysis/coin-subapp.md),

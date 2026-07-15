@@ -1,6 +1,6 @@
 # Coding-agent Session Integration
 
-Status: proposed technical contract
+Status: implemented and independently verified
 
 Verified: 2026-07-15
 
