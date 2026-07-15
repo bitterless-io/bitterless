@@ -1,7 +1,7 @@
 ---
 id: coin-subapp-shell-001
 scope: Coin window, scoped bridge, and local renderer shell
-status: in-progress
+status: done
 depends-on: []
 ---
 
@@ -54,3 +54,25 @@ points without adding live analysis, resource writes, or a Codex runtime yet.
 - Run `yarn typecheck:node`, focused Coin renderer typecheck, `yarn build`, and `git diff --check`.
 - Launch through Home and inspect screenshots at `1360x860` and `800x600`; verify one full-width local
   renderer, all controls fit, and no chat/split/remote/browser UI exists.
+
+## Result
+
+- Added the authenticated singleton Coin window, scoped sender-checked bridge, validated on-screen
+  geometry persistence, locale initialization/live synchronization, and explicit auth/quit cleanup.
+- Added the bilingual Home Mini App entry and one full-width local Coin renderer with Monitor,
+  Screener, Meme, Strategy, History, Resources, Sources diagnostics, AI/source status, and footer.
+- Resources renders truthful unavailable shells for Codex, GMGN CLI/API key, Alchemy chains, and
+  service endpoints. It performs no login, credential write, CLI execution, source request, or AI run.
+- Removed the superseded visible Codex pane, divider, messages, composer, prompt copy, and sizing
+  state. The Electron E2E asserts that those surfaces are absent.
+
+Verification:
+
+- Focused lifecycle/sender/geometry suite passed (`8/8`).
+- Focused Coin renderer typecheck and `yarn typecheck:node` passed.
+- `yarn build` passed with only the existing Home router mixed-import warning.
+- Coin Electron Playwright passed (`1/1`) at `1360x860` and `800x600`, including singleton focus,
+  locale sync, security, full-width layout, Resources, geometry restore, and auth invalidation.
+- `git diff --check` and the production Coin no-chat source audit passed.
+- Screenshots: `out/playwright/coin/screenshots/coin-1360x860.png`,
+  `coin-resources-1360x860.png`, `coin-800x600.png`, and `coin-resources-800x600.png`.

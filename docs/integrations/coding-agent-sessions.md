@@ -29,6 +29,18 @@ state's source, confidence, and observation time instead of presenting a guessed
 Claude Desktop chats, Desktop Code sessions, or arbitrary cloud sessions. In this document,
 "Claude background job" always means a session hosted by the Claude Code Agent View supervisor.
 
+## Implemented delivery scope
+
+The external-session feature includes phases 1-3 below: provider-neutral persistence, safe opening,
+read-only Codex/Claude discovery, Claude background attach/resume, and opt-in lifecycle bridges.
+The UI contract is [Coding-agent sessions layout](coding-agent-sessions-layout.md).
+
+The managed Codex App Server supervisor in phase 4 is an optional future execution surface, not part
+of this delivery. It does not improve the accuracy of status for tasks already owned by Codex
+Desktop, which is the target of this integration. The read-only Codex discovery adapter may start a
+short-lived App Server to call `thread/list`; every `notLoaded` result remains `unknown` unless a
+fresh hook event exists.
+
 ## Goals
 
 - List registered/discovered Codex and Claude sessions in one Bitterless surface.
@@ -550,7 +562,7 @@ are blocked by default.
 Exit gate: working/approval/idle transitions update without transcript access, stale states become
 `unknown`, and unrelated provider settings survive install/remove byte-semantically unchanged.
 
-### Phase 4 - managed Codex App Server
+### Phase 4 - optional managed Codex execution surface
 
 - Add a stdio App Server supervisor for Bitterless-owned Codex tasks.
 - Generate/validate version-matched schemas and consume status/turn notifications.
@@ -558,6 +570,9 @@ Exit gate: working/approval/idle transitions update without transcript access, s
 
 Exit gate: a managed task has authoritative same-owner status, while an independently active Desktop
 task is never mislabeled from a separate server's `notLoaded` state.
+
+This phase is deliberately deferred until Bitterless owns Codex execution. It is not an acceptance
+gate for the external-session dashboard.
 
 ## Acceptance criteria
 

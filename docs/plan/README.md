@@ -25,9 +25,14 @@ Electron/SQLite pin. Development and verification are performed by different age
 | [coin-analysis-workspace-003](tasks/coin-analysis-workspace-003.md) | Coin analysis tabs, truthful source adapters, persistence, and decisions | pending | coin-resource-settings-002 |
 | [coin-ai-analysis-004](tasks/coin-ai-analysis-004.md) | background Codex structured analysis without chat UI | pending | coin-analysis-workspace-003 |
 | [coin-subapp-integration-005](tasks/coin-subapp-integration-005.md) | end-to-end lifecycle, resources, data, AI, and visual acceptance | pending | coin-ai-analysis-004 |
+| [coding-agent-sessions-core-001](tasks/coding-agent-sessions-core-001.md) | storage, Codex/Claude discovery, normalization, and safe opening | ready | — |
+| [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | pending | coding-agent-sessions-core-001 |
+| [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | pending | coding-agent-sessions-bridge-002 |
+| [coding-agent-sessions-integration-004](tasks/coding-agent-sessions-integration-004.md) | real-boundary and Electron acceptance | pending | coding-agent-sessions-ui-003 |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
-[Coin sub-application](analysis/coin-subapp.md).
+[Coin sub-application](analysis/coin-subapp.md),
+[Coding-agent sessions](analysis/coding-agent-sessions.md).
 
 ## Concurrency guard
 

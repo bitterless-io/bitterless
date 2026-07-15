@@ -28,6 +28,8 @@ design document.
 
 - [Coding-agent sessions](integrations/coding-agent-sessions.md) - safe links to Codex and Claude
   sessions, normalized live status, provider capability boundaries, and phased delivery.
+- [Coding-agent sessions layout](integrations/coding-agent-sessions-layout.md) - main-window page,
+  filters, status rows, registration dialog, integration setup, and responsive states.
 
 ## Design system
 

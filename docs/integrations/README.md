@@ -36,6 +36,8 @@ main-process integration service
 
 - [Coding-agent sessions](coding-agent-sessions.md) - Codex and Claude session discovery, opening,
   and status observation.
+- [Coding-agent sessions layout](coding-agent-sessions-layout.md) - user-visible main-window page
+  and interaction contract.
 
 ## Scope-wide constraints
 
