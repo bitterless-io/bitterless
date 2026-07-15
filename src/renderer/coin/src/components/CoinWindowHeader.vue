@@ -17,8 +17,8 @@
       <a-tooltip :content="i18nHelper.coin.window.sourceStatus" position="bottom">
         <button
           name="coin__windowHeader__sources"
-          class="coin-window-header__source-button"
-          :class="{ 'coin-window-header__source-button--active': store.sourcesVisible }"
+          class="coin-window-header__status-button"
+          :class="{ 'coin-window-header__status-button--active': store.sourcesVisible }"
           type="button"
           :aria-pressed="store.sourcesVisible"
           :disabled="store.statusLoading"
@@ -27,6 +27,21 @@
           <a-spin v-if="store.statusLoading" :size="12" />
           <IconDatabaseOff v-else :size="16" stroke-width="1.8" aria-hidden="true" />
           <span>{{ i18nHelper.coin.sources }}</span>
+          <span class="coin-window-header__status-dot" aria-hidden="true"></span>
+        </button>
+      </a-tooltip>
+
+      <a-tooltip :content="i18nHelper.coin.window.aiStatus" position="bottom">
+        <button
+          name="coin__windowHeader__ai"
+          class="coin-window-header__status-button"
+          :class="{ 'coin-window-header__status-button--active': store.resourcesActive }"
+          type="button"
+          :aria-pressed="store.resourcesActive"
+          @click="store.openResources()"
+        >
+          <IconBrandOpenai :size="16" stroke-width="1.8" aria-hidden="true" />
+          <span>{{ i18nHelper.coin.aiStatusSignIn }}</span>
           <span class="coin-window-header__status-dot" aria-hidden="true"></span>
         </button>
       </a-tooltip>
@@ -78,6 +93,7 @@
 
 <script setup lang="ts">
 import {
+  IconBrandOpenai,
   IconCoins,
   IconDatabaseOff,
   IconMinus,

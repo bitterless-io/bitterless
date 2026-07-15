@@ -24,6 +24,11 @@ design document.
 - [GMGN CLI setup](guides/gmgn-cli.md) - Yarn installation, personal API key, read-only probes,
   allowlist, and second-machine setup.
 
+## Integrations
+
+- [Coding-agent sessions](integrations/coding-agent-sessions.md) - safe links to Codex and Claude
+  sessions, normalized live status, provider capability boundaries, and phased delivery.
+
 ## Design system
 
 - [Design system](design/README.md)

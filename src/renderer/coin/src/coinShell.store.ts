@@ -7,6 +7,7 @@ import type { CoinMemeMode, CoinTab, CoinWindowAction } from './coinShell.type';
 class CoinShellStore {
   activeTab: CoinTab = 'monitor';
   memeMode: CoinMemeMode = 'discover';
+  resourcesActive = false;
   sourcesVisible = false;
   status: CoinShellStatus | null = null;
   statusLoading = false;
@@ -20,6 +21,16 @@ class CoinShellStore {
   async openSources(): Promise<void> {
     this.sourcesVisible = true;
     if (!this.status) await this.refreshStatus();
+  }
+
+  openTab(tab: CoinTab): void {
+    this.activeTab = tab;
+    this.resourcesActive = false;
+  }
+
+  openResources(): void {
+    this.sourcesVisible = false;
+    this.resourcesActive = true;
   }
 
   async refreshStatus(): Promise<void> {

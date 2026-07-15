@@ -1,11 +1,27 @@
 <template>
   <main id="coin-analysis-pane" name="coin__analysisPane" class="coin-analysis-pane">
     <a-tabs
-      v-model:active-key="store.activeTab"
+      :active-key="store.resourcesActive ? '' : store.activeTab"
       class="coin-analysis-tabs"
+      :class="{ 'coin-analysis-tabs--resources': store.resourcesActive }"
       type="line"
       :animation="false"
+      @change="handleTabChange"
     >
+      <template #extra>
+        <button
+          name="coin__resourcesNav"
+          class="coin-resources-nav"
+          :class="{ 'coin-resources-nav--active': store.resourcesActive }"
+          type="button"
+          :aria-pressed="store.resourcesActive"
+          @click="store.openResources()"
+        >
+          <IconSettings :size="15" stroke-width="1.8" aria-hidden="true" />
+          <span>{{ i18nHelper.coin.resources }}</span>
+        </button>
+      </template>
+
       <a-tab-pane key="monitor" :title="i18nHelper.coin.tabs.monitor">
         <section name="coin__monitor" class="coin-workspace-view">
           <div name="coin__monitor__toolbar" class="coin-workspace-toolbar">
@@ -147,15 +163,22 @@
       </a-tab-pane>
     </a-tabs>
 
+    <CoinResourcesView v-if="store.resourcesActive" />
     <CoinSourcesDrawer />
   </main>
 </template>
 
 <script setup lang="ts">
-import { IconHistoryOff, IconRefresh } from '@tabler/icons-vue';
+import { IconHistoryOff, IconRefresh, IconSettings } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { coinShellStore as store } from '../coinShell.store';
+import type { CoinTab } from '../coinShell.type';
 import CoinEvidenceStrip from './CoinEvidenceStrip.vue';
+import CoinResourcesView from './CoinResourcesView.vue';
 import CoinSourcesDrawer from './CoinSourcesDrawer.vue';
 import CoinUnavailableState from './CoinUnavailableState.vue';
+
+const handleTabChange = (key: string | number): void => {
+  store.openTab(key as CoinTab);
+};
 </script>
