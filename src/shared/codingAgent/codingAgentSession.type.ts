@@ -33,6 +33,22 @@ export type CodingAgentStatusSource =
   | 'manual'
   | 'none';
 
+export type CodingAgentIntegrationConfiguration =
+  | 'not-installed'
+  | 'configured'
+  | 'drifted'
+  | 'invalid';
+
+export interface CodingAgentIntegrationStatus {
+  provider: CodingAgentProvider;
+  product: 'Codex' | 'Claude Code CLI';
+  configuration: CodingAgentIntegrationConfiguration;
+  bridgeListening: boolean;
+  requiresTrust: boolean;
+  lastEventAt: number | null;
+  message: string;
+}
+
 export interface CodingAgentSessionRecord {
   id: string;
   provider: CodingAgentProvider;
@@ -160,6 +176,15 @@ export interface CodingAgentSessionApi {
   open(params: { id: string }): Promise<OpenCodingAgentSessionResult>;
   rename(params: { id: string; title: string | null }): Promise<CodingAgentSessionRecord>;
   remove(params: { id: string }): Promise<boolean>;
+  getIntegrationStatus(params: {
+    provider: CodingAgentProvider;
+  }): Promise<CodingAgentIntegrationStatus>;
+  installStatusBridge(params: {
+    provider: CodingAgentProvider;
+  }): Promise<CodingAgentIntegrationStatus>;
+  removeStatusBridge(params: {
+    provider: CodingAgentProvider;
+  }): Promise<CodingAgentIntegrationStatus>;
 }
 
 export interface NormalizedCodingAgentStatus {

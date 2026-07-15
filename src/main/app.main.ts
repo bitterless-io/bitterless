@@ -8,7 +8,6 @@ import { pathMainHelper } from '../shared/pathHelper/main/pathMain.helper';
 import { mainWindowHelper } from './windows/mainWindow.helper';
 import { sqliteWindowHelper } from './windows/sqliteWindow.helper';
 import { connectorWindowHelper } from './windows/connectorWindow.helper';
-import { initXpc } from './xpc/xpc.helper';
 import { initDirectory } from './directoryHelper/directory.helper';
 import { llamaWindowHelper } from './windows/llamaWindow.helper';
 import { omniWindowHelper } from './windows/omniWindow.helper';
@@ -28,8 +27,12 @@ import {
   parseMcpBridgeEndpointArg,
   type CoreSqliteBootApi,
 } from '@shared/mcp/mcpBridge.shared';
+import { CODING_AGENT_HOOK_HELPER_ARG } from '@shared/codingAgent/codingAgentHookBridge.contract';
+import { runAgentSessionHookHelper } from './codingAgent/agentSessionHook.helper';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
+const isCodingAgentHookHelperMode = process.argv.includes(CODING_AGENT_HOOK_HELPER_ARG);
+const isHelperMode = isMcpHelperMode || isCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
 
@@ -53,6 +56,7 @@ const waitForWindowLoad = (window: Electron.BrowserWindow): Promise<void> => {
 };
 
 const configureE2EUserData = (): void => {
+  if (isHelperMode) return;
   if (!isE2E) return;
   if (app.isPackaged) {
     throw new Error('BITTERLESS_E2E is unavailable in packaged builds');
@@ -139,6 +143,7 @@ const installE2ENetworkGuard = (): void => {
 let isQuitting = false;
 let hasShownQuitDialog = false;
 let cleanupPromise: Promise<void> | null = null;
+let stopCodingAgentSessionBridge: (() => Promise<void>) | null = null;
 
 const redirectConsoleToStderr = (): void => {
   const write = (level: string, args: unknown[]): void => {
@@ -163,6 +168,9 @@ const cleanupResources = (): Promise<void> => {
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
 
+    try { await stopCodingAgentSessionBridge?.(); } catch {
+      // Best-effort shutdown: the remaining application resources must still be released.
+    }
     try { await mcpBridgeServer.stop(); } catch {}
     try { await coinWindowHandler.destroyForHostQuit(); } catch {}
     try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
@@ -178,7 +186,10 @@ const cleanupResources = (): Promise<void> => {
   return cleanupPromise;
 };
 
-app.whenReady().then(async () => {
+if (isCodingAgentHookHelperMode) {
+  redirectConsoleToStderr();
+  void runAgentSessionHookHelper(process.argv, process.stdin).finally(() => app.exit(0));
+} else app.whenReady().then(async () => {
   if (isMcpHelperMode) {
     redirectConsoleToStderr();
     try {
@@ -196,6 +207,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     app.dock.setBadge('');
   }
+  const { initXpc } = await import('./xpc/xpc.helper');
   initXpc();
 
   packageMainHelper.init();
@@ -240,6 +252,16 @@ app.whenReady().then(async () => {
     }
   }
 
+  if (coreSqliteReady) {
+    try {
+      const codingAgentRuntime = await import('./xpc/codingAgentSession.handler');
+      stopCodingAgentSessionBridge = codingAgentRuntime.stopCodingAgentSessionBridge;
+      await codingAgentRuntime.startCodingAgentSessionBridge();
+    } catch (err) {
+      console.warn('[app] Coding-agent status bridge disabled:', err);
+    }
+  }
+
   // SQLite 进程准备就绪后，再启动主窗口和其他窗口
   // llamaWindowHelper.create();
   await mainWindowHelper.create();
@@ -258,7 +280,7 @@ app.on('before-quit', async (event) => {
   if (isQuitting) return;
   event.preventDefault();
 
-  if (isMcpHelperMode) {
+  if (isHelperMode) {
     isQuitting = true;
     app.quit();
     return;

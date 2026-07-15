@@ -27,6 +27,7 @@ and XPC integration. Do not read or forward transcript/prompt/tool content.
 - `src/main/app.main.ts`
 - `scripts/coding-agent/`
 - `package.json`
+- `yarn.lock`
 - this task file
 
 ## Verification

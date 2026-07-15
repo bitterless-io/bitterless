@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   CodingAgentDiscoveryIssue,
   CodingAgentDiscoveryResult,
+  CodingAgentIntegrationStatus,
   CodingAgentProvider,
   CodingAgentSessionApi,
   CodingAgentSessionDaoApi,
@@ -11,6 +12,8 @@ import type {
   RefreshCodingAgentSessionsResult,
   RegisterCodingAgentSessionParams
 } from '@shared/codingAgent/codingAgentSession.type';
+import type { CodingAgentHookEvent } from '@shared/codingAgent/codingAgentHookBridge.type';
+import { normalizeCodingAgentHookEvent } from '@shared/codingAgent/codingAgentHookBridge.contract';
 import {
   effectiveProcessLiveness,
   effectiveRuntimeState,
@@ -56,7 +59,21 @@ export interface CodingAgentSessionServiceDependencies {
   broadcastChanged?: (ids: string[], revision: number) => void;
   now?: () => number;
   idFactory?: () => string;
+  integration?: {
+    getStatus(provider: CodingAgentProvider): CodingAgentIntegrationStatus;
+    install(provider: CodingAgentProvider): CodingAgentIntegrationStatus;
+    remove(provider: CodingAgentProvider): CodingAgentIntegrationStatus;
+  };
 }
+
+const HOOK_FRESHNESS_MS = 60_000;
+
+const statusSourceRank = (source: CodingAgentStatusSource): number => {
+  if (source === 'codex-app-server' || source === 'claude-agents-cli') return 3;
+  if (source === 'codex-hook' || source === 'claude-hook') return 2;
+  if (source === 'manual') return 1;
+  return 0;
+};
 
 export class CodingAgentSessionService implements CodingAgentSessionApi {
   private readonly now: () => number;
@@ -317,5 +334,95 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
     const removed = await this.dependencies.repository.softDelete({ id });
     if (removed) this.notify([id]);
     return removed;
+  }
+
+  async applyHookEvent(event: CodingAgentHookEvent): Promise<CodingAgentSessionRecord> {
+    const evidence = normalizeCodingAgentHookEvent(event);
+    const rows = await this.dependencies.repository.list({ includeUnknown: true });
+    const observableSurfaces = evidence.provider === 'codex'
+      ? ['codex-managed-app-server', 'codex-desktop'] as const
+      : ['claude-code-background', 'claude-code-cli'] as const;
+    const existing = observableSurfaces
+      .map((surface) => rows.find(
+        (row) => row.provider === evidence.provider &&
+          row.surface === surface &&
+          row.externalSessionId === evidence.externalSessionId
+      ))
+      .find((row) => row !== undefined);
+    const surface = existing?.surface ?? (
+      evidence.provider === 'codex' ? 'codex-desktop' : 'claude-code-cli'
+    );
+    if (
+      existing &&
+      (
+        statusSourceRank(existing.statusSource) > statusSourceRank(evidence.statusSource) ||
+        (statusSourceRank(existing.statusSource) === statusSourceRank(evidence.statusSource) &&
+          existing.statusObservedAt !== null &&
+          existing.statusObservedAt > evidence.observedAt)
+      )
+    ) {
+      return this.effectiveRecord(existing);
+    }
+
+    const row = await this.dependencies.repository.upsert({
+      id: existing?.id ?? this.idFactory(),
+      provider: evidence.provider,
+      surface,
+      externalSessionId: evidence.externalSessionId,
+      runtimeJobId: existing?.runtimeJobId ?? null,
+      title: existing?.title ?? null,
+      titleIsCustom: existing?.titleIsCustom ?? false,
+      cwd: evidence.cwd ?? existing?.cwd ?? null,
+      state: evidence.state,
+      lastTurnState: evidence.lastTurnState ?? existing?.lastTurnState ?? 'unknown',
+      providerState: evidence.providerState,
+      statusSource: evidence.statusSource,
+      statusObservedAt: evidence.observedAt,
+      statusFreshUntil: evidence.state === 'failed' || evidence.state === 'ended'
+        ? null
+        : evidence.observedAt + HOOK_FRESHNESS_MS,
+      isProcessAlive: null
+    });
+    if (
+      row.statusSource === evidence.statusSource &&
+      row.statusObservedAt === evidence.observedAt
+    ) {
+      this.currentRuntimeObservations.set(row.id, {
+        statusSource: row.statusSource,
+        observedAt: evidence.observedAt
+      });
+      this.notify([row.id]);
+    }
+    return this.effectiveRecord(row);
+  }
+
+  async getIntegrationStatus(params: {
+    provider: CodingAgentProvider;
+  }): Promise<CodingAgentIntegrationStatus> {
+    const provider = parseCodingAgentRefreshParams(params).provider;
+    if (!provider || !this.dependencies.integration) {
+      throw new Error('Coding-agent status bridge is unavailable');
+    }
+    return this.dependencies.integration.getStatus(provider);
+  }
+
+  async installStatusBridge(params: {
+    provider: CodingAgentProvider;
+  }): Promise<CodingAgentIntegrationStatus> {
+    const provider = parseCodingAgentRefreshParams(params).provider;
+    if (!provider || !this.dependencies.integration) {
+      throw new Error('Coding-agent status bridge is unavailable');
+    }
+    return this.dependencies.integration.install(provider);
+  }
+
+  async removeStatusBridge(params: {
+    provider: CodingAgentProvider;
+  }): Promise<CodingAgentIntegrationStatus> {
+    const provider = parseCodingAgentRefreshParams(params).provider;
+    if (!provider || !this.dependencies.integration) {
+      throw new Error('Coding-agent status bridge is unavailable');
+    }
+    return this.dependencies.integration.remove(provider);
   }
 }
