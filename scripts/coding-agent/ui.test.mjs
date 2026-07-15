@@ -324,13 +324,8 @@ try {
         open: async () => {
           openCalls += 1;
           return {
-            kind: 'terminal-command',
-            target: {
-              kind: 'claude-resume',
-              executable: 'claude',
-              args: ['--resume', ID_2],
-              cwd: '/tmp'
-            }
+            kind: 'opened-terminal',
+            action: 'resume'
           };
         }
       })
@@ -351,7 +346,7 @@ try {
   assert.equal(openCalls, 0);
   await openState.openSession(inactiveClaude);
   assert.equal(openCalls, 1);
-  assert.equal(openState.actionErrors[ID_1].code, 'terminal-main-required');
+  assert.equal(openState.actionErrors[ID_1], undefined);
 
   // Integration drawer loads both providers and uses install as explicit drift repair.
   const integrationState = new CodingAgentSessionState(
@@ -387,7 +382,8 @@ try {
   );
   assert(!storeSource.includes('child_process'));
   assert(!storeSource.includes('shell.openExternal'));
-  assert(storeSource.includes("result.kind === 'terminal-command'"));
+  assert(!storeSource.includes('terminal-command'));
+  assert(!storeSource.includes('result.target'));
 
   for (const sourcePath of [
     'src/renderer/home/src/views/codingAgentSessions/CodingAgentSessions.vue',

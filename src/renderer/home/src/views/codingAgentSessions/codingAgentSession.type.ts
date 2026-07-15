@@ -32,7 +32,7 @@ export type CodingAgentPrimaryAction =
     };
 
 export type CodingAgentActionError = {
-  code: 'terminal-main-required' | 'already-open' | 'unavailable' | 'request-failed';
+  code: 'already-open' | 'unavailable' | 'request-failed';
   detail: string | null;
 };
 

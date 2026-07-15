@@ -1,7 +1,6 @@
 import { isAbsolute, normalize, resolve } from 'node:path';
 import { statSync } from 'node:fs';
 import type {
-  CodingAgentCommandTarget,
   CodingAgentSessionRecord,
   OpenCodingAgentSessionResult
 } from '@shared/codingAgent/codingAgentSession.type';
@@ -14,6 +13,22 @@ import {
 export interface DirectoryInspector {
   isDirectory(path: string): boolean;
 }
+
+export type CodingAgentTerminalTarget =
+  | {
+      kind: 'claude-attach';
+      jobId: string;
+      cwd: string;
+    }
+  | {
+      kind: 'claude-resume';
+      sessionId: string;
+      cwd: string;
+    };
+
+export type ClaudeCommandTargetResult =
+  | { kind: 'terminal-target'; target: CodingAgentTerminalTarget }
+  | Extract<OpenCodingAgentSessionResult, { kind: 'already-open' | 'unavailable' }>;
 
 const defaultDirectoryInspector: DirectoryInspector = {
   isDirectory: (path: string): boolean => {
@@ -47,18 +62,17 @@ export const buildCodexThreadDeepLink = (threadId: unknown): string => {
 export const buildClaudeCommandTarget = (
   record: CodingAgentSessionRecord,
   inspector: DirectoryInspector = defaultDirectoryInspector
-): OpenCodingAgentSessionResult => {
+): ClaudeCommandTargetResult => {
   if (record.surface === 'claude-code-background') {
     if (record.runtimeJobId === null) {
       return { kind: 'unavailable', reason: 'Claude background job id is unavailable' };
     }
-    const target: CodingAgentCommandTarget = {
+    const target: CodingAgentTerminalTarget = {
       kind: 'claude-attach',
-      executable: 'claude',
-      args: ['attach', parseClaudeJobId(record.runtimeJobId)],
+      jobId: parseClaudeJobId(record.runtimeJobId),
       cwd: requireExistingAbsoluteDirectory(record.cwd, inspector)
     };
-    return { kind: 'terminal-command', target };
+    return { kind: 'terminal-target', target };
   }
 
   if (record.surface !== 'claude-code-cli') {
@@ -76,11 +90,10 @@ export const buildClaudeCommandTarget = (
       reason: 'The Claude Code process state is unknown; automatic resume is disabled'
     };
   }
-  const target: CodingAgentCommandTarget = {
+  const target: CodingAgentTerminalTarget = {
     kind: 'claude-resume',
-    executable: 'claude',
-    args: ['--resume', parseUuid(record.externalSessionId, 'Claude session id')],
+    sessionId: parseUuid(record.externalSessionId, 'Claude session id'),
     cwd: requireExistingAbsoluteDirectory(record.cwd, inspector)
   };
-  return { kind: 'terminal-command', target };
+  return { kind: 'terminal-target', target };
 };

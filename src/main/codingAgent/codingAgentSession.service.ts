@@ -27,7 +27,8 @@ import {
 import {
   buildClaudeCommandTarget,
   buildCodexThreadDeepLink,
-  requireExistingAbsoluteDirectory
+  requireExistingAbsoluteDirectory,
+  type CodingAgentTerminalTarget
 } from './codingAgentTarget';
 
 interface DiscoveryAdapter {
@@ -56,6 +57,7 @@ export interface CodingAgentSessionServiceDependencies {
   codexDiscovery: DiscoveryAdapter;
   claudeDiscovery: DiscoveryAdapter;
   openExternal: (url: string) => Promise<void>;
+  launchTerminal: (target: CodingAgentTerminalTarget) => Promise<'attach' | 'resume'>;
   broadcastChanged?: (ids: string[], revision: number) => void;
   now?: () => number;
   idFactory?: () => string;
@@ -298,28 +300,52 @@ export class CodingAgentSessionService implements CodingAgentSessionApi {
 
   async open(params: { id: string }): Promise<OpenCodingAgentSessionResult> {
     const { id } = parseCodingAgentIdParams(params);
-    const persistedRecord = await this.dependencies.repository.getById({ id });
+    let persistedRecord: CodingAgentSessionRecord | undefined;
+    try {
+      persistedRecord = await this.dependencies.repository.getById({ id });
+    } catch {
+      return { kind: 'unavailable', reason: 'Coding-agent session data is unavailable' };
+    }
     if (!persistedRecord) {
       return { kind: 'unavailable', reason: 'Coding-agent session was not found' };
     }
     const record = this.effectiveRecord(persistedRecord);
 
     if (record.provider === 'codex') {
-      const url = buildCodexThreadDeepLink(record.externalSessionId);
-      await this.dependencies.openExternal(url);
-      return { kind: 'opened-url', url };
+      try {
+        const url = buildCodexThreadDeepLink(record.externalSessionId);
+        await this.dependencies.openExternal(url);
+        return { kind: 'opened-url', url };
+      } catch {
+        return { kind: 'unavailable', reason: 'The Codex URL handler is unavailable' };
+      }
     }
     if (record.surface === 'claude-desktop-chat') {
-      const url = `claude://claude.ai/chat/${parseUuid(record.externalSessionId, 'Claude chat id')}`;
-      await this.dependencies.openExternal(url);
-      return { kind: 'opened-url', url };
+      try {
+        const url = `claude://claude.ai/chat/${parseUuid(record.externalSessionId, 'Claude chat id')}`;
+        await this.dependencies.openExternal(url);
+        return { kind: 'opened-url', url };
+      } catch {
+        return { kind: 'unavailable', reason: 'The Claude Desktop URL handler is unavailable' };
+      }
     }
     if (record.surface === 'claude-desktop-code') {
-      const url = `https://claude.ai/code/${parseUuid(record.externalSessionId, 'Claude Code id')}`;
-      await this.dependencies.openExternal(url);
-      return { kind: 'opened-url', url };
+      try {
+        const url = `https://claude.ai/code/${parseUuid(record.externalSessionId, 'Claude Code id')}`;
+        await this.dependencies.openExternal(url);
+        return { kind: 'opened-url', url };
+      } catch {
+        return { kind: 'unavailable', reason: 'The Claude Code session URL is unavailable' };
+      }
     }
-    return buildClaudeCommandTarget(record);
+    try {
+      const target = buildClaudeCommandTarget(record);
+      if (target.kind !== 'terminal-target') return target;
+      const action = await this.dependencies.launchTerminal(target.target);
+      return { kind: 'opened-terminal', action };
+    } catch {
+      return { kind: 'unavailable', reason: 'Claude Code CLI could not be opened in a terminal' };
+    }
   }
 
   async rename(params: { id: string; title: string | null }): Promise<CodingAgentSessionRecord> {

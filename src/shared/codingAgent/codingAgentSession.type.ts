@@ -149,23 +149,11 @@ export interface RefreshCodingAgentSessionsResult {
   issues: CodingAgentDiscoveryIssue[];
 }
 
-export type CodingAgentCommandTarget =
-  | {
-      kind: 'claude-attach';
-      executable: 'claude';
-      args: ['attach', string];
-      cwd: string;
-    }
-  | {
-      kind: 'claude-resume';
-      executable: 'claude';
-      args: ['--resume', string];
-      cwd: string;
-    };
+export type CodingAgentTerminalAction = 'attach' | 'resume';
 
 export type OpenCodingAgentSessionResult =
   | { kind: 'opened-url'; url: string }
-  | { kind: 'terminal-command'; target: CodingAgentCommandTarget }
+  | { kind: 'opened-terminal'; action: CodingAgentTerminalAction }
   | { kind: 'already-open'; message: string }
   | { kind: 'unavailable'; reason: string };
 

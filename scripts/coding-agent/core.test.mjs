@@ -291,11 +291,10 @@ try {
       existingInspector
     ),
     {
-      kind: 'terminal-command',
+      kind: 'terminal-target',
       target: {
         kind: 'claude-attach',
-        executable: 'claude',
-        args: ['attach', 'job_A-12:child'],
+        jobId: 'job_A-12:child',
         cwd: projectRoot
       }
     }
@@ -308,11 +307,10 @@ try {
       existingInspector
     ),
     {
-      kind: 'terminal-command',
+      kind: 'terminal-target',
       target: {
         kind: 'claude-resume',
-        executable: 'claude',
-        args: ['--resume', CLAUDE_ID],
+        sessionId: CLAUDE_ID,
         cwd: projectRoot
       }
     }
@@ -779,6 +777,7 @@ try {
   const records = new Map();
   const changed = [];
   const opened = [];
+  let openExternalFailure = false;
   const repository = {
     upsert: async (value) => {
       const existing = [...records.values()].find(
@@ -827,7 +826,13 @@ try {
         snapshot: { status: 'failed' }
       })
     },
-    openExternal: async (url) => opened.push(url),
+    openExternal: async (url) => {
+      opened.push(url);
+      if (openExternalFailure) throw new Error('No URL handler');
+    },
+    launchTerminal: async () => {
+      throw new Error('unused');
+    },
     broadcastChanged: (ids, revision) => changed.push({ ids, revision }),
     idFactory: () => ID_3,
     now: () => 9999
@@ -842,6 +847,16 @@ try {
   assert.equal((await service.list({ includeUnknown: false })).length, 0);
   assert.equal((await service.open({ id: registered.id })).kind, 'opened-url');
   assert.deepEqual(opened, [`codex://threads/${CODEX_ID}`]);
+  openExternalFailure = true;
+  assert.deepEqual(await service.open({ id: registered.id }), {
+    kind: 'unavailable',
+    reason: 'The Codex URL handler is unavailable'
+  });
+  openExternalFailure = false;
+  assert.deepEqual(opened, [
+    `codex://threads/${CODEX_ID}`,
+    `codex://threads/${CODEX_ID}`
+  ]);
   await service.rename({ id: registered.id, title: 'Core' });
   assert.equal(await service.remove({ id: registered.id }), true);
   assert.deepEqual(
@@ -928,6 +943,8 @@ try {
     now: () => integrationNow,
     freshnessMs: 100
   });
+  const launchedTargets = [];
+  let terminalLaunchFails = false;
   const integrationService = new serviceModule.CodingAgentSessionService({
     repository: integrationStore,
     codexDiscovery: {
@@ -940,6 +957,11 @@ try {
     },
     claudeDiscovery: integrationClaudeAdapter,
     openExternal: async () => {},
+    launchTerminal: async (target) => {
+      if (terminalLaunchFails) throw new Error('Terminal details must not escape');
+      launchedTargets.push(target);
+      return target.kind === 'claude-attach' ? 'attach' : 'resume';
+    },
     now: () => integrationNow,
     idFactory: () => ID_3
   });
@@ -960,6 +982,25 @@ try {
   );
   assert.equal(sameMillisecondBackground.state, 'working');
   assert.equal(sameMillisecondBackground.isProcessAlive, false);
+  assert.deepEqual(await integrationService.open({ id: sameMillisecondBackground.id }), {
+    kind: 'opened-terminal',
+    action: 'attach'
+  });
+  assert.deepEqual(launchedTargets.at(-1), {
+    kind: 'claude-attach',
+    jobId: 'same-millisecond-job',
+    cwd: projectRoot
+  });
+  integrationDatabase
+    .prepare('UPDATE coding_agent_session SET runtime_job_id = ? WHERE id = ?')
+    .run('--dangerous', sameMillisecondBackground.id);
+  assert.deepEqual(await integrationService.open({ id: sameMillisecondBackground.id }), {
+    kind: 'unavailable',
+    reason: 'Coding-agent session data is unavailable'
+  });
+  integrationDatabase
+    .prepare('UPDATE coding_agent_session SET runtime_job_id = ? WHERE id = ?')
+    .run('same-millisecond-job', sameMillisecondBackground.id);
 
   integrationNow = 5100;
   await integrationService.refresh({ provider: 'claude' });
@@ -1008,14 +1049,30 @@ try {
   const absentCli = (await integrationService.list()).find((row) => row.id === ID_1);
   assert.equal(absentCli.isProcessAlive, false);
   assert.deepEqual(await integrationService.open({ id: ID_1 }), {
-    kind: 'terminal-command',
-    target: {
-      kind: 'claude-resume',
-      executable: 'claude',
-      args: ['--resume', CLAUDE_ID],
-      cwd: projectRoot
-    }
+    kind: 'opened-terminal',
+    action: 'resume'
   });
+  assert.deepEqual(launchedTargets.at(-1), {
+    kind: 'claude-resume',
+    sessionId: CLAUDE_ID,
+    cwd: projectRoot
+  });
+  integrationDatabase
+    .prepare('UPDATE coding_agent_session SET cwd = ? WHERE id = ?')
+    .run(join(buildRoot, 'deleted-cwd'), ID_1);
+  assert.deepEqual(await integrationService.open({ id: ID_1 }), {
+    kind: 'unavailable',
+    reason: 'Claude Code CLI could not be opened in a terminal'
+  });
+  integrationDatabase
+    .prepare('UPDATE coding_agent_session SET cwd = ? WHERE id = ?')
+    .run(projectRoot, ID_1);
+  terminalLaunchFails = true;
+  assert.deepEqual(await integrationService.open({ id: ID_1 }), {
+    kind: 'unavailable',
+    reason: 'Claude Code CLI could not be opened in a terminal'
+  });
+  terminalLaunchFails = false;
 
   integrationClaudeFails = true;
   integrationNow = 5140;
@@ -1030,7 +1087,7 @@ try {
   integrationClaudeFails = false;
   integrationNow = 5150;
   await integrationService.refresh({ provider: 'claude' });
-  assert.equal((await integrationService.open({ id: ID_1 })).kind, 'terminal-command');
+  assert.equal((await integrationService.open({ id: ID_1 })).kind, 'opened-terminal');
   integrationNow = 5251;
   assert.equal(
     (await integrationService.list()).find((row) => row.id === ID_1).isProcessAlive,
@@ -1090,6 +1147,9 @@ try {
       }
     },
     openExternal: async () => {},
+    launchTerminal: async () => {
+      throw new Error('unused');
+    },
     broadcastChanged: (ids, revision) => coalescedBroadcasts.push({ ids, revision }),
     now: () => integrationNow,
     idFactory: () => ID_5

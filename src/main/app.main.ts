@@ -65,6 +65,12 @@ const configureE2EUserData = (): void => {
   if (!userDataPath) {
     throw new Error('BITTERLESS_E2E_USER_DATA_DIR is required when BITTERLESS_E2E=1');
   }
+  const homePath = process.env.BITTERLESS_E2E_HOME_DIR?.trim();
+  if (!homePath) {
+    throw new Error('BITTERLESS_E2E_HOME_DIR is required when BITTERLESS_E2E=1');
+  }
+  mkdirSync(homePath, { recursive: true });
+  app.setPath('home', homePath);
   mkdirSync(userDataPath, { recursive: true });
   app.setPath('userData', userDataPath);
 };

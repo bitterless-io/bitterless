@@ -409,11 +409,21 @@ auto-resumed.
 
 The terminal launcher is a dedicated main-process service with two fixed templates:
 
-- attach: `claude`, `agents`/`attach` arguments derived only from a validated job ID
+- attach: exactly `claude attach <job-id>`, with the argument derived only from a validated job ID
 - resume: `claude`, `--resume`, and a validated conversation ID, with validated `cwd`
 
-It must not concatenate a shell command string from renderer data. Platform-specific terminal
-creation belongs behind this service and requires packaged macOS and Windows integration tests.
+The renderer supplies only the registry record ID and receives only the result action
+`{ kind: "opened-terminal", action: "attach" | "resume" }`; it never receives the executable,
+arguments, or `cwd` as part of that open action. Below the active application's `userData`, the
+launcher writes either a random owner-only, one-use macOS `.command` or a one-use Windows `.cmd`
+that inherits the current user's profile ACL. It removes stale launchers to keep the directory
+bounded and opens the new file with Electron's `shell.openPath`. It must not concatenate a shell
+command string from renderer data.
+
+The feasible automated platform gate is a real source-tree Electron E2E run on macOS plus pure,
+deterministic Windows launcher-generation tests. `BITTERLESS_E2E` intentionally rejects packaged
+builds, so packaged macOS/Windows smoke remains a release verification rather than something this
+test mode can claim to exercise.
 
 ### Foreground status bridge
 
@@ -522,13 +532,19 @@ credential-bearing environment variables.
 All renderer calls go through `electron-xpc`. Each method takes zero or one object parameter:
 
 ```ts
+type OpenResult =
+  | { kind: "opened-url"; url: string }
+  | { kind: "opened-terminal"; action: "attach" | "resume" }
+  | { kind: "already-open"; message: string }
+  | { kind: "unavailable"; reason: string };
+
 interface CodingAgentSessionXpcHandler {
   list(params?: { includeUnknown?: boolean }): Promise<CodingAgentSessionRecord[]>;
   register(params: RegisterCodingAgentSessionParams): Promise<CodingAgentSessionRecord>;
   refresh(params?: { provider?: CodingAgentProvider }): Promise<RefreshResult>;
   open(params: { id: string }): Promise<OpenResult>;
   rename(params: { id: string; title: string | null }): Promise<CodingAgentSessionRecord>;
-  remove(params: { id: string }): Promise<void>;
+  remove(params: { id: string }): Promise<boolean>;
   getIntegrationStatus(params: { provider: CodingAgentProvider }): Promise<IntegrationStatus>;
   installStatusBridge(params: { provider: CodingAgentProvider }): Promise<IntegrationStatus>;
   removeStatusBridge(params: { provider: CodingAgentProvider }): Promise<IntegrationStatus>;
@@ -618,7 +634,8 @@ gate for the external-session dashboard.
 
 - A stored Codex ID always produces exactly `codex://threads/<validated-id>`.
 - A missing provider or unavailable bridge never changes a session to `idle`/`ended`.
-- Managed Codex status maps every installed-schema `ThreadStatus` variant.
+- Installed-schema fixtures prove the Codex `ThreadStatus` normalizer maps every variant; this does
+  not imply that the deferred Phase 4 managed App Server supervisor has shipped.
 - Claude background discovery maps every documented `state` and preserves unknown future values.
 - Live foreground Claude sessions are not automatically resumed in a second terminal.
 - Hook install/remove is idempotent and preserves unrelated Codex/Claude configuration.
@@ -626,8 +643,9 @@ gate for the external-session dashboard.
 - Unix socket and Windows named-pipe endpoints are profile-isolated and reject oversized/invalid
   events.
 - SQLite removal is soft and re-registration of the same provider session succeeds.
-- macOS and Windows tests cover missing URL handler, missing CLI, successful open/attach, malformed
-  provider output, bridge downtime, and app restart with stale persisted state.
+- Real source-tree Electron E2E on macOS covers the SQLite/XPC/UI/broadcast/hook/restart chain;
+  deterministic platform tests cover missing URL handlers/CLI, successful open/attach, malformed
+  provider output, bridge downtime, stale persisted state, and Windows launcher generation.
 
 ## Sources
 

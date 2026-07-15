@@ -226,6 +226,7 @@ const isolatedLaunchEnv = (paths: {
     XDG_CACHE_HOME: join(paths.homeDir, '.cache'),
     MICROMEET_DIR: join(paths.homeDir, '.micromeet'),
     BITTERLESS_E2E: '1',
+    BITTERLESS_E2E_HOME_DIR: paths.homeDir,
     BITTERLESS_E2E_USER_DATA_DIR: paths.userDataDir,
     BITTERLESS_E2E_MOCK_ORIGIN: paths.mockOrigin,
     COACH_OPEN_DEVTOOLS: '0',
@@ -239,7 +240,9 @@ const isolatedLaunchEnv = (paths: {
 export const test = base.extend<MaestroFixtures>({
   bitterless: async ({}, use) => {
     assertLaunchPrerequisites()
-    const tempRoot = mkdtempSync(join(tmpdir(), 'bitterless-maestro-e2e-'))
+    // Keep Unix-domain socket paths below the macOS limit for every E2E bridge.
+    const tempBase = process.platform === 'win32' ? tmpdir() : '/tmp'
+    const tempRoot = mkdtempSync(join(tempBase, 'bl-maestro-'))
     const homeDir = join(tempRoot, 'home')
     const userDataDir = join(tempRoot, 'user-data')
     mkdirSync(homeDir, { recursive: true })

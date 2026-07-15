@@ -208,9 +208,6 @@ const actionReason = computed(() => {
 
 const actionErrorLabel = computed(() => {
   if (!actionError.value) return null;
-  if (actionError.value.code === 'terminal-main-required') {
-    return i18nHelper.codingAgentSessions.messages.terminalMainRequired;
-  }
   if (actionError.value.code === 'already-open') {
     return i18nHelper.codingAgentSessions.messages.alreadyOpenDetail;
   }

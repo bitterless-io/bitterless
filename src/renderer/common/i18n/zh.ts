@@ -266,7 +266,6 @@ export const zh: typeof en = {
       listError: '无法加载会话登记表。',
       refreshError: '提供商刷新失败，现有记录已保留。',
       copyFailed: '无法复制会话 ID。',
-      terminalMainRequired: '终端操作必须由 Bitterless 主进程启动。',
       alreadyOpenDetail: '已有 Claude Code 进程正在使用该会话。',
       unavailableAction: '根据当前提供商证据，无法打开该会话。',
       requestFailed: '打开操作失败。',

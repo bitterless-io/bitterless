@@ -264,7 +264,6 @@ export const en = {
       listError: 'The session registry could not be loaded.',
       refreshError: 'Provider refresh failed. Existing rows were kept.',
       copyFailed: 'The session ID could not be copied.',
-      terminalMainRequired: 'Terminal actions must be launched by the Bitterless main process.',
       alreadyOpenDetail: 'A live Claude Code process already owns this conversation.',
       unavailableAction: 'This session cannot be opened from the current provider evidence.',
       requestFailed: 'The open action failed.',

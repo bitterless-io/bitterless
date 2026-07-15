@@ -16,6 +16,7 @@ import { CodingAgentSessionService } from '../codingAgent/codingAgentSession.ser
 import { CodingAgentStatusBridgeService } from '../codingAgent/codingAgentStatusBridge.service';
 import { agentSessionEventBridgeServer } from '../codingAgent/agentSessionEventBridge.server';
 import { getCodingAgentBridgeEndpoint } from '@shared/codingAgent/codingAgentHookBridge.contract';
+import { CodingAgentTerminalLauncher } from '../codingAgent/codingAgentTerminal.service';
 
 const repository = createXpcMainEmitter<CodingAgentSessionDaoApi>('CodingAgentSessionDao');
 const codingAgentStatusBridgeService = new CodingAgentStatusBridgeService({
@@ -28,11 +29,17 @@ const codingAgentStatusBridgeService = new CodingAgentStatusBridgeService({
     lastEventAt: agentSessionEventBridgeServer.getLastEventAt(provider)
   })
 });
+const codingAgentTerminalLauncher = new CodingAgentTerminalLauncher({
+  userDataPath: app.getPath('userData'),
+  appPath: app.getAppPath(),
+  openPath: async (path) => await shell.openPath(path)
+});
 const codingAgentSessionService = new CodingAgentSessionService({
   repository,
   codexDiscovery: new CodexDiscoveryAdapter(),
   claudeDiscovery: new ClaudeDiscoveryAdapter(),
   openExternal: async (url) => await shell.openExternal(url),
+  launchTerminal: async (target) => await codingAgentTerminalLauncher.launch(target),
   broadcastChanged: (ids, revision) => {
     xpcMain.broadcast('coding-agent-session/changed', { ids, revision });
   },

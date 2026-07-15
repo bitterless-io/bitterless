@@ -428,9 +428,7 @@ export class CodingAgentSessionState {
     this.actionErrors[session.id] = undefined;
     try {
       const result = await this.dependencies.api.open({ id: session.id });
-      if (result.kind === 'terminal-command') {
-        this.actionErrors[session.id] = { code: 'terminal-main-required', detail: null };
-      } else if (result.kind === 'already-open') {
+      if (result.kind === 'already-open') {
         this.actionErrors[session.id] = { code: 'already-open', detail: null };
       } else if (result.kind === 'unavailable') {
         this.actionErrors[session.id] = { code: 'unavailable', detail: result.reason };

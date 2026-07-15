@@ -1199,6 +1199,9 @@ try {
     codexDiscovery: { discover: async () => { throw new Error('unused'); } },
     claudeDiscovery: { discover: async () => { throw new Error('unused'); } },
     openExternal: async () => {},
+    launchTerminal: async () => {
+      throw new Error('unused');
+    },
     now: () => clock,
     idFactory: (() => {
       const ids = [
