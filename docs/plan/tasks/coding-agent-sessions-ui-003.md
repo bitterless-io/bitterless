@@ -1,7 +1,7 @@
 ---
 id: coding-agent-sessions-ui-003
 scope: authenticated Home dashboard, filters, row actions, registration, and integration setup
-status: pending
+status: in-progress
 depends-on: [coding-agent-sessions-bridge-002]
 ---
 
@@ -28,6 +28,8 @@ arbitrary commands may remain.
 - `src/renderer/common/assets/icons/`
 - `src/renderer/common/i18n/en.ts`
 - `src/renderer/common/i18n/zh.ts`
+- `scripts/coding-agent/`
+- `package.json`
 - this task file
 
 ## Verification

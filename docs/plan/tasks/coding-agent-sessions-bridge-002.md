@@ -1,7 +1,7 @@
 ---
 id: coding-agent-sessions-bridge-002
 scope: Codex and Claude lifecycle hook bridge and reversible settings installation
-status: in-progress
+status: done
 depends-on: [coding-agent-sessions-core-001]
 ---
 
