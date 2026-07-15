@@ -1,0 +1,80 @@
+import { app, shell } from 'electron';
+import { XpcMainHandler } from 'electron-xpc/main';
+import type { PathName } from '../shared/pathHelper.type';
+import * as path from 'path';
+import * as fse from 'fs-extra';
+import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot';
+
+export class PathMainHelper extends XpcMainHandler {
+  init(): void {
+    // XpcMainHandler auto-registers methods on instantiation
+    // This init() is kept for compatibility with existing code
+  }
+
+  /** Get the app installation path */
+  async getAppPath(): Promise<string> {
+    return app.getAppPath();
+  }
+
+  /** Get a special directory or file path by name */
+  async getPath(params: { name: PathName }): Promise<string> {
+    return params.name === 'userData' ? maestroDataRoot() : app.getPath(params.name);
+  }
+
+  /** Get the user data path (e.g. Application Support on macOS, Roaming on Windows) */
+  async getUserDataPath(): Promise<string> {
+    return maestroDataRoot();
+  }
+
+  /** Open a path in the default file manager */
+  async openPath(params: { path: string }): Promise<string> {
+    return shell.openPath(params.path);
+  }
+
+  /** Get the Chromium executable path based on platform */
+  async getChromiumPath(): Promise<string | null> {
+    const userDataPath = maestroDataRoot();
+    const platform = process.platform;
+    const arch = process.arch;
+
+    console.log('[PathMainHelper] getChromiumPath - platform:', platform, 'arch:', arch);
+    console.log('[PathMainHelper] userDataPath:', userDataPath);
+
+    let chromiumPath: string;
+    console.log('platform', platform, 'arch:', arch);
+    if (platform === 'darwin') {
+      const chromeName = arch === 'arm64' ? 'chrome-macarm' : 'chrome-mac';
+      chromiumPath = path.join(userDataPath, 'extra', chromeName, 'Chromium.app', 'Contents', 'MacOS', 'Chromium');
+    } else if (platform === 'win32') {
+      const appPath = app.getAppPath();
+      console.log('[PathMainHelper] appPath:', appPath);
+      const isRelease = process.env.VITE_MODE === 'release';
+      if (isRelease) {
+        chromiumPath = path.join(appPath, '..', 'app.asar.unpacked', 'chrome-win', 'chrome.exe');
+        console.log('[PathMainHelper] chromiumPath:', chromiumPath);
+      } else {
+        chromiumPath = path.join(appPath, 'asar_unpacked', 'chrome-win', 'chrome.exe');
+      }
+      console.log('[PathMainHelper] chromiumPath:', chromiumPath);
+    } else {
+      console.error('[PathMainHelper] Unsupported platform:', platform);
+      return null;
+    }
+
+    console.log('[PathMainHelper] checking chromium path:', chromiumPath);
+
+    const exists = await fse.pathExists(chromiumPath);
+    if (!exists) {
+      console.error('[PathMainHelper] Chromium not found at:', chromiumPath);
+      const extraDir = path.join(userDataPath, 'extra');
+      const extraExists = await fse.pathExists(extraDir);
+      console.error('[PathMainHelper] extra directory exists:', extraExists);
+      return null;
+    }
+
+    console.log('[PathMainHelper] chromium path found:', chromiumPath);
+    return chromiumPath;
+  }
+}
+
+export const pathMainHelper = new PathMainHelper();

@@ -6,9 +6,11 @@ import {
   loginApi,
   logoutApi,
   meApi,
+  resetPasswordApi,
   sendOtpApi,
   verifyOtpApi,
-  type CurrentCustomer
+  type CurrentCustomer,
+  type OtpPurpose
 } from '@/networking/auth.api';
 
 const TOKEN_KEY = 'bitterless-desktop-token';
@@ -51,6 +53,19 @@ const getCustomerDeviceId = (customerId: number): string => {
   return `${tail}${getOrCreateDeviceSeed()}`;
 };
 
+export const customerNeedsPasswordSetup = (customer: CurrentCustomer | null | undefined): boolean =>
+  !!customer &&
+  (customer.status === 'invited' || customer.must_set_password || !customer.has_password);
+
+const ensureSessionEligibleCustomer = (customer: CurrentCustomer): CurrentCustomer => {
+  const status = (customer as { status?: unknown }).status;
+  if (status === 'active' || status === 'invited') return customer;
+  if (status === 'inactive') {
+    throw new Error('账号已停用，请联系管理员');
+  }
+  throw new Error('账号状态无效，请重新登录');
+};
+
 const decodeJwtPayload = (token: string): { sub?: number; scope?: string } | null => {
   try {
     const payload = token.split('.')[1];
@@ -73,6 +88,7 @@ class AuthStore {
   current: CurrentCustomer | null = null;
   loading = false;
   sendingOtp = false;
+  resettingPassword = false;
   checking = false;
 
   isAuthenticated(): boolean {
@@ -87,14 +103,40 @@ class AuthStore {
     return localStorage.getItem(DEVICE_ID_KEY) || '';
   }
 
-  private async activateToken(token: string, deviceId: string): Promise<CurrentCustomer> {
-    localStorage.setItem(DEVICE_ID_KEY, deviceId);
-    setToken(token);
-    const current = await this.fetchMe();
-    if (!current.must_set_password) {
-      await authEmitter.activateSession();
+  private async fetchValidatedCustomer(token: string): Promise<CurrentCustomer> {
+    return ensureSessionEligibleCustomer(await meApi(token));
+  }
+
+  private async activateAuthenticatedSession(current: CurrentCustomer): Promise<void> {
+    ensureSessionEligibleCustomer(current);
+    if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
+      throw new Error('账号尚未完成首次密码设置');
     }
-    return current;
+
+    try {
+      await authEmitter.activateSession();
+    } catch (err) {
+      this.clearLocalSession();
+      throw err;
+    }
+  }
+
+  private async activateToken(token: string, deviceId: string): Promise<CurrentCustomer> {
+    try {
+      const current = await this.fetchValidatedCustomer(token);
+      localStorage.setItem(DEVICE_ID_KEY, deviceId);
+      setToken(token);
+      this.current = current;
+
+      if (!customerNeedsPasswordSetup(current)) {
+        await this.activateAuthenticatedSession(current);
+      }
+      return current;
+    } catch (err) {
+      this.clearLocalSession();
+      await logoutApi(token).catch(() => undefined);
+      throw err;
+    }
   }
 
   async loginWithPassword(email: string, password: string): Promise<void> {
@@ -111,9 +153,11 @@ class AuthStore {
       }
 
       const customerDeviceId = getCustomerDeviceId(customerId);
-      const finalLogin = await loginApi({ email, password, device_id: customerDeviceId });
-
-      await logoutApi(bootstrapLogin.token).catch(() => undefined);
+      const finalLogin = await loginApi({
+        email,
+        password,
+        device_id: customerDeviceId
+      }).finally(() => logoutApi(bootstrapLogin.token).catch(() => undefined));
 
       await this.activateToken(finalLogin.token, customerDeviceId);
     } catch (err: any) {
@@ -124,15 +168,40 @@ class AuthStore {
     }
   }
 
-  async sendOtp(email: string): Promise<void> {
+  async sendOtp(email: string, purpose: OtpPurpose = 'login'): Promise<void> {
     this.sendingOtp = true;
     try {
-      await sendOtpApi({ email });
+      await sendOtpApi({ email, purpose });
     } catch (err: any) {
-      Message.error(err?.message || '验证码发送失败');
+      Message.error(
+        err?.message || (purpose === 'reset_password' ? '重置验证码发送失败' : '验证码发送失败')
+      );
       throw err;
     } finally {
       this.sendingOtp = false;
+    }
+  }
+
+  async resetPassword(
+    email: string,
+    code: string,
+    newPassword: string,
+    passwordConfirmation: string
+  ): Promise<void> {
+    this.resettingPassword = true;
+    try {
+      await resetPasswordApi({
+        email,
+        code,
+        new_password: newPassword,
+        password_confirmation: passwordConfirmation
+      });
+      this.clearLocalSession();
+    } catch (err: any) {
+      Message.error(err?.message || '密码重置失败');
+      throw err;
+    } finally {
+      this.resettingPassword = false;
     }
   }
 
@@ -157,12 +226,12 @@ class AuthStore {
     this.loading = true;
     try {
       await changePasswordApi(token, { new_password: newPassword });
-      if (this.current) {
-        this.current.status = 'active';
-        this.current.has_password = true;
-        this.current.must_set_password = false;
+      const current = await this.fetchMe();
+      if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
+        this.clearLocalSession();
+        throw new Error('账号尚未完成激活，请使用新密码重新登录');
       }
-      await authEmitter.activateSession();
+      await this.activateAuthenticatedSession(current);
     } catch (err: any) {
       Message.error(err?.message || '密码设置失败');
       throw err;
@@ -179,15 +248,26 @@ class AuthStore {
 
     this.checking = true;
     try {
-      const me = await meApi(token);
+      const me = await this.fetchValidatedCustomer(token);
       this.current = me;
       if (!localStorage.getItem(DEVICE_ID_KEY)) {
         localStorage.setItem(DEVICE_ID_KEY, getCustomerDeviceId(me.id));
       }
       return me;
+    } catch (err) {
+      this.clearLocalSession();
+      throw err;
     } finally {
       this.checking = false;
     }
+  }
+
+  async restoreSession(): Promise<CurrentCustomer> {
+    const current = await this.fetchMe();
+    if (!customerNeedsPasswordSetup(current)) {
+      await this.activateAuthenticatedSession(current);
+    }
+    return current;
   }
 
   clearLocalSession(): void {

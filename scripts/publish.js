@@ -207,7 +207,7 @@ const runBuild = (options) => {
   run('rig', ['--env', `release_${options.env}`]);
   run('node', ['scripts/before.js']);
   run('yarn', ['build']);
-  run('node', ['scripts/prepare-cowork-cli.cjs', options.platform]);
+  run('node', ['scripts/prepare-maestro-cli.cjs', options.platform]);
   run('node', ['scripts/signedBuild.js', ...platformConfigs[options.platform].buildArgs]);
 };
 

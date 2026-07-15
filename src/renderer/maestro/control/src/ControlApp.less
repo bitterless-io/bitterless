@@ -1,0 +1,221 @@
+.control-app {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.control-app .arco-btn {
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.control-app .arco-btn-size-mini {
+  height: 28px;
+}
+
+.control-app .arco-btn-secondary,
+.control-app .arco-btn-outline {
+  border-color: #d8e2ed;
+  background: #ffffff;
+  color: #465467;
+}
+
+.control-app .arco-btn-secondary:hover,
+.control-app .arco-btn-outline:hover {
+  border-color: rgba(22, 93, 255, 0.35);
+  background: #f3f7ff;
+  color: #165dff;
+}
+
+.control-app .arco-btn-primary {
+  border-color: #165dff;
+  background: #165dff;
+  color: #ffffff;
+}
+
+.control-app .arco-btn-primary:hover {
+  border-color: #0f50dc;
+  background: #0f50dc;
+}
+
+.control-app__text-button {
+  display: inline-flex;
+  height: 28px;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0 6px;
+  color: #465467;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.12s ease;
+}
+
+.control-app__text-button:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #1f2937;
+}
+
+.control-app__text-button:active {
+  transform: scale(0.96);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.control-app__text-button:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
+  transform: none;
+}
+
+.control-app__text-button:disabled:hover {
+  background: transparent;
+}
+
+.control-app__card {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.control-app__toolbar,
+.control-app__channels,
+.control-app__toolbar-actions,
+.control-app__channel,
+.control-app__state,
+.control-app__login-card,
+.control-app__llm {
+  display: flex;
+  align-items: center;
+}
+
+.control-app__toolbar {
+  flex-shrink: 0;
+  justify-content: space-between;
+  gap: 8px;
+  background: #ffffff;
+  padding-bottom: 8px;
+}
+
+.control-app__channels {
+  min-width: 0;
+  gap: 4px;
+  border-radius: 999px;
+  background: #edf2f7;
+  padding: 4px;
+}
+
+.control-app__channel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 4px 12px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.control-app__channel:hover { color: #1f2937; }
+.control-app__channel--active { background: #ffffff; color: #165dff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+
+.control-app__toolbar-actions { min-width: 0; gap: 6px; }
+.control-app__demo-button { gap: 6px; }
+
+.control-app__popup {
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 6px;
+  font-size: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.control-app__popup--demo { width: 156px; }
+.control-app__popup--provider { width: 136px; }
+.control-app__popup--model { width: 168px; }
+.control-app__popup--effort { width: 120px; }
+
+.control-app__popup-option {
+  display: flex;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0 8px;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.control-app__popup-option:last-child { margin-bottom: 0; }
+.control-app__popup-option:hover { background: rgba(0, 0, 0, 0.05); }
+.control-app__popup-option--danger { color: #dc2626; }
+.control-app__popup-option--active { background: #edf4ff; color: #165dff; }
+.control-app__popup-option--split { justify-content: space-between; }
+
+.control-app__option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.control-app__option-meta { flex-shrink: 0; margin-left: 8px; color: #9ca3af; font-size: 10px; font-weight: 600; }
+.control-app__text-button--effort { max-width: 76px; }
+
+.control-app__state {
+  min-height: 0;
+  flex: 1;
+  justify-content: center;
+  background: #ffffff;
+}
+
+.control-app__error,
+.control-app__connector-empty {
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 20px 24px;
+  text-align: center;
+}
+
+.control-app__error-title { color: #dc2626; font-size: 12px; font-weight: 600; }
+.control-app__error-detail { max-width: 260px; margin-top: 4px; overflow: hidden; color: #9ca3af; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.control-app__retry { margin-top: 12px; }
+.control-app__connector-empty { color: #9ca3af; font-size: 12px; font-weight: 600; }
+
+.control-app__login-card {
+  min-height: 40px;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px 12px;
+}
+
+.control-app__login-message { min-width: 0; overflow: hidden; color: #4b5563; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.control-app__llm { min-width: 0; gap: 6px; }

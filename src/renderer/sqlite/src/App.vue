@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { xpcRenderer } from 'electron-xpc/renderer';
+import './App.less';
 
 onMounted(() => {
   xpcRenderer.handle('sqlite/hello', async () => {
@@ -15,18 +16,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="container">
-    <h1>SQLite Manager</h1>
+  <div class="sqlite-manager">
+    <h1 class="sqlite-manager__title">SQLite Manager</h1>
   </div>
 </template>
-
-<style scoped>
-.container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  font-family: sans-serif;
-}
-</style>

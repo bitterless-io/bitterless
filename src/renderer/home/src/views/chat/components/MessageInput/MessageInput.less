@@ -33,12 +33,16 @@
 }
 
 .message-input__btn--send {
-  background: oklch(0.511 0.262 276.966);
-  color: oklch(1 0 0);
+  background: var(--bl-royalblue-600);
+  color: #ffffff;
 }
 
 .message-input__btn--send:hover:not(:disabled) {
-  background: oklch(0.457 0.24 277.023);
+  background: var(--bl-royalblue-500);
+}
+
+.message-input__btn--send:active:not(:disabled) {
+  background: var(--bl-royalblue-800);
 }
 
 .message-input__btn--send:disabled {
@@ -48,9 +52,14 @@
 
 .message-input__btn--stop {
   background: transparent;
-  color: #71717a;
+  color: var(--bl-royalblue-500);
 }
 
 .message-input__btn--stop:hover {
-  background: oklch(0.967 0.003 264.542);
+  background: var(--bl-royalblue-50);
+}
+
+.message-input__btn:focus-visible {
+  outline: 2px solid var(--bl-royalblue-400);
+  outline-offset: 2px;
 }

@@ -1,9 +1,12 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "src/cowork/main/**/*", "src/cowork/preload/**/*", "src/cowork/shared/**/*"],
+  "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
   "compilerOptions": {
     "composite": true,
     "skipLibCheck": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "noImplicitReturns": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "types": ["electron-vite/node"],
@@ -14,8 +17,8 @@
       "@main/*": ["src/main/*"],
       "@preload/*": ["src/preload/*"],
       "@shared/*": ["src/shared/*"],
-      "@cowork-main/*": ["src/cowork/main/*"],
-      "@cowork-shared/*": ["src/cowork/shared/*"]
+      "@maestro-main/*": ["src/main/maestro/*"],
+      "@maestro-shared/*": ["src/shared/maestro/*"]
     }
   }
 }

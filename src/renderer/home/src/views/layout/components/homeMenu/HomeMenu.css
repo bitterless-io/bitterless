@@ -1,6 +1,8 @@
-@reference "tailwindcss";
-
 .home-menu {
-  @apply flex flex-col items-center justify-center h-full;
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 12px;
 }

@@ -4,7 +4,6 @@ import readline from 'readline';
 import type {
   LocalRpcFailure,
   LocalRpcRequest,
-  LocalRpcResponse,
   McpBridgeEndpoint,
 } from '@shared/mcp/mcpBridge.shared';
 import { MCP_LOCAL_RPC_MAX_BYTES, getMcpBridgeEndpoint } from '@shared/mcp/mcpBridge.shared';
@@ -15,7 +14,7 @@ interface McpRequest {
   jsonrpc: '2.0';
   id?: JsonRpcId;
   method: string;
-  params?: any;
+  params?: unknown;
 }
 
 interface McpTool {
@@ -26,6 +25,14 @@ interface McpTool {
 
 const REQUEST_TIMEOUT_MS = 10000;
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  return error instanceof Error && error.message ? error.message : fallback;
+};
+
 const tools: McpTool[] = [
   {
     name: 'domain.list',
@@ -33,6 +40,19 @@ const tools: McpTool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'domain.create',
+    description: 'Create an active human-managed Bitterless todo domain only when Ral explicitly requests or authorizes it. Never create a domain implicitly while creating a todo.',
+    inputSchema: {
+      type: 'object',
+      required: ['title'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 200 },
+        description: { type: 'string', maxLength: 500 },
+      },
       additionalProperties: false,
     },
   },
@@ -116,7 +136,11 @@ const tools: McpTool[] = [
           type: 'boolean',
           description: 'Star the todo into Focus. Use true only for live-session human blockers; do not star backlog or deferrable work.',
         },
-        note: { type: ['string', 'null'], maxLength: 10000 },
+        note: {
+          type: 'string',
+          maxLength: 10000,
+          description: 'Use an empty string to clear the note.',
+        },
       },
       additionalProperties: false,
     },
@@ -136,7 +160,11 @@ const tools: McpTool[] = [
           type: 'boolean',
           description: 'Star the todo into Focus. Use true only for live-session human blockers; do not star backlog or deferrable work.',
         },
-        note: { type: ['string', 'null'], maxLength: 10000 },
+        note: {
+          type: 'string',
+          maxLength: 10000,
+          description: 'Use an empty string to clear the note.',
+        },
       },
       additionalProperties: false,
     },
@@ -192,7 +220,7 @@ const tools: McpTool[] = [
   },
 ];
 
-const writeMessage = (message: Record<string, unknown>): void => {
+const writeMessage = (message: object): void => {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 };
 
@@ -252,10 +280,23 @@ const callBridge = (endpoint: McpBridgeEndpoint, method: string, params: unknown
       if (!line) return;
 
       try {
-        const response = JSON.parse(line) as LocalRpcResponse;
+        const response = JSON.parse(line) as unknown;
+        const hasResult = isRecord(response) && Object.hasOwn(response, 'result');
+        const hasError = isRecord(response) && Object.hasOwn(response, 'error');
+        if (
+          !isRecord(response) ||
+          response.jsonrpc !== '2.0' ||
+          response.id !== id ||
+          hasResult === hasError
+        ) {
+          throw new Error('Bitterless MCP bridge returned an invalid JSON-RPC response');
+        }
         cleanup();
-        if ('error' in response) {
-          reject(new Error(response.error.message));
+        if (hasError) {
+          const message = isRecord(response.error) && typeof response.error.message === 'string'
+            ? response.error.message
+            : 'Bitterless MCP bridge returned an invalid error response';
+          reject(new Error(message));
           return;
         }
         resolve(response.result);
@@ -265,30 +306,35 @@ const callBridge = (endpoint: McpBridgeEndpoint, method: string, params: unknown
       }
     });
 
-    socket.on('error', (err: any) => {
+    socket.on('error', (err: Error) => {
       cleanup();
-      const bridgeTarget = endpoint.transport === 'win32-named-pipe' ? endpoint.path : endpoint.path;
-      reject(new Error(`Bitterless is not running or the MCP bridge is unavailable: ${bridgeTarget}. ${err?.message ?? ''}`.trim()));
+      reject(new Error(
+        `Bitterless is not running or the MCP bridge is unavailable: ${endpoint.path}. ${err.message}`.trim(),
+      ));
     });
   });
 };
 
-const createToolText = (toolName: string, result: unknown): string => {
+const createToolText = (toolName: string): string => {
   if (toolName.endsWith('.list')) {
     return `Bitterless ${toolName} completed.`;
   }
   return `Bitterless ${toolName} succeeded.`;
 };
 
-const getBridgeTimeoutMs = (toolName: string, args: any): number => {
+const getBridgeTimeoutMs = (toolName: string, args: unknown): number => {
   if (toolName !== 'event.wait') return REQUEST_TIMEOUT_MS;
-  const timeoutMs = typeof args?.timeoutMs === 'number' && Number.isFinite(args.timeoutMs)
-    ? Math.max(1000, Math.min(30000, Math.floor(args.timeoutMs)))
+  const timeoutValue = isRecord(args) ? args.timeoutMs : undefined;
+  const timeoutMs = typeof timeoutValue === 'number' && Number.isFinite(timeoutValue)
+    ? Math.max(1000, Math.min(30000, Math.floor(timeoutValue)))
     : 25000;
   return timeoutMs + 5000;
 };
 
-const handleRequest = async (request: McpRequest): Promise<void> => {
+const handleRequest = async (
+  request: McpRequest,
+  endpoint: McpBridgeEndpoint,
+): Promise<void> => {
   const id = request.id ?? null;
 
   if (request.method.startsWith('notifications/')) {
@@ -296,11 +342,14 @@ const handleRequest = async (request: McpRequest): Promise<void> => {
   }
 
   if (request.method === 'initialize') {
+    const params = isRecord(request.params) ? request.params : {};
     writeMessage({
       jsonrpc: '2.0',
       id,
       result: {
-        protocolVersion: request.params?.protocolVersion ?? '2025-06-18',
+        protocolVersion: typeof params.protocolVersion === 'string'
+          ? params.protocolVersion
+          : '2025-06-18',
         capabilities: {
           tools: {},
         },
@@ -330,15 +379,15 @@ const handleRequest = async (request: McpRequest): Promise<void> => {
   }
 
   if (request.method === 'tools/call') {
-    const toolName = request.params?.name;
+    const params = isRecord(request.params) ? request.params : {};
+    const toolName = params.name;
     if (typeof toolName !== 'string' || !tools.some((tool) => tool.name === toolName)) {
       writeError(id, -32602, 'Unknown Bitterless MCP tool');
       return;
     }
 
     try {
-      const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
-      const args = request.params?.arguments ?? {};
+      const args = params.arguments ?? {};
       const result = await callBridge(endpoint, toolName, args, getBridgeTimeoutMs(toolName, args));
       writeMessage({
         jsonrpc: '2.0',
@@ -347,14 +396,14 @@ const handleRequest = async (request: McpRequest): Promise<void> => {
           content: [
             {
               type: 'text',
-              text: createToolText(toolName, result),
+              text: createToolText(toolName),
             },
           ],
           structuredContent: result,
         },
       });
-    } catch (err: any) {
-      writeError(id, -32000, err?.message ?? 'Bitterless MCP tool failed');
+    } catch (err) {
+      writeError(id, -32000, getErrorMessage(err, 'Bitterless MCP tool failed'));
     }
     return;
   }
@@ -362,7 +411,10 @@ const handleRequest = async (request: McpRequest): Promise<void> => {
   writeError(id, -32601, `Method not found: ${request.method}`);
 };
 
-export const startBitterlessMcpStdioServer = async (): Promise<void> => {
+export const startBitterlessMcpStdioServer = async (
+  explicitEndpoint?: McpBridgeEndpoint,
+): Promise<void> => {
+  const endpoint = explicitEndpoint ?? getMcpBridgeEndpoint(app.getPath('userData'));
   const rl = readline.createInterface({
     input: process.stdin,
     crlfDelay: Infinity,
@@ -378,13 +430,13 @@ export const startBitterlessMcpStdioServer = async (): Promise<void> => {
 
   const runRequest = (request: McpRequest): void => {
     pendingRequests += 1;
-    handleRequest(request).catch((err: any) => {
+    handleRequest(request, endpoint).catch((err: unknown) => {
       const failure: LocalRpcFailure = {
         jsonrpc: '2.0',
         id: request.id ?? null,
         error: {
           code: -32000,
-          message: err?.message ?? 'Bitterless MCP request failed',
+          message: getErrorMessage(err, 'Bitterless MCP request failed'),
         },
       };
       writeMessage(failure);
@@ -394,7 +446,7 @@ export const startBitterlessMcpStdioServer = async (): Promise<void> => {
     });
   };
 
-  process.stderr.write('[bitterless-mcp] stdio server started\n');
+  process.stderr.write(`[bitterless-mcp] stdio server started (${endpoint.path})\n`);
 
   rl.on('line', (line) => {
     const trimmed = line.trim();
@@ -407,8 +459,8 @@ export const startBitterlessMcpStdioServer = async (): Promise<void> => {
     try {
       const request = JSON.parse(trimmed) as McpRequest;
       runRequest(request);
-    } catch (err: any) {
-      writeError(null, -32700, err?.message ?? 'Parse error');
+    } catch (err) {
+      writeError(null, -32700, getErrorMessage(err, 'Parse error'));
     }
   });
 

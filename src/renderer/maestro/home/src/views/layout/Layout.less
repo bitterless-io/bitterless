@@ -1,0 +1,47 @@
+.maestro-layout {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.maestro-layout__body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.maestro-layout__operation {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  background: #ffffff;
+}
+
+.maestro-layout__splash {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.maestro-layout__logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  opacity: 0.95;
+}
+
+.maestro-layout__control {
+  width: 0;
+  flex-shrink: 0;
+  background: #f7f8fa;
+  transition: width 0.2s ease-out;
+}
+
+.maestro-layout__control--open {
+  width: 480px;
+}

@@ -16,6 +16,8 @@ external_resources/*
 legacy/
 local.md
 demo/
+!src/main/maestro/demo/
+!src/main/maestro/demo/bookingDemo.service.ts
 local_test/
 dump/*
 !dump/.gitkeep
@@ -27,5 +29,5 @@ snapshots
 asar_unpacked
 .upload_checkpoint
 build/installer.nsh
-build/cowork-tools/
+build/maestro-tools/
 packages/micromeet-cli/release/

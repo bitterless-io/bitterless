@@ -1,6 +1,6 @@
 # micromeet CLI Manual
 
-`micromeet` is the Micromeet command line client bundled with Micromeet Cowork. Its primary domains match the Core authentication boundaries: `crms` for tenant/institution work and `sys` for platform administration.
+`micromeet` is the Micromeet command line client bundled with Bitterless Maestro. Its primary domains match the Core authentication boundaries: `crms` for tenant/institution work and `sys` for platform administration.
 
 ## Quick Start
 
@@ -79,7 +79,7 @@ micromeet crms auth status [--check] [--json]
 micromeet crms auth set-password [--password <password>] [--json]
 ```
 
-Login calls `POST /share/auth/password-login`. A standalone login must pass `--region`, set `MICROMEET_CRMS_REGION`/`MICROMEET_REGION`, or inherit the region from a credential last written by Cowork. Otherwise an interactive terminal asks for `SG`, `HK`, or `ID`; non-interactive use exits with guidance to pass `--region`. `--check` calls `POST /share/user/profile/detail` using the stored token. If login reports `activationRequired: yes`, the account is still invited and Core intentionally blocks business endpoints. Run `micromeet crms auth set-password`; it calls `POST /share/auth/set-password`, activates the account, and keeps using the stored token. Omit `--password` to enter it through the hidden prompt.
+Login calls `POST /share/auth/password-login`. A standalone login must pass `--region`, set `MICROMEET_CRMS_REGION`/`MICROMEET_REGION`, or inherit the region from a credential last written by Maestro. Otherwise an interactive terminal asks for `SG`, `HK`, or `ID`; non-interactive use exits with guidance to pass `--region`. `--check` calls `POST /share/user/profile/detail` using the stored token. If login reports `activationRequired: yes`, the account is still invited and Core intentionally blocks business endpoints. Run `micromeet crms auth set-password`; it calls `POST /share/auth/set-password`, activates the account, and keeps using the stored token. Omit `--password` to enter it through the hidden prompt.
 
 ### Sys
 
@@ -118,7 +118,10 @@ MICROMEET_CREDENTIAL_FILE
 
 Token resolution order is `--token`, realm token environment variable, `MICROMEET_TOKEN`, encrypted credential, then the legacy CRMS `~/.micromeet/session.json` compatibility file. A legacy JWT with an email claim is migrated into the encrypted CRMS file and the plaintext file is deleted on first use.
 
-Cowork is authoritative when it logs in. It writes a complete `cowork`-source CRMS credential through a temporary file and atomically replaces the previous credential. A Cowork SG login therefore replaces an earlier standalone ID token, account, workspace, and region together. Cowork logout removes the shared CRMS credential.
+Maestro is authoritative when it logs in. It writes a complete CRMS credential with the legacy
+protocol source value `cowork` through a temporary file and atomically replaces the previous
+credential. A Maestro SG login therefore replaces an earlier standalone ID token, account,
+workspace, and region together. Maestro logout removes the shared CRMS credential.
 
 ## CRMS Examples
 
@@ -171,11 +174,11 @@ mac_intel -> release/micromeet-macos-x64
 win64     -> release/micromeet-win-x64.exe
 ```
 
-Cowork stages only the current platform binary into the host's `build/cowork-tools` directory. electron-builder copies it to `Resources/cowork-tools` through `extraResources`, and the macOS signing configuration lists `Contents/Resources/cowork-tools/micromeet` in `mac.binaries`.
+Maestro stages only the current platform binary into the host's `build/maestro-tools` directory. electron-builder copies it to `Resources/maestro-tools` through `extraResources`, and the macOS signing configuration lists `Contents/Resources/maestro-tools/micromeet` in `mac.binaries`.
 
-At startup Cowork creates `~/.micromeet/bin/micromeet`, prepends that directory to child-process `PATH`, and synchronizes the AI CRMS browser login into the encrypted CRMS credential. Cowork-started coding-agent sessions can therefore run `micromeet` immediately. External Terminal sessions need `~/.micromeet/bin` on their shell `PATH`.
+At startup Maestro creates `~/.micromeet/bin/micromeet`, prepends that directory to child-process `PATH`, and synchronizes the AI CRMS browser login into the encrypted CRMS credential. Maestro-started coding-agent sessions can therefore run `micromeet` immediately. External Terminal sessions need `~/.micromeet/bin` on their shell `PATH`.
 
-The bundled CLI updates together with Cowork's application auto-update. The MVP does not rewrite shell startup files or provide a separate CLI self-update command.
+The bundled CLI updates together with Maestro's application auto-update. The MVP does not rewrite shell startup files or provide a separate CLI self-update command.
 
 ## Public Installation
 
@@ -206,4 +209,4 @@ yarn cli:publish
 yarn cli:publish:dry-run
 ```
 
-The public install page is generated and deployed by this Cowork-owned command at `https://assets.micromeet.ai/apps/micromeet-cli/install.html`.
+The public install page is generated and deployed by this Maestro-owned command at `https://assets.micromeet.ai/apps/micromeet-cli/install.html`.

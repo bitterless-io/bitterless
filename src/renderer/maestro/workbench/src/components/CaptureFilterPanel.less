@@ -1,0 +1,126 @@
+.capture-filter {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: #f8fafc;
+}
+
+.capture-filter__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.capture-filter__title {
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.capture-filter__actions,
+.capture-filter__rules__heading,
+.capture-filter__rules__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.capture-filter__body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.capture-filter__rules {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.capture-filter__rules + .capture-filter__rules {
+  margin-top: 12px;
+}
+
+.capture-filter__rules__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.capture-filter__rules__heading {
+  min-width: 0;
+  gap: 8px;
+}
+
+.capture-filter__rules__title {
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.capture-filter__rules__list {
+  padding: 8px;
+}
+
+.capture-filter__rules__row + .capture-filter__rules__row {
+  margin-top: 6px;
+}
+
+.capture-filter__rules__empty {
+  padding: 8px 10px;
+  border: 1px dashed #e5e7eb;
+  border-radius: 4px;
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.capture-filter__rules__select {
+  width: 116px;
+  flex-shrink: 0;
+}
+
+.capture-filter__rules__input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+
+.capture-filter__rules__input:focus {
+  border-color: #165dff;
+}
+
+.capture-filter__rules__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+}
+
+.capture-filter__rules__remove:hover {
+  background: #fef2f2;
+  color: #dc2626;
+}

@@ -1,14 +1,16 @@
 .login-view {
-  min-height: 100vh;
+  box-sizing: border-box;
   width: 100vw;
+  height: 100vh;
+  min-height: 0;
   display: grid;
   place-items: center;
   overflow: auto;
+  padding: clamp(20px, 4vw, 40px);
+  color: #1e2237;
   background:
-    linear-gradient(120deg, rgba(16, 19, 33, 0.96), rgba(30, 34, 55, 0.9)),
-    radial-gradient(circle at 18% 24%, rgba(96, 107, 157, 0.34), transparent 34%),
-    radial-gradient(circle at 82% 72%, rgba(196, 202, 223, 0.16), transparent 28%), #101321;
-  padding: 32px;
+    radial-gradient(circle at 18% 20%, rgba(196, 202, 223, 0.72), transparent 32%),
+    linear-gradient(135deg, #f3f5fc 0%, #ffffff 52%, #e2e4eb 100%);
 }
 
 .login-view__drag-region {
@@ -21,23 +23,27 @@
 }
 
 .login-view__panel {
+  box-sizing: border-box;
+  position: relative;
   width: min(420px, calc(100vw - 40px));
-  padding: 34px;
-  border: 1px solid rgba(196, 202, 223, 0.3);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 32px 34px;
+  border: 1px solid #c4cadf;
+  border-left: 4px solid #4e5882;
   border-radius: 8px;
-  background: rgba(248, 248, 248, 0.97);
-  box-shadow: 0 24px 80px rgba(16, 19, 33, 0.42);
+  background: #ffffff;
+  box-shadow: 0 20px 56px rgba(50, 57, 85, 0.16);
 }
 
 .login-view__mark {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 20px;
   color: #1e2237;
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0;
-  margin-bottom: 28px;
 }
 
 .login-view__mark-line {
@@ -45,17 +51,26 @@
   width: 32px;
   height: 2px;
   border-radius: 999px;
-  background: #606b9d;
+  background: #4e5882;
 }
 
 .login-view__copy {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+
+  h1 {
+    margin: 0;
+    color: #1e2237;
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.02em;
+  }
 
   p {
-    margin: 0;
+    margin: 8px 0 0;
     color: #606b9d;
     font-size: 14px;
-    line-height: 1.7;
+    line-height: 1.65;
   }
 }
 
@@ -65,14 +80,17 @@
   white-space: nowrap;
 }
 
-.login-view__password-modal {
+.login-view__password-modal,
+.login-view__recovery-modal {
   > p {
-    margin: 0 0 8px;
+    margin: 0 0 16px;
     color: #606b9d;
     font-size: 14px;
     line-height: 1.6;
   }
+}
 
+.login-view__password-modal {
   .login-view__account {
     margin-bottom: 20px;
     color: #323955;
@@ -81,13 +99,21 @@
 }
 
 .login-view__password-dialog,
-.login-view__password-dialog .arco-modal-body {
+.login-view__recovery-dialog {
+  border: 1px solid #c4cadf;
+  background: #ffffff;
+}
+
+.login-view__password-dialog .arco-modal-body,
+.login-view__recovery-dialog .arco-modal-body {
+  max-height: calc(100vh - 132px);
+  overflow-y: auto;
   background: #f3f5fc;
 }
 
 .login-view__modes {
   width: 100%;
-  margin-bottom: 22px;
+  margin-bottom: 20px;
 
   .arco-radio-button {
     flex: 1;
@@ -97,7 +123,7 @@
 
 .login-view__form {
   .arco-form-item {
-    margin-bottom: 18px;
+    margin-bottom: 16px;
   }
 
   .arco-form-item-label {
@@ -106,13 +132,39 @@
   }
 
   .arco-input-wrapper {
-    background: #fff;
+    background: #ffffff;
   }
 
   .arco-btn-primary {
-    margin-top: 6px;
+    margin-top: 4px;
     border-radius: 6px;
     font-weight: 700;
+
+    &:focus-visible {
+      outline: 3px solid rgba(96, 107, 157, 0.3);
+      outline-offset: 2px;
+    }
+  }
+}
+
+.login-view__forgot {
+  display: flex;
+  justify-content: flex-end;
+  margin: -12px 0 8px;
+
+  .arco-btn-text {
+    padding-right: 0;
+    color: #4e5882;
+  }
+
+  .arco-btn-text:hover {
+    color: #606b9d;
+    background: transparent;
+  }
+
+  .arco-btn-text:focus-visible {
+    outline: 2px solid #808ab1;
+    outline-offset: 2px;
   }
 }
 
@@ -128,7 +180,7 @@
 }
 
 .login-view__footer {
-  margin-top: 18px;
+  margin-top: 16px;
   color: #8188a2;
   font-size: 12px;
   line-height: 1.6;
@@ -144,11 +196,29 @@
     padding: 26px;
   }
 
+  .login-view__copy h1 {
+    font-size: 24px;
+  }
+
   .login-view__otp-field {
     grid-template-columns: minmax(0, 1fr) 104px;
 
     .arco-btn {
       width: 104px;
     }
+  }
+}
+
+@media (max-height: 640px) {
+  .login-view__panel {
+    max-height: calc(100vh - 32px);
+    padding-top: 26px;
+    padding-bottom: 26px;
+  }
+
+  .login-view__mark,
+  .login-view__copy,
+  .login-view__modes {
+    margin-bottom: 16px;
   }
 }

@@ -1,5 +1,6 @@
 import { BaseDao } from './base.dao';
 import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
+import type { DomainMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 
 export interface DomainRow {
   id: number;
@@ -11,13 +12,26 @@ export interface DomainRow {
   updated_at: number;
 }
 
-export class DomainDao extends BaseDao {
+export type RestoreDomainResult =
+  | 'restored'
+  | 'already_active'
+  | 'limit_reached'
+  | 'not_found';
+
+export class DomainDao extends BaseDao implements DomainMcpDaoApi {
   async create(params: { title?: string; description?: string }): Promise<DomainRow | undefined> {
     const now = Date.now();
     const result = await sqliteHelper.safeRun(
-      'INSERT INTO domain (title, description, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      `INSERT INTO domain (title, description, created_at, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE (
+         SELECT COUNT(*)
+         FROM domain
+         WHERE is_deleted = 0 AND archived = 0
+       ) < 17`,
       [params.title ?? 'Untitled', params.description ?? '', now, now],
     );
+    if (result.changes === 0) return undefined;
     return sqliteHelper.safeGet<DomainRow>(
       'SELECT * FROM domain WHERE id = ?',
       [result.lastInsertRowid],
@@ -64,6 +78,28 @@ export class DomainDao extends BaseDao {
       'UPDATE domain SET archived = ?, updated_at = ? WHERE id = ?',
       [params.archived, Date.now(), params.id],
     );
+  }
+
+  async restore(params: { id: number }): Promise<RestoreDomainResult> {
+    const result = await sqliteHelper.safeRun(
+      `UPDATE domain
+       SET archived = 0, updated_at = ?
+       WHERE id = ?
+         AND is_deleted = 0
+         AND archived = 1
+         AND (
+           SELECT COUNT(*)
+           FROM domain
+           WHERE is_deleted = 0 AND archived = 0
+         ) < 17`,
+      [Date.now(), params.id],
+    );
+    if (result.changes > 0) return 'restored';
+
+    const domain = await this.getById(params);
+    if (!domain || domain.is_deleted === 1) return 'not_found';
+    if (domain.archived === 0) return 'already_active';
+    return 'limit_reached';
   }
 }
 

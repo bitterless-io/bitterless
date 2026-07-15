@@ -3,6 +3,7 @@ import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
 import moment from 'moment';
 import { recordTodoEvent } from './todoEvent.dao';
 import type { TodoEventActor } from './todoEvent.dao';
+import type { TodoMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 
 export type TodoSource = 'human' | 'ai';
 
@@ -104,7 +105,7 @@ const parseEventPayload = (payload: string): Record<string, unknown> => {
   return {};
 };
 
-export class TodoDao extends BaseDao {
+export class TodoDao extends BaseDao implements TodoMcpDaoApi {
   async create(params: TodoInsertParams): Promise<TodoRow | undefined> {
     const now = Date.now();
     const source = normalizeTodoSource(params.source);
@@ -134,12 +135,12 @@ export class TodoDao extends BaseDao {
   async getByDomainId(params: { domainId: number; status?: number }): Promise<TodoRow[]> {
     if (params.status !== undefined) {
       return sqliteHelper.safeAll<TodoRow>(
-        'SELECT * FROM todos WHERE domain_id = ? AND status = ? ORDER BY created_at DESC',
+        'SELECT * FROM todos WHERE domain_id = ? AND status = ? AND is_deleted = 0 ORDER BY created_at DESC',
         [params.domainId, params.status],
       );
     }
     return sqliteHelper.safeAll<TodoRow>(
-      'SELECT * FROM todos WHERE domain_id = ? ORDER BY created_at DESC',
+      'SELECT * FROM todos WHERE domain_id = ? AND is_deleted = 0 ORDER BY created_at DESC',
       [params.domainId],
     );
   }
@@ -476,8 +477,9 @@ export class TodoDao extends BaseDao {
     return result;
   }
 
-  async hardDelete(params: { id: number; actor?: TodoEventActor }): Promise<void> {
+  async hardDelete(params: { id: number; actor?: TodoEventActor }): Promise<boolean> {
     const todo = await this.getById({ id: params.id });
+    if (!todo) return false;
     await sqliteHelper.safeRun(
       'DELETE FROM sub_todos WHERE todo_id = ?',
       [params.id],
@@ -486,19 +488,21 @@ export class TodoDao extends BaseDao {
       'DELETE FROM todos WHERE id = ?',
       [params.id],
     );
-    if (todo) {
-      await recordTodoEvent({
-        type: 'todo.deleted',
-        todoId: todo.id,
-        domainId: todo.domain_id,
-        actor: params.actor,
-        payload: { title: todo.title },
-      });
-    }
+    const remaining = await this.getById({ id: params.id });
+    if (remaining) return false;
+    await recordTodoEvent({
+      type: 'todo.deleted',
+      todoId: todo.id,
+      domainId: todo.domain_id,
+      actor: params.actor,
+      payload: { title: todo.title },
+    });
+    return true;
   }
 
-  async moveToDomain(params: { id: number; domainId: number; actor?: TodoEventActor }): Promise<void> {
+  async moveToDomain(params: { id: number; domainId: number; actor?: TodoEventActor }): Promise<TodoRow | undefined> {
     const before = await this.getById({ id: params.id });
+    if (!before) return undefined;
     await sqliteHelper.safeRun(
       'UPDATE todos SET domain_id = ?, updated_at = ? WHERE id = ?',
       [params.domainId, Date.now(), params.id],
@@ -517,6 +521,7 @@ export class TodoDao extends BaseDao {
         },
       });
     }
+    return todo;
   }
 
   // --- Sort helpers ---

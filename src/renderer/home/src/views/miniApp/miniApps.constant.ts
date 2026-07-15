@@ -1,6 +1,7 @@
 import todoIcon from '@renderer/common/assets/icons/menu-icons/todo.png';
 import omniIcon from '@renderer/common/assets/icons/omni.png';
-import coworkIcon from '@renderer/common/assets/icons/cowork.png';
+import maestroIcon from '@renderer/common/assets/icons/maestro.png';
+import coinIcon from '@renderer/common/assets/icons/coin.png';
 import type { en } from '@renderer/common/i18n/en';
 
 export interface MiniApp {
@@ -8,12 +9,13 @@ export interface MiniApp {
   name: string;
   subtitle: string;
   icon: string;
-  action: () => void;
+  action: () => void | Promise<void>;
 }
 
 export const createMiniApps = (
   openTodo: () => void,
-  openCowork: () => void,
+  openMaestro: () => void,
+  openCoin: () => void,
   openOmniBrowser: () => void,
   i18n: typeof en,
 ): MiniApp[] => [
@@ -25,11 +27,18 @@ export const createMiniApps = (
     action: openTodo,
   },
   {
-    id: 'cowork',
-    name: i18n.miniApp.cowork.name,
-    subtitle: i18n.miniApp.cowork.subtitle,
-    icon: coworkIcon,
-    action: openCowork,
+    id: 'maestro',
+    name: i18n.miniApp.maestro.name,
+    subtitle: i18n.miniApp.maestro.subtitle,
+    icon: maestroIcon,
+    action: openMaestro,
+  },
+  {
+    id: 'coin',
+    name: i18n.miniApp.coin.name,
+    subtitle: i18n.miniApp.coin.subtitle,
+    icon: coinIcon,
+    action: openCoin,
   },
   {
     id: 'omni-browser',

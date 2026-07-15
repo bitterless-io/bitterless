@@ -3,14 +3,13 @@ import { defineConfig } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 import { config as dotenvConfig } from 'dotenv'
 import monacoEditorPlugin from 'vite-plugin-monaco-editor-esm'
-import tailwindcss from '@tailwindcss/vite'
 import theme from './theme'
 import { readFileSync } from 'fs'
 import JSON5 from 'json5'
 
 dotenvConfig({ path: resolve('.env.rig') })
 
-const coworkBuildDefine = {
+const maestroBuildDefine = {
   __COACH_BUILD_REGION__: JSON.stringify(process.env.VITE_COACH_REGION || 'SG'),
   __COACH_AI_CRMS_RELAY_BASE_URL__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL || ''),
   __COACH_AI_CRMS_RELAY_BASE_URL_SG__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_SG || ''),
@@ -18,11 +17,11 @@ const coworkBuildDefine = {
   __COACH_AI_CRMS_RELAY_BASE_URL_ID__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_ID || '')
 }
 
-const coworkSqliteDevCspPlugin = {
-  name: 'bitterless:cowork-sqlite-dev-csp',
+const maestroSqliteDevCspPlugin = {
+  name: 'bitterless:maestro-sqlite-dev-csp',
   apply: 'serve' as const,
   transformIndexHtml(html: string, context: { path: string }) {
-    if (!context.path.includes('coworkSqlite')) return html
+    if (!context.path.includes('/maestro/sqlite/')) return html
     return html.replace(
       /(<meta http-equiv="Content-Security-Policy" content=")default-src 'none'("\s*\/>)/,
       "$1default-src 'none'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* wss://localhost:*$2"
@@ -30,7 +29,19 @@ const coworkSqliteDevCspPlugin = {
   }
 }
 
-function generateEnvDefines() {
+const coinDevCspPlugin = {
+  name: 'bitterless:coin-dev-csp',
+  apply: 'serve' as const,
+  transformIndexHtml(html: string, context: { path: string }) {
+    if (!context.path.includes('/coin/')) return html
+    return html.replace(
+      "connect-src 'none'",
+      "connect-src 'self' ws://localhost:* wss://localhost:*"
+    )
+  }
+}
+
+const generateEnvDefines = () => {
   const envRigPath = resolve('env.rig.json5');
   const envRigContent = readFileSync(envRigPath, 'utf-8');
   const envRigConfig = JSON5.parse(envRigContent);
@@ -47,7 +58,7 @@ function generateEnvDefines() {
 
 export default defineConfig({
   main: {
-    define: { ...generateEnvDefines(), ...coworkBuildDefine },
+    define: { ...generateEnvDefines(), ...maestroBuildDefine },
     build: {
       rollupOptions: {
         input: {
@@ -63,8 +74,8 @@ export default defineConfig({
         '@preload': resolve('src/preload'),
         '@shared': resolve('src/shared'),
         '@main': resolve('src/main'),
-        '@cowork-main': resolve('src/cowork/main'),
-        '@cowork-shared': resolve('src/cowork/shared')
+        '@maestro-main': resolve('src/main/maestro'),
+        '@maestro-shared': resolve('src/shared/maestro')
       }
     },
     esbuild: {
@@ -76,7 +87,7 @@ export default defineConfig({
     }
   },
   preload: {
-    define: coworkBuildDefine,
+    define: maestroBuildDefine,
     build: {
       rollupOptions: {
         input: {
@@ -87,8 +98,9 @@ export default defineConfig({
           todo: resolve('src/preload/todo/todo.preload.ts'),
           omni: resolve('src/preload/omni/omni.preload.ts'),
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
-          coworkCoach: resolve('src/cowork/preload/coach.preload.ts'),
-          coworkSqlite: resolve('src/cowork/preload/sqlite.preload.ts')
+          coin: resolve('src/preload/coin/coin.preload.ts'),
+          maestroCoach: resolve('src/preload/maestro/coach.preload.ts'),
+          maestroSqlite: resolve('src/preload/maestro/sqlite.preload.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp', /tiktoken/, /js-tiktoken/, 'linkedom', '@mozilla/readability', 'playwright', 'playwright-core']
       }
@@ -99,8 +111,8 @@ export default defineConfig({
         '@preload': resolve('src/preload'),
         '@shared': resolve('src/shared'),
         '@main': resolve('src/main'),
-        '@cowork-main': resolve('src/cowork/main'),
-        '@cowork-shared': resolve('src/cowork/shared')
+        '@maestro-main': resolve('src/main/maestro'),
+        '@maestro-shared': resolve('src/shared/maestro')
       }
     },
     esbuild: {
@@ -112,7 +124,7 @@ export default defineConfig({
     }
   },
   renderer: {
-    define: coworkBuildDefine,
+    define: maestroBuildDefine,
     build: {
       rollupOptions: {
         input: {
@@ -124,10 +136,11 @@ export default defineConfig({
           'omni/omniCell': resolve('src/renderer/omni/omniCell/index.html'),
           'omni/omniControl': resolve('src/renderer/omni/omniControl/index.html'),
           'omni/omniWindow': resolve('src/renderer/omni/omniWindow/index.html'),
-          coworkHome: resolve('src/renderer/coworkHome/index.html'),
-          coworkControl: resolve('src/renderer/coworkControl/index.html'),
-          coworkWorkbench: resolve('src/renderer/coworkWorkbench/index.html'),
-          coworkSqlite: resolve('src/renderer/coworkSqlite/index.html')
+          coin: resolve('src/renderer/coin/index.html'),
+          maestroHome: resolve('src/renderer/maestro/home/index.html'),
+          maestroControl: resolve('src/renderer/maestro/control/index.html'),
+          maestroWorkbench: resolve('src/renderer/maestro/workbench/index.html'),
+          maestroSqlite: resolve('src/renderer/maestro/sqlite/index.html')
         }
       }
     },
@@ -149,16 +162,16 @@ export default defineConfig({
         '@preload': resolve('src/preload'),
         '@shared': resolve('src/shared'),
         '@main': resolve('src/main'),
-        '@cowork-main': resolve('src/cowork/main'),
-        '@cowork-shared': resolve('src/cowork/shared'),
-        '@cowork-renderer': resolve('src/cowork/renderer'),
+        '@maestro-main': resolve('src/main/maestro'),
+        '@maestro-shared': resolve('src/shared/maestro'),
+        '@maestro-renderer': resolve('src/renderer/maestro'),
         '@': resolve('src/renderer/home/src')
       }
     },
     plugins: [
       vue(),
-      tailwindcss(),
-      coworkSqliteDevCspPlugin,
+      coinDevCspPlugin,
+      maestroSqliteDevCspPlugin,
       monacoEditorPlugin({ customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork') })
     ],
     css: {

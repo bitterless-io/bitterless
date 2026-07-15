@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/main/mcp/**/*.ts",
+    "../../src/main/env.d.ts",
+    "../../src/main/xpc/mcp.handler.ts",
+    "../../src/preload/env.d.ts",
+    "../../src/preload/sqlite/dao/domain.dao.ts",
+    "../../src/preload/sqlite/dao/todo.dao.ts",
+    "../../src/preload/sqlite/dao/todoEvent.dao.ts",
+    "../../src/shared/mcp/**/*.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noCheck": false,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true
+  }
+}

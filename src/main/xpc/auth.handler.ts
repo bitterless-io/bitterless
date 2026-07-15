@@ -8,17 +8,20 @@ import { omniWindowHelper } from '@main/windows/omniWindow.helper';
 import { sqliteWindowHelper } from '@main/windows/sqliteWindow.helper';
 import { pluginTestHandler } from './pluginTest.handler';
 import { todoWindowHandler } from './todoWindow.handler';
-import { coworkWindowHandler } from './coworkWindow.handler';
+import { coinWindowHandler } from './coinWindow.handler';
+import { maestroWindowHandler } from './maestroWindow.handler';
 
 class AuthHandler extends XpcMainHandler {
   private invalidating = false;
 
   async activateSession(): Promise<void> {
     await this._ensureSqliteWindow();
-    await coworkWindowHandler.prepareForAuthenticatedSession();
+    await maestroWindowHandler.prepareForAuthenticatedSession();
+    await coinWindowHandler.prepareForAuthenticatedSession();
   }
 
   async invalidateSession(params: AuthInvalidationPayload = {}): Promise<void> {
+    coinWindowHandler.lockForAuthInvalidation();
     if (this.invalidating) return;
 
     this.invalidating = true;
@@ -71,11 +74,14 @@ class AuthHandler extends XpcMainHandler {
   }
 
   private async _closeSecondaryWindows(): Promise<void> {
+    await coinWindowHandler._destroyForAuth().catch((err) => {
+      console.warn('[AuthHandler] Failed to destroy Coin window:', err);
+    });
     await todoWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy todo window:', err);
     });
-    await coworkWindowHandler._destroyForAuth().catch((err) => {
-      console.warn('[AuthHandler] Failed to destroy Cowork window:', err);
+    await maestroWindowHandler._destroyForAuth().catch((err) => {
+      console.warn('[AuthHandler] Failed to destroy Maestro window:', err);
     });
     await pluginTestHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy plugin test windows:', err);

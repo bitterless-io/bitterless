@@ -18,6 +18,7 @@ class MainWindowHelper extends WindowHelper {
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    backgroundColor: '#F3F5FC',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 8 } }
       : { frame: false }),

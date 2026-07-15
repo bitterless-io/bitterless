@@ -32,7 +32,7 @@
   justify-content: center;
   font-size: 16px;
   flex-shrink: 0;
-  background: oklch(0.951 0.013 255.508);
+  background: var(--bl-royalblue-100);
 }
 
 .message-list__item__content {
@@ -44,14 +44,14 @@
 }
 
 .message-list__item--user .message-list__item__content {
-  background: oklch(0.623 0.214 259.815);
-  color: oklch(1 0 0);
+  background: var(--bl-royalblue-600);
+  color: #ffffff;
   border-bottom-right-radius: 4px;
 }
 
 .message-list__item--assistant .message-list__item__content {
-  background: oklch(0.968 0.007 247.896);
-  color: oklch(0.269 0.005 286.033);
+  background: #ffffff;
+  color: var(--bl-royalblue-900);
   border-bottom-left-radius: 4px;
 }
 
@@ -64,7 +64,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: oklch(0.637 0.013 264.364);
+  color: var(--bl-royalblue-400);
   font-size: 14px;
 }
 
@@ -103,25 +103,25 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #a5b4fc;
+  background: var(--bl-royalblue-400);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 2px 8px oklch(0 0 0 / 0.18);
+  box-shadow: 0 2px 8px rgba(50, 57, 85, 0.18);
   transition: background 0.15s;
   user-select: none;
   z-index: 10;
 
   .tabler-icon {
-    color: oklch(1 0 0);
+    color: #ffffff;
   }
 
   &:hover {
-    background: oklch(0.623 0.214 259.815);
+    background: var(--bl-royalblue-500);
   }
 
   &--new {
-    background: #a5b4fc;
+    background: var(--bl-royalblue-600);
   }
 }

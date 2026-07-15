@@ -3,7 +3,7 @@ process.env['LANGCHAIN_CALLBACKS_BACKGROUND'] = 'false';
 process.env['TIKTOKEN_CACHE_DIR'] = '';
 
 // Importing xpc/preload auto-exposes xpcRenderer to window
-import 'electron-xpc/preload';
+import { XpcPreloadHandler } from 'electron-xpc/preload';
 import { sqliteManager } from './sqliteHelper/sqlite.manager';
 import { initMessageServer } from './messageServer/messageServer';
 // Table imports — register table schemas before init
@@ -33,6 +33,10 @@ import { pathHelper } from '@shared/pathHelper/preload/pathPreload.helper';
 import * as path from 'path';
 import * as fs from 'fs';
 import type Database from 'better-sqlite3-multiple-ciphers';
+import type {
+  CoreSqliteBootApi,
+  CoreSqliteBootResult,
+} from '@shared/mcp/mcpBridge.shared';
 
 interface TableColumnInfo {
   name: string;
@@ -91,11 +95,42 @@ const loadTiktokenLocal = async (): Promise<void> => {
   }
 };
 
-const bootstrap = async (): Promise<void> => {
+let bootResult: CoreSqliteBootResult = {
+  ok: false,
+  error: 'Core SQLite preload has not finished booting.',
+};
+
+const bootSqlite = async (): Promise<void> => {
+  try {
+    await sqliteManager.init();
+    bootResult = { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    bootResult = { ok: false, error: message };
+    console.error('[sqlite.preload] SQLite init failed:', err);
+  }
+};
+
+// The preload may be evaluated for an initial about:blank document. Only the actual hidden SQLite
+// renderer owns the database bootstrap and its readiness result.
+const isSqliteRendererDocument = location.pathname.endsWith('/sqlite/index.html');
+const bootPromise = isSqliteRendererDocument ? bootSqlite() : Promise.resolve();
+
+export class CoreSqliteBootDao extends XpcPreloadHandler implements CoreSqliteBootApi {
+  async ready(): Promise<CoreSqliteBootResult> {
+    await bootPromise;
+    return bootResult;
+  }
+}
+
+export const coreSqliteBootDao = new CoreSqliteBootDao();
+
+const bootstrapServices = async (): Promise<void> => {
+  await bootPromise;
+  if (!bootResult.ok) return;
   await loadTiktokenLocal();
-  await sqliteManager.init();
   initMessageServer();
   await initQdrant();
 };
 
-bootstrap().catch((err) => console.error('[sqlite.preload] bootstrap failed:', err));
+bootstrapServices().catch((err) => console.error('[sqlite.preload] service bootstrap failed:', err));

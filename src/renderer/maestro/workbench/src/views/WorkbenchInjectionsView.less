@@ -1,0 +1,157 @@
+.workbench-injections {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  background: #fff;
+}
+
+.workbench-injections__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 4px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.workbench-injections__title,
+.workbench-injections__domain__name-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workbench-injections__title__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 6px;
+  background: #eef4ff;
+  color: #165dff;
+}
+
+.workbench-injections__title__body,
+.workbench-injections__domain__identity {
+  min-width: 0;
+}
+
+.workbench-injections__title__heading,
+.workbench-injections__domain__name,
+.workbench-injections__trigger__title {
+  overflow: hidden;
+  color: #111827;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-injections__title__heading {
+  font-size: 13px;
+}
+
+.workbench-injections__title__subtitle,
+.workbench-injections__domain__meta {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.workbench-injections__body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 4px 0;
+  overflow: auto;
+}
+
+.workbench-injections__empty {
+  margin-top: 48px;
+}
+
+.workbench-injections__list,
+.workbench-injections__domain {
+  display: grid;
+}
+
+.workbench-injections__list {
+  gap: 8px;
+}
+
+.workbench-injections__domain {
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fbfcfe;
+  font-size: 12px;
+  box-shadow: 0 1px 0 rgb(15 23 42 / 3%);
+}
+
+.workbench-injections__domain__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workbench-injections__domain__name {
+  max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.workbench-injections__domain__current {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workbench-injections__domain__meta {
+  margin-top: 4px;
+}
+
+.workbench-injections__triggers {
+  display: grid;
+  gap: 6px;
+}
+
+.workbench-injections__trigger {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.workbench-injections__trigger__title {
+  font-size: 12px;
+}
+
+.workbench-injections__trigger__description {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 16px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (min-width: 768px) {
+  .workbench-injections__triggers {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

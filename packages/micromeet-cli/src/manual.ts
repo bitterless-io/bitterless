@@ -61,7 +61,7 @@ const helpEntries: Record<string, HelpEntry> = {
     options: [
       '--email <email>          Login email; prompts when omitted.',
       '--password <password>    Login password; hidden prompt when omitted.',
-      '--region <SG|HK|ID>      Required unless inheriting a Cowork-selected region.',
+      '--region <SG|HK|ID>      Required unless inheriting a Maestro-selected region.',
       '--language <language>    Login language, default en.'
     ]
   },

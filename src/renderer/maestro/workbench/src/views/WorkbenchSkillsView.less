@@ -1,0 +1,365 @@
+.workbench-skills {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: 160px 240px minmax(0, 1fr);
+  background: #fff;
+}
+
+.workbench-skills__domains,
+.workbench-skills__catalog,
+.workbench-skills__detail {
+  min-height: 0;
+  overflow: auto;
+}
+
+.workbench-skills__domains {
+  border-right: 1px solid #e5e7eb;
+  background: #f6f8fb;
+}
+
+.workbench-skills__domains__title,
+.workbench-skills__catalog__header {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.workbench-skills__domains__title,
+.workbench-skills__catalog__title {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.workbench-skills__domain,
+.workbench-skills__skill {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  background: transparent;
+  text-align: left;
+}
+
+.workbench-skills__domain {
+  padding: 8px 12px;
+  color: #4b5563;
+}
+
+.workbench-skills__domain:hover,
+.workbench-skills__skill:hover {
+  background: rgb(255 255 255 / 70%);
+}
+
+.workbench-skills__domain--active,
+.workbench-skills__skill--active {
+  background: #fff;
+}
+
+.workbench-skills__domain--active {
+  color: #165dff;
+}
+
+.workbench-skills__domain__name,
+.workbench-skills__domain__meta,
+.workbench-skills__skill__name,
+.workbench-skills__skill__meta {
+  display: block;
+}
+
+.workbench-skills__domain__name,
+.workbench-skills__skill__name,
+.workbench-skills__catalog__title,
+.workbench-skills__detail__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-skills__domain__name {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.workbench-skills__domain__meta {
+  margin-top: 2px;
+  color: #9ca3af;
+  font-size: 10px;
+}
+
+.workbench-skills__domain__meta--active {
+  color: #165dff;
+}
+
+.workbench-skills__empty {
+  margin-top: 32px;
+}
+
+.workbench-skills__catalog {
+  border-right: 1px solid #e5e7eb;
+  background: #eef2f5;
+}
+
+.workbench-skills__catalog__header,
+.workbench-skills__catalog__actions,
+.workbench-skills__detail__header,
+.workbench-skills__detail__actions,
+.workbench-skills__tags,
+.workbench-skills__audit__header {
+  display: flex;
+  align-items: center;
+}
+
+.workbench-skills__catalog__header {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workbench-skills__catalog__actions,
+.workbench-skills__detail__actions {
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.workbench-skills__skill {
+  padding: 12px;
+}
+
+.workbench-skills__skill__name {
+  color: #111827;
+  font-size: 13px;
+}
+
+.workbench-skills__skill__meta {
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.workbench-skills__icon-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.workbench-skills__icon-action--small {
+  width: 24px;
+  height: 24px;
+}
+
+.workbench-skills__icon-action:hover {
+  background: #f4f7fb;
+  color: #374151;
+}
+
+.workbench-skills__icon-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.workbench-skills__detail {
+  padding: 16px;
+  background: #fff;
+}
+
+.workbench-skills__detail__empty {
+  margin-top: 40px;
+}
+
+.workbench-skills__detail__header {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.workbench-skills__detail__title {
+  margin: 0;
+  color: #111827;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.workbench-skills__description {
+  margin: 0 0 8px;
+  color: #6b7280;
+  line-height: 1.625;
+}
+
+.workbench-skills__notice,
+.workbench-skills__rules,
+.workbench-skills__audit,
+.workbench-skills__markdown {
+  margin-bottom: 12px;
+  border-radius: 6px;
+}
+
+.workbench-skills__notice {
+  padding: 10px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.workbench-skills__notice--external {
+  border: 1px solid #bae6fd;
+  background: #f0f9ff;
+  color: #0c4a6e;
+}
+
+.workbench-skills__tags {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workbench-skills__tags--triggers {
+  margin-bottom: 6px;
+}
+
+.workbench-skills__tags--inputs {
+  margin-bottom: 10px;
+}
+
+.workbench-skills__rules {
+  padding: 10px;
+  border: 1px solid #ddd6fe;
+  background: #f5f3ff;
+}
+
+.workbench-skills__rules__title {
+  margin-bottom: 4px;
+  color: #6d28d9;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workbench-skills__rules__content {
+  margin: 0;
+  color: #4c1d95;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.workbench-skills__audit {
+  padding: 10px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+}
+
+.workbench-skills__audit__header {
+  gap: 6px;
+  margin-bottom: 4px;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workbench-skills__audit__issue {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 70%);
+  color: #451a03;
+  font-size: 12px;
+}
+
+.workbench-skills__audit__list {
+  display: block;
+}
+
+.workbench-skills__audit__issue + .workbench-skills__audit__issue {
+  margin-top: 4px;
+}
+
+.workbench-skills__audit__severity {
+  margin-right: 4px;
+}
+
+.workbench-skills__audit__path {
+  margin-left: 4px;
+  color: #b45309;
+  font-size: 11px;
+}
+
+.workbench-skills__markdown {
+  max-height: 420px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  background: #fbfcfe;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.workbench-skills__markdown h1,
+.workbench-skills__markdown h2,
+.workbench-skills__markdown h3,
+.workbench-skills__markdown h4,
+.workbench-skills__markdown h5,
+.workbench-skills__markdown h6 {
+  margin: 10px 0 4px;
+  font-weight: 600;
+}
+
+.workbench-skills__markdown p {
+  margin: 0 0 8px;
+}
+
+.workbench-skills__markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.workbench-skills__markdown ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.workbench-skills__markdown li {
+  margin: 2px 0;
+}
+
+.workbench-skills__markdown a {
+  color: #165dff;
+  text-decoration: underline;
+}
+
+.workbench-skills__markdown strong {
+  font-weight: 600;
+}
+
+.workbench-skills__markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgb(15 23 42 / 8%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.workbench-skills__markdown pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f6f8fa;
+}
+
+.workbench-skills__markdown pre code {
+  padding: 0;
+  background: transparent;
+}

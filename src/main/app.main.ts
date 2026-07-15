@@ -2,6 +2,7 @@ import { app, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { electronApp, optimizer } from '@electron-toolkit/utils';
+import { createXpcMainEmitter } from 'electron-xpc/main';
 import { packageMainHelper } from '../shared/packageHelper/main/package.helper';
 import { pathMainHelper } from '../shared/pathHelper/main/pathMain.helper';
 import { mainWindowHelper } from './windows/mainWindow.helper';
@@ -17,11 +18,39 @@ import './xpc/app.handler';
 import { updateService } from '@main/updateHelper/update.service';
 import { mcpBridgeServer } from './mcp/mcpBridge.server';
 import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
-import { coworkWindowHandler } from './xpc/coworkWindow.handler';
-import { COWORK_PARTITION } from '@cowork-main/data/coworkDataRoot';
+import { mcpHandler } from './xpc/mcp.handler';
+import { coinWindowHandler } from './xpc/coinWindow.handler';
+import { maestroWindowHandler } from './xpc/maestroWindow.handler';
+import { applicationLanguageService } from './i18n/applicationLanguage.service';
+import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot';
+import {
+  MCP_BRIDGE_PATH_ARG,
+  parseMcpBridgeEndpointArg,
+  type CoreSqliteBootApi,
+} from '@shared/mcp/mcpBridge.shared';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isE2E = process.env.BITTERLESS_E2E === '1';
+const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
+
+const waitForWindowLoad = (window: Electron.BrowserWindow): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      window.webContents.removeListener('did-finish-load', onLoaded);
+      window.webContents.removeListener('did-fail-load', onFailed);
+    };
+    const onLoaded = (): void => {
+      cleanup();
+      resolve();
+    };
+    const onFailed = (_event: Electron.Event, code: number, description: string): void => {
+      cleanup();
+      reject(new Error(`[sqlite] hidden window failed to load: ${code} ${description}`));
+    };
+    window.webContents.once('did-finish-load', onLoaded);
+    window.webContents.once('did-fail-load', onFailed);
+  });
+};
 
 const configureE2EUserData = (): void => {
   if (!isE2E) return;
@@ -85,7 +114,7 @@ const installE2ENetworkGuard = (): void => {
     return deniedResponse(request);
   };
 
-  const coworkHandler = async (request: Request): Promise<Response> => {
+  const maestroHandler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (
       url.protocol === 'http:' &&
@@ -103,7 +132,7 @@ const installE2ENetworkGuard = (): void => {
 
   for (const scheme of ['http', 'https']) {
     session.defaultSession.protocol.handle(scheme, defaultHandler);
-    session.fromPartition(COWORK_PARTITION).protocol.handle(scheme, coworkHandler);
+    session.fromPartition(MAESTRO_PARTITION).protocol.handle(scheme, maestroHandler);
   }
 };
 
@@ -134,8 +163,9 @@ const cleanupResources = (): Promise<void> => {
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
 
-    try { mcpBridgeServer.stop(); } catch {}
-    try { await coworkWindowHandler.destroyForHostQuit(); } catch {}
+    try { await mcpBridgeServer.stop(); } catch {}
+    try { await coinWindowHandler.destroyForHostQuit(); } catch {}
+    try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
     try { mainWindowHelper.destroy(); } catch {}
     try { sqliteWindowHelper.destroy(); } catch {}
     try { llamaWindowHelper.destroy(); } catch {}
@@ -151,7 +181,13 @@ const cleanupResources = (): Promise<void> => {
 app.whenReady().then(async () => {
   if (isMcpHelperMode) {
     redirectConsoleToStderr();
-    await startBitterlessMcpStdioServer();
+    try {
+      const endpoint = parseMcpBridgeEndpointArg(process.argv);
+      await startBitterlessMcpStdioServer(endpoint);
+    } catch (err) {
+      console.error(`[bitterless-mcp] invalid ${MCP_BRIDGE_PATH_ARG}:`, err);
+      app.exit(2);
+    }
     return;
   }
 
@@ -172,21 +208,41 @@ app.whenReady().then(async () => {
 
   // 先启动 SQLite 进程并等待其准备就绪
   const sqliteWindow = sqliteWindowHelper.create();
-  await new Promise<void>((resolve) => {
-    sqliteWindow.webContents.on('did-finish-load', () => {
-      resolve();
-    });
-  });
+  await waitForWindowLoad(sqliteWindow);
 
+  let coreSqliteReady = false;
   try {
-    await mcpBridgeServer.start();
+    const coreSqliteResult = await coreSqliteBoot.ready();
+    if (!coreSqliteResult?.ok) {
+      throw new Error(coreSqliteResult?.error || 'Core SQLite preload did not become ready');
+    }
+    coreSqliteReady = true;
   } catch (err) {
-    console.warn('[app] MCP bridge failed to start:', err);
+    console.warn('[app] MCP integration disabled because core SQLite is unavailable:', err);
+  }
+
+  await applicationLanguageService.initialize();
+
+  let mcpBridgeStarted = false;
+  if (coreSqliteReady) {
+    try {
+      await mcpBridgeServer.start();
+      mcpBridgeStarted = true;
+    } catch (err) {
+      console.warn('[app] MCP integration disabled:', err);
+    }
+  }
+  if (mcpBridgeStarted) {
+    try {
+      await mcpHandler.ensureShim();
+    } catch (err) {
+      console.warn('[app] MCP helper generation failed; bridge remains available:', err);
+    }
   }
 
   // SQLite 进程准备就绪后，再启动主窗口和其他窗口
   // llamaWindowHelper.create();
-  mainWindowHelper.create();
+  await mainWindowHelper.create();
   // connectorWindowHelper.create();
 
   // 初始化系统托盘 (仅 Windows)

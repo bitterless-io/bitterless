@@ -1,5 +1,8 @@
 # 颜色
 
+> 历史颜色探索稿。当前设计规范以 [`docs/design/colors.md`](../docs/design/colors.md) 为准；
+> 新增或修改主题色、菜单图标状态色时，不再直接更新本文件。
+
 ## 主题色
 - 50:#f8f8f8
 - #eceef5

@@ -1,12 +1,12 @@
 <template>
   <div class="language-setting">
     <div class="language-setting__header">
-      <h3 class="language-setting__title">{{ i18nHelper.setting.language.label }}</h3>
+      <h3 class="language-setting__title">{{ i18nHelper.setting.general.language.label }}</h3>
     </div>
     <div class="language-setting__body">
       <a-radio-group v-model="languageSettingStore.currentLanguage" direction="vertical" @change="onLanguageChange">
-        <a-radio value="en">{{ i18nHelper.setting.language.en }}</a-radio>
-        <a-radio value="zh">{{ i18nHelper.setting.language.zh }}</a-radio>
+        <a-radio value="en">{{ i18nHelper.setting.general.language.en }}</a-radio>
+        <a-radio value="zh">{{ i18nHelper.setting.general.language.zh }}</a-radio>
       </a-radio-group>
     </div>
   </div>
@@ -21,8 +21,8 @@ onMounted(async () => {
   await languageSettingStore.loadLanguage();
 });
 
-const onLanguageChange = (): void => {
-  languageSettingStore.changeLanguage(languageSettingStore.currentLanguage);
+const onLanguageChange = async (): Promise<void> => {
+  await languageSettingStore.changeLanguage(languageSettingStore.currentLanguage);
 };
 </script>
 

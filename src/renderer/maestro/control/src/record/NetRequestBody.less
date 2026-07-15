@@ -1,0 +1,34 @@
+.network-request__summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.network-request__method,
+.network-request__status {
+  flex-shrink: 0;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.network-request__method {
+  background: rgba(29, 79, 145, 0.1);
+  color: #1d4f91;
+  text-transform: uppercase;
+}
+
+.network-request__url {
+  overflow: hidden;
+  color: #374151;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-status--server-error { background: #fee2e2; color: #b91c1c; }
+.record-status--client-error { background: #fef3c7; color: #b45309; }
+.record-status--success { background: #d1fae5; color: #047857; }
+.record-status--neutral { background: #f3f4f6; color: #4b5563; }

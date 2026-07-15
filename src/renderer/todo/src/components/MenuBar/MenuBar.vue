@@ -1,11 +1,18 @@
 <template>
-  <div class="menubar" :class="menubarClass" @dblclick="handleDoubleClick">
+  <div name="menubar" class="menubar" :class="menubarClass" @dblclick="handleDoubleClick">
     <span class="menubar__title">{{ i18nHelper.todo.title }}</span>
-    <div class="menubar__actions">
+    <div name="menubar__actions" class="menubar__actions">
       <a-tooltip :content="i18nHelper.todo.archivedDomains" position="br" mini>
-        <a-button size="mini" type="text" @click="handleOpenArchivedDomains">
+        <a-button
+          size="mini"
+          type="text"
+          :loading="archivedDomainsLoading"
+          :title="i18nHelper.todo.archivedDomains"
+          :aria-label="i18nHelper.todo.archivedDomains"
+          @click="handleOpenArchivedDomains"
+        >
           <template #icon>
-            <IconTrash />
+            <IconArchive />
           </template>
         </a-button>
       </a-tooltip>
@@ -80,6 +87,7 @@
 import { computed, nextTick, ref } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import {
+  IconArchive,
   IconExternalLink,
   IconMaximize,
   IconMinus,
@@ -87,7 +95,6 @@ import {
   IconRefresh,
   IconRobot,
   IconSettings,
-  IconTrash,
   IconX
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
@@ -109,6 +116,7 @@ const isWindows = uaHelper.isWindows;
 const mcpGuideVisible = ref(false);
 const mcpInfo = ref<McpIntegrationInfo | null>(null);
 const archivedDomainsVisible = ref(false);
+const archivedDomainsLoading = ref(false);
 
 const menubarClass = computed(() => {
   if (isMac) return 'menubar--mac';
@@ -130,8 +138,18 @@ const handleOpenMcpGuide = async () => {
 };
 
 const handleOpenArchivedDomains = async () => {
-  await todoStore.loadArchivedDomains();
-  archivedDomainsVisible.value = true;
+  if (archivedDomainsLoading.value) return;
+
+  archivedDomainsLoading.value = true;
+  try {
+    await todoStore.loadArchivedDomains();
+    archivedDomainsVisible.value = true;
+  } catch {
+    archivedDomainsVisible.value = false;
+    Message.error(i18nHelper.todo.archivedDomainsLoadFailed);
+  } finally {
+    archivedDomainsLoading.value = false;
+  }
 };
 
 const handleToggleShowCompleted = async () => {

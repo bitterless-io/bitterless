@@ -3,61 +3,66 @@
     :visible="visible"
     :footer="false"
     :width="560"
+    title-align="start"
     modal-class="mcp-guide-modal"
     @cancel="handleClose"
   >
-    <div class="mcp-guide">
-      <div class="mcp-guide__header">
-        <div>
-          <div class="mcp-guide__eyebrow">{{ i18nHelper.todo.mcpEyebrow }}</div>
-          <h2>{{ i18nHelper.todo.mcpTitle }}</h2>
-        </div>
-        <a-button size="mini" type="text" @click="handleClose">
-          <template #icon>
-            <IconX />
-          </template>
-        </a-button>
+    <template #title>
+      <div class="mcp-guide__title">
+        <div class="mcp-guide__eyebrow">{{ i18nHelper.todo.mcpEyebrow }}</div>
+        <h2 class="mcp-guide__heading">{{ i18nHelper.todo.mcpTitle }}</h2>
       </div>
+    </template>
 
+    <div class="mcp-guide">
       <p class="mcp-guide__summary">{{ i18nHelper.todo.mcpSummary }}</p>
 
       <div class="mcp-guide__field">
         <div class="mcp-guide__field-head">
-          <span>{{ i18nHelper.todo.mcpCommandPath }}</span>
-          <a-button size="mini" type="outline" @click="copyText(info?.commandPath ?? '')">
-            <template #icon>
-              <IconCopy />
-            </template>
-            {{ i18nHelper.todo.mcpCopy }}
-          </a-button>
+          <span class="mcp-guide__field-title">{{ i18nHelper.todo.mcpCommandPath }}</span>
+          <IconBtn
+            class="mcp-guide__copy-button"
+            :disabled="!info?.commandPath"
+            :title="i18nHelper.todo.mcpCopy"
+            :aria-label="i18nHelper.todo.mcpCopy"
+            @click="copyText(info?.commandPath ?? '')"
+          >
+            <IconCopy class="mcp-guide__copy-icon" :size="18" stroke="1.8" />
+          </IconBtn>
         </div>
-        <code>{{ info?.commandPath || i18nHelper.todo.mcpLoading }}</code>
+        <code class="mcp-guide__code">{{ info?.commandPath || i18nHelper.todo.mcpLoading }}</code>
       </div>
 
       <div class="mcp-guide__field">
         <div class="mcp-guide__field-head">
-          <span>{{ i18nHelper.todo.mcpConfig }}</span>
-          <a-button size="mini" type="outline" @click="copyText(info?.configJson ?? '')">
-            <template #icon>
-              <IconCopy />
-            </template>
-            {{ i18nHelper.todo.mcpCopy }}
-          </a-button>
+          <span class="mcp-guide__field-title">{{ i18nHelper.todo.mcpConfig }}</span>
+          <IconBtn
+            class="mcp-guide__copy-button"
+            :disabled="!info?.configJson"
+            :title="i18nHelper.todo.mcpCopy"
+            :aria-label="i18nHelper.todo.mcpCopy"
+            @click="copyText(info?.configJson ?? '')"
+          >
+            <IconCopy class="mcp-guide__copy-icon" :size="18" stroke="1.8" />
+          </IconBtn>
         </div>
-        <pre>{{ info?.configJson || i18nHelper.todo.mcpLoading }}</pre>
+        <pre class="mcp-guide__code">{{ info?.configJson || i18nHelper.todo.mcpLoading }}</pre>
       </div>
 
       <div class="mcp-guide__field mcp-guide__field--quiet">
         <div class="mcp-guide__field-head">
-          <span>{{ i18nHelper.todo.mcpAgentPrompt }}</span>
-          <a-button size="mini" type="primary" @click="copyText(info?.instruction ?? '')">
-            <template #icon>
-              <IconCopy />
-            </template>
-            {{ i18nHelper.todo.mcpCopyAgentPrompt }}
-          </a-button>
+          <span class="mcp-guide__field-title">{{ i18nHelper.todo.mcpAgentPrompt }}</span>
+          <IconBtn
+            class="mcp-guide__copy-button mcp-guide__copy-button--primary"
+            :disabled="!info?.instruction"
+            :title="i18nHelper.todo.mcpCopyAgentPrompt"
+            :aria-label="i18nHelper.todo.mcpCopyAgentPrompt"
+            @click="copyText(info?.instruction ?? '')"
+          >
+            <IconCopy class="mcp-guide__copy-icon" :size="18" stroke="1.8" />
+          </IconBtn>
         </div>
-        <p>{{ i18nHelper.todo.mcpAgentPromptHint }}</p>
+        <p class="mcp-guide__hint">{{ i18nHelper.todo.mcpAgentPromptHint }}</p>
       </div>
     </div>
   </a-modal>
@@ -65,7 +70,8 @@
 
 <script setup lang="ts">
 import { Message } from '@arco-design/web-vue';
-import { IconCopy, IconX } from '@tabler/icons-vue';
+import { IconCopy } from '@tabler/icons-vue';
+import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
 

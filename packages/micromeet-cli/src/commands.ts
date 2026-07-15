@@ -155,13 +155,13 @@ const isExplicitSource = (source: string): boolean => source === 'cli' || source
 
 const resolveCrmsLoginContext = async (ctx: CommandContext): Promise<CommandContext> => {
   const hasExplicitRegion = isExplicitSource(ctx.config.regionSource)
-  const inheritsCoworkRegion =
+  const inheritsMaestroRegion =
     ctx.config.regionSource === 'credential' && ctx.config.credentialAuthSource === 'cowork'
-  if (hasExplicitRegion || inheritsCoworkRegion) return ctx
+  if (hasExplicitRegion || inheritsMaestroRegion) return ctx
 
   if (!isInteractiveTerminal()) {
     throw new CliError(
-      'CRMS region is required in non-interactive mode; pass --region SG|HK|ID or log in through Cowork first'
+      'CRMS region is required in non-interactive mode; pass --region SG|HK|ID or log in through Maestro first'
     )
   }
 

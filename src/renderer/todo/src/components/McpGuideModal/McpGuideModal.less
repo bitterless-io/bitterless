@@ -1,55 +1,84 @@
 .mcp-guide-modal {
+  width: calc(100vw - 32px) !important;
+  max-width: 560px;
+  overflow: hidden;
+  border-radius: 12px;
+
+  .arco-modal-header {
+    height: auto;
+    min-height: 74px;
+    align-items: center;
+    padding: 16px 20px 14px 24px;
+    border-bottom-color: #e2e4eb;
+    background: #ffffff;
+  }
+
+  .arco-modal-title {
+    min-width: 0;
+    padding-right: 16px;
+  }
+
+  .arco-modal-close-btn {
+    flex: 0 0 auto;
+    margin-left: 0;
+    color: var(--color-text-2);
+  }
+
+  .arco-modal-close-btn:hover {
+    color: var(--color-text-1);
+  }
+
   .arco-modal-body {
     padding: 0;
+    max-height: calc(100vh - 106px);
+    overflow-y: auto;
   }
 }
 
-.mcp-guide {
-  padding: 18px;
-  background: oklch(0.985 0.004 250);
-}
-
-.mcp-guide__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid oklch(0.88 0.018 255);
+.mcp-guide__title {
+  min-width: 0;
 }
 
 .mcp-guide__eyebrow {
-  margin-bottom: 6px;
-  color: oklch(0.48 0.105 198);
+  margin-bottom: 4px;
+  color: #4e5882;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.mcp-guide h2 {
+.mcp-guide__heading {
   margin: 0;
-  color: oklch(0.25 0.034 262);
-  font-size: 18px;
+  color: #1e2237;
+  font-size: 20px;
+  font-weight: 700;
   line-height: 1.25;
 }
 
+.mcp-guide {
+  padding: 20px 24px 24px;
+  background: #f3f5fc;
+}
+
 .mcp-guide__summary {
-  margin: 14px 0;
-  color: oklch(0.42 0.03 260);
+  margin: 0 0 16px;
+  color: var(--color-text-2);
   font-size: 13px;
+  line-height: 1.6;
 }
 
 .mcp-guide__field {
   margin-top: 12px;
-  padding: 12px;
-  border: 1px solid oklch(0.88 0.018 255);
-  border-radius: 8px;
-  background: oklch(1 0 0);
+  padding: 14px;
+  border: 1px solid #c4cadf;
+  border-radius: 10px;
+  background: #ffffff;
 }
 
 .mcp-guide__field--quiet {
-  background: oklch(0.97 0.012 200);
+  background: #f3f5fc;
 }
 
 .mcp-guide__field-head {
@@ -57,31 +86,83 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-height: 32px;
   margin-bottom: 10px;
-  color: oklch(0.33 0.04 260);
+  color: #323955;
   font-size: 12px;
   font-weight: 700;
 }
 
-.mcp-guide__field code,
-.mcp-guide__field pre {
+.mcp-guide__field-title {
+  min-width: 0;
+}
+
+.mcp-guide__copy-button.icon-btn.arco-btn {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  color: #4e5882;
+}
+
+.mcp-guide__copy-button.icon-btn.arco-btn:hover {
+  color: #323955;
+  background: #e2e4eb;
+}
+
+.mcp-guide__copy-button--primary.icon-btn.arco-btn {
+  color: #ffffff;
+  background: #4e5882;
+}
+
+.mcp-guide__copy-button--primary.icon-btn.arco-btn:hover {
+  color: #ffffff;
+  background: #606b9d;
+}
+
+.mcp-guide__copy-button--primary.icon-btn.arco-btn[disabled],
+.mcp-guide__copy-button--primary.icon-btn.arco-btn[disabled]:hover {
+  color: var(--color-text-4);
+  background: #e2e4eb;
+}
+
+.mcp-guide__copy-icon {
+  display: block;
+}
+
+.mcp-guide__code {
   display: block;
   width: 100%;
   margin: 0;
-  padding: 10px;
-  overflow: auto;
-  color: oklch(0.93 0.035 165);
-  background: oklch(0.18 0.018 250);
-  border-radius: 6px;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  padding: 12px;
+  overflow-x: auto;
+  color: #e2e4eb;
+  background: #101321;
+  border-radius: 8px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.55;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
-.mcp-guide__field p {
+.mcp-guide__hint {
   margin: 0;
-  color: oklch(0.41 0.035 235);
+  color: var(--color-text-2);
   font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (max-width: 480px) {
+  .mcp-guide-modal {
+    width: calc(100vw - 24px) !important;
+
+    .arco-modal-header {
+      padding-left: 18px;
+    }
+  }
+
+  .mcp-guide {
+    padding: 16px 18px 20px;
+  }
 }

@@ -12,11 +12,9 @@ import {
   setCustomComponents
 } from 'markstream-vue';
 import '@renderer/common/assets/style/theme.less';
-import App from './App.vue';
-import router from './router';
 import { i18n } from '@renderer/common/i18n/i18n.helper';
+import { initializeRendererLanguage } from '@renderer/common/i18n/rendererLanguage';
 import './xpc/test.subscriber';
-import './xpc/language.subscriber';
 import { initAuthSubscriber } from './xpc/auth.subscriber';
 import { initUpdateSubscriber } from './xpc/update.subscriber';
 
@@ -26,7 +24,16 @@ setCustomComponents({
   code_block: MarkdownCodeBlockNode
 });
 
-createApp(App).use(ArcoVue).use(router).use(i18n).mount('#app');
+const bootstrap = async (): Promise<void> => {
+  await initializeRendererLanguage();
+  const [{ default: App }, { default: router }] = await Promise.all([
+    import('./App.vue'),
+    import('./router'),
+  ]);
+  createApp(App).use(ArcoVue).use(router).use(i18n).mount('#app');
 
-initAuthSubscriber();
-initUpdateSubscriber();
+  initAuthSubscriber();
+  initUpdateSubscriber();
+};
+
+void bootstrap();

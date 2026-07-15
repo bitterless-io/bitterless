@@ -1,0 +1,18 @@
+.message-list {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgb(248, 250, 252);
+}
+
+.message-list__scroll {
+  height: 100%;
+  overflow: auto;
+  padding: 8px;
+}
+
+.message-list__scroll > * + * {
+  margin-top: 12px;
+}

@@ -6,9 +6,7 @@
     "src/renderer/**/src/**/*.vue",
     "src/renderer/common/**/*",
     "src/preload/**/rigchat.preload.type.ts",
-    "src/shared/**/*",
-    "src/cowork/renderer/**/*",
-    "src/cowork/shared/**/*"
+    "src/shared/**/*"
   ],
   "compilerOptions": {
     "composite": true,
@@ -31,14 +29,14 @@
       "@shared/*": [
         "src/shared/*"
       ],
-      "@cowork-main/*": [
-        "src/cowork/main/*"
+      "@maestro-main/*": [
+        "src/main/maestro/*"
       ],
-      "@cowork-shared/*": [
-        "src/cowork/shared/*"
+      "@maestro-shared/*": [
+        "src/shared/maestro/*"
       ],
-      "@cowork-renderer/*": [
-        "src/cowork/renderer/*"
+      "@maestro-renderer/*": [
+        "src/renderer/maestro/*"
       ]
     }
   }

@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import { defaultRoutes } from './defaultRoutes';
-import { authStore } from '@/stores/auth/auth.store';
+import { authStore, customerNeedsPasswordSetup } from '@/stores/auth/auth.store';
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -16,14 +16,19 @@ router.beforeEach(async (to) => {
 
   if (!authStore.current) {
     try {
-      await authStore.fetchMe();
+      await authStore.restoreSession();
     } catch {
       authStore.clearLocalSession();
       return { name: 'login', query: { redirect: to.fullPath } };
     }
   }
 
-  if (authStore.current?.must_set_password) {
+  if (customerNeedsPasswordSetup(authStore.current)) {
+    return { name: 'login', query: { redirect: to.fullPath } };
+  }
+
+  if (authStore.current?.status !== 'active') {
+    authStore.clearLocalSession();
     return { name: 'login', query: { redirect: to.fullPath } };
   }
 

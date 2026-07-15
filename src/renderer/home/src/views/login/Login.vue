@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Message } from '@arco-design/web-vue';
-import { authStore } from '@/stores/auth/auth.store';
+import { authStore, customerNeedsPasswordSetup } from '@/stores/auth/auth.store';
 
 type LoginMode = 'password' | 'otp';
 type LoginStep = 'login' | 'set-password';
@@ -18,7 +18,14 @@ const code = ref('');
 const newPassword = ref('');
 const passwordConfirmation = ref('');
 const cooldown = ref(0);
+const resetVisible = ref(false);
+const resetEmail = ref('');
+const resetCode = ref('');
+const resetNewPassword = ref('');
+const resetPasswordConfirmation = ref('');
+const resetCooldown = ref(0);
 let cooldownTimer: number | undefined;
+let resetCooldownTimer: number | undefined;
 
 const redirectAfterLogin = (): void => {
   const redirect = (route.query.redirect as string) || '/chat';
@@ -26,9 +33,15 @@ const redirectAfterLogin = (): void => {
 };
 
 const continueAfterLogin = (): void => {
-  if (authStore.current?.must_set_password) {
-    email.value = authStore.current.email;
+  const current = authStore.current;
+  if (customerNeedsPasswordSetup(current)) {
+    email.value = current?.email || email.value;
     step.value = 'set-password';
+    return;
+  }
+  if (current?.status !== 'active') {
+    authStore.clearLocalSession();
+    Message.error('账号状态无效，请重新登录');
     return;
   }
   Message.success('登录成功');
@@ -47,12 +60,22 @@ const startCooldown = (): void => {
   }, 1000);
 };
 
+const startResetCooldown = (): void => {
+  resetCooldown.value = 60;
+  window.clearInterval(resetCooldownTimer);
+  resetCooldownTimer = window.setInterval(() => {
+    resetCooldown.value -= 1;
+    if (resetCooldown.value <= 0) {
+      window.clearInterval(resetCooldownTimer);
+      resetCooldownTimer = undefined;
+    }
+  }, 1000);
+};
+
 onMounted(async () => {
   if (!authStore.isAuthenticated()) return;
   try {
-    if (!authStore.current) {
-      await authStore.fetchMe();
-    }
+    await authStore.restoreSession();
     continueAfterLogin();
   } catch {
     authStore.clearLocalSession();
@@ -61,19 +84,88 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.clearInterval(cooldownTimer);
+  window.clearInterval(resetCooldownTimer);
 });
 
 const onSendOtp = async (): Promise<void> => {
-  if (authStore.sendingOtp) return;
+  if (authStore.sendingOtp || cooldown.value > 0) return;
 
-  if (!email.value) {
+  if (!email.value.trim()) {
     Message.warning('请输入邮箱');
     return;
   }
   try {
-    await authStore.sendOtp(email.value.trim());
+    await authStore.sendOtp(email.value.trim(), 'login');
     Message.success('验证码已发送');
     startCooldown();
+  } catch {
+    /* error already shown by store */
+  }
+};
+
+const openPasswordRecovery = (): void => {
+  resetEmail.value = email.value.trim();
+  resetCode.value = '';
+  resetNewPassword.value = '';
+  resetPasswordConfirmation.value = '';
+  resetVisible.value = true;
+};
+
+const closePasswordRecovery = (): void => {
+  resetVisible.value = false;
+  resetCode.value = '';
+  resetNewPassword.value = '';
+  resetPasswordConfirmation.value = '';
+};
+
+const onSendResetOtp = async (): Promise<void> => {
+  if (authStore.sendingOtp || resetCooldown.value > 0) return;
+  if (!resetEmail.value.trim()) {
+    Message.warning('请输入邮箱');
+    return;
+  }
+
+  try {
+    await authStore.sendOtp(resetEmail.value.trim(), 'reset_password');
+    Message.success('如果账号可以重置密码，验证码将发送到该邮箱');
+    startResetCooldown();
+  } catch {
+    /* error already shown by store */
+  }
+};
+
+const onResetPassword = async (): Promise<void> => {
+  if (authStore.resettingPassword) return;
+  if (!resetEmail.value.trim()) {
+    Message.warning('请输入邮箱');
+    return;
+  }
+  if (resetCode.value.trim().length !== 6) {
+    Message.warning('请输入 6 位验证码');
+    return;
+  }
+  if (resetNewPassword.value.length < 8) {
+    Message.warning('密码至少 8 位');
+    return;
+  }
+  if (resetNewPassword.value !== resetPasswordConfirmation.value) {
+    Message.warning('两次输入的密码不一致');
+    return;
+  }
+
+  try {
+    await authStore.resetPassword(
+      resetEmail.value.trim(),
+      resetCode.value.trim(),
+      resetNewPassword.value,
+      resetPasswordConfirmation.value
+    );
+    email.value = resetEmail.value.trim();
+    password.value = '';
+    code.value = '';
+    mode.value = 'password';
+    closePasswordRecovery();
+    Message.success('密码已重置，请使用新密码登录');
   } catch {
     /* error already shown by store */
   }
@@ -82,7 +174,7 @@ const onSendOtp = async (): Promise<void> => {
 const onSubmit = async (): Promise<void> => {
   if (authStore.loading) return;
 
-  if (!email.value) {
+  if (!email.value.trim()) {
     Message.warning('请输入邮箱');
     return;
   }
@@ -134,12 +226,13 @@ const onSetPassword = async (): Promise<void> => {
 
     <section name="login__panel" class="login-view__panel">
       <div class="login-view__mark">
-        <span class="login-view__mark-line"></span>
+        <span class="login-view__mark-line" aria-hidden="true"></span>
         <span>Bitterless</span>
       </div>
 
       <div name="login__copy" class="login-view__copy">
-        <p>使用你的 Bitterless customer 账号进入桌面工作区。</p>
+        <h1>登录 Bitterless</h1>
+        <p>使用受邀客户账号进入桌面工作区。</p>
       </div>
 
       <a-radio-group v-model="mode" type="button" size="large" class="login-view__modes">
@@ -169,7 +262,11 @@ const onSetPassword = async (): Promise<void> => {
           />
         </a-form-item>
 
-        <a-form-item v-else label="邮箱验证码">
+        <div v-if="mode === 'password'" name="login__forgot" class="login-view__forgot">
+          <a-button type="text" size="small" @click="openPasswordRecovery"> 忘记密码？ </a-button>
+        </div>
+
+        <a-form-item v-if="mode === 'otp'" label="邮箱验证码">
           <div name="login__otp" class="login-view__otp-field">
             <a-input
               v-model="code"
@@ -185,7 +282,9 @@ const onSetPassword = async (): Promise<void> => {
               :disabled="authStore.sendingOtp || cooldown > 0"
               @click="onSendOtp"
             >
-              {{ authStore.sendingOtp ? '发送中...' : cooldown > 0 ? `${cooldown}s` : '发送验证码' }}
+              {{
+                authStore.sendingOtp ? '发送中...' : cooldown > 0 ? `${cooldown}s` : '发送验证码'
+              }}
             </a-button>
           </div>
         </a-form-item>
@@ -206,6 +305,87 @@ const onSetPassword = async (): Promise<void> => {
         <span>当前版本仅开放受邀客户账号。</span>
       </div>
     </section>
+
+    <a-modal
+      :visible="resetVisible"
+      width="min(440px, calc(100vw - 40px))"
+      :footer="false"
+      :closable="true"
+      :mask-closable="true"
+      :esc-to-close="true"
+      :unmount-on-close="false"
+      modal-class="login-view__recovery-dialog"
+      @cancel="closePasswordRecovery"
+    >
+      <template #title>重置密码</template>
+      <div name="login__password-recovery" class="login-view__recovery-modal">
+        <p>输入账号邮箱和验证码，然后设置新的登录密码。</p>
+
+        <a-form layout="vertical" :model="{}" class="login-view__form" @submit.prevent>
+          <a-form-item label="邮箱">
+            <a-input
+              v-model="resetEmail"
+              size="large"
+              placeholder="you@example.com"
+              autocomplete="email"
+              allow-clear
+            />
+          </a-form-item>
+          <a-form-item label="邮箱验证码">
+            <div name="login__reset-otp" class="login-view__otp-field">
+              <a-input
+                v-model="resetCode"
+                size="large"
+                placeholder="6 位验证码"
+                autocomplete="one-time-code"
+                :max-length="6"
+              />
+              <a-button
+                size="large"
+                :loading="authStore.sendingOtp"
+                :disabled="authStore.sendingOtp || resetCooldown > 0"
+                @click="onSendResetOtp"
+              >
+                {{
+                  authStore.sendingOtp
+                    ? '发送中...'
+                    : resetCooldown > 0
+                      ? `${resetCooldown}s`
+                      : '发送验证码'
+                }}
+              </a-button>
+            </div>
+          </a-form-item>
+          <a-form-item label="新密码">
+            <a-input-password
+              v-model="resetNewPassword"
+              size="large"
+              placeholder="至少 8 位"
+              autocomplete="new-password"
+            />
+          </a-form-item>
+          <a-form-item label="确认密码">
+            <a-input-password
+              v-model="resetPasswordConfirmation"
+              size="large"
+              placeholder="再次输入密码"
+              autocomplete="new-password"
+              @press-enter="onResetPassword"
+            />
+          </a-form-item>
+          <a-button
+            long
+            type="primary"
+            size="large"
+            :loading="authStore.resettingPassword"
+            :disabled="authStore.resettingPassword"
+            @click="onResetPassword"
+          >
+            重置密码
+          </a-button>
+        </a-form>
+      </div>
+    </a-modal>
 
     <a-modal
       :visible="step === 'set-password'"

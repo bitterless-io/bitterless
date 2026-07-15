@@ -16,13 +16,14 @@ class TrayHelper {
     this.mainWindowHelper = mainWindowHelper;
 
     const isWin = process.platform === 'win32';
+    const iconFilename = isWin ? 'tray-win.ico' : 'tray-mac@2x.png';
     let iconPath: string;
 
     if (import.meta.env.VITE_MODE === 'release') {
       const unpacked = join(app.getAppPath(), '..', 'app.asar.unpacked', 'icons');
-      iconPath = isWin ? join(unpacked, 'icon.ico') : join(unpacked, 'tray-mac@2x.png');
+      iconPath = join(unpacked, iconFilename);
     } else {
-      iconPath = join(__dirname, '../../build', isWin ? 'icon.ico' : 'tray-mac@2x.png');
+      iconPath = join(__dirname, '../../build', iconFilename);
     }
 
     let icon = nativeImage.createFromPath(iconPath);

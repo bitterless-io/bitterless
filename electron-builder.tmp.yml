@@ -30,8 +30,12 @@ files:
 extraResources:
   - from: asar_unpacked
     to: app.asar.unpacked
-  - from: build/cowork-tools
-    to: cowork-tools
+  - from: build/maestro-tools
+    to: maestro-tools
+  - from: build/tray-mac@2x.png
+    to: app.asar.unpacked/icons/tray-mac@2x.png
+  - from: build/tray-win.ico
+    to: app.asar.unpacked/icons/tray-win.ico
 win:
   executableName: ${name}
 nsis:
@@ -43,7 +47,7 @@ nsis:
   include: build/installer.nsh
 mac:
   binaries:
-    - Contents/Resources/cowork-tools/micromeet
+    - Contents/Resources/maestro-tools/micromeet
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false

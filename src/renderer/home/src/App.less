@@ -1,6 +1,40 @@
-html, body, #app {
+:root {
+  color-scheme: light;
+  --bl-royalblue-50: #f3f5fc;
+  --bl-royalblue-100: #e2e4eb;
+  --bl-royalblue-200: #c4cadf;
+  --bl-royalblue-300: #a3aac5;
+  --bl-royalblue-400: #808ab1;
+  --bl-royalblue-500: #606b9d;
+  --bl-royalblue-600: #4e5882;
+  --bl-royalblue-700: #3e4568;
+  --bl-royalblue-800: #323955;
+  --bl-royalblue-900: #1e2237;
+}
+
+html,
+body,
+#app {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
+  color: var(--bl-royalblue-900);
+  background-color: var(--bl-royalblue-50);
+}
+
+html,
+body {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

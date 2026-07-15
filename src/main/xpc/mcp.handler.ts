@@ -4,23 +4,24 @@ import { chmodSync, mkdirSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import {
   createMcpConfigJson,
+  createPosixMcpShim,
+  createWindowsMcpShim,
   getMcpBridgeEndpoint,
+  getMcpServerName,
   getMcpShimPath,
   type McpIntegrationInfo,
 } from '@shared/mcp/mcpBridge.shared';
-
-const shellQuote = (value: string): string => {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-};
 
 class McpHandler extends XpcMainHandler {
   async getIntegrationInfo(): Promise<McpIntegrationInfo> {
     const commandPath = await this.ensureShim();
     const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
-    const configJson = createMcpConfigJson(commandPath);
+    const serverName = getMcpServerName(app.getName());
+    const configJson = createMcpConfigJson(commandPath, serverName);
     const instruction = `把这段 MCP 配置添加到你的 agent 应用，然后保持 Bitterless 正在运行：\n\n${configJson}`;
 
     return {
+      serverName,
       commandPath,
       configJson,
       instruction,
@@ -45,21 +46,21 @@ class McpHandler extends XpcMainHandler {
   }
 
   private createPosixShim(): string {
-    const execPath = shellQuote(process.execPath);
-    if (app.isPackaged) {
-      return `#!/bin/sh\nexec ${execPath} --mcp-helper "$@"\n`;
-    }
-
-    return `#!/bin/sh\nexec ${execPath} ${shellQuote(app.getAppPath())} --mcp-helper "$@"\n`;
+    const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
+    return createPosixMcpShim(
+      process.execPath,
+      app.isPackaged ? null : app.getAppPath(),
+      endpoint.path,
+    );
   }
 
   private createWindowsShim(): string {
-    const execPath = `"${process.execPath}"`;
-    if (app.isPackaged) {
-      return `@echo off\r\n${execPath} --mcp-helper %*\r\n`;
-    }
-
-    return `@echo off\r\n${execPath} "${app.getAppPath()}" --mcp-helper %*\r\n`;
+    const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
+    return createWindowsMcpShim(
+      process.execPath,
+      app.isPackaged ? null : app.getAppPath(),
+      endpoint.path,
+    );
   }
 }
 

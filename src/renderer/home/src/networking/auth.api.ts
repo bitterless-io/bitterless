@@ -12,12 +12,14 @@ export interface AuthLoginResult {
   email: string;
 }
 
+export type OtpPurpose = 'login' | 'reset_password';
+
 export interface CurrentCustomer {
   id: number;
   email: string;
   nickname?: string;
   scope: 'customer';
-  status: 'invited' | 'active' | 'disabled';
+  status: 'invited' | 'active' | 'inactive';
   has_password: boolean;
   must_set_password: boolean;
 }
@@ -91,10 +93,10 @@ export const loginApi = (data: {
     body: JSON.stringify({ ...data, scope: 'customer' })
   });
 
-export const sendOtpApi = (data: { email: string }): Promise<{ ok: true }> =>
+export const sendOtpApi = (data: { email: string; purpose: OtpPurpose }): Promise<{ ok: true }> =>
   request<{ ok: true }>('/auth/send-otp', {
     method: 'POST',
-    body: JSON.stringify({ ...data, purpose: 'login' })
+    body: JSON.stringify(data)
   });
 
 export const verifyOtpApi = (data: {
@@ -105,6 +107,17 @@ export const verifyOtpApi = (data: {
   request<AuthLoginResult>('/auth/verify-otp', {
     method: 'POST',
     body: JSON.stringify({ ...data, purpose: 'login' })
+  });
+
+export const resetPasswordApi = (data: {
+  email: string;
+  code: string;
+  new_password: string;
+  password_confirmation: string;
+}): Promise<{ ok: true }> =>
+  request<{ ok: true }>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify(data)
   });
 
 export const meApi = (token: string): Promise<CurrentCustomer> =>

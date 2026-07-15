@@ -231,6 +231,8 @@ class TodoState {
       this.domainList.push(domain);
       this.todosByDomain[domain.id] = [];
       this.broadcastDataUpdated();
+    } else {
+      Message.warning(i18nHelper.todo.domainLimitReached);
     }
   }
 
@@ -276,6 +278,46 @@ class TodoState {
       this.closeDetail();
     }
     this.broadcastDataUpdated();
+  }
+
+  async restoreDomain(id: number): Promise<boolean> {
+    const archivedDomain = this.archivedDomainList.find((domain) => domain.id === id);
+    const result = await domainEmitter.restore({ id });
+    if (result === 'limit_reached') {
+      Message.warning(i18nHelper.todo.domainLimitReached);
+      return false;
+    }
+    if (result === 'not_found') {
+      throw new Error(`Archived domain ${id} no longer exists`);
+    }
+
+    let restoredDomain = archivedDomain
+      ? { ...archivedDomain, archived: 0, updated_at: Date.now() }
+      : undefined;
+    try {
+      restoredDomain = (await domainEmitter.getById({ id })) ?? restoredDomain;
+    } catch (error) {
+      console.error('[todo] domain restored but its latest row could not be read:', error);
+    }
+
+    this.archivedDomainList = this.archivedDomainList.filter((domain) => domain.id !== id);
+    if (restoredDomain) {
+      const activeIndex = this.domainList.findIndex((domain) => domain.id === id);
+      if (activeIndex >= 0) {
+        this.domainList[activeIndex] = restoredDomain;
+      } else {
+        this.domainList.push(restoredDomain);
+      }
+      this.todosByDomain[id] ??= [];
+      this.completedTodosByDomain[id] ??= [];
+      try {
+        await this.loadTodosForDomain(id);
+      } catch (error) {
+        console.error('[todo] domain restored but its todos could not be reloaded:', error);
+      }
+    }
+    this.broadcastDataUpdated();
+    return true;
   }
 
   async saveDomainOrder(order: number[]): Promise<void> {

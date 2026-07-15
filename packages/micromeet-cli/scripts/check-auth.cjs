@@ -76,7 +76,7 @@ const main = async () => {
     assert.throws(() => loadCredential(directFile, 'crms'), /decryption failed/)
 
     // Embedded-runtime interoperability smoke: construct the exact v2 envelope
-    // written by Cowork main, then read it through the bundled CLI store.
+    // written by Maestro main, then read it through the bundled CLI store.
     const embeddedFile = join(root, 'embedded', 'crms.json')
     const embeddedKeyFile = credentialKeyFile(embeddedFile)
     const embeddedKey = randomBytes(32)
@@ -205,7 +205,7 @@ const main = async () => {
     assert.notEqual(missingRegion.code, 0)
     assert.match(missingRegion.stderr, /CRMS region is required in non-interactive mode/)
 
-    const coworkCredential = {
+    const maestroCredential = {
       realm: 'crms',
       email: 'cowork@example.com',
       token: 'cowork-sg-token',
@@ -216,12 +216,12 @@ const main = async () => {
       auth_source: 'cowork',
       updated_at: 2
     }
-    saveCredential(crmsFile, coworkCredential)
-    assert.deepEqual(loadCredential(crmsFile, 'crms'), coworkCredential)
-    const coworkStatus = JSON.parse((await runCli(['crms', 'auth', 'status', '--json'], env)).stdout)
-    assert.equal(coworkStatus.region, 'SG')
-    assert.equal(coworkStatus.credentialAuthSource, 'cowork')
-    assert.equal(coworkStatus.workspaceId.value, 'tenant-cowork')
+    saveCredential(crmsFile, maestroCredential)
+    assert.deepEqual(loadCredential(crmsFile, 'crms'), maestroCredential)
+    const maestroStatus = JSON.parse((await runCli(['crms', 'auth', 'status', '--json'], env)).stdout)
+    assert.equal(maestroStatus.region, 'SG')
+    assert.equal(maestroStatus.credentialAuthSource, 'cowork')
+    assert.equal(maestroStatus.workspaceId.value, 'tenant-cowork')
 
     await runCli(
       ['crms', 'login', '--email', 'crms@example.com', '--password', 'crms-password', '--json'],

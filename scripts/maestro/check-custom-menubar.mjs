@@ -1,0 +1,25 @@
+import { assert, readMaestro, readProject } from './_harness.mjs'
+
+const shortcuts = readMaestro('main/common/shortcutsHelper/shortcuts.helper.ts')
+const windowHelper = readMaestro('main/windows/window.helper.ts')
+const menuBar = readMaestro('renderer/home/src/components/MenuBar/MenuBar.vue')
+const menuBarStyle = readMaestro('renderer/home/src/components/MenuBar/MenuBar.less')
+const menuBarStore = readMaestro('renderer/home/src/components/MenuBar/menuBar.store.ts')
+const appMain = readProject('src/main/app.main.ts')
+
+assert(shortcuts.includes("app.on('web-contents-created'"), 'Maestro shortcuts should attach to created WebContents')
+assert(shortcuts.includes("contents.on('before-input-event'"), 'Maestro shortcuts should use before-input-event')
+assert(shortcuts.includes('session.fromPartition(MAESTRO_PARTITION)'), 'Maestro shortcuts must be scoped to its persistent partition')
+assert(shortcuts.includes("key !== 't' && key !== 'w'"), 'embedded shortcuts should handle only tab open/close')
+assert(shortcuts.includes('shortcutDedupeMs') && shortcuts.includes('lastShortcutAt'), 'shortcut paths should dedupe one physical keypress')
+assert(!shortcuts.includes('globalShortcut'), 'embedded shortcuts must never steal keys from other apps')
+assert(!shortcuts.includes("key === 'q'") && !shortcuts.includes('confirmAndQuit'), 'Bitterless must retain quit ownership')
+assert(!shortcuts.includes('Menu.setApplicationMenu') && !shortcuts.includes('Menu.buildFromTemplate'), 'Maestro must not replace the host application menu')
+assert(appMain.includes("app.on('before-quit'"), 'Bitterless should own the application quit lifecycle')
+assert(windowHelper.includes("titleBarStyle: process.platform === 'darwin' ? 'hiddenInset'"), 'Maestro should keep its in-window chrome on macOS')
+assert(menuBar.includes("'maestro-menu-bar__tabs--mac': menuBarStore.isMac"), 'Maestro chrome should select the macOS traffic-light gutter')
+assert(menuBarStyle.includes('.maestro-menu-bar__tabs--mac { padding-left: 90px; }'), 'Maestro chrome should reserve the 90px macOS traffic-light gutter')
+assert(menuBar.includes('class="maestro-menu-bar"') && menuBarStyle.includes('height: 96px;'), 'Maestro menu bar should retain its 96px chrome')
+assert(menuBarStore.includes('traffic lights overlap') && menuBarStore.includes('reserve a left gutter'), 'Maestro menu store should document its macOS gutter')
+
+console.log('[check-custom-menubar] ok')

@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": "../..",
+    "outDir": "../../out/tests/coin/unit-build",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "../../src/main/coin/coinSender.guard.ts",
+    "../../src/main/coin/coinWindow.lifecycle.ts",
+    "../../src/main/coin/coinWindowState.ts",
+    "./unit/**/*.ts"
+  ]
+}

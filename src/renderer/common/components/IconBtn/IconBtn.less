@@ -1,0 +1,50 @@
+.icon-btn.arco-btn {
+  display: inline-flex;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  color: var(--color-text-2);
+  line-height: 1;
+  border-radius: 6px;
+  -webkit-app-region: no-drag;
+  transition:
+    color 0.16s ease,
+    background-color 0.16s ease,
+    transform 0.12s ease,
+    box-shadow 0.16s ease;
+}
+
+.icon-btn.arco-btn:hover {
+  color: var(--color-text-1);
+  background: var(--color-fill-2);
+}
+
+.icon-btn.arco-btn:active {
+  background: var(--color-fill-3);
+  transform: scale(0.95);
+}
+
+.icon-btn.arco-btn:focus-visible {
+  box-shadow: 0 0 0 2px rgba(var(--primary-6), 0.2);
+}
+
+.icon-btn.arco-btn .arco-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  font-size: 18px;
+}
+
+.icon-btn.arco-btn[disabled],
+.icon-btn.arco-btn[disabled]:hover,
+.icon-btn.arco-btn[disabled]:active {
+  color: var(--color-text-4);
+  background: transparent;
+  cursor: not-allowed;
+  transform: none;
+}

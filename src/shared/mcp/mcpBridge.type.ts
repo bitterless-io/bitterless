@@ -6,11 +6,21 @@ export interface McpBridgeEndpoint {
 }
 
 export interface McpIntegrationInfo {
+  serverName: string;
   commandPath: string;
   configJson: string;
   instruction: string;
   bridgePath: string;
   transport: McpBridgeTransport;
+}
+
+export interface CoreSqliteBootResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface CoreSqliteBootApi {
+  ready(): Promise<CoreSqliteBootResult>;
 }
 
 export interface LocalRpcRequest {

@@ -1,0 +1,152 @@
+.record-item {
+  position: relative;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  background: #ffffff;
+  padding: 8px 10px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.record-item::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 1px;
+  background: #f3f4f6;
+}
+
+.record-item:hover {
+  background: #fbfcfe;
+}
+
+.record-item--selected,
+.record-item--selected:hover {
+  border-left-color: #165dff;
+  background: #f4f8ff;
+}
+
+.record-item__header,
+.record-item__actions {
+  display: flex;
+  align-items: center;
+}
+
+.record-item__header {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.record-item__actions {
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.record-item__kind {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.record-kind--request { color: #1d4f91; }
+.record-kind--response { color: #0f766e; }
+.record-kind--action { color: #b45309; }
+.record-kind--snapshot { color: #7c3aed; }
+.record-kind--error { color: #b91c1c; }
+.record-kind--neutral { color: #6b7280; }
+
+.record-item__time {
+  color: #9ca3af;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.record-item__filter-button,
+.record-item__flag-button,
+.record-item__delete-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0;
+}
+
+.record-item__filter-button,
+.record-item__flag-button {
+  width: 20px;
+  height: 20px;
+  color: #9ca3af;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.record-item__filter-button:hover {
+  background: #eaf2ff;
+  color: #165dff;
+}
+
+.record-item__filter-option {
+  display: block;
+  width: 168px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  padding: 0 12px;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.record-item__filter-option:hover {
+  background: #f3f7ff;
+  color: #165dff;
+}
+
+.record-item__filter-option--danger:hover {
+  background: #fff1f0;
+  color: #dc2626;
+}
+
+.record-item__flag-button:hover,
+.record-item__flag-button--active {
+  background: #fffbeb;
+  color: #f59e0b;
+}
+
+.record-item__flag-button--active:hover {
+  background: #fef3c7;
+}
+
+.record-item__delete-button {
+  width: 16px;
+  height: 16px;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.record-item__delete-button:hover {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.record-item__spec {
+  width: 100%;
+  height: 72px;
+  margin-top: 6px;
+  resize: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  outline: none;
+  background: rgba(249, 250, 251, 0.6);
+  padding: 4px 8px;
+  color: #374151;
+  font-size: 11px;
+  line-height: 1.625;
+}
+
+.record-item__spec::placeholder { color: #9ca3af; }
+.record-item__spec:focus { border-color: #165dff; background: #ffffff; }

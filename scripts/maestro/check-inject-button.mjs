@@ -1,0 +1,83 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const root = join(projectRoot, 'src')
+const sourcePath = (relativePath) => {
+  const [processName, ...rest] = relativePath.split('/')
+  return join(root, processName, 'maestro', ...rest)
+}
+const read = (path) => readFileSync(sourcePath(path), 'utf8')
+const readProject = (path) => readFileSync(join(projectRoot, path), 'utf8')
+
+const sqliteManager = read('preload/sqlite/sqliteManager.ts')
+const sqlitePreload = read('preload/sqlite.preload.ts')
+const injectDao = read('preload/sqlite/inject_btn.dao.ts')
+const injectApi = read('shared/injectBtn.api.ts')
+const coachApi = read('shared/coach.api.ts')
+const maestroWindow = read('main/windows/maestroWindow.helper.ts')
+const catalog = read('main/agent/hostToolCatalog.ts')
+const controlApp = read('renderer/control/src/ControlApp.vue')
+const workbenchStore = read('renderer/workbench/src/workbench.store.ts')
+const workbenchRouter = read('renderer/workbench/src/workbench.router.ts')
+const workbenchApp = read('renderer/workbench/src/WorkbenchApp.vue')
+const workbenchInjections = read('renderer/workbench/src/views/WorkbenchInjectionsView.vue')
+const feature = readProject('docs/features/maestro.md')
+
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message)
+}
+
+assert(sqliteManager.includes('CREATE TABLE IF NOT EXISTS inject_btns'), 'fresh SQLite schema should create inject_btns')
+assert(sqliteManager.includes('PRIMARY KEY (domain, skill_title)'), 'inject_btns should key by domain + skill title')
+assert(sqliteManager.includes('db.exec(CREATE_INJECT_BTNS)'), 'sqlite manager should create inject_btns on fresh DB')
+assert(sqlitePreload.includes('sqliteManager.addMigration(260705083000'), 'sqlite preload should register inject_btns migration')
+assert(sqlitePreload.includes("await import('./sqlite/inject_btn.dao')"), 'sqlite preload should register InjectBtnDao')
+assert(injectDao.includes('class InjectBtnDao') && injectDao.includes('upsertMany'), 'InjectBtnDao should expose upsertMany')
+assert(injectDao.includes('DELETE FROM inject_btns WHERE domain = ?'), 'InjectBtnDao should support domain removal for recovery')
+assert(injectApi.includes('interface InjectBtnApi') && injectApi.includes('InjectBtnEntry'), 'shared inject button API should be typed')
+
+assert(catalog.includes("name: 'inject_button'"), 'host tool catalog should list inject_button')
+assert(catalog.includes("name: 'remove_injected_button'"), 'host tool catalog should list remove_injected_button')
+assert(maestroWindow.includes("name: 'inject_button'"), 'Maestro agent should expose inject_button tool')
+assert(maestroWindow.includes("name: 'remove_injected_button'"), 'Maestro agent should expose remove_injected_button tool')
+assert(maestroWindow.includes("createXpcMainEmitter<InjectBtnApi>('InjectBtnDao')"), 'main should call InjectBtnDao over xpc')
+assert(maestroWindow.includes('private async toolInjectButton'), 'main should implement inject button tool')
+assert(maestroWindow.includes('private async toolRemoveInjectedButton'), 'main should implement remove injected button tool')
+assert(maestroWindow.includes('await injectBtnStore.upsertMany'), 'inject button tool should persist rows')
+assert(maestroWindow.includes('buildInjectedButtonScript(domain, entries, nonce)'), 'inject should use a nonce-bearing script')
+assert(maestroWindow.includes("textContent = 'micromeet'"), 'injected button should display micromeet')
+assert(maestroWindow.includes("window.open('bitterless-maestro://trigger?'"), 'injected modal should call the internal trigger URL')
+assert(maestroWindow.includes('private handleInjectedButtonOpen'), 'main should intercept trigger URLs')
+assert(maestroWindow.includes('expectedNonce !== trigger.nonce'), 'trigger URLs should be nonce-gated')
+assert(maestroWindow.includes("xpcMain.broadcast('coach/injected-skill-trigger'"), 'main should broadcast injected trigger events')
+assert(maestroWindow.includes("wc.on('did-finish-load'") && maestroWindow.includes('injectStoredButtonForTab'), 'stored domain rows should re-inject after page load')
+assert(maestroWindow.includes('snap = () =>'), 'injected button should snap to the nearest side after dragging')
+assert(maestroWindow.includes('button.offsetHeight / 2'), 'docked button should hide only the radius cap, not half the pill width')
+assert(maestroWindow.includes("root.style.width = '0'") && maestroWindow.includes("root.style.height = '0'"), 'injected root should be zero-sized so it does not widen the page')
+assert(!maestroWindow.includes("side === 'left' ? -offset + 'px'"), 'docked root should stay inside the viewport instead of using negative offsets')
+assert(maestroWindow.includes('button.getBoundingClientRect()'), 'drag/snap geometry should use the visual button rect, not the zero-sized root')
+
+assert(coachApi.includes('InjectedSkillTrigger'), 'shared coach API should type injected trigger broadcasts')
+assert(coachApi.includes('export type WorkbenchPane') && coachApi.includes("'injections'"), 'WorkbenchPane should include injections')
+assert(coachApi.includes('listInjectedButtons(): Promise<InjectedButtonDomain[]>'), 'Coach contract should list injected buttons')
+assert(coachApi.includes('removeInjectedButtonDomain'), 'Coach contract should remove injected button domains')
+assert(controlApp.includes("xpcRenderer.subscribe('coach/injected-skill-trigger'"), 'Control should subscribe to injected trigger events')
+assert(controlApp.includes('messageStore.send(session.id, message)'), 'Control should send injected trigger text into Maestro')
+assert(maestroWindow.includes('async listInjectedButtons(): Promise<InjectedButtonDomain[]>'), 'main should list injected button domains')
+assert(maestroWindow.includes('async removeInjectedButtonDomain'), 'main should remove persisted injected button domains')
+assert(maestroWindow.includes('private async removeInjectedButtonFromTabs'), 'main should uninject open same-domain tabs')
+assert(maestroWindow.includes("document.getElementById('__bitterless_maestro_button_root__')"), 'main should remove the injected button DOM root')
+assert(maestroWindow.includes("xpcMain.broadcast('coach/injected-buttons-changed'"), 'main should broadcast injected button changes')
+
+assert(workbenchStore.includes("'injections'"), 'Workbench store should register the injections pane')
+assert(workbenchStore.includes('refreshInjectedButtons'), 'Workbench store should load injected button domains')
+assert(workbenchStore.includes('removeInjectedButtonDomain'), 'Workbench store should remove injected button domains')
+assert(workbenchRouter.includes('WorkbenchInjectionsView') && workbenchRouter.includes("name: 'injections'"), 'Workbench router should expose injections')
+assert(workbenchApp.includes("injections: 'Injections'"), 'Workbench app should label the injections pane')
+assert(workbenchInjections.includes('Injected Buttons'), 'Workbench injections view should render injected buttons')
+assert(workbenchInjections.includes('store.removeInjectedButtonDomain'), 'Workbench injections view should call remove')
+assert(feature.includes('domain injections'), 'embedded feature contract should preserve domain injections')
+
+console.log('[check-inject-button] ok')

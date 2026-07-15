@@ -1,33 +1,40 @@
 import { reactive } from 'vue';
-import { switchLanguage } from '@renderer/common/i18n/i18n.helper';
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { LanguageHandler } from '@preload/sqlite/handler/language.handler';
 import type { SearchEngineHandler } from '@preload/sqlite/handler/searchEngine.handler';
-import { xpcRenderer } from 'electron-xpc/renderer';
+import {
+  getCurrentRendererLanguage,
+  onRendererLanguageApplied,
+  requestApplicationLanguageChange,
+} from '@renderer/common/i18n/rendererLanguage';
+import type { AppLanguage } from '@shared/i18n/applicationLanguage';
 
-const languageEmitter = createXpcRendererEmitter<LanguageHandler>('LanguageHandler');
 const searchEngineEmitter = createXpcRendererEmitter<SearchEngineHandler>('SearchEngineHandler');
 
 type SearchEngine = 'baidu' | 'duckduckgo';
 
 class GeneralSettingState {
-  currentLanguage: 'en' | 'zh' = 'en';
+  currentLanguage: AppLanguage = 'en';
   currentSearchEngine: SearchEngine = 'baidu';
   loading = false;
 
   async loadSettings(): Promise<void> {
-    const lang = await languageEmitter.getLanguage();
-    this.currentLanguage = lang as 'en' | 'zh';
-    switchLanguage(this.currentLanguage);
+    this.currentLanguage = getCurrentRendererLanguage();
 
     const searchEngine = await searchEngineEmitter.getSearchEngine();
     this.currentSearchEngine = (searchEngine as SearchEngine) || 'baidu';
   }
 
-  changeLanguage(lang: 'en' | 'zh'): void {
-    this.currentLanguage = lang;
-    switchLanguage(lang);
-    this.persistLanguage(lang);
+  async changeLanguage(language: AppLanguage): Promise<void> {
+    const previousLanguage = getCurrentRendererLanguage();
+    this.loading = true;
+    try {
+      await requestApplicationLanguageChange(language);
+    } catch (err) {
+      this.currentLanguage = previousLanguage;
+      console.error('[GeneralSettingState] Failed to save language:', err);
+    } finally {
+      this.loading = false;
+    }
   }
 
   changeSearchEngine(engine: SearchEngine): void {
@@ -46,18 +53,13 @@ class GeneralSettingState {
     }
   }
 
-  private async persistLanguage(lang: 'en' | 'zh'): Promise<void> {
-    try {
-      await languageEmitter.setLanguage({ lang });
-      xpcRenderer.broadcast('language/changed', { lang });
-    } catch (err) {
-      console.error('[GeneralSettingState] Failed to save language:', err);
-      throw err;
-    }
-  }
 }
 
 export const generalSettingStore = reactive(new GeneralSettingState());
+
+onRendererLanguageApplied((language) => {
+  generalSettingStore.currentLanguage = language;
+});
 
 export const loadGeneralSetting = async (): Promise<void> => {
   await generalSettingStore.loadSettings();

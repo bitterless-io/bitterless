@@ -31,8 +31,8 @@ onMounted(async () => {
   await generalSettingStore.loadSettings();
 });
 
-const onLanguageChange = (): void => {
-  generalSettingStore.changeLanguage(generalSettingStore.currentLanguage);
+const onLanguageChange = async (): Promise<void> => {
+  await generalSettingStore.changeLanguage(generalSettingStore.currentLanguage);
 };
 
 const onSearchEngineChange = (): void => {
