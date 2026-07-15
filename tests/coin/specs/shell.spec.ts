@@ -74,8 +74,7 @@ const expectStableLayout = async (page: Page): Promise<void> => {
       header: rect('.coin-window-header'),
       workspace: rect('.coin-app__workspace'),
       analysis: rect('.coin-analysis-pane'),
-      divider: rect('.coin-split-divider'),
-      codex: rect('.coin-app__codex'),
+      navigation: rect('.coin-analysis-tabs > .arco-tabs-nav'),
       footer: rect('.coin-status-bar'),
     };
   });
@@ -86,11 +85,10 @@ const expectStableLayout = async (page: Page): Promise<void> => {
   expect(layout.footer.height).toBe(28);
   expect(layout.workspace.top).toBe(layout.header.bottom);
   expect(layout.workspace.bottom).toBe(layout.footer.top);
-  expect(layout.analysis.right).toBeLessThanOrEqual(layout.divider.left + 1);
-  expect(layout.divider.right).toBeLessThanOrEqual(layout.codex.left + 1);
-  expect(layout.codex.right).toBeLessThanOrEqual(layout.viewport.width + 1);
-  expect(layout.analysis.width).toBeGreaterThanOrEqual(474);
-  expect(layout.codex.width).toBeGreaterThanOrEqual(320);
+  expect(layout.navigation.height).toBe(38);
+  expect(layout.analysis.left).toBeLessThanOrEqual(1);
+  expect(layout.analysis.right).toBeGreaterThanOrEqual(layout.viewport.width - 1);
+  expect(layout.analysis.width).toBeGreaterThanOrEqual(layout.viewport.width - 1);
 };
 
 test('delivers a secure singleton Coin shell at both supported sizes', async ({ bitterless }) => {
@@ -150,6 +148,8 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   for (const tab of ['Monitor', 'Screener', 'Meme', 'Strategy', 'History']) {
     await expect(coinTab(coinPage, tab)).toBeVisible();
   }
+  const resourcesNav = coinPage.getByRole('button', { name: 'Resources', exact: true });
+  await expect(resourcesNav).toBeVisible();
   await coinTab(coinPage, 'Meme').click();
   const activeTabPanel = coinPage.locator(
     '.coin-analysis-tabs .arco-tabs-content-item-active .arco-tabs-pane',
@@ -158,21 +158,49 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   await activeTabPanel.locator('.arco-radio-button').filter({ hasText: 'Analyze' }).click();
   await expect(activeTabPanel.getByText('Contract address')).toBeVisible();
   await coinTab(coinPage, 'Monitor').click();
-  await expect(coinPage.getByText('Codex is not connected')).toBeVisible();
   await expect(coinPage.getByText('Shell ready')).toBeVisible();
 
-  await coinPage.getByRole('button', { name: 'Sources', exact: true }).click();
+  const forbiddenSurface = await coinPage.evaluate(() => ({
+    chat: document.querySelectorAll(
+      '.coin-codex-pane, .coin-app__codex, [name*="chat" i], [class*="chat" i]',
+    ).length,
+    composer: document.querySelectorAll('textarea, [name*="composer" i], [class*="composer" i]')
+      .length,
+    divider: document.querySelectorAll('.coin-split-divider, [name*="split" i], [role="separator"]')
+      .length,
+  }));
+  expect(forbiddenSurface).toEqual({ chat: 0, composer: 0, divider: 0 });
+
+  const aiStatusButton = coinPage.locator('[name="coin__windowHeader__ai"]');
+  await expect(aiStatusButton).toContainText('AI sign-in required');
+  await aiStatusButton.click();
+  await expect(coinPage.locator('[name="coin__resourcesPage"]')).toBeVisible();
+  await expect(coinPage.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible();
+  for (const section of ['AI analysis', 'Local data tool', 'Chain data', 'Services']) {
+    await expect(coinPage.getByRole('heading', { name: section, exact: true })).toBeVisible();
+  }
+  await expect(coinPage.getByText('yarn global add gmgn-cli', { exact: true })).toBeVisible();
+  await expect(coinPage.getByText('Alchemy BSC', { exact: true })).toBeVisible();
+  await expect(coinPage.getByText('Monitor API', { exact: true })).toBeVisible();
+  await expect(coinPage.getByRole('button', { name: 'Connect Codex' })).toBeDisabled();
+  await expect(resourcesNav).toHaveAttribute('aria-pressed', 'true');
+  await expect(aiStatusButton).toHaveAttribute('aria-pressed', 'true');
+  await coinTab(coinPage, 'Monitor').click();
+  await expect(coinPage.locator('[name="coin__resourcesPage"]')).toHaveCount(0);
+
+  await coinPage.locator('[name="coin__windowHeader__sources"]').click();
   const drawer = coinPage.locator('.arco-drawer');
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText('Binance monitor')).toBeVisible();
+  await expect(drawer.getByText('Codex AI')).toBeVisible();
   const readDrawerPlacement = () => coinPage.evaluate(() => {
     const drawer = document.querySelector('.arco-drawer')!.getBoundingClientRect();
     const analysis = document.querySelector('.coin-analysis-pane')!.getBoundingClientRect();
-    const codex = document.querySelector('.coin-app__codex')!.getBoundingClientRect();
     return {
+      drawerLeft: drawer.left,
       drawerRight: drawer.right,
+      analysisLeft: analysis.left,
       analysisRight: analysis.right,
-      codexLeft: codex.left,
     };
   });
   await expect.poll(async () => {
@@ -180,7 +208,7 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
     return placement.drawerRight - placement.analysisRight;
   }).toBeLessThanOrEqual(1);
   const drawerPlacement = await readDrawerPlacement();
-  expect(drawerPlacement.drawerRight).toBeLessThanOrEqual(drawerPlacement.codexLeft + 1);
+  expect(drawerPlacement.drawerLeft).toBeGreaterThanOrEqual(drawerPlacement.analysisLeft - 1);
   await drawer.getByRole('button', { name: 'Close', exact: true }).click();
 
   mkdirSync(screenshotRoot, { recursive: true });
@@ -189,6 +217,13 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
     path: join(screenshotRoot, 'coin-1360x860.png'),
     animations: 'disabled',
   });
+  await resourcesNav.click();
+  await expectStableLayout(coinPage);
+  await coinPage.screenshot({
+    path: join(screenshotRoot, 'coin-resources-1360x860.png'),
+    animations: 'disabled',
+  });
+  await coinTab(coinPage, 'Monitor').click();
 
   await setCoinWindowBounds(app, { width: 800, height: 600 });
   await expect.poll(() => coinPage.evaluate(() => ({ width: innerWidth, height: innerHeight })))
@@ -196,6 +231,12 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   await expectStableLayout(coinPage);
   await coinPage.screenshot({
     path: join(screenshotRoot, 'coin-800x600.png'),
+    animations: 'disabled',
+  });
+  await aiStatusButton.click();
+  await expectStableLayout(coinPage);
+  await coinPage.screenshot({
+    path: join(screenshotRoot, 'coin-resources-800x600.png'),
     animations: 'disabled',
   });
 
