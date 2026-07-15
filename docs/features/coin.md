@@ -125,17 +125,36 @@ interface MemeAnalyzeInput {
 
 The response must render at least:
 
-- total holders and Top 10/Top 100 concentration;
+- total holders and filtered Top 10/Top 100 concentration over independently attributable wallets;
 - GMGN fresh-wallet, bot/degen, and entrapment-trader rates when supplied;
 - Top 100 curated-library, Robinhood, BSC, and PVP hit counts plus holding share;
 - EOA-only holder count/share and the same cohort breakdown after excluding contracts, pools, and
   black-hole addresses;
+- the excluded-address audit: original source rank, address, exclusion class, reason, and evidence;
 - ranked key wallets with label, cohort, holding share, realized/unrealized evidence, and reason;
 - current popular concepts/narratives and attention-potential evidence;
 - source names, observation times, unsupported fields, warnings, and confidence.
 
 Every percentage has a numerator/denominator or source receipt. Missing evidence is `null` with a
 reason, never `0`.
+
+Holder concentration and wallet-cohort analysis MUST use the filtered holder universe, not the raw
+provider ranking. Before re-ranking, exclude chain burn/null/system addresses, labelled exchange or
+custody wallets, liquidity pools, contracts/programs, bridges/routers, and explicitly labelled
+project treasury or vesting accounts. Excluded balances remain visible in the audit and risk output;
+they are not silently discarded.
+
+Raw rank 1 has a mandatory classification gate. If it is an excluded class, remove it and backfill
+from subsequent source rows. If it is independently attributable, retain it. Rank alone is never a
+reason to delete a real whale. If rank 1 remains unknown, filtered Top 10/Top 100 and holder-derived
+scores are unavailable rather than calculated from a misleading universe.
+
+After exclusions, eligible wallets are re-ranked from 1. A concentration depth is complete only
+when the source window contains enough classified eligible wallets to fill it, or the complete
+holder population is known to be smaller. GMGN local mode exposes at most 100 holder rows without a
+holder cursor; when exclusions prevent backfilling a complete Top 100, return `null + reason` and
+show the eligible/source-row coverage. A deployed Meme service may satisfy the contract by paging or
+over-fetching before returning its filtered Top 100.
 
 ### Attention analysis
 

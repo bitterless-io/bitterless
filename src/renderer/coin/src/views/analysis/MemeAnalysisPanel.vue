@@ -101,8 +101,57 @@
               </small>
             </div>
           </div>
+          <div class="coin-inline-facts">
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.filtered }}:
+              {{ result.holderDistribution.holderUniverse.attestation.filtered ? i18nHelper.coin.analysis.labels.yes : i18nHelper.coin.analysis.labels.no }}
+            </span>
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.rawRows }}:
+              {{ result.holderDistribution.holderUniverse.coverage.rawHolderCount ?? unavailable }}
+            </span>
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.sourceRows }}:
+              {{ result.holderDistribution.holderUniverse.coverage.sourceRowCount }} / {{ result.holderDistribution.holderUniverse.coverage.sourceLimit }}
+            </span>
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.eligibleRows }}:
+              {{ result.holderDistribution.holderUniverse.coverage.eligibleRowCount }}
+            </span>
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.unknownRows }}:
+              {{ result.holderDistribution.holderUniverse.coverage.unknownRowCount }}
+            </span>
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.top10Coverage }}:
+              {{ result.holderDistribution.holderUniverse.coverage.top10EligibleCount }} · {{ result.holderDistribution.holderUniverse.coverage.top10Complete ? i18nHelper.coin.analysis.labels.ready : i18nHelper.coin.analysis.labels.partial }}
+            </span>
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.top100Coverage }}:
+              {{ result.holderDistribution.holderUniverse.coverage.top100EligibleCount }} · {{ result.holderDistribution.holderUniverse.coverage.top100Complete ? i18nHelper.coin.analysis.labels.ready : i18nHelper.coin.analysis.labels.partial }}
+            </span>
+            <span>
+              {{ i18nHelper.coin.analysis.holderUniverse.rawRankOne }}:
+              {{ holderClassificationLabel(result.holderDistribution.holderUniverse.topHolder.status) }} ·
+              {{ result.holderDistribution.holderUniverse.topHolder.address ? shortAddress(result.holderDistribution.holderUniverse.topHolder.address) : unavailable }}
+            </span>
+          </div>
           <div v-if="result.holderDistribution.excludedByType.length" class="coin-inline-facts">
             <span v-for="entry in result.holderDistribution.excludedByType" :key="entry.type">{{ entry.type }}: {{ entry.count }}</span>
+          </div>
+          <div v-if="result.holderDistribution.holderUniverse.exclusionAudit.length" class="coin-data-table-scroll coin-data-table-scroll--section">
+            <table class="coin-data-table">
+              <thead><tr><th>{{ i18nHelper.coin.analysis.columns.sourceRank }}</th><th>{{ i18nHelper.coin.analysis.columns.wallet }}</th><th>{{ i18nHelper.coin.analysis.columns.exclusionClass }}</th><th>{{ i18nHelper.coin.analysis.columns.reason }}</th><th>{{ i18nHelper.coin.analysis.columns.evidence }}</th></tr></thead>
+              <tbody>
+                <tr v-for="entry in result.holderDistribution.holderUniverse.exclusionAudit" :key="`${entry.sourceRank}-${entry.address}`">
+                  <td>{{ entry.sourceRank }}</td>
+                  <td class="coin-data-table__identity coin-address">{{ shortAddress(entry.address) }}</td>
+                  <td>{{ holderClassLabel(entry.class) }}</td>
+                  <td>{{ entry.reason }}</td>
+                  <td>{{ entry.evidenceRefs.length }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -147,12 +196,13 @@
           <CoinResultState v-if="result.keyWallets.length === 0" kind="unavailable" :title="i18nHelper.coin.analysis.states.keyWalletsUnavailable" :detail="result.keyWalletsReason || undefined" />
           <div v-else class="coin-data-table-scroll coin-data-table-scroll--section">
             <table class="coin-data-table coin-data-table--wallets">
-              <thead><tr><th>#</th><th>{{ i18nHelper.coin.analysis.columns.wallet }}</th><th>{{ i18nHelper.coin.analysis.columns.label }}</th><th>{{ i18nHelper.coin.analysis.columns.holderRank }}</th><th>{{ i18nHelper.coin.analysis.columns.holdingShare }}</th><th>{{ i18nHelper.coin.analysis.columns.walletScore }}</th><th>{{ i18nHelper.coin.analysis.columns.pnl }}</th></tr></thead>
+              <thead><tr><th>#</th><th>{{ i18nHelper.coin.analysis.columns.wallet }}</th><th>{{ i18nHelper.coin.analysis.columns.label }}</th><th>{{ i18nHelper.coin.analysis.columns.sourceRank }}</th><th>{{ i18nHelper.coin.analysis.columns.eligibleRank }}</th><th>{{ i18nHelper.coin.analysis.columns.holdingShare }}</th><th>{{ i18nHelper.coin.analysis.columns.walletScore }}</th><th>{{ i18nHelper.coin.analysis.columns.pnl }}</th></tr></thead>
               <tbody>
                 <tr v-for="wallet in result.keyWallets" :key="wallet.address">
                   <td>{{ wallet.rank }}</td>
                   <td class="coin-data-table__identity coin-address">{{ shortAddress(wallet.address) }}</td>
                   <td>{{ wallet.label }}</td>
+                  <td>{{ wallet.sourceHolderRank ?? unavailable }}</td>
                   <td>{{ wallet.holderRank ?? unavailable }}</td>
                   <td>{{ nullablePercent(wallet.holdingSharePct) }}</td>
                   <td>{{ nullableNumber(wallet.walletScore) }}</td>
@@ -249,7 +299,12 @@ import { computed } from 'vue';
 import dayjs from 'dayjs';
 import { IconAlertTriangle, IconMicroscope, IconPlayerStop, IconSparkles } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import type { CoinNullableMetric, CoinRatioMetric } from '@shared/coin/coinAnalysis.type';
+import type {
+  CoinHolderClassificationStatus,
+  CoinHolderExclusionClass,
+  CoinNullableMetric,
+  CoinRatioMetric,
+} from '@shared/coin/coinAnalysis.type';
 import CoinEvidenceStrip from '../../components/CoinEvidenceStrip.vue';
 import CoinAiInterpretation from './CoinAiInterpretation.vue';
 import CoinResultState from './CoinResultState.vue';
@@ -298,4 +353,11 @@ const nullableCurrency = (value: number | null): string => value === null ? unav
 const formatDate = (value: number): string => dayjs(value).format('YYYY-MM-DD HH:mm:ss');
 const shortAddress = (value: string): string => value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
 const basisLabel = (basis: 'observed' | 'inferred'): string => basis === 'observed' ? i18nHelper.coin.analysis.labels.observed : i18nHelper.coin.analysis.labels.inferred;
+const holderClassificationLabel = (status: CoinHolderClassificationStatus): string => {
+  if (status === 'independent') return i18nHelper.coin.analysis.holderUniverse.independent;
+  if (status === 'excluded') return i18nHelper.coin.analysis.holderUniverse.excluded;
+  return i18nHelper.coin.analysis.holderUniverse.unknown;
+};
+const holderClassLabel = (value: CoinHolderExclusionClass): string =>
+  i18nHelper.coin.analysis.holderUniverse.classes[value];
 </script>

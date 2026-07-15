@@ -13,6 +13,7 @@ source mode after a failure, or silently switches to sample data.
 | Alchemy account and applications | local chain identity/contract/account checks and future activity collection | Create read-only endpoints for every supported chain and run the capability probe below. |
 | GMGN personal API credential | local Meme discovery, token metadata, security, holders, traders, and concepts | Obtain a credential whose terms allow the planned personal analysis workload. |
 | Curated wallet cohort dataset | high-profit, Robinhood, BSC, PVP overlap scoring | Supply reviewed addresses, chain, label, provenance, confidence, and version. |
+| Non-independent holder registry | exchange/custody, pool, bridge/router, treasury, and vesting exclusions | Supply reviewed public addresses, chain, exclusion class, provenance, confidence, and version. Never include signing material. |
 | Coin source services | desktop Monitor/Screener and optional preferred Meme service requests | Deploy the applicable backend services and provide their public API bases. |
 | Position data | position-aware `HOLD` decisions | Supply entry price, remaining amount, invested amount, and risk inputs for each analysis. |
 
@@ -83,6 +84,25 @@ Normalize addresses by chain, deduplicate them, distinguish EOA from contracts/p
 and retain the source used to assign each label. Cohorts are evidence, not a private-key or trading
 wallet registry; never provide seed phrases or signing credentials.
 
+## Holder-universe exclusions
+
+Top-holder concentration and cohort overlap operate on independently attributable wallets only.
+Classification priority is chain-invariant address rules, explicit provider labels/tags, Alchemy
+account kind, then the reviewed exclusion registry. Exclude burn/null/system addresses,
+exchange/custody wallets, pools, contracts/programs, bridges/routers, and explicitly labelled
+treasury/vesting accounts. Preserve every exclusion as an auditable row with original source rank,
+address, class, reason, and evidence.
+
+Do not remove raw rank 1 merely because it is rank 1. It must be classified: excluded classes are
+removed and eligible wallets are re-ranked; a verified independent wallet remains; an unknown rank
+1 blocks holder concentration and holder-derived scoring until classification is available.
+
+GMGN `token holders` currently returns at most 100 rows and exposes no holder pagination cursor. A
+local result can therefore backfill filtered Top 10 from the returned window, but filtered Top 100
+is unavailable whenever exclusions leave fewer than the required eligible rows and the complete
+population is not known. A production Meme service should page/over-fetch until it has 100 eligible
+wallets or proves that fewer exist.
+
 ## Service handoff
 
 The desktop receives only source API bases:
@@ -121,6 +141,7 @@ unsupported dimensions so the renderer can display `null + reason` rather than a
 - [ ] `gmgn-cli` is installed, the personal key is configured with mode `0600`, and the read-only
       probe passes without `GMGN_PRIVATE_KEY`.
 - [ ] A reviewed, versioned wallet cohort is deployed.
+- [ ] A reviewed, versioned non-independent holder registry is deployed and rank 1 is classified.
 - [ ] Monitor and Screener bases use HTTPS in production; the optional Meme base does the same when selected.
 - [ ] Missing source data returns `null + reason`, never a fabricated zero.
 - [ ] Polling respects provider cooldowns and can be stopped without losing the last valid receipt.

@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { createUnattestedCoinHolderUniverse } from '@shared/coin/coinAnalysis.type';
 import type {
   CoinAttentionConcept,
   CoinChain,
   CoinCohortKey,
   CoinCohortOverlap,
+  CoinHolderExclusionAudit,
+  CoinHolderExclusionClass,
+  CoinHolderUniverseMetadata,
   CoinKeyWallet,
   CoinLaunchStage,
   CoinMemeAnalysisResult,
@@ -30,6 +34,8 @@ const COHORTS: Array<{ cohort: CoinCohortKey; label: string }> = [
 const COHORT_REASON = 'No reviewed, versioned owner cohort registry is configured for local analysis.';
 const ACCOUNT_CLASSIFICATION_REASON = 'Alchemy account classification is incomplete for the returned holder set.';
 const UNSUPPORTED_SCORE_REASON = 'The source did not provide this score; Bitterless does not infer it from rank alone.';
+const RANK_ONE_REASON = 'Raw source rank 1 is not verified as independent or non-independent.';
+const UNATTESTED_UNIVERSE_REASON = 'The Meme service did not attest that holder-derived values use the filtered holder universe.';
 
 export interface LocalMemeReadSet {
   info?: GmgnReadResult;
@@ -45,7 +51,7 @@ export interface LocalMemeReadSet {
 
 interface LocalHolder {
   address: string;
-  rank: number;
+  sourceRank: number;
   sharePct: number | null;
   amount: number | null;
   label: string | null;
@@ -54,6 +60,233 @@ interface LocalHolder {
   realizedPnlUsd: number | null;
   unrealizedPnlUsd: number | null;
 }
+
+interface ClassifiedLocalHolder {
+  holder: LocalHolder;
+  status: 'independent' | 'excluded' | 'unknown';
+  class: CoinHolderExclusionClass | null;
+  reason: string;
+  evidenceRefs: string[];
+}
+
+interface EligibleLocalHolder extends LocalHolder {
+  eligibleRank: number;
+}
+
+const EVM_BURN_SYSTEM_ADDRESSES = new Set([
+  ...Array.from({ length: 11 }, (_, index) => `0x${index.toString(16).padStart(40, '0')}`),
+  '0x000000000000000000000000000000000000dead',
+]);
+const SOLANA_BURN_SYSTEM_ADDRESSES = new Set([
+  '11111111111111111111111111111111',
+  '1nc1nerator11111111111111111111111111111111',
+]);
+const SOLANA_PROGRAM_ADDRESSES = new Set([
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
+  'BPFLoader1111111111111111111111111111111111',
+  'BPFLoaderUpgradeab1e11111111111111111111111',
+]);
+const EXPLICIT_EXCLUSION_LABELS = new Map<string, CoinHolderExclusionClass>([
+  ['burn', 'burn_null_system'],
+  ['burn address', 'burn_null_system'],
+  ['burn null system', 'burn_null_system'],
+  ['dead address', 'burn_null_system'],
+  ['null address', 'burn_null_system'],
+  ['black hole', 'burn_null_system'],
+  ['system address', 'burn_null_system'],
+  ['exchange', 'exchange_custody'],
+  ['exchange custody', 'exchange_custody'],
+  ['exchange wallet', 'exchange_custody'],
+  ['centralized exchange', 'exchange_custody'],
+  ['cex', 'exchange_custody'],
+  ['cex wallet', 'exchange_custody'],
+  ['custody', 'exchange_custody'],
+  ['custody wallet', 'exchange_custody'],
+  ['custodian', 'exchange_custody'],
+  ['exchange deposit', 'exchange_custody'],
+  ['liquidity pool', 'liquidity_pool'],
+  ['lp', 'liquidity_pool'],
+  ['lp wallet', 'liquidity_pool'],
+  ['amm pool', 'liquidity_pool'],
+  ['dex pool', 'liquidity_pool'],
+  ['contract', 'contract_program'],
+  ['contract program', 'contract_program'],
+  ['contract address', 'contract_program'],
+  ['smart contract', 'contract_program'],
+  ['program', 'contract_program'],
+  ['program account', 'contract_program'],
+  ['bridge', 'bridge_router'],
+  ['bridge wallet', 'bridge_router'],
+  ['bridge router', 'bridge_router'],
+  ['router', 'bridge_router'],
+  ['treasury', 'treasury_vesting'],
+  ['project treasury', 'treasury_vesting'],
+  ['protocol treasury', 'treasury_vesting'],
+  ['vesting', 'treasury_vesting'],
+  ['vesting wallet', 'treasury_vesting'],
+  ['vesting contract', 'treasury_vesting'],
+  ['treasury vesting', 'treasury_vesting'],
+  ['non independent', 'other_non_independent'],
+  ['other non independent', 'other_non_independent'],
+  ['dev', 'other_non_independent'],
+  ['developer', 'other_non_independent'],
+  ['deployer', 'other_non_independent'],
+  ['creator', 'other_non_independent'],
+  ['token creator', 'other_non_independent'],
+  ['insider', 'other_non_independent'],
+  ['bundler', 'other_non_independent'],
+  ['sniper', 'other_non_independent'],
+  ['team', 'other_non_independent'],
+  ['non independent wallet', 'other_non_independent'],
+  ['market maker', 'other_non_independent'],
+  ['protocol wallet', 'other_non_independent'],
+  ['team wallet', 'other_non_independent'],
+]);
+const EXPLICIT_INDEPENDENT_LABELS = new Set(['independent wallet', 'individual wallet']);
+const EXCHANGE_CUSTODY_BRANDS = [
+  'binance',
+  'okx',
+  'bybit',
+  'coinbase',
+  'kraken',
+  'kucoin',
+  'mexc',
+  'gate.io',
+  'htx',
+  'huobi',
+  'bitget',
+  'crypto.com',
+  'upbit',
+  'bithumb',
+  'bitfinex',
+  'gemini',
+  'robinhood',
+] as const;
+const EXCHANGE_CUSTODY_SAFE_SUFFIX_TOKENS = new Set<string>([
+  'wallet',
+  'custody',
+  'hot',
+  'cold',
+  'deposit',
+  'withdrawal',
+  'exchange',
+  'account',
+]);
+
+const holderAddressKey = (chain: CoinChain, address: string): string =>
+  chain === 'solana' ? address.trim() : address.trim().toLowerCase();
+
+const normalizedClassificationLabel = (value: string): string =>
+  value.trim().toLowerCase().replace(/[_/\\:-]+/g, ' ').replace(/\s+/g, ' ');
+
+const isExchangeCustodyBrandLabel = (value: string): boolean =>
+  EXCHANGE_CUSTODY_BRANDS.some((brand) => {
+    if (value === brand) return true;
+    if (!value.startsWith(`${brand} `)) return false;
+    const suffixTokens = value.slice(brand.length + 1).split(' ');
+    return suffixTokens.length > 0 && suffixTokens.every((token) =>
+      EXCHANGE_CUSTODY_SAFE_SUFFIX_TOKENS.has(token) || /^\d+$/.test(token));
+  });
+
+const classifyLocalHolder = (
+  chain: CoinChain,
+  holder: LocalHolder,
+  reads: LocalMemeReadSet,
+  holderEvidence: string[],
+  accountEvidence: string[],
+): ClassifiedLocalHolder => {
+  const addressKey = holderAddressKey(chain, holder.address);
+  if (
+    (chain === 'solana' && SOLANA_BURN_SYSTEM_ADDRESSES.has(addressKey)) ||
+    (chain !== 'solana' && EVM_BURN_SYSTEM_ADDRESSES.has(addressKey))
+  ) {
+    return {
+      holder,
+      status: 'excluded',
+      class: 'burn_null_system',
+      reason: 'A deterministic chain-known burn, null, or system address rule matched this holder.',
+      evidenceRefs: [...new Set([...holderEvidence, 'holder-classifier:chain-known-v1'])],
+    };
+  }
+  if (chain === 'solana' && SOLANA_PROGRAM_ADDRESSES.has(addressKey)) {
+    return {
+      holder,
+      status: 'excluded',
+      class: 'contract_program',
+      reason: 'A deterministic chain-known Solana program address rule matched this holder.',
+      evidenceRefs: [...new Set([...holderEvidence, 'holder-classifier:chain-known-v1'])],
+    };
+  }
+
+  const explicitLabels = [holder.label, ...holder.tags]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => ({ raw: value, normalized: normalizedClassificationLabel(value) }));
+  for (const label of explicitLabels) {
+    const exclusionClass = EXPLICIT_EXCLUSION_LABELS.get(label.normalized);
+    if (exclusionClass) {
+      return {
+        holder,
+        status: 'excluded',
+        class: exclusionClass,
+        reason: `Explicit holder label/tag "${label.raw}" classifies this address as non-independent.`,
+        evidenceRefs: holderEvidence,
+      };
+    }
+    if (isExchangeCustodyBrandLabel(label.normalized)) {
+      return {
+        holder,
+        status: 'excluded',
+        class: 'exchange_custody',
+        reason: `Explicit exchange/custody brand label "${label.raw}" classifies this address as non-independent.`,
+        evidenceRefs: holderEvidence,
+      };
+    }
+    if (EXPLICIT_INDEPENDENT_LABELS.has(label.normalized)) {
+      return {
+        holder,
+        status: 'independent',
+        class: null,
+        reason: `Explicit holder label/tag "${label.raw}" identifies an independent wallet.`,
+        evidenceRefs: holderEvidence,
+      };
+    }
+  }
+
+  const holderKinds = new Map(
+    Object.entries(reads.alchemy?.holderKinds ?? {})
+      .map(([address, kind]) => [holderAddressKey(chain, address), kind] as const),
+  );
+  const accountKind = reads.alchemy?.chainIdentityVerified === true
+    ? holderKinds.get(addressKey) ?? 'unknown'
+    : 'unknown';
+  if (accountKind === 'wallet') {
+    return {
+      holder,
+      status: 'independent',
+      class: null,
+      reason: 'Alchemy account kind verifies a wallet and no higher-precedence exclusion matched.',
+      evidenceRefs: accountEvidence,
+    };
+  }
+  if (accountKind === 'contract' || accountKind === 'account') {
+    return {
+      holder,
+      status: 'excluded',
+      class: 'contract_program',
+      reason: `Alchemy account kind classifies this holder as ${accountKind === 'contract' ? 'a contract' : 'a program-owned account'}.`,
+      evidenceRefs: accountEvidence,
+    };
+  }
+  return {
+    holder,
+    status: 'unknown',
+    class: null,
+    reason: reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON,
+    evidenceRefs: accountEvidence,
+  };
+};
 
 const metric = <T>(value: T, evidenceRefs: string[]): CoinNullableMetric<T> => ({
   value,
@@ -185,7 +418,7 @@ const localHolders = (reads: LocalMemeReadSet): LocalHolder[] => {
     ]);
     holders.push({
       address,
-      rank: Math.max(1, Math.trunc(numberByKeys(value, ['rank', 'holder_rank']) ?? index + 1)),
+      sourceRank: Math.max(1, Math.trunc(numberByKeys(value, ['rank', 'holder_rank']) ?? index + 1)),
       sharePct: sharePct !== null && sharePct >= 0 && sharePct <= 100 ? sharePct : null,
       amount: numberByKeys(value, ['amount', 'token_amount', 'balance']),
       label: textByKeys(value, ['label', 'wallet_label', 'name'], 160),
@@ -195,7 +428,7 @@ const localHolders = (reads: LocalMemeReadSet): LocalHolder[] => {
       unrealizedPnlUsd: numberByKeys(value, ['unrealized_pnl_usd', 'unrealized_profit_usd']),
     });
   });
-  return holders.slice(0, 100);
+  return holders.sort((left, right) => left.sourceRank - right.sourceRank).slice(0, 100);
 };
 
 export const extractLocalHolderAddresses = (reads: LocalMemeReadSet): string[] =>
@@ -212,12 +445,20 @@ const holderCountMetric = (reads: LocalMemeReadSet, holders: LocalHolder[]) => {
 };
 
 const concentrationMetric = (
-  holders: LocalHolder[],
+  holders: EligibleLocalHolder[],
   requestedDepth: 10 | 100,
-  totalHolders: number | null,
+  coverageComplete: boolean,
+  completeRawPopulation: boolean,
+  sourceRowCount: number,
   evidence: string[],
 ): CoinRatioMetric => {
-  const required = totalHolders === null ? requestedDepth : Math.min(requestedDepth, totalHolders);
+  if (!coverageComplete) {
+    const reason = requestedDepth === 100
+      ? `Filtered Top 100 is unavailable because GMGN's non-pageable source window has ${holders.length} eligible holders across ${sourceRowCount} source rows.`
+      : `Filtered Top 10 is unavailable because the source window cannot establish 10 classified eligible holders.`;
+    return unavailableRatio(reason, evidence);
+  }
+  const required = completeRawPopulation ? Math.min(requestedDepth, holders.length) : requestedDepth;
   const selected = holders.slice(0, required);
   if (selected.length < required || selected.some(({ sharePct }) => sharePct === null)) {
     return unavailableRatio(
@@ -225,7 +466,8 @@ const concentrationMetric = (
       evidence,
     );
   }
-  return ratio(selected.reduce((sum, holder) => sum + (holder.sharePct ?? 0), 0), evidence);
+  const share = selected.reduce((sum, holder) => sum + (holder.sharePct ?? 0), 0);
+  return ratio(share, evidence, share, 100);
 };
 
 const sourceRate = (
@@ -240,21 +482,22 @@ const sourceRate = (
     : unavailableRatio(unavailableReason, evidence);
 };
 
-const unavailableCohorts = (): CoinCohortOverlap[] =>
+const unavailableCohorts = (reason = COHORT_REASON): CoinCohortOverlap[] =>
   COHORTS.map(({ cohort, label }) => ({
     cohort,
     label,
-    matchCount: unavailableMetric<number>(COHORT_REASON),
-    holdingSharePct: unavailableRatio(COHORT_REASON),
+    matchCount: unavailableMetric<number>(reason),
+    holdingSharePct: unavailableRatio(reason),
   }));
 
-const localKeyWallets = (holders: LocalHolder[], evidence: string[]): CoinKeyWallet[] =>
+const localKeyWallets = (holders: EligibleLocalHolder[], evidence: string[]): CoinKeyWallet[] =>
   holders
     .filter((holder) => holder.label || holder.tags.length > 0)
     .map((holder, index) => ({
       rank: index + 1,
       address: holder.address,
-      holderRank: holder.rank,
+      holderRank: holder.eligibleRank,
+      sourceHolderRank: holder.sourceRank,
       label: holder.label ?? holder.tags.join(', '),
       cohorts: [],
       holdingSharePct: holder.sharePct,
@@ -439,6 +682,19 @@ const completeUnavailableFields = (
   return [...byField.values()].slice(0, 200);
 };
 
+const holderDepthComplete = (
+  classified: ClassifiedLocalHolder[],
+  eligible: EligibleLocalHolder[],
+  depth: 10 | 100,
+  completeRawPopulation: boolean,
+): boolean => {
+  if (eligible.length >= depth) {
+    const boundarySourceRank = eligible[depth - 1]?.sourceRank ?? Number.POSITIVE_INFINITY;
+    return !classified.some(({ status, holder }) => status === 'unknown' && holder.sourceRank <= boundarySourceRank);
+  }
+  return completeRawPopulation && classified.every(({ status }) => status !== 'unknown');
+};
+
 const localScore = (
   top10: CoinRatioMetric,
   fresh: CoinRatioMetric,
@@ -446,8 +702,11 @@ const localScore = (
   risks: CoinRiskEvidence[],
   evidenceRefs: string[],
 ): CoinNullableMetric<number> => {
+  if (top10.value === null) {
+    return unavailableMetric('Local score v1 requires an available filtered Top 10 concentration.', evidenceRefs);
+  }
   const components: number[] = [];
-  if (top10.value !== null) components.push(Math.max(0, 100 - top10.value * 2));
+  components.push(Math.max(0, 100 - top10.value * 2));
   if (fresh.value !== null) components.push(Math.min(100, fresh.value * 2));
   if (bot.value !== null) components.push(Math.max(0, 100 - bot.value * 2));
   if (components.length < 2) {
@@ -467,8 +726,74 @@ export const buildLocalMemeAnalysis = (
   const holderEvidence = readEvidence(reads, 'token-holders');
   const holders = localHolders(reads);
   const holderCount = holderCountMetric(reads, holders);
-  const top10SharePct = concentrationMetric(holders, 10, holderCount.value, holderEvidence);
-  const top100SharePct = concentrationMetric(holders, 100, holderCount.value, holderEvidence);
+  const accountEvidence = alchemyEvidence(reads);
+  const classifiedHolders = holders.map((holder) =>
+    classifyLocalHolder(input.chain, holder, reads, holderEvidence, accountEvidence));
+  const eligibleHolders: EligibleLocalHolder[] = classifiedHolders
+    .filter(({ status }) => status === 'independent')
+    .map(({ holder }, index) => ({ ...holder, eligibleRank: index + 1 }));
+  const exclusionAudit: CoinHolderExclusionAudit[] = classifiedHolders
+    .filter((item): item is ClassifiedLocalHolder & { class: CoinHolderExclusionClass } =>
+      item.status === 'excluded' && item.class !== null)
+    .map(({ holder, class: exclusionClass, reason, evidenceRefs }) => ({
+      sourceRank: holder.sourceRank,
+      address: holder.address,
+      class: exclusionClass,
+      reason,
+      evidenceRefs,
+    }));
+  const rawTopHolder = classifiedHolders.find(({ holder }) => holder.sourceRank === 1);
+  const topHolder: CoinHolderUniverseMetadata['topHolder'] = rawTopHolder
+    ? {
+        sourceRank: rawTopHolder.holder.sourceRank,
+        address: rawTopHolder.holder.address,
+        status: rawTopHolder.status,
+        class: rawTopHolder.class,
+        reason: rawTopHolder.status === 'unknown' ? RANK_ONE_REASON : rawTopHolder.reason,
+        evidenceRefs: rawTopHolder.evidenceRefs,
+      }
+    : {
+        sourceRank: null,
+        address: null,
+        status: 'unknown',
+        class: null,
+        reason: 'The GMGN holder source did not include raw source rank 1.',
+        evidenceRefs: holderEvidence,
+      };
+  const rankOneClassified = topHolder.sourceRank === 1 && topHolder.status !== 'unknown';
+  const completeRawPopulation = holderCount.value !== null && holders.length >= holderCount.value;
+  const top10Complete = rankOneClassified && holderDepthComplete(classifiedHolders, eligibleHolders, 10, completeRawPopulation);
+  const top100Complete = rankOneClassified && holderDepthComplete(classifiedHolders, eligibleHolders, 100, completeRawPopulation);
+  const holderUniverse: CoinHolderUniverseMetadata = {
+    attestation: {
+      filtered: true,
+      method: 'local-classifier-v1',
+      reason: null,
+      evidenceRefs: [...new Set([...holderEvidence, ...accountEvidence, 'holder-classifier:local-v1'])],
+    },
+    topHolder,
+    coverage: {
+      rawHolderCount: holderCount.value,
+      sourceLimit: Math.min(100, Math.max(1, input.holderLimit)),
+      sourceRowCount: holders.length,
+      classifiedRowCount: classifiedHolders.filter(({ status }) => status !== 'unknown').length,
+      eligibleRowCount: eligibleHolders.length,
+      excludedRowCount: exclusionAudit.length,
+      unknownRowCount: classifiedHolders.filter(({ status }) => status === 'unknown').length,
+      top10EligibleCount: Math.min(10, eligibleHolders.length),
+      top10Complete,
+      top100EligibleCount: Math.min(100, eligibleHolders.length),
+      top100Complete,
+    },
+    exclusionAudit,
+  };
+  const concentrationEvidence = [...new Set([...holderEvidence, ...accountEvidence])];
+  const top10SharePct = rankOneClassified
+    ? concentrationMetric(eligibleHolders, 10, top10Complete, completeRawPopulation, holders.length, concentrationEvidence)
+    : unavailableRatio(`Filtered Top 10 is unavailable because ${RANK_ONE_REASON}`, concentrationEvidence);
+  const top100SharePct = rankOneClassified
+    ? concentrationMetric(eligibleHolders, 100, top100Complete, completeRawPopulation, holders.length, concentrationEvidence)
+    : unavailableRatio(`Filtered Top 100 is unavailable because ${RANK_ONE_REASON}`, concentrationEvidence);
   const freshWalletRatePct = sourceRate(
     reads.holders?.data,
     ['fresh_wallet_rate_pct', 'fresh_wallet_rate', 'fresh_rate'],
@@ -497,35 +822,54 @@ export const buildLocalMemeAnalysis = (
   const liquidityValue = numberByKeys(reads.info?.data, ['liquidity_usd', 'liquidityUsd', 'liquidity']);
   const missingFromInfo = (label: string) => `${label} is not present in the GMGN token-info response.`;
 
-  const allClassified = holders.length > 0 && holders.every((holder) => reads.alchemy?.holderKinds[holder.address] && reads.alchemy.holderKinds[holder.address] !== 'unknown');
-  const walletHolders = allClassified
-    ? holders.filter((holder) => reads.alchemy?.holderKinds[holder.address] === 'wallet')
-    : [];
-  const walletSharesComplete = allClassified && walletHolders.every(({ sharePct }) => sharePct !== null);
-  const accountEvidence = alchemyEvidence(reads);
-  const eoaHolderCount = allClassified
-    ? metric(walletHolders.length, accountEvidence)
-    : unavailableMetric<number>(reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON, accountEvidence);
+  const classificationComplete = (holders.length > 0 || holderCount.value === 0) &&
+    classifiedHolders.every(({ status }) => status !== 'unknown');
+  const walletSharesComplete = classificationComplete && eligibleHolders.every(({ sharePct }) => sharePct !== null);
+  const eoaHolderCount = classificationComplete
+    ? metric(eligibleHolders.length, concentrationEvidence)
+    : unavailableMetric<number>(reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON, concentrationEvidence);
   const eoaHoldingShare = walletSharesComplete
-    ? ratio(walletHolders.reduce((sum, holder) => sum + (holder.sharePct ?? 0), 0), accountEvidence)
-    : unavailableRatio(reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON, accountEvidence);
-  const excludedCount = allClassified
-    ? metric(holders.length - walletHolders.length, accountEvidence)
-    : unavailableMetric<number>(reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON, accountEvidence);
-  const excludedByType = allClassified
-    ? [
-        {
-          type: input.chain === 'solana' ? 'PROGRAM_OR_ACCOUNT' : 'CONTRACT',
-          count: holders.length - walletHolders.length,
-          evidenceRefs: accountEvidence,
-        },
-      ]
-    : [];
+    ? ratio(
+        eligibleHolders.reduce((sum, holder) => sum + (holder.sharePct ?? 0), 0),
+        concentrationEvidence,
+      )
+    : unavailableRatio(reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON, concentrationEvidence);
+  const excludedCount = reads.holders
+    ? metric(exclusionAudit.length, concentrationEvidence)
+    : unavailableMetric<number>('GMGN did not return a holder source window.', concentrationEvidence);
+  const excludedGroups = new Map<CoinHolderExclusionClass, CoinHolderExclusionAudit[]>();
+  exclusionAudit.forEach((entry) => {
+    excludedGroups.set(entry.class, [...(excludedGroups.get(entry.class) ?? []), entry]);
+  });
+  const excludedByType = [...excludedGroups.entries()].map(([type, entries]) => ({
+    type,
+    count: entries.length,
+    evidenceRefs: [...new Set(entries.flatMap(({ evidenceRefs }) => evidenceRefs))],
+  }));
 
   const concepts = observedConcepts(reads);
   const fits = tokenConceptFits(concepts, nameValue, symbolValue);
-  const keyWallets = localKeyWallets(holders, holderEvidence);
+  const keyWallets = localKeyWallets(eligibleHolders, concentrationEvidence);
   const risks = localRisks(reads);
+  const holderWarnings: string[] = [];
+  if (!rankOneClassified) {
+    risks.push({
+      code: 'HOLDER_RANK_ONE_UNKNOWN',
+      severity: 'warning',
+      text: `${RANK_ONE_REASON} Filtered concentration and the holder-derived deterministic score are unavailable.`,
+      evidenceRefs: topHolder.evidenceRefs,
+    });
+    holderWarnings.push(`${RANK_ONE_REASON} Holder-derived concentration and scoring are blocked.`);
+  }
+  if (rankOneClassified && !top100Complete) {
+    risks.push({
+      code: 'HOLDER_TOP100_INCOMPLETE',
+      severity: 'warning',
+      text: 'The filtered Top 100 is incomplete because the bounded GMGN source window cannot backfill all exclusions or unknown rows.',
+      evidenceRefs: concentrationEvidence,
+    });
+    holderWarnings.push('Filtered Top 100 coverage is incomplete in the non-pageable GMGN holder window.');
+  }
   if (reads.alchemy && !reads.alchemy.chainIdentityVerified) {
     risks.push({
       code: 'CHAIN_IDENTITY_MISMATCH',
@@ -544,7 +888,9 @@ export const buildLocalMemeAnalysis = (
   }
 
   const scoreEvidence = [...new Set([...holderEvidence, ...traderEvidence, ...risks.flatMap((risk) => risk.evidenceRefs)])];
-  const deterministicScore = localScore(top10SharePct, freshWalletRatePct, botDegenRatePct, risks, scoreEvidence);
+  const deterministicScore = rankOneClassified
+    ? localScore(top10SharePct, freshWalletRatePct, botDegenRatePct, risks, scoreEvidence)
+    : unavailableMetric(`Local score v1 is unavailable because ${RANK_ONE_REASON}`, scoreEvidence);
   const confidenceDimensions = [
     nameValue,
     priceValue,
@@ -590,6 +936,7 @@ export const buildLocalMemeAnalysis = (
       entrapmentTraderRatePct,
       excludedAddressCount: excludedCount,
       excludedByType,
+      holderUniverse,
     },
     top100Cohorts: unavailableCohorts(),
     eoaAnalysis: {
@@ -601,7 +948,7 @@ export const buildLocalMemeAnalysis = (
     keyWallets,
     keyWalletsReason: keyWallets.length > 0
       ? null
-      : 'GMGN returned no labelled wallets in the bounded holder page.',
+      : 'GMGN returned no labelled wallets in the classified eligible holder universe.',
     concepts,
     tokenConceptFits: fits,
     conceptsReason: concepts.length > 0
@@ -614,6 +961,7 @@ export const buildLocalMemeAnalysis = (
     warnings: [
       'Local CLI/RPC mode is explicit and does not fall back to a deployed Meme service.',
       COHORT_REASON,
+      ...holderWarnings,
     ],
     receipts: reads.receipts,
   };
@@ -682,6 +1030,95 @@ const legacyCohorts = (
   });
 };
 
+const unavailableExistingCohorts = (
+  cohorts: CoinCohortOverlap[],
+  reason: string,
+): CoinCohortOverlap[] => cohorts.map((cohort) => ({
+  ...cohort,
+  matchCount: unavailableMetric(reason, cohort.matchCount.evidenceRefs),
+  holdingSharePct: unavailableRatio(reason, cohort.holdingSharePct.evidenceRefs),
+}));
+
+const gateUnattestedServiceUniverse = (
+  result: CoinMemeAnalysisResult,
+  reason: string,
+): void => {
+  const evidenceRefs = result.receipts.flatMap(({ evidenceIds }) => evidenceIds);
+  result.holderDistribution.top10SharePct = unavailableRatio(reason, result.holderDistribution.top10SharePct.evidenceRefs);
+  result.holderDistribution.top100SharePct = unavailableRatio(reason, result.holderDistribution.top100SharePct.evidenceRefs);
+  result.holderDistribution.excludedAddressCount = unavailableMetric(reason, evidenceRefs);
+  result.holderDistribution.excludedByType = [];
+  result.holderDistribution.holderUniverse = createUnattestedCoinHolderUniverse(reason);
+  result.top100Cohorts = unavailableExistingCohorts(result.top100Cohorts, reason);
+  result.eoaAnalysis.holderCount = unavailableMetric(reason, result.eoaAnalysis.holderCount.evidenceRefs);
+  result.eoaAnalysis.holdingSharePct = unavailableRatio(reason, result.eoaAnalysis.holdingSharePct.evidenceRefs);
+  result.eoaAnalysis.cohorts = unavailableExistingCohorts(result.eoaAnalysis.cohorts, reason);
+  result.keyWallets = [];
+  result.keyWalletsReason = reason;
+  result.deterministicScore = unavailableMetric(reason, result.deterministicScore.evidenceRefs);
+};
+
+const enforceServiceHolderUniverse = (result: CoinMemeAnalysisResult): void => {
+  const universe = result.holderDistribution.holderUniverse;
+  const serviceAttested = universe.attestation.filtered && universe.attestation.method === 'service-attestation';
+  if (!serviceAttested) {
+    gateUnattestedServiceUniverse(result, UNATTESTED_UNIVERSE_REASON);
+    if (!result.risks.some(({ code }) => code === 'HOLDER_UNIVERSE_UNATTESTED')) {
+      result.risks.push({
+        code: 'HOLDER_UNIVERSE_UNATTESTED',
+        severity: 'warning',
+        text: UNATTESTED_UNIVERSE_REASON,
+        evidenceRefs: result.receipts.flatMap(({ evidenceIds }) => evidenceIds),
+      });
+    }
+    if (!result.warnings.includes(UNATTESTED_UNIVERSE_REASON)) result.warnings.push(UNATTESTED_UNIVERSE_REASON);
+    result.risks = result.risks.slice(-100);
+    result.warnings = result.warnings.slice(-100);
+    return;
+  }
+
+  const excludedAddresses = new Set(
+    universe.exclusionAudit.map(({ address }) => holderAddressKey(result.asset.chain, address)),
+  );
+  const filteredKeyWallets = result.keyWallets.filter(({ address }) =>
+    !excludedAddresses.has(holderAddressKey(result.asset.chain, address)));
+  if (filteredKeyWallets.length !== result.keyWallets.length) {
+    result.keyWallets = filteredKeyWallets.map((wallet, index) => ({ ...wallet, rank: index + 1 }));
+    if (result.keyWallets.length === 0) {
+      result.keyWalletsReason = 'All service key-wallet rows were present in the holder exclusion audit.';
+    }
+    result.warnings.push('Service key-wallet rows present in the exclusion audit were removed locally.');
+  }
+
+  const rankOneVerified = universe.topHolder.sourceRank === 1 && universe.topHolder.status !== 'unknown';
+  const rankOneReason = `Holder-derived service values are unavailable because ${RANK_ONE_REASON}`;
+  if (!rankOneVerified || !universe.coverage.top10Complete) {
+    const reason = rankOneVerified
+      ? 'Filtered Top 10 is unavailable because the service attestation reports incomplete eligible coverage.'
+      : rankOneReason;
+    result.holderDistribution.top10SharePct = unavailableRatio(reason, result.holderDistribution.top10SharePct.evidenceRefs);
+    result.deterministicScore = unavailableMetric(reason, result.deterministicScore.evidenceRefs);
+  }
+  if (!rankOneVerified || !universe.coverage.top100Complete) {
+    const reason = rankOneVerified
+      ? 'Filtered Top 100 is unavailable because the service attestation reports incomplete eligible coverage.'
+      : rankOneReason;
+    result.holderDistribution.top100SharePct = unavailableRatio(reason, result.holderDistribution.top100SharePct.evidenceRefs);
+    result.top100Cohorts = unavailableExistingCohorts(result.top100Cohorts, reason);
+  }
+  if (!rankOneVerified && !result.risks.some(({ code }) => code === 'HOLDER_RANK_ONE_UNKNOWN')) {
+    result.risks.push({
+      code: 'HOLDER_RANK_ONE_UNKNOWN',
+      severity: 'warning',
+      text: rankOneReason,
+      evidenceRefs: universe.topHolder.evidenceRefs,
+    });
+    result.warnings.push(rankOneReason);
+  }
+  result.risks = result.risks.slice(-100);
+  result.warnings = result.warnings.slice(-100);
+};
+
 export const normalizeMemeServicePayload = (
   payload: unknown,
   input: CoinMemeAnalyzeInput,
@@ -701,6 +1138,7 @@ export const normalizeMemeServicePayload = (
       ...parsed,
       receipts: [...parsed.receipts, serviceReceipt].slice(-40),
     };
+    enforceServiceHolderUniverse(result);
     result.unavailable = completeUnavailableFields(result, result.unavailable);
     return coinMemeAnalysisResultSchema.parse(result) as CoinMemeAnalysisResult;
   }
@@ -801,6 +1239,9 @@ export const normalizeMemeServicePayload = (
         rank: Math.max(1, Math.trunc(finiteNumber(wallet.rank) ?? index + 1)),
         address,
         holderRank: finiteNumber(wallet.holderRank) === null ? null : Math.max(1, Math.trunc(finiteNumber(wallet.holderRank)!)),
+        sourceHolderRank: finiteNumber(wallet.sourceHolderRank) === null
+          ? null
+          : Math.max(1, Math.trunc(finiteNumber(wallet.sourceHolderRank)!)),
         label: (Array.isArray(wallet.tags) ? wallet.tags.map((tag) => stringValue(tag, 80)).filter(Boolean).join(', ') : '') || 'Service-labelled wallet',
         cohorts: [],
         holdingSharePct: holdingSharePct !== null && holdingSharePct >= 0 && holdingSharePct <= 100 ? holdingSharePct : null,
@@ -851,6 +1292,7 @@ export const normalizeMemeServicePayload = (
               : [];
           }).slice(0, 30)
         : [],
+      holderUniverse: createUnattestedCoinHolderUniverse(UNATTESTED_UNIVERSE_REASON),
     },
     top100Cohorts: topCohorts,
     eoaAnalysis: {
@@ -876,6 +1318,7 @@ export const normalizeMemeServicePayload = (
     warnings: [],
     receipts: [serviceReceipt],
   };
+  enforceServiceHolderUniverse(result);
   result.unavailable = completeUnavailableFields(result, result.unavailable);
   return coinMemeAnalysisResultSchema.parse(result) as CoinMemeAnalysisResult;
 };

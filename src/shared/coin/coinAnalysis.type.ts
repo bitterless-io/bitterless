@@ -12,6 +12,15 @@ export const COIN_LAUNCH_STAGES = [
 ] as const;
 export const COIN_AI_MODELS = ['gpt-5.5', 'gpt-5.4'] as const;
 export const COIN_AI_EFFORTS = ['low', 'medium', 'high'] as const;
+export const COIN_HOLDER_EXCLUSION_CLASSES = [
+  'burn_null_system',
+  'exchange_custody',
+  'liquidity_pool',
+  'contract_program',
+  'bridge_router',
+  'treasury_vesting',
+  'other_non_independent',
+] as const;
 
 export type CoinChain = (typeof COIN_CHAINS)[number];
 export type CoinLaunchStage = (typeof COIN_LAUNCH_STAGES)[number];
@@ -23,6 +32,8 @@ export type CoinDecision = 'BUY' | 'HOLD' | 'SELL';
 export type CoinAiModel = (typeof COIN_AI_MODELS)[number];
 export type CoinAiEffort = (typeof COIN_AI_EFFORTS)[number];
 export type CoinAiTargetKind = 'monitor' | 'screener' | 'meme' | 'strategy';
+export type CoinHolderExclusionClass = (typeof COIN_HOLDER_EXCLUSION_CLASSES)[number];
+export type CoinHolderClassificationStatus = 'independent' | 'excluded' | 'unknown';
 
 export interface CoinAiAnalysisTarget {
   kind: CoinAiTargetKind;
@@ -318,6 +329,82 @@ export interface CoinMemeAsset {
   contractVerified: CoinNullableMetric<boolean>;
 }
 
+export interface CoinHolderExclusionAudit {
+  sourceRank: number;
+  address: string;
+  class: CoinHolderExclusionClass;
+  reason: string;
+  evidenceRefs: string[];
+}
+
+export interface CoinTopHolderClassification {
+  sourceRank: number | null;
+  address: string | null;
+  status: CoinHolderClassificationStatus;
+  class: CoinHolderExclusionClass | null;
+  reason: string;
+  evidenceRefs: string[];
+}
+
+export interface CoinHolderUniverseCoverage {
+  rawHolderCount: number | null;
+  sourceLimit: number;
+  sourceRowCount: number;
+  classifiedRowCount: number;
+  eligibleRowCount: number;
+  excludedRowCount: number;
+  unknownRowCount: number;
+  top10EligibleCount: number;
+  top10Complete: boolean;
+  top100EligibleCount: number;
+  top100Complete: boolean;
+}
+
+export interface CoinHolderUniverseMetadata {
+  attestation: {
+    filtered: boolean;
+    method: 'local-classifier-v1' | 'service-attestation' | 'unattested';
+    reason: string | null;
+    evidenceRefs: string[];
+  };
+  topHolder: CoinTopHolderClassification;
+  coverage: CoinHolderUniverseCoverage;
+  exclusionAudit: CoinHolderExclusionAudit[];
+}
+
+export const createUnattestedCoinHolderUniverse = (
+  reason = 'This result does not attest that holder-derived values use the filtered holder universe.',
+): CoinHolderUniverseMetadata => ({
+  attestation: {
+    filtered: false,
+    method: 'unattested',
+    reason,
+    evidenceRefs: [],
+  },
+  topHolder: {
+    sourceRank: null,
+    address: null,
+    status: 'unknown',
+    class: null,
+    reason,
+    evidenceRefs: [],
+  },
+  coverage: {
+    rawHolderCount: null,
+    sourceLimit: 0,
+    sourceRowCount: 0,
+    classifiedRowCount: 0,
+    eligibleRowCount: 0,
+    excludedRowCount: 0,
+    unknownRowCount: 0,
+    top10EligibleCount: 0,
+    top10Complete: false,
+    top100EligibleCount: 0,
+    top100Complete: false,
+  },
+  exclusionAudit: [],
+});
+
 export interface CoinMemeHolderDistribution {
   holderCount: CoinNullableMetric<number>;
   top10SharePct: CoinRatioMetric;
@@ -327,6 +414,7 @@ export interface CoinMemeHolderDistribution {
   entrapmentTraderRatePct: CoinRatioMetric;
   excludedAddressCount: CoinNullableMetric<number>;
   excludedByType: Array<{ type: string; count: number; evidenceRefs: string[] }>;
+  holderUniverse: CoinHolderUniverseMetadata;
 }
 
 export type CoinCohortKey = 'curated' | 'robinhood' | 'bsc' | 'pvp';
@@ -349,6 +437,7 @@ export interface CoinKeyWallet {
   rank: number;
   address: string;
   holderRank: number | null;
+  sourceHolderRank?: number | null;
   label: string;
   cohorts: CoinCohortKey[];
   holdingSharePct: number | null;

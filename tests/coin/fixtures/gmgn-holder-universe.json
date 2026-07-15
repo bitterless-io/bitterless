@@ -1,0 +1,81 @@
+{
+  "chain": "bsc",
+  "contractAddress": "0x9000000000000000000000000000000000000000",
+  "cases": {
+    "burnRankOne": {
+      "holderCount": 2,
+      "holders": [
+        { "rank": 1, "address": "0x0000000000000000000000000000000000000000", "holding_percentage": 40 },
+        { "rank": 2, "address": "0x9000000000000000000000000000000000000002", "holding_percentage": 10, "label": "observed whale" }
+      ],
+      "holderKinds": {
+        "0x0000000000000000000000000000000000000000": "wallet",
+        "0x9000000000000000000000000000000000000002": "wallet"
+      }
+    },
+    "exchangeRankOne": {
+      "holderCount": 2,
+      "holders": [
+        { "rank": 1, "address": "0x9100000000000000000000000000000000000001", "holding_percentage": 35, "label": "Binance Hot Wallet 8" },
+        { "rank": 2, "address": "0x9100000000000000000000000000000000000002", "holding_percentage": 9 }
+      ],
+      "holderKinds": {
+        "0x9100000000000000000000000000000000000001": "wallet",
+        "0x9100000000000000000000000000000000000002": "wallet"
+      }
+    },
+    "independentRankOne": {
+      "holderCount": 2,
+      "holders": [
+        { "rank": 1, "address": "0xAbCd000000000000000000000000000000000001", "holding_percentage": 25, "label": "ordinary whale" },
+        { "rank": 2, "address": "0x9200000000000000000000000000000000000002", "holding_percentage": 5 }
+      ],
+      "holderKinds": {
+        "0xabcd000000000000000000000000000000000001": "wallet",
+        "0x9200000000000000000000000000000000000002": "wallet"
+      }
+    },
+    "unknownRankOne": {
+      "holderCount": 2,
+      "holders": [
+        { "rank": 1, "address": "0x9300000000000000000000000000000000000001", "holding_percentage": 30 },
+        { "rank": 2, "address": "0x9300000000000000000000000000000000000002", "holding_percentage": 7 }
+      ],
+      "holderKinds": {
+        "0x9300000000000000000000000000000000000001": "unknown",
+        "0x9300000000000000000000000000000000000002": "wallet"
+      }
+    },
+    "coordinatedRankOne": {
+      "holderCount": 2,
+      "holders": [
+        { "rank": 1, "address": "0x9350000000000000000000000000000000000001", "holding_percentage": 28, "tags": ["insider", "bundler"] },
+        { "rank": 2, "address": "0x9350000000000000000000000000000000000002", "holding_percentage": 6 }
+      ],
+      "holderKinds": {
+        "0x9350000000000000000000000000000000000001": "wallet",
+        "0x9350000000000000000000000000000000000002": "wallet"
+      }
+    },
+    "top10Backfill": {
+      "holderCount": 1000,
+      "generatedRows": 11,
+      "excludedRanks": [1]
+    },
+    "top100Incomplete": {
+      "holderCount": 1000,
+      "generatedRows": 100,
+      "excludedRanks": [2]
+    },
+    "solanaCaseSensitiveUnknown": {
+      "chain": "solana",
+      "holderCount": 1,
+      "holders": [
+        { "rank": 1, "address": "CaseSensitiveWallet111111111111111111111", "holding_percentage": 12 }
+      ],
+      "holderKinds": {
+        "casesensitivewallet111111111111111111111": "wallet"
+      }
+    }
+  }
+}

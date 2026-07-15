@@ -7,6 +7,8 @@ import type {
 import {
   COIN_AI_EFFORTS,
   COIN_AI_MODELS,
+  COIN_HOLDER_EXCLUSION_CLASSES,
+  createUnattestedCoinHolderUniverse,
 } from '@shared/coin/coinAnalysis.type';
 import {
   COIN_AI_MAX_RECEIPTS,
@@ -159,10 +161,49 @@ const cohort = z.object({
   holdingSharePct: ratioMetric,
 }).strict();
 
+const holderExclusionClass = z.enum(COIN_HOLDER_EXCLUSION_CLASSES);
+const holderUniverse = z.object({
+  attestation: z.object({
+    filtered: z.boolean(),
+    method: z.enum(['local-classifier-v1', 'service-attestation', 'unattested']),
+    reason: boundedString(500).nullable(),
+    evidenceRefs,
+  }).strict(),
+  topHolder: z.object({
+    sourceRank: z.number().int().positive().nullable(),
+    address: boundedString(160).min(1).nullable(),
+    status: z.enum(['independent', 'excluded', 'unknown']),
+    class: holderExclusionClass.nullable(),
+    reason: boundedString(500).min(1),
+    evidenceRefs,
+  }).strict(),
+  coverage: z.object({
+    rawHolderCount: z.number().int().nonnegative().nullable(),
+    sourceLimit: z.number().int().nonnegative(),
+    sourceRowCount: z.number().int().nonnegative(),
+    classifiedRowCount: z.number().int().nonnegative(),
+    eligibleRowCount: z.number().int().nonnegative(),
+    excludedRowCount: z.number().int().nonnegative(),
+    unknownRowCount: z.number().int().nonnegative(),
+    top10EligibleCount: z.number().int().nonnegative().max(10),
+    top10Complete: z.boolean(),
+    top100EligibleCount: z.number().int().nonnegative().max(100),
+    top100Complete: z.boolean(),
+  }).strict(),
+  exclusionAudit: z.array(z.object({
+    sourceRank: z.number().int().positive(),
+    address: boundedString(160).min(1),
+    class: holderExclusionClass,
+    reason: boundedString(500).min(1),
+    evidenceRefs,
+  }).strict()).max(100),
+}).strict().default(createUnattestedCoinHolderUniverse());
+
 const keyWallet = z.object({
   rank: z.number().int().positive(),
   address: boundedString(160).min(1),
   holderRank: z.number().int().positive().nullable(),
+  sourceHolderRank: z.number().int().positive().nullable().default(null),
   label: boundedString(160).min(1),
   cohorts: z.array(z.enum(['curated', 'robinhood', 'bsc', 'pvp'])).max(4),
   holdingSharePct: finite.min(0).max(100).nullable(),
@@ -174,6 +215,66 @@ const keyWallet = z.object({
   reason: boundedString(500).min(1),
   evidenceRefs,
 }).strict();
+
+const isSchemaRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const migrationEvidenceRefs = (value: unknown): string[] =>
+  isSchemaRecord(value) && Array.isArray(value.evidenceRefs)
+    ? value.evidenceRefs.filter((ref): ref is string => typeof ref === 'string').slice(0, 64)
+    : [];
+
+const unavailableMigrationMetric = (value: unknown, reason: string) => ({
+  value: null,
+  reason,
+  evidenceRefs: migrationEvidenceRefs(value),
+});
+
+const unavailableMigrationRatio = (value: unknown, reason: string) => ({
+  ...unavailableMigrationMetric(value, reason),
+  numerator: null,
+  denominator: null,
+});
+
+const migrateUnattestedHolderUniverse = (value: unknown): unknown => {
+  if (!isSchemaRecord(value) || !isSchemaRecord(value.holderDistribution)) return value;
+  const distribution = value.holderDistribution;
+  const universe = isSchemaRecord(distribution.holderUniverse) ? distribution.holderUniverse : null;
+  const attestation = universe && isSchemaRecord(universe.attestation) ? universe.attestation : null;
+  if (attestation?.filtered === true) return value;
+
+  const reason = 'Legacy holder-derived values are unavailable because the result has no filtered-universe attestation.';
+  const unavailableCohorts = (cohorts: unknown): unknown => Array.isArray(cohorts)
+    ? cohorts.map((entry) => isSchemaRecord(entry) ? {
+        ...entry,
+        matchCount: unavailableMigrationMetric(entry.matchCount, reason),
+        holdingSharePct: unavailableMigrationRatio(entry.holdingSharePct, reason),
+      } : entry)
+    : cohorts;
+  const eoa = isSchemaRecord(value.eoaAnalysis) ? value.eoaAnalysis : null;
+
+  return {
+    ...value,
+    holderDistribution: {
+      ...distribution,
+      top10SharePct: unavailableMigrationRatio(distribution.top10SharePct, reason),
+      top100SharePct: unavailableMigrationRatio(distribution.top100SharePct, reason),
+      excludedAddressCount: unavailableMigrationMetric(distribution.excludedAddressCount, reason),
+      excludedByType: [],
+      holderUniverse: createUnattestedCoinHolderUniverse(reason),
+    },
+    top100Cohorts: unavailableCohorts(value.top100Cohorts),
+    eoaAnalysis: eoa ? {
+      ...eoa,
+      holderCount: unavailableMigrationMetric(eoa.holderCount, reason),
+      holdingSharePct: unavailableMigrationRatio(eoa.holdingSharePct, reason),
+      cohorts: unavailableCohorts(eoa.cohorts),
+    } : value.eoaAnalysis,
+    keyWallets: [],
+    keyWalletsReason: reason,
+    deterministicScore: unavailableMigrationMetric(value.deterministicScore, reason),
+  };
+};
 
 const concept = z.object({
   rank: z.number().int().positive(),
@@ -201,7 +302,7 @@ const conceptFit = z.object({
   evidenceRefs,
 }).strict();
 
-export const coinMemeAnalysisResultSchema = z.object({
+const coinMemeAnalysisResultBaseSchema = z.object({
   schema: z.literal('coin-meme-analysis-v1'),
   id: boundedString(160).min(1),
   mode: z.enum(['service', 'local_cli_rpc']),
@@ -231,6 +332,7 @@ export const coinMemeAnalysisResultSchema = z.object({
       count: z.number().int().nonnegative(),
       evidenceRefs,
     }).strict()).max(30),
+    holderUniverse,
   }).strict(),
   top100Cohorts: z.array(cohort).length(4),
   eoaAnalysis: z.object({
@@ -260,6 +362,11 @@ export const coinMemeAnalysisResultSchema = z.object({
   warnings: z.array(boundedString(500)).max(100),
   receipts: z.array(coinSourceReceiptSchema).max(40),
 }).strict();
+
+export const coinMemeAnalysisResultSchema = z.preprocess(
+  migrateUnattestedHolderUniverse,
+  coinMemeAnalysisResultBaseSchema,
+);
 
 const evidenceDescriptor = z.object({
   id: boundedString(160).min(1),

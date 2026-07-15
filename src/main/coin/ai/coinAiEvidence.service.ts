@@ -242,6 +242,34 @@ const addMemeEvidence = (
   ];
   for (const [label, metric] of assetMetrics) addMetric(snapshot, label, metric);
 
+  const universe = result.holderDistribution.holderUniverse;
+  addFact(
+    snapshot,
+    'Holder universe attestation',
+    `filtered=${universe.attestation.filtered}; method=${universe.attestation.method}; reason=${universe.attestation.reason ?? 'none'}`,
+    universe.attestation.evidenceRefs,
+  );
+  addFact(
+    snapshot,
+    'Holder universe coverage',
+    `raw=${universe.coverage.rawHolderCount ?? 'unknown'}; source=${universe.coverage.sourceRowCount}/${universe.coverage.sourceLimit}; classified=${universe.coverage.classifiedRowCount}; eligible=${universe.coverage.eligibleRowCount}; excluded=${universe.coverage.excludedRowCount}; unknown=${universe.coverage.unknownRowCount}; top10Complete=${universe.coverage.top10Complete}; top100Complete=${universe.coverage.top100Complete}`,
+    universe.attestation.evidenceRefs,
+  );
+  addFact(
+    snapshot,
+    'Raw rank 1 classification',
+    `sourceRank=${universe.topHolder.sourceRank ?? 'missing'}; address=${universe.topHolder.address ?? 'missing'}; status=${universe.topHolder.status}; class=${universe.topHolder.class ?? 'none'}; reason=${universe.topHolder.reason}`,
+    universe.topHolder.evidenceRefs,
+  );
+  for (const exclusion of universe.exclusionAudit.slice(0, 3)) {
+    addFact(
+      snapshot,
+      `Excluded holder at source rank ${exclusion.sourceRank}`,
+      `address=${exclusion.address}; class=${exclusion.class}; reason=${exclusion.reason}`,
+      exclusion.evidenceRefs,
+    );
+  }
+
   for (const concept of result.concepts.slice(0, 6)) {
     addFact(
       snapshot,
