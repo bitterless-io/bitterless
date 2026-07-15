@@ -673,6 +673,8 @@ try {
       assert.equal(pendingState.providers.codex.pending, true);
       assert.equal(pendingState.providers.codex.settingsPath, pendingSettingsPath);
       assert.equal(typeof pendingState.providers.codex.originalHash, 'string');
+      assert.match(pendingState.providers.codex.shimHash, /^[a-f0-9]{64}$/);
+      const recordedShimHash = pendingState.providers.codex.shimHash;
       assert.equal(existsSync(pendingBackupPath), stage !== 'pending-state');
       assert.equal(
         existsSync(pendingShimPath),
@@ -682,14 +684,17 @@ try {
       const resumedService = new statusModule.CodingAgentStatusBridgeService({
         homePath: pendingSetup.homePath,
         userDataPath: pendingSetup.userDataPath,
-        execPath: '/Applications/Bitterless App.app/Contents/MacOS/Bitterless',
-        appPath: '/Applications/Bitterless App.app',
+        execPath: '/Applications/Bitterless Next.app/Contents/MacOS/Bitterless',
+        appPath: '/Applications/Bitterless Next.app',
         platform: 'darwin',
         idFactory: () => OTHER_INSTALLATION_ID
       });
       if (outcome === 'retry') {
         assert.equal(resumedService.install('codex').configuration, 'configured');
         assert.equal(readFileSync(pendingBackupPath, 'utf8'), pendingOriginal);
+        assert.ok(readFileSync(pendingShimPath, 'utf8').includes('Bitterless Next.app'));
+        const completedState = JSON.parse(readFileSync(pendingStatePath, 'utf8'));
+        assert.notEqual(completedState.providers.codex.shimHash, recordedShimHash);
       } else {
         assert.equal(resumedService.remove('codex').configuration, 'not-installed');
         assert.deepEqual(JSON.parse(readFileSync(pendingSettingsPath, 'utf8')), {
@@ -731,8 +736,8 @@ try {
   const tamperedRetry = new statusModule.CodingAgentStatusBridgeService({
     homePath: tamperedPendingSetup.homePath,
     userDataPath: tamperedPendingSetup.userDataPath,
-    execPath: '/Applications/Bitterless App.app/Contents/MacOS/Bitterless',
-    appPath: '/Applications/Bitterless App.app',
+    execPath: '/Applications/Bitterless Next.app/Contents/MacOS/Bitterless',
+    appPath: '/Applications/Bitterless Next.app',
     platform: 'darwin'
   });
   assert.equal(tamperedRetry.install('codex').configuration, 'drifted');
@@ -914,17 +919,47 @@ try {
         () => pendingClaudeSetup.service.install('claude'),
         new RegExp(`claude-fixture-${stage}`)
       );
+      const pendingClaudeStatePath = join(
+        pendingClaudeUserData,
+        'coding-agent',
+        'installation.json'
+      );
+      const pendingClaudeState = JSON.parse(readFileSync(pendingClaudeStatePath, 'utf8'));
+      assert.match(pendingClaudeState.providers.claude.handlerHash, /^[a-f0-9]{64}$/);
+      assert.match(pendingClaudeState.providers.claude.hookLayoutHash, /^[a-f0-9]{64}$/);
+      const recordedHandlerHash = pendingClaudeState.providers.claude.handlerHash;
+      const recordedLayoutHash = pendingClaudeState.providers.claude.hookLayoutHash;
       const resumedClaude = new statusModule.CodingAgentStatusBridgeService({
         homePath: pendingClaudeSetup.homePath,
         userDataPath: pendingClaudeUserData,
-        execPath: '/Applications/Bitterless % &.app/Contents/MacOS/Bitterless',
-        appPath: '/Applications/Bitterless % &.app',
+        execPath: '/Applications/Bitterless Next % &.app/Contents/MacOS/Bitterless',
+        appPath: '/Applications/Bitterless Next % &.app',
         platform: 'darwin',
         idFactory: () => OTHER_INSTALLATION_ID
       });
       if (outcome === 'retry') {
         assert.equal(resumedClaude.install('claude').configuration, 'configured');
         assert.equal(readFileSync(backupPath, 'utf8'), original);
+        const resumedSettings = parseJsonc(
+          readFileSync(settingsPath, 'utf8'),
+          [],
+          { allowTrailingComma: true }
+        );
+        const resumedHandlers = Object.values(resumedSettings.hooks)
+          .flatMap((groups) => groups)
+          .flatMap((group) => group.hooks)
+          .filter((handler) => handler.args?.includes(INSTALLATION_ID));
+        assert.equal(resumedHandlers.length, 7);
+        assert.ok(resumedHandlers.every(
+          (handler) => handler.command ===
+            '/Applications/Bitterless Next % &.app/Contents/MacOS/Bitterless'
+        ));
+        assert.ok(resumedHandlers.every(
+          (handler) => handler.args[0] === '/Applications/Bitterless Next % &.app'
+        ));
+        const completedState = JSON.parse(readFileSync(pendingClaudeStatePath, 'utf8'));
+        assert.notEqual(completedState.providers.claude.handlerHash, recordedHandlerHash);
+        assert.equal(completedState.providers.claude.hookLayoutHash, recordedLayoutHash);
       } else {
         assert.equal(resumedClaude.remove('claude').configuration, 'not-installed');
         const removedPendingClaude = readFileSync(settingsPath, 'utf8');
@@ -938,45 +973,118 @@ try {
     }
   }
 
-  const tamperedClaudeSettingsSetup = makeStatusService(
+  for (const mutation of [
+    'command',
+    'timeout',
+    'args',
+    'commandWindows',
+    'duplicate',
+    'move'
+  ]) {
+    const tamperedClaudeSettingsSetup = makeStatusService(
+      statusModule,
+      `claude-pending-tampered-${mutation}`,
+      {
+        installCheckpoint: (_provider, checkpoint) => {
+          if (checkpoint === 'settings') {
+            throw new Error(`claude-fixture-tampered-${mutation}`);
+          }
+        }
+      }
+    );
+    assert.throws(
+      () => tamperedClaudeSettingsSetup.service.install('claude'),
+      new RegExp(`claude-fixture-tampered-${mutation}`)
+    );
+    const tamperedClaudeSettingsPath = join(
+      tamperedClaudeSettingsSetup.homePath,
+      '.claude',
+      'settings.json'
+    );
+    const tamperedClaudeSettings = JSON.parse(
+      readFileSync(tamperedClaudeSettingsPath, 'utf8')
+    );
+    const stopHandlers = tamperedClaudeSettings.hooks.Stop[0].hooks;
+    const targetHandler = stopHandlers[0];
+    if (mutation === 'command') targetHandler.command = '/tmp/third-party-command';
+    if (mutation === 'timeout') targetHandler.timeout = 9;
+    if (mutation === 'args') targetHandler.args.push('--third-party-change');
+    if (mutation === 'commandWindows') {
+      targetHandler.commandWindows = 'C:\\third-party-command.exe';
+    }
+    if (mutation === 'duplicate') stopHandlers.push(structuredClone(targetHandler));
+    if (mutation === 'move') {
+      const [movedHandler] = stopHandlers.splice(0, 1);
+      tamperedClaudeSettings.hooks.PreToolUse = [{
+        matcher: 'Shell',
+        hooks: [movedHandler]
+      }];
+    }
+    const tamperedText = `${JSON.stringify(tamperedClaudeSettings, null, 2)}\n`;
+    writeFileSync(tamperedClaudeSettingsPath, tamperedText);
+    const tamperedClaudeRecovery = new statusModule.CodingAgentStatusBridgeService({
+      homePath: tamperedClaudeSettingsSetup.homePath,
+      userDataPath: tamperedClaudeSettingsSetup.userDataPath,
+      execPath: '/Applications/Bitterless Next.app/Contents/MacOS/Bitterless',
+      appPath: '/Applications/Bitterless Next.app',
+      platform: 'darwin'
+    });
+    assert.equal(tamperedClaudeRecovery.install('claude').configuration, 'drifted');
+    assert.equal(readFileSync(tamperedClaudeSettingsPath, 'utf8'), tamperedText);
+    assert.equal(tamperedClaudeRecovery.remove('claude').configuration, 'drifted');
+    assert.equal(
+      readFileSync(tamperedClaudeSettingsPath, 'utf8'),
+      tamperedText,
+      `pending recovery must preserve Claude ${mutation} drift byte-for-byte`
+    );
+  }
+
+  const legacyPendingClaudeSetup = makeStatusService(
     statusModule,
-    'claude-pending-tampered-settings',
+    'claude-pending-legacy-fingerprints',
     {
       installCheckpoint: (_provider, checkpoint) => {
-        if (checkpoint === 'settings') throw new Error('claude-fixture-tampered-settings');
+        if (checkpoint === 'settings') throw new Error('claude-fixture-legacy-fingerprints');
       }
     }
   );
   assert.throws(
-    () => tamperedClaudeSettingsSetup.service.install('claude'),
-    /claude-fixture-tampered-settings/
+    () => legacyPendingClaudeSetup.service.install('claude'),
+    /claude-fixture-legacy-fingerprints/
   );
-  const tamperedClaudeSettingsPath = join(
-    tamperedClaudeSettingsSetup.homePath,
+  const legacyPendingStatePath = join(
+    legacyPendingClaudeSetup.userDataPath,
+    'coding-agent',
+    'installation.json'
+  );
+  const legacyPendingState = JSON.parse(readFileSync(legacyPendingStatePath, 'utf8'));
+  delete legacyPendingState.providers.claude.handlerHash;
+  delete legacyPendingState.providers.claude.hookLayoutHash;
+  writeFileSync(legacyPendingStatePath, `${JSON.stringify(legacyPendingState, null, 2)}\n`);
+  const legacyPendingSettingsPath = join(
+    legacyPendingClaudeSetup.homePath,
     '.claude',
     'settings.json'
   );
-  const tamperedClaudeSettings = JSON.parse(
-    readFileSync(tamperedClaudeSettingsPath, 'utf8')
-  );
-  tamperedClaudeSettings.hooks.Stop[0].hooks[0].args.push('--third-party-change');
-  writeFileSync(
-    tamperedClaudeSettingsPath,
-    `${JSON.stringify(tamperedClaudeSettings, null, 2)}\n`
-  );
-  const tamperedClaudeRemoval = new statusModule.CodingAgentStatusBridgeService({
-    homePath: tamperedClaudeSettingsSetup.homePath,
-    userDataPath: tamperedClaudeSettingsSetup.userDataPath,
-    execPath: '/Applications/Bitterless App.app/Contents/MacOS/Bitterless',
-    appPath: '/Applications/Bitterless App.app',
+  const legacyPendingSettings = readFileSync(legacyPendingSettingsPath, 'utf8');
+  const legacyPendingRecovery = new statusModule.CodingAgentStatusBridgeService({
+    homePath: legacyPendingClaudeSetup.homePath,
+    userDataPath: legacyPendingClaudeSetup.userDataPath,
+    execPath: '/Applications/Bitterless Next.app/Contents/MacOS/Bitterless',
+    appPath: '/Applications/Bitterless Next.app',
     platform: 'darwin'
   });
-  assert.equal(tamperedClaudeRemoval.remove('claude').configuration, 'drifted');
-  assert.ok(
-    JSON.parse(readFileSync(tamperedClaudeSettingsPath, 'utf8'))
-      .hooks.Stop[0].hooks[0].args.includes('--third-party-change'),
-    'pending remove must preserve a tampered Claude handler'
+  assert.equal(legacyPendingRecovery.getStatus('claude').configuration, 'drifted');
+  assert.equal(legacyPendingRecovery.install('claude').configuration, 'drifted');
+  assert.equal(legacyPendingRecovery.remove('claude').configuration, 'drifted');
+  assert.equal(
+    readFileSync(legacyPendingSettingsPath, 'utf8'),
+    legacyPendingSettings,
+    'legacy pending state without fingerprints must never broadly delete old hooks'
   );
+  legacyPendingState.providers.claude.handlerHash = 'not-a-sha256';
+  writeFileSync(legacyPendingStatePath, `${JSON.stringify(legacyPendingState, null, 2)}\n`);
+  assert.equal(legacyPendingRecovery.getStatus('claude').configuration, 'invalid');
 
   // Windows Codex schema includes commandWindows and safely quoted special characters.
   const windowsRoot = tempRoot('windows-install');

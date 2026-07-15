@@ -47,6 +47,8 @@ interface ProviderInstallState {
   settingsPath: string;
   shimPath: string | null;
   shimHash: string | null;
+  handlerHash: string | null;
+  hookLayoutHash: string | null;
   backupPath: string;
   originalHash: string | null;
   originalExisted: boolean;
@@ -80,6 +82,16 @@ interface ConfigInspection {
   status: 'absent' | 'exact' | 'upgradeable' | 'drifted';
   snapshot: SettingsSnapshot;
   reason: string;
+}
+
+interface HookFingerprints {
+  handlerHash: string | null;
+  hookLayoutHash: string | null;
+}
+
+interface PendingConfigInspection {
+  status: 'absent' | 'current' | 'recorded' | 'drifted';
+  inspection: ConfigInspection;
 }
 
 export interface CodingAgentStatusBridgeDependencies {
@@ -119,6 +131,41 @@ const HOOKS: Record<CodingAgentProvider, HookSpec[]> = {
 
 const sha256 = (value: string | Buffer): string => {
   return createHash('sha256').update(value).digest('hex');
+};
+
+const parseOptionalFingerprint = (value: unknown): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new Error('Invalid coding-agent provider fingerprint');
+  }
+  return value;
+};
+
+const canonicalizeJson = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (!isPlainRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalizeJson(value[key])])
+  );
+};
+
+const fingerprintJson = (value: unknown): string => {
+  const serialized = JSON.stringify(canonicalizeJson(value));
+  if (serialized === undefined) throw new Error('Cannot fingerprint an undefined value');
+  return sha256(serialized);
+};
+
+const fingerprintHookLayout = (
+  locations: Array<{ event: string; matcher: string | null }>
+): string => {
+  const sorted = [...locations].sort((left, right) => {
+    const leftKey = JSON.stringify([left.event, left.matcher]);
+    const rightKey = JSON.stringify([right.event, right.matcher]);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  return fingerprintJson(sorted);
 };
 
 const atomicWrite = (path: string, content: string | Buffer, mode?: number): void => {
@@ -166,6 +213,8 @@ const parseProviderInstallState = (value: unknown): ProviderInstallState => {
     settingsPath: value.settingsPath,
     shimPath: value.shimPath,
     shimHash: value.shimHash,
+    handlerHash: parseOptionalFingerprint(value.handlerHash),
+    hookLayoutHash: parseOptionalFingerprint(value.hookLayoutHash),
     backupPath: value.backupPath,
     originalHash: typeof value.originalHash === 'string' ? value.originalHash : null,
     originalExisted: value.originalExisted
@@ -391,6 +440,79 @@ const inspectConfig = (
     };
   }
   return { status: 'exact', snapshot, reason: '' };
+};
+
+const expectedHookFingerprints = (
+  provider: CodingAgentProvider,
+  definition: HookDefinition
+): HookFingerprints => {
+  if (provider !== 'claude') {
+    return { handlerHash: null, hookLayoutHash: null };
+  }
+  return {
+    handlerHash: fingerprintJson(definition.handler),
+    hookLayoutHash: fingerprintHookLayout(
+      HOOKS[provider].map((spec) => ({
+        event: spec.event,
+        matcher: spec.matcher ?? null
+      }))
+    )
+  };
+};
+
+const inspectOwnedHookFingerprints = (
+  snapshot: SettingsSnapshot,
+  definition: HookDefinition
+): HookFingerprints => {
+  const hooks = isPlainRecord(snapshot.value.hooks) ? snapshot.value.hooks : {};
+  const handlerHashes: string[] = [];
+  const locations: Array<{ event: string; matcher: string | null }> = [];
+  for (const [event, groupsValue] of Object.entries(hooks)) {
+    const groups = groupsValue as JsonRecord[];
+    for (const group of groups) {
+      for (const handler of group.hooks as JsonRecord[]) {
+        if (!definition.isOwned(handler)) continue;
+        handlerHashes.push(fingerprintJson(handler));
+        locations.push({
+          event,
+          matcher: typeof group.matcher === 'string' ? group.matcher : null
+        });
+      }
+    }
+  }
+  if (handlerHashes.length === 0) {
+    return { handlerHash: null, hookLayoutHash: null };
+  }
+  const uniqueHandlerHashes = new Set(handlerHashes);
+  return {
+    handlerHash: uniqueHandlerHashes.size === 1 ? handlerHashes[0] : null,
+    hookLayoutHash: fingerprintHookLayout(locations)
+  };
+};
+
+const inspectPendingConfig = (
+  snapshot: SettingsSnapshot,
+  provider: CodingAgentProvider,
+  definition: HookDefinition,
+  install: ProviderInstallState
+): PendingConfigInspection => {
+  const inspection = inspectConfig(snapshot, provider, definition);
+  if (inspection.status === 'absent') return { status: 'absent', inspection };
+  if (inspection.status === 'exact') return { status: 'current', inspection };
+  if (
+    provider === 'claude' &&
+    install.handlerHash !== null &&
+    install.hookLayoutHash !== null
+  ) {
+    const actual = inspectOwnedHookFingerprints(snapshot, definition);
+    if (
+      actual.handlerHash === install.handlerHash &&
+      actual.hookLayoutHash === install.hookLayoutHash
+    ) {
+      return { status: 'recorded', inspection };
+    }
+  }
+  return { status: 'drifted', inspection };
 };
 
 const formattingOptions = (text: string): FormattingOptions => ({
@@ -637,8 +759,25 @@ export class CodingAgentStatusBridgeService {
     }
 
     const snapshot = readSettings(layout.settingsPath, provider);
-    const inspection = inspectConfig(snapshot, provider, definition);
+    const pendingConfig = inspectPendingConfig(snapshot, provider, definition, install);
+    if (pendingConfig.status === 'drifted') {
+      return this.response(
+        provider,
+        'drifted',
+        pendingConfig.inspection.reason || 'Pending hook configuration changed externally'
+      );
+    }
     const shimExists = layout.shimPath !== null && existsSync(layout.shimPath);
+    let actualShimHash: string | null = null;
+    if (shimExists && layout.shimPath !== null) {
+      actualShimHash = sha256(readFileSync(layout.shimPath));
+      if (
+        actualShimHash !== expectedShimHash &&
+        (install.shimHash === null || actualShimHash !== install.shimHash)
+      ) {
+        return this.response(provider, 'drifted', 'Pending hook shim changed externally');
+      }
+    }
     if (existsSync(layout.backupPath)) {
       const backup = readFileSync(layout.backupPath);
       const backupHash = sha256(backup);
@@ -650,7 +789,7 @@ export class CodingAgentStatusBridgeService {
       if (
         install.originalHash === null ||
         sha256(snapshot.raw) !== install.originalHash ||
-        inspection.status !== 'absent' ||
+        pendingConfig.status !== 'absent' ||
         shimExists
       ) {
         return this.response(
@@ -664,31 +803,30 @@ export class CodingAgentStatusBridgeService {
     this.dependencies.installCheckpoint?.(provider, 'backup');
 
     if (layout.shimPath !== null && expectedShim !== null && expectedShimHash !== null) {
-      if (existsSync(layout.shimPath)) {
-        if (sha256(readFileSync(layout.shimPath)) !== expectedShimHash) {
-          return this.response(provider, 'drifted', 'Pending hook shim changed externally');
-        }
-      } else {
+      if (!existsSync(layout.shimPath) || actualShimHash !== expectedShimHash) {
         atomicWrite(layout.shimPath, expectedShim, 0o700);
         if (this.platform !== 'win32') chmodSync(layout.shimPath, 0o700);
       }
       this.dependencies.installCheckpoint?.(provider, 'shim');
     }
 
-    if (inspection.status === 'absent') {
-      atomicWrite(layout.settingsPath, addHooks(snapshot.text, provider, definition));
-    } else if (inspection.status !== 'exact') {
-      return this.response(
-        provider,
-        'drifted',
-        inspection.reason || 'Pending hook configuration changed externally'
+    if (pendingConfig.status === 'absent' || pendingConfig.status === 'recorded') {
+      const settingsWithoutRecordedHooks = pendingConfig.status === 'recorded'
+        ? removeHooks(snapshot.text, provider, definition)
+        : snapshot.text;
+      atomicWrite(
+        layout.settingsPath,
+        addHooks(settingsWithoutRecordedHooks, provider, definition)
       );
     }
     this.dependencies.installCheckpoint?.(provider, 'settings');
 
+    const fingerprints = expectedHookFingerprints(provider, definition);
     install.installed = true;
     install.pending = false;
     install.shimHash = expectedShimHash;
+    install.handlerHash = fingerprints.handlerHash;
+    install.hookLayoutHash = fingerprints.hookLayoutHash;
     this.writeState(state);
     return this.getStatus(provider);
   }
@@ -715,21 +853,25 @@ export class CodingAgentStatusBridgeService {
       }
     }
     if (layout.shimPath !== null && existsSync(layout.shimPath)) {
+      const actualShimHash = sha256(readFileSync(layout.shimPath));
       if (
         expectedShimHash === null ||
-        sha256(readFileSync(layout.shimPath)) !== expectedShimHash
+        (
+          actualShimHash !== expectedShimHash &&
+          (install.shimHash === null || actualShimHash !== install.shimHash)
+        )
       ) {
         return this.response(provider, 'drifted', 'Pending hook shim changed externally');
       }
     }
 
     const snapshot = readSettings(layout.settingsPath, provider);
-    const inspection = inspectConfig(snapshot, provider, definition);
-    if (inspection.status !== 'absent' && inspection.status !== 'exact') {
+    const pendingConfig = inspectPendingConfig(snapshot, provider, definition, install);
+    if (pendingConfig.status === 'drifted') {
       return this.response(
         provider,
         'drifted',
-        inspection.reason || 'Pending hook configuration changed externally'
+        pendingConfig.inspection.reason || 'Pending hook configuration changed externally'
       );
     }
     const nextSettings = removeHooks(snapshot.text, provider, definition);
@@ -747,6 +889,8 @@ export class CodingAgentStatusBridgeService {
       install.installed = false;
       install.pending = false;
       install.shimHash = null;
+      install.handlerHash = null;
+      install.hookLayoutHash = null;
     }
     this.writeState(state);
     return this.getStatus(provider);
@@ -856,6 +1000,7 @@ export class CodingAgentStatusBridgeService {
     const expectedShim = this.expectedShim(provider, installationId);
     const expectedShimHash = expectedShim === null ? null : sha256(expectedShim);
     const definition = this.hookDefinition(provider, installationId, layout);
+    const fingerprints = expectedHookFingerprints(provider, definition);
 
     if (existingInstall?.pending && !existingInstall.installed) {
       return this.completePendingInstall({
@@ -895,6 +1040,8 @@ export class CodingAgentStatusBridgeService {
           if (this.platform !== 'win32') chmodSync(layout.shimPath, 0o700);
         }
         existingInstall.shimHash = expectedShimHash;
+        existingInstall.handlerHash = fingerprints.handlerHash;
+        existingInstall.hookLayoutHash = fingerprints.hookLayoutHash;
         existingInstall.pending = false;
         this.writeState(state);
         return this.getStatus(provider);
@@ -908,6 +1055,14 @@ export class CodingAgentStatusBridgeService {
         atomicWrite(layout.shimPath, expectedShim, 0o700);
         if (this.platform !== 'win32') chmodSync(layout.shimPath, 0o700);
         existingInstall.shimHash = expectedShimHash;
+        this.writeState(state);
+      }
+      if (
+        existingInstall.handlerHash !== fingerprints.handlerHash ||
+        existingInstall.hookLayoutHash !== fingerprints.hookLayoutHash
+      ) {
+        existingInstall.handlerHash = fingerprints.handlerHash;
+        existingInstall.hookLayoutHash = fingerprints.hookLayoutHash;
         this.writeState(state);
       }
       return this.getStatus(provider);
@@ -933,6 +1088,8 @@ export class CodingAgentStatusBridgeService {
       settingsPath: layout.settingsPath,
       shimPath: layout.shimPath,
       shimHash: expectedShimHash,
+      handlerHash: fingerprints.handlerHash,
+      hookLayoutHash: fingerprints.hookLayoutHash,
       backupPath: layout.backupPath,
       originalExisted: snapshot.existed,
       pending: true,
@@ -941,6 +1098,8 @@ export class CodingAgentStatusBridgeService {
     pendingInstall.installed = false;
     pendingInstall.pending = true;
     pendingInstall.shimHash = expectedShimHash;
+    pendingInstall.handlerHash = fingerprints.handlerHash;
+    pendingInstall.hookLayoutHash = fingerprints.hookLayoutHash;
     state.providers[provider] = pendingInstall;
     this.writeState(state);
     this.dependencies.installCheckpoint?.(provider, 'pending-state');
@@ -989,6 +1148,8 @@ export class CodingAgentStatusBridgeService {
     install.installed = false;
     install.pending = false;
     install.shimHash = null;
+    install.handlerHash = null;
+    install.hookLayoutHash = null;
     this.writeState(state);
     return this.getStatus(provider);
   }
