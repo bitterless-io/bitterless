@@ -1,7 +1,7 @@
 ---
 id: coding-agent-sessions-ui-003
 scope: authenticated Home dashboard, filters, row actions, registration, and integration setup
-status: in-progress
+status: done
 depends-on: [coding-agent-sessions-bridge-002]
 ---
 

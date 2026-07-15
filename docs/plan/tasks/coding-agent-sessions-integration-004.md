@@ -1,7 +1,7 @@
 ---
 id: coding-agent-sessions-integration-004
 scope: real storage/provider/bridge/XPC/UI chains and Electron acceptance
-status: pending
+status: in-progress
 depends-on: [coding-agent-sessions-ui-003]
 ---
 
