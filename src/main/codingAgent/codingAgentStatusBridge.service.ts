@@ -110,10 +110,7 @@ const HOOKS: Record<CodingAgentProvider, HookSpec[]> = {
     { event: 'SessionStart', matcher: 'startup|resume|clear' },
     { event: 'UserPromptSubmit' },
     { event: 'PermissionRequest' },
-    {
-      event: 'Notification',
-      matcher: 'permission_prompt|idle_prompt|agent_needs_input|agent_completed'
-    },
+    { event: 'Notification', matcher: 'permission_prompt|idle_prompt' },
     { event: 'Stop' },
     { event: 'StopFailure' },
     { event: 'SessionEnd' }

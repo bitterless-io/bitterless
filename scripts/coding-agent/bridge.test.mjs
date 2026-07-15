@@ -309,9 +309,7 @@ try {
     ['StopFailure', undefined, 'failed', 'failed'],
     ['SessionEnd', undefined, 'ended', null],
     ['Notification', 'permission_prompt', 'waiting_approval', 'in_progress'],
-    ['Notification', 'idle_prompt', 'idle', 'completed'],
-    ['Notification', 'agent_needs_input', 'waiting_input', 'in_progress'],
-    ['Notification', 'agent_completed', 'idle', 'completed']
+    ['Notification', 'idle_prompt', 'idle', 'completed']
   ];
   for (const [eventName, notificationType, state, lastTurnState] of mappingCases) {
     const provider = ['StopFailure', 'SessionEnd', 'Notification'].includes(eventName)
@@ -335,6 +333,17 @@ try {
   assert.throws(
     () => contract.parseCodingAgentHookEvent({ ...redactedEvent, eventId: 'invalid' }),
     /UUID/
+  );
+  assert.throws(
+    () => makeHookEvent(contract, {
+      provider: 'claude',
+      rawInput: {
+        hook_event_name: 'Notification',
+        notification_type: 'agent_completed'
+      }
+    }),
+    /Unsupported Claude notification type/,
+    'Agent View background notifications must not create foreground hook evidence'
   );
 
   // Generated shims pin every argument and never forward provider argv.

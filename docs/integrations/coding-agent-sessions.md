@@ -423,8 +423,7 @@ Bitterless-owned hook definitions into the user's Claude settings and subscribe 
 - `SessionStart`
 - `UserPromptSubmit`
 - `PermissionRequest`
-- `Notification` for the installed CLI's old/new lifecycle names:
-  `permission_prompt`, `idle_prompt`, `agent_needs_input`, and `agent_completed`
+- `Notification` for `permission_prompt` and `idle_prompt`
 - `Stop`
 - `StopFailure`
 - `SessionEnd`
@@ -434,6 +433,10 @@ The helper forwards the same minimal envelope as the Codex helper. It does not r
 hooks byte-for-byte where possible, and make install/remove idempotent. Claude handlers use the
 documented exec form (`command` plus an argument array) on both platforms; this avoids shell
 quoting and does not treat Claude Desktop as a status source.
+
+Do not normalize Agent View's `agent_needs_input` or `agent_completed` notifications as foreground
+hook state. They describe background jobs, and `agent_completed` may represent either success or
+failure; background authority remains the validated `claude agents --json` snapshot.
 
 ## Local event bridge
 

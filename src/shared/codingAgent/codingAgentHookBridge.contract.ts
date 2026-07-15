@@ -39,9 +39,7 @@ const CLAUDE_EVENTS = new Set<CodingAgentHookEventName>([
 ]);
 const NOTIFICATION_TYPES = new Set<CodingAgentHookNotificationType>([
   'permission_prompt',
-  'idle_prompt',
-  'agent_needs_input',
-  'agent_completed'
+  'idle_prompt'
 ]);
 const CONTROL_CHARACTER_PATTERN = /[\0\r\n]/;
 
@@ -237,14 +235,8 @@ export const normalizeCodingAgentHookEvent = (
     state = 'ended';
     lastTurnState = null;
   } else if (
-    hookEventName === 'Notification' && notificationType === 'agent_needs_input'
-  ) {
-    state = 'waiting_input';
-    lastTurnState = 'in_progress';
-  } else if (
     hookEventName === 'Stop' ||
-    (hookEventName === 'Notification' &&
-      (notificationType === 'idle_prompt' || notificationType === 'agent_completed'))
+    (hookEventName === 'Notification' && notificationType === 'idle_prompt')
   ) {
     state = 'idle';
     lastTurnState = 'completed';
