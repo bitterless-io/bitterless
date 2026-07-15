@@ -177,6 +177,44 @@ try {
     /executable is unavailable/
   );
 
+  const dottedAppExecutable = join(appPath, '..provider', 'claude');
+  mkdirSync(dirname(dottedAppExecutable), { recursive: true });
+  writeFileSync(dottedAppExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  chmodSync(dottedAppExecutable, 0o700);
+  assert.throws(
+    () =>
+      new resolverModule.CanonicalClaudeExecutableResolver({
+        appPath,
+        homePath,
+        configuredPath: dottedAppExecutable,
+        platform: 'darwin',
+        trustedCandidatePaths: []
+      }).resolve(),
+    /executable is unavailable/,
+    'a child segment beginning with two dots must remain inside the app boundary'
+  );
+
+  const bundleRoot = join(fixtureRoot, 'Bitterless.app');
+  const packagedAppPath = join(bundleRoot, 'Contents', 'Resources', 'app.asar');
+  const bundleExecutable = join(bundleRoot, 'Contents', 'MacOS', 'claude');
+  mkdirSync(dirname(packagedAppPath), { recursive: true });
+  mkdirSync(dirname(bundleExecutable), { recursive: true });
+  writeFileSync(packagedAppPath, 'fixture asar\n');
+  writeFileSync(bundleExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  chmodSync(bundleExecutable, 0o700);
+  assert.throws(
+    () =>
+      new resolverModule.CanonicalClaudeExecutableResolver({
+        appPath: packagedAppPath,
+        homePath,
+        configuredPath: bundleExecutable,
+        platform: 'darwin',
+        trustedCandidatePaths: []
+      }).resolve(),
+    /executable is unavailable/,
+    'a packaged macOS app boundary must cover Contents/MacOS siblings of app.asar'
+  );
+
   const openedPaths = [];
   const launcher = new terminal.CodingAgentTerminalLauncher({
     userDataPath,
@@ -311,7 +349,8 @@ try {
 
   const targetCwd = join(fixtureRoot, 'target-with-claude');
   mkdirSync(targetCwd, { recursive: true });
-  const targetExecutable = join(targetCwd, 'claude');
+  const targetExecutable = join(targetCwd, '..provider', 'claude');
+  mkdirSync(dirname(targetExecutable), { recursive: true });
   writeFileSync(targetExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
   chmodSync(targetExecutable, 0o700);
   const targetExecutableLauncher = new terminal.CodingAgentTerminalLauncher({

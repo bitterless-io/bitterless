@@ -34,12 +34,28 @@ const comparablePath = (value: string, platform: NodeJS.Platform): string => {
 const isInside = (root: string, candidate: string, platform: NodeJS.Platform): boolean => {
   const path = platformPath(platform);
   const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  const escapesRoot =
+    relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  return !escapesRoot;
 };
 
 const resolveApplicationRoot = (appPath: string, platform: NodeJS.Platform): string => {
+  const path = platformPath(platform);
   const resolved = realpathSync(appPath);
-  return statSync(resolved).isDirectory() ? resolved : platformPath(platform).dirname(resolved);
+  const applicationPath = statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
+  if (platform === 'darwin') {
+    let directory = applicationPath;
+    while (true) {
+      if (path.basename(directory).toLowerCase().endsWith('.app')) return directory;
+      const parent = path.dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+  if (platform === 'win32' && path.basename(applicationPath).toLowerCase() === 'resources') {
+    return path.dirname(applicationPath);
+  }
+  return applicationPath;
 };
 
 const isInsideGitWorktree = (candidate: string, platform: NodeJS.Platform): boolean => {
