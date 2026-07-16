@@ -12,6 +12,32 @@ const tableExists = (db: MigrationDatabase, tableName: string): boolean => {
   );
 };
 
+const addColumnIfMissing = (
+  db: MigrationDatabase,
+  tableName: string,
+  columnName: string,
+  definition: string
+): void => {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as TableColumnInfo[];
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`);
+};
+
+export const ensureEyesOnAgentsProjectMetadataSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'project_key', 'TEXT');
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'project_root', 'TEXT');
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'project_name', 'TEXT');
+  db.exec(`
+    UPDATE eyes_on_agents_thread
+    SET project_key = NULL, project_root = NULL, project_name = NULL
+    WHERE (project_key IS NULL OR project_root IS NULL OR project_name IS NULL)
+      AND NOT (project_key IS NULL AND project_root IS NULL AND project_name IS NULL);
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_domain_project
+      ON eyes_on_agents_thread (domain_id, project_key);
+  `);
+};
+
 export const ensureEyesOnAgentsLegacyImport = (db: MigrationDatabase): void => {
   const importLegacy = db.transaction(() => {
     const now = Date.now();

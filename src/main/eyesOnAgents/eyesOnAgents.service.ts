@@ -19,6 +19,11 @@ import {
 } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import type { CodexHookEvent } from '@shared/eyesOnAgents/codexHookBridge.type';
 import type { CodexAppServerSupervisor } from './codexAppServer.supervisor';
+import {
+  projectMetadataFromResolution,
+  resolveEyesOnAgentsProject,
+  type EyesOnAgentsProjectResolution
+} from './projectResolver.service';
 
 interface EyesOnAgentsServiceDependencies {
   repository: EyesOnAgentsRepositoryApi;
@@ -646,9 +651,21 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     if (listed.state === 'rejected') throw listed.error;
     if (!this.isObservationActive(context)) return;
     const observedAt = this.now();
+    const projectCache = new Map<string, EyesOnAgentsProjectResolution>();
     const threads = listed.value.flatMap((entry) => {
       const parsed = parseThreadEntry(entry, observedAt);
-      return parsed ? [parsed] : [];
+      if (!parsed) return [];
+      const cacheKey = parsed.cwd ?? '';
+      let resolution = projectCache.get(cacheKey);
+      if (!resolution) {
+        resolution = resolveEyesOnAgentsProject(parsed.cwd);
+        projectCache.set(cacheKey, resolution);
+      }
+      const project = projectMetadataFromResolution(resolution);
+      return [{
+        ...parsed,
+        ...(project === undefined ? {} : { project })
+      }];
     });
     await this.dependencies.repository.upsertDiscoveredThreads({ threads });
     if (!this.isObservationActive(context)) return;
@@ -870,10 +887,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   }
 
   private async performPersistCodexHookEvent(event: CodexHookEvent): Promise<void> {
+    const project = projectMetadataFromResolution(
+      resolveEyesOnAgentsProject(event.payload.cwd)
+    );
     const base = {
       threadId: event.payload.sessionId,
       turnId: event.payload.turnId,
       cwd: event.payload.cwd,
+      ...(project === undefined ? {} : { project }),
       observedAt: event.occurredAt,
       source: 'codex_hook' as const
     };

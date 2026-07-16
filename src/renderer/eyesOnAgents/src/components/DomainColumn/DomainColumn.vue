@@ -48,6 +48,8 @@
       </a-dropdown>
     </header>
 
+    <ProjectFilter v-if="projectFilter" />
+
     <div name="eyesOnAgents__domainColumn__body" class="agent-domain__body">
       <draggable
         v-model="visibleThreads"
@@ -65,11 +67,7 @@
 
       <div v-if="visibleThreads.length === 0" class="agent-domain__empty">
         <IconCircleCheck v-if="focus" :size="20" />
-        <span>
-          {{ focus
-            ? i18nHelper.eyesOnAgents.board.emptyFocus
-            : i18nHelper.eyesOnAgents.board.emptyDomain }}
-        </span>
+        <span>{{ emptyLabel }}</span>
       </div>
     </div>
   </section>
@@ -92,6 +90,7 @@ import type {
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import ThreadCard from '../ThreadCard/ThreadCard.vue';
+import ProjectFilter from '../ProjectFilter/ProjectFilter.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 interface ThreadAddEvent {
@@ -103,9 +102,13 @@ const props = withDefaults(defineProps<{
   threads: EyesOnAgentsThread[];
   domain?: EyesOnAgentsDomain;
   focus?: boolean;
+  projectFilter?: boolean;
+  totalCount?: number;
 }>(), {
   domain: undefined,
   focus: false,
+  projectFilter: false,
+  totalCount: undefined,
 });
 
 const visibleThreads = ref<EyesOnAgentsThread[]>([]);
@@ -114,10 +117,28 @@ const editingTitle = ref('');
 const titleInputRef = ref<HTMLInputElement | null>(null);
 const canManage = computed(() => Boolean(props.domain && !props.domain.isSystem));
 const countLabel = computed(() => {
+  if (
+    props.projectFilter &&
+    eyesOnAgentsStore.isUncategorizedProjectFiltered &&
+    props.totalCount !== undefined
+  ) {
+    return i18nHelper.eyesOnAgents.board.filteredThreads
+      .replace('{visible}', String(props.threads.length))
+      .replace('{total}', String(props.totalCount));
+  }
   const template = props.focus
     ? i18nHelper.eyesOnAgents.board.signals
     : i18nHelper.eyesOnAgents.board.threads;
   return template.replace('{count}', String(props.threads.length));
+});
+const emptyLabel = computed(() => {
+  if (props.focus) return i18nHelper.eyesOnAgents.board.emptyFocus;
+  if (!props.projectFilter || !eyesOnAgentsStore.isUncategorizedProjectFiltered) {
+    return i18nHelper.eyesOnAgents.board.emptyDomain;
+  }
+  return eyesOnAgentsStore.uncategorizedProjectFilter.type === 'none'
+    ? i18nHelper.eyesOnAgents.board.emptyNoProject
+    : i18nHelper.eyesOnAgents.board.emptyProject;
 });
 const dragGroup = computed(() => props.focus
   ? { name: 'eyes-on-agents-threads', pull: 'clone', put: false }

@@ -23,6 +23,8 @@ EyesOnAgents never reads or displays them.
   application is running.
 - Import Codex threads into a dedicated, display-oriented SQLite model.
 - Put every newly discovered thread into the system `Uncategorized` Domain until the user moves it.
+- Derive current Git Project metadata from `cwd` and filter `Uncategorized` by Project without
+  changing manual Domain assignment.
 - Show running threads and newly completed unread threads in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
@@ -142,6 +144,9 @@ first real-column sort position. Focus is not stored in this table.
 | `domain_id` | non-null reference to an active EyesOnAgents Domain |
 | `title` | Codex name/preview fallback, display only |
 | `cwd` | working directory when Codex exposes it |
+| `project_key` | normalized nearest Git worktree root used for grouping/filtering |
+| `project_root` | canonical native Git worktree root for display |
+| `project_name` | compact worktree-root basename |
 | `runtime_state` | normalized status enum |
 | `active_flags_json` | App Server active flags, never transcript content |
 | `active_turn_id` | currently observed turn when known |
@@ -161,6 +166,19 @@ threads do not flood Focus as unread.
 
 Deleting a custom Domain soft-deletes it and moves all of its threads to `Uncategorized` in one
 transaction. The system Domain cannot be renamed or deleted.
+
+## Project source metadata
+
+Codex App Server has no Project catalog. EyesOnAgents resolves the nearest current Git worktree root
+from each thread's `cwd` in the main process and persists the resulting Project metadata. A valid
+non-Git directory explicitly clears Project metadata; an inaccessible or otherwise unavailable path
+preserves the last known value. A `.git` directory and a bounded `gitdir:` file both identify a
+worktree, so nested repositories, submodules, and linked worktrees use their nearest root.
+
+Project is a source dimension, not classification. It never creates a Domain, changes `domain_id`,
+or filters Focus/custom Domains. The renderer may filter only `Uncategorized` by `All`, `No
+project`, or an exact `project_key`. See
+[EyesOnAgents Project Filter](../features/eyes-on-agents-project-filter.md) for the complete contract.
 
 ## Runtime state
 

@@ -18,7 +18,10 @@ import { todoEventTable } from './dao/todoEvent.table';
 import { sortTable } from './dao/sort.table';
 import { migrationTable } from './dao/migration.table';
 import { eyesOnAgentsTable } from './dao/eyesOnAgents.table';
-import { ensureEyesOnAgentsLegacyImport } from './dao/eyesOnAgents.migration';
+import {
+  ensureEyesOnAgentsLegacyImport,
+  ensureEyesOnAgentsProjectMetadataSchema,
+} from './dao/eyesOnAgents.migration';
 // Dao imports trigger singleton creation -> auto-register xpc handlers via BaseDao
 import './dao/setting.dao';
 import './dao/message.dao';
@@ -80,6 +83,7 @@ sqliteManager.addMigration(26062002, (db) => {
   addColumnIfMissing(db, 'domain', 'archived', 'INTEGER NOT NULL DEFAULT 0');
 });
 sqliteManager.addMigration(26071601, ensureEyesOnAgentsLegacyImport);
+sqliteManager.addMigration(26071602, ensureEyesOnAgentsProjectMetadataSchema);
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {
@@ -108,9 +112,10 @@ let bootResult: CoreSqliteBootResult = {
 const bootSqlite = async (): Promise<void> => {
   try {
     await sqliteManager.init();
-    // Re-run the idempotent import at every successful boot. SqliteManager intentionally records
-    // failed migration versions, so this repair path must not depend on migration bookkeeping.
+    // Re-run idempotent EyesOnAgents repairs at every successful boot. SqliteManager intentionally
+    // records failed migration versions, so this path must not depend on migration bookkeeping.
     ensureEyesOnAgentsLegacyImport(sqliteManager.db);
+    ensureEyesOnAgentsProjectMetadataSchema(sqliteManager.db);
     bootResult = { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

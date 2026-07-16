@@ -1,6 +1,7 @@
 import type {
   EyesOnAgentsBridgeState,
   EyesOnAgentsDiscoveredThread,
+  EyesOnAgentsProjectMetadata,
   EyesOnAgentsRuntimeEvent,
   EyesOnAgentsRuntimeState
 } from './eyesOnAgents.type';
@@ -85,6 +86,19 @@ export const parseEyesOnAgentsPath = (value: unknown): string | null => {
   }
   if (CONTROL_CHARACTER_PATTERN.test(value)) throw new Error('cwd is invalid');
   return value;
+};
+
+export const parseEyesOnAgentsProjectMetadata = (
+  value: unknown
+): EyesOnAgentsProjectMetadata | null => {
+  if (value === null) return null;
+  if (!isEyesOnAgentsRecord(value)) throw new Error('project metadata must be an object or null');
+  assertOnlyKeys(value, ['projectKey', 'projectRoot', 'projectName'], 'project metadata');
+  return {
+    projectKey: parseEyesOnAgentsText(value.projectKey, 'projectKey', 4096, false) as string,
+    projectRoot: parseEyesOnAgentsText(value.projectRoot, 'projectRoot', 4096, false) as string,
+    projectName: parseEyesOnAgentsText(value.projectName, 'projectName', 300, false) as string
+  };
 };
 
 export const parseEyesOnAgentsTimestamp = (
@@ -275,6 +289,9 @@ export const parseEyesOnAgentsRuntimeEvent = (
   const threadId = parseEyesOnAgentsUuid(event.threadId);
   const observedAt = parseEyesOnAgentsTimestamp(event.observedAt, 'observedAt', false) as number;
   const cwd = event.cwd === undefined ? undefined : parseEyesOnAgentsPath(event.cwd);
+  const project = event.project === undefined
+    ? undefined
+    : parseEyesOnAgentsProjectMetadata(event.project);
   const turnId = event.turnId === undefined
     ? undefined
     : parseEyesOnAgentsText(event.turnId, 'turnId', 200);
@@ -289,6 +306,7 @@ export const parseEyesOnAgentsRuntimeEvent = (
       activeFlags: parseEyesOnAgentsActiveFlags(event.activeFlags),
       observedAt,
       cwd,
+      project,
       turnId
     };
   }
@@ -296,10 +314,10 @@ export const parseEyesOnAgentsRuntimeEvent = (
     if (!['completed', 'failed', 'interrupted'].includes(event.outcome)) {
       throw new Error('turn outcome is unsupported');
     }
-    return { ...event, threadId, observedAt, cwd, turnId: turnId ?? null };
+    return { ...event, threadId, observedAt, cwd, project, turnId: turnId ?? null };
   }
   if (event.type === 'turn_started') {
-    return { ...event, threadId, observedAt, cwd, turnId: turnId ?? null };
+    return { ...event, threadId, observedAt, cwd, project, turnId: turnId ?? null };
   }
   throw new Error('runtime event type is unsupported');
 };

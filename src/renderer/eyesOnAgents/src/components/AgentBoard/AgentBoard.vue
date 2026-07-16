@@ -17,7 +17,9 @@
       name="eyesOnAgents__uncategorizedColumn"
       :domain="eyesOnAgentsStore.uncategorizedDomain"
       :title="i18nHelper.eyesOnAgents.board.uncategorized"
-      :threads="eyesOnAgentsStore.threadsForDomain(eyesOnAgentsStore.uncategorizedDomain.id)"
+      :threads="eyesOnAgentsStore.filteredUncategorizedThreads"
+      :total-count="eyesOnAgentsStore.uncategorizedThreads.length"
+      project-filter
     />
 
     <draggable

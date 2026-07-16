@@ -31,11 +31,20 @@ export interface EyesOnAgentsDomain {
   isSystem: boolean;
 }
 
+export interface EyesOnAgentsProjectMetadata {
+  projectKey: string;
+  projectRoot: string;
+  projectName: string;
+}
+
 export interface EyesOnAgentsThread {
   threadId: string;
   domainId: number;
   title: string | null;
   cwd: string | null;
+  projectKey: string | null;
+  projectRoot: string | null;
+  projectName: string | null;
   runtimeState: EyesOnAgentsRuntimeState;
   activeFlags: string[];
   activeTurnId: string | null;
@@ -77,6 +86,7 @@ export interface EyesOnAgentsDiscoveredThread {
   threadId: string;
   title: string | null;
   cwd: string | null;
+  project?: EyesOnAgentsProjectMetadata | null;
   runtimeState: EyesOnAgentsRuntimeState;
   activeFlags: string[];
   statusSource: Extract<EyesOnAgentsStatusSource, 'app_server' | 'discovery'>;
@@ -93,6 +103,7 @@ export type EyesOnAgentsRuntimeEvent =
       observedAt: number;
       source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook'>;
       cwd?: string | null;
+      project?: EyesOnAgentsProjectMetadata | null;
       turnId?: string | null;
     }
   | {
@@ -102,6 +113,7 @@ export type EyesOnAgentsRuntimeEvent =
       observedAt: number;
       source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook'>;
       cwd?: string | null;
+      project?: EyesOnAgentsProjectMetadata | null;
     }
   | {
       type: 'turn_completed';
@@ -111,6 +123,7 @@ export type EyesOnAgentsRuntimeEvent =
       observedAt: number;
       source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook'>;
       cwd?: string | null;
+      project?: EyesOnAgentsProjectMetadata | null;
     };
 
 export interface EyesOnAgentsRepositoryApi {

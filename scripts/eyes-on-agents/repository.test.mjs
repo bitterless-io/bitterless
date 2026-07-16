@@ -10,6 +10,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-eyes-repository-'));
 const THREAD_A = '11111111-1111-4111-8111-111111111111';
 const THREAD_B = '22222222-2222-4222-8222-222222222222';
+const THREAD_C = '33333333-3333-4333-8333-333333333333';
 const INVALID_VERSION_THREAD = '33333333-3333-0333-8333-333333333333';
 const INVALID_VARIANT_THREAD = '44444444-4444-4444-7444-444444444444';
 const EXTRA_HYPHEN_THREAD = '55555555-5555-4555-8555-55555555555-';
@@ -90,7 +91,10 @@ try {
     'table',
     'src/preload/sqlite/dao/eyesOnAgents.table.ts'
   );
-  const { ensureEyesOnAgentsLegacyImport } = await loadTypeScriptModule(
+  const {
+    ensureEyesOnAgentsLegacyImport,
+    ensureEyesOnAgentsProjectMetadataSchema
+  } = await loadTypeScriptModule(
     'migration',
     'src/preload/sqlite/dao/eyesOnAgents.migration.ts'
   );
@@ -101,6 +105,8 @@ try {
     'a failed migration attempt must remain safe to retry outside version bookkeeping'
   );
   repairDb.exec(eyesOnAgentsTable.createSql);
+  ensureEyesOnAgentsProjectMetadataSchema(repairDb);
+  ensureEyesOnAgentsProjectMetadataSchema(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
   assert.equal(
@@ -110,6 +116,25 @@ try {
     1
   );
   repairDb.close();
+
+  const oldDb = new TestDatabase();
+  oldDb.exec(`
+    CREATE TABLE eyes_on_agents_thread (
+      thread_id TEXT PRIMARY KEY,
+      domain_id INTEGER NOT NULL
+    );
+  `);
+  ensureEyesOnAgentsProjectMetadataSchema(oldDb);
+  ensureEyesOnAgentsProjectMetadataSchema(oldDb);
+  const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
+  assert.deepEqual(
+    migratedColumns
+      .map((column) => column.name)
+      .filter((name) => name.startsWith('project_')),
+    ['project_key', 'project_root', 'project_name'],
+    'old databases must receive the idempotent Project columns migration'
+  );
+  oldDb.close();
 
   const db = new TestDatabase();
   db.exec(eyesOnAgentsTable.createSql);
@@ -190,6 +215,11 @@ try {
         threadId: THREAD_A,
         title: 'Synced A',
         cwd: '/repo/a',
+        project: {
+          projectKey: '/repo/a',
+          projectRoot: '/repo/a',
+          projectName: 'a'
+        },
         runtimeState: 'unknown',
         activeFlags: [],
         statusSource: 'discovery',
@@ -200,6 +230,7 @@ try {
         threadId: THREAD_B,
         title: 'Synced B',
         cwd: '/repo/b',
+        project: null,
         runtimeState: 'unknown',
         activeFlags: [],
         statusSource: 'discovery',
@@ -226,10 +257,114 @@ try {
     }]
   });
   snapshot = await repository.getSnapshot();
+  const preservedProjectA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
   assert.equal(
-    snapshot.threads.find((thread) => thread.threadId === THREAD_A).domainId,
+    preservedProjectA.domainId,
     custom.id,
     'sync must preserve Domain assignment'
+  );
+  assert.equal(
+    preservedProjectA.projectKey,
+    '/repo/a',
+    'unavailable Project evidence must preserve the last known Project'
+  );
+
+  await repository.upsertDiscoveredThreads({
+    threads: [{
+      threadId: THREAD_A,
+      title: null,
+      cwd: '/plain',
+      project: null,
+      runtimeState: 'unknown',
+      activeFlags: [],
+      statusSource: 'discovery',
+      statusObservedAt: null,
+      lastActivityAt: 103
+    }]
+  });
+  snapshot = await repository.getSnapshot();
+  const clearedProjectA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
+  assert.equal(clearedProjectA.projectKey, null, 'confirmed no-Project evidence must clear all fields');
+  assert.equal(clearedProjectA.projectRoot, null);
+  assert.equal(clearedProjectA.projectName, null);
+  assert.equal(clearedProjectA.domainId, custom.id, 'Project clearing must not change Domain');
+
+  await repository.upsertDiscoveredThreads({
+    threads: [{
+      threadId: THREAD_A,
+      title: null,
+      cwd: '/repo/new-a',
+      project: {
+        projectKey: '/repo/new-a',
+        projectRoot: '/repo/new-a',
+        projectName: 'new-a'
+      },
+      runtimeState: 'unknown',
+      activeFlags: [],
+      statusSource: 'discovery',
+      statusObservedAt: null,
+      lastActivityAt: 104
+    }]
+  });
+  snapshot = await repository.getSnapshot();
+  const updatedProjectA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
+  assert.equal(updatedProjectA.projectKey, '/repo/new-a');
+  assert.equal(updatedProjectA.domainId, custom.id, 'Project updates must not change Domain');
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_C,
+      turnId: 'hook-created',
+      cwd: '/repo/hook',
+      project: {
+        projectKey: '/repo/hook',
+        projectRoot: '/repo/hook',
+        projectName: 'hook'
+      },
+      observedAt: 190,
+      source: 'codex_hook'
+    }
+  });
+  snapshot = await repository.getSnapshot();
+  const hookCreated = snapshot.threads.find((thread) => thread.threadId === THREAD_C);
+  assert.equal(hookCreated.projectKey, '/repo/hook', 'hook-created rows must persist Project metadata');
+  assert.equal(
+    hookCreated.domainId,
+    snapshot.domains.find((domain) => domain.domainKey === 'uncategorized').id
+  );
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'thread_status',
+      threadId: THREAD_C,
+      runtimeState: 'waiting_input',
+      activeFlags: ['waitingOnUserInput'],
+      observedAt: 191,
+      source: 'codex_hook'
+    }
+  });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_C).projectKey,
+    '/repo/hook',
+    'runtime events without cwd evidence must preserve Project metadata'
+  );
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'thread_status',
+      threadId: THREAD_C,
+      runtimeState: 'idle',
+      activeFlags: [],
+      project: null,
+      observedAt: 192,
+      source: 'codex_hook'
+    }
+  });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_C).projectKey,
+    null,
+    'runtime confirmed no-Project evidence must clear Project metadata'
   );
 
   await repository.applyRuntimeEvent({

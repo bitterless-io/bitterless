@@ -29,8 +29,8 @@ for live signals.
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌ Focus ─────────┐ ┌ Uncategorized ─┐ ┌ Bitterless ─────┐ ┌ + Domain ─┐  │
-│  │ 3 signals      │ │ 12 threads      │ │ 4 threads       │ │           │  │
-│  │                 │ │                 │ │                 │ │           │  │
+│  │ 3 signals      │ │ 4 of 12 threads │ │ 4 threads       │ │           │  │
+│  │                 │ │ [overmind (4)▾] │ │                 │ │           │  │
 │  │┃ Working        │ │┃ Unknown        │ │┃ Waiting input  │ │           │  │
 │  │ API pagination │ │ Release notes   │ │ App Server RPC  │ │           │  │
 │  │ /repo/a · now  │ │ /repo/b · 2h   │ │ /repo/a · now   │ │           │  │
@@ -110,6 +110,13 @@ A regular Domain is one continuous cool-neutral background surface: its header h
 independent card background. Focus uses the same structure with a warm attention background, so
 its distinction does not depend on a border, top rule, or shadow.
 
+`Uncategorized` alone has one compact Project filter between its header and scrollable thread list.
+It is a searchable mini Select with `All`, `No project`, and one option per current Git Project in
+Uncategorized. Options include counts; same-named Projects expose a shortened root. The Select uses
+a quiet background instead of a decorative border and retains a visible keyboard focus outline.
+While filtered, the header reports visible and total counts. Filtering never changes Focus, custom
+Domains, or the stored Domain of any thread.
+
 The final narrow add column creates a Domain inline. Empty or duplicate titles remain editable with
 an inline validation message. Its button/form uses the regular Domain background without a dashed
 outline. Hover deepens the background; keyboard focus retains a visible outline. `Esc` cancels and
@@ -166,6 +173,7 @@ card leaves it in Focus until the runtime state changes.
 | syncing | existing cards retained; duplicate sync disabled |
 | no threads | concise prompt to connect/sync; no fake sample rows |
 | no Focus items | quiet “Nothing needs attention” state |
+| Project filter has no matches | selected option remains available; `0 of total` and scoped empty text |
 | App Server error | neutral/error banner with retry; persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
 | unknown runtime | grey rail and explicit `Unknown`; never rendered as idle |
@@ -192,6 +200,7 @@ EyesOnAgentsApp
   └─ AgentBoard
        ├─ FocusColumn (derived)
        ├─ DomainColumn × N
+       │    ├─ ProjectFilter (Uncategorized only)
        │    └─ ThreadCard × N
        └─ AddDomainColumn
 ```

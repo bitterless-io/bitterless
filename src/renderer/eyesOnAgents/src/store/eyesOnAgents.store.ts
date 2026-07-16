@@ -8,6 +8,14 @@ import {
   eyesOnAgentsEmitter,
   subscribeEyesOnAgentsChanges,
 } from '../emitter/eyesOnAgents.emitter';
+import {
+  ALL_PROJECT_FILTER_VALUE,
+  NO_PROJECT_FILTER_VALUE,
+  buildEyesOnAgentsProjectFilterOptions,
+  filterEyesOnAgentsThreadsByProject,
+  type EyesOnAgentsProjectFilterOption,
+  type EyesOnAgentsProjectFilterSelection,
+} from '../services/projectFilter.service';
 
 const attentionRank = (thread: EyesOnAgentsThread): number => {
   if (thread.runtimeState === 'waiting_approval') return 0;
@@ -38,6 +46,7 @@ class EyesOnAgentsState {
   actionError: string | null = null;
   busyAction: string | null = null;
   openingThreadIds = new Set<string>();
+  uncategorizedProjectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private subscribed = false;
@@ -66,6 +75,35 @@ class EyesOnAgentsState {
     return sortThreads(this.threads.filter((thread) => thread.isFocused));
   }
 
+  get uncategorizedThreads(): EyesOnAgentsThread[] {
+    if (!this.uncategorizedDomain) return [];
+    return this.threadsForDomain(this.uncategorizedDomain.id);
+  }
+
+  get uncategorizedProjectOptions(): EyesOnAgentsProjectFilterOption[] {
+    return buildEyesOnAgentsProjectFilterOptions(
+      this.uncategorizedThreads,
+      this.uncategorizedProjectFilter,
+    );
+  }
+
+  get filteredUncategorizedThreads(): EyesOnAgentsThread[] {
+    return filterEyesOnAgentsThreadsByProject(
+      this.uncategorizedThreads,
+      this.uncategorizedProjectFilter,
+    );
+  }
+
+  get uncategorizedProjectFilterValue(): string {
+    if (this.uncategorizedProjectFilter.type === 'all') return ALL_PROJECT_FILTER_VALUE;
+    if (this.uncategorizedProjectFilter.type === 'none') return NO_PROJECT_FILTER_VALUE;
+    return `project:${encodeURIComponent(this.uncategorizedProjectFilter.projectKey)}`;
+  }
+
+  get isUncategorizedProjectFiltered(): boolean {
+    return this.uncategorizedProjectFilter.type !== 'all';
+  }
+
   initialize(): void {
     if (this.subscribed) return;
     this.subscribed = true;
@@ -76,6 +114,26 @@ class EyesOnAgentsState {
 
   threadsForDomain(domainId: number): EyesOnAgentsThread[] {
     return sortThreads(this.threads.filter((thread) => thread.domainId === domainId));
+  }
+
+  selectUncategorizedProjectFilter(value: string): void {
+    const option = this.uncategorizedProjectOptions.find((item) => item.value === value);
+    if (!option) return;
+    if (option.type === 'all') {
+      this.uncategorizedProjectFilter = { type: 'all' };
+      return;
+    }
+    if (option.type === 'none') {
+      this.uncategorizedProjectFilter = { type: 'none' };
+      return;
+    }
+    if (!option.projectKey || !option.projectRoot || !option.projectName) return;
+    this.uncategorizedProjectFilter = {
+      type: 'project',
+      projectKey: option.projectKey,
+      projectRoot: option.projectRoot,
+      projectName: option.projectName,
+    };
   }
 
   async loadSnapshot(quiet = false): Promise<void> {

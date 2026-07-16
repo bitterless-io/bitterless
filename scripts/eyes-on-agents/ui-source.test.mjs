@@ -67,6 +67,9 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   const addDomain = read(
     'src/renderer/eyesOnAgents/src/components/AddDomainColumn/AddDomainColumn.less'
   );
+  const projectFilter = read(
+    'src/renderer/eyesOnAgents/src/components/ProjectFilter/ProjectFilter.less'
+  );
 
   assert.match(app, /--eyes-canvas: oklch\(0\.985 0 0\)/);
   assert.match(app, /--eyes-column: oklch\(0\.96 0 0\)/);
@@ -117,6 +120,34 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   const addDomainFocus = cssRule(addDomain, '.add-domain-column__button:focus-visible');
   assert.match(addDomainFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
   assert.match(addDomainFocus, /outline-offset: 2px/);
+
+  const projectSelect = cssRule(projectFilter, '.project-filter__select .arco-select-view');
+  assert.match(projectSelect, /border: 0/);
+  assert.match(projectSelect, /background: oklch/);
+  const projectSelectFocus = cssRule(
+    projectFilter,
+    '.project-filter__select .arco-select-view:focus-within'
+  );
+  assert.match(projectSelectFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
+});
+
+test('Project filtering is scoped only to Uncategorized', () => {
+  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
+  const projectFilter = read(
+    'src/renderer/eyesOnAgents/src/components/ProjectFilter/ProjectFilter.vue'
+  );
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  assert.match(board, /:threads="eyesOnAgentsStore\.focusThreads"/);
+  assert.match(board, /:threads="eyesOnAgentsStore\.filteredUncategorizedThreads"/);
+  assert.match(board, /:threads="eyesOnAgentsStore\.threadsForDomain\(element\.id\)"/);
+  assert.match(domain, /<ProjectFilter v-if="projectFilter"/);
+  assert.match(projectFilter, /allow-search/);
+  assert.match(projectFilter, /:aria-label="i18nHelper\.eyesOnAgents\.board\.projectFilterLabel"/);
+  assert.match(english, /noProject: 'No project'/);
+  assert.match(chinese, /noProject: '无 Project'/);
 });
 
 test('connection panel presents Connect-managed bridge trust and safe cleanup', () => {

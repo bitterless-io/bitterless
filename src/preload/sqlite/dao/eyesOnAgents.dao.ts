@@ -5,6 +5,7 @@ import { sqliteManager } from '../sqliteHelper/sqlite.manager';
 import type {
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsDomain,
+  EyesOnAgentsProjectMetadata,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsRuntimeEvent,
   EyesOnAgentsRuntimeState,
@@ -17,6 +18,7 @@ import {
   isEyesOnAgentsUnread,
   parseEyesOnAgentsActiveFlags,
   parseEyesOnAgentsPath,
+  parseEyesOnAgentsProjectMetadata,
   parseEyesOnAgentsRuntimeEvent,
   parseEyesOnAgentsRuntimeState,
   parseEyesOnAgentsText,
@@ -37,6 +39,9 @@ interface ThreadRow {
   domain_id: number;
   title: string | null;
   cwd: string | null;
+  project_key: string | null;
+  project_root: string | null;
+  project_name: string | null;
   runtime_state: string;
   active_flags_json: string;
   active_turn_id: string | null;
@@ -77,6 +82,27 @@ const parseTurnId = (value: unknown, label: string): string | null => {
   return parseEyesOnAgentsText(value, label, 200);
 };
 
+const projectFromRow = (row: ThreadRow): EyesOnAgentsProjectMetadata | null => {
+  if (row.project_key === null && row.project_root === null && row.project_name === null) {
+    return null;
+  }
+  if (row.project_key === null || row.project_root === null || row.project_name === null) {
+    throw new Error('Project metadata is incomplete');
+  }
+  return parseEyesOnAgentsProjectMetadata({
+    projectKey: row.project_key,
+    projectRoot: row.project_root,
+    projectName: row.project_name
+  });
+};
+
+const projectColumns = (
+  project: EyesOnAgentsProjectMetadata | null | undefined
+): [string | null, string | null, string | null] => {
+  if (!project) return [null, null, null];
+  return [project.projectKey, project.projectRoot, project.projectName];
+};
+
 const toThread = (row: ThreadRow): EyesOnAgentsThread => {
   const runtimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
   const lastCompletedAt = parseEyesOnAgentsTimestamp(
@@ -101,11 +127,15 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
     lastOpenedTurnId,
     lastOpenedAt
   });
+  const project = projectFromRow(row);
   return {
     threadId: parseEyesOnAgentsUuid(row.thread_id),
     domainId: parsePositiveId(row.domain_id, 'domain id'),
     title: parseEyesOnAgentsText(row.title, 'thread title', 300),
     cwd: parseEyesOnAgentsPath(row.cwd),
+    projectKey: project?.projectKey ?? null,
+    projectRoot: project?.projectRoot ?? null,
+    projectName: project?.projectName ?? null,
     runtimeState,
     activeFlags,
     activeTurnId: parseTurnId(row.active_turn_id, 'active_turn_id'),
@@ -137,16 +167,22 @@ const defaultDomainId = (): number => {
 
 const normalizeDiscoveredThread = (
   value: EyesOnAgentsDiscoveredThread
-): EyesOnAgentsDiscoveredThread => ({
-  threadId: parseEyesOnAgentsUuid(value.threadId),
-  title: parseEyesOnAgentsText(value.title, 'thread title', 300),
-  cwd: parseEyesOnAgentsPath(value.cwd),
-  runtimeState: parseEyesOnAgentsRuntimeState(value.runtimeState),
-  activeFlags: parseEyesOnAgentsActiveFlags(value.activeFlags),
-  statusSource: value.statusSource === 'app_server' ? 'app_server' : 'discovery',
-  statusObservedAt: parseEyesOnAgentsTimestamp(value.statusObservedAt, 'statusObservedAt'),
-  lastActivityAt: parseEyesOnAgentsTimestamp(value.lastActivityAt, 'lastActivityAt')
-});
+): EyesOnAgentsDiscoveredThread => {
+  const project = value.project === undefined
+    ? undefined
+    : parseEyesOnAgentsProjectMetadata(value.project);
+  return {
+    threadId: parseEyesOnAgentsUuid(value.threadId),
+    title: parseEyesOnAgentsText(value.title, 'thread title', 300),
+    cwd: parseEyesOnAgentsPath(value.cwd),
+    ...(project === undefined ? {} : { project }),
+    runtimeState: parseEyesOnAgentsRuntimeState(value.runtimeState),
+    activeFlags: parseEyesOnAgentsActiveFlags(value.activeFlags),
+    statusSource: value.statusSource === 'app_server' ? 'app_server' : 'discovery',
+    statusObservedAt: parseEyesOnAgentsTimestamp(value.statusObservedAt, 'statusObservedAt'),
+    lastActivityAt: parseEyesOnAgentsTimestamp(value.lastActivityAt, 'lastActivityAt')
+  };
+};
 
 const requireActiveDomain = (domainId: number): DomainRow => {
   const row = sqliteManager.db.prepare(
@@ -185,7 +221,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       []
     );
     const rows = await sqliteHelper.safeAll<ThreadRow>(
-      `SELECT thread_id, domain_id, title, cwd, runtime_state, active_flags_json,
+      `SELECT thread_id, domain_id, title, cwd, project_key, project_root, project_name,
+        runtime_state, active_flags_json,
         active_turn_id, last_completed_turn_id, last_completed_at,
         last_opened_turn_id, last_opened_at, status_source, status_observed_at,
         last_activity_at
@@ -245,11 +282,12 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const now = Date.now();
       const statement = sqliteManager.db.prepare(
         `INSERT INTO eyes_on_agents_thread (
-          thread_id, domain_id, title, cwd, runtime_state, active_flags_json,
+          thread_id, domain_id, title, cwd, project_key, project_root, project_name,
+          runtime_state, active_flags_json,
           active_turn_id, last_completed_turn_id, last_completed_at,
           last_opened_turn_id, last_opened_at, status_source, status_observed_at,
           last_activity_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)
         ON CONFLICT(thread_id) DO UPDATE SET
           title = COALESCE(excluded.title, eyes_on_agents_thread.title),
           cwd = COALESCE(excluded.cwd, eyes_on_agents_thread.cwd),
@@ -307,11 +345,13 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           updated_at = excluded.updated_at`
       );
       for (const thread of threads) {
+        const project = projectColumns(thread.project);
         statement.run(
           thread.threadId,
           domainId,
           thread.title,
           thread.cwd,
+          ...project,
           thread.runtimeState,
           JSON.stringify(thread.activeFlags),
           thread.statusSource,
@@ -320,6 +360,13 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           now,
           now
         );
+        if (thread.project !== undefined) {
+          sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET
+              project_key = ?, project_root = ?, project_name = ?
+             WHERE thread_id = ?`
+          ).run(...project, thread.threadId);
+        }
       }
     });
     transaction();
@@ -333,6 +380,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const domainId = defaultDomainId();
       const state = eventState(event);
       const activeFlags = event.type === 'thread_status' ? event.activeFlags : [];
+      const project = projectColumns(event.project);
       const startedTurnId = event.type === 'turn_started'
         ? event.turnId ?? (event.source === 'codex_hook' ? `hook-${event.observedAt}` : null)
         : event.type === 'thread_status'
@@ -340,15 +388,17 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           : null;
       sqliteManager.db.prepare(
         `INSERT OR IGNORE INTO eyes_on_agents_thread (
-          thread_id, domain_id, title, cwd, runtime_state, active_flags_json,
+          thread_id, domain_id, title, cwd, project_key, project_root, project_name,
+          runtime_state, active_flags_json,
           active_turn_id, last_completed_turn_id, last_completed_at,
           last_opened_turn_id, last_opened_at, status_source, status_observed_at,
           last_activity_at, created_at, updated_at
-        ) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)`
       ).run(
         event.threadId,
         domainId,
         event.cwd ?? null,
+        ...project,
         state,
         JSON.stringify(activeFlags),
         startedTurnId,
@@ -368,6 +418,13 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       };
       if (existing.status_observed_at !== null && existing.status_observed_at > event.observedAt) {
         return;
+      }
+      if (event.project !== undefined) {
+        sqliteManager.db.prepare(
+          `UPDATE eyes_on_agents_thread SET
+            project_key = ?, project_root = ?, project_name = ?
+           WHERE thread_id = ?`
+        ).run(...project, event.threadId);
       }
 
       if (event.type === 'turn_completed') {
