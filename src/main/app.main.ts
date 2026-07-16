@@ -20,6 +20,7 @@ import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
 import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
 import { maestroWindowHandler } from './xpc/maestroWindow.handler';
+import { eyesOnAgentsWindowHandler } from './xpc/eyesOnAgentsWindow.handler';
 import { applicationLanguageService } from './i18n/applicationLanguage.service';
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot';
 import {
@@ -27,11 +28,11 @@ import {
   parseMcpBridgeEndpointArg,
   type CoreSqliteBootApi,
 } from '@shared/mcp/mcpBridge.shared';
-import { CODING_AGENT_HOOK_HELPER_ARG } from '@shared/codingAgent/codingAgentHookBridge.contract';
-import { runAgentSessionHookHelper } from './codingAgent/agentSessionHook.helper';
+import { CODEX_HOOK_HELPER_ARG } from '@shared/eyesOnAgents/codexHookBridge.contract';
+import { runCodexHookHelper } from './eyesOnAgents/codexHookBridge.helper';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
-const isCodingAgentHookHelperMode = process.argv.includes(CODING_AGENT_HOOK_HELPER_ARG);
+const isCodingAgentHookHelperMode = process.argv.includes(CODEX_HOOK_HELPER_ARG);
 const isHelperMode = isMcpHelperMode || isCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
@@ -149,7 +150,7 @@ const installE2ENetworkGuard = (): void => {
 let isQuitting = false;
 let hasShownQuitDialog = false;
 let cleanupPromise: Promise<void> | null = null;
-let stopCodingAgentSessionBridge: (() => Promise<void>) | null = null;
+let stopEyesOnAgentsRuntime: (() => Promise<void>) | null = null;
 
 const redirectConsoleToStderr = (): void => {
   const write = (level: string, args: unknown[]): void => {
@@ -174,12 +175,13 @@ const cleanupResources = (): Promise<void> => {
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
 
-    try { await stopCodingAgentSessionBridge?.(); } catch {
+    try { await stopEyesOnAgentsRuntime?.(); } catch {
       // Best-effort shutdown: the remaining application resources must still be released.
     }
     try { await mcpBridgeServer.stop(); } catch {}
     try { await coinWindowHandler.destroyForHostQuit(); } catch {}
     try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
+    try { await eyesOnAgentsWindowHandler.destroyForHostQuit(); } catch {}
     try { mainWindowHelper.destroy(); } catch {}
     try { sqliteWindowHelper.destroy(); } catch {}
     try { llamaWindowHelper.destroy(); } catch {}
@@ -194,7 +196,7 @@ const cleanupResources = (): Promise<void> => {
 
 if (isCodingAgentHookHelperMode) {
   redirectConsoleToStderr();
-  void runAgentSessionHookHelper(process.argv, process.stdin).finally(() => app.exit(0));
+  void runCodexHookHelper(process.argv, process.stdin).finally(() => app.exit(0));
 } else app.whenReady().then(async () => {
   if (isMcpHelperMode) {
     redirectConsoleToStderr();
@@ -260,11 +262,11 @@ if (isCodingAgentHookHelperMode) {
 
   if (coreSqliteReady) {
     try {
-      const codingAgentRuntime = await import('./xpc/codingAgentSession.handler');
-      stopCodingAgentSessionBridge = codingAgentRuntime.stopCodingAgentSessionBridge;
-      await codingAgentRuntime.startCodingAgentSessionBridge();
+      const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
+      stopEyesOnAgentsRuntime = eyesOnAgentsRuntime.stopEyesOnAgentsRuntime;
+      await eyesOnAgentsRuntime.startEyesOnAgentsRuntime();
     } catch (err) {
-      console.warn('[app] Coding-agent status bridge disabled:', err);
+      console.warn('[app] EyesOnAgents runtime disabled:', err);
     }
   }
 

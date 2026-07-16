@@ -1,0 +1,102 @@
+.eyes-menu-bar {
+  height: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  background: #4e5882;
+  border-bottom: 1px solid #3d4666;
+  color: #f6f7fc;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.eyes-menu-bar--mac {
+  padding-left: 78px;
+}
+
+.eyes-menu-bar__identity,
+.eyes-menu-bar__actions,
+.eyes-menu-bar__connection {
+  display: flex;
+  align-items: center;
+}
+
+.eyes-menu-bar__identity {
+  gap: 7px;
+}
+
+.eyes-menu-bar__title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.eyes-menu-bar__actions {
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.eyes-menu-bar__connection {
+  height: 24px;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 8%);
+  color: #f6f7fc;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.eyes-menu-bar__connection:hover,
+.eyes-menu-bar__connection:focus-visible {
+  background: rgb(255 255 255 / 15%);
+  outline: none;
+}
+
+.eyes-menu-bar__status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #adb3c7;
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 10%);
+}
+
+.eyes-menu-bar__status-dot--connected {
+  background: #7fc29a;
+}
+
+.eyes-menu-bar__status-dot--connecting,
+.eyes-menu-bar__status-dot--syncing {
+  background: #f0b45d;
+}
+
+.eyes-menu-bar__status-dot--error {
+  background: #e58179;
+}
+
+.eyes-menu-bar__actions .arco-btn {
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  color: #f6f7fc;
+}
+
+.eyes-menu-bar__actions .arco-btn:hover,
+.eyes-menu-bar__actions .arco-btn:focus-visible,
+.eyes-menu-bar__button--active {
+  color: #fff;
+  background: rgb(255 255 255 / 15%);
+}
+
+.eyes-menu-bar__actions .eyes-menu-bar__button--attention {
+  color: #ffd4ac;
+}
+
+.eyes-menu-bar__actions .eyes-menu-bar__close:hover {
+  background: #c84d4d;
+}

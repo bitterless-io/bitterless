@@ -1,0 +1,211 @@
+.thread-card {
+  min-height: 122px;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #dfe3ee;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(50 57 85 / 6%);
+  cursor: grab;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.thread-card:hover,
+.thread-card:focus-visible {
+  border-color: #aeb7d3;
+  box-shadow: 0 6px 18px rgb(50 57 85 / 11%);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.thread-card__signal {
+  width: 7px;
+  flex: 0 0 7px;
+  position: relative;
+  background: #aeb4c3;
+}
+
+.thread-card__signal-line {
+  position: absolute;
+  inset: 0;
+  background: inherit;
+}
+
+.thread-card__signal-dot {
+  width: 7px;
+  height: 7px;
+  position: absolute;
+  top: 12px;
+  left: 9px;
+  z-index: 2;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: inherit;
+  box-shadow: 0 0 0 1px rgb(50 57 85 / 12%);
+}
+
+.thread-card--working .thread-card__signal {
+  background: #586aa2;
+}
+
+.thread-card--waiting_approval .thread-card__signal,
+.thread-card--waiting_input .thread-card__signal,
+.thread-card--unread .thread-card__signal {
+  background: #c2410c;
+}
+
+.thread-card--idle .thread-card__signal,
+.thread-card--ended .thread-card__signal {
+  background: #6d9c7d;
+}
+
+.thread-card--failed .thread-card__signal {
+  background: #b64c43;
+}
+
+.thread-card--working .thread-card__signal-dot {
+  animation: thread-signal-pulse 1.8s ease-in-out infinite;
+}
+
+.thread-card__content {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 10px 9px 13px;
+}
+
+.thread-card__status-row,
+.thread-card__meta,
+.thread-card__actions {
+  display: flex;
+  align-items: center;
+}
+
+.thread-card__status-row {
+  min-height: 16px;
+  gap: 6px;
+}
+
+.thread-card__runtime {
+  color: #586077;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.thread-card--working .thread-card__runtime {
+  color: #46588e;
+}
+
+.thread-card--waiting_approval .thread-card__runtime,
+.thread-card--waiting_input .thread-card__runtime,
+.thread-card--unread .thread-card__runtime {
+  color: #9a3b16;
+}
+
+.thread-card--failed .thread-card__runtime {
+  color: #973c35;
+}
+
+.thread-card__new-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #9a3b16;
+  background: #fff0e8;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.thread-card__source {
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border: 1px solid #dde1ec;
+  border-radius: 50%;
+  color: #6b738a;
+  background: #f5f6fa;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.thread-card__title {
+  min-height: 34px;
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #1e2237;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.thread-card__meta {
+  min-width: 0;
+  gap: 8px;
+  color: #7b8297;
+  font-size: 10px;
+}
+
+.thread-card__path {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.thread-card__path svg {
+  flex: 0 0 auto;
+}
+
+.thread-card__path span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-card__time {
+  flex: 0 0 auto;
+}
+
+.thread-card__actions {
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: auto;
+  cursor: default;
+}
+
+.thread-card__actions .arco-btn-primary {
+  min-width: 58px;
+}
+
+.thread-card__check--hidden {
+  opacity: 0;
+}
+
+@keyframes thread-signal-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgb(88 106 162 / 20%);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgb(88 106 162 / 12%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-card,
+  .thread-card__signal-dot {
+    animation: none;
+    transition: none;
+  }
+}

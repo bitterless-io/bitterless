@@ -17,8 +17,8 @@ import { subTodoTable } from './dao/subTodo.table';
 import { todoEventTable } from './dao/todoEvent.table';
 import { sortTable } from './dao/sort.table';
 import { migrationTable } from './dao/migration.table';
-import { codingAgentSessionTable } from './dao/codingAgentSession.table';
-import { migrateLegacyCodingAgentSessionTitleOwnership } from './dao/codingAgentSession.migration';
+import { eyesOnAgentsTable } from './dao/eyesOnAgents.table';
+import { ensureEyesOnAgentsLegacyImport } from './dao/eyesOnAgents.migration';
 // Dao imports trigger singleton creation -> auto-register xpc handlers via BaseDao
 import './dao/setting.dao';
 import './dao/message.dao';
@@ -28,7 +28,7 @@ import './dao/domain.dao';
 import './dao/todo.dao';
 import './dao/subTodo.dao';
 import './dao/todoEvent.dao';
-import './dao/codingAgentSession.dao';
+import './dao/eyesOnAgents.dao';
 import './handler/language.handler';
 import './handler/searchEngine.handler';
 import { initQdrant } from './qdrantHelper/qdrant.helper';
@@ -67,7 +67,7 @@ sqliteManager.addTable(subTodoTable);
 sqliteManager.addTable(todoEventTable);
 sqliteManager.addTable(sortTable);
 sqliteManager.addTable(migrationTable);
-sqliteManager.addTable(codingAgentSessionTable);
+sqliteManager.addTable(eyesOnAgentsTable);
 
 // Migrations versioncode 来源于当前的 package.json versioncode
 sqliteManager.addMigration(26040705, `ALTER TABLE todos ADD COLUMN note TEXT NOT NULL DEFAULT '';`);
@@ -79,7 +79,7 @@ sqliteManager.addMigration(26062002, (db) => {
   addColumnIfMissing(db, 'domain', 'description', `TEXT NOT NULL DEFAULT ''`);
   addColumnIfMissing(db, 'domain', 'archived', 'INTEGER NOT NULL DEFAULT 0');
 });
-sqliteManager.addMigration(26071501, migrateLegacyCodingAgentSessionTitleOwnership);
+sqliteManager.addMigration(26071601, ensureEyesOnAgentsLegacyImport);
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {
@@ -108,6 +108,9 @@ let bootResult: CoreSqliteBootResult = {
 const bootSqlite = async (): Promise<void> => {
   try {
     await sqliteManager.init();
+    // Re-run the idempotent import at every successful boot. SqliteManager intentionally records
+    // failed migration versions, so this repair path must not depend on migration bookkeeping.
+    ensureEyesOnAgentsLegacyImport(sqliteManager.db);
     bootResult = { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

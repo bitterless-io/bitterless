@@ -25,7 +25,7 @@ main-process integration service
 
 | Concern | Owner |
 |---|---|
-| Provider-neutral records and status vocabulary | integration service |
+| Codex thread records and status vocabulary | integration service |
 | URL validation and process launch allowlist | main process |
 | Provider discovery and event normalization | provider adapter |
 | Persistent session references | dedicated SQLite repository |
@@ -34,10 +34,13 @@ main-process integration service
 
 ## Modules
 
-- [Coding-agent sessions](coding-agent-sessions.md) - Codex and Claude session discovery, opening,
-  and status observation.
-- [Coding-agent sessions layout](coding-agent-sessions-layout.md) - user-visible main-window page
-  and interaction contract.
+- [EyesOnAgents](eyes-on-agents.md) - Codex App Server connection, thread discovery, safe opening,
+  Domain persistence, and status observation.
+- [EyesOnAgents layout](eyes-on-agents-layout.md) - standalone observation board and interaction
+  contract.
+
+The earlier Coding-agent Sessions documents are historical. EyesOnAgents intentionally removes
+Claude and replaces the main-window registry with a Codex-only Mini App.
 
 ## Scope-wide constraints
 

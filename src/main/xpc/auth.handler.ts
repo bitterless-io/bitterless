@@ -8,6 +8,11 @@ import { omniWindowHelper } from '@main/windows/omniWindow.helper';
 import { sqliteWindowHelper } from '@main/windows/sqliteWindow.helper';
 import { pluginTestHandler } from './pluginTest.handler';
 import { todoWindowHandler } from './todoWindow.handler';
+import { eyesOnAgentsWindowHandler } from './eyesOnAgentsWindow.handler';
+import {
+  resumeEyesOnAgentsAfterAuth,
+  suspendEyesOnAgentsForAuth,
+} from './eyesOnAgents.handler';
 import { coinWindowHandler } from './coinWindow.handler';
 import { maestroWindowHandler } from './maestroWindow.handler';
 
@@ -16,6 +21,7 @@ class AuthHandler extends XpcMainHandler {
 
   async activateSession(): Promise<void> {
     await this._ensureSqliteWindow();
+    await resumeEyesOnAgentsAfterAuth();
     await maestroWindowHandler.prepareForAuthenticatedSession();
     await coinWindowHandler.prepareForAuthenticatedSession();
   }
@@ -74,11 +80,17 @@ class AuthHandler extends XpcMainHandler {
   }
 
   private async _closeSecondaryWindows(): Promise<void> {
+    await suspendEyesOnAgentsForAuth().catch((err) => {
+      console.warn('[AuthHandler] Failed to suspend EyesOnAgents runtime:', err);
+    });
     await coinWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy Coin window:', err);
     });
     await todoWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy todo window:', err);
+    });
+    await eyesOnAgentsWindowHandler._destroyForAuth().catch((err) => {
+      console.warn('[AuthHandler] Failed to destroy EyesOnAgents window:', err);
     });
     await maestroWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy Maestro window:', err);

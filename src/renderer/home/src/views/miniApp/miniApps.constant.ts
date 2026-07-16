@@ -2,6 +2,7 @@ import todoIcon from '@renderer/common/assets/icons/menu-icons/todo.png';
 import omniIcon from '@renderer/common/assets/icons/omni.png';
 import maestroIcon from '@renderer/common/assets/icons/maestro.png';
 import coinIcon from '@renderer/common/assets/icons/coin.png';
+import eyesOnAgentsIcon from '@renderer/common/assets/icons/eyes-on-agents.svg';
 import type { en } from '@renderer/common/i18n/en';
 
 export interface MiniApp {
@@ -16,6 +17,7 @@ export const createMiniApps = (
   openTodo: () => void,
   openMaestro: () => void,
   openCoin: () => void,
+  openEyesOnAgents: () => void,
   openOmniBrowser: () => void,
   i18n: typeof en,
 ): MiniApp[] => [
@@ -39,6 +41,13 @@ export const createMiniApps = (
     subtitle: i18n.miniApp.coin.subtitle,
     icon: coinIcon,
     action: openCoin,
+  },
+  {
+    id: 'eyes-on-agents',
+    name: i18n.miniApp.eyesOnAgents.name,
+    subtitle: i18n.miniApp.eyesOnAgents.subtitle,
+    icon: eyesOnAgentsIcon,
+    action: openEyesOnAgents,
   },
   {
     id: 'omni-browser',

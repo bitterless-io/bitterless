@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/env.d.ts",
+    "../../src/main/env.d.ts",
+    "../../src/preload/env.d.ts",
+    "../../src/shared/eyesOnAgents/**/*.ts",
+    "../../src/main/eyesOnAgents/**/*.ts",
+    "../../src/main/xpc/eyesOnAgents.handler.ts",
+    "../../src/preload/sqlite/dao/eyesOnAgents.*.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noCheck": false,
+    "noEmit": true
+  }
+}

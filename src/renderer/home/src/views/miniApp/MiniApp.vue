@@ -43,6 +43,7 @@ import { todoWindowEmitter } from '@/emitter/todoWindow.emitter';
 import { omniWindowEmitter } from '@/emitter/omniWindow.emitter';
 import { maestroWindowEmitter } from '@/emitter/maestroWindow.emitter';
 import { coinWindowEmitter } from '@/emitter/coinWindow.emitter';
+import { eyesOnAgentsWindowEmitter } from '@/emitter/eyesOnAgentsWindow.emitter';
 import { createMiniApps, type MiniApp } from './miniApps.constant';
 
 const openingAppIds = ref(new Set<string>());
@@ -63,6 +64,10 @@ const openCoin = async () => {
   await coinWindowEmitter.openCoinWindow();
 };
 
+const openEyesOnAgents = async () => {
+  await eyesOnAgentsWindowEmitter.openEyesOnAgentsWindow();
+};
+
 const openApp = async (app: MiniApp): Promise<void> => {
   if (openingAppIds.value.has(app.id)) return;
   openingAppIds.value.add(app.id);
@@ -77,7 +82,14 @@ const openApp = async (app: MiniApp): Promise<void> => {
 };
 
 const miniApps = computed(() =>
-  createMiniApps(openTodo, openMaestro, openCoin, openOmniBrowser, i18nHelper),
+  createMiniApps(
+    openTodo,
+    openMaestro,
+    openCoin,
+    openEyesOnAgents,
+    openOmniBrowser,
+    i18nHelper,
+  ),
 );
 </script>
 

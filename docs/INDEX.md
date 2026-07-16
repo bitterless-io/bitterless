@@ -26,10 +26,10 @@ design document.
 
 ## Integrations
 
-- [Coding-agent sessions](integrations/coding-agent-sessions.md) - safe links to Codex and Claude
-  sessions, normalized live status, provider capability boundaries, and phased delivery.
-- [Coding-agent sessions layout](integrations/coding-agent-sessions-layout.md) - main-window page,
-  filters, status rows, registration dialog, integration setup, and responsive states.
+- [EyesOnAgents](integrations/eyes-on-agents.md) - Codex-only App Server connection, Domain
+  classification, Focus/unread semantics, Desktop status bridge, and persistence boundary.
+- [EyesOnAgents layout](integrations/eyes-on-agents-layout.md) - standalone Mini App window,
+  horizontal observation board, signal cards, and responsive interaction states.
 
 ## Design system
 
@@ -44,6 +44,7 @@ design document.
 - [Delivery plan](plan/README.md)
 - [Delivery backlog](plan/backlog.md)
 - [Coin delivery analysis](plan/analysis/coin-subapp.md)
+- [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
 
 ## Legacy references
 
@@ -51,3 +52,5 @@ design document.
   [`docs/design/colors.md`](design/colors.md).
 - `doc/plan/tasks/` - historical Todo and release tasks.
 - `docs/plan/tasks/` - current task files, including tasks created before this index.
+- `docs/integrations/coding-agent-sessions*.md` - historical Codex/Claude implementation superseded
+  by EyesOnAgents.

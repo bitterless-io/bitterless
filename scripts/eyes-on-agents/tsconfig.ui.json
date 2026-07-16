@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.web.json",
+  "include": [
+    "../../src/renderer/eyesOnAgents/src/**/*",
+    "../../src/renderer/eyesOnAgents/src/**/*.vue",
+    "../../src/renderer/common/i18n/**/*",
+    "../../src/renderer/common/utils/userAgentHelper/ua.helper.ts",
+    "../../src/shared/eyesOnAgents/eyesOnAgents.type.ts",
+    "../../src/shared/eyesOnAgents/eyesOnAgentsWindow.type.ts",
+    "../../src/env.d.ts",
+    "../../src/shared/i18n/applicationLanguage.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "baseUrl": "../..",
+    "paths": {
+      "@renderer/*": ["src/renderer/*"],
+      "@/*": ["src/renderer/home/src/*"],
+      "@shared/*": ["src/shared/*"]
+    }
+  }
+}

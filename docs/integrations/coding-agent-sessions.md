@@ -1,8 +1,11 @@
 # Coding-agent Session Integration
 
-Status: implemented and independently verified
+Status: historical; superseded by EyesOnAgents
 
 Verified: 2026-07-15
+
+> This document records the previous Codex-and-Claude main-window implementation. The current
+> product contract is [EyesOnAgents](eyes-on-agents.md); do not use this file for new delivery.
 
 ## Decision
 

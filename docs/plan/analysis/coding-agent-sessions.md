@@ -1,5 +1,8 @@
 # Coding-agent Sessions Delivery Analysis
 
+Status: historical; superseded by
+[EyesOnAgents Delivery Analysis](eyes-on-agents.md).
+
 ## Goal decomposition
 
 Delivery is complete when the authenticated Bitterless Home page can discover known local Codex

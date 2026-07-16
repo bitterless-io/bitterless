@@ -30,10 +30,12 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | done | coding-agent-sessions-core-001 |
 | [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | done | coding-agent-sessions-bridge-002 |
 | [coding-agent-sessions-integration-004](tasks/coding-agent-sessions-integration-004.md) | real-boundary and Electron acceptance | done | coding-agent-sessions-ui-003 |
+| [eyes-on-agents-001](tasks/eyes-on-agents-001.md) | Codex-only standalone observation board and persistent App Server | done | — |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [Coin sub-application](analysis/coin-subapp.md),
-[Coding-agent sessions](analysis/coding-agent-sessions.md).
+[Coding-agent sessions](analysis/coding-agent-sessions.md),
+[EyesOnAgents](analysis/eyes-on-agents.md).
 
 ## Concurrency guard
 

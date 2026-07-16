@@ -1,6 +1,9 @@
 # Coding-agent Sessions Layout
 
-Status: delivery contract
+Status: historical; superseded by EyesOnAgents
+
+> The current standalone Mini App layout is
+> [EyesOnAgents Layout](eyes-on-agents-layout.md). This file remains as prior-design evidence only.
 
 ## Design principles
 
