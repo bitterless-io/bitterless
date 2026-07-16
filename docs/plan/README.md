@@ -34,6 +34,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [coding-agent-sessions-integration-004](tasks/coding-agent-sessions-integration-004.md) | real-boundary and Electron acceptance | done | coding-agent-sessions-ui-003 |
 | [eyes-on-agents-001](tasks/eyes-on-agents-001.md) | Codex-only standalone observation board and persistent App Server | done | — |
 | [eyes-on-agents-focus-002](tasks/eyes-on-agents-focus-002.md) | Codex Desktop lifecycle connection and long-running Focus correctness | done | eyes-on-agents-001 |
+| [eyes-on-agents-project-filter-003](tasks/eyes-on-agents-project-filter-003.md) | Git Project metadata and Uncategorized source filter | done | eyes-on-agents-focus-002 |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [Coin sub-application](analysis/coin-subapp.md),

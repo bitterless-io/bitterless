@@ -1,10 +1,12 @@
 <template>
-  <div name="eyesOnAgents__projectFilter" class="project-filter">
+  <label name="eyesOnAgents__projectFilter" class="project-filter">
+    <span class="project-filter__label">
+      {{ i18nHelper.eyesOnAgents.board.projectFilterLabel }}
+    </span>
     <a-select
       class="project-filter__select"
       size="mini"
       allow-search
-      :aria-label="i18nHelper.eyesOnAgents.board.projectFilterLabel"
       :model-value="eyesOnAgentsStore.uncategorizedProjectFilterValue"
       @change="handleChange"
     >
@@ -20,7 +22,7 @@
         </span>
       </a-option>
     </a-select>
-  </div>
+  </label>
 </template>
 
 <script setup lang="ts">

@@ -1,23 +1,35 @@
 .project-filter {
+  display: block;
   padding: 0 9px 5px;
+}
+
+.project-filter__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .project-filter__select {
   width: 100%;
 }
 
-.project-filter__select .arco-select-view {
+.project-filter__select.arco-select-view {
   border: 0;
   color: #4f5874;
   background: oklch(0.925 0.008 265);
   box-shadow: none;
 }
 
-.project-filter__select .arco-select-view:hover {
+.project-filter__select.arco-select-view:hover {
   background: oklch(0.905 0.012 265);
 }
 
-.project-filter__select .arco-select-view:focus-within {
+.project-filter__select.arco-select-view:focus-within {
   outline: 2px solid var(--eyes-focus-ring);
   outline-offset: 1px;
 }

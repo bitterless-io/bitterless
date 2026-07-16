@@ -16,6 +16,8 @@ design document.
   states, and responsive constraints.
 - [Todo MCP integration](features/todo-mcp.md) - production-first local Todo access with isolated
   development instances.
+- [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
+  Project metadata and an Uncategorized-only source filter.
 
 ## Guides
 

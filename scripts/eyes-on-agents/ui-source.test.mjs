@@ -121,12 +121,12 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   assert.match(addDomainFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
   assert.match(addDomainFocus, /outline-offset: 2px/);
 
-  const projectSelect = cssRule(projectFilter, '.project-filter__select .arco-select-view');
+  const projectSelect = cssRule(projectFilter, '.project-filter__select.arco-select-view');
   assert.match(projectSelect, /border: 0/);
   assert.match(projectSelect, /background: oklch/);
   const projectSelectFocus = cssRule(
     projectFilter,
-    '.project-filter__select .arco-select-view:focus-within'
+    '.project-filter__select.arco-select-view:focus-within'
   );
   assert.match(projectSelectFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
 });
@@ -144,8 +144,9 @@ test('Project filtering is scoped only to Uncategorized', () => {
   assert.match(board, /:threads="eyesOnAgentsStore\.filteredUncategorizedThreads"/);
   assert.match(board, /:threads="eyesOnAgentsStore\.threadsForDomain\(element\.id\)"/);
   assert.match(domain, /<ProjectFilter v-if="projectFilter"/);
+  assert.match(projectFilter, /<label name="eyesOnAgents__projectFilter"/);
+  assert.match(projectFilter, /class="project-filter__label"/);
   assert.match(projectFilter, /allow-search/);
-  assert.match(projectFilter, /:aria-label="i18nHelper\.eyesOnAgents\.board\.projectFilterLabel"/);
   assert.match(english, /noProject: 'No project'/);
   assert.match(chinese, /noProject: '无 Project'/);
 });

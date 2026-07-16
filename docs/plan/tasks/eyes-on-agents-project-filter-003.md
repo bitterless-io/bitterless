@@ -1,6 +1,6 @@
 id: eyes-on-agents-project-filter-003
 scope: EyesOnAgents Project metadata and Uncategorized filtering
-status: in-progress
+status: done
 depends-on: [eyes-on-agents-focus-002]
 
 # Objective
