@@ -650,6 +650,15 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     if (listed.state === 'cancelled') return;
     if (listed.state === 'rejected') throw listed.error;
     if (!this.isObservationActive(context)) return;
+    const archivedListed = await this.awaitUnlessCancelled(
+      Promise.resolve().then(
+        async () => await this.dependencies.appServer.listArchivedThreads()
+      ),
+      context.controller.signal
+    );
+    if (archivedListed.state === 'cancelled') return;
+    if (archivedListed.state === 'rejected') throw archivedListed.error;
+    if (!this.isObservationActive(context)) return;
     const observedAt = this.now();
     const projectCache = new Map<string, EyesOnAgentsProjectResolution>();
     const threads = listed.value.flatMap((entry) => {
@@ -667,7 +676,19 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         ...(project === undefined ? {} : { project })
       }];
     });
+    const archivedThreadIds = [...new Set(archivedListed.value.flatMap((entry) => {
+      if (!isEyesOnAgentsRecord(entry)) return [];
+      try {
+        return [parseEyesOnAgentsUuid(entry.id, 'archived Codex thread id')];
+      } catch {
+        return [];
+      }
+    }))];
     await this.dependencies.repository.upsertDiscoveredThreads({ threads });
+    await this.dependencies.repository.markThreadsArchived({
+      threadIds: archivedThreadIds,
+      observedAt
+    });
     if (!this.isObservationActive(context)) return;
     this.notify();
   }
@@ -762,9 +783,34 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   ): Promise<void> {
     if (!isEyesOnAgentsRecord(paramsValue)) return;
     const observedAt = this.now();
+    let threadId: string;
+    try {
+      threadId = threadIdFromNotification(paramsValue);
+    } catch {
+      return;
+    }
+    if (method === 'thread/archived') {
+      await this.dependencies.repository.setThreadArchived({
+        threadId,
+        archived: true,
+        observedAt
+      });
+      if (this.isObservationActive(context)) this.notify();
+      return;
+    }
+    if (method === 'thread/unarchived') {
+      await this.dependencies.repository.setThreadArchived({
+        threadId,
+        archived: false,
+        observedAt
+      });
+      if (!this.isObservationActive(context)) return;
+      this.notify();
+      await this.performSync(context);
+      return;
+    }
     let event: EyesOnAgentsRuntimeEvent | null = null;
     try {
-      const threadId = threadIdFromNotification(paramsValue);
       if (method === 'thread/status/changed') {
         const normalized = normalizeEyesOnAgentsThreadStatus(paramsValue.status);
         event = {

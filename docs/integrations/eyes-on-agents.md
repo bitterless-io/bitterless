@@ -29,6 +29,8 @@ EyesOnAgents never reads or displays them.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
 - Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
   activated again.
+- Hide archived Codex threads and restore unarchived threads without losing their Domain or local
+  read state.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
 - Supplement managed App Server events with the metadata-only Codex Desktop hook bridge managed by
   the EyesOnAgents connection lifecycle, while making the evidence source visible and bounded.
@@ -69,6 +71,11 @@ same server instance. Codex Desktop currently owns a separate private stdio App 
 no supported external attach endpoint. A managed connection can list the shared thread store, but
 it must not reinterpret `notLoaded` as idle or completed.
 
+The same boundary applies to archive notifications. EyesOnAgents consumes `thread/archived` and
+`thread/unarchived` from its managed App Server, but it does not assume that Codex Desktop's private
+App Server broadcasts those events across processes. Full Sync therefore reconciles both the
+non-archived and archived `thread/list` inventories from the shared store.
+
 The Codex hook bridge is therefore the Desktop observation source and is installed or repaired by
 the same Connect action that starts the managed App Server. It reports lifecycle transitions for
 Desktop/CLI work after installation, but it does not provide transcripts and cannot prove a turn
@@ -100,9 +107,11 @@ The main process owns one connection supervisor for the entire Bitterless proces
    shell.
 3. The client completes the JSON-RPC initialize handshake before reporting `connected`.
 4. It calls `hooks/list` to verify that every Bitterless-owned Desktop hook is enabled and trusted.
-5. It pages through `thread/list`, upserts Codex metadata, and leaves the child process running.
-6. Notifications such as `thread/status/changed`, `turn/started`, and `turn/completed` update the
-   repository and broadcast a compact change event to EyesOnAgents renderers.
+5. It pages through non-archived and archived `thread/list` inventories, upserts active Codex
+   metadata, reconciles known archived rows, and leaves the child process running.
+6. Notifications such as `thread/status/changed`, `turn/started`, `turn/completed`,
+   `thread/archived`, and `thread/unarchived` update the repository and broadcast a compact change
+   event to EyesOnAgents renderers.
 7. Trusted Desktop hook events update the same repository while preserving their separate evidence
    source.
 8. Unexpected process exit changes the connection to `error`; it never fabricates thread state.
@@ -120,7 +129,8 @@ provide an executable, command arguments, URL, or arbitrary JSON-RPC method.
 
 The EyesOnAgents renderer listens for its own top-level window to regain focus. Each focus
 transition requests one foreground refresh so metadata that has no lifecycle notification, such as
-a renamed thread title, is updated from `thread/list` without waiting for a manual Sync.
+a renamed thread title or a Desktop-owned archive transition, is updated from `thread/list` without
+waiting for a manual Sync.
 
 The refresh respects connection intent:
 
@@ -136,6 +146,33 @@ The store's existing single busy action and coalesced snapshot load prevent over
 requests. The listener is removed when the renderer unmounts. This is activation-driven only: no
 timer, polling loop, hidden-window sync, or new persisted state is introduced. A failed activation
 sync uses the existing action error surface and retains the last valid snapshot.
+
+### Archive visibility and reconciliation
+
+Codex App Server `thread/list` returns only non-archived threads by default and only archived
+threads when `archived: true`. Its `thread/archived` and `thread/unarchived` notifications carry
+only `{ threadId }`. EyesOnAgents uses those protocol facts as follows:
+
+- `thread/archived` marks a known row archived, clears transient active evidence, and broadcasts so
+  the row disappears from every Domain and Focus immediately.
+- `thread/unarchived` clears the archive flag for a known row, clears stale active evidence,
+  broadcasts, and runs a full Sync so a previously unknown row can be imported and current metadata
+  replaces the retained snapshot.
+- Full Sync first upserts every non-archived thread with `is_archived = 0`, then marks only thread IDs
+  explicitly returned by the archived inventory with `is_archived = 1`. It never infers archive from
+  absence because provider/source filters and malformed entries can also omit a row.
+- If the two paged inventories overlap during an archive race, the later archived inventory wins;
+  the lifecycle notification or next activation Sync repairs a concurrent unarchive.
+- A malformed archived entry is ignored individually, matching existing discovery parsing, and
+  cannot hide an unrelated row.
+- Archived rows remain in SQLite but are excluded from renderer snapshots. Domain assignment,
+  Project metadata, completion/open markers, and unread history are preserved across archive and
+  unarchive.
+- EyesOnAgents does not expose its own archive control and does not read archived transcripts.
+
+Protocol basis: the official
+[Codex App Server reference](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
+and the TypeScript schema generated from the bundled Codex CLI version used by Bitterless.
 
 ## Domain model
 
@@ -170,6 +207,7 @@ first real-column sort position. Focus is not stored in this table.
 | `project_key` | normalized nearest Git worktree root used for grouping/filtering |
 | `project_root` | canonical native Git worktree root for display |
 | `project_name` | compact worktree-root basename |
+| `is_archived` | Codex archive visibility flag; archived rows are retained but omitted from snapshots |
 | `runtime_state` | normalized status enum |
 | `active_flags_json` | App Server active flags, never transcript content |
 | `active_turn_id` | currently observed turn when known |

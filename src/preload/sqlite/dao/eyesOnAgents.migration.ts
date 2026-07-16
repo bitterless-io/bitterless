@@ -38,6 +38,22 @@ export const ensureEyesOnAgentsProjectMetadataSchema = (db: MigrationDatabase): 
   `);
 };
 
+export const ensureEyesOnAgentsArchiveSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  addColumnIfMissing(
+    db,
+    'eyes_on_agents_thread',
+    'is_archived',
+    'INTEGER NOT NULL DEFAULT 0'
+  );
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_archive_activity
+      ON eyes_on_agents_thread (
+        is_archived, domain_id, last_activity_at DESC, updated_at DESC
+      );
+  `);
+};
+
 export const ensureEyesOnAgentsLegacyImport = (db: MigrationDatabase): void => {
   const importLegacy = db.transaction(() => {
     const now = Date.now();

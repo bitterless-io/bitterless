@@ -305,6 +305,14 @@ export class CodexAppServerSupervisor {
   }
 
   async listThreads(): Promise<unknown[]> {
+    return await this.listThreadInventory(false);
+  }
+
+  async listArchivedThreads(): Promise<unknown[]> {
+    return await this.listThreadInventory(true);
+  }
+
+  private async listThreadInventory(archived: boolean): Promise<unknown[]> {
     const connection = this.connection;
     if (!connection || this.state === 'disconnected' || this.state === 'connecting') {
       throw new Error('Codex App Server is not connected');
@@ -320,6 +328,7 @@ export class CodexAppServerSupervisor {
           throw new Error(`Codex thread/list exceeded ${MAX_PAGES} pages`);
         }
         const result = await this.request(connection, 'thread/list', {
+          archived,
           cursor,
           limit: 100,
           useStateDbOnly: true

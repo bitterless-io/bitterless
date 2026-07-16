@@ -35,6 +35,7 @@ export class EyesOnAgentsTable extends BaseTable {
       project_key TEXT,
       project_root TEXT,
       project_name TEXT,
+      is_archived INTEGER NOT NULL DEFAULT 0,
       runtime_state TEXT NOT NULL DEFAULT 'unknown',
       active_flags_json TEXT NOT NULL DEFAULT '[]',
       active_turn_id TEXT,
@@ -51,6 +52,8 @@ export class EyesOnAgentsTable extends BaseTable {
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_domain_activity
       ON eyes_on_agents_thread (domain_id, last_activity_at DESC, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_archive_activity
+      ON eyes_on_agents_thread (is_archived, domain_id, last_activity_at DESC, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_attention
       ON eyes_on_agents_thread (runtime_state, last_completed_at DESC);
   `;

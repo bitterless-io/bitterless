@@ -54,6 +54,8 @@ interface ThreadRow {
   last_activity_at: number | null;
 }
 
+const MAX_ARCHIVED_THREAD_IDS = 10_000;
+
 const parsePositiveId = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new Error(`${label} must be a positive integer`);
@@ -227,6 +229,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         last_opened_turn_id, last_opened_at, status_source, status_observed_at,
         last_activity_at
        FROM eyes_on_agents_thread
+       WHERE is_archived = 0
        ORDER BY COALESCE(last_activity_at, updated_at) DESC, updated_at DESC`,
       []
     );
@@ -291,6 +294,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         ON CONFLICT(thread_id) DO UPDATE SET
           title = COALESCE(excluded.title, eyes_on_agents_thread.title),
           cwd = COALESCE(excluded.cwd, eyes_on_agents_thread.cwd),
+          is_archived = 0,
           runtime_state = CASE
             WHEN excluded.status_source = 'discovery'
               AND eyes_on_agents_thread.status_source IN ('app_server', 'discovery')
@@ -368,6 +372,68 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ).run(...project, thread.threadId);
         }
       }
+    });
+    transaction();
+  }
+
+  async setThreadArchived(params: {
+    threadId: string;
+    archived: boolean;
+    observedAt: number;
+  }): Promise<void> {
+    const threadId = parseEyesOnAgentsUuid(params?.threadId);
+    if (typeof params?.archived !== 'boolean') throw new Error('archived must be a boolean');
+    const observedAt = parseEyesOnAgentsTimestamp(
+      params.observedAt,
+      'observedAt',
+      false
+    ) as number;
+    await sqliteHelper.safeRun(
+      `UPDATE eyes_on_agents_thread SET
+        is_archived = ?,
+        runtime_state = 'unknown',
+        active_flags_json = '[]',
+        active_turn_id = NULL,
+        status_source = 'discovery',
+        status_observed_at = ?,
+        updated_at = ?
+       WHERE thread_id = ?`,
+      [params.archived ? 1 : 0, observedAt, Date.now(), threadId]
+    );
+  }
+
+  async markThreadsArchived(params: {
+    threadIds: string[];
+    observedAt: number;
+  }): Promise<void> {
+    if (!params || !Array.isArray(params.threadIds)) {
+      throw new Error('threadIds must be an array');
+    }
+    if (params.threadIds.length > MAX_ARCHIVED_THREAD_IDS) {
+      throw new Error(`threadIds must not exceed ${MAX_ARCHIVED_THREAD_IDS} entries`);
+    }
+    const threadIds = [...new Set(params.threadIds.map((threadId) => (
+      parseEyesOnAgentsUuid(threadId)
+    )))];
+    const observedAt = parseEyesOnAgentsTimestamp(
+      params.observedAt,
+      'observedAt',
+      false
+    ) as number;
+    const transaction = sqliteManager.db.transaction(() => {
+      const now = Date.now();
+      const statement = sqliteManager.db.prepare(
+        `UPDATE eyes_on_agents_thread SET
+          is_archived = 1,
+          runtime_state = 'unknown',
+          active_flags_json = '[]',
+          active_turn_id = NULL,
+          status_source = 'discovery',
+          status_observed_at = ?,
+          updated_at = ?
+         WHERE thread_id = ?`
+      );
+      for (const threadId of threadIds) statement.run(observedAt, now, threadId);
     });
     transaction();
   }

@@ -133,6 +133,12 @@ export interface EyesOnAgentsRepositoryApi {
   upsertDiscoveredThreads(params: {
     threads: EyesOnAgentsDiscoveredThread[];
   }): Promise<void>;
+  setThreadArchived(params: {
+    threadId: string;
+    archived: boolean;
+    observedAt: number;
+  }): Promise<void>;
+  markThreadsArchived(params: { threadIds: string[]; observedAt: number }): Promise<void>;
   applyRuntimeEvent(params: { event: EyesOnAgentsRuntimeEvent }): Promise<void>;
   markOpened(params: { threadId: string; openedAt: number }): Promise<void>;
   createDomain(params: { title: string }): Promise<void>;

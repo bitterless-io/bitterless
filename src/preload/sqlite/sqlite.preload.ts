@@ -19,6 +19,7 @@ import { sortTable } from './dao/sort.table';
 import { migrationTable } from './dao/migration.table';
 import { eyesOnAgentsTable } from './dao/eyesOnAgents.table';
 import {
+  ensureEyesOnAgentsArchiveSchema,
   ensureEyesOnAgentsLegacyImport,
   ensureEyesOnAgentsProjectMetadataSchema,
 } from './dao/eyesOnAgents.migration';
@@ -84,6 +85,7 @@ sqliteManager.addMigration(26062002, (db) => {
 });
 sqliteManager.addMigration(26071601, ensureEyesOnAgentsLegacyImport);
 sqliteManager.addMigration(26071602, ensureEyesOnAgentsProjectMetadataSchema);
+sqliteManager.addMigration(26071603, ensureEyesOnAgentsArchiveSchema);
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {
@@ -116,6 +118,7 @@ const bootSqlite = async (): Promise<void> => {
     // records failed migration versions, so this path must not depend on migration bookkeeping.
     ensureEyesOnAgentsLegacyImport(sqliteManager.db);
     ensureEyesOnAgentsProjectMetadataSchema(sqliteManager.db);
+    ensureEyesOnAgentsArchiveSchema(sqliteManager.db);
     bootResult = { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

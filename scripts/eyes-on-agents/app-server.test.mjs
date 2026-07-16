@@ -72,9 +72,10 @@ class FakeChild extends EventEmitter {
     }
     if (message.method === 'thread/list') {
       const cursor = message.params.cursor;
+      const prefix = message.params.archived ? 'archived-' : '';
       const result = cursor === null
-        ? { data: [{ id: 'one' }], nextCursor: 'page-2' }
-        : { data: [{ id: 'two' }], nextCursor: null };
+        ? { data: [{ id: `${prefix}one` }], nextCursor: 'page-2' }
+        : { data: [{ id: `${prefix}two` }], nextCursor: null };
       queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
       return;
     }
@@ -193,6 +194,21 @@ try {
     child.messages.filter((message) => message.method === 'thread/list').length,
     2,
     'thread/list must page until nextCursor is null'
+  );
+  assert.ok(
+    child.messages
+      .filter((message) => message.method === 'thread/list')
+      .every((message) => message.params.archived === false),
+    'active inventory requests must explicitly exclude archived threads'
+  );
+  const archivedThreads = await supervisor.listArchivedThreads();
+  assert.deepEqual(archivedThreads, [{ id: 'archived-one' }, { id: 'archived-two' }]);
+  assert.ok(
+    child.messages
+      .filter((message) => message.method === 'thread/list')
+      .slice(2)
+      .every((message) => message.params.archived === true),
+    'archived inventory requests must explicitly request archived threads'
   );
   assert.deepEqual(await supervisor.listHooks(), [{
     command: '/fixed/bitterless-hook',
@@ -332,7 +348,9 @@ try {
     }),
     invalidateAppServerStatuses: async () => undefined,
     invalidateCodexHookStatuses: async () => undefined,
-    upsertDiscoveredThreads: async () => undefined
+    upsertDiscoveredThreads: async () => undefined,
+    setThreadArchived: async () => undefined,
+    markThreadsArchived: async () => undefined
   };
   let delayedBridgeStatus = {
     state: 'not_installed',
@@ -427,8 +445,8 @@ try {
   );
   assert.equal(
     delayedChild.messages.filter((message) => message.method === 'thread/list').length,
-    4,
-    'both service requests must sync successfully after readiness'
+    8,
+    'both service requests must sync active and archived inventories after readiness'
   );
   assert.equal(
     delayedChild.messages.filter((message) => message.method === 'hooks/list').length,

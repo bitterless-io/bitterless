@@ -92,6 +92,7 @@ try {
     'src/preload/sqlite/dao/eyesOnAgents.table.ts'
   );
   const {
+    ensureEyesOnAgentsArchiveSchema,
     ensureEyesOnAgentsLegacyImport,
     ensureEyesOnAgentsProjectMetadataSchema
   } = await loadTypeScriptModule(
@@ -105,6 +106,8 @@ try {
     'a failed migration attempt must remain safe to retry outside version bookkeeping'
   );
   repairDb.exec(eyesOnAgentsTable.createSql);
+  ensureEyesOnAgentsArchiveSchema(repairDb);
+  ensureEyesOnAgentsArchiveSchema(repairDb);
   ensureEyesOnAgentsProjectMetadataSchema(repairDb);
   ensureEyesOnAgentsProjectMetadataSchema(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
@@ -121,11 +124,15 @@ try {
   oldDb.exec(`
     CREATE TABLE eyes_on_agents_thread (
       thread_id TEXT PRIMARY KEY,
-      domain_id INTEGER NOT NULL
+      domain_id INTEGER NOT NULL,
+      last_activity_at INTEGER,
+      updated_at INTEGER NOT NULL DEFAULT 0
     );
   `);
   ensureEyesOnAgentsProjectMetadataSchema(oldDb);
   ensureEyesOnAgentsProjectMetadataSchema(oldDb);
+  ensureEyesOnAgentsArchiveSchema(oldDb);
+  ensureEyesOnAgentsArchiveSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -133,6 +140,11 @@ try {
       .filter((name) => name.startsWith('project_')),
     ['project_key', 'project_root', 'project_name'],
     'old databases must receive the idempotent Project columns migration'
+  );
+  assert.equal(
+    migratedColumns.some((column) => column.name === 'is_archived'),
+    true,
+    'old databases must receive the idempotent archive state migration'
   );
   oldDb.close();
 
@@ -417,6 +429,86 @@ try {
   const completedB = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
   assert.equal(completedB.isUnread, true, 'later unseen turn B must become unread');
   assert.equal(completedB.isFocused, true);
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_A,
+      turnId: 'turn-c',
+      observedAt: 245,
+      source: 'app_server'
+    }
+  });
+  await repository.setThreadArchived({
+    threadId: THREAD_A,
+    archived: true,
+    observedAt: 250
+  });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.some((thread) => thread.threadId === THREAD_A),
+    false,
+    'archived threads must disappear from EyesOnAgents snapshots'
+  );
+  const archivedA = db.prepare(
+    `SELECT is_archived, domain_id, project_key, runtime_state, active_flags_json,
+      active_turn_id, last_completed_turn_id, last_completed_at,
+      last_opened_turn_id, last_opened_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(THREAD_A);
+  assert.equal(archivedA.is_archived, 1);
+  assert.equal(archivedA.domain_id, custom.id, 'archive must preserve Domain assignment');
+  assert.equal(archivedA.project_key, '/repo/new-a', 'archive must preserve Project metadata');
+  assert.equal(archivedA.runtime_state, 'unknown');
+  assert.equal(archivedA.active_flags_json, '[]');
+  assert.equal(archivedA.active_turn_id, null, 'archive must clear transient active-turn evidence');
+  assert.equal(archivedA.last_completed_turn_id, 'turn-b');
+  assert.equal(archivedA.last_completed_at, 240);
+  assert.equal(archivedA.last_opened_turn_id, 'hook-200');
+  assert.equal(archivedA.last_opened_at, 210);
+
+  await repository.setThreadArchived({
+    threadId: THREAD_A,
+    archived: false,
+    observedAt: 260
+  });
+  snapshot = await repository.getSnapshot();
+  const unarchivedA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
+  assert.equal(unarchivedA.domainId, custom.id);
+  assert.equal(unarchivedA.projectKey, '/repo/new-a');
+  assert.equal(unarchivedA.lastCompletedTurnId, 'turn-b');
+  assert.equal(unarchivedA.isUnread, true, 'unarchive must preserve durable read state');
+
+  await repository.markThreadsArchived({ threadIds: [THREAD_A, THREAD_A], observedAt: 270 });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.some((thread) => thread.threadId === THREAD_A),
+    false,
+    'archived inventory reconciliation must hide every explicit archived id'
+  );
+  await repository.upsertDiscoveredThreads({
+    threads: [{
+      threadId: THREAD_A,
+      title: 'Active after unarchive',
+      cwd: '/repo/new-a',
+      runtimeState: 'unknown',
+      activeFlags: [],
+      statusSource: 'discovery',
+      statusObservedAt: 280,
+      lastActivityAt: 280
+    }]
+  });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.some((thread) => thread.threadId === THREAD_A),
+    true,
+    'active discovery must clear a stale archived marker'
+  );
+  assert.equal(
+    db.prepare('SELECT is_archived FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_A).is_archived,
+    0
+  );
 
   await repository.applyRuntimeEvent({
     event: {

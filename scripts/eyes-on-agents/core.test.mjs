@@ -8,6 +8,7 @@ import { build } from 'esbuild';
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-eyes-core-'));
 const THREAD_ID = '019f653a-2ef7-7031-8f6b-c770bacffbb2';
+const ARCHIVED_THREAD_ID = '11111111-1111-4111-8111-111111111111';
 
 const loadTypeScriptModule = async (name, entry) => {
   const outfile = join(buildRoot, `${name}.mjs`);
@@ -174,6 +175,8 @@ try {
     invalidateAppServerStatuses: async () => undefined,
     invalidateCodexHookStatuses: async () => undefined,
     upsertDiscoveredThreads: async () => undefined,
+    setThreadArchived: async () => undefined,
+    markThreadsArchived: async () => undefined,
     applyRuntimeEvent: async () => undefined,
     createDomain: async () => undefined,
     renameDomain: async () => undefined,
@@ -192,7 +195,8 @@ try {
     isConnected: () => false,
     connect: async () => undefined,
     disconnect: async () => undefined,
-    listThreads: async () => []
+    listThreads: async () => [],
+    listArchivedThreads: async () => []
   };
   const desktopBridge = {
     getStatus: () => ({
@@ -253,6 +257,7 @@ try {
 
   const reconnectOrder = [];
   let synchronizedThreads = null;
+  let synchronizedArchivedThreadIds = null;
   let connected = false;
   let setReconnectListening = () => undefined;
   const reconnectService = new EyesOnAgentsService({
@@ -267,6 +272,10 @@ try {
       upsertDiscoveredThreads: async ({ threads }) => {
         reconnectOrder.push('upsert');
         synchronizedThreads = threads;
+      },
+      markThreadsArchived: async ({ threadIds }) => {
+        reconnectOrder.push('archive');
+        synchronizedArchivedThreadIds = threadIds;
       }
     },
     settings,
@@ -291,6 +300,10 @@ try {
           cwd: '/repo',
           status: { type: 'notLoaded' }
         }];
+      },
+      listArchivedThreads: async () => {
+        reconnectOrder.push('list-archived');
+        return [{ id: ARCHIVED_THREAD_ID }, { id: 'malformed-archive-id' }];
       },
       listHooks: async () => {
         reconnectOrder.push('hooks');
@@ -358,7 +371,9 @@ try {
       'hooks',
       'bridge-inspect',
       'list',
-      'upsert'
+      'list-archived',
+      'upsert',
+      'archive'
     ],
     'old managed-server evidence must be invalidated before a replacement server connects'
   );
@@ -372,14 +387,25 @@ try {
     statusObservedAt: 789,
     lastActivityAt: null
   }], 'notLoaded sync evidence must carry the current server observation time');
+  assert.deepEqual(
+    synchronizedArchivedThreadIds,
+    [ARCHIVED_THREAD_ID],
+    'archive reconciliation must skip malformed entries without discarding valid ids'
+  );
 
   const createLifecycleHarness = (autoOnStart) => {
     const calls = [];
     const runtimeEvents = [];
+    const archiveTransitions = [];
+    const archivedBatches = [];
+    const discoveredBatches = [];
     let lifecycleNow = 1_000;
     let appServerConnected = false;
+    let activeInventory = [];
+    let archivedInventory = [];
     let settingValue = autoOnStart;
     let duringAppServerInvalidation = async () => undefined;
+    let duringArchiveTransition = async () => undefined;
     let duringAppServerConnect = async () => undefined;
     let duringAppServerDisconnect = async () => undefined;
     let duringHookInvalidation = async () => undefined;
@@ -409,7 +435,15 @@ try {
         calls.push('invalidate-hook');
         await duringHookInvalidation();
       },
-      upsertDiscoveredThreads: async () => calls.push('upsert'),
+      upsertDiscoveredThreads: async ({ threads }) => {
+        discoveredBatches.push(threads);
+        calls.push('upsert');
+      },
+      setThreadArchived: async (params) => {
+        archiveTransitions.push(params);
+        await duringArchiveTransition(params);
+      },
+      markThreadsArchived: async (params) => archivedBatches.push(params),
       applyRuntimeEvent: async ({ event }) => {
         runtimeEvents.push({ event, callIndex: calls.length });
         calls.push(`event:${event.type}`);
@@ -475,8 +509,9 @@ try {
         listThreads: async () => {
           calls.push('thread-list');
           await duringThreadList();
-          return [];
+          return activeInventory;
         },
+        listArchivedThreads: async () => archivedInventory,
         listHooks: async () => {
           calls.push('hooks-list');
           await duringHooksList();
@@ -507,6 +542,9 @@ try {
     });
     return {
       calls,
+      archiveTransitions,
+      archivedBatches,
+      discoveredBatches,
       lifecycleBridge,
       runtimeEvents,
       service,
@@ -515,6 +553,7 @@ try {
       duringAppServerConnect: (callback) => { duringAppServerConnect = callback; },
       duringAppServerDisconnect: (callback) => { duringAppServerDisconnect = callback; },
       duringAppServerInvalidation: (callback) => { duringAppServerInvalidation = callback; },
+      duringArchiveTransition: (callback) => { duringArchiveTransition = callback; },
       duringHookInvalidation: (callback) => { duringHookInvalidation = callback; },
       duringHooksList: (callback) => { duringHooksList = callback; },
       duringListenerStart: (callback) => { duringListenerStart = callback; },
@@ -533,6 +572,10 @@ try {
       },
       setInspectionError: (error) => { inspectionError = error; },
       setInspectionReady: (ready) => { inspectionReady = ready; },
+      setThreadInventories: ({ active, archived }) => {
+        activeInventory = active;
+        archivedInventory = archived;
+      },
       isAppServerConnected: () => appServerConnected,
       settingValue: () => settingValue,
       status: () => bridgeStatus
@@ -554,6 +597,81 @@ try {
     'normal app shutdown must leave the installation for the next auto-connect'
   );
   assert.equal(autoHarness.status().listening, false);
+
+  const archiveHarness = createLifecycleHarness(false);
+  await archiveHarness.service.connectAppServer();
+  archiveHarness.advance();
+  const archiveNotifyCount = archiveHarness.calls.filter((call) => call === 'notify').length;
+  await archiveHarness.service.handleAppServerNotification('thread/archived', {
+    threadId: THREAD_ID
+  });
+  assert.deepEqual(archiveHarness.archiveTransitions.at(-1), {
+    threadId: THREAD_ID,
+    archived: true,
+    observedAt: 2_000
+  });
+  assert.equal(
+    archiveHarness.calls.filter((call) => call === 'notify').length,
+    archiveNotifyCount + 1,
+    'a managed archive notification must refresh EyesOnAgents immediately'
+  );
+  await archiveHarness.service.handleAppServerNotification('thread/archived', {
+    threadId: 'malformed-thread-id'
+  });
+  assert.equal(
+    archiveHarness.archiveTransitions.length,
+    1,
+    'malformed archive notifications must not reach persistence'
+  );
+  archiveHarness.duringArchiveTransition(async () => {
+    throw new Error('simulated archive persistence failure');
+  });
+  const failedArchiveNotifyCount = archiveHarness.calls.filter(
+    (call) => call === 'notify'
+  ).length;
+  await assert.rejects(
+    () => archiveHarness.service.handleAppServerNotification('thread/archived', {
+      threadId: ARCHIVED_THREAD_ID
+    }),
+    /simulated archive persistence failure/
+  );
+  assert.equal(
+    archiveHarness.calls.filter((call) => call === 'notify').length,
+    failedArchiveNotifyCount,
+    'a failed archive write must propagate without broadcasting stale state'
+  );
+  archiveHarness.duringArchiveTransition(async () => undefined);
+
+  archiveHarness.setThreadInventories({
+    active: [{
+      id: THREAD_ID,
+      name: 'Restored task',
+      cwd: '/repo',
+      status: { type: 'notLoaded' }
+    }],
+    archived: [{ id: 'malformed-archive-id' }]
+  });
+  const unarchiveNotifyCount = archiveHarness.calls.filter((call) => call === 'notify').length;
+  await archiveHarness.service.handleAppServerNotification('thread/unarchived', {
+    threadId: THREAD_ID
+  });
+  assert.deepEqual(archiveHarness.archiveTransitions.at(-1), {
+    threadId: THREAD_ID,
+    archived: false,
+    observedAt: 2_000
+  });
+  assert.equal(archiveHarness.discoveredBatches.at(-1)[0].threadId, THREAD_ID);
+  assert.deepEqual(
+    archiveHarness.archivedBatches.at(-1),
+    { threadIds: [], observedAt: 2_000 },
+    'unarchive reconciliation must ignore malformed archived inventory rows individually'
+  );
+  assert.equal(
+    archiveHarness.calls.filter((call) => call === 'notify').length,
+    unarchiveNotifyCount + 2,
+    'unarchive must refresh immediately and again after its full reconciliation'
+  );
+  await archiveHarness.service.disconnectAppServer();
 
   const startBoundaryEvent = {
     schemaVersion: 1,
