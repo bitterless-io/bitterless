@@ -282,6 +282,69 @@ const resolveSigningCertificatePath = (env) => {
   throw new Error(`Developer ID certificate not found: ${configuredPath}`);
 };
 
+const parseUserKeychainSearchList = (output) => {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+};
+
+const readUserKeychainSearchList = () => {
+  return parseUserKeychainSearchList(runOutput('security', ['list-keychains', '-d', 'user']));
+};
+
+const setUserKeychainSearchList = (keychainPaths) => {
+  runPrivate(
+    'security',
+    ['list-keychains', '-d', 'user', '-s', ...keychainPaths],
+    'Update user keychain search list',
+  );
+};
+
+const withTemporaryUserKeychainSearchList = (keychainPath, callback, dependencies = {}) => {
+  const readSearchList = dependencies.readSearchList ?? readUserKeychainSearchList;
+  const setSearchList = dependencies.setSearchList ?? setUserKeychainSearchList;
+  const originalSearchList = readSearchList();
+  const temporarySearchList = [
+    keychainPath,
+    ...originalSearchList.filter((item) => item !== keychainPath),
+  ];
+
+  setSearchList(temporarySearchList);
+  try {
+    return callback();
+  } finally {
+    setSearchList(originalSearchList);
+  }
+};
+
+const parseDeveloperIdApplicationIdentities = (output) => {
+  const identities = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(
+      /^\s*\d+\)\s+([0-9A-F]{40})\s+"(Developer ID Application: .+ \(([A-Z0-9]+)\))"\s*$/i,
+    );
+    if (!match) continue;
+    identities.push({
+      hash: match[1],
+      name: match[2],
+      teamIdentifier: match[3],
+    });
+  }
+  return identities;
+};
+
+const selectDeveloperIdApplicationIdentity = (output, teamIdentifier) => {
+  const matches = parseDeveloperIdApplicationIdentities(output)
+    .filter((identity) => identity.teamIdentifier === teamIdentifier);
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected exactly one Developer ID Application identity for team ${teamIdentifier}, found ${matches.length}`,
+    );
+  }
+  return matches[0].hash;
+};
+
 const withTemporarySigningKeychain = (callback) => {
   const env = loadSigningEnv();
   const certificatePath = resolveSigningCertificatePath(env);
@@ -304,7 +367,16 @@ const withTemporarySigningKeychain = (callback) => {
       ['set-key-partition-list', '-S', 'apple-tool:,apple:', '-s', '-k', keychainPassword, keychainPath],
       'Authorize codesign key access',
     );
-    return callback(keychainPath);
+    return withTemporaryUserKeychainSearchList(keychainPath, () => {
+      const identities = runOutput('security', [
+        'find-identity',
+        '-v',
+        '-p',
+        'codesigning',
+        keychainPath,
+      ]);
+      return callback({ keychainPath, identities });
+    });
   } finally {
     spawnSync('security', ['delete-keychain', keychainPath], { stdio: 'ignore' });
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -333,19 +405,30 @@ const findSingleFileByExt = (ext) => {
   return matches[0];
 };
 
-const getDeveloperIdIdentity = (appPath) => {
+const getMacAppTeamIdentifier = (appPath) => {
+  runOutput('codesign', ['--verify', '--deep', '--strict', appPath]);
   const output = runOutput('codesign', ['-dvvv', appPath]);
-  const line = output.split(/\r?\n/).find((item) => item.startsWith('Authority=Developer ID Application:'));
-  if (!line) {
-    throw new Error('Could not find Developer ID Application authority from signed app');
+  const match = output.match(/^TeamIdentifier=([A-Z0-9]+)$/m);
+  if (!match) {
+    throw new Error('Could not find a TeamIdentifier in the verified signed app');
   }
-  return line.replace(/^Authority=/, '');
+  return match[1];
 };
 
-const signDmg = (dmgPath, identity) => {
-  withTemporarySigningKeychain((keychainPath) => {
-    run('codesign', ['--keychain', keychainPath, '--sign', identity, '--force', '--timestamp', dmgPath]);
+const signDmg = (dmgPath, teamIdentifier) => {
+  withTemporarySigningKeychain(({ keychainPath, identities }) => {
+    const identityHash = selectDeveloperIdApplicationIdentity(identities, teamIdentifier);
+    run('codesign', [
+      '--keychain',
+      keychainPath,
+      '--sign',
+      identityHash,
+      '--force',
+      '--timestamp',
+      dmgPath,
+    ]);
   });
+  run('codesign', ['--verify', '--verbose=4', dmgPath]);
 };
 
 const notarizeDmg = (dmgPath) => {
@@ -386,6 +469,7 @@ const notarizeDmg = (dmgPath) => {
     }
   }
   run('xcrun', ['stapler', 'staple', dmgPath]);
+  run('xcrun', ['stapler', 'validate', dmgPath]);
 };
 
 const regenerateBlockmap = (filePath) => {
@@ -427,9 +511,9 @@ const finalizeMacDmg = (platform) => {
     throw new Error('No DMG artifact found in dist');
   }
   const appPath = getMacAppPath(platform);
-  const identity = getDeveloperIdIdentity(appPath);
+  const teamIdentifier = getMacAppTeamIdentifier(appPath);
   console.log(`[publish.js] Signing DMG: ${path.basename(dmgPath)}`);
-  signDmg(dmgPath, identity);
+  signDmg(dmgPath, teamIdentifier);
   console.log(`[publish.js] Notarizing DMG: ${path.basename(dmgPath)}`);
   notarizeDmg(dmgPath);
   console.log(`[publish.js] Regenerating DMG blockmap and latest-mac.yml`);
@@ -645,7 +729,16 @@ const main = async () => {
   console.log('[publish.js] Done.');
 };
 
-main().catch((err) => {
-  console.error(`[publish.js] ${err.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`[publish.js] ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  parseDeveloperIdApplicationIdentities,
+  parseUserKeychainSearchList,
+  selectDeveloperIdApplicationIdentity,
+  withTemporaryUserKeychainSearchList,
+};

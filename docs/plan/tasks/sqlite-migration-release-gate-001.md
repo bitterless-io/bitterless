@@ -50,8 +50,9 @@ one production version to macOS ARM64, macOS x64, and Windows x64 only if every 
 - `yarn typecheck:node`
 - `yarn test:eyes-on-agents:repository`
 - production build hook source test proves audit runs before any build/sign/publish step;
-- macOS publisher test proves DMG signing uses a disposable explicit keychain and does not log
-  certificate/keychain passwords;
+- macOS publisher tests prove DMG signing uses a disposable explicit keychain, restores the exact
+  prior user keychain search list on success and failure, selects the app-team identity, verifies
+  the signed artifact, and does not log certificate/keychain passwords;
 - `git diff --check`;
 - process audit proves no audit/test/Electron helper remains;
 - after code sync, production release and public manifest/artifact verification pass for

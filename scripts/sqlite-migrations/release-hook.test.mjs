@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf-8')
+const require = createRequire(import.meta.url)
+const {
+  parseUserKeychainSearchList,
+  selectDeveloperIdApplicationIdentity,
+  withTemporaryUserKeychainSearchList,
+} = require('../publish.js')
 
 test('publish audits SQLite before build, signing, or upload', () => {
   const source = read('scripts/publish.js')
@@ -58,12 +65,76 @@ test('release version codes use the common comparison library', () => {
 test('DMG signing uses a private disposable keychain', () => {
   const source = read('scripts/publish.js')
   assert.match(source, /withTemporarySigningKeychain/)
+  assert.match(source, /withTemporaryUserKeychainSearchList/)
   assert.match(source, /\['create-keychain', '-p', keychainPassword, keychainPath\]/)
   assert.match(source, /\['import', certificatePath, '-k', keychainPath, '-P', certificatePassword/)
-  assert.match(source, /\['--keychain', keychainPath, '--sign', identity/)
+  assert.match(source, /'find-identity'/)
+  assert.match(source, /'codesigning'/)
+  assert.match(source, /\['--verify', '--verbose=4', dmgPath\]/)
   assert.match(source, /\['delete-keychain', keychainPath\]/)
   assert.match(source, /finally\s*{/)
   assert.doesNotMatch(source, /console\.(?:log|warn|error)\([^\n]*(?:certificatePassword|keychainPassword)/)
+})
+
+test('temporary signing keychain restores the exact user search list', () => {
+  const writes = []
+  const dependencies = {
+    readSearchList: () => ['/Users/test/login.keychain-db', '/Library/Keychains/System.keychain'],
+    setSearchList: (value) => writes.push([...value]),
+  }
+
+  assert.equal(
+    withTemporaryUserKeychainSearchList('/tmp/release.keychain-db', () => 'signed', dependencies),
+    'signed',
+  )
+  assert.deepEqual(writes, [
+    [
+      '/tmp/release.keychain-db',
+      '/Users/test/login.keychain-db',
+      '/Library/Keychains/System.keychain',
+    ],
+    ['/Users/test/login.keychain-db', '/Library/Keychains/System.keychain'],
+  ])
+})
+
+test('temporary signing keychain restores the user search list when signing fails', () => {
+  const writes = []
+  const dependencies = {
+    readSearchList: () => ['/Users/test/login.keychain-db'],
+    setSearchList: (value) => writes.push([...value]),
+  }
+
+  assert.throws(
+    () => withTemporaryUserKeychainSearchList('/tmp/release.keychain-db', () => {
+      throw new Error('sign failed')
+    }, dependencies),
+    /sign failed/,
+  )
+  assert.deepEqual(writes, [
+    ['/tmp/release.keychain-db', '/Users/test/login.keychain-db'],
+    ['/Users/test/login.keychain-db'],
+  ])
+})
+
+test('DMG signing selects one imported Developer ID identity for the app team', () => {
+  const output = [
+    '  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Developer ID Application: Example One (TEAMONE123)"',
+    '  2) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Example Two (TEAMTWO456)"',
+    '     2 valid identities found',
+  ].join('\n')
+
+  assert.equal(
+    selectDeveloperIdApplicationIdentity(output, 'TEAMTWO456'),
+    'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+  )
+  assert.throws(
+    () => selectDeveloperIdApplicationIdentity(output, 'MISSING123'),
+    /found 0/,
+  )
+  assert.deepEqual(
+    parseUserKeychainSearchList('    "/Users/test/login.keychain-db"\n    "/Library/Keychains/System.keychain"\n'),
+    ['/Users/test/login.keychain-db', '/Library/Keychains/System.keychain'],
+  )
 })
 
 test('migration audit is pure Node and uses runtime manifests', () => {

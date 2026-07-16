@@ -39,8 +39,12 @@ shorter values are accepted only as upgrade checkpoints.
 6. Migration, update, packaging, and audit comparisons all call `compareVersions`; none infer
    ordering from JavaScript numbers or string width.
 7. macOS DMG finalization imports the configured Developer ID P12 into an isolated temporary
-   keychain, signs with an explicit `--keychain`, and always deletes the keychain. This avoids a
-   hidden dependency on a certificate being installed in the user's login keychain.
+   keychain, temporarily prepends it to the user keychain search list, selects the unique imported
+   Developer ID identity matching the verified app Team ID, signs with an explicit `--keychain`,
+   restores the exact prior search list, and always deletes the keychain. The publisher verifies
+   both the app before signing and the DMG before notarization, then validates the stapled ticket.
+   This avoids a hidden dependency on a certificate being installed in the user's login keychain
+   while matching macOS `codesign` identity-discovery behavior.
 
 ## Delivery decision
 
