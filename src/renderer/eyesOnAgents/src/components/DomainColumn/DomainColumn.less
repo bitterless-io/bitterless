@@ -7,16 +7,12 @@
   flex: 0 0 300px;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #dfe3ee;
-  border-radius: 10px;
-  background: rgb(255 255 255 / 70%);
-  box-shadow: 0 3px 12px rgb(50 57 85 / 4%);
+  border-radius: 8px;
+  background: var(--eyes-column);
 }
 
 .agent-domain--focus {
-  border-color: #cbd2e7;
-  background: #eef1fa;
-  box-shadow: inset 0 3px 0 #4e5882, 0 3px 12px rgb(50 57 85 / 7%);
+  background: var(--eyes-column-focus);
 }
 
 .agent-domain__header,
@@ -31,8 +27,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 10px 10px 8px 13px;
-  border-bottom: 1px solid #e4e7ef;
-  background: rgb(255 255 255 / 74%);
+  background: transparent;
   user-select: none;
 }
 
@@ -76,6 +71,11 @@
   font: inherit;
   font-size: 13px;
   font-weight: 650;
+}
+
+.agent-domain__title-input:focus-visible {
+  outline: 2px solid var(--eyes-focus-ring);
+  outline-offset: 1px;
 }
 
 .agent-domain__count {

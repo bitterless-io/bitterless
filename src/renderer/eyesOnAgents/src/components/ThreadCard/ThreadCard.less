@@ -3,20 +3,21 @@
   display: flex;
   position: relative;
   overflow: hidden;
-  border: 1px solid #dfe3ee;
-  border-radius: 9px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(50 57 85 / 6%);
+  border-radius: 6px;
+  background: var(--eyes-item);
   cursor: grab;
-  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
 }
 
-.thread-card:hover,
+.thread-card:hover {
+  background: var(--eyes-item-hover);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
+}
+
 .thread-card:focus-visible {
-  border-color: #aeb7d3;
-  box-shadow: 0 6px 18px rgb(50 57 85 / 11%);
-  outline: none;
-  transform: translateY(-1px);
+  background: var(--eyes-item-focus);
+  outline: 2px solid var(--eyes-focus-ring);
+  outline-offset: 2px;
 }
 
 .thread-card__signal {
@@ -127,7 +128,6 @@
   align-items: center;
   justify-content: center;
   margin-left: auto;
-  border: 1px solid #dde1ec;
   border-radius: 50%;
   color: #6b738a;
   background: #f5f6fa;

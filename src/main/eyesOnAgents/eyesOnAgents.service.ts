@@ -42,6 +42,35 @@ interface EyesOnAgentsServiceDependencies {
 
 const AUTO_CONNECT_SETTING_KEY = 'eyes_on_agents';
 const AUTO_CONNECT_SETTING_SUB_KEY = 'app_server_auto_connect';
+const MAX_PENDING_CODEX_HOOK_EVENTS = 256;
+
+type HookInspectionState =
+  | 'uninspected'
+  | 'pending'
+  | 'flushing'
+  | 'trusted'
+  | 'rejected';
+
+interface HookListenerLifetime {
+  listeningSince: number;
+  admissionEpoch: number;
+  inspectionState: HookInspectionState;
+  pendingEvents: CodexHookEvent[];
+  overflowed: boolean;
+}
+
+type CancellableResult<T> =
+  | { state: 'resolved'; value: T }
+  | { state: 'rejected'; error: unknown }
+  | { state: 'cancelled' };
+
+type HookFlushResult = 'trusted' | 'rejected' | 'replaced' | 'cancelled';
+
+interface ObservationContext {
+  intentVersion: number;
+  controller: AbortController;
+  hookWriteTail: Promise<void>;
+}
 
 const parseProviderTimestamp = (value: unknown): number | null => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
@@ -100,33 +129,44 @@ const parseThreadEntry = (
 export class EyesOnAgentsService implements EyesOnAgentsApi {
   private readonly now: () => number;
   private autoConnectEnabled = false;
+  private lifecycleIntentVersion = 0;
+  private observationContext: ObservationContext | null = null;
   private desktopObservationPromise: Promise<void> | null = null;
+  private desktopTeardownPromise: Promise<void> | null = null;
+  private bridgeInspectionPromise: Promise<void> | null = null;
+  private hookListenerLifetime: HookListenerLifetime | null = null;
+  private hookIntakeEnabled = false;
+  private teardownRemoveBridgeRequested = false;
+  private teardownDisableAutoConnectRequested = false;
+  private readonly activeObservationOperations = new Set<Promise<void>>();
+  private readonly activeRuntimeOperations = new Set<Promise<void>>();
 
   constructor(private readonly dependencies: EyesOnAgentsServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
   }
 
   async initialize(): Promise<void> {
-    this.autoConnectEnabled = (await this.dependencies.settings.get<boolean>({
+    const intentVersion = this.lifecycleIntentVersion;
+    const autoConnectEnabled = (await this.dependencies.settings.get<boolean>({
       key: AUTO_CONNECT_SETTING_KEY,
       sub_key: AUTO_CONNECT_SETTING_SUB_KEY
     })) === true;
-    if (!this.autoConnectEnabled) return;
+    if (intentVersion !== this.lifecycleIntentVersion) return;
+    this.autoConnectEnabled = autoConnectEnabled;
+    if (!autoConnectEnabled) return;
     try {
-      await this.ensureDesktopObservation();
-      await this.ensureAppServerConnected();
-      await this.performSync();
+      await this.runObservationOperation(intentVersion, async (context) => {
+        await this.ensureDesktopObservation(context);
+        if (!await this.ensureAppServerConnected(context)) return;
+        await this.performSync(context);
+      });
     } catch {
       // The connection status carries the truthful error for the renderer. Startup continues.
     }
   }
 
   async shutdown(): Promise<void> {
-    try {
-      await this.dependencies.appServer.disconnect();
-    } finally {
-      await this.dependencies.bridgeListener.stop();
-    }
+    await this.requestDesktopTeardown({ removeBridge: false, disableAutoConnect: false });
   }
 
   async getSnapshot(): Promise<EyesOnAgentsSnapshot> {
@@ -166,72 +206,119 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   }
 
   async connectAppServer(): Promise<EyesOnAgentsSnapshot> {
-    await this.ensureDesktopObservation();
-    await this.ensureAppServerConnected();
-    this.autoConnectEnabled = true;
-    await this.dependencies.settings.upsert({
-      key: AUTO_CONNECT_SETTING_KEY,
-      sub_key: AUTO_CONNECT_SETTING_SUB_KEY,
-      value: true
+    const intentVersion = this.lifecycleIntentVersion;
+    await this.runObservationOperation(intentVersion, async (context) => {
+      await this.ensureDesktopObservation(context);
+      if (!await this.ensureAppServerConnected(context)) return;
+      await this.dependencies.settings.upsert({
+        key: AUTO_CONNECT_SETTING_KEY,
+        sub_key: AUTO_CONNECT_SETTING_SUB_KEY,
+        value: true
+      });
+      if (!this.isObservationActive(context)) return;
+      this.autoConnectEnabled = true;
+      await this.performSync(context);
     });
-    await this.performSync();
     return await this.getSnapshot();
   }
 
   async disconnectAppServer(): Promise<EyesOnAgentsSnapshot> {
-    this.autoConnectEnabled = false;
-    await this.dependencies.settings.upsert({
-      key: AUTO_CONNECT_SETTING_KEY,
-      sub_key: AUTO_CONNECT_SETTING_SUB_KEY,
-      value: false
+    await this.requestDesktopTeardown({
+      removeBridge: true,
+      disableAutoConnect: true
     });
-    try {
-      await this.dependencies.appServer.disconnect();
-    } finally {
-      try {
-        await this.dependencies.bridgeListener.stop();
-      } finally {
-        this.dependencies.desktopBridge.remove();
-        await this.invalidateCodexHookStatuses();
-      }
-    }
     this.notify();
     return await this.getSnapshot();
   }
 
   async syncThreads(): Promise<EyesOnAgentsSnapshot> {
-    await this.ensureDesktopObservation();
-    await this.ensureAppServerConnected();
-    await this.performSync();
+    const intentVersion = this.lifecycleIntentVersion;
+    await this.runObservationOperation(intentVersion, async (context) => {
+      await this.ensureDesktopObservation(context);
+      if (!await this.ensureAppServerConnected(context)) return;
+      await this.performSync(context);
+    });
     return await this.getSnapshot();
   }
 
-  private async ensureAppServerConnected(): Promise<void> {
-    if (this.dependencies.appServer.isConnected()) return;
-    await this.dependencies.repository.invalidateAppServerStatuses({ observedAt: this.now() });
-    await this.dependencies.appServer.connect();
-  }
-
-  private async ensureDesktopObservation(): Promise<void> {
-    if (this.desktopObservationPromise) return await this.desktopObservationPromise;
-    this.desktopObservationPromise = this.performEnsureDesktopObservation();
+  private async runObservationOperation(
+    intentVersion: number,
+    callback: (context: ObservationContext) => Promise<void>
+  ): Promise<void> {
+    if (this.desktopTeardownPromise) {
+      await this.desktopTeardownPromise;
+      return;
+    }
+    if (intentVersion !== this.lifecycleIntentVersion) return;
+    let context = this.observationContext;
+    if (
+      context === null ||
+      context.intentVersion !== intentVersion ||
+      context.controller.signal.aborted
+    ) {
+      context = {
+        intentVersion,
+        controller: new AbortController(),
+        hookWriteTail: Promise.resolve()
+      };
+      this.observationContext = context;
+    }
+    this.hookIntakeEnabled = true;
+    const operation = callback(context);
+    this.activeObservationOperations.add(operation);
     try {
-      await this.desktopObservationPromise;
+      await operation;
     } finally {
-      this.desktopObservationPromise = null;
+      this.activeObservationOperations.delete(operation);
     }
   }
 
-  private async performEnsureDesktopObservation(): Promise<void> {
-    const wasListening = this.bridgeStatus().listening;
-    if (!wasListening) await this.invalidateCodexHookStatuses();
+  private async ensureAppServerConnected(context: ObservationContext): Promise<boolean> {
+    if (!this.isObservationActive(context)) return false;
+    if (this.dependencies.appServer.isConnected()) return true;
+    await this.dependencies.repository.invalidateAppServerStatuses({ observedAt: this.now() });
+    if (!this.isObservationActive(context)) return false;
+    await this.dependencies.appServer.connect();
+    return this.isObservationActive(context);
+  }
+
+  private async ensureDesktopObservation(context: ObservationContext): Promise<void> {
+    if (!this.isObservationActive(context)) return;
+    if (this.desktopObservationPromise) {
+      await this.desktopObservationPromise;
+    } else {
+      const operation = this.performEnsureDesktopObservation(context);
+      this.desktopObservationPromise = operation;
+      try {
+        await operation;
+      } finally {
+        if (this.desktopObservationPromise === operation) {
+          this.desktopObservationPromise = null;
+        }
+      }
+    }
+  }
+
+  private async performEnsureDesktopObservation(context: ObservationContext): Promise<void> {
+    if (!this.isObservationActive(context)) return;
+    const initial = this.bridgeStatus();
+    const wasListening = initial.listening;
+    if (!wasListening) {
+      this.resetHookListenerLifetime();
+    }
+    if (!wasListening || initial.state !== 'installed') {
+      await this.invalidateCodexHookStatuses();
+    }
+    if (!this.isObservationActive(context)) return;
     await this.dependencies.bridgeListener.start();
+    if (!this.isObservationActive(context)) return;
+    const lifetime = this.currentHookListenerLifetime();
     const current = this.bridgeStatus();
     const status = current.state === 'installed' || current.state === 'needs_trust'
       ? current
       : this.dependencies.desktopBridge.install();
-    if (status.state !== 'installed') await this.invalidateCodexHookStatuses();
     if (status.state !== 'installed' && status.state !== 'needs_trust') {
+      if (lifetime) this.rejectHookListenerLifetime(lifetime);
       throw new Error(status.error ?? 'Unable to install the Codex Desktop bridge');
     }
   }
@@ -240,26 +327,331 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     await this.dependencies.repository.invalidateCodexHookStatuses({ observedAt: this.now() });
   }
 
-  private async refreshBridgeInspection(): Promise<void> {
-    try {
-      this.dependencies.desktopBridge.updateHookInspection(
-        await this.dependencies.appServer.listHooks()
-      );
-    } catch (error) {
-      this.dependencies.desktopBridge.setHookInspectionError(error);
-    }
-    if (this.bridgeStatus().state !== 'installed') await this.invalidateCodexHookStatuses();
+  private resetHookListenerLifetime(): void {
+    if (this.hookListenerLifetime) this.hookListenerLifetime.pendingEvents.length = 0;
+    this.hookListenerLifetime = null;
   }
 
-  private async performSync(): Promise<void> {
-    await this.refreshBridgeInspection();
-    const entries = await this.dependencies.appServer.listThreads();
+  private isObservationActive(context: ObservationContext): boolean {
+    return this.hookIntakeEnabled &&
+      !context.controller.signal.aborted &&
+      this.observationContext === context &&
+      this.lifecycleIntentVersion === context.intentVersion;
+  }
+
+  private async joinDesktopObservationWork(): Promise<void> {
+    for (;;) {
+      const pending = new Set<Promise<unknown>>([
+        ...this.activeObservationOperations,
+        ...this.activeRuntimeOperations
+      ]);
+      if (this.desktopObservationPromise) pending.add(this.desktopObservationPromise);
+      if (this.bridgeInspectionPromise) pending.add(this.bridgeInspectionPromise);
+      if (pending.size === 0) return;
+      await Promise.allSettled([...pending]);
+    }
+  }
+
+  private async performDesktopTeardown(): Promise<void> {
+    let teardownError: unknown = null;
+    const settle = async (operation: Promise<unknown>): Promise<void> => {
+      try {
+        await operation;
+      } catch (error) {
+        teardownError ??= error;
+      }
+    };
+    const disconnectOperation = this.dependencies.appServer.disconnect();
+    if (this.desktopObservationPromise) {
+      await settle(this.desktopObservationPromise);
+    }
+    await settle(this.dependencies.bridgeListener.stop());
+    await settle(disconnectOperation);
+    await this.joinDesktopObservationWork();
+    await settle(this.dependencies.appServer.disconnect());
+    this.resetHookListenerLifetime();
+    let removedBridge = false;
+    let disabledAutoConnect = false;
+    for (;;) {
+      if (this.teardownDisableAutoConnectRequested && !disabledAutoConnect) {
+        await settle(this.dependencies.settings.upsert({
+          key: AUTO_CONNECT_SETTING_KEY,
+          sub_key: AUTO_CONNECT_SETTING_SUB_KEY,
+          value: false
+        }));
+        disabledAutoConnect = true;
+      }
+      if (this.teardownRemoveBridgeRequested && !removedBridge) {
+        try {
+          this.dependencies.desktopBridge.remove();
+        } catch (error) {
+          teardownError ??= error;
+        }
+        removedBridge = true;
+      }
+      await settle(this.invalidateCodexHookStatuses());
+      if (
+        disabledAutoConnect === this.teardownDisableAutoConnectRequested &&
+        removedBridge === this.teardownRemoveBridgeRequested
+      ) {
+        break;
+      }
+    }
+    if (this.observationContext?.controller.signal.aborted) {
+      this.observationContext = null;
+    }
+    if (teardownError) throw teardownError;
+  }
+
+  private requestDesktopTeardown(params: {
+    removeBridge: boolean;
+    disableAutoConnect: boolean;
+  }): Promise<void> {
+    this.lifecycleIntentVersion += 1;
+    this.teardownRemoveBridgeRequested ||= params.removeBridge;
+    this.teardownDisableAutoConnectRequested ||= params.disableAutoConnect;
+    if (params.disableAutoConnect) this.autoConnectEnabled = false;
+    this.hookIntakeEnabled = false;
+    this.observationContext?.controller.abort();
+    this.resetHookListenerLifetime();
+    if (this.desktopTeardownPromise) return this.desktopTeardownPromise;
+    const operation = this.performDesktopTeardown();
+    this.desktopTeardownPromise = operation;
+    const clear = (): void => {
+      if (this.desktopTeardownPromise !== operation) return;
+      this.desktopTeardownPromise = null;
+      this.teardownRemoveBridgeRequested = false;
+      this.teardownDisableAutoConnectRequested = false;
+    };
+    void operation.then(clear, clear);
+    return operation;
+  }
+
+  private async teardownDesktopObservation(removeBridge: boolean): Promise<void> {
+    await this.requestDesktopTeardown({
+      removeBridge,
+      disableAutoConnect: false
+    });
+  }
+
+  private currentHookListenerLifetime(
+    status: EyesOnAgentsBridgeStatus = this.bridgeStatus()
+  ): HookListenerLifetime | null {
+    const listeningSince = status.listeningSince === null
+      ? Number.NaN
+      : Date.parse(status.listeningSince);
+    if (!status.listening || !Number.isFinite(listeningSince)) {
+      this.resetHookListenerLifetime();
+      return null;
+    }
+    if (
+      this.hookListenerLifetime === null ||
+      this.hookListenerLifetime.listeningSince !== listeningSince
+    ) {
+      this.resetHookListenerLifetime();
+      this.hookListenerLifetime = {
+        listeningSince,
+        admissionEpoch: 0,
+        inspectionState: 'uninspected',
+        pendingEvents: [],
+        overflowed: false
+      };
+    }
+    return this.hookListenerLifetime;
+  }
+
+  private isCurrentHookListenerLifetime(lifetime: HookListenerLifetime): boolean {
+    const status = this.bridgeStatus();
+    const listeningSince = status.listeningSince === null
+      ? Number.NaN
+      : Date.parse(status.listeningSince);
+    return this.hookListenerLifetime === lifetime &&
+      status.listening &&
+      Number.isFinite(listeningSince) &&
+      listeningSince === lifetime.listeningSince;
+  }
+
+  private rejectHookListenerLifetime(lifetime: HookListenerLifetime): void {
+    lifetime.admissionEpoch += 1;
+    lifetime.inspectionState = 'rejected';
+    lifetime.pendingEvents.length = 0;
+  }
+
+  private bufferCodexHookEvent(
+    lifetime: HookListenerLifetime,
+    event: CodexHookEvent
+  ): void {
+    if (lifetime.overflowed) return;
+    if (lifetime.pendingEvents.length >= MAX_PENDING_CODEX_HOOK_EVENTS) {
+      lifetime.overflowed = true;
+      lifetime.pendingEvents.length = 0;
+      return;
+    }
+    lifetime.pendingEvents.push(event);
+  }
+
+  private async awaitUnlessCancelled<T>(
+    operation: Promise<T>,
+    signal: AbortSignal
+  ): Promise<CancellableResult<T>> {
+    if (signal.aborted) return { state: 'cancelled' };
+    let onAbort: (() => void) | null = null;
+    const cancellation = new Promise<CancellableResult<T>>((resolve) => {
+      onAbort = () => resolve({ state: 'cancelled' });
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    const settled: Promise<CancellableResult<T>> = operation.then(
+      (value): CancellableResult<T> => ({ state: 'resolved', value }),
+      (error: unknown): CancellableResult<T> => ({ state: 'rejected', error })
+    );
+    try {
+      return await Promise.race([settled, cancellation]);
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  private async flushCodexHookEvents(
+    lifetime: HookListenerLifetime,
+    context: ObservationContext
+  ): Promise<HookFlushResult> {
+    const admissionEpoch = lifetime.admissionEpoch;
+    const pendingBatch = lifetime.pendingEvents.splice(0);
+    lifetime.inspectionState = 'flushing';
+    const writes = pendingBatch.map(
+      (event) => this.enqueueCodexHookWrite(event, context, lifetime)
+    );
+    const settled = await Promise.allSettled(writes);
+    const failed = settled.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    if (failed) throw failed.reason;
+    if (lifetime.admissionEpoch !== admissionEpoch) {
+      return 'rejected';
+    }
+    if (!this.isObservationActive(context)) {
+      this.rejectHookListenerLifetime(lifetime);
+      return 'cancelled';
+    }
+    if (!this.isCurrentHookListenerLifetime(lifetime)) {
+      this.rejectHookListenerLifetime(lifetime);
+      return 'replaced';
+    }
+    if (this.bridgeStatus().state !== 'installed') {
+      this.rejectHookListenerLifetime(lifetime);
+      return 'rejected';
+    }
+    lifetime.inspectionState = 'trusted';
+    return 'trusted';
+  }
+
+  private async performRefreshBridgeInspection(context: ObservationContext): Promise<void> {
+    for (;;) {
+      if (!this.isObservationActive(context)) return;
+      const lifetime = this.currentHookListenerLifetime();
+      if (!lifetime) return;
+      if (lifetime.inspectionState === 'rejected') lifetime.overflowed = false;
+      const drainEpoch = lifetime.admissionEpoch;
+      lifetime.inspectionState = 'pending';
+      const drained = await this.awaitUnlessCancelled(
+        context.hookWriteTail,
+        context.controller.signal
+      );
+      if (drained.state === 'cancelled') return;
+      if (drained.state === 'rejected') throw drained.error;
+      if (!this.isObservationActive(context)) return;
+      if (!this.isCurrentHookListenerLifetime(lifetime)) {
+        this.rejectHookListenerLifetime(lifetime);
+        if (this.currentHookListenerLifetime()) continue;
+        return;
+      }
+      if (
+        lifetime.admissionEpoch !== drainEpoch ||
+        lifetime.inspectionState !== 'pending'
+      ) {
+        return;
+      }
+      lifetime.admissionEpoch += 1;
+      const admissionEpoch = lifetime.admissionEpoch;
+      const inspection = await this.awaitUnlessCancelled(
+        Promise.resolve().then(async () => await this.dependencies.appServer.listHooks()),
+        context.controller.signal
+      );
+      if (inspection.state === 'cancelled') {
+        this.rejectHookListenerLifetime(lifetime);
+        return;
+      }
+      if (!this.isCurrentHookListenerLifetime(lifetime)) {
+        this.rejectHookListenerLifetime(lifetime);
+        if (this.currentHookListenerLifetime()) continue;
+        return;
+      }
+      if (
+        lifetime.admissionEpoch !== admissionEpoch ||
+        lifetime.inspectionState !== 'pending'
+      ) {
+        return;
+      }
+      if (lifetime.overflowed) {
+        this.dependencies.desktopBridge.setHookInspectionError(
+          new Error('Codex hook event buffer overflow')
+        );
+        this.rejectHookListenerLifetime(lifetime);
+        await this.invalidateCodexHookStatuses();
+        return;
+      }
+      if (inspection.state === 'resolved') {
+        this.dependencies.desktopBridge.updateHookInspection(inspection.value);
+      } else {
+        this.dependencies.desktopBridge.setHookInspectionError(inspection.error);
+      }
+      if (this.bridgeStatus().state === 'installed') {
+        const flushResult = await this.flushCodexHookEvents(lifetime, context);
+        if (flushResult === 'trusted' || flushResult === 'cancelled') return;
+        if (flushResult === 'replaced') {
+          await this.invalidateCodexHookStatuses();
+          if (this.isObservationActive(context) && this.currentHookListenerLifetime()) continue;
+          return;
+        }
+      } else {
+        this.rejectHookListenerLifetime(lifetime);
+      }
+      await this.invalidateCodexHookStatuses();
+      return;
+    }
+  }
+
+  private async refreshBridgeInspection(context: ObservationContext): Promise<void> {
+    if (!this.isObservationActive(context)) return;
+    if (this.bridgeInspectionPromise) return await this.bridgeInspectionPromise;
+    const operation = this.performRefreshBridgeInspection(context);
+    this.bridgeInspectionPromise = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.bridgeInspectionPromise === operation) {
+        this.bridgeInspectionPromise = null;
+      }
+    }
+  }
+
+  private async performSync(context: ObservationContext): Promise<void> {
+    await this.refreshBridgeInspection(context);
+    if (!this.isObservationActive(context)) return;
+    const listed = await this.awaitUnlessCancelled(
+      Promise.resolve().then(async () => await this.dependencies.appServer.listThreads()),
+      context.controller.signal
+    );
+    if (listed.state === 'cancelled') return;
+    if (listed.state === 'rejected') throw listed.error;
+    if (!this.isObservationActive(context)) return;
     const observedAt = this.now();
-    const threads = entries.flatMap((entry) => {
+    const threads = listed.value.flatMap((entry) => {
       const parsed = parseThreadEntry(entry, observedAt);
       return parsed ? [parsed] : [];
     });
     await this.dependencies.repository.upsertDiscoveredThreads({ threads });
+    if (!this.isObservationActive(context)) return;
     this.notify();
   }
 
@@ -306,21 +698,23 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   }
 
   async installCodexBridge(): Promise<EyesOnAgentsSnapshot> {
-    await this.ensureDesktopObservation();
-    if (this.dependencies.appServer.isConnected()) await this.refreshBridgeInspection();
-    return await this.changedSnapshot();
+    const intentVersion = this.lifecycleIntentVersion;
+    await this.runObservationOperation(intentVersion, async (context) => {
+      await this.ensureDesktopObservation(context);
+      if (!this.isObservationActive(context)) return;
+      if (this.dependencies.appServer.isConnected()) {
+        await this.refreshBridgeInspection(context);
+      }
+      if (this.isObservationActive(context)) this.notify();
+    });
+    return await this.getSnapshot();
   }
 
   async removeCodexBridge(): Promise<EyesOnAgentsSnapshot> {
     if (this.dependencies.appServer.isConnected() || this.autoConnectEnabled) {
       throw new Error('Disconnect EyesOnAgents before cleaning up the Codex Desktop bridge');
     }
-    try {
-      await this.dependencies.bridgeListener.stop();
-    } finally {
-      this.dependencies.desktopBridge.remove();
-      await this.invalidateCodexHookStatuses();
-    }
+    await this.teardownDesktopObservation(true);
     return await this.changedSnapshot();
   }
 
@@ -333,6 +727,22 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   }
 
   async handleAppServerNotification(method: string, paramsValue: unknown): Promise<void> {
+    const context = this.observationContext;
+    if (!context || !this.isObservationActive(context)) return;
+    const operation = this.performHandleAppServerNotification(context, method, paramsValue);
+    this.activeRuntimeOperations.add(operation);
+    try {
+      await operation;
+    } finally {
+      this.activeRuntimeOperations.delete(operation);
+    }
+  }
+
+  private async performHandleAppServerNotification(
+    context: ObservationContext,
+    method: string,
+    paramsValue: unknown
+  ): Promise<void> {
     if (!isEyesOnAgentsRecord(paramsValue)) return;
     const observedAt = this.now();
     let event: EyesOnAgentsRuntimeEvent | null = null;
@@ -369,24 +779,97 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     } catch {
       return;
     }
-    if (!event) return;
+    if (!event || !this.isObservationActive(context)) return;
     await this.dependencies.repository.applyRuntimeEvent({ event });
-    this.notify();
+    if (this.isObservationActive(context)) this.notify();
   }
 
   async applyCodexHookEvent(event: CodexHookEvent): Promise<void> {
+    const context = this.observationContext;
+    if (!context || !this.isObservationActive(context)) return;
+    const operation = this.performApplyCodexHookEvent(context, event);
+    this.activeRuntimeOperations.add(operation);
+    try {
+      await operation;
+    } finally {
+      this.activeRuntimeOperations.delete(operation);
+    }
+  }
+
+  private async performApplyCodexHookEvent(
+    context: ObservationContext,
+    event: CodexHookEvent
+  ): Promise<void> {
     const bridge = this.bridgeStatus();
-    const listeningSince = bridge.listeningSince === null
-      ? Number.NaN
-      : Date.parse(bridge.listeningSince);
+    const lifetime = this.currentHookListenerLifetime(bridge);
+    if (!lifetime || event.occurredAt < lifetime.listeningSince) return;
     if (
-      bridge.state !== 'installed' ||
-      !bridge.listening ||
-      !Number.isFinite(listeningSince) ||
-      event.occurredAt < listeningSince
+      lifetime.inspectionState === 'uninspected' ||
+      lifetime.inspectionState === 'pending'
     ) {
+      this.bufferCodexHookEvent(lifetime, event);
       return;
     }
+    if (lifetime.inspectionState === 'flushing') {
+      if (
+        !this.isObservationActive(context) ||
+        !this.isCurrentHookListenerLifetime(lifetime) ||
+        this.bridgeStatus().state !== 'installed'
+      ) {
+        return;
+      }
+      void this.enqueueCodexHookWrite(event, context, lifetime);
+      return;
+    }
+    if (lifetime.inspectionState === 'rejected') return;
+    if (bridge.state !== 'installed') {
+      this.rejectHookListenerLifetime(lifetime);
+      return;
+    }
+    void this.enqueueCodexHookWrite(event, context, lifetime);
+  }
+
+  private enqueueCodexHookWrite(
+    event: CodexHookEvent,
+    context: ObservationContext,
+    lifetime: HookListenerLifetime
+  ): Promise<void> {
+    const admissionEpoch = lifetime.admissionEpoch;
+    const operation = context.hookWriteTail.then(async () => {
+      if (
+        !this.isObservationActive(context) ||
+        !this.isCurrentHookListenerLifetime(lifetime) ||
+        lifetime.admissionEpoch !== admissionEpoch ||
+        lifetime.inspectionState === 'rejected' ||
+        this.bridgeStatus().state !== 'installed'
+      ) {
+        return;
+      }
+      try {
+        await this.performPersistCodexHookEvent(event);
+      } catch (error) {
+        this.rejectHookListenerLifetime(lifetime);
+        if (this.isObservationActive(context)) {
+          this.dependencies.desktopBridge.setHookInspectionError(error);
+          try {
+            await this.invalidateCodexHookStatuses();
+          } finally {
+            if (this.isObservationActive(context)) this.notify();
+          }
+        }
+        throw error;
+      }
+    });
+    context.hookWriteTail = operation.catch(() => undefined);
+    this.activeRuntimeOperations.add(operation);
+    const clear = (): void => {
+      this.activeRuntimeOperations.delete(operation);
+    };
+    void operation.then(clear, clear);
+    return operation;
+  }
+
+  private async performPersistCodexHookEvent(event: CodexHookEvent): Promise<void> {
     const base = {
       threadId: event.payload.sessionId,
       turnId: event.payload.turnId,

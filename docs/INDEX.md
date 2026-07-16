@@ -48,6 +48,8 @@ design document.
 
 ## Issues
 
+- [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:
+  decorative borders replaced by Todo-style background-led Domain and thread-item hierarchy.
 - [EyesOnAgents Desktop Focus](issues/archived/eyes-on-agents-desktop-focus.md) - fixed: active Codex Desktop tasks
   missing from Focus when lifecycle observation is absent or expires too early.
 

@@ -63,3 +63,10 @@ received.
 
 - Round 1: `docs/plan/reviews/eyes-on-agents-focus-002-1.md` — blocking findings resolved.
 - Round 2: `docs/plan/reviews/eyes-on-agents-focus-002-2.md` — accepted.
+- Round 3: `docs/plan/reviews/eyes-on-agents-focus-002-3.md` — blocking findings resolved.
+- Round 4: `docs/plan/reviews/eyes-on-agents-focus-002-4.md` — accepted.
+- Round 5: `docs/plan/reviews/eyes-on-agents-focus-002-5.md` — blocking findings resolved.
+- Round 6: `docs/plan/reviews/eyes-on-agents-focus-002-6.md` — blocking findings resolved.
+- Round 7: `docs/plan/reviews/eyes-on-agents-focus-002-7.md` — blocking findings resolved.
+- Round 8: `docs/plan/reviews/eyes-on-agents-focus-002-8.md` — blocking findings resolved.
+- Round 9: `docs/plan/reviews/eyes-on-agents-focus-002-9.md` — accepted.

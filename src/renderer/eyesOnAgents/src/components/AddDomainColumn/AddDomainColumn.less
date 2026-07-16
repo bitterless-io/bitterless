@@ -8,9 +8,9 @@
 .add-domain-column__button,
 .add-domain-column__form {
   width: 100%;
-  border: 1px dashed #c7cddd;
-  border-radius: 10px;
-  background: rgb(255 255 255 / 55%);
+  border: 0;
+  border-radius: 8px;
+  background: var(--eyes-column);
 }
 
 .add-domain-column__button {
@@ -24,13 +24,17 @@
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
+  transition: background-color 140ms ease;
 }
 
-.add-domain-column__button:hover,
+.add-domain-column__button:hover {
+  background: var(--eyes-column-hover);
+}
+
 .add-domain-column__button:focus-visible {
-  border-color: #7e89b2;
-  background: #fff;
-  outline: none;
+  background: var(--eyes-column-hover);
+  outline: 2px solid var(--eyes-focus-ring);
+  outline-offset: 2px;
 }
 
 .add-domain-column__form {

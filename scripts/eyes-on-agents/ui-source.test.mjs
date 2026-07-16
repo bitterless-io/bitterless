@@ -9,6 +9,12 @@ const walk = (directory) => readdirSync(join(root, directory)).flatMap((entry) =
   const relative = join(directory, entry);
   return statSync(join(root, relative)).isDirectory() ? walk(relative) : [relative];
 });
+const cssRule = (source, selector) => {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = source.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`));
+  assert.ok(match, `Missing CSS rule: ${selector}`);
+  return match[1];
+};
 
 test('EyesOnAgents is a standalone Mini App, not a Home route', () => {
   const config = read('electron.vite.config.ts');
@@ -48,6 +54,69 @@ test('observation board exposes stable regions and reduced motion', () => {
   assert.match(source, /pull: 'clone', put: false/);
   assert.match(source, /eyesOnAgentsEmitter\.moveThread/);
   assert.doesNotMatch(source, /Claude|claude/);
+});
+
+test('observation surfaces use Todo-style background hierarchy without decorative borders', () => {
+  const app = read('src/renderer/eyesOnAgents/src/App.less');
+  const domain = read(
+    'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
+  );
+  const thread = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
+  );
+  const addDomain = read(
+    'src/renderer/eyesOnAgents/src/components/AddDomainColumn/AddDomainColumn.less'
+  );
+
+  assert.match(app, /--eyes-canvas: oklch\(0\.985 0 0\)/);
+  assert.match(app, /--eyes-column: oklch\(0\.96 0 0\)/);
+  assert.match(app, /--eyes-column-focus: oklch\(0\.94 0\.04 60\)/);
+  assert.match(app, /--eyes-item: oklch\(1 0 0\)/);
+
+  const domainShell = cssRule(domain, '.agent-domain');
+  assert.match(domainShell, /background: var\(--eyes-column\)/);
+  assert.doesNotMatch(domainShell, /\bborder\s*:/);
+  assert.doesNotMatch(domainShell, /box-shadow/);
+
+  const focusDomain = cssRule(domain, '.agent-domain--focus');
+  assert.match(focusDomain, /background: var\(--eyes-column-focus\)/);
+  assert.doesNotMatch(focusDomain, /border-color|box-shadow/);
+
+  const domainHeader = cssRule(domain, '.agent-domain__header');
+  assert.match(domainHeader, /background: transparent/);
+  assert.doesNotMatch(domainHeader, /border-bottom|box-shadow/);
+
+  const domainTitleInput = cssRule(domain, '.agent-domain__title-input');
+  assert.match(domainTitleInput, /border: 1px solid/);
+  const domainTitleFocus = cssRule(domain, '.agent-domain__title-input:focus-visible');
+  assert.match(domainTitleFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
+
+  const threadCard = cssRule(thread, '.thread-card');
+  assert.match(threadCard, /background: var\(--eyes-item\)/);
+  assert.doesNotMatch(threadCard, /\bborder\s*:/);
+  assert.doesNotMatch(threadCard, /\bbox-shadow\s*:|\btransform\s*:/);
+
+  const threadHover = cssRule(thread, '.thread-card:hover');
+  assert.match(threadHover, /box-shadow: 0 1px 4px/);
+  assert.doesNotMatch(threadHover, /\btransform\s*:/);
+
+  const threadFocus = cssRule(thread, '.thread-card:focus-visible');
+  assert.match(threadFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
+  assert.match(threadFocus, /outline-offset: 2px/);
+
+  const threadSource = cssRule(thread, '.thread-card__source');
+  assert.doesNotMatch(threadSource, /\bborder\s*:/);
+  const signalDot = cssRule(thread, '.thread-card__signal-dot');
+  assert.match(signalDot, /border: 2px solid #fff/);
+
+  assert.doesNotMatch(addDomain, /border:\s*1px\s+dashed|\bdashed\b/);
+  assert.match(
+    addDomain,
+    /\.add-domain-column__button,\s*\.add-domain-column__form\s*\{[^}]*border: 0;[^}]*background: var\(--eyes-column\)/
+  );
+  const addDomainFocus = cssRule(addDomain, '.add-domain-column__button:focus-visible');
+  assert.match(addDomainFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
+  assert.match(addDomainFocus, /outline-offset: 2px/);
 });
 
 test('connection panel presents Connect-managed bridge trust and safe cleanup', () => {

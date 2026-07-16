@@ -432,8 +432,8 @@ try {
   );
   assert.equal(
     delayedChild.messages.filter((message) => message.method === 'hooks/list').length,
-    2,
-    'both service requests must refresh hook trust after sync'
+    1,
+    'concurrent service requests must share one hook-trust inspection'
   );
   await delayedSupervisor.disconnect();
 

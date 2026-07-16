@@ -76,6 +76,17 @@ exact definition once before it runs. After installation, EyesOnAgents inspects 
 reports `needs_trust` until every Bitterless-owned definition is enabled and has `trusted` or
 `managed` trust status. Bitterless never bypasses Codex hook trust or writes managed policy.
 
+While a fresh `hooks/list` inspection is pending, current-listener events remain only in a bounded
+in-memory queue. EyesOnAgents writes them to SQLite in arrival order only after that inspection
+proves the exact hooks trusted; it discards the whole queue on any other result, listener change,
+or overflow. A prior `installed` result never authorizes events across a new inspection boundary.
+EyesOnAgents establishes that pending boundary before draining writes accepted by the preceding
+inspection, so events arriving during a slow write join the fresh bounded queue rather than being
+dropped between admission epochs. Every queued write captures an immutable admission epoch. A
+SQLite write failure rejects that epoch before any suffix can start, reports only the bounded bridge
+error, invalidates hook-owned active evidence, and refreshes the renderer; a later `Sync` must drain
+the rejected tail and prove fresh trust before admission can reopen.
+
 ## App Server connection lifecycle
 
 The main process owns one connection supervisor for the entire Bitterless process:

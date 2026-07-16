@@ -59,8 +59,10 @@ Use the existing Bitterless color contract as the source of truth:
 |---|---|
 | menu bar / primary action | Royal Blue `#4E5882` |
 | deep text | `#323955` / `#1E2237` |
-| board canvas | cool grey-blue `#F3F5FC` |
-| Domain/card surface | white |
+| board canvas | near-white neutral `oklch(0.985 0 0)` |
+| regular Domain surface | cool neutral `oklch(0.96 0 0)` |
+| Focus Domain surface | warm attention tint `oklch(0.94 0.04 60)` |
+| thread item surface | white `oklch(1 0 0)` |
 | waiting / unread completion | amber / accent orange `#C2410C` |
 | completed/read | restrained green |
 | failure | red |
@@ -68,6 +70,12 @@ Use the existing Bitterless color contract as the source of truth:
 
 Typography stays on the product's existing system-font stack. Hierarchy comes from size, weight,
 spacing, and alignment rather than a new font dependency.
+
+Surface hierarchy follows Todo: background contrast separates the board, Domains, Focus, and
+thread items. Domain shells, Domain headers, thread items, source badges, and the add-Domain
+surface have no decorative outline or persistent shadow. A thread item may gain one quiet shadow
+on pointer hover without moving; keyboard focus uses a visible outline and a light background
+rather than reintroducing a permanent card border.
 
 The signature element is a narrow **signal rail** on the left edge of every thread card. Its color
 and top dot encode live state without turning the whole card into an alert. Working receives one
@@ -98,8 +106,14 @@ Each real Domain header contains title, count, and an overflow menu. User Domain
 reordered, or deleted. Deleting requires confirmation and states that threads will move to
 `Uncategorized`; it never deletes Codex tasks.
 
+A regular Domain is one continuous cool-neutral background surface: its header has no divider or
+independent card background. Focus uses the same structure with a warm attention background, so
+its distinction does not depend on a border, top rule, or shadow.
+
 The final narrow add column creates a Domain inline. Empty or duplicate titles remain editable with
-an inline validation message. `Esc` cancels and `Enter` confirms.
+an inline validation message. Its button/form uses the regular Domain background without a dashed
+outline. Hover deepens the background; keyboard focus retains a visible outline. `Esc` cancels and
+`Enter` confirms.
 
 Thread cards can be dragged between real Domain columns. Focus is not a storage destination and
 does not participate in Domain ordering. A Focus card may be dragged into a real Domain to classify
@@ -116,6 +130,12 @@ A card displays only observation metadata:
 - relative last-activity time;
 - evidence source on hover or in the overflow details;
 - primary `Open` action.
+
+The card is an unbordered white item with a compact radius and no persistent shadow. Pointer hover
+uses a slightly tinted background and Todo-strength light shadow, with no vertical lift. Keyboard
+focus uses a light Royal Blue background plus an explicit focus outline. The source badge also uses
+background contrast without an outline; the signal dot keeps its white separator because it must
+remain legible across status colors.
 
 The whole card may focus keyboard navigation, but only `Open`, double-click, or `Enter` launches
 Codex and marks the observed turn read after the deep link succeeds. Dragging or selecting never
