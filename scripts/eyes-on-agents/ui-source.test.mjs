@@ -39,6 +39,19 @@ test('window contract enforces singleton-safe paths and minimum size', () => {
   assert.match(source, /_destroyForAuth\(\)/);
 });
 
+test('window activation refreshes thread discovery without leaking its listener', () => {
+  const app = read('src/renderer/eyesOnAgents/src/App.vue');
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
+
+  assert.match(app, /window\.addEventListener\('focus', handleWindowFocus\)/);
+  assert.match(app, /window\.removeEventListener\('focus', handleWindowFocus\)/);
+  assert.match(app, /eyesOnAgentsStore\.refreshOnWindowActivation\(\)/);
+  assert.match(store, /async refreshOnWindowActivation\(\): Promise<void>/);
+  assert.match(store, /connection\?\.state === 'connected'/);
+  assert.match(store, /connection\?\.autoConnectEnabled/);
+  assert.match(store, /await this\.loadSnapshot\(true\)/);
+});
+
 test('observation board exposes stable regions and reduced motion', () => {
   const rendererFiles = walk('src/renderer/eyesOnAgents');
   const source = rendererFiles

@@ -176,6 +176,20 @@ class EyesOnAgentsState {
     await this.runSnapshotAction('sync', () => eyesOnAgentsEmitter.syncThreads());
   }
 
+  async refreshOnWindowActivation(): Promise<void> {
+    const connection = this.snapshot?.connection;
+    const shouldSync = connection?.state === 'connected'
+      || Boolean(
+        connection?.autoConnectEnabled
+        && (connection.state === 'disconnected' || connection.state === 'error'),
+      );
+    if (shouldSync) {
+      await this.syncThreads();
+      return;
+    }
+    await this.loadSnapshot(true);
+  }
+
   async installCodexBridge(): Promise<void> {
     await this.runSnapshotAction('bridge-install', () => eyesOnAgentsEmitter.installCodexBridge());
   }

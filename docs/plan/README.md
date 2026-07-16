@@ -35,6 +35,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-001](tasks/eyes-on-agents-001.md) | Codex-only standalone observation board and persistent App Server | done | — |
 | [eyes-on-agents-focus-002](tasks/eyes-on-agents-focus-002.md) | Codex Desktop lifecycle connection and long-running Focus correctness | done | eyes-on-agents-001 |
 | [eyes-on-agents-project-filter-003](tasks/eyes-on-agents-project-filter-003.md) | Git Project metadata and Uncategorized source filter | done | eyes-on-agents-focus-002 |
+| [eyes-on-agents-activation-refresh-004](tasks/eyes-on-agents-activation-refresh-004.md) | refresh thread metadata whenever the EyesOnAgents window regains focus | done | eyes-on-agents-project-filter-003 |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [Coin sub-application](analysis/coin-subapp.md),

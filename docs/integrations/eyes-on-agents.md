@@ -1,6 +1,6 @@
 # EyesOnAgents Integration
 
-Status: implemented and independently verified
+Status: implemented and locally verified
 
 Date: 2026-07-16
 
@@ -27,6 +27,8 @@ EyesOnAgents never reads or displays them.
   changing manual Domain assignment.
 - Show running threads and newly completed unread threads in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
+- Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
+  activated again.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
 - Supplement managed App Server events with the metadata-only Codex Desktop hook bridge managed by
   the EyesOnAgents connection lifecycle, while making the evidence source visible and bounded.
@@ -113,6 +115,27 @@ thread and Domain state belongs in the dedicated tables below.
 
 The renderer can request only `connect`, `disconnect`, `sync`, and status inspection. It cannot
 provide an executable, command arguments, URL, or arbitrary JSON-RPC method.
+
+### Window activation refresh
+
+The EyesOnAgents renderer listens for its own top-level window to regain focus. Each focus
+transition requests one foreground refresh so metadata that has no lifecycle notification, such as
+a renamed thread title, is updated from `thread/list` without waiting for a manual Sync.
+
+The refresh respects connection intent:
+
+| current state | activation behavior |
+|---|---|
+| `connected` | run `syncThreads()` and apply the returned snapshot |
+| `disconnected` or `error` with auto-connect enabled | retry `syncThreads()` |
+| `connecting` or `syncing` | quietly reload the current snapshot; the in-flight operation broadcasts its completion |
+| explicitly disconnected with auto-connect disabled | quietly reload local SQLite state without reconnecting |
+| initial snapshot not loaded | coalesce with the existing snapshot load |
+
+The store's existing single busy action and coalesced snapshot load prevent overlapping activation
+requests. The listener is removed when the renderer unmounts. This is activation-driven only: no
+timer, polling loop, hidden-window sync, or new persisted state is introduced. A failed activation
+sync uses the existing action error surface and retains the last valid snapshot.
 
 ## Domain model
 

@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { IconAlertTriangle, IconEye } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import AgentBoard from './components/AgentBoard/AgentBoard.vue';
@@ -87,9 +87,18 @@ const handleRetry = async (): Promise<void> => {
   await eyesOnAgentsStore.loadSnapshot();
 };
 
+const handleWindowFocus = (): void => {
+  void eyesOnAgentsStore.refreshOnWindowActivation().catch(() => undefined);
+};
+
 onMounted(async () => {
   eyesOnAgentsStore.initialize();
+  window.addEventListener('focus', handleWindowFocus);
   await eyesOnAgentsStore.loadSnapshot();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', handleWindowFocus);
 });
 </script>
 
