@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView } from 'electron';
+import { app, BrowserWindow, WebContentsView } from 'electron';
 import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
@@ -12,6 +12,8 @@ const MENUBAR_HEIGHT = 36;
 const WINDOW_LAYOUT_KEY = 'window_layout';
 const WINDOW_LAYOUT_SUB_KEY = 'todo';
 const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
+const resolveTodoOutPath = (...segments: string[]): string =>
+  join(app.getAppPath(), 'out', ...segments);
 
 class TodoWindowHandler extends XpcMainHandler {
   private todoView: WebContentsView | null = null;
@@ -74,7 +76,7 @@ class TodoWindowHandler extends XpcMainHandler {
 
     this.todoView = new WebContentsView({
       webPreferences: {
-        preload: join(__dirname, '../preload/todo.js'),
+        preload: resolveTodoOutPath('preload', 'todo.js'),
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
@@ -87,7 +89,7 @@ class TodoWindowHandler extends XpcMainHandler {
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       this.todoView.webContents.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/todo/index.html`);
     } else {
-      this.todoView.webContents.loadFile(join(__dirname, '../renderer/todo/index.html'));
+      this.todoView.webContents.loadFile(resolveTodoOutPath('renderer', 'todo', 'index.html'));
     }
 
     if (is.dev && import.meta.env.VITE_MODE !== 'release') {
@@ -134,7 +136,7 @@ class TodoWindowHandler extends XpcMainHandler {
       titleBarStyle: 'hidden',
       ...(isMac && { trafficLightPosition: { x: 12, y: 8 } }),
       webPreferences: {
-        preload: join(__dirname, '../preload/todo.js'),
+        preload: resolveTodoOutPath('preload', 'todo.js'),
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
@@ -168,7 +170,7 @@ class TodoWindowHandler extends XpcMainHandler {
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       await this.standaloneWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/todo/index.html`);
     } else {
-      await this.standaloneWindow.loadFile(join(__dirname, '../renderer/todo/index.html'));
+      await this.standaloneWindow.loadFile(resolveTodoOutPath('renderer', 'todo', 'index.html'));
     }
 
     if (is.dev && import.meta.env.VITE_MODE !== 'release') {

@@ -106,6 +106,7 @@ import { mcpEmitter } from '../../emitter/mcp.emitter';
 import McpGuideModal from '../McpGuideModal/McpGuideModal.vue';
 import ArchivedDomainsModal from '../ArchivedDomainsModal/ArchivedDomainsModal.vue';
 import type { McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
+import { resolveMcpIntegrationSkillState } from '@shared/mcp/mcpIntegrationInfo.shared';
 
 const props = defineProps<{
   isStandalone: boolean;
@@ -130,7 +131,14 @@ const handleRefresh = async () => {
 
 const handleOpenMcpGuide = async () => {
   try {
-    mcpInfo.value = await mcpEmitter.getIntegrationInfo();
+    const info = await mcpEmitter.getIntegrationInfo();
+    const skillState = resolveMcpIntegrationSkillState(info);
+    if (skillState.status !== 'ready') {
+      Message.error(i18nHelper.todo.mcpRestartRequiredDescription);
+      return;
+    }
+
+    mcpInfo.value = { ...info, skillPath: skillState.skillPath };
     mcpGuideVisible.value = true;
   } catch (err: any) {
     Message.error(err?.message ?? i18nHelper.todo.mcpLoadFailed);

@@ -15,6 +15,8 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-mcp-domain-create](tasks/todo-mcp-domain-create.md) | explicit MCP domain creation and live bootstrap | done | todo-mcp-smoke-cli-and-skill |
 | [todo-mcp-multi-instance](tasks/todo-mcp-multi-instance.md) | simultaneous production/DEBUG MCP with production-first routing | verified-source; production deploy pending | todo-mcp-smoke-cli-and-skill, todo-mcp-domain-create |
 | [todo-mcp-portable-skill](tasks/todo-mcp-portable-skill.md) | exportable Codex/Claude personal multi-device Todo skill package | done | todo-mcp-multi-instance |
+| [todo-preload-runtime-001](tasks/todo-preload-runtime-001.md) | chunk-safe Todo preload and renderer asset resolution | done | renderer-i18n-sync |
+| [todo-agent-skill-onboarding-002](tasks/todo-agent-skill-onboarding-002.md) | two-step MCP plus portable skill onboarding | done | todo-mcp-portable-skill, renderer-arco-bem-controls |
 | [maestro-source-layout-migration](tasks/maestro-source-layout-migration.md) | rename Sidekick to Maestro and keep sources distributed by Electron process | done | cowork-subapp-001, cowork-subapp-002 |
 | [renderer-arco-bem-controls](tasks/renderer-arco-bem-controls.md) | MCP guide modal and Maestro ChatPanel control consistency | done | maestro-source-layout-migration, todo-mcp-domain-create |
 | [renderer-tailwind-removal](tasks/renderer-tailwind-removal.md) | remove renderer Tailwind usage, retain dormant dependencies, and enforce shallow business BEM | done | renderer-arco-bem-controls, maestro-source-layout-migration |

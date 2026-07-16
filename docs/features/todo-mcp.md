@@ -115,6 +115,45 @@ The archive contains one top-level `bitterless-todo/` directory and no credentia
 machine-specific helper path. The workspace `.agents/skills/`, `.claude/skills/`, and
 `~/.codex/skills/` copies must remain byte-identical to this portable source.
 
+## Agent onboarding contract
+
+The in-app integration guide must present MCP registration and skill installation as two required,
+distinct steps:
+
+```text
+┌──────────── Agent Todo access ─────────────┐
+│ MCP exposes the Todo tools.                │
+│ Skill teaches the agent when/how to use    │
+│ them for personal, cross-device follow-up. │
+├─────────────────────────────────────────────┤
+│ 1. Connect MCP                              │
+│    Helper path                         copy │
+│    MCP config                          copy │
+├─────────────────────────────────────────────┤
+│ 2. Install bitterless-todo skill            │
+│    Bundled skill folder                copy │
+│    Codex / Claude installation hint         │
+├─────────────────────────────────────────────┤
+│ Complete setup instructions            copy │
+└─────────────────────────────────────────────┘
+```
+
+MCP configuration alone only makes tool schemas callable. It does not reliably teach a general
+agent that Bitterless is the user's durable personal, multi-device-synchronized Todo manager, when
+a conversational follow-up is worth persisting, how to avoid duplicates, or why internal agent
+steps and project issues must not be written. The `bitterless-todo` skill owns that judgment policy.
+
+The guide exposes a real bundled skill directory and a complete copyable setup instruction that
+contains both the current instance's MCP JSON and the skill path. Development integrations remain
+explicit test targets: a `bitterless-debug` guide must identify that server as test-only, while the
+portable skill keeps its production `bitterless` dependency for real personal Todo work.
+
+The modal distinguishes request progress from an incompatible/stale main process. `Loading...` is
+allowed only while integration info is genuinely pending. Once an integration response exists,
+missing or empty required fields such as `skillPath` are a contract mismatch: the guide must show
+an explicit restart-required error (or reject opening with that error), never leave a permanent
+loading placeholder.
+
 ## Compatibility and safety
 
 - The production key `bitterless`, existing tool names, schemas, and structured responses do not
@@ -124,3 +163,5 @@ machine-specific helper path. The workspace `.agents/skills/`, `.claude/skills/`
 - Helper routing is local-only. No network port or SQLite access is exposed to MCP hosts.
 - The skill package contains only instructions and MCP metadata. It never contains Todo data or
   authentication material.
+- Release packaging copies the canonical `skills/bitterless-todo/` tree into a readable external
+  resource directory so Codex and Claude Code can install the exact same package.

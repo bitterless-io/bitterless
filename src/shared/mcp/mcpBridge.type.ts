@@ -9,6 +9,7 @@ export interface McpIntegrationInfo {
   serverName: string;
   commandPath: string;
   configJson: string;
+  skillPath: string;
   instruction: string;
   bridgePath: string;
   transport: McpBridgeTransport;

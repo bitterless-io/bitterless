@@ -11,6 +11,11 @@ import {
   getMcpShimPath,
   type McpIntegrationInfo,
 } from '@shared/mcp/mcpBridge.shared';
+import {
+  createTodoAgentSetupInstruction,
+  requireTodoAgentSkillPath,
+  resolveTodoAgentSkillPath,
+} from '../mcp/mcpAgentOnboarding.service';
 
 class McpHandler extends XpcMainHandler {
   async getIntegrationInfo(): Promise<McpIntegrationInfo> {
@@ -18,12 +23,20 @@ class McpHandler extends XpcMainHandler {
     const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
     const serverName = getMcpServerName(app.getName());
     const configJson = createMcpConfigJson(commandPath, serverName);
-    const instruction = `把这段 MCP 配置添加到你的 agent 应用，然后保持 Bitterless 正在运行：\n\n${configJson}`;
+    const skillPath = requireTodoAgentSkillPath(
+      resolveTodoAgentSkillPath({
+        appPath: app.getAppPath(),
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+      }),
+    );
+    const instruction = createTodoAgentSetupInstruction({ configJson, serverName, skillPath });
 
     return {
       serverName,
       commandPath,
       configJson,
+      skillPath,
       instruction,
       bridgePath: endpoint.path,
       transport: endpoint.transport,

@@ -30,6 +30,8 @@ files:
 extraResources:
   - from: asar_unpacked
     to: app.asar.unpacked
+  - from: skills/bitterless-todo
+    to: agent-skills/bitterless-todo
   - from: build/maestro-tools
     to: maestro-tools
   - from: build/tray-mac@2x.png

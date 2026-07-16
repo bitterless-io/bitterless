@@ -8,6 +8,8 @@ const chatPanel = readFileSync(join(root, 'renderer/maestro/control/src/ChatPane
 const chatPanelLess = readFileSync(join(root, 'renderer/maestro/control/src/ChatPanel.less'), 'utf8')
 const mcpGuide = readFileSync(join(root, 'renderer/todo/src/components/McpGuideModal/McpGuideModal.vue'), 'utf8')
 const mcpGuideLess = readFileSync(join(root, 'renderer/todo/src/components/McpGuideModal/McpGuideModal.less'), 'utf8')
+const rendererEn = readFileSync(join(root, 'renderer/common/i18n/en.ts'), 'utf8')
+const rendererZh = readFileSync(join(root, 'renderer/common/i18n/zh.ts'), 'utf8')
 const sharedIconBtn = readFileSync(join(root, 'renderer/common/components/IconBtn/IconBtn.vue'), 'utf8')
 const sharedIconBtnLess = readFileSync(join(root, 'renderer/common/components/IconBtn/IconBtn.less'), 'utf8')
 const legacyIconBtnPath = join(root, 'renderer/maestro/common/components/IconBtn.vue')
@@ -63,16 +65,41 @@ assert(!sharedIconBtn.includes('tailwind') && !sharedIconBtnLess.includes('@appl
 assert(mcpGuide.includes('<template #title>'), 'MCP guide should use the native Arco title slot')
 assert(mcpGuide.includes('title-align="start"'), 'MCP guide should align its Arco title at the start')
 assert(!mcpGuide.includes('IconX') && !mcpGuide.includes('mcp-guide__header'), 'MCP guide should rely on the native Arco close control')
-assert((mcpGuide.match(/<IconBtn\b/g) || []).length === 3, 'all three MCP copy actions should use shared IconBtn')
-assert((mcpGuide.match(/<IconCopy\b/g) || []).length === 3, 'all three MCP copy actions should use Tabler IconCopy')
-for (const value of ['commandPath', 'configJson', 'instruction']) {
-  assert(mcpGuide.includes(`:disabled="!info?.${value}"`), `MCP ${value} copy action should be disabled while empty`)
+const mcpTemplate = mcpGuide.match(/<template>([\s\S]*?)<script setup/)?.[1] || ''
+const mcpGuideBemClass = /^(?:mcp-guide-modal|mcp-guide(?:__[a-z0-9]+(?:-[a-z0-9]+)*){0,2}(?:--[a-z0-9]+(?:-[a-z0-9]+)*)?)$/
+for (const match of mcpTemplate.matchAll(/(?<!:)class="([^"]*)"/g)) {
+  for (const token of match[1].trim().split(/\s+/).filter(Boolean)) {
+    assert(mcpGuideBemClass.test(token), `MCP guide should use only shallow business BEM classes: ${token}`)
+  }
+}
+assert((mcpGuide.match(/<IconBtn\b/g) || []).length === 4, 'all four MCP and skill copy actions should use shared IconBtn')
+assert((mcpGuide.match(/<IconCopy\b/g) || []).length === 4, 'all four MCP and skill copy actions should use Tabler IconCopy')
+for (const value of ['commandPath', 'configJson', 'skillPath', 'instruction']) {
+  if (value === 'skillPath') {
+    assert(mcpGuide.includes(':disabled="skillState.status !== \'ready\'"'), 'MCP skillPath copy action should require a current integration contract')
+  } else if (value === 'instruction') {
+    assert(mcpGuide.includes(':disabled="skillState.status !== \'ready\' || !instruction"'), 'MCP instruction copy action should require a current integration contract')
+  } else {
+    assert(mcpGuide.includes(`:disabled="!${value}"`), `MCP ${value} copy action should be disabled while empty`)
+  }
 }
 for (const tag of mcpGuide.match(/<IconBtn\b[\s\S]*?>/g) || []) {
   assert(tag.includes(':title=') && tag.includes(':aria-label='), 'MCP copy IconBtn should have an accessible title and label')
 }
 assert(mcpGuideLess.includes('width: calc(100vw - 32px) !important'), 'MCP modal should stay within the Todo viewport')
 assert(mcpGuideLess.includes('max-height: calc(100vh - 106px)'), 'MCP modal body should scroll within the viewport')
+assert(mcpGuide.includes('mcpStepConnect') && mcpGuide.includes('mcpStepSkill'), 'MCP guide should present MCP and skill as two labeled steps')
+assert(mcpGuide.includes('<a-alert') && mcpGuide.includes('type="warning"') && mcpGuide.includes('show-icon'), 'non-production MCP safety should use a prominent Arco warning')
+assert(mcpGuide.includes("v-if=\"info && info.serverName !== 'bitterless'\""), 'MCP safety warning should render only for non-production server names')
+assert(mcpGuide.includes("mcpTestInstanceTitle.replace('{serverName}', info.serverName)"), 'MCP safety warning should visibly identify the current test server name')
+assert(mcpGuide.includes('mcpTestInstanceWarning'), 'MCP safety warning should visibly direct real personal Todo work to production')
+assert(rendererEn.includes("mcpTestInstanceTitle: 'Test-only MCP: {serverName}'") && rendererEn.includes('Do not store real personal todos in this instance') && rendererEn.includes('production bitterless server'), 'English MCP warning should identify the test server and direct real personal Todo work to production')
+assert(rendererZh.includes("mcpTestInstanceTitle: '仅限测试的 MCP：{serverName}'") && rendererZh.includes('不要在当前实例保存真实个人待办') && rendererZh.includes('生产 server bitterless'), 'Chinese MCP warning should identify the test server and direct real personal Todo work to production')
+assert(mcpGuide.includes('mcpCompleteSetup') && mcpGuide.includes('copyText(instruction)'), 'MCP guide should copy complete MCP and skill setup instructions')
+assert(mcpGuide.includes('copyText(skillPath)'), 'MCP guide should expose a copy action for the bundled skill directory')
+assert(mcpGuide.includes("skillState.status === 'restart-required'") && mcpGuide.includes('mcpRestartRequiredDescription'), 'a stale main-process response should surface a restart-required contract error')
+assert(!/info\?\.[a-zA-Z]+ \|\| i18nHelper\.todo\.mcpLoading/.test(mcpGuide), 'Loading should render only while integration info is genuinely pending')
+assert(!mcpGuide.includes('class="flex') && !mcpGuideLess.includes('@apply'), 'MCP guide should remain business BEM and Less without Tailwind utilities')
 
 assert(chatPanel.includes('function onComposerKeydown(event: KeyboardEvent): void'), 'composer keydown handler should exist')
 assert(
