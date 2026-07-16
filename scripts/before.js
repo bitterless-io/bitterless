@@ -24,6 +24,23 @@ const viteMode = envVars.VITE_MODE || '';
 
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 const baseName = pkg._name;
+const isTimestampVersionCode = (value) => {
+  if (typeof value !== 'string' || !/^\d{12}$/.test(value)) return false;
+  const year = 2000 + Number(value.slice(0, 2));
+  const month = Number(value.slice(2, 4));
+  const day = Number(value.slice(4, 6));
+  const hour = Number(value.slice(6, 8));
+  const minute = Number(value.slice(8, 10));
+  const second = Number(value.slice(10, 12));
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+  return day >= 1 && day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+};
+if (!isTimestampVersionCode(pkg.version_code)) {
+  throw new Error('[before.js] package.json version_code must be a YYMMDDHHmmss string');
+}
+if (pkg.versionCode != null) {
+  throw new Error('[before.js] legacy package.json versionCode is not allowed');
+}
 
 const isDebug = viteMode === 'debug';
 const isDev = viteEnv === 'dev';
@@ -88,13 +105,13 @@ const writeVersionInfo = () => {
 
   const versionInfo = {
     version: pkg.version,
-    versionCode: pkg.versionCode,
+    versionCode: pkg.version_code,
     releaseNotes,
   };
 
   const versionInfoPath = path.join(distDir, 'version_info.json');
   fs.writeFileSync(versionInfoPath, JSON.stringify(versionInfo, null, 2) + '\n', 'utf-8');
-  console.log(`[before.js] ✅ version_info.json written to dist/ (version=${pkg.version}, versionCode=${pkg.versionCode})`);
+  console.log(`[before.js] ✅ version_info.json written to dist/ (version=${pkg.version}, versionCode=${pkg.version_code})`);
 };
 
 writeVersionInfo();

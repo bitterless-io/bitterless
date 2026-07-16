@@ -1,7 +1,7 @@
 export type PackageInfo = {
   name: string;
   version: string;
-  versionCode: number;
+  versionCode: string;
   description: string;
   repository: string;
   author: string;

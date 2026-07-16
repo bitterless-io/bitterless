@@ -11,7 +11,7 @@ const sourcePath = (relativePath) => {
 const read = (path) => readFileSync(sourcePath(path), 'utf8')
 const readProject = (path) => readFileSync(join(projectRoot, path), 'utf8')
 
-const sqliteManager = read('preload/sqlite/sqliteManager.ts')
+const sqliteRelease = read('preload/sqlite/maestroSqlite.release.ts')
 const sqlitePreload = read('preload/sqlite.preload.ts')
 const injectDao = read('preload/sqlite/inject_btn.dao.ts')
 const injectApi = read('shared/injectBtn.api.ts')
@@ -29,10 +29,11 @@ const assert = (condition, message) => {
   if (!condition) throw new Error(message)
 }
 
-assert(sqliteManager.includes('CREATE TABLE IF NOT EXISTS inject_btns'), 'fresh SQLite schema should create inject_btns')
-assert(sqliteManager.includes('PRIMARY KEY (domain, skill_title)'), 'inject_btns should key by domain + skill title')
-assert(sqliteManager.includes('db.exec(CREATE_INJECT_BTNS)'), 'sqlite manager should create inject_btns on fresh DB')
-assert(sqlitePreload.includes('sqliteManager.addMigration(260705083000'), 'sqlite preload should register inject_btns migration')
+assert(sqliteRelease.includes('CREATE TABLE IF NOT EXISTS inject_btns'), 'fresh SQLite schema should create inject_btns')
+assert(sqliteRelease.includes('PRIMARY KEY (domain, skill_title)'), 'inject_btns should key by domain + skill title')
+assert(sqliteRelease.includes('db.exec(CREATE_INJECT_BTNS)'), 'SQLite release manifest should create inject_btns')
+assert(sqliteRelease.includes("versionCode: '260705083000'"), 'SQLite release manifest should register inject_btns migration')
+assert(sqliteRelease.includes('maestroSqliteMigrations'), 'runtime and audit should share the Maestro migration manifest')
 assert(sqlitePreload.includes("await import('./sqlite/inject_btn.dao')"), 'sqlite preload should register InjectBtnDao')
 assert(injectDao.includes('class InjectBtnDao') && injectDao.includes('upsertMany'), 'InjectBtnDao should expose upsertMany')
 assert(injectDao.includes('DELETE FROM inject_btns WHERE domain = ?'), 'InjectBtnDao should support domain removal for recovery')

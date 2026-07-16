@@ -158,14 +158,14 @@ export interface CoachXpcContract {
 
 export interface UpdateInfo {
   version: string
-  versionCode: number
+  versionCode: string
 }
 
 export type UpdateCheckStatus = 'available' | 'latest' | 'disabled' | 'unsupported' | 'error'
 
 export interface UpdateCheckResult {
   status: UpdateCheckStatus
-  currentVersionCode: number
+  currentVersionCode: string
   info?: UpdateInfo
   error?: string
 }
@@ -688,7 +688,7 @@ export interface PackageInfo {
   name: string
   productName: string
   version: string
-  versionCode: number
+  versionCode: string
   description: string
 }
 

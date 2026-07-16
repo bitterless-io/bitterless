@@ -52,8 +52,6 @@ export class EyesOnAgentsTable extends BaseTable {
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_domain_activity
       ON eyes_on_agents_thread (domain_id, last_activity_at DESC, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_archive_activity
-      ON eyes_on_agents_thread (is_archived, domain_id, last_activity_at DESC, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_attention
       ON eyes_on_agents_thread (runtime_state, last_completed_at DESC);
   `;

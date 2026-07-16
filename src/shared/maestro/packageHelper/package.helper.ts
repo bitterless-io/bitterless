@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 export interface PackageInfo {
   name: string
   version: string
-  versionCode: number
+  versionCode: string
   description: string
   repository: string
   author: string
@@ -30,7 +30,7 @@ const ALLOWED: (keyof PackageInfo)[] = [
 const DEFAULTS: PackageInfo = {
   name: '',
   version: '',
-  versionCode: 0,
+  versionCode: '0',
   description: '',
   repository: '',
   author: '',
@@ -45,9 +45,13 @@ class PackageHelper {
   private pick(raw: Record<string, unknown>): PackageInfo {
     const out: Record<string, unknown> = { ...DEFAULTS }
     for (const key of ALLOWED) {
-      const value = raw[key]
+      const value = key === 'versionCode'
+        ? raw.version_code ?? raw.versionCode
+        : raw[key]
       if (value == null) continue
-      out[key] = typeof value === 'object' ? JSON.stringify(value) : value
+      out[key] = key === 'versionCode'
+        ? String(value)
+        : typeof value === 'object' ? JSON.stringify(value) : value
     }
     return out as unknown as PackageInfo
   }

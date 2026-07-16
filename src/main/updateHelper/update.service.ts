@@ -3,11 +3,12 @@ import { app } from 'electron';
 import { xpcMain } from 'electron-xpc/main';
 import * as fs from 'fs';
 import * as path from 'path';
+import { compareVersions } from 'compare-versions';
 import type { UpdateInfo, ManifestData, PlatformType, UpdateCheckResult } from './update.type';
 
 class UpdateService {
   private pollingInterval: NodeJS.Timeout | null = null;
-  private currentVersionCode: number;
+  private currentVersionCode: string;
   private platform: PlatformType | null;
   private viteEnv: string;
   private viteMode: string;
@@ -17,7 +18,7 @@ class UpdateService {
   isUpdating = false;
   constructor() {
     this.disabledForE2E = process.env.BITTERLESS_E2E === '1';
-    this.currentVersionCode = this.disabledForE2E ? 0 : this.getCurrentVersionCode();
+    this.currentVersionCode = this.disabledForE2E ? '0' : this.getCurrentVersionCode();
     this.platform = this.disabledForE2E ? null : this.detectPlatform();
     this.viteEnv = import.meta.env.VITE_ENV || 'dev';
     this.viteMode = import.meta.env.VITE_MODE || 'debug';
@@ -25,11 +26,11 @@ class UpdateService {
     if (!this.disabledForE2E) this.setupAutoUpdater();
   }
 
-  private getCurrentVersionCode(): number {
+  private getCurrentVersionCode(): string {
     const appPath = app.getAppPath();
     const packagePath = path.join(appPath, 'package.json');
     const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-    return packageJson.versionCode || 0;
+    return String(packageJson.version_code ?? packageJson.versionCode ?? '0');
   }
 
   private detectPlatform(): PlatformType {
@@ -82,7 +83,7 @@ class UpdateService {
 
       this.notifyUpdateReady({
         version: info.version,
-        versionCode: 0,
+        versionCode: '0',
         releaseNotes: (info.releaseNotes as string) || '',
         downloadUrl: ''
       });
@@ -98,8 +99,15 @@ class UpdateService {
         return null;
       }
 
-      const manifest: ManifestData = await response.json();
-      return manifest;
+      const manifest = await response.json() as ManifestData;
+      const versionCode = String(manifest.versionCode);
+      if (!/^\d+$/.test(versionCode)) {
+        throw new Error(`Invalid update manifest versionCode: ${versionCode}`);
+      }
+      return {
+        ...manifest,
+        versionCode,
+      };
     } catch (error) {
       console.error('[UpdateService] Error fetching manifest:', error);
       return null;
@@ -136,7 +144,7 @@ class UpdateService {
     console.log('[UpdateService] Current versionCode:', this.currentVersionCode);
     console.log('[UpdateService] Manifest versionCode:', manifest.versionCode);
 
-    if (manifest.versionCode > this.currentVersionCode) {
+    if (compareVersions(manifest.versionCode, this.currentVersionCode) > 0) {
       console.log('[UpdateService] Update available, downloading...');
 
       const updateInfo: UpdateInfo = {

@@ -1,1 +1,3 @@
-- 🐞Todo bugfix
+- 👀 Added EyesOnAgents with Codex project filtering, Focus monitoring, and archive synchronization.
+- 🔄 Refreshes Codex task titles and archive state whenever the observation window is activated.
+- 🛡️ Added fail-closed, multi-version SQLite migration checks before every production package.

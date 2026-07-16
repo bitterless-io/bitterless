@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "noCheck": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "auditRunner.ts",
+    "../../src/preload/common/sqliteMigration.service.ts",
+    "../../src/preload/sqlite/coreSqlite.release.ts",
+    "../../src/preload/sqlite/dao/*.table.ts",
+    "../../src/preload/sqlite/dao/eyesOnAgents.migration.ts",
+    "../../src/preload/maestro/sqlite/maestroSqlite.release.ts"
+  ]
+}

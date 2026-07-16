@@ -3,7 +3,7 @@ import { xpcRenderer } from 'electron-xpc/renderer';
 
 interface UpdateInfo {
   version: string;
-  versionCode: number;
+  versionCode: string;
   releaseNotes: string;
   downloadUrl: string;
 }

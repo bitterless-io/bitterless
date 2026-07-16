@@ -18,7 +18,7 @@ const ALLOWED_FIELDS: (keyof PackageInfo)[] = [
 const DEFAULTS: Record<keyof PackageInfo, any> = {
   name: '',
   version: '',
-  versionCode: 0,
+  versionCode: '0',
   description: '',
   repository: '',
   author: '',
@@ -37,7 +37,9 @@ class PackageMainHelper extends XpcMainHandler {
   private _pickFields(raw: Record<string, any>): PackageInfo {
     const result: Record<string, any> = {};
     for (const key of ALLOWED_FIELDS) {
-      result[key] = raw[key] ?? DEFAULTS[key];
+      result[key] = key === 'versionCode'
+        ? String(raw.version_code ?? raw.versionCode ?? DEFAULTS.versionCode)
+        : raw[key] ?? DEFAULTS[key];
     }
     return result as PackageInfo;
   }

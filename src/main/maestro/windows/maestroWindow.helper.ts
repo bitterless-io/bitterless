@@ -1055,7 +1055,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
   // App identity for Workbench ▸ About. Reads the REAL bundled package.json — mirrors
   // The host package helper returns the asar root when packaged and the
   // project root in dev, and electron-builder always ships package.json (with our custom
-  // versionCode + productName) into the dmg, so the same read works in both.
+  // version_code + productName) into the dmg, so the same read works in both.
   async getPackageInfo(): Promise<PackageInfo> {
     let raw: Record<string, unknown> = {}
     try {
@@ -1068,7 +1068,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
       name: str(raw.name),
       productName: str(raw.productName, str(raw.name)),
       version: str(raw.version, app.getVersion()),
-      versionCode: typeof raw.versionCode === 'number' ? raw.versionCode : 0,
+      versionCode: String(raw.version_code ?? raw.versionCode ?? '0'),
       description: str(raw.description)
     }
   }

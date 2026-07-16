@@ -6,23 +6,7 @@ process.env['TIKTOKEN_CACHE_DIR'] = '';
 import { XpcPreloadHandler } from 'electron-xpc/preload';
 import { sqliteManager } from './sqliteHelper/sqlite.manager';
 import { initMessageServer } from './messageServer/messageServer';
-// Table imports — register table schemas before init
-import { sessionTable } from './dao/session.table';
-import { messageTable } from './dao/message.table';
-import { settingTable } from './dao/setting.table';
-import { envTable } from './dao/env.table';
-import { domainTable } from './dao/domain.table';
-import { todoTable } from './dao/todo.table';
-import { subTodoTable } from './dao/subTodo.table';
-import { todoEventTable } from './dao/todoEvent.table';
-import { sortTable } from './dao/sort.table';
-import { migrationTable } from './dao/migration.table';
-import { eyesOnAgentsTable } from './dao/eyesOnAgents.table';
-import {
-  ensureEyesOnAgentsArchiveSchema,
-  ensureEyesOnAgentsLegacyImport,
-  ensureEyesOnAgentsProjectMetadataSchema,
-} from './dao/eyesOnAgents.migration';
+import { coreSqliteMigrations, coreSqliteTables } from './coreSqlite.release';
 // Dao imports trigger singleton creation -> auto-register xpc handlers via BaseDao
 import './dao/setting.dao';
 import './dao/message.dao';
@@ -39,53 +23,15 @@ import { initQdrant } from './qdrantHelper/qdrant.helper';
 import { pathHelper } from '@shared/pathHelper/preload/pathPreload.helper';
 import * as path from 'path';
 import * as fs from 'fs';
-import type Database from 'better-sqlite3-multiple-ciphers';
 import type {
   CoreSqliteBootApi,
   CoreSqliteBootResult,
 } from '@shared/mcp/mcpBridge.shared';
 
-interface TableColumnInfo {
-  name: string;
+for (const table of coreSqliteTables) sqliteManager.addTable(table);
+for (const migration of coreSqliteMigrations) {
+  sqliteManager.addMigration(migration.versionCode, migration.runner);
 }
-
-const addColumnIfMissing = (
-  db: Database.Database,
-  tableName: string,
-  columnName: string,
-  columnDefinition: string,
-): void => {
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as TableColumnInfo[];
-  const exists = columns.some((column) => column.name === columnName);
-  if (exists) return;
-  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`);
-};
-
-sqliteManager.addTable(sessionTable);
-sqliteManager.addTable(messageTable);
-sqliteManager.addTable(settingTable);
-sqliteManager.addTable(envTable);
-sqliteManager.addTable(domainTable);
-sqliteManager.addTable(todoTable);
-sqliteManager.addTable(subTodoTable);
-sqliteManager.addTable(todoEventTable);
-sqliteManager.addTable(sortTable);
-sqliteManager.addTable(migrationTable);
-sqliteManager.addTable(eyesOnAgentsTable);
-
-// Migrations versioncode 来源于当前的 package.json versioncode
-sqliteManager.addMigration(26040705, `ALTER TABLE todos ADD COLUMN note TEXT NOT NULL DEFAULT '';`);
-sqliteManager.addMigration(26042101, `ALTER TABLE todos ADD COLUMN repeat_interval INTEGER NOT NULL DEFAULT 1;`);
-sqliteManager.addMigration(26061901, `ALTER TABLE todos ADD COLUMN source TEXT NOT NULL DEFAULT 'human';`);
-sqliteManager.addMigration(26061902, `ALTER TABLE domain ADD COLUMN description TEXT NOT NULL DEFAULT '';`);
-sqliteManager.addMigration(26062002, (db) => {
-  addColumnIfMissing(db, 'todos', 'source', `TEXT NOT NULL DEFAULT 'human'`);
-  addColumnIfMissing(db, 'domain', 'description', `TEXT NOT NULL DEFAULT ''`);
-  addColumnIfMissing(db, 'domain', 'archived', 'INTEGER NOT NULL DEFAULT 0');
-});
-sqliteManager.addMigration(26071601, ensureEyesOnAgentsLegacyImport);
-sqliteManager.addMigration(26071602, ensureEyesOnAgentsProjectMetadataSchema);
-sqliteManager.addMigration(26071603, ensureEyesOnAgentsArchiveSchema);
 
 const loadTiktokenLocal = async (): Promise<void> => {
   try {
@@ -114,11 +60,6 @@ let bootResult: CoreSqliteBootResult = {
 const bootSqlite = async (): Promise<void> => {
   try {
     await sqliteManager.init();
-    // Re-run idempotent EyesOnAgents repairs at every successful boot. SqliteManager intentionally
-    // records failed migration versions, so this path must not depend on migration bookkeeping.
-    ensureEyesOnAgentsLegacyImport(sqliteManager.db);
-    ensureEyesOnAgentsProjectMetadataSchema(sqliteManager.db);
-    ensureEyesOnAgentsArchiveSchema(sqliteManager.db);
     bootResult = { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -8,7 +8,7 @@ const shellEmitter = createXpcRendererEmitter<ShellHandler>('ShellHandler');
 interface AppInfo {
   name: string;
   version: string;
-  versionCode: number;
+  versionCode: string;
   website: string;
 }
 
@@ -16,7 +16,7 @@ class AboutState {
   appInfo: AppInfo = {
     name: '',
     version: '',
-    versionCode: 0,
+    versionCode: '0',
     website: '',
   };
 

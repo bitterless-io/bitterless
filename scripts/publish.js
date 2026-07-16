@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 const OSS = require('ali-oss');
 const { appBuilderPath } = require('app-builder-bin');
+const { compareVersions } = require('compare-versions');
 
 const rootDir = path.resolve(__dirname, '..');
 const distDir = path.join(rootDir, 'dist');
@@ -201,9 +202,6 @@ const runOutput = (command, args, options = {}) => {
 };
 
 const runBuild = (options) => {
-  if (options.bump) {
-    run('node', ['scripts/patch.js']);
-  }
   run('rig', ['--env', `release_${options.env}`]);
   run('node', ['scripts/before.js']);
   run('yarn', ['build']);
@@ -424,6 +422,41 @@ const uploadFile = async (client, objectKey, filePath, dryRun) => {
   console.log(`[publish.js] Uploaded ${path.basename(filePath)} -> ${objectKey}`);
 };
 
+const assertNoRemoteDowngrade = async (client, objectPrefix) => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+  const localVersionCode = String(pkg.version_code);
+  let remoteInfo;
+  try {
+    const result = await client.get(`${objectPrefix}/version_info.json`);
+    remoteInfo = JSON.parse(result.content.toString('utf-8'));
+  } catch (error) {
+    if (error?.code === 'NoSuchKey' || error?.status === 404 || error?.statusCode === 404) {
+      console.log('[publish.js] No existing remote version manifest; first publish is allowed.');
+      return;
+    }
+    throw error;
+  }
+
+  const remoteVersionCode = String(remoteInfo.versionCode);
+  if (!/^\d+$/.test(remoteVersionCode)) {
+    throw new Error(`Remote version_info.json has invalid versionCode: ${remoteVersionCode}`);
+  }
+  const order = compareVersions(localVersionCode, remoteVersionCode);
+  if (order < 0) {
+    throw new Error(
+      `Refusing version downgrade: local ${localVersionCode}, remote ${remoteVersionCode}`,
+    );
+  }
+  if (order === 0 && remoteInfo.version !== pkg.version) {
+    throw new Error(
+      `Remote version_code ${remoteVersionCode} belongs to version ${remoteInfo.version}, not ${pkg.version}`,
+    );
+  }
+  console.log(
+    `[publish.js] Version order verified: local ${localVersionCode}, remote ${remoteVersionCode}`,
+  );
+};
+
 const rfc3986 = (value) => {
   return encodeURIComponent(String(value)).replace(/[!'()*]/g, (char) => {
     return `%${char.charCodeAt(0).toString(16).toUpperCase()}`;
@@ -515,23 +548,13 @@ const main = async () => {
     return;
   }
 
-  if (options.build) {
-    runBuild(options);
+  if (options.bump) {
+    run('node', ['scripts/patch.js']);
   }
+  run('yarn', ['audit:sqlite-migrations']);
 
   const publishConfig = createPublishConfig(options);
-  if (!options.dryRun) {
-    finalizeMacDmg(options.platform);
-  }
   const objectPrefix = `${options.prefix}/${options.env}/${options.platform}`;
-  const versionInfoPath = createVersionInfoForUpload(options);
-  const versionInfo = readDistVersionInfo();
-  const artifacts = findArtifacts(options.platform, versionInfo.version);
-
-  console.log(`[publish.js] Env file: ${options.envFile}`);
-  console.log(`[publish.js] Target: oss://${publishConfig.bucket}/${objectPrefix}/`);
-  console.log(`[publish.js] Public URL: ${options.publicBaseUrl}/${objectPrefix}`);
-
   const client = options.dryRun
     ? null
     : new OSS({
@@ -540,6 +563,22 @@ const main = async () => {
       accessKeySecret: publishConfig.accessKeySecret,
       bucket: publishConfig.bucket,
     });
+  if (client) await assertNoRemoteDowngrade(client, objectPrefix);
+
+  if (options.build) {
+    runBuild(options);
+  }
+
+  if (!options.dryRun) {
+    finalizeMacDmg(options.platform);
+  }
+  const versionInfoPath = createVersionInfoForUpload(options);
+  const versionInfo = readDistVersionInfo();
+  const artifacts = findArtifacts(options.platform, versionInfo.version);
+
+  console.log(`[publish.js] Env file: ${options.envFile}`);
+  console.log(`[publish.js] Target: oss://${publishConfig.bucket}/${objectPrefix}/`);
+  console.log(`[publish.js] Public URL: ${options.publicBaseUrl}/${objectPrefix}`);
 
   for (const artifact of artifacts) {
     await uploadFile(client, `${objectPrefix}/${path.basename(artifact)}`, artifact, options.dryRun);

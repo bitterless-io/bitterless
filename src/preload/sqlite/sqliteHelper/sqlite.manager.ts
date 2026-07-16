@@ -3,20 +3,19 @@ import { join, dirname } from 'path';
 import { rmSync, mkdirSync, existsSync } from 'fs';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { packageHelper } from '../../../shared/packageHelper/preload/packagePreload.helper';
+import {
+  runSqliteMigrations,
+  type SqliteMigration,
+  type SqliteMigrationRunner,
+} from '../../common/sqliteMigration.service';
 import type { BaseTable } from '../dao/base.table';
+import { finalizeCoreSqliteSchema } from '../coreSqlite.release';
 import { sqlitePasswordHelper } from './sqlitePassword.helper';
-
-type MigrationRunner = string | ((db: Database.Database) => void);
-
-interface MigrationEntry {
-  versionCode: number;
-  runner: MigrationRunner;
-}
 
 class SqliteManager {
   private _db: Database.Database | null = null;
   private tables: BaseTable[] = [];
-  private migrations: MigrationEntry[] = [];
+  private migrations: SqliteMigration[] = [];
 
   get db(): Database.Database {
     if (!this._db) {
@@ -29,7 +28,7 @@ class SqliteManager {
     this.tables.push(table);
   }
 
-  addMigration(versionCode: number, runner: MigrationRunner): void {
+  addMigration(versionCode: string, runner: SqliteMigrationRunner): void {
     this.migrations.push({ versionCode, runner });
   }
 
@@ -39,48 +38,6 @@ class SqliteManager {
     }
     if (this.tables.length > 0) {
       console.log(`[sqlite] created/verified ${this.tables.length} table(s)`);
-    }
-  }
-
-  private runMigrations(currentVersionCode: number, dbExistedBeforeOpen: boolean): void {
-    const lastRow = this.db
-      .prepare('SELECT MAX(version_code) as last FROM migration')
-      .get() as { last: number | null };
-    let lastVersionCode = lastRow?.last ?? null;
-
-    const insertMigration = this.db.prepare('INSERT OR IGNORE INTO migration (version_code) VALUES (?)');
-
-    if (lastVersionCode === null) {
-      if (dbExistedBeforeOpen) {
-        lastVersionCode = 0;
-      } else {
-        // New database: tables were just created with the latest schema, so old ALTER migrations are unnecessary.
-        insertMigration.run(currentVersionCode);
-        lastVersionCode = currentVersionCode;
-      }
-    }
-
-    // Existing DB: run migrations with versionCode > lastVersionCode
-    const pending = this.migrations
-      .filter((m) => m.versionCode > lastVersionCode)
-      .sort((a, b) => a.versionCode - b.versionCode);
-
-    for (const m of pending) {
-      console.log('[sqlite] running migration:', m.versionCode);
-      try {
-        if (typeof m.runner === 'string') {
-          this.db.exec(m.runner);
-        } else {
-          m.runner(this.db);
-        }
-      } catch (err: any) {
-        console.warn(`[sqlite] migration ${m.versionCode} failed (skipped):`, err.message);
-      }
-      insertMigration.run(m.versionCode);
-    }
-
-    if (pending.length > 0) {
-      console.log(`[sqlite] executed ${pending.length} migration(s)`);
     }
   }
 
@@ -113,11 +70,18 @@ class SqliteManager {
     this._db.pragma('optimize(0x10002)');
 
     const packageInfo = await packageHelper.getPackageInfo();
-    const currentVersionCode: number = packageInfo.versionCode || 0;
+    const currentVersionCode = packageInfo.versionCode;
     console.log('[sqlite] current versionCode:', currentVersionCode);
 
     this.runTables();
-    this.runMigrations(currentVersionCode, dbExistedBeforeOpen);
+    runSqliteMigrations({
+      db: this.db,
+      migrations: this.migrations,
+      currentVersionCode,
+      dbExistedBeforeOpen,
+      logPrefix: '[sqlite]',
+    });
+    finalizeCoreSqliteSchema(this.db);
 
     console.log('[sqlite] database initialized');
   }

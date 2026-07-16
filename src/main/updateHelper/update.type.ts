@@ -1,13 +1,13 @@
 export interface UpdateInfo {
   version: string;
-  versionCode: number;
+  versionCode: string;
   releaseNotes: string;
   downloadUrl: string;
 }
 
 export interface ManifestData {
   version: string;
-  versionCode: number;
+  versionCode: string;
   uuid: string;
   downloadUrl: string;
   releaseNotes: string;
@@ -18,7 +18,7 @@ export type UpdateCheckStatus = 'available' | 'latest' | 'disabled' | 'error';
 
 export interface UpdateCheckResult {
   status: UpdateCheckStatus;
-  currentVersionCode: number;
+  currentVersionCode: string;
   info?: UpdateInfo;
   error?: string;
 }

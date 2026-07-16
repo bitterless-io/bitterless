@@ -37,11 +37,13 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-project-filter-003](tasks/eyes-on-agents-project-filter-003.md) | Git Project metadata and Uncategorized source filter | done | eyes-on-agents-focus-002 |
 | [eyes-on-agents-activation-refresh-004](tasks/eyes-on-agents-activation-refresh-004.md) | refresh thread metadata whenever the EyesOnAgents window regains focus | done | eyes-on-agents-project-filter-003 |
 | [eyes-on-agents-archive-sync-005](tasks/eyes-on-agents-archive-sync-005.md) | reconcile Codex archive/unarchive state into EyesOnAgents visibility | done | eyes-on-agents-activation-refresh-004 |
+| [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | audit multi-version SQLite upgrades before production packaging | in-progress | — |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [Coin sub-application](analysis/coin-subapp.md),
 [Coding-agent sessions](analysis/coding-agent-sessions.md),
-[EyesOnAgents](analysis/eyes-on-agents.md).
+[EyesOnAgents](analysis/eyes-on-agents.md), and
+[SQLite migration release gate](analysis/sqlite-migration-release-gate.md).
 
 ## Concurrency guard
 

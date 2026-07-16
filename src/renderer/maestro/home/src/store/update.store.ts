@@ -19,19 +19,19 @@ class UpdateState {
   /** True while the newer build is being downloaded. */
   downloading = false
   /** The found or ready build's version/versionCode. */
-  info: { version: string; versionCode: number } | null = null
+  info: { version: string; versionCode: string } | null = null
   private initialized = false
 
   init(): void {
     if (this.initialized) return
     this.initialized = true
     xpcRenderer.subscribe('coach/update-available', (payload) => {
-      this.info = payload.params as { version: string; versionCode: number }
+      this.info = payload.params as { version: string; versionCode: string }
       this.downloading = true
       this.ready = true
     })
     xpcRenderer.subscribe('coach/update-downloaded', (payload) => {
-      this.info = payload.params as { version: string; versionCode: number }
+      this.info = payload.params as { version: string; versionCode: string }
       this.downloading = false
       this.ready = true
     })

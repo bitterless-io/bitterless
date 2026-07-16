@@ -18,6 +18,8 @@ design document.
   development instances.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
   Project metadata and an Uncategorized-only source filter.
+- [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
+  upgrade audit required before signed production packaging.
 
 ## Guides
 
@@ -47,6 +49,7 @@ design document.
 - [Delivery backlog](plan/backlog.md)
 - [Coin delivery analysis](plan/analysis/coin-subapp.md)
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
+- [SQLite migration release-gate analysis](plan/analysis/sqlite-migration-release-gate.md)
 
 ## Issues
 

@@ -3,7 +3,7 @@ import { updateStore } from '../store/update.store';
 
 interface UpdateInfo {
   version: string;
-  versionCode: number;
+  versionCode: string;
   releaseNotes: string;
   downloadUrl: string;
 }

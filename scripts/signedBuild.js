@@ -16,6 +16,15 @@ const electronBuilderBin = path.join(
   process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder',
 );
 
+const auditCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+console.log('[signedBuild.js] Running SQLite migration release gate');
+const audit = spawnSync(auditCommand, ['audit:sqlite-migrations'], {
+  stdio: 'inherit',
+  cwd: rootDir,
+  shell: process.platform === 'win32',
+});
+if (audit.status !== 0) process.exit(audit.status ?? 1);
+
 const unwrapEnvValue = (value) => {
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
     return value.slice(1, -1);
