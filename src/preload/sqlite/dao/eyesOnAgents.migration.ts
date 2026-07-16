@@ -54,6 +54,37 @@ export const ensureEyesOnAgentsArchiveSchema = (db: MigrationDatabase): void => 
   `);
 };
 
+export const ensureEyesOnAgentsSyncPersistenceSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  const columns = db.prepare('PRAGMA table_info(eyes_on_agents_thread)').all() as TableColumnInfo[];
+  const needsUnreadBackfill = !columns.some((column) => column.name === 'is_unread');
+  if (needsUnreadBackfill) {
+    db.exec('ALTER TABLE eyes_on_agents_thread ADD COLUMN is_unread INTEGER NOT NULL DEFAULT 0;');
+    db.exec(`
+      UPDATE eyes_on_agents_thread
+      SET is_unread = CASE
+        WHEN last_completed_at IS NULL THEN 0
+        WHEN last_completed_turn_id IS NOT NULL AND last_opened_turn_id IS NOT NULL
+          THEN CASE WHEN last_completed_turn_id <> last_opened_turn_id THEN 1 ELSE 0 END
+        WHEN last_opened_at IS NULL OR last_completed_at > last_opened_at THEN 1
+        ELSE 0
+      END;
+    `);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS eyes_on_agents_thread_snapshot (
+      thread_id TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      synced_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_snapshot_inventory
+      ON eyes_on_agents_thread_snapshot (is_archived, synced_at DESC);
+  `);
+};
+
 export const ensureEyesOnAgentsLegacyImport = (db: MigrationDatabase): void => {
   const importLegacy = db.transaction(() => {
     const now = Date.now();

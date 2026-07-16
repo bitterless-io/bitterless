@@ -94,6 +94,13 @@ export interface EyesOnAgentsDiscoveredThread {
   lastActivityAt: number | null;
 }
 
+export interface EyesOnAgentsThreadSnapshot {
+  threadId: string;
+  payloadJson: string;
+  archived: boolean;
+  syncedAt: number;
+}
+
 export type EyesOnAgentsRuntimeEvent =
   | {
       type: 'thread_status';
@@ -132,6 +139,9 @@ export interface EyesOnAgentsRepositoryApi {
   invalidateCodexHookStatuses(params: { observedAt: number }): Promise<void>;
   upsertDiscoveredThreads(params: {
     threads: EyesOnAgentsDiscoveredThread[];
+  }): Promise<void>;
+  upsertThreadSnapshots(params: {
+    snapshots: EyesOnAgentsThreadSnapshot[];
   }): Promise<void>;
   setThreadArchived(params: {
     threadId: string;

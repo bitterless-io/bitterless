@@ -187,7 +187,7 @@ export const zh: typeof en = {
       eyebrow: 'Codex Desktop',
       title: 'Codex Desktop Bridge',
       description: '由“连接”统一管理。Codex 需要一次性审核，之后这些纯元数据生命周期 hooks 才会运行。',
-      trustReview: '请在 Codex 中打开 /hooks，批准或启用 4 条 Bitterless hooks，然后回到这里点击“同步”。',
+      trustReview: '请在 Codex 中打开 /hooks，批准或启用 4 条 Bitterless hooks，然后回到这里点击“刷新”。',
       notInstalled: '未安装',
       needsTrust: '等待批准',
       installed: '已就绪',
@@ -198,6 +198,7 @@ export const zh: typeof en = {
     },
     actions: {
       sync: '同步',
+      refresh: '刷新',
       openConnections: '打开连接面板',
       pin: '置顶窗口',
       unpin: '取消置顶',

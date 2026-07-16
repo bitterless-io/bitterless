@@ -36,7 +36,7 @@ interface CoreFixtureOptions {
   source: boolean
   domainDescription: boolean
   domainArchived: boolean
-  eyesStage: 0 | 1 | 2 | 3
+  eyesStage: 0 | 1 | 2 | 3 | 4
   historicalVersionCode?: string
   codingAgent?: boolean
   legacySettingTemp?: boolean
@@ -276,6 +276,9 @@ const createCoreFixture = (
     const archiveColumns = options.eyesStage >= 3
       ? ['is_archived INTEGER NOT NULL DEFAULT 0']
       : []
+    const unreadColumns = options.eyesStage >= 4
+      ? ['is_unread INTEGER NOT NULL DEFAULT 0']
+      : []
     db.exec(`
       CREATE TABLE eyes_on_agents_thread (
         thread_id TEXT PRIMARY KEY,
@@ -290,6 +293,7 @@ const createCoreFixture = (
         last_completed_at INTEGER,
         last_opened_turn_id TEXT,
         last_opened_at INTEGER,
+        ${unreadColumns.join(',')}${unreadColumns.length > 0 ? ',' : ''}
         status_source TEXT NOT NULL DEFAULT 'discovery',
         status_observed_at INTEGER,
         last_activity_at INTEGER,
@@ -303,6 +307,32 @@ const createCoreFixture = (
         '11111111-1111-4111-8111-111111111111', 1, 'audit-thread', '/tmp/audit', 1, 1
       );
     `)
+    if (options.eyesStage === 3) {
+      db.exec(`
+        UPDATE eyes_on_agents_thread
+        SET last_completed_turn_id = 'audit-turn', last_completed_at = 2;
+      `)
+    }
+    if (options.eyesStage >= 4) {
+      db.exec(`
+        UPDATE eyes_on_agents_thread SET is_unread = 1;
+        CREATE TABLE eyes_on_agents_thread_snapshot (
+          thread_id TEXT PRIMARY KEY,
+          payload_json TEXT NOT NULL,
+          is_archived INTEGER NOT NULL DEFAULT 0,
+          synced_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        INSERT INTO eyes_on_agents_thread_snapshot (
+          thread_id, payload_json, is_archived, synced_at, created_at, updated_at
+        ) VALUES (
+          '11111111-1111-4111-8111-111111111111',
+          '{"id":"11111111-1111-4111-8111-111111111111","preview":"audit-private-preview","turns":[]}',
+          0, 2, 1, 2
+        );
+      `)
+    }
   }
 
   if (options.codingAgent) {
@@ -342,6 +372,15 @@ const verifyCoreSchema = (
     'project_root',
     'project_name',
     'is_archived',
+    'is_unread',
+  ])
+  assertColumns(db, 'eyes_on_agents_thread_snapshot', [
+    'thread_id',
+    'payload_json',
+    'is_archived',
+    'synced_at',
+    'created_at',
+    'updated_at',
   ])
   const indexes = db.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'eyes_on_agents_thread'",
@@ -376,9 +415,22 @@ const verifyCoreSchema = (
   }
   if (baseline.fixture?.eyesStage) {
     const thread = db.prepare(
-      "SELECT title FROM eyes_on_agents_thread WHERE thread_id = '11111111-1111-4111-8111-111111111111'",
-    ).get() as { title: string }
+      "SELECT title, is_unread FROM eyes_on_agents_thread WHERE thread_id = '11111111-1111-4111-8111-111111111111'",
+    ).get() as { title: string; is_unread: number }
     assert.equal(thread.title, 'audit-thread')
+    if (baseline.fixture.eyesStage >= 3) {
+      assert.equal(thread.is_unread, 1, 'unread state must survive/backfill across Eyes upgrades')
+    }
+    if (baseline.fixture.eyesStage >= 4) {
+      const raw = db.prepare(
+        "SELECT payload_json FROM eyes_on_agents_thread_snapshot WHERE thread_id = '11111111-1111-4111-8111-111111111111'",
+      ).get() as { payload_json: string }
+      assert.equal(
+        JSON.parse(raw.payload_json).preview,
+        'audit-private-preview',
+        'raw inventory snapshots must survive an idempotent current-schema audit',
+      )
+    }
   }
   if (baseline.fixture?.codingAgent) {
     const imported = db.prepare(
@@ -504,6 +556,34 @@ const coreBaselines: readonly CoreBaseline[] = [
       historicalVersionCode: '26071603',
     },
   },
+  {
+    name: 'eyes-260716000003',
+    dbExistedBeforeOpen: true,
+    fixture: {
+      settingSubKey: true,
+      note: true,
+      repeatInterval: true,
+      source: true,
+      domainDescription: true,
+      domainArchived: true,
+      eyesStage: 3,
+      historicalVersionCode: '260716000003',
+    },
+  },
+  {
+    name: 'eyes-260716000004',
+    dbExistedBeforeOpen: true,
+    fixture: {
+      settingSubKey: true,
+      note: true,
+      repeatInterval: true,
+      source: true,
+      domainDescription: true,
+      domainArchived: true,
+      eyesStage: 4,
+      historicalVersionCode: '260716000004',
+    },
+  },
 ]
 
 const auditCoreBaselines = (): void => {
@@ -524,11 +604,17 @@ const auditCoreBaselines = (): void => {
       finalizeCoreSqliteSchema(db)
       verifyCoreSchema(db, baseline)
       if (baseline.dbExistedBeforeOpen) {
+        const checkpoint = baseline.fixture?.historicalVersionCode ?? null
+        const expected = coreSqliteMigrations
+          .filter((migration) => (
+            checkpoint === null || compareVersions(migration.versionCode, checkpoint) > 0
+          ))
+          .map((migration) => migration.versionCode)
         assert.deepEqual(
           result.appliedVersionCodes,
-          coreSqliteMigrations.map((migration) => migration.versionCode),
+          expected,
         )
-        assertLedgerContains(db, result.appliedVersionCodes)
+        assertLedgerContains(db, expected)
       } else {
         assert.deepEqual(result.appliedVersionCodes, [])
         assert.equal(result.stampedVersionCode, currentVersionCode)

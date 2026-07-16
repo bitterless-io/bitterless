@@ -16,7 +16,9 @@ const INVALID_VARIANT_THREAD = '44444444-4444-4444-7444-444444444444';
 const EXTRA_HYPHEN_THREAD = '55555555-5555-4555-8555-55555555555-';
 
 class TestDatabase {
-  raw = new DatabaseSync(':memory:');
+  constructor(path = ':memory:') {
+    this.raw = new DatabaseSync(path);
+  }
 
   exec(sql) {
     return this.raw.exec(sql);
@@ -94,7 +96,8 @@ try {
   const {
     ensureEyesOnAgentsArchiveSchema,
     ensureEyesOnAgentsLegacyImport,
-    ensureEyesOnAgentsProjectMetadataSchema
+    ensureEyesOnAgentsProjectMetadataSchema,
+    ensureEyesOnAgentsSyncPersistenceSchema
   } = await loadTypeScriptModule(
     'migration',
     'src/preload/sqlite/dao/eyesOnAgents.migration.ts'
@@ -110,6 +113,8 @@ try {
   ensureEyesOnAgentsArchiveSchema(repairDb);
   ensureEyesOnAgentsProjectMetadataSchema(repairDb);
   ensureEyesOnAgentsProjectMetadataSchema(repairDb);
+  ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
+  ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
   assert.equal(
@@ -125,14 +130,27 @@ try {
     CREATE TABLE eyes_on_agents_thread (
       thread_id TEXT PRIMARY KEY,
       domain_id INTEGER NOT NULL,
+      runtime_state TEXT NOT NULL DEFAULT 'unknown',
+      last_completed_turn_id TEXT,
+      last_completed_at INTEGER,
+      last_opened_turn_id TEXT,
+      last_opened_at INTEGER,
       last_activity_at INTEGER,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
+    INSERT INTO eyes_on_agents_thread (
+      thread_id, domain_id, last_completed_turn_id, last_completed_at,
+      last_opened_turn_id, last_opened_at
+    ) VALUES
+      ('${THREAD_A}', 1, 'turn-a', 200, NULL, NULL),
+      ('${THREAD_B}', 1, 'turn-b', 200, 'turn-b', 100);
   `);
   ensureEyesOnAgentsProjectMetadataSchema(oldDb);
   ensureEyesOnAgentsProjectMetadataSchema(oldDb);
   ensureEyesOnAgentsArchiveSchema(oldDb);
   ensureEyesOnAgentsArchiveSchema(oldDb);
+  ensureEyesOnAgentsSyncPersistenceSchema(oldDb);
+  ensureEyesOnAgentsSyncPersistenceSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -146,9 +164,33 @@ try {
     true,
     'old databases must receive the idempotent archive state migration'
   );
+  assert.equal(
+    migratedColumns.some((column) => column.name === 'is_unread'),
+    true,
+    'old databases must receive the persistent unread migration'
+  );
+  assert.equal(
+    oldDb.prepare('SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_A).is_unread,
+    1,
+    'legacy unseen completion must backfill as unread'
+  );
+  assert.equal(
+    oldDb.prepare('SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_B).is_unread,
+    0,
+    'legacy opened completion must stay read'
+  );
+  assert.ok(
+    oldDb.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'eyes_on_agents_thread_snapshot'"
+    ).get(),
+    'old databases must receive the raw thread snapshot table'
+  );
   oldDb.close();
 
-  const db = new TestDatabase();
+  const dbPath = join(buildRoot, 'repository.sqlite');
+  let db = new TestDatabase(dbPath);
   db.exec(eyesOnAgentsTable.createSql);
   db.exec(`
     CREATE TABLE coding_agent_session (
@@ -214,7 +256,7 @@ try {
     'src/preload/sqlite/dao/eyesOnAgents.dao.ts',
     [repositoryStubs]
   );
-  const repository = new EyesOnAgentsRepositoryDao();
+  let repository = new EyesOnAgentsRepositoryDao();
   let snapshot = await repository.getSnapshot();
   assert.equal(snapshot.domains.length, 1);
   assert.equal(snapshot.domains[0].domainKey, 'uncategorized');
@@ -256,6 +298,61 @@ try {
   const custom = snapshot.domains.find((domain) => domain.title === 'Bitterless');
   assert.ok(custom);
   await repository.moveThread({ threadId: THREAD_A, domainId: custom.id });
+  await repository.upsertThreadSnapshots({
+    snapshots: [
+      {
+        threadId: THREAD_A,
+        payloadJson: JSON.stringify({
+          id: THREAD_A,
+          name: 'Raw A',
+          preview: 'private preview A',
+          status: { type: 'notLoaded' },
+          turns: []
+        }),
+        archived: false,
+        syncedAt: 101
+      },
+      {
+        threadId: THREAD_C,
+        payloadJson: JSON.stringify({ id: THREAD_C, preview: 'archived preview', turns: [] }),
+        archived: true,
+        syncedAt: 101
+      }
+    ]
+  });
+  await assert.rejects(
+    () => repository.upsertThreadSnapshots({
+      snapshots: [{
+        threadId: THREAD_A,
+        payloadJson: JSON.stringify({ id: THREAD_B }),
+        archived: false,
+        syncedAt: 101
+      }]
+    }),
+    /must match threadId/
+  );
+  db.close();
+  db = new TestDatabase(dbPath);
+  globalThis.__eyesTestSqliteManager.db = db;
+  repository = new EyesOnAgentsRepositoryDao();
+  const persistedRawA = db.prepare(
+    'SELECT payload_json, is_archived, synced_at FROM eyes_on_agents_thread_snapshot WHERE thread_id = ?'
+  ).get(THREAD_A);
+  assert.deepEqual(JSON.parse(persistedRawA.payload_json), {
+    id: THREAD_A,
+    name: 'Raw A',
+    preview: 'private preview A',
+    status: { type: 'notLoaded' },
+    turns: []
+  }, 'the complete thread/list object must survive a SQLite restart');
+  assert.equal(persistedRawA.is_archived, 0);
+  assert.equal(persistedRawA.synced_at, 101);
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_A).domainId,
+    custom.id,
+    'raw source persistence must not overwrite the Bitterless Domain annotation'
+  );
   await repository.upsertDiscoveredThreads({
     threads: [{
       threadId: THREAD_A,
@@ -388,7 +485,38 @@ try {
       source: 'codex_hook'
     }
   });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_A).isUnread,
+    true,
+    'a running event must set unread'
+  );
   await repository.markOpened({ threadId: THREAD_A, openedAt: 210 });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_A).isUnread,
+    false,
+    'a successful Open must clear unread'
+  );
+  await repository.upsertDiscoveredThreads({
+    threads: [{
+      threadId: THREAD_A,
+      title: 'Still running',
+      cwd: '/repo/new-a',
+      runtimeState: 'working',
+      activeFlags: [],
+      statusSource: 'app_server',
+      statusObservedAt: 215,
+      lastActivityAt: 215
+    }]
+  });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_A).isUnread,
+    true,
+    'a later thread/list running observation must set unread again'
+  );
+  await repository.markOpened({ threadId: THREAD_A, openedAt: 216 });
   await repository.applyRuntimeEvent({
     event: {
       type: 'turn_completed',
@@ -403,8 +531,8 @@ try {
   const completedA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
   assert.equal(completedA.lastCompletedTurnId, 'hook-200');
   assert.equal(completedA.lastOpenedTurnId, 'hook-200');
-  assert.equal(completedA.isUnread, false, 'opened active turn A must stay read when A completes');
-  assert.equal(completedA.isFocused, false);
+  assert.equal(completedA.isUnread, true, 'completion must become unread after an active Open');
+  assert.equal(completedA.isFocused, true);
 
   await repository.applyRuntimeEvent({
     event: {
@@ -453,7 +581,7 @@ try {
   const archivedA = db.prepare(
     `SELECT is_archived, domain_id, project_key, runtime_state, active_flags_json,
       active_turn_id, last_completed_turn_id, last_completed_at,
-      last_opened_turn_id, last_opened_at
+      last_opened_turn_id, last_opened_at, is_unread
      FROM eyes_on_agents_thread WHERE thread_id = ?`
   ).get(THREAD_A);
   assert.equal(archivedA.is_archived, 1);
@@ -465,7 +593,14 @@ try {
   assert.equal(archivedA.last_completed_turn_id, 'turn-b');
   assert.equal(archivedA.last_completed_at, 240);
   assert.equal(archivedA.last_opened_turn_id, 'hook-200');
-  assert.equal(archivedA.last_opened_at, 210);
+  assert.equal(archivedA.last_opened_at, 216);
+  assert.equal(archivedA.is_unread, 1, 'archive must preserve persistent unread state');
+  assert.equal(
+    db.prepare('SELECT is_archived FROM eyes_on_agents_thread_snapshot WHERE thread_id = ?')
+      .get(THREAD_A).is_archived,
+    1,
+    'archive notification persistence must update the raw snapshot inventory marker'
+  );
 
   await repository.setThreadArchived({
     threadId: THREAD_A,
@@ -478,6 +613,12 @@ try {
   assert.equal(unarchivedA.projectKey, '/repo/new-a');
   assert.equal(unarchivedA.lastCompletedTurnId, 'turn-b');
   assert.equal(unarchivedA.isUnread, true, 'unarchive must preserve durable read state');
+  assert.equal(
+    db.prepare('SELECT is_archived FROM eyes_on_agents_thread_snapshot WHERE thread_id = ?')
+      .get(THREAD_A).is_archived,
+    0,
+    'unarchive notification persistence must update the raw snapshot inventory marker'
+  );
 
   await repository.markThreadsArchived({ threadIds: [THREAD_A, THREAD_A], observedAt: 270 });
   snapshot = await repository.getSnapshot();
@@ -486,6 +627,20 @@ try {
     false,
     'archived inventory reconciliation must hide every explicit archived id'
   );
+  assert.equal(
+    db.prepare('SELECT is_archived FROM eyes_on_agents_thread_snapshot WHERE thread_id = ?')
+      .get(THREAD_A).is_archived,
+    1,
+    'archived inventory reconciliation must update the raw snapshot marker'
+  );
+  await repository.upsertThreadSnapshots({
+    snapshots: [{
+      threadId: THREAD_A,
+      payloadJson: JSON.stringify({ id: THREAD_A, name: 'Active after unarchive', turns: [] }),
+      archived: false,
+      syncedAt: 280
+    }]
+  });
   await repository.upsertDiscoveredThreads({
     threads: [{
       threadId: THREAD_A,
@@ -509,6 +664,11 @@ try {
       .get(THREAD_A).is_archived,
     0
   );
+  assert.equal(
+    db.prepare('SELECT is_archived FROM eyes_on_agents_thread_snapshot WHERE thread_id = ?')
+      .get(THREAD_A).is_archived,
+    0
+  );
 
   await repository.applyRuntimeEvent({
     event: {
@@ -527,8 +687,8 @@ try {
   assert.equal(disconnectedB.activeTurnId, null);
   assert.equal(
     disconnectedB.isFocused,
-    false,
-    'reconnect preparation must invalidate status owned by the previous managed server'
+    true,
+    'runtime invalidation must preserve the unread attention raised by observed work'
   );
 
   await repository.applyRuntimeEvent({
@@ -557,7 +717,8 @@ try {
   assert.equal(notLoadedB.runtimeState, 'unknown');
   assert.equal(notLoadedB.statusSource, 'discovery');
   assert.equal(notLoadedB.activeTurnId, null);
-  assert.equal(notLoadedB.isFocused, false, 'server B notLoaded must clear server A working state');
+  assert.equal(notLoadedB.runtimeState, 'unknown', 'server B notLoaded must clear server A working state');
+  assert.equal(notLoadedB.isUnread, true, 'unknown discovery must preserve persistent unread');
 
   await repository.applyRuntimeEvent({
     event: {

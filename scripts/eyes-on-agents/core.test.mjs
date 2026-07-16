@@ -175,6 +175,7 @@ try {
     invalidateAppServerStatuses: async () => undefined,
     invalidateCodexHookStatuses: async () => undefined,
     upsertDiscoveredThreads: async () => undefined,
+    upsertThreadSnapshots: async () => undefined,
     setThreadArchived: async () => undefined,
     markThreadsArchived: async () => undefined,
     applyRuntimeEvent: async () => undefined,
@@ -257,6 +258,7 @@ try {
 
   const reconnectOrder = [];
   let synchronizedThreads = null;
+  let synchronizedSnapshots = null;
   let synchronizedArchivedThreadIds = null;
   let connected = false;
   let setReconnectListening = () => undefined;
@@ -272,6 +274,10 @@ try {
       upsertDiscoveredThreads: async ({ threads }) => {
         reconnectOrder.push('upsert');
         synchronizedThreads = threads;
+      },
+      upsertThreadSnapshots: async ({ snapshots }) => {
+        reconnectOrder.push('snapshots');
+        synchronizedSnapshots = snapshots;
       },
       markThreadsArchived: async ({ threadIds }) => {
         reconnectOrder.push('archive');
@@ -372,6 +378,7 @@ try {
       'bridge-inspect',
       'list',
       'list-archived',
+      'snapshots',
       'upsert',
       'archive'
     ],
@@ -387,6 +394,35 @@ try {
     statusObservedAt: 789,
     lastActivityAt: null
   }], 'notLoaded sync evidence must carry the current server observation time');
+  assert.equal(synchronizedSnapshots.length, 2);
+  assert.deepEqual(
+    synchronizedSnapshots.map((snapshot) => ({
+      threadId: snapshot.threadId,
+      archived: snapshot.archived,
+      syncedAt: snapshot.syncedAt,
+      payload: JSON.parse(snapshot.payloadJson)
+    })),
+    [
+      {
+        threadId: THREAD_ID,
+        archived: false,
+        syncedAt: 789,
+        payload: {
+          id: THREAD_ID,
+          name: 'Not loaded task',
+          cwd: '/repo',
+          status: { type: 'notLoaded' }
+        }
+      },
+      {
+        threadId: ARCHIVED_THREAD_ID,
+        archived: true,
+        syncedAt: 789,
+        payload: { id: ARCHIVED_THREAD_ID }
+      }
+    ],
+    'sync must persist complete valid objects from active and archived inventories'
+  );
   assert.deepEqual(
     synchronizedArchivedThreadIds,
     [ARCHIVED_THREAD_ID],
@@ -399,6 +435,7 @@ try {
     const archiveTransitions = [];
     const archivedBatches = [];
     const discoveredBatches = [];
+    const snapshotBatches = [];
     let lifecycleNow = 1_000;
     let appServerConnected = false;
     let activeInventory = [];
@@ -438,6 +475,10 @@ try {
       upsertDiscoveredThreads: async ({ threads }) => {
         discoveredBatches.push(threads);
         calls.push('upsert');
+      },
+      upsertThreadSnapshots: async ({ snapshots }) => {
+        snapshotBatches.push(snapshots);
+        calls.push('snapshots');
       },
       setThreadArchived: async (params) => {
         archiveTransitions.push(params);
@@ -545,6 +586,7 @@ try {
       archiveTransitions,
       archivedBatches,
       discoveredBatches,
+      snapshotBatches,
       lifecycleBridge,
       runtimeEvents,
       service,

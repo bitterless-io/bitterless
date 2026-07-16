@@ -185,7 +185,7 @@ export const en = {
       eyebrow: 'Codex Desktop',
       title: 'Codex Desktop Bridge',
       description: 'Managed by Connect. Codex requires a one-time review before these metadata-only lifecycle hooks can run.',
-      trustReview: 'In Codex, open /hooks and approve or enable the four Bitterless hooks, then return here and Sync.',
+      trustReview: 'In Codex, open /hooks and approve or enable the four Bitterless hooks, then return here and Refresh.',
       notInstalled: 'Not installed',
       needsTrust: 'Approval needed',
       installed: 'Ready',
@@ -196,6 +196,7 @@ export const en = {
     },
     actions: {
       sync: 'Sync',
+      refresh: 'Refresh',
       openConnections: 'Open connections',
       pin: 'Keep on top',
       unpin: 'Stop keeping on top',
@@ -239,7 +240,7 @@ export const en = {
     },
     thread: {
       untitled: 'Untitled Codex task',
-      new: 'New',
+      new: 'Unread',
       source: 'Evidence: {source}',
       appServer: 'App Server',
       codexHook: 'Desktop Bridge',

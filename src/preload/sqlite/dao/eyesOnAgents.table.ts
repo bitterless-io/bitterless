@@ -43,6 +43,7 @@ export class EyesOnAgentsTable extends BaseTable {
       last_completed_at INTEGER,
       last_opened_turn_id TEXT,
       last_opened_at INTEGER,
+      is_unread INTEGER NOT NULL DEFAULT 0,
       status_source TEXT NOT NULL DEFAULT 'discovery',
       status_observed_at INTEGER,
       last_activity_at INTEGER,
@@ -54,6 +55,17 @@ export class EyesOnAgentsTable extends BaseTable {
       ON eyes_on_agents_thread (domain_id, last_activity_at DESC, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_attention
       ON eyes_on_agents_thread (runtime_state, last_completed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS eyes_on_agents_thread_snapshot (
+      thread_id TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      synced_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_snapshot_inventory
+      ON eyes_on_agents_thread_snapshot (is_archived, synced_at DESC);
   `;
 }
 

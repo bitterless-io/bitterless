@@ -22,19 +22,19 @@
         <span>{{ connectionLabel }}</span>
       </button>
 
-      <a-tooltip :content="i18nHelper.eyesOnAgents.actions.sync" position="br" mini>
-        <a-button
-          name="eyesOnAgents__menuBar__sync"
-          size="mini"
-          type="text"
-          :loading="eyesOnAgentsStore.busyAction === 'sync'"
-          :disabled="!canSync"
-          :aria-label="i18nHelper.eyesOnAgents.actions.sync"
-          @click="handleSync"
-        >
-          <template #icon><IconRefresh :size="16" /></template>
-        </a-button>
-      </a-tooltip>
+      <a-button
+        name="eyesOnAgents__menuBar__refresh"
+        class="eyes-menu-bar__refresh"
+        size="mini"
+        type="text"
+        :loading="eyesOnAgentsStore.busyAction === 'sync'"
+        :disabled="!canRefresh"
+        :aria-label="i18nHelper.eyesOnAgents.actions.refresh"
+        @click="handleRefresh"
+      >
+        <template #icon><IconRefresh :size="16" /></template>
+        {{ i18nHelper.eyesOnAgents.actions.refresh }}
+      </a-button>
 
       <a-tooltip :content="bridgeLabel" position="br" mini>
         <a-button
@@ -126,8 +126,10 @@ const platformClass = computed(() => ({
 const connectionState = computed(
   () => eyesOnAgentsStore.snapshot?.connection.state ?? 'disconnected',
 );
-const canSync = computed(
-  () => connectionState.value === 'connected' && !eyesOnAgentsStore.busyAction,
+const canRefresh = computed(
+  () => !eyesOnAgentsStore.busyAction
+    && connectionState.value !== 'connecting'
+    && connectionState.value !== 'syncing',
 );
 const connectionDotClass = computed(
   () => `eyes-menu-bar__status-dot--${connectionState.value}`,
@@ -173,7 +175,7 @@ const pinLabel = computed(() =>
     : i18nHelper.eyesOnAgents.actions.pin,
 );
 
-const handleSync = async (): Promise<void> => {
+const handleRefresh = async (): Promise<void> => {
   await eyesOnAgentsStore.syncThreads().catch(() => undefined);
 };
 

@@ -25,7 +25,7 @@ for live signals.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  EyesOnAgents        ● App Server connected     [Sync] [Bridge] [Settings] │
+│  EyesOnAgents        ● App Server connected  [↻ Refresh] [Bridge] [Settings]│
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌ Focus ─────────┐ ┌ Uncategorized ─┐ ┌ Bitterless ─────┐ ┌ + Domain ─┐  │
@@ -87,7 +87,8 @@ The menu bar shows:
 
 - application title;
 - App Server connection dot and compact state text;
-- `Sync`, disabled while synchronization is in flight;
+- labelled `Refresh`, available from connected, disconnected, and error states and disabled while
+  another board action, connection, or synchronization is in flight;
 - Codex Desktop Bridge status/action;
 - a compact settings/always-on-top control and platform window controls.
 
@@ -99,6 +100,8 @@ Clicking the connection status opens a small panel with:
 - Desktop hook bridge status with `Install`, `Repair`, or `Remove`.
 
 Errors stay in this panel and as a compact board banner. They never clear already persisted threads.
+The header Refresh action reconnects when necessary and reconciles active plus archived inventories;
+it is always visible as the manual fallback for missed activation or lifecycle updates.
 
 ## Domain column
 
@@ -131,7 +134,7 @@ the underlying thread.
 A card displays only observation metadata:
 
 - signal rail and runtime label;
-- unread `New` badge for an observed completion not opened from EyesOnAgents;
+- unread badge for running or terminal attention observed since the last successful EyesOnAgents Open;
 - title, falling back to a shortened UUID;
 - compact working-directory basename/path;
 - relative last-activity time;
@@ -170,11 +173,11 @@ card leaves it in Focus until the runtime state changes.
 |---|---|
 | first launch, disconnected | connection callout plus persisted board if any |
 | connecting | dot and button spinner; existing content remains interactive |
-| syncing | existing cards retained; duplicate sync disabled |
+| syncing or connecting | existing cards retained; duplicate Refresh disabled |
 | no threads | concise prompt to connect/sync; no fake sample rows |
 | no Focus items | quiet “Nothing needs attention” state |
 | Project filter has no matches | selected option remains available; `0 of total` and scoped empty text |
-| App Server error | neutral/error banner with retry; persisted states are not rewritten |
+| App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
 | unknown runtime | grey rail and explicit `Unknown`; never rendered as idle |
 | long title/path | two-line title and single-line ellipsis path with tooltip |

@@ -7,6 +7,7 @@ import {
   ensureEyesOnAgentsArchiveSchema,
   ensureEyesOnAgentsLegacyImport,
   ensureEyesOnAgentsProjectMetadataSchema,
+  ensureEyesOnAgentsSyncPersistenceSchema,
 } from './dao/eyesOnAgents.migration';
 import { eyesOnAgentsTable } from './dao/eyesOnAgents.table';
 import { messageTable } from './dao/message.table';
@@ -115,6 +116,7 @@ export const coreSqliteTables: readonly BaseTable[] = [
 export const finalizeCoreSqliteSchema = (db: Database.Database): void => {
   ensureEyesOnAgentsProjectMetadataSchema(db);
   ensureEyesOnAgentsArchiveSchema(db);
+  ensureEyesOnAgentsSyncPersistenceSchema(db);
 };
 
 export const coreSqliteMigrations: readonly SqliteMigration[] = [
@@ -165,5 +167,9 @@ export const coreSqliteMigrations: readonly SqliteMigration[] = [
   {
     versionCode: '260716000003',
     runner: ensureEyesOnAgentsArchiveSchema,
+  },
+  {
+    versionCode: '260716000004',
+    runner: ensureEyesOnAgentsSyncPersistenceSchema,
   },
 ];

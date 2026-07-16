@@ -5,7 +5,8 @@ import type {
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsRuntimeEvent,
-  EyesOnAgentsSnapshot
+  EyesOnAgentsSnapshot,
+  EyesOnAgentsThreadSnapshot
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
   buildEyesOnAgentsDeepLink,
@@ -125,6 +126,26 @@ const parseThreadEntry = (
       statusSource: normalizedStatus.statusSource,
       statusObservedAt: observedAt,
       lastActivityAt: providerActivity
+    };
+  } catch {
+    return null;
+  }
+};
+
+const parseThreadSnapshot = (
+  value: unknown,
+  archived: boolean,
+  syncedAt: number
+): EyesOnAgentsThreadSnapshot | null => {
+  if (!isEyesOnAgentsRecord(value)) return null;
+  try {
+    const payloadJson = JSON.stringify(value);
+    if (typeof payloadJson !== 'string') return null;
+    return {
+      threadId: parseEyesOnAgentsUuid(value.id, 'Codex thread id'),
+      payloadJson,
+      archived,
+      syncedAt
     };
   } catch {
     return null;
@@ -660,6 +681,16 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     if (archivedListed.state === 'rejected') throw archivedListed.error;
     if (!this.isObservationActive(context)) return;
     const observedAt = this.now();
+    const snapshots = [
+      ...listed.value.flatMap((entry) => {
+        const snapshot = parseThreadSnapshot(entry, false, observedAt);
+        return snapshot ? [snapshot] : [];
+      }),
+      ...archivedListed.value.flatMap((entry) => {
+        const snapshot = parseThreadSnapshot(entry, true, observedAt);
+        return snapshot ? [snapshot] : [];
+      })
+    ];
     const projectCache = new Map<string, EyesOnAgentsProjectResolution>();
     const threads = listed.value.flatMap((entry) => {
       const parsed = parseThreadEntry(entry, observedAt);
@@ -684,6 +715,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         return [];
       }
     }))];
+    await this.dependencies.repository.upsertThreadSnapshots({ snapshots });
     await this.dependencies.repository.upsertDiscoveredThreads({ threads });
     await this.dependencies.repository.markThreadsArchived({
       threadIds: archivedThreadIds,

@@ -349,6 +349,7 @@ try {
     invalidateAppServerStatuses: async () => undefined,
     invalidateCodexHookStatuses: async () => undefined,
     upsertDiscoveredThreads: async () => undefined,
+    upsertThreadSnapshots: async () => undefined,
     setThreadArchived: async () => undefined,
     markThreadsArchived: async () => undefined
   };

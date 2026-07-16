@@ -22,15 +22,21 @@ EyesOnAgents never reads or displays them.
 - Connect to a Bitterless-managed local Codex App Server and keep that connection alive while the
   application is running.
 - Import Codex threads into a dedicated, display-oriented SQLite model.
+- Persist each validated active and archived `thread/list` object as a local source snapshot, while
+  keeping Bitterless-owned Domain and read markers in a separate normalized overlay.
 - Put every newly discovered thread into the system `Uncategorized` Domain until the user moves it.
 - Derive current Git Project metadata from `cwd` and filter `Uncategorized` by Project without
   changing manual Domain assignment.
 - Show running threads and newly completed unread threads in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
+- Persist unread explicitly: every observed running state or terminal event sets unread, and only a
+  successful Open from EyesOnAgents clears it until running is observed again.
 - Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
   activated again.
 - Hide archived Codex threads and restore unarchived threads without losing their Domain or local
   read state.
+- Provide a visible Refresh action that can reconnect and run full reconciliation from disconnected
+  or error state as well as from an existing connection.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
 - Supplement managed App Server events with the metadata-only Codex Desktop hook bridge managed by
   the EyesOnAgents connection lifecycle, while making the evidence source visible and bounded.
@@ -95,7 +101,7 @@ EyesOnAgents establishes that pending boundary before draining writes accepted b
 inspection, so events arriving during a slow write join the fresh bounded queue rather than being
 dropped between admission epochs. Every queued write captures an immutable admission epoch. A
 SQLite write failure rejects that epoch before any suffix can start, reports only the bounded bridge
-error, invalidates hook-owned active evidence, and refreshes the renderer; a later `Sync` must drain
+error, invalidates hook-owned active evidence, and refreshes the renderer; a later `Refresh` must drain
 the rejected tail and prove fresh trust before admission can reopen.
 
 ## App Server connection lifecycle
@@ -107,8 +113,9 @@ The main process owns one connection supervisor for the entire Bitterless proces
    shell.
 3. The client completes the JSON-RPC initialize handshake before reporting `connected`.
 4. It calls `hooks/list` to verify that every Bitterless-owned Desktop hook is enabled and trusted.
-5. It pages through non-archived and archived `thread/list` inventories, upserts active Codex
-   metadata, reconciles known archived rows, and leaves the child process running.
+5. It pages through non-archived and archived `thread/list` inventories, stores each validated raw
+   object locally, upserts normalized display metadata, reconciles known archived rows, and leaves
+   the child process running.
 6. Notifications such as `thread/status/changed`, `turn/started`, `turn/completed`,
    `thread/archived`, and `thread/unarchived` update the repository and broadcast a compact change
    event to EyesOnAgents renderers.
@@ -122,8 +129,24 @@ A successful explicit connection enables auto-connect for later Bitterless launc
 disconnect disables auto-connect. Connection preference belongs in the existing setting store;
 thread and Domain state belongs in the dedicated tables below.
 
-The renderer can request only `connect`, `disconnect`, `sync`, and status inspection. It cannot
+The renderer can request only `connect`, `disconnect`, full refresh/sync, and status inspection. It cannot
 provide an executable, command arguments, URL, or arbitrary JSON-RPC method.
+
+### Explicit refresh fallback
+
+The header exposes a labelled `Refresh` action rather than an icon-only connected-state Sync. It
+runs the same full active-plus-archived reconciliation as connection and activation refresh:
+
+- while connected, it refreshes both inventories immediately;
+- while disconnected or in error, it starts the allowlisted managed App Server, refreshes, and
+  leaves the connection alive;
+- while another board action, connection, or sync is in flight, it is disabled so no conflicting
+  mutation or duplicate inventory request starts;
+- on failure, the last persisted source snapshots, Domains, and read markers remain available.
+
+Refresh never launches Electron helpers, scans transcripts, or accepts user-supplied commands. It
+is the manual recovery path when activation delivery, lifecycle notifications, or title propagation
+have not yet caught up.
 
 ### Window activation refresh
 
@@ -215,10 +238,26 @@ first real-column sort position. Focus is not stored in this table.
 | `last_completed_at` | most recent observed terminal time |
 | `last_opened_turn_id` | terminal/active turn seen when opened through EyesOnAgents |
 | `last_opened_at` | successful Codex deep-link open time |
+| `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open clears it |
 | `status_source` | `app_server`, `codex_hook`, or `discovery` |
 | `status_observed_at` | freshness boundary for runtime evidence |
 | `last_activity_at` | sort/display timestamp from reliable metadata or events |
 | `created_at`, `updated_at` | local lifecycle timestamps |
+
+### `eyes_on_agents_thread_snapshot`
+
+| column | meaning |
+|---|---|
+| `thread_id` | validated Codex UUID primary key and link to the normalized overlay |
+| `payload_json` | complete JSON object returned for that thread by the latest `thread/list` inventory |
+| `is_archived` | whether the object came from the archived inventory |
+| `synced_at` | time this exact source object was observed |
+| `created_at`, `updated_at` | local snapshot lifecycle timestamps |
+
+Source snapshot upsert and normalized overlay upsert apply the same UUID validation. A refresh
+replaces `payload_json` for an observed thread but never overwrites `domain_id`, Project metadata
+chosen by Bitterless, open markers, or `is_unread`. Absence from an inventory does not delete a raw
+snapshot because filters and concurrent archive transitions can omit entries.
 
 Initial migration imports only active Codex rows from the legacy `coding_agent_session` table.
 Imported and newly discovered rows are assigned to `Uncategorized`; subsequent syncs preserve an
@@ -273,30 +312,28 @@ heartbeat.
 
 ## Focus and unread semantics
 
-Focus is a derived view, never a persisted classification:
+Focus is a derived view, never a persisted classification. Unread is a persisted Bitterless marker:
 
 ```text
 in Focus = runtime state is working/waiting_approval/waiting_input
-        OR a completion was observed and that completed turn is unread
+        OR is_unread = true
 ```
 
-Unread compares turn identity first and timestamps only as a compatibility fallback:
+Every accepted `turn_started`, active `thread_status`, active `thread/list` observation, and
+`turn_completed` sets `is_unread = true`. This includes the completion of a turn that was opened
+while running: completion is a new attention transition and becomes unread again. A successful Open
+sets `is_unread = false`; if a later refresh still observes that thread running, it sets unread again
+as required. Idle, unknown, archive, and invalidation transitions preserve the current marker.
 
-```text
-if last_completed_turn_id and last_opened_turn_id are known:
-  unread = last_completed_turn_id != last_opened_turn_id
-else:
-  unread = last_completed_at > last_opened_at (or no last_opened_at)
-```
-
-Opening a running thread records the active turn as seen. If that same turn later completes, it
-does not become unread. A later completed turn does. A running thread remains in Focus even after
-being opened.
+The legacy completion/open comparison is used once by migration to backfill the new column, so an
+upgrade preserves previously unread completed threads without flooding Focus with historical rows.
+A running thread remains in Focus after Open because runtime state independently keeps it there,
+even while its unread badge is temporarily clear.
 
 `last_opened_*` changes only after `shell.openExternal(codex://threads/<id>)` resolves successfully.
 Selecting a card, moving it, or opening the same thread directly inside Codex does not mark it read.
-This means "unread" precisely means "not opened from EyesOnAgents since the observed completion";
-Bitterless cannot observe arbitrary manual navigation inside Codex Desktop.
+This means "unread" precisely means "attention observed by EyesOnAgents since the last successful
+Open from EyesOnAgents". Bitterless cannot observe arbitrary manual navigation inside Codex Desktop.
 
 ## XPC surface
 
@@ -318,6 +355,7 @@ EyesOnAgentsRepositoryHandler (SQLite preload)
   getSnapshot()
   invalidateAppServerStatuses({ observedAt })
   upsertDiscoveredThreads({ threads })
+  upsertThreadSnapshots({ snapshots })
   applyRuntimeEvent({ event })
   markOpened({ threadId, openedAt })
   createDomain({ title })
@@ -333,8 +371,13 @@ memory; it does not issue one query per Domain.
 
 ## Safety and privacy
 
-- Persist only IDs, titles/previews, working directories, lifecycle flags, and timestamps.
-- Never store prompt text, response text, tool payloads, diffs, credentials, or approval details.
+- Persist the complete object returned by `thread/list` only in the local source snapshot table.
+  Current Codex schemas say list results have empty `turns`, but `preview` is usually derived from
+  the first user message and is therefore potentially sensitive.
+- Never send raw snapshot payloads to the renderer or include them in logs, errors, telemetry, or
+  exports. Renderer snapshots continue to contain only normalized observation metadata.
+- Never call `thread/read` to populate storage and never store turns, response text, tool payloads,
+  diffs, credentials, or approval details.
 - Validate every thread ID before persistence and before constructing the deep link.
 - Start Codex with `spawn`/`execFile` argument arrays and `shell: false`.
 - The local hook bridge remains isolated by Bitterless `userData` identity and accepts only the

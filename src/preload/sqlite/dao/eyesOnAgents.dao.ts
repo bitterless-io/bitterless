@@ -11,11 +11,12 @@ import type {
   EyesOnAgentsRuntimeState,
   EyesOnAgentsSnapshot,
   EyesOnAgentsStatusSource,
-  EyesOnAgentsThread
+  EyesOnAgentsThread,
+  EyesOnAgentsThreadSnapshot
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
   isEyesOnAgentsFocused,
-  isEyesOnAgentsUnread,
+  isEyesOnAgentsRecord,
   parseEyesOnAgentsActiveFlags,
   parseEyesOnAgentsPath,
   parseEyesOnAgentsProjectMetadata,
@@ -49,12 +50,14 @@ interface ThreadRow {
   last_completed_at: number | null;
   last_opened_turn_id: string | null;
   last_opened_at: number | null;
+  is_unread: number;
   status_source: string;
   status_observed_at: number | null;
   last_activity_at: number | null;
 }
 
 const MAX_ARCHIVED_THREAD_IDS = 10_000;
+const MAX_THREAD_SNAPSHOTS = 20_000;
 
 const parsePositiveId = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
@@ -123,12 +126,8 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
     'last_completed_turn_id'
   );
   const lastOpenedTurnId = parseTurnId(row.last_opened_turn_id, 'last_opened_turn_id');
-  const isUnread = isEyesOnAgentsUnread({
-    lastCompletedTurnId,
-    lastCompletedAt,
-    lastOpenedTurnId,
-    lastOpenedAt
-  });
+  if (row.is_unread !== 0 && row.is_unread !== 1) throw new Error('is_unread is invalid');
+  const isUnread = row.is_unread === 1;
   const project = projectFromRow(row);
   return {
     threadId: parseEyesOnAgentsUuid(row.thread_id),
@@ -186,6 +185,30 @@ const normalizeDiscoveredThread = (
   };
 };
 
+const normalizeThreadSnapshot = (
+  value: EyesOnAgentsThreadSnapshot
+): EyesOnAgentsThreadSnapshot => {
+  const threadId = parseEyesOnAgentsUuid(value?.threadId);
+  if (typeof value?.payloadJson !== 'string') throw new Error('payloadJson must be a string');
+  let payload: unknown;
+  try {
+    payload = JSON.parse(value.payloadJson) as unknown;
+  } catch {
+    throw new Error('payloadJson must contain valid JSON');
+  }
+  if (!isEyesOnAgentsRecord(payload)) throw new Error('payloadJson must contain an object');
+  if (parseEyesOnAgentsUuid(payload.id, 'snapshot payload id') !== threadId) {
+    throw new Error('snapshot payload id must match threadId');
+  }
+  if (typeof value.archived !== 'boolean') throw new Error('archived must be a boolean');
+  return {
+    threadId,
+    payloadJson: JSON.stringify(payload),
+    archived: value.archived,
+    syncedAt: parseEyesOnAgentsTimestamp(value.syncedAt, 'syncedAt', false) as number
+  };
+};
+
 const requireActiveDomain = (domainId: number): DomainRow => {
   const row = sqliteManager.db.prepare(
     `SELECT id, domain_key, title, sort_index, is_system
@@ -226,7 +249,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       `SELECT thread_id, domain_id, title, cwd, project_key, project_root, project_name,
         runtime_state, active_flags_json,
         active_turn_id, last_completed_turn_id, last_completed_at,
-        last_opened_turn_id, last_opened_at, status_source, status_observed_at,
+        last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
         last_activity_at
        FROM eyes_on_agents_thread
        WHERE is_archived = 0
@@ -288,9 +311,9 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           thread_id, domain_id, title, cwd, project_key, project_root, project_name,
           runtime_state, active_flags_json,
           active_turn_id, last_completed_turn_id, last_completed_at,
-          last_opened_turn_id, last_opened_at, status_source, status_observed_at,
+          last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
           last_activity_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(thread_id) DO UPDATE SET
           title = COALESCE(excluded.title, eyes_on_agents_thread.title),
           cwd = COALESCE(excluded.cwd, eyes_on_agents_thread.cwd),
@@ -321,6 +344,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               AND COALESCE(excluded.status_observed_at, 0) >= COALESCE(eyes_on_agents_thread.status_observed_at, 0)
               THEN NULL
             ELSE eyes_on_agents_thread.active_turn_id
+          END,
+          is_unread = CASE
+            WHEN excluded.runtime_state IN ('working', 'waiting_approval', 'waiting_input') THEN 1
+            ELSE eyes_on_agents_thread.is_unread
           END,
           status_source = CASE
             WHEN excluded.status_source = 'discovery'
@@ -358,6 +385,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ...project,
           thread.runtimeState,
           JSON.stringify(thread.activeFlags),
+          ['working', 'waiting_approval', 'waiting_input'].includes(thread.runtimeState) ? 1 : 0,
           thread.statusSource,
           thread.statusObservedAt,
           thread.lastActivityAt,
@@ -376,6 +404,42 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     transaction();
   }
 
+  async upsertThreadSnapshots(params: {
+    snapshots: EyesOnAgentsThreadSnapshot[];
+  }): Promise<void> {
+    if (!params || !Array.isArray(params.snapshots)) {
+      throw new Error('snapshots must be an array');
+    }
+    if (params.snapshots.length > MAX_THREAD_SNAPSHOTS) {
+      throw new Error(`snapshots must not exceed ${MAX_THREAD_SNAPSHOTS} entries`);
+    }
+    const snapshots = params.snapshots.map(normalizeThreadSnapshot);
+    const transaction = sqliteManager.db.transaction(() => {
+      const now = Date.now();
+      const statement = sqliteManager.db.prepare(
+        `INSERT INTO eyes_on_agents_thread_snapshot (
+          thread_id, payload_json, is_archived, synced_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(thread_id) DO UPDATE SET
+          payload_json = excluded.payload_json,
+          is_archived = excluded.is_archived,
+          synced_at = excluded.synced_at,
+          updated_at = excluded.updated_at`
+      );
+      for (const snapshot of snapshots) {
+        statement.run(
+          snapshot.threadId,
+          snapshot.payloadJson,
+          snapshot.archived ? 1 : 0,
+          snapshot.syncedAt,
+          now,
+          now
+        );
+      }
+    });
+    transaction();
+  }
+
   async setThreadArchived(params: {
     threadId: string;
     archived: boolean;
@@ -388,18 +452,26 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       'observedAt',
       false
     ) as number;
-    await sqliteHelper.safeRun(
-      `UPDATE eyes_on_agents_thread SET
-        is_archived = ?,
-        runtime_state = 'unknown',
-        active_flags_json = '[]',
-        active_turn_id = NULL,
-        status_source = 'discovery',
-        status_observed_at = ?,
-        updated_at = ?
-       WHERE thread_id = ?`,
-      [params.archived ? 1 : 0, observedAt, Date.now(), threadId]
-    );
+    const transaction = sqliteManager.db.transaction(() => {
+      const now = Date.now();
+      sqliteManager.db.prepare(
+        `UPDATE eyes_on_agents_thread SET
+          is_archived = ?,
+          runtime_state = 'unknown',
+          active_flags_json = '[]',
+          active_turn_id = NULL,
+          status_source = 'discovery',
+          status_observed_at = ?,
+          updated_at = ?
+         WHERE thread_id = ?`
+      ).run(params.archived ? 1 : 0, observedAt, now, threadId);
+      sqliteManager.db.prepare(
+        `UPDATE eyes_on_agents_thread_snapshot SET
+          is_archived = ?, updated_at = ?
+         WHERE thread_id = ?`
+      ).run(params.archived ? 1 : 0, now, threadId);
+    });
+    transaction();
   }
 
   async markThreadsArchived(params: {
@@ -433,7 +505,15 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           updated_at = ?
          WHERE thread_id = ?`
       );
-      for (const threadId of threadIds) statement.run(observedAt, now, threadId);
+      const snapshotStatement = sqliteManager.db.prepare(
+        `UPDATE eyes_on_agents_thread_snapshot SET
+          is_archived = 1, updated_at = ?
+         WHERE thread_id = ?`
+      );
+      for (const threadId of threadIds) {
+        statement.run(observedAt, now, threadId);
+        snapshotStatement.run(now, threadId);
+      }
     });
     transaction();
   }
@@ -457,9 +537,9 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           thread_id, domain_id, title, cwd, project_key, project_root, project_name,
           runtime_state, active_flags_json,
           active_turn_id, last_completed_turn_id, last_completed_at,
-          last_opened_turn_id, last_opened_at, status_source, status_observed_at,
+          last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
           last_activity_at, created_at, updated_at
-        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`
       ).run(
         event.threadId,
         domainId,
@@ -468,6 +548,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         state,
         JSON.stringify(activeFlags),
         startedTurnId,
+        state === 'working' || state === 'waiting_approval' || state === 'waiting_input'
+          || event.type === 'turn_completed' ? 1 : 0,
         event.source,
         event.observedAt,
         event.observedAt,
@@ -502,6 +584,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             active_turn_id = NULL,
             last_completed_turn_id = ?,
             last_completed_at = ?,
+            is_unread = 1,
             status_source = ?,
             status_observed_at = ?,
             last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
@@ -531,6 +614,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               THEN COALESCE(?, active_turn_id)
             ELSE NULL
           END,
+          is_unread = CASE
+            WHEN ? IN ('working', 'waiting_approval', 'waiting_input') THEN 1
+            ELSE is_unread
+          END,
           status_source = ?,
           status_observed_at = ?,
           last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
@@ -542,6 +629,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         JSON.stringify(activeFlags),
         state,
         startedTurnId,
+        state,
         event.source,
         event.observedAt,
         event.observedAt,
@@ -559,6 +647,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       `UPDATE eyes_on_agents_thread SET
         last_opened_turn_id = COALESCE(active_turn_id, last_completed_turn_id),
         last_opened_at = ?,
+        is_unread = 0,
         updated_at = ?
        WHERE thread_id = ?`,
       [openedAt, Date.now(), threadId]
