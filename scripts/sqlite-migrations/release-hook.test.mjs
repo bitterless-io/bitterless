@@ -55,6 +55,17 @@ test('release version codes use the common comparison library', () => {
   assert.doesNotMatch(releaseSources, /versionCode\s*-\s*/)
 })
 
+test('DMG signing uses a private disposable keychain', () => {
+  const source = read('scripts/publish.js')
+  assert.match(source, /withTemporarySigningKeychain/)
+  assert.match(source, /\['create-keychain', '-p', keychainPassword, keychainPath\]/)
+  assert.match(source, /\['import', certificatePath, '-k', keychainPath, '-P', certificatePassword/)
+  assert.match(source, /\['--keychain', keychainPath, '--sign', identity/)
+  assert.match(source, /\['delete-keychain', keychainPath\]/)
+  assert.match(source, /finally\s*{/)
+  assert.doesNotMatch(source, /console\.(?:log|warn|error)\([^\n]*(?:certificatePassword|keychainPassword)/)
+})
+
 test('migration audit is pure Node and uses runtime manifests', () => {
   const source = read('scripts/sqlite-migrations/auditRunner.ts')
   assert.match(source, /coreSqliteMigrations/)

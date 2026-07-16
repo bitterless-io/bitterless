@@ -67,6 +67,11 @@ it before environment preparation, application compilation, signing, notarizatio
 `scripts/publish.js --build` is the authoritative all-platform release path and must fail closed if
 the audit exits non-zero.
 
+macOS DMG signing must work when the Developer ID certificate exists only as the configured P12,
+not as a persistent login-keychain identity. The publisher imports that P12 into a private
+temporary keychain, passes the keychain explicitly to `codesign`, never logs passwords, and deletes
+the keychain in a `finally` path before notarization or upload can continue.
+
 The audit is a pure Node process. It must not launch Electron, create an application window, touch a
 real user database, read transcripts, or mutate production storage. It requires Node.js 22.5 or
 newer so the disposable databases can use the built-in `node:sqlite` engine without another native

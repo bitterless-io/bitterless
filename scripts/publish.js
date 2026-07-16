@@ -17,6 +17,7 @@ const defaultPublishEnvPath = path.join(keychainDir, 'publish.env');
 const defaultPublicBaseUrl = 'https://assets.terncloud.com';
 const defaultOssPrefix = 'bitterless/distro';
 const defaultSigningEnvPath = path.join(keychainDir, 'signing.env');
+const defaultSigningCertificatePath = path.join(keychainDir, 'Certificates.p12');
 
 const platformConfigs = {
   mac_arm: {
@@ -201,6 +202,17 @@ const runOutput = (command, args, options = {}) => {
   return `${result.stdout ?? ''}${result.stderr ?? ''}`;
 };
 
+const runPrivate = (command, args, label) => {
+  const result = spawnSync(command, args, {
+    cwd: rootDir,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.status !== 0) {
+    throw new Error(`${label} failed with exit code ${result.status ?? 1}`);
+  }
+};
+
 const runBuild = (options) => {
   run('rig', ['--env', `release_${options.env}`]);
   run('node', ['scripts/before.js']);
@@ -257,6 +269,48 @@ const loadSigningEnv = () => {
   return parseEnvFile(envPath);
 };
 
+const normalizeFilePath = (value) => {
+  return decodeURIComponent(value.replace(/^file:\/\//, ''));
+};
+
+const resolveSigningCertificatePath = (env) => {
+  const configuredPath = env.CSC_LINK
+    ? normalizeFilePath(env.CSC_LINK)
+    : defaultSigningCertificatePath;
+  if (fs.existsSync(configuredPath)) return configuredPath;
+  if (fs.existsSync(defaultSigningCertificatePath)) return defaultSigningCertificatePath;
+  throw new Error(`Developer ID certificate not found: ${configuredPath}`);
+};
+
+const withTemporarySigningKeychain = (callback) => {
+  const env = loadSigningEnv();
+  const certificatePath = resolveSigningCertificatePath(env);
+  const certificatePassword = env.CSC_KEY_PASSWORD ?? '';
+  const keychainPassword = crypto.randomBytes(32).toString('hex');
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bitterless-dmg-sign-'));
+  const keychainPath = path.join(tempDir, 'dmg-signing.keychain-db');
+
+  try {
+    runPrivate('security', ['create-keychain', '-p', keychainPassword, keychainPath], 'Create signing keychain');
+    runPrivate('security', ['unlock-keychain', '-p', keychainPassword, keychainPath], 'Unlock signing keychain');
+    runPrivate('security', ['set-keychain-settings', '-lut', '21600', keychainPath], 'Configure signing keychain');
+    runPrivate(
+      'security',
+      ['import', certificatePath, '-k', keychainPath, '-P', certificatePassword, '-T', '/usr/bin/codesign'],
+      'Import Developer ID certificate',
+    );
+    runPrivate(
+      'security',
+      ['set-key-partition-list', '-S', 'apple-tool:,apple:', '-s', '-k', keychainPassword, keychainPath],
+      'Authorize codesign key access',
+    );
+    return callback(keychainPath);
+  } finally {
+    spawnSync('security', ['delete-keychain', keychainPath], { stdio: 'ignore' });
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+};
+
 const getMacAppPath = (platform) => {
   const dirName = platform === 'mac_intel' ? 'mac' : 'mac-arm64';
   const appDir = path.join(distDir, dirName);
@@ -289,7 +343,9 @@ const getDeveloperIdIdentity = (appPath) => {
 };
 
 const signDmg = (dmgPath, identity) => {
-  run('codesign', ['--sign', identity, '--force', '--timestamp', dmgPath]);
+  withTemporarySigningKeychain((keychainPath) => {
+    run('codesign', ['--keychain', keychainPath, '--sign', identity, '--force', '--timestamp', dmgPath]);
+  });
 };
 
 const notarizeDmg = (dmgPath) => {

@@ -38,6 +38,9 @@ shorter values are accepted only as upgrade checkpoints.
    value type to a 12-digit string.
 6. Migration, update, packaging, and audit comparisons all call `compareVersions`; none infer
    ordering from JavaScript numbers or string width.
+7. macOS DMG finalization imports the configured Developer ID P12 into an isolated temporary
+   keychain, signs with an explicit `--keychain`, and always deletes the keychain. This avoids a
+   hidden dependency on a certificate being installed in the user's login keychain.
 
 ## Delivery decision
 
