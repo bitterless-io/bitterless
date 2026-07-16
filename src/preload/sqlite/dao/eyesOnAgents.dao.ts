@@ -215,6 +215,26 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     );
   }
 
+  async invalidateCodexHookStatuses(params: { observedAt: number }): Promise<void> {
+    const observedAt = parseEyesOnAgentsTimestamp(
+      params?.observedAt,
+      'observedAt',
+      false
+    ) as number;
+    await sqliteHelper.safeRun(
+      `UPDATE eyes_on_agents_thread SET
+        runtime_state = 'unknown',
+        active_flags_json = '[]',
+        active_turn_id = NULL,
+        status_source = 'discovery',
+        status_observed_at = ?,
+        updated_at = ?
+       WHERE status_source = 'codex_hook'
+         AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')`,
+      [observedAt, Date.now()]
+    );
+  }
+
   async upsertDiscoveredThreads(params: {
     threads: EyesOnAgentsDiscoveredThread[];
   }): Promise<void> {

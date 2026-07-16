@@ -46,6 +46,11 @@ design document.
 - [Coin delivery analysis](plan/analysis/coin-subapp.md)
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
 
+## Issues
+
+- [EyesOnAgents Desktop Focus](issues/archived/eyes-on-agents-desktop-focus.md) - fixed: active Codex Desktop tasks
+  missing from Focus when lifecycle observation is absent or expires too early.
+
 ## Legacy references
 
 - `doc/colors.md` - historical palette exploration; the current contract is

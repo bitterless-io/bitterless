@@ -368,6 +368,23 @@ try {
     'hook-500',
     'reconnect preparation must not erase Desktop hook ownership'
   );
+  await repository.markOpened({ threadId: THREAD_B, openedAt: 705 });
+  await repository.invalidateCodexHookStatuses({ observedAt: 710 });
+  snapshot = await repository.getSnapshot();
+  const hookAfterDisconnectB = snapshot.threads.find((thread) => thread.threadId === THREAD_B);
+  assert.equal(hookAfterDisconnectB.runtimeState, 'unknown');
+  assert.equal(hookAfterDisconnectB.statusSource, 'discovery');
+  assert.equal(hookAfterDisconnectB.activeTurnId, null);
+  assert.equal(
+    hookAfterDisconnectB.lastOpenedTurnId,
+    'hook-500',
+    'hook invalidation must preserve durable opened markers'
+  );
+  assert.equal(
+    hookAfterDisconnectB.isFocused,
+    false,
+    'disconnect then reconnect must not resurrect an old active hook turn'
+  );
 
   await repository.createDomain({ title: 'Rollback check' });
   snapshot = await repository.getSnapshot();

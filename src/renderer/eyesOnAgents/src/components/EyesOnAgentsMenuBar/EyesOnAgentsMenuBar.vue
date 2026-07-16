@@ -153,6 +153,8 @@ const bridgeLabel = computed(() => {
   switch (bridgeState.value) {
     case 'installed':
       return i18nHelper.eyesOnAgents.bridge.installed;
+    case 'needs_trust':
+      return i18nHelper.eyesOnAgents.bridge.needsTrust;
     case 'drifted':
       return i18nHelper.eyesOnAgents.bridge.drifted;
     case 'error':
@@ -163,7 +165,7 @@ const bridgeLabel = computed(() => {
 });
 const bridgeButtonClass = computed(() => ({
   'eyes-menu-bar__button--active': bridgeState.value === 'installed',
-  'eyes-menu-bar__button--attention': ['drifted', 'error'].includes(bridgeState.value),
+  'eyes-menu-bar__button--attention': ['needs_trust', 'drifted', 'error'].includes(bridgeState.value),
 }));
 const pinLabel = computed(() =>
   alwaysOnTop.value

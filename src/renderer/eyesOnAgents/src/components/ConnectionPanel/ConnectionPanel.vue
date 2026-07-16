@@ -46,10 +46,12 @@
             :disabled="Boolean(eyesOnAgentsStore.busyAction)"
             @click="handleConnect"
           >
-            {{ i18nHelper.eyesOnAgents.connection.connect }}
+            {{ connectionState === 'error'
+              ? i18nHelper.eyesOnAgents.connection.retry
+              : i18nHelper.eyesOnAgents.connection.connect }}
           </a-button>
           <a-button
-            v-else
+            v-if="canDisconnect"
             status="danger"
             :loading="eyesOnAgentsStore.busyAction === 'disconnect'"
             :disabled="Boolean(eyesOnAgentsStore.busyAction)"
@@ -76,7 +78,9 @@
       <section name="eyesOnAgents__connections__bridge" class="eyes-connection-card">
         <div class="eyes-connection-card__header">
           <div>
-            <span class="eyes-connection-card__eyebrow">Desktop</span>
+            <span class="eyes-connection-card__eyebrow">
+              {{ i18nHelper.eyesOnAgents.bridge.eyebrow }}
+            </span>
             <h2>{{ i18nHelper.eyesOnAgents.bridge.title }}</h2>
           </div>
           <span class="eyes-connection-card__status" :class="bridgeStatusClass">
@@ -84,29 +88,37 @@
           </span>
         </div>
         <p>{{ i18nHelper.eyesOnAgents.bridge.description }}</p>
+        <div
+          v-if="bridgeState === 'needs_trust'"
+          class="eyes-connection-card__trust"
+          role="status"
+        >
+          {{ i18nHelper.eyesOnAgents.bridge.trustReview }}
+        </div>
         <div v-if="bridge?.error" class="eyes-connection-card__error" role="alert">
           {{ bridge.error }}
         </div>
-        <div class="eyes-connection-card__actions">
+        <div
+          v-if="canRepairBridge || canCleanupBridge"
+          class="eyes-connection-card__actions"
+        >
           <a-button
-            v-if="bridgeState !== 'installed'"
+            v-if="canRepairBridge"
             type="primary"
             :loading="eyesOnAgentsStore.busyAction === 'bridge-install'"
             :disabled="Boolean(eyesOnAgentsStore.busyAction)"
             @click="handleInstallBridge"
           >
-            {{ bridgeState === 'drifted'
-              ? i18nHelper.eyesOnAgents.bridge.repair
-              : i18nHelper.eyesOnAgents.bridge.install }}
+            {{ i18nHelper.eyesOnAgents.bridge.repair }}
           </a-button>
           <a-button
-            v-else
+            v-if="canCleanupBridge"
             status="danger"
             :loading="eyesOnAgentsStore.busyAction === 'bridge-remove'"
             :disabled="Boolean(eyesOnAgentsStore.busyAction)"
             @click="handleRemoveBridge"
           >
-            {{ i18nHelper.eyesOnAgents.bridge.remove }}
+            {{ i18nHelper.eyesOnAgents.bridge.cleanup }}
           </a-button>
         </div>
       </section>
@@ -134,6 +146,17 @@ const bridge = computed(() => eyesOnAgentsStore.snapshot?.bridge ?? null);
 const connectionState = computed(() => connection.value?.state ?? 'disconnected');
 const bridgeState = computed(() => bridge.value?.state ?? 'not_installed');
 const isConnected = computed(() => ['connected', 'syncing'].includes(connectionState.value));
+const canDisconnect = computed(
+  () => isConnected.value || connection.value?.autoConnectEnabled === true,
+);
+const canRepairBridge = computed(
+  () => ['drifted', 'error'].includes(bridgeState.value) ||
+    (bridgeState.value === 'not_installed' && isConnected.value),
+);
+const canCleanupBridge = computed(
+  () => !canDisconnect.value &&
+    ['installed', 'needs_trust', 'drifted'].includes(bridgeState.value),
+);
 const connectionStatusClass = computed(
   () => `eyes-connection-card__status--${connectionState.value}`,
 );
@@ -152,6 +175,7 @@ const connectionLabel = computed(() => {
 const bridgeLabel = computed(() => {
   switch (bridgeState.value) {
     case 'installed': return i18nHelper.eyesOnAgents.bridge.installed;
+    case 'needs_trust': return i18nHelper.eyesOnAgents.bridge.needsTrust;
     case 'drifted': return i18nHelper.eyesOnAgents.bridge.drifted;
     case 'error': return i18nHelper.eyesOnAgents.bridge.error;
     default: return i18nHelper.eyesOnAgents.bridge.notInstalled;

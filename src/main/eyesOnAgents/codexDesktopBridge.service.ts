@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { EyesOnAgentsBridgeStatus } from '@shared/eyesOnAgents/eyesOnAgents.type';
+import type { CodexHookDefinition } from './codexAppServer.supervisor';
 import {
   createCodexHookCommand,
   createCodexHookShim,
@@ -30,7 +31,11 @@ interface CodexDesktopBridgeDependencies {
   appPath: string | null;
   platform?: NodeJS.Platform;
   idFactory?: () => string;
-  runtimeStatus?: () => { listening: boolean; lastEventAt: number | null };
+  runtimeStatus?: () => {
+    listening: boolean;
+    listeningSince: number | null;
+    lastEventAt: number | null;
+  };
 }
 
 interface BridgeState {
@@ -42,15 +47,27 @@ interface BridgeState {
 
 interface HookSpec {
   event: 'SessionStart' | 'UserPromptSubmit' | 'PermissionRequest' | 'Stop';
+  protocolEvent: 'sessionStart' | 'userPromptSubmit' | 'permissionRequest' | 'stop';
   matcher?: string;
 }
 
 const HOOKS: HookSpec[] = [
-  { event: 'SessionStart', matcher: 'startup|resume|clear' },
-  { event: 'UserPromptSubmit' },
-  { event: 'PermissionRequest' },
-  { event: 'Stop' }
+  { event: 'SessionStart', protocolEvent: 'sessionStart', matcher: 'startup|resume|clear' },
+  { event: 'UserPromptSubmit', protocolEvent: 'userPromptSubmit' },
+  { event: 'PermissionRequest', protocolEvent: 'permissionRequest' },
+  { event: 'Stop', protocolEvent: 'stop' }
 ];
+
+const MAX_BRIDGE_ERROR_LENGTH = 300;
+const HOOK_INSPECTION_ERROR = 'Codex hook inspection failed; reconnect or Sync to retry';
+
+type HookInspection =
+  | { hooks: CodexHookDefinition[]; error: null }
+  | { hooks: null; error: string };
+
+const boundedError = (_value: unknown): string => {
+  return HOOK_INSPECTION_ERROR.slice(0, MAX_BRIDGE_ERROR_LENGTH);
+};
 
 const atomicWrite = (path: string, content: string, mode = 0o600): void => {
   mkdirSync(dirname(path), { recursive: true });
@@ -110,6 +127,7 @@ export class CodexDesktopBridgeService {
   private readonly legacyStatePath: string;
   private readonly settingsPath: string;
   private readonly shimPath: string;
+  private hookInspection: HookInspection | null = null;
 
   constructor(private readonly dependencies: CodexDesktopBridgeDependencies) {
     this.platform = dependencies.platform ?? process.platform;
@@ -262,8 +280,16 @@ export class CodexDesktopBridgeService {
     return { ownedCount, exactCount };
   }
 
-  private runtime(): { listening: boolean; lastEventAt: number | null } {
-    return this.dependencies.runtimeStatus?.() ?? { listening: false, lastEventAt: null };
+  private runtime(): {
+    listening: boolean;
+    listeningSince: number | null;
+    lastEventAt: number | null;
+  } {
+    return this.dependencies.runtimeStatus?.() ?? {
+      listening: false,
+      listeningSince: null,
+      lastEventAt: null
+    };
   }
 
   private response(
@@ -274,11 +300,62 @@ export class CodexDesktopBridgeService {
     return {
       state,
       listening: runtime.listening,
+      listeningSince: runtime.listeningSince === null
+        ? null
+        : new Date(runtime.listeningSince).toISOString(),
       lastEventAt: runtime.lastEventAt === null
         ? null
         : new Date(runtime.lastEventAt).toISOString(),
       error
     };
+  }
+
+  updateHookInspection(hooks: CodexHookDefinition[]): void {
+    this.hookInspection = {
+      hooks: hooks.map((hook) => ({ ...hook })),
+      error: null
+    };
+  }
+
+  setHookInspectionError(error: unknown): void {
+    this.hookInspection = { hooks: null, error: boundedError(error) };
+  }
+
+  private inspectedStatus(): EyesOnAgentsBridgeStatus {
+    if (this.hookInspection === null) return this.response('needs_trust');
+    if (this.hookInspection.error !== null) {
+      return this.response('error', this.hookInspection.error);
+    }
+    const expectedCommand = this.expectedHandler().command;
+    const owned = this.hookInspection.hooks.filter(
+      (hook) => hook.command?.includes(this.shimPath) === true
+    );
+    if (owned.length !== HOOKS.length) {
+      return this.response(
+        'drifted',
+        `Codex reported ${owned.length} of ${HOOKS.length} Bitterless hooks`
+      );
+    }
+    const matched: CodexHookDefinition[] = [];
+    for (const spec of HOOKS) {
+      const definitions = owned.filter((hook) =>
+        hook.command === expectedCommand &&
+        hook.eventName === spec.protocolEvent &&
+        hook.handlerType === 'command' &&
+        hook.matcher === (spec.matcher ?? null)
+      );
+      if (definitions.length !== 1) {
+        return this.response('drifted', 'Codex reported changed Bitterless hook definitions');
+      }
+      matched.push(definitions[0]);
+    }
+    if (matched.some((hook) => !hook.enabled)) {
+      return this.response('needs_trust');
+    }
+    if (matched.some((hook) => hook.trustStatus !== 'trusted' && hook.trustStatus !== 'managed')) {
+      return this.response('needs_trust');
+    }
+    return this.response('installed');
   }
 
   getStatus(): EyesOnAgentsBridgeStatus {
@@ -304,7 +381,7 @@ export class CodexDesktopBridgeService {
       ) {
         return this.response('drifted', 'Bitterless Codex hook configuration changed');
       }
-      return this.response('installed');
+      return this.inspectedStatus();
     } catch (error) {
       return this.response('error', error instanceof Error ? error.message : String(error));
     }
@@ -312,6 +389,7 @@ export class CodexDesktopBridgeService {
 
   install(): EyesOnAgentsBridgeStatus {
     try {
+      this.hookInspection = null;
       const installationId = this.ensureInstallationId();
       const state = this.readState() as BridgeState;
       const root = parseRoot(existsSync(this.settingsPath)
@@ -332,6 +410,7 @@ export class CodexDesktopBridgeService {
 
   remove(): EyesOnAgentsBridgeStatus {
     try {
+      this.hookInspection = null;
       const state = this.readState();
       const root = parseRoot(existsSync(this.settingsPath)
         ? readFileSync(this.settingsPath, 'utf8')

@@ -29,6 +29,7 @@ interface UnixSocketIdentity {
 }
 
 type EventConsumer = (event: CodexHookEvent) => Promise<void>;
+type ServerFactory = (listener: (socket: Socket) => void) => Server;
 
 const getSocketIdentity = (path: string): UnixSocketIdentity => {
   const stats = lstatSync(path);
@@ -88,7 +89,13 @@ export class CodexHookBridgeServer {
   private consume: EventConsumer | null = null;
   private consumeQueue: Promise<void> = Promise.resolve();
   private readonly seenEvents = new Set<string>();
+  private listeningSince: number | null = null;
   private lastEventAt: number | null = null;
+
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly serverFactory: ServerFactory = net.createServer
+  ) {}
 
   isListening(): boolean {
     return this.server?.listening === true;
@@ -98,6 +105,10 @@ export class CodexHookBridgeServer {
     return this.lastEventAt;
   }
 
+  getListeningSince(): number | null {
+    return this.listeningSince;
+  }
+
   async start(params: {
     endpoint: CodexHookBridgeEndpoint;
     installationId: string;
@@ -105,7 +116,7 @@ export class CodexHookBridgeServer {
   }): Promise<CodexHookBridgeEndpoint> {
     if (this.server && this.endpoint) return this.endpoint;
     const installationId = parseEyesOnAgentsUuid(params.installationId, 'installationId');
-    const server = net.createServer((socket) => this.handleConnection(socket));
+    const server = this.serverFactory((socket) => this.handleConnection(socket));
     try {
       if (params.endpoint.transport === 'unix') {
         mkdirSync(dirname(params.endpoint.path), { recursive: true, mode: 0o700 });
@@ -134,6 +145,7 @@ export class CodexHookBridgeServer {
       this.endpoint = params.endpoint;
       this.installationId = installationId;
       this.consume = params.consume;
+      this.listeningSince = this.now();
       this.socketIdentity = params.endpoint.transport === 'unix'
         ? getSocketIdentity(params.endpoint.path)
         : null;
@@ -154,6 +166,7 @@ export class CodexHookBridgeServer {
     this.socketIdentity = null;
     this.consume = null;
     this.seenEvents.clear();
+    this.listeningSince = null;
     this.lastEventAt = null;
     if (server) {
       let preserved: string | null = null;

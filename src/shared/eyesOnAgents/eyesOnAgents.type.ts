@@ -18,6 +18,7 @@ export type EyesOnAgentsConnectionState =
 
 export type EyesOnAgentsBridgeState =
   | 'not_installed'
+  | 'needs_trust'
   | 'installed'
   | 'drifted'
   | 'error';
@@ -59,6 +60,7 @@ export interface EyesOnAgentsConnectionStatus {
 export interface EyesOnAgentsBridgeStatus {
   state: EyesOnAgentsBridgeState;
   listening: boolean;
+  listeningSince: string | null;
   lastEventAt: string | null;
   error: string | null;
 }
@@ -114,6 +116,7 @@ export type EyesOnAgentsRuntimeEvent =
 export interface EyesOnAgentsRepositoryApi {
   getSnapshot(): Promise<Pick<EyesOnAgentsSnapshot, 'domains' | 'threads'>>;
   invalidateAppServerStatuses(params: { observedAt: number }): Promise<void>;
+  invalidateCodexHookStatuses(params: { observedAt: number }): Promise<void>;
   upsertDiscoveredThreads(params: {
     threads: EyesOnAgentsDiscoveredThread[];
   }): Promise<void>;

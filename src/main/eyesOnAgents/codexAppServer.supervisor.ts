@@ -23,6 +23,22 @@ interface AppServerConnection {
   disconnecting: boolean;
 }
 
+export type CodexHookTrustStatus =
+  | 'managed'
+  | 'untrusted'
+  | 'trusted'
+  | 'modified'
+  | 'unknown';
+
+export interface CodexHookDefinition {
+  command: string | null;
+  enabled: boolean;
+  eventName: string;
+  handlerType: string;
+  matcher: string | null;
+  trustStatus: CodexHookTrustStatus;
+}
+
 type SpawnAppServer = (
   executable: string,
   args: string[]
@@ -40,6 +56,8 @@ export interface CodexAppServerSupervisorOptions {
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_THREADS = 10_000;
 const MAX_PAGES = 100;
+const MAX_HOOKS = 1_000;
+const MAX_HOOK_TEXT_LENGTH = 8_192;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 const fixedCodexCandidates = (): string[] => {
@@ -98,6 +116,42 @@ const errorMessage = (value: unknown): string => {
     }
   }
   return 'Codex App Server request failed';
+};
+
+const parseHookText = (value: unknown, label: string): string => {
+  if (typeof value !== 'string' || value.length > MAX_HOOK_TEXT_LENGTH) {
+    throw new Error(`Codex hooks/list ${label} is invalid`);
+  }
+  return value;
+};
+
+const parseNullableHookText = (value: unknown, label: string): string | null => {
+  if (value === null || value === undefined) return null;
+  return parseHookText(value, label);
+};
+
+const parseHookTrustStatus = (value: unknown): CodexHookTrustStatus => {
+  if (value === 'managed' || value === 'untrusted' || value === 'trusted' || value === 'modified') {
+    return value;
+  }
+  return 'unknown';
+};
+
+const parseHookDefinition = (value: unknown, index: number): CodexHookDefinition => {
+  if (!isEyesOnAgentsRecord(value)) {
+    throw new Error(`Codex hooks/list hook ${index} is invalid`);
+  }
+  if (typeof value.enabled !== 'boolean') {
+    throw new Error(`Codex hooks/list hook ${index} enabled flag is invalid`);
+  }
+  return {
+    command: parseNullableHookText(value.command, `hook ${index} command`),
+    enabled: value.enabled,
+    eventName: parseHookText(value.eventName, `hook ${index} eventName`),
+    handlerType: parseHookText(value.handlerType, `hook ${index} handlerType`),
+    matcher: parseNullableHookText(value.matcher, `hook ${index} matcher`),
+    trustStatus: parseHookTrustStatus(value.trustStatus)
+  };
 };
 
 export class CodexAppServerSupervisor {
@@ -299,6 +353,25 @@ export class CodexAppServerSupervisor {
       if (this.connection === connection) this.setStatus('error', message);
       throw error;
     }
+  }
+
+  async listHooks(): Promise<CodexHookDefinition[]> {
+    const connection = this.connection;
+    if (!connection || !this.isConnected()) {
+      throw new Error('Codex App Server is not connected');
+    }
+    const result = await this.request(connection, 'hooks/list', { cwds: [] });
+    if (!isEyesOnAgentsRecord(result) || !Array.isArray(result.data) || result.data.length !== 1) {
+      throw new Error('Codex hooks/list response is invalid');
+    }
+    const entry = result.data[0];
+    if (!isEyesOnAgentsRecord(entry) || !Array.isArray(entry.hooks)) {
+      throw new Error('Codex hooks/list entry is invalid');
+    }
+    if (entry.hooks.length > MAX_HOOKS) {
+      throw new Error(`Codex hooks/list exceeded ${MAX_HOOKS} entries`);
+    }
+    return entry.hooks.map((hook, index) => parseHookDefinition(hook, index));
   }
 
   private request(

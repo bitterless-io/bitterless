@@ -31,11 +31,39 @@ const desktopBridge = new CodexDesktopBridgeService({
   appPath: app.isPackaged ? null : app.getAppPath(),
   runtimeStatus: () => ({
     listening: codexHookBridgeServer.isListening(),
+    listeningSince: codexHookBridgeServer.getListeningSince(),
     lastEventAt: codexHookBridgeServer.getLastEventAt()
   })
 });
 
 let eyesOnAgentsService: EyesOnAgentsService;
+let bridgeStartPromise: Promise<void> | null = null;
+
+const startBridgeListener = async (): Promise<void> => {
+  if (codexHookBridgeServer.isListening()) return;
+  if (bridgeStartPromise) return await bridgeStartPromise;
+  bridgeStartPromise = (async () => {
+    const installationId = desktopBridge.ensureInstallationId();
+    await codexHookBridgeServer.start({
+      endpoint: getCodexHookBridgeEndpoint(app.getPath('userData')),
+      installationId,
+      consume: async (event) => {
+        await eyesOnAgentsService.applyCodexHookEvent(event);
+      }
+    });
+  })();
+  try {
+    await bridgeStartPromise;
+  } finally {
+    bridgeStartPromise = null;
+  }
+};
+
+const stopBridgeListener = async (): Promise<void> => {
+  if (bridgeStartPromise) await bridgeStartPromise;
+  await codexHookBridgeServer.stop();
+};
+
 const appServer = new CodexAppServerSupervisor({
   onNotification: async (method, params) => {
     await eyesOnAgentsService.handleAppServerNotification(method, params);
@@ -50,25 +78,20 @@ eyesOnAgentsService = new EyesOnAgentsService({
   settings,
   appServer,
   desktopBridge,
+  bridgeListener: {
+    start: startBridgeListener,
+    stop: stopBridgeListener
+  },
   openExternal: async (url) => await shell.openExternal(url),
   broadcastChanged: () => xpcMain.broadcast('eyes-on-agents/changed', {})
 });
 
 export const startEyesOnAgentsRuntime = async (): Promise<void> => {
-  const installationId = desktopBridge.ensureInstallationId();
-  await codexHookBridgeServer.start({
-    endpoint: getCodexHookBridgeEndpoint(app.getPath('userData')),
-    installationId,
-    consume: async (event) => {
-      await eyesOnAgentsService.applyCodexHookEvent(event);
-    }
-  });
   await eyesOnAgentsService.initialize();
 };
 
 export const stopEyesOnAgentsRuntime = async (): Promise<void> => {
   await eyesOnAgentsService.shutdown();
-  await codexHookBridgeServer.stop();
 };
 
 export const suspendEyesOnAgentsForAuth = async (): Promise<void> => {

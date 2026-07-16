@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -36,6 +37,44 @@ const ownedHandlers = (root) => Object.values(root.hooks ?? {}).flatMap((groups)
   ))
 );
 
+const ownedHookDefinitions = (root, trustStatus = 'trusted') =>
+  Object.entries(root.hooks ?? {}).flatMap(([eventName, groups]) =>
+    groups.flatMap((group) => group.hooks
+      .filter((handler) =>
+        typeof handler.command === 'string' &&
+        handler.command.includes('bitterless-codex-session-hook')
+      )
+      .map((handler) => ({
+        command: handler.command,
+        enabled: true,
+        eventName: ({
+          SessionStart: 'sessionStart',
+          UserPromptSubmit: 'userPromptSubmit',
+          PermissionRequest: 'permissionRequest',
+          Stop: 'stop'
+        })[eventName],
+        handlerType: 'command',
+        matcher: group.matcher ?? null,
+        trustStatus
+      })))
+  );
+
+class FakeServer extends EventEmitter {
+  listening = false;
+
+  listen(_path, callback) {
+    this.listening = true;
+    queueMicrotask(callback);
+    return this;
+  }
+
+  close(callback) {
+    this.listening = false;
+    queueMicrotask(callback);
+    return this;
+  }
+}
+
 try {
   mkdirSync(dirname(settingsPath), { recursive: true });
   writeFileSync(settingsPath, `${JSON.stringify({
@@ -59,27 +98,57 @@ try {
     appPath: null,
     platform: 'darwin',
     idFactory: () => INSTALLATION_ID,
-    runtimeStatus: () => ({ listening: true, lastEventAt: 123 })
+    runtimeStatus: () => ({ listening: true, listeningSince: 100, lastEventAt: 123 })
   });
 
   assert.equal(service.getStatus().state, 'not_installed');
-  assert.equal(service.install().state, 'installed');
+  assert.equal(service.install().state, 'needs_trust');
   assert.equal(existsSync(shimPath), true);
   let root = JSON.parse(readFileSync(settingsPath, 'utf8'));
   assert.equal(root.userSetting, true);
   assert.equal(root.hooks.SessionStart[0].hooks[0].command, '/usr/bin/user-hook');
   assert.equal(ownedHandlers(root).length, 4);
   assert.equal(existsSync(join(homePath, '.claude')), false, 'Codex bridge must not touch other agents');
+  assert.equal(service.getStatus().listeningSince, new Date(100).toISOString());
 
-  assert.equal(service.install().state, 'installed');
+  const trustedDefinitions = ownedHookDefinitions(root);
+  service.updateHookInspection(trustedDefinitions);
+  assert.equal(service.getStatus().state, 'installed');
+  service.updateHookInspection(ownedHookDefinitions(root, 'managed'));
+  assert.equal(service.getStatus().state, 'installed');
+  for (const trustStatus of ['untrusted', 'modified', 'unknown']) {
+    service.updateHookInspection(ownedHookDefinitions(root, trustStatus));
+    assert.equal(
+      service.getStatus().state,
+      'needs_trust',
+      `${trustStatus} definitions must require Codex review`
+    );
+  }
+  service.updateHookInspection([
+    { ...trustedDefinitions[0], enabled: false },
+    ...trustedDefinitions.slice(1)
+  ]);
+  assert.equal(service.getStatus().state, 'needs_trust');
+  service.updateHookInspection(trustedDefinitions.slice(1));
+  assert.equal(service.getStatus().state, 'drifted');
+  service.setHookInspectionError(new Error(`malformed-${'x'.repeat(500)}`));
+  assert.equal(service.getStatus().state, 'error');
+  assert.ok(service.getStatus().error.length <= 300, 'inspection errors must stay bounded');
+
+  assert.equal(service.install().state, 'needs_trust');
   root = JSON.parse(readFileSync(settingsPath, 'utf8'));
   assert.equal(ownedHandlers(root).length, 4, 'repeated install must stay idempotent');
+  service.updateHookInspection(ownedHookDefinitions(root));
+  assert.equal(service.getStatus().state, 'installed');
 
   const owned = ownedHandlers(root)[0];
   owned.timeout = 999;
   writeFileSync(settingsPath, `${JSON.stringify(root, null, 2)}\n`);
   assert.equal(service.getStatus().state, 'drifted');
-  assert.equal(service.install().state, 'installed', 'install must repair owned hook drift');
+  assert.equal(service.install().state, 'needs_trust', 'install must repair owned hook drift');
+  root = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  service.updateHookInspection(ownedHookDefinitions(root));
+  assert.equal(service.getStatus().state, 'installed');
 
   assert.equal(service.remove().state, 'not_installed');
   root = JSON.parse(readFileSync(settingsPath, 'utf8'));
@@ -123,6 +192,46 @@ try {
   });
   assert.doesNotMatch(JSON.stringify(event), /PROMPT-SENTINEL/);
   assert.equal(event.payload.sessionId, THREAD_ID);
+
+  const { CodexHookBridgeServer } = await loadTypeScriptModule(
+    'bridge-server',
+    'src/main/eyesOnAgents/codexHookBridge.server.ts'
+  );
+  let listenerNow = 1_000;
+  const bridgeServer = new CodexHookBridgeServer(
+    () => listenerNow,
+    () => new FakeServer()
+  );
+  const listenerEndpoint = {
+    transport: 'win32-named-pipe',
+    path: `\\\\.\\pipe\\bitterless-eyes-${process.pid}-${Date.now()}`
+  };
+  await bridgeServer.start({
+    endpoint: listenerEndpoint,
+    installationId: INSTALLATION_ID,
+    consume: async () => undefined
+  });
+  assert.equal(bridgeServer.getListeningSince(), 1_000);
+  listenerNow = 2_000;
+  await bridgeServer.start({
+    endpoint: listenerEndpoint,
+    installationId: INSTALLATION_ID,
+    consume: async () => undefined
+  });
+  assert.equal(
+    bridgeServer.getListeningSince(),
+    1_000,
+    'an idempotent start must preserve the continuous listener lifetime'
+  );
+  await bridgeServer.stop();
+  assert.equal(bridgeServer.getListeningSince(), null);
+  await bridgeServer.start({
+    endpoint: listenerEndpoint,
+    installationId: INSTALLATION_ID,
+    consume: async () => undefined
+  });
+  assert.equal(bridgeServer.getListeningSince(), 2_000);
+  await bridgeServer.stop();
 
   console.log('EyesOnAgents Codex bridge tests passed');
 } finally {

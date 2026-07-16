@@ -1,4 +1,5 @@
 import type {
+  EyesOnAgentsBridgeState,
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsRuntimeEvent,
   EyesOnAgentsRuntimeState
@@ -169,16 +170,37 @@ export const isEyesOnAgentsFocused = (
 ): boolean => ACTIVE_STATES.has(runtimeState) || isUnread;
 
 export const effectiveEyesOnAgentsRuntimeState = (
-  runtimeState: EyesOnAgentsRuntimeState,
-  statusSource: 'app_server' | 'codex_hook' | 'discovery',
-  statusObservedAt: number | null,
-  now: number,
-  managedServerConnected: boolean
+  params: {
+    runtimeState: EyesOnAgentsRuntimeState;
+    statusSource: 'app_server' | 'codex_hook' | 'discovery';
+    statusObservedAt: number | null;
+    managedServerConnected: boolean;
+    hookBridgeState: EyesOnAgentsBridgeState;
+    hookBridgeListening: boolean;
+    hookBridgeListeningSince: number | null;
+  }
 ): EyesOnAgentsRuntimeState => {
+  const {
+    runtimeState,
+    statusSource,
+    statusObservedAt,
+    managedServerConnected,
+    hookBridgeState,
+    hookBridgeListening,
+    hookBridgeListeningSince
+  } = params;
   if (!ACTIVE_STATES.has(runtimeState)) return runtimeState;
   if (statusObservedAt === null) return 'unknown';
   if (statusSource === 'app_server') return managedServerConnected ? runtimeState : 'unknown';
-  if (statusSource === 'codex_hook' && now - statusObservedAt <= 60_000) return runtimeState;
+  if (
+    statusSource === 'codex_hook' &&
+    hookBridgeState === 'installed' &&
+    hookBridgeListening &&
+    hookBridgeListeningSince !== null &&
+    statusObservedAt >= hookBridgeListeningSince
+  ) {
+    return runtimeState;
+  }
   return 'unknown';
 };
 

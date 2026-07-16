@@ -26,8 +26,8 @@ EyesOnAgents never reads or displays them.
 - Show running threads and newly completed unread threads in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
-- Supplement managed App Server events with the existing opt-in Codex Desktop hook bridge, while
-  making the evidence source visible and bounded.
+- Supplement managed App Server events with the metadata-only Codex Desktop hook bridge managed by
+  the EyesOnAgents connection lifecycle, while making the evidence source visible and bounded.
 - Support macOS and Windows through the existing Electron/XPC architecture.
 
 ## Non-goals
@@ -65,24 +65,34 @@ same server instance. Codex Desktop currently owns a separate private stdio App 
 no supported external attach endpoint. A managed connection can list the shared thread store, but
 it must not reinterpret `notLoaded` as idle or completed.
 
-The Codex hook bridge is therefore retained as a separate, optional Desktop observation source. It
-can report lifecycle transitions for Desktop/CLI work after installation, but it does not provide
-transcripts and cannot prove every possible waiting state. Stale or contradictory evidence becomes
-`unknown`.
+The Codex hook bridge is therefore the Desktop observation source and is installed or repaired by
+the same Connect action that starts the managed App Server. It reports lifecycle transitions for
+Desktop/CLI work after installation, but it does not provide transcripts and cannot prove a turn
+that was already running before the current listener started. Stale or contradictory evidence
+becomes `unknown`.
+
+Codex treats the bridge as a non-managed command hook and requires the user to review and trust its
+exact definition once before it runs. After installation, EyesOnAgents inspects `hooks/list` and
+reports `needs_trust` until every Bitterless-owned definition is enabled and has `trusted` or
+`managed` trust status. Bitterless never bypasses Codex hook trust or writes managed policy.
 
 ## App Server connection lifecycle
 
 The main process owns one connection supervisor for the entire Bitterless process:
 
-1. `Connect` resolves the installed Codex executable and starts `codex app-server --stdio` without
-   a shell.
-2. The client completes the JSON-RPC initialize handshake before reporting `connected`.
-3. It pages through `thread/list`, upserts Codex metadata, and leaves the child process running.
-4. Notifications such as `thread/status/changed`, `turn/started`, and `turn/completed` update the
+1. `Connect` installs or repairs the Bitterless-owned metadata-only Codex Desktop bridge.
+2. It resolves the installed Codex executable and starts `codex app-server --stdio` without a
+   shell.
+3. The client completes the JSON-RPC initialize handshake before reporting `connected`.
+4. It calls `hooks/list` to verify that every Bitterless-owned Desktop hook is enabled and trusted.
+5. It pages through `thread/list`, upserts Codex metadata, and leaves the child process running.
+6. Notifications such as `thread/status/changed`, `turn/started`, and `turn/completed` update the
    repository and broadcast a compact change event to EyesOnAgents renderers.
-5. Unexpected process exit changes the connection to `error`; it never fabricates thread state.
-6. `Disconnect`, sign-out, or application shutdown terminates only the App Server process owned by
-   Bitterless.
+7. Trusted Desktop hook events update the same repository while preserving their separate evidence
+   source.
+8. Unexpected process exit changes the connection to `error`; it never fabricates thread state.
+9. Explicit `Disconnect` terminates the Bitterless-owned App Server and removes only the
+   Bitterless-owned Desktop hook entries.
 
 A successful explicit connection enables auto-connect for later Bitterless launches. Explicit
 disconnect disables auto-connect. Connection preference belongs in the existing setting store;
@@ -163,9 +173,13 @@ App Server active flags map approval/input waits ahead of generic working. `notL
 `unknown`, not idle. A terminal turn notification records completion independently from the
 thread's resulting idle state.
 
-Hook evidence may temporarily override discovery evidence when it is newer. App Server lifecycle
-events from the managed connection are authoritative for that connection. Evidence past the
-existing freshness boundary becomes `unknown` while the durable completion/open markers remain.
+Hook evidence may override discovery evidence when it is newer. App Server lifecycle events from
+the managed connection are authoritative for that connection. Hook-active evidence remains valid
+until terminal evidence only while its observation belongs to the current continuously listening
+bridge runtime and all owned hooks are trusted. A Bitterless restart establishes a new listener
+lifetime, so active evidence from a previous lifetime becomes `unknown` while durable
+completion/open markers remain. There is no 60-second active expiry because Codex emits no running
+heartbeat.
 
 ## Focus and unread semantics
 

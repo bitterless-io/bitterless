@@ -49,3 +49,22 @@ test('observation board exposes stable regions and reduced motion', () => {
   assert.match(source, /eyesOnAgentsEmitter\.moveThread/);
   assert.doesNotMatch(source, /Claude|claude/);
 });
+
+test('connection panel presents Connect-managed bridge trust and safe cleanup', () => {
+  const panel = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
+  );
+  const menuBar = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue'
+  );
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  assert.match(panel, /bridgeState === 'needs_trust'/);
+  assert.match(panel, /eyesOnAgents\.bridge\.trustReview/);
+  assert.match(panel, /!canDisconnect\.value &&[\s\S]*'installed', 'needs_trust', 'drifted'/);
+  assert.match(menuBar, /case 'needs_trust'/);
+  assert.match(english, /Managed by Connect/);
+  assert.match(english, /open \/hooks and approve or enable the four Bitterless hooks/);
+  assert.match(chinese, /打开 \/hooks，批准或启用 4 条 Bitterless hooks/);
+});

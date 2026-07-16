@@ -76,6 +76,33 @@ class FakeChild extends EventEmitter {
         ? { data: [{ id: 'one' }], nextCursor: 'page-2' }
         : { data: [{ id: 'two' }], nextCursor: null };
       queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+      return;
+    }
+    if (message.method === 'hooks/list') {
+      const result = {
+        data: [{
+          cwd: '/repo',
+          errors: [],
+          warnings: [],
+          hooks: [{
+            command: '/fixed/bitterless-hook',
+            currentHash: 'hash',
+            displayOrder: 1,
+            enabled: true,
+            eventName: 'stop',
+            handlerType: 'command',
+            isManaged: false,
+            key: 'private-key-not-for-renderer',
+            matcher: null,
+            source: 'user',
+            sourcePath: '/private/hooks.json',
+            statusMessage: 'private-detail-not-for-renderer',
+            timeoutSec: 2,
+            trustStatus: 'trusted'
+          }]
+        }]
+      };
+      queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
     }
   }
 
@@ -120,6 +147,18 @@ class DelayedInitializeChild extends FakeChild {
   }
 }
 
+class MalformedHooksChild extends FakeChild {
+  handle(message) {
+    if (message.method !== 'hooks/list') {
+      super.handle(message);
+      return;
+    }
+    this.messages.push(message);
+    const result = { data: [{ hooks: [{ enabled: 'yes' }] }] };
+    queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+  }
+}
+
 try {
   const { CodexAppServerSupervisor } = await loadSupervisor();
   const { EyesOnAgentsService } = await loadService();
@@ -155,6 +194,14 @@ try {
     2,
     'thread/list must page until nextCursor is null'
   );
+  assert.deepEqual(await supervisor.listHooks(), [{
+    command: '/fixed/bitterless-hook',
+    enabled: true,
+    eventName: 'stop',
+    handlerType: 'command',
+    matcher: null,
+    trustStatus: 'trusted'
+  }], 'hooks/list must return only the bounded fields needed for owned-hook inspection');
 
   child.stdout.write(`${JSON.stringify({
     method: 'turn/completed',
@@ -184,6 +231,23 @@ try {
   });
   await assert.rejects(() => brokenSupervisor.connect(), /invalid JSON|failed/i);
   assert.equal(brokenSupervisor.getStatus(false).state, 'error');
+
+  const malformedHooksChild = new MalformedHooksChild();
+  const malformedHooksSupervisor = new CodexAppServerSupervisor({
+    executable: '/fixed/codex',
+    spawnAppServer: () => malformedHooksChild
+  });
+  await malformedHooksSupervisor.connect();
+  await assert.rejects(
+    () => malformedHooksSupervisor.listHooks(),
+    /hooks\/list hook 0 enabled flag is invalid/
+  );
+  assert.equal(
+    malformedHooksSupervisor.getStatus(false).state,
+    'connected',
+    'malformed hook metadata must not corrupt the App Server connection'
+  );
+  await malformedHooksSupervisor.disconnect();
 
   const disconnectChild = new FakeChild();
   const disconnectSupervisor = new CodexAppServerSupervisor({
@@ -267,7 +331,15 @@ try {
       threads: []
     }),
     invalidateAppServerStatuses: async () => undefined,
+    invalidateCodexHookStatuses: async () => undefined,
     upsertDiscoveredThreads: async () => undefined
+  };
+  let delayedBridgeStatus = {
+    state: 'not_installed',
+    listening: false,
+    listeningSince: null,
+    lastEventAt: null,
+    error: null
   };
   const delayedService = new EyesOnAgentsService({
     repository: delayedRepository,
@@ -277,14 +349,37 @@ try {
     },
     appServer: delayedSupervisor,
     desktopBridge: {
-      getStatus: () => ({
-        state: 'not_installed',
-        listening: false,
-        lastEventAt: null,
-        error: null
-      }),
-      install: () => undefined,
-      remove: () => undefined
+      getStatus: () => delayedBridgeStatus,
+      install: () => {
+        delayedBridgeStatus = { ...delayedBridgeStatus, state: 'needs_trust' };
+        return delayedBridgeStatus;
+      },
+      remove: () => {
+        delayedBridgeStatus = { ...delayedBridgeStatus, state: 'not_installed' };
+        return delayedBridgeStatus;
+      },
+      updateHookInspection: () => {
+        delayedBridgeStatus = { ...delayedBridgeStatus, state: 'installed' };
+      },
+      setHookInspectionError: () => {
+        delayedBridgeStatus = { ...delayedBridgeStatus, state: 'error' };
+      }
+    },
+    bridgeListener: {
+      start: async () => {
+        delayedBridgeStatus = {
+          ...delayedBridgeStatus,
+          listening: true,
+          listeningSince: new Date(250).toISOString()
+        };
+      },
+      stop: async () => {
+        delayedBridgeStatus = {
+          ...delayedBridgeStatus,
+          listening: false,
+          listeningSince: null
+        };
+      }
     },
     openExternal: async () => undefined,
     now: () => 300
@@ -315,6 +410,11 @@ try {
   await Promise.all([delayedConnectRequest, delayedSyncRequest]);
   assert.equal(delayedSyncOutcome, 'resolved');
   assert.equal(delayedSupervisor.getStatus(false).state, 'connected');
+  assert.ok(
+    delayedChild.messages.findIndex((message) => message.method === 'hooks/list') <
+      delayedChild.messages.findIndex((message) => message.method === 'thread/list'),
+    'hook trust inspection must begin before any thread/list page request'
+  );
   assert.equal(
     delayedChild.messages.filter((message) => message.method === 'initialize').length,
     1,
@@ -329,6 +429,11 @@ try {
     delayedChild.messages.filter((message) => message.method === 'thread/list').length,
     4,
     'both service requests must sync successfully after readiness'
+  );
+  assert.equal(
+    delayedChild.messages.filter((message) => message.method === 'hooks/list').length,
+    2,
+    'both service requests must refresh hook trust after sync'
   );
   await delayedSupervisor.disconnect();
 
