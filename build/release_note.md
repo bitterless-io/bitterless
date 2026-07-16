@@ -1,3 +1,5 @@
 - 👀 Added EyesOnAgents with Codex project filtering, Focus monitoring, and archive synchronization.
-- 🔄 Refreshes Codex task titles and archive state whenever the observation window is activated.
+- 🔄 Added a manual Refresh fallback and automatic activation refresh for Codex titles and archive state.
+- 💾 Persists Codex thread inventory snapshots separately from Bitterless Domain and unread markers.
+- 🎯 Running or newly completed tasks become unread; opening them from EyesOnAgents marks them read.
 - 🛡️ Added fail-closed, multi-version SQLite migration checks before every production package.
