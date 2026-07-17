@@ -5,6 +5,7 @@ import {
   type AppLanguage,
   type ApplicationLanguageSnapshot,
   type DurableLanguageApi,
+  resolveSystemAppLanguage,
 } from '@shared/i18n/applicationLanguage';
 import { trayHelper } from '../tray/tray.helper';
 import { i18nHelper } from './i18n.helper';
@@ -29,6 +30,10 @@ class ApplicationLanguageService {
       },
     },
   );
+
+  initializeFallback(systemLocale: unknown): ApplicationLanguageSnapshot {
+    return this.coordinator.initializeFallback(resolveSystemAppLanguage(systemLocale));
+  }
 
   async initialize(): Promise<ApplicationLanguageSnapshot> {
     return await this.coordinator.initialize();

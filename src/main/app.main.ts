@@ -20,6 +20,7 @@ import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
 import {
   OptionalStartupLifecycle,
   type OptionalStartupStageGuard,
+  withStartupTimeout,
 } from './mcp/optionalStartupLifecycle.service';
 import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
@@ -38,6 +39,8 @@ const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
+const CORE_SQLITE_READY_TIMEOUT_MS = 3000;
+const PERSISTED_LANGUAGE_TIMEOUT_MS = 1000;
 
 if (isHelperMode && process.platform === 'darwin') {
   app.setActivationPolicy('prohibited');
@@ -161,6 +164,13 @@ let cleanupPromise: Promise<void> | null = null;
 let stopEyesOnAgentsRuntime: (() => Promise<void>) | null = null;
 const optionalIntegrationsLifecycle = new OptionalStartupLifecycle();
 
+const initializeApplicationLanguageFallback = (): void => {
+  const systemLocale = app.isReady()
+    ? app.getPreferredSystemLanguages()[0]
+    : 'en';
+  applicationLanguageService.initializeFallback(systemLocale);
+};
+
 const redirectConsoleToStderr = (): void => {
   const write = (level: string, args: unknown[]): void => {
     process.stderr.write(`[${level}] ${args.map((arg) => {
@@ -220,6 +230,7 @@ const runLegacyMcpHelper = async (): Promise<void> => {
 };
 
 const startGui = async (): Promise<void> => {
+  initializeApplicationLanguageFallback();
   installE2ENetworkGuard();
   electronApp.setAppUserModelId('com.electron');
   if (process.platform === 'darwin') {
@@ -236,22 +247,9 @@ const startGui = async (): Promise<void> => {
     optimizer.watchWindowShortcuts(window);
   });
 
-  // 先启动 SQLite 进程并等待其准备就绪
+  // 先启动 SQLite 进程并等待文档加载；DAO readiness 属于有界的可选启动。
   const sqliteWindow = sqliteWindowHelper.create();
   await waitForWindowLoad(sqliteWindow);
-
-  let coreSqliteReady = false;
-  try {
-    const coreSqliteResult = await coreSqliteBoot.ready();
-    if (!coreSqliteResult?.ok) {
-      throw new Error(coreSqliteResult?.error || 'Core SQLite preload did not become ready');
-    }
-    coreSqliteReady = true;
-  } catch (err) {
-    console.warn('[app] MCP integration disabled because core SQLite is unavailable:', err);
-  }
-
-  await applicationLanguageService.initialize();
 
   // SQLite 进程准备就绪后，再启动主窗口和其他窗口
   // llamaWindowHelper.create();
@@ -267,25 +265,46 @@ const startGui = async (): Promise<void> => {
   });
 
   void optionalIntegrationsLifecycle.start((canStartNextStage) =>
-    startOptionalIntegrations(coreSqliteReady, canStartNextStage)
+    startOptionalIntegrations(canStartNextStage)
   ).catch((err: unknown) => {
     console.warn('[app] Optional integrations disabled:', err);
   });
 };
 
 const startOptionalIntegrations = async (
-  coreSqliteReady: boolean,
   canStartNextStage: OptionalStartupStageGuard,
 ): Promise<void> => {
   if (!canStartNextStage()) return;
-  let mcpBridgeStarted = false;
-  if (coreSqliteReady) {
-    try {
-      await mcpBridgeServer.start();
-      mcpBridgeStarted = true;
-    } catch (err) {
-      console.warn('[app] MCP integration disabled:', err);
+  try {
+    const coreSqliteResult = await withStartupTimeout(coreSqliteBoot.ready(), {
+      label: 'Core SQLite readiness',
+      timeoutMs: CORE_SQLITE_READY_TIMEOUT_MS,
+    });
+    if (!coreSqliteResult?.ok) {
+      throw new Error(coreSqliteResult?.error || 'Core SQLite preload did not become ready');
     }
+  } catch (err) {
+    console.warn('[app] MCP integration disabled because core SQLite is unavailable:', err);
+    return;
+  }
+  if (!canStartNextStage()) return;
+
+  try {
+    await withStartupTimeout(applicationLanguageService.initialize(), {
+      label: 'Persisted application language read',
+      timeoutMs: PERSISTED_LANGUAGE_TIMEOUT_MS,
+    });
+  } catch (err) {
+    console.warn('[app] Persisted language unavailable; keeping system fallback:', err);
+  }
+  if (!canStartNextStage()) return;
+
+  let mcpBridgeStarted = false;
+  try {
+    await mcpBridgeServer.start();
+    mcpBridgeStarted = true;
+  } catch (err) {
+    console.warn('[app] MCP integration disabled:', err);
   }
   if (!canStartNextStage()) return;
   if (mcpBridgeStarted) {
@@ -297,15 +316,13 @@ const startOptionalIntegrations = async (
   }
   if (!canStartNextStage()) return;
 
-  if (coreSqliteReady) {
-    try {
-      const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
-      if (!canStartNextStage()) return;
-      stopEyesOnAgentsRuntime = eyesOnAgentsRuntime.stopEyesOnAgentsRuntime;
-      await eyesOnAgentsRuntime.startEyesOnAgentsRuntime();
-    } catch (err) {
-      console.warn('[app] EyesOnAgents runtime disabled:', err);
-    }
+  try {
+    const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
+    if (!canStartNextStage()) return;
+    stopEyesOnAgentsRuntime = eyesOnAgentsRuntime.stopEyesOnAgentsRuntime;
+    await eyesOnAgentsRuntime.startEyesOnAgentsRuntime();
+  } catch (err) {
+    console.warn('[app] EyesOnAgents runtime disabled:', err);
   }
 };
 
@@ -356,6 +373,7 @@ app.on('before-quit', async (event) => {
   }
 
   if (process.platform === 'darwin' && !hasShownQuitDialog) {
+    initializeApplicationLanguageFallback();
     hasShownQuitDialog = true;
 
     const shouldQuit = await dialogHelper.showQuitConfirmDialog();

@@ -28,11 +28,17 @@ window the first visible, single-instance application surface during development
   settings byte-identical and failing closed for drifted definitions.
 - Request the single-instance lock only in GUI mode and focus current Home on a second launch.
 - Create Home after SQLite and language readiness, before optional MCP/EyesOnAgents runtime work.
+- Give Core SQLite readiness and persisted main-window layout reads explicit startup bounds. On
+  timeout, initialize the Home shell with a system-language fallback and keep SQLite-dependent
+  integrations disabled.
 
 ## Expected paths
 
 - `electron.vite.config.ts`
 - `src/main/app.main.ts`
+- `src/main/windows/mainWindow.helper.ts`
+- `src/main/i18n/applicationLanguage.service.ts`
+- `src/shared/i18n/applicationLanguage.ts`
 - `src/main/mcp/`
 - `src/main/xpc/mcp.handler.ts`
 - `src/shared/mcp/mcpBridge.shared.ts`
@@ -49,4 +55,6 @@ window the first visible, single-instance application surface during development
   mutation or generic repair.
 - Startup tests prove unresolved EyesOnAgents work cannot precede or block Home, and only GUI mode
   owns the single-instance lock.
+- A deterministic never-resolving SQLite/layout fixture proves Home still creates within the bound
+  and an early quit path has initialized main-process i18n.
 - Relevant typechecks, build, compiled-helper smoke checks, and `git diff --check` pass.

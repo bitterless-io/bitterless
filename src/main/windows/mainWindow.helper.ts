@@ -4,9 +4,11 @@ import { debounce } from 'es-toolkit';
 import { createXpcMainEmitter } from 'electron-xpc/main';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
+import { withStartupTimeout } from '../mcp/optionalStartupLifecycle.service';
 
 const WINDOW_LAYOUT_KEY = 'window_layout';
 const WINDOW_LAYOUT_SUB_KEY = 'main';
+const MAIN_WINDOW_LAYOUT_TIMEOUT_MS = 1000;
 const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
 
 class MainWindowHelper extends WindowHelper {
@@ -74,7 +76,15 @@ class MainWindowHelper extends WindowHelper {
   }
 
   async create(): Promise<any> {
-    const savedLayout = await this.loadLayout();
+    let savedLayout: WindowLayout | null = null;
+    try {
+      savedLayout = await withStartupTimeout(this.loadLayout(), {
+        label: 'Main window layout read',
+        timeoutMs: MAIN_WINDOW_LAYOUT_TIMEOUT_MS,
+      });
+    } catch (err) {
+      console.warn('[MainWindowHelper] Using default layout because saved layout is unavailable:', err);
+    }
     if (savedLayout) {
       this.windowOptions = {
         ...this.windowOptions,

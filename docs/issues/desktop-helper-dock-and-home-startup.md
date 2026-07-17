@@ -15,6 +15,10 @@ the macOS Dock, while the expected Home window is absent or delayed indefinitely
   app-main helper mode instead of the dedicated Node helper.
 - Normal startup awaits optional Codex inspection and synchronization before creating Home.
 - The GUI entry has no explicit single-instance lock.
+- Live `yarn dev` verification exposed a second independent gate: the SQLite renderer can finish
+  loading while `CoreSqliteBootDao.ready()` never resolves. Startup then owns only the SQLite
+  renderer indefinitely; Home is never created. Quitting in this state also reaches the localized
+  confirmation dialog before application language initialization and rejects its event handler.
 
 ## Required correction
 
@@ -23,6 +27,10 @@ the macOS Dock, while the expected Home window is absent or delayed indefinitely
 3. Refresh exact owned EyesOnAgents artifacts without changing hook settings or trust.
 4. Acquire one GUI instance per profile and focus it on repeated launch.
 5. Create Home after SQLite/language readiness but before optional background integrations.
+6. Bound Core SQLite readiness and saved-layout reads. A database/preload stall must fall back to a
+   visible Home window with SQLite-dependent integrations disabled, never an infinite startup.
+7. Initialize a safe system-language fallback before a readiness wait can block, so early quit and
+   other main-process dialogs remain valid during degraded startup.
 
 ## Acceptance
 
@@ -30,4 +38,6 @@ the macOS Dock, while the expected Home window is absent or delayed indefinitely
 - Exact legacy hook artifacts migrate without changing hook configuration bytes or trust state.
 - One profile exposes at most one GUI Dock application and repeated launch focuses Home.
 - An unresolved EyesOnAgents initialization cannot block Home creation.
+- An unresolved Core SQLite readiness or layout request cannot block Home creation, and early quit
+  does not produce an unhandled language-initialization rejection.
 - Focused helper, lifecycle, typecheck, build, and source-order regressions pass.

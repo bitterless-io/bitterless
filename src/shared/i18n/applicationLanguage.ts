@@ -60,6 +60,11 @@ export const parseAppLanguage = (value: unknown): AppLanguage => {
   return value;
 };
 
+export const resolveSystemAppLanguage = (value: unknown): AppLanguage => {
+  if (typeof value !== 'string') return 'en';
+  return /^zh(?:[-_]|$)/i.test(value.trim()) ? 'zh' : 'en';
+};
+
 export const parseApplicationLanguageSnapshot = (
   value: unknown,
 ): ApplicationLanguageSnapshot => {
@@ -89,6 +94,9 @@ export class ApplicationLanguageCoordinator {
   private readonly effects: ApplicationLanguageEffects;
   private snapshot: ApplicationLanguageSnapshot | null = null;
   private mutationQueue: Promise<void> = Promise.resolve();
+  private initializationPromise: Promise<ApplicationLanguageSnapshot> | null = null;
+  private isPersistedInitialized = false;
+  private stateVersion = 0;
 
   constructor(
     persistence: ApplicationLanguagePersistence,
@@ -98,13 +106,27 @@ export class ApplicationLanguageCoordinator {
     this.effects = effects;
   }
 
-  async initialize(): Promise<ApplicationLanguageSnapshot> {
+  initializeFallback(value: unknown): ApplicationLanguageSnapshot {
     if (this.snapshot) return this.getSnapshot();
-
-    const language = parseAppLanguage(await this.persistence.read());
+    const language = parseAppLanguage(value);
     this.snapshot = { language, revision: 0 };
+    this.stateVersion += 1;
     this.effects.apply(language);
     return this.getSnapshot();
+  }
+
+  async initialize(): Promise<ApplicationLanguageSnapshot> {
+    if (this.isPersistedInitialized) return this.getSnapshot();
+    if (this.initializationPromise) return await this.initializationPromise;
+
+    this.initializationPromise = this.initializePersistedLanguage();
+    try {
+      const snapshot = await this.initializationPromise;
+      this.isPersistedInitialized = true;
+      return snapshot;
+    } finally {
+      this.initializationPromise = null;
+    }
   }
 
   getSnapshot(): ApplicationLanguageSnapshot {
@@ -133,15 +155,46 @@ export class ApplicationLanguageCoordinator {
     language: AppLanguage,
   ): Promise<ApplicationLanguageSnapshot> {
     const current = this.getSnapshot();
-    if (language === current.language) return current;
+    if (language === current.language && this.isPersistedInitialized) return current;
 
     await this.persistence.write(language);
+    this.isPersistedInitialized = true;
+    this.stateVersion += 1;
 
+    const latest = this.getSnapshot();
+    if (language === latest.language) return latest;
+
+    const snapshot = {
+      language,
+      revision: latest.revision + 1,
+    };
+    this.snapshot = snapshot;
+    this.stateVersion += 1;
+    this.effects.apply(language);
+    this.effects.broadcast(snapshot);
+    return this.getSnapshot();
+  }
+
+  private async initializePersistedLanguage(): Promise<ApplicationLanguageSnapshot> {
+    const versionBeforeRead = this.stateVersion;
+    const language = parseAppLanguage(await this.persistence.read());
+    if (this.stateVersion !== versionBeforeRead) return this.getSnapshot();
+
+    if (!this.snapshot) {
+      this.snapshot = { language, revision: 0 };
+      this.stateVersion += 1;
+      this.effects.apply(language);
+      return this.getSnapshot();
+    }
+
+    const current = this.getSnapshot();
+    if (language === current.language) return current;
     const snapshot = {
       language,
       revision: current.revision + 1,
     };
     this.snapshot = snapshot;
+    this.stateVersion += 1;
     this.effects.apply(language);
     this.effects.broadcast(snapshot);
     return this.getSnapshot();
