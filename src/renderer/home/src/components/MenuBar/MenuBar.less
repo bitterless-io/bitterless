@@ -39,6 +39,69 @@
   -webkit-app-region: no-drag;
 }
 
+.menu-bar__startup-issues {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  background-color: oklch(0.65 0.19 35);
+  border: none;
+  border-radius: 12px;
+  color: oklch(0.98 0.01 35);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.menu-bar__startup-issues:hover,
+.menu-bar__startup-issues:focus-visible {
+  background-color: oklch(0.59 0.2 35);
+}
+
+.menu-bar__startup-issues:focus-visible {
+  outline: 2px solid oklch(0.92 0.08 75);
+  outline-offset: 1px;
+}
+
+.menu-bar__startup-icon {
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.menu-bar__startup-count {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.menu-bar__startup-tooltip {
+  width: min(320px, calc(100vw - 32px));
+  user-select: text;
+}
+
+.menu-bar__startup-tooltip-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.menu-bar__startup-tooltip-issue + .menu-bar__startup-tooltip-issue {
+  margin-top: 8px;
+}
+
+.menu-bar__startup-tooltip-stage {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.menu-bar__startup-tooltip-message {
+  margin-top: 2px;
+  color: oklch(0.88 0.01 274);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .menu-bar__win-controls {
   display: flex;
   align-items: stretch;

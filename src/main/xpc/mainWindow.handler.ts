@@ -1,7 +1,16 @@
 import { XpcMainHandler } from 'electron-xpc/main';
 import { mainWindowHelper } from '../windows/mainWindow.helper';
+import { startupDiagnosticsService } from '../startup/startupDiagnostics.service';
+import type {
+  StartupDiagnosticsApi,
+  StartupDiagnosticsSnapshot,
+} from '@shared/startup/startupDiagnostics';
 
-class MainWindowHandler extends XpcMainHandler {
+class MainWindowHandler extends XpcMainHandler implements StartupDiagnosticsApi {
+  async getStartupDiagnostics(): Promise<StartupDiagnosticsSnapshot> {
+    return startupDiagnosticsService.getSnapshot();
+  }
+
   async minimize(): Promise<void> {
     const win = mainWindowHelper.browserWindow;
     if (win && !win.isDestroyed()) {

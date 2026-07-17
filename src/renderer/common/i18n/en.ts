@@ -11,6 +11,23 @@ export const en = {
     keychainDeniedOk: 'Deny',
     keychainDeniedCancel: 'Cancel',
   },
+  menuBar: {
+    restartToUpdate: 'Restart to Update',
+    proxy: 'Proxy',
+    startupDiagnostics: {
+      title: 'Startup issues',
+      buttonLabel: '{count} startup issues',
+      stages: {
+        'core-sqlite': 'Core SQLite',
+        'application-language': 'Application language',
+        'window-layout': 'Window layout',
+        'mcp-shim': 'Todo MCP helper',
+        tray: 'System tray',
+        'mcp-bridge': 'Todo MCP bridge',
+        'eyes-on-agents': 'EyesOnAgents',
+      },
+    },
+  },
   omni: {
     title: 'Omni Browser',
     layout: 'Layout',

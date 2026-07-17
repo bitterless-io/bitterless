@@ -1,6 +1,6 @@
 ---
 id: desktop-helper-process-isolation-001
-scope: Node-only helper processes, GUI singleton, and strict SQLite-first startup
+scope: Node-only helper processes, GUI singleton, and observable SQLite-first startup
 status: in-progress
 depends-on: [todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008]
 ---
@@ -9,12 +9,13 @@ depends-on: [todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008]
 
 ## Objective
 
-Keep every background Codex helper out of the Electron GUI lifecycle while making successful Core
-SQLite boot the mandatory first application dependency before Home or any other runtime work.
+Keep every background Codex helper out of the Electron GUI lifecycle while starting Core SQLite
+first without allowing its readiness or failure to block the visible application startup.
 
 ## Context
 
 - [Desktop helper startup issue](../../issues/desktop-helper-dock-and-home-startup.md)
+- [Startup diagnostics](../../features/startup-diagnostics.md)
 - [Todo MCP integration](../../features/todo-mcp.md)
 - [EyesOnAgents Codex observation](../../features/eyes-on-agents-codex-observation.md)
 
@@ -27,28 +28,35 @@ SQLite boot the mandatory first application dependency before Home or any other 
 - Refresh exact owned EyesOnAgents helper artifacts before listener startup while leaving hook
   settings byte-identical and failing closed for drifted definitions.
 - Request the single-instance lock only in GUI mode and focus current Home on a second launch.
-- Initialize only the minimum handlers required by SQLite, then create its hidden window and await
-  the target preload's explicit successful Core boot result. The initial `about:blank` preload
-  response is ignored, and HTML `did-finish-load` is not a database-readiness prerequisite.
+- Initialize only the minimum handlers required by SQLite, then create its hidden window first and
+  observe its explicit result in the background. No registration, document, Core, or elapsed-time
+  wait may block Home and independent startup work.
 - Prove connection readability after applying the SQLCipher key with
   `SELECT COUNT(*) AS object_count FROM sqlite_master`; accept `0` for a new empty database and any
-  non-negative count for an existing database, while query failure aborts startup.
-- SQLite failure aborts GUI startup; no language hydration, Home, Tray, Todo shim, MCP, or
-  EyesOnAgents initialization may occur on the failure path.
-- After SQLite success, hydrate the durable language strictly, create Home with persisted layout,
-  refresh the Todo shim, and then start optional MCP/EyesOnAgents work.
+  non-negative count for an existing database, while query failure fails Core readiness and records
+  a startup issue.
+- Initialize a system-language fallback, create Home with default bounds, refresh the Todo shim,
+  and initialize Tray while SQLite remains pending.
+- After SQLite success, hydrate the durable language and start SQLite-dependent MCP/EyesOnAgents
+  work. On explicit failure, keep the GUI alive and publish a revisioned startup issue.
+- Show startup issues in a background-led Home menubar button; hover or keyboard focus lists the
+  localized stage and concise error for each issue.
 
 ## Expected paths
 
 - `electron.vite.config.ts`
 - `src/main/app.main.ts`
 - `src/main/startup/`
+- `src/shared/startup/`
+- `src/main/xpc/mainWindow.handler.ts`
 - `src/main/windows/mainWindow.helper.ts`
 - `src/main/i18n/applicationLanguage.service.ts`
 - `src/preload/sqlite/sqlite.preload.ts`
 - `src/preload/sqlite/sqliteHelper/sqlite.manager.ts`
 - `src/preload/sqlite/sqliteHelper/coreSqliteReadProbe.ts`
 - `src/preload/sqlite/messageServer/messageServer.ts`
+- `src/renderer/home/src/components/MenuBar/`
+- `src/renderer/common/i18n/`
 - `src/shared/i18n/applicationLanguage.ts`
 - `src/shared/mcp/mcpBridge.type.ts`
 - `src/main/mcp/`
@@ -65,12 +73,12 @@ SQLite boot the mandatory first application dependency before Home or any other 
   behavior.
 - EyesOnAgents tests prove exact legacy artifacts refresh before listener startup without config
   mutation or generic repair.
-- Startup tests prove target-preload/Core success precedes language, Home, Tray, Todo shim, MCP, and
-  EyesOnAgents; missing registration, timeout, or failure produces none of those side effects.
+- Startup coordinator checks prove the SQLite renderer starts before foreground work, while its
+  pending state or explicit failure cannot block Home, Todo shim, or Tray.
 - The read-probe contract accepts `0` for a new empty schema, accepts a non-negative populated
   schema count, and fails closed for invalid/unreadable results before Core can report readiness.
-- Startup coordinator tests and source-contract checks cover the required ordering and fail-closed
-  paths; owner verification exercises the real preload-to-main handshake and early quit path.
+- Diagnostics checks cover subscribe-before-fetch, revision ordering, stage replacement/clearing,
+  and menubar visibility. Owner verification exercises the real preload-to-main lifecycle.
 - Relevant typechecks, build, compiled-helper smoke checks, and `git diff --check` are release
   verification gates; the latest real-startup check is intentionally handed to the owner.
 
@@ -87,11 +95,20 @@ SQLite boot the mandatory first application dependency before Home or any other 
   unbounded post-Core layout read and insufficient fatal-timeout/single-flight behavior coverage.
 - [Round 6](../reviews/desktop-helper-process-isolation-001-6.md) — no confirmed code defect,
   pending one controlled real startup.
+- [Round 7](../reviews/desktop-helper-process-isolation-001-7.md) — changes requested for scripted
+  checks that still encoded the superseded fatal Core gate.
+- [Round 8](../reviews/desktop-helper-process-isolation-001-8.md) — changes requested for missing
+  diagnostics revision, replacement, clearing, and stale-snapshot coverage.
+- [Round 9](../reviews/desktop-helper-process-isolation-001-9.md) — static review passed after the
+  runtime and verification contracts converged; owner runtime verification remains pending.
 
 Round 4's degraded-startup contract was superseded by the owner's SQLite-first correction and is
 not the acceptance basis for the reopened task.
 
-The Round 6 live handoff then failed at the still-present `did-finish-load` prerequisite. The
-current implementation replaces document completion with a generation-bound target-preload signal
-and the schema read probe above. Per owner direction, no further agent-run Electron launch is
-performed; owner verification remains pending.
+The Round 6 live handoff then failed at the still-present `did-finish-load` prerequisite. That gate
+was replaced by a generation-bound target-preload signal and the schema read probe above.
+
+The next owner run exposed a 30-second target-registration timeout. The owner clarified that
+SQLite-first is launch priority rather than a readiness barrier. The current correction removes
+elapsed-time failure semantics, continues foreground startup, and surfaces explicit failures in
+the Home menubar.

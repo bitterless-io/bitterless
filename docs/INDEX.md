@@ -24,6 +24,8 @@ design document.
   or local Todo/EyesOnAgents operation views with development and packaged runtime mapping.
 - [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
   upgrade audit required before signed production packaging.
+- [Startup diagnostics](features/startup-diagnostics.md) - SQLite-first but non-blocking GUI
+  startup with main-owned failures surfaced from the Home menubar.
 
 ## Guides
 

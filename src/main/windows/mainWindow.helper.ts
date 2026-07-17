@@ -1,14 +1,12 @@
-import { BrowserWindowConstructorOptions } from 'electron';
+import { BrowserWindow, BrowserWindowConstructorOptions } from 'electron';
 import { WindowHelper } from './window.helper';
 import { debounce } from 'es-toolkit';
 import { createXpcMainEmitter } from 'electron-xpc/main';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
-import { withStartupTimeout } from '../mcp/optionalStartupLifecycle.service';
 
 const WINDOW_LAYOUT_KEY = 'window_layout';
 const WINDOW_LAYOUT_SUB_KEY = 'main';
-const MAIN_WINDOW_LAYOUT_TIMEOUT_MS = 1000;
 const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
 
 interface MainWindowCreateOptions {
@@ -35,6 +33,9 @@ class MainWindowHelper extends WindowHelper {
     }
   };
   private _debouncedSaveLayoutFn: (() => void) | null = null;
+  private _layoutPersistenceReady = false;
+  private _hasLocalLayoutChange = false;
+  private _isApplyingPersistedLayout = false;
 
   private debouncedSaveLayout(): void {
     if (!this._debouncedSaveLayoutFn) {
@@ -67,52 +68,57 @@ class MainWindowHelper extends WindowHelper {
   }
 
   private async loadLayout(): Promise<WindowLayout | null> {
-    try {
-      const layout = await settingEmitter.get<WindowLayout>({
-        key: WINDOW_LAYOUT_KEY,
-        sub_key: WINDOW_LAYOUT_SUB_KEY,
-      });
-      return layout;
-    } catch (err) {
-      console.error('[MainWindowHelper] Failed to load layout:', err);
-      return null;
-    }
+    return await settingEmitter.get<WindowLayout>({
+      key: WINDOW_LAYOUT_KEY,
+      sub_key: WINDOW_LAYOUT_SUB_KEY,
+    });
   }
 
-  async create({
+  create({
     canCreate = () => true,
-  }: MainWindowCreateOptions = {}): Promise<any | null> {
-    let savedLayout: WindowLayout | null = null;
-    try {
-      savedLayout = await withStartupTimeout(this.loadLayout(), {
-        label: 'Main window layout read',
-        timeoutMs: MAIN_WINDOW_LAYOUT_TIMEOUT_MS,
-      });
-    } catch (err) {
-      console.warn('[MainWindowHelper] Using default layout because saved layout is unavailable:', err);
-    }
-    if (savedLayout) {
-      this.windowOptions = {
-        ...this.windowOptions,
-        x: savedLayout.x,
-        y: savedLayout.y,
-        width: savedLayout.width,
-        height: savedLayout.height,
-      };
-    }
+  }: MainWindowCreateOptions = {}): BrowserWindow | null {
     if (!canCreate()) return null;
 
+    this._layoutPersistenceReady = false;
+    this._hasLocalLayoutChange = false;
+    this._isApplyingPersistedLayout = false;
     const window = super.create();
 
     window.on('move', () => {
-      this.debouncedSaveLayout();
+      this.handleLayoutChange();
     });
 
     window.on('resize', () => {
-      this.debouncedSaveLayout();
+      this.handleLayoutChange();
     });
 
     return window;
+  }
+
+  async hydratePersistedLayout(): Promise<void> {
+    const window = this.browserWindow;
+    if (!window || window.isDestroyed()) return;
+
+    const savedLayout = await this.loadLayout();
+    if (this.browserWindow !== window || window.isDestroyed()) return;
+
+    if (savedLayout && !this._hasLocalLayoutChange) {
+      this._isApplyingPersistedLayout = true;
+      try {
+        window.setBounds(savedLayout);
+      } finally {
+        this._isApplyingPersistedLayout = false;
+      }
+    }
+
+    this._layoutPersistenceReady = true;
+    if (this._hasLocalLayoutChange) this.debouncedSaveLayout();
+  }
+
+  private handleLayoutChange(): void {
+    if (this._isApplyingPersistedLayout) return;
+    this._hasLocalLayoutChange = true;
+    if (this._layoutPersistenceReady) this.debouncedSaveLayout();
   }
 }
 

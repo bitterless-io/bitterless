@@ -1,47 +1,48 @@
-<script setup lang="ts">
-import { onMounted } from 'vue';
-import { proxySettingStore } from '@/views/setting/components/ProxySetting/proxySetting.store';
-import { updateStore } from '@/store/update.store';
-import { menuBarStore } from './menuBar.store';
-
-const title = import.meta.env.VITE_MAIN_TITLE || 'BitterLess';
-
-const handleRestartUpdate = () => {
-  updateStore.restartAndUpdate();
-};
-
-const handleDblClick = () => {
-  if (menuBarStore.isWindows) {
-    menuBarStore.toggleMaximize();
-  }
-};
-
-onMounted(() => {
-  menuBarStore.init();
-});
-</script>
-
 <template>
   <div :class="['menu-bar', { 'menu-bar--mac': menuBarStore.isMac }]" @dblclick="handleDblClick">
     <div class="menu-bar__left">
       <span class="menu-bar__title">{{ title }}</span>
-      <div v-if="menuBarStore.isWindows" class="menu-bar__actions">
-        <div v-if="updateStore.updateAvailable" class="menu-bar__update" @click="handleRestartUpdate">
-          <span class="menu-bar__update-text">Restart to Update</span>
-        </div>
-        <div v-if="proxySettingStore.activeSetting.switch" class="menu-bar__status">
-          <span class="menu-bar__status-dot"></span>
-          <span class="menu-bar__status-text">Proxy</span>
-        </div>
-      </div>
     </div>
-    <div v-if="menuBarStore.isMac" class="menu-bar__actions">
+    <div class="menu-bar__actions">
       <div v-if="updateStore.updateAvailable" class="menu-bar__update" @click="handleRestartUpdate">
-        <span class="menu-bar__update-text">Restart to Update</span>
+        <span class="menu-bar__update-text">{{ i18nHelper.menuBar.restartToUpdate }}</span>
       </div>
+      <a-tooltip
+        v-if="menuBarStore.startupIssueCount > 0"
+        position="br"
+        :popup-visible="menuBarStore.startupTooltipFocused ? true : undefined"
+      >
+        <button
+          type="button"
+          class="menu-bar__startup-issues"
+          :aria-label="menuBarStore.startupIssueButtonLabel"
+          @focus="menuBarStore.showStartupTooltipOnFocus()"
+          @blur="menuBarStore.hideStartupTooltipOnBlur()"
+        >
+          <span class="menu-bar__startup-icon" aria-hidden="true">!</span>
+          <span class="menu-bar__startup-count">{{ menuBarStore.startupIssueCount }}</span>
+        </button>
+        <template #content>
+          <div class="menu-bar__startup-tooltip">
+            <div class="menu-bar__startup-tooltip-title">
+              {{ i18nHelper.menuBar.startupDiagnostics.title }}
+            </div>
+            <div
+              v-for="issue in menuBarStore.startupIssues"
+              :key="issue.stage"
+              class="menu-bar__startup-tooltip-issue"
+            >
+              <div class="menu-bar__startup-tooltip-stage">
+                {{ menuBarStore.getStartupStageLabel(issue.stage) }}
+              </div>
+              <div class="menu-bar__startup-tooltip-message">{{ issue.message }}</div>
+            </div>
+          </div>
+        </template>
+      </a-tooltip>
       <div v-if="proxySettingStore.activeSetting.switch" class="menu-bar__status">
         <span class="menu-bar__status-dot"></span>
-        <span class="menu-bar__status-text">Proxy</span>
+        <span class="menu-bar__status-text">{{ i18nHelper.menuBar.proxy }}</span>
       </div>
     </div>
     <div v-if="menuBarStore.isWindows" class="menu-bar__win-controls">
@@ -58,6 +59,30 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<script setup lang="ts">
+import { onMounted } from 'vue';
+import { proxySettingStore } from '@/views/setting/components/ProxySetting/proxySetting.store';
+import { updateStore } from '@/store/update.store';
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import { menuBarStore } from './menuBar.store';
+
+const title = import.meta.env.VITE_MAIN_TITLE || 'BitterLess';
+
+const handleRestartUpdate = (): void => {
+  updateStore.restartAndUpdate();
+};
+
+const handleDblClick = (): void => {
+  if (menuBarStore.isWindows) {
+    menuBarStore.toggleMaximize();
+  }
+};
+
+onMounted(() => {
+  menuBarStore.init();
+});
+</script>
 
 <style lang="less">
 @import './MenuBar.less';

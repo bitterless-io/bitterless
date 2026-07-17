@@ -43,10 +43,11 @@ when Ral explicitly asks to test that local instance.
 
 ## Helper lifecycle
 
-1. GUI startup first completes Core SQLite initialization. A SQLite failure aborts the remaining
-   startup and does not install or refresh helper artifacts.
-2. After SQLite succeeds, the GUI writes `<userData>/bin/bitterless-mcp`; opening the integration
-   guide may refresh the same owned file.
+1. GUI startup starts the Core SQLite renderer first, then refreshes the owned helper artifact
+   without waiting for Core readiness. SQLite failure does not leave a legacy GUI-entry shim in
+   place.
+2. The GUI writes `<userData>/bin/bitterless-mcp`; opening the integration guide may refresh the
+   same owned file. The SQLite-dependent bridge itself starts only after Core succeeds.
 3. The shim sets `ELECTRON_RUN_AS_NODE=1` and invokes the dedicated bundled
    `out/main/mcpHelper.js` entry through Electron's executable. It never enters the GUI application,
    creates a `BrowserWindow`, or owns a Dock application.

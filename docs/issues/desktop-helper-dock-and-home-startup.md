@@ -7,12 +7,12 @@
 Starting the Bitterless development application appears to create several Electron applications in
 the macOS Dock, while the expected Home window is absent or delayed indefinitely.
 
-## Owner correction — SQLite-first startup
+## Owner correction — SQLite-first, non-blocking startup
 
-The degraded Home behavior delivered in the previous resolution is rejected. Normal GUI startup
-must begin by booting Core SQLite and must not initialize language, Home, Tray, helper artifacts,
-MCP, EyesOnAgents, or any other application work until SQLite returns an explicit successful boot
-result. A SQLite failure is a startup failure, not permission to continue with a partial shell.
+Normal GUI startup must begin by booting the independent Core SQLite renderer, then immediately
+continue to the Home and other independent startup work. SQLite-first defines launch priority, not
+a readiness barrier. SQLite-dependent integrations still wait for Core success in the background.
+Explicit startup failures remain visible from the Home menubar instead of terminating the GUI.
 
 ## Confirmed cause
 
@@ -54,32 +54,37 @@ result. A SQLite failure is a startup failure, not permission to continue with a
 3. Refresh exact owned EyesOnAgents artifacts without changing hook settings or trust.
 4. Acquire one GUI instance per profile and focus it on repeated launch.
 5. After only the minimum main/XPC/path prerequisites required by the SQLite preload, create the
-   hidden SQLite window and await the target preload's explicit successful Core SQLite boot result.
-   Do not gate database readiness on `did-finish-load`; ignore the initial `about:blank` preload
-   registration and wait for the real SQLite document handler.
+   hidden SQLite window first. Observe its explicit successful Core SQLite boot result in the
+   background; do not gate foreground startup on `did-finish-load`, target registration, Core
+   readiness, or any elapsed-time threshold.
 6. After applying the SQLCipher key, Core must execute
    `SELECT COUNT(*) AS object_count FROM sqlite_master`. A newly created empty database succeeds
    with `0`; an existing readable database succeeds with a non-negative count; a wrong key,
-   corrupt file, or unreadable connection throws and fails startup. Core readiness remains pending
+   corrupt file, or unreadable connection throws and fails Core readiness. Core readiness remains pending
    until this read probe, schema creation, migrations, and final schema verification all succeed.
-7. If SQLite load or initialization fails, abort GUI startup with an explicit error. Do not create
-   Home or initialize language, Tray, helper artifacts, MCP, EyesOnAgents, or other application work.
-8. Only after SQLite succeeds, strictly hydrate the durable application language, create Home with
-   its persisted layout, refresh helper artifacts, and start the remaining integrations.
-9. An early quit/error dialog may install an in-memory language fallback for that dialog only; the
-   normal startup path must not expose fallback application state before SQLite succeeds.
+7. Initialize an in-memory system-language fallback, create Home with default bounds, refresh
+   helper artifacts, and initialize Tray without waiting for SQLite. SQLite failure must not exit or
+   hide the GUI.
+8. After SQLite succeeds, hydrate the durable application language and start SQLite-dependent MCP
+   and EyesOnAgents integrations in the background.
+9. Record explicit failures in main-owned in-memory startup diagnostics. Home's menubar shows a
+   compact warning button only when issues exist; hover or keyboard focus lists the failing stages
+   and messages. See [Startup diagnostics](../features/startup-diagnostics.md).
 
 ## Acceptance
 
 - Concurrent Codex helper clients add no Bitterless/Electron Dock applications.
 - Exact legacy hook artifacts migrate without changing hook configuration bytes or trust state.
 - One profile exposes at most one GUI Dock application and repeated launch focuses Home.
-- Behavioral coordinator and integration tests prove SQLite success precedes language, Home, Tray,
-  Todo shim, MCP, and EyesOnAgents initialization.
+- Behavioral coordinator and integration checks prove the SQLite renderer starts first while Home,
+  Tray, and Todo shim proceed independently; persisted language, MCP, and EyesOnAgents await Core.
 - An unresolved EyesOnAgents initialization cannot block Home creation.
-- A SQLite load/init failure produces no partial Home/Tray/helper/integration startup.
-- A target-preload registration/Core-ready timeout is fatal and produces no partial startup;
-  `did-finish-load` is not part of the readiness contract.
+- Home, helper refresh, and Tray continue while SQLite is pending or failed; SQLite-dependent
+  integrations remain gated independently.
+- No target-preload/Core-ready timeout exists. Only explicit preload, renderer, navigation,
+  database-read, schema, or migration failure creates a startup issue.
+- The Home menubar warning is absent with no issues and lists localized failing stages plus concise
+  error messages on hover or keyboard focus.
 - The schema read probe succeeds for both an empty new database and an existing populated database,
   and fails closed for an unreadable/encryption-invalid database.
 - Early quit does not produce an unhandled language-initialization rejection.
@@ -103,6 +108,6 @@ and one visible window titled `BitterLess`. The generated DEV_DEBUG shim exporte
 `ELECTRON_RUN_AS_NODE=1` and targeted `out/main/mcpHelper.js`; shutdown left no new GUI process or
 uninitialized-language rejection.
 
-This resolution was reopened because it allowed Home, Tray, and helper initialization after a
-SQLite timeout. The new delivery must repair the SQLite boot dependency and restore strict
-SQLite-first sequencing.
+This resolution was reopened again after the strict gate caused a 30-second target-registration
+timeout and exited the GUI. The corrected delivery starts SQLite first without turning its
+readiness into a foreground startup barrier.

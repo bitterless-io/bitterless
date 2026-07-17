@@ -51,8 +51,9 @@ main language change -- broadcast --> every live first-party renderer
 
 - The core SQLite language record remains the durable source across application restarts.
 - The main process validates the stored value and owns the current in-memory language after startup.
-- Normal main-process language initialization begins only after Core SQLite boot succeeds. Startup
-  must not publish an in-memory fallback and continue before the durable source is available.
+- Immediately after starting the Core SQLite renderer, main publishes a system-language in-memory
+  fallback so Home and other independent renderers can mount without waiting for persistence.
+  Successful Core readiness then hydrates the durable language and broadcasts any change.
 - Home Settings requests a change through a typed main-process handler. The main process persists
   the value before updating its own dialogs/tray and broadcasting the committed language.
 - Renderers never broadcast authoritative language changes and never use renderer-local

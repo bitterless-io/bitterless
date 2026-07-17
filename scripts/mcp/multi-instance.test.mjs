@@ -752,6 +752,10 @@ try {
   assert.doesNotMatch(helperBundleText, /BrowserWindow|require\("electron"\)|from\("electron"\)/);
 
   const appMainSource = readFileSync(join(projectRoot, 'src', 'main', 'app.main.ts'), 'utf8');
+  const guiStartupSource = readFileSync(
+    join(projectRoot, 'src', 'main', 'startup', 'guiStartup.service.ts'),
+    'utf8'
+  );
   const stdioSource = readFileSync(
     join(projectRoot, 'src', 'main', 'mcp', 'mcpStdio.helper.ts'),
     'utf8'
@@ -796,19 +800,17 @@ try {
   assert.ok(singleInstanceIndex >= 0 && singleInstanceIndex < readyIndex);
   assert.ok(optionalFenceIndex >= 0 && optionalFenceIndex < eyesStopIndex);
   assert.ok(optionalFenceIndex < mcpStopIndex);
-  const sqliteCreateIndex = appMainSource.indexOf('sqliteWindowHelper.create()');
-  const targetPreloadWaitIndex = appMainSource.indexOf('waitForTargetPreloadRegistration:');
+  const sqliteCreateIndex = appMainSource.indexOf('sqliteWindowHelper.create(');
   const sqliteGuardIndex = appMainSource.indexOf('coreSqliteBoot.ready({ targetId })');
   const languageIndex = appMainSource.indexOf('applicationLanguageService.initialize()');
-  const mainWindowIndex = appMainSource.indexOf('await mainWindowHelper.create(');
+  const mainWindowIndex = appMainSource.indexOf('mainWindowHelper.create(');
   const ensureShimIndex = appMainSource.indexOf('await mcpHandler.ensureShim()');
   const trayIndex = appMainSource.indexOf('trayHelper.init(mainWindowHelper)');
   const bridgeStartIndex = appMainSource.indexOf('await mcpBridgeServer.start()');
   const eyesImportIndex = appMainSource.indexOf("await import('./xpc/eyesOnAgents.handler')");
-  assert.ok(sqliteCreateIndex >= 0 && sqliteCreateIndex < targetPreloadWaitIndex);
-  assert.ok(targetPreloadWaitIndex < sqliteGuardIndex);
-  assert.ok(sqliteGuardIndex < languageIndex);
-  assert.ok(languageIndex < mainWindowIndex);
+  assert.ok(sqliteCreateIndex >= 0 && sqliteCreateIndex < sqliteGuardIndex);
+  assert.ok(mainWindowIndex >= 0);
+  assert.ok(languageIndex >= 0);
   assert.ok(mainWindowIndex < ensureShimIndex);
   assert.ok(mainWindowIndex < trayIndex);
   assert.ok(ensureShimIndex < optionalStartIndex);
@@ -820,7 +822,18 @@ try {
     appMainSource.match(/if \(!canStartNextStage\(\)\) return;/g)?.length,
     3
   );
-  assert.match(appMainSource, /timeoutMs: SQLITE_STARTUP_TIMEOUT_MS/);
+  assert.ok(
+    guiStartupSource.indexOf('dependencies.startCoreSqlite()') <
+      guiStartupSource.indexOf('dependencies.initializeLanguageFallback()')
+  );
+  assert.ok(
+    guiStartupSource.indexOf('dependencies.initializeLanguageFallback()') <
+      guiStartupSource.indexOf('dependencies.createHome()')
+  );
+  assert.match(guiStartupSource, /void coreSqliteResult/);
+  assert.doesNotMatch(appMainSource, /withStartupTimeout|SQLITE_STARTUP_TIMEOUT_MS/);
+  assert.doesNotMatch(appMainSource, /app\.exit\(1\)/);
+  assert.match(appMainSource, /startupDiagnosticsService\.report\('core-sqlite', err\)/);
   assert.doesNotMatch(appMainSource, /did-finish-load|waitForWindowLoad/);
   assert.doesNotMatch(appMainSource, /degraded Home|isSqliteDocumentAvailable/);
   assert.match(appMainSource, /isShutdownStarted = true/);

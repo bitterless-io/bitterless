@@ -13,6 +13,23 @@ export const zh: typeof en = {
     keychainDeniedOk: '拒绝',
     keychainDeniedCancel: '取消',
   },
+  menuBar: {
+    restartToUpdate: '重启以更新',
+    proxy: '代理',
+    startupDiagnostics: {
+      title: '启动异常',
+      buttonLabel: '{count} 个启动异常',
+      stages: {
+        'core-sqlite': '核心 SQLite',
+        'application-language': '应用语言',
+        'window-layout': '窗口布局',
+        'mcp-shim': 'Todo MCP 助手',
+        tray: '系统托盘',
+        'mcp-bridge': 'Todo MCP 桥接',
+        'eyes-on-agents': 'EyesOnAgents',
+      },
+    },
+  },
   omni: {
     title: '全能浏览器',
     layout: '布局',

@@ -64,11 +64,11 @@ const optionalIntegrationsDefinitionIndex = appMain.indexOf(
   startGuiIndex
 )
 const startGuiSource = appMain.slice(startGuiIndex, optionalIntegrationsDefinitionIndex)
-const sqliteCreateIndex = appMain.indexOf('sqliteWindowHelper.create()', startGuiIndex)
-const targetPreloadWaitIndex = appMain.indexOf('waitForTargetPreloadRegistration:', sqliteCreateIndex)
-const sqliteReadyIndex = appMain.indexOf('waitForCoreSqlite:', targetPreloadWaitIndex)
+const guiStartup = readProject('src/main/startup/guiStartup.service.ts')
+const sqliteCreateIndex = appMain.indexOf('sqliteWindowHelper.create(')
+const sqliteReadyIndex = appMain.indexOf('coreSqliteBoot.ready({ targetId })')
 const mainLanguageIndex = appMain.indexOf('applicationLanguageService.initialize()')
-const homeCreateIndex = appMain.indexOf('await mainWindowHelper.create(')
+const homeCreateIndex = appMain.indexOf('mainWindowHelper.create(')
 const shimCreateIndex = appMain.indexOf('await mcpHandler.ensureShim()')
 const trayCreateIndex = appMain.indexOf('trayHelper.init(mainWindowHelper)')
 const optionalStartIndex = appMain.indexOf('optionalIntegrationsLifecycle.start(')
@@ -76,36 +76,34 @@ const earlyQuitFallbackIndex = appMain.lastIndexOf(
   'initializeApplicationLanguageFallback();',
   appMain.indexOf('await dialogHelper.showQuitConfirmDialog()')
 )
-assert(sqliteReadyIndex >= 0, 'main startup must await core SQLite readiness')
+assert(sqliteReadyIndex > sqliteCreateIndex, 'Core readiness must be observed after starting SQLite')
 assert(
-  !startGuiSource.includes('initializeApplicationLanguageFallback()'),
-  'normal GUI startup must not initialize a language fallback before Core SQLite'
+  startGuiSource.includes('initializeApplicationLanguageFallback()'),
+  'normal GUI startup must initialize an in-memory language fallback'
 )
-assert(targetPreloadWaitIndex > sqliteCreateIndex, 'Core startup must wait for target preload registration')
 assert(!appMain.includes('did-finish-load'), 'HTML load completion must not gate Core SQLite startup')
-assert(mainLanguageIndex > sqliteReadyIndex, 'persisted language may hydrate only after Core SQLite readiness')
-assert(homeCreateIndex > mainLanguageIndex, 'Home must follow strict persisted language initialization')
+assert(guiStartup.indexOf('dependencies.startCoreSqlite()') < guiStartup.indexOf('dependencies.initializeLanguageFallback()'), 'SQLite must start before the foreground fallback')
+assert(guiStartup.indexOf('dependencies.initializeLanguageFallback()') < guiStartup.indexOf('dependencies.createHome()'), 'fallback must initialize before Home')
+assert(guiStartup.includes('void coreSqliteResult'), 'foreground startup must not await Core SQLite')
+assert(mainLanguageIndex >= 0, 'persisted language must hydrate after Core success')
 assert(shimCreateIndex > homeCreateIndex, 'MCP shim refresh must follow Home creation')
 assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')
 assert(optionalStartIndex > homeCreateIndex, 'optional startup must begin only after Home creation')
 assert(
   earlyQuitFallbackIndex >= 0,
-  'early macOS quit may initialize a fallback solely for its localized dialog'
+  'early macOS quit must retain its localized-dialog fallback'
 )
-assert(
-  !appMain.includes('degraded Home'),
-  'Core SQLite failure must not continue into a partial Home startup'
-)
+assert(appMain.includes("startupDiagnosticsService.report('core-sqlite', err)"), 'Core failure must publish a startup diagnostic')
+assert(!appMain.includes('app.exit(1)'), 'Core failure must not exit the GUI')
 
 const mainWindow = readProject('src/main/windows/mainWindow.helper.ts')
-assert(mainWindow.includes('MAIN_WINDOW_LAYOUT_TIMEOUT_MS = 1000'), 'saved layout reads need a one-second bound')
 assert(
-  mainWindow.includes('withStartupTimeout(this.loadLayout()'),
-  'Home must bound its post-Core persisted layout read'
+  mainWindow.indexOf('const window = super.create()') < mainWindow.indexOf('async hydratePersistedLayout()'),
+  'Home must be created with default bounds before persisted layout hydration'
 )
 assert(
-  mainWindow.includes('Using default layout because saved layout is unavailable'),
-  'a failed post-Core layout read must warn and use the default layout'
+  !mainWindow.includes('withStartupTimeout(this.loadLayout()'),
+  'persisted layout hydration must not gate foreground Home startup'
 )
 assert(
   mainWindow.includes('if (!canCreate()) return null'),

@@ -20,7 +20,6 @@ import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
 import {
   OptionalStartupLifecycle,
   type OptionalStartupStageGuard,
-  withStartupTimeout,
 } from './mcp/optionalStartupLifecycle.service';
 import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
@@ -35,14 +34,15 @@ import {
   type CoreSqliteBootApi,
   type CoreSqliteTargetPreloadRegistration,
 } from '@shared/mcp/mcpBridge.shared';
-import { runCoreGatedGuiStartup } from './startup/guiStartup.service';
+import { runSqliteFirstGuiStartup } from './startup/guiStartup.service';
+import { startupDiagnosticsService } from './startup/startupDiagnostics.service';
+import type { StartupDiagnosticStage } from '@shared/startup/startupDiagnostics';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
-const SQLITE_STARTUP_TIMEOUT_MS = 30000;
 
 if (isHelperMode && process.platform === 'darwin') {
   app.setActivationPolicy('prohibited');
@@ -336,10 +336,41 @@ const runLegacyMcpHelper = async (): Promise<void> => {
   }
 };
 
+const runDiagnosedStartupStage = async (
+  stage: StartupDiagnosticStage,
+  operation: () => Promise<void> | void,
+): Promise<void> => {
+  try {
+    await operation();
+    startupDiagnosticsService.clear(stage);
+  } catch (err) {
+    startupDiagnosticsService.report(stage, err);
+    console.warn(`[app] ${stage} startup failed:`, err);
+  }
+};
+
+const startCoreSqliteRenderer = (): Promise<{ ok: boolean; error?: string }> => {
+  const registration = createCoreSqliteTargetRegistrationWaiter();
+  try {
+    sqliteWindowHelper.create((window) => {
+      registration.observeWindow(window);
+    });
+  } catch (err) {
+    registration.dispose();
+    return Promise.reject(err);
+  }
+
+  return registration.promise
+    .then(async (targetId) => {
+      const result = await registration.guardCoreReady(coreSqliteBoot.ready({ targetId }));
+      if (result?.ok) console.log(`[app] Core SQLite ready: ${targetId}`);
+      return result;
+    })
+    .finally(() => registration.dispose());
+};
+
 const startGui = async (): Promise<void> => {
-  let targetPreloadRegistration: CoreSqliteTargetRegistrationWaiter | null = null;
-  let coreSqliteTargetId: string | null = null;
-  await runCoreGatedGuiStartup({
+  await runSqliteFirstGuiStartup({
     initializeCorePrerequisites: async () => {
       const { initXpc } = await import('./xpc/xpc.helper');
       if (isShutdownStarted) return;
@@ -350,73 +381,49 @@ const startGui = async (): Promise<void> => {
       app.on('browser-window-created', (_, window) => {
         optimizer.watchWindowShortcuts(window);
       });
-      targetPreloadRegistration = createCoreSqliteTargetRegistrationWaiter();
-      sqliteWindowHelper.create((window) => {
-        targetPreloadRegistration?.observeWindow(window);
-      });
     },
-    waitForTargetPreloadRegistration: async () => {
-      if (!targetPreloadRegistration) {
-        throw new Error('Core SQLite target preload registration waiter was not created');
-      }
-      try {
-        coreSqliteTargetId = await withStartupTimeout(targetPreloadRegistration.promise, {
-          label: 'Core SQLite target preload registration',
-          timeoutMs: SQLITE_STARTUP_TIMEOUT_MS,
-        });
-      } catch (err) {
-        targetPreloadRegistration.dispose();
-        targetPreloadRegistration = null;
-        throw err;
-      }
+    startCoreSqlite: () => startCoreSqliteRenderer(),
+    initializeLanguageFallback: () => {
+      initializeApplicationLanguageFallback();
     },
-    waitForCoreSqlite: async () => {
-      const waiter = targetPreloadRegistration;
-      const targetId = coreSqliteTargetId;
-      if (!waiter || !targetId) throw new Error('Core SQLite target preload was not registered');
-      try {
-        const result = await withStartupTimeout(
-          waiter.guardCoreReady(coreSqliteBoot.ready({ targetId })),
-          {
-            label: 'Core SQLite readiness',
-            timeoutMs: SQLITE_STARTUP_TIMEOUT_MS,
-          },
-        );
-        if (result?.ok) console.log(`[app] Core SQLite ready: ${targetId}`);
-        return result;
-      } finally {
-        waiter.dispose();
-        targetPreloadRegistration = null;
-      }
-    },
-    initializeLanguage: async () => {
-      await applicationLanguageService.initialize();
+    initializeForegroundRuntime: () => {
       installE2ENetworkGuard();
       electronApp.setAppUserModelId('com.electron');
       if (process.platform === 'darwin') app.dock.setBadge('');
     },
-    createHome: async () => {
-      await mainWindowHelper.create({ canCreate: () => !isShutdownStarted });
+    createHome: () => {
+      mainWindowHelper.create({ canCreate: () => !isShutdownStarted });
     },
     refreshMcpShim: async () => {
-      try {
+      await runDiagnosedStartupStage('mcp-shim', async () => {
         await mcpHandler.ensureShim();
-      } catch (err) {
-        console.warn('[app] MCP helper generation failed:', err);
-      }
-    },
-    initializeTray: () => {
-      trayHelper.init(mainWindowHelper);
-      app.on('activate', () => {
-        mainWindowHelper.show();
       });
     },
-    startOptionalIntegrations: () => {
+    initializeTray: async () => {
+      await runDiagnosedStartupStage('tray', () => {
+        trayHelper.init(mainWindowHelper);
+        app.on('activate', () => {
+          mainWindowHelper.show();
+        });
+      });
+    },
+    handleCoreSqliteReady: () => {
+      startupDiagnosticsService.clear('core-sqlite');
+      void runDiagnosedStartupStage('application-language', async () => {
+        await applicationLanguageService.initialize();
+      });
+      void runDiagnosedStartupStage('window-layout', async () => {
+        await mainWindowHelper.hydratePersistedLayout();
+      });
       void optionalIntegrationsLifecycle.start((canStartNextStage) =>
         startOptionalIntegrations(canStartNextStage)
       ).catch((err: unknown) => {
         console.warn('[app] Optional integrations disabled:', err);
       });
+    },
+    handleCoreSqliteFailure: (err) => {
+      startupDiagnosticsService.report('core-sqlite', err);
+      console.warn('[app] Core SQLite unavailable; continuing foreground startup:', err);
     },
     shouldStop: () => isShutdownStarted,
   });
@@ -427,21 +434,17 @@ const startOptionalIntegrations = async (
 ): Promise<void> => {
   if (!canStartNextStage()) return;
 
-  try {
+  await runDiagnosedStartupStage('mcp-bridge', async () => {
     await mcpBridgeServer.start();
-  } catch (err) {
-    console.warn('[app] MCP integration disabled:', err);
-  }
+  });
   if (!canStartNextStage()) return;
 
-  try {
+  await runDiagnosedStartupStage('eyes-on-agents', async () => {
     const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
     if (!canStartNextStage()) return;
     stopEyesOnAgentsRuntime = eyesOnAgentsRuntime.stopEyesOnAgentsRuntime;
     await eyesOnAgentsRuntime.startEyesOnAgentsRuntime();
-  } catch (err) {
-    console.warn('[app] EyesOnAgents runtime disabled:', err);
-  }
+  });
 };
 
 if (isLegacyCodingAgentHookHelperMode) {
@@ -462,7 +465,6 @@ if (isLegacyCodingAgentHookHelperMode) {
   });
   void app.whenReady().then(startGui).catch((err: unknown) => {
     console.error('[app] GUI startup failed:', err);
-    app.exit(1);
   });
 }
 

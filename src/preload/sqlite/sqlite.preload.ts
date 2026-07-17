@@ -71,9 +71,21 @@ const bootSqlite = async (): Promise<void> => {
   }
 };
 
-// The preload may be evaluated for an initial about:blank document. Only the actual hidden SQLite
-// renderer owns the database bootstrap and its readiness result.
-const isSqliteRendererDocument = location.pathname.endsWith('/sqlite/index.html');
+// The preload may be evaluated for an initial about:blank document. Development and packaged
+// renderers can expose the SQLite entry as `/sqlite`, `/sqlite/`, or `/sqlite/index.html`, so the
+// target check follows the renderer directory instead of one exact pathname.
+const isSqliteRendererDocument = (() => {
+  if (location.protocol === 'about:') return false;
+  let pathname = location.pathname;
+  try {
+    pathname = decodeURIComponent(pathname);
+  } catch {
+    // A malformed escape is not a SQLite renderer target.
+    return false;
+  }
+  const normalizedPathname = pathname.replace(/\/+$/, '');
+  return /\/sqlite(?:\/index\.html)?$/i.test(normalizedPathname);
+})();
 const bootPromise = isSqliteRendererDocument ? bootSqlite() : Promise.resolve();
 const targetId = isSqliteRendererDocument ? randomUUID() : null;
 

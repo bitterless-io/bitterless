@@ -4,13 +4,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  StartupTimeoutError,
-  withStartupTimeout,
-} from '../../src/main/mcp/optionalStartupLifecycle.service.ts';
-import { runCoreGatedGuiStartup } from '../../src/main/startup/guiStartup.service.ts';
+import { runSqliteFirstGuiStartup } from '../../src/main/startup/guiStartup.service.ts';
 import { onceAsync } from '../../src/preload/sqlite/sqliteHelper/onceAsync.ts';
 import { probeCoreSqliteReadable } from '../../src/preload/sqlite/sqliteHelper/coreSqliteReadProbe.ts';
+import {
+  StartupDiagnosticsState,
+  selectNewerStartupDiagnosticsSnapshot,
+} from '../../src/shared/startup/startupDiagnostics.ts';
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -24,18 +24,8 @@ const createDeferred = () => {
   return { promise, reject, resolve };
 };
 
-const createManualTimeout = () => {
-  let onTimeout = null;
-  return {
-    schedule: (handler) => {
-      onTimeout = handler;
-      return () => undefined;
-    },
-    fire: () => {
-      assert.ok(onTimeout, 'startup timeout must be scheduled');
-      onTimeout();
-    },
-  };
+const flushBackground = async () => {
+  await new Promise((resolve) => setImmediate(resolve));
 };
 
 const createDependencies = (overrides = {}) => {
@@ -45,15 +35,15 @@ const createDependencies = (overrides = {}) => {
     initializeCorePrerequisites: async () => {
       events.push('prerequisites');
     },
-    waitForTargetPreloadRegistration: async () => {
-      events.push('target-preload');
+    startCoreSqlite: () => {
+      events.push('core:start');
+      return Promise.resolve({ ok: true });
     },
-    waitForCoreSqlite: async () => {
-      events.push('core-sqlite');
-      return { ok: true };
+    initializeLanguageFallback: () => {
+      events.push('language:fallback');
     },
-    initializeLanguage: async () => {
-      events.push('language');
+    initializeForegroundRuntime: async () => {
+      events.push('foreground');
     },
     createHome: async () => {
       events.push('home');
@@ -64,8 +54,11 @@ const createDependencies = (overrides = {}) => {
     initializeTray: async () => {
       events.push('tray');
     },
-    startOptionalIntegrations: async () => {
-      events.push('optional-integrations');
+    handleCoreSqliteReady: async () => {
+      events.push('core:ready');
+    },
+    handleCoreSqliteFailure: async (error) => {
+      events.push(`core:failed:${error instanceof Error ? error.message : String(error)}`);
     },
     shouldStop: () => shouldStop,
     ...overrides,
@@ -80,162 +73,92 @@ const createDependencies = (overrides = {}) => {
 };
 
 {
-  const { dependencies, events } = createDependencies();
-  await runCoreGatedGuiStartup(dependencies);
+  const core = createDeferred();
+  const { dependencies, events } = createDependencies({
+    startCoreSqlite: () => {
+      events.push('core:start');
+      return core.promise;
+    },
+  });
+  await runSqliteFirstGuiStartup(dependencies);
   assert.deepEqual(events, [
     'prerequisites',
-    'target-preload',
-    'core-sqlite',
-    'language',
+    'core:start',
+    'language:fallback',
+    'foreground',
     'home',
     'mcp-shim',
     'tray',
-    'optional-integrations',
   ]);
 }
 
 {
-  const targetPreloadGate = createDeferred();
   const { dependencies, events } = createDependencies({
-    waitForTargetPreloadRegistration: async () => {
-      events.push('target-preload:start');
-      await targetPreloadGate.promise;
-      events.push('target-preload:end');
+    startCoreSqlite: () => {
+      events.push('core:start');
+      return Promise.reject(new Error('file is not a database'));
     },
   });
-  const startup = runCoreGatedGuiStartup(dependencies);
-  await Promise.resolve();
-  assert.deepEqual(events, ['prerequisites', 'target-preload:start']);
-  targetPreloadGate.resolve();
+  await runSqliteFirstGuiStartup(dependencies);
+  await flushBackground();
+  assert.ok(events.includes('core:failed:file is not a database'));
+  assert.ok(events.includes('home'));
+  assert.ok(events.includes('mcp-shim'));
+  assert.ok(events.includes('tray'));
+}
+
+{
+  const home = createDeferred();
+  const { dependencies, events } = createDependencies({
+    createHome: async () => {
+      events.push('home:start');
+      await home.promise;
+      events.push('home:end');
+    },
+  });
+  const startup = runSqliteFirstGuiStartup(dependencies);
+  await flushBackground();
+  assert.equal(events.includes('core:ready'), false);
+  home.resolve();
   await startup;
-  assert.equal(events.includes('core-sqlite'), true);
+  await flushBackground();
+  assert.ok(events.indexOf('home:end') < events.indexOf('core:ready'));
 }
 
 {
-  const { dependencies, events } = createDependencies({
-    waitForTargetPreloadRegistration: async () => {
-      events.push('target-preload:failed');
-      throw new Error('target preload failed');
-    },
-  });
-  await assert.rejects(runCoreGatedGuiStartup(dependencies), /target preload failed/);
-  assert.deepEqual(events, ['prerequisites', 'target-preload:failed']);
-}
+  const diagnostics = new StartupDiagnosticsState();
+  assert.deepEqual(diagnostics.getSnapshot(), { revision: 0, issues: [] });
 
-{
-  const coreGate = createDeferred();
-  const { dependencies, events } = createDependencies({
-    waitForCoreSqlite: async () => {
-      events.push('core-sqlite:start');
-      return await coreGate.promise;
-    },
-  });
-  const startup = runCoreGatedGuiStartup(dependencies);
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.deepEqual(events, [
-    'prerequisites',
-    'target-preload',
-    'core-sqlite:start',
+  const first = diagnostics.report('core-sqlite', 'file is not a database');
+  assert.equal(first.revision, 1);
+  assert.deepEqual(first.issues, [
+    { stage: 'core-sqlite', message: 'file is not a database' },
   ]);
-  coreGate.resolve({ ok: true });
-  await startup;
-  assert.equal(events.includes('language'), true);
-}
 
-for (const failure of [
-  { result: { ok: false, error: 'core failed' }, expected: /core failed/ },
-  { result: null, expected: /did not report a successful result/ },
-  { rejection: new Error('core rejected'), expected: /core rejected/ },
-]) {
-  const { dependencies, events } = createDependencies({
-    waitForCoreSqlite: async () => {
-      events.push('core-sqlite:failed');
-      if (failure.rejection) throw failure.rejection;
-      return failure.result;
-    },
-  });
-  await assert.rejects(runCoreGatedGuiStartup(dependencies), failure.expected);
-  assert.deepEqual(events, [
-    'prerequisites',
-    'target-preload',
-    'core-sqlite:failed',
+  const duplicate = diagnostics.report('core-sqlite', 'file is not a database');
+  assert.equal(duplicate.revision, 1);
+
+  const replacement = diagnostics.report('core-sqlite', 'database disk image is malformed');
+  assert.equal(replacement.revision, 2);
+  assert.deepEqual(replacement.issues, [
+    { stage: 'core-sqlite', message: 'database disk image is malformed' },
   ]);
+
+  assert.equal(diagnostics.clear('tray').revision, 2);
+  const cleared = diagnostics.clear('core-sqlite');
+  assert.deepEqual(cleared, { revision: 3, issues: [] });
 }
 
 {
-  const timeout = createManualTimeout();
-  const { dependencies, events } = createDependencies({
-    waitForTargetPreloadRegistration: async () => {
-      events.push('target-preload:start');
-      await withStartupTimeout(new Promise(() => undefined), {
-        label: 'Core SQLite target preload registration',
-        timeoutMs: 30000,
-        schedule: timeout.schedule,
-      });
-    },
-  });
-  const startup = runCoreGatedGuiStartup(dependencies);
-  await Promise.resolve();
-  await Promise.resolve();
-  timeout.fire();
-  await assert.rejects(startup, (err) => err instanceof StartupTimeoutError);
-  assert.deepEqual(events, ['prerequisites', 'target-preload:start']);
-}
-
-{
-  const timeout = createManualTimeout();
-  const { dependencies, events } = createDependencies({
-    waitForCoreSqlite: async () => {
-      events.push('core-sqlite:start');
-      return await withStartupTimeout(new Promise(() => undefined), {
-        label: 'Core SQLite readiness',
-        timeoutMs: 30000,
-        schedule: timeout.schedule,
-      });
-    },
-  });
-  const startup = runCoreGatedGuiStartup(dependencies);
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  timeout.fire();
-  await assert.rejects(startup, (err) => err instanceof StartupTimeoutError);
-  assert.deepEqual(events, [
-    'prerequisites',
-    'target-preload',
-    'core-sqlite:start',
-  ]);
-}
-
-{
-  let stopStartup;
-  const { dependencies, events, stop } = createDependencies({
-    waitForCoreSqlite: async () => {
-      events.push('core-sqlite');
-      stopStartup();
-      return { ok: true };
-    },
-  });
-  stopStartup = stop;
-  await runCoreGatedGuiStartup(dependencies);
-  assert.deepEqual(events, ['prerequisites', 'target-preload', 'core-sqlite']);
-}
-
-{
-  const { dependencies, events } = createDependencies({
-    initializeLanguage: async () => {
-      events.push('language:failed');
-      throw new Error('language failed');
-    },
-  });
-  await assert.rejects(runCoreGatedGuiStartup(dependencies), /language failed/);
-  assert.deepEqual(events, [
-    'prerequisites',
-    'target-preload',
-    'core-sqlite',
-    'language:failed',
-  ]);
+  const older = { revision: 1, issues: [] };
+  const equal = { revision: 2, issues: [] };
+  const newer = {
+    revision: 3,
+    issues: [{ stage: 'tray', message: 'icon unavailable' }],
+  };
+  assert.equal(selectNewerStartupDiagnosticsSnapshot(2, older), null);
+  assert.equal(selectNewerStartupDiagnosticsSnapshot(2, equal), null);
+  assert.deepEqual(selectNewerStartupDiagnosticsSnapshot(2, newer), newer);
 }
 
 const sqliteManagerSource = readFileSync(
@@ -251,6 +174,14 @@ const sqlitePreloadSource = readFileSync(
   'utf8',
 );
 const appMainSource = readFileSync(join(projectRoot, 'src/main/app.main.ts'), 'utf8');
+const guiStartupSource = readFileSync(
+  join(projectRoot, 'src/main/startup/guiStartup.service.ts'),
+  'utf8',
+);
+const menuBarStoreSource = readFileSync(
+  join(projectRoot, 'src/renderer/home/src/components/MenuBar/menuBar.store.ts'),
+  'utf8',
+);
 
 assert.doesNotMatch(sqliteManagerSource, /packageHelper|getPackageInfo/);
 assert.match(sqliteManagerSource, /private readonly initializeOnce = onceAsync/);
@@ -261,31 +192,41 @@ assert.ok(
 assert.doesNotMatch(messageServerSource, /sqliteManager\.init/);
 assert.match(messageServerSource, /if \(isMessageServerInitialized\) return/);
 assert.match(sqlitePreloadSource, /sqliteManager\.init\(__BITTERLESS_VERSION_CODE__\)/);
-const handlerRegistrationIndex = sqlitePreloadSource.indexOf(
-  'export const coreSqliteBootDao = isSqliteRendererDocument',
-);
-const targetBroadcastIndex = sqlitePreloadSource.indexOf(
-  'xpcRenderer.broadcast(CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT',
-);
-assert.match(sqlitePreloadSource, /location\.pathname\.endsWith\('\/sqlite\/index\.html'\)/);
-assert.ok(handlerRegistrationIndex >= 0 && handlerRegistrationIndex < targetBroadcastIndex);
-assert.match(
-  sqlitePreloadSource,
-  /coreSqliteBootDao = isSqliteRendererDocument\s*\? new CoreSqliteBootDao\(\)\s*:\s*null/,
-);
+assert.match(sqlitePreloadSource, /location\.protocol === 'about:'/);
+assert.match(sqlitePreloadSource, /\/sqlite\(\?:\\\/index\\\.html\)\?\$/);
+assert.doesNotMatch(sqlitePreloadSource, /location\.pathname\.endsWith/);
 assert.match(sqlitePreloadSource, /ready\(params: CoreSqliteReadyParams\)/);
 assert.match(sqlitePreloadSource, /params\?\.targetId !== targetId/);
-assert.match(sqlitePreloadSource, /broadcast\(CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT, \{ targetId \}\)/);
+assert.match(
+  sqlitePreloadSource,
+  /broadcast\(CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT, \{ targetId \}\)/,
+);
 assert.ok(
   appMainSource.indexOf('xpcMain.subscribe(CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT') <
-    appMainSource.indexOf('sqliteWindowHelper.create()'),
+    appMainSource.indexOf('sqliteWindowHelper.create('),
 );
 assert.match(appMainSource, /coreSqliteBoot\.ready\(\{ targetId \}\)/);
-assert.match(appMainSource, /Core SQLite target preload registered:/);
-assert.match(appMainSource, /Core SQLite ready:/);
-assert.match(appMainSource, /invalidationError = err/);
-assert.match(appMainSource, /if \(invalidationError\) throw invalidationError/);
-assert.doesNotMatch(appMainSource, /did-finish-load|waitForWindowLoad/);
+assert.doesNotMatch(appMainSource, /withStartupTimeout|SQLITE_STARTUP_TIMEOUT_MS/);
+assert.doesNotMatch(appMainSource, /app\.exit\(1\)/);
+assert.doesNotMatch(
+  appMainSource,
+  /waitForTargetPreloadRegistration|waitForCoreSqlite/,
+);
+assert.ok(
+  guiStartupSource.indexOf('dependencies.startCoreSqlite()') <
+    guiStartupSource.indexOf('dependencies.initializeLanguageFallback()'),
+);
+assert.match(guiStartupSource, /void coreSqliteResult/);
+assert.ok(
+  guiStartupSource.indexOf('dependencies.initializeLanguageFallback()') <
+    guiStartupSource.indexOf('dependencies.createHome()'),
+);
+assert.match(appMainSource, /startupDiagnosticsService\.report\('core-sqlite', err\)/);
+assert.ok(
+  menuBarStoreSource.indexOf('xpcRenderer.subscribe(STARTUP_DIAGNOSTICS_CHANGED_EVENT') <
+    menuBarStoreSource.indexOf('mainWindowEmitter.getStartupDiagnostics()'),
+);
+assert.match(menuBarStoreSource, /selectNewerStartupDiagnosticsSnapshot/);
 
 {
   const result = (objectCount) => ({
@@ -293,10 +234,7 @@ assert.doesNotMatch(appMainSource, /did-finish-load|waitForWindowLoad/);
   });
   assert.equal(probeCoreSqliteReadable(result(0)), 0);
   assert.equal(probeCoreSqliteReadable(result(4)), 4);
-  assert.throws(
-    () => probeCoreSqliteReadable(result(-1)),
-    /invalid object_count/,
-  );
+  assert.throws(() => probeCoreSqliteReadable(result(-1)), /invalid object_count/);
   assert.throws(() => probeCoreSqliteReadable({
     prepare: () => {
       throw new Error('file is not a database');
@@ -318,9 +256,7 @@ assert.doesNotMatch(appMainSource, /did-finish-load|waitForWindowLoad/);
   assert.equal(initializationCount, 1);
   gate.resolve();
   assert.equal(await first, '260717000001');
-  const sequential = initializeOnce('260717000003');
-  assert.strictEqual(sequential, first);
-  assert.equal(await sequential, '260717000001');
+  assert.strictEqual(initializeOnce('260717000003'), first);
   assert.equal(initializationCount, 1);
 }
 
@@ -331,8 +267,7 @@ assert.doesNotMatch(appMainSource, /did-finish-load|waitForWindowLoad/);
     throw new Error('init failed');
   });
   const first = initializeOnce();
-  const second = initializeOnce();
-  assert.strictEqual(second, first);
+  assert.strictEqual(initializeOnce(), first);
   await assert.rejects(first, /init failed/);
   await assert.rejects(initializeOnce(), /init failed/);
   assert.equal(initializationCount, 1);
