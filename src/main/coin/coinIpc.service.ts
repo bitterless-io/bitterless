@@ -114,12 +114,6 @@ export const registerCoinIpc = (dependencies: CoinIpcDependencies): void => {
   scopedHandle(COIN_IPC_CHANNELS.gmgnOpenOfficialLink, async (_window, value) =>
     await dependencies.resources.openGmgnOfficialLink(value));
 
-  scopedHandle(COIN_IPC_CHANNELS.alchemySave, async (_window, value) =>
-    await dependencies.resources.saveAlchemy(value));
-
-  scopedHandle(COIN_IPC_CHANNELS.alchemyTest, async (_window, value) =>
-    await dependencies.resources.testAlchemy(value));
-
   scopedHandle(COIN_IPC_CHANNELS.serviceSave, async (_window, value) =>
     await dependencies.resources.saveService(value));
 

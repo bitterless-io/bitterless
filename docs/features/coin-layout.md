@@ -90,8 +90,8 @@ in both evidence strip and result header.
 Meme uses a local segmented control for `Discover` and `Analyze`.
 
 ```text
-Mode [Service | Local CLI/RPC]  Chain [BSC]  Contract address [0x...]  [Analyze] [Cancel]
-Evidence: GMGN ready | Alchemy ready | age 18s | deterministic 72
+Mode [Service | Local GMGN CLI]  Chain [BSC]  Contract address [0x...]  [Analyze] [Cancel]
+Evidence: GMGN ready | age 18s | deterministic 72
 Overview  Cohort overlap  EOA-only  Attention  Risks
 
 Core distribution
@@ -157,11 +157,6 @@ Resources is a dense settings page with one bordered list per category. Cards ar
 │ API key   Configured • read-only                 [Replace] [Verify]   │
 │ Missing: yarn global add gmgn-cli                 [Copy] [Recheck]     │
 └────────────────────────────────────────────────────────────────────────┘
-┌ Chain data ───────────────────────────────────────────────────────────┐
-│ Alchemy Robinhood   Probing   masked endpoint             [Configure] │
-│ Alchemy BSC         Ready     masked endpoint              [Configure] │
-│ Alchemy Solana      Ready     masked endpoint              [Configure] │
-└────────────────────────────────────────────────────────────────────────┘
 ┌ Services ─────────────────────────────────────────────────────────────┐
 │ Monitor / Screener / Meme API status, URL host only, last check       │
 └────────────────────────────────────────────────────────────────────────┘
@@ -176,8 +171,6 @@ Behavior:
   states that no trading/private key is configured.
 - Verify runs a fixed read-only probe and shows start/end time, exit/error class, and sanitized
   summary. No raw API key, command environment, or unbounded payload is shown.
-- Alchemy modals accept target-chain HTTP/WSS endpoints, save encrypted values, and return masked
-  status only. A Test action has row-local loading.
 - Every save/test/connect action has loading, duplicate-submit protection, success/error feedback,
   and keyboard-safe modal behavior.
 
@@ -190,9 +183,8 @@ Source             Configured   Support     Freshness    Last error
 Binance filter     yes          read-only   4s           —
 Coin screen        yes          read-only   2m           —
 GMGN CLI           no           unavailable —            API key required
-Alchemy BSC        yes          read-only   18s          —
-Alchemy Solana     yes          read-only   22s          —
-Robinhood Chain    probing      partial     —            capability gate
+Owner cohorts      no           unavailable —            reviewed registry required
+Strategy v1        yes          read-only   —            —
 ```
 
 It contains diagnostics only. Credentials and complete secret-bearing endpoints are never shown.
@@ -246,7 +238,6 @@ CoinApp
 │  ├─ CoinResourcesView
 │  │  ├─ CodexResourceSection
 │  │  ├─ GmgnCliResourceSection
-│  │  ├─ AlchemyResourceSection
 │  │  └─ ServiceResourceSection
 │  └─ SourcesDrawer
 └─ CoinStatusBar

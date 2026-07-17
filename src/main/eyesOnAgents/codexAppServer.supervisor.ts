@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { constants as fsConstants, accessSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import type {
   EyesOnAgentsConnectionState,
   EyesOnAgentsConnectionStatus
@@ -27,15 +27,19 @@ export type CodexHookTrustStatus =
   | 'managed'
   | 'untrusted'
   | 'trusted'
-  | 'modified'
-  | 'unknown';
+  | 'modified';
 
 export interface CodexHookDefinition {
   command: string | null;
+  currentHash: string;
   enabled: boolean;
   eventName: string;
   handlerType: string;
+  isManaged: boolean;
+  key: string;
   matcher: string | null;
+  source: string;
+  sourcePath: string;
   trustStatus: CodexHookTrustStatus;
 }
 
@@ -130,11 +134,19 @@ const parseNullableHookText = (value: unknown, label: string): string | null => 
   return parseHookText(value, label);
 };
 
+const parseAbsoluteHookPath = (value: unknown, label: string): string => {
+  const path = parseHookText(value, label);
+  if (!isAbsolute(path)) {
+    throw new Error(`Codex hooks/list ${label} must be absolute`);
+  }
+  return path;
+};
+
 const parseHookTrustStatus = (value: unknown): CodexHookTrustStatus => {
   if (value === 'managed' || value === 'untrusted' || value === 'trusted' || value === 'modified') {
     return value;
   }
-  return 'unknown';
+  throw new Error('Codex hooks/list trust status is unsupported');
 };
 
 const parseHookDefinition = (value: unknown, index: number): CodexHookDefinition => {
@@ -144,14 +156,46 @@ const parseHookDefinition = (value: unknown, index: number): CodexHookDefinition
   if (typeof value.enabled !== 'boolean') {
     throw new Error(`Codex hooks/list hook ${index} enabled flag is invalid`);
   }
+  if (typeof value.isManaged !== 'boolean') {
+    throw new Error(`Codex hooks/list hook ${index} managed flag is invalid`);
+  }
   return {
     command: parseNullableHookText(value.command, `hook ${index} command`),
+    currentHash: parseHookText(value.currentHash, `hook ${index} currentHash`),
     enabled: value.enabled,
     eventName: parseHookText(value.eventName, `hook ${index} eventName`),
     handlerType: parseHookText(value.handlerType, `hook ${index} handlerType`),
+    isManaged: value.isManaged,
+    key: parseHookText(value.key, `hook ${index} key`),
     matcher: parseNullableHookText(value.matcher, `hook ${index} matcher`),
+    source: parseHookText(value.source, `hook ${index} source`),
+    sourcePath: parseAbsoluteHookPath(value.sourcePath, `hook ${index} sourcePath`),
     trustStatus: parseHookTrustStatus(value.trustStatus)
   };
+};
+
+const assertEmptyHookDiagnostics = (value: unknown, label: string): void => {
+  if (!Array.isArray(value)) {
+    throw new Error(`Codex hooks/list ${label} is invalid`);
+  }
+  if (value.length > 0) {
+    throw new Error(`Codex hooks/list reported ${label}`);
+  }
+};
+
+const parseBatchWriteResult = (value: unknown): void => {
+  if (!isEyesOnAgentsRecord(value)) {
+    throw new Error('Codex config/batchWrite response is invalid');
+  }
+  if (value.status !== 'ok' && value.status !== 'okOverridden') {
+    throw new Error('Codex config/batchWrite status is invalid');
+  }
+  if (typeof value.version !== 'string' || !value.version) {
+    throw new Error('Codex config/batchWrite version is invalid');
+  }
+  if (typeof value.filePath !== 'string' || !isAbsolute(value.filePath)) {
+    throw new Error('Codex config/batchWrite filePath is invalid');
+  }
 };
 
 export class CodexAppServerSupervisor {
@@ -377,10 +421,38 @@ export class CodexAppServerSupervisor {
     if (!isEyesOnAgentsRecord(entry) || !Array.isArray(entry.hooks)) {
       throw new Error('Codex hooks/list entry is invalid');
     }
+    assertEmptyHookDiagnostics(entry.errors, 'errors');
+    assertEmptyHookDiagnostics(entry.warnings, 'warnings');
     if (entry.hooks.length > MAX_HOOKS) {
       throw new Error(`Codex hooks/list exceeded ${MAX_HOOKS} entries`);
     }
     return entry.hooks.map((hook, index) => parseHookDefinition(hook, index));
+  }
+
+  async enableHooks(keys: string[]): Promise<void> {
+    const connection = this.connection;
+    if (!connection || !this.isConnected()) {
+      throw new Error('Codex App Server is not connected');
+    }
+    if (keys.length === 0 || keys.length > MAX_HOOKS || new Set(keys).size !== keys.length) {
+      throw new Error('Codex hook keys are invalid');
+    }
+    const state = Object.fromEntries(keys.map((key, index) => {
+      const parsed = parseHookText(key, `hook key ${index}`);
+      if (!parsed) throw new Error(`Codex hook key ${index} is invalid`);
+      return [parsed, { enabled: true }];
+    }));
+    const result = await this.request(connection, 'config/batchWrite', {
+      edits: [{
+        keyPath: 'hooks.state',
+        value: state,
+        mergeStrategy: 'upsert'
+      }],
+      filePath: null,
+      expectedVersion: null,
+      reloadUserConfig: true
+    });
+    parseBatchWriteResult(result);
   }
 
   private request(

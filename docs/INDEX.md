@@ -18,6 +18,8 @@ design document.
   development instances.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
   Project metadata and an Uncategorized-only source filter.
+- [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
+  lifecycle, lightweight reliable delivery, Codex trust review, and App Server independence.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
   or local Todo/EyesOnAgents operation views with development and packaged runtime mapping.
 - [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
@@ -25,8 +27,8 @@ design document.
 
 ## Guides
 
-- [Coin data source preparation](guides/coin-data-sources.md) - owner resources, Alchemy/GMGN
-  setup, wallet cohorts, credential boundary, and production readiness gates.
+- [Coin data source preparation](guides/coin-data-sources.md) - owner resources, GMGN setup,
+  wallet cohorts, credential boundary, and production readiness gates.
 - [GMGN CLI setup](guides/gmgn-cli.md) - Yarn installation, personal API key, read-only probes,
   allowlist, and second-machine setup.
 
@@ -56,6 +58,8 @@ design document.
 
 ## Issues
 
+- [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
+  background Codex helpers register as GUI Electron apps and optional startup work gates Home.
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:
   decorative borders replaced by Todo-style background-led Domain and thread-item hierarchy.
 - [EyesOnAgents Desktop Focus](issues/archived/eyes-on-agents-desktop-focus.md) - fixed: active Codex Desktop tasks

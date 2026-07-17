@@ -1,7 +1,6 @@
 import { app, net } from 'electron';
 import { WebSocket } from 'undici';
 import {
-  coinAlchemyResourceService,
   coinGmgnCliService,
   coinServiceEndpointService,
 } from '../resources/coinResource.runtime';
@@ -26,6 +25,5 @@ export const coinDataService = new CoinDataService({
   http,
   services: coinServiceEndpointService,
   gmgn: coinGmgnCliService,
-  alchemy: coinAlchemyResourceService,
   createWebSocket: (url) => new WebSocket(url) as unknown as CoinWebSocketPort,
 });

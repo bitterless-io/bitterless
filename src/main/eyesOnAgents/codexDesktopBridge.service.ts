@@ -2,19 +2,26 @@ import { randomUUID } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs';
-import { dirname, join } from 'node:path';
-import type { EyesOnAgentsBridgeStatus } from '@shared/eyesOnAgents/eyesOnAgents.type';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import type {
+  EyesOnAgentsBridgeReviewReason,
+  EyesOnAgentsBridgeStatus
+} from '@shared/eyesOnAgents/eyesOnAgents.type';
 import type { CodexHookDefinition } from './codexAppServer.supervisor';
 import {
   createCodexHookCommand,
   createCodexHookShim,
-  getCodexHookBridgeEndpoint
+  getCodexHookBridgeEndpoint,
+  getCodexHookOutboxPath
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import {
   isEyesOnAgentsRecord,
@@ -28,9 +35,11 @@ interface CodexDesktopBridgeDependencies {
   userDataPath: string;
   homePath: string;
   execPath: string;
-  appPath: string | null;
+  appRootPath: string;
+  helperSourcePath?: string;
   platform?: NodeJS.Platform;
   idFactory?: () => string;
+  now?: () => number;
   runtimeStatus?: () => {
     listening: boolean;
     listeningSince: number | null;
@@ -60,16 +69,25 @@ const HOOKS: HookSpec[] = [
 
 const MAX_BRIDGE_ERROR_LENGTH = 300;
 const HOOK_INSPECTION_ERROR = 'Codex hook inspection failed; reconnect or Sync to retry';
+const HOOK_OPERATIONAL_ERROR = 'Codex hook observation failed; reconnect or Sync to retry';
+const MAX_HELPER_ARTIFACT_FILES = 16;
+const MAX_HELPER_ARTIFACT_BYTES = 512 * 1024;
+const RELATIVE_REQUIRE_PATTERN = /require\(["'](\.[^"']+)["']\)/g;
 
 type HookInspection =
-  | { hooks: CodexHookDefinition[]; error: null }
-  | { hooks: null; error: string };
+  | { hooks: CodexHookDefinition[]; error: null; inspectedAt: number }
+  | { hooks: null; error: string; inspectedAt: number };
+
+interface HelperArtifactFile {
+  relativePath: string;
+  content: Buffer;
+}
 
 const boundedError = (_value: unknown): string => {
   return HOOK_INSPECTION_ERROR.slice(0, MAX_BRIDGE_ERROR_LENGTH);
 };
 
-const atomicWrite = (path: string, content: string, mode = 0o600): void => {
+const atomicWrite = (path: string, content: string | Uint8Array, mode = 0o600): void => {
   mkdirSync(dirname(path), { recursive: true });
   const temp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   try {
@@ -123,15 +141,22 @@ const isHookGroup = (value: unknown): value is HookGroup => {
 export class CodexDesktopBridgeService {
   private readonly platform: NodeJS.Platform;
   private readonly idFactory: () => string;
+  private readonly now: () => number;
   private readonly statePath: string;
   private readonly legacyStatePath: string;
   private readonly settingsPath: string;
   private readonly shimPath: string;
+  private readonly helperRootPath: string;
+  private readonly helperPath: string;
+  private readonly legacyHelperPath: string;
+  private readonly helperSourcePath: string;
   private hookInspection: HookInspection | null = null;
+  private operationalError: string | null = null;
 
   constructor(private readonly dependencies: CodexDesktopBridgeDependencies) {
     this.platform = dependencies.platform ?? process.platform;
     this.idFactory = dependencies.idFactory ?? randomUUID;
+    this.now = dependencies.now ?? Date.now;
     this.statePath = join(dependencies.userDataPath, 'eyes-on-agents', 'codex-bridge.json');
     this.legacyStatePath = join(dependencies.userDataPath, 'coding-agent', 'installation.json');
     this.settingsPath = join(dependencies.homePath, '.codex', 'hooks.json');
@@ -139,6 +164,19 @@ export class CodexDesktopBridgeService {
       dependencies.userDataPath,
       'bin',
       `bitterless-codex-session-hook${this.platform === 'win32' ? '.cmd' : ''}`
+    );
+    this.helperRootPath = join(
+      dependencies.userDataPath,
+      'bin',
+      'bitterless-codex-hook-helper'
+    );
+    this.helperPath = join(this.helperRootPath, 'codexHookHelper.cjs');
+    this.legacyHelperPath = join(dependencies.userDataPath, 'bin', 'bitterless-codex-hook-helper.cjs');
+    this.helperSourcePath = dependencies.helperSourcePath ?? join(
+      dependencies.appRootPath,
+      'out',
+      'main',
+      'codexHookHelper.js'
     );
   }
 
@@ -189,20 +227,106 @@ export class CodexDesktopBridgeService {
   private expectedShim(installationId: string): string {
     return createCodexHookShim({
       execPath: this.dependencies.execPath,
-      appPath: this.dependencies.appPath,
+      helperPath: this.helperPath,
       endpointPath: getCodexHookBridgeEndpoint(
         this.dependencies.userDataPath,
         this.platform
       ).path,
       installationId,
+      outboxPath: getCodexHookOutboxPath(this.dependencies.userDataPath),
       platform: this.platform
+    });
+  }
+
+  private expectedHelperArtifact(): HelperArtifactFile[] {
+    const sourceRoot = dirname(this.helperSourcePath);
+    const queue = [this.helperSourcePath];
+    const visited = new Set<string>();
+    const files: HelperArtifactFile[] = [];
+    let totalBytes = 0;
+    while (queue.length > 0) {
+      const sourcePath = resolve(queue.shift() as string);
+      if (visited.has(sourcePath)) continue;
+      visited.add(sourcePath);
+      const sourceRelativePath = relative(sourceRoot, sourcePath);
+      if (
+        !sourceRelativePath ||
+        sourceRelativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
+        sourceRelativePath === '..' ||
+        isAbsolute(sourceRelativePath)
+      ) {
+        throw new Error('Codex hook helper dependency escaped its build directory');
+      }
+      if (!lstatSync(sourcePath).isFile()) {
+        throw new Error('Codex hook helper artifact contains a non-file dependency');
+      }
+      const content = readFileSync(sourcePath);
+      totalBytes += content.length;
+      if (files.length + 1 > MAX_HELPER_ARTIFACT_FILES || totalBytes > MAX_HELPER_ARTIFACT_BYTES) {
+        throw new Error('Codex hook helper artifact exceeds its bounded package');
+      }
+      files.push({
+        relativePath: sourcePath === resolve(this.helperSourcePath)
+          ? 'codexHookHelper.cjs'
+          : sourceRelativePath,
+        content
+      });
+      const source = content.toString('utf8');
+      for (const match of source.matchAll(RELATIVE_REQUIRE_PATTERN)) {
+        const dependencyPath = resolve(dirname(sourcePath), match[1]);
+        const dependencyRelativePath = relative(sourceRoot, dependencyPath);
+        if (
+          dependencyRelativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
+          dependencyRelativePath === '..' ||
+          isAbsolute(dependencyRelativePath)
+        ) {
+          throw new Error('Codex hook helper dependency escaped its build directory');
+        }
+        queue.push(dependencyPath);
+      }
+    }
+    return files;
+  }
+
+  private installHelperArtifact(files: HelperArtifactFile[]): void {
+    mkdirSync(this.helperRootPath, { recursive: true, mode: 0o700 });
+    if (this.platform !== 'win32') chmodSync(this.helperRootPath, 0o700);
+    const entry = files.find((file) => file.relativePath === 'codexHookHelper.cjs');
+    if (!entry) throw new Error('Codex hook helper entry is missing');
+    for (const file of files) {
+      if (file === entry) continue;
+      atomicWrite(join(this.helperRootPath, file.relativePath), file.content);
+    }
+    atomicWrite(this.helperPath, entry.content);
+    const expected = new Set(files.map((file) => resolve(this.helperRootPath, file.relativePath)));
+    const cleanDirectory = (directory: string): void => {
+      for (const name of readdirSync(directory)) {
+        const path = join(directory, name);
+        const stats = lstatSync(path);
+        if (stats.isDirectory()) {
+          cleanDirectory(path);
+          if (readdirSync(path).length === 0) rmSync(path, { recursive: false, force: true });
+        } else if (!expected.has(resolve(path))) {
+          unlinkSync(path);
+        }
+      }
+    };
+    cleanDirectory(this.helperRootPath);
+    if (existsSync(this.legacyHelperPath)) unlinkSync(this.legacyHelperPath);
+  }
+
+  private isHelperArtifactExact(files: HelperArtifactFile[]): boolean {
+    return files.every((file) => {
+      const path = join(this.helperRootPath, file.relativePath);
+      return existsSync(path) && readFileSync(path).equals(file.content);
     });
   }
 
   private isOwnedHandler(value: unknown): boolean {
     if (!isEyesOnAgentsRecord(value)) return false;
+    const expectedCommand = createCodexHookCommand(this.shimPath, this.platform);
     return [value.command, value.commandWindows].some(
-      (command) => typeof command === 'string' && command.includes(this.shimPath)
+      (command) => command === expectedCommand
     );
   }
 
@@ -294,11 +418,13 @@ export class CodexDesktopBridgeService {
 
   private response(
     state: EyesOnAgentsBridgeStatus['state'],
-    error: string | null = null
+    error: string | null = null,
+    reviewReason: EyesOnAgentsBridgeReviewReason | null = null
   ): EyesOnAgentsBridgeStatus {
     const runtime = this.runtime();
     return {
       state,
+      reviewReason,
       listening: runtime.listening,
       listeningSince: runtime.listeningSince === null
         ? null
@@ -306,29 +432,54 @@ export class CodexDesktopBridgeService {
       lastEventAt: runtime.lastEventAt === null
         ? null
         : new Date(runtime.lastEventAt).toISOString(),
+      lastInspectedAt: this.hookInspection === null
+        ? null
+        : new Date(this.hookInspection.inspectedAt).toISOString(),
       error
     };
   }
 
   updateHookInspection(hooks: CodexHookDefinition[]): void {
+    this.operationalError = null;
     this.hookInspection = {
       hooks: hooks.map((hook) => ({ ...hook })),
-      error: null
+      error: null,
+      inspectedAt: this.now()
     };
   }
 
   setHookInspectionError(error: unknown): void {
-    this.hookInspection = { hooks: null, error: boundedError(error) };
+    this.operationalError = null;
+    this.hookInspection = {
+      hooks: null,
+      error: boundedError(error),
+      inspectedAt: this.now()
+    };
+  }
+
+  setOperationalError(_error: unknown): void {
+    this.operationalError = HOOK_OPERATIONAL_ERROR.slice(0, MAX_BRIDGE_ERROR_LENGTH);
   }
 
   private inspectedStatus(): EyesOnAgentsBridgeStatus {
-    if (this.hookInspection === null) return this.response('needs_trust');
+    if (this.operationalError !== null) {
+      return this.response('error', this.operationalError);
+    }
+    if (this.hookInspection === null) {
+      return this.response('needs_trust', null, 'untrusted');
+    }
     if (this.hookInspection.error !== null) {
       return this.response('error', this.hookInspection.error);
     }
     const expectedCommand = this.expectedHandler().command;
-    const owned = this.hookInspection.hooks.filter(
-      (hook) => hook.command?.includes(this.shimPath) === true
+    const commandMatches = this.hookInspection.hooks.filter(
+      (hook) => hook.command === expectedCommand
+    );
+    if (commandMatches.some((hook) => !this.isRuntimeOwnedDefinition(hook))) {
+      return this.response('drifted', 'Codex reported changed Bitterless hook ownership');
+    }
+    const owned = commandMatches.filter(
+      (hook) => this.isRuntimeOwnedDefinition(hook)
     );
     if (owned.length !== HOOKS.length) {
       return this.response(
@@ -350,12 +501,112 @@ export class CodexDesktopBridgeService {
       matched.push(definitions[0]);
     }
     if (matched.some((hook) => !hook.enabled)) {
-      return this.response('needs_trust');
+      return this.response('needs_trust', null, 'disabled');
     }
-    if (matched.some((hook) => hook.trustStatus !== 'trusted' && hook.trustStatus !== 'managed')) {
-      return this.response('needs_trust');
+    if (matched.some((hook) =>
+      hook.trustStatus !== 'trusted' &&
+      hook.trustStatus !== 'managed' &&
+      hook.trustStatus !== 'modified' &&
+      hook.trustStatus !== 'untrusted'
+    )) {
+      return this.response('error', HOOK_INSPECTION_ERROR);
+    }
+    if (matched.some((hook) => hook.trustStatus === 'modified')) {
+      return this.response('needs_trust', null, 'modified');
+    }
+    if (matched.some((hook) => hook.trustStatus === 'untrusted')) {
+      return this.response('needs_trust', null, 'untrusted');
     }
     return this.response('installed');
+  }
+
+  private canonicalHookSourcePath(path: string): string {
+    const canonical = resolve(path);
+    return this.platform === 'win32' ? canonical.toLowerCase() : canonical;
+  }
+
+  private isRuntimeOwnedDefinition(hook: CodexHookDefinition): boolean {
+    return hook.command === this.expectedHandler().command &&
+      hook.source === 'user' &&
+      hook.isManaged === false &&
+      this.canonicalHookSourcePath(hook.sourcePath) ===
+        this.canonicalHookSourcePath(this.settingsPath);
+  }
+
+  hasInstallationIntent(): boolean {
+    try {
+      return this.readState()?.installed === true;
+    } catch {
+      return false;
+    }
+  }
+
+  hasExactInstallation(): boolean {
+    try {
+      const state = this.readState();
+      if (!state?.installed) return false;
+      const root = parseRoot(existsSync(this.settingsPath)
+        ? readFileSync(this.settingsPath, 'utf8')
+        : '{}');
+      const inspection = this.inspect(root);
+      return inspection.ownedCount === HOOKS.length &&
+        inspection.exactCount === HOOKS.length &&
+        existsSync(this.shimPath) &&
+        readFileSync(this.shimPath, 'utf8') === this.expectedShim(state.installationId) &&
+        existsSync(this.helperPath) &&
+        this.isHelperArtifactExact(this.expectedHelperArtifact());
+    } catch {
+      return false;
+    }
+  }
+
+  refreshInstalledArtifacts(): EyesOnAgentsBridgeStatus {
+    try {
+      const state = this.readState();
+      if (!state?.installed) return this.getStatus();
+      const root = parseRoot(existsSync(this.settingsPath)
+        ? readFileSync(this.settingsPath, 'utf8')
+        : '{}');
+      const inspection = this.inspect(root);
+      if (
+        inspection.ownedCount !== HOOKS.length ||
+        inspection.exactCount !== HOOKS.length
+      ) {
+        return this.response('drifted', 'Bitterless Codex hook configuration changed');
+      }
+      this.installHelperArtifact(this.expectedHelperArtifact());
+      atomicWrite(
+        this.shimPath,
+        this.expectedShim(state.installationId),
+        this.platform === 'win32' ? 0o600 : 0o700
+      );
+      return this.getStatus();
+    } catch (error) {
+      return this.response('error', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  getDisabledExactHookKeys(): string[] {
+    if (this.hookInspection?.error !== null || !this.hookInspection?.hooks) return [];
+    if (this.inspectedStatus().reviewReason !== 'disabled') return [];
+    const expectedCommand = this.expectedHandler().command;
+    const keys: string[] = [];
+    for (const spec of HOOKS) {
+      const matches = this.hookInspection.hooks.filter((hook) =>
+        this.isRuntimeOwnedDefinition(hook) &&
+        hook.command === expectedCommand &&
+        hook.eventName === spec.protocolEvent &&
+        hook.handlerType === 'command' &&
+        hook.matcher === (spec.matcher ?? null)
+      );
+      if (matches.length !== 1) return [];
+      const hook = matches[0];
+      if (!hook.enabled) {
+        if (!hook.key) return [];
+        keys.push(hook.key);
+      }
+    }
+    return new Set(keys).size === keys.length ? keys : [];
   }
 
   getStatus(): EyesOnAgentsBridgeStatus {
@@ -366,18 +617,22 @@ export class CodexDesktopBridgeService {
         : '{}');
       const inspection = this.inspect(root);
       const shimExists = existsSync(this.shimPath);
+      const helperExists = existsSync(this.helperPath);
       if (!state?.installed) {
-        if (inspection.ownedCount > 0 || shimExists) {
+        if (inspection.ownedCount > 0 || shimExists || helperExists) {
           return this.response('drifted', 'An incomplete Bitterless Codex hook was found');
         }
         return this.response('not_installed');
       }
       const shimExact = shimExists &&
         readFileSync(this.shimPath, 'utf8') === this.expectedShim(state.installationId);
+      const helperExact = helperExists &&
+        this.isHelperArtifactExact(this.expectedHelperArtifact());
       if (
         inspection.ownedCount !== HOOKS.length ||
         inspection.exactCount !== HOOKS.length ||
-        !shimExact
+        !shimExact ||
+        !helperExact
       ) {
         return this.response('drifted', 'Bitterless Codex hook configuration changed');
       }
@@ -390,16 +645,28 @@ export class CodexDesktopBridgeService {
   install(): EyesOnAgentsBridgeStatus {
     try {
       this.hookInspection = null;
+      this.operationalError = null;
       const installationId = this.ensureInstallationId();
       const state = this.readState() as BridgeState;
       const root = parseRoot(existsSync(this.settingsPath)
         ? readFileSync(this.settingsPath, 'utf8')
         : '{}');
+      this.installHelperArtifact(this.expectedHelperArtifact());
       atomicWrite(
-        this.settingsPath,
-        `${JSON.stringify(this.addExpectedHooks(root), null, 2)}\n`
+        this.shimPath,
+        this.expectedShim(installationId),
+        this.platform === 'win32' ? 0o600 : 0o700
       );
-      atomicWrite(this.shimPath, this.expectedShim(installationId), this.platform === 'win32' ? 0o600 : 0o700);
+      const inspection = this.inspect(root);
+      if (
+        inspection.ownedCount !== HOOKS.length ||
+        inspection.exactCount !== HOOKS.length
+      ) {
+        atomicWrite(
+          this.settingsPath,
+          `${JSON.stringify(this.addExpectedHooks(root), null, 2)}\n`
+        );
+      }
       state.installed = true;
       this.writeState(state);
       return this.getStatus();
@@ -411,7 +678,14 @@ export class CodexDesktopBridgeService {
   remove(): EyesOnAgentsBridgeStatus {
     try {
       this.hookInspection = null;
-      const state = this.readState();
+      this.operationalError = null;
+      let state: BridgeState | null = null;
+      let stateCorrupt = false;
+      try {
+        state = this.readState();
+      } catch {
+        stateCorrupt = true;
+      }
       const root = parseRoot(existsSync(this.settingsPath)
         ? readFileSync(this.settingsPath, 'utf8')
         : '{}');
@@ -425,9 +699,17 @@ export class CodexDesktopBridgeService {
         atomicWrite(this.settingsPath, `${JSON.stringify(next, null, 2)}\n`);
       }
       if (existsSync(this.shimPath)) unlinkSync(this.shimPath);
+      if (existsSync(this.helperRootPath)) {
+        rmSync(this.helperRootPath, { recursive: true, force: true });
+      }
+      if (existsSync(this.legacyHelperPath)) unlinkSync(this.legacyHelperPath);
+      const outboxPath = getCodexHookOutboxPath(this.dependencies.userDataPath);
+      if (existsSync(outboxPath)) rmSync(outboxPath, { recursive: true, force: true });
       if (state) {
         state.installed = false;
         this.writeState(state);
+      } else if (stateCorrupt && existsSync(this.statePath)) {
+        unlinkSync(this.statePath);
       }
       return this.getStatus();
     } catch (error) {

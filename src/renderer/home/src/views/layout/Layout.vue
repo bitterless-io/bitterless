@@ -1,18 +1,15 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
 import HomeMenu from './components/homeMenu/HomeMenu.vue';
-import MenuBar from '../../components/MenuBar/MenuBar.vue';
 import MessageSearch from '../chat/components/MessageSearch/MessageSearch.vue';
 import {
   initSearchShortcut,
   destroySearchShortcut
 } from '../chat/components/MessageSearch/messageSearch.store';
-import { loadProxySetting } from '@/views/setting/components/ProxySetting/proxySetting.store';
 import { initConnectors } from '../connector/connector.init';
 
 onMounted(() => {
   initSearchShortcut();
-  loadProxySetting();
   initConnectors().catch((err) => {
     console.error('[layout] failed to initialize connectors:', err);
   });
@@ -22,7 +19,6 @@ onUnmounted(() => destroySearchShortcut());
 
 <template>
   <div class="layout">
-    <MenuBar />
     <a-layout class="layout__body">
       <a-layout-sider class="layout__sider" :width="56" :collapsed-width="56">
         <HomeMenu />

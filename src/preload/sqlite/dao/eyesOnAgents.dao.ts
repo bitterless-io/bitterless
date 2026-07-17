@@ -236,6 +236,123 @@ const eventState = (event: EyesOnAgentsRuntimeEvent): EyesOnAgentsRuntimeState =
   return 'idle';
 };
 
+const applyRuntimeEventInTransaction = (event: EyesOnAgentsRuntimeEvent): void => {
+  const now = Date.now();
+  const domainId = defaultDomainId();
+  const state = eventState(event);
+  const activeFlags = event.type === 'thread_status' ? event.activeFlags : [];
+  const project = projectColumns(event.project);
+  const startedTurnId = event.type === 'turn_started'
+    ? event.turnId ?? (event.source === 'codex_hook' ? `hook-${event.observedAt}` : null)
+    : event.type === 'thread_status'
+      ? event.turnId ?? null
+      : null;
+  sqliteManager.db.prepare(
+    `INSERT OR IGNORE INTO eyes_on_agents_thread (
+      thread_id, domain_id, title, cwd, project_key, project_root, project_name,
+      runtime_state, active_flags_json,
+      active_turn_id, last_completed_turn_id, last_completed_at,
+      last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
+      last_activity_at, created_at, updated_at
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    event.threadId,
+    domainId,
+    event.cwd ?? null,
+    ...project,
+    state,
+    JSON.stringify(activeFlags),
+    startedTurnId,
+    state === 'working' || state === 'waiting_approval' || state === 'waiting_input'
+      || event.type === 'turn_completed' ? 1 : 0,
+    event.source,
+    event.observedAt,
+    event.observedAt,
+    now,
+    now
+  );
+
+  const existing = sqliteManager.db.prepare(
+    `SELECT status_observed_at, active_turn_id
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(event.threadId) as {
+    status_observed_at: number | null;
+    active_turn_id: string | null;
+  };
+  if (existing.status_observed_at !== null && existing.status_observed_at > event.observedAt) {
+    return;
+  }
+  if (event.project !== undefined) {
+    sqliteManager.db.prepare(
+      `UPDATE eyes_on_agents_thread SET
+        project_key = ?, project_root = ?, project_name = ?
+       WHERE thread_id = ?`
+    ).run(...project, event.threadId);
+  }
+
+  if (event.type === 'turn_completed') {
+    sqliteManager.db.prepare(
+      `UPDATE eyes_on_agents_thread SET
+        cwd = COALESCE(?, cwd),
+        runtime_state = ?,
+        active_flags_json = '[]',
+        active_turn_id = NULL,
+        last_completed_turn_id = ?,
+        last_completed_at = ?,
+        is_unread = 1,
+        status_source = ?,
+        status_observed_at = ?,
+        last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
+        updated_at = ?
+       WHERE thread_id = ?`
+    ).run(
+      event.cwd ?? null,
+      state,
+      event.turnId ?? existing.active_turn_id,
+      event.observedAt,
+      event.source,
+      event.observedAt,
+      event.observedAt,
+      now,
+      event.threadId
+    );
+    return;
+  }
+
+  sqliteManager.db.prepare(
+    `UPDATE eyes_on_agents_thread SET
+      cwd = COALESCE(?, cwd),
+      runtime_state = ?,
+      active_flags_json = ?,
+      active_turn_id = CASE
+        WHEN ? IN ('working', 'waiting_approval', 'waiting_input')
+          THEN COALESCE(?, active_turn_id)
+        ELSE NULL
+      END,
+      is_unread = CASE
+        WHEN ? IN ('working', 'waiting_approval', 'waiting_input') THEN 1
+        ELSE is_unread
+      END,
+      status_source = ?,
+      status_observed_at = ?,
+      last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
+      updated_at = ?
+     WHERE thread_id = ?`
+  ).run(
+    event.cwd ?? null,
+    state,
+    JSON.stringify(activeFlags),
+    state,
+    startedTurnId,
+    state,
+    event.source,
+    event.observedAt,
+    event.observedAt,
+    now,
+    event.threadId
+  );
+};
+
 export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRepositoryApi {
   async getSnapshot(): Promise<Pick<EyesOnAgentsSnapshot, 'domains' | 'threads'>> {
     const domains = await sqliteHelper.safeAll<DomainRow>(
@@ -521,123 +638,32 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
   async applyRuntimeEvent(params: { event: EyesOnAgentsRuntimeEvent }): Promise<void> {
     if (!params) throw new Error('event params are required');
     const event = parseEyesOnAgentsRuntimeEvent(params.event);
-    const transaction = sqliteManager.db.transaction(() => {
-      const now = Date.now();
-      const domainId = defaultDomainId();
-      const state = eventState(event);
-      const activeFlags = event.type === 'thread_status' ? event.activeFlags : [];
-      const project = projectColumns(event.project);
-      const startedTurnId = event.type === 'turn_started'
-        ? event.turnId ?? (event.source === 'codex_hook' ? `hook-${event.observedAt}` : null)
-        : event.type === 'thread_status'
-          ? event.turnId ?? null
-          : null;
-      sqliteManager.db.prepare(
-        `INSERT OR IGNORE INTO eyes_on_agents_thread (
-          thread_id, domain_id, title, cwd, project_key, project_root, project_name,
-          runtime_state, active_flags_json,
-          active_turn_id, last_completed_turn_id, last_completed_at,
-          last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
-          last_activity_at, created_at, updated_at
-        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        event.threadId,
-        domainId,
-        event.cwd ?? null,
-        ...project,
-        state,
-        JSON.stringify(activeFlags),
-        startedTurnId,
-        state === 'working' || state === 'waiting_approval' || state === 'waiting_input'
-          || event.type === 'turn_completed' ? 1 : 0,
-        event.source,
-        event.observedAt,
-        event.observedAt,
-        now,
-        now
-      );
-
-      const existing = sqliteManager.db.prepare(
-        `SELECT status_observed_at, active_turn_id
-         FROM eyes_on_agents_thread WHERE thread_id = ?`
-      ).get(event.threadId) as {
-        status_observed_at: number | null;
-        active_turn_id: string | null;
-      };
-      if (existing.status_observed_at !== null && existing.status_observed_at > event.observedAt) {
-        return;
-      }
-      if (event.project !== undefined) {
-        sqliteManager.db.prepare(
-          `UPDATE eyes_on_agents_thread SET
-            project_key = ?, project_root = ?, project_name = ?
-           WHERE thread_id = ?`
-        ).run(...project, event.threadId);
-      }
-
-      if (event.type === 'turn_completed') {
-        sqliteManager.db.prepare(
-          `UPDATE eyes_on_agents_thread SET
-            cwd = COALESCE(?, cwd),
-            runtime_state = ?,
-            active_flags_json = '[]',
-            active_turn_id = NULL,
-            last_completed_turn_id = ?,
-            last_completed_at = ?,
-            is_unread = 1,
-            status_source = ?,
-            status_observed_at = ?,
-            last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
-            updated_at = ?
-           WHERE thread_id = ?`
-        ).run(
-          event.cwd ?? null,
-          state,
-          event.turnId ?? existing.active_turn_id,
-          event.observedAt,
-          event.source,
-          event.observedAt,
-          event.observedAt,
-          now,
-          event.threadId
-        );
-        return;
-      }
-
-      sqliteManager.db.prepare(
-        `UPDATE eyes_on_agents_thread SET
-          cwd = COALESCE(?, cwd),
-          runtime_state = ?,
-          active_flags_json = ?,
-          active_turn_id = CASE
-            WHEN ? IN ('working', 'waiting_approval', 'waiting_input')
-              THEN COALESCE(?, active_turn_id)
-            ELSE NULL
-          END,
-          is_unread = CASE
-            WHEN ? IN ('working', 'waiting_approval', 'waiting_input') THEN 1
-            ELSE is_unread
-          END,
-          status_source = ?,
-          status_observed_at = ?,
-          last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
-          updated_at = ?
-         WHERE thread_id = ?`
-      ).run(
-        event.cwd ?? null,
-        state,
-        JSON.stringify(activeFlags),
-        state,
-        startedTurnId,
-        state,
-        event.source,
-        event.observedAt,
-        event.observedAt,
-        now,
-        event.threadId
-      );
-    });
+    const transaction = sqliteManager.db.transaction(() => applyRuntimeEventInTransaction(event));
     transaction();
+  }
+
+  async applyRuntimeEventDelivery(params: {
+    deliveryId: string;
+    event: EyesOnAgentsRuntimeEvent;
+  }): Promise<{ duplicate: boolean }> {
+    if (!params) throw new Error('delivery params are required');
+    const deliveryId = parseEyesOnAgentsUuid(params.deliveryId, 'deliveryId');
+    const event = parseEyesOnAgentsRuntimeEvent(params.event);
+    if (event.source !== 'codex_hook') {
+      throw new Error('delivery event source must be codex_hook');
+    }
+    const transaction = sqliteManager.db.transaction((): { duplicate: boolean } => {
+      const result = sqliteManager.db.prepare(
+        `INSERT INTO eyes_on_agents_hook_delivery_receipt (
+          delivery_id, thread_id, observed_at, committed_at
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(delivery_id) DO NOTHING`
+      ).run(deliveryId, event.threadId, event.observedAt, Date.now());
+      if (Number(result.changes) === 0) return { duplicate: true };
+      applyRuntimeEventInTransaction(event);
+      return { duplicate: false };
+    });
+    return transaction();
   }
 
   async markOpened(params: { threadId: string; openedAt: number }): Promise<void> {

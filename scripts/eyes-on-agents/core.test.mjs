@@ -179,6 +179,7 @@ try {
     setThreadArchived: async () => undefined,
     markThreadsArchived: async () => undefined,
     applyRuntimeEvent: async () => undefined,
+    applyRuntimeEventDelivery: async () => ({ duplicate: false }),
     createDomain: async () => undefined,
     renameDomain: async () => undefined,
     deleteDomain: async () => undefined,
@@ -222,7 +223,8 @@ try {
       error: null
     }),
     updateHookInspection: () => undefined,
-    setHookInspectionError: () => undefined
+    setHookInspectionError: () => undefined,
+    setOperationalError: () => undefined
   };
   const bridgeListener = {
     start: async () => undefined,
@@ -333,6 +335,9 @@ try {
       };
       return {
         getStatus: () => status,
+        hasInstallationIntent: () => false,
+        hasExactInstallation: () => false,
+        getDisabledExactHookKeys: () => [],
         install: () => {
           reconnectOrder.push('bridge-install');
           status = { ...status, state: 'needs_trust' };
@@ -348,6 +353,9 @@ try {
           status = { ...status, state: 'installed' };
         },
         setHookInspectionError: () => {
+          status = { ...status, state: 'error' };
+        },
+        setOperationalError: () => {
           status = { ...status, state: 'error' };
         }
       };
@@ -369,13 +377,8 @@ try {
   assert.deepEqual(
     reconnectOrder,
     [
-      'invalidate-hook:789',
-      'bridge-start',
-      'bridge-install',
       'invalidate:789',
       'connect',
-      'hooks',
-      'bridge-inspect',
       'list',
       'list-archived',
       'snapshots',
@@ -436,6 +439,7 @@ try {
     const archivedBatches = [];
     const discoveredBatches = [];
     const snapshotBatches = [];
+    const openedUrls = [];
     let lifecycleNow = 1_000;
     let appServerConnected = false;
     let activeInventory = [];
@@ -447,6 +451,7 @@ try {
     let duringAppServerDisconnect = async () => undefined;
     let duringHookInvalidation = async () => undefined;
     let duringHooksList = async () => undefined;
+    let duringHookEnable = async () => undefined;
     let duringListenerStart = async () => undefined;
     let duringListenerStop = async () => undefined;
     let duringRuntimeEvent = async () => undefined;
@@ -455,11 +460,17 @@ try {
     let duringThreadList = async () => undefined;
     let inspectionError = null;
     let inspectionReady = true;
+    let inspectionReviewReason = null;
+    let disabledHookKeys = ['fresh-owned-disabled-key'];
+    let observationInstalled = true;
+    let localInstallationExact = true;
     let bridgeStatus = {
-      state: 'not_installed',
+      state: 'needs_trust',
+      reviewReason: 'untrusted',
       listening: false,
       listeningSince: null,
       lastEventAt: null,
+      lastInspectedAt: null,
       error: null
     };
     const lifecycleRepository = {
@@ -490,30 +501,79 @@ try {
         calls.push(`event:${event.type}`);
         await duringRuntimeEvent(event);
         calls.push(`event-finished:${event.type}`);
+      },
+      applyRuntimeEventDelivery: async ({ deliveryId, event }) => {
+        runtimeEvents.push({ event, deliveryId, callIndex: calls.length });
+        calls.push(`delivery:${event.type}`);
+        await duringRuntimeEvent(event);
+        calls.push(`delivery-finished:${event.type}`);
+        return { duplicate: false };
       }
     };
     const lifecycleBridge = {
       getStatus: () => bridgeStatus,
+      hasInstallationIntent: () => observationInstalled,
+      hasExactInstallation: () => observationInstalled && localInstallationExact,
+      refreshInstalledArtifacts: () => {
+        calls.push('bridge-refresh-artifacts');
+        return bridgeStatus;
+      },
+      getDisabledExactHookKeys: () => bridgeStatus.reviewReason === 'disabled'
+        ? disabledHookKeys
+        : [],
       install: () => {
         calls.push('bridge-install');
-        bridgeStatus = { ...bridgeStatus, state: 'needs_trust', error: null };
+        observationInstalled = true;
+        localInstallationExact = true;
+        bridgeStatus = {
+          ...bridgeStatus,
+          state: 'needs_trust',
+          reviewReason: 'untrusted',
+          lastInspectedAt: null,
+          error: null
+        };
         return bridgeStatus;
       },
       remove: () => {
         calls.push('bridge-remove');
-        bridgeStatus = { ...bridgeStatus, state: 'not_installed', error: null };
+        observationInstalled = false;
+        localInstallationExact = false;
+        bridgeStatus = {
+          ...bridgeStatus,
+          state: 'not_installed',
+          reviewReason: null,
+          lastInspectedAt: null,
+          error: null
+        };
         return bridgeStatus;
       },
       updateHookInspection: () => {
         calls.push('bridge-inspect');
+        const reviewReason = inspectionReady ? inspectionReviewReason : 'untrusted';
         bridgeStatus = {
           ...bridgeStatus,
-          state: inspectionReady ? 'installed' : 'needs_trust',
+          state: reviewReason === null ? 'installed' : 'needs_trust',
+          reviewReason,
+          lastInspectedAt: new Date(lifecycleNow).toISOString(),
           error: null
         };
       },
       setHookInspectionError: (error) => {
-        bridgeStatus = { ...bridgeStatus, state: 'error', error: String(error) };
+        bridgeStatus = {
+          ...bridgeStatus,
+          state: 'error',
+          reviewReason: null,
+          lastInspectedAt: new Date(lifecycleNow).toISOString(),
+          error: String(error)
+        };
+      },
+      setOperationalError: (error) => {
+        bridgeStatus = {
+          ...bridgeStatus,
+          state: 'error',
+          reviewReason: null,
+          error: String(error)
+        };
       }
     };
     const service = new EyesOnAgentsService({
@@ -558,6 +618,11 @@ try {
           await duringHooksList();
           if (inspectionError) throw inspectionError;
           return [];
+        },
+        enableHooks: async () => {
+          calls.push('hooks-enable');
+          await duringHookEnable();
+          inspectionReviewReason = null;
         }
       },
       desktopBridge: lifecycleBridge,
@@ -577,7 +642,9 @@ try {
           bridgeStatus = { ...bridgeStatus, listening: false, listeningSince: null };
         }
       },
-      openExternal: async () => undefined,
+      openExternal: async (url) => {
+        openedUrls.push(url);
+      },
       broadcastChanged: () => calls.push('notify'),
       now: () => lifecycleNow
     });
@@ -589,15 +656,20 @@ try {
       snapshotBatches,
       lifecycleBridge,
       runtimeEvents,
+      openedUrls,
       service,
       advance: () => { lifecycleNow += 1_000; },
-      drift: () => { bridgeStatus = { ...bridgeStatus, state: 'drifted' }; },
+      drift: () => {
+        localInstallationExact = false;
+        bridgeStatus = { ...bridgeStatus, state: 'drifted', reviewReason: null };
+      },
       duringAppServerConnect: (callback) => { duringAppServerConnect = callback; },
       duringAppServerDisconnect: (callback) => { duringAppServerDisconnect = callback; },
       duringAppServerInvalidation: (callback) => { duringAppServerInvalidation = callback; },
       duringArchiveTransition: (callback) => { duringArchiveTransition = callback; },
       duringHookInvalidation: (callback) => { duringHookInvalidation = callback; },
       duringHooksList: (callback) => { duringHooksList = callback; },
+      duringHookEnable: (callback) => { duringHookEnable = callback; },
       duringListenerStart: (callback) => { duringListenerStart = callback; },
       duringListenerStop: (callback) => { duringListenerStop = callback; },
       duringRuntimeEvent: (callback) => { duringRuntimeEvent = callback; },
@@ -613,7 +685,15 @@ try {
         };
       },
       setInspectionError: (error) => { inspectionError = error; },
-      setInspectionReady: (ready) => { inspectionReady = ready; },
+      setInspectionReady: (ready) => {
+        inspectionReady = ready;
+        if (!ready) inspectionReviewReason = null;
+      },
+      setInspectionReviewReason: (reason) => {
+        inspectionReady = true;
+        inspectionReviewReason = reason;
+      },
+      setDisabledHookKeys: (keys) => { disabledHookKeys = [...keys]; },
       setThreadInventories: ({ active, archived }) => {
         activeInventory = active;
         archivedInventory = archived;
@@ -628,8 +708,18 @@ try {
   await autoHarness.service.initialize();
   assert.equal(
     autoHarness.calls.filter((call) => call === 'bridge-install').length,
+    0,
+    'automatic App Server connection must never install Codex observation'
+  );
+  assert.ok(
+    autoHarness.calls.indexOf('bridge-refresh-artifacts') <
+      autoHarness.calls.indexOf('listener-start'),
+    'startup must refresh exact owned artifacts before listener startup'
+  );
+  assert.equal(
+    autoHarness.calls.filter((call) => call === 'listener-start').length,
     1,
-    'automatic connection must install the Desktop bridge'
+    'an already installed observation must restart its listener on launch'
   );
   assert.equal(autoHarness.status().state, 'installed');
   await autoHarness.service.shutdown();
@@ -638,7 +728,80 @@ try {
     false,
     'normal app shutdown must leave the installation for the next auto-connect'
   );
+  assert.equal(
+    autoHarness.settingValue(),
+    true,
+    'normal app shutdown must preserve the App Server auto-connect preference'
+  );
   assert.equal(autoHarness.status().listening, false);
+
+  const installedAutoOffHarness = createLifecycleHarness(false);
+  await installedAutoOffHarness.service.initialize();
+  assert.equal(installedAutoOffHarness.settingValue(), false);
+  assert.equal(installedAutoOffHarness.isAppServerConnected(), false);
+  assert.equal(installedAutoOffHarness.status().state, 'installed');
+  assert.equal(installedAutoOffHarness.status().listening, true);
+  assert.equal(
+    installedAutoOffHarness.calls.filter((call) => call === 'listener-start').length,
+    1,
+    'installed observation must start on launch when App Server auto-connect is disabled'
+  );
+  assert.equal(
+    installedAutoOffHarness.calls.filter((call) => call === 'app-server-connect').length,
+    1,
+    'launch must use a short App Server connection to inspect installed hooks'
+  );
+  assert.equal(
+    installedAutoOffHarness.calls.filter((call) => call === 'app-server-disconnect').length,
+    1,
+    'the short launch inspector must restore the explicit disconnected state'
+  );
+  assert.equal(installedAutoOffHarness.calls.includes('thread-list'), false);
+
+  const reviewHarness = createLifecycleHarness(false);
+  await reviewHarness.service.initialize();
+  reviewHarness.setInspectionReviewReason('disabled');
+  const reviewCallsStart = reviewHarness.calls.length;
+  await reviewHarness.service.reviewCodexBridge();
+  const reviewCalls = reviewHarness.calls.slice(reviewCallsStart);
+  assert.ok(
+    reviewCalls.indexOf('hooks-list') < reviewCalls.indexOf('hooks-enable') &&
+      reviewCalls.indexOf('hooks-enable') < reviewCalls.lastIndexOf('hooks-list'),
+    'Review must re-enable only between a fresh hooks/list and its recheck'
+  );
+  assert.equal(reviewHarness.status().state, 'installed');
+  assert.equal(reviewHarness.isAppServerConnected(), false);
+  assert.equal(reviewHarness.settingValue(), false);
+  assert.deepEqual(reviewHarness.openedUrls, ['codex://settings']);
+
+  const spoofedReviewHarness = createLifecycleHarness(false);
+  await spoofedReviewHarness.service.initialize();
+  spoofedReviewHarness.setInspectionReviewReason('disabled');
+  spoofedReviewHarness.setDisabledHookKeys([]);
+  const spoofedReviewCallsStart = spoofedReviewHarness.calls.length;
+  await spoofedReviewHarness.service.reviewCodexBridge();
+  const spoofedReviewCalls = spoofedReviewHarness.calls.slice(spoofedReviewCallsStart);
+  assert.equal(
+    spoofedReviewCalls.includes('hooks-enable'),
+    false,
+    'Review must not call config/batchWrite when exact ownership yields no safe hook keys'
+  );
+  assert.equal(spoofedReviewHarness.status().state, 'error');
+  assert.equal(spoofedReviewHarness.isAppServerConnected(), false);
+  assert.equal(spoofedReviewHarness.settingValue(), false);
+  assert.deepEqual(spoofedReviewHarness.openedUrls, ['codex://settings']);
+
+  const unsupportedReviewHarness = createLifecycleHarness(false);
+  await unsupportedReviewHarness.service.initialize();
+  unsupportedReviewHarness.setInspectionReviewReason('disabled');
+  unsupportedReviewHarness.duringHookEnable(async () => {
+    throw new Error('config/batchWrite unsupported');
+  });
+  await unsupportedReviewHarness.service.reviewCodexBridge();
+  assert.equal(unsupportedReviewHarness.status().state, 'error');
+  assert.equal(unsupportedReviewHarness.status().listening, true);
+  assert.equal(unsupportedReviewHarness.isAppServerConnected(), false);
+  assert.deepEqual(unsupportedReviewHarness.openedUrls, ['codex://settings']);
 
   const archiveHarness = createLifecycleHarness(false);
   await archiveHarness.service.connectAppServer();
@@ -867,6 +1030,33 @@ try {
     'a hooks/list error must discard all pending events without durable writes'
   );
   await inspectionErrorHarness.service.disconnectAppServer();
+
+  const inspectionTimestampHarness = createLifecycleHarness(false);
+  await inspectionTimestampHarness.service.connectAppServer();
+  const successfulInspectionAt = inspectionTimestampHarness.status().lastInspectedAt;
+  inspectionTimestampHarness.advance();
+  await inspectionTimestampHarness.service.reportCodexHookCoverageGap();
+  assert.equal(inspectionTimestampHarness.status().state, 'error');
+  assert.equal(
+    inspectionTimestampHarness.status().lastInspectedAt,
+    successfulInspectionAt,
+    'a runtime coverage gap must not move the last hooks/list inspection time'
+  );
+  await inspectionTimestampHarness.service.disconnectAppServer();
+
+  const failedInspectionTimestampHarness = createLifecycleHarness(false);
+  await failedInspectionTimestampHarness.service.connectAppServer();
+  const beforeFailedInspection = failedInspectionTimestampHarness.status().lastInspectedAt;
+  failedInspectionTimestampHarness.advance();
+  failedInspectionTimestampHarness.setInspectionError(new Error('private hooks/list detail'));
+  await failedInspectionTimestampHarness.service.syncThreads();
+  assert.equal(failedInspectionTimestampHarness.status().state, 'error');
+  assert.notEqual(
+    failedInspectionTimestampHarness.status().lastInspectedAt,
+    beforeFailedInspection,
+    'an actual hooks/list failure must move the last inspection-attempt time'
+  );
+  await failedInspectionTimestampHarness.service.disconnectAppServer();
 
   const failedFlushHarness = createLifecycleHarness(false);
   const failedFlushTailAdmissions = [];
@@ -1361,11 +1551,10 @@ try {
     'invalidate-hook'
   );
   assert.ok(
-    pendingShutdownHarness.calls.indexOf('app-server-disconnect') <
-      pendingShutdownHarness.calls.indexOf('listener-stop') &&
-      pendingShutdownHarness.calls.lastIndexOf('app-server-disconnect') <
-        pendingShutdownFinalInvalidation,
-    'shutdown must cancel App Server RPC, stop intake, then perform final invalidation'
+    pendingShutdownHarness.calls.indexOf('listener-stop') <
+      pendingShutdownFinalInvalidation &&
+      pendingShutdownHarness.calls.includes('app-server-disconnect'),
+    'shutdown must fence hook intake and independently disconnect App Server'
   );
   assert.equal(
     pendingShutdownHarness.calls.includes('thread-list'),
@@ -1486,23 +1675,19 @@ try {
   assert.deepEqual(
     disconnectDrainHarness.runtimeEvents.map(({ event }) => event.turnId),
     ['turn-disconnect-drain'],
-    'disconnect must fence new hook intake before stopping the listener'
+    'a second hook event must remain queued behind the accepted slow write'
   );
   releaseDisconnectDrain();
   await Promise.all([disconnectDrainRequest, disconnectDrainConnect]);
-  const disconnectDrainFinalInvalidation = disconnectDrainHarness.calls.lastIndexOf(
-    'invalidate-hook'
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    disconnectDrainHarness.runtimeEvents.map(({ event }) => event.turnId),
+    ['turn-disconnect-drain', 'turn-during-disconnect-fence'],
+    'App Server Disconnect must preserve the independent hook admission queue'
   );
-  assert.ok(
-    disconnectDrainHarness.calls.indexOf('bridge-remove') < disconnectDrainFinalInvalidation,
-    'explicit disconnect must remove the bridge before its final invalidation'
-  );
-  assert.equal(
-    disconnectDrainHarness.calls.slice(disconnectDrainFinalInvalidation + 1)
-      .filter((call) => call === 'notify').length,
-    1,
-    'only the explicit disconnected-state notification may follow final invalidation'
-  );
+  assert.equal(disconnectDrainHarness.calls.includes('bridge-remove'), false);
+  assert.equal(disconnectDrainHarness.calls.includes('listener-stop'), false);
+  assert.equal(disconnectDrainHarness.status().listening, true);
 
   const shutdownNotificationHarness = createLifecycleHarness(false);
   await shutdownNotificationHarness.service.connectAppServer();
@@ -1539,8 +1724,8 @@ try {
   );
   assert.equal(
     shutdownNotificationHarness.calls.filter((call) => call === 'invalidate-hook').length,
-    shutdownNotificationInvalidationsBefore,
-    'shutdown final invalidation must wait for the App Server notification write'
+    shutdownNotificationInvalidationsBefore + 1,
+    'hook evidence invalidation is independent from the joined App Server write'
   );
   await shutdownNotificationHarness.service.handleAppServerNotification('turn/completed', {
     threadId: THREAD_ID,
@@ -1553,18 +1738,10 @@ try {
   );
   releaseShutdownNotification();
   await Promise.all([shutdownNotificationWrite, shutdownForNotification]);
-  const shutdownNotificationFinalInvalidation = shutdownNotificationHarness.calls.lastIndexOf(
-    'invalidate-hook'
-  );
   assert.equal(
     shutdownNotificationHarness.calls.filter((call) => call === 'notify').length,
     shutdownNotificationCountBefore,
     'an old App Server notification must not notify after its observation was aborted'
-  );
-  assert.ok(
-    shutdownNotificationHarness.runtimeEvents[0].callIndex <
-      shutdownNotificationFinalInvalidation,
-    'shutdown final invalidation must happen after the joined notification write'
   );
   shutdownNotificationHarness.duringRuntimeEvent(async () => undefined);
   await shutdownNotificationHarness.service.connectAppServer();
@@ -1632,13 +1809,12 @@ try {
   assert.equal(disconnectNotificationHarness.runtimeEvents.length, 1);
   releaseDisconnectNotification();
   await Promise.all([disconnectNotificationWrite, disconnectForNotification]);
-  const disconnectNotificationFinalInvalidation = disconnectNotificationHarness.calls.lastIndexOf(
-    'invalidate-hook'
+  assert.equal(
+    disconnectNotificationHarness.calls.filter((call) => call === 'invalidate-hook').length,
+    disconnectNotificationInvalidationsBefore,
+    'App Server Disconnect must not invalidate trusted hook evidence'
   );
-  assert.ok(
-    disconnectNotificationHarness.runtimeEvents[0].callIndex <
-      disconnectNotificationFinalInvalidation
-  );
+  assert.equal(disconnectNotificationHarness.status().listening, true);
   assert.equal(
     disconnectNotificationHarness.calls.filter((call) => call === 'notify').length,
     disconnectNotificationCountBefore + 1,
@@ -1674,18 +1850,11 @@ try {
   );
   assert.equal(
     shutdownPreflightHarness.calls.filter((call) => call === 'invalidate-hook').length,
-    shutdownPreflightInvalidationsBefore,
-    'shutdown final invalidation must wait for the pre-connect invalidation write'
+    shutdownPreflightInvalidationsBefore + 1,
+    'hook shutdown must not wait on the independent App Server preflight'
   );
   releaseShutdownPreflight();
   await Promise.all([shutdownPreflightConnect, shutdownDuringPreflight]);
-  const shutdownPreflightFinalInvalidation = shutdownPreflightHarness.calls.lastIndexOf(
-    'invalidate-hook'
-  );
-  assert.ok(
-    shutdownPreflightHarness.calls.indexOf('invalidate-app-server') <
-      shutdownPreflightFinalInvalidation
-  );
   assert.equal(
     shutdownPreflightHarness.calls.includes('app-server-connect'),
     false,
@@ -1721,20 +1890,10 @@ try {
   );
   releaseDisconnectPreflight();
   await Promise.all([disconnectPreflightConnect, disconnectDuringPreflight]);
-  const disconnectPreflightFinalInvalidation = disconnectPreflightHarness.calls.lastIndexOf(
-    'invalidate-hook'
-  );
-  assert.ok(
-    disconnectPreflightHarness.calls.indexOf('bridge-remove') <
-      disconnectPreflightFinalInvalidation
-  );
+  assert.equal(disconnectPreflightHarness.calls.includes('bridge-remove'), false);
+  assert.equal(disconnectPreflightHarness.calls.includes('listener-stop'), false);
   assert.equal(disconnectPreflightHarness.calls.includes('app-server-connect'), false);
-  assert.equal(
-    disconnectPreflightHarness.calls.slice(disconnectPreflightFinalInvalidation + 1)
-      .filter((call) => call === 'notify').length,
-    1,
-    'only the explicit disconnected-state notification may follow preflight teardown'
-  );
+  assert.equal(disconnectPreflightHarness.status().listening, true);
 
   const cleanupPreflightHarness = createLifecycleHarness(false);
   let releaseCleanupPreflight;
@@ -1753,10 +1912,10 @@ try {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(
     cleanupPreflightResolved,
-    false,
-    'bridge cleanup must share the teardown join for pre-connect invalidation'
+    true,
+    'Disable must not wait for the independent App Server preflight'
   );
-  assert.equal(cleanupPreflightHarness.calls.includes('bridge-remove'), false);
+  assert.equal(cleanupPreflightHarness.calls.includes('bridge-remove'), true);
   releaseCleanupPreflight();
   await Promise.all([cleanupPreflightConnect, cleanupDuringPreflight]);
   const cleanupPreflightFinalInvalidation = cleanupPreflightHarness.calls.lastIndexOf(
@@ -1765,12 +1924,16 @@ try {
   assert.ok(
     cleanupPreflightHarness.calls.indexOf('bridge-remove') < cleanupPreflightFinalInvalidation
   );
-  assert.equal(cleanupPreflightHarness.calls.includes('app-server-connect'), false);
+  assert.equal(
+    cleanupPreflightHarness.calls.includes('app-server-connect'),
+    true,
+    'Disable must leave an in-progress App Server Connect intact'
+  );
   assert.equal(
     cleanupPreflightHarness.calls.slice(cleanupPreflightFinalInvalidation + 1)
       .filter((call) => call === 'notify').length,
-    1,
-    'only the cleanup snapshot notification may follow final invalidation'
+    2,
+    'Disable and the independent App Server sync must each publish their final snapshot'
   );
 
   const initializeFenceHarness = createLifecycleHarness(true);
@@ -1834,8 +1997,8 @@ try {
   await Promise.all([staleConnect, preferenceDisconnect]);
   assert.equal(preferenceRaceHarness.settingValue(), false);
   assert.equal(preferenceRaceHarness.isAppServerConnected(), false);
-  assert.equal(preferenceRaceHarness.status().state, 'not_installed');
-  assert.equal(preferenceRaceHarness.status().listening, false);
+  assert.equal(preferenceRaceHarness.status().state, 'needs_trust');
+  assert.equal(preferenceRaceHarness.status().listening, true);
   assert.equal(
     preferenceRaceHarness.calls.includes('thread-list'),
     false,
@@ -1851,8 +2014,8 @@ try {
   await preferenceRaceHarness.service.connectAppServer();
   assert.equal(
     preferenceRaceHarness.calls.filter((call) => call === 'listener-start').length,
-    2,
-    'a later Connect must create a fresh listener after teardown completes'
+    1,
+    'a later Connect must reuse the listener preserved by Disconnect'
   );
   assert.equal(preferenceRaceHarness.settingValue(), true);
   assert.equal(preferenceRaceHarness.isAppServerConnected(), true);
@@ -1887,7 +2050,8 @@ try {
   releaseHeldConnect();
   await Promise.all([heldConnectRequest, heldConnectDisconnect]);
   assert.equal(heldConnectHarness.isAppServerConnected(), false);
-  assert.equal(heldConnectHarness.status().state, 'not_installed');
+  assert.equal(heldConnectHarness.status().state, 'needs_trust');
+  assert.equal(heldConnectHarness.status().listening, true);
   assert.equal(heldConnectHarness.calls.includes('hooks-list'), false);
   assert.equal(heldConnectHarness.calls.includes('thread-list'), false);
   assert.equal(heldConnectHarness.settingValue(), false);
@@ -1917,7 +2081,8 @@ try {
   assert.equal(lateSyncHarness.calls.filter((call) => call === 'upsert').length, lateSyncUpserts);
   assert.equal(lateSyncHarness.calls.filter((call) => call === 'notify').length, lateSyncNotifies);
   assert.equal(lateSyncHarness.isAppServerConnected(), false);
-  assert.equal(lateSyncHarness.status().state, 'not_installed');
+  assert.equal(lateSyncHarness.status().state, 'installed');
+  assert.equal(lateSyncHarness.status().listening, true);
 
   const teardownUpgradeHarness = createLifecycleHarness(false);
   await teardownUpgradeHarness.service.connectAppServer();
@@ -1946,12 +2111,17 @@ try {
   );
   assert.equal(
     teardownUpgradeHarness.calls.filter((call) => call === 'bridge-remove').length,
-    1,
-    'the shared teardown must upgrade to explicit bridge removal exactly once'
+    0,
+    'Shutdown and App Server Disconnect must both preserve global observation'
   );
   assert.equal(teardownUpgradeHarness.settingValue(), false);
-  assert.equal(teardownUpgradeHarness.isAppServerConnected(), false);
-  assert.equal(teardownUpgradeHarness.status().state, 'not_installed');
+  assert.equal(
+    teardownUpgradeHarness.isAppServerConnected(),
+    false,
+    JSON.stringify(teardownUpgradeHarness.calls)
+  );
+  assert.equal(teardownUpgradeHarness.status().state, 'installed');
+  assert.equal(teardownUpgradeHarness.status().listening, false);
   assert.equal(
     teardownUpgradeHarness.calls.filter((call) => call === 'listener-start').length,
     1,
@@ -1977,8 +2147,8 @@ try {
   await explicitHarness.service.connectAppServer();
   assert.equal(
     explicitHarness.calls.filter((call) => call === 'bridge-install').length,
-    1,
-    'explicit connection must install the Desktop bridge'
+    0,
+    'App Server Connect must not install or rewrite Codex hooks'
   );
   assert.ok(
     explicitHarness.calls.indexOf('invalidate-hook') <
@@ -1998,11 +2168,6 @@ try {
     'a trusted hook event received during thread pagination must be preserved'
   );
   explicitHarness.duringThreadList(async () => undefined);
-  await assert.rejects(
-    () => explicitHarness.service.removeCodexBridge(),
-    /Disconnect EyesOnAgents/,
-    'cleanup must not break a live connected observation path'
-  );
   explicitHarness.drift();
   const acceptedEventCount = explicitHarness.calls.filter(
     (call) => call === 'event:turn_started'
@@ -2020,9 +2185,121 @@ try {
   await explicitHarness.service.syncThreads();
   assert.equal(
     explicitHarness.calls.filter((call) => call === 'bridge-install').length,
-    2,
-    'Sync must repair a drifted Desktop bridge'
+    0,
+    'Sync must not repair or rewrite a drifted Codex observation'
   );
+  assert.equal(explicitHarness.status().state, 'drifted');
+  await explicitHarness.service.installCodexBridge();
+  assert.equal(
+    explicitHarness.calls.filter((call) => call === 'bridge-install').length,
+    1,
+    'only explicit Repair may rewrite the owned Codex observation'
+  );
+  assert.equal(explicitHarness.status().state, 'installed');
+  await explicitHarness.service.removeCodexBridge();
+  assert.equal(explicitHarness.status().state, 'not_installed');
+  assert.equal(explicitHarness.status().listening, false);
+  assert.equal(
+    explicitHarness.isAppServerConnected(),
+    true,
+    'Disable observation must leave App Server connected'
+  );
+
+  const committedDeliveryHarness = createLifecycleHarness(false);
+  await committedDeliveryHarness.service.connectAppServer();
+  let releaseDeliveryCommit;
+  let markDeliveryCommitStarted;
+  const deliveryCommitStarted = new Promise((resolve) => {
+    markDeliveryCommitStarted = resolve;
+  });
+  const deliveryCommitGate = new Promise((resolve) => {
+    releaseDeliveryCommit = resolve;
+  });
+  committedDeliveryHarness.duringRuntimeEvent(async (event) => {
+    if (event.turnId !== 'turn-commit-gate') return;
+    markDeliveryCommitStarted();
+    await deliveryCommitGate;
+  });
+  let committedDeliverySettled = false;
+  const committedDelivery = committedDeliveryHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '12121212-1212-4212-8212-121212121212',
+    event: {
+      ...hookEvent,
+      eventId: '12121212-1212-4212-8212-121212121212',
+      payload: { ...hookEvent.payload, turnId: 'turn-commit-gate' }
+    }
+  }).finally(() => {
+    committedDeliverySettled = true;
+  });
+  await deliveryCommitStarted;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    committedDeliverySettled,
+    false,
+    'a bridge delivery must not resolve before the repository commit completes'
+  );
+  releaseDeliveryCommit();
+  assert.deepEqual(await committedDelivery, { duplicate: false });
+  assert.equal(
+    committedDeliveryHarness.calls.includes('delivery-finished:turn_started'),
+    true,
+    'a committed bridge delivery must use the transactional repository API'
+  );
+  await committedDeliveryHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '13131313-1313-4313-8313-131313131313',
+    event: {
+      ...hookEvent,
+      eventId: '13131313-1313-4313-8313-131313131313',
+      occurredAt: 500,
+      payload: { ...hookEvent.payload, turnId: 'turn-offline-replay' }
+    }
+  });
+  assert.equal(
+    committedDeliveryHarness.runtimeEvents.at(-1)?.event.turnId,
+    'turn-offline-replay',
+    'a durable replay from before the current listener lifetime must pass current trust admission'
+  );
+  await committedDeliveryHarness.service.disconnectAppServer();
+
+  const pendingDeliveryHarness = createLifecycleHarness(false);
+  let releasePendingListener;
+  let markPendingDeliveryStarted;
+  const pendingDeliveryStarted = new Promise((resolve) => {
+    markPendingDeliveryStarted = resolve;
+  });
+  const pendingListenerGate = new Promise((resolve) => {
+    releasePendingListener = resolve;
+  });
+  let pendingDeliveryResult;
+  pendingDeliveryHarness.duringListenerStart(async () => {
+    pendingDeliveryResult = pendingDeliveryHarness.service.commitCodexHookDelivery({
+      schemaVersion: 1,
+      deliveryId: '14141414-1414-4414-8414-141414141414',
+      event: {
+        ...hookEvent,
+        eventId: '14141414-1414-4414-8414-141414141414',
+        payload: { ...hookEvent.payload, turnId: 'turn-pending-teardown' }
+      }
+    }).then(
+      () => ({ state: 'resolved' }),
+      () => ({ state: 'rejected' })
+    );
+    markPendingDeliveryStarted();
+    await pendingListenerGate;
+  });
+  const pendingConnect = pendingDeliveryHarness.service.connectAppServer();
+  await pendingDeliveryStarted;
+  const pendingDisconnect = pendingDeliveryHarness.service.removeCodexBridge();
+  releasePendingListener();
+  await Promise.allSettled([pendingConnect, pendingDisconnect]);
+  assert.deepEqual(
+    await pendingDeliveryResult,
+    { state: 'rejected' },
+    'teardown must reject a buffered delivery instead of leaving its ACK promise pending'
+  );
+
   explicitHarness.advance();
   await explicitHarness.service.disconnectAppServer();
   assert.equal(explicitHarness.status().state, 'not_installed');
@@ -2030,7 +2307,7 @@ try {
   assert.equal(
     explicitHarness.calls.filter((call) => call === 'bridge-remove').length,
     1,
-    'explicit disconnect must remove the Desktop bridge'
+    'App Server Disconnect must not remove the already disabled bridge again'
   );
 
   console.log('EyesOnAgents core tests passed');

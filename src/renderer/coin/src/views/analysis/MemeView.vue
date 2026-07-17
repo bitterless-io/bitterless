@@ -72,10 +72,8 @@ const selectedModeConfigured = computed(() => {
   if (mode === 'service') {
     return Boolean(workspace.sourceStatuses.find((source) => source.source === 'meme-service')?.configured);
   }
-  const chainSource = `alchemy-${workspace.data.drafts.meme.chain}`;
   const gmgn = workspace.sourceStatuses.find((source) => source.source === 'gmgn-cli');
-  const alchemy = workspace.sourceStatuses.find((source) => source.source === chainSource);
-  return Boolean(gmgn?.configured && alchemy?.configured);
+  return Boolean(gmgn?.configured);
 });
 const modeLabel = computed(() => workspace.data.drafts.meme.mode === 'service'
   ? i18nHelper.coin.analysis.modes.deployedService

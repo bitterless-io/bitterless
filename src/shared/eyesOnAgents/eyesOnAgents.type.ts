@@ -23,6 +23,11 @@ export type EyesOnAgentsBridgeState =
   | 'drifted'
   | 'error';
 
+export type EyesOnAgentsBridgeReviewReason =
+  | 'untrusted'
+  | 'modified'
+  | 'disabled';
+
 export interface EyesOnAgentsDomain {
   id: number;
   domainKey: string;
@@ -68,9 +73,11 @@ export interface EyesOnAgentsConnectionStatus {
 
 export interface EyesOnAgentsBridgeStatus {
   state: EyesOnAgentsBridgeState;
+  reviewReason: EyesOnAgentsBridgeReviewReason | null;
   listening: boolean;
   listeningSince: string | null;
   lastEventAt: string | null;
+  lastInspectedAt: string | null;
   error: string | null;
 }
 
@@ -133,6 +140,10 @@ export type EyesOnAgentsRuntimeEvent =
       project?: EyesOnAgentsProjectMetadata | null;
     };
 
+export interface EyesOnAgentsRuntimeDeliveryResult {
+  duplicate: boolean;
+}
+
 export interface EyesOnAgentsRepositoryApi {
   getSnapshot(): Promise<Pick<EyesOnAgentsSnapshot, 'domains' | 'threads'>>;
   invalidateAppServerStatuses(params: { observedAt: number }): Promise<void>;
@@ -150,6 +161,10 @@ export interface EyesOnAgentsRepositoryApi {
   }): Promise<void>;
   markThreadsArchived(params: { threadIds: string[]; observedAt: number }): Promise<void>;
   applyRuntimeEvent(params: { event: EyesOnAgentsRuntimeEvent }): Promise<void>;
+  applyRuntimeEventDelivery(params: {
+    deliveryId: string;
+    event: EyesOnAgentsRuntimeEvent;
+  }): Promise<EyesOnAgentsRuntimeDeliveryResult>;
   markOpened(params: { threadId: string; openedAt: number }): Promise<void>;
   createDomain(params: { title: string }): Promise<void>;
   renameDomain(params: { domainId: number; title: string }): Promise<void>;
@@ -168,6 +183,8 @@ export interface EyesOnAgentsApi {
     snapshot: EyesOnAgentsSnapshot;
   }>;
   installCodexBridge(): Promise<EyesOnAgentsSnapshot>;
+  reviewCodexBridge(): Promise<EyesOnAgentsSnapshot>;
+  refreshCodexBridgeStatus(): Promise<EyesOnAgentsSnapshot>;
   removeCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   getCodexBridgeStatus(): Promise<EyesOnAgentsBridgeStatus>;
   createDomain(params: { title: string }): Promise<EyesOnAgentsSnapshot>;

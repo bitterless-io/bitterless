@@ -17,6 +17,10 @@ import './xpc/app.handler';
 import { updateService } from '@main/updateHelper/update.service';
 import { mcpBridgeServer } from './mcp/mcpBridge.server';
 import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
+import {
+  OptionalStartupLifecycle,
+  type OptionalStartupStageGuard,
+} from './mcp/optionalStartupLifecycle.service';
 import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
 import { maestroWindowHandler } from './xpc/maestroWindow.handler';
@@ -28,14 +32,16 @@ import {
   parseMcpBridgeEndpointArg,
   type CoreSqliteBootApi,
 } from '@shared/mcp/mcpBridge.shared';
-import { CODEX_HOOK_HELPER_ARG } from '@shared/eyesOnAgents/codexHookBridge.contract';
-import { runCodexHookHelper } from './eyesOnAgents/codexHookBridge.helper';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
-const isCodingAgentHookHelperMode = process.argv.includes(CODEX_HOOK_HELPER_ARG);
-const isHelperMode = isMcpHelperMode || isCodingAgentHookHelperMode;
+const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
+const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
+
+if (isHelperMode && process.platform === 'darwin') {
+  app.setActivationPolicy('prohibited');
+}
 
 const waitForWindowLoad = (window: Electron.BrowserWindow): Promise<void> => {
   return new Promise((resolve, reject) => {
@@ -77,6 +83,8 @@ const configureE2EUserData = (): void => {
 };
 
 configureE2EUserData();
+
+const hasSingleInstanceLock = isHelperMode || app.requestSingleInstanceLock();
 
 const e2eMockOrigin = (): string => {
   const raw = process.env.BITTERLESS_E2E_MOCK_ORIGIN?.trim();
@@ -151,6 +159,7 @@ let isQuitting = false;
 let hasShownQuitDialog = false;
 let cleanupPromise: Promise<void> | null = null;
 let stopEyesOnAgentsRuntime: (() => Promise<void>) | null = null;
+const optionalIntegrationsLifecycle = new OptionalStartupLifecycle();
 
 const redirectConsoleToStderr = (): void => {
   const write = (level: string, args: unknown[]): void => {
@@ -175,6 +184,9 @@ const cleanupResources = (): Promise<void> => {
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
 
+    try { await optionalIntegrationsLifecycle.fenceAndJoin(); } catch {
+      // Startup errors are logged at their source; cleanup still owns every initialized resource.
+    }
     try { await stopEyesOnAgentsRuntime?.(); } catch {
       // Best-effort shutdown: the remaining application resources must still be released.
     }
@@ -194,22 +206,20 @@ const cleanupResources = (): Promise<void> => {
   return cleanupPromise;
 };
 
-if (isCodingAgentHookHelperMode) {
+const runLegacyMcpHelper = async (): Promise<void> => {
   redirectConsoleToStderr();
-  void runCodexHookHelper(process.argv, process.stdin).finally(() => app.exit(0));
-} else app.whenReady().then(async () => {
-  if (isMcpHelperMode) {
-    redirectConsoleToStderr();
-    try {
-      const endpoint = parseMcpBridgeEndpointArg(process.argv);
-      await startBitterlessMcpStdioServer(endpoint);
-    } catch (err) {
-      console.error(`[bitterless-mcp] invalid ${MCP_BRIDGE_PATH_ARG}:`, err);
-      app.exit(2);
-    }
-    return;
+  try {
+    const endpoint = parseMcpBridgeEndpointArg(process.argv);
+    if (!endpoint) throw new Error(`${MCP_BRIDGE_PATH_ARG} is required`);
+    await startBitterlessMcpStdioServer(endpoint);
+    app.exit(0);
+  } catch (err) {
+    console.error(`[bitterless-mcp] invalid ${MCP_BRIDGE_PATH_ARG}:`, err);
+    app.exit(2);
   }
+};
 
+const startGui = async (): Promise<void> => {
   installE2ENetworkGuard();
   electronApp.setAppUserModelId('com.electron');
   if (process.platform === 'darwin') {
@@ -243,33 +253,6 @@ if (isCodingAgentHookHelperMode) {
 
   await applicationLanguageService.initialize();
 
-  let mcpBridgeStarted = false;
-  if (coreSqliteReady) {
-    try {
-      await mcpBridgeServer.start();
-      mcpBridgeStarted = true;
-    } catch (err) {
-      console.warn('[app] MCP integration disabled:', err);
-    }
-  }
-  if (mcpBridgeStarted) {
-    try {
-      await mcpHandler.ensureShim();
-    } catch (err) {
-      console.warn('[app] MCP helper generation failed; bridge remains available:', err);
-    }
-  }
-
-  if (coreSqliteReady) {
-    try {
-      const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
-      stopEyesOnAgentsRuntime = eyesOnAgentsRuntime.stopEyesOnAgentsRuntime;
-      await eyesOnAgentsRuntime.startEyesOnAgentsRuntime();
-    } catch (err) {
-      console.warn('[app] EyesOnAgents runtime disabled:', err);
-    }
-  }
-
   // SQLite 进程准备就绪后，再启动主窗口和其他窗口
   // llamaWindowHelper.create();
   await mainWindowHelper.create();
@@ -282,7 +265,71 @@ if (isCodingAgentHookHelperMode) {
     // macOS: 点击 dock 图标显示主窗口
     mainWindowHelper.show();
   });
-});
+
+  void optionalIntegrationsLifecycle.start((canStartNextStage) =>
+    startOptionalIntegrations(coreSqliteReady, canStartNextStage)
+  ).catch((err: unknown) => {
+    console.warn('[app] Optional integrations disabled:', err);
+  });
+};
+
+const startOptionalIntegrations = async (
+  coreSqliteReady: boolean,
+  canStartNextStage: OptionalStartupStageGuard,
+): Promise<void> => {
+  if (!canStartNextStage()) return;
+  let mcpBridgeStarted = false;
+  if (coreSqliteReady) {
+    try {
+      await mcpBridgeServer.start();
+      mcpBridgeStarted = true;
+    } catch (err) {
+      console.warn('[app] MCP integration disabled:', err);
+    }
+  }
+  if (!canStartNextStage()) return;
+  if (mcpBridgeStarted) {
+    try {
+      await mcpHandler.ensureShim();
+    } catch (err) {
+      console.warn('[app] MCP helper generation failed; bridge remains available:', err);
+    }
+  }
+  if (!canStartNextStage()) return;
+
+  if (coreSqliteReady) {
+    try {
+      const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
+      if (!canStartNextStage()) return;
+      stopEyesOnAgentsRuntime = eyesOnAgentsRuntime.stopEyesOnAgentsRuntime;
+      await eyesOnAgentsRuntime.startEyesOnAgentsRuntime();
+    } catch (err) {
+      console.warn('[app] EyesOnAgents runtime disabled:', err);
+    }
+  }
+};
+
+if (isLegacyCodingAgentHookHelperMode) {
+  process.stderr.write(
+    '[bitterless] legacy Codex hook helper is no longer supported; restart Bitterless to refresh it\n',
+  );
+  app.exit(2);
+} else if (isMcpHelperMode) {
+  void app.whenReady().then(runLegacyMcpHelper).catch((err: unknown) => {
+    console.error('[bitterless-mcp] legacy helper startup failed:', err);
+    app.exit(2);
+  });
+} else if (!hasSingleInstanceLock) {
+  app.exit(0);
+} else {
+  app.on('second-instance', () => {
+    mainWindowHelper.show();
+  });
+  void app.whenReady().then(startGui).catch((err: unknown) => {
+    console.error('[app] GUI startup failed:', err);
+    app.exit(1);
+  });
+}
 
 app.on('before-quit', async (event) => {
   if (isQuitting) return;

@@ -69,7 +69,6 @@ export class CoinResourceService {
       observedAt: this.now(),
       codex,
       gmgn,
-      alchemy: this.dependencies.alchemy.getStatuses(),
       services: this.dependencies.services.getStatuses(),
     };
   }

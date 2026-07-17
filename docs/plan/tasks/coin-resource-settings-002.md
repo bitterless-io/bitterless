@@ -7,6 +7,9 @@ depends-on: [coin-subapp-shell-001]
 
 # Coin Resource Settings
 
+> Active-release follow-up: `coin-gmgn-only-local-mode-007` removes Alchemy from Resources and the
+> renderer IPC surface. The adapter described below is retained only as dormant future work.
+
 ## Objective
 
 Make Resources operational for Codex account status, GMGN CLI installation/API-key verification,
@@ -70,4 +73,4 @@ the renderer.
   of a blank window, and makes store/listener failures visible. Per owner instruction, no test command
   was run after this change.
 - Final Electron/Resources verification is intentionally assigned to the owner's configured local
-  run after GMGN and Alchemy setup.
+  run after GMGN setup.

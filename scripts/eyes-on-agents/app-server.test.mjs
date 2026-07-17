@@ -104,6 +104,15 @@ class FakeChild extends EventEmitter {
         }]
       };
       queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+      return;
+    }
+    if (message.method === 'config/batchWrite') {
+      const result = {
+        status: 'ok',
+        version: 'test-version',
+        filePath: '/tmp/codex-config.toml'
+      };
+      queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
     }
   }
 
@@ -155,8 +164,66 @@ class MalformedHooksChild extends FakeChild {
       return;
     }
     this.messages.push(message);
-    const result = { data: [{ hooks: [{ enabled: 'yes' }] }] };
+    const result = {
+      data: [{ hooks: [{ enabled: 'yes' }], errors: [], warnings: [] }]
+    };
     queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+  }
+}
+
+class RelativeSourcePathChild extends FakeChild {
+  handle(message) {
+    if (message.method !== 'hooks/list') {
+      super.handle(message);
+      return;
+    }
+    this.messages.push(message);
+    const result = {
+      data: [{
+        hooks: [{
+          command: '/fixed/bitterless-hook',
+          currentHash: 'hash',
+          enabled: true,
+          eventName: 'stop',
+          handlerType: 'command',
+          isManaged: false,
+          key: 'private-key-not-for-renderer',
+          matcher: null,
+          source: 'user',
+          sourcePath: 'relative/hooks.json',
+          trustStatus: 'trusted'
+        }],
+        errors: [],
+        warnings: []
+      }]
+    };
+    queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+  }
+}
+
+class WarningHooksChild extends FakeChild {
+  handle(message) {
+    if (message.method !== 'hooks/list') {
+      super.handle(message);
+      return;
+    }
+    this.messages.push(message);
+    const result = { data: [{ hooks: [], errors: [], warnings: ['private warning'] }] };
+    queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+  }
+}
+
+class UnsupportedBatchWriteChild extends FakeChild {
+  handle(message) {
+    if (message.method !== 'config/batchWrite') {
+      super.handle(message);
+      return;
+    }
+    this.messages.push(message);
+    queueMicrotask(() => this.stdout.write(`${JSON.stringify({
+      id: message.id,
+      error: { message: 'method not found' }
+    })}\n`));
   }
 }
 
@@ -212,12 +279,40 @@ try {
   );
   assert.deepEqual(await supervisor.listHooks(), [{
     command: '/fixed/bitterless-hook',
+    currentHash: 'hash',
     enabled: true,
     eventName: 'stop',
     handlerType: 'command',
+    isManaged: false,
+    key: 'private-key-not-for-renderer',
     matcher: null,
+    source: 'user',
+    sourcePath: '/private/hooks.json',
     trustStatus: 'trusted'
-  }], 'hooks/list must return only the bounded fields needed for owned-hook inspection');
+  }], 'hooks/list must retain only the bounded main-process fields needed for inspection');
+  await supervisor.enableHooks(['private-key-not-for-renderer']);
+  const batchWrite = child.messages.find((message) => message.method === 'config/batchWrite');
+  assert.deepEqual(batchWrite, {
+    method: 'config/batchWrite',
+    id: batchWrite.id,
+    params: {
+      edits: [{
+        keyPath: 'hooks.state',
+        value: {
+          'private-key-not-for-renderer': { enabled: true }
+        },
+        mergeStrategy: 'upsert'
+      }],
+      filePath: null,
+      expectedVersion: null,
+      reloadUserConfig: true
+    }
+  }, 'hook re-enable must use the fixed hooks.state batch-write shape');
+  assert.equal(
+    JSON.stringify(batchWrite).includes('trusted_hash'),
+    false,
+    'Bitterless must never write Codex hook trust hashes'
+  );
 
   child.stdout.write(`${JSON.stringify({
     method: 'turn/completed',
@@ -264,6 +359,54 @@ try {
     'malformed hook metadata must not corrupt the App Server connection'
   );
   await malformedHooksSupervisor.disconnect();
+
+  const relativeSourcePathSupervisor = new CodexAppServerSupervisor({
+    executable: '/fixed/codex',
+    spawnAppServer: () => new RelativeSourcePathChild()
+  });
+  await relativeSourcePathSupervisor.connect();
+  await assert.rejects(
+    () => relativeSourcePathSupervisor.listHooks(),
+    /hooks\/list hook 0 sourcePath must be absolute/
+  );
+  assert.equal(
+    relativeSourcePathSupervisor.getStatus(false).state,
+    'connected',
+    'relative source paths must fail inspection without corrupting the App Server connection'
+  );
+  await relativeSourcePathSupervisor.disconnect();
+
+  const warningHooksSupervisor = new CodexAppServerSupervisor({
+    executable: '/fixed/codex',
+    spawnAppServer: () => new WarningHooksChild()
+  });
+  await warningHooksSupervisor.connect();
+  await assert.rejects(
+    () => warningHooksSupervisor.listHooks(),
+    /hooks\/list reported warnings/
+  );
+  assert.equal(
+    warningHooksSupervisor.getStatus(false).state,
+    'connected',
+    'hook warnings must fail inspection without exposing details or killing inventory'
+  );
+  await warningHooksSupervisor.disconnect();
+
+  const unsupportedBatchWriteSupervisor = new CodexAppServerSupervisor({
+    executable: '/fixed/codex',
+    spawnAppServer: () => new UnsupportedBatchWriteChild()
+  });
+  await unsupportedBatchWriteSupervisor.connect();
+  await assert.rejects(
+    () => unsupportedBatchWriteSupervisor.enableHooks(['fresh-owned-key']),
+    /method not found/
+  );
+  assert.equal(
+    unsupportedBatchWriteSupervisor.getStatus(false).state,
+    'connected',
+    'a missing re-enable capability must leave manual review transport available'
+  );
+  await unsupportedBatchWriteSupervisor.disconnect();
 
   const disconnectChild = new FakeChild();
   const disconnectSupervisor = new CodexAppServerSupervisor({
@@ -355,9 +498,11 @@ try {
   };
   let delayedBridgeStatus = {
     state: 'not_installed',
+    reviewReason: null,
     listening: false,
     listeningSince: null,
     lastEventAt: null,
+    lastInspectedAt: null,
     error: null
   };
   const delayedService = new EyesOnAgentsService({
@@ -369,6 +514,9 @@ try {
     appServer: delayedSupervisor,
     desktopBridge: {
       getStatus: () => delayedBridgeStatus,
+      hasInstallationIntent: () => false,
+      hasExactInstallation: () => false,
+      getDisabledExactHookKeys: () => [],
       install: () => {
         delayedBridgeStatus = { ...delayedBridgeStatus, state: 'needs_trust' };
         return delayedBridgeStatus;
@@ -381,6 +529,9 @@ try {
         delayedBridgeStatus = { ...delayedBridgeStatus, state: 'installed' };
       },
       setHookInspectionError: () => {
+        delayedBridgeStatus = { ...delayedBridgeStatus, state: 'error' };
+      },
+      setOperationalError: () => {
         delayedBridgeStatus = { ...delayedBridgeStatus, state: 'error' };
       }
     },
@@ -429,11 +580,6 @@ try {
   await Promise.all([delayedConnectRequest, delayedSyncRequest]);
   assert.equal(delayedSyncOutcome, 'resolved');
   assert.equal(delayedSupervisor.getStatus(false).state, 'connected');
-  assert.ok(
-    delayedChild.messages.findIndex((message) => message.method === 'hooks/list') <
-      delayedChild.messages.findIndex((message) => message.method === 'thread/list'),
-    'hook trust inspection must begin before any thread/list page request'
-  );
   assert.equal(
     delayedChild.messages.filter((message) => message.method === 'initialize').length,
     1,
@@ -451,9 +597,11 @@ try {
   );
   assert.equal(
     delayedChild.messages.filter((message) => message.method === 'hooks/list').length,
-    1,
-    'concurrent service requests must share one hook-trust inspection'
+    0,
+    'App Server Connect and Sync must not install or inspect disabled observation hooks'
   );
+  assert.equal(delayedBridgeStatus.state, 'not_installed');
+  assert.equal(delayedBridgeStatus.listening, false);
   await delayedSupervisor.disconnect();
 
   console.log('EyesOnAgents App Server tests passed');

@@ -46,10 +46,6 @@ const resources = Object.freeze({
   openGmgnOfficialLink: async (
     params: Parameters<CoinBridge['resources']['openGmgnOfficialLink']>[0],
   ) => await ipcRenderer.invoke(COIN_IPC_CHANNELS.gmgnOpenOfficialLink, params),
-  saveAlchemy: async (params: Parameters<CoinBridge['resources']['saveAlchemy']>[0]) =>
-    await ipcRenderer.invoke(COIN_IPC_CHANNELS.alchemySave, params),
-  testAlchemy: async (params: Parameters<CoinBridge['resources']['testAlchemy']>[0]) =>
-    await ipcRenderer.invoke(COIN_IPC_CHANNELS.alchemyTest, params),
   saveService: async (params: Parameters<CoinBridge['resources']['saveService']>[0]) =>
     await ipcRenderer.invoke(COIN_IPC_CHANNELS.serviceSave, params),
 });

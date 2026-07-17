@@ -12,10 +12,11 @@ const explicitBridgePath = process.argv[3];
 if (!userDataPath) {
   throw new Error('The MCP production stdio fixture requires a userData path');
 }
+if (!explicitBridgePath) {
+  throw new Error('The MCP production stdio fixture requires an explicit bridge path');
+}
 
 installMcpSourceHooks({ projectRoot, userDataPath });
 
 const { startBitterlessMcpStdioServer } = await import('../../../src/main/mcp/mcpStdio.helper.ts');
-await startBitterlessMcpStdioServer(
-  explicitBridgePath ? { transport: 'unix', path: explicitBridgePath } : undefined
-);
+await startBitterlessMcpStdioServer({ transport: 'unix', path: explicitBridgePath });

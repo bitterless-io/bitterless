@@ -20,7 +20,6 @@ import type {
   CoinTokenConceptFit,
   CoinUnavailableField,
 } from '@shared/coin/coinAnalysis.type';
-import type { AlchemyAssetInspection } from '../resources/alchemyResource.service';
 import type { GmgnReadResult } from '../resources/gmgnCli.service';
 import { coinMemeAnalysisResultSchema } from '../state/coinState.schema';
 import { finiteNumber, isRecord, stringValue, timestampValue } from './coinData.normalize';
@@ -32,7 +31,8 @@ const COHORTS: Array<{ cohort: CoinCohortKey; label: string }> = [
   { cohort: 'pvp', label: 'PVP benchmark' },
 ];
 const COHORT_REASON = 'No reviewed, versioned owner cohort registry is configured for local analysis.';
-const ACCOUNT_CLASSIFICATION_REASON = 'Alchemy account classification is incomplete for the returned holder set.';
+const ACCOUNT_CLASSIFICATION_REASON = 'GMGN did not explicitly classify every returned holder as independent or non-independent.';
+const CHAIN_VERIFICATION_DEFERRED_REASON = 'Independent chain and account verification is deferred in the GMGN-only release.';
 const UNSUPPORTED_SCORE_REASON = 'The source did not provide this score; Bitterless does not infer it from rank alone.';
 const RANK_ONE_REASON = 'Raw source rank 1 is not verified as independent or non-independent.';
 const UNATTESTED_UNIVERSE_REASON = 'The Meme service did not attest that holder-derived values use the filtered holder universe.';
@@ -44,8 +44,6 @@ export interface LocalMemeReadSet {
   traders?: GmgnReadResult;
   trending?: GmgnReadResult;
   hotSearches?: GmgnReadResult;
-  alchemy?: AlchemyAssetInspection;
-  alchemyReason?: string;
   receipts: CoinSourceReceipt[];
 }
 
@@ -56,6 +54,8 @@ interface LocalHolder {
   amount: number | null;
   label: string | null;
   tags: string[];
+  addressType: number | null;
+  exchange: string | null;
   walletScore: number | null;
   realizedPnlUsd: number | null;
   unrealizedPnlUsd: number | null;
@@ -145,6 +145,19 @@ const EXPLICIT_EXCLUSION_LABELS = new Map<string, CoinHolderExclusionClass>([
   ['team wallet', 'other_non_independent'],
 ]);
 const EXPLICIT_INDEPENDENT_LABELS = new Set(['independent wallet', 'individual wallet']);
+const LIQUIDITY_POOL_MARKERS = [
+  'amm',
+  'dex',
+  'liquidity',
+  'meteora',
+  'orca',
+  'pancakeswap',
+  'pool',
+  'pump',
+  'raydium',
+  'sushiswap',
+  'uniswap',
+] as const;
 const EXCHANGE_CUSTODY_BRANDS = [
   'binance',
   'okx',
@@ -190,12 +203,13 @@ const isExchangeCustodyBrandLabel = (value: string): boolean =>
       EXCHANGE_CUSTODY_SAFE_SUFFIX_TOKENS.has(token) || /^\d+$/.test(token));
   });
 
+const isLiquidityPoolLabel = (value: string): boolean =>
+  LIQUIDITY_POOL_MARKERS.some((marker) => value.includes(marker));
+
 const classifyLocalHolder = (
   chain: CoinChain,
   holder: LocalHolder,
-  reads: LocalMemeReadSet,
   holderEvidence: string[],
-  accountEvidence: string[],
 ): ClassifiedLocalHolder => {
   const addressKey = holderAddressKey(chain, holder.address);
   if (
@@ -254,37 +268,37 @@ const classifyLocalHolder = (
     }
   }
 
-  const holderKinds = new Map(
-    Object.entries(reads.alchemy?.holderKinds ?? {})
-      .map(([address, kind]) => [holderAddressKey(chain, address), kind] as const),
-  );
-  const accountKind = reads.alchemy?.chainIdentityVerified === true
-    ? holderKinds.get(addressKey) ?? 'unknown'
-    : 'unknown';
-  if (accountKind === 'wallet') {
+  if (holder.addressType === 2 || holder.exchange) {
+    const exchange = holder.exchange ? normalizedClassificationLabel(holder.exchange) : '';
+    const exclusionClass: CoinHolderExclusionClass = isLiquidityPoolLabel(exchange)
+      ? 'liquidity_pool'
+      : 'exchange_custody';
+    return {
+      holder,
+      status: 'excluded',
+      class: exclusionClass,
+      reason: holder.exchange
+        ? `GMGN addr_type identifies an exchange or liquidity-pool address (${holder.exchange}).`
+        : 'GMGN addr_type identifies an exchange or liquidity-pool address.',
+      evidenceRefs: holderEvidence,
+    };
+  }
+  if (holder.addressType === 0) {
     return {
       holder,
       status: 'independent',
       class: null,
-      reason: 'Alchemy account kind verifies a wallet and no higher-precedence exclusion matched.',
-      evidenceRefs: accountEvidence,
+      reason: 'GMGN addr_type identifies a regular wallet and no higher-precedence exclusion matched.',
+      evidenceRefs: holderEvidence,
     };
   }
-  if (accountKind === 'contract' || accountKind === 'account') {
-    return {
-      holder,
-      status: 'excluded',
-      class: 'contract_program',
-      reason: `Alchemy account kind classifies this holder as ${accountKind === 'contract' ? 'a contract' : 'a program-owned account'}.`,
-      evidenceRefs: accountEvidence,
-    };
-  }
+
   return {
     holder,
     status: 'unknown',
     class: null,
-    reason: reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON,
-    evidenceRefs: accountEvidence,
+    reason: ACCOUNT_CLASSIFICATION_REASON,
+    evidenceRefs: holderEvidence,
   };
 };
 
@@ -321,9 +335,6 @@ const readEvidence = (reads: LocalMemeReadSet, operation: GmgnReadResult['operat
     .filter((receipt) => receipt.source === 'gmgn-cli' && receipt.evidenceIds.some((id) => id.includes(operation)))
     .flatMap((receipt) => receipt.evidenceIds);
 
-const alchemyEvidence = (reads: LocalMemeReadSet): string[] =>
-  reads.receipts.filter((receipt) => receipt.source.startsWith('alchemy-')).flatMap((receipt) => receipt.evidenceIds);
-
 const valueByKeys = (
   value: unknown,
   keys: string[],
@@ -336,7 +347,7 @@ const valueByKeys = (
     for (const key of keys) {
       if (Object.hasOwn(value, key) && value[key] !== null && value[key] !== undefined) return value[key];
     }
-    for (const nestedKey of ['data', 'result', 'token', 'info', 'market', 'stats', 'security']) {
+    for (const nestedKey of ['data', 'result', 'token', 'info', 'market', 'stat', 'stats', 'security']) {
       const nested = valueByKeys(value[nestedKey], keys, depth + 1, visited);
       if (nested !== undefined) return nested;
     }
@@ -393,22 +404,27 @@ const normalizeLaunchStage = (value: unknown): CoinLaunchStage | null => {
 };
 
 const tagsFrom = (value: unknown): string[] => {
-  const tags = valueByKeys(value, ['tags', 'labels', 'tag']);
-  if (Array.isArray(tags)) {
-    return tags.map((tag) => stringValue(tag, 80)).filter((tag): tag is string => Boolean(tag)).slice(0, 12);
+  const tags: string[] = [];
+  for (const key of ['tags', 'labels', 'tag', 'maker_token_tags']) {
+    const found = valueByKeys(value, [key]);
+    if (Array.isArray(found)) {
+      tags.push(...found.map((tag) => stringValue(tag, 80)).filter((tag): tag is string => Boolean(tag)));
+      continue;
+    }
+    const text = stringValue(found, 240);
+    if (text) tags.push(...text.split(/[,|]/).map((tag) => tag.trim()).filter(Boolean));
   }
-  const text = stringValue(tags, 240);
-  return text ? text.split(/[,|]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 12) : [];
+  return [...new Set(tags)].slice(0, 12);
 };
 
 const localHolders = (reads: LocalMemeReadSet): LocalHolder[] => {
   const rows = firstArray(reads.holders?.data, ['holders', 'items', 'list', 'rank']);
   const holders: LocalHolder[] = [];
-  rows.forEach((value, index) => {
-    if (!isRecord(value)) return;
+  for (const [index, value] of rows.entries()) {
+    if (!isRecord(value)) continue;
     const address = textByKeys(value, ['address', 'wallet_address', 'owner', 'wallet'], 160);
-    if (!address) return;
-    const sharePct = numberByKeys(value, [
+    if (!address) continue;
+    const explicitSharePct = numberByKeys(value, [
       'holding_percentage',
       'holding_pct',
       'holdingPercent',
@@ -416,27 +432,39 @@ const localHolders = (reads: LocalMemeReadSet): LocalHolder[] => {
       'percent',
       'share_pct',
     ]);
+    const amountPercentage = numberByKeys(value, ['amount_percentage']);
+    const sharePct = explicitSharePct ?? (
+      amountPercentage !== null && amountPercentage >= 0
+        ? amountPercentage <= 1 ? amountPercentage * 100 : amountPercentage
+        : null
+    );
     holders.push({
       address,
       sourceRank: Math.max(1, Math.trunc(numberByKeys(value, ['rank', 'holder_rank']) ?? index + 1)),
       sharePct: sharePct !== null && sharePct >= 0 && sharePct <= 100 ? sharePct : null,
-      amount: numberByKeys(value, ['amount', 'token_amount', 'balance']),
+      amount: numberByKeys(value, ['amount', 'amount_cur', 'token_amount', 'balance']),
       label: textByKeys(value, ['label', 'wallet_label', 'name'], 160),
       tags: tagsFrom(value),
+      addressType: numberByKeys(value, ['addr_type']),
+      exchange: textByKeys(value, ['exchange'], 160),
       walletScore: numberByKeys(value, ['wallet_score', 'score']),
-      realizedPnlUsd: numberByKeys(value, ['realized_pnl_usd', 'realized_profit_usd']),
-      unrealizedPnlUsd: numberByKeys(value, ['unrealized_pnl_usd', 'unrealized_profit_usd']),
+      realizedPnlUsd: numberByKeys(value, ['realized_pnl_usd', 'realized_profit_usd', 'realized_profit']),
+      unrealizedPnlUsd: numberByKeys(value, ['unrealized_pnl_usd', 'unrealized_profit_usd', 'unrealized_profit']),
     });
-  });
+  }
   return holders.sort((left, right) => left.sourceRank - right.sourceRank).slice(0, 100);
 };
 
-export const extractLocalHolderAddresses = (reads: LocalMemeReadSet): string[] =>
-  localHolders(reads).map(({ address }) => address);
-
 const holderCountMetric = (reads: LocalMemeReadSet, holders: LocalHolder[]) => {
-  const evidence = readEvidence(reads, 'token-holders');
-  const count = numberByKeys(reads.holders?.data, ['holder_count', 'holders_count', 'total_holders', 'total']);
+  const holderEvidence = readEvidence(reads, 'token-holders');
+  const infoEvidence = readEvidence(reads, 'token-info');
+  const holderCount = numberByKeys(reads.holders?.data, ['holder_count', 'holders_count', 'total_holders', 'total']);
+  const infoCount = numberByKeys(reads.info?.data, ['holder_count', 'holders_count', 'total_holders']);
+  const count = holderCount ?? infoCount;
+  const evidence = [...new Set([
+    ...(holderCount !== null ? holderEvidence : []),
+    ...(infoCount !== null ? infoEvidence : []),
+  ])];
   if (count !== null && count >= 0) return metric(Math.trunc(count), evidence);
   if (holders.length > 0 && holders.length < 100) {
     return unavailableMetric<number>('GMGN returned a holder page but did not identify the total holder count.', evidence);
@@ -471,15 +499,21 @@ const concentrationMetric = (
 };
 
 const sourceRate = (
-  value: unknown,
-  keys: string[],
+  values: unknown[],
+  percentageKeys: string[],
+  ratioKeys: string[],
   unavailableReason: string,
   evidence: string[],
 ): CoinRatioMetric => {
-  const rate = numberByKeys(value, keys);
-  return rate !== null && rate >= 0 && rate <= 100
-    ? ratio(rate, evidence)
-    : unavailableRatio(unavailableReason, evidence);
+  for (const value of values) {
+    const percentage = numberByKeys(value, percentageKeys);
+    if (percentage !== null && percentage >= 0 && percentage <= 100) {
+      return ratio(percentage, evidence);
+    }
+    const rate = numberByKeys(value, ratioKeys);
+    if (rate !== null && rate >= 0 && rate <= 1) return ratio(rate * 100, evidence);
+  }
+  return unavailableRatio(unavailableReason, evidence);
 };
 
 const unavailableCohorts = (reason = COHORT_REASON): CoinCohortOverlap[] =>
@@ -626,11 +660,6 @@ const completeUnavailableFields = (
   initial: CoinUnavailableField[],
 ): CoinUnavailableField[] => {
   const defaultSource: CoinSourceId = result.mode === 'service' ? 'meme-service' : 'gmgn-cli';
-  const alchemySource: CoinSourceId = result.asset.chain === 'robinhood'
-    ? 'alchemy-robinhood'
-    : result.asset.chain === 'bsc'
-      ? 'alchemy-bsc'
-      : 'alchemy-solana';
   const collected: Array<CoinUnavailableField | null> = [
     unavailableField('asset.name', result.asset.name, defaultSource),
     unavailableField('asset.symbol', result.asset.symbol, defaultSource),
@@ -638,17 +667,17 @@ const completeUnavailableFields = (
     unavailableField('asset.priceUsd', result.asset.priceUsd, defaultSource),
     unavailableField('asset.marketCapUsd', result.asset.marketCapUsd, defaultSource),
     unavailableField('asset.liquidityUsd', result.asset.liquidityUsd, defaultSource),
-    unavailableField('asset.chainIdentityVerified', result.asset.chainIdentityVerified, alchemySource),
-    unavailableField('asset.contractVerified', result.asset.contractVerified, alchemySource),
+    unavailableField('asset.chainIdentityVerified', result.asset.chainIdentityVerified, null),
+    unavailableField('asset.contractVerified', result.asset.contractVerified, null),
     unavailableField('holderDistribution.holderCount', result.holderDistribution.holderCount, defaultSource),
     unavailableField('holderDistribution.top10SharePct', result.holderDistribution.top10SharePct, defaultSource),
     unavailableField('holderDistribution.top100SharePct', result.holderDistribution.top100SharePct, defaultSource),
     unavailableField('holderDistribution.freshWalletRatePct', result.holderDistribution.freshWalletRatePct, defaultSource),
     unavailableField('holderDistribution.botDegenRatePct', result.holderDistribution.botDegenRatePct, defaultSource),
     unavailableField('holderDistribution.entrapmentTraderRatePct', result.holderDistribution.entrapmentTraderRatePct, defaultSource),
-    unavailableField('holderDistribution.excludedAddressCount', result.holderDistribution.excludedAddressCount, alchemySource),
-    unavailableField('eoaAnalysis.holderCount', result.eoaAnalysis.holderCount, alchemySource),
-    unavailableField('eoaAnalysis.holdingSharePct', result.eoaAnalysis.holdingSharePct, alchemySource),
+    unavailableField('holderDistribution.excludedAddressCount', result.holderDistribution.excludedAddressCount, defaultSource),
+    unavailableField('eoaAnalysis.holderCount', result.eoaAnalysis.holderCount, defaultSource),
+    unavailableField('eoaAnalysis.holdingSharePct', result.eoaAnalysis.holdingSharePct, defaultSource),
     unavailableField('deterministicScore', result.deterministicScore, null),
     unavailableField('confidence', result.confidence, null),
   ];
@@ -726,9 +755,8 @@ export const buildLocalMemeAnalysis = (
   const holderEvidence = readEvidence(reads, 'token-holders');
   const holders = localHolders(reads);
   const holderCount = holderCountMetric(reads, holders);
-  const accountEvidence = alchemyEvidence(reads);
   const classifiedHolders = holders.map((holder) =>
-    classifyLocalHolder(input.chain, holder, reads, holderEvidence, accountEvidence));
+    classifyLocalHolder(input.chain, holder, holderEvidence));
   const eligibleHolders: EligibleLocalHolder[] = classifiedHolders
     .filter(({ status }) => status === 'independent')
     .map(({ holder }, index) => ({ ...holder, eligibleRank: index + 1 }));
@@ -769,7 +797,7 @@ export const buildLocalMemeAnalysis = (
       filtered: true,
       method: 'local-classifier-v1',
       reason: null,
-      evidenceRefs: [...new Set([...holderEvidence, ...accountEvidence, 'holder-classifier:local-v1'])],
+      evidenceRefs: [...new Set([...holderEvidence, 'holder-classifier:local-v1'])],
     },
     topHolder,
     coverage: {
@@ -787,7 +815,7 @@ export const buildLocalMemeAnalysis = (
     },
     exclusionAudit,
   };
-  const concentrationEvidence = [...new Set([...holderEvidence, ...accountEvidence])];
+  const concentrationEvidence = holderEvidence;
   const top10SharePct = rankOneClassified
     ? concentrationMetric(eligibleHolders, 10, top10Complete, completeRawPopulation, holders.length, concentrationEvidence)
     : unavailableRatio(`Filtered Top 10 is unavailable because ${RANK_ONE_REASON}`, concentrationEvidence);
@@ -795,23 +823,26 @@ export const buildLocalMemeAnalysis = (
     ? concentrationMetric(eligibleHolders, 100, top100Complete, completeRawPopulation, holders.length, concentrationEvidence)
     : unavailableRatio(`Filtered Top 100 is unavailable because ${RANK_ONE_REASON}`, concentrationEvidence);
   const freshWalletRatePct = sourceRate(
-    reads.holders?.data,
-    ['fresh_wallet_rate_pct', 'fresh_wallet_rate', 'fresh_rate'],
+    [reads.holders?.data, reads.info?.data],
+    ['fresh_wallet_rate_pct', 'fresh_rate_pct'],
+    ['fresh_wallet_rate', 'fresh_rate'],
     'GMGN did not supply a fresh-wallet rate.',
-    holderEvidence,
+    [...new Set([...holderEvidence, ...infoEvidence])],
   );
   const botDegenRatePct = sourceRate(
-    reads.holders?.data,
-    ['bot_degen_rate_pct', 'bot_degen_rate', 'bot_rate'],
+    [reads.holders?.data, reads.info?.data],
+    ['bot_degen_rate_pct', 'bot_rate_pct'],
+    ['bot_degen_rate', 'bot_rate'],
     'GMGN did not supply a bot/degen rate.',
-    holderEvidence,
+    [...new Set([...holderEvidence, ...infoEvidence])],
   );
   const traderEvidence = readEvidence(reads, 'token-traders');
   const entrapmentTraderRatePct = sourceRate(
-    reads.traders?.data,
-    ['top_entrapment_trader_pct', 'entrapment_trader_rate_pct', 'entrapment_rate'],
+    [reads.traders?.data, reads.info?.data],
+    ['top_entrapment_trader_pct', 'entrapment_trader_rate_pct'],
+    ['top_entrapment_trader_percentage', 'entrapment_trader_rate', 'entrapment_rate'],
     'GMGN did not supply an entrapment-trader rate.',
-    traderEvidence,
+    [...new Set([...traderEvidence, ...infoEvidence])],
   );
 
   const nameValue = textByKeys(reads.info?.data, ['name', 'token_name'], 200);
@@ -827,13 +858,13 @@ export const buildLocalMemeAnalysis = (
   const walletSharesComplete = classificationComplete && eligibleHolders.every(({ sharePct }) => sharePct !== null);
   const eoaHolderCount = classificationComplete
     ? metric(eligibleHolders.length, concentrationEvidence)
-    : unavailableMetric<number>(reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON, concentrationEvidence);
+    : unavailableMetric<number>(ACCOUNT_CLASSIFICATION_REASON, concentrationEvidence);
   const eoaHoldingShare = walletSharesComplete
     ? ratio(
         eligibleHolders.reduce((sum, holder) => sum + (holder.sharePct ?? 0), 0),
         concentrationEvidence,
       )
-    : unavailableRatio(reads.alchemyReason ?? ACCOUNT_CLASSIFICATION_REASON, concentrationEvidence);
+    : unavailableRatio(ACCOUNT_CLASSIFICATION_REASON, concentrationEvidence);
   const excludedCount = reads.holders
     ? metric(exclusionAudit.length, concentrationEvidence)
     : unavailableMetric<number>('GMGN did not return a holder source window.', concentrationEvidence);
@@ -870,23 +901,6 @@ export const buildLocalMemeAnalysis = (
     });
     holderWarnings.push('Filtered Top 100 coverage is incomplete in the non-pageable GMGN holder window.');
   }
-  if (reads.alchemy && !reads.alchemy.chainIdentityVerified) {
-    risks.push({
-      code: 'CHAIN_IDENTITY_MISMATCH',
-      severity: 'critical',
-      text: 'The configured Alchemy endpoint did not match the selected chain identity.',
-      evidenceRefs: accountEvidence,
-    });
-  }
-  if (reads.alchemy && !reads.alchemy.assetAccountVerified) {
-    risks.push({
-      code: 'ASSET_ACCOUNT_UNVERIFIED',
-      severity: 'critical',
-      text: 'Alchemy could not verify the supplied contract or token account.',
-      evidenceRefs: accountEvidence,
-    });
-  }
-
   const scoreEvidence = [...new Set([...holderEvidence, ...traderEvidence, ...risks.flatMap((risk) => risk.evidenceRefs)])];
   const deterministicScore = rankOneClassified
     ? localScore(top10SharePct, freshWalletRatePct, botDegenRatePct, risks, scoreEvidence)
@@ -899,7 +913,6 @@ export const buildLocalMemeAnalysis = (
     freshWalletRatePct.value,
     botDegenRatePct.value,
     entrapmentTraderRatePct.value,
-    reads.alchemy?.assetAccountVerified ?? null,
   ];
   const availableDimensions = confidenceDimensions.filter((value) => value !== null && value !== undefined).length;
   const confidence = availableDimensions > 0
@@ -920,12 +933,8 @@ export const buildLocalMemeAnalysis = (
       priceUsd: priceValue !== null && priceValue >= 0 ? metric(priceValue, infoEvidence) : unavailableMetric(missingFromInfo('USD price'), infoEvidence),
       marketCapUsd: marketCapValue !== null && marketCapValue >= 0 ? metric(marketCapValue, infoEvidence) : unavailableMetric(missingFromInfo('Market cap'), infoEvidence),
       liquidityUsd: liquidityValue !== null && liquidityValue >= 0 ? metric(liquidityValue, infoEvidence) : unavailableMetric(missingFromInfo('Liquidity'), infoEvidence),
-      chainIdentityVerified: reads.alchemy
-        ? metric(reads.alchemy.chainIdentityVerified, accountEvidence)
-        : unavailableMetric(reads.alchemyReason ?? 'Alchemy is not configured for this chain.', accountEvidence),
-      contractVerified: reads.alchemy
-        ? metric(reads.alchemy.assetAccountVerified, accountEvidence)
-        : unavailableMetric(reads.alchemyReason ?? 'Alchemy is not configured for this chain.', accountEvidence),
+      chainIdentityVerified: unavailableMetric(CHAIN_VERIFICATION_DEFERRED_REASON),
+      contractVerified: unavailableMetric(CHAIN_VERIFICATION_DEFERRED_REASON),
     },
     holderDistribution: {
       holderCount,
@@ -959,7 +968,7 @@ export const buildLocalMemeAnalysis = (
     confidence,
     unavailable: [],
     warnings: [
-      'Local CLI/RPC mode is explicit and does not fall back to a deployed Meme service.',
+      'Local GMGN CLI mode is explicit and does not fall back to a deployed Meme service.',
       COHORT_REASON,
       ...holderWarnings,
     ],
@@ -979,8 +988,8 @@ export const buildLocalMemeAnalysis = (
     unavailableField('holderDistribution.freshWalletRatePct', freshWalletRatePct, 'gmgn-cli'),
     unavailableField('holderDistribution.botDegenRatePct', botDegenRatePct, 'gmgn-cli'),
     unavailableField('holderDistribution.entrapmentTraderRatePct', entrapmentTraderRatePct, 'gmgn-cli'),
-    unavailableField('eoaAnalysis.holderCount', eoaHolderCount, input.chain === 'robinhood' ? 'alchemy-robinhood' : input.chain === 'bsc' ? 'alchemy-bsc' : 'alchemy-solana'),
-    unavailableField('eoaAnalysis.holdingSharePct', eoaHoldingShare, input.chain === 'robinhood' ? 'alchemy-robinhood' : input.chain === 'bsc' ? 'alchemy-bsc' : 'alchemy-solana'),
+    unavailableField('eoaAnalysis.holderCount', eoaHolderCount, 'gmgn-cli'),
+    unavailableField('eoaAnalysis.holdingSharePct', eoaHoldingShare, 'gmgn-cli'),
     unavailableField('deterministicScore', deterministicScore, null),
   ].filter((field): field is CoinUnavailableField => Boolean(field));
   for (const cohort of COHORTS) {

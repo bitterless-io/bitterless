@@ -23,11 +23,13 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-archived-domains-modal-refresh](tasks/todo-archived-domains-modal-refresh.md) | compact Archived domains management and restore flow | done | renderer-arco-bem-controls |
 | [renderer-i18n-sync](tasks/renderer-i18n-sync.md) | main-owned language state, live renderer updates, and correct recreated-window locale | done | — |
 | [customer-account-recovery](tasks/customer-account-recovery.md) | customer recovery, lifecycle enforcement, and Royal Blue home surface | done | — |
+| [login-shared-window-shell](tasks/login-shared-window-shell.md) | shared MenuBar and update controls across login and authenticated routes | done | customer-account-recovery |
 | [coin-subapp-shell-001](tasks/coin-subapp-shell-001.md) | Coin singleton window, scoped bridge, and full-width analysis shell | done | — |
-| [coin-resource-settings-002](tasks/coin-resource-settings-002.md) | Codex/GMGN/Alchemy/service configuration and secure local probes | implemented; owner verification pending | coin-subapp-shell-001 |
+| [coin-resource-settings-002](tasks/coin-resource-settings-002.md) | Codex/GMGN/service configuration and secure local probes; Alchemy adapter deferred | implemented; owner verification pending | coin-subapp-shell-001 |
 | [coin-analysis-workspace-003](tasks/coin-analysis-workspace-003.md) | Coin analysis tabs, truthful source adapters, persistence, and decisions | implemented; owner verification pending | coin-resource-settings-002 |
 | [coin-ai-analysis-004](tasks/coin-ai-analysis-004.md) | background Codex structured analysis without chat UI | implemented; owner verification pending | coin-analysis-workspace-003 |
 | [coin-subapp-integration-005](tasks/coin-subapp-integration-005.md) | end-to-end lifecycle, resources, data, AI, and visual acceptance | owner verification pending | coin-ai-analysis-004 |
+| [coin-gmgn-only-local-mode-007](tasks/coin-gmgn-only-local-mode-007.md) | remove Alchemy from the active release and make local Meme analysis GMGN-only | implemented; owner verification pending | coin-analysis-workspace-003, coin-holder-universe-filter-006 |
 | [coding-agent-sessions-core-001](tasks/coding-agent-sessions-core-001.md) | storage, Codex/Claude discovery, normalization, and safe opening | done | — |
 | [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | done | coding-agent-sessions-core-001 |
 | [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | done | coding-agent-sessions-bridge-002 |
@@ -38,6 +40,9 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-activation-refresh-004](tasks/eyes-on-agents-activation-refresh-004.md) | refresh thread metadata whenever the EyesOnAgents window regains focus | done | eyes-on-agents-project-filter-003 |
 | [eyes-on-agents-archive-sync-005](tasks/eyes-on-agents-archive-sync-005.md) | reconcile Codex archive/unarchive state into EyesOnAgents visibility | done | eyes-on-agents-activation-refresh-004 |
 | [eyes-on-agents-sync-persistence-006](tasks/eyes-on-agents-sync-persistence-006.md) | persist raw Codex inventory, explicit unread attention, and disconnected Refresh fallback | done | eyes-on-agents-archive-sync-005 |
+| [eyes-on-agents-hook-delivery-007](tasks/eyes-on-agents-hook-delivery-007.md) | lightweight Hook helper, durable outbox, commit ACK, and persistent dedupe | done | eyes-on-agents-sync-persistence-006 |
+| [eyes-on-agents-global-onboarding-008](tasks/eyes-on-agents-global-onboarding-008.md) | global Hook lifecycle, trust review/recheck, and App Server decoupling | done | eyes-on-agents-hook-delivery-007 |
+| [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and non-blocking Home startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | audit multi-version SQLite upgrades before production packaging | in-progress | — |
 

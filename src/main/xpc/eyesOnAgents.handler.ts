@@ -7,7 +7,10 @@ import type {
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsSnapshot
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
-import { getCodexHookBridgeEndpoint } from '@shared/eyesOnAgents/codexHookBridge.contract';
+import {
+  getCodexHookBridgeEndpoint,
+  getCodexHookOutboxPath
+} from '@shared/eyesOnAgents/codexHookBridge.contract';
 import {
   parseEyesOnAgentsCreateDomainParams,
   parseEyesOnAgentsDomainParams,
@@ -28,7 +31,7 @@ const desktopBridge = new CodexDesktopBridgeService({
   userDataPath: app.getPath('userData'),
   homePath: app.getPath('home'),
   execPath: process.execPath,
-  appPath: app.isPackaged ? null : app.getAppPath(),
+  appRootPath: app.getAppPath(),
   runtimeStatus: () => ({
     listening: codexHookBridgeServer.isListening(),
     listeningSince: codexHookBridgeServer.getListeningSince(),
@@ -47,8 +50,12 @@ const startBridgeListener = async (): Promise<void> => {
     await codexHookBridgeServer.start({
       endpoint: getCodexHookBridgeEndpoint(app.getPath('userData')),
       installationId,
-      consume: async (event) => {
-        await eyesOnAgentsService.applyCodexHookEvent(event);
+      outboxPath: getCodexHookOutboxPath(app.getPath('userData')),
+      consume: async (delivery) => {
+        return await eyesOnAgentsService.commitCodexHookDelivery(delivery);
+      },
+      onCoverageGap: async () => {
+        await eyesOnAgentsService.reportCodexHookCoverageGap();
       }
     });
   })();
@@ -128,6 +135,14 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
 
   async installCodexBridge(): Promise<EyesOnAgentsSnapshot> {
     return await eyesOnAgentsService.installCodexBridge();
+  }
+
+  async reviewCodexBridge(): Promise<EyesOnAgentsSnapshot> {
+    return await eyesOnAgentsService.reviewCodexBridge();
+  }
+
+  async refreshCodexBridgeStatus(): Promise<EyesOnAgentsSnapshot> {
+    return await eyesOnAgentsService.refreshCodexBridgeStatus();
   }
 
   async removeCodexBridge(): Promise<EyesOnAgentsSnapshot> {

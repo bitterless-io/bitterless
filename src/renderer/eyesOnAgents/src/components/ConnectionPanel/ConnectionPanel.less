@@ -24,10 +24,8 @@
 
 .eyes-connection-card {
   padding: 16px;
-  border: 1px solid #dfe3ee;
   border-radius: 12px;
   background: #fff;
-  box-shadow: 0 4px 16px rgb(50 57 85 / 5%);
 }
 
 .eyes-connection-card__header {
@@ -89,6 +87,9 @@
 }
 
 .eyes-connection-card__facts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin: 0 0 14px;
   padding: 10px 12px;
   border-radius: 8px;
@@ -114,6 +115,7 @@
 }
 
 .eyes-connection-card__actions {
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -128,9 +130,11 @@
 }
 
 .eyes-connection-card__trust {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: 12px;
   padding: 8px 10px;
-  border: 1px solid #f0d19d;
   border-radius: 7px;
   color: #76501f;
   background: #fff7e9;
@@ -142,7 +146,6 @@
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid #d6dced;
   border-radius: 9px;
   color: #4f5875;
   background: #eef1fa;

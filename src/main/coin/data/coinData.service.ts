@@ -18,9 +18,6 @@ import type {
   CoinSourceId,
   CoinSourceReceipt,
 } from '@shared/coin/coinAnalysis.type';
-import type { CoinResourceChain } from '@shared/coin/coinResource.type';
-import type { AlchemyResourceService } from '../resources/alchemyResource.service';
-import { AlchemyReadError } from '../resources/alchemyResource.service';
 import type { GmgnCliService, GmgnReadInput, GmgnReadResult } from '../resources/gmgnCli.service';
 import { GmgnReadError } from '../resources/gmgnCli.service';
 import type { ServiceEndpointService } from '../resources/serviceEndpoint.service';
@@ -43,7 +40,6 @@ import {
 import { normalizeDiscoverCandidates } from './discover.normalize';
 import {
   buildLocalMemeAnalysis,
-  extractLocalHolderAddresses,
   normalizeMemeServicePayload,
   type LocalMemeReadSet,
 } from './memeAnalysis.normalize';
@@ -62,7 +58,6 @@ export interface CoinDataServiceDependencies {
   http: CoinHttpClient;
   services: ServiceEndpointService;
   gmgn: GmgnCliService;
-  alchemy: AlchemyResourceService;
   createWebSocket(url: string): CoinWebSocketPort;
   now?: () => number;
   setTimer?: typeof setTimeout;
@@ -83,7 +78,6 @@ const sourceMode = (
   if (source === 'monitor-ws') return 'websocket';
   if (source === 'meme-service') return 'service';
   if (source === 'gmgn-cli') return 'local_cli';
-  if (source.startsWith('alchemy-')) return 'local_rpc';
   if (source === 'strategy-v1') return 'deterministic';
   return 'http';
 };
@@ -127,20 +121,6 @@ const publicError = (error: unknown): CoinDataError => {
       retryable: ['process-failed', 'rate-limited', 'timeout', 'queue-full'].includes(error.code),
     };
   }
-  if (error instanceof AlchemyReadError) {
-    const messages: Record<AlchemyReadError['code'], string> = {
-      cancelled: 'The Alchemy read was cancelled.',
-      'invalid-input': 'The chain address is invalid for Alchemy verification.',
-      'invalid-response': 'Alchemy returned an unsupported read-only RPC response.',
-      'not-configured': 'Configure Alchemy for the selected chain in Resources.',
-      timeout: 'Alchemy verification timed out.',
-    };
-    return {
-      code: `alchemy-${error.code}`,
-      message: messages[error.code],
-      retryable: error.code === 'timeout' || error.code === 'invalid-response',
-    };
-  }
   return {
     code: 'invalid-source-response',
     message: 'The source response did not match the bounded Coin contract.',
@@ -181,11 +161,8 @@ export class CoinDataService {
   async getSources(): Promise<CoinDataSourceStatus[]> {
     const serviceStatuses = this.dependencies.services.getStatuses();
     const gmgn = await this.dependencies.gmgn.detect();
-    const alchemy = this.dependencies.alchemy.getStatuses();
     const serviceConfigured = (service: 'monitor' | 'screener' | 'meme') =>
       Boolean(serviceStatuses.find((status) => status.service === service)?.configured);
-    const alchemyStatus = (chain: CoinResourceChain) =>
-      alchemy.find((status) => status.chain === chain);
     const fromReceipt = (
       source: CoinSourceId,
       configured: boolean,
@@ -211,9 +188,6 @@ export class CoinDataService {
       fromReceipt('screener', serviceConfigured('screener'), 'read-only', serviceConfigured('screener') ? null : 'Configure the Screener endpoint in Resources.'),
       fromReceipt('meme-service', serviceConfigured('meme'), 'read-only', serviceConfigured('meme') ? null : 'A deployed Meme service is optional when explicit local mode is configured.'),
       fromReceipt('gmgn-cli', gmgnConfigured, 'read-only', gmgnConfigured ? null : 'Install GMGN CLI and configure a personal API key.', this.dependencies.gmgn.readCooldownUntil || null),
-      fromReceipt('alchemy-robinhood', Boolean(alchemyStatus('robinhood')?.configured), 'read-only', alchemyStatus('robinhood')?.configured ? null : 'Configure Alchemy Robinhood in Resources.'),
-      fromReceipt('alchemy-bsc', Boolean(alchemyStatus('bsc')?.configured), 'read-only', alchemyStatus('bsc')?.configured ? null : 'Configure Alchemy BSC in Resources.'),
-      fromReceipt('alchemy-solana', Boolean(alchemyStatus('solana')?.configured), 'read-only', alchemyStatus('solana')?.configured ? null : 'Configure Alchemy Solana in Resources.'),
       fromReceipt('owner-cohorts', false, 'unavailable', 'No reviewed owner cohort registry is configured.'),
       fromReceipt('strategy-v1', true, 'read-only', null),
     ];
@@ -426,7 +400,7 @@ export class CoinDataService {
   ): Promise<CoinDataEnvelope<CoinMemeAnalysisResult>> {
     const endpoint = this.resolveService('meme');
     if (!endpoint) {
-      return this.unavailableEnvelope('meme-service', 'Configure the deployed Meme service or explicitly select Local CLI + RPC mode.');
+      return this.unavailableEnvelope('meme-service', 'Configure the deployed Meme service or explicitly select local GMGN mode.');
     }
     return await this.withRequest(input.requestId, 'meme-service', async (signal) => {
       const payload = await this.dependencies.http.requestJson({
@@ -460,7 +434,7 @@ export class CoinDataService {
   private async analyzeMemeLocal(
     input: ReturnType<typeof parseMemeAnalyzeInput>,
   ): Promise<CoinDataEnvelope<CoinMemeAnalysisResult>> {
-    const readiness = await this.localReadiness(input.chain);
+    const readiness = await this.localReadiness();
     if (readiness) return this.unavailableEnvelope('gmgn-cli', readiness);
     return await this.withRequest(input.requestId, 'gmgn-cli', async (signal) => {
       const reads: LocalMemeReadSet = { receipts: [] };
@@ -504,41 +478,6 @@ export class CoinDataService {
         throw new GmgnReadError((failures[0]?.code as GmgnReadError['code']) || 'process-failed');
       }
 
-      const alchemySource = this.alchemySource(input.chain);
-      try {
-        reads.alchemy = await this.dependencies.alchemy.inspectAsset(
-          input.chain,
-          input.contractAddress,
-          extractLocalHolderAddresses(reads),
-          signal,
-        );
-        const evidenceId = `alchemy:${input.chain}:${reads.alchemy.observedAt}`;
-        reads.receipts.push(this.recordReceipt(createSourceReceipt({
-          source: alchemySource,
-          mode: 'local_rpc',
-          status: reads.alchemy.chainIdentityVerified && reads.alchemy.assetAccountVerified ? 'ready' : 'partial',
-          observedAt: reads.alchemy.observedAt,
-          receivedAt: this.now(),
-          reason: reads.alchemy.chainIdentityVerified && reads.alchemy.assetAccountVerified
-            ? null
-            : 'Chain identity or asset account verification did not pass.',
-          evidenceIds: [evidenceId],
-        })));
-      } catch (error) {
-        if (error instanceof AlchemyReadError && error.code === 'cancelled') throw error;
-        const failure = publicError(error);
-        failures.push(failure);
-        reads.alchemyReason = failure.message;
-        reads.receipts.push(this.recordReceipt(createSourceReceipt({
-          source: alchemySource,
-          mode: 'local_rpc',
-          status: error instanceof AlchemyReadError && error.code === 'not-configured' ? 'unavailable' : 'error',
-          observedAt: null,
-          receivedAt: this.now(),
-          reason: failure.message,
-          evidenceIds: [`alchemy:${input.chain}:error:${this.now()}`],
-        })));
-      }
       const aggregate = this.recordReceipt(createSourceReceipt({
         source: 'gmgn-cli',
         mode: 'local_cli',
@@ -580,7 +519,7 @@ export class CoinDataService {
       };
     } catch (error) {
       const publicFailure = publicError(error);
-      const status = publicFailure.code === 'cancelled' || publicFailure.code === 'alchemy-cancelled'
+      const status = publicFailure.code === 'cancelled'
         ? 'cancelled'
         : 'error';
       const receipt = this.recordReceipt(createSourceReceipt({
@@ -633,14 +572,6 @@ export class CoinDataService {
   private recordReceipt(receipt: CoinSourceReceipt): CoinSourceReceipt {
     this.latestReceipts.set(receipt.source, receipt);
     return receipt;
-  }
-
-  private alchemySource(chain: CoinResourceChain): CoinSourceId {
-    return chain === 'robinhood'
-      ? 'alchemy-robinhood'
-      : chain === 'bsc'
-        ? 'alchemy-bsc'
-        : 'alchemy-solana';
   }
 
   private connectMonitor(
@@ -743,13 +674,11 @@ export class CoinDataService {
     this.monitorListener?.({ type: 'connection', connection, reason, receipt });
   }
 
-  private async localReadiness(chain: CoinResourceChain): Promise<string | null> {
+  private async localReadiness(): Promise<string | null> {
     const gmgn = await this.dependencies.gmgn.detect();
-    if (!gmgn.installed) return 'Install GMGN CLI in Resources before selecting Local CLI + RPC.';
+    if (!gmgn.installed) return 'Install GMGN CLI in Resources before selecting local GMGN mode.';
     if (gmgn.privateKeyDetected) return 'Remove GMGN_PRIVATE_KEY before using read-only local mode.';
     if (!gmgn.apiKeyConfigured) return 'Configure GMGN_API_KEY in Resources before selecting local mode.';
-    const alchemy = this.dependencies.alchemy.getStatuses().find((status) => status.chain === chain);
-    if (!alchemy?.configured) return `Configure Alchemy ${chain} in Resources before selecting local mode.`;
     return null;
   }
 
@@ -757,9 +686,9 @@ export class CoinDataService {
     if (input.mode === 'service') {
       return this.resolveService('meme')
         ? null
-        : unavailableError('Configure the deployed Meme service or explicitly select Local CLI + RPC mode.');
+        : unavailableError('Configure the deployed Meme service or explicitly select local GMGN mode.');
     }
-    const reason = await this.localReadiness(input.chain);
+    const reason = await this.localReadiness();
     return reason ? unavailableError(reason) : null;
   }
 

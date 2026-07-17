@@ -10,7 +10,6 @@ source mode after a failure, or silently switches to sample data.
 
 | Resource | Required for | Owner action |
 |---|---|---|
-| Alchemy account and applications | local chain identity/contract/account checks and future activity collection | Create read-only endpoints for every supported chain and run the capability probe below. |
 | GMGN personal API credential | local Meme discovery, token metadata, security, holders, traders, and concepts | Obtain a credential whose terms allow the planned personal analysis workload. |
 | Curated wallet cohort dataset | high-profit, Robinhood, BSC, PVP overlap scoring | Supply reviewed addresses, chain, label, provenance, confidence, and version. |
 | Non-independent holder registry | exchange/custody, pool, bridge/router, treasury, and vesting exclusions | Supply reviewed public addresses, chain, exclusion class, provenance, confidence, and version. Never include signing material. |
@@ -20,34 +19,17 @@ source mode after a failure, or silently switches to sample data.
 Do not put API keys, RPC URLs containing keys, wallet lists with private annotations, or production
 credentials in this repository. Bitterless is a `projects/` submodule and must be treated as public.
 Store service credentials in the private parent workspace under `areas/keychain/` or
-`ops/bitterless/`. Per-machine GMGN/Alchemy values may instead be entered through Resources, where
-the main process stores them outside the repository.
+`ops/bitterless/`. Per-machine GMGN values may instead be entered through Resources, where the main
+process stores them outside the repository.
 
 For local desktop setup, use Coin's Resources page. It stores GMGN in the standard owner-only GMGN
-config and encrypts Alchemy values with Electron `safeStorage`; neither credential is synchronized
-with Git. See the full [GMGN CLI setup guide](gmgn-cli.md).
+config, which is not synchronized with Git. See the full [GMGN CLI setup guide](gmgn-cli.md).
 
-## Alchemy setup
+## Deferred: Alchemy setup
 
-1. Sign in to Alchemy and create a workspace dedicated to personal Bitterless coin research.
-2. Create separate applications/endpoints for BSC, Solana, and Robinhood Chain when each network is
-   available to the account. Separate apps make quota, failures, and later credential rotation
-   attributable by chain.
-3. Choose the production network for each chain. Enter the HTTPS endpoint through Resources for
-   local mode, or record it in the private Bitterless ops inventory for a deployed service.
-4. Keep the key in the main process. Resources encrypts the endpoint with Electron `safeStorage`;
-   the renderer receives only masked readiness metadata, and no `VITE_*` value may contain it.
-5. The implemented local adapter performs read-only chain identity plus contract/account checks
-   where supported: `eth_chainId` and `eth_getCode` for EVM chains, and Solana health/account-info
-   calls for Solana. Holder/activity coverage still comes from GMGN or a deployed Meme service.
-6. Record each capability as `supported`, `unsupported`, or `degraded`, with the observed timestamp
-   and error. An RPC that answers a health call is not proof that it can produce the holder metrics.
-7. For Robinhood Chain, collect at least seven days of sample density, transfer coverage, and rate
-   behavior before enabling a score. Keep its UI source state unavailable until that gate passes.
-
-Use one credential per service environment where possible. Rotation means updating the private
-backend environment and ops inventory, redeploying the collector, then verifying the source status;
-it must not require a desktop release.
+Alchemy is not part of the current release and is not required for local discovery or analysis.
+Its setup, Resources UI, renderer IPC, and analysis integration are deferred to a later tracked task;
+there is nothing to configure for the GMGN-only release.
 
 ## GMGN setup
 
@@ -87,8 +69,10 @@ wallet registry; never provide seed phrases or signing credentials.
 ## Holder-universe exclusions
 
 Top-holder concentration and cohort overlap operate on independently attributable wallets only.
-Classification priority is chain-invariant address rules, explicit provider labels/tags, Alchemy
-account kind, then the reviewed exclusion registry. Exclude burn/null/system addresses,
+Current classification priority is chain-invariant address rules, explicit provider labels/tags,
+then GMGN `addr_type` and `exchange`. GMGN `addr_type=0` identifies a regular wallet;
+`addr_type=2` identifies an exchange or liquidity-pool address. RPC account kind and the reviewed
+exclusion registry are deferred. Exclude known burn/null/system addresses,
 exchange/custody wallets, pools, contracts/programs, bridges/routers, and explicitly labelled
 treasury/vesting accounts. Preserve every exclusion as an auditable row with original source rank,
 address, class, reason, and evidence.
@@ -115,8 +99,8 @@ VITE_COIN_MEME_API_BASE
 ```
 
 The monitor and screen services may be enabled independently. A configured Meme service is the
-preferred explicit mode, but it is optional: explicit local mode uses configured GMGN CLI plus the
-selected chain's Alchemy endpoint. There is no service-to-local fallback after a failed request.
+preferred explicit service mode, but it is optional: explicit local mode uses the configured GMGN
+CLI alone. There is no service-to-local fallback after a failed request.
 
 The desktop currently calls these service contracts:
 
@@ -136,7 +120,6 @@ unsupported dimensions so the renderer can display `null + reason` rather than a
 ## Readiness checklist
 
 - [ ] Private ops inventory names the `ral` owner for every credential and deployed resource.
-- [ ] Alchemy endpoints are main-process-only or server-only and capability probes are recorded per chain.
 - [ ] GMGN terms/rate limits and required fields are verified.
 - [ ] `gmgn-cli` is installed, the personal key is configured with mode `0600`, and the read-only
       probe passes without `GMGN_PRIVATE_KEY`.

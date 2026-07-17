@@ -24,7 +24,7 @@ CoinWindowHandler --------------------------- auth / quit cleanup
        +-- Coin BrowserWindow (one local renderer, minimum 800x600)
               |
               +-- Monitor / Screener / Meme / Strategy / History
-              +-- Resources (Codex, GMGN CLI, Alchemy, service readiness)
+              +-- Resources (Codex, GMGN CLI, service readiness)
 
 Coin preload -- allowlisted, sender-checked IPC --> main Coin services
        +-- CoinDataService
@@ -64,10 +64,10 @@ Default size is `1360x860`; minimum size is `800x600`. Geometry is persisted und
 |---|---|---|
 | Monitor | Watch selected symbols, price/range, listing age, freshness, and connection state. | Implemented; requires configured HTTP and WebSocket bases. |
 | Screener | Parse structured/natural-language filters and rank futures/spot symbols. | Implemented; live/sample selection is explicit. |
-| Meme | Discover recently filled tokens or analyze one `chain + CA` with holder, cohort, and attention evidence. | Implemented in explicit service or local CLI/RPC mode. |
+| Meme | Discover recently filled tokens or analyze one `chain + CA` with holder, cohort, and attention evidence. | Implemented in explicit service or local GMGN CLI mode. |
 | Strategy | Convert structured evidence, risk, and optional position into exactly `BUY`, `HOLD`, or `SELL`. | Deterministic v1 implemented; no execution. |
 | History | Reopen analyses, decisions, and source receipts. | Versioned owner-only JSON persistence implemented. |
-| Resources | Configure and verify Codex, GMGN CLI, Alchemy, and service endpoints. | Local machine configuration; secrets never enter project files. |
+| Resources | Configure and verify Codex, GMGN CLI, and service endpoints. | Local machine configuration; secrets never enter project files. |
 
 Sources status is available from the header and Resources page. It shows configuration, support,
 read-only status, freshness, cooldown, and the latest failure reason.
@@ -77,7 +77,7 @@ read-only status, freshness, cooldown, and the latest failure reason.
 ### Source configuration
 
 Non-secret service bases may be supplied by build/runtime configuration or a validated user
-override. Secret-bearing GMGN/Alchemy configuration is owned by `CoinResourceService`.
+override. Secret-bearing GMGN configuration is owned by `CoinResourceService`.
 
 | Value | Purpose |
 |---|---|
@@ -143,6 +143,10 @@ provider ranking. Before re-ranking, exclude chain burn/null/system addresses, l
 custody wallets, liquidity pools, contracts/programs, bridges/routers, and explicitly labelled
 project treasury or vesting accounts. Excluded balances remain visible in the audit and risk output;
 they are not silently discarded.
+
+In local mode, GMGN `addr_type=0` is explicit regular-wallet evidence and `addr_type=2` is explicit
+exchange/pool evidence. `exchange`, `tags`, and `maker_token_tags` refine the exclusion class and
+take precedence over treating a row as eligible.
 
 Raw rank 1 has a mandatory classification gate. If it is an excluded class, remove it and backfill
 from subsequent source rows. If it is independently attributable, retain it. Rank alone is never a
@@ -252,12 +256,12 @@ disconnect consequence. Every action has loading and duplicate-submit protection
 - Local Discover starts at most one trenches command per polling interval and enforces a 60-second
   minimum. It never fans out one process per candidate.
 
-### Alchemy and services
+### Services and deferred sources
 
-Alchemy HTTP/WSS endpoints are accepted only in the main process, encrypted with Electron
-`safeStorage`, persisted in an owner-only file, and returned to the renderer only as masked readiness
-metadata. Service base overrides are validated `https` URLs in production. The page reports chain
-capability/probe status separately for Robinhood Chain, BSC, and Solana.
+Service base overrides are validated `https` URLs in production. Alchemy is deferred from the
+current release: it is not a local-mode prerequisite, is not shown in Resources or Sources, and has
+no renderer IPC capability. The existing main-process adapter and encrypted-store implementation
+remain dormant for a future tracked task.
 
 Detailed human steps live in [`coin-data-sources.md`](../guides/coin-data-sources.md) and
 [`gmgn-cli.md`](../guides/gmgn-cli.md).
@@ -270,7 +274,7 @@ Coin uses no hidden SQLite renderer. Main-process services write owner-only stat
 | File | State |
 |---|---|
 | `coin-state.json` | active page, source-safe drafts, watches, analyses, decisions, source receipts/history |
-| `resources.enc` | Alchemy and other secret resource values encrypted by `safeStorage` |
+| `resources.enc` | Reserved encrypted resource values; dormant Alchemy data remains forward-compatible |
 | `window-state.json` | validated geometry |
 
 Codex tokens remain in the shared Pi auth file. GMGN uses its standard owner-only config file and is
@@ -288,7 +292,7 @@ state.load / state.save / state.recover
 data.getSources / data.monitor / data.refreshMonitor / data.parseScreener / data.screen
 data.analyzeMeme / data.startDiscover / data.stopDiscover / data.cancel
 strategy.evaluate
-resources.getStatus / resources.saveAlchemy / resources.detectGmgn
+resources.getStatus / resources.detectGmgn
 resources.saveGmgnApiKey / resources.verifyGmgn / resources.openGuide
 codex.getStatus / codex.connect / codex.disconnect
 window.minimize / window.toggleMaximize / window.close
@@ -313,17 +317,15 @@ in scope. Coin provides analysis and decisions only.
 ## Human preparation
 
 1. Install GMGN CLI, create a personal API key, and complete the read-only probe.
-2. Create an Alchemy application for Robinhood Chain, BSC, and Solana and configure read-only
-   endpoints through Resources/private ops.
-3. Curate and version high-profit/control wallet cohorts and labels.
-4. Run the seven-day Robinhood capability/sample-density probe before enabling its score.
-5. Deploy/configure Monitor and Screener service bases. A deployed Meme service is optional when
-   explicit local GMGN/Alchemy mode is configured, and preferred when a Meme base is configured.
-6. Supply actual position and risk inputs for position-aware `HOLD` decisions.
-7. Connect Codex only when exercising optional structured AI interpretation.
+2. Curate and version high-profit/control wallet cohorts and labels.
+3. Run the seven-day Robinhood capability/sample-density probe before enabling its score.
+4. Deploy/configure Monitor and Screener service bases. A deployed Meme service is optional when
+   explicit local GMGN mode is configured, and preferred when a Meme base is configured.
+5. Supply actual position and risk inputs for position-aware `HOLD` decisions.
+6. Connect Codex only when exercising optional structured AI interpretation.
 
-X API and Helius remain optional follow-up sources. Wallet signing and exchange credentials are not
-requested.
+Alchemy, X API, and Helius are optional follow-up sources. Wallet signing and exchange credentials
+are not requested.
 
 ## Owner verification pending
 

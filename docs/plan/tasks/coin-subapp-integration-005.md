@@ -19,8 +19,7 @@ build, typecheck, or visual verification is authorized for this handoff.
 - Exercise Home → Coin first/repeated Open, close/reopen, geometry, language, logout, quit/update,
   and relaunch. No duplicate/orphan/hidden/remote renderer may remain.
 - Exercise Resources through production boundaries: Codex connect status, GMGN detect/key/probe,
-  Alchemy encrypted config/probe, service status, masking, failures, and fresh-machine unavailable
-  states.
+  service status, masking, failures, and fresh-machine unavailable states.
 - Exercise each analysis adapter using local HTTP fixtures across success, unsupported, missing,
   partial, stale, failure, cancellation, persistence, and reopen.
 - Exercise complete Meme output, concept/attention evidence, polling, deterministic decisions, and
@@ -44,7 +43,7 @@ build, typecheck, or visual verification is authorized for this handoff.
 ## Verification
 
 - Owner runs `yarn dev` for local/debug sources or `yarn dev:prod` for production sources after
-  completing the GMGN and Alchemy setup guides.
+  completing the GMGN setup guide.
 - Owner may run focused unit/contract tests, Electron Playwright, Maestro lifecycle checks,
   `yarn check:maestro`, node/renderer typechecks, and `yarn build` when a full verification pass is
   wanted.
@@ -57,11 +56,9 @@ build, typecheck, or visual verification is authorized for this handoff.
 
 1. Follow `docs/guides/gmgn-cli.md`, then configure the personal key and run the fixed read-only
    probe from Coin → Resources.
-2. Follow `docs/guides/coin-data-sources.md`, adding separate mainnet HTTPS endpoints for Robinhood
-   Chain, BSC, and Solana; add WSS endpoints when the Alchemy app exposes them.
-3. Start Bitterless with `yarn dev`, log in, open Coin, and confirm Resources reports the selected
+2. Start Bitterless with `yarn dev`, log in, open Coin, and confirm Resources reports the selected
    providers without exposing credentials.
-4. Exercise Monitor, Screener, Meme Discover/Analyze, Strategy (including a complete existing
+3. Exercise Monitor, Screener, Meme Discover/Analyze, Strategy (including a complete existing
    position for HOLD), History restore, Sources, and Codex Analyze with AI/Cancel.
-5. Close and reopen Coin, then restart Bitterless and confirm geometry, persisted results, resource
+4. Close and reopen Coin, then restart Bitterless and confirm geometry, persisted results, resource
    readiness, and validated AI receipts restore without chat or trading controls.

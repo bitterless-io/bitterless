@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { isAbsolute, join, win32 } from 'node:path';
 import type {
   CodexHookBridgeEndpoint,
+  CodexHookDelivery,
+  CodexHookDeliveryAck,
   CodexHookEvent,
   CodexHookEventName,
   CodexHookHelperArgs
@@ -18,6 +20,7 @@ export const CODEX_HOOK_HELPER_ARG = '--coding-agent-hook-helper';
 export const CODEX_HOOK_BRIDGE_PATH_ARG = '--coding-agent-bridge-path';
 export const CODEX_HOOK_PROVIDER_ARG = '--coding-agent-provider';
 export const CODEX_HOOK_INSTALLATION_ID_ARG = '--coding-agent-installation-id';
+export const CODEX_HOOK_OUTBOX_PATH_ARG = '--coding-agent-outbox-path';
 
 const CODEX_EVENTS = new Set<CodexHookEventName>([
   'SessionStart',
@@ -73,7 +76,8 @@ export const parseCodexHookHelperArgs = (
   const knownFlags = new Set([
     CODEX_HOOK_BRIDGE_PATH_ARG,
     CODEX_HOOK_PROVIDER_ARG,
-    CODEX_HOOK_INSTALLATION_ID_ARG
+    CODEX_HOOK_INSTALLATION_ID_ARG,
+    CODEX_HOOK_OUTBOX_PATH_ARG
   ]);
   const values = new Map<string, string>();
   for (let index = helperIndexes[0] + 1; index < argv.length; index += 1) {
@@ -87,7 +91,11 @@ export const parseCodexHookHelperArgs = (
     values.set(flag, assertSafeArgument(next, flag));
     index += 1;
   }
-  for (const flag of [CODEX_HOOK_BRIDGE_PATH_ARG, CODEX_HOOK_INSTALLATION_ID_ARG]) {
+  for (const flag of [
+    CODEX_HOOK_BRIDGE_PATH_ARG,
+    CODEX_HOOK_INSTALLATION_ID_ARG,
+    CODEX_HOOK_OUTBOX_PATH_ARG
+  ]) {
     if (!values.has(flag)) throw new Error(`${flag} is required`);
   }
   const provider = values.get(CODEX_HOOK_PROVIDER_ARG);
@@ -99,16 +107,31 @@ export const parseCodexHookHelperArgs = (
     values.get(CODEX_HOOK_INSTALLATION_ID_ARG),
     'installationId'
   );
+  const outboxPath = values.get(CODEX_HOOK_OUTBOX_PATH_ARG) as string;
   if (platform === 'win32') {
     if (!path.startsWith('\\\\.\\pipe\\')) {
       throw new Error(`${CODEX_HOOK_BRIDGE_PATH_ARG} must be a local Windows named pipe`);
     }
-    return { endpoint: { transport: 'win32-named-pipe', path }, installationId };
+    if (!win32.isAbsolute(outboxPath)) {
+      throw new Error(`${CODEX_HOOK_OUTBOX_PATH_ARG} must be an absolute Windows path`);
+    }
+    return {
+      endpoint: { transport: 'win32-named-pipe', path },
+      installationId,
+      outboxPath
+    };
   }
   if (!path.startsWith('/')) {
     throw new Error(`${CODEX_HOOK_BRIDGE_PATH_ARG} must be an absolute Unix socket path`);
   }
-  return { endpoint: { transport: 'unix', path }, installationId };
+  if (!isAbsolute(outboxPath)) {
+    throw new Error(`${CODEX_HOOK_OUTBOX_PATH_ARG} must be an absolute Unix path`);
+  }
+  return { endpoint: { transport: 'unix', path }, installationId, outboxPath };
+};
+
+export const getCodexHookOutboxPath = (userDataPath: string): string => {
+  return join(assertSafeArgument(userDataPath, 'userData path'), 'eyes-on-agents', 'codex-hook-outbox');
 };
 
 export const createCodexHookEvent = (params: {
@@ -160,6 +183,42 @@ export const parseCodexHookEvent = (value: unknown): CodexHookEvent => {
   });
 };
 
+export const createCodexHookDelivery = (params: {
+  deliveryId: string;
+  event: CodexHookEvent;
+}): CodexHookDelivery => {
+  return {
+    schemaVersion: 1,
+    deliveryId: parseEyesOnAgentsUuid(params.deliveryId, 'deliveryId'),
+    event: parseCodexHookEvent(params.event)
+  };
+};
+
+export const parseCodexHookDelivery = (value: unknown): CodexHookDelivery => {
+  if (
+    !isEyesOnAgentsRecord(value) ||
+    value.schemaVersion !== 1 ||
+    Object.keys(value).sort().join(',') !== 'deliveryId,event,schemaVersion'
+  ) {
+    throw new Error('Invalid Codex hook delivery envelope');
+  }
+  return createCodexHookDelivery({
+    deliveryId: value.deliveryId as string,
+    event: value.event as CodexHookEvent
+  });
+};
+
+export const parseCodexHookDeliveryAck = (value: unknown): CodexHookDeliveryAck => {
+  if (
+    !isEyesOnAgentsRecord(value) ||
+    value.status !== 'committed' ||
+    Object.keys(value).length !== 1
+  ) {
+    throw new Error('Invalid Codex hook delivery acknowledgement');
+  }
+  return { status: 'committed' };
+};
+
 const shellQuote = (value: string): string => {
   const safe = assertSafeArgument(value, 'POSIX shim argument');
   return `'${safe.replace(/'/g, `'\\''`)}'`;
@@ -178,7 +237,8 @@ export const createCodexHookCommand = (
 
 export const createCodexHookHelperArguments = (
   endpointPath: string,
-  installationId: string
+  installationId: string,
+  outboxPath: string
 ): string[] => [
   CODEX_HOOK_HELPER_ARG,
   CODEX_HOOK_BRIDGE_PATH_ARG,
@@ -186,24 +246,31 @@ export const createCodexHookHelperArguments = (
   CODEX_HOOK_PROVIDER_ARG,
   'codex',
   CODEX_HOOK_INSTALLATION_ID_ARG,
-  parseEyesOnAgentsUuid(installationId, 'installationId')
+  parseEyesOnAgentsUuid(installationId, 'installationId'),
+  CODEX_HOOK_OUTBOX_PATH_ARG,
+  assertSafeArgument(outboxPath, 'outbox path')
 ];
 
 export const createCodexHookShim = (params: {
   execPath: string;
-  appPath: string | null;
+  helperPath: string;
   endpointPath: string;
   installationId: string;
+  outboxPath: string;
   platform?: NodeJS.Platform;
 }): string => {
   const platform = params.platform ?? process.platform;
   const quote = platform === 'win32' ? windowsQuote : shellQuote;
   const command = [
     quote(params.execPath),
-    ...(params.appPath ? [quote(params.appPath)] : []),
-    ...createCodexHookHelperArguments(params.endpointPath, params.installationId).map(quote)
+    quote(params.helperPath),
+    ...createCodexHookHelperArguments(
+      params.endpointPath,
+      params.installationId,
+      params.outboxPath
+    ).map(quote)
   ].join(' ');
   return platform === 'win32'
-    ? `@echo off\r\nsetlocal DisableDelayedExpansion\r\n${command} >nul 2>nul\r\nexit /b 0\r\n`
-    : `#!/bin/sh\n${command} >/dev/null 2>/dev/null || true\nexit 0\n`;
+    ? `@echo off\r\nsetlocal DisableDelayedExpansion\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n${command} >nul 2>nul\r\nexit /b 0\r\n`
+    : `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 ${command} >/dev/null 2>/dev/null || true\nexit 0\n`;
 };

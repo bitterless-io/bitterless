@@ -16,8 +16,9 @@ and cohort analysis.
 ## Contract
 
 - Classify every returned holder with evidence before inclusion in the eligible holder universe.
-- Apply deterministic chain burn/system address rules, explicit GMGN labels/tags, Alchemy account
-  kind, and a future versioned owner exclusion registry in that priority order.
+- Apply deterministic chain burn/system address rules, explicit GMGN labels/tags, and GMGN
+  `addr_type`/`exchange` evidence in the current release. Account-kind RPC verification and a
+  versioned owner exclusion registry are deferred.
 - Require a classification decision for raw rank 1. Exclude it only when evidence identifies a
   non-independent class; retain a verified independent wallet; block holder-derived concentration
   and scores when rank 1 is unknown.

@@ -49,6 +49,7 @@ class EyesOnAgentsState {
   uncategorizedProjectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
+  private activationPromise: Promise<void> | null = null;
   private subscribed = false;
 
   get domains(): EyesOnAgentsDomain[] {
@@ -177,21 +178,27 @@ class EyesOnAgentsState {
   }
 
   async refreshOnWindowActivation(): Promise<void> {
-    const connection = this.snapshot?.connection;
-    const shouldSync = connection?.state === 'connected'
-      || Boolean(
-        connection?.autoConnectEnabled
-        && (connection.state === 'disconnected' || connection.state === 'error'),
-      );
-    if (shouldSync) {
-      await this.syncThreads();
-      return;
-    }
-    await this.loadSnapshot(true);
+    if (this.activationPromise) return await this.activationPromise;
+
+    const request = this.performWindowActivationRefresh();
+    this.activationPromise = request.finally(() => {
+      this.activationPromise = null;
+    });
+    await this.activationPromise;
   }
 
   async installCodexBridge(): Promise<void> {
     await this.runSnapshotAction('bridge-install', () => eyesOnAgentsEmitter.installCodexBridge());
+  }
+
+  async reviewCodexBridge(): Promise<void> {
+    await this.runSnapshotAction('bridge-review', () => eyesOnAgentsEmitter.reviewCodexBridge());
+  }
+
+  async refreshCodexBridgeStatus(): Promise<void> {
+    await this.runSnapshotAction('bridge-refresh', () =>
+      eyesOnAgentsEmitter.refreshCodexBridgeStatus(),
+    );
   }
 
   async removeCodexBridge(): Promise<void> {
@@ -259,6 +266,24 @@ class EyesOnAgentsState {
 
   clearActionError(): void {
     this.actionError = null;
+  }
+
+  private async performWindowActivationRefresh(): Promise<void> {
+    const connection = this.snapshot?.connection;
+    const shouldSync = connection?.state === 'connected'
+      || Boolean(
+        connection?.autoConnectEnabled
+        && (connection.state === 'disconnected' || connection.state === 'error'),
+      );
+    if (shouldSync) {
+      await this.syncThreads();
+    } else {
+      await this.loadSnapshot(true);
+    }
+
+    if (this.snapshot?.bridge.state !== 'not_installed') {
+      await this.refreshCodexBridgeStatus();
+    }
   }
 
   private async runSnapshotAction(

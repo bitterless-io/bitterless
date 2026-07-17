@@ -50,6 +50,9 @@ test('window activation refreshes thread discovery without leaking its listener'
   assert.match(store, /connection\?\.state === 'connected'/);
   assert.match(store, /connection\?\.autoConnectEnabled/);
   assert.match(store, /await this\.loadSnapshot\(true\)/);
+  assert.match(store, /this\.snapshot\?\.bridge\.state !== 'not_installed'/);
+  assert.match(store, /await this\.refreshCodexBridgeStatus\(\)/);
+  assert.match(store, /if \(this\.activationPromise\) return await this\.activationPromise/);
 });
 
 test('observation board exposes stable regions and reduced motion', () => {
@@ -164,7 +167,7 @@ test('Project filtering is scoped only to Uncategorized', () => {
   assert.match(chinese, /noProject: '无 Project'/);
 });
 
-test('connection panel presents Connect-managed bridge trust and safe cleanup', () => {
+test('connection panel presents independent Codex observation onboarding and review', () => {
   const panel = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
   );
@@ -174,13 +177,31 @@ test('connection panel presents Connect-managed bridge trust and safe cleanup', 
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
-  assert.match(panel, /bridgeState === 'needs_trust'/);
-  assert.match(panel, /eyesOnAgents\.bridge\.trustReview/);
-  assert.match(panel, /!canDisconnect\.value &&[\s\S]*'installed', 'needs_trust', 'drifted'/);
+  assert.match(panel, /const canEnableBridge = computed\(\(\) => bridgeState\.value === 'not_installed'\)/);
+  assert.match(panel, /const canRepairBridge = computed\(\(\) => bridgeState\.value === 'drifted'\)/);
+  assert.match(panel, /bridgeState\.value === 'needs_trust' \|\| bridgeState\.value === 'error'/);
+  assert.match(panel, /eyesOnAgentsStore\.reviewCodexBridge\(\)/);
+  assert.match(panel, /eyesOnAgentsStore\.refreshCodexBridgeStatus\(\)/);
+  assert.match(panel, /bridgeReviewReason\.value === 'disabled'/);
+  assert.match(panel, /bridge\.value\?\.listening[\s\S]*observing[\s\S]*installedPaused/);
+  assert.match(panel, /lastInspectedAt/);
+  assert.match(panel, /lastEventAt/);
+  assert.doesNotMatch(panel, /!canDisconnect\.value/);
   assert.match(menuBar, /case 'needs_trust'/);
-  assert.match(english, /Managed by Connect/);
-  assert.match(english, /open \/hooks and approve or enable the four Bitterless hooks[\s\S]*Refresh/);
-  assert.match(chinese, /打开 \/hooks，批准或启用 4 条 Bitterless hooks[\s\S]*刷新/);
+  assert.match(english, /Global Codex observation/);
+  assert.match(english, /Installed, paused/);
+  assert.match(english, /Review in Codex/);
+  assert.match(english, /Re-enable and review/);
+  assert.match(english, /Check again/);
+  assert.match(english, /Codex Settings → Hooks[\s\S]*\/hooks/);
+  assert.match(chinese, /全局 Codex 观测/);
+  assert.match(chinese, /已安装，监听暂停/);
+  assert.match(chinese, /在 Codex 中审核/);
+  assert.match(chinese, /重新启用并审核/);
+  assert.match(chinese, /再次检查/);
+  assert.match(chinese, /Codex 设置 → Hooks[\s\S]*\/hooks/);
+  assert.doesNotMatch(english, /Managed by Connect/);
+  assert.doesNotMatch(chinese, /由“连接”统一管理/);
 });
 
 test('header Refresh is visible and can recover disconnected or error state', () => {

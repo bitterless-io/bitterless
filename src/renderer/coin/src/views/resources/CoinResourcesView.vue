@@ -233,49 +233,6 @@
         </div>
       </section>
 
-      <section name="coin__resources__chains" class="coin-resource-section">
-        <header class="coin-resource-section__header">
-          <IconCloudLock :size="17" aria-hidden="true" />
-          <h2>{{ i18nHelper.coin.resourcePage.sections.chainData }}</h2>
-        </header>
-        <div class="coin-resource-list">
-          <div
-            v-for="chain in chainRows"
-            :key="chain.chain"
-            name="coin__resources__chainRow"
-            class="coin-resource-row"
-          >
-            <span class="coin-resource-row__icon">
-              <IconCloudLock :size="18" aria-hidden="true" />
-            </span>
-            <div class="coin-resource-row__content">
-              <div class="coin-resource-row__heading">
-                <strong>{{ chainName(chain.chain) }}</strong>
-                <span class="coin-resource-state" :class="alchemyStateClass(chain)">
-                  {{ alchemyStateLabel(chain) }}
-                </span>
-              </div>
-              <span class="coin-resource-row__detail">{{ alchemyDetail(chain) }}</span>
-            </div>
-            <div class="coin-resource-row__actions">
-              <a-button size="mini" @click="store.openAlchemy(chain.chain)">
-                <template #icon><IconSettings :size="14" /></template>
-                {{ chain.configured ? i18nHelper.coin.resourcePage.replace : i18nHelper.coin.resourcePage.configure }}
-              </a-button>
-              <a-button
-                size="mini"
-                :loading="store.alchemyTesting === chain.chain"
-                :disabled="!chain.configured || !!store.alchemyTesting"
-                @click="store.testAlchemy(chain.chain)"
-              >
-                <template #icon><IconTestPipe :size="14" /></template>
-                {{ i18nHelper.coin.resourcePage.test }}
-              </a-button>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section name="coin__resources__services" class="coin-resource-section">
         <header class="coin-resource-section__header">
           <IconServer :size="17" aria-hidden="true" />
@@ -415,56 +372,6 @@
     </a-modal>
 
     <a-modal
-      :visible="!!store.alchemyModalChain"
-      :title="alchemyModalTitle"
-      :mask-closable="!store.alchemySaving"
-      :esc-to-close="!store.alchemySaving"
-      :closable="!store.alchemySaving"
-      :footer="false"
-      width="620px"
-      unmount-on-close
-      @cancel="store.closeAlchemy()"
-    >
-      <div name="coin__resources__alchemyModal" class="coin-resource-modal">
-        <label class="coin-resource-field">
-          <span>{{ i18nHelper.coin.resourcePage.httpEndpoint }}</span>
-          <a-input-password
-            v-model="store.alchemyHttpUrl"
-            size="small"
-            :placeholder="i18nHelper.coin.resourcePage.alchemyModal.httpPlaceholder"
-            autocomplete="off"
-            allow-clear
-          />
-        </label>
-        <label class="coin-resource-field">
-          <span>{{ i18nHelper.coin.resourcePage.wssEndpoint }}</span>
-          <a-input-password
-            v-model="store.alchemyWssUrl"
-            size="small"
-            :placeholder="i18nHelper.coin.resourcePage.alchemyModal.wssPlaceholder"
-            autocomplete="off"
-            allow-clear
-          />
-        </label>
-        <p>{{ i18nHelper.coin.resourcePage.alchemyModal.secureStorage }}</p>
-        <div class="coin-resource-modal__footer">
-          <a-button size="mini" :disabled="!!store.alchemySaving" @click="store.closeAlchemy()">
-            {{ i18nHelper.coin.resourcePage.cancel }}
-          </a-button>
-          <a-button
-            type="primary"
-            size="mini"
-            :loading="!!store.alchemySaving"
-            :disabled="!!store.alchemySaving"
-            @click="store.saveAlchemy()"
-          >
-            {{ i18nHelper.coin.resourcePage.save }}
-          </a-button>
-        </div>
-      </div>
-    </a-modal>
-
-    <a-modal
       :visible="!!store.serviceModal"
       :title="serviceModalTitle"
       :mask-closable="!store.serviceSaving"
@@ -545,7 +452,6 @@ import {
   IconBook2,
   IconBrandOpenai,
   IconCircleCheck,
-  IconCloudLock,
   IconCopy,
   IconDeviceDesktop,
   IconDotsVertical,
@@ -559,14 +465,11 @@ import {
   IconSettings,
   IconShieldCheck,
   IconTerminal2,
-  IconTestPipe,
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { COIN_AI_EFFORTS, COIN_AI_MODELS } from '@shared/coin/coinAnalysis.type';
-import { COIN_RESOURCE_CHAINS, COIN_SERVICE_IDS } from '@shared/coin/coinResource.type';
+import { COIN_SERVICE_IDS } from '@shared/coin/coinResource.type';
 import type {
-  CoinAlchemyStatus,
-  CoinResourceChain,
   CoinServiceId,
   CoinServiceStatus,
 } from '@shared/coin/coinResource.type';
@@ -576,17 +479,6 @@ import { coinResourcesStore as store } from './coinResources.store';
 const modelOptions = COIN_AI_MODELS;
 const effortOptions = COIN_AI_EFFORTS;
 const status = computed(() => store.status);
-const chainRows = computed<CoinAlchemyStatus[]>(() =>
-  status.value?.alchemy ??
-  COIN_RESOURCE_CHAINS.map((chain) => ({
-    chain,
-    state: 'missing',
-    configured: false,
-    maskedHttpEndpoint: null,
-    maskedWssEndpoint: null,
-    lastProbe: null,
-  })),
-);
 const serviceRows = computed<CoinServiceStatus[]>(() =>
   status.value?.services ??
   COIN_SERVICE_IDS.map((service) => ({
@@ -598,7 +490,7 @@ const serviceRows = computed<CoinServiceStatus[]>(() =>
     source: null,
   })),
 );
-const totalCount = 8;
+const totalCount = 5;
 const readyCount = computed(() => {
   if (!status.value) return 0;
   return [
@@ -606,7 +498,6 @@ const readyCount = computed(() => {
     status.value.gmgn.installed &&
       status.value.gmgn.apiKeyConfigured &&
       Boolean(status.value.gmgn.lastProbe?.ok),
-    ...status.value.alchemy.map((item) => item.configured),
     ...status.value.services.map((item) => item.configured),
   ].filter(Boolean).length;
 });
@@ -678,12 +569,6 @@ const gmgnCanVerify = computed(() =>
       !status.value.gmgn.privateKeyDetected,
   ),
 );
-const alchemyModalTitle = computed(() =>
-  i18nHelper.coin.resourcePage.alchemyModal.title.replace(
-    '{chain}',
-    store.alchemyModalChain ? chainName(store.alchemyModalChain) : '',
-  ),
-);
 const serviceModalTitle = computed(() =>
   i18nHelper.coin.resourcePage.serviceModal.title.replace(
     '{service}',
@@ -700,33 +585,8 @@ const deviceBody = computed(() =>
 const formatTime = (value: number | null | undefined): string =>
   value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-';
 
-const chainName = (chain: CoinResourceChain): string =>
-  i18nHelper.coin.resourcePage.chains[chain];
-
 const serviceName = (service: CoinServiceId): string =>
   i18nHelper.coin.resourcePage.services[service];
-
-const alchemyStateClass = (row: CoinAlchemyStatus): Record<string, boolean> => ({
-  'coin-resource-state--ready': row.state === 'configured',
-  'coin-resource-state--danger': row.state === 'corrupt' || row.state === 'secure-storage-unavailable',
-  'coin-resource-state--warning': row.state === 'missing',
-});
-
-const alchemyStateLabel = (row: CoinAlchemyStatus): string => {
-  if (row.state === 'configured') return i18nHelper.coin.resourcePage.configured;
-  if (row.state === 'corrupt') return i18nHelper.coin.resourcePage.invalid;
-  if (row.state === 'secure-storage-unavailable') return i18nHelper.coin.resourcePage.unavailableState;
-  return i18nHelper.coin.resourcePage.notConfigured;
-};
-
-const alchemyDetail = (row: CoinAlchemyStatus): string => {
-  if (row.state === 'corrupt') return i18nHelper.coin.resourcePage.chainCorrupt;
-  if (row.state === 'secure-storage-unavailable') return i18nHelper.coin.resourcePage.chainSecureStorage;
-  if (!row.configured) return i18nHelper.coin.resourcePage.chainDetail;
-  const endpoints = [row.maskedHttpEndpoint, row.maskedWssEndpoint].filter(Boolean).join(' · ');
-  const tested = row.lastProbe ? formatTime(row.lastProbe.completedAt) : i18nHelper.coin.resourcePage.noTest;
-  return `${i18nHelper.coin.resourcePage.chainConfigured} · ${endpoints} · ${i18nHelper.coin.resourcePage.lastTest} ${tested}`;
-};
 
 const serviceStateClass = (row: CoinServiceStatus): Record<string, boolean> => ({
   'coin-resource-state--ready': row.state === 'configured',

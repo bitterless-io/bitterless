@@ -67,14 +67,14 @@
       "generatedRows": 100,
       "excludedRanks": [2]
     },
-    "solanaCaseSensitiveUnknown": {
+    "missingGmgnAddressType": {
       "chain": "solana",
       "holderCount": 1,
       "holders": [
         { "rank": 1, "address": "CaseSensitiveWallet111111111111111111111", "holding_percentage": 12 }
       ],
       "holderKinds": {
-        "casesensitivewallet111111111111111111111": "wallet"
+        "CaseSensitiveWallet111111111111111111111": "unknown"
       }
     }
   }

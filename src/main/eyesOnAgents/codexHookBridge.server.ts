@@ -10,15 +10,18 @@ import {
 import net, { type Server, type Socket } from 'node:net';
 import {
   CODEX_HOOK_BRIDGE_MAX_FRAME_BYTES,
-  parseCodexHookEvent
+  parseCodexHookDelivery
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import type {
   CodexHookBridgeEndpoint,
-  CodexHookEvent
+  CodexHookDelivery
 } from '@shared/eyesOnAgents/codexHookBridge.type';
 import { parseEyesOnAgentsUuid } from '@shared/eyesOnAgents/eyesOnAgents.contract';
-
-const MAX_SEEN_EVENTS = 1024;
+import {
+  replayCodexHookOutbox,
+  type CodexHookOutboxCoverageGap,
+  type CodexHookOutboxReplayResult
+} from './codexHookOutbox.service';
 
 interface UnixSocketIdentity {
   dev: number;
@@ -28,8 +31,14 @@ interface UnixSocketIdentity {
   birthtimeMs: number;
 }
 
-type EventConsumer = (event: CodexHookEvent) => Promise<void>;
+type EventConsumer = (delivery: CodexHookDelivery) => Promise<{ duplicate: boolean }>;
 type ServerFactory = (listener: (socket: Socket) => void) => Server;
+type CoverageGapConsumer = (gap: CodexHookOutboxCoverageGap) => Promise<void>;
+type OutboxReplayer = (params: {
+  endpoint: CodexHookBridgeEndpoint;
+  outboxPath: string;
+  onCoverageGap?: (gap: CodexHookOutboxCoverageGap) => void | Promise<void>;
+}) => Promise<CodexHookOutboxReplayResult>;
 
 const getSocketIdentity = (path: string): UnixSocketIdentity => {
   const stats = lstatSync(path);
@@ -78,6 +87,7 @@ const probeSocket = (path: string): Promise<'live' | 'stale'> => {
 };
 
 const writeAck = (socket: Socket, value: object): void => {
+  if (socket.destroyed) return;
   socket.end(`${JSON.stringify(value)}\n`);
 };
 
@@ -88,13 +98,19 @@ export class CodexHookBridgeServer {
   private socketIdentity: UnixSocketIdentity | null = null;
   private consume: EventConsumer | null = null;
   private consumeQueue: Promise<void> = Promise.resolve();
-  private readonly seenEvents = new Set<string>();
+  private outboxPath: string | null = null;
+  private onCoverageGap: CoverageGapConsumer | null = null;
+  private replayPromise: Promise<void> | null = null;
+  private replayRequested = false;
+  private replayEnabled = false;
+  private reportedCoverageGap: string | null = null;
   private listeningSince: number | null = null;
   private lastEventAt: number | null = null;
 
   constructor(
     private readonly now: () => number = Date.now,
-    private readonly serverFactory: ServerFactory = net.createServer
+    private readonly serverFactory: ServerFactory = net.createServer,
+    private readonly outboxReplayer: OutboxReplayer = replayCodexHookOutbox
   ) {}
 
   isListening(): boolean {
@@ -113,6 +129,8 @@ export class CodexHookBridgeServer {
     endpoint: CodexHookBridgeEndpoint;
     installationId: string;
     consume: EventConsumer;
+    outboxPath?: string;
+    onCoverageGap?: CoverageGapConsumer;
   }): Promise<CodexHookBridgeEndpoint> {
     if (this.server && this.endpoint) return this.endpoint;
     const installationId = parseEyesOnAgentsUuid(params.installationId, 'installationId');
@@ -145,10 +163,15 @@ export class CodexHookBridgeServer {
       this.endpoint = params.endpoint;
       this.installationId = installationId;
       this.consume = params.consume;
+      this.outboxPath = params.outboxPath ?? null;
+      this.onCoverageGap = params.onCoverageGap ?? null;
+      this.replayEnabled = true;
+      this.reportedCoverageGap = null;
       this.listeningSince = this.now();
       this.socketIdentity = params.endpoint.transport === 'unix'
         ? getSocketIdentity(params.endpoint.path)
         : null;
+      this.requestOutboxReplay();
       return params.endpoint;
     } catch (error) {
       if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -157,6 +180,9 @@ export class CodexHookBridgeServer {
   }
 
   async stop(): Promise<void> {
+    this.replayEnabled = false;
+    this.replayRequested = false;
+    if (this.replayPromise) await this.replayPromise.catch(() => undefined);
     const server = this.server;
     const endpoint = this.endpoint;
     const identity = this.socketIdentity;
@@ -165,7 +191,9 @@ export class CodexHookBridgeServer {
     this.installationId = null;
     this.socketIdentity = null;
     this.consume = null;
-    this.seenEvents.clear();
+    this.outboxPath = null;
+    this.onCoverageGap = null;
+    this.reportedCoverageGap = null;
     this.listeningSince = null;
     this.lastEventAt = null;
     if (server) {
@@ -194,23 +222,66 @@ export class CodexHookBridgeServer {
     await this.consumeQueue;
   }
 
-  private remember(eventId: string): boolean {
-    if (this.seenEvents.has(eventId)) return false;
-    this.seenEvents.add(eventId);
-    while (this.seenEvents.size > MAX_SEEN_EVENTS) {
-      const oldest = this.seenEvents.values().next().value as string | undefined;
-      if (!oldest) break;
-      this.seenEvents.delete(oldest);
-    }
-    return true;
+  private requestOutboxReplay(): void {
+    if (!this.replayEnabled || !this.endpoint || !this.outboxPath) return;
+    this.replayRequested = true;
+    if (this.replayPromise) return;
+    const operation = this.performOutboxReplay();
+    this.replayPromise = operation;
+    const clear = (): void => {
+      if (this.replayPromise !== operation) return;
+      this.replayPromise = null;
+      if (this.replayRequested) this.requestOutboxReplay();
+    };
+    void operation.then(clear, clear);
   }
 
-  private enqueue(event: CodexHookEvent): void {
-    if (!this.consume) return;
+  private async performOutboxReplay(): Promise<void> {
+    while (this.replayEnabled && this.replayRequested) {
+      this.replayRequested = false;
+      const endpoint = this.endpoint;
+      const outboxPath = this.outboxPath;
+      if (!endpoint || !outboxPath) return;
+      let detectedGap: CodexHookOutboxCoverageGap | null = null;
+      await this.outboxReplayer({
+        endpoint,
+        outboxPath,
+        onCoverageGap: (gap) => {
+          detectedGap = gap;
+        }
+      });
+      if (detectedGap && this.onCoverageGap) {
+        const signature = JSON.stringify(detectedGap);
+        if (signature !== this.reportedCoverageGap) {
+          await this.onCoverageGap(detectedGap);
+          this.reportedCoverageGap = signature;
+        }
+      }
+    }
+  }
+
+  private enqueue(delivery: CodexHookDelivery): Promise<{ duplicate: boolean }> {
+    if (!this.consume) return Promise.reject(new Error('Codex hook listener is unavailable'));
     const consume = this.consume;
-    this.consumeQueue = this.consumeQueue
-      .then(async () => await consume(event))
-      .catch(() => undefined);
+    const operation = this.consumeQueue.then(async () => await consume(delivery));
+    this.consumeQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async handleFrame(socket: Socket, line: string): Promise<void> {
+    try {
+      if (!line) throw new Error('empty frame');
+      const delivery = parseCodexHookDelivery(JSON.parse(line) as unknown);
+      if (delivery.event.installationId !== this.installationId) {
+        throw new Error('installation mismatch');
+      }
+      await this.enqueue(delivery);
+      this.lastEventAt = Math.max(this.lastEventAt ?? 0, delivery.event.occurredAt);
+      writeAck(socket, { status: 'committed' });
+      this.requestOutboxReplay();
+    } catch {
+      writeAck(socket, { status: 'unavailable' });
+    }
   }
 
   private handleConnection(socket: Socket): void {
@@ -230,22 +301,7 @@ export class CodexHookBridgeServer {
       const newline = buffer.indexOf('\n');
       if (newline < 0) return;
       handled = true;
-      try {
-        const line = buffer.slice(0, newline).trim();
-        if (!line) throw new Error('empty frame');
-        const event = parseCodexHookEvent(JSON.parse(line) as unknown);
-        if (event.installationId !== this.installationId) throw new Error('installation mismatch');
-        const key = `${event.installationId}:${event.eventId}`;
-        if (!this.remember(key)) {
-          writeAck(socket, { ok: true, duplicate: true });
-          return;
-        }
-        this.lastEventAt = Math.max(this.lastEventAt ?? 0, event.occurredAt);
-        this.enqueue(event);
-        writeAck(socket, { ok: true });
-      } catch {
-        writeAck(socket, { ok: false, error: 'invalid-event' });
-      }
+      void this.handleFrame(socket, buffer.slice(0, newline).trim());
     });
   }
 }

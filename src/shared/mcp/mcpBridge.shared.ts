@@ -87,34 +87,32 @@ const windowsBatchQuote = (value: string): string => {
 
 export const createPosixMcpShim = (
   execPath: string,
-  appPath: string | null,
+  helperPath: string,
   bridgePath: string,
 ): string => {
   const command = [
     shellQuote(execPath),
-    ...(appPath ? [shellQuote(appPath)] : []),
-    '--mcp-helper',
+    shellQuote(helperPath),
     MCP_BRIDGE_PATH_ARG,
     shellQuote(bridgePath),
     '"$@"',
   ].join(' ');
-  return `#!/bin/sh\nexec ${command}\n`;
+  return `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ${command}\n`;
 };
 
 export const createWindowsMcpShim = (
   execPath: string,
-  appPath: string | null,
+  helperPath: string,
   bridgePath: string,
 ): string => {
   const command = [
     windowsBatchQuote(execPath),
-    ...(appPath ? [windowsBatchQuote(appPath)] : []),
-    '--mcp-helper',
+    windowsBatchQuote(helperPath),
     MCP_BRIDGE_PATH_ARG,
     windowsBatchQuote(bridgePath),
     '%*',
   ].join(' ');
-  return `@echo off\r\nsetlocal DisableDelayedExpansion\r\n${command}\r\n`;
+  return `@echo off\r\nsetlocal DisableDelayedExpansion\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n${command}\r\n`;
 };
 
 export const parseMcpBridgeEndpointArg = (

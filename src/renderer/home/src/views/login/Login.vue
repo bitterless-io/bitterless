@@ -222,8 +222,6 @@ const onSetPassword = async (): Promise<void> => {
 
 <template>
   <main name="login" class="login-view">
-    <div name="login__drag-region" class="login-view__drag-region" aria-hidden="true"></div>
-
     <section name="login__panel" class="login-view__panel">
       <div class="login-view__mark">
         <span class="login-view__mark-line" aria-hidden="true"></span>

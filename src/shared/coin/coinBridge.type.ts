@@ -1,8 +1,5 @@
 import type { ApplicationLanguageSnapshot } from '@shared/i18n/applicationLanguage';
 import type {
-  CoinAlchemyProbeReceipt,
-  CoinAlchemySaveInput,
-  CoinAlchemySaveReceipt,
   CoinCodexActionReceipt,
   CoinCodexDeviceCodeNotice,
   CoinCodexLoginMethod,
@@ -11,7 +8,6 @@ import type {
   CoinGmgnProbeReceipt,
   CoinGmgnSaveReceipt,
   CoinGmgnStatus,
-  CoinResourceChain,
   CoinResourcesStatus,
   CoinServiceSaveInput,
   CoinServiceSaveReceipt,
@@ -58,8 +54,6 @@ export const COIN_IPC_CHANNELS = {
   gmgnVerify: 'coin:gmgn:verify',
   gmgnCancelVerify: 'coin:gmgn:cancel-verify',
   gmgnOpenOfficialLink: 'coin:gmgn:open-official-link',
-  alchemySave: 'coin:alchemy:save',
-  alchemyTest: 'coin:alchemy:test',
   serviceSave: 'coin:service:save',
   stateLoad: 'coin:state:load',
   stateSave: 'coin:state:save',
@@ -119,8 +113,6 @@ export interface CoinBridge {
     verifyGmgn(): Promise<CoinGmgnProbeReceipt>;
     cancelGmgnVerify(): Promise<boolean>;
     openGmgnOfficialLink(params: { target: CoinGmgnOfficialLinkTarget }): Promise<boolean>;
-    saveAlchemy(params: CoinAlchemySaveInput): Promise<CoinAlchemySaveReceipt>;
-    testAlchemy(params: { chain: CoinResourceChain }): Promise<CoinAlchemyProbeReceipt>;
     saveService(params: CoinServiceSaveInput): Promise<CoinServiceSaveReceipt>;
   };
   readonly state: {

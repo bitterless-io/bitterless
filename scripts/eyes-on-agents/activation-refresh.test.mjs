@@ -20,7 +20,8 @@ const emitterPlugin = {
         const harness = () => globalThis.__eyesOnAgentsActivationHarness;
         export const eyesOnAgentsEmitter = {
           getSnapshot: () => harness().getSnapshot(),
-          syncThreads: () => harness().syncThreads()
+          syncThreads: () => harness().syncThreads(),
+          refreshCodexBridgeStatus: () => harness().refreshCodexBridgeStatus()
         };
         export const subscribeEyesOnAgentsChanges = () => undefined;
       `,
@@ -29,7 +30,14 @@ const emitterPlugin = {
   },
 };
 
-const snapshot = ({ state, autoConnectEnabled, title = 'before' }) => ({
+const snapshot = ({
+  state,
+  autoConnectEnabled,
+  title = 'before',
+  bridgeState = 'not_installed',
+  reviewReason = null,
+  listening = false,
+}) => ({
   domains: [],
   threads: [{
     threadId: '11111111-1111-4111-8111-111111111111',
@@ -59,10 +67,12 @@ const snapshot = ({ state, autoConnectEnabled, title = 'before' }) => ({
     autoConnectEnabled,
   },
   bridge: {
-    state: 'not_installed',
-    listening: false,
+    state: bridgeState,
+    reviewReason,
+    listening,
     listeningSince: null,
     lastEventAt: null,
+    lastInspectedAt: null,
     error: null,
   },
   lastSyncedAt: null,
@@ -72,9 +82,11 @@ const createHarness = ({
   initial,
   synced = snapshot({ state: 'connected', autoConnectEnabled: true, title: 'after sync' }),
   local = initial,
+  inspected = local,
   syncImplementation,
+  inspectionImplementation,
 }) => {
-  const calls = { snapshot: 0, sync: 0 };
+  const calls = { snapshot: 0, sync: 0, inspection: 0 };
   return {
     calls,
     getSnapshot: async () => {
@@ -85,6 +97,11 @@ const createHarness = ({
       calls.sync += 1;
       if (syncImplementation) return await syncImplementation();
       return synced;
+    },
+    refreshCodexBridgeStatus: async () => {
+      calls.inspection += 1;
+      if (inspectionImplementation) return await inspectionImplementation();
+      return inspected;
     },
   };
 };
@@ -127,7 +144,44 @@ test('window activation refresh follows connection intent and coalesces overlap'
 
         assert.equal(harness.calls.sync, 1);
         assert.equal(harness.calls.snapshot, 0);
+        assert.equal(harness.calls.inspection, 0);
         assert.equal(store.threads[0]?.title, 'after sync');
+      },
+    );
+
+    await context.test(
+      'connected activation also performs a fresh observation trust check',
+      async () => {
+        const initial = snapshot({
+          state: 'connected',
+          autoConnectEnabled: true,
+          bridgeState: 'needs_trust',
+          reviewReason: 'untrusted',
+        });
+        const synced = snapshot({
+          state: 'connected',
+          autoConnectEnabled: true,
+          title: 'after sync',
+          bridgeState: 'needs_trust',
+          reviewReason: 'untrusted',
+        });
+        const inspected = snapshot({
+          state: 'connected',
+          autoConnectEnabled: true,
+          title: 'after inspection',
+          bridgeState: 'installed',
+          listening: true,
+        });
+        const harness = createHarness({ initial, synced, inspected });
+        const store = await loadStore(harness, initial);
+
+        await store.refreshOnWindowActivation();
+
+        assert.equal(harness.calls.sync, 1);
+        assert.equal(harness.calls.snapshot, 0);
+        assert.equal(harness.calls.inspection, 1);
+        assert.equal(store.snapshot.bridge.state, 'installed');
+        assert.equal(store.threads[0]?.title, 'after inspection');
       },
     );
 
@@ -185,7 +239,73 @@ test('window activation refresh follows connection intent and coalesces overlap'
 
         assert.equal(harness.calls.sync, 0);
         assert.equal(harness.calls.snapshot, 1);
+        assert.equal(harness.calls.inspection, 0);
         assert.equal(store.threads[0]?.title, 'local only');
+      },
+    );
+
+    await context.test(
+      'explicit disconnect still rechecks installed observation without persistent reconnect',
+      async () => {
+        const initial = snapshot({
+          state: 'disconnected',
+          autoConnectEnabled: false,
+          bridgeState: 'installed',
+          listening: true,
+        });
+        const local = snapshot({
+          state: 'disconnected',
+          autoConnectEnabled: false,
+          title: 'local refresh',
+          bridgeState: 'installed',
+          listening: true,
+        });
+        const inspected = snapshot({
+          state: 'disconnected',
+          autoConnectEnabled: false,
+          title: 'checked',
+          bridgeState: 'installed',
+          listening: true,
+        });
+        const harness = createHarness({ initial, local, inspected });
+        const store = await loadStore(harness, initial);
+
+        await store.refreshOnWindowActivation();
+
+        assert.equal(harness.calls.sync, 0);
+        assert.equal(harness.calls.snapshot, 1);
+        assert.equal(harness.calls.inspection, 1);
+        assert.equal(store.snapshot.connection.autoConnectEnabled, false);
+        assert.equal(store.threads[0]?.title, 'checked');
+      },
+    );
+
+    await context.test(
+      'returning from Codex rechecks a bridge awaiting trust',
+      async () => {
+        const initial = snapshot({
+          state: 'disconnected',
+          autoConnectEnabled: false,
+          bridgeState: 'needs_trust',
+          reviewReason: 'untrusted',
+        });
+        const inspected = snapshot({
+          state: 'disconnected',
+          autoConnectEnabled: false,
+          bridgeState: 'installed',
+          listening: true,
+          title: 'trusted',
+        });
+        const harness = createHarness({ initial, inspected });
+        const store = await loadStore(harness, initial);
+
+        await store.refreshOnWindowActivation();
+
+        assert.equal(harness.calls.sync, 0);
+        assert.equal(harness.calls.snapshot, 1);
+        assert.equal(harness.calls.inspection, 1);
+        assert.equal(store.snapshot.bridge.state, 'installed');
+        assert.equal(store.threads[0]?.title, 'trusted');
       },
     );
 
@@ -240,7 +360,7 @@ test('window activation refresh follows connection intent and coalesces overlap'
 
       const first = store.refreshOnWindowActivation();
       await Promise.resolve();
-      await store.refreshOnWindowActivation();
+      const second = store.refreshOnWindowActivation();
 
       assert.equal(harness.calls.sync, 1);
       resolveSync(snapshot({
@@ -248,7 +368,7 @@ test('window activation refresh follows connection intent and coalesces overlap'
         autoConnectEnabled: true,
         title: 'finished',
       }));
-      await first;
+      await Promise.all([first, second]);
       assert.equal(store.threads[0]?.title, 'finished');
     });
   } finally {

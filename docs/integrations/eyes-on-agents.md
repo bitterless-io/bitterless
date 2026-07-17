@@ -1,10 +1,10 @@
 # EyesOnAgents Integration
 
-Status: implemented and locally verified
+Status: implemented and independently verified
 
-Date: 2026-07-16
+Date: 2026-07-17
 
-Verified: 2026-07-16
+Verified: 2026-07-17 (through task 008)
 
 ## Decision
 
@@ -38,8 +38,8 @@ EyesOnAgents never reads or displays them.
 - Provide a visible Refresh action that can reconnect and run full reconciliation from disconnected
   or error state as well as from an existing connection.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
-- Supplement managed App Server events with the metadata-only Codex Desktop hook bridge managed by
-  the EyesOnAgents connection lifecycle, while making the evidence source visible and bounded.
+- Supplement managed App Server events with an independently enabled, global, metadata-only Codex
+  observation bridge whose delivery, trust, and listener state remain visible and bounded.
 - Support macOS and Windows through the existing Electron/XPC architecture.
 
 ## Non-goals
@@ -82,16 +82,26 @@ The same boundary applies to archive notifications. EyesOnAgents consumes `threa
 App Server broadcasts those events across processes. Full Sync therefore reconciles both the
 non-archived and archived `thread/list` inventories from the shared store.
 
-The Codex hook bridge is therefore the Desktop observation source and is installed or repaired by
-the same Connect action that starts the managed App Server. It reports lifecycle transitions for
-Desktop/CLI work after installation, but it does not provide transcripts and cannot prove a turn
-that was already running before the current listener started. Stale or contradictory evidence
+The Codex hook bridge is therefore the Desktop observation source. It is enabled and disabled
+explicitly and independently from App Server Connect/Disconnect. It reports lifecycle transitions
+for Desktop/CLI work after installation, but it does not provide transcripts and cannot prove a
+turn that was already running before the current listener started. Stale or contradictory evidence
 becomes `unknown`.
 
 Codex treats the bridge as a non-managed command hook and requires the user to review and trust its
 exact definition once before it runs. After installation, EyesOnAgents inspects `hooks/list` and
 reports `needs_trust` until every Bitterless-owned definition is enabled and has `trusted` or
-`managed` trust status. Bitterless never bypasses Codex hook trust or writes managed policy.
+`managed` trust status. Review opens the supported `codex://settings` entry and instructs the user
+to select Settings → Hooks or enter `/hooks`; Bitterless never clicks Trust, writes `trusted_hash`,
+bypasses Codex hook trust, or writes managed policy.
+
+The global helper runs as a dedicated `ELECTRON_RUN_AS_NODE` entry, never the full Bitterless main
+application. When Bitterless is unavailable, it atomically stores one bounded outbox file per
+delivery. The listener acknowledges only after SQLite records the delivery receipt and runtime
+transition in one transaction. Startup replay plus persistent receipt dedupe covers both offline
+events and a lost acknowledgement after commit. Corruption or overflow is reported as a coverage
+error and invalidates live hook evidence rather than presenting it as current. The complete
+contract is [EyesOnAgents Codex Observation](../features/eyes-on-agents-codex-observation.md).
 
 While a fresh `hooks/list` inspection is pending, current-listener events remain only in a bounded
 in-memory queue. EyesOnAgents writes them to SQLite in arrival order only after that inspection
@@ -108,22 +118,22 @@ the rejected tail and prove fresh trust before admission can reopen.
 
 The main process owns one connection supervisor for the entire Bitterless process:
 
-1. `Connect` installs or repairs the Bitterless-owned metadata-only Codex Desktop bridge.
-2. It resolves the installed Codex executable and starts `codex app-server --stdio` without a
+1. `Connect` resolves the installed Codex executable and starts `codex app-server --stdio` without a
    shell.
-3. The client completes the JSON-RPC initialize handshake before reporting `connected`.
-4. It calls `hooks/list` to verify that every Bitterless-owned Desktop hook is enabled and trusted.
-5. It pages through non-archived and archived `thread/list` inventories, stores each validated raw
+2. The client completes the JSON-RPC initialize handshake before reporting `connected`.
+3. If Codex observation is already enabled, it may call `hooks/list` to refresh its separate trust
+   status; it never installs or repairs hooks as a side effect.
+4. It pages through non-archived and archived `thread/list` inventories, stores each validated raw
    object locally, upserts normalized display metadata, reconciles known archived rows, and leaves
    the child process running.
-6. Notifications such as `thread/status/changed`, `turn/started`, `turn/completed`,
+5. Notifications such as `thread/status/changed`, `turn/started`, `turn/completed`,
    `thread/archived`, and `thread/unarchived` update the repository and broadcast a compact change
    event to EyesOnAgents renderers.
-7. Trusted Desktop hook events update the same repository while preserving their separate evidence
+6. Trusted Desktop hook events update the same repository while preserving their separate evidence
    source.
-8. Unexpected process exit changes the connection to `error`; it never fabricates thread state.
-9. Explicit `Disconnect` terminates the Bitterless-owned App Server and removes only the
-   Bitterless-owned Desktop hook entries.
+7. Unexpected process exit changes the connection to `error`; it never fabricates thread state.
+8. Explicit `Disconnect` terminates only the Bitterless-owned App Server. Global hook definitions,
+   the listener, trust evidence, and observation intent remain unchanged.
 
 A successful explicit connection enables auto-connect for later Bitterless launches. Explicit
 disconnect disables auto-connect. Connection preference belongs in the existing setting store;
@@ -155,14 +165,16 @@ transition requests one foreground refresh so metadata that has no lifecycle not
 a renamed thread title or a Desktop-owned archive transition, is updated from `thread/list` without
 waiting for a manual Sync.
 
-The refresh respects connection intent:
+The inventory refresh respects connection intent. Independently, activation rechecks installed
+Codex observation trust by reusing the connected App Server or a short inspection connection that
+does not change auto-connect intent:
 
 | current state | activation behavior |
 |---|---|
 | `connected` | run `syncThreads()` and apply the returned snapshot |
 | `disconnected` or `error` with auto-connect enabled | retry `syncThreads()` |
 | `connecting` or `syncing` | quietly reload the current snapshot; the in-flight operation broadcasts its completion |
-| explicitly disconnected with auto-connect disabled | quietly reload local SQLite state without reconnecting |
+| explicitly disconnected with auto-connect disabled | reload local SQLite state; if observation is installed, use a short `hooks/list` inspector and then disconnect |
 | initial snapshot not loaded | coalesce with the existing snapshot load |
 
 The store's existing single busy action and coalesced snapshot load prevent overlapping activation
@@ -348,6 +360,8 @@ EyesOnAgentsHandler (main)
   syncThreads()
   openThread({ threadId })
   installCodexBridge()
+  reviewCodexBridge()
+  refreshCodexBridgeStatus()
   removeCodexBridge()
   getCodexBridgeStatus()
 

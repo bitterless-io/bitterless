@@ -77,14 +77,5 @@
         "rank_change": 0
       }
     ]
-  },
-  "alchemy": {
-    "chainIdentityVerified": true,
-    "assetAccountVerified": true,
-    "holderKinds": {
-      "0x1000000000000000000000000000000000000001": "wallet",
-      "0x1000000000000000000000000000000000000002": "wallet",
-      "0x1000000000000000000000000000000000000003": "contract"
-    }
   }
 }

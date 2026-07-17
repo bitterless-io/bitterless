@@ -5,6 +5,7 @@ import { domainTable } from './dao/domain.table';
 import { envTable } from './dao/env.table';
 import {
   ensureEyesOnAgentsArchiveSchema,
+  ensureEyesOnAgentsHookDeliverySchema,
   ensureEyesOnAgentsLegacyImport,
   ensureEyesOnAgentsProjectMetadataSchema,
   ensureEyesOnAgentsSyncPersistenceSchema,
@@ -117,6 +118,7 @@ export const finalizeCoreSqliteSchema = (db: Database.Database): void => {
   ensureEyesOnAgentsProjectMetadataSchema(db);
   ensureEyesOnAgentsArchiveSchema(db);
   ensureEyesOnAgentsSyncPersistenceSchema(db);
+  ensureEyesOnAgentsHookDeliverySchema(db);
 };
 
 export const coreSqliteMigrations: readonly SqliteMigration[] = [
@@ -171,5 +173,9 @@ export const coreSqliteMigrations: readonly SqliteMigration[] = [
   {
     versionCode: '260716000004',
     runner: ensureEyesOnAgentsSyncPersistenceSchema,
+  },
+  {
+    versionCode: '260716000005',
+    runner: ensureEyesOnAgentsHookDeliverySchema,
   },
 ];

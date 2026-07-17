@@ -1,27 +1,38 @@
 import { randomUUID } from 'node:crypto';
-import net from 'node:net';
 import type { Readable } from 'node:stream';
 import {
-  CODEX_HOOK_BRIDGE_MAX_FRAME_BYTES,
+  createCodexHookDelivery,
   createCodexHookEvent,
   parseCodexHookHelperArgs
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import type {
-  CodexHookBridgeEndpoint,
-  CodexHookEvent,
+  CodexHookDelivery,
   CodexHookHelperArgs
 } from '@shared/eyesOnAgents/codexHookBridge.type';
+import {
+  persistCodexHookOutboxDelivery,
+  sendCodexHookDelivery,
+  type CodexHookDeliveryResult,
+  type CodexHookOutboxPersistResult
+} from './codexHookOutbox.service';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-const MAX_ACK_BYTES = 4096;
-const HELPER_TIMEOUT_MS = 500;
 
-type EventSender = (endpoint: CodexHookBridgeEndpoint, event: CodexHookEvent) => Promise<void>;
+type DeliverySender = (
+  args: CodexHookHelperArgs,
+  delivery: CodexHookDelivery
+) => Promise<CodexHookDeliveryResult>;
+type OutboxWriter = (params: {
+  outboxPath: string;
+  delivery: CodexHookDelivery;
+  now?: number;
+}) => CodexHookOutboxPersistResult;
 
 export interface CodexHookHelperDependencies {
   parseArgs?: (argv: string[]) => CodexHookHelperArgs;
   readInput?: (input: Readable) => Promise<unknown>;
-  send?: EventSender;
+  send?: DeliverySender;
+  persist?: OutboxWriter;
   now?: () => number;
   idFactory?: () => string;
 }
@@ -71,41 +82,6 @@ export const readCodexHookInput = (
   });
 };
 
-export const sendCodexHookEvent = (
-  endpoint: CodexHookBridgeEndpoint,
-  event: CodexHookEvent,
-  timeoutMs = HELPER_TIMEOUT_MS
-): Promise<void> => {
-  return new Promise((resolve) => {
-    const frame = `${JSON.stringify(event)}\n`;
-    if (Buffer.byteLength(frame, 'utf8') > CODEX_HOOK_BRIDGE_MAX_FRAME_BYTES) {
-      resolve();
-      return;
-    }
-    const socket = net.createConnection(endpoint.path);
-    socket.setEncoding('utf8');
-    let settled = false;
-    let ack = '';
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      socket.removeAllListeners();
-      socket.destroy();
-      resolve();
-    };
-    const timeout = setTimeout(finish, timeoutMs);
-    timeout.unref();
-    socket.once('connect', () => socket.write(frame));
-    socket.on('data', (chunk: string) => {
-      ack += chunk;
-      if (Buffer.byteLength(ack, 'utf8') > MAX_ACK_BYTES || ack.includes('\n')) finish();
-    });
-    socket.once('error', finish);
-    socket.once('close', finish);
-  });
-};
-
 export const runCodexHookHelper = async (
   argv: string[],
   input: Readable,
@@ -114,13 +90,30 @@ export const runCodexHookHelper = async (
   try {
     const args = (dependencies.parseArgs ?? parseCodexHookHelperArgs)(argv);
     const rawInput = await (dependencies.readInput ?? readCodexHookInput)(input);
+    const deliveryId = (dependencies.idFactory ?? randomUUID)();
     const event = createCodexHookEvent({
       rawInput,
       installationId: args.installationId,
-      eventId: (dependencies.idFactory ?? randomUUID)(),
+      eventId: deliveryId,
       occurredAt: (dependencies.now ?? Date.now)()
     });
-    await (dependencies.send ?? sendCodexHookEvent)(args.endpoint, event);
+    const delivery = createCodexHookDelivery({ deliveryId, event });
+    const send = dependencies.send ?? (async (helperArgs, value) => {
+      return await sendCodexHookDelivery(helperArgs.endpoint, value);
+    });
+    let result: CodexHookDeliveryResult = 'unavailable';
+    try {
+      result = await send(args, delivery);
+    } catch {
+      result = 'unavailable';
+    }
+    if (result !== 'committed') {
+      (dependencies.persist ?? persistCodexHookOutboxDelivery)({
+        outboxPath: args.outboxPath,
+        delivery,
+        now: (dependencies.now ?? Date.now)()
+      });
+    }
   } catch {
     // Observation must never block Codex when Bitterless is unavailable or input is malformed.
   }

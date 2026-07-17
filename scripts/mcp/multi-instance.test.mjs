@@ -19,7 +19,9 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 import { installMcpSourceHooks } from './fixtures/mcp-source-hooks.mjs';
+import { OptionalStartupLifecycle } from '../../src/main/mcp/optionalStartupLifecycle.service.ts';
 import {
   createMcpConfigJson,
   createPosixMcpShim,
@@ -256,7 +258,60 @@ const endpoint = (name) => ({
   path: join(tempDirectory, `${name}.sock`)
 });
 
+const createDeferred = () => {
+  let resolve;
+  const promise = new Promise((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+};
+
 try {
+  const heldMcpStart = createDeferred();
+  const mcpStartEntered = createDeferred();
+  const lifecycleEvents = [];
+  let overlapCleanupCompleted = false;
+  const overlapLifecycle = new OptionalStartupLifecycle();
+  const overlapStartup = overlapLifecycle.start(async (canStartNextStage) => {
+    if (!canStartNextStage()) return;
+    lifecycleEvents.push('mcp:start');
+    mcpStartEntered.resolve();
+    await heldMcpStart.promise;
+    lifecycleEvents.push('mcp:started');
+    if (!canStartNextStage()) return;
+    lifecycleEvents.push('shim:start');
+    if (!canStartNextStage()) return;
+    lifecycleEvents.push('eyes:import');
+    if (!canStartNextStage()) return;
+    lifecycleEvents.push('eyes:start');
+  });
+  await mcpStartEntered.promise;
+  const overlapCleanup = (async () => {
+    await overlapLifecycle.fenceAndJoin();
+    lifecycleEvents.push('mcp:stop');
+    overlapCleanupCompleted = true;
+    lifecycleEvents.push('cleanup:complete');
+  })();
+  await Promise.resolve();
+  assert.equal(overlapCleanupCompleted, false);
+  assert.deepEqual(lifecycleEvents, ['mcp:start']);
+  heldMcpStart.resolve();
+  await Promise.all([overlapStartup, overlapCleanup]);
+  assert.deepEqual(lifecycleEvents, [
+    'mcp:start',
+    'mcp:started',
+    'mcp:stop',
+    'cleanup:complete'
+  ]);
+
+  const preFencedLifecycle = new OptionalStartupLifecycle();
+  await preFencedLifecycle.fenceAndJoin();
+  let postCleanupStartupCalled = false;
+  await preFencedLifecycle.start(async () => {
+    postCleanupStartupCalled = true;
+  });
+  assert.equal(postCleanupStartupCalled, false);
+
   assert.equal(getMcpServerName('Bitterless'), 'bitterless');
   assert.equal(getMcpServerName('Bitterless_DEBUG'), 'bitterless-debug');
   assert.equal(getMcpServerName('Bitterless_DEV'), 'bitterless-dev');
@@ -273,17 +328,17 @@ try {
 
   const unixPath = join(tempDirectory, "quoted bridge's route.sock");
   assert.deepEqual(
-    parseMcpBridgeEndpointArg(['electron', '--mcp-helper', '--mcp-bridge-path', unixPath], 'darwin'),
+    parseMcpBridgeEndpointArg(['electron', 'mcpHelper.js', '--mcp-bridge-path', unixPath], 'darwin'),
     { transport: 'unix', path: unixPath }
   );
   assert.deepEqual(
     parseMcpBridgeEndpointArg(
-      ['Bitterless.exe', '--mcp-helper', '--mcp-bridge-path', '\\\\.\\pipe\\bitterless-mcp-test'],
+      ['Bitterless.exe', 'mcpHelper.js', '--mcp-bridge-path', '\\\\.\\pipe\\bitterless-mcp-test'],
       'win32'
     ),
     { transport: 'win32-named-pipe', path: '\\\\.\\pipe\\bitterless-mcp-test' }
   );
-  assert.equal(parseMcpBridgeEndpointArg(['electron', '--mcp-helper']), undefined);
+  assert.equal(parseMcpBridgeEndpointArg(['electron', 'mcpHelper.js']), undefined);
   assert.throws(
     () => parseMcpBridgeEndpointArg(['--mcp-bridge-path=/tmp/bridge.sock']),
     /separate path argument/
@@ -316,7 +371,6 @@ try {
   });
   assert.equal(captureRun.status, 0, captureRun.stderr);
   assert.deepEqual(JSON.parse(readFileSync(capturePath, 'utf8')), [
-    '--mcp-helper',
     '--mcp-bridge-path',
     unixPath,
     'extra value',
@@ -325,12 +379,14 @@ try {
 
   const windowsShim = createWindowsMcpShim(
     'C:\\Program Files\\Bitterless 100%\\Bitterless.exe',
-    'C:\\source tree\\bitterless',
+    'C:\\Program Files\\Bitterless 100%\\resources\\app.asar\\out\\main\\mcpHelper.js',
     '\\\\.\\pipe\\bitterless-mcp-test'
   );
   assert.match(windowsShim, /setlocal DisableDelayedExpansion/);
+  assert.match(windowsShim, /set "ELECTRON_RUN_AS_NODE=1"/);
   assert.match(windowsShim, /Bitterless 100%%/);
-  assert.match(windowsShim, /--mcp-helper --mcp-bridge-path "\\\\\.\\pipe\\bitterless-mcp-test" %\*/);
+  assert.match(windowsShim, /mcpHelper\.js" --mcp-bridge-path "\\\\\.\\pipe\\bitterless-mcp-test" %\*/);
+  assert.doesNotMatch(windowsShim, /--mcp-helper|app\.main/);
 
   const generatedEndpoint = getMcpBridgeEndpoint(join(tempDirectory, 'profile'));
   assert.equal(generatedEndpoint.transport, 'unix');
@@ -677,7 +733,69 @@ try {
     await validationServer.stop();
   }
 
+  const helperBuild = await build({
+    entryPoints: [join(projectRoot, 'src', 'main', 'mcp', 'mcpHelper.main.ts')],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    target: 'node22',
+    tsconfig: join(projectRoot, 'tsconfig.node.json'),
+    metafile: true,
+    write: false
+  });
+  assert.equal(
+    Object.keys(helperBuild.metafile.inputs).some((path) => path.endsWith('src/main/app.main.ts')),
+    false,
+    'the MCP helper bundle must not import the application entry'
+  );
+  const helperBundleText = helperBuild.outputFiles.map((file) => file.text).join('\n');
+  assert.doesNotMatch(helperBundleText, /BrowserWindow|require\("electron"\)|from\("electron"\)/);
+
   const appMainSource = readFileSync(join(projectRoot, 'src', 'main', 'app.main.ts'), 'utf8');
+  const stdioSource = readFileSync(
+    join(projectRoot, 'src', 'main', 'mcp', 'mcpStdio.helper.ts'),
+    'utf8'
+  );
+  const handlerSource = readFileSync(
+    join(projectRoot, 'src', 'main', 'xpc', 'mcp.handler.ts'),
+    'utf8'
+  );
+  const viteConfigSource = readFileSync(join(projectRoot, 'electron.vite.config.ts'), 'utf8');
+  assert.doesNotMatch(stdioSource, /from ['"]electron['"]|BrowserWindow|app\.getPath/);
+  assert.match(
+    handlerSource,
+    /join\(app\.getAppPath\(\), 'out', 'main', 'mcpHelper\.js'\)/
+  );
+  assert.doesNotMatch(handlerSource, /--mcp-helper|app\.main/);
+  assert.match(viteConfigSource, /mcpHelper: resolve\('src\/main\/mcp\/mcpHelper\.main\.ts'\)/);
+  assert.match(appMainSource, /process\.argv\.includes\('--coding-agent-hook-helper'\)/);
+  assert.doesNotMatch(appMainSource, /CODEX_HOOK_HELPER_ARG|runCodexHookHelper/);
+  assert.match(
+    appMainSource,
+    /const isHelperMode = isMcpHelperMode \|\| isLegacyCodingAgentHookHelperMode/
+  );
+  assert.match(
+    appMainSource,
+    /if \(isLegacyCodingAgentHookHelperMode\) \{[\s\S]*?app\.exit\(2\);[\s\S]*?\} else if \(isMcpHelperMode\)/
+  );
+  const activationPolicyIndex = appMainSource.indexOf("app.setActivationPolicy('prohibited')");
+  const singleInstanceIndex = appMainSource.indexOf('app.requestSingleInstanceLock()');
+  const readyIndex = appMainSource.indexOf('app.whenReady()');
+  const optionalStartIndex = appMainSource.indexOf('optionalIntegrationsLifecycle.start(');
+  const optionalFenceIndex = appMainSource.indexOf(
+    'await optionalIntegrationsLifecycle.fenceAndJoin()'
+  );
+  const eyesStopIndex = appMainSource.indexOf('await stopEyesOnAgentsRuntime?.()');
+  const mcpStopIndex = appMainSource.indexOf('await mcpBridgeServer.stop()');
+  assert.ok(activationPolicyIndex >= 0 && activationPolicyIndex < readyIndex);
+  assert.match(
+    appMainSource,
+    /const hasSingleInstanceLock = isHelperMode \|\| app\.requestSingleInstanceLock\(\)/
+  );
+  assert.match(appMainSource, /app\.on\('second-instance',[\s\S]*?mainWindowHelper\.show\(\)/);
+  assert.ok(singleInstanceIndex >= 0 && singleInstanceIndex < readyIndex);
+  assert.ok(optionalFenceIndex >= 0 && optionalFenceIndex < eyesStopIndex);
+  assert.ok(optionalFenceIndex < mcpStopIndex);
   const sqliteGuardIndex = appMainSource.indexOf('const coreSqliteResult = await coreSqliteBoot.ready()');
   const sqliteWarningIndex = appMainSource.indexOf(
     'MCP integration disabled because core SQLite is unavailable'
@@ -700,10 +818,21 @@ try {
   assert.ok(shimGuardIndex > bridgeStartedIndex);
   assert.ok(ensureShimIndex > shimGuardIndex && shimWarningIndex > ensureShimIndex);
   assert.ok(mainWindowIndex > sqliteWarningIndex);
-  assert.ok(mainWindowIndex > shimWarningIndex);
+  assert.ok(mainWindowIndex < bridgeStartIndex);
+  assert.ok(mainWindowIndex < ensureShimIndex);
+  assert.ok(mainWindowIndex < optionalStartIndex);
+  assert.ok(
+    mainWindowIndex < appMainSource.indexOf("await import('./xpc/eyesOnAgents.handler')")
+  );
+  assert.equal(
+    appMainSource.match(/if \(!canStartNextStage\(\)\) return;/g)?.length,
+    4
+  );
+  assert.match(appMainSource, /void optionalIntegrationsLifecycle\.start/);
+  assert.match(appMainSource, /app\.whenReady\(\)\.then\(startGui\)\.catch/);
 
   console.log(
-    '[mcp-multi-instance-test] routing, config, shim quoting, pinned helpers, socket ownership, stale recovery, and explicit readiness errors passed'
+    '[mcp-multi-instance-test] routing, Node-only helper isolation, lifecycle overlap, config, shim quoting, pinned helpers, socket ownership, stale recovery, and startup ordering passed'
   );
 } finally {
   rmSync(tempDirectory, { force: true, recursive: true });

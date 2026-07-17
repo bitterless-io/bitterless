@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { XpcMainHandler } from 'electron-xpc/main';
 import { chmodSync, mkdirSync, writeFileSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import {
   createMcpConfigJson,
   createPosixMcpShim,
@@ -62,7 +62,7 @@ class McpHandler extends XpcMainHandler {
     const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
     return createPosixMcpShim(
       process.execPath,
-      app.isPackaged ? null : app.getAppPath(),
+      join(app.getAppPath(), 'out', 'main', 'mcpHelper.js'),
       endpoint.path,
     );
   }
@@ -71,7 +71,7 @@ class McpHandler extends XpcMainHandler {
     const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
     return createWindowsMcpShim(
       process.execPath,
-      app.isPackaged ? null : app.getAppPath(),
+      join(app.getAppPath(), 'out', 'main', 'mcpHelper.js'),
       endpoint.path,
     );
   }

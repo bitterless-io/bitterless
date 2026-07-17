@@ -42,13 +42,18 @@ const holderCaseResult = (name: string) => {
       rank,
       address: `0xa${rank.toString(16).padStart(39, '0')}`,
       holding_percentage: 1,
+      addr_type: 0,
       ...(holderCase.excludedRanks?.includes(rank) ? { label: 'exchange' } : {}),
     };
   });
-  const holders = holderCase.holders ?? generatedHolders;
+  const rawHolders = holderCase.holders ?? generatedHolders;
   const holderKinds = holderCase.holderKinds ?? Object.fromEntries(
-    holders.map((holder: Fixture) => [holder.address, 'wallet']),
+    rawHolders.map((holder: Fixture) => [holder.address, 'wallet']),
   );
+  const holders = rawHolders.map((holder: Fixture) =>
+    holder.addr_type !== undefined || holderKinds[holder.address] !== 'wallet'
+      ? holder
+      : { ...holder, addr_type: 0 });
   const value = {
     chain,
     contractAddress: holderUniverseFixture.contractAddress,
@@ -64,28 +69,30 @@ const holderCaseResult = (name: string) => {
         holders,
       },
     },
-    alchemy: {
-      chain,
-      observedAt: 5_000,
-      chainIdentityVerified: true,
-      assetAccountVerified: true,
-      holderKinds,
-    },
-    receipts: [receipt('token-holders'), receipt('alchemy', chain === 'solana' ? 'alchemy-solana' : 'alchemy-bsc')],
+    receipts: [receipt('token-holders')],
   };
   return buildLocalMemeAnalysis(inputFor(value), reads, 6_000);
 };
 
-test('local GMGN and Alchemy evidence produces observed concepts and explicit unavailable cohorts', () => {
+test('local GMGN evidence produces filtered holders, observed concepts, and unavailable cohorts', () => {
   const value = fixture('gmgn-local-analysis.json');
   const reads: LocalMemeReadSet = {
     info: { operation: 'token-info', observedAt: 1_000, data: value.info },
     security: { operation: 'token-security', observedAt: 1_000, data: value.security },
-    holders: { operation: 'token-holders', observedAt: 1_000, data: value.holders },
-    traders: { operation: 'token-traders', observedAt: 1_000, data: value.traders },
+    holders: {
+      operation: 'token-holders',
+      observedAt: 1_000,
+      data: {
+        ...value.holders.data,
+        holders: value.holders.data.holders.map((holder: Fixture, index: number) => ({
+          ...holder,
+          ...(index === 2 ? { tags: ['contract'] } : { addr_type: 0 }),
+        })),
+      },
+    },
+    traders: { operation: 'token-traders', observedAt: 1_000, data: { list: [] } },
     hotSearches: { operation: 'hot-searches', observedAt: 1_000, data: value.hotSearches },
     trending: { operation: 'trending', observedAt: 1_000, data: value.trending },
-    alchemy: { chain: 'bsc', observedAt: 1_000, ...value.alchemy },
     receipts: [
       receipt('token-info'),
       receipt('token-security'),
@@ -93,7 +100,6 @@ test('local GMGN and Alchemy evidence produces observed concepts and explicit un
       receipt('token-traders'),
       receipt('hot-searches'),
       receipt('trending'),
-      receipt('alchemy', 'alchemy-bsc'),
     ],
   };
   const result = buildLocalMemeAnalysis(inputFor(value), reads, 2_000);
@@ -112,12 +118,97 @@ test('local GMGN and Alchemy evidence produces observed concepts and explicit un
   assert.equal(result.unavailable.some(({ field }) => field === 'top100Cohorts.curated.matchCount'), true);
 });
 
-test('partial local evidence never converts unsupported fields into zero', () => {
+test('GMGN-only evidence remains usable while deferred chain verification stays unavailable', () => {
+  const value = fixture('gmgn-local-analysis.json');
+  const reads: LocalMemeReadSet = {
+    info: {
+      operation: 'token-info',
+      observedAt: 1_000,
+      data: {
+        ...value.info.data,
+        holder_count: 4,
+        stat: {
+          fresh_wallet_rate: 0.2736,
+          bot_degen_rate: 0.1478,
+          top_entrapment_trader_percentage: 0.3972,
+        },
+      },
+    },
+    security: { operation: 'token-security', observedAt: 1_000, data: value.security },
+    holders: {
+      operation: 'token-holders',
+      observedAt: 1_000,
+      data: {
+        list: [
+          {
+            address: '0x1000000000000000000000000000000000000001',
+            amount_percentage: 0.4,
+            addr_type: 2,
+            exchange: 'pancakeswap_amm',
+          },
+          {
+            address: '0x1000000000000000000000000000000000000002',
+            amount_percentage: 0.2,
+            addr_type: 2,
+            exchange: 'binance',
+          },
+          {
+            address: '0x1000000000000000000000000000000000000003',
+            amount_percentage: 0.1,
+            amount_cur: 1_000_000,
+            addr_type: 0,
+            tags: ['smart_degen'],
+            maker_token_tags: ['top_holder'],
+            realized_profit: 1_200,
+            unrealized_profit: 300,
+          },
+          {
+            address: '0x1000000000000000000000000000000000000004',
+            amount_percentage: 0.05,
+            addr_type: 0,
+          },
+        ],
+      },
+    },
+    traders: { operation: 'token-traders', observedAt: 1_000, data: { list: [] } },
+    hotSearches: { operation: 'hot-searches', observedAt: 1_000, data: value.hotSearches },
+    trending: { operation: 'trending', observedAt: 1_000, data: value.trending },
+    receipts: [
+      receipt('token-info'),
+      receipt('token-security'),
+      receipt('token-holders'),
+      receipt('token-traders'),
+      receipt('hot-searches'),
+      receipt('trending'),
+    ],
+  };
+  const result = buildLocalMemeAnalysis(inputFor(value), reads, 2_000);
+  assert.equal(result.holderDistribution.holderCount.value, 4);
+  assert.equal(result.holderDistribution.freshWalletRatePct.value, 27.36);
+  assert.equal(result.holderDistribution.botDegenRatePct.value, 14.78);
+  assert.equal(result.holderDistribution.entrapmentTraderRatePct.value, 39.72);
+  assert.equal(result.holderDistribution.top10SharePct.value, 15);
+  assert.equal(result.holderDistribution.top100SharePct.value, 15);
+  assert.equal(result.holderDistribution.holderUniverse.topHolder.class, 'liquidity_pool');
+  assert.equal(result.holderDistribution.holderUniverse.exclusionAudit.some(({ class: exclusionClass }) => exclusionClass === 'exchange_custody'), true);
+  assert.equal(result.eoaAnalysis.holderCount.value, 2);
+  assert.equal(result.keyWallets[0]?.holderRank, 1);
+  assert.equal(result.keyWallets[0]?.sourceHolderRank, 3);
+  assert.equal(result.keyWallets[0]?.holdingSharePct, 10);
+  assert.equal(result.keyWallets[0]?.realizedPnlUsd, 1_200);
+  assert.equal(result.keyWallets[0]?.unrealizedPnlUsd, 300);
+  assert.equal(result.concepts[0]?.attentionScore.value, 84);
+  assert.equal(result.asset.chainIdentityVerified.value, null);
+  assert.match(result.asset.chainIdentityVerified.reason || '', /deferred/i);
+  assert.equal(result.receipts.every(({ source }) => source === 'gmgn-cli'), true);
+  assert.doesNotMatch(JSON.stringify(result), /Alchemy/);
+});
+
+test('partial GMGN-only evidence never converts unsupported fields into zero', () => {
   const value = fixture('gmgn-local-partial.json');
   const reads: LocalMemeReadSet = {
     info: { operation: 'token-info', observedAt: 3_000, data: value.info },
     hotSearches: { operation: 'hot-searches', observedAt: 3_000, data: value.hotSearches },
-    alchemyReason: 'Alchemy fixture unavailable.',
     receipts: [receipt('token-info'), receipt('hot-searches')],
   };
   const result = buildLocalMemeAnalysis(inputFor(value), reads, 4_000);
@@ -139,14 +230,14 @@ test('burn/system raw rank 1 is audited and the next independent wallet is re-ra
   assert.equal(result.keyWallets[0]?.sourceHolderRank, 2);
 });
 
-test('a realistic numbered exchange label overrides an Alchemy wallet classification', () => {
+test('a realistic numbered exchange label overrides GMGN regular-wallet classification', () => {
   const result = holderCaseResult('exchangeRankOne');
   assert.equal(result.holderDistribution.holderUniverse.topHolder.class, 'exchange_custody');
   assert.equal(result.holderDistribution.holderUniverse.exclusionAudit[0]?.sourceRank, 1);
   assert.equal(result.holderDistribution.top10SharePct.value, 9);
 });
 
-test('verified independent rank 1 is retained with an EVM case-insensitive Alchemy lookup', () => {
+test('GMGN regular-wallet rank 1 is retained as independent', () => {
   const result = holderCaseResult('independentRankOne');
   assert.equal(result.holderDistribution.holderUniverse.topHolder.status, 'independent');
   assert.equal(result.holderDistribution.holderUniverse.exclusionAudit.length, 0);
@@ -162,7 +253,7 @@ test('unknown raw rank 1 blocks filtered concentration and holder-derived score'
   assert.equal(result.risks.some(({ code }) => code === 'HOLDER_RANK_ONE_UNKNOWN'), true);
 });
 
-test('explicit insider and bundler tags override an Alchemy wallet classification', () => {
+test('explicit insider and bundler tags override GMGN regular-wallet classification', () => {
   const result = holderCaseResult('coordinatedRankOne');
   assert.equal(result.holderDistribution.holderUniverse.topHolder.status, 'excluded');
   assert.equal(result.holderDistribution.holderUniverse.topHolder.class, 'other_non_independent');
@@ -187,8 +278,8 @@ test('filtered Top 100 is unavailable when the non-pageable source window cannot
   assert.match(result.holderDistribution.top100SharePct.reason || '', /non-pageable/i);
 });
 
-test('Solana Alchemy classification lookups remain case-sensitive', () => {
-  const result = holderCaseResult('solanaCaseSensitiveUnknown');
+test('a holder without GMGN address type or an explicit label remains unknown', () => {
+  const result = holderCaseResult('missingGmgnAddressType');
   assert.equal(result.holderDistribution.holderUniverse.topHolder.status, 'unknown');
   assert.equal(result.holderDistribution.top10SharePct.value, null);
 });

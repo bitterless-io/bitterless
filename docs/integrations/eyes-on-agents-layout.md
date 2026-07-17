@@ -89,7 +89,7 @@ The menu bar shows:
 - App Server connection dot and compact state text;
 - labelled `Refresh`, available from connected, disconnected, and error states and disabled while
   another board action, connection, or synchronization is in flight;
-- Codex Desktop Bridge status/action;
+- independent Codex observation status/action;
 - a compact settings/always-on-top control and platform window controls.
 
 Clicking the connection status opens a small panel with:
@@ -97,7 +97,25 @@ Clicking the connection status opens a small panel with:
 - managed App Server status and `Connect`/`Disconnect`;
 - last successful sync time and latest error, if any;
 - an explicit note that this connection does not attach to Codex Desktop's private stdio process;
-- Desktop hook bridge status with `Install`, `Repair`, or `Remove`.
+- Codex observation status with `Enable`, `Review in Codex`, `Check again`, `Repair`, or `Disable`.
+
+The panel separates the two lifecycles visually and semantically:
+
+```text
+┌ Connections ────────────────────────────────────────────────┐
+│ App Server · Disconnected                     [Connect]     │
+│ Thread inventory and this server's lifecycle notifications │
+│                                                            │
+│ Codex observation · Needs review              [Review]     │
+│ Installed globally · Listener active          [Check again]│
+│ Open Codex Settings → Hooks, or enter /hooks.  [Disable]    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+App Server Connect/Disconnect never installs or removes observation. The observation section shows
+local installation, Codex trust, and current listener as separate facts. It reports **Installed,
+paused** rather than **Observing** when trusted hooks exist but the listener is not running. A user
+who skipped trust or disabled a hook always retains Review and Check actions.
 
 Errors stay in this panel and as a compact board banner. They never clear already persisted threads.
 The header Refresh action reconnects when necessary and reconciles active plus archived inventories;
@@ -179,6 +197,9 @@ card leaves it in Focus until the runtime state changes.
 | Project filter has no matches | selected option remains available; `0 of total` and scoped empty text |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
+| bridge needs review | Review opens Codex Settings and gives Settings → Hooks plus `/hooks` instructions; Check remains available |
+| bridge disabled in Codex | Review safely re-enables only exact Bitterless entries, then still requires Codex trust when applicable |
+| bridge installed, listener stopped | explicit `Installed, paused`; never claim live observation |
 | unknown runtime | grey rail and explicit `Unknown`; never rendered as idle |
 | long title/path | two-line title and single-line ellipsis path with tooltip |
 

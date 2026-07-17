@@ -2,11 +2,9 @@ import { reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type {
-  CoinAlchemyStatus,
   CoinCodexDeviceCodeNotice,
   CoinCodexLoginMethod,
   CoinGmgnOfficialLinkTarget,
-  CoinResourceChain,
   CoinResourcesStatus,
   CoinServiceId,
   CoinServiceStatus,
@@ -25,15 +23,10 @@ class CoinResourcesState {
   gmgnCancelling = false;
   copyLoading = false;
   officialLinkLoading: CoinGmgnOfficialLinkTarget | null = null;
-  alchemySaving: CoinResourceChain | null = null;
-  alchemyTesting: CoinResourceChain | null = null;
   serviceSaving: CoinServiceId | null = null;
   gmgnKeyVisible = false;
   gmgnGuideVisible = false;
   gmgnApiKey = '';
-  alchemyModalChain: CoinResourceChain | null = null;
-  alchemyHttpUrl = '';
-  alchemyWssUrl = '';
   serviceModal: CoinServiceId | null = null;
   serviceHttpUrl = '';
   serviceWsUrl = '';
@@ -226,68 +219,6 @@ class CoinResourcesState {
     }
   }
 
-  openAlchemy(chain: CoinResourceChain): void {
-    this.alchemyModalChain = chain;
-    this.alchemyHttpUrl = '';
-    this.alchemyWssUrl = '';
-  }
-
-  closeAlchemy(): void {
-    if (this.alchemySaving) return;
-    this.alchemyModalChain = null;
-    this.alchemyHttpUrl = '';
-    this.alchemyWssUrl = '';
-  }
-
-  async saveAlchemy(): Promise<void> {
-    const chain = this.alchemyModalChain;
-    if (!chain || this.alchemySaving) return;
-    if (!this.alchemyHttpUrl.trim() || !this.alchemyWssUrl.trim()) {
-      Message.error(i18nHelper.coin.resourcePage.feedback.alchemyBothRequired);
-      return;
-    }
-    this.alchemySaving = chain;
-    try {
-      const receipt = await window.coin.resources.saveAlchemy({
-        chain,
-        httpUrl: this.alchemyHttpUrl,
-        wssUrl: this.alchemyWssUrl,
-      });
-      this.updateAlchemy(receipt.status);
-      if (!receipt.ok) {
-        Message.error(this.alchemySaveError(receipt.errorCode));
-        return;
-      }
-      this.closeAlchemyAfterSave();
-      Message.success(i18nHelper.coin.resourcePage.feedback.alchemySaved);
-    } catch (error) {
-      console.error('[Coin] Alchemy save failed:', error);
-      Message.error(i18nHelper.coin.resourcePage.feedback.alchemySaveFailed);
-    } finally {
-      this.alchemySaving = null;
-    }
-  }
-
-  async testAlchemy(chain: CoinResourceChain): Promise<void> {
-    if (this.alchemyTesting) return;
-    this.alchemyTesting = chain;
-    try {
-      const receipt = await window.coin.resources.testAlchemy({ chain });
-      const current = this.status?.alchemy.find((item) => item.chain === chain);
-      if (current) current.lastProbe = receipt;
-      Message[receipt.ok ? 'success' : 'error'](
-        receipt.ok
-          ? i18nHelper.coin.resourcePage.feedback.alchemyVerified
-          : this.alchemyProbeError(receipt.code),
-      );
-    } catch (error) {
-      console.error('[Coin] Alchemy test failed:', error);
-      Message.error(i18nHelper.coin.resourcePage.feedback.alchemyTestFailed);
-    } finally {
-      this.alchemyTesting = null;
-    }
-  }
-
   openService(service: CoinServiceId): void {
     this.serviceModal = service;
     this.serviceHttpUrl = '';
@@ -342,22 +273,10 @@ class CoinResourcesState {
     if (this.status) this.status.gmgn = status;
   }
 
-  private updateAlchemy(status: CoinAlchemyStatus): void {
-    if (!this.status) return;
-    const index = this.status.alchemy.findIndex((item) => item.chain === status.chain);
-    if (index >= 0) this.status.alchemy[index] = status;
-  }
-
   private updateService(status: CoinServiceStatus): void {
     if (!this.status) return;
     const index = this.status.services.findIndex((item) => item.service === status.service);
     if (index >= 0) this.status.services[index] = status;
-  }
-
-  private closeAlchemyAfterSave(): void {
-    this.alchemyModalChain = null;
-    this.alchemyHttpUrl = '';
-    this.alchemyWssUrl = '';
   }
 
   private closeServiceAfterSave(): void {
@@ -384,20 +303,6 @@ class CoinResourcesState {
     return feedback.gmgnVerifyFailed;
   }
 
-  private alchemySaveError(code: string | undefined): string {
-    const feedback = i18nHelper.coin.resourcePage.feedback;
-    if (code === 'secure-storage-unavailable') return feedback.safeStorageUnavailable;
-    if (code === 'invalid-input') return feedback.alchemyInvalid;
-    return feedback.alchemySaveFailed;
-  }
-
-  private alchemyProbeError(code: string): string {
-    const feedback = i18nHelper.coin.resourcePage.feedback;
-    if (code === 'not-configured') return feedback.alchemyRequired;
-    if (code === 'timeout') return feedback.alchemyTimeout;
-    if (code === 'invalid-response') return feedback.alchemyInvalidResponse;
-    return feedback.alchemyTestFailed;
-  }
 }
 
 export const coinResourcesStore = reactive<CoinResourcesState>(new CoinResourcesState());

@@ -1,4 +1,3 @@
-import { app } from 'electron';
 import net from 'net';
 import readline from 'readline';
 import type {
@@ -6,7 +5,7 @@ import type {
   LocalRpcRequest,
   McpBridgeEndpoint,
 } from '@shared/mcp/mcpBridge.shared';
-import { MCP_LOCAL_RPC_MAX_BYTES, getMcpBridgeEndpoint } from '@shared/mcp/mcpBridge.shared';
+import { MCP_LOCAL_RPC_MAX_BYTES } from '@shared/mcp/mcpBridge.shared';
 
 type JsonRpcId = string | number | null;
 
@@ -411,61 +410,64 @@ const handleRequest = async (
   writeError(id, -32601, `Method not found: ${request.method}`);
 };
 
-export const startBitterlessMcpStdioServer = async (
-  explicitEndpoint?: McpBridgeEndpoint,
+export const startBitterlessMcpStdioServer = (
+  endpoint: McpBridgeEndpoint,
 ): Promise<void> => {
-  const endpoint = explicitEndpoint ?? getMcpBridgeEndpoint(app.getPath('userData'));
-  const rl = readline.createInterface({
-    input: process.stdin,
-    crlfDelay: Infinity,
-  });
-  let inputClosed = false;
-  let pendingRequests = 0;
-
-  const quitWhenIdle = (): void => {
-    if (inputClosed && pendingRequests === 0) {
-      app.quit();
-    }
-  };
-
-  const runRequest = (request: McpRequest): void => {
-    pendingRequests += 1;
-    handleRequest(request, endpoint).catch((err: unknown) => {
-      const failure: LocalRpcFailure = {
-        jsonrpc: '2.0',
-        id: request.id ?? null,
-        error: {
-          code: -32000,
-          message: getErrorMessage(err, 'Bitterless MCP request failed'),
-        },
-      };
-      writeMessage(failure);
-    }).finally(() => {
-      pendingRequests -= 1;
-      quitWhenIdle();
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      crlfDelay: Infinity,
     });
-  };
+    let inputClosed = false;
+    let pendingRequests = 0;
+    let finished = false;
 
-  process.stderr.write(`[bitterless-mcp] stdio server started (${endpoint.path})\n`);
+    const finishWhenIdle = (): void => {
+      if (!finished && inputClosed && pendingRequests === 0) {
+        finished = true;
+        resolve();
+      }
+    };
 
-  rl.on('line', (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    if (Buffer.byteLength(trimmed, 'utf8') > MCP_LOCAL_RPC_MAX_BYTES) {
-      writeError(null, -32600, 'Bitterless MCP request is too large');
-      return;
-    }
+    const runRequest = (request: McpRequest): void => {
+      pendingRequests += 1;
+      handleRequest(request, endpoint).catch((err: unknown) => {
+        const failure: LocalRpcFailure = {
+          jsonrpc: '2.0',
+          id: request.id ?? null,
+          error: {
+            code: -32000,
+            message: getErrorMessage(err, 'Bitterless MCP request failed'),
+          },
+        };
+        writeMessage(failure);
+      }).finally(() => {
+        pendingRequests -= 1;
+        finishWhenIdle();
+      });
+    };
 
-    try {
-      const request = JSON.parse(trimmed) as McpRequest;
-      runRequest(request);
-    } catch (err) {
-      writeError(null, -32700, getErrorMessage(err, 'Parse error'));
-    }
-  });
+    process.stderr.write(`[bitterless-mcp] stdio server started (${endpoint.path})\n`);
 
-  rl.on('close', () => {
-    inputClosed = true;
-    quitWhenIdle();
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      if (Buffer.byteLength(trimmed, 'utf8') > MCP_LOCAL_RPC_MAX_BYTES) {
+        writeError(null, -32600, 'Bitterless MCP request is too large');
+        return;
+      }
+
+      try {
+        const request = JSON.parse(trimmed) as McpRequest;
+        runRequest(request);
+      } catch (err) {
+        writeError(null, -32700, getErrorMessage(err, 'Parse error'));
+      }
+    });
+
+    rl.on('close', () => {
+      inputClosed = true;
+      finishWhenIdle();
+    });
   });
 };

@@ -63,6 +63,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           'app.main': resolve('src/main/app.main.ts'),
+          codexHookHelper: resolve('src/main/eyesOnAgents/codexHookHelper.main.ts'),
+          mcpHelper: resolve('src/main/mcp/mcpHelper.main.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp']
       },

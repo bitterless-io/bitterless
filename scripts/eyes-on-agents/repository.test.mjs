@@ -11,6 +11,11 @@ const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-eyes-repository-'));
 const THREAD_A = '11111111-1111-4111-8111-111111111111';
 const THREAD_B = '22222222-2222-4222-8222-222222222222';
 const THREAD_C = '33333333-3333-4333-8333-333333333333';
+const THREAD_D = '66666666-6666-4666-8666-666666666666';
+const THREAD_E = '77777777-7777-4777-8777-777777777777';
+const DELIVERY_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const DELIVERY_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const DELIVERY_C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const INVALID_VERSION_THREAD = '33333333-3333-0333-8333-333333333333';
 const INVALID_VARIANT_THREAD = '44444444-4444-4444-7444-444444444444';
 const EXTRA_HYPHEN_THREAD = '55555555-5555-4555-8555-55555555555-';
@@ -95,6 +100,7 @@ try {
   );
   const {
     ensureEyesOnAgentsArchiveSchema,
+    ensureEyesOnAgentsHookDeliverySchema,
     ensureEyesOnAgentsLegacyImport,
     ensureEyesOnAgentsProjectMetadataSchema,
     ensureEyesOnAgentsSyncPersistenceSchema
@@ -115,6 +121,13 @@ try {
   ensureEyesOnAgentsProjectMetadataSchema(repairDb);
   ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
   ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
+  ensureEyesOnAgentsHookDeliverySchema(repairDb);
+  repairDb.prepare(
+    `INSERT INTO eyes_on_agents_hook_delivery_receipt (
+      delivery_id, thread_id, observed_at, committed_at
+    ) VALUES (?, ?, 1, 2)`
+  ).run(DELIVERY_A, THREAD_A);
+  ensureEyesOnAgentsHookDeliverySchema(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
   assert.equal(
@@ -122,6 +135,13 @@ try {
       "SELECT COUNT(*) AS count FROM eyes_on_agents_domain WHERE domain_key = 'uncategorized' AND is_deleted = 0"
     ).get().count,
     1
+  );
+  assert.equal(
+    repairDb.prepare(
+      'SELECT COUNT(*) AS count FROM eyes_on_agents_hook_delivery_receipt WHERE delivery_id = ?'
+    ).get(DELIVERY_A).count,
+    1,
+    'an idempotent receipt migration must preserve committed delivery IDs'
   );
   repairDb.close();
 
@@ -151,6 +171,8 @@ try {
   ensureEyesOnAgentsArchiveSchema(oldDb);
   ensureEyesOnAgentsSyncPersistenceSchema(oldDb);
   ensureEyesOnAgentsSyncPersistenceSchema(oldDb);
+  ensureEyesOnAgentsHookDeliverySchema(oldDb);
+  ensureEyesOnAgentsHookDeliverySchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -186,6 +208,12 @@ try {
       "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'eyes_on_agents_thread_snapshot'"
     ).get(),
     'old databases must receive the raw thread snapshot table'
+  );
+  assert.deepEqual(
+    oldDb.prepare('PRAGMA table_info(eyes_on_agents_hook_delivery_receipt)').all()
+      .map((column) => column.name),
+    ['delivery_id', 'thread_id', 'observed_at', 'committed_at'],
+    'old databases must receive the idempotent hook delivery receipt table'
   );
   oldDb.close();
 
@@ -815,6 +843,131 @@ try {
   await assert.rejects(
     () => repository.renameDomain({ domainId: uncategorized.id, title: 'Renamed' }),
     /System Domains cannot be renamed/
+  );
+
+  await assert.rejects(
+    () => repository.applyRuntimeEventDelivery({
+      deliveryId: DELIVERY_C,
+      event: {
+        type: 'turn_started',
+        threadId: THREAD_D,
+        turnId: 'wrong-source',
+        observedAt: 799,
+        source: 'app_server'
+      }
+    }),
+    /source must be codex_hook/
+  );
+
+  const firstDelivery = await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_A,
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_D,
+      turnId: 'delivery-turn',
+      observedAt: 800,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(firstDelivery, { duplicate: false });
+  const receipt = db.prepare(
+    `SELECT delivery_id, thread_id, observed_at, committed_at,
+      typeof(observed_at) AS observed_at_type,
+      typeof(committed_at) AS committed_at_type
+     FROM eyes_on_agents_hook_delivery_receipt WHERE delivery_id = ?`
+  ).get(DELIVERY_A);
+  assert.equal(receipt.thread_id, THREAD_D);
+  assert.equal(receipt.observed_at, 800);
+  assert.equal(receipt.observed_at_type, 'integer');
+  assert.equal(receipt.committed_at_type, 'integer');
+  assert.equal(
+    db.prepare('SELECT runtime_state FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_D).runtime_state,
+    'working',
+    'a fresh delivery must apply its event in the receipt transaction'
+  );
+
+  db.close();
+  db = new TestDatabase(dbPath);
+  globalThis.__eyesTestSqliteManager.db = db;
+  repository = new EyesOnAgentsRepositoryDao();
+  const replayedDelivery = await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_A,
+    event: {
+      type: 'turn_completed',
+      threadId: THREAD_D,
+      turnId: 'delivery-turn',
+      outcome: 'completed',
+      observedAt: 900,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(replayedDelivery, { duplicate: true });
+  const replayedThread = db.prepare(
+    `SELECT runtime_state, last_completed_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(THREAD_D);
+  assert.equal(replayedThread.runtime_state, 'working');
+  assert.equal(
+    replayedThread.last_completed_at,
+    null,
+    'a persisted receipt must dedupe replay after a repository and SQLite restart'
+  );
+
+  db.exec(`
+    CREATE TRIGGER abort_eyes_hook_delivery_event
+    BEFORE INSERT ON eyes_on_agents_thread
+    WHEN NEW.thread_id = '${THREAD_E}'
+    BEGIN
+      SELECT RAISE(ABORT, 'injected hook delivery failure');
+    END;
+  `);
+  const failedDeliveryEvent = {
+    type: 'turn_started',
+    threadId: THREAD_E,
+    turnId: 'failed-delivery-turn',
+    observedAt: 1000,
+    source: 'codex_hook'
+  };
+  await assert.rejects(
+    () => repository.applyRuntimeEventDelivery({
+      deliveryId: DELIVERY_B,
+      event: failedDeliveryEvent
+    }),
+    /injected hook delivery failure/
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT COUNT(*) AS count FROM eyes_on_agents_hook_delivery_receipt WHERE delivery_id = ?'
+    ).get(DELIVERY_B).count,
+    0,
+    'an event failure must roll back the delivery receipt'
+  );
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_E).count,
+    0,
+    'an event failure must roll back the event application'
+  );
+  db.exec('DROP TRIGGER abort_eyes_hook_delivery_event;');
+  assert.deepEqual(
+    await repository.applyRuntimeEventDelivery({
+      deliveryId: DELIVERY_B,
+      event: failedDeliveryEvent
+    }),
+    { duplicate: false },
+    'a rolled-back delivery ID must remain retryable'
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT COUNT(*) AS count FROM eyes_on_agents_hook_delivery_receipt WHERE delivery_id = ?'
+    ).get(DELIVERY_B).count,
+    1
+  );
+  assert.equal(
+    db.prepare('SELECT runtime_state FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_E).runtime_state,
+    'working'
   );
 
   db.close();

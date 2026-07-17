@@ -382,6 +382,12 @@ const verifyCoreSchema = (
     'created_at',
     'updated_at',
   ])
+  assertColumns(db, 'eyes_on_agents_hook_delivery_receipt', [
+    'delivery_id',
+    'thread_id',
+    'observed_at',
+    'committed_at',
+  ])
   const indexes = db.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'eyes_on_agents_thread'",
   ).all() as { name: string }[]

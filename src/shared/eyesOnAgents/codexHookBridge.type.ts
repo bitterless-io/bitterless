@@ -24,7 +24,18 @@ export interface CodexHookEvent {
   };
 }
 
+export interface CodexHookDelivery {
+  schemaVersion: 1;
+  deliveryId: string;
+  event: CodexHookEvent;
+}
+
+export interface CodexHookDeliveryAck {
+  status: 'committed';
+}
+
 export interface CodexHookHelperArgs {
   endpoint: CodexHookBridgeEndpoint;
   installationId: string;
+  outboxPath: string;
 }

@@ -136,6 +136,5 @@ export interface CoinResourcesStatus {
   observedAt: number;
   codex: CoinCodexStatus;
   gmgn: CoinGmgnStatus;
-  alchemy: CoinAlchemyStatus[];
   services: CoinServiceStatus[];
 }
