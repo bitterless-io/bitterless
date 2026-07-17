@@ -68,6 +68,12 @@ if (process.platform === 'win32') {
 }
 const args = process.argv.slice(2);
 const electronBuilderCommand = fs.existsSync(electronBuilderBin) ? electronBuilderBin : 'electron-builder';
+if (process.platform === 'darwin') {
+  const retryPreloadPath = path.join(rootDir, 'scripts', 'codesignRetry.preload.js');
+  const retryPreloadOption = `--require=${JSON.stringify(retryPreloadPath)}`;
+  env.NODE_OPTIONS = [env.NODE_OPTIONS, retryPreloadOption].filter(Boolean).join(' ');
+  console.log('[signedBuild.js] Enabled per-file Apple timestamp retry for codesign');
+}
 console.log(`[signedBuild.js] Running: ${electronBuilderCommand} ${args.join(' ')}`);
 
 const result = spawnSync(electronBuilderCommand, args, {

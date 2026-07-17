@@ -45,6 +45,10 @@ shorter values are accepted only as upgrade checkpoints.
    both the app before signing and the DMG before notarization, then validates the stapled ticket.
    This avoids a hidden dependency on a certificate being installed in the user's login keychain
    while matching macOS `codesign` identity-discovery behavior.
+8. Electron-builder's per-file signing calls run through a release-only preload that retries only
+   Apple's exact transient `timestamp service is not available` failure with bounded backoff.
+   Permanent signing failures still fail immediately, and the retry log contains no command path,
+   signing identity, or credential.
 
 ## Delivery decision
 

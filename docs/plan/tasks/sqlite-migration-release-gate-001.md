@@ -53,6 +53,8 @@ one production version to macOS ARM64, macOS x64, and Windows x64 only if every 
 - macOS publisher tests prove DMG signing uses a disposable explicit keychain, restores the exact
   prior user keychain search list on success and failure, selects the app-team identity, verifies
   the signed artifact, and does not log certificate/keychain passwords;
+- macOS build tests prove per-file codesign retries only the exact transient Apple timestamp
+  service failure with bounded backoff, while permanent and non-codesign failures remain immediate;
 - `git diff --check`;
 - process audit proves no audit/test/Electron helper remains;
 - after code sync, production release and public manifest/artifact verification pass for

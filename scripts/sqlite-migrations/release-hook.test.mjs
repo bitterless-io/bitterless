@@ -10,6 +10,7 @@ const {
   selectDeveloperIdApplicationIdentity,
   withTemporaryUserKeychainSearchList,
 } = require('../publish.js')
+const { createCodesignRetryExecutor } = require('../codesignRetry.helper.js')
 
 test('publish audits SQLite before build, signing, or upload', () => {
   const source = read('scripts/publish.js')
@@ -45,6 +46,8 @@ test('signedBuild cannot invoke electron-builder before the audit', () => {
   const builderIndex = source.lastIndexOf('spawnSync(electronBuilderCommand')
   assert(auditIndex >= 0)
   assert(builderIndex > auditIndex)
+  assert.match(source, /codesignRetry\.preload\.js/)
+  assert.match(source, /env\.NODE_OPTIONS/)
 })
 
 test('release version codes use the common comparison library', () => {
@@ -135,6 +138,57 @@ test('DMG signing selects one imported Developer ID identity for the app team', 
     parseUserKeychainSearchList('    "/Users/test/login.keychain-db"\n    "/Library/Keychains/System.keychain"\n'),
     ['/Users/test/login.keychain-db', '/Library/Keychains/System.keychain'],
   )
+})
+
+test('codesign retries only transient Apple timestamp failures', async () => {
+  const calls = []
+  const delays = []
+  const retries = []
+  const execute = async (file) => {
+    calls.push(file)
+    if (calls.length < 3) {
+      const error = new Error('The timestamp service is not available.')
+      error.stderr = 'The timestamp service is not available.'
+      throw error
+    }
+    return 'signed'
+  }
+  const retryingExecute = createCodesignRetryExecutor(execute, {
+    retryDelaysMs: [2, 5],
+    delay: async (ms) => delays.push(ms),
+    onRetry: (event) => retries.push(event),
+  })
+
+  assert.equal(await retryingExecute('codesign', ['--timestamp'], {}), 'signed')
+  assert.deepEqual(calls, ['codesign', 'codesign', 'codesign'])
+  assert.deepEqual(delays, [2, 5])
+  assert.deepEqual(retries, [
+    { attempt: 2, maxAttempts: 3, retryDelayMs: 2 },
+    { attempt: 3, maxAttempts: 3, retryDelayMs: 5 },
+  ])
+})
+
+test('codesign retry does not mask permanent or non-codesign failures', async () => {
+  let calls = 0
+  const permanentFailure = createCodesignRetryExecutor(async () => {
+    calls++
+    throw new Error('invalid signature')
+  }, {
+    retryDelaysMs: [1, 1],
+    delay: async () => {},
+  })
+  await assert.rejects(() => permanentFailure('codesign', [], {}), /invalid signature/)
+  assert.equal(calls, 1)
+
+  const nonCodesignFailure = createCodesignRetryExecutor(async () => {
+    calls++
+    throw new Error('The timestamp service is not available.')
+  }, {
+    retryDelaysMs: [1, 1],
+    delay: async () => {},
+  })
+  await assert.rejects(() => nonCodesignFailure('security', [], {}), /timestamp service/)
+  assert.equal(calls, 2)
 })
 
 test('migration audit is pure Node and uses runtime manifests', () => {
