@@ -46,6 +46,12 @@ Explicit startup failures remain visible from the Home menubar instead of termin
   Main must wait for the target SQLite preload registration/readiness result directly. The initial
   `about:blank` preload evaluation must report "not target document" rather than a false boot
   failure so main can ignore it until the real preload replaces the handler.
+- Removing the Core gate exposed two foreground races that the old serial order had masked. Home's
+  renderer still awaited `ApplicationLanguageHandler/getCurrentLanguage` before importing App or
+  mounting Vue, so a pending or failed early XPC request left only the BrowserWindow background.
+  Separately, the internal SQLite BrowserWindow still showed itself outside release builds and
+  could take focus after Home was created. The observed 5173-to-5174 fallback is not causal:
+  electron-vite passes the actual selected port to the Electron child before launch.
 
 ## Required correction
 
@@ -70,6 +76,10 @@ Explicit startup failures remain visible from the Home menubar instead of termin
 9. Record explicit failures in main-owned in-memory startup diagnostics. Home's menubar shows a
    compact warning button only when issues exist; hover or keyboard focus lists the failing stages
    and messages. See [Startup diagnostics](../features/startup-diagnostics.md).
+10. Keep the internal Core SQLite BrowserWindow hidden in development and production so it cannot
+    cover or focus ahead of Home.
+11. Start Home language subscribe/fetch before mount but never await it as a mount prerequisite.
+    Mount with the explicit bootstrap locale and apply the main snapshot in place when available.
 
 ## Acceptance
 
@@ -81,6 +91,9 @@ Explicit startup failures remain visible from the Home menubar instead of termin
 - An unresolved EyesOnAgents initialization cannot block Home creation.
 - Home, helper refresh, and Tray continue while SQLite is pending or failed; SQLite-dependent
   integrations remain gated independently.
+- The SQLite renderer never becomes a visible or focused application window.
+- Home's menubar and routed shell render while the initial language XPC request is pending or
+  rejected; a later snapshot updates the locale without reload.
 - No target-preload/Core-ready timeout exists. Only explicit preload, renderer, navigation,
   database-read, schema, or migration failure creates a startup issue.
 - The Home menubar warning is absent with no issues and lists localized failing stages plus concise

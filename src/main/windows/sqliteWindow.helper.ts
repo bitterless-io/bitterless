@@ -10,7 +10,7 @@ class SqliteWindowHelper extends WindowHelper {
     minWidth: 800,
     minHeight: 600,
   };
-  protected showOnReady = !(import.meta.env.VITE_ENV === 'prod' && import.meta.env.VITE_MODE === 'release');
+  protected showOnReady = false;
 
   create(onCreated?: (window: BrowserWindow) => void): BrowserWindow {
     const win = super.create(onCreated);

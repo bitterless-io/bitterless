@@ -25,6 +25,7 @@ assert.equal(new Set(rendererEntries.map(([name]) => name)).size, rendererEntrie
 
 for (const [name, path] of rendererEntries) {
   const source = readProject(path)
+  const languageStartIndex = source.indexOf('initializeRendererLanguage()')
   const initializeIndex = source.indexOf('await initializeRendererLanguage()')
   const productImportIndex = source.indexOf("import('./")
   const createIndex = source.indexOf('createApp(')
@@ -33,11 +34,20 @@ for (const [name, path] of rendererEntries) {
 
   assert(source.includes("@renderer/common/i18n/rendererLanguage"), `${name} must import shared language initialization`)
   assert(source.includes("@renderer/common/i18n/i18n.helper"), `${name} must import the shared Vue i18n plugin`)
-  assert(initializeIndex >= 0, `${name} must await shared language initialization`)
-  assert(productImportIndex > initializeIndex, `${name} must evaluate product UI only after language initialization`)
-  assert(createIndex > initializeIndex, `${name} must initialize language before createApp`)
+  assert(languageStartIndex >= 0, `${name} must start shared language initialization`)
+  if (name === 'home') {
+    assert.equal(initializeIndex, -1, 'home language initialization must not gate Vue mount')
+    assert(
+      source.includes('initializeRendererLanguage().catch('),
+      'home must observe background language initialization failures'
+    )
+  } else {
+    assert(initializeIndex >= 0, `${name} must await shared language initialization`)
+  }
+  assert(productImportIndex > languageStartIndex, `${name} must start language initialization before evaluating product UI`)
+  assert(createIndex > languageStartIndex, `${name} must start language initialization before createApp`)
   assert(pluginIndex > createIndex && pluginIndex < mountIndex, `${name} must install Vue i18n before mount`)
-  assert(mountIndex > pluginIndex, `${name} must mount only after language initialization and plugin install`)
+  assert(mountIndex > pluginIndex, `${name} must mount only after plugin install`)
 }
 
 const rendererI18n = readProject('src/renderer/common/i18n/i18n.helper.ts')
@@ -108,6 +118,12 @@ assert(
 assert(
   mainWindow.includes('if (!canCreate()) return null'),
   'Home creation must stop if shutdown wins its persisted layout wait'
+)
+
+const sqliteWindow = readProject('src/main/windows/sqliteWindow.helper.ts')
+assert(
+  sqliteWindow.includes('protected showOnReady = false'),
+  'the internal Core SQLite window must remain hidden in every environment'
 )
 
 const mainHandler = readProject('src/main/xpc/applicationLanguage.handler.ts')

@@ -5,8 +5,10 @@ Status: Current delivery contract
 ## Purpose
 
 Bitterless owns one application language across every first-party renderer UI. The Home settings
-surface is the only user-facing language control, the main process owns the current runtime value,
-and every renderer must initialize from that value before its first Vue mount.
+surface is the only user-facing language control and the main process owns the current runtime
+value. Ordinary renderers initialize from that value before their first Vue mount; the critical
+Home shell uses the explicit English bootstrap locale while the same initialization runs in the
+background so language IPC can never leave the main window blank.
 
 This contract covers language configuration and synchronization. Existing product copy is translated
 when it already uses the shared message schema; migrating every remaining hard-coded Maestro string
@@ -41,10 +43,12 @@ main-process application language service
       | get current language    | set language from Home Settings
       v                         |
 renderer bootstrap         Home renderer
-      |
-      | subscribe before mount
-      v
-Vue app mounts with the correct locale
+      |                         |
+      | subscribe before mount  | subscribe + request without awaiting
+      v                         v
+Vue app mounts with       Home shell mounts with bootstrap locale
+the current locale              |
+                                +-- snapshot/broadcast --> live locale update
 
 main language change -- broadcast --> every live first-party renderer
 ```
@@ -61,16 +65,23 @@ main language change -- broadcast --> every live first-party renderer
 
 ## Initialization contract
 
-Every in-scope renderer must:
+Every in-scope renderer must register the shared language-change subscriber, request the current
+language from the main process, and apply an accepted snapshot to the shared reactive messages,
+Vue i18n locale, and document `lang` attribute.
 
-1. register the shared language-change subscriber;
-2. request the current language from the main process;
-3. apply it to the shared reactive messages, Vue i18n locale, and document `lang` attribute;
-4. only then create and mount its Vue application.
+- Todo, Connector, EyesOnAgents, Omni, and Maestro renderers await the initial snapshot before
+  mounting because their windows are not the foreground recovery surface.
+- Home starts subscribe-before-fetch before importing and mounting its application, but does not
+  await the request. The shared English messages are its explicit temporary bootstrap locale.
+- A pending language request has no timeout semantics and cannot delay Home. Rejection is logged;
+  a later authoritative broadcast still replaces the bootstrap locale.
+- Home rendering continues with the bootstrap locale until the first authoritative snapshot
+  arrives.
 
 A renderer destroyed before a broadcast and later recreated therefore obtains the current language
-from main rather than relying on event history. Missing or invalid required language state is an
-explicit initialization error; the renderer must not silently mount in a guessed/default locale.
+from main rather than relying on event history. Missing or invalid required language state remains
+an explicit initialization error for ordinary renderers; Home fails open only to the documented
+bootstrap locale so the recovery UI remains usable.
 
 ## Live-change contract
 
@@ -82,8 +93,9 @@ explicit initialization error; the renderer must not silently mount in a guessed
 
 ## Verification
 
-- A deterministic source guard enumerates every in-scope renderer entry and proves that it awaits
-  shared language initialization before mounting and installs the Vue i18n plugin.
+- A deterministic source guard enumerates every in-scope renderer entry, proves that ordinary
+  renderers await shared language initialization, and proves that Home starts it without using it
+  as a mount gate. Every renderer installs the Vue i18n plugin.
 - Contract tests cover invalid values, persistence-before-broadcast ordering, and renderer startup.
 - Electron E2E changes language from Home, observes live renderer updates, destroys/recreates a
   sub-application window, and observes the committed language before its first rendered state.

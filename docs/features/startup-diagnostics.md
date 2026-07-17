@@ -36,6 +36,11 @@ app.whenReady
   blocks Home, helper refresh, Tray, or other independent work.
 - Home receives an in-memory system-language fallback before it mounts. Successful Core readiness
   later hydrates and broadcasts the persisted language.
+- Home's renderer must never await language IPC before mounting its shell. It starts the shared
+  subscribe-before-fetch flow, mounts immediately with the explicit bootstrap locale, and applies
+  the main-owned snapshot whenever that request or a later broadcast arrives.
+- The Core SQLite BrowserWindow is an internal renderer and remains hidden in every build mode. It
+  must never focus, cover, or visually compete with Home while the two startup lanes run together.
 - Home uses default window bounds during foreground startup. Persistence reads must not delay its
   creation.
 - Startup diagnostics are main-owned, in-memory state. They cannot depend on SQLite persistence.
@@ -68,6 +73,8 @@ one or more startup issues exist.
   warning.
 - The renderer subscribes to diagnostics changes before fetching the current snapshot so failures
   that happen before Home mounts are not lost.
+- Diagnostics delivery starts after the Home shell mounts; diagnostics IPC itself cannot become a
+  new mount gate.
 
 ## State boundary
 
@@ -76,4 +83,3 @@ one or more startup issues exist.
 | Main process | revisioned startup issue snapshot | getter plus `electron-xpc` broadcast |
 | Home MenuBar store | latest accepted snapshot | subscribe-before-fetch, ignore stale revision |
 | MenuBar view | issue count, localized stages, messages | conditional button and hover/focus tooltip |
-

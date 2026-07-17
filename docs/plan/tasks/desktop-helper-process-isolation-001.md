@@ -37,6 +37,10 @@ first without allowing its readiness or failure to block the visible application
   a startup issue.
 - Initialize a system-language fallback, create Home with default bounds, refresh the Todo shim,
   and initialize Tray while SQLite remains pending.
+- Keep the internal SQLite BrowserWindow hidden in every mode so concurrent Core startup cannot
+  cover or focus ahead of Home.
+- Start Home's language subscription and snapshot request before mount, but do not await the request
+  as a mount gate. Mount with the documented bootstrap locale and hydrate it in place.
 - After SQLite success, hydrate the durable language and start SQLite-dependent MCP/EyesOnAgents
   work. On explicit failure, keep the GUI alive and publish a revisioned startup issue.
 - Show startup issues in a background-led Home menubar button; hover or keyboard focus lists the
@@ -50,12 +54,14 @@ first without allowing its readiness or failure to block the visible application
 - `src/shared/startup/`
 - `src/main/xpc/mainWindow.handler.ts`
 - `src/main/windows/mainWindow.helper.ts`
+- `src/main/windows/sqliteWindow.helper.ts`
 - `src/main/i18n/applicationLanguage.service.ts`
 - `src/preload/sqlite/sqlite.preload.ts`
 - `src/preload/sqlite/sqliteHelper/sqlite.manager.ts`
 - `src/preload/sqlite/sqliteHelper/coreSqliteReadProbe.ts`
 - `src/preload/sqlite/messageServer/messageServer.ts`
 - `src/renderer/home/src/components/MenuBar/`
+- `src/renderer/home/src/main.ts`
 - `src/renderer/common/i18n/`
 - `src/shared/i18n/applicationLanguage.ts`
 - `src/shared/mcp/mcpBridge.type.ts`
@@ -79,6 +85,8 @@ first without allowing its readiness or failure to block the visible application
   schema count, and fails closed for invalid/unreadable results before Core can report readiness.
 - Diagnostics checks cover subscribe-before-fetch, revision ordering, stage replacement/clearing,
   and menubar visibility. Owner verification exercises the real preload-to-main lifecycle.
+- Owner verification confirms that only Home becomes visible, its shell renders while language IPC
+  is pending, and a later language snapshot updates the mounted UI.
 - Relevant typechecks, build, compiled-helper smoke checks, and `git diff --check` are release
   verification gates; the latest real-startup check is intentionally handed to the owner.
 
@@ -112,3 +120,7 @@ The next owner run exposed a 30-second target-registration timeout. The owner cl
 SQLite-first is launch priority rather than a readiness barrier. The current correction removes
 elapsed-time failure semantics, continues foreground startup, and surfaces explicit failures in
 the Home menubar.
+
+The following owner run exposed the remaining foreground races: the development SQLite renderer
+could surface above Home, while Home itself still treated language IPC as a pre-mount barrier. The
+current correction keeps the internal renderer hidden and makes Home language hydration fail-open.

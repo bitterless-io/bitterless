@@ -25,7 +25,14 @@ setCustomComponents({
 });
 
 const bootstrap = async (): Promise<void> => {
-  await initializeRendererLanguage();
+  try {
+    void initializeRendererLanguage().catch((error: unknown) => {
+      console.error('[Home] Renderer language initialization failed:', error);
+    });
+  } catch (error) {
+    console.error('[Home] Renderer language initialization failed:', error);
+  }
+
   const [{ default: App }, { default: router }] = await Promise.all([
     import('./App.vue'),
     import('./router'),
