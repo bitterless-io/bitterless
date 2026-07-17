@@ -58,14 +58,40 @@ assert(rendererBootstrap.includes('snapshot.revision < appliedSnapshot.revision'
 assert(rendererBootstrap.includes('parseApplicationLanguageSnapshot'), 'renderer bootstrap must validate main snapshots')
 
 const appMain = readProject('src/main/app.main.ts')
-const sqliteReadyIndex = appMain.indexOf('await coreSqliteBoot.ready()')
-const mainLanguageIndex = appMain.indexOf('await applicationLanguageService.initialize()')
+const sqliteReadyIndex = appMain.indexOf('coreSqliteBoot.ready()')
+const fallbackIndex = appMain.indexOf('initializeApplicationLanguageFallback();')
+const startGuiIndex = appMain.indexOf('const startGui = async')
+const firstStartGuiAwaitIndex = appMain.indexOf('await ', startGuiIndex)
+const sqliteCreateIndex = appMain.indexOf('sqliteWindowHelper.create()', startGuiIndex)
+const mainLanguageIndex = appMain.indexOf('applicationLanguageService.initialize()')
 const homeCreateIndex = appMain.indexOf('await mainWindowHelper.create()')
 const trayCreateIndex = appMain.indexOf('trayHelper.init(mainWindowHelper)')
+const optionalStartIndex = appMain.indexOf('optionalIntegrationsLifecycle.start(')
+const earlyQuitFallbackIndex = appMain.lastIndexOf(
+  'initializeApplicationLanguageFallback();',
+  appMain.indexOf('await dialogHelper.showQuitConfirmDialog()')
+)
 assert(sqliteReadyIndex >= 0, 'main startup must await core SQLite readiness')
-assert(mainLanguageIndex > sqliteReadyIndex, 'main language must hydrate after core SQLite is ready')
-assert(homeCreateIndex > mainLanguageIndex, 'Home must be created after main language hydration')
-assert(trayCreateIndex > mainLanguageIndex, 'Tray must be created after main language hydration')
+assert(fallbackIndex > startGuiIndex, 'main startup must synchronously initialize a language fallback')
+assert(fallbackIndex < firstStartGuiAwaitIndex, 'language fallback must precede the first GUI startup await')
+assert(fallbackIndex < sqliteCreateIndex, 'language fallback must precede hidden SQLite creation')
+assert(homeCreateIndex > sqliteCreateIndex, 'Home must follow the hidden SQLite document load')
+assert(homeCreateIndex < sqliteReadyIndex, 'Core SQLite DAO readiness must not gate Home creation')
+assert(homeCreateIndex < mainLanguageIndex, 'persisted language hydration must not gate Home creation')
+assert(mainLanguageIndex > sqliteReadyIndex, 'persisted language may hydrate only after Core SQLite readiness')
+assert(optionalStartIndex > homeCreateIndex, 'optional startup must begin only after Home creation')
+assert(trayCreateIndex > fallbackIndex, 'Tray must be created after fallback language initialization')
+assert(
+  earlyQuitFallbackIndex >= 0,
+  'early macOS quit must ensure fallback language before opening its localized dialog'
+)
+
+const mainWindow = readProject('src/main/windows/mainWindow.helper.ts')
+assert(mainWindow.includes('MAIN_WINDOW_LAYOUT_TIMEOUT_MS'), 'saved layout reads need an explicit bound')
+assert(
+  mainWindow.includes('withStartupTimeout(this.loadLayout()'),
+  'Home creation must bound the persisted layout read'
+)
 
 const mainHandler = readProject('src/main/xpc/applicationLanguage.handler.ts')
 assert(mainHandler.includes('implements ApplicationLanguageApi'), 'main language handler must implement the shared typed API')
@@ -122,7 +148,91 @@ assert.equal(
 const contractModule = await import(
   `data:text/javascript;base64,${Buffer.from(transpiled.outputText).toString('base64')}`
 )
-const { ApplicationLanguageCoordinator, ApplicationLanguageContractError } = contractModule
+const {
+  ApplicationLanguageCoordinator,
+  ApplicationLanguageContractError,
+  resolveSystemAppLanguage
+} = contractModule
+
+assert.equal(resolveSystemAppLanguage('zh-CN'), 'zh')
+assert.equal(resolveSystemAppLanguage('ZH_hant'), 'zh')
+assert.equal(resolveSystemAppLanguage('en-US'), 'en')
+assert.equal(resolveSystemAppLanguage('fr-FR'), 'en')
+assert.equal(resolveSystemAppLanguage(undefined), 'en')
+
+const fallbackEvents = []
+let releaseFallbackRead
+const fallbackReadGate = new Promise((resolveGate) => {
+  releaseFallbackRead = resolveGate
+})
+const fallbackCoordinator = new ApplicationLanguageCoordinator(
+  {
+    read: async () => {
+      fallbackEvents.push('read:start')
+      const language = await fallbackReadGate
+      fallbackEvents.push(`read:end:${language}`)
+      return language
+    },
+    write: async () => undefined
+  },
+  {
+    apply: (language) => fallbackEvents.push(`apply:${language}`),
+    broadcast: (snapshot) => fallbackEvents.push(`broadcast:${snapshot.language}:${snapshot.revision}`)
+  }
+)
+assert.deepEqual(fallbackCoordinator.initializeFallback('en'), { language: 'en', revision: 0 })
+assert.deepEqual(fallbackCoordinator.getSnapshot(), { language: 'en', revision: 0 })
+assert.deepEqual(fallbackEvents, ['apply:en'])
+const pendingFallbackHydration = fallbackCoordinator.initialize()
+await Promise.resolve()
+assert.deepEqual(fallbackCoordinator.getSnapshot(), { language: 'en', revision: 0 })
+assert.deepEqual(fallbackEvents, ['apply:en', 'read:start'])
+releaseFallbackRead('zh')
+assert.deepEqual(await pendingFallbackHydration, { language: 'zh', revision: 1 })
+assert.deepEqual(fallbackEvents, [
+  'apply:en',
+  'read:start',
+  'read:end:zh',
+  'apply:zh',
+  'broadcast:zh:1'
+])
+
+const sameFallbackEffects = []
+const sameFallbackCoordinator = new ApplicationLanguageCoordinator(
+  { read: async () => 'zh', write: async () => undefined },
+  {
+    apply: (language) => sameFallbackEffects.push(`apply:${language}`),
+    broadcast: (snapshot) => sameFallbackEffects.push(`broadcast:${snapshot.language}`)
+  }
+)
+sameFallbackCoordinator.initializeFallback('zh')
+assert.deepEqual(await sameFallbackCoordinator.initialize(), { language: 'zh', revision: 0 })
+assert.deepEqual(sameFallbackEffects, ['apply:zh'])
+
+const invalidPersistedEffects = []
+const invalidPersistedCoordinator = new ApplicationLanguageCoordinator(
+  { read: async () => 'fr', write: async () => undefined },
+  {
+    apply: (language) => invalidPersistedEffects.push(`apply:${language}`),
+    broadcast: (snapshot) => invalidPersistedEffects.push(`broadcast:${snapshot.language}`)
+  }
+)
+invalidPersistedCoordinator.initializeFallback('en')
+await assert.rejects(
+  invalidPersistedCoordinator.initialize(),
+  (error) => error instanceof ApplicationLanguageContractError && error.code === 'INVALID_APP_LANGUAGE'
+)
+assert.deepEqual(invalidPersistedCoordinator.getSnapshot(), { language: 'en', revision: 0 })
+assert.deepEqual(invalidPersistedEffects, ['apply:en'])
+
+const invalidFallbackCoordinator = new ApplicationLanguageCoordinator(
+  { read: async () => 'en', write: async () => undefined },
+  { apply: () => undefined, broadcast: () => undefined }
+)
+assert.throws(
+  () => invalidFallbackCoordinator.initializeFallback('fr'),
+  (error) => error instanceof ApplicationLanguageContractError && error.code === 'INVALID_APP_LANGUAGE'
+)
 
 const invalidCoordinator = new ApplicationLanguageCoordinator(
   { read: async () => 'fr', write: async () => undefined },

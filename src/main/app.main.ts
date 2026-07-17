@@ -19,6 +19,7 @@ import { mcpBridgeServer } from './mcp/mcpBridge.server';
 import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
 import {
   OptionalStartupLifecycle,
+  StartupTimeoutError,
   type OptionalStartupStageGuard,
   withStartupTimeout,
 } from './mcp/optionalStartupLifecycle.service';
@@ -33,6 +34,7 @@ import {
   parseMcpBridgeEndpointArg,
   type CoreSqliteBootApi,
 } from '@shared/mcp/mcpBridge.shared';
+import { ApplicationLanguageContractError } from '@shared/i18n/applicationLanguage';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
@@ -289,12 +291,19 @@ const startOptionalIntegrations = async (
   }
   if (!canStartNextStage()) return;
 
+  const persistedLanguageInitialization = applicationLanguageService.initialize();
   try {
-    await withStartupTimeout(applicationLanguageService.initialize(), {
+    await withStartupTimeout(persistedLanguageInitialization, {
       label: 'Persisted application language read',
       timeoutMs: PERSISTED_LANGUAGE_TIMEOUT_MS,
     });
   } catch (err) {
+    if (err instanceof ApplicationLanguageContractError) throw err;
+    if (err instanceof StartupTimeoutError) {
+      void persistedLanguageInitialization.catch((lateErr: unknown) => {
+        console.error('[app] Late persisted language hydration failed:', lateErr);
+      });
+    }
     console.warn('[app] Persisted language unavailable; keeping system fallback:', err);
   }
   if (!canStartNextStage()) return;

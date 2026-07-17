@@ -107,8 +107,8 @@ export class ApplicationLanguageCoordinator {
   }
 
   initializeFallback(value: unknown): ApplicationLanguageSnapshot {
-    if (this.snapshot) return this.getSnapshot();
     const language = parseAppLanguage(value);
+    if (this.snapshot) return this.getSnapshot();
     this.snapshot = { language, revision: 0 };
     this.stateVersion += 1;
     this.effects.apply(language);
