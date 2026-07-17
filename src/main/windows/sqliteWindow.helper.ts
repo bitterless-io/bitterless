@@ -12,8 +12,8 @@ class SqliteWindowHelper extends WindowHelper {
   };
   protected showOnReady = !(import.meta.env.VITE_ENV === 'prod' && import.meta.env.VITE_MODE === 'release');
 
-  create(): BrowserWindow {
-    const win = super.create();
+  create(onCreated?: (window: BrowserWindow) => void): BrowserWindow {
+    const win = super.create(onCreated);
 
     win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
       callback({

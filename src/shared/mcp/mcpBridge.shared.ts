@@ -4,6 +4,8 @@ import type { McpBridgeEndpoint } from './mcpBridge.type';
 export type {
   CoreSqliteBootApi,
   CoreSqliteBootResult,
+  CoreSqliteReadyParams,
+  CoreSqliteTargetPreloadRegistration,
   LocalRpcFailure,
   LocalRpcRequest,
   LocalRpcResponse,
@@ -15,6 +17,8 @@ export type {
 
 export const MCP_LOCAL_RPC_MAX_BYTES = 8 * 1024 * 1024;
 export const MCP_BRIDGE_PATH_ARG = '--mcp-bridge-path';
+export const CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT =
+  'core-sqlite/target-preload-registered';
 
 const assertSafeArgument = (value: string, label: string): void => {
   if (!value || /[\0\r\n]/.test(value)) {

@@ -43,17 +43,17 @@ when Ral explicitly asks to test that local instance.
 
 ## Helper lifecycle
 
-1. Before any SQLite readiness gate, the GUI writes `<userData>/bin/bitterless-mcp`; opening the
-   integration guide may refresh the same owned file.
-2. The shim sets `ELECTRON_RUN_AS_NODE=1` and invokes the dedicated bundled
+1. GUI startup first completes Core SQLite initialization. A SQLite failure aborts the remaining
+   startup and does not install or refresh helper artifacts.
+2. After SQLite succeeds, the GUI writes `<userData>/bin/bitterless-mcp`; opening the integration
+   guide may refresh the same owned file.
+3. The shim sets `ELECTRON_RUN_AS_NODE=1` and invokes the dedicated bundled
    `out/main/mcpHelper.js` entry through Electron's executable. It never enters the GUI application,
    creates a `BrowserWindow`, or owns a Dock application.
-3. The shim embeds the exact bridge endpoint that created it. The stdio helper uses this pinned
+4. The shim embeds the exact bridge endpoint that created it. The stdio helper uses this pinned
    endpoint instead of recalculating a target from a mutable development `package.json.name`.
-4. After Core SQLite readiness, the GUI starts one bridge on its own endpoint. A live existing
+5. The GUI starts one bridge on its own endpoint. A live existing
    socket is an ownership error; only a confirmed stale socket may be removed.
-5. If SQLite startup is degraded, the Node-only shim remains installed while the bridge stays
-   unavailable. This separates helper migration from database availability.
 
 Previously generated app-entry launchers remain compatible only as a transition: current app-main
 helper mode is windowless and does not acquire the GUI singleton. The next launch of the owning

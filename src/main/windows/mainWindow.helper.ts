@@ -13,8 +13,6 @@ const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
 
 interface MainWindowCreateOptions {
   canCreate?: () => boolean;
-  loadPersistedLayout?: boolean;
-  showImmediately?: boolean;
 }
 
 class MainWindowHelper extends WindowHelper {
@@ -83,19 +81,15 @@ class MainWindowHelper extends WindowHelper {
 
   async create({
     canCreate = () => true,
-    loadPersistedLayout = true,
-    showImmediately = false,
   }: MainWindowCreateOptions = {}): Promise<any | null> {
     let savedLayout: WindowLayout | null = null;
-    if (loadPersistedLayout) {
-      try {
-        savedLayout = await withStartupTimeout(this.loadLayout(), {
-          label: 'Main window layout read',
-          timeoutMs: MAIN_WINDOW_LAYOUT_TIMEOUT_MS,
-        });
-      } catch (err) {
-        console.warn('[MainWindowHelper] Using default layout because saved layout is unavailable:', err);
-      }
+    try {
+      savedLayout = await withStartupTimeout(this.loadLayout(), {
+        label: 'Main window layout read',
+        timeoutMs: MAIN_WINDOW_LAYOUT_TIMEOUT_MS,
+      });
+    } catch (err) {
+      console.warn('[MainWindowHelper] Using default layout because saved layout is unavailable:', err);
     }
     if (savedLayout) {
       this.windowOptions = {
@@ -109,10 +103,6 @@ class MainWindowHelper extends WindowHelper {
     if (!canCreate()) return null;
 
     const window = super.create();
-    if (showImmediately) {
-      window.show();
-      window.focus();
-    }
 
     window.on('move', () => {
       this.debouncedSaveLayout();

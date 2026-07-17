@@ -11,7 +11,7 @@ export abstract class WindowHelper {
   protected abstract windowOptions: Partial<BrowserWindowConstructorOptions>;
   protected showOnReady = true;
 
-  create(): BrowserWindow {
+  create(onCreated?: (window: BrowserWindow) => void): BrowserWindow {
     this.isQuitting = false;
 
     const primaryDisplay = screen.getPrimaryDisplay();
@@ -38,6 +38,7 @@ export abstract class WindowHelper {
     };
 
     this.browserWindow = new BrowserWindow(options);
+    onCreated?.(this.browserWindow);
 
     this.browserWindow.on('ready-to-show', () => {
       if (this.showOnReady) {

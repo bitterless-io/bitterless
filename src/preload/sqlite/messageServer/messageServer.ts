@@ -4,7 +4,6 @@ import { langGraphHelper } from '../../base/langGraph/langGraph.helper';
 import type { ChatMessageInput, ModelConfig, PerformanceEntry } from '../../base/langGraph/langGraph.helper';
 import type { ProxyConfig } from '../../base/langGraph/model.adaptor';
 import { xpcRenderer } from 'electron-xpc/preload';
-import { sqliteManager } from '../sqliteHelper/sqlite.manager';
 
 interface ProxySetting {
   switch: boolean;
@@ -33,7 +32,7 @@ const getSystemPrompt = async (): Promise<string> => {
 };
 
 let currentAbortController: AbortController | null = null;
-let isSqliteInitialized = false;
+let isMessageServerInitialized = false;
 
 const sendMessage = async (sessionId: string): Promise<void> => {
   try {
@@ -99,15 +98,10 @@ const sendMessage = async (sessionId: string): Promise<void> => {
   }
 };
 
-export const initMessageServer = async (): Promise<void> => {
-  try {
-    await sqliteManager.init();
-    isSqliteInitialized = true;
-  } catch (err: any) {
-    isSqliteInitialized = false;
-    console.error('[messageServer] SQLite initialization failed:', err.message);
-    throw new Error(`SQLite initialization failed: ${err.message}`);
-  }
+export const initMessageServer = (): void => {
+  if (isMessageServerInitialized) return;
+  isMessageServerInitialized = true;
+
   xpcRenderer.handle('chat/stop', async () => {
     currentAbortController?.abort();
     currentAbortController = null;
@@ -115,16 +109,6 @@ export const initMessageServer = async (): Promise<void> => {
   });
 
   xpcRenderer.handle('chat/send', async (payload) => {
-    if (!isSqliteInitialized) {
-      const errorMsg = 'SQLite database is not initialized';
-      console.error('[messageServer]', errorMsg);
-      const { sessionId } = payload.params || {};
-      if (sessionId) {
-        xpcRenderer.send('chat/stream/done', { sessionId, content: '', error: errorMsg });
-      }
-      return null;
-    }
-
     const { sessionId, content } = payload.params || {};
     if (!sessionId || !content) {
       console.error('[messageServer] missing sessionId or content');

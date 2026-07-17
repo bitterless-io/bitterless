@@ -9,6 +9,20 @@ import JSON5 from 'json5'
 
 dotenvConfig({ path: resolve('.env.rig') })
 
+const packageMetadata = JSON.parse(readFileSync(resolve('package.json'), 'utf-8')) as {
+  version_code?: unknown
+}
+if (
+  typeof packageMetadata.version_code !== 'string' ||
+  !/^\d{12}$/.test(packageMetadata.version_code)
+) {
+  throw new Error('package.json version_code must be a 12-digit string')
+}
+
+const bitterlessPreloadBuildDefine = {
+  __BITTERLESS_VERSION_CODE__: JSON.stringify(packageMetadata.version_code)
+}
+
 const maestroBuildDefine = {
   __COACH_BUILD_REGION__: JSON.stringify(process.env.VITE_COACH_REGION || 'SG'),
   __COACH_AI_CRMS_RELAY_BASE_URL__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL || ''),
@@ -89,7 +103,7 @@ export default defineConfig({
     }
   },
   preload: {
-    define: maestroBuildDefine,
+    define: { ...maestroBuildDefine, ...bitterlessPreloadBuildDefine },
     build: {
       rollupOptions: {
         input: {

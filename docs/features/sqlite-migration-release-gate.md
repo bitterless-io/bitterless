@@ -43,6 +43,21 @@ macOS ARM64, macOS x64, and Windows x64.
   is required because older releases used incompatible version-number widths and corrected entries
   must safely replay.
 
+## Runtime Core readiness
+
+- Core SQLite readiness is owned by the target SQLite preload, not renderer HTML
+  `did-finish-load`.
+- Only the real `/sqlite/index.html` preload registers the boot handler and broadcasts a generated
+  `targetId`. Main calls `ready({ targetId })` only after that signal; the initial `about:blank`
+  preload cannot satisfy or overwrite the gate.
+- After applying the SQLCipher key and database pragmas, runtime executes
+  `SELECT COUNT(*) AS object_count FROM sqlite_master`. An empty new database returns `0`; an
+  existing readable database returns a non-negative count. Query failure or an invalid result
+  fails startup before Home or integrations initialize.
+- The ready result is successful only after the read probe, current tables, ordered migrations, and
+  final Core schema verification all complete. Target registration and ready RPC each have a
+  fatal 30-second deadline; there is no degraded Home path.
+
 ## Historical upgrade matrix
 
 The audit creates disposable SQLite databases through a pure-Node adapter matching the production

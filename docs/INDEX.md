@@ -58,9 +58,8 @@ design document.
 
 ## Issues
 
-- [Desktop helper Dock and Home startup](issues/archived/desktop-helper-dock-and-home-startup.md) -
-  fixed: Node-only helper launchers, GUI singleton ownership, and bounded degraded startup keep one
-  visible Home window without helper Dock applications.
+- [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
+  retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:
   decorative borders replaced by Todo-style background-led Domain and thread-item hierarchy.
 - [EyesOnAgents Desktop Focus](issues/archived/eyes-on-agents-desktop-focus.md) - fixed: active Codex Desktop tasks

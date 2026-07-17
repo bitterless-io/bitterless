@@ -2,7 +2,7 @@ import { app, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { electronApp, optimizer } from '@electron-toolkit/utils';
-import { createXpcMainEmitter } from 'electron-xpc/main';
+import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main';
 import { packageMainHelper } from '../shared/packageHelper/main/package.helper';
 import { pathMainHelper } from '../shared/pathHelper/main/pathMain.helper';
 import { mainWindowHelper } from './windows/mainWindow.helper';
@@ -19,7 +19,6 @@ import { mcpBridgeServer } from './mcp/mcpBridge.server';
 import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
 import {
   OptionalStartupLifecycle,
-  StartupTimeoutError,
   type OptionalStartupStageGuard,
   withStartupTimeout,
 } from './mcp/optionalStartupLifecycle.service';
@@ -30,42 +29,145 @@ import { eyesOnAgentsWindowHandler } from './xpc/eyesOnAgentsWindow.handler';
 import { applicationLanguageService } from './i18n/applicationLanguage.service';
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot';
 import {
+  CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT,
   MCP_BRIDGE_PATH_ARG,
   parseMcpBridgeEndpointArg,
   type CoreSqliteBootApi,
+  type CoreSqliteTargetPreloadRegistration,
 } from '@shared/mcp/mcpBridge.shared';
-import { ApplicationLanguageContractError } from '@shared/i18n/applicationLanguage';
+import { runCoreGatedGuiStartup } from './startup/guiStartup.service';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
-const SQLITE_DOCUMENT_LOAD_TIMEOUT_MS = 3000;
-const CORE_SQLITE_READY_TIMEOUT_MS = 3000;
-const PERSISTED_LANGUAGE_TIMEOUT_MS = 1000;
+const SQLITE_STARTUP_TIMEOUT_MS = 30000;
 
 if (isHelperMode && process.platform === 'darwin') {
   app.setActivationPolicy('prohibited');
 }
 
-const waitForWindowLoad = (window: Electron.BrowserWindow): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const cleanup = (): void => {
-      window.webContents.removeListener('did-finish-load', onLoaded);
-      window.webContents.removeListener('did-fail-load', onFailed);
-    };
-    const onLoaded = (): void => {
-      cleanup();
-      resolve();
-    };
-    const onFailed = (_event: Electron.Event, code: number, description: string): void => {
-      cleanup();
-      reject(new Error(`[sqlite] hidden window failed to load: ${code} ${description}`));
-    };
-    window.webContents.once('did-finish-load', onLoaded);
-    window.webContents.once('did-fail-load', onFailed);
+interface CoreSqliteTargetRegistrationWaiter {
+  promise: Promise<string>;
+  guardCoreReady<T>(operation: Promise<T>): Promise<T>;
+  observeWindow(window: Electron.BrowserWindow): void;
+  dispose(): void;
+}
+
+const createCoreSqliteTargetRegistrationWaiter = (): CoreSqliteTargetRegistrationWaiter => {
+  let resolveRegistration: ((targetId: string) => void) | null = null;
+  let rejectRegistration: ((err: Error) => void) | null = null;
+  let rejectInvalidation: ((err: Error) => void) | null = null;
+  let invalidationError: Error | null = null;
+  let observedWindow: Electron.BrowserWindow | null = null;
+  let registeredTargetId: string | null = null;
+  let isDisposed = false;
+
+  const cleanup = (): void => {
+    if (!observedWindow) return;
+    observedWindow.webContents.removeListener('did-fail-load', onFailedLoad);
+    observedWindow.webContents.removeListener('preload-error', onPreloadError);
+    observedWindow.webContents.removeListener('render-process-gone', onRenderProcessGone);
+    observedWindow.webContents.removeListener('destroyed', onDestroyed);
+    observedWindow.webContents.removeListener('did-start-navigation', onStartedNavigation);
+    observedWindow.removeListener('closed', onClosed);
+    observedWindow = null;
+  };
+  const dispose = (): void => {
+    if (isDisposed) return;
+    isDisposed = true;
+    cleanup();
+  };
+  const fail = (err: Error): void => {
+    if (isDisposed) return;
+    dispose();
+    if (!registeredTargetId) {
+      rejectRegistration?.(err);
+    } else if (rejectInvalidation) {
+      rejectInvalidation(err);
+    } else {
+      invalidationError = err;
+    }
+  };
+  const resolve = (payload: { params?: unknown }): void => {
+    if (isDisposed || registeredTargetId) return;
+    const registration = payload.params as Partial<CoreSqliteTargetPreloadRegistration> | undefined;
+    const targetId = registration?.targetId;
+    if (typeof targetId !== 'string' || !targetId.trim()) {
+      fail(new Error('[sqlite] target preload registration has no targetId'));
+      return;
+    }
+    registeredTargetId = targetId;
+    console.log(`[app] Core SQLite target preload registered: ${registeredTargetId}`);
+    resolveRegistration?.(registeredTargetId);
+  };
+  const onFailedLoad = (
+    _event: Electron.Event,
+    code: number,
+    description: string,
+    _url: string,
+    isMainFrame: boolean,
+  ): void => {
+    if (isMainFrame) fail(new Error(`[sqlite] hidden window failed to load: ${code} ${description}`));
+  };
+  const onRenderProcessGone = (
+    _event: Electron.Event,
+    details: Electron.RenderProcessGoneDetails,
+  ): void => {
+    fail(new Error(`[sqlite] hidden renderer exited: ${details.reason}`));
+  };
+  const onPreloadError = (
+    _event: Electron.Event,
+    preloadPath: string,
+    error: Error,
+  ): void => {
+    fail(new Error(`[sqlite] preload error in ${preloadPath}: ${error.message}`));
+  };
+  const onDestroyed = (): void => {
+    fail(new Error('[sqlite] hidden webContents destroyed during Core SQLite startup'));
+  };
+  const onClosed = (): void => {
+    fail(new Error('[sqlite] hidden window closed during Core SQLite startup'));
+  };
+  const onStartedNavigation = (
+    _event: Electron.Event,
+    url: string,
+    isInPlace: boolean,
+    isMainFrame: boolean,
+  ): void => {
+    if (registeredTargetId && isMainFrame && !isInPlace) {
+      fail(new Error(`[sqlite] hidden window navigated during Core SQLite startup: ${url}`));
+    }
+  };
+
+  const promise = new Promise<string>((resolvePromise, rejectPromise) => {
+    resolveRegistration = resolvePromise;
+    rejectRegistration = rejectPromise;
   });
+  xpcMain.subscribe(CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT, resolve);
+
+  return {
+    promise,
+    guardCoreReady: async (operation) => {
+      if (invalidationError) throw invalidationError;
+      const invalidationPromise = new Promise<never>((_resolve, rejectPromise) => {
+        rejectInvalidation = rejectPromise;
+      });
+      return await Promise.race([operation, invalidationPromise]);
+    },
+    observeWindow: (window) => {
+      if (isDisposed) return;
+      observedWindow = window;
+      window.webContents.on('did-fail-load', onFailedLoad);
+      window.webContents.once('preload-error', onPreloadError);
+      window.webContents.once('render-process-gone', onRenderProcessGone);
+      window.webContents.once('destroyed', onDestroyed);
+      window.webContents.on('did-start-navigation', onStartedNavigation);
+      window.once('closed', onClosed);
+    },
+    dispose,
+  };
 };
 
 const configureE2EUserData = (): void => {
@@ -235,102 +337,94 @@ const runLegacyMcpHelper = async (): Promise<void> => {
 };
 
 const startGui = async (): Promise<void> => {
-  initializeApplicationLanguageFallback();
-  installE2ENetworkGuard();
-  electronApp.setAppUserModelId('com.electron');
-  if (process.platform === 'darwin') {
-    app.dock.setBadge('');
-  }
-  const { initXpc } = await import('./xpc/xpc.helper');
-  initXpc();
-
-  packageMainHelper.init();
-  pathMainHelper.init();
-  initDirectory();
-  void mcpHandler.ensureShim().catch((err: unknown) => {
-    console.warn('[app] Early MCP helper generation failed:', err);
+  let targetPreloadRegistration: CoreSqliteTargetRegistrationWaiter | null = null;
+  let coreSqliteTargetId: string | null = null;
+  await runCoreGatedGuiStartup({
+    initializeCorePrerequisites: async () => {
+      const { initXpc } = await import('./xpc/xpc.helper');
+      if (isShutdownStarted) return;
+      initXpc();
+      packageMainHelper.init();
+      pathMainHelper.init();
+      initDirectory();
+      app.on('browser-window-created', (_, window) => {
+        optimizer.watchWindowShortcuts(window);
+      });
+      targetPreloadRegistration = createCoreSqliteTargetRegistrationWaiter();
+      sqliteWindowHelper.create((window) => {
+        targetPreloadRegistration?.observeWindow(window);
+      });
+    },
+    waitForTargetPreloadRegistration: async () => {
+      if (!targetPreloadRegistration) {
+        throw new Error('Core SQLite target preload registration waiter was not created');
+      }
+      try {
+        coreSqliteTargetId = await withStartupTimeout(targetPreloadRegistration.promise, {
+          label: 'Core SQLite target preload registration',
+          timeoutMs: SQLITE_STARTUP_TIMEOUT_MS,
+        });
+      } catch (err) {
+        targetPreloadRegistration.dispose();
+        targetPreloadRegistration = null;
+        throw err;
+      }
+    },
+    waitForCoreSqlite: async () => {
+      const waiter = targetPreloadRegistration;
+      const targetId = coreSqliteTargetId;
+      if (!waiter || !targetId) throw new Error('Core SQLite target preload was not registered');
+      try {
+        const result = await withStartupTimeout(
+          waiter.guardCoreReady(coreSqliteBoot.ready({ targetId })),
+          {
+            label: 'Core SQLite readiness',
+            timeoutMs: SQLITE_STARTUP_TIMEOUT_MS,
+          },
+        );
+        if (result?.ok) console.log(`[app] Core SQLite ready: ${targetId}`);
+        return result;
+      } finally {
+        waiter.dispose();
+        targetPreloadRegistration = null;
+      }
+    },
+    initializeLanguage: async () => {
+      await applicationLanguageService.initialize();
+      installE2ENetworkGuard();
+      electronApp.setAppUserModelId('com.electron');
+      if (process.platform === 'darwin') app.dock.setBadge('');
+    },
+    createHome: async () => {
+      await mainWindowHelper.create({ canCreate: () => !isShutdownStarted });
+    },
+    refreshMcpShim: async () => {
+      try {
+        await mcpHandler.ensureShim();
+      } catch (err) {
+        console.warn('[app] MCP helper generation failed:', err);
+      }
+    },
+    initializeTray: () => {
+      trayHelper.init(mainWindowHelper);
+      app.on('activate', () => {
+        mainWindowHelper.show();
+      });
+    },
+    startOptionalIntegrations: () => {
+      void optionalIntegrationsLifecycle.start((canStartNextStage) =>
+        startOptionalIntegrations(canStartNextStage)
+      ).catch((err: unknown) => {
+        console.warn('[app] Optional integrations disabled:', err);
+      });
+    },
+    shouldStop: () => isShutdownStarted,
   });
-
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window);
-  });
-
-  // 先启动 SQLite 进程并等待文档加载。
-  const sqliteWindow = sqliteWindowHelper.create();
-  let isSqliteDocumentAvailable = false;
-  try {
-    await withStartupTimeout(waitForWindowLoad(sqliteWindow), {
-      label: 'Hidden SQLite document load',
-      timeoutMs: SQLITE_DOCUMENT_LOAD_TIMEOUT_MS,
-    });
-    isSqliteDocumentAvailable = true;
-  } catch (err) {
-    console.warn('[app] Hidden SQLite document unavailable; using degraded Home startup:', err);
-  }
-  if (isShutdownStarted) return;
-
-  // Layout reads are bounded, so degraded startup still reaches Home.
-  // llamaWindowHelper.create();
-  await mainWindowHelper.create({
-    canCreate: () => !isShutdownStarted,
-    loadPersistedLayout: isSqliteDocumentAvailable,
-    showImmediately: !isSqliteDocumentAvailable,
-  });
-  if (isShutdownStarted) return;
-  // connectorWindowHelper.create();
-
-  // 初始化系统托盘 (仅 Windows)
-  trayHelper.init(mainWindowHelper);
-
-  app.on('activate', () => {
-    // macOS: 点击 dock 图标显示主窗口
-    mainWindowHelper.show();
-  });
-
-  if (isSqliteDocumentAvailable) {
-    void optionalIntegrationsLifecycle.start((canStartNextStage) =>
-      startOptionalIntegrations(canStartNextStage)
-    ).catch((err: unknown) => {
-      console.warn('[app] Optional integrations disabled:', err);
-    });
-  } else {
-    console.warn('[app] SQLite-dependent integrations disabled for degraded startup.');
-  }
 };
 
 const startOptionalIntegrations = async (
   canStartNextStage: OptionalStartupStageGuard,
 ): Promise<void> => {
-  if (!canStartNextStage()) return;
-  try {
-    const coreSqliteResult = await withStartupTimeout(coreSqliteBoot.ready(), {
-      label: 'Core SQLite readiness',
-      timeoutMs: CORE_SQLITE_READY_TIMEOUT_MS,
-    });
-    if (!coreSqliteResult?.ok) {
-      throw new Error(coreSqliteResult?.error || 'Core SQLite preload did not become ready');
-    }
-  } catch (err) {
-    console.warn('[app] MCP integration disabled because core SQLite is unavailable:', err);
-    return;
-  }
-  if (!canStartNextStage()) return;
-
-  const persistedLanguageInitialization = applicationLanguageService.initialize();
-  try {
-    await withStartupTimeout(persistedLanguageInitialization, {
-      label: 'Persisted application language read',
-      timeoutMs: PERSISTED_LANGUAGE_TIMEOUT_MS,
-    });
-  } catch (err) {
-    if (err instanceof ApplicationLanguageContractError) throw err;
-    if (err instanceof StartupTimeoutError) {
-      void persistedLanguageInitialization.catch((lateErr: unknown) => {
-        console.error('[app] Late persisted language hydration failed:', lateErr);
-      });
-    }
-    console.warn('[app] Persisted language unavailable; keeping system fallback:', err);
-  }
   if (!canStartNextStage()) return;
 
   try {

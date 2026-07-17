@@ -2,7 +2,6 @@ import { ipcRenderer } from 'electron';
 import { join, dirname } from 'path';
 import { rmSync, mkdirSync, existsSync } from 'fs';
 import Database from 'better-sqlite3-multiple-ciphers';
-import { packageHelper } from '../../../shared/packageHelper/preload/packagePreload.helper';
 import {
   runSqliteMigrations,
   type SqliteMigration,
@@ -10,12 +9,17 @@ import {
 } from '../../common/sqliteMigration.service';
 import type { BaseTable } from '../dao/base.table';
 import { finalizeCoreSqliteSchema } from '../coreSqlite.release';
+import { probeCoreSqliteReadable } from './coreSqliteReadProbe';
+import { onceAsync } from './onceAsync';
 import { sqlitePasswordHelper } from './sqlitePassword.helper';
 
 class SqliteManager {
   private _db: Database.Database | null = null;
   private tables: BaseTable[] = [];
   private migrations: SqliteMigration[] = [];
+  private readonly initializeOnce = onceAsync(
+    async (currentVersionCode: string) => await this.initialize(currentVersionCode),
+  );
 
   get db(): Database.Database {
     if (!this._db) {
@@ -41,7 +45,11 @@ class SqliteManager {
     }
   }
 
-  async init(): Promise<void> {
+  init(currentVersionCode: string): Promise<void> {
+    return this.initializeOnce(currentVersionCode);
+  }
+
+  private async initialize(currentVersionCode: string): Promise<void> {
     const bitterlessPath = await ipcRenderer.invoke('bitterless:get-userdata-path');
     const dbPath = join(bitterlessPath, 'db', 'main.db');
     let dbExistedBeforeOpen = existsSync(dbPath);
@@ -69,8 +77,8 @@ class SqliteManager {
     this._db.pragma('synchronous=normal');
     this._db.pragma('optimize(0x10002)');
 
-    const packageInfo = await packageHelper.getPackageInfo();
-    const currentVersionCode = packageInfo.versionCode;
+    const objectCount = probeCoreSqliteReadable(this._db);
+    console.log('[sqlite] read probe object count:', objectCount);
     console.log('[sqlite] current versionCode:', currentVersionCode);
 
     this.runTables();

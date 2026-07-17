@@ -20,8 +20,16 @@ export interface CoreSqliteBootResult {
   error?: string;
 }
 
+export interface CoreSqliteReadyParams {
+  targetId: string;
+}
+
+export interface CoreSqliteTargetPreloadRegistration {
+  targetId: string;
+}
+
 export interface CoreSqliteBootApi {
-  ready(): Promise<CoreSqliteBootResult>;
+  ready(params: CoreSqliteReadyParams): Promise<CoreSqliteBootResult>;
 }
 
 export interface LocalRpcRequest {
