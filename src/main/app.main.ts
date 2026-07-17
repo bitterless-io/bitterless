@@ -41,6 +41,7 @@ const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
+const SQLITE_DOCUMENT_LOAD_TIMEOUT_MS = 3000;
 const CORE_SQLITE_READY_TIMEOUT_MS = 3000;
 const PERSISTED_LANGUAGE_TIMEOUT_MS = 1000;
 
@@ -162,6 +163,7 @@ const installE2ENetworkGuard = (): void => {
 
 let isQuitting = false;
 let hasShownQuitDialog = false;
+let isShutdownStarted = false;
 let cleanupPromise: Promise<void> | null = null;
 let stopEyesOnAgentsRuntime: (() => Promise<void>) | null = null;
 const optionalIntegrationsLifecycle = new OptionalStartupLifecycle();
@@ -193,6 +195,7 @@ const redirectConsoleToStderr = (): void => {
 
 const cleanupResources = (): Promise<void> => {
   if (cleanupPromise) return cleanupPromise;
+  isShutdownStarted = true;
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
 
@@ -244,18 +247,36 @@ const startGui = async (): Promise<void> => {
   packageMainHelper.init();
   pathMainHelper.init();
   initDirectory();
+  void mcpHandler.ensureShim().catch((err: unknown) => {
+    console.warn('[app] Early MCP helper generation failed:', err);
+  });
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window);
   });
 
-  // 先启动 SQLite 进程并等待文档加载；DAO readiness 属于有界的可选启动。
+  // 先启动 SQLite 进程并等待文档加载。
   const sqliteWindow = sqliteWindowHelper.create();
-  await waitForWindowLoad(sqliteWindow);
+  let isSqliteDocumentAvailable = false;
+  try {
+    await withStartupTimeout(waitForWindowLoad(sqliteWindow), {
+      label: 'Hidden SQLite document load',
+      timeoutMs: SQLITE_DOCUMENT_LOAD_TIMEOUT_MS,
+    });
+    isSqliteDocumentAvailable = true;
+  } catch (err) {
+    console.warn('[app] Hidden SQLite document unavailable; using degraded Home startup:', err);
+  }
+  if (isShutdownStarted) return;
 
-  // SQLite 进程准备就绪后，再启动主窗口和其他窗口
+  // Layout reads are bounded, so degraded startup still reaches Home.
   // llamaWindowHelper.create();
-  await mainWindowHelper.create();
+  await mainWindowHelper.create({
+    canCreate: () => !isShutdownStarted,
+    loadPersistedLayout: isSqliteDocumentAvailable,
+    showImmediately: !isSqliteDocumentAvailable,
+  });
+  if (isShutdownStarted) return;
   // connectorWindowHelper.create();
 
   // 初始化系统托盘 (仅 Windows)
@@ -266,11 +287,15 @@ const startGui = async (): Promise<void> => {
     mainWindowHelper.show();
   });
 
-  void optionalIntegrationsLifecycle.start((canStartNextStage) =>
-    startOptionalIntegrations(canStartNextStage)
-  ).catch((err: unknown) => {
-    console.warn('[app] Optional integrations disabled:', err);
-  });
+  if (isSqliteDocumentAvailable) {
+    void optionalIntegrationsLifecycle.start((canStartNextStage) =>
+      startOptionalIntegrations(canStartNextStage)
+    ).catch((err: unknown) => {
+      console.warn('[app] Optional integrations disabled:', err);
+    });
+  } else {
+    console.warn('[app] SQLite-dependent integrations disabled for degraded startup.');
+  }
 };
 
 const startOptionalIntegrations = async (
@@ -308,20 +333,10 @@ const startOptionalIntegrations = async (
   }
   if (!canStartNextStage()) return;
 
-  let mcpBridgeStarted = false;
   try {
     await mcpBridgeServer.start();
-    mcpBridgeStarted = true;
   } catch (err) {
     console.warn('[app] MCP integration disabled:', err);
-  }
-  if (!canStartNextStage()) return;
-  if (mcpBridgeStarted) {
-    try {
-      await mcpHandler.ensureShim();
-    } catch (err) {
-      console.warn('[app] MCP helper generation failed; bridge remains available:', err);
-    }
   }
   if (!canStartNextStage()) return;
 

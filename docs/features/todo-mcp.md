@@ -43,14 +43,21 @@ when Ral explicitly asks to test that local instance.
 
 ## Helper lifecycle
 
-1. The GUI waits for the core SQLite preload to report that the Todo database is initialized.
-2. The GUI starts one bridge on its own endpoint. A live existing socket is an ownership error;
-   only a confirmed stale socket may be removed.
-3. The GUI automatically writes `<userData>/bin/bitterless-mcp`; opening the integration guide may
-   refresh the same file but is not required for helper installation.
-4. The shim embeds the exact bridge endpoint that created it. The stdio helper uses this pinned
+1. Before any SQLite readiness gate, the GUI writes `<userData>/bin/bitterless-mcp`; opening the
+   integration guide may refresh the same owned file.
+2. The shim sets `ELECTRON_RUN_AS_NODE=1` and invokes the dedicated bundled
+   `out/main/mcpHelper.js` entry through Electron's executable. It never enters the GUI application,
+   creates a `BrowserWindow`, or owns a Dock application.
+3. The shim embeds the exact bridge endpoint that created it. The stdio helper uses this pinned
    endpoint instead of recalculating a target from a mutable development `package.json.name`.
-5. Legacy helpers without a pinned endpoint continue to fall back to their own `userData` route.
+4. After Core SQLite readiness, the GUI starts one bridge on its own endpoint. A live existing
+   socket is an ownership error; only a confirmed stale socket may be removed.
+5. If SQLite startup is degraded, the Node-only shim remains installed while the bridge stays
+   unavailable. This separates helper migration from database availability.
+
+Previously generated app-entry launchers remain compatible only as a transition: current app-main
+helper mode is windowless and does not acquire the GUI singleton. The next launch of the owning
+Bitterless profile rewrites the shim to the dedicated Node entry.
 
 SQLite readiness must fail explicitly. The bridge must not turn an unavailable/null DAO result into
 an empty domain or Todo list, and must not expose raw JavaScript errors such as calling `.filter()`

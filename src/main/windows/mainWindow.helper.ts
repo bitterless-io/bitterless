@@ -11,6 +11,12 @@ const WINDOW_LAYOUT_SUB_KEY = 'main';
 const MAIN_WINDOW_LAYOUT_TIMEOUT_MS = 1000;
 const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
 
+interface MainWindowCreateOptions {
+  canCreate?: () => boolean;
+  loadPersistedLayout?: boolean;
+  showImmediately?: boolean;
+}
+
 class MainWindowHelper extends WindowHelper {
   protected preloadFile = 'home.js';
   protected rendererPath = 'home/index.html';
@@ -75,15 +81,21 @@ class MainWindowHelper extends WindowHelper {
     }
   }
 
-  async create(): Promise<any> {
+  async create({
+    canCreate = () => true,
+    loadPersistedLayout = true,
+    showImmediately = false,
+  }: MainWindowCreateOptions = {}): Promise<any | null> {
     let savedLayout: WindowLayout | null = null;
-    try {
-      savedLayout = await withStartupTimeout(this.loadLayout(), {
-        label: 'Main window layout read',
-        timeoutMs: MAIN_WINDOW_LAYOUT_TIMEOUT_MS,
-      });
-    } catch (err) {
-      console.warn('[MainWindowHelper] Using default layout because saved layout is unavailable:', err);
+    if (loadPersistedLayout) {
+      try {
+        savedLayout = await withStartupTimeout(this.loadLayout(), {
+          label: 'Main window layout read',
+          timeoutMs: MAIN_WINDOW_LAYOUT_TIMEOUT_MS,
+        });
+      } catch (err) {
+        console.warn('[MainWindowHelper] Using default layout because saved layout is unavailable:', err);
+      }
     }
     if (savedLayout) {
       this.windowOptions = {
@@ -94,8 +106,13 @@ class MainWindowHelper extends WindowHelper {
         height: savedLayout.height,
       };
     }
+    if (!canCreate()) return null;
 
     const window = super.create();
+    if (showImmediately) {
+      window.show();
+      window.focus();
+    }
 
     window.on('move', () => {
       this.debouncedSaveLayout();

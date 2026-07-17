@@ -21,7 +21,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { installMcpSourceHooks } from './fixtures/mcp-source-hooks.mjs';
-import { OptionalStartupLifecycle } from '../../src/main/mcp/optionalStartupLifecycle.service.ts';
+import {
+  OptionalStartupLifecycle,
+  StartupTimeoutError,
+  withStartupTimeout
+} from '../../src/main/mcp/optionalStartupLifecycle.service.ts';
 import {
   createMcpConfigJson,
   createPosixMcpShim,
@@ -311,6 +315,139 @@ try {
     postCleanupStartupCalled = true;
   });
   assert.equal(postCleanupStartupCalled, false);
+
+  const createManualTimeout = () => {
+    let onTimeout = null;
+    let scheduledDelay = null;
+    let cancelled = false;
+    return {
+      schedule: (handler, timeoutMs) => {
+        onTimeout = handler;
+        scheduledDelay = timeoutMs;
+        return () => {
+          cancelled = true;
+        };
+      },
+      fire: () => {
+        assert.ok(onTimeout, 'a startup deadline must be scheduled');
+        onTimeout();
+      },
+      get cancelled() {
+        return cancelled;
+      },
+      get scheduledDelay() {
+        return scheduledDelay;
+      }
+    };
+  };
+
+  const unavailableDocumentEvents = ['language:fallback'];
+  const neverDocumentLoad = new Promise(() => undefined);
+  const documentDeadline = createManualTimeout();
+  const documentOutcome = withStartupTimeout(neverDocumentLoad, {
+    label: 'Hidden SQLite document load',
+    timeoutMs: 3000,
+    schedule: documentDeadline.schedule
+  }).then(
+    () => true,
+    (err) => {
+      assert.ok(err instanceof StartupTimeoutError);
+      unavailableDocumentEvents.push('document:timeout');
+      return false;
+    }
+  );
+  documentDeadline.fire();
+  const documentAvailable = await documentOutcome;
+  assert.equal(documentDeadline.scheduledDelay, 3000);
+  assert.equal(documentAvailable, false);
+  unavailableDocumentEvents.push('layout:skipped');
+  unavailableDocumentEvents.push('home:create');
+  assert.deepEqual(unavailableDocumentEvents, [
+    'language:fallback',
+    'document:timeout',
+    'layout:skipped',
+    'home:create'
+  ]);
+  assert.equal(
+    unavailableDocumentEvents.some((event) =>
+      ['layout:read', 'core:start', 'language:read', 'mcp:start', 'eyes:start'].includes(event)
+    ),
+    false,
+    'an unavailable hidden document must skip every SQLite-dependent startup stage'
+  );
+
+  const degradedStartupEvents = ['language:fallback'];
+  const neverLayoutRead = new Promise(() => undefined);
+  const layoutDeadline = createManualTimeout();
+  const layoutOutcome = withStartupTimeout(neverLayoutRead, {
+    label: 'Main window layout read',
+    timeoutMs: 1000,
+    schedule: layoutDeadline.schedule
+  }).catch((err) => {
+    assert.ok(err instanceof StartupTimeoutError);
+    degradedStartupEvents.push('layout:timeout');
+    return null;
+  });
+  assert.equal(layoutDeadline.scheduledDelay, 1000);
+  layoutDeadline.fire();
+  await layoutOutcome;
+  degradedStartupEvents.push('home:create');
+
+  const neverCoreReady = new Promise(() => undefined);
+  const coreDeadline = createManualTimeout();
+  const coreOutcome = withStartupTimeout(neverCoreReady, {
+    label: 'Core SQLite readiness',
+    timeoutMs: 3000,
+    schedule: coreDeadline.schedule
+  }).then(
+    () => degradedStartupEvents.push('core:ready'),
+    (err) => {
+      assert.ok(err instanceof StartupTimeoutError);
+      degradedStartupEvents.push('core:timeout');
+    }
+  );
+  assert.equal(coreDeadline.scheduledDelay, 3000);
+  coreDeadline.fire();
+  await coreOutcome;
+  assert.equal(coreDeadline.cancelled, false, 'a fired deadline does not need cancellation');
+
+  assert.deepEqual(degradedStartupEvents, [
+    'language:fallback',
+    'layout:timeout',
+    'home:create',
+    'core:timeout'
+  ]);
+  assert.equal(
+    degradedStartupEvents.some((event) =>
+      ['language:read', 'mcp:start', 'eyes:start'].includes(event)
+    ),
+    false,
+    'degraded startup must not read SQLite language state or start SQLite integrations'
+  );
+
+  const completedDocumentDeadline = createManualTimeout();
+  assert.equal(await withStartupTimeout(Promise.resolve('loaded'), {
+    label: 'Hidden SQLite document load',
+    timeoutMs: 1000,
+    schedule: completedDocumentDeadline.schedule
+  }), 'loaded');
+  assert.equal(
+    completedDocumentDeadline.cancelled,
+    true,
+    'a loaded hidden document must cancel its deadline'
+  );
+
+  const failedDocumentDeadline = createManualTimeout();
+  await assert.rejects(withStartupTimeout(Promise.reject(new Error('document failed')), {
+    label: 'Hidden SQLite document load',
+    timeoutMs: 1000,
+    schedule: failedDocumentDeadline.schedule
+  }), /document failed/);
+  assert.equal(
+    failedDocumentDeadline.cancelled,
+    true,
+    'a failed hidden document must cancel its deadline'
+  );
 
   assert.equal(getMcpServerName('Bitterless'), 'bitterless');
   assert.equal(getMcpServerName('Bitterless_DEBUG'), 'bitterless-debug');
@@ -752,6 +889,10 @@ try {
   assert.doesNotMatch(helperBundleText, /BrowserWindow|require\("electron"\)|from\("electron"\)/);
 
   const appMainSource = readFileSync(join(projectRoot, 'src', 'main', 'app.main.ts'), 'utf8');
+  const mainWindowSource = readFileSync(
+    join(projectRoot, 'src', 'main', 'windows', 'mainWindow.helper.ts'),
+    'utf8'
+  );
   const stdioSource = readFileSync(
     join(projectRoot, 'src', 'main', 'mcp', 'mcpStdio.helper.ts'),
     'utf8'
@@ -796,38 +937,65 @@ try {
   assert.ok(singleInstanceIndex >= 0 && singleInstanceIndex < readyIndex);
   assert.ok(optionalFenceIndex >= 0 && optionalFenceIndex < eyesStopIndex);
   assert.ok(optionalFenceIndex < mcpStopIndex);
-  const sqliteGuardIndex = appMainSource.indexOf('const coreSqliteResult = await coreSqliteBoot.ready()');
+  const sqliteGuardIndex = appMainSource.indexOf(
+    'const coreSqliteResult = await withStartupTimeout(coreSqliteBoot.ready()'
+  );
   const sqliteWarningIndex = appMainSource.indexOf(
     'MCP integration disabled because core SQLite is unavailable'
   );
   const sqliteTryIndex = appMainSource.lastIndexOf('try {', sqliteGuardIndex);
   const sqliteCatchIndex = appMainSource.indexOf('} catch (err) {', sqliteGuardIndex);
   const bridgeStartIndex = appMainSource.indexOf('await mcpBridgeServer.start()');
-  const bridgeStartedIndex = appMainSource.indexOf('mcpBridgeStarted = true', bridgeStartIndex);
-  const shimGuardIndex = appMainSource.indexOf('if (mcpBridgeStarted)', bridgeStartedIndex);
-  const ensureShimIndex = appMainSource.indexOf('await mcpHandler.ensureShim()', shimGuardIndex);
+  const ensureShimIndex = appMainSource.indexOf('void mcpHandler.ensureShim()');
   const shimWarningIndex = appMainSource.indexOf(
-    'MCP helper generation failed; bridge remains available',
+    'Early MCP helper generation failed',
     ensureShimIndex
   );
-  const mainWindowIndex = appMainSource.indexOf('await mainWindowHelper.create()');
+  const mainWindowIndex = appMainSource.indexOf('await mainWindowHelper.create(');
+  const sqliteDocumentWaitIndex = appMainSource.indexOf(
+    'await withStartupTimeout(waitForWindowLoad(sqliteWindow)'
+  );
+  const sqliteDocumentWarningIndex = appMainSource.indexOf(
+    'Hidden SQLite document unavailable; using degraded Home startup'
+  );
   assert.ok(sqliteTryIndex >= 0 && sqliteTryIndex < sqliteGuardIndex);
   assert.ok(sqliteCatchIndex > sqliteGuardIndex && sqliteWarningIndex > sqliteCatchIndex);
   assert.ok(bridgeStartIndex > sqliteWarningIndex);
-  assert.ok(bridgeStartedIndex > bridgeStartIndex);
-  assert.ok(shimGuardIndex > bridgeStartedIndex);
-  assert.ok(ensureShimIndex > shimGuardIndex && shimWarningIndex > ensureShimIndex);
-  assert.ok(mainWindowIndex > sqliteWarningIndex);
+  assert.ok(ensureShimIndex >= 0 && shimWarningIndex > ensureShimIndex);
+  assert.ok(ensureShimIndex < sqliteDocumentWaitIndex);
+  assert.ok(ensureShimIndex < sqliteGuardIndex);
+  assert.equal(appMainSource.match(/mcpHandler\.ensureShim\(\)/g)?.length, 1);
+  assert.ok(mainWindowIndex < sqliteGuardIndex);
+  assert.ok(mainWindowIndex < sqliteWarningIndex);
   assert.ok(mainWindowIndex < bridgeStartIndex);
-  assert.ok(mainWindowIndex < ensureShimIndex);
+  assert.ok(ensureShimIndex < mainWindowIndex);
   assert.ok(mainWindowIndex < optionalStartIndex);
+  assert.ok(sqliteDocumentWaitIndex >= 0 && sqliteDocumentWaitIndex < sqliteDocumentWarningIndex);
+  assert.ok(sqliteDocumentWarningIndex < mainWindowIndex);
   assert.ok(
     mainWindowIndex < appMainSource.indexOf("await import('./xpc/eyesOnAgents.handler')")
   );
   assert.equal(
     appMainSource.match(/if \(!canStartNextStage\(\)\) return;/g)?.length,
-    4
+    5
   );
+  assert.match(appMainSource, /timeoutMs: CORE_SQLITE_READY_TIMEOUT_MS/);
+  assert.match(appMainSource, /timeoutMs: SQLITE_DOCUMENT_LOAD_TIMEOUT_MS/);
+  assert.match(
+    appMainSource,
+    /loadPersistedLayout: isSqliteDocumentAvailable/
+  );
+  assert.match(
+    appMainSource,
+    /showImmediately: !isSqliteDocumentAvailable/
+  );
+  assert.match(
+    appMainSource,
+    /if \(isSqliteDocumentAvailable\) \{[\s\S]*?optionalIntegrationsLifecycle\.start/
+  );
+  assert.match(mainWindowSource, /if \(loadPersistedLayout\) \{/);
+  assert.match(mainWindowSource, /if \(showImmediately\) \{[\s\S]*?window\.show\(\)/);
+  assert.match(appMainSource, /isShutdownStarted = true/);
   assert.match(appMainSource, /void optionalIntegrationsLifecycle\.start/);
   assert.match(appMainSource, /app\.whenReady\(\)\.then\(startGui\)\.catch/);
 

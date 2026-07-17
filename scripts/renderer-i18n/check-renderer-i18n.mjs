@@ -63,8 +63,16 @@ const fallbackIndex = appMain.indexOf('initializeApplicationLanguageFallback();'
 const startGuiIndex = appMain.indexOf('const startGui = async')
 const firstStartGuiAwaitIndex = appMain.indexOf('await ', startGuiIndex)
 const sqliteCreateIndex = appMain.indexOf('sqliteWindowHelper.create()', startGuiIndex)
+const sqliteDocumentWaitIndex = appMain.indexOf(
+  'await withStartupTimeout(waitForWindowLoad(sqliteWindow)',
+  sqliteCreateIndex
+)
+const sqliteDocumentWarningIndex = appMain.indexOf(
+  'Hidden SQLite document unavailable; using degraded Home startup',
+  sqliteDocumentWaitIndex
+)
 const mainLanguageIndex = appMain.indexOf('applicationLanguageService.initialize()')
-const homeCreateIndex = appMain.indexOf('await mainWindowHelper.create()')
+const homeCreateIndex = appMain.indexOf('await mainWindowHelper.create(')
 const trayCreateIndex = appMain.indexOf('trayHelper.init(mainWindowHelper)')
 const optionalStartIndex = appMain.indexOf('optionalIntegrationsLifecycle.start(')
 const earlyQuitFallbackIndex = appMain.lastIndexOf(
@@ -75,7 +83,13 @@ assert(sqliteReadyIndex >= 0, 'main startup must await core SQLite readiness')
 assert(fallbackIndex > startGuiIndex, 'main startup must synchronously initialize a language fallback')
 assert(fallbackIndex < firstStartGuiAwaitIndex, 'language fallback must precede the first GUI startup await')
 assert(fallbackIndex < sqliteCreateIndex, 'language fallback must precede hidden SQLite creation')
+assert(sqliteDocumentWaitIndex > sqliteCreateIndex, 'hidden SQLite document loading must be bounded')
+assert(
+  sqliteDocumentWarningIndex > sqliteDocumentWaitIndex,
+  'hidden SQLite document timeout or failure must enter degraded startup'
+)
 assert(homeCreateIndex > sqliteCreateIndex, 'Home must follow the hidden SQLite document load')
+assert(homeCreateIndex > sqliteDocumentWarningIndex, 'Home must proceed after hidden SQLite failure handling')
 assert(homeCreateIndex < sqliteReadyIndex, 'Core SQLite DAO readiness must not gate Home creation')
 assert(homeCreateIndex < mainLanguageIndex, 'persisted language hydration must not gate Home creation')
 assert(mainLanguageIndex > sqliteReadyIndex, 'persisted language may hydrate only after Core SQLite readiness')
@@ -85,12 +99,36 @@ assert(
   earlyQuitFallbackIndex >= 0,
   'early macOS quit must ensure fallback language before opening its localized dialog'
 )
+assert(
+  appMain.includes('loadPersistedLayout: isSqliteDocumentAvailable'),
+  'an unavailable hidden SQLite document must skip the persisted layout request'
+)
+assert(
+  appMain.includes('showImmediately: !isSqliteDocumentAvailable'),
+  'degraded startup must show Home without waiting for renderer first paint'
+)
+assert(
+  /if \(isSqliteDocumentAvailable\) \{[\s\S]*?optionalIntegrationsLifecycle\.start/.test(appMain),
+  'SQLite-dependent integrations must not start when the hidden document is unavailable'
+)
 
 const mainWindow = readProject('src/main/windows/mainWindow.helper.ts')
 assert(mainWindow.includes('MAIN_WINDOW_LAYOUT_TIMEOUT_MS'), 'saved layout reads need an explicit bound')
 assert(
   mainWindow.includes('withStartupTimeout(this.loadLayout()'),
   'Home creation must bound the persisted layout read'
+)
+assert(
+  mainWindow.includes('if (!canCreate()) return null'),
+  'Home creation must stop if shutdown wins the bounded layout wait'
+)
+assert(
+  mainWindow.includes('if (loadPersistedLayout) {'),
+  'degraded Home creation must be able to bypass persisted layout loading'
+)
+assert(
+  /if \(showImmediately\) \{[\s\S]*?window\.show\(\)/.test(mainWindow),
+  'degraded Home creation must not depend on ready-to-show'
 )
 
 const mainHandler = readProject('src/main/xpc/applicationLanguage.handler.ts')
