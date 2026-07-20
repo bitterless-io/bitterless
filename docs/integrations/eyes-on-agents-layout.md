@@ -31,12 +31,12 @@ for live signals.
 │  ┌ Focus ─────────┐ ┌ Uncategorized ─┐ ┌ Bitterless ─────┐ ┌ + Domain ─┐  │
 │  │ 3 signals      │ │ 4 of 12 threads │ │ 4 threads       │ │           │  │
 │  │                 │ │ [overmind (4)▾] │ │                 │ │           │  │
-│  │┃ Working        │ │┃ Unknown        │ │┃ Waiting input  │ │           │  │
+│  │ Working         │ │ Unknown         │ │ Waiting input   │ │           │  │
 │  │ API pagination │ │ Release notes   │ │ App Server RPC  │ │           │  │
 │  │ /repo/a · now  │ │ /repo/b · 2h   │ │ /repo/a · now   │ │           │  │
-│  │          [Open]│ │          [Open] │ │          [Open] │ │           │  │
+│  │             [↗]│ │             [↗] │ │             [↗] │ │           │  │
 │  │                 │ │                 │ │                 │ │           │  │
-│  │┃ Finished · new │ │┃ Idle           │ │┃ Idle           │ │           │  │
+│  │ Finished · new  │ │ Idle            │ │ Idle            │ │           │  │
 │  │ Fix migrations │ │ UI polish       │ │ Hook bridge     │ │           │  │
 │  │ /repo/c · 3m   │ │ /repo/c · 1d   │ │ /repo/a · 4h   │ │           │  │
 │  └─────────────────┘ └─────────────────┘ └─────────────────┘ └───────────┘  │
@@ -63,23 +63,23 @@ Use the existing Bitterless color contract as the source of truth:
 | regular Domain surface | cool neutral `oklch(0.96 0 0)` |
 | Focus Domain surface | warm attention tint `oklch(0.94 0.04 60)` |
 | thread item surface | white `oklch(1 0 0)` |
-| waiting / unread completion | amber / accent orange `#C2410C` |
-| completed/read | restrained green |
-| failure | red |
-| unknown / disconnected | neutral grey |
+| waiting / unread completion text | amber / accent orange `#C2410C` |
+| working status text | Royal Blue |
+| failure status text | red |
+| idle / ended / unknown text | neutral grey |
 
 Typography stays on the product's existing system-font stack. Hierarchy comes from size, weight,
 spacing, and alignment rather than a new font dependency.
 
 Surface hierarchy follows Todo: background contrast separates the board, Domains, Focus, and
-thread items. Domain shells, Domain headers, thread items, source badges, and the add-Domain
-surface have no decorative outline or persistent shadow. A thread item may gain one quiet shadow
+thread items. Domain shells, Domain headers, thread items, and the add-Domain surface have no
+decorative outline or persistent shadow. A thread item may gain one quiet shadow
 on pointer hover without moving; keyboard focus uses a visible outline and a light background
 rather than reintroducing a permanent card border.
 
-The signature element is a narrow **signal rail** on the left edge of every thread card. Its color
-and top dot encode live state without turning the whole card into an alert. Working receives one
-quiet pulse animation; `prefers-reduced-motion` disables it.
+The horizontal Domain board and its background-led hierarchy are the product signature. Thread
+cards contain no decorative signal rail, source badge, or ambient status animation. Runtime state
+is communicated directly by its text label; unread work retains the compact `New` badge.
 
 ## Header behavior
 
@@ -151,19 +151,17 @@ the underlying thread.
 
 A card displays only observation metadata:
 
-- signal rail and runtime label;
+- runtime label;
 - unread badge for running or terminal attention observed since the last successful EyesOnAgents Open;
 - title, falling back to a shortened UUID;
 - compact working-directory basename/path;
 - relative last-activity time;
-- evidence source on hover or in the overflow details;
-- primary `Open` action.
+- an icon-only `Open` action with localized tooltip and accessible label.
 
 The card is an unbordered white item with a compact radius and no persistent shadow. Pointer hover
 uses a slightly tinted background and Todo-strength light shadow, with no vertical lift. Keyboard
-focus uses a light Royal Blue background plus an explicit focus outline. The source badge also uses
-background contrast without an outline; the signal dot keeps its white separator because it must
-remain legible across status colors.
+focus uses a light Royal Blue background plus an explicit focus outline. Status color is applied
+only to the runtime text and unread badge; it does not create another visual region.
 
 The whole card may focus keyboard navigation, but only `Open`, double-click, or `Enter` launches
 Codex and marks the observed turn read after the deep link succeeds. Dragging or selecting never
@@ -200,18 +198,19 @@ card leaves it in Focus until the runtime state changes.
 | bridge needs review | Review opens Codex Settings and gives Settings → Hooks plus `/hooks` instructions; Check remains available |
 | bridge disabled in Codex | Review safely re-enables only exact Bitterless entries, then still requires Codex trust when applicable |
 | bridge installed, listener stopped | explicit `Installed, paused`; never claim live observation |
-| unknown runtime | grey rail and explicit `Unknown`; never rendered as idle |
+| unknown runtime | explicit neutral `Unknown`; never rendered as idle |
 | long title/path | two-line title and single-line ellipsis path with tooltip |
 
 ## Accessibility and responsive behavior
 
 - Interactive controls have visible keyboard focus and accessible labels.
-- Status never depends on color alone; every rail has a text label.
+- Status never depends on color alone; every runtime state has a text label.
 - At the minimum window size, columns remain 280-300px and the board scrolls horizontally instead
   of collapsing into an unreadable grid.
 - Dialogs and connection panels remain within the viewport and own their vertical scrolling.
 - Drag is an enhancement: each thread overflow menu also provides a Domain selector.
-- Animations respect reduced-motion preferences.
+- No card-level ambient animation is used; other application motion still respects reduced-motion
+  preferences.
 
 ## Component boundary
 

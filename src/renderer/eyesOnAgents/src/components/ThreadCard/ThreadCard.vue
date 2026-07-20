@@ -9,22 +9,12 @@
     @dblclick="handleDoubleClick"
     @keydown.enter.prevent="handleOpen"
   >
-    <div class="thread-card__signal" aria-hidden="true">
-      <span class="thread-card__signal-line" />
-      <span class="thread-card__signal-dot" />
-    </div>
-
     <div class="thread-card__content">
       <div class="thread-card__status-row">
         <span class="thread-card__runtime">{{ runtimeLabel }}</span>
         <span v-if="thread.isUnread" class="thread-card__new-badge">
           {{ i18nHelper.eyesOnAgents.thread.new }}
         </span>
-        <a-tooltip :content="sourceTooltip" position="top" mini>
-          <span class="thread-card__source" :aria-label="sourceTooltip">
-            {{ sourceInitial }}
-          </span>
-        </a-tooltip>
       </div>
 
       <h3 class="thread-card__title" :title="displayTitle">{{ displayTitle }}</h3>
@@ -38,16 +28,19 @@
       </div>
 
       <div class="thread-card__actions" @keydown.enter.stop>
-        <a-button
-          size="mini"
-          type="primary"
-          :loading="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
-          :disabled="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
-          @click.stop="handleOpen"
-        >
-          <template #icon><IconExternalLink :size="13" /></template>
-          {{ i18nHelper.eyesOnAgents.actions.open }}
-        </a-button>
+        <a-tooltip :content="i18nHelper.eyesOnAgents.actions.open" position="top" mini>
+          <a-button
+            size="mini"
+            type="primary"
+            :title="i18nHelper.eyesOnAgents.actions.open"
+            :aria-label="i18nHelper.eyesOnAgents.actions.open"
+            :loading="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
+            :disabled="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
+            @click.stop="handleOpen"
+          >
+            <template #icon><IconExternalLink :size="13" /></template>
+          </a-button>
+        </a-tooltip>
 
         <a-dropdown trigger="click" position="br">
           <a-button
@@ -118,17 +111,6 @@ const runtimeLabel = computed(() => {
     default: return i18nHelper.eyesOnAgents.thread.unknown;
   }
 });
-const sourceLabel = computed(() => {
-  switch (props.thread.statusSource) {
-    case 'app_server': return i18nHelper.eyesOnAgents.thread.appServer;
-    case 'codex_hook': return i18nHelper.eyesOnAgents.thread.codexHook;
-    default: return i18nHelper.eyesOnAgents.thread.discovery;
-  }
-});
-const sourceInitial = computed(() => sourceLabel.value.slice(0, 1).toUpperCase());
-const sourceTooltip = computed(() =>
-  i18nHelper.eyesOnAgents.thread.source.replace('{source}', sourceLabel.value),
-);
 const activityLabel = computed(() => {
   const value = props.thread.lastActivityAt ?? props.thread.lastCompletedAt;
   if (!value) return i18nHelper.eyesOnAgents.thread.unknown;

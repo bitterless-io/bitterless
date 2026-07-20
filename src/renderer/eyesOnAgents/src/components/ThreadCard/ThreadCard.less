@@ -20,55 +20,6 @@
   outline-offset: 2px;
 }
 
-.thread-card__signal {
-  width: 7px;
-  flex: 0 0 7px;
-  position: relative;
-  background: #aeb4c3;
-}
-
-.thread-card__signal-line {
-  position: absolute;
-  inset: 0;
-  background: inherit;
-}
-
-.thread-card__signal-dot {
-  width: 7px;
-  height: 7px;
-  position: absolute;
-  top: 12px;
-  left: 9px;
-  z-index: 2;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  background: inherit;
-  box-shadow: 0 0 0 1px rgb(50 57 85 / 12%);
-}
-
-.thread-card--working .thread-card__signal {
-  background: #586aa2;
-}
-
-.thread-card--waiting_approval .thread-card__signal,
-.thread-card--waiting_input .thread-card__signal,
-.thread-card--unread .thread-card__signal {
-  background: #c2410c;
-}
-
-.thread-card--idle .thread-card__signal,
-.thread-card--ended .thread-card__signal {
-  background: #6d9c7d;
-}
-
-.thread-card--failed .thread-card__signal {
-  background: #b64c43;
-}
-
-.thread-card--working .thread-card__signal-dot {
-  animation: thread-signal-pulse 1.8s ease-in-out infinite;
-}
-
 .thread-card__content {
   min-width: 0;
   flex: 1;
@@ -118,20 +69,6 @@
   color: #9a3b16;
   background: #fff0e8;
   font-size: 9px;
-  font-weight: 750;
-}
-
-.thread-card__source {
-  width: 17px;
-  height: 17px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: auto;
-  border-radius: 50%;
-  color: #6b738a;
-  background: #f5f6fa;
-  font-size: 8px;
   font-weight: 750;
 }
 
@@ -185,27 +122,12 @@
   cursor: default;
 }
 
-.thread-card__actions .arco-btn-primary {
-  min-width: 58px;
-}
-
 .thread-card__check--hidden {
   opacity: 0;
 }
 
-@keyframes thread-signal-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 1px rgb(88 106 162 / 20%);
-  }
-  50% {
-    box-shadow: 0 0 0 5px rgb(88 106 162 / 12%);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .thread-card,
-  .thread-card__signal-dot {
-    animation: none;
+  .thread-card {
     transition: none;
   }
 }

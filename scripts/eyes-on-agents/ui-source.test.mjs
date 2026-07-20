@@ -123,11 +123,6 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   assert.match(threadFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
   assert.match(threadFocus, /outline-offset: 2px/);
 
-  const threadSource = cssRule(thread, '.thread-card__source');
-  assert.doesNotMatch(threadSource, /\bborder\s*:/);
-  const signalDot = cssRule(thread, '.thread-card__signal-dot');
-  assert.match(signalDot, /border: 2px solid #fff/);
-
   assert.doesNotMatch(addDomain, /border:\s*1px\s+dashed|\bdashed\b/);
   assert.match(
     addDomain,
@@ -145,6 +140,34 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
     '.project-filter__select.arco-select-view:focus-within'
   );
   assert.match(projectSelectFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
+});
+
+test('thread cards omit decorative signals and expose an accessible icon-only Open action', () => {
+  const component = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
+  );
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
+  );
+
+  assert.doesNotMatch(component, /thread-card__signal|thread-card__source/);
+  assert.doesNotMatch(component, /sourceLabel|sourceInitial|sourceTooltip/);
+  assert.doesNotMatch(styles, /thread-card__signal|thread-card__source|thread-signal-pulse/);
+
+  const openAction = component.match(
+    /<a-tooltip :content="i18nHelper\.eyesOnAgents\.actions\.open"[\s\S]*?<a-button[\s\S]*?<\/a-button>[\s\S]*?<\/a-tooltip>/
+  );
+  assert.ok(openAction, 'Missing localized Open tooltip and button');
+  assert.match(openAction[0], /:title="i18nHelper\.eyesOnAgents\.actions\.open"/);
+  assert.match(openAction[0], /:aria-label="i18nHelper\.eyesOnAgents\.actions\.open"/);
+  assert.match(openAction[0], /:loading="eyesOnAgentsStore\.openingThreadIds\.has\(thread\.threadId\)"/);
+  assert.match(openAction[0], /:disabled="eyesOnAgentsStore\.openingThreadIds\.has\(thread\.threadId\)"/);
+  assert.match(openAction[0], /@click\.stop="handleOpen"/);
+  assert.match(openAction[0], /<template #icon><IconExternalLink :size="13" \/><\/template>/);
+  assert.doesNotMatch(
+    openAction[0],
+    /\{\{\s*i18nHelper\.eyesOnAgents\.actions\.open\s*\}\}/
+  );
 });
 
 test('Project filtering is scoped only to Uncategorized', () => {

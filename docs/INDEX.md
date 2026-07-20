@@ -39,7 +39,7 @@ design document.
 - [EyesOnAgents](integrations/eyes-on-agents.md) - Codex-only App Server connection, raw inventory snapshots, Domain
   classification, Focus/unread semantics, Desktop status bridge, and persistence boundary.
 - [EyesOnAgents layout](integrations/eyes-on-agents-layout.md) - standalone Mini App window,
-  horizontal observation board, signal cards, and responsive interaction states.
+  horizontal observation board, compact status-first cards, and responsive interaction states.
 
 ## Design system
 
