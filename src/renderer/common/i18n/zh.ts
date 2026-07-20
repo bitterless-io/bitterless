@@ -252,9 +252,6 @@ export const zh: typeof en = {
     board: {
       focus: 'Focus',
       all: 'All',
-      signals: '{count} 个信号',
-      threads: '{count} 个任务',
-      filteredThreads: '{visible} / {total} 个任务',
       projectFilterLabel: '按 Project 筛选 All',
       allProjects: 'All',
       noProject: '无 Project',
@@ -278,6 +275,7 @@ export const zh: typeof en = {
     thread: {
       untitled: '未命名 Codex 任务',
       new: '未读',
+      workingDirectory: '工作目录：{path}',
       source: '证据：{source}',
       appServer: 'App Server',
       codexHook: 'Desktop Bridge',

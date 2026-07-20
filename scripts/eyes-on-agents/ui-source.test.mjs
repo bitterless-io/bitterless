@@ -174,31 +174,122 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   assert.match(projectSelectFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
 });
 
-test('thread cards omit decorative signals and expose an accessible icon-only Open action', () => {
+test('thread cards use compact title and action rows with accessible status marks', () => {
   const component = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
   );
   const styles = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
   );
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
 
-  assert.doesNotMatch(component, /thread-card__signal|thread-card__source/);
+  assert.doesNotMatch(
+    component,
+    /thread-card__(?:signal|source|status-row|runtime|new-badge|meta|path)|displayPath/
+  );
+  assert.doesNotMatch(component, /thread-card--|\{\{\s*runtimeLabel\s*\}\}/);
   assert.doesNotMatch(component, /sourceLabel|sourceInitial|sourceTooltip/);
-  assert.doesNotMatch(styles, /thread-card__signal|thread-card__source|thread-signal-pulse/);
+  assert.doesNotMatch(
+    styles,
+    /thread-card__(?:signal|source|status-row|runtime|new-badge|meta|path)|thread-signal-pulse/
+  );
+
+  assert.match(component, /:aria-label="`\$\{displayTitle\}, \$\{runtimeLabel\}`"/);
+  assert.match(component, /@dblclick="handleDoubleClick"/);
+  assert.match(component, /@keydown\.enter\.prevent="handleOpen"/);
+  assert.match(component, /eyesOnAgentsStore\.openThread\(props\.thread\.threadId\)/);
+  assert.match(
+    component,
+    /v-if="thread\.runtimeState === 'working'"[\s\S]*?class="thread-card__working"[\s\S]*?role="status"[\s\S]*?:aria-label="runtimeLabel"[\s\S]*?<a-spin :size="12"/
+  );
+  assert.equal((component.match(/<a-spin/g) ?? []).length, 1);
+
+  const cardShell = cssRule(styles, '.thread-card');
+  assert.doesNotMatch(cardShell, /min-height/);
+  assert.doesNotMatch(cardShell, /(?:^|\n)\s*height\s*:/);
+  const cardContent = cssRule(styles, '.thread-card__content');
+  assert.match(cardContent, /gap: 4px/);
+  assert.match(cardContent, /padding: 8px/);
+  const cardTitle = cssRule(styles, '.thread-card__title');
+  assert.match(cardTitle, /line-height: 18px/);
+  assert.match(cardTitle, /min-height: 18px/);
+  assert.match(cardTitle, /max-height: 36px/);
+  assert.match(cardTitle, /overflow: hidden/);
+  assert.match(cardTitle, /overflow-wrap: anywhere/);
+  assert.match(cardTitle, /-webkit-line-clamp: 2/);
+  assert.doesNotMatch(cardTitle, /line-height: 1\.35|min-height: (?:34|36)px/);
+  assert.doesNotMatch(cardTitle, /(?:^|\n)\s*height\s*:\s*36px/);
+
+  assert.match(
+    component,
+    /<div class="thread-card__actions">\s*<span class="thread-card__time">[\s\S]*?<div class="thread-card__controls"[\s\S]*?class="thread-card__folder"[\s\S]*?class="thread-card__open-control thread-card__control"[\s\S]*?<a-dropdown/
+  );
+  const cardActions = cssRule(styles, '.thread-card__actions');
+  assert.match(cardActions, /justify-content: space-between/);
+
+  assert.match(
+    component,
+    /<a-tooltip v-if="thread\.cwd" :content="folderLabel"[\s\S]*?:title="folderLabel"[\s\S]*?:aria-label="folderLabel"[\s\S]*?<IconFolder :size="10" aria-hidden="true"/
+  );
+  assert.match(
+    component,
+    /thread\.workingDirectory[\s\S]*?\.replace\('\{path\}', props\.thread\.cwd \?\? ''\)/
+  );
+  assert.match(english, /workingDirectory: 'Working directory: \{path\}'/);
+  assert.match(chinese, /workingDirectory: '工作目录：\{path\}'/);
 
   const openAction = component.match(
     /<a-tooltip :content="i18nHelper\.eyesOnAgents\.actions\.open"[\s\S]*?<a-button[\s\S]*?<\/a-button>[\s\S]*?<\/a-tooltip>/
   );
   assert.ok(openAction, 'Missing localized Open tooltip and button');
   assert.match(openAction[0], /:title="i18nHelper\.eyesOnAgents\.actions\.open"/);
-  assert.match(openAction[0], /:aria-label="i18nHelper\.eyesOnAgents\.actions\.open"/);
+  assert.match(openAction[0], /:aria-label="openAriaLabel"/);
   assert.match(openAction[0], /:loading="eyesOnAgentsStore\.openingThreadIds\.has\(thread\.threadId\)"/);
   assert.match(openAction[0], /:disabled="eyesOnAgentsStore\.openingThreadIds\.has\(thread\.threadId\)"/);
   assert.match(openAction[0], /@click\.stop="handleOpen"/);
-  assert.match(openAction[0], /<template #icon><IconExternalLink :size="13" \/><\/template>/);
+  assert.match(openAction[0], /<template #icon><IconExternalLink :size="9" \/><\/template>/);
   assert.doesNotMatch(
     openAction[0],
     /\{\{\s*i18nHelper\.eyesOnAgents\.actions\.open\s*\}\}/
+  );
+  assert.match(
+    component,
+    /const showUnreadDot = computed\(\(\) =>\s*props\.thread\.isUnread && props\.thread\.runtimeState === 'idle'\);/
+  );
+  assert.match(
+    component,
+    /const openAriaLabel = computed\(\(\) => showUnreadDot\.value[\s\S]*?actions\.open[\s\S]*?thread\.new/
+  );
+  assert.equal((component.match(/eyesOnAgents\.thread\.new/g) ?? []).length, 1);
+  assert.doesNotMatch(component, /v-if\s*=\s*["']thread\.isUnread["']/);
+  assert.match(
+    component,
+    /v-if="showUnreadDot"\s+class="thread-card__unread-dot"\s+aria-hidden="true"/
+  );
+  const unreadDot = cssRule(styles, '.thread-card__unread-dot');
+  assert.match(unreadDot, /position: absolute/);
+  assert.match(unreadDot, /background: #ef4444/);
+
+  assert.match(
+    component,
+    /:aria-label="i18nHelper\.eyesOnAgents\.actions\.more"[\s\S]*?<IconDots :size="12" \/>/
+  );
+  const folderBox = cssRule(styles, '.thread-card__folder');
+  assert.match(folderBox, /width: 20px/);
+  assert.match(folderBox, /height: 20px/);
+  const actionButtons = cssRule(
+    styles,
+    '.thread-card__controls .arco-btn-size-mini.arco-btn-only-icon'
+  );
+  assert.match(actionButtons, /width: 20px/);
+  assert.match(actionButtons, /height: 20px/);
+
+  assert.match(component, /closest\('\.thread-card__control'\)/);
+  assert.doesNotMatch(component, /closest\('\.thread-card__actions'\)/);
+  assert.match(
+    styles,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.thread-card__working \.arco-icon-loading\s*\{[\s\S]*?animation: none/
   );
 });
 
@@ -215,7 +306,7 @@ test('All projects every thread while Focus and custom Domains retain their scop
   assert.match(board, /:threads="eyesOnAgentsStore\.focusThreads"/);
   assert.match(board, /:title="i18nHelper\.eyesOnAgents\.board\.all"/);
   assert.match(board, /:threads="eyesOnAgentsStore\.filteredAllThreads"/);
-  assert.match(board, /:total-count="eyesOnAgentsStore\.allThreads\.length"/);
+  assert.doesNotMatch(board, /total-count|totalCount/);
   assert.match(board, /:threads="eyesOnAgentsStore\.threadsForDomain\(element\.id\)"/);
   assert.match(store, /get allThreads\(\): EyesOnAgentsThread\[\] \{\s*return sortThreads\(this\.threads\);/);
   assert.match(store, /buildEyesOnAgentsProjectFilterOptions\(\s*this\.allThreads,/);
@@ -228,6 +319,8 @@ test('All projects every thread while Focus and custom Domains retain their scop
   assert.match(projectFilter, /eyesOnAgentsStore\.allProjectFilterValue/);
   assert.match(projectFilter, /eyesOnAgentsStore\.allProjectOptions/);
   assert.match(projectFilter, /selectAllProjectFilter/);
+  assert.match(projectFilter, /class="project-filter__count">\{\{ option\.count \}\}/);
+  assert.match(projectFilter, /`\$\{optionLabel\(option\)\} \(\$\{option\.count\}\)`/);
   assert.match(english, /all: 'All'/);
   assert.match(chinese, /all: 'All'/);
   assert.match(chinese, /allProjects: 'All'/);
@@ -235,6 +328,33 @@ test('All projects every thread while Focus and custom Domains retain their scop
   assert.match(chinese, /projectFilterLabel: '按 Project 筛选 All'/);
   assert.match(english, /noProject: 'No project'/);
   assert.match(chinese, /noProject: '无 Project'/);
+});
+
+test('Domain headers cannot restore counts or their obsolete height', () => {
+  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
+  );
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+  const rendererSource = walk('src/renderer/eyesOnAgents')
+    .filter((path) => /\.(vue|less|ts|html)$/.test(path))
+    .map(read)
+    .join('\n');
+
+  assert.doesNotMatch(rendererSource, /agent-domain__count/);
+  assert.doesNotMatch(board, /:total-count=|totalCount/);
+  assert.doesNotMatch(domain, /agent-domain__count|countLabel|totalCount/);
+  assert.doesNotMatch(styles, /agent-domain__count|min-height:\s*57px/);
+  assert.doesNotMatch(
+    english,
+    /signals: '\{count\} signals'|filteredThreads:|threads: '\{count\} threads'/
+  );
+  assert.doesNotMatch(
+    chinese,
+    /signals: '\{count\} 个信号'|filteredThreads:|threads: '\{count\} 个任务'/
+  );
 });
 
 test('Domain board wraps one draggable list and uses clone-only fixed projections', () => {
@@ -267,7 +387,10 @@ test('Domain board wraps one draggable list and uses clone-only fixed projection
   assert.match(domain, /props\.focus \|\| props\.all[\s\S]*pull: 'clone', put: false/);
   assert.match(domain, /:sort="!focus && !all"/);
   assert.match(domainStyles, /\.agent-domain\s*\{[^}]*max-height: 600px;/);
-  assert.match(domainStyles, /\.agent-domain__body\s*\{[^}]*overflow-y: auto;/);
+  const domainBody = cssRule(domainStyles, '.agent-domain__body');
+  assert.match(domainBody, /overflow-y: auto/);
+  assert.match(domainBody, /padding: 0 9px 9px/);
+  assert.doesNotMatch(domainBody, /padding:\s*9px\s*;/);
   assert.doesNotMatch(addDomainStyles, /height:\s*100%/);
 });
 

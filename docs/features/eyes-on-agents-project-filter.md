@@ -1,6 +1,6 @@
 # EyesOnAgents Project Filter
 
-Status: implemented and independently statically reviewed through task 011
+Status: implemented and independently statically reviewed through task 012
 
 Date: 2026-07-20
 
@@ -17,7 +17,6 @@ nearest current Git worktree root found by walking upward from a thread's `cwd`.
 
 ```text
 ┌ All ─────────────────────────────┐
-│ 4 of 18 threads                  │
 │ [ Project: overmind (4)       ▾ ]│
 │                                  │
 │ thread item                      │
@@ -38,8 +37,7 @@ Filter choices:
 - Each Project option filters by its stable `project_key` and shows its complete visible count.
 - Project options are sorted by display name, then root. Same-named Projects show a shortened root
   to disambiguate them.
-- While filtered, the column count is `{visible} of {total} threads`; `All` keeps the existing total
-  count.
+- Domain headers do not render thread counts. Counts remain inside the Project choices only.
 - The selected filter is renderer-session state and is not written to SQLite settings.
 - If the last matching Project thread is archived or its metadata changes, the selected option
   remains visible with zero results until the user changes the filter.
@@ -93,9 +91,9 @@ modify the manually assigned Domain.
 | state | behavior |
 |---|---|
 | no visible threads | the existing full-page EyesOnAgents empty state replaces the board and filter |
-| `All` selected | total count and every non-archived thread |
+| `All` selected | every non-archived thread; the `All` choice retains its option count |
 | `No project` selected | only rows whose Project metadata is null |
-| Project selected, zero results | `0 of {total}` plus a Project-specific empty message |
+| Project selected, zero results | Project-specific empty message; no separate column count row |
 | duplicate Project names | shortened roots disambiguate options |
 | Project lookup unavailable | last known metadata is preserved; no sync failure is raised |
 | Project path later changes | the next Sync recomputes and updates only Project metadata |

@@ -23,7 +23,6 @@
           :domain="eyesOnAgentsStore.uncategorizedDomain"
           :title="i18nHelper.eyesOnAgents.board.all"
           :threads="eyesOnAgentsStore.filteredAllThreads"
-          :total-count="eyesOnAgentsStore.allThreads.length"
           all
           project-filter
         />

@@ -6,37 +6,32 @@
     :data-domain-id="domain?.id"
   >
     <header class="agent-domain__header" :class="{ 'agent-domain__drag-handle': canManage }">
-      <div class="agent-domain__heading">
-        <div class="agent-domain__title-row">
-          <IconTargetArrow v-if="focus" :size="15" />
-          <input
-            v-if="editing"
-            ref="titleInputRef"
-            v-model="titleInput"
-            class="agent-domain__title-input"
-            :style="{ width: `${inputWidth}px` }"
-            maxlength="80"
-            @blur="commitRename"
-            @click.stop
-            @mousedown.stop
-            @keydown.enter.prevent="blurTitleInput"
-            @keydown.esc.prevent.stop="cancelRename"
-          />
-          <button
-            v-else-if="canManage"
-            class="agent-domain__title agent-domain__title--editable"
-            type="button"
-            @click.stop="beginRename"
-            @mousedown.stop
-          >
-            {{ title }}
-          </button>
-          <h2 v-else class="agent-domain__title">{{ title }}</h2>
-          <span ref="titleSizerRef" class="agent-domain__title-sizer">{{ editingTitle }}</span>
-        </div>
-        <span class="agent-domain__count">
-          {{ countLabel }}
-        </span>
+      <div class="agent-domain__title-row">
+        <IconTargetArrow v-if="focus" :size="15" />
+        <input
+          v-if="editing"
+          ref="titleInputRef"
+          v-model="titleInput"
+          class="agent-domain__title-input"
+          :style="{ width: `${inputWidth}px` }"
+          maxlength="80"
+          @blur="commitRename"
+          @click.stop
+          @mousedown.stop
+          @keydown.enter.prevent="blurTitleInput"
+          @keydown.esc.prevent.stop="cancelRename"
+        />
+        <button
+          v-else-if="canManage"
+          class="agent-domain__title agent-domain__title--editable"
+          type="button"
+          @click.stop="beginRename"
+          @mousedown.stop
+        >
+          {{ title }}
+        </button>
+        <h2 v-else class="agent-domain__title">{{ title }}</h2>
+        <span ref="titleSizerRef" class="agent-domain__title-sizer">{{ editingTitle }}</span>
       </div>
 
       <a-dropdown v-if="canManage" trigger="click" position="br">
@@ -112,13 +107,11 @@ const props = withDefaults(defineProps<{
   focus?: boolean;
   all?: boolean;
   projectFilter?: boolean;
-  totalCount?: number;
 }>(), {
   domain: undefined,
   focus: false,
   all: false,
   projectFilter: false,
-  totalCount: undefined,
 });
 
 const visibleThreads = ref<EyesOnAgentsThread[]>([]);
@@ -128,21 +121,6 @@ const titleInputRef = ref<HTMLInputElement | null>(null);
 const titleSizerRef = ref<HTMLSpanElement | null>(null);
 const inputWidth = ref(40);
 const canManage = computed(() => Boolean(props.domain && !props.domain.isSystem));
-const countLabel = computed(() => {
-  if (
-    props.projectFilter &&
-    eyesOnAgentsStore.isAllProjectFiltered &&
-    props.totalCount !== undefined
-  ) {
-    return i18nHelper.eyesOnAgents.board.filteredThreads
-      .replace('{visible}', String(props.threads.length))
-      .replace('{total}', String(props.totalCount));
-  }
-  const template = props.focus
-    ? i18nHelper.eyesOnAgents.board.signals
-    : i18nHelper.eyesOnAgents.board.threads;
-  return template.replace('{count}', String(props.threads.length));
-});
 const emptyLabel = computed(() => {
   if (props.focus) return i18nHelper.eyesOnAgents.board.emptyFocus;
   if (!props.projectFilter || !eyesOnAgentsStore.isAllProjectFiltered) {

@@ -2,7 +2,6 @@
   <article
     name="eyesOnAgents__threadCard"
     class="thread-card"
-    :class="[`thread-card--${thread.runtimeState}`, { 'thread-card--unread': thread.isUnread }]"
     :data-thread-id="thread.threadId"
     tabindex="0"
     :aria-label="`${displayTitle}, ${runtimeLabel}`"
@@ -10,64 +9,82 @@
     @keydown.enter.prevent="handleOpen"
   >
     <div class="thread-card__content">
-      <div class="thread-card__status-row">
-        <span class="thread-card__runtime">{{ runtimeLabel }}</span>
-        <span v-if="thread.isUnread" class="thread-card__new-badge">
-          {{ i18nHelper.eyesOnAgents.thread.new }}
+      <div class="thread-card__title-row">
+        <h3 class="thread-card__title" :title="displayTitle">{{ displayTitle }}</h3>
+        <span
+          v-if="thread.runtimeState === 'working'"
+          class="thread-card__working"
+          role="status"
+          :aria-label="runtimeLabel"
+        >
+          <a-spin :size="12" aria-hidden="true" />
         </span>
       </div>
 
-      <h3 class="thread-card__title" :title="displayTitle">{{ displayTitle }}</h3>
-
-      <div class="thread-card__meta">
-        <span v-if="thread.cwd" class="thread-card__path" :title="thread.cwd">
-          <IconFolder :size="13" />
-          <span>{{ displayPath }}</span>
-        </span>
+      <div class="thread-card__actions">
         <span class="thread-card__time">{{ activityLabel }}</span>
-      </div>
 
-      <div class="thread-card__actions" @keydown.enter.stop>
-        <a-tooltip :content="i18nHelper.eyesOnAgents.actions.open" position="top" mini>
-          <a-button
-            size="mini"
-            type="primary"
-            :title="i18nHelper.eyesOnAgents.actions.open"
-            :aria-label="i18nHelper.eyesOnAgents.actions.open"
-            :loading="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
-            :disabled="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
-            @click.stop="handleOpen"
-          >
-            <template #icon><IconExternalLink :size="13" /></template>
-          </a-button>
-        </a-tooltip>
+        <div class="thread-card__controls" @keydown.enter.stop>
+          <a-tooltip v-if="thread.cwd" :content="folderLabel" position="top" mini>
+            <span
+              class="thread-card__folder"
+              role="img"
+              :title="folderLabel"
+              :aria-label="folderLabel"
+            >
+              <IconFolder :size="10" aria-hidden="true" />
+            </span>
+          </a-tooltip>
 
-        <a-dropdown trigger="click" position="br">
-          <a-button
-            size="mini"
-            type="text"
-            :aria-label="i18nHelper.eyesOnAgents.actions.more"
-            @click.stop
-          >
-            <template #icon><IconDots :size="16" /></template>
-          </a-button>
-          <template #content>
-            <a-dgroup :title="i18nHelper.eyesOnAgents.actions.moveTo">
-              <a-doption
-                v-for="domain in eyesOnAgentsStore.domains"
-                :key="domain.id"
-                :disabled="domain.id === thread.domainId"
-                @click="handleMove(domain.id)"
+          <a-tooltip :content="i18nHelper.eyesOnAgents.actions.open" position="top" mini>
+            <span class="thread-card__open-control thread-card__control">
+              <a-button
+                size="mini"
+                type="primary"
+                :title="i18nHelper.eyesOnAgents.actions.open"
+                :aria-label="openAriaLabel"
+                :loading="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
+                :disabled="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
+                @click.stop="handleOpen"
               >
-                <IconCheck
-                  :size="13"
-                  :class="{ 'thread-card__check--hidden': domain.id !== thread.domainId }"
-                />
-                {{ domainLabel(domain) }}
-              </a-doption>
-            </a-dgroup>
-          </template>
-        </a-dropdown>
+                <template #icon><IconExternalLink :size="9" /></template>
+              </a-button>
+              <span
+                v-if="showUnreadDot"
+                class="thread-card__unread-dot"
+                aria-hidden="true"
+              />
+            </span>
+          </a-tooltip>
+
+          <a-dropdown trigger="click" position="br">
+            <a-button
+              class="thread-card__control"
+              size="mini"
+              type="text"
+              :aria-label="i18nHelper.eyesOnAgents.actions.more"
+              @click.stop
+            >
+              <template #icon><IconDots :size="12" /></template>
+            </a-button>
+            <template #content>
+              <a-dgroup :title="i18nHelper.eyesOnAgents.actions.moveTo">
+                <a-doption
+                  v-for="domain in eyesOnAgentsStore.domains"
+                  :key="domain.id"
+                  :disabled="domain.id === thread.domainId"
+                  @click="handleMove(domain.id)"
+                >
+                  <IconCheck
+                    :size="13"
+                    :class="{ 'thread-card__check--hidden': domain.id !== thread.domainId }"
+                  />
+                  {{ domainLabel(domain) }}
+                </a-doption>
+              </a-dgroup>
+            </template>
+          </a-dropdown>
+        </div>
       </div>
     </div>
   </article>
@@ -95,12 +112,6 @@ const displayTitle = computed(() =>
   props.thread.title?.trim()
   || `${i18nHelper.eyesOnAgents.thread.untitled} · ${props.thread.threadId.slice(0, 8)}`,
 );
-const displayPath = computed(() => {
-  const path = props.thread.cwd?.replace(/[\\/]+$/, '') ?? '';
-  const segments = path.split(/[\\/]/).filter(Boolean);
-  if (segments.length <= 2) return path;
-  return `…/${segments.slice(-2).join('/')}`;
-});
 const runtimeLabel = computed(() => {
   switch (props.thread.runtimeState) {
     case 'working': return i18nHelper.eyesOnAgents.thread.working;
@@ -112,6 +123,13 @@ const runtimeLabel = computed(() => {
     default: return i18nHelper.eyesOnAgents.thread.unknown;
   }
 });
+const folderLabel = computed(() => i18nHelper.eyesOnAgents.thread.workingDirectory
+  .replace('{path}', props.thread.cwd ?? ''));
+const showUnreadDot = computed(() =>
+  props.thread.isUnread && props.thread.runtimeState === 'idle');
+const openAriaLabel = computed(() => showUnreadDot.value
+  ? `${i18nHelper.eyesOnAgents.actions.open}, ${i18nHelper.eyesOnAgents.thread.new}`
+  : i18nHelper.eyesOnAgents.actions.open);
 const activityLabel = computed(() => {
   const value = props.thread.lastActivityAt ?? props.thread.lastCompletedAt;
   if (!value) return i18nHelper.eyesOnAgents.thread.unknown;
@@ -134,7 +152,7 @@ const handleOpen = async (): Promise<void> => {
 };
 
 const handleDoubleClick = async (event: MouseEvent): Promise<void> => {
-  if ((event.target as HTMLElement).closest('.thread-card__actions')) return;
+  if ((event.target as HTMLElement).closest('.thread-card__control')) return;
   await handleOpen();
 };
 

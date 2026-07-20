@@ -250,9 +250,6 @@ export const en = {
     board: {
       focus: 'Focus',
       all: 'All',
-      signals: '{count} signals',
-      threads: '{count} threads',
-      filteredThreads: '{visible} of {total} threads',
       projectFilterLabel: 'Filter All by Project',
       allProjects: 'All',
       noProject: 'No project',
@@ -276,6 +273,7 @@ export const en = {
     thread: {
       untitled: 'Untitled Codex task',
       new: 'Unread',
+      workingDirectory: 'Working directory: {path}',
       source: 'Evidence: {source}',
       appServer: 'App Server',
       codexHook: 'Desktop Bridge',

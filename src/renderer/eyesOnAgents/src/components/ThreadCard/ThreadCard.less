@@ -1,5 +1,4 @@
 .thread-card {
-  min-height: 122px;
   display: flex;
   position: relative;
   overflow: hidden;
@@ -25,101 +24,98 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px 10px 9px 13px;
+  gap: 4px;
+  padding: 8px;
 }
 
-.thread-card__status-row,
-.thread-card__meta,
-.thread-card__actions {
+.thread-card__title-row,
+.thread-card__actions,
+.thread-card__controls,
+.thread-card__folder,
+.thread-card__working,
+.thread-card__open-control {
   display: flex;
   align-items: center;
 }
 
-.thread-card__status-row {
-  min-height: 16px;
+.thread-card__title-row {
+  min-width: 0;
+  align-items: flex-start;
   gap: 6px;
 }
 
-.thread-card__runtime {
-  color: #586077;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.025em;
-  text-transform: uppercase;
-}
-
-.thread-card--working .thread-card__runtime {
-  color: #46588e;
-}
-
-.thread-card--waiting_approval .thread-card__runtime,
-.thread-card--waiting_input .thread-card__runtime,
-.thread-card--unread .thread-card__runtime {
-  color: #9a3b16;
-}
-
-.thread-card--failed .thread-card__runtime {
-  color: #973c35;
-}
-
-.thread-card__new-badge {
-  padding: 1px 6px;
-  border-radius: 999px;
-  color: #9a3b16;
-  background: #fff0e8;
-  font-size: 9px;
-  font-weight: 750;
-}
-
 .thread-card__title {
-  min-height: 34px;
+  min-width: 0;
+  min-height: 18px;
+  max-height: 36px;
+  flex: 1;
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
   color: #1e2237;
   font-size: 13px;
   font-weight: 650;
-  line-height: 1.35;
+  line-height: 18px;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
-.thread-card__meta {
-  min-width: 0;
-  gap: 8px;
-  color: #7b8297;
-  font-size: 10px;
+.thread-card__working {
+  width: 16px;
+  height: 18px;
+  flex: 0 0 16px;
+  justify-content: center;
+  color: var(--eyes-primary);
 }
 
-.thread-card__path {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.thread-card__path svg {
-  flex: 0 0 auto;
-}
-
-.thread-card__path span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-card__time {
-  flex: 0 0 auto;
+.thread-card__working .arco-spin-icon {
+  color: var(--eyes-primary);
 }
 
 .thread-card__actions {
-  justify-content: flex-end;
-  gap: 3px;
-  margin-top: auto;
+  justify-content: space-between;
+  gap: 8px;
   cursor: default;
+}
+
+.thread-card__time {
+  min-width: 0;
+  color: #7b8297;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.thread-card__controls {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.thread-card__folder {
+  width: 20px;
+  height: 20px;
+  justify-content: center;
+  color: #68708a;
+}
+
+.thread-card__controls .arco-btn-size-mini.arco-btn-only-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.thread-card__open-control {
+  position: relative;
+}
+
+.thread-card__unread-dot {
+  width: 6px;
+  height: 6px;
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  border-radius: 50%;
+  background: #ef4444;
+  pointer-events: none;
 }
 
 .thread-card__check--hidden {
@@ -129,5 +125,9 @@
 @media (prefers-reduced-motion: reduce) {
   .thread-card {
     transition: none;
+  }
+
+  .thread-card__working .arco-icon-loading {
+    animation: none !important;
   }
 }

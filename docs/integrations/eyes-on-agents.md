@@ -1,10 +1,10 @@
 # EyesOnAgents Integration
 
-Status: implemented and independently statically reviewed through task 011
+Status: implemented and independently statically reviewed through task 012
 
 Date: 2026-07-17
 
-Verified: 2026-07-20 (through task 011; runtime owner verification pending)
+Verified: 2026-07-20 (through task 012; runtime owner verification pending)
 
 ## Decision
 
