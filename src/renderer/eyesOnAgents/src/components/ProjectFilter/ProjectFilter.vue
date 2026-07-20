@@ -7,11 +7,11 @@
       class="project-filter__select"
       size="mini"
       allow-search
-      :model-value="eyesOnAgentsStore.uncategorizedProjectFilterValue"
+      :model-value="eyesOnAgentsStore.allProjectFilterValue"
       @change="handleChange"
     >
       <a-option
-        v-for="option in eyesOnAgentsStore.uncategorizedProjectOptions"
+        v-for="option in eyesOnAgentsStore.allProjectOptions"
         :key="option.value"
         :value="option.value"
         :label="selectedLabel(option)"
@@ -43,7 +43,7 @@ const selectedLabel = (option: EyesOnAgentsProjectFilterOption): string => {
 
 const handleChange = (value: unknown): void => {
   if (typeof value !== 'string') return;
-  eyesOnAgentsStore.selectUncategorizedProjectFilter(value);
+  eyesOnAgentsStore.selectAllProjectFilter(value);
 };
 </script>
 

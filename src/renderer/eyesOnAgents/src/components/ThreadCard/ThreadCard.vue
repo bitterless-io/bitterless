@@ -144,7 +144,7 @@ const handleMove = async (domainId: number): Promise<void> => {
 
 const domainLabel = (domain: EyesOnAgentsDomain): string =>
   domain.domainKey === 'uncategorized'
-    ? i18nHelper.eyesOnAgents.board.uncategorized
+    ? i18nHelper.eyesOnAgents.board.all
     : domain.title;
 </script>
 

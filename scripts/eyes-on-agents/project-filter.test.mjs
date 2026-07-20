@@ -8,9 +8,9 @@ import { build } from 'esbuild';
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-eyes-filter-'));
 
-const thread = (threadId, project) => ({
+const thread = (threadId, project, domainId = 1) => ({
   threadId,
-  domainId: 1,
+  domainId,
   title: threadId,
   cwd: null,
   projectKey: project?.key ?? null,
@@ -43,11 +43,11 @@ try {
   });
   const filter = await import(`${pathToFileURL(outfile).href}?v=${Date.now()}`);
   const threads = [
-    thread('plain', null),
-    thread('overmind-1', { key: '/work/overmind', root: '/work/overmind', name: 'overmind' }),
-    thread('overmind-2', { key: '/work/overmind', root: '/work/overmind', name: 'overmind' }),
-    thread('same-a', { key: '/a/app', root: '/a/app', name: 'app' }),
-    thread('same-b', { key: '/b/app', root: '/b/app', name: 'app' }),
+    thread('plain', null, 1),
+    thread('overmind-1', { key: '/work/overmind', root: '/work/overmind', name: 'overmind' }, 2),
+    thread('overmind-2', { key: '/work/overmind', root: '/work/overmind', name: 'overmind' }, 3),
+    thread('same-a', { key: '/a/app', root: '/a/app', name: 'app' }, 2),
+    thread('same-b', { key: '/b/app', root: '/b/app', name: 'app' }, 4),
   ];
 
   let options = filter.buildEyesOnAgentsProjectFilterOptions(threads, { type: 'all' });

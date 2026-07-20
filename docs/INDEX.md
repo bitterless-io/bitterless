@@ -17,7 +17,7 @@ design document.
 - [Todo MCP integration](features/todo-mcp.md) - production-first local Todo access with isolated
   development instances.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
-  Project metadata and an Uncategorized-only source filter.
+  Project metadata and an All-column source filter.
 - [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
   lifecycle, lightweight reliable delivery, Codex trust review, and App Server independence.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
@@ -39,7 +39,7 @@ design document.
 - [EyesOnAgents](integrations/eyes-on-agents.md) - Codex-only App Server connection, raw inventory snapshots, Domain
   classification, Focus/unread semantics, Desktop status bridge, and persistence boundary.
 - [EyesOnAgents layout](integrations/eyes-on-agents-layout.md) - standalone Mini App window,
-  horizontal observation board, compact status-first cards, and responsive interaction states.
+  wrapping observation board, compact status-first cards, and responsive interaction states.
 
 ## Design system
 

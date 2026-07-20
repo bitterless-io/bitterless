@@ -135,7 +135,10 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   assert.doesNotMatch(domainHeader, /border-bottom|box-shadow/);
 
   const domainTitleInput = cssRule(domain, '.agent-domain__title-input');
-  assert.match(domainTitleInput, /border: 1px solid/);
+  assert.match(domainTitleInput, /min-width: 40px/);
+  assert.match(domainTitleInput, /max-width: 200px/);
+  assert.match(domainTitleInput, /border: 0/);
+  assert.match(domainTitleInput, /box-shadow: 0 0 0 1px/);
   const domainTitleFocus = cssRule(domain, '.agent-domain__title-input:focus-visible');
   assert.match(domainTitleFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
 
@@ -199,24 +202,101 @@ test('thread cards omit decorative signals and expose an accessible icon-only Op
   );
 });
 
-test('Project filtering is scoped only to Uncategorized', () => {
+test('All projects every thread while Focus and custom Domains retain their scopes', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
   const projectFilter = read(
     'src/renderer/eyesOnAgents/src/components/ProjectFilter/ProjectFilter.vue'
   );
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
   assert.match(board, /:threads="eyesOnAgentsStore\.focusThreads"/);
-  assert.match(board, /:threads="eyesOnAgentsStore\.filteredUncategorizedThreads"/);
+  assert.match(board, /:title="i18nHelper\.eyesOnAgents\.board\.all"/);
+  assert.match(board, /:threads="eyesOnAgentsStore\.filteredAllThreads"/);
+  assert.match(board, /:total-count="eyesOnAgentsStore\.allThreads\.length"/);
   assert.match(board, /:threads="eyesOnAgentsStore\.threadsForDomain\(element\.id\)"/);
+  assert.match(store, /get allThreads\(\): EyesOnAgentsThread\[\] \{\s*return sortThreads\(this\.threads\);/);
+  assert.match(store, /buildEyesOnAgentsProjectFilterOptions\(\s*this\.allThreads,/);
+  assert.match(store, /filterEyesOnAgentsThreadsByProject\(\s*this\.allThreads,/);
+  assert.doesNotMatch(store, /uncategorizedProjectFilter|filteredUncategorizedThreads|uncategorizedThreads/);
   assert.match(domain, /<ProjectFilter v-if="projectFilter"/);
   assert.match(projectFilter, /<label name="eyesOnAgents__projectFilter"/);
   assert.match(projectFilter, /class="project-filter__label"/);
   assert.match(projectFilter, /allow-search/);
+  assert.match(projectFilter, /eyesOnAgentsStore\.allProjectFilterValue/);
+  assert.match(projectFilter, /eyesOnAgentsStore\.allProjectOptions/);
+  assert.match(projectFilter, /selectAllProjectFilter/);
+  assert.match(english, /all: 'All'/);
+  assert.match(chinese, /all: 'All'/);
+  assert.match(chinese, /allProjects: 'All'/);
+  assert.match(english, /projectFilterLabel: 'Filter All by Project'/);
+  assert.match(chinese, /projectFilterLabel: '按 Project 筛选 All'/);
   assert.match(english, /noProject: 'No project'/);
   assert.match(chinese, /noProject: '无 Project'/);
+});
+
+test('Domain board wraps one draggable list and uses clone-only fixed projections', () => {
+  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
+  const boardStyles = read(
+    'src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.less'
+  );
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
+  const domainStyles = read(
+    'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
+  );
+  const addDomainStyles = read(
+    'src/renderer/eyesOnAgents/src/components/AddDomainColumn/AddDomainColumn.less'
+  );
+
+  assert.equal((board.match(/<draggable/g) ?? []).length, 1);
+  assert.match(board, /<template #header>[\s\S]*eyesOnAgents__focusColumn[\s\S]*eyesOnAgents__allColumn[\s\S]*<template #item/);
+  assert.match(board, /<template #footer>[\s\S]*<AddDomainColumn \/>/);
+  assert.doesNotMatch(board, /direction="horizontal"|scrollToFocus|showJumpToFocus|IconArrowLeft/);
+  assert.match(board, /oldDraggableIndex\?: number/);
+  assert.match(board, /newDraggableIndex\?: number/);
+  assert.match(board, /reorderCustomDomains\(event\.oldDraggableIndex, event\.newDraggableIndex\)/);
+  assert.doesNotMatch(board, /event\.oldIndex|event\.newIndex/);
+  const boardShell = cssRule(boardStyles, '.agent-board');
+  assert.match(boardShell, /overflow-x: hidden/);
+  assert.match(boardShell, /overflow-y: auto/);
+  assert.match(boardStyles, /\.agent-board__columns\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
+  assert.doesNotMatch(boardStyles, /display:\s*contents|overflow-x:\s*auto/);
+
+  assert.match(domain, /props\.focus \|\| props\.all[\s\S]*pull: 'clone', put: false/);
+  assert.match(domain, /:sort="!focus && !all"/);
+  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*max-height: 600px;/);
+  assert.match(domainStyles, /\.agent-domain__body\s*\{[^}]*overflow-y: auto;/);
+  assert.doesNotMatch(addDomainStyles, /height:\s*100%/);
+});
+
+test('custom Domain titles edit on click with Todo-sized inputs and no Rename menu item', () => {
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
+  const domainStyles = read(
+    'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
+  );
+  const addDomain = read(
+    'src/renderer/eyesOnAgents/src/components/AddDomainColumn/AddDomainColumn.vue'
+  );
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  assert.match(domain, /v-else-if="canManage"[\s\S]*@click\.stop="beginRename"/);
+  assert.match(domain, /ref="titleSizerRef" class="agent-domain__title-sizer"/);
+  assert.match(domain, /:style="\{ width: `\$\{inputWidth\}px` \}"/);
+  assert.match(domain, /offsetWidth \?\? 0\) \+ 8/);
+  assert.match(domain, /Math\.min\(Math\.max\(measured, 40\), 200\)/);
+  assert.match(domain, /@blur="commitRename"/);
+  assert.match(domain, /@keydown\.enter\.prevent="blurTitleInput"/);
+  assert.match(domain, /@keydown\.esc\.prevent\.stop="cancelRename"/);
+  assert.match(domain, /value\.toLocaleLowerCase\(\) === 'all'/);
+  assert.match(addDomain, /normalizedTitle\.value\.toLocaleLowerCase\(\) === 'all'/);
+  assert.doesNotMatch(domain, /IconPencil|actions\.rename/);
+  assert.doesNotMatch(english, /rename: 'Rename'|renameTitle:/);
+  assert.doesNotMatch(chinese, /rename: '重命名'|renameTitle:/);
+  assert.match(domainStyles, /\.agent-domain__title-sizer\s*\{[^}]*visibility: hidden;/);
+  assert.match(domainStyles, /\.agent-domain__title-input\s*\{[^}]*min-width: 40px;[^}]*max-width: 200px;/);
 });
 
 test('connection panel presents independent Codex observation onboarding and review', () => {

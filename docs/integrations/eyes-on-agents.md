@@ -1,10 +1,10 @@
 # EyesOnAgents Integration
 
-Status: implemented and independently verified
+Status: implemented and independently statically reviewed through task 011
 
 Date: 2026-07-17
 
-Verified: 2026-07-17 (through task 008)
+Verified: 2026-07-20 (through task 011; runtime owner verification pending)
 
 ## Decision
 
@@ -25,7 +25,9 @@ EyesOnAgents never reads or displays them.
 - Persist each validated active and archived `thread/list` object as a local source snapshot, while
   keeping Bitterless-owned Domain and read markers in a separate normalized overlay.
 - Put every newly discovered thread into the system `Uncategorized` Domain until the user moves it.
-- Derive current Git Project metadata from `cwd` and filter `Uncategorized` by Project without
+- Show every non-archived thread in a fixed renderer-only `All` projection while preserving the
+  system `uncategorized` Domain as the storage fallback.
+- Derive current Git Project metadata from `cwd` and filter `All` by Project without
   changing manual Domain assignment.
 - Show running threads and newly completed unread threads in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
@@ -223,15 +225,16 @@ must not share ordering, archive, or deletion semantics.
 | `id` | integer primary key |
 | `domain_key` | stable unique key; `uncategorized` is reserved |
 | `title` | user-visible title |
-| `sort_index` | horizontal board order for real Domains |
+| `sort_index` | wrapped board order for stored Domains |
 | `is_system` | system Domains cannot be renamed or deleted |
 | `is_deleted` | soft-delete flag |
 | `delete_flag` | active value `0`; deletion timestamp string for unique-key reuse |
 | `deleted_at` | soft-delete time |
 | `created_at`, `updated_at` | lifecycle timestamps |
 
-`Uncategorized` is inserted idempotently during SQLite bootstrap with `is_system = true` and the
-first real-column sort position. Focus is not stored in this table.
+`Uncategorized` is inserted idempotently during SQLite bootstrap with `is_system = true` and kept
+as the internal fallback assignment. The renderer labels its fixed projection `All`; neither All
+nor Focus is stored as a separate table row.
 
 ### `eyes_on_agents_thread`
 
@@ -279,7 +282,8 @@ existing Domain assignment. Historical import does not synthesize a completion m
 threads do not flood Focus as unread.
 
 Deleting a custom Domain soft-deletes it and moves all of its threads to `Uncategorized` in one
-transaction. The system Domain cannot be renamed or deleted.
+transaction. The system Domain cannot be renamed or deleted, and the affected threads remain
+visible in the renderer's All projection throughout the change.
 
 ## Project source metadata
 
@@ -290,8 +294,9 @@ preserves the last known value. A `.git` directory and a bounded `gitdir:` file 
 worktree, so nested repositories, submodules, and linked worktrees use their nearest root.
 
 Project is a source dimension, not classification. It never creates a Domain, changes `domain_id`,
-or filters Focus/custom Domains. The renderer may filter only `Uncategorized` by `All`, `No
-project`, or an exact `project_key`. See
+or filters Focus/custom Domains. The renderer may filter only the All projection by `All`, `No
+project`, or an exact `project_key`; its options and counts use every visible non-archived thread,
+regardless of stored Domain assignment. See
 [EyesOnAgents Project Filter](../features/eyes-on-agents-project-filter.md) for the complete contract.
 
 ## Runtime state

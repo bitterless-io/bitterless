@@ -12,14 +12,27 @@
           <input
             v-if="editing"
             ref="titleInputRef"
-            v-model="editingTitle"
+            v-model="titleInput"
             class="agent-domain__title-input"
+            :style="{ width: `${inputWidth}px` }"
             maxlength="80"
             @blur="commitRename"
-            @keydown.enter.prevent="commitRename"
-            @keydown.esc.prevent="cancelRename"
+            @click.stop
+            @mousedown.stop
+            @keydown.enter.prevent="blurTitleInput"
+            @keydown.esc.prevent.stop="cancelRename"
           />
-          <h2 v-else>{{ title }}</h2>
+          <button
+            v-else-if="canManage"
+            class="agent-domain__title agent-domain__title--editable"
+            type="button"
+            @click.stop="beginRename"
+            @mousedown.stop
+          >
+            {{ title }}
+          </button>
+          <h2 v-else class="agent-domain__title">{{ title }}</h2>
+          <span ref="titleSizerRef" class="agent-domain__title-sizer">{{ editingTitle }}</span>
         </div>
         <span class="agent-domain__count">
           {{ countLabel }}
@@ -36,10 +49,6 @@
           <template #icon><IconDots :size="17" /></template>
         </a-button>
         <template #content>
-          <a-doption @click="beginRename">
-            <IconPencil :size="14" />
-            {{ i18nHelper.eyesOnAgents.actions.rename }}
-          </a-doption>
           <a-doption class="agent-domain__delete-option" @click="confirmDelete">
             <IconTrash :size="14" />
             {{ i18nHelper.eyesOnAgents.actions.delete }}
@@ -56,7 +65,7 @@
         class="agent-domain__thread-list"
         :group="dragGroup"
         item-key="threadId"
-        :sort="!focus"
+        :sort="!focus && !all"
         :animation="160"
         @add="handleThreadAdded"
       >
@@ -80,7 +89,6 @@ import { Modal } from '@arco-design/web-vue';
 import {
   IconCircleCheck,
   IconDots,
-  IconPencil,
   IconTargetArrow,
   IconTrash,
 } from '@tabler/icons-vue';
@@ -102,11 +110,13 @@ const props = withDefaults(defineProps<{
   threads: EyesOnAgentsThread[];
   domain?: EyesOnAgentsDomain;
   focus?: boolean;
+  all?: boolean;
   projectFilter?: boolean;
   totalCount?: number;
 }>(), {
   domain: undefined,
   focus: false,
+  all: false,
   projectFilter: false,
   totalCount: undefined,
 });
@@ -115,11 +125,13 @@ const visibleThreads = ref<EyesOnAgentsThread[]>([]);
 const editing = ref(false);
 const editingTitle = ref('');
 const titleInputRef = ref<HTMLInputElement | null>(null);
+const titleSizerRef = ref<HTMLSpanElement | null>(null);
+const inputWidth = ref(40);
 const canManage = computed(() => Boolean(props.domain && !props.domain.isSystem));
 const countLabel = computed(() => {
   if (
     props.projectFilter &&
-    eyesOnAgentsStore.isUncategorizedProjectFiltered &&
+    eyesOnAgentsStore.isAllProjectFiltered &&
     props.totalCount !== undefined
   ) {
     return i18nHelper.eyesOnAgents.board.filteredThreads
@@ -133,16 +145,31 @@ const countLabel = computed(() => {
 });
 const emptyLabel = computed(() => {
   if (props.focus) return i18nHelper.eyesOnAgents.board.emptyFocus;
-  if (!props.projectFilter || !eyesOnAgentsStore.isUncategorizedProjectFiltered) {
+  if (!props.projectFilter || !eyesOnAgentsStore.isAllProjectFiltered) {
     return i18nHelper.eyesOnAgents.board.emptyDomain;
   }
-  return eyesOnAgentsStore.uncategorizedProjectFilter.type === 'none'
+  return eyesOnAgentsStore.allProjectFilter.type === 'none'
     ? i18nHelper.eyesOnAgents.board.emptyNoProject
     : i18nHelper.eyesOnAgents.board.emptyProject;
 });
-const dragGroup = computed(() => props.focus
+const dragGroup = computed(() => props.focus || props.all
   ? { name: 'eyes-on-agents-threads', pull: 'clone', put: false }
   : { name: 'eyes-on-agents-threads', pull: true, put: true });
+
+const measureTitleInput = (): void => {
+  void nextTick(() => {
+    const measured = (titleSizerRef.value?.offsetWidth ?? 0) + 8;
+    inputWidth.value = Math.min(Math.max(measured, 40), 200);
+  });
+};
+
+const titleInput = computed({
+  get: () => editingTitle.value,
+  set: (value: string) => {
+    editingTitle.value = value;
+    measureTitleInput();
+  },
+});
 
 watch(
   () => props.threads,
@@ -153,7 +180,7 @@ watch(
 );
 
 const handleThreadAdded = async (event: ThreadAddEvent): Promise<void> => {
-  if (!props.domain || event.newIndex === undefined) return;
+  if (props.focus || props.all || !props.domain || event.newIndex === undefined) return;
   const thread = visibleThreads.value[event.newIndex];
   if (!thread) return;
   await eyesOnAgentsStore.moveThread(thread.threadId, props.domain.id).catch(() => undefined);
@@ -165,8 +192,13 @@ const beginRename = async (): Promise<void> => {
   editingTitle.value = props.domain.title;
   editing.value = true;
   await nextTick();
+  measureTitleInput();
   titleInputRef.value?.focus();
   titleInputRef.value?.select();
+};
+
+const blurTitleInput = (): void => {
+  titleInputRef.value?.blur();
 };
 
 const cancelRename = (): void => {
@@ -185,7 +217,8 @@ const commitRename = async (): Promise<void> => {
     (domain) => domain.id !== props.domain?.id
       && domain.title.trim().toLocaleLowerCase() === value.toLocaleLowerCase(),
   );
-  if (duplicate) {
+  const reserved = value.toLocaleLowerCase() === 'all';
+  if (duplicate || reserved) {
     editingTitle.value = props.domain.title;
     cancelRename();
     return;

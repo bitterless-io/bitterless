@@ -60,7 +60,8 @@ const validationError = computed(() => {
   const duplicate = eyesOnAgentsStore.domains.some(
     (domain) => domain.title.trim().toLocaleLowerCase() === normalizedTitle.value.toLocaleLowerCase(),
   );
-  return duplicate ? i18nHelper.eyesOnAgents.domain.duplicate : '';
+  const reserved = normalizedTitle.value.toLocaleLowerCase() === 'all';
+  return duplicate || reserved ? i18nHelper.eyesOnAgents.domain.duplicate : '';
 });
 
 const startEditing = async (): Promise<void> => {

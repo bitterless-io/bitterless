@@ -18,7 +18,7 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | Hook execution | dedicated `ELECTRON_RUN_AS_NODE` helper; never launch the full app main entry |
 | Hook reliability | atomic offline outbox, commit-only ACK, and transactional persistent receipt |
 | Hook trust | inspect with `hooks/list`; user approves in Codex; Bitterless never writes trust hashes |
-| classification | dedicated Domain table with immutable `Uncategorized` default |
+| classification | dedicated Domain table with internal immutable `uncategorized` fallback; renderer exposes it through fixed `All` |
 | source persistence | exact validated `thread/list` objects in a local-only snapshot table |
 | Focus | derived active + persistent unread projection |
 | unread | active/list/terminal observations set; successful EyesOnAgents Open clears |
@@ -43,7 +43,7 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 |---|---|
 | Mini Apps card -> XPC -> BrowserWindow | one window is created; a second click focuses it |
 | Connect -> spawn -> initialize | status reaches connected only after handshake |
-| Sync -> paged `thread/list` -> SQLite | every validated Codex thread appears once in Uncategorized |
+| Sync -> paged `thread/list` -> SQLite | every validated non-archived Codex thread appears in All; new rows use the internal fallback Domain |
 | active + archived inventories -> source table | latest validated raw objects survive restart and never reach renderer |
 | reconnect/refresh -> upsert | existing Domain/open state remains; running observations set unread |
 | App Server notification -> repository -> XPC broadcast | active and completion state updates without refresh |
@@ -55,8 +55,9 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | active observation/completion -> Focus | running or newly completed thread is unread; historical import does not flood Focus |
 | Open -> exact deep link -> mark opened | successful open clears unread; failed open does not; later active observation restores unread |
 | header Refresh while disconnected/error -> connect + reconcile | manual recovery refreshes raw and normalized state without duplicate jobs |
+| All Project filter -> renderer snapshot | Project counts span every visible non-archived thread without changing Domain assignment |
 | Domain drag/menu -> repository | assignment survives renderer and application restart |
-| delete Domain -> transaction | threads move to Uncategorized and Domain is soft-deleted |
+| delete Domain -> transaction | threads move to the internal fallback, remain visible in All, and Domain is soft-deleted |
 | auth/app shutdown -> cleanup | window and Bitterless-owned App Server process close cleanly |
 
 ## Primary risks and controls

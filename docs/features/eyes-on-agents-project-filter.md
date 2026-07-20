@@ -1,14 +1,14 @@
 # EyesOnAgents Project Filter
 
-Status: implemented and locally verified
+Status: implemented and independently statically reviewed through task 011
 
-Date: 2026-07-16
+Date: 2026-07-20
 
 ## Decision
 
-Add a source filter inside the system `Uncategorized` Domain so Project work can be separated from
-threads that have no known Git Project. Project is derived metadata; it is not a Domain, never
-creates a Domain, and never changes `domain_id`.
+Add a source filter inside the fixed renderer `All` projection so Project work can be separated from
+threads that have no known Git Project across the complete visible inventory. Project is derived
+metadata; it is not a Domain, never creates a Domain, and never changes `domain_id`.
 
 Codex App Server does not expose a Project catalog. EyesOnAgents therefore defines a Project as the
 nearest current Git worktree root found by walking upward from a thread's `cwd`.
@@ -16,7 +16,7 @@ nearest current Git worktree root found by walking upward from a thread's `cwd`.
 ## User-visible contract
 
 ```text
-┌ Uncategorized ───────────────────┐
+┌ All ─────────────────────────────┐
 │ 4 of 18 threads                  │
 │ [ Project: overmind (4)       ▾ ]│
 │                                  │
@@ -32,18 +32,19 @@ Filter choices:
   ...
 ```
 
-- The control appears only in `Uncategorized`.
-- `All` shows every Uncategorized thread.
+- The control appears only in the fixed `All` projection.
+- `All` shows every non-archived renderer thread regardless of its stored Domain.
 - `No project` shows threads without a known current Git worktree root.
-- Each Project option filters by its stable `project_key` and shows its Uncategorized count.
+- Each Project option filters by its stable `project_key` and shows its complete visible count.
 - Project options are sorted by display name, then root. Same-named Projects show a shortened root
   to disambiguate them.
 - While filtered, the column count is `{visible} of {total} threads`; `All` keeps the existing total
   count.
 - The selected filter is renderer-session state and is not written to SQLite settings.
-- If the last matching thread leaves `Uncategorized`, the selected option remains visible with zero
-  results until the user changes the filter. This makes a drag result explicit.
+- If the last matching Project thread is archived or its metadata changes, the selected option
+  remains visible with zero results until the user changes the filter.
 - Focus and every custom Domain remain unfiltered.
+- Moving a thread between Domains or deleting a Domain never changes All filter membership.
 
 `No project` is deliberately not a promise about conversational intent. A normal conversation
 started inside a Git worktree belongs to that Project, while a code task started in a non-Git
@@ -91,8 +92,8 @@ modify the manually assigned Domain.
 
 | state | behavior |
 |---|---|
-| no Uncategorized threads | filter remains reachable; existing empty Domain message is shown |
-| `All` selected | total count and all Uncategorized threads |
+| no visible threads | the existing full-page EyesOnAgents empty state replaces the board and filter |
+| `All` selected | total count and every non-archived thread |
 | `No project` selected | only rows whose Project metadata is null |
 | Project selected, zero results | `0 of {total}` plus a Project-specific empty message |
 | duplicate Project names | shortened roots disambiguate options |
@@ -113,7 +114,7 @@ worktree. It never reads repository content, remotes, prompts, transcripts, diff
   correct nearest Project.
 - A valid non-Git cwd is `No project`; unavailable paths preserve prior metadata.
 - Project metadata survives SQLite restart and updates without changing Domain assignment.
-- `Uncategorized` supports `All`, `No project`, and per-Project filtering with truthful counts and
-  empty states.
+- The All projection supports `All`, `No project`, and per-Project filtering with truthful counts
+  and empty states across mixed Domain assignments.
 - Focus and custom Domain contents are unchanged by the filter.
 - macOS and Windows path normalization is covered by tests.

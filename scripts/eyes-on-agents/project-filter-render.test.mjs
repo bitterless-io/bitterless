@@ -51,7 +51,7 @@ const stubPlugin = {
             export const i18nHelper = {
               eyesOnAgents: {
                 board: {
-                  projectFilterLabel: 'Filter Uncategorized by Project',
+                  projectFilterLabel: 'Filter All by Project',
                   allProjects: 'All',
                   noProject: 'No project'
                 }
@@ -64,8 +64,8 @@ const stubPlugin = {
       return {
         contents: `
           export const eyesOnAgentsStore = {
-            uncategorizedProjectFilterValue: 'all',
-            uncategorizedProjectOptions: [{
+            allProjectFilterValue: 'all',
+            allProjectOptions: [{
               value: 'all',
               type: 'all',
               count: 2,
@@ -75,7 +75,7 @@ const stubPlugin = {
               shortRoot: null,
               duplicateName: false
             }],
-            selectUncategorizedProjectFilter() {}
+            selectAllProjectFilter() {}
           };
         `,
         loader: 'js',
@@ -116,7 +116,7 @@ try {
   assert.ok(select, 'the style selector must match the actual Arco Select root');
   assert.ok(input, 'the searchable Arco Select must expose a focusable input');
   assert.equal(input.labels?.[0], label, 'the focusable input must be associated with the label');
-  assert.match(label.textContent ?? '', /Filter Uncategorized by Project/);
+  assert.match(label.textContent ?? '', /Filter All by Project/);
   console.log('EyesOnAgents Project filter rendered-DOM test passed');
 } finally {
   rmSync(buildRoot, { recursive: true, force: true });

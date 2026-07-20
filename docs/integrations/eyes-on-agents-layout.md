@@ -1,13 +1,13 @@
 # EyesOnAgents Layout
 
-Status: implemented and independently verified
+Status: implemented and independently statically reviewed through task 011
 
 ## Product stance
 
 EyesOnAgents is a daylight operations board for one person supervising several Codex tasks. Its
 single job is to answer: **what is running, what just finished, and where does each task belong?**
 
-It borrows Todo's standalone window and horizontal Domain-board interaction, but none of Todo's
+It borrows Todo's standalone window and Domain-board interaction, but none of Todo's
 checkbox, due-date, repeat, subtask, or detail-editor behavior. Avoid a generic dark developer
 dashboard: the surface remains calm Royal Blue, white, and cool grey, with status color used only
 for live signals.
@@ -28,28 +28,31 @@ for live signals.
 │  EyesOnAgents        ● App Server connected  [↻ Refresh] [Bridge] [Settings]│
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  ┌ Focus ─────────┐ ┌ Uncategorized ─┐ ┌ Bitterless ─────┐ ┌ + Domain ─┐  │
-│  │ 3 signals      │ │ 4 of 12 threads │ │ 4 threads       │ │           │  │
-│  │                 │ │ [overmind (4)▾] │ │                 │ │           │  │
-│  │ Working         │ │ Unknown         │ │ Waiting input   │ │           │  │
-│  │ API pagination │ │ Release notes   │ │ App Server RPC  │ │           │  │
-│  │ /repo/a · now  │ │ /repo/b · 2h   │ │ /repo/a · now   │ │           │  │
-│  │             [↗]│ │             [↗] │ │             [↗] │ │           │  │
-│  │                 │ │                 │ │                 │ │           │  │
-│  │ Finished · new  │ │ Idle            │ │ Idle            │ │           │  │
-│  │ Fix migrations │ │ UI polish       │ │ Hook bridge     │ │           │  │
-│  │ /repo/c · 3m   │ │ /repo/c · 1d   │ │ /repo/a · 4h   │ │           │  │
-│  └─────────────────┘ └─────────────────┘ └─────────────────┘ └───────────┘  │
-│                      horizontal board scroll →                              │
+│  ┌ Focus ─────────┐ ┌ All ────────────┐ ┌ Bitterless ─────┐                │
+│  │ 3 signals      │ │ 4 of 12 threads │ │ 4 threads       │                │
+│  │                 │ │ [overmind (4)▾]│ │                 │                │
+│  │ Working         │ │ Unknown         │ │ Waiting input   │                │
+│  │ API pagination │ │ Release notes   │ │ App Server RPC  │                │
+│  │ /repo/a · now  │ │ /repo/b · 2h   │ │ /repo/a · now   │                │
+│  │             [↗]│ │             [↗]│ │             [↗]│                │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘                │
+│                                                                              │
+│  ┌ Research ──────┐ ┌ Release ────────┐ ┌ + Domain ───────┐                │
+│  │ Idle            │ │ Finished · new │ │                 │                │
+│  │ Project notes   │ │ Fix migrations │ │                 │                │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘                │
+│                           wrapped rows; board scrolls vertically ↓           │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The 32px menu bar is the drag region. The board owns horizontal scrolling. Each 300px Domain
-column owns its own vertical scrolling, so long histories do not move the header or other columns.
+The 32px menu bar is the drag region. The board wraps columns into as many rows as the window width
+allows and owns vertical page scrolling. Each 300px Domain column grows only as needed, is capped at
+600px, and owns its own thread-list scrolling beyond that limit.
 
-Focus is fixed first and visually distinct, but it is a projection: its cards also remain in their
-real Domain. `Uncategorized` is the first real Domain and cannot be renamed, moved behind user
-Domains, or deleted.
+Focus is fixed first and visually distinct; All is fixed second. Both are projections: Focus shows
+attention and All shows every non-archived thread, while cards also remain in their stored custom
+Domain when assigned. The persisted `uncategorized` system Domain remains the storage fallback but
+is presented as All and cannot be renamed, reordered, or deleted.
 
 ## Visual system
 
@@ -77,7 +80,7 @@ decorative outline or persistent shadow. A thread item may gain one quiet shadow
 on pointer hover without moving; keyboard focus uses a visible outline and a light background
 rather than reintroducing a permanent card border.
 
-The horizontal Domain board and its background-led hierarchy are the product signature. Thread
+The wrapping Domain board and its background-led hierarchy are the product signature. Thread
 cards contain no decorative signal rail, source badge, or ambient status animation. Runtime state
 is communicated directly by its text label; unread work retains the compact `New` badge.
 
@@ -123,17 +126,20 @@ it is always visible as the manual fallback for missed activation or lifecycle u
 
 ## Domain column
 
-Each real Domain header contains title, count, and an overflow menu. User Domains can be renamed,
-reordered, or deleted. Deleting requires confirmation and states that threads will move to
-`Uncategorized`; it never deletes Codex tasks.
+Each Domain header contains title and count. A custom Domain title enters inline edit when clicked,
+matching Todo: the input measures its content between 40px and 200px, focuses and selects on entry,
+commits through blur or Enter, and cancels with Escape. Focus and All never show an editable cursor
+or input. The custom Domain overflow menu contains Delete only; the separate Rename action is
+removed. Custom Domains remain reorderable. Deleting requires confirmation and states that its
+threads remain available in All; it never deletes Codex tasks.
 
 A regular Domain is one continuous cool-neutral background surface: its header has no divider or
 independent card background. Focus uses the same structure with a warm attention background, so
 its distinction does not depend on a border, top rule, or shadow.
 
-`Uncategorized` alone has one compact Project filter between its header and scrollable thread list.
-It is a searchable mini Select with `All`, `No project`, and one option per current Git Project in
-Uncategorized. Options include counts; same-named Projects expose a shortened root. The Select uses
+All alone has one compact Project filter between its header and scrollable thread list. It is a
+searchable mini Select with `All`, `No project`, and one option per current Git Project across every
+visible thread. Options include counts; same-named Projects expose a shortened root. The Select uses
 a quiet background instead of a decorative border and retains a visible keyboard focus outline.
 While filtered, the header reports visible and total counts. Filtering never changes Focus, custom
 Domains, or the stored Domain of any thread.
@@ -143,9 +149,11 @@ an inline validation message. Its button/form uses the regular Domain background
 outline. Hover deepens the background; keyboard focus retains a visible outline. `Esc` cancels and
 `Enter` confirms.
 
-Thread cards can be dragged between real Domain columns. Focus is not a storage destination and
-does not participate in Domain ordering. A Focus card may be dragged into a real Domain to classify
-the underlying thread.
+Thread cards can be dragged between custom Domain columns. Focus and All are not sortable storage
+lists and do not participate in Domain ordering. A card dragged from Focus or All is cloned into a
+custom Domain before the underlying assignment changes, so it never disappears from either
+projection. All does not accept drops because it already contains every thread; the card Domain
+menu's All destination removes a custom classification.
 
 ## Thread card
 
@@ -197,7 +205,7 @@ card leaves it in Focus until the runtime state changes.
 | syncing or connecting | existing cards retained; duplicate Refresh disabled |
 | no threads | concise prompt to connect/sync; no fake sample rows |
 | no Focus items | quiet “Nothing needs attention” state |
-| Project filter has no matches | selected option remains available; `0 of total` and scoped empty text |
+| All Project filter has no matches | selected option remains available; `0 of total` and scoped empty text |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
 | bridge needs review | Review opens Codex Settings and gives Settings → Hooks plus `/hooks` instructions; Check remains available |
@@ -210,8 +218,10 @@ card leaves it in Focus until the runtime state changes.
 
 - Interactive controls have visible keyboard focus and accessible labels.
 - Status never depends on color alone; every runtime state has a text label.
-- At the minimum window size, columns remain 280-300px and the board scrolls horizontally instead
-  of collapsing into an unreadable grid.
+- At the minimum window size, columns remain 280-300px, wrap into multiple rows, and the board owns
+  vertical scrolling instead of collapsing into an unreadable grid.
+- No column exceeds 600px; a longer thread list scrolls inside that column without stretching its
+  row or the surrounding columns.
 - Dialogs and connection panels remain within the viewport and own their vertical scrolling.
 - Drag is an enhancement: each thread overflow menu also provides a Domain selector.
 - No card-level ambient animation is used; other application motion still respects reduced-motion
@@ -227,8 +237,9 @@ EyesOnAgentsApp
   ├─ ConnectionPanel
   └─ AgentBoard
        ├─ FocusColumn (derived)
-       ├─ DomainColumn × N
-       │    ├─ ProjectFilter (Uncategorized only)
+       ├─ AllColumn (all non-archived threads)
+       │    └─ ProjectFilter
+       ├─ CustomDomainColumn × N
        │    └─ ThreadCard × N
        └─ AddDomainColumn
 ```
