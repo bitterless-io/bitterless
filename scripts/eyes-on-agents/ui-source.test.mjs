@@ -55,6 +55,35 @@ test('window activation refreshes thread discovery without leaking its listener'
   assert.match(store, /if \(this\.activationPromise\) return await this\.activationPromise/);
 });
 
+test('relative thread times share one renderer-global reactive clock', () => {
+  const app = read('src/renderer/eyesOnAgents/src/App.vue');
+  const globalStore = read('src/renderer/eyesOnAgents/src/store/global.store.ts');
+  const threadCard = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
+  );
+
+  assert.match(globalStore, /currentTime = Date\.now\(\)/);
+  assert.match(globalStore, /private currentTimeTimer: number \| null = null/);
+  assert.match(globalStore, /startCurrentTimeLoop\(\): void/);
+  assert.match(globalStore, /this\.currentTime = Date\.now\(\)/);
+  assert.match(globalStore, /if \(this\.currentTimeTimer !== null\) return/);
+  assert.match(globalStore, /window\.setInterval\([\s\S]*?10_000\)/);
+  assert.match(globalStore, /stopCurrentTimeLoop\(\): void/);
+  assert.match(globalStore, /window\.clearInterval\(this\.currentTimeTimer\)/);
+  assert.match(globalStore, /this\.currentTimeTimer = null/);
+  assert.match(globalStore, /reactive\(new GlobalState\(\)\)/);
+
+  assert.match(app, /globalStore\.startCurrentTimeLoop\(\)/);
+  assert.match(app, /globalStore\.stopCurrentTimeLoop\(\)/);
+
+  assert.match(
+    threadCard,
+    /props\.thread\.lastActivityAt \?\? props\.thread\.lastCompletedAt/
+  );
+  assert.match(threadCard, /globalStore\.currentTime - timestamp/);
+  assert.doesNotMatch(threadCard, /Date\.now\(\)|setInterval\(|clearInterval\(/);
+});
+
 test('observation board exposes stable regions and reduced motion', () => {
   const rendererFiles = walk('src/renderer/eyesOnAgents');
   const source = rendererFiles

@@ -43,6 +43,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-hook-delivery-007](tasks/eyes-on-agents-hook-delivery-007.md) | lightweight Hook helper, durable outbox, commit ACK, and persistent dedupe | done | eyes-on-agents-sync-persistence-006 |
 | [eyes-on-agents-global-onboarding-008](tasks/eyes-on-agents-global-onboarding-008.md) | global Hook lifecycle, trust review/recheck, and App Server decoupling | done | eyes-on-agents-hook-delivery-007 |
 | [eyes-on-agents-thread-card-009](tasks/eyes-on-agents-thread-card-009.md) | remove decorative thread-card signals/source and reduce Open to an icon | done | eyes-on-agents-global-onboarding-008 |
+| [eyes-on-agents-reactive-time-010](tasks/eyes-on-agents-reactive-time-010.md) | update visible thread relative times from one renderer-global 10-second clock | done | eyes-on-agents-thread-card-009 |
 | [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and observable SQLite-first startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | audit multi-version SQLite upgrades before production packaging | in-progress | — |

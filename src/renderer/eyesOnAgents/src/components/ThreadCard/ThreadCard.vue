@@ -87,6 +87,7 @@ import type {
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
+import { globalStore } from '../../store/global.store';
 
 const props = defineProps<{ thread: EyesOnAgentsThread }>();
 
@@ -116,7 +117,7 @@ const activityLabel = computed(() => {
   if (!value) return i18nHelper.eyesOnAgents.thread.unknown;
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return i18nHelper.eyesOnAgents.thread.unknown;
-  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  const minutes = Math.max(0, Math.floor((globalStore.currentTime - timestamp) / 60_000));
   if (minutes < 1) return i18nHelper.eyesOnAgents.thread.justNow;
   if (minutes < 60) {
     return i18nHelper.eyesOnAgents.thread.minutesAgo.replace('{count}', String(minutes));

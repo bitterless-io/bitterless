@@ -178,9 +178,11 @@ does not change auto-connect intent:
 | initial snapshot not loaded | coalesce with the existing snapshot load |
 
 The store's existing single busy action and coalesced snapshot load prevent overlapping activation
-requests. The listener is removed when the renderer unmounts. This is activation-driven only: no
-timer, polling loop, hidden-window sync, or new persisted state is introduced. A failed activation
-sync uses the existing action error surface and retains the last valid snapshot.
+requests. The listener is removed when the renderer unmounts. Snapshot refresh remains
+activation-driven only: no timer, polling loop, or hidden-window sync is introduced for IPC or App
+Server work. The separate renderer-global presentation clock may tick locally for relative-time
+labels, but it never refreshes or persists thread data. A failed activation sync uses the existing
+action error surface and retains the last valid snapshot.
 
 ### Archive visibility and reconciliation
 

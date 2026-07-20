@@ -155,8 +155,13 @@ A card displays only observation metadata:
 - unread badge for running or terminal attention observed since the last successful EyesOnAgents Open;
 - title, falling back to a shortened UUID;
 - compact working-directory basename/path;
-- relative last-activity time;
+- relative last-activity time, derived from one renderer-global reactive clock that advances every
+  10 seconds so visible cards update without receiving a new thread snapshot;
 - an icon-only `Open` action with localized tooltip and accessible label.
+
+The presentation clock is renderer-local and transient. One store-owned interval serves the whole
+EyesOnAgents window; thread cards never create their own timers, and clock ticks never trigger IPC,
+App Server synchronization, Hook inspection, or persistence.
 
 The card is an unbordered white item with a compact radius and no persistent shadow. Pointer hover
 uses a slightly tinted background and Todo-strength light shadow, with no vertical lift. Keyboard

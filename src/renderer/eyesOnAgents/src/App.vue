@@ -63,6 +63,7 @@ import AgentBoard from './components/AgentBoard/AgentBoard.vue';
 import ConnectionPanel from './components/ConnectionPanel/ConnectionPanel.vue';
 import EyesOnAgentsMenuBar from './components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue';
 import { eyesOnAgentsStore } from './store/eyesOnAgents.store';
+import { globalStore } from './store/global.store';
 
 const connectionsVisible = ref(false);
 
@@ -92,12 +93,14 @@ const handleWindowFocus = (): void => {
 };
 
 onMounted(async () => {
+  globalStore.startCurrentTimeLoop();
   eyesOnAgentsStore.initialize();
   window.addEventListener('focus', handleWindowFocus);
   await eyesOnAgentsStore.loadSnapshot();
 });
 
 onBeforeUnmount(() => {
+  globalStore.stopCurrentTimeLoop();
   window.removeEventListener('focus', handleWindowFocus);
 });
 </script>
