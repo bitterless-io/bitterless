@@ -226,3 +226,36 @@ UI, MCP, web/build, remote HTTP, or backend/PostgreSQL work.
 Run Todo 7's renderer/web/runtime/MCP/build verification without expanding Main sync behavior, then
 run Todo 8's non-production HTTP smoke only after its backend prerequisite is green. Ral will perform
 the Electron GUI pass after the code/build gates are clean.
+
+# handoff checkpoint — 2026-07-21 (Todo-scoped web TypeScript gate)
+
+The task remains `in-progress`. This batch changed only the Todo renderer TypeScript boundary, a
+focused Todo web typecheck, its package scripts, and this task record. It did not change connector,
+Coin, Poker, Home, Omni, Maestro, shared runtime, Main runtime, preload runtime, MCP runtime, or
+backend behavior.
+
+## Todo 7-8 progress
+
+- [ ] Todo 7: the requested Todo-scoped renderer/MCP/native/build slice is complete. The strict
+  `typecheck:todo-web` gate covers the Todo renderer and the shared/preload contracts it consumes
+  without loading unrelated renderer modules. Main handler declaration contracts are regenerated
+  from their real source classes and compared before the strict Vue check, so the existing
+  `@main` emitter types remain exact without pulling unrelated Main implementation diagnostics into
+  this focused gate. The Electron GUI and the separate Todo-window runtime check were not run in
+  this batch.
+- [ ] Todo 8: the backend-dependent non-production two-client Core/PostgreSQL smoke remains blocked
+  on `todoist-sync-backend-001` and `todoist-sync-backend-integration-002`. This external gate still
+  prevents task completion.
+
+## Todo-scoped web evidence
+
+- `yarn typecheck:todo-web` passed with strict null checks, `noImplicitAny`, and no unchecked Todo
+  renderer source.
+- `yarn typecheck:mcp` passed.
+- `yarn test:todoist-sync` passed: 17 native deterministic tests, 17 passed.
+- `yarn build` passed for Main, preload, and renderer production bundles.
+- `git diff --check` passed.
+- Full `yarn typecheck:web` still failed in the pre-existing connector, Coin, Poker, Home, Omni,
+  Maestro, and shared baseline. No remaining diagnostic path starts with `src/renderer/todo/`.
+- No Electron GUI, real Core request, remote database, backend/PostgreSQL operation, or two-client
+  smoke was run.

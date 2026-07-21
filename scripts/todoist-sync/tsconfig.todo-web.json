@@ -1,0 +1,44 @@
+{
+  "extends": "../../tsconfig.web.json",
+  "include": [
+    "../../src/env.d.ts",
+    "../../src/renderer/todo/src/**/*",
+    "../../src/renderer/todo/src/**/*.vue",
+    "../../src/renderer/common/components/IconBtn/**/*",
+    "../../src/renderer/common/i18n/**/*",
+    "../../src/renderer/common/utils/sound.util.ts",
+    "../../src/renderer/common/utils/userAgentHelper/ua.helper.ts",
+    "../../src/preload/sqlite/dao/setting.dao.ts",
+    "../../src/shared/i18n/applicationLanguage.ts",
+    "../../src/shared/mcp/mcpBridge.type.ts",
+    "../../src/shared/mcp/mcpIntegrationInfo.shared.ts",
+    "../../src/shared/mcp/todoMcpDao.type.ts",
+    "../../src/shared/todoistSync/**/*.ts",
+    "../../src/shared/window/window.types.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noCheck": false,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "baseUrl": "../..",
+    "paths": {
+      "@main/xpc/todoWindow.handler": [
+        "src/renderer/todo/src/emitter/contracts/xpc/todoWindow.handler.d.ts"
+      ],
+      "@main/xpc/windowControl.handler": [
+        "src/renderer/todo/src/emitter/contracts/xpc/windowControl.handler.d.ts"
+      ],
+      "@main/*": ["src/main/*"],
+      "@renderer/*": ["src/renderer/*"],
+      "@/*": ["src/renderer/home/src/*"],
+      "@preload/todo/todo.preload": [
+        "node_modules/.cache/bitterless/todo-web-preload-types/preload/todo/todo.preload.d.ts"
+      ],
+      "@preload/*": ["src/preload/*"],
+      "@shared/*": ["src/shared/*"]
+    }
+  }
+}

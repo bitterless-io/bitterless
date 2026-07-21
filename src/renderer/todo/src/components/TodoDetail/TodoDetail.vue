@@ -465,7 +465,7 @@ const onIntervalBlur = (e: FocusEvent) => {
 
 const _saveRepeatInterval = throttle((id: string, interval: number) => {
   todoStore.updateRepeatInterval(id, interval);
-}, 300, { trailing: true });
+}, 300, { edges: ['leading', 'trailing'] });
 
 const onIntervalInput = (e: Event) => {
   const input = e.target as HTMLInputElement;
@@ -496,7 +496,7 @@ const onRemindChange = (value: string | Date | undefined) => {
 
 const _saveNote = throttle((id: string, value: string) => {
   todoStore.updateTodo({ id, note: value.trim() });
-}, 150, { trailing: true });
+}, 150, { edges: ['leading', 'trailing'] });
 
 const onNoteInput = (e: Event) => {
   if (!todoStore.selectedTodo) return;
