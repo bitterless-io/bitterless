@@ -11,7 +11,7 @@ class OmniWindowHandler extends XpcMainHandler {
     console.log('[OmniWindowHandler] openOmniWindow called');
     if (omniWindowHelper.baseWindow && !omniWindowHelper.baseWindow.isDestroyed()) {
       console.log('[OmniWindowHandler] baseWindow exists, focusing');
-      omniWindowHelper.baseWindow.focus();
+      omniWindowHelper.show();
       return;
     }
     if (omniWindowHelper.isCreating) {

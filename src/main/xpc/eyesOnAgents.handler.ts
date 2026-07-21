@@ -5,7 +5,8 @@ import type {
   EyesOnAgentsApi,
   EyesOnAgentsBridgeStatus,
   EyesOnAgentsRepositoryApi,
-  EyesOnAgentsSnapshot
+  EyesOnAgentsSnapshot,
+  EyesOnAgentsThreadPagesRefreshResult
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
   getCodexHookBridgeEndpoint,
@@ -17,15 +18,18 @@ import {
   parseEyesOnAgentsMoveThreadParams,
   parseEyesOnAgentsRenameDomainParams,
   parseEyesOnAgentsReorderDomainsParams,
+  parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams,
   parseEyesOnAgentsThreadIdParams,
 } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import { codexHookBridgeServer } from '../eyesOnAgents/codexHookBridge.server';
 import { CodexDesktopBridgeService } from '../eyesOnAgents/codexDesktopBridge.service';
 import { CodexAppServerSupervisor } from '../eyesOnAgents/codexAppServer.supervisor';
 import { EyesOnAgentsService } from '../eyesOnAgents/eyesOnAgents.service';
+import { LastUserPromptPreferenceService } from '../eyesOnAgents/lastUserPromptPreference.service';
 
 const repository = createXpcMainEmitter<EyesOnAgentsRepositoryApi>('EyesOnAgentsRepositoryDao');
 const settings = createXpcMainEmitter<SettingDao>('SettingDao');
+const lastUserPromptPreference = new LastUserPromptPreferenceService(app.getPath('userData'));
 
 const desktopBridge = new CodexDesktopBridgeService({
   userDataPath: app.getPath('userData'),
@@ -84,6 +88,7 @@ eyesOnAgentsService = new EyesOnAgentsService({
   repository,
   settings,
   appServer,
+  lastUserPromptPreference,
   desktopBridge,
   bridgeListener: {
     start: startBridgeListener,
@@ -126,6 +131,10 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     return await eyesOnAgentsService.syncThreads();
   }
 
+  async refreshThreadPages(): Promise<EyesOnAgentsThreadPagesRefreshResult> {
+    return await eyesOnAgentsService.refreshThreadPages();
+  }
+
   async openThread(params: { threadId: string }): Promise<{
     url: string;
     snapshot: EyesOnAgentsSnapshot;
@@ -151,6 +160,14 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
 
   async getCodexBridgeStatus(): Promise<EyesOnAgentsBridgeStatus> {
     return await eyesOnAgentsService.getCodexBridgeStatus();
+  }
+
+  async setLastUserPromptCaptureEnabled(
+    params: { enabled: boolean }
+  ): Promise<EyesOnAgentsSnapshot> {
+    return await eyesOnAgentsService.setLastUserPromptCaptureEnabled(
+      parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams(params)
+    );
   }
 
   async createDomain(params: { title: string }): Promise<EyesOnAgentsSnapshot> {

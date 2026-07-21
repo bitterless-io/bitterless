@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import { lstatSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
 import {
   createCodexHookDelivery,
-  createCodexHookEvent,
-  parseCodexHookHelperArgs
+  createCodexHookEventV2,
+  parseCodexHookHelperArgs,
+  toMetadataOnlyCodexHookDelivery
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import type {
   CodexHookDelivery,
-  CodexHookHelperArgs
+  CodexHookHelperArgs,
+  CodexHookMetadataOnlyDelivery
 } from '@shared/eyesOnAgents/codexHookBridge.type';
 import {
   persistCodexHookOutboxDelivery,
@@ -24,7 +28,7 @@ type DeliverySender = (
 ) => Promise<CodexHookDeliveryResult>;
 type OutboxWriter = (params: {
   outboxPath: string;
-  delivery: CodexHookDelivery;
+  delivery: CodexHookMetadataOnlyDelivery;
   now?: number;
 }) => CodexHookOutboxPersistResult;
 
@@ -33,9 +37,20 @@ export interface CodexHookHelperDependencies {
   readInput?: (input: Readable) => Promise<unknown>;
   send?: DeliverySender;
   persist?: OutboxWriter;
+  isLastUserPromptCaptureEnabled?: (outboxPath: string) => boolean;
   now?: () => number;
   idFactory?: () => string;
 }
+
+export const isCodexHookLastUserPromptCaptureEnabled = (outboxPath: string): boolean => {
+  try {
+    return lstatSync(
+      join(dirname(outboxPath), 'last-user-prompt.enabled')
+    ).isFile();
+  } catch {
+    return false;
+  }
+};
 
 export const readCodexHookInput = (
   input: Readable,
@@ -91,11 +106,21 @@ export const runCodexHookHelper = async (
     const args = (dependencies.parseArgs ?? parseCodexHookHelperArgs)(argv);
     const rawInput = await (dependencies.readInput ?? readCodexHookInput)(input);
     const deliveryId = (dependencies.idFactory ?? randomUUID)();
-    const event = createCodexHookEvent({
+    let captureUserPrompt = false;
+    try {
+      captureUserPrompt = (
+        dependencies.isLastUserPromptCaptureEnabled ??
+        isCodexHookLastUserPromptCaptureEnabled
+      )(args.outboxPath);
+    } catch {
+      captureUserPrompt = false;
+    }
+    const event = createCodexHookEventV2({
       rawInput,
       installationId: args.installationId,
       eventId: deliveryId,
-      occurredAt: (dependencies.now ?? Date.now)()
+      occurredAt: (dependencies.now ?? Date.now)(),
+      captureUserPrompt
     });
     const delivery = createCodexHookDelivery({ deliveryId, event });
     const send = dependencies.send ?? (async (helperArgs, value) => {
@@ -108,9 +133,10 @@ export const runCodexHookHelper = async (
       result = 'unavailable';
     }
     if (result !== 'committed') {
+      const metadataOnlyDelivery = toMetadataOnlyCodexHookDelivery(delivery);
       (dependencies.persist ?? persistCodexHookOutboxDelivery)({
         outboxPath: args.outboxPath,
-        delivery,
+        delivery: metadataOnlyDelivery,
         now: (dependencies.now ?? Date.now)()
       });
     }

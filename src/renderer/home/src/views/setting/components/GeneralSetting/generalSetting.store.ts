@@ -1,5 +1,7 @@
 import { reactive } from 'vue';
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
+import router from '@/router';
+import { authStore } from '@/stores/auth/auth.store';
 import type { SearchEngineHandler } from '@preload/sqlite/handler/searchEngine.handler';
 import {
   getCurrentRendererLanguage,
@@ -16,6 +18,11 @@ class GeneralSettingState {
   currentLanguage: AppLanguage = 'en';
   currentSearchEngine: SearchEngine = 'baidu';
   loading = false;
+  loggingOut = false;
+
+  get accountEmail(): string {
+    return authStore.current?.email || '';
+  }
 
   async loadSettings(): Promise<void> {
     this.currentLanguage = getCurrentRendererLanguage();
@@ -50,6 +57,25 @@ class GeneralSettingState {
       console.error('[GeneralSettingState] Failed to save search engine:', err);
     } finally {
       this.loading = false;
+    }
+  }
+
+  async logout(): Promise<void> {
+    if (this.loggingOut) return;
+
+    this.loggingOut = true;
+    const cleanupPromise = authStore.logout();
+    try {
+      await router.replace({ name: 'login' });
+    } catch (err) {
+      console.error('[GeneralSettingState] Failed to navigate after logout:', err);
+    }
+    try {
+      await cleanupPromise;
+    } catch (err) {
+      console.error('[GeneralSettingState] Failed to clean up after logout:', err);
+    } finally {
+      this.loggingOut = false;
     }
   }
 

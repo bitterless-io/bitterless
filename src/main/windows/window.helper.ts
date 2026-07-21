@@ -1,6 +1,11 @@
 import { BrowserWindow, BrowserWindowConstructorOptions, shell, screen } from 'electron';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
+import {
+  windowStateService,
+  type WindowStateController,
+} from './windowState.service';
+import type { WindowStateKey } from '@shared/window/window.types';
 
 export abstract class WindowHelper {
   browserWindow: BrowserWindow | null = null;
@@ -10,6 +15,9 @@ export abstract class WindowHelper {
   protected abstract rendererPath: string;
   protected abstract windowOptions: Partial<BrowserWindowConstructorOptions>;
   protected showOnReady = true;
+  protected windowStateKey: WindowStateKey | null = null;
+  protected deferInitialWindowStateSave = false;
+  protected windowStateController: WindowStateController | null = null;
 
   create(onCreated?: (window: BrowserWindow) => void): BrowserWindow {
     this.isQuitting = false;
@@ -21,6 +29,12 @@ export abstract class WindowHelper {
     const windowHeight = Math.floor(screenHeight / 2);
     const x = 0;
     const y = screenHeight - windowHeight;
+    const restored = this.windowStateKey
+      ? windowStateService.resolve(this.windowStateKey, {
+          minWidth: this.windowOptions.minWidth,
+          minHeight: this.windowOptions.minHeight,
+        })
+      : null;
 
     const options: BrowserWindowConstructorOptions = {
       show: false,
@@ -30,6 +44,7 @@ export abstract class WindowHelper {
       x: x,
       y: y,
       ...this.windowOptions,
+      ...(restored?.bounds ?? {}),
       webPreferences: {
         preload: join(__dirname, `../preload/${this.preloadFile}`),
         sandbox: false,
@@ -38,11 +53,22 @@ export abstract class WindowHelper {
     };
 
     this.browserWindow = new BrowserWindow(options);
+    this.windowStateController = this.windowStateKey
+      ? windowStateService.register(this.windowStateKey, this.browserWindow, {
+          minWidth: this.windowOptions.minWidth,
+          minHeight: this.windowOptions.minHeight,
+          deferInitialSave: this.deferInitialWindowStateSave,
+        })
+      : null;
     onCreated?.(this.browserWindow);
 
     this.browserWindow.on('ready-to-show', () => {
       if (this.showOnReady) {
-        this.browserWindow?.show();
+        if (this.windowStateController) {
+          this.windowStateController.show();
+        } else {
+          this.browserWindow?.show();
+        }
       }
       const shouldOpenDevTools =
         process.env.BITTERLESS_E2E !== '1' &&
@@ -75,6 +101,11 @@ export abstract class WindowHelper {
 
   show(): void {
     if (this.browserWindow && !this.browserWindow.isDestroyed()) {
+      if (this.windowStateController) {
+        this.windowStateController.show();
+        this.browserWindow.focus();
+        return;
+      }
       if (this.browserWindow.isMinimized()) {
         this.browserWindow.restore();
       }
@@ -92,8 +123,22 @@ export abstract class WindowHelper {
   destroy(): void {
     this.isQuitting = true;
     if (this.browserWindow && !this.browserWindow.isDestroyed()) {
+      this.windowStateController?.flushAndDispose();
       this.browserWindow.destroy();
-      this.browserWindow = null;
     }
+    this.browserWindow = null;
+    this.windowStateController = null;
+  }
+
+  protected importLegacyWindowState(value: unknown): boolean {
+    return this.windowStateController?.importLegacy(value) ?? false;
+  }
+
+  protected hasPersistedWindowState(): boolean {
+    return this.windowStateKey ? windowStateService.has(this.windowStateKey) : false;
+  }
+
+  protected enableWindowStatePersistence(): void {
+    this.windowStateController?.enablePersistence();
   }
 }

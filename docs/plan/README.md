@@ -17,6 +17,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-mcp-portable-skill](tasks/todo-mcp-portable-skill.md) | exportable Codex/Claude personal multi-device Todo skill package | done | todo-mcp-multi-instance |
 | [todo-preload-runtime-001](tasks/todo-preload-runtime-001.md) | chunk-safe Todo preload and renderer asset resolution | done | renderer-i18n-sync |
 | [todo-agent-skill-onboarding-002](tasks/todo-agent-skill-onboarding-002.md) | two-step MCP plus portable skill onboarding | done | todo-mcp-portable-skill, renderer-arco-bem-controls |
+| [todoist-sync-desktop-001](tasks/todoist-sync-desktop-001.md) | independent encrypted SQLite/HTTP sync plus complete Todo UI, MCP, clock, migration-audit, and Electron cutover | in-progress | — |
 | [maestro-source-layout-migration](tasks/maestro-source-layout-migration.md) | rename Sidekick to Maestro and keep sources distributed by Electron process | done | cowork-subapp-001, cowork-subapp-002 |
 | [renderer-arco-bem-controls](tasks/renderer-arco-bem-controls.md) | MCP guide modal and Maestro ChatPanel control consistency | done | maestro-source-layout-migration, todo-mcp-domain-create |
 | [renderer-tailwind-removal](tasks/renderer-tailwind-removal.md) | remove renderer Tailwind usage, retain dormant dependencies, and enforce shallow business BEM | done | renderer-arco-bem-controls, maestro-source-layout-migration |
@@ -24,6 +25,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [renderer-i18n-sync](tasks/renderer-i18n-sync.md) | main-owned language state, live renderer updates, and correct recreated-window locale | done | — |
 | [customer-account-recovery](tasks/customer-account-recovery.md) | customer recovery, lifecycle enforcement, and Royal Blue home surface | done | — |
 | [login-shared-window-shell](tasks/login-shared-window-shell.md) | shared MenuBar and update controls across login and authenticated routes | done | customer-account-recovery |
+| [customer-auth-login-account-001](tasks/customer-auth-login-account-001.md) | deterministic login transition, General account identity, and manual logout | implemented; backend gate and owner verification pending | customer-account-recovery, login-shared-window-shell |
 | [coin-subapp-shell-001](tasks/coin-subapp-shell-001.md) | Coin singleton window, scoped bridge, and full-width analysis shell | done | — |
 | [coin-resource-settings-002](tasks/coin-resource-settings-002.md) | Codex/GMGN/service configuration and secure local probes; Alchemy adapter deferred | implemented; owner verification pending | coin-subapp-shell-001 |
 | [coin-analysis-workspace-003](tasks/coin-analysis-workspace-003.md) | Coin analysis tabs, truthful source adapters, persistence, and decisions | implemented; owner verification pending | coin-resource-settings-002 |
@@ -46,9 +48,18 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-reactive-time-010](tasks/eyes-on-agents-reactive-time-010.md) | update visible thread relative times from one renderer-global 10-second clock | done | eyes-on-agents-thread-card-009 |
 | [eyes-on-agents-all-board-011](tasks/eyes-on-agents-all-board-011.md) | All projection, Todo-style title editing, and wrapping 600px Domain columns | done | eyes-on-agents-reactive-time-010 |
 | [eyes-on-agents-compact-card-012](tasks/eyes-on-agents-compact-card-012.md) | remove Domain counts and compact status/meta into title plus action rows | done | eyes-on-agents-all-board-011 |
+| [eyes-on-agents-hook-guide-013](tasks/eyes-on-agents-hook-guide-013.md) | actionable Codex Hook trust guide in the connection drawer | done | eyes-on-agents-compact-card-012, eyes-on-agents-global-onboarding-008 |
+| [eyes-on-agents-menubar-domain-guide-014](tasks/eyes-on-agents-menubar-domain-guide-014.md) | menubar Domain creation and always-visible connection Hook guide | done | eyes-on-agents-hook-guide-013 |
+| [eyes-on-agents-refresh-polling-015](tasks/eyes-on-agents-refresh-polling-015.md) | one non-overlapping ten-second thread refresh poll | done | eyes-on-agents-menubar-domain-guide-014 |
+| [eyes-on-agents-last-user-prompt-016](tasks/eyes-on-agents-last-user-prompt-016.md) | trusted live Hook capture with content-free offline recovery | done | eyes-on-agents-silent-focus-polling-018, eyes-on-agents-hook-delivery-007 |
+| [eyes-on-agents-all-title-search-017](tasks/eyes-on-agents-all-title-search-017.md) | simple title substring search in the All column | done | eyes-on-agents-refresh-polling-015 |
+| [eyes-on-agents-silent-focus-polling-018](tasks/eyes-on-agents-silent-focus-polling-018.md) | silent field-level title, state, and opted-in question refresh for Focus | done | eyes-on-agents-refresh-polling-015, eyes-on-agents-hook-delivery-007 |
+| [eyes-on-agents-tiered-all-polling-019](tasks/eyes-on-agents-tiered-all-polling-019.md) | hot-page plus round-robin cold-page field refresh across All | done | eyes-on-agents-silent-focus-polling-018, eyes-on-agents-last-user-prompt-016 |
+| [eyes-on-agents-thread-ingestion-prompt-card-020](tasks/eyes-on-agents-thread-ingestion-prompt-card-020.md) | tolerant thread admission, title repair, compact latest-question echo, and consent guide | implemented; owner verification pending | eyes-on-agents-tiered-all-polling-019, eyes-on-agents-last-user-prompt-016 |
 | [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and observable SQLite-first startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
-| [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | audit multi-version SQLite upgrades before production packaging | in-progress | — |
+| [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | final three-family SQLite audit and production packaging proof | pending | todoist-sync-desktop-001 |
+| [window-state-persistence-001](tasks/window-state-persistence-001.md) | unified bounds, mode, and physical-display persistence for every visible top-level window | implemented; owner verification pending | — |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [Coin sub-application](analysis/coin-subapp.md),
@@ -56,6 +67,8 @@ Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md
 [EyesOnAgents](analysis/eyes-on-agents.md), and
 [Omni mini-app cells](analysis/omni-miniapp-cells.md), and
 [SQLite migration release gate](analysis/sqlite-migration-release-gate.md).
+
+Todo synchronization: [Todoist-style HTTP sync](analysis/todoist-sync.md).
 
 ## Concurrency guard
 

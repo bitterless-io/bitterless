@@ -35,10 +35,6 @@
           :threads="eyesOnAgentsStore.threadsForDomain(element.id)"
         />
       </template>
-
-      <template #footer>
-        <AddDomainColumn />
-      </template>
     </draggable>
   </div>
 </template>
@@ -46,7 +42,6 @@
 <script setup lang="ts">
 import draggable from 'vuedraggable';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import AddDomainColumn from '../AddDomainColumn/AddDomainColumn.vue';
 import DomainColumn from '../DomainColumn/DomainColumn.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 

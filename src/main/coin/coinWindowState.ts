@@ -118,6 +118,15 @@ export class CoinWindowStateStore {
     }
   }
 
+  readLegacy(): CoinPersistedWindowState | null {
+    if (!existsSync(this.filePath)) return null;
+    try {
+      return parseCoinWindowState(JSON.parse(readFileSync(this.filePath, 'utf8')));
+    } catch {
+      return null;
+    }
+  }
+
   save(state: CoinPersistedWindowState, displays: CoinDisplayBounds[]): boolean {
     const validated = restoreCoinWindowState(state, displays);
     if (!validated) return false;

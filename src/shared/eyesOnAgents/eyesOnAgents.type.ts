@@ -42,6 +42,17 @@ export interface EyesOnAgentsProjectMetadata {
   projectName: string;
 }
 
+export type EyesOnAgentsLastUserPromptState = 'available' | 'pending' | 'unavailable';
+
+export interface EyesOnAgentsLastUserPrompt {
+  state: EyesOnAgentsLastUserPromptState;
+  preview: string | null;
+  turnId: string | null;
+  observedAt: string | null;
+  checkedAt: string | null;
+  truncated: boolean;
+}
+
 export interface EyesOnAgentsThread {
   threadId: string;
   domainId: number;
@@ -62,6 +73,7 @@ export interface EyesOnAgentsThread {
   lastActivityAt: string | null;
   isUnread: boolean;
   isFocused: boolean;
+  lastUserPrompt: EyesOnAgentsLastUserPrompt;
 }
 
 export interface EyesOnAgentsConnectionStatus {
@@ -81,12 +93,28 @@ export interface EyesOnAgentsBridgeStatus {
   error: string | null;
 }
 
+export type EyesOnAgentsTitleEnrichmentDiagnosticState = 'skipped' | 'rejected';
+
+export type EyesOnAgentsTitleEnrichmentDiagnosticReason =
+  | 'app_server_unavailable'
+  | 'thread_read_rejected'
+  | 'unusable_response';
+
+export interface EyesOnAgentsTitleEnrichmentDiagnostic {
+  state: EyesOnAgentsTitleEnrichmentDiagnosticState;
+  reason: EyesOnAgentsTitleEnrichmentDiagnosticReason;
+  threadId: string;
+  observedAt: string;
+}
+
 export interface EyesOnAgentsSnapshot {
   domains: EyesOnAgentsDomain[];
   threads: EyesOnAgentsThread[];
   connection: EyesOnAgentsConnectionStatus;
   bridge: EyesOnAgentsBridgeStatus;
   lastSyncedAt: string | null;
+  lastUserPromptCaptureEnabled: boolean;
+  titleEnrichmentDiagnostic: EyesOnAgentsTitleEnrichmentDiagnostic | null;
 }
 
 export interface EyesOnAgentsDiscoveredThread {
@@ -106,6 +134,56 @@ export interface EyesOnAgentsThreadSnapshot {
   payloadJson: string;
   archived: boolean;
   syncedAt: number;
+}
+
+export interface EyesOnAgentsThreadRefreshStatusPatch {
+  runtimeState: EyesOnAgentsRuntimeState;
+  activeFlags: string[];
+  activeTurnId?: string | null;
+  source: Extract<EyesOnAgentsStatusSource, 'app_server'>;
+  observedAt: number;
+}
+
+export interface EyesOnAgentsThreadRefreshLastUserPromptPatch {
+  preview: string | null;
+  turnId: string | null;
+  observedAt: number | null;
+  checkedAt: number;
+  truncated: boolean;
+  source: 'app_server';
+}
+
+export interface EyesOnAgentsThreadRefreshPatch {
+  threadId: string;
+  title?: string | null;
+  status?: EyesOnAgentsThreadRefreshStatusPatch;
+  lastActivityAt?: number;
+  lastUserPrompt?: EyesOnAgentsThreadRefreshLastUserPromptPatch;
+}
+
+export interface EyesOnAgentsThreadRefreshCandidate {
+  threadId: string;
+  lastUserPromptCheckedAt: number | null;
+}
+
+export interface EyesOnAgentsThreadRefreshPages {
+  hot: EyesOnAgentsThreadRefreshCandidate[];
+  cold: EyesOnAgentsThreadRefreshCandidate[];
+  pageCount: number;
+  coldPage: number | null;
+}
+
+export interface EyesOnAgentsHookLastUserPromptCandidate {
+  preview: string | null;
+  truncated: boolean;
+}
+
+export interface EyesOnAgentsRepositoryMutationResult {
+  changed: boolean;
+}
+
+export interface EyesOnAgentsThreadPagesRefreshResult {
+  changed: boolean;
 }
 
 export type EyesOnAgentsRuntimeEvent =
@@ -144,8 +222,24 @@ export interface EyesOnAgentsRuntimeDeliveryResult {
   duplicate: boolean;
 }
 
+export interface EyesOnAgentsRuntimePersistenceResult {
+  created: boolean;
+  titleMissing: boolean;
+}
+
+export type EyesOnAgentsRuntimeDeliveryPersistenceResult =
+  EyesOnAgentsRuntimeDeliveryResult & EyesOnAgentsRuntimePersistenceResult;
+
 export interface EyesOnAgentsRepositoryApi {
   getSnapshot(): Promise<Pick<EyesOnAgentsSnapshot, 'domains' | 'threads'>>;
+  getThreadRefreshPages(params: {
+    coldPage: number;
+    previousPageCount: number | null;
+  }): Promise<EyesOnAgentsThreadRefreshPages>;
+  refreshThreadPage(params: {
+    threads: EyesOnAgentsThreadRefreshPatch[];
+  }): Promise<EyesOnAgentsRepositoryMutationResult>;
+  clearLastUserPrompts(): Promise<EyesOnAgentsRepositoryMutationResult>;
   invalidateAppServerStatuses(params: { observedAt: number }): Promise<void>;
   invalidateCodexHookStatuses(params: { observedAt: number }): Promise<void>;
   upsertDiscoveredThreads(params: {
@@ -160,11 +254,19 @@ export interface EyesOnAgentsRepositoryApi {
     observedAt: number;
   }): Promise<void>;
   markThreadsArchived(params: { threadIds: string[]; observedAt: number }): Promise<void>;
-  applyRuntimeEvent(params: { event: EyesOnAgentsRuntimeEvent }): Promise<void>;
+  applyRuntimeEvent(params: {
+    event: EyesOnAgentsRuntimeEvent;
+    hookLastUserPrompt?: EyesOnAgentsHookLastUserPromptCandidate;
+  }): Promise<EyesOnAgentsRuntimePersistenceResult>;
   applyRuntimeEventDelivery(params: {
     deliveryId: string;
     event: EyesOnAgentsRuntimeEvent;
-  }): Promise<EyesOnAgentsRuntimeDeliveryResult>;
+    hookLastUserPrompt?: EyesOnAgentsHookLastUserPromptCandidate;
+  }): Promise<EyesOnAgentsRuntimeDeliveryPersistenceResult>;
+  enrichMissingThreadTitle(params: {
+    threadId: string;
+    title: string;
+  }): Promise<EyesOnAgentsRepositoryMutationResult>;
   markOpened(params: { threadId: string; openedAt: number }): Promise<void>;
   createDomain(params: { title: string }): Promise<void>;
   renameDomain(params: { domainId: number; title: string }): Promise<void>;
@@ -178,6 +280,7 @@ export interface EyesOnAgentsApi {
   connectAppServer(): Promise<EyesOnAgentsSnapshot>;
   disconnectAppServer(): Promise<EyesOnAgentsSnapshot>;
   syncThreads(): Promise<EyesOnAgentsSnapshot>;
+  refreshThreadPages(): Promise<EyesOnAgentsThreadPagesRefreshResult>;
   openThread(params: { threadId: string }): Promise<{
     url: string;
     snapshot: EyesOnAgentsSnapshot;
@@ -187,6 +290,9 @@ export interface EyesOnAgentsApi {
   refreshCodexBridgeStatus(): Promise<EyesOnAgentsSnapshot>;
   removeCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   getCodexBridgeStatus(): Promise<EyesOnAgentsBridgeStatus>;
+  setLastUserPromptCaptureEnabled(params: {
+    enabled: boolean;
+  }): Promise<EyesOnAgentsSnapshot>;
   createDomain(params: { title: string }): Promise<EyesOnAgentsSnapshot>;
   renameDomain(params: { domainId: number; title: string }): Promise<EyesOnAgentsSnapshot>;
   deleteDomain(params: { domainId: number }): Promise<EyesOnAgentsSnapshot>;

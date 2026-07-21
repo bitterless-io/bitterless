@@ -5,24 +5,35 @@ import { sqliteManager } from '../sqliteHelper/sqlite.manager';
 import type {
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsDomain,
+  EyesOnAgentsHookLastUserPromptCandidate,
+  EyesOnAgentsLastUserPrompt,
   EyesOnAgentsProjectMetadata,
   EyesOnAgentsRepositoryApi,
+  EyesOnAgentsRuntimeDeliveryPersistenceResult,
   EyesOnAgentsRuntimeEvent,
+  EyesOnAgentsRuntimePersistenceResult,
   EyesOnAgentsRuntimeState,
   EyesOnAgentsSnapshot,
   EyesOnAgentsStatusSource,
   EyesOnAgentsThread,
+  EyesOnAgentsThreadRefreshCandidate,
+  EyesOnAgentsThreadRefreshPages,
+  EyesOnAgentsThreadRefreshPatch,
   EyesOnAgentsThreadSnapshot
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
   isEyesOnAgentsFocused,
   isEyesOnAgentsRecord,
+  normalizeEyesOnAgentsProviderThreadTitle,
   parseEyesOnAgentsActiveFlags,
+  parseEyesOnAgentsHookLastUserPromptCandidate,
+  parseEyesOnAgentsLastUserPromptPreview,
   parseEyesOnAgentsPath,
   parseEyesOnAgentsProjectMetadata,
   parseEyesOnAgentsRuntimeEvent,
   parseEyesOnAgentsRuntimeState,
   parseEyesOnAgentsText,
+  parseEyesOnAgentsThreadRefreshPatch,
   parseEyesOnAgentsTimestamp,
   parseEyesOnAgentsUuid
 } from '@shared/eyesOnAgents/eyesOnAgents.contract';
@@ -54,10 +65,40 @@ interface ThreadRow {
   status_source: string;
   status_observed_at: number | null;
   last_activity_at: number | null;
+  last_user_prompt_preview: string | null;
+  last_user_prompt_turn_id: string | null;
+  last_user_prompt_at: number | null;
+  last_user_prompt_truncated: number;
+  last_user_prompt_source: string | null;
+  last_user_prompt_checked_at: number | null;
+}
+
+interface ThreadRefreshPersistenceRow {
+  title: string | null;
+  runtime_state: string;
+  active_flags_json: string;
+  active_turn_id: string | null;
+  is_unread: number;
+  status_source: string;
+  status_observed_at: number | null;
+  last_activity_at: number | null;
+  last_user_prompt_preview: string | null;
+  last_user_prompt_turn_id: string | null;
+  last_user_prompt_at: number | null;
+  last_user_prompt_truncated: number;
+  last_user_prompt_source: string | null;
+  last_user_prompt_checked_at: number | null;
 }
 
 const MAX_ARCHIVED_THREAD_IDS = 10_000;
 const MAX_THREAD_SNAPSHOTS = 20_000;
+const THREAD_REFRESH_PAGE_SIZE = 40;
+const ACTIVE_RUNTIME_STATES = new Set<EyesOnAgentsRuntimeState>([
+  'working',
+  'waiting_approval',
+  'waiting_input'
+]);
+type ThreadRefreshColumnValue = string | number | null;
 
 const parsePositiveId = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
@@ -85,6 +126,99 @@ const parseStatusSource = (value: unknown): EyesOnAgentsStatusSource => {
 
 const parseTurnId = (value: unknown, label: string): string | null => {
   return parseEyesOnAgentsText(value, label, 200);
+};
+
+const parseLastUserPromptSource = (value: unknown): 'app_server' | 'codex_hook' | null => {
+  if (value === null) return null;
+  if (value === 'app_server' || value === 'codex_hook') return value;
+  throw new Error('last user prompt source is unsupported');
+};
+
+const toLastUserPrompt = (row: ThreadRow): EyesOnAgentsLastUserPrompt => {
+  const preview = parseEyesOnAgentsLastUserPromptPreview(row.last_user_prompt_preview);
+  const turnId = parseTurnId(row.last_user_prompt_turn_id, 'last_user_prompt_turn_id');
+  const observedAt = parseEyesOnAgentsTimestamp(
+    row.last_user_prompt_at,
+    'last_user_prompt_at'
+  );
+  const checkedAt = parseEyesOnAgentsTimestamp(
+    row.last_user_prompt_checked_at,
+    'last_user_prompt_checked_at'
+  );
+  if (row.last_user_prompt_truncated !== 0 && row.last_user_prompt_truncated !== 1) {
+    throw new Error('last_user_prompt_truncated is invalid');
+  }
+  parseLastUserPromptSource(row.last_user_prompt_source);
+  return {
+    state: preview !== null
+      ? 'available'
+      : turnId !== null || observedAt !== null
+        ? 'pending'
+        : 'unavailable',
+    preview,
+    turnId,
+    observedAt: toIso(observedAt),
+    checkedAt: toIso(checkedAt),
+    truncated: row.last_user_prompt_truncated === 1
+  };
+};
+
+const parseStoredActiveFlags = (value: string): string[] => {
+  try {
+    return parseEyesOnAgentsActiveFlags(JSON.parse(value) as unknown);
+  } catch {
+    return [];
+  }
+};
+
+const haveSameActiveFlags = (left: string[], right: string[]): boolean => {
+  if (left.length !== right.length) return false;
+  const leftSet = new Set(left);
+  return right.every((flag) => leftSet.has(flag));
+};
+
+const canApplyAppServerPrompt = (
+  row: ThreadRefreshPersistenceRow,
+  patch: NonNullable<EyesOnAgentsThreadRefreshPatch['lastUserPrompt']>
+): boolean => {
+  const existingSource = parseLastUserPromptSource(row.last_user_prompt_source);
+  const existingUnavailable = row.last_user_prompt_preview === null
+    && row.last_user_prompt_turn_id === null
+    && row.last_user_prompt_at === null;
+  const sameTurn = patch.turnId !== null && patch.turnId === row.last_user_prompt_turn_id;
+  const existingPending = row.last_user_prompt_preview === null && !existingUnavailable;
+  const canFillPending = sameTurn && existingPending && patch.preview !== null;
+  const canRefreshAppServerTurn = existingSource === 'app_server'
+    && sameTurn
+    && row.last_user_prompt_preview !== null
+    && patch.preview !== null
+    && row.last_user_prompt_checked_at !== null
+    && patch.checkedAt > row.last_user_prompt_checked_at;
+  const protectsAvailableHookPrompt = existingSource === 'codex_hook'
+    && sameTurn
+    && row.last_user_prompt_preview !== null;
+  if (protectsAvailableHookPrompt) return false;
+  if (patch.observedAt === null) return canFillPending;
+  if (row.last_user_prompt_at === null) {
+    return existingUnavailable || canFillPending;
+  }
+  if (patch.observedAt > row.last_user_prompt_at) return true;
+  if (patch.observedAt < row.last_user_prompt_at) return false;
+  return canFillPending || canRefreshAppServerTurn;
+};
+
+const shouldReplaceWithAppServerPrompt = (
+  row: ThreadRefreshPersistenceRow,
+  patch: NonNullable<EyesOnAgentsThreadRefreshPatch['lastUserPrompt']>
+): boolean => {
+  if (patch.observedAt === null) return false;
+  const existingUnavailable = row.last_user_prompt_preview === null
+    && row.last_user_prompt_turn_id === null
+    && row.last_user_prompt_at === null;
+  return existingUnavailable || (
+    row.last_user_prompt_at !== null
+    && patch.observedAt > row.last_user_prompt_at
+  );
 };
 
 const projectFromRow = (row: ThreadRow): EyesOnAgentsProjectMetadata | null => {
@@ -152,7 +286,8 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
       parseEyesOnAgentsTimestamp(row.last_activity_at, 'last_activity_at')
     ),
     isUnread,
-    isFocused: isEyesOnAgentsFocused(runtimeState, isUnread)
+    isFocused: isEyesOnAgentsFocused(runtimeState, isUnread),
+    lastUserPrompt: toLastUserPrompt(row)
   };
 };
 
@@ -236,28 +371,61 @@ const eventState = (event: EyesOnAgentsRuntimeEvent): EyesOnAgentsRuntimeState =
   return 'idle';
 };
 
-const applyRuntimeEventInTransaction = (event: EyesOnAgentsRuntimeEvent): void => {
+const titleFromStoredThreadSnapshot = (threadId: string): string | null => {
+  const row = sqliteManager.db.prepare(
+    `SELECT payload_json FROM eyes_on_agents_thread_snapshot
+     WHERE thread_id = ?`
+  ).get(threadId) as { payload_json: string } | undefined;
+  if (!row) return null;
+  try {
+    const value = JSON.parse(row.payload_json) as unknown;
+    if (!isEyesOnAgentsRecord(value)) return null;
+    if (parseEyesOnAgentsUuid(value.id, 'snapshot thread id') !== threadId) return null;
+    return normalizeEyesOnAgentsProviderThreadTitle(value);
+  } catch {
+    return null;
+  }
+};
+
+const runtimePersistenceResult = (
+  threadId: string,
+  created: boolean
+): EyesOnAgentsRuntimePersistenceResult => {
+  const row = sqliteManager.db.prepare(
+    `SELECT title, is_archived FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(threadId) as { title: string | null; is_archived: number };
+  return {
+    created,
+    titleMissing: row.is_archived === 0 && row.title === null
+  };
+};
+
+const applyRuntimeEventInTransaction = (
+  event: EyesOnAgentsRuntimeEvent
+): EyesOnAgentsRuntimePersistenceResult => {
   const now = Date.now();
   const domainId = defaultDomainId();
   const state = eventState(event);
   const activeFlags = event.type === 'thread_status' ? event.activeFlags : [];
   const project = projectColumns(event.project);
+  const snapshotTitle = titleFromStoredThreadSnapshot(event.threadId);
   const startedTurnId = event.type === 'turn_started'
     ? event.turnId ?? (event.source === 'codex_hook' ? `hook-${event.observedAt}` : null)
     : event.type === 'thread_status'
       ? event.turnId ?? null
       : null;
-  sqliteManager.db.prepare(
+  const inserted = sqliteManager.db.prepare(
     `INSERT OR IGNORE INTO eyes_on_agents_thread (
       thread_id, domain_id, title, cwd, project_key, project_root, project_name,
       runtime_state, active_flags_json,
       active_turn_id, last_completed_turn_id, last_completed_at,
       last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
       last_activity_at, created_at, updated_at
-    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`
   ).run(
     event.threadId,
     domainId,
+    snapshotTitle,
     event.cwd ?? null,
     ...project,
     state,
@@ -272,6 +440,14 @@ const applyRuntimeEventInTransaction = (event: EyesOnAgentsRuntimeEvent): void =
     now
   );
 
+  if (snapshotTitle !== null) {
+    sqliteManager.db.prepare(
+      `UPDATE eyes_on_agents_thread SET title = ?, updated_at = ?
+       WHERE thread_id = ? AND title IS NULL`
+    ).run(snapshotTitle, now, event.threadId);
+  }
+  const created = Number(inserted.changes) === 1;
+
   const existing = sqliteManager.db.prepare(
     `SELECT status_observed_at, active_turn_id
      FROM eyes_on_agents_thread WHERE thread_id = ?`
@@ -280,7 +456,7 @@ const applyRuntimeEventInTransaction = (event: EyesOnAgentsRuntimeEvent): void =
     active_turn_id: string | null;
   };
   if (existing.status_observed_at !== null && existing.status_observed_at > event.observedAt) {
-    return;
+    return runtimePersistenceResult(event.threadId, created);
   }
   if (event.project !== undefined) {
     sqliteManager.db.prepare(
@@ -316,7 +492,7 @@ const applyRuntimeEventInTransaction = (event: EyesOnAgentsRuntimeEvent): void =
       now,
       event.threadId
     );
-    return;
+    return runtimePersistenceResult(event.threadId, created);
   }
 
   sqliteManager.db.prepare(
@@ -351,6 +527,44 @@ const applyRuntimeEventInTransaction = (event: EyesOnAgentsRuntimeEvent): void =
     now,
     event.threadId
   );
+  return runtimePersistenceResult(event.threadId, created);
+};
+
+const normalizeHookLastUserPromptCandidate = (
+  event: EyesOnAgentsRuntimeEvent,
+  value: EyesOnAgentsHookLastUserPromptCandidate | undefined
+): EyesOnAgentsHookLastUserPromptCandidate | undefined => {
+  if (value === undefined) return undefined;
+  if (event.type !== 'turn_started' || event.source !== 'codex_hook') {
+    throw new Error('hook last user prompt requires a codex_hook turn_started event');
+  }
+  return parseEyesOnAgentsHookLastUserPromptCandidate(value);
+};
+
+const applyHookLastUserPromptInTransaction = (
+  event: Extract<EyesOnAgentsRuntimeEvent, { type: 'turn_started' }>,
+  candidate: EyesOnAgentsHookLastUserPromptCandidate
+): void => {
+  sqliteManager.db.prepare(
+    `UPDATE eyes_on_agents_thread SET
+      last_user_prompt_preview = ?,
+      last_user_prompt_turn_id = ?,
+      last_user_prompt_at = ?,
+      last_user_prompt_truncated = ?,
+      last_user_prompt_source = 'codex_hook',
+      last_user_prompt_checked_at = NULL,
+      updated_at = ?
+     WHERE thread_id = ?
+       AND (last_user_prompt_at IS NULL OR last_user_prompt_at < ?)`
+  ).run(
+    candidate.preview,
+    event.turnId,
+    event.observedAt,
+    candidate.truncated ? 1 : 0,
+    Date.now(),
+    event.threadId,
+    event.observedAt
+  );
 };
 
 export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRepositoryApi {
@@ -367,13 +581,270 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         runtime_state, active_flags_json,
         active_turn_id, last_completed_turn_id, last_completed_at,
         last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
-        last_activity_at
+        last_activity_at, last_user_prompt_preview, last_user_prompt_turn_id,
+        last_user_prompt_at, last_user_prompt_truncated, last_user_prompt_source,
+        last_user_prompt_checked_at
        FROM eyes_on_agents_thread
        WHERE is_archived = 0
-       ORDER BY COALESCE(last_activity_at, updated_at) DESC, updated_at DESC`,
+       ORDER BY COALESCE(last_activity_at, updated_at) DESC, updated_at DESC, thread_id ASC`,
       []
     );
     return { domains: domains.map(toDomain), threads: rows.map(toThread) };
+  }
+
+  async getThreadRefreshPages(params: {
+    coldPage: number;
+    previousPageCount: number | null;
+  }): Promise<EyesOnAgentsThreadRefreshPages> {
+    if (
+      !params ||
+      !Number.isSafeInteger(params.coldPage) ||
+      params.coldPage < 2 ||
+      (
+        params.previousPageCount !== null &&
+        (
+          !Number.isSafeInteger(params.previousPageCount) ||
+          params.previousPageCount < 0
+        )
+      )
+    ) {
+      throw new Error('thread refresh pagination is invalid');
+    }
+    const transaction = sqliteManager.db.transaction((): EyesOnAgentsThreadRefreshPages => {
+      const countRow = sqliteManager.db.prepare(
+        `SELECT COUNT(*) AS count
+         FROM eyes_on_agents_thread
+         WHERE is_archived = 0`
+      ).get() as { count: number };
+      const count = Number(countRow.count);
+      if (!Number.isSafeInteger(count) || count < 0) {
+        throw new Error('thread refresh page count is invalid');
+      }
+      const pageCount = Math.ceil(count / THREAD_REFRESH_PAGE_SIZE);
+      const pageCountShrank = params.previousPageCount !== null &&
+        pageCount < params.previousPageCount;
+      const coldPage = pageCount <= 1
+        ? null
+        : pageCountShrank || params.coldPage > pageCount
+          ? 2
+          : params.coldPage;
+      const selectPage = sqliteManager.db.prepare(
+        `SELECT thread_id, last_user_prompt_checked_at
+         FROM eyes_on_agents_thread
+         WHERE is_archived = 0
+         ORDER BY COALESCE(last_activity_at, updated_at) DESC,
+           updated_at DESC, thread_id ASC
+         LIMIT ? OFFSET ?`
+      );
+      const toCandidate = (
+        row: { thread_id: string; last_user_prompt_checked_at: number | null }
+      ): EyesOnAgentsThreadRefreshCandidate => ({
+        threadId: parseEyesOnAgentsUuid(row.thread_id),
+        lastUserPromptCheckedAt: parseEyesOnAgentsTimestamp(
+          row.last_user_prompt_checked_at,
+          'last_user_prompt_checked_at'
+        )
+      });
+      const hotRows = selectPage.all(
+        THREAD_REFRESH_PAGE_SIZE,
+        0
+      ) as Array<{ thread_id: string; last_user_prompt_checked_at: number | null }>;
+      const coldRows = coldPage === null
+        ? []
+        : selectPage.all(
+            THREAD_REFRESH_PAGE_SIZE,
+            (coldPage - 1) * THREAD_REFRESH_PAGE_SIZE
+          ) as Array<{ thread_id: string; last_user_prompt_checked_at: number | null }>;
+      return {
+        hot: hotRows.map(toCandidate),
+        cold: coldRows.map(toCandidate),
+        pageCount,
+        coldPage
+      };
+    });
+    return transaction();
+  }
+
+  async refreshThreadPage(params: {
+    threads: EyesOnAgentsThreadRefreshPatch[];
+  }): Promise<{ changed: boolean }> {
+    if (!params || !Array.isArray(params.threads)) throw new Error('threads must be an array');
+    if (params.threads.length > THREAD_REFRESH_PAGE_SIZE) {
+      throw new Error(`threads must not exceed ${THREAD_REFRESH_PAGE_SIZE} entries`);
+    }
+    const threads = params.threads.map(parseEyesOnAgentsThreadRefreshPatch);
+    if (new Set(threads.map((thread) => thread.threadId)).size !== threads.length) {
+      throw new Error('thread refresh patches must have unique threadIds');
+    }
+    const transaction = sqliteManager.db.transaction((): { changed: boolean } => {
+      const select = sqliteManager.db.prepare(
+        `SELECT title, runtime_state, active_flags_json, active_turn_id, is_unread,
+          status_source, status_observed_at, last_activity_at,
+          last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
+          last_user_prompt_truncated, last_user_prompt_source, last_user_prompt_checked_at
+         FROM eyes_on_agents_thread WHERE thread_id = ? AND is_archived = 0`
+      );
+      const now = Date.now();
+      let changed = false;
+      for (const thread of threads) {
+        const row = select.get(thread.threadId) as ThreadRefreshPersistenceRow | undefined;
+        if (!row) continue;
+        const updates = new Map<string, ThreadRefreshColumnValue>();
+        const setIfDifferent = (
+          column: string,
+          current: ThreadRefreshColumnValue,
+          next: ThreadRefreshColumnValue
+        ): void => {
+          if (current !== next) updates.set(column, next);
+        };
+
+        if (thread.title !== undefined) {
+          setIfDifferent('title', row.title, thread.title);
+        }
+        if (
+          thread.status !== undefined
+          && thread.status.runtimeState !== 'unknown'
+          && (
+            row.status_observed_at === null
+            || thread.status.observedAt > row.status_observed_at
+          )
+        ) {
+          const currentRuntimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
+          const currentFlags = parseStoredActiveFlags(row.active_flags_json);
+          const currentSource = parseStatusSource(row.status_source);
+          const flagsChanged = !haveSameActiveFlags(currentFlags, thread.status.activeFlags);
+          const statusChanged = currentRuntimeState !== thread.status.runtimeState
+            || flagsChanged
+            || currentSource !== thread.status.source;
+          if (currentRuntimeState !== thread.status.runtimeState) {
+            updates.set('runtime_state', thread.status.runtimeState);
+          }
+          if (flagsChanged) {
+            updates.set('active_flags_json', JSON.stringify(thread.status.activeFlags));
+          }
+          if (currentSource !== thread.status.source) {
+            updates.set('status_source', thread.status.source);
+          }
+          if (statusChanged && row.status_observed_at !== thread.status.observedAt) {
+            updates.set('status_observed_at', thread.status.observedAt);
+          }
+
+          const isActive = ACTIVE_RUNTIME_STATES.has(thread.status.runtimeState);
+          const hasActiveTurnId = Object.prototype.hasOwnProperty.call(
+            thread.status,
+            'activeTurnId'
+          );
+          const nextActiveTurnId = isActive
+            ? hasActiveTurnId
+              ? thread.status.activeTurnId ?? null
+              : row.active_turn_id
+            : null;
+          setIfDifferent('active_turn_id', row.active_turn_id, nextActiveTurnId);
+          if (row.is_unread !== 0 && row.is_unread !== 1) {
+            throw new Error('is_unread is invalid');
+          }
+          if (isActive && row.is_unread !== 1) updates.set('is_unread', 1);
+        }
+
+        if (
+          thread.lastActivityAt !== undefined
+          && (
+            row.last_activity_at === null
+            || thread.lastActivityAt > row.last_activity_at
+          )
+        ) {
+          updates.set('last_activity_at', thread.lastActivityAt);
+        }
+
+        if (thread.lastUserPrompt !== undefined) {
+          const existingPreview = parseEyesOnAgentsLastUserPromptPreview(
+            row.last_user_prompt_preview
+          );
+          const existingTurnId = parseTurnId(
+            row.last_user_prompt_turn_id,
+            'last_user_prompt_turn_id'
+          );
+          const existingObservedAt = parseEyesOnAgentsTimestamp(
+            row.last_user_prompt_at,
+            'last_user_prompt_at'
+          );
+          const existingCheckedAt = parseEyesOnAgentsTimestamp(
+            row.last_user_prompt_checked_at,
+            'last_user_prompt_checked_at'
+          );
+          if (row.last_user_prompt_truncated !== 0 && row.last_user_prompt_truncated !== 1) {
+            throw new Error('last_user_prompt_truncated is invalid');
+          }
+          const existingSource = parseLastUserPromptSource(row.last_user_prompt_source);
+          if (canApplyAppServerPrompt(row, thread.lastUserPrompt)) {
+            setIfDifferent(
+              'last_user_prompt_preview',
+              existingPreview,
+              thread.lastUserPrompt.preview
+            );
+            setIfDifferent(
+              'last_user_prompt_truncated',
+              row.last_user_prompt_truncated,
+              thread.lastUserPrompt.truncated ? 1 : 0
+            );
+            setIfDifferent(
+              'last_user_prompt_source',
+              existingSource,
+              thread.lastUserPrompt.source
+            );
+            if (shouldReplaceWithAppServerPrompt(row, thread.lastUserPrompt)) {
+              setIfDifferent(
+                'last_user_prompt_turn_id',
+                existingTurnId,
+                thread.lastUserPrompt.turnId
+              );
+              setIfDifferent(
+                'last_user_prompt_at',
+                existingObservedAt,
+                thread.lastUserPrompt.observedAt
+              );
+            }
+          }
+          if (
+            existingCheckedAt === null
+            || thread.lastUserPrompt.checkedAt > existingCheckedAt
+          ) {
+            updates.set('last_user_prompt_checked_at', thread.lastUserPrompt.checkedAt);
+          }
+        }
+
+        if (updates.size === 0) continue;
+        updates.set('updated_at', now);
+        const columns = [...updates.keys()];
+        const result = sqliteManager.db.prepare(
+          `UPDATE eyes_on_agents_thread SET ${columns.map((column) => `${column} = ?`).join(', ')}
+           WHERE thread_id = ? AND is_archived = 0`
+        ).run(...updates.values(), thread.threadId);
+        if (Number(result.changes) === 1) changed = true;
+      }
+      return { changed };
+    });
+    return transaction();
+  }
+
+  async clearLastUserPrompts(): Promise<{ changed: boolean }> {
+    const result = sqliteManager.db.prepare(
+      `UPDATE eyes_on_agents_thread SET
+        last_user_prompt_preview = NULL,
+        last_user_prompt_turn_id = NULL,
+        last_user_prompt_at = NULL,
+        last_user_prompt_truncated = 0,
+        last_user_prompt_source = NULL,
+        last_user_prompt_checked_at = NULL,
+        updated_at = ?
+       WHERE last_user_prompt_preview IS NOT NULL
+          OR last_user_prompt_turn_id IS NOT NULL
+          OR last_user_prompt_at IS NOT NULL
+          OR last_user_prompt_truncated <> 0
+          OR last_user_prompt_source IS NOT NULL
+          OR last_user_prompt_checked_at IS NOT NULL`
+    ).run(Date.now());
+    return { changed: Number(result.changes) > 0 };
   }
 
   async invalidateAppServerStatuses(params: { observedAt: number }): Promise<void> {
@@ -635,35 +1106,76 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     transaction();
   }
 
-  async applyRuntimeEvent(params: { event: EyesOnAgentsRuntimeEvent }): Promise<void> {
+  async applyRuntimeEvent(params: {
+    event: EyesOnAgentsRuntimeEvent;
+    hookLastUserPrompt?: EyesOnAgentsHookLastUserPromptCandidate;
+  }): Promise<EyesOnAgentsRuntimePersistenceResult> {
     if (!params) throw new Error('event params are required');
     const event = parseEyesOnAgentsRuntimeEvent(params.event);
-    const transaction = sqliteManager.db.transaction(() => applyRuntimeEventInTransaction(event));
-    transaction();
+    const hookLastUserPrompt = normalizeHookLastUserPromptCandidate(
+      event,
+      params.hookLastUserPrompt
+    );
+    const transaction = sqliteManager.db.transaction(
+      (): EyesOnAgentsRuntimePersistenceResult => {
+        const result = applyRuntimeEventInTransaction(event);
+        if (hookLastUserPrompt !== undefined && event.type === 'turn_started') {
+          applyHookLastUserPromptInTransaction(event, hookLastUserPrompt);
+        }
+        return result;
+      }
+    );
+    return transaction();
   }
 
   async applyRuntimeEventDelivery(params: {
     deliveryId: string;
     event: EyesOnAgentsRuntimeEvent;
-  }): Promise<{ duplicate: boolean }> {
+    hookLastUserPrompt?: EyesOnAgentsHookLastUserPromptCandidate;
+  }): Promise<EyesOnAgentsRuntimeDeliveryPersistenceResult> {
     if (!params) throw new Error('delivery params are required');
     const deliveryId = parseEyesOnAgentsUuid(params.deliveryId, 'deliveryId');
     const event = parseEyesOnAgentsRuntimeEvent(params.event);
     if (event.source !== 'codex_hook') {
       throw new Error('delivery event source must be codex_hook');
     }
-    const transaction = sqliteManager.db.transaction((): { duplicate: boolean } => {
-      const result = sqliteManager.db.prepare(
-        `INSERT INTO eyes_on_agents_hook_delivery_receipt (
-          delivery_id, thread_id, observed_at, committed_at
-        ) VALUES (?, ?, ?, ?)
-        ON CONFLICT(delivery_id) DO NOTHING`
-      ).run(deliveryId, event.threadId, event.observedAt, Date.now());
-      if (Number(result.changes) === 0) return { duplicate: true };
-      applyRuntimeEventInTransaction(event);
-      return { duplicate: false };
-    });
+    const hookLastUserPrompt = normalizeHookLastUserPromptCandidate(
+      event,
+      params.hookLastUserPrompt
+    );
+    const transaction = sqliteManager.db.transaction(
+      (): EyesOnAgentsRuntimeDeliveryPersistenceResult => {
+        const result = sqliteManager.db.prepare(
+          `INSERT INTO eyes_on_agents_hook_delivery_receipt (
+            delivery_id, thread_id, observed_at, committed_at
+          ) VALUES (?, ?, ?, ?)
+          ON CONFLICT(delivery_id) DO NOTHING`
+        ).run(deliveryId, event.threadId, event.observedAt, Date.now());
+        if (Number(result.changes) === 0) {
+          return { duplicate: true, created: false, titleMissing: false };
+        }
+        const persistence = applyRuntimeEventInTransaction(event);
+        if (hookLastUserPrompt !== undefined && event.type === 'turn_started') {
+          applyHookLastUserPromptInTransaction(event, hookLastUserPrompt);
+        }
+        return { duplicate: false, ...persistence };
+      }
+    );
     return transaction();
+  }
+
+  async enrichMissingThreadTitle(params: {
+    threadId: string;
+    title: string;
+  }): Promise<{ changed: boolean }> {
+    const threadId = parseEyesOnAgentsUuid(params?.threadId);
+    const title = parseEyesOnAgentsText(params?.title, 'thread title', 300, false) as string;
+    const result = await sqliteHelper.safeRun(
+      `UPDATE eyes_on_agents_thread SET title = ?, updated_at = ?
+       WHERE thread_id = ? AND is_archived = 0 AND title IS NULL`,
+      [title, Date.now(), threadId]
+    );
+    return { changed: Number(result.changes) === 1 };
   }
 
   async markOpened(params: { threadId: string; openedAt: number }): Promise<void> {

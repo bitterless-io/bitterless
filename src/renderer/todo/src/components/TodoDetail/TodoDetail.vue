@@ -253,7 +253,7 @@ const TITLE_MAX_LENGTH = 250;
 const headerTitleRef = ref<HTMLTextAreaElement | null>(null);
 const _headerTitleText = ref('');
 const headerEditing = ref(false);
-const subTodoEditingTexts = reactive<Record<number, string>>({});
+const subTodoEditingTexts = reactive<Record<string, string>>({});
 
 const autoResize = (el: HTMLTextAreaElement) => {
   el.style.height = 'auto';
@@ -275,7 +275,7 @@ const startHeaderEditing = async () => {
   headerTitleRef.value?.select();
 };
 
-const onSubTitleInput = (id: number, el: HTMLTextAreaElement) => {
+const onSubTitleInput = (id: string, el: HTMLTextAreaElement) => {
   const value = el.value;
   subTodoEditingTexts[id] = value.length > TITLE_MAX_LENGTH ? value.slice(0, TITLE_MAX_LENGTH) : value;
   if (value.length > TITLE_MAX_LENGTH) {
@@ -357,7 +357,7 @@ watch(() => todoStore.selectedTodo?.id, (newId) => {
 }, { immediate: true });
 
 
-const onSubTitleEnter = async (e: KeyboardEvent, id: number) => {
+const onSubTitleEnter = async (e: KeyboardEvent, id: string) => {
   const ta = e.target as HTMLTextAreaElement;
   ta.blur();
   await nextTick();
@@ -372,9 +372,9 @@ const onSubTitleEnter = async (e: KeyboardEvent, id: number) => {
   }
 };
 
-const activeSubTodoId = ref<number | null>(null);
+const activeSubTodoId = ref<string | null>(null);
 
-const activateSubTodo = async (e: MouseEvent, id: number) => {
+const activateSubTodo = async (e: MouseEvent, id: string) => {
   if (activeSubTodoId.value === id) return;
   activeSubTodoId.value = id;
   await nextTick();
@@ -384,7 +384,7 @@ const activateSubTodo = async (e: MouseEvent, id: number) => {
   }
 };
 
-const onSubTitleBlur = (e: FocusEvent, id: number) => {
+const onSubTitleBlur = (e: FocusEvent, id: string) => {
   activeSubTodoId.value = null;
   const trimmed = (e.target as HTMLTextAreaElement).value.trim();
   subTodoEditingTexts[id] = trimmed;
@@ -463,7 +463,7 @@ const onIntervalBlur = (e: FocusEvent) => {
   intervalDropdownVisible.value = false;
 };
 
-const _saveRepeatInterval = throttle((id: number, interval: number) => {
+const _saveRepeatInterval = throttle((id: string, interval: number) => {
   todoStore.updateRepeatInterval(id, interval);
 }, 300, { trailing: true });
 
@@ -494,7 +494,7 @@ const onRemindChange = (value: string | Date | undefined) => {
   todoStore.updateTodo({ id: todoStore.selectedTodo.id, remind_at: ts });
 };
 
-const _saveNote = throttle((id: number, value: string) => {
+const _saveNote = throttle((id: string, value: string) => {
   todoStore.updateTodo({ id, note: value.trim() });
 }, 150, { trailing: true });
 
@@ -516,7 +516,7 @@ onUnmounted(() => {
   _saveNote.flush();
 });
 
-const handleDeleteSubTodo = (id: number) => {
+const handleDeleteSubTodo = (id: string) => {
   const doAction = () => todoStore.deleteSubTodo(id);
 
   let onKeydown: (e: KeyboardEvent) => void;

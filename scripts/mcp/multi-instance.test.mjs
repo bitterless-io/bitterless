@@ -42,18 +42,25 @@ const broadcasts = [];
 let domainResult = [];
 let lastTodoUpdateParams = null;
 const now = Date.now();
+const DOMAIN_ID = '00000000000000000007';
+const TODO_ID = '00000000000000000042';
+const OTHER_TODO_ID = '00000000000000000099';
+const MISSING_DOMAIN_ID = '00000000000000000999';
 const validDomain = {
-  id: 7,
+  id: DOMAIN_ID,
+  customer_id: '1',
   title: 'Others',
   description: '',
   is_deleted: 0,
   archived: 0,
+  position: 0,
   created_at: now,
   updated_at: now
 };
 const validTodo = {
-  id: 42,
-  domain_id: 7,
+  id: TODO_ID,
+  customer_id: '1',
+  domain_id: DOMAIN_ID,
   title: 'Fixture todo',
   status: 0,
   important: 0,
@@ -69,18 +76,19 @@ const validTodo = {
   note: '',
   source: 'ai',
   is_deleted: 0,
+  position: 0,
   created_at: now,
   updated_at: now
 };
 const validStatus = {
   items: [{
-    id: 42,
+    id: TODO_ID,
     state: 'active',
     exists: true,
     completed: false,
     deleted: false,
     title: validTodo.title,
-    domain_id: 7,
+    domain_id: DOMAIN_ID,
     updated_at: now,
     completed_at: null,
     deleted_at: null,
@@ -107,27 +115,21 @@ installMcpSourceHooks({
   projectRoot,
   userDataPath: wrongUserData,
   broadcasts,
-  emitters: {
-    DomainDao: {
-      create: async () => daoResults.domainCreate,
-      getAll: async () => domainResult
-    },
-    TodoDao: {
-      completeTodo: async () => daoResults.todoComplete,
-      create: async () => daoResults.todoCreate,
-      getByDomainId: async () => daoResults.todoList,
-      getById: async () => daoResults.todoGet,
-      getStatusByIds: async () => daoResults.todoStatus,
-      hardDelete: async () => daoResults.todoDelete,
-      moveToDomain: async () => daoResults.todoMove,
-      uncompleteTodo: async () => daoResults.todoUncomplete,
-      update: async (params) => {
-        lastTodoUpdateParams = params;
-        return daoResults.todoUpdate;
-      }
-    },
-    TodoEventDao: {
-      listAfter: async () => daoResults.eventList
+  todoRepository: {
+    completeTodo: async () => daoResults.todoComplete,
+    createDomain: async () => daoResults.domainCreate,
+    createTodo: async () => daoResults.todoCreate,
+    deleteTodo: async () => daoResults.todoDelete,
+    getDomains: async () => domainResult,
+    getTodoById: async () => daoResults.todoGet,
+    getTodosByDomain: async () => daoResults.todoList,
+    getStatusByIds: async () => daoResults.todoStatus,
+    listAfter: async () => daoResults.eventList,
+    moveToDomain: async () => daoResults.todoMove,
+    uncompleteTodo: async () => daoResults.todoUncomplete,
+    updateTodo: async (params) => {
+      lastTodoUpdateParams = params;
+      return daoResults.todoUpdate;
     }
   }
 });
@@ -536,7 +538,7 @@ try {
   try {
     await assert.rejects(
       notReadyClient.callTool('domain.list'),
-      /DomainDao\.getAll is unavailable because the core SQLite store is not ready/
+      /TodoistSyncRepository\.getDomains is unavailable because the core SQLite store is not ready/
     );
     domainResult = [];
     const recovered = await notReadyClient.callTool('domain.list');
@@ -566,7 +568,7 @@ try {
   try {
     lastTodoUpdateParams = null;
     const clearedTodo = await validationClient.callTool('todo.update', {
-      id: 42,
+      id: TODO_ID,
       dueAt: null,
       remindAt: null
     });
@@ -579,7 +581,7 @@ try {
     lastTodoUpdateParams = null;
     await assert.rejects(
       validationClient.callTool('todo.update', {
-        id: 42,
+        id: TODO_ID,
         dueAt: null,
         due_at: now
       }),
@@ -593,63 +595,63 @@ try {
       null,
       'domain.create',
       { title: 'New domain' },
-      /DomainDao\.create is unavailable/
+      /TodoistSyncRepository\.createDomain is unavailable/
     );
     await expectDaoFailure(
       'eventList',
       null,
       'event.list',
       {},
-      /TodoEventDao\.listAfter is unavailable/
+      /TodoistSyncRepository\.listAfter is unavailable/
     );
     await expectDaoFailure(
       'eventList',
       { events: null, latestEventId: 0, hasMore: false },
       'event.wait',
       { timeoutMs: 1000 },
-      /TodoEventDao\.listAfter returned an invalid event list result/
+      /TodoistSyncRepository\.listAfter returned an invalid event list result/
     );
     await expectDaoFailure(
       'todoList',
       {},
       'todo.list',
-      { domainId: 7 },
-      /TodoDao\.getByDomainId returned an invalid array result/
+      { domainId: DOMAIN_ID },
+      /TodoistSyncRepository\.getTodosByDomain returned an invalid array result/
     );
     await expectDaoFailure(
       'todoGet',
       undefined,
       'todo.get',
-      { id: 42 },
-      /Todo not found: 42/
+      { id: TODO_ID },
+      new RegExp(`Todo not found: ${TODO_ID}`)
     );
     await expectDaoFailure(
       'todoGet',
       { id: 'bad' },
       'todo.get',
-      { id: 42 },
-      /TodoDao\.getById returned an invalid todo row/
+      { id: TODO_ID },
+      /TodoistSyncRepository\.getTodoById returned an invalid todo row/
     );
     await expectDaoFailure(
       'todoStatus',
       null,
       'todo.status',
-      { ids: [42] },
-      /TodoDao\.getStatusByIds is unavailable/
+      { ids: [TODO_ID] },
+      /TodoistSyncRepository\.getStatusByIds is unavailable/
     );
     await expectDaoFailure(
       'todoStatus',
       { items: [], summary: { active: 0, completed: 0, deleted: 0, missing: 0 } },
       'todo.status',
-      { ids: [42] },
-      /TodoDao\.getStatusByIds returned an invalid todo status result/
+      { ids: [TODO_ID] },
+      /TodoistSyncRepository\.getStatusByIds returned an invalid todo status result/
     );
     await expectDaoFailure(
       'todoCreate',
       null,
       'todo.create',
-      { domainId: 7, title: 'Created' },
-      /TodoDao\.create is unavailable/
+      { domainId: DOMAIN_ID, title: 'Created' },
+      /TodoistSyncRepository\.createTodo is unavailable/
     );
 
     const previousCreate = daoResults.todoCreate;
@@ -658,8 +660,8 @@ try {
       'todoUpdate',
       null,
       'todo.create',
-      { domainId: 7, title: 'Created', note: 'validated before insert' },
-      /TodoDao\.update after create is unavailable/
+      { domainId: DOMAIN_ID, title: 'Created', note: 'validated before insert' },
+      /TodoistSyncRepository\.updateTodo after create is unavailable/
     );
     daoResults.todoCreate = previousCreate;
 
@@ -667,49 +669,49 @@ try {
       'todoUpdate',
       null,
       'todo.update',
-      { id: 42, title: 'Updated' },
-      /TodoDao\.update is unavailable/
+      { id: TODO_ID, title: 'Updated' },
+      /TodoistSyncRepository\.updateTodo is unavailable/
     );
     await expectDaoFailure(
       'todoUpdate',
-      { ...validTodo, id: 99, title: 'Updated' },
+      { ...validTodo, id: OTHER_TODO_ID, title: 'Updated' },
       'todo.update',
-      { id: 42, title: 'Updated' },
-      /TodoDao\.update returned an invalid todo row/
+      { id: TODO_ID, title: 'Updated' },
+      /TodoistSyncRepository\.updateTodo returned an invalid todo row/
     );
     await expectDaoFailure(
       'todoComplete',
       null,
       'todo.complete',
-      { id: 42 },
-      /TodoDao\.completeTodo is unavailable/
+      { id: TODO_ID },
+      /TodoistSyncRepository\.completeTodo is unavailable/
     );
     await expectDaoFailure(
       'todoUncomplete',
       undefined,
       'todo.uncomplete',
-      { id: 42 },
-      /Todo not found: 42/
+      { id: TODO_ID },
+      new RegExp(`Todo not found: ${TODO_ID}`)
     );
     await expectDaoFailure(
       'todoDelete',
       false,
       'todo.delete',
-      { id: 42 },
-      /Todo not found or not deleted: 42/
+      { id: TODO_ID },
+      new RegExp(`Todo not found or not deleted: ${TODO_ID}`)
     );
     await expectDaoFailure(
       'todoMove',
       null,
       'todo.move',
-      { id: 42, domainId: 7 },
-      /TodoDao\.moveToDomain is unavailable/
+      { id: TODO_ID, domainId: DOMAIN_ID },
+      /TodoistSyncRepository\.moveToDomain is unavailable/
     );
 
     const invalidBefore = broadcasts.length;
     await assert.rejects(
       validationClient.callTool('todo.create', {
-        domainId: 7,
+        domainId: DOMAIN_ID,
         title: 'Must not be inserted',
         note: 'x'.repeat(10001)
       }),
@@ -717,16 +719,16 @@ try {
     );
     assert.equal(broadcasts.length, invalidBefore);
     await assert.rejects(
-      validationClient.callTool('todo.list', { domainId: 999 }),
-      /Active domain not found: 999/
+      validationClient.callTool('todo.list', { domainId: MISSING_DOMAIN_ID }),
+      new RegExp(`Active domain not found: ${MISSING_DOMAIN_ID}`)
     );
     await assert.rejects(
-      validationClient.callTool('todo.move', { id: 42, domainId: 999 }),
-      /Active domain not found: 999/
+      validationClient.callTool('todo.move', { id: TODO_ID, domainId: MISSING_DOMAIN_ID }),
+      new RegExp(`Active domain not found: ${MISSING_DOMAIN_ID}`)
     );
 
     daoResults.todoStatus = validStatus;
-    const recoveredStatus = await validationClient.callTool('todo.status', { ids: [42] });
+    const recoveredStatus = await validationClient.callTool('todo.status', { ids: [TODO_ID] });
     assert.equal(recoveredStatus.items[0].state, 'active');
   } finally {
     await validationClient.close();

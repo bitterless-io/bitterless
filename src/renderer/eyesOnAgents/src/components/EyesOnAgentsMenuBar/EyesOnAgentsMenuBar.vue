@@ -11,6 +11,8 @@
     </div>
 
     <div name="eyesOnAgents__menuBar__actions" class="eyes-menu-bar__actions">
+      <AddDomainPopover />
+
       <button
         name="eyesOnAgents__menuBar__connection"
         class="eyes-menu-bar__connection"
@@ -109,6 +111,7 @@ import {
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
+import AddDomainPopover from '../AddDomainPopover/AddDomainPopover.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 import { eyesOnAgentsWindowEmitter } from '../../emitter/eyesOnAgentsWindow.emitter';
 

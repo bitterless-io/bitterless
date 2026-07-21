@@ -18,6 +18,7 @@
     "test:sqlite-migrations": "node --test scripts/sqlite-migrations/release-hook.test.mjs",
     "typecheck:sqlite-migrations": "tsc -p scripts/sqlite-migrations/tsconfig.strict.json",
     "check:renderer-i18n": "node scripts/renderer-i18n/check-renderer-i18n.mjs",
+    "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
     "check:todo-window-runtime": "node scripts/todo/check-todo-window-runtime.mjs",
     "test:eyes-on-agents:core": "node scripts/eyes-on-agents/core.test.mjs",
@@ -209,7 +210,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEV_DEBUG",
+  "name": "Bitterless_DEBUG",
   "version": "0.0.34",
-  "version_code": "260716214318"
+  "version_code": "260721112925"
 }

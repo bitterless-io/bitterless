@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installMcpSourceHooks } from './fixtures/mcp-source-hooks.mjs';
+import { getMcpBridgeEndpoint } from '../../src/shared/mcp/mcpBridge.shared.ts';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(scriptDirectory, '..', '..');
@@ -51,11 +52,13 @@ const createDomain = async (params) => {
   state.createCalls.push(params);
   const now = Date.now();
   const domain = {
-    id: state.nextId,
+    id: String(state.nextId).padStart(20, '0'),
+    customer_id: '1',
     title: params.title,
     description: params.description,
     is_deleted: 0,
     archived: 0,
+    position: state.domains.length,
     created_at: now,
     updated_at: now
   };
@@ -68,21 +71,17 @@ installMcpSourceHooks({
   projectRoot,
   userDataPath: tempDirectory,
   broadcasts,
-  emitters: {
-    DomainDao: {
-      create: createDomain,
-      getAll: getDomains
-    },
-    TodoDao: {},
-    TodoEventDao: {}
+  todoRepository: {
+    createDomain,
+    getDomains
   }
 });
 
 const { McpBridgeServer } = await import('../../src/main/mcp/mcpBridge.server.ts');
 
 class PublicMcpClient {
-  constructor() {
-    this.child = spawn(process.execPath, [helperFixture, tempDirectory], {
+  constructor(bridgePath) {
+    this.child = spawn(process.execPath, [helperFixture, tempDirectory, bridgePath], {
       stdio: ['pipe', 'pipe', 'pipe']
     });
     this.child.stdout.setEncoding('utf8');
@@ -163,21 +162,24 @@ const expectToolError = async (client, args, pattern) => {
 const activeDomain = (id) => {
   const now = Date.now();
   return {
-    id,
+    id: String(id).padStart(20, '0'),
+    customer_id: '1',
     title: `Domain ${id}`,
     description: '',
     is_deleted: 0,
     archived: 0,
+    position: id,
     created_at: now,
     updated_at: now
   };
 };
 
 const server = new McpBridgeServer();
-const client = new PublicMcpClient();
+const bridgeEndpoint = getMcpBridgeEndpoint(tempDirectory);
+const client = new PublicMcpClient(bridgeEndpoint.path);
 
 try {
-  await server.start();
+  await server.start(bridgeEndpoint);
   await client.request('initialize', {
     protocolVersion: '2025-06-18',
     capabilities: {},
@@ -222,7 +224,7 @@ try {
   assert.deepEqual(state.createCalls, [
     { title: 'Others', description: 'General uncategorized work' }
   ]);
-  assert.deepEqual(broadcasts, [{ name: 'todo/data_updated', payload: { source: 'mcp' } }]);
+  assert.deepEqual(broadcasts, []);
 
   state.domains = [
     ...Array.from({ length: 16 }, (_, index) => activeDomain(index + 1)),
@@ -251,7 +253,7 @@ try {
   assert.equal(state.getAllRaceProbe.captureCount, 1);
   state.getAllRaceProbe = null;
   assert.equal(state.createCalls.length, 1);
-  assert.equal(broadcasts.length, 1);
+  assert.equal(broadcasts.length, 0);
   assert.equal(state.domains.filter((domain) => domain.archived === 0 && domain.is_deleted === 0).length, 17);
 
   const domainToArchive = state.domains.find(
@@ -262,7 +264,7 @@ try {
   assert.equal(state.domains.filter((domain) => domain.archived === 0 && domain.is_deleted === 0).length, 17);
 
   console.log(
-    '[domain-create-test] public schema, validation, serialized active limit, recovery, and UI broadcast passed'
+    '[domain-create-test] public schema, validation, serialized active limit, and recovery passed'
   );
 } finally {
   await client.close();

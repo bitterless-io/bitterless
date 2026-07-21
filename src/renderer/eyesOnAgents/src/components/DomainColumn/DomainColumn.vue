@@ -34,6 +34,21 @@
         <span ref="titleSizerRef" class="agent-domain__title-sizer">{{ editingTitle }}</span>
       </div>
 
+      <a-button
+        v-if="all"
+        ref="titleSearchButtonRef"
+        name="eyesOnAgents__domainColumn__titleSearchToggle"
+        class="agent-domain__search-trigger"
+        size="mini"
+        type="text"
+        :aria-label="i18nHelper.eyesOnAgents.actions.searchTitles"
+        :aria-expanded="titleSearchOpen"
+        aria-controls="eyes-on-agents-all-title-search"
+        @click="toggleTitleSearch"
+      >
+        <template #icon><IconSearch :size="13" aria-hidden="true" /></template>
+      </a-button>
+
       <a-dropdown v-if="canManage" trigger="click" position="br">
         <a-button
           size="mini"
@@ -51,6 +66,35 @@
         </template>
       </a-dropdown>
     </header>
+
+    <div
+      v-if="all && titleSearchOpen"
+      id="eyes-on-agents-all-title-search"
+      name="eyesOnAgents__domainColumn__titleSearch"
+      class="agent-domain__search-row"
+      role="search"
+      :aria-label="i18nHelper.eyesOnAgents.actions.searchTitles"
+      @keydown.esc.prevent.stop="closeTitleSearch"
+    >
+      <a-input
+        ref="titleSearchInputRef"
+        v-model="eyesOnAgentsStore.allTitleQuery"
+        class="agent-domain__search-input"
+        size="mini"
+        :placeholder="i18nHelper.eyesOnAgents.board.titleSearchPlaceholder"
+        :aria-label="i18nHelper.eyesOnAgents.actions.searchTitles"
+      />
+      <a-button
+        name="eyesOnAgents__domainColumn__clearTitleSearch"
+        class="agent-domain__search-clear"
+        size="mini"
+        type="text"
+        :aria-label="i18nHelper.eyesOnAgents.actions.clearTitleSearch"
+        @click="clearTitleSearch"
+      >
+        <template #icon><IconX :size="12" aria-hidden="true" /></template>
+      </a-button>
+    </div>
 
     <ProjectFilter v-if="projectFilter" />
 
@@ -78,14 +122,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import draggable from 'vuedraggable';
 import { Modal } from '@arco-design/web-vue';
 import {
   IconCircleCheck,
   IconDots,
+  IconSearch,
   IconTargetArrow,
   IconTrash,
+  IconX,
 } from '@tabler/icons-vue';
 import type {
   EyesOnAgentsDomain,
@@ -117,12 +163,18 @@ const props = withDefaults(defineProps<{
 const visibleThreads = ref<EyesOnAgentsThread[]>([]);
 const editing = ref(false);
 const editingTitle = ref('');
+const titleSearchOpen = ref(false);
 const titleInputRef = ref<HTMLInputElement | null>(null);
 const titleSizerRef = ref<HTMLSpanElement | null>(null);
+const titleSearchButtonRef = ref<{ $el?: HTMLElement } | null>(null);
+const titleSearchInputRef = ref<{ focus?: () => void } | null>(null);
 const inputWidth = ref(40);
 const canManage = computed(() => Boolean(props.domain && !props.domain.isSystem));
 const emptyLabel = computed(() => {
   if (props.focus) return i18nHelper.eyesOnAgents.board.emptyFocus;
+  if (props.all && eyesOnAgentsStore.isAllTitleFiltered) {
+    return i18nHelper.eyesOnAgents.board.emptyTitleSearch;
+  }
   if (!props.projectFilter || !eyesOnAgentsStore.isAllProjectFiltered) {
     return i18nHelper.eyesOnAgents.board.emptyDomain;
   }
@@ -133,6 +185,32 @@ const emptyLabel = computed(() => {
 const dragGroup = computed(() => props.focus || props.all
   ? { name: 'eyes-on-agents-threads', pull: 'clone', put: false }
   : { name: 'eyes-on-agents-threads', pull: true, put: true });
+
+const focusTitleSearchInput = async (): Promise<void> => {
+  await nextTick();
+  titleSearchInputRef.value?.focus?.();
+};
+
+const closeTitleSearch = async (): Promise<void> => {
+  eyesOnAgentsStore.clearAllTitleQuery();
+  titleSearchOpen.value = false;
+  await nextTick();
+  titleSearchButtonRef.value?.$el?.focus();
+};
+
+const toggleTitleSearch = async (): Promise<void> => {
+  if (titleSearchOpen.value) {
+    await closeTitleSearch();
+    return;
+  }
+  titleSearchOpen.value = true;
+  await focusTitleSearchInput();
+};
+
+const clearTitleSearch = async (): Promise<void> => {
+  eyesOnAgentsStore.clearAllTitleQuery();
+  await focusTitleSearchInput();
+};
 
 const measureTitleInput = (): void => {
   void nextTick(() => {
@@ -156,6 +234,10 @@ watch(
   },
   { immediate: true },
 );
+
+onBeforeUnmount(() => {
+  if (props.all) eyesOnAgentsStore.clearAllTitleQuery();
+});
 
 const handleThreadAdded = async (event: ThreadAddEvent): Promise<void> => {
   if (props.focus || props.all || !props.domain || event.newIndex === undefined) return;

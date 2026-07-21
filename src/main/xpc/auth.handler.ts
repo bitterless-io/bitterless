@@ -15,18 +15,52 @@ import {
 } from './eyesOnAgents.handler';
 import { coinWindowHandler } from './coinWindow.handler';
 import { maestroWindowHandler } from './maestroWindow.handler';
+import { todoistSyncSession } from '@main/todoistSync/todoistSync.session';
 
 class AuthHandler extends XpcMainHandler {
   private invalidating = false;
+  private deactivationPromise: Promise<void> | null = null;
+  private sessionActivationGeneration = 0;
+  private sessionShouldBeActive = false;
 
   async activateSession(): Promise<void> {
+    this.sessionShouldBeActive = true;
+    const generation = ++this.sessionActivationGeneration;
+    const deactivationPromise = this.deactivationPromise;
+    if (deactivationPromise) {
+      await deactivationPromise.catch((err) => {
+        console.warn('[AuthHandler] Previous session teardown failed:', err);
+      });
+    }
+    if (this._stopStaleActivation(generation)) return;
     await this._ensureSqliteWindow();
+    if (this._stopStaleActivation(generation)) return;
     await resumeEyesOnAgentsAfterAuth();
+    if (this._stopStaleActivation(generation)) return;
     await maestroWindowHandler.prepareForAuthenticatedSession();
+    if (this._stopStaleActivation(generation)) return;
     await coinWindowHandler.prepareForAuthenticatedSession();
   }
 
+  async deactivateSession(): Promise<void> {
+    this.sessionShouldBeActive = false;
+    this.sessionActivationGeneration += 1;
+    coinWindowHandler.lockForAuthInvalidation();
+    if (this.deactivationPromise) return await this.deactivationPromise;
+
+    const request = this._deactivateSession();
+    const tracked = request.finally(() => {
+      if (this.deactivationPromise === tracked) {
+        this.deactivationPromise = null;
+      }
+    });
+    this.deactivationPromise = tracked;
+    await tracked;
+  }
+
   async invalidateSession(params: AuthInvalidationPayload = {}): Promise<void> {
+    this.sessionShouldBeActive = false;
+    this.sessionActivationGeneration += 1;
     coinWindowHandler.lockForAuthInvalidation();
     if (this.invalidating) return;
 
@@ -43,11 +77,7 @@ class AuthHandler extends XpcMainHandler {
       const mainWindow = await this._ensureMainWindow();
 
       if (mainWindow && !mainWindow.isDestroyed()) {
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
-        mainWindow.show();
-        mainWindow.focus();
+        mainWindowHelper.show();
       }
 
       xpcMain.broadcast('auth/invalidated', eventPayload);
@@ -79,7 +109,22 @@ class AuthHandler extends XpcMainHandler {
     });
   }
 
+  private _stopStaleActivation(generation: number): boolean {
+    return generation !== this.sessionActivationGeneration || !this.sessionShouldBeActive;
+  }
+
+  private async _deactivateSession(): Promise<void> {
+    await this._closeSecondaryWindows();
+    const mainWindow = await this._ensureMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindowHelper.show();
+    }
+  }
+
   private async _closeSecondaryWindows(): Promise<void> {
+    await todoistSyncSession.deactivate().catch((err) => {
+      console.warn('[AuthHandler] Failed to deactivate Todo sync:', err);
+    });
     await suspendEyesOnAgentsForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to suspend EyesOnAgents runtime:', err);
     });

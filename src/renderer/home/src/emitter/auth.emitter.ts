@@ -1,9 +1,4 @@
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { AuthInvalidationPayload } from '@shared/auth/auth.type';
+import type { AuthHandler } from '@main/xpc/auth.handler';
 
-interface AuthHandlerEmitter {
-  activateSession(): Promise<void>;
-  invalidateSession(params?: AuthInvalidationPayload): Promise<void>;
-}
-
-export const authEmitter = createXpcRendererEmitter<AuthHandlerEmitter>('AuthHandler');
+export const authEmitter = createXpcRendererEmitter<AuthHandler>('AuthHandler');

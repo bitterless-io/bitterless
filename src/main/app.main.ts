@@ -25,6 +25,9 @@ import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
 import { maestroWindowHandler } from './xpc/maestroWindow.handler';
 import { eyesOnAgentsWindowHandler } from './xpc/eyesOnAgentsWindow.handler';
+import { todoWindowHandler } from './xpc/todoWindow.handler';
+import { todoistSyncSession } from './todoistSync/todoistSync.session';
+import { pluginTestHandler } from './xpc/pluginTest.handler';
 import { applicationLanguageService } from './i18n/applicationLanguage.service';
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot';
 import {
@@ -211,7 +214,10 @@ const installE2ENetworkGuard = (): void => {
   if (!isE2E) return;
   const mockOrigin = e2eMockOrigin();
   const deniedLog = join(app.getPath('userData'), 'e2e-network-denied.log');
-  const authOrigins = new Set(['https://bl-test-api.terncloud.com', 'https://api.bitterless.io']);
+  const authOrigins = new Set([
+    'https://bl-test-api.terncloud.com',
+    'https://prod-bitterless-hcqmtqwtox.cn-shanghai.fcapp.run',
+  ]);
 
   const deniedResponse = (request: Request): Response => {
     const url = new URL(request.url);
@@ -308,9 +314,12 @@ const cleanupResources = (): Promise<void> => {
       // Best-effort shutdown: the remaining application resources must still be released.
     }
     try { await mcpBridgeServer.stop(); } catch {}
+    try { await todoistSyncSession.deactivate(); } catch {}
     try { await coinWindowHandler.destroyForHostQuit(); } catch {}
     try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
     try { await eyesOnAgentsWindowHandler.destroyForHostQuit(); } catch {}
+    try { await todoWindowHandler.destroyForHostQuit(); } catch {}
+    try { await pluginTestHandler.destroyForHostQuit(); } catch {}
     try { mainWindowHelper.destroy(); } catch {}
     try { sqliteWindowHelper.destroy(); } catch {}
     try { llamaWindowHelper.destroy(); } catch {}

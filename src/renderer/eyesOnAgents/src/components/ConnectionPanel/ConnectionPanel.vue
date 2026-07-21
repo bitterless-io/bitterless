@@ -35,6 +35,15 @@
             <dd>{{ lastSyncedLabel }}</dd>
           </div>
         </dl>
+        <div
+          v-if="titleEnrichmentDiagnostic"
+          name="eyesOnAgents__connections__titleEnrichmentDiagnostic"
+          class="eyes-connection-card__diagnostic"
+          role="status"
+        >
+          <strong>{{ i18nHelper.eyesOnAgents.connection.titleEnrichment }}</strong>
+          <span>{{ titleEnrichmentDiagnosticLabel }}</span>
+        </div>
         <div v-if="connection?.error" class="eyes-connection-card__error" role="alert">
           {{ connection.error }}
         </div>
@@ -91,6 +100,28 @@
           </span>
         </div>
         <p>{{ i18nHelper.eyesOnAgents.bridge.description }}</p>
+        <div
+          name="eyesOnAgents__connections__promptRetention"
+          class="eyes-connection-card__preference"
+        >
+          <div class="eyes-connection-card__preference-copy">
+            <strong id="eyes-on-agents-prompt-retention-label">
+              {{ i18nHelper.eyesOnAgents.bridge.promptRetentionLabel }}
+            </strong>
+            <span id="eyes-on-agents-prompt-retention-description">
+              {{ i18nHelper.eyesOnAgents.bridge.promptRetentionDescription }}
+            </span>
+          </div>
+          <a-switch
+            size="small"
+            :model-value="lastUserPromptCaptureEnabled"
+            :loading="eyesOnAgentsStore.busyAction === 'prompt-retention'"
+            :disabled="Boolean(eyesOnAgentsStore.busyAction)"
+            aria-labelledby="eyes-on-agents-prompt-retention-label"
+            aria-describedby="eyes-on-agents-prompt-retention-description"
+            @change="handleLastUserPromptCaptureChange"
+          />
+        </div>
         <dl class="eyes-connection-card__facts">
           <div>
             <dt>{{ i18nHelper.eyesOnAgents.bridge.listener }}</dt>
@@ -111,12 +142,44 @@
         </dl>
         <div
           v-if="showReviewGuidance"
-          class="eyes-connection-card__trust"
+          class="eyes-connection-card__trust-summary"
           role="status"
         >
           <strong>{{ reviewGuidance }}</strong>
-          <span>{{ i18nHelper.eyesOnAgents.bridge.reviewInstructions }}</span>
         </div>
+        <section
+          name="eyesOnAgents__connections__hookGuide"
+          class="eyes-connection-card__hook-guide"
+          aria-labelledby="eyes-connection-hook-guide-title"
+        >
+          <h3 id="eyes-connection-hook-guide-title">
+            {{ i18nHelper.eyesOnAgents.bridge.hookGuideTitle }}
+          </h3>
+          <ol class="eyes-connection-card__hook-steps">
+            <li name="eyesOnAgents__connections__hookGuideStep">
+              <strong>{{ i18nHelper.eyesOnAgents.bridge.hookGuideOpenTitle }}</strong>
+              <span>{{ i18nHelper.eyesOnAgents.bridge.hookGuideOpenDescription }}</span>
+            </li>
+            <li name="eyesOnAgents__connections__hookGuideStep">
+              <strong>{{ i18nHelper.eyesOnAgents.bridge.hookGuideReviewTitle }}</strong>
+              <span>{{ i18nHelper.eyesOnAgents.bridge.hookGuideReviewDescription }}</span>
+              <span class="eyes-connection-card__hook-cli">
+                {{ i18nHelper.eyesOnAgents.bridge.hookGuideCli }}
+              </span>
+            </li>
+            <li name="eyesOnAgents__connections__hookGuideStep">
+              <strong>{{ i18nHelper.eyesOnAgents.bridge.hookGuideConfirmTitle }}</strong>
+              <span>{{ i18nHelper.eyesOnAgents.bridge.hookGuideConfirmDescription }}</span>
+            </li>
+            <li name="eyesOnAgents__connections__hookGuideStep">
+              <strong>{{ i18nHelper.eyesOnAgents.bridge.hookGuideContentTitle }}</strong>
+              <span>{{ i18nHelper.eyesOnAgents.bridge.hookGuideContentDescription }}</span>
+            </li>
+          </ol>
+          <p class="eyes-connection-card__trust-boundary">
+            {{ i18nHelper.eyesOnAgents.bridge.hookGuideTrustBoundary }}
+          </p>
+        </section>
         <div v-if="bridge?.error" class="eyes-connection-card__error" role="alert">
           {{ bridge.error }}
         </div>
@@ -195,6 +258,12 @@ const drawerVisible = computed({
 });
 const connection = computed(() => eyesOnAgentsStore.snapshot?.connection ?? null);
 const bridge = computed(() => eyesOnAgentsStore.snapshot?.bridge ?? null);
+const titleEnrichmentDiagnostic = computed(
+  () => eyesOnAgentsStore.snapshot?.titleEnrichmentDiagnostic ?? null,
+);
+const lastUserPromptCaptureEnabled = computed(
+  () => eyesOnAgentsStore.snapshot?.lastUserPromptCaptureEnabled ?? false,
+);
 const connectionState = computed(() => connection.value?.state ?? 'disconnected');
 const bridgeState = computed(() => bridge.value?.state ?? 'not_installed');
 const isConnected = computed(() => ['connected', 'syncing'].includes(connectionState.value));
@@ -275,6 +344,22 @@ const lastSyncedLabel = computed(() => {
     ? i18nHelper.eyesOnAgents.connection.neverSynced
     : parsed.toLocaleString();
 });
+const titleEnrichmentDiagnosticLabel = computed(() => {
+  const diagnostic = titleEnrichmentDiagnostic.value;
+  if (!diagnostic) return '';
+  const threadId = diagnostic.threadId.slice(0, 8);
+  switch (diagnostic.reason) {
+    case 'thread_read_rejected':
+      return i18nHelper.eyesOnAgents.connection.titleEnrichmentReadRejected
+        .replace('{thread}', threadId);
+    case 'unusable_response':
+      return i18nHelper.eyesOnAgents.connection.titleEnrichmentUnusable
+        .replace('{thread}', threadId);
+    default:
+      return i18nHelper.eyesOnAgents.connection.titleEnrichmentDeferred
+        .replace('{thread}', threadId);
+  }
+});
 const formatTimestamp = (value: string | null | undefined): string => {
   if (!value) return i18nHelper.eyesOnAgents.bridge.never;
   const parsed = new Date(value);
@@ -291,6 +376,12 @@ const handleDisconnect = async (): Promise<void> => {
 };
 const handleSync = async (): Promise<void> => {
   await eyesOnAgentsStore.syncThreads().catch(() => undefined);
+};
+const handleLastUserPromptCaptureChange = async (
+  enabled: boolean | string | number,
+): Promise<void> => {
+  await eyesOnAgentsStore.setLastUserPromptCaptureEnabled(Boolean(enabled))
+    .catch(() => undefined);
 };
 const handleInstallBridge = async (): Promise<void> => {
   await eyesOnAgentsStore.installCodexBridge().catch(() => undefined);

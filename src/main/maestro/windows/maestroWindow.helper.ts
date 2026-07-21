@@ -678,7 +678,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
   protected windowOptions = { title: 'Maestro', width: 1360, height: 900 }
   protected showOnReady = false
   // The main app window — base WindowHelper remembers its size/position/display.
-  protected windowStateKey = 'cowork-main'
+  protected windowStateKey = 'maestro' as const
 
   constructor(
     @inject(Symbol.for(MaestroLlmService.name))

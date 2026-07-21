@@ -6,7 +6,13 @@ import type {
   CodexHookDeliveryAck,
   CodexHookEvent,
   CodexHookEventName,
-  CodexHookHelperArgs
+  CodexHookEventPayloadBase,
+  CodexHookEventV1,
+  CodexHookEventV2,
+  CodexHookEventV2Payload,
+  CodexHookHelperArgs,
+  CodexHookMetadataOnlyDelivery,
+  CodexHookMetadataOnlyEvent
 } from './codexHookBridge.type';
 import {
   isEyesOnAgentsRecord,
@@ -16,6 +22,7 @@ import {
 } from './eyesOnAgents.contract';
 
 export const CODEX_HOOK_BRIDGE_MAX_FRAME_BYTES = 64 * 1024;
+export const CODEX_HOOK_USER_PROMPT_MAX_BYTES = 8_192;
 export const CODEX_HOOK_HELPER_ARG = '--coding-agent-hook-helper';
 export const CODEX_HOOK_BRIDGE_PATH_ARG = '--coding-agent-bridge-path';
 export const CODEX_HOOK_PROVIDER_ARG = '--coding-agent-provider';
@@ -29,6 +36,27 @@ const CODEX_EVENTS = new Set<CodexHookEventName>([
   'Stop'
 ]);
 const CONTROL_CHARACTER_PATTERN = /[\0\r\n]/;
+const NUL_CHARACTER_PATTERN = /\0/;
+const UTF8_ENCODER = new TextEncoder();
+const BASE_EVENT_PAYLOAD_KEYS = ['cwd', 'hookEventName', 'sessionId', 'turnId'] as const;
+const EVENT_ENVELOPE_KEYS = [
+  'eventId',
+  'installationId',
+  'occurredAt',
+  'payload',
+  'schemaVersion'
+] as const;
+
+const hasOwn = (value: Record<string, unknown>, key: string): boolean => {
+  return Object.prototype.hasOwnProperty.call(value, key);
+};
+
+const hasExactKeys = (
+  value: Record<string, unknown>,
+  keys: readonly string[]
+): boolean => {
+  return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
+};
 
 const assertSafeArgument = (value: unknown, label: string): string => {
   if (typeof value !== 'string' || !value || CONTROL_CHARACTER_PATTERN.test(value)) {
@@ -46,6 +74,108 @@ const parseEventName = (value: unknown): CodexHookEventName => {
 
 const parseTurnId = (value: unknown): string | null => {
   return parseEyesOnAgentsText(value, 'turn_id', 200);
+};
+
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!Number.isFinite(next) || next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const parseEventIdentity = (params: {
+  rawInput: Record<string, unknown>;
+  installationId: unknown;
+  eventId: unknown;
+  occurredAt: unknown;
+}): {
+  installationId: string;
+  eventId: string;
+  occurredAt: number;
+  payload: CodexHookEventPayloadBase;
+} => {
+  if (!Number.isSafeInteger(params.occurredAt) || (params.occurredAt as number) < 0) {
+    throw new Error('occurredAt must be a non-negative integer');
+  }
+  return {
+    installationId: parseEyesOnAgentsUuid(params.installationId, 'installationId'),
+    eventId: parseEyesOnAgentsUuid(params.eventId, 'eventId'),
+    occurredAt: params.occurredAt as number,
+    payload: {
+      sessionId: parseEyesOnAgentsUuid(params.rawInput.session_id, 'session_id'),
+      cwd: parseEyesOnAgentsPath(params.rawInput.cwd),
+      hookEventName: parseEventName(params.rawInput.hook_event_name),
+      turnId: parseTurnId(params.rawInput.turn_id)
+    }
+  };
+};
+
+const parsePromptPreview = (value: unknown): string => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('userPromptPreview must be a non-empty string');
+  }
+  if (NUL_CHARACTER_PATTERN.test(value) || hasUnpairedSurrogate(value)) {
+    throw new Error('userPromptPreview contains a forbidden character');
+  }
+  if (UTF8_ENCODER.encode(value).byteLength > CODEX_HOOK_USER_PROMPT_MAX_BYTES) {
+    throw new Error(
+      `userPromptPreview must be at most ${CODEX_HOOK_USER_PROMPT_MAX_BYTES} UTF-8 bytes`
+    );
+  }
+  return value;
+};
+
+const toV2MetadataPayload = (
+  payload: CodexHookEventPayloadBase
+): CodexHookEventV2Payload => {
+  const base = {
+    sessionId: payload.sessionId,
+    cwd: payload.cwd,
+    turnId: payload.turnId
+  };
+  if (payload.hookEventName === 'UserPromptSubmit') {
+    return { ...base, hookEventName: 'UserPromptSubmit' };
+  }
+  if (payload.hookEventName === 'PermissionRequest') {
+    return { ...base, hookEventName: 'PermissionRequest' };
+  }
+  if (payload.hookEventName === 'Stop') {
+    return { ...base, hookEventName: 'Stop' };
+  }
+  return { ...base, hookEventName: 'SessionStart' };
+};
+
+export const boundCodexHookUserPrompt = (
+  value: unknown
+): { userPromptPreview: string; userPromptTruncated: boolean } | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized || NUL_CHARACTER_PATTERN.test(normalized) || hasUnpairedSurrogate(normalized)) {
+    return null;
+  }
+  const characters: string[] = [];
+  let byteLength = 0;
+  let userPromptTruncated = false;
+  for (const character of normalized) {
+    const characterBytes = UTF8_ENCODER.encode(character).byteLength;
+    if (byteLength + characterBytes > CODEX_HOOK_USER_PROMPT_MAX_BYTES) {
+      userPromptTruncated = true;
+      break;
+    }
+    characters.push(character);
+    byteLength += characterBytes;
+  }
+  return {
+    userPromptPreview: characters.join(''),
+    userPromptTruncated
+  };
 };
 
 export const getCodexHookBridgeEndpoint = (
@@ -139,38 +269,75 @@ export const createCodexHookEvent = (params: {
   installationId: string;
   eventId: string;
   occurredAt: number;
-}): CodexHookEvent => {
+}): CodexHookEventV1 => {
   if (!isEyesOnAgentsRecord(params.rawInput)) throw new Error('Hook input must be an object');
-  if (!Number.isSafeInteger(params.occurredAt) || params.occurredAt < 0) {
-    throw new Error('occurredAt must be a non-negative integer');
-  }
+  const parsed = parseEventIdentity(params);
   return {
     schemaVersion: 1,
-    installationId: parseEyesOnAgentsUuid(params.installationId, 'installationId'),
-    eventId: parseEyesOnAgentsUuid(params.eventId, 'eventId'),
-    occurredAt: params.occurredAt,
-    payload: {
-      sessionId: parseEyesOnAgentsUuid(params.rawInput.session_id, 'session_id'),
-      cwd: parseEyesOnAgentsPath(params.rawInput.cwd),
-      hookEventName: parseEventName(params.rawInput.hook_event_name),
-      turnId: parseTurnId(params.rawInput.turn_id)
+    installationId: parsed.installationId,
+    eventId: parsed.eventId,
+    occurredAt: parsed.occurredAt,
+    payload: parsed.payload
+  };
+};
+
+export const createCodexHookEventV2 = (params: {
+  rawInput: unknown;
+  installationId: string;
+  eventId: string;
+  occurredAt: number;
+  captureUserPrompt: boolean;
+}): CodexHookEventV2 => {
+  if (!isEyesOnAgentsRecord(params.rawInput)) throw new Error('Hook input must be an object');
+  const parsed = parseEventIdentity(params);
+  if (parsed.payload.hookEventName !== 'UserPromptSubmit') {
+    return {
+      schemaVersion: 2,
+      installationId: parsed.installationId,
+      eventId: parsed.eventId,
+      occurredAt: parsed.occurredAt,
+      payload: toV2MetadataPayload(parsed.payload)
+    };
+  }
+  let prompt: ReturnType<typeof boundCodexHookUserPrompt> = null;
+  if (params.captureUserPrompt) {
+    try {
+      prompt = boundCodexHookUserPrompt(params.rawInput.prompt);
+    } catch {
+      prompt = null;
     }
+  }
+  return {
+    schemaVersion: 2,
+    installationId: parsed.installationId,
+    eventId: parsed.eventId,
+    occurredAt: parsed.occurredAt,
+    payload: prompt
+      ? {
+          ...parsed.payload,
+          hookEventName: 'UserPromptSubmit',
+          userPromptPreview: prompt.userPromptPreview,
+          userPromptTruncated: prompt.userPromptTruncated
+        }
+      : {
+          ...parsed.payload,
+          hookEventName: 'UserPromptSubmit'
+        }
   };
 };
 
 export const parseCodexHookEvent = (value: unknown): CodexHookEvent => {
-  if (!isEyesOnAgentsRecord(value) || value.schemaVersion !== 1 || !isEyesOnAgentsRecord(value.payload)) {
+  if (
+    !isEyesOnAgentsRecord(value) ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    !isEyesOnAgentsRecord(value.payload)
+  ) {
     throw new Error('Invalid Codex hook envelope');
   }
-  if (
-    Object.keys(value).sort().join(',') !==
-      'eventId,installationId,occurredAt,payload,schemaVersion' ||
-    Object.keys(value.payload).sort().join(',') !==
-      'cwd,hookEventName,sessionId,turnId'
-  ) {
+  if (!hasExactKeys(value, EVENT_ENVELOPE_KEYS)) {
     throw new Error('Codex hook envelope contains unsupported fields');
   }
-  return createCodexHookEvent({
+  const parsed = parseEventIdentity({
     rawInput: {
       session_id: value.payload.sessionId,
       cwd: value.payload.cwd,
@@ -181,6 +348,97 @@ export const parseCodexHookEvent = (value: unknown): CodexHookEvent => {
     eventId: value.eventId as string,
     occurredAt: value.occurredAt as number
   });
+  if (value.schemaVersion === 1) {
+    if (!hasExactKeys(value.payload, BASE_EVENT_PAYLOAD_KEYS)) {
+      throw new Error('Codex hook envelope contains unsupported fields');
+    }
+    return {
+      schemaVersion: 1,
+      installationId: parsed.installationId,
+      eventId: parsed.eventId,
+      occurredAt: parsed.occurredAt,
+      payload: parsed.payload
+    };
+  }
+  const hasPreview = hasOwn(value.payload, 'userPromptPreview');
+  const hasTruncated = hasOwn(value.payload, 'userPromptTruncated');
+  const hasPromptFields = hasPreview || hasTruncated;
+  const expectedKeys = hasPromptFields
+    ? [...BASE_EVENT_PAYLOAD_KEYS, 'userPromptPreview', 'userPromptTruncated']
+    : BASE_EVENT_PAYLOAD_KEYS;
+  if (!hasExactKeys(value.payload, expectedKeys)) {
+    throw new Error('Codex hook envelope contains unsupported fields');
+  }
+  if (hasPreview !== hasTruncated) {
+    throw new Error('Codex hook prompt fields must be provided together');
+  }
+  if (parsed.payload.hookEventName !== 'UserPromptSubmit') {
+    if (hasPromptFields) {
+      throw new Error('Codex hook prompt fields are only allowed for UserPromptSubmit');
+    }
+    return {
+      schemaVersion: 2,
+      installationId: parsed.installationId,
+      eventId: parsed.eventId,
+      occurredAt: parsed.occurredAt,
+      payload: toV2MetadataPayload(parsed.payload)
+    };
+  }
+  if (!hasPromptFields) {
+    return {
+      schemaVersion: 2,
+      installationId: parsed.installationId,
+      eventId: parsed.eventId,
+      occurredAt: parsed.occurredAt,
+      payload: {
+        ...parsed.payload,
+        hookEventName: 'UserPromptSubmit'
+      }
+    };
+  }
+  if (typeof value.payload.userPromptTruncated !== 'boolean') {
+    throw new Error('userPromptTruncated must be a boolean');
+  }
+  return {
+    schemaVersion: 2,
+    installationId: parsed.installationId,
+    eventId: parsed.eventId,
+    occurredAt: parsed.occurredAt,
+    payload: {
+      ...parsed.payload,
+      hookEventName: 'UserPromptSubmit',
+      userPromptPreview: parsePromptPreview(value.payload.userPromptPreview),
+      userPromptTruncated: value.payload.userPromptTruncated
+    }
+  };
+};
+
+export const toMetadataOnlyCodexHookEvent = (
+  value: CodexHookEvent
+): CodexHookMetadataOnlyEvent => {
+  const event = parseCodexHookEvent(value);
+  const payload: CodexHookEventPayloadBase = {
+    sessionId: event.payload.sessionId,
+    cwd: event.payload.cwd,
+    hookEventName: event.payload.hookEventName,
+    turnId: event.payload.turnId
+  };
+  if (event.schemaVersion === 1) {
+    return {
+      schemaVersion: 1,
+      installationId: event.installationId,
+      eventId: event.eventId,
+      occurredAt: event.occurredAt,
+      payload
+    };
+  }
+  return {
+    schemaVersion: 2,
+    installationId: event.installationId,
+    eventId: event.eventId,
+    occurredAt: event.occurredAt,
+    payload
+  };
 };
 
 export const createCodexHookDelivery = (params: {
@@ -206,6 +464,33 @@ export const parseCodexHookDelivery = (value: unknown): CodexHookDelivery => {
     deliveryId: value.deliveryId as string,
     event: value.event as CodexHookEvent
   });
+};
+
+export const toMetadataOnlyCodexHookDelivery = (
+  value: CodexHookDelivery
+): CodexHookMetadataOnlyDelivery => {
+  const delivery = parseCodexHookDelivery(value);
+  return {
+    schemaVersion: 1,
+    deliveryId: delivery.deliveryId,
+    event: toMetadataOnlyCodexHookEvent(delivery.event)
+  };
+};
+
+export const parseCodexHookMetadataOnlyDelivery = (
+  value: unknown
+): CodexHookMetadataOnlyDelivery => {
+  const delivery = parseCodexHookDelivery(value);
+  if (
+    delivery.event.schemaVersion === 2 &&
+    (
+      hasOwn(delivery.event.payload, 'userPromptPreview') ||
+      hasOwn(delivery.event.payload, 'userPromptTruncated')
+    )
+  ) {
+    throw new Error('Offline Codex hook deliveries must be metadata-only');
+  }
+  return toMetadataOnlyCodexHookDelivery(delivery);
 };
 
 export const parseCodexHookDeliveryAck = (value: unknown): CodexHookDeliveryAck => {

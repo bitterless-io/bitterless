@@ -1,10 +1,10 @@
 # EyesOnAgents Integration
 
-Status: implemented and independently statically reviewed through task 012
+Status: tolerant ingestion, title repair, and prompt-card disclosure implemented; owner verification pending
 
 Date: 2026-07-17
 
-Verified: 2026-07-20 (through task 012; runtime owner verification pending)
+Verified: 2026-07-21 (through task 019; runtime owner verification pending)
 
 ## Decision
 
@@ -40,14 +40,16 @@ EyesOnAgents never reads or displays them.
 - Provide a visible Refresh action that can reconnect and run full reconciliation from disconnected
   or error state as well as from an existing connection.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
-- Supplement managed App Server events with an independently enabled, global, metadata-only Codex
-  observation bridge whose delivery, trust, and listener state remain visible and bounded.
+- Supplement managed App Server events with an independently enabled global Codex observation
+  bridge: lifecycle delivery stays metadata-only by default, while a separate opt-in may retain one
+  bounded latest user question from trusted live delivery.
 - Support macOS and Windows through the existing Electron/XPC architecture.
 
 ## Non-goals
 
 - Claude Code, Claude Desktop, `claude agents --json`, or Claude hook support.
-- Reading prompts, transcripts, tool calls, diffs, or model output.
+- Reading earlier user prompts, complete transcripts, tool calls, diffs, or model output. The one
+  latest-user-question exception is defined separately and remains default-off.
 - Sending prompts, steering an active turn, or implementing a client-side message queue in this
   delivery. The persistent App Server client is the foundation for a later composer.
 - Attaching to the private stdio child process owned by Codex Desktop.
@@ -67,7 +69,7 @@ Bitterless-managed `codex app-server --stdio`
       v
 EyesOnAgents service ------------------------------------+
       ^                                                   |
-      |  lifecycle metadata only                          v
+      |  lifecycle + optional bounded latest question    v
 opt-in Codex Desktop hooks -> local bridge       SQLite + XPC broadcast
                                                           |
                                                           v
@@ -89,6 +91,17 @@ explicitly and independently from App Server Connect/Disconnect. It reports life
 for Desktop/CLI work after installation, but it does not provide transcripts and cannot prove a
 turn that was already running before the current listener started. Stale or contradictory evidence
 becomes `unknown`.
+
+The upstream protocols can expose conversation content: `UserPromptSubmit` supplies the exact
+submitted `prompt`, `Stop` may supply `last_assistant_message`, and App Server can return history.
+Under the default-off [EyesOnAgents Last User Prompt](../features/eyes-on-agents-last-user-prompt.md)
+contract, the Hook helper may project only one bounded preview into a trusted live
+`UserPromptSubmit` delivery; every offline delivery is stripped back to metadata before writing.
+The tiered All-thread poll may also request one bounded `thread/turns/list(itemsView: "full")` page
+for a selected changed thread, retain only its newest valid user-message preview, and discard every other item. It
+never requests `thread/read({ includeTurns: true })` or the Codex 0.137 unsupported
+`thread/turns/items/list`; responses, reasoning, tools, diffs, approvals, attachments, earlier
+questions, and transcript history remain prohibited.
 
 Codex treats the bridge as a non-managed command hook and requires the user to review and trust its
 exact definition once before it runs. After installation, EyesOnAgents inspects `hooks/list` and
@@ -125,9 +138,10 @@ The main process owns one connection supervisor for the entire Bitterless proces
 2. The client completes the JSON-RPC initialize handshake before reporting `connected`.
 3. If Codex observation is already enabled, it may call `hooks/list` to refresh its separate trust
    status; it never installs or repairs hooks as a side effect.
-4. It pages through non-archived and archived `thread/list` inventories, stores each validated raw
-   object locally, upserts normalized display metadata, reconciles known archived rows, and leaves
-   the child process running.
+4. It pages through non-archived and archived `thread/list` inventories, stores each UUID-validated
+   raw object locally, independently normalizes optional display fields, reconciles known archived
+   rows, and leaves the child process running. A malformed optional preview, name, cwd, or status
+   detail never excludes an otherwise valid thread.
 5. Notifications such as `thread/status/changed`, `turn/started`, `turn/completed`,
    `thread/archived`, and `thread/unarchived` update the repository and broadcast a compact change
    event to EyesOnAgents renderers.
@@ -141,8 +155,9 @@ A successful explicit connection enables auto-connect for later Bitterless launc
 disconnect disables auto-connect. Connection preference belongs in the existing setting store;
 thread and Domain state belongs in the dedicated tables below.
 
-The renderer can request only `connect`, `disconnect`, full refresh/sync, and status inspection. It cannot
-provide an executable, command arguments, URL, or arbitrary JSON-RPC method.
+The renderer can request only `connect`, `disconnect`, full refresh/sync, the parameter-free tiered
+thread refresh, and status inspection. It cannot provide an executable, command arguments, URL,
+thread IDs, page selection, or an arbitrary JSON-RPC method.
 
 ### Explicit refresh fallback
 
@@ -160,12 +175,106 @@ Refresh never launches Electron helpers, scans transcripts, or accepts user-supp
 is the manual recovery path when activation delivery, lifecycle notifications, or title propagation
 have not yet caught up.
 
+### Periodic refresh polling
+
+While the EyesOnAgents renderer is mounted, one store-owned interval requests a silent tiered refresh
+every `10_000` milliseconds. Main and SQLite, never renderer state, choose fixed 40-row pages across
+every persisted non-archived All thread. Each admitted tick snapshots page 1 plus the current cold
+page, processes the hot page first, then one cold page in the cycle
+`2 -> 3 -> ... -> last -> 2`. One tick therefore contains at most two batches and 80 rows.
+
+Candidate order is deterministic recency:
+`COALESCE(last_activity_at, updated_at) DESC`, then `updated_at DESC`, then `thread_id ASC`.
+Project/title filters, Domain membership, Focus membership, and renderer attention ordering do not
+alter coverage. A reduced page count resets the cold cursor to page 2. Cancellation or repository
+failure does not advance it; individual malformed or failed rows are skipped so one row cannot
+starve the rest of the cold sweep.
+
+The status evidence time is captured before each `thread/read` request. A lifecycle notification
+that arrives while the request is pending therefore has a newer watermark and cannot be overwritten
+by the older response. Polling status applies only when that watermark is strictly newer than the
+stored status; equal-millisecond evidence preserves the already persisted lifecycle state. Once a
+SQLite page mutation has started, Main waits for that mutation to settle even if the App Server
+context is cancelled; teardown cannot lose track of a late write, and the cancelled page remains
+incomplete so its cold cursor does not advance.
+
+The poll follows persisted connection intent:
+
+| current state | polling behavior |
+|---|---|
+| `connected` | run `refreshThreadPages()` without renderer loading state |
+| `disconnected` or `error` with auto-connect enabled | reconnect through the managed allowlisted App Server, then refresh the selected hot/cold pages |
+| `connecting`, `syncing`, another board action, or snapshot load in flight | skip this tick without queuing another request |
+| explicitly disconnected with auto-connect disabled | skip this tick; only an explicit foreground action may reconnect |
+
+Starting the poll is idempotent, so repeated initialization cannot create another interval. The
+renderer clears the interval and its stored handle on unmount. One dedicated background promise
+drops later ticks and never writes the foreground `busyAction`; header and drawer Refresh buttons
+therefore remain still. The semantic XPC accepts no IDs or page input. Each batch runs at most four
+row pipelines concurrently and calls per-thread
+`thread/read({ includeTurns: false })`, never active/archived `thread/list`, `hooks/list`, Project
+resolution, archive reconciliation, or raw snapshot persistence.
+
+That XPC returns only `{ changed: boolean }`, never a snapshot. An unchanged poll therefore sends no
+snapshot across XPC and performs no renderer reactive replacement. Each changed batch emits one
+existing `eyes-on-agents/changed` broadcast, whose established subscription reloads the current
+snapshot; a tick can therefore emit at most one hot and one cold change broadcast. A fully unchanged
+tick emits no repository data-change broadcast. App Server connection-state notifications remain a
+separate broadcast source. Concurrent poll callers share the same
+result-bearing Main promise. Foreground Connect/Refresh increments a Main admission counter before
+waiting for an already admitted poll; while that counter is nonzero, a new poll returns unchanged.
+The automatic full sync after `thread/unarchived` uses the same admission-and-join ordering. This
+prevents foreground/background App Server overlap independently of renderer state.
+
+The repository compares optional title, runtime, provider activity, and prompt patches independently
+and updates `updated_at` only with a real semantic change. A reliable provider activity watermark
+may advance `last_activity_at` monotonically so a newly active row joins the next hot page. An
+unchanged poll performs no SQLite UPDATE and no renderer broadcast. If **Store latest user
+question** is enabled, one bounded full-items turn page is read only when provider activity has
+advanced beyond the persisted content-check watermark.
+The other response items never leave main-process memory. Codex 0.137 does not implement
+`thread/turns/items/list`, so EyesOnAgents does not call it. Every returned turn must either omit
+`itemsView` or explicitly report `full`; an explicit `summary`, `notLoaded`, or other view rejects the
+content page and does not advance the prompt check watermark.
+
+The tiered path can update title, activity, runtime/Focus evidence, and opted-in latest-question
+state only for already persisted rows. It cannot discover a new thread or reconcile archive and
+Project metadata; window activation and labelled manual Refresh remain the full-inventory fallback.
+Explicit Disconnect still prevents the background operation from reconnecting.
+
+### Normalized admission and Hook-first title repair
+
+Thread admission and display projection are separate. A valid UUID admits the row. Title resolution
+accepts a valid bounded `name` first and never inspects `preview` in that case; only a missing or
+invalid name uses a preview fallback whose whitespace is folded and whose Unicode text is safely
+truncated to 300 display characters. Invalid optional cwd/status values degrade only those fields.
+The full provider object remains unchanged in `eyes_on_agents_thread_snapshot` and never enters the
+normalized row.
+
+Full Refresh writes raw snapshots before normalized rows, so a lifecycle event that first creates a
+row can restore a missing title from an already stored snapshot in the same SQLite transaction. If
+that snapshot has no usable title and the existing managed App Server context is already connected,
+Main schedules one thread-ID-deduplicated `thread/read({ includeTurns: false })` after the lifecycle
+transaction commits. This repair projects title only: it does not auto-connect, fetch turns, delay a
+Hook ACK, or apply runtime/activity evidence. A later lifecycle event reuses the in-flight repair.
+
+Skipped/rejected repair diagnostics contain only a fixed reason enum, validated UUID, and integer
+time. Provider errors, responses, previews, and other content are never logged. Full Refresh and the
+tiered All poll remain bounded retry paths, while a successful no-op emits no SQLite write or board
+broadcast.
+
 ### Window activation refresh
 
 The EyesOnAgents renderer listens for its own top-level window to regain focus. Each focus
 transition requests one foreground refresh so metadata that has no lifecycle notification, such as
 a renamed thread title or a Desktop-owned archive transition, is updated from `thread/list` without
 waiting for a manual Sync.
+
+The Desktop-owned App Server's `thread/name/updated` notification does not cross into the separate
+Bitterless-managed App Server process, and the Hook envelope has no title field. `thread/list` is
+therefore the cross-process reconciliation source for renames: connected activation refreshes it,
+and the labelled Refresh action is the explicit fallback after a deliberate disconnect or missed
+activation.
 
 The inventory refresh respects connection intent. Independently, activation rechecks installed
 Codex observation trust by reusing the connected App Server or a short inspection connection that
@@ -180,11 +289,12 @@ does not change auto-connect intent:
 | initial snapshot not loaded | coalesce with the existing snapshot load |
 
 The store's existing single busy action and coalesced snapshot load prevent overlapping activation
-requests. The listener is removed when the renderer unmounts. Snapshot refresh remains
-activation-driven only: no timer, polling loop, or hidden-window sync is introduced for IPC or App
-Server work. The separate renderer-global presentation clock may tick locally for relative-time
-labels, but it never refreshes or persists thread data. A failed activation sync uses the existing
-action error surface and retains the last valid snapshot.
+requests. The listener is removed when the renderer unmounts. Activation refresh and the single
+ten-second tiered poll honor the same connection intent. Main's foreground admission counter, rather
+than a shared renderer loading state, prevents them from creating parallel App Server work.
+The separate renderer-global presentation clock remains presentation only; it never refreshes or
+persists thread data. A failed activation uses the existing action error surface; a failed periodic
+poll stays silent. Both retain the last valid snapshot.
 
 ### Archive visibility and reconciliation
 
@@ -299,6 +409,12 @@ project`, or an exact `project_key`; its options and counts use every visible no
 regardless of stored Domain assignment. See
 [EyesOnAgents Project Filter](../features/eyes-on-agents-project-filter.md) for the complete contract.
 
+All also has a renderer-session title query. After Project filtering, a non-empty trimmed query keeps
+only threads whose non-null `title` contains that query case-insensitively. It never reads raw source
+snapshots or conversation content and never changes persisted thread or Domain state. Clearing or
+closing title search restores the currently selected Project result rather than resetting the Project
+filter. Focus and custom Domain projections never consume this query.
+
 ## Runtime state
 
 ```ts
@@ -354,6 +470,12 @@ Selecting a card, moving it, or opening the same thread directly inside Codex do
 This means "unread" precisely means "attention observed by EyesOnAgents since the last successful
 Open from EyesOnAgents". Bitterless cannot observe arbitrary manual navigation inside Codex Desktop.
 
+A `Stop` Hook proves only that the turn stopped; it is not a read receipt and contains no supported
+signal that Codex still has this thread selected, frontmost, or viewed. App Server likewise exposes
+no documented selected-thread or read event. Consequently, if the user remains in Codex and reads
+the answer as it completes, EyesOnAgents conservatively keeps the completion unread until Open
+succeeds from EyesOnAgents. Completion must never auto-clear unread.
+
 ## XPC surface
 
 All renderer/main/preload communication uses `electron-xpc`; each method accepts zero or one object
@@ -365,15 +487,20 @@ EyesOnAgentsHandler (main)
   connectAppServer()
   disconnectAppServer()
   syncThreads()
+  refreshThreadPages() -> { changed }
   openThread({ threadId })
   installCodexBridge()
   reviewCodexBridge()
   refreshCodexBridgeStatus()
   removeCodexBridge()
   getCodexBridgeStatus()
+  setLastUserPromptCaptureEnabled({ enabled })
 
 EyesOnAgentsRepositoryHandler (SQLite preload)
   getSnapshot()
+  getThreadRefreshPages({ coldPage, previousPageCount }) -> { hot, cold, pageCount, coldPage }
+  refreshThreadPage({ threads }) -> { changed }
+  clearLastUserPrompts() -> { changed }
   invalidateAppServerStatuses({ observedAt })
   upsertDiscoveredThreads({ threads })
   upsertThreadSnapshots({ snapshots })
@@ -397,8 +524,15 @@ memory; it does not issue one query per Domain.
   the first user message and is therefore potentially sensitive.
 - Never send raw snapshot payloads to the renderer or include them in logs, errors, telemetry, or
   exports. Renderer snapshots continue to contain only normalized observation metadata.
-- Never call `thread/read` to populate storage and never store turns, response text, tool payloads,
-  diffs, credentials, or approval details.
+- Name-first normalized title projection may read an already stored raw snapshot inside SQLite, but
+  persists only the bounded title. A title-repair diagnostic is content-free and enum-bounded.
+- Use `thread/read({ includeTurns: false })` only for the narrow selected-row title/status/activity
+  projection; never persist its raw object. When the separate default-off consent is enabled, one bounded
+  `thread/turns/list` page may project only the newest user question under the contract above. Never
+  store turns, response text, tool payloads, diffs, credentials, or approval details.
+- Although `UserPromptSubmit` Hook input contains `prompt`, forward it only as the separately
+  consented bounded live preview and strip it before every offline write. `Stop.last_assistant_message`
+  and every other content field remain outside the allowlist and are never forwarded or persisted.
 - Validate every thread ID before persistence and before constructing the deep link.
 - Start Codex with `spawn`/`execFile` argument arrays and `shell: false`.
 - The local hook bridge remains isolated by Bitterless `userData` identity and accepts only the

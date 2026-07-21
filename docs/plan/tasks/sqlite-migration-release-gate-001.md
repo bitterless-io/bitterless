@@ -1,16 +1,18 @@
 ---
 id: sqlite-migration-release-gate-001
-scope: strict Core and Maestro SQLite upgrade audit before all production packages
-status: in-progress
-depends-on: []
+scope: strict Core, Maestro, and Todoist-sync SQLite upgrade audit before all production packages
+status: pending
+depends-on: [todoist-sync-desktop-001]
 ---
 
 # SQLite Migration Release Gate
 
 ## Objective
 
-Implement and verify the contract in `docs/features/sqlite-migration-release-gate.md`, then release
-one production version to macOS ARM64, macOS x64, and Windows x64 only if every gate passes.
+After `todoist-sync-desktop-001` has supplied the Todo manifest and audit registration, run the
+combined three-family fail-closed audit and verify the contract in
+`docs/features/sqlite-migration-release-gate.md`. Release one production version to macOS ARM64,
+macOS x64, and Windows x64 only if every gate passes.
 
 ## Context
 
@@ -47,6 +49,14 @@ one production version to macOS ARM64, macOS x64, and Windows x64 only if every 
 - Core matrix covers no ledger, historical 10-digit ledger, later 8-digit ledgers, and each
   EyesOnAgents shape;
 - Maestro matrix covers every registered checkpoint and multi-version jumps;
+- Todoist sync matrix imports the production manifest and covers fresh/current-v1, an invalid or
+  incomplete ledger, rollback of an injected future migration, sentinel preservation,
+  `integrity_check`, and `foreign_key_check`;
+- Electron-ABI Todo cipher smoke proves encrypted create/reopen, wrong-key failure, customer-path
+  isolation, and that development plus packaged macOS/Windows outputs resolve the production
+  `better-sqlite3-multiple-ciphers` native module;
+- Todo database tests inject a fixed test password and prove they never touch Electron
+  `safeStorage`/the operating-system keychain; no legacy `main.db` Todo import is attempted;
 - `yarn typecheck:node`
 - `yarn test:eyes-on-agents:repository`
 - production build hook source test proves audit runs before any build/sign/publish step;
@@ -59,3 +69,11 @@ one production version to macOS ARM64, macOS x64, and Windows x64 only if every 
 - process audit proves no audit/test/Electron helper remains;
 - after code sync, production release and public manifest/artifact verification pass for
   `mac_arm`, `mac_intel`, and `win64`.
+
+## Ownership boundary
+
+The existing Core/Maestro shared runner, audit CLI, and packaging hook are the already-present
+foundation. `todoist-sync-desktop-001` alone owns the new Todo runtime manifest, fixed-password
+fixtures, native cipher smoke, and registration into that foundation. This task starts only after
+that dependency and owns the final combined audit/package/publication proof; it must not redesign
+or duplicate the Todo manifest.

@@ -41,8 +41,8 @@ app.whenReady
   the main-owned snapshot whenever that request or a later broadcast arrives.
 - The Core SQLite BrowserWindow is an internal renderer and remains hidden in every build mode. It
   must never focus, cover, or visually compete with Home while the two startup lanes run together.
-- Home uses default window bounds during foreground startup. Persistence reads must not delay its
-  creation.
+- Home may restore from the Main-owned atomic window-state file before first show. It never waits
+  for SQLite; an SQLite-only legacy layout may hydrate later without delaying creation.
 - Startup diagnostics are main-owned, in-memory state. They cannot depend on SQLite persistence.
 - Each issue has a stable stage code and a concise error message. A later successful retry clears
   the issue for that stage.

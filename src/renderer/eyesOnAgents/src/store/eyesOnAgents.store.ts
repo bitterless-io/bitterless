@@ -47,9 +47,12 @@ class EyesOnAgentsState {
   busyAction: string | null = null;
   openingThreadIds = new Set<string>();
   allProjectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
+  allTitleQuery = '';
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private activationPromise: Promise<void> | null = null;
+  private backgroundRefreshPromise: Promise<void> | null = null;
+  private refreshTimer: number | null = null;
   private subscribed = false;
 
   get domains(): EyesOnAgentsDomain[] {
@@ -88,9 +91,15 @@ class EyesOnAgentsState {
   }
 
   get filteredAllThreads(): EyesOnAgentsThread[] {
-    return filterEyesOnAgentsThreadsByProject(
+    const projectThreads = filterEyesOnAgentsThreadsByProject(
       this.allThreads,
       this.allProjectFilter,
+    );
+    const query = this.allTitleQuery.trim().toLocaleLowerCase();
+    if (!query) return projectThreads;
+    return projectThreads.filter(
+      (thread) => thread.title !== null
+        && thread.title.toLocaleLowerCase().includes(query),
     );
   }
 
@@ -104,12 +113,29 @@ class EyesOnAgentsState {
     return this.allProjectFilter.type !== 'all';
   }
 
+  get isAllTitleFiltered(): boolean {
+    return Boolean(this.allTitleQuery.trim());
+  }
+
   initialize(): void {
     if (this.subscribed) return;
     this.subscribed = true;
     subscribeEyesOnAgentsChanges(() => {
       void this.loadSnapshot(true);
     });
+  }
+
+  startRefreshPolling(): void {
+    if (this.refreshTimer !== null) return;
+    this.refreshTimer = window.setInterval(() => {
+      void this.performRefreshPollingTick().catch(() => undefined);
+    }, 10_000);
+  }
+
+  stopRefreshPolling(): void {
+    if (this.refreshTimer === null) return;
+    window.clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
   }
 
   threadsForDomain(domainId: number): EyesOnAgentsThread[] {
@@ -134,6 +160,10 @@ class EyesOnAgentsState {
       projectRoot: option.projectRoot,
       projectName: option.projectName,
     };
+  }
+
+  clearAllTitleQuery(): void {
+    this.allTitleQuery = '';
   }
 
   async loadSnapshot(quiet = false): Promise<void> {
@@ -174,6 +204,12 @@ class EyesOnAgentsState {
 
   async syncThreads(): Promise<void> {
     await this.runSnapshotAction('sync', () => eyesOnAgentsEmitter.syncThreads());
+  }
+
+  async setLastUserPromptCaptureEnabled(enabled: boolean): Promise<void> {
+    await this.runSnapshotAction('prompt-retention', () =>
+      eyesOnAgentsEmitter.setLastUserPromptCaptureEnabled({ enabled }),
+    );
   }
 
   async refreshOnWindowActivation(): Promise<void> {
@@ -265,6 +301,38 @@ class EyesOnAgentsState {
 
   clearActionError(): void {
     this.actionError = null;
+  }
+
+  private async performRefreshPollingTick(): Promise<void> {
+    if (this.snapshotPromise || this.busyAction || this.backgroundRefreshPromise) return;
+
+    const connection = this.snapshot?.connection;
+    if (
+      !connection
+      || connection.state === 'connecting'
+      || connection.state === 'syncing'
+    ) return;
+
+    const shouldSync = connection.state === 'connected'
+      || (
+        connection.autoConnectEnabled
+        && (connection.state === 'disconnected' || connection.state === 'error')
+      );
+    if (!shouldSync) return;
+
+    const request = this.performBackgroundThreadPagesRefresh();
+    this.backgroundRefreshPromise = request.finally(() => {
+      this.backgroundRefreshPromise = null;
+    });
+    await this.backgroundRefreshPromise;
+  }
+
+  private async performBackgroundThreadPagesRefresh(): Promise<void> {
+    try {
+      await eyesOnAgentsEmitter.refreshThreadPages();
+    } catch {
+      // Background refresh keeps the last valid snapshot and stays silent.
+    }
   }
 
   private async performWindowActivationRefresh(): Promise<void> {

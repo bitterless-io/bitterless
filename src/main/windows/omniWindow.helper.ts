@@ -6,6 +6,10 @@ import type { OmniCellLayout, OmniLayoutConfig, OmniPaneNode } from '@shared/omn
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
+import {
+  windowStateService,
+  type WindowStateController,
+} from './windowState.service';
 
 const LAYOUT_KEY = 'omni_layout';
 const WINDOW_LAYOUT_KEY = 'window_layout';
@@ -112,14 +116,27 @@ export class OmniWindowHelper {
   private currentLayout: OmniCellLayout[] = [];
   private currentLayoutTree: OmniPaneNode | null = null;
   private _throttledApplyLayoutFn: (() => void) | null = null;
-  private _throttledSaveWindowLayoutFn: (() => void) | null = null;
   private _throttledSaveLayoutToDaoFn: (() => void) | null = null;
-  private _creating = false;
+  private creationPromise: Promise<BaseWindow> | null = null;
+  private _creationGeneration = 0;
   private _loadSemaphore = new Semaphore(3);
   private _abortTokens = new Set<{ abort: () => void }>();
+  private windowStateController: WindowStateController | null = null;
 
   get isCreating(): boolean {
-    return this._creating;
+    return this.creationPromise !== null;
+  }
+
+  show(): void {
+    const window = this.baseWindow;
+    if (!window || window.isDestroyed()) return;
+    if (this.windowStateController) {
+      this.windowStateController.show();
+    } else {
+      if (window.isMinimized()) window.restore();
+      window.show();
+    }
+    window.focus();
   }
 
   private throttledApplyLayout(): void {
@@ -129,15 +146,6 @@ export class OmniWindowHelper {
       }, 16, { trailing: true });
     }
     this._throttledApplyLayoutFn();
-  }
-
-  private throttledSaveWindowLayout(): void {
-    if (!this._throttledSaveWindowLayoutFn) {
-      this._throttledSaveWindowLayoutFn = throttle(() => {
-        this.saveWindowLayout();
-      }, 100, { trailing: true });
-    }
-    this._throttledSaveWindowLayoutFn();
   }
 
   private throttledSaveLayoutToDao(): void {
@@ -200,35 +208,16 @@ export class OmniWindowHelper {
     this.currentLayoutTree = null;
 
     if (this.baseWindow && !this.baseWindow.isDestroyed()) {
+      this.windowStateController?.flushAndDispose();
       this.baseWindow.destroy();
     }
     this.baseWindow = null;
+    this.windowStateController = null;
 
     // Clear ServiceWorkers so a stuck SW from this session doesn't survive into the next open
     session.fromPartition(OMNI_PARTITION)
       .clearStorageData({ storages: ['serviceworkers'] })
       .catch((err) => console.warn('[OmniWindowHelper] Failed to clear SW:', err));
-  }
-
-  private async saveWindowLayout(): Promise<void> {
-    if (!this.baseWindow || this.baseWindow.isDestroyed()) return;
-    try {
-      const bounds = this.baseWindow.getBounds();
-      const layout: WindowLayout = {
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-      };
-      await settingEmitter.upsert({
-        key: WINDOW_LAYOUT_KEY,
-        sub_key: WINDOW_LAYOUT_SUB_KEY,
-        value: layout,
-      });
-      console.log('[OmniWindowHelper] Window layout saved:', layout);
-    } catch (err) {
-      console.error('[OmniWindowHelper] Failed to save window layout:', err);
-    }
   }
 
   private async loadWindowLayout(): Promise<WindowLayout | null> {
@@ -245,25 +234,45 @@ export class OmniWindowHelper {
   }
 
   async create(): Promise<BaseWindow> {
-    if (this._creating) {
-      console.log('[OmniWindowHelper] create() already in progress, skipping');
-      return this.baseWindow!;
-    }
-    this._creating = true;
-    console.log('[OmniWindowHelper] create() called');
-    try {
+    const current = this.baseWindow;
+    if (current && !current.isDestroyed()) return current;
+    if (this.creationPromise) return await this.creationPromise;
+
     this.cleanupAllViews();
+    const creationGeneration = ++this._creationGeneration;
+    const pending = this.createWindow(creationGeneration);
+    this.creationPromise = pending;
+    try {
+      return await pending;
+    } catch (error) {
+      if (this._creationGeneration === creationGeneration) {
+        this._creationGeneration += 1;
+        this.cleanupAllViews();
+      }
+      throw error;
+    } finally {
+      if (this.creationPromise === pending) this.creationPromise = null;
+    }
+  }
+
+  private async createWindow(creationGeneration: number): Promise<BaseWindow> {
+    console.log('[OmniWindowHelper] create() called');
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
     const defaultWidth = Math.floor(screenWidth * 0.7);
     const defaultHeight = Math.floor(screenHeight * 0.7);
 
-    const savedLayout = await this.loadWindowLayout();
+    if (!windowStateService.has('omni')) {
+      const legacyLayout = await this.loadWindowLayout();
+      this.assertCreationActive(creationGeneration);
+      if (legacyLayout) windowStateService.importLegacy('omni', legacyLayout);
+    }
+    const restored = windowStateService.resolve('omni');
 
     const windowOptions: any = {
-      width: savedLayout?.width ?? defaultWidth,
-      height: savedLayout?.height ?? defaultHeight,
+      width: restored?.bounds.width ?? defaultWidth,
+      height: restored?.bounds.height ?? defaultHeight,
       minWidth: 800,
       minHeight: 600,
       title: 'Omni Browser',
@@ -273,40 +282,44 @@ export class OmniWindowHelper {
         : { frame: false }),
     };
 
-    if (savedLayout) {
-      windowOptions.x = savedLayout.x;
-      windowOptions.y = savedLayout.y;
+    if (restored) {
+      windowOptions.x = restored.bounds.x;
+      windowOptions.y = restored.bounds.y;
     }
 
-    this.baseWindow = new BaseWindow(windowOptions);
+    const createdWindow = new BaseWindow(windowOptions);
+    this.baseWindow = createdWindow;
+    const stateController = windowStateService.register('omni', createdWindow);
+    this.windowStateController = stateController;
     console.log('[OmniWindowHelper] BaseWindow created');
 
     // Create top menubar view
-    this.menubarView = this.createWebContentsView('omniWindow');
-    this.baseWindow.contentView.addChildView(this.menubarView);
+    const menubarView = this.createWebContentsView('omniWindow');
+    this.menubarView = menubarView;
+    createdWindow.contentView.addChildView(menubarView);
     console.log('[OmniWindowHelper] menubarView added');
 
     // BaseWindow does not emit 'ready-to-show' (that is a BrowserWindow event).
     // Show the window once the menubar webContents finishes loading instead.
-    this.menubarView.webContents.on('did-finish-load', () => {
+    menubarView.webContents.on('did-finish-load', () => {
+      if (!this.isCreationActive(creationGeneration, createdWindow)) return;
       console.log('[OmniWindowHelper] menubar did-finish-load, showing window');
-      this.baseWindow?.show();
+      stateController.show();
     });
 
-    this.baseWindow.on('closed' as any, () => {
+    createdWindow.on('closed' as any, () => {
       console.log('[OmniWindowHelper] baseWindow closed, cleaning up');
-      this.cleanupAllViews();
+      if (this.baseWindow === createdWindow) {
+        this._creationGeneration += 1;
+        this.cleanupAllViews();
+      }
     });
 
-    this.baseWindow.on('resize' as any, () => {
+    createdWindow.on('resize' as any, () => {
+      if (this.baseWindow !== createdWindow) return;
       this.throttledApplyLayout();
       this.updateMenubarBounds();
       this.updateControlBounds();
-      this.throttledSaveWindowLayout();
-    });
-
-    this.baseWindow.on('move' as any, () => {
-      this.throttledSaveWindowLayout();
     });
 
     this.updateMenubarBounds();
@@ -319,7 +332,7 @@ export class OmniWindowHelper {
       console.log('[OmniWindowHelper] controlView singleton created');
     }
     // Set proper bounds even when hidden — prevents splitpanes layout thrashing in a 0×0 container
-    const [cvWidth, cvHeight] = this.baseWindow.getContentSize();
+    const [cvWidth, cvHeight] = createdWindow.getContentSize();
     this.controlView.setBounds({
       x: 0,
       y: MENUBAR_HEIGHT,
@@ -329,7 +342,7 @@ export class OmniWindowHelper {
 
     const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
     if (shouldOpenDevTools) {
-      this.menubarView.webContents.openDevTools({ mode: 'detach' });
+      menubarView.webContents.openDevTools({ mode: 'detach' });
     }
 
     // Permission handler: deny notifications for specific domains (e.g. larksuite.com),
@@ -354,12 +367,10 @@ export class OmniWindowHelper {
     });
 
     // Restore saved cell layout so cells appear immediately on window open
-    await this.restoreSavedLayout();
+    await this.restoreSavedLayout(creationGeneration);
+    this.assertCreationActive(creationGeneration, createdWindow);
 
-    return this.baseWindow;
-    } finally {
-      this._creating = false;
-    }
+    return createdWindow;
   }
 
   toggleControl(): void {
@@ -441,6 +452,8 @@ export class OmniWindowHelper {
   }
 
   destroy(): void {
+    this._creationGeneration += 1;
+    this.creationPromise = null;
     this.cleanupAllViews();
     // Destroy the singleton controlView only on full destroy (app quit)
     this.closeWebContentsView(this.controlView);
@@ -646,9 +659,10 @@ export class OmniWindowHelper {
     return false;
   }
 
-  private async restoreSavedLayout(): Promise<void> {
+  private async restoreSavedLayout(creationGeneration: number): Promise<void> {
     try {
       const config = await settingEmitter.get<OmniLayoutConfig>({ key: LAYOUT_KEY });
+      if (this._creationGeneration !== creationGeneration) return;
       if (config?.tree) {
         const leaves = extractTreeLeaves(config.tree);
         const cells: OmniCellLayout[] = leaves.map((l) => ({ id: l.id, url: l.url, x: 0, y: 0, width: 100, height: 100 }));
@@ -657,6 +671,26 @@ export class OmniWindowHelper {
       }
     } catch (err) {
       console.error('[OmniWindowHelper] Failed to restore saved layout:', err);
+    }
+  }
+
+  private isCreationActive(
+    creationGeneration: number,
+    createdWindow?: BaseWindow,
+  ): boolean {
+    return this._creationGeneration === creationGeneration &&
+      (!createdWindow || (
+        this.baseWindow === createdWindow &&
+        !createdWindow.isDestroyed()
+      ));
+  }
+
+  private assertCreationActive(
+    creationGeneration: number,
+    createdWindow?: BaseWindow,
+  ): void {
+    if (!this.isCreationActive(creationGeneration, createdWindow)) {
+      throw new Error('[OmniWindowHelper] Window creation was cancelled');
     }
   }
 

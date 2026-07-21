@@ -2,9 +2,11 @@
 
 ## Purpose and boundary
 
-This document defines the Bitterless desktop login, account-recovery, and first-password contracts.
-Core owns credential and account-state validation. The desktop renderer owns form validation,
-session activation, and the modal/page transitions described here.
+This document defines the Bitterless desktop login, account-recovery, first-password, and manual
+logout contracts. Core owns credential and account-state validation. The desktop renderer owns form
+validation, durable local session commitment, immediate route transitions, and the account controls
+described here. Optional local runtimes activate after authentication and never redefine whether
+Core login succeeded.
 
 ## Account lifecycle
 
@@ -49,8 +51,7 @@ shared menu bar's clickable update and window controls.
 ┌──────────────────────── shared Royal Blue MenuBar ───────────────────────┐
 │ Bitterless                                  [Restart to Update] [controls]│
 ├──────────────────── light Royal Blue login surface ─────────────────────┤
-│        ┌─ Royal Blue account panel ─────────────────────────────┐         │
-│        │ Bitterless                                             │         │
+│        ┌─ white account surface; no visible outline ────────────┐         │
 │        │ [Password login] [Email code]                          │         │
 │        │ Email                                                  │         │
 │        │ Password                           [Forgot password?]   │         │
@@ -69,22 +70,47 @@ Forgot password                    Invited first login
 └──────────────────────────────┘    cannot close by X/mask/Escape
 ```
 
+Settings exposes account identity inside the existing General page without adding another card:
+
+```text
+┌──────────────────────── Settings → General ──────────────────────────────┐
+│ Display language                                                         │
+│ Search engine                                                            │
+│                                                                          │
+│ Account                                                                  │
+│ signed-in@example.test                                         [Logout] │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Interaction contract
 
 | Action | Contract |
 |---|---|
-| Password login | Authenticate, fetch `/auth/me`, then activate workers only for an active account |
-| Email-code login | Authenticate with purpose `login`; invited opens first-password setup, active enters the workspace |
+| Password login | Authenticate and fetch `/auth/me`; an active account enters the workspace immediately while local runtimes activate asynchronously |
+| Email-code login | Authenticate with purpose `login`; invited opens first-password setup, while active enters immediately without waiting for local runtimes |
 | Forgot password | Open a closable modal without creating an authenticated desktop session |
 | Send reset code | Send an email OTP with purpose `reset_password`; disable duplicate submission during the request and cooldown |
 | Reset password | Require two matching inputs of at least eight characters, reset through the dedicated unauthenticated endpoint, then return to password login |
-| First-password setup | Require two matching inputs of at least eight characters; keep the modal open on error |
+| First-password setup | Require two matching inputs of at least eight characters; keep the modal open on mutation error; after mutation success, any route failure changes the modal to a navigation-only retry |
 | Update available while logged out | Show the same `Restart to Update` action as the authenticated workspace; clicking it calls the existing update restart flow |
 | Window controls while logged out | Keep the shared macOS drag region or Windows minimize/maximize/close controls interactive above the login content |
+| Logout | Clear local authentication and route to Login immediately; best-effort revoke the Core token and silently tear down authenticated secondary windows |
 
 All request buttons expose a loading state and block re-entry. Reset-password completion never logs
 the customer in automatically; the customer signs in with the new password. Restoring an inactive
-or otherwise invalid session clears the local token before any authenticated worker is activated.
+or otherwise invalid session clears only that still-current local token. Initial restore and a new
+login submission cannot overlap.
+
+Logout cleanup is deliberately detached after local session removal. A stalled network revoke or
+secondary-window teardown cannot keep the Login form disabled. Main serializes a new optional
+runtime activation behind the tracked teardown; stale activations only stop and never initiate an
+untracked teardown of their own.
+
+Core login plus a successful `/auth/me` response is the desktop authentication commit point. Vue
+Router replacement is awaited so completion means the requested route is visible. SQLite,
+EyesOnAgents, Maestro, Coin, and other local runtime preparation starts after that commit and is not
+awaited by navigation. A local runtime rejection is reported separately and cannot clear, revoke, or
+mislabel the valid Core session as a credential failure.
 
 ## Visual contract
 
@@ -92,8 +118,12 @@ or otherwise invalid session clears the local token before any authenticated wor
   surfaces. No transparent or near-black area may appear during first paint, resizing, or routing.
 - Primary actions use `royalblue-600` (`#4E5882`), hover uses `royalblue-500` (`#606B9D`), and
   pressed uses `royalblue-800` (`#323955`).
-- Login and account modals use `royalblue-50`, white, and `royalblue-200` surfaces/borders.
-- The account panel's narrow Royal Blue edge is the page signature; other decoration remains quiet.
+- Login and account modals use `royalblue-50`, white, and `royalblue-200` surfaces where modal
+  separation requires it.
+- The login panel has no visible outline or left accent edge. Its hierarchy comes from the white
+  surface, restrained shadow, spacing, and the main login heading. The small `Bitterless` eyebrow is
+  absent.
+- General Account follows the page's existing flat section rhythm and adds no bordered card.
 - At the `800x600` minimum window size, each modal remains fully reachable and owns its internal
   scrolling when necessary.
 - The 32px shared `MenuBar` is the only window-chrome layer. Login content fills the remaining
@@ -109,4 +139,7 @@ or otherwise invalid session clears the local token before any authenticated wor
 - `src/renderer/home/src/stores/auth/auth.store.ts`
 - `src/renderer/home/src/networking/auth.api.ts`
 - `src/renderer/home/src/router/index.ts`
+- `src/renderer/home/src/views/setting/components/GeneralSetting/GeneralSetting.vue`
+- `src/renderer/home/src/views/setting/components/GeneralSetting/GeneralSetting.less`
 - `src/main/windows/mainWindow.helper.ts`
+- `src/main/xpc/auth.handler.ts`

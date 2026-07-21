@@ -3,9 +3,12 @@ import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
 import { mainWindowHelper } from '../windows/mainWindow.helper';
-import { throttle } from 'es-toolkit';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
+import {
+  windowStateService,
+  type WindowStateController,
+} from '@main/windows/windowState.service';
 
 const SIDER_WIDTH = 56;
 const MENUBAR_HEIGHT = 36;
@@ -18,38 +21,9 @@ const resolveTodoOutPath = (...segments: string[]): string =>
 class TodoWindowHandler extends XpcMainHandler {
   private todoView: WebContentsView | null = null;
   private standaloneWindow: BrowserWindow | null = null;
+  private creationPromise: Promise<BrowserWindow> | null = null;
   private resizeHandler: (() => void) | null = null;
-  private _throttledSaveLayoutFn: (() => void) | null = null;
-
-  private throttledSaveLayout(): void {
-    if (!this._throttledSaveLayoutFn) {
-      this._throttledSaveLayoutFn = throttle(() => {
-        this.saveLayout();
-      }, 100, { trailing: true });
-    }
-    this._throttledSaveLayoutFn();
-  }
-
-  private async saveLayout(): Promise<void> {
-    if (!this.standaloneWindow || this.standaloneWindow.isDestroyed()) return;
-    try {
-      const bounds = this.standaloneWindow.getBounds();
-      const layout: WindowLayout = {
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-      };
-      await settingEmitter.upsert({
-        key: WINDOW_LAYOUT_KEY,
-        sub_key: WINDOW_LAYOUT_SUB_KEY,
-        value: layout,
-      });
-      console.log('[TodoWindowHandler] Layout saved:', layout);
-    } catch (err) {
-      console.error('[TodoWindowHandler] Failed to save layout:', err);
-    }
-  }
+  private windowStateController: WindowStateController | null = null;
 
   private async loadLayout(): Promise<WindowLayout | null> {
     try {
@@ -118,19 +92,54 @@ class TodoWindowHandler extends XpcMainHandler {
   }
 
   async openTodoWindow(): Promise<void> {
+    if (this.creationPromise) {
+      const created = await this.creationPromise;
+      if (!created.isDestroyed()) {
+        this.windowStateController?.show();
+        created.focus();
+      }
+      return;
+    }
+
     if (this.standaloneWindow && !this.standaloneWindow.isDestroyed()) {
+      if (this.windowStateController) {
+        this.windowStateController.show();
+      } else {
+        this.standaloneWindow.show();
+      }
       this.standaloneWindow.focus();
       return;
     }
 
+    this.creationPromise = this.createStandaloneWindow().finally(() => {
+      this.creationPromise = null;
+    });
+
+    const created = await this.creationPromise;
+    if (!created.isDestroyed()) {
+      if (this.windowStateController) {
+        this.windowStateController.show();
+      } else {
+        created.show();
+      }
+      created.focus();
+    }
+  }
+
+  private async createStandaloneWindow(): Promise<BrowserWindow> {
     const isMac = process.platform === 'darwin';
-    const savedLayout = await this.loadLayout();
+    if (!windowStateService.has('todo')) {
+      const legacyLayout = await this.loadLayout();
+      if (legacyLayout) windowStateService.importLegacy('todo', legacyLayout);
+    }
+    const restored = windowStateService.resolve('todo');
 
     const windowOptions: any = {
-      width: savedLayout?.width ?? 900,
-      height: savedLayout?.height ?? 670,
+      width: restored?.bounds.width ?? 900,
+      height: restored?.bounds.height ?? 670,
       minWidth: 800,
       minHeight: 600,
+      show: false,
       title: 'Todo',
       autoHideMenuBar: true,
       titleBarStyle: 'hidden',
@@ -144,37 +153,51 @@ class TodoWindowHandler extends XpcMainHandler {
       },
     };
 
-    if (savedLayout) {
-      windowOptions.x = savedLayout.x;
-      windowOptions.y = savedLayout.y;
+    if (restored) {
+      windowOptions.x = restored.bounds.x;
+      windowOptions.y = restored.bounds.y;
     }
 
-    this.standaloneWindow = new BrowserWindow(windowOptions);
+    const created = new BrowserWindow(windowOptions);
+    const stateController = windowStateService.register(
+      'todo',
+      created,
+    );
+    this.standaloneWindow = created;
+    this.windowStateController = stateController;
 
-    this.standaloneWindow.on('ready-to-show', () => {
-      this.standaloneWindow?.show();
+    created.on('ready-to-show', () => {
+      stateController.show();
     });
 
-    this.standaloneWindow.on('move', () => {
-      this.throttledSaveLayout();
+    created.on('closed', () => {
+      if (this.standaloneWindow === created) this.standaloneWindow = null;
+      if (this.windowStateController === stateController) {
+        this.windowStateController = null;
+      }
     });
 
-    this.standaloneWindow.on('resize', () => {
-      this.throttledSaveLayout();
-    });
+    try {
+      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        await created.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/todo/index.html`);
+      } else {
+        await created.loadFile(resolveTodoOutPath('renderer', 'todo', 'index.html'));
+      }
 
-    this.standaloneWindow.on('closed', () => {
-      this.standaloneWindow = null;
-    });
-
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      await this.standaloneWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/todo/index.html`);
-    } else {
-      await this.standaloneWindow.loadFile(resolveTodoOutPath('renderer', 'todo', 'index.html'));
-    }
-
-    if (is.dev && import.meta.env.VITE_MODE !== 'release') {
-      this.standaloneWindow.webContents.openDevTools({ mode: 'detach' });
+      if (is.dev && import.meta.env.VITE_MODE !== 'release') {
+        created.webContents.openDevTools({ mode: 'detach' });
+      }
+      return created;
+    } catch (error) {
+      if (!created.isDestroyed()) {
+        stateController.flushAndDispose();
+        created.destroy();
+      }
+      if (this.standaloneWindow === created) this.standaloneWindow = null;
+      if (this.windowStateController === stateController) {
+        this.windowStateController = null;
+      }
+      throw error;
     }
   }
 
@@ -197,6 +220,8 @@ class TodoWindowHandler extends XpcMainHandler {
   }
 
   async _destroyForAuth(): Promise<void> {
+    const pending = this.creationPromise;
+    if (pending) await pending.catch(() => undefined);
     const mainWindow = mainWindowHelper.browserWindow;
 
     if (this.resizeHandler && mainWindow && !mainWindow.isDestroyed()) {
@@ -213,9 +238,15 @@ class TodoWindowHandler extends XpcMainHandler {
     this.todoView = null;
 
     if (this.standaloneWindow && !this.standaloneWindow.isDestroyed()) {
+      this.windowStateController?.flushAndDispose();
       this.standaloneWindow.destroy();
     }
     this.standaloneWindow = null;
+    this.windowStateController = null;
+  }
+
+  async destroyForHostQuit(): Promise<void> {
+    await this._destroyForAuth();
   }
 
   async isMaximized(): Promise<boolean> {

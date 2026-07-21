@@ -28,6 +28,30 @@
           <IconRefresh />
         </template>
       </a-button>
+      <a-popover trigger="click" position="br">
+        <a-badge :count="todoistSyncStore.failures.length" :max-count="99">
+          <a-button size="mini" type="text" :title="i18nHelper.todo.syncStatusTitle">
+            <template #icon>
+              <IconCloud :class="{ 'menubar__sync-icon--active': todoistSyncStore.status?.syncing }" />
+            </template>
+          </a-button>
+        </a-badge>
+        <template #content>
+          <div class="todo-sync-status">
+            <strong>{{ i18nHelper.todo.syncStatusTitle }}</strong>
+            <span>{{ syncStatusLabel }}</span>
+            <div v-if="todoistSyncStore.failures.length" class="todo-sync-status__failures">
+              <div v-for="failure in todoistSyncStore.failures" :key="failure.uuid" class="todo-sync-status__failure">
+                <span>{{ failure.command_type }} · {{ failure.error_message || failure.error_code }}</span>
+                <div class="todo-sync-status__actions">
+                  <a-button size="mini" @click="todoistSyncStore.retry(failure.uuid)">{{ i18nHelper.todo.syncRetry }}</a-button>
+                  <a-button size="mini" status="danger" @click="todoistSyncStore.discard(failure.uuid)">{{ i18nHelper.todo.syncDiscard }}</a-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </a-popover>
       <a-dropdown trigger="click" position="br">
         <a-button size="mini" type="text">
           <template #icon>
@@ -88,6 +112,7 @@ import { computed, nextTick, ref } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import {
   IconArchive,
+  IconCloud,
   IconExternalLink,
   IconMaximize,
   IconMinus,
@@ -107,6 +132,7 @@ import McpGuideModal from '../McpGuideModal/McpGuideModal.vue';
 import ArchivedDomainsModal from '../ArchivedDomainsModal/ArchivedDomainsModal.vue';
 import type { McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
 import { resolveMcpIntegrationSkillState } from '@shared/mcp/mcpIntegrationInfo.shared';
+import { todoistSyncStore } from '../../store/todoistSync.store';
 
 const props = defineProps<{
   isStandalone: boolean;
@@ -118,6 +144,12 @@ const mcpGuideVisible = ref(false);
 const mcpInfo = ref<McpIntegrationInfo | null>(null);
 const archivedDomainsVisible = ref(false);
 const archivedDomainsLoading = ref(false);
+const syncStatusLabel = computed(() => {
+  if (todoistSyncStore.status?.syncing) return i18nHelper.todo.syncStatusSyncing;
+  if (todoistSyncStore.status?.pull_only) return i18nHelper.todo.syncStatusPullOnly;
+  if (todoistSyncStore.status?.last_error) return todoistSyncStore.status.last_error;
+  return i18nHelper.todo.syncStatusReady;
+});
 
 const menubarClass = computed(() => {
   if (isMac) return 'menubar--mac';
@@ -126,7 +158,7 @@ const menubarClass = computed(() => {
 });
 
 const handleRefresh = async () => {
-  await todoWindowEmitter.reloadTodoData();
+  await Promise.all([todoistSyncStore.requestSync(), todoStore.loadAll()]);
 };
 
 const handleOpenMcpGuide = async () => {

@@ -81,7 +81,7 @@ const emit = defineEmits<{
 }>();
 
 const searchText = ref('');
-const restoringDomainId = ref<number | null>(null);
+const restoringDomainId = ref<string | null>(null);
 
 const normalizedSearch = computed(() => searchText.value.trim().toLowerCase());
 
@@ -108,7 +108,7 @@ const handleClose = () => {
   emit('close');
 };
 
-const handleRestore = async (id: number) => {
+const handleRestore = async (id: string) => {
   if (restoringDomainId.value !== null) return;
 
   restoringDomainId.value = id;

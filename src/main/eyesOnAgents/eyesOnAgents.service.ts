@@ -3,10 +3,17 @@ import type {
   EyesOnAgentsApi,
   EyesOnAgentsBridgeStatus,
   EyesOnAgentsDiscoveredThread,
+  EyesOnAgentsHookLastUserPromptCandidate,
   EyesOnAgentsRepositoryApi,
+  EyesOnAgentsRepositoryMutationResult,
   EyesOnAgentsRuntimeDeliveryResult,
   EyesOnAgentsRuntimeEvent,
   EyesOnAgentsSnapshot,
+  EyesOnAgentsTitleEnrichmentDiagnostic,
+  EyesOnAgentsThreadPagesRefreshResult,
+  EyesOnAgentsThreadRefreshCandidate,
+  EyesOnAgentsThreadRefreshLastUserPromptPatch,
+  EyesOnAgentsThreadRefreshPatch,
   EyesOnAgentsThreadSnapshot
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
@@ -14,6 +21,7 @@ import {
   effectiveEyesOnAgentsRuntimeState,
   isEyesOnAgentsFocused,
   isEyesOnAgentsRecord,
+  normalizeEyesOnAgentsProviderThreadTitle,
   normalizeEyesOnAgentsThreadStatus,
   parseEyesOnAgentsPath,
   parseEyesOnAgentsText,
@@ -25,6 +33,7 @@ import type {
   CodexHookEvent
 } from '@shared/eyesOnAgents/codexHookBridge.type';
 import type { CodexAppServerSupervisor } from './codexAppServer.supervisor';
+import type { LastUserPromptPreferenceService } from './lastUserPromptPreference.service';
 import {
   projectMetadataFromResolution,
   resolveEyesOnAgentsProject,
@@ -35,6 +44,10 @@ interface EyesOnAgentsServiceDependencies {
   repository: EyesOnAgentsRepositoryApi;
   settings: Pick<SettingDao, 'get' | 'upsert'>;
   appServer: CodexAppServerSupervisor;
+  lastUserPromptPreference?: Pick<
+    LastUserPromptPreferenceService,
+    'isEnabled' | 'enable' | 'disable'
+  >;
   desktopBridge: {
     getStatus(): EyesOnAgentsBridgeStatus;
     hasInstallationIntent(): boolean;
@@ -59,6 +72,14 @@ interface EyesOnAgentsServiceDependencies {
 const AUTO_CONNECT_SETTING_KEY = 'eyes_on_agents';
 const AUTO_CONNECT_SETTING_SUB_KEY = 'app_server_auto_connect';
 const MAX_PENDING_CODEX_HOOK_EVENTS = 256;
+const MAX_LAST_USER_PROMPT_BYTES = 8_192;
+const THREAD_REFRESH_PAGE_SIZE = 40;
+const THREAD_REFRESH_CONCURRENCY = 4;
+const DEFAULT_LAST_USER_PROMPT_PREFERENCE = {
+  isEnabled: (): boolean => false,
+  enable: (): boolean => false,
+  disable: (): boolean => false
+};
 
 type HookInspectionState =
   | 'uninspected'
@@ -84,6 +105,7 @@ interface PendingCodexHookEvent {
   event: CodexHookEvent;
   deliveryId: string | null;
   completion: HookDeliveryCompletion | null;
+  lastUserPromptPreferenceEpoch: number;
 }
 
 type HookWriteResult = EyesOnAgentsRuntimeDeliveryResult | undefined;
@@ -106,10 +128,204 @@ interface AppServerContext {
   controller: AbortController;
 }
 
+interface ThreadRefreshBatchResult {
+  changed: boolean;
+  completed: boolean;
+}
+
+interface ThreadRefreshPromptAdmission {
+  enabled: boolean;
+  epoch: number;
+}
+
+const providerThreadField = (
+  value: Record<string, unknown>,
+  key: string
+): unknown => {
+  try {
+    return value[key];
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeProviderThreadStatus = (
+  value: unknown
+): ReturnType<typeof normalizeEyesOnAgentsThreadStatus> => {
+  try {
+    return normalizeEyesOnAgentsThreadStatus(value);
+  } catch {
+    return { runtimeState: 'unknown', activeFlags: [], statusSource: 'discovery' };
+  }
+};
+
 const parseProviderTimestamp = (value: unknown): number | null => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
   const milliseconds = value < 10_000_000_000 ? value * 1000 : value;
-  return Number.isSafeInteger(milliseconds) ? milliseconds : Math.floor(milliseconds);
+  const integerMilliseconds = Math.floor(milliseconds);
+  return Number.isSafeInteger(integerMilliseconds) ? integerMilliseconds : null;
+};
+
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!Number.isFinite(next) || next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const boundLastUserPrompt = (
+  value: string
+): Pick<EyesOnAgentsThreadRefreshLastUserPromptPatch, 'preview' | 'truncated'> => {
+  const normalized = value.trim();
+  if (!normalized || normalized.includes('\0') || hasUnpairedSurrogate(normalized)) {
+    return { preview: null, truncated: false };
+  }
+  const characters: string[] = [];
+  let byteLength = 0;
+  let truncated = false;
+  for (const character of normalized) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (byteLength + characterBytes > MAX_LAST_USER_PROMPT_BYTES) {
+      truncated = true;
+      break;
+    }
+    characters.push(character);
+    byteLength += characterBytes;
+  }
+  return { preview: characters.join(''), truncated };
+};
+
+const parseThreadRefreshTitle = (
+  value: Record<string, unknown>
+): string | undefined => normalizeEyesOnAgentsProviderThreadTitle(value) ?? undefined;
+
+const threadRefreshStatusPatch = (
+  value: unknown,
+  observedAt: number
+): EyesOnAgentsThreadRefreshPatch['status'] | undefined => {
+  const status = normalizeProviderThreadStatus(value);
+  if (status.statusSource !== 'app_server') return undefined;
+  const active = status.runtimeState === 'working' ||
+    status.runtimeState === 'waiting_approval' ||
+    status.runtimeState === 'waiting_input';
+  return {
+    runtimeState: status.runtimeState,
+    activeFlags: status.activeFlags,
+    ...(active ? {} : { activeTurnId: null }),
+    source: 'app_server',
+    observedAt
+  };
+};
+
+const parseThreadRefreshRead = (
+  value: unknown,
+  options: { expectedThreadId: string; observedAt: number }
+): { patch: EyesOnAgentsThreadRefreshPatch; providerActivityAt: number | null } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Codex thread/read thread is invalid');
+  const threadId = parseEyesOnAgentsUuid(
+    providerThreadField(value, 'id'),
+    'Codex thread/read thread id'
+  );
+  if (threadId !== options.expectedThreadId) {
+    throw new Error('Codex thread/read returned a different thread');
+  }
+  const title = parseThreadRefreshTitle(value);
+  const status = threadRefreshStatusPatch(
+    providerThreadField(value, 'status'),
+    options.observedAt
+  );
+  const providerActivityAt = parseProviderTimestamp(providerThreadField(value, 'updatedAt')) ??
+    parseProviderTimestamp(providerThreadField(value, 'createdAt'));
+  return {
+    patch: {
+      threadId,
+      ...(title === undefined ? {} : { title }),
+      ...(status === undefined ? {} : { status }),
+      ...(providerActivityAt === null ? {} : { lastActivityAt: providerActivityAt })
+    },
+    providerActivityAt
+  };
+};
+
+const turnIdentity = (value: Record<string, unknown>): {
+  turnId: string;
+  observedAt: number | null;
+} => {
+  const turnId = parseEyesOnAgentsText(value.id, 'Codex turn id', 200, false) as string;
+  return {
+    turnId,
+    observedAt: parseProviderTimestamp(value.completedAt) ??
+      parseProviderTimestamp(value.startedAt)
+  };
+};
+
+const lastUserPromptFromTurns = (
+  turns: unknown[],
+  options: { checkedAt: number; providerActivityAt: number | null }
+): EyesOnAgentsThreadRefreshLastUserPromptPatch => {
+  let pendingTurnId: string | null = null;
+  let pendingObservedAt: number | null = options.providerActivityAt;
+  for (const turnValue of turns) {
+    if (!isEyesOnAgentsRecord(turnValue) || !Array.isArray(turnValue.items)) {
+      throw new Error('Codex thread/turns/list turn is invalid');
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(turnValue, 'itemsView')
+      && turnValue.itemsView !== 'full'
+    ) {
+      throw new Error('Codex thread/turns/list itemsView is not full');
+    }
+    const identity = turnIdentity(turnValue);
+    pendingTurnId ??= identity.turnId;
+    pendingObservedAt ??= identity.observedAt;
+    for (let index = turnValue.items.length - 1; index >= 0; index -= 1) {
+      const item = turnValue.items[index];
+      if (!isEyesOnAgentsRecord(item) || item.type !== 'userMessage') continue;
+      if (!Array.isArray(item.content)) {
+        throw new Error('Codex userMessage content is invalid');
+      }
+      const textSegments: string[] = [];
+      for (const segment of item.content) {
+        if (!isEyesOnAgentsRecord(segment) || segment.type !== 'text') continue;
+        if (typeof segment.text !== 'string') {
+          throw new Error('Codex userMessage text is invalid');
+        }
+        textSegments.push(segment.text);
+      }
+      if (textSegments.length === 0) continue;
+      const bounded = boundLastUserPrompt(textSegments.join(''));
+      if (bounded.preview === null) continue;
+      return {
+        ...bounded,
+        turnId: identity.turnId,
+        observedAt: identity.observedAt ?? options.providerActivityAt,
+        checkedAt: options.checkedAt,
+        source: 'app_server'
+      };
+    }
+  }
+  return {
+    preview: null,
+    turnId: pendingTurnId,
+    observedAt: pendingObservedAt,
+    checkedAt: options.checkedAt,
+    truncated: false,
+    source: 'app_server'
+  };
+};
+
+const hasThreadRefreshPatch = (patch: EyesOnAgentsThreadRefreshPatch): boolean => {
+  return patch.title !== undefined ||
+    patch.status !== undefined ||
+    patch.lastActivityAt !== undefined ||
+    patch.lastUserPrompt !== undefined;
 };
 
 const turnIdFrom = (value: unknown): string | null => {
@@ -139,25 +355,33 @@ const parseThreadEntry = (
   observedAt: number
 ): EyesOnAgentsDiscoveredThread | null => {
   if (!isEyesOnAgentsRecord(value)) return null;
+  let threadId: string;
   try {
-    const normalizedStatus = normalizeEyesOnAgentsThreadStatus(value.status);
-    const providerActivity = parseProviderTimestamp(value.updatedAt) ??
-      parseProviderTimestamp(value.createdAt);
-    const name = parseEyesOnAgentsText(value.name, 'thread name', 300);
-    const preview = parseEyesOnAgentsText(value.preview, 'thread preview', 300);
-    return {
-      threadId: parseEyesOnAgentsUuid(value.id, 'Codex thread id'),
-      title: name ?? preview,
-      cwd: parseEyesOnAgentsPath(value.cwd),
-      runtimeState: normalizedStatus.runtimeState,
-      activeFlags: normalizedStatus.activeFlags,
-      statusSource: normalizedStatus.statusSource,
-      statusObservedAt: observedAt,
-      lastActivityAt: providerActivity
-    };
+    threadId = parseEyesOnAgentsUuid(value.id, 'Codex thread id');
   } catch {
     return null;
   }
+  let cwd: string | null = null;
+  try {
+    cwd = parseEyesOnAgentsPath(providerThreadField(value, 'cwd'));
+  } catch {
+    // Optional provider paths cannot reject an otherwise valid thread identity.
+  }
+  const normalizedStatus = normalizeProviderThreadStatus(
+    providerThreadField(value, 'status')
+  );
+  const providerActivity = parseProviderTimestamp(providerThreadField(value, 'updatedAt')) ??
+    parseProviderTimestamp(providerThreadField(value, 'createdAt'));
+  return {
+    threadId,
+    title: normalizeEyesOnAgentsProviderThreadTitle(value),
+    cwd,
+    runtimeState: normalizedStatus.runtimeState,
+    activeFlags: normalizedStatus.activeFlags,
+    statusSource: normalizedStatus.statusSource,
+    statusObservedAt: observedAt,
+    lastActivityAt: providerActivity
+  };
 };
 
 const parseThreadSnapshot = (
@@ -182,13 +406,22 @@ const parseThreadSnapshot = (
 
 export class EyesOnAgentsService implements EyesOnAgentsApi {
   private readonly now: () => number;
+  private readonly lastUserPromptPreference: Pick<
+    LastUserPromptPreferenceService,
+    'isEnabled' | 'enable' | 'disable'
+  >;
   private autoConnectEnabled = false;
   private appServerIntentVersion = 0;
   private appServerLifecycleVersion = 0;
   private appServerContext: AppServerContext | null = null;
   private appServerConnectPromise: Promise<void> | null = null;
+  private backgroundRefreshPromise: Promise<EyesOnAgentsThreadPagesRefreshResult> | null = null;
+  private coldThreadRefreshPage = 2;
+  private threadRefreshPageCount: number | null = null;
+  private foregroundAppServerOperationPending = 0;
   private appServerTeardownPromise: Promise<void> | null = null;
   private appServerTeardownDisableAutoConnectRequested = false;
+  private lastUserPromptPreferenceEpoch = 0;
   private observationIntentVersion = 0;
   private observationContext: ObservationContext | null = null;
   private desktopObservationPromise: Promise<void> | null = null;
@@ -202,9 +435,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   private readonly activeHookOperations = new Set<Promise<unknown>>();
   private readonly activeAppServerOperations = new Set<Promise<void>>();
   private readonly activeAppServerRuntimeOperations = new Set<Promise<void>>();
+  private readonly titleEnrichmentOperations = new Map<string, Promise<void>>();
+  private titleEnrichmentGeneration = 0;
+  private titleEnrichmentDiagnostic: EyesOnAgentsTitleEnrichmentDiagnostic | null = null;
 
   constructor(private readonly dependencies: EyesOnAgentsServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
+    this.lastUserPromptPreference = dependencies.lastUserPromptPreference ??
+      DEFAULT_LAST_USER_PROMPT_PREFERENCE;
   }
 
   async initialize(): Promise<void> {
@@ -246,12 +484,20 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   async shutdown(): Promise<void> {
     const observationTeardown = this.requestDesktopTeardown({ removeBridge: false });
     const appServerTeardown = this.requestAppServerTeardown({ disableAutoConnect: false });
-    await observationTeardown;
-    await appServerTeardown;
+    const teardownResults = await Promise.allSettled([
+      observationTeardown,
+      appServerTeardown
+    ]);
+    await this.joinAppServerWork();
+    const failed = teardownResults.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    if (failed) throw failed.reason;
   }
 
   async getSnapshot(): Promise<EyesOnAgentsSnapshot> {
     const persisted = await this.dependencies.repository.getSnapshot();
+    const lastUserPromptCaptureEnabled = this.lastUserPromptPreference.isEnabled();
     const connection = this.dependencies.appServer.getStatus(this.autoConnectEnabled);
     const connected = this.dependencies.appServer.isConnected();
     const bridge = this.bridgeStatus();
@@ -274,7 +520,17 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       return {
         ...thread,
         runtimeState,
-        isFocused: isEyesOnAgentsFocused(runtimeState, thread.isUnread)
+        isFocused: isEyesOnAgentsFocused(runtimeState, thread.isUnread),
+        lastUserPrompt: lastUserPromptCaptureEnabled
+          ? thread.lastUserPrompt
+          : {
+              state: 'unavailable' as const,
+              preview: null,
+              turnId: null,
+              observedAt: null,
+              checkedAt: null,
+              truncated: false
+            }
       };
     });
     return {
@@ -282,30 +538,38 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       threads,
       connection,
       bridge,
-      lastSyncedAt: connection.lastSyncedAt
+      lastSyncedAt: connection.lastSyncedAt,
+      lastUserPromptCaptureEnabled,
+      titleEnrichmentDiagnostic: this.titleEnrichmentDiagnostic
     };
   }
 
   async connectAppServer(): Promise<EyesOnAgentsSnapshot> {
-    if (this.appServerTeardownPromise) {
-      await this.appServerTeardownPromise;
-      return await this.getSnapshot();
-    }
-    this.appServerIntentVersion += 1;
-    const intentVersion = this.appServerLifecycleVersion;
-    await this.ensureInstalledObservationActive();
-    await this.runAppServerOperation(intentVersion, async (context) => {
-      if (!await this.ensureAppServerConnected(context)) return;
-      await this.dependencies.settings.upsert({
-        key: AUTO_CONNECT_SETTING_KEY,
-        sub_key: AUTO_CONNECT_SETTING_SUB_KEY,
-        value: true
+    this.foregroundAppServerOperationPending += 1;
+    try {
+      if (this.appServerTeardownPromise) {
+        await this.appServerTeardownPromise;
+        return await this.getSnapshot();
+      }
+      await this.joinBackgroundRefresh();
+      this.appServerIntentVersion += 1;
+      const intentVersion = this.appServerLifecycleVersion;
+      await this.ensureInstalledObservationActive();
+      await this.runAppServerOperation(intentVersion, async (context) => {
+        if (!await this.ensureAppServerConnected(context)) return;
+        await this.dependencies.settings.upsert({
+          key: AUTO_CONNECT_SETTING_KEY,
+          sub_key: AUTO_CONNECT_SETTING_SUB_KEY,
+          value: true
+        });
+        if (!this.isAppServerActive(context)) return;
+        this.autoConnectEnabled = true;
+        await this.performSync(context);
       });
-      if (!this.isAppServerActive(context)) return;
-      this.autoConnectEnabled = true;
-      await this.performSync(context);
-    });
-    return await this.getSnapshot();
+      return await this.getSnapshot();
+    } finally {
+      this.foregroundAppServerOperationPending -= 1;
+    }
   }
 
   async disconnectAppServer(): Promise<EyesOnAgentsSnapshot> {
@@ -316,17 +580,71 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   }
 
   async syncThreads(): Promise<EyesOnAgentsSnapshot> {
-    if (this.appServerTeardownPromise) {
-      await this.appServerTeardownPromise;
+    this.foregroundAppServerOperationPending += 1;
+    try {
+      if (this.appServerTeardownPromise) {
+        await this.appServerTeardownPromise;
+        return await this.getSnapshot();
+      }
+      await this.joinBackgroundRefresh();
+      const intentVersion = this.appServerLifecycleVersion;
+      await this.ensureInstalledObservationActive();
+      await this.runAppServerOperation(intentVersion, async (context) => {
+        if (!await this.ensureAppServerConnected(context)) return;
+        await this.performSync(context);
+      });
       return await this.getSnapshot();
+    } finally {
+      this.foregroundAppServerOperationPending -= 1;
+    }
+  }
+
+  async refreshThreadPages(): Promise<EyesOnAgentsThreadPagesRefreshResult> {
+    if (this.backgroundRefreshPromise) {
+      return await this.backgroundRefreshPromise;
+    }
+    if (this.foregroundAppServerOperationPending > 0) return { changed: false };
+    if (
+      this.appServerTeardownPromise ||
+      this.activeAppServerOperations.size > 0 ||
+      this.activeAppServerRuntimeOperations.size > 0
+    ) {
+      return { changed: false };
+    }
+    const status = this.dependencies.appServer.getStatus(this.autoConnectEnabled);
+    if (status.state === 'connecting' || status.state === 'syncing') {
+      return { changed: false };
+    }
+    if (!this.dependencies.appServer.isConnected() && !this.autoConnectEnabled) {
+      return { changed: false };
     }
     const intentVersion = this.appServerLifecycleVersion;
-    await this.ensureInstalledObservationActive();
-    await this.runAppServerOperation(intentVersion, async (context) => {
-      if (!await this.ensureAppServerConnected(context)) return;
-      await this.performSync(context);
-    });
-    return await this.getSnapshot();
+    const operation = (async (): Promise<EyesOnAgentsThreadPagesRefreshResult> => {
+      let changed = false;
+      try {
+        await this.runAppServerOperation(intentVersion, async (context) => {
+          if (!this.dependencies.appServer.isConnected() && !this.autoConnectEnabled) return;
+          if (!await this.ensureAppServerConnected(context, { invalidateStatuses: false })) return;
+          changed = await this.performRefreshThreadPages(context);
+        });
+      } catch {
+        // Connection state remains authoritative; periodic refresh is intentionally silent.
+      }
+      return { changed };
+    })();
+    this.backgroundRefreshPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.backgroundRefreshPromise === operation) {
+        this.backgroundRefreshPromise = null;
+      }
+    }
+  }
+
+  private async joinBackgroundRefresh(): Promise<void> {
+    if (!this.backgroundRefreshPromise) return;
+    await Promise.allSettled([this.backgroundRefreshPromise]);
   }
 
   private async ensureInstalledObservationActive(): Promise<void> {
@@ -399,11 +717,16 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     }
   }
 
-  private async ensureAppServerConnected(context: AppServerContext): Promise<boolean> {
+  private async ensureAppServerConnected(
+    context: AppServerContext,
+    options: { invalidateStatuses?: boolean } = {}
+  ): Promise<boolean> {
     if (!this.isAppServerActive(context)) return false;
     if (this.dependencies.appServer.isConnected()) return true;
-    await this.dependencies.repository.invalidateAppServerStatuses({ observedAt: this.now() });
-    if (!this.isAppServerActive(context)) return false;
+    if (options.invalidateStatuses !== false) {
+      await this.dependencies.repository.invalidateAppServerStatuses({ observedAt: this.now() });
+      if (!this.isAppServerActive(context)) return false;
+    }
     if (!this.appServerConnectPromise) {
       const operation = this.dependencies.appServer.connect();
       this.appServerConnectPromise = operation;
@@ -498,6 +821,145 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return !context.controller.signal.aborted &&
       this.appServerContext === context &&
       this.appServerLifecycleVersion === context.intentVersion;
+  }
+
+  private recordTitleEnrichmentDiagnostic(
+    generation: number,
+    value: Omit<EyesOnAgentsTitleEnrichmentDiagnostic, 'observedAt'>
+  ): void {
+    if (generation !== this.titleEnrichmentGeneration) return;
+    this.titleEnrichmentDiagnostic = {
+      ...value,
+      observedAt: new Date(this.now()).toISOString()
+    };
+    this.notify();
+  }
+
+  private completeTitleEnrichment(generation: number): boolean {
+    if (generation !== this.titleEnrichmentGeneration) return false;
+    const cleared = this.titleEnrichmentDiagnostic !== null;
+    this.titleEnrichmentDiagnostic = null;
+    this.titleEnrichmentGeneration += 1;
+    return cleared;
+  }
+
+  private clearTitleEnrichmentDiagnosticForFullSync(): void {
+    this.titleEnrichmentGeneration += 1;
+    this.titleEnrichmentDiagnostic = null;
+  }
+
+  private clearTitleEnrichmentDiagnosticForThread(threadId: string): boolean {
+    if (this.titleEnrichmentDiagnostic?.threadId !== threadId) return false;
+    this.titleEnrichmentDiagnostic = null;
+    return true;
+  }
+
+  private scheduleMissingThreadTitleEnrichment(threadId: string): void {
+    if (this.titleEnrichmentOperations.has(threadId)) return;
+    const generation = this.titleEnrichmentGeneration + 1;
+    this.titleEnrichmentGeneration = generation;
+    let operation: Promise<void>;
+    operation = new Promise((resolve) => {
+      setImmediate(() => {
+        void this.performMissingThreadTitleEnrichment(threadId, generation).then(
+          () => resolve(),
+          () => resolve()
+        );
+      });
+    });
+    this.titleEnrichmentOperations.set(threadId, operation);
+    this.activeAppServerRuntimeOperations.add(operation);
+    const clear = (): void => {
+      if (this.titleEnrichmentOperations.get(threadId) === operation) {
+        this.titleEnrichmentOperations.delete(threadId);
+      }
+      this.activeAppServerRuntimeOperations.delete(operation);
+    };
+    void operation.then(clear, clear);
+  }
+
+  private async performMissingThreadTitleEnrichment(
+    threadId: string,
+    generation: number
+  ): Promise<void> {
+    const context = this.appServerContext;
+    if (
+      !context ||
+      !this.isAppServerActive(context) ||
+      !this.dependencies.appServer.isConnected()
+    ) {
+      this.recordTitleEnrichmentDiagnostic(generation, {
+        state: 'skipped',
+        reason: 'app_server_unavailable',
+        threadId
+      });
+      return;
+    }
+    const read = await this.awaitUnlessCancelled(
+      Promise.resolve().then(async () => await this.dependencies.appServer.readThread(threadId)),
+      context.controller.signal
+    );
+    if (read.state === 'cancelled') {
+      this.recordTitleEnrichmentDiagnostic(generation, {
+        state: 'skipped',
+        reason: 'app_server_unavailable',
+        threadId
+      });
+      return;
+    }
+    if (read.state === 'rejected') {
+      this.recordTitleEnrichmentDiagnostic(generation, {
+        state: 'rejected',
+        reason: 'thread_read_rejected',
+        threadId
+      });
+      return;
+    }
+    let title: string | null = null;
+    try {
+      if (!isEyesOnAgentsRecord(read.value)) throw new Error('unusable response');
+      const returnedThreadId = parseEyesOnAgentsUuid(
+        providerThreadField(read.value, 'id'),
+        'Codex thread/read thread id'
+      );
+      if (returnedThreadId !== threadId) throw new Error('unusable response');
+      title = normalizeEyesOnAgentsProviderThreadTitle(read.value);
+    } catch {
+      title = null;
+    }
+    if (title === null) {
+      this.recordTitleEnrichmentDiagnostic(generation, {
+        state: 'rejected',
+        reason: 'unusable_response',
+        threadId
+      });
+      return;
+    }
+    if (!this.isAppServerActive(context) || !this.dependencies.appServer.isConnected()) {
+      this.recordTitleEnrichmentDiagnostic(generation, {
+        state: 'skipped',
+        reason: 'app_server_unavailable',
+        threadId
+      });
+      return;
+    }
+    let changed = false;
+    try {
+      const enriched = await this.dependencies.repository.enrichMissingThreadTitle({
+        threadId,
+        title
+      });
+      changed = enriched.changed;
+    } catch {
+      this.recordTitleEnrichmentDiagnostic(generation, {
+        state: 'rejected',
+        reason: 'thread_read_rejected',
+        threadId
+      });
+      return;
+    }
+    const cleared = this.completeTitleEnrichment(generation);
+    if (changed || cleared) this.notify();
   }
 
   private async joinDesktopObservationWork(): Promise<void> {
@@ -1014,8 +1476,222 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       threadIds: archivedThreadIds,
       observedAt
     });
+    this.clearTitleEnrichmentDiagnosticForFullSync();
     if (!this.isAppServerActive(context)) return;
     this.notify();
+  }
+
+  private async performRefreshThreadPages(context: AppServerContext): Promise<boolean> {
+    if (!this.isAppServerActive(context)) return false;
+    const selected = await this.awaitUnlessCancelled(
+      this.dependencies.repository.getThreadRefreshPages({
+        coldPage: this.coldThreadRefreshPage,
+        previousPageCount: this.threadRefreshPageCount
+      }),
+      context.controller.signal
+    );
+    if (selected.state === 'cancelled') return false;
+    if (selected.state === 'rejected') throw selected.error;
+    if (!this.isAppServerActive(context)) return false;
+    if (
+      selected.value.hot.length > THREAD_REFRESH_PAGE_SIZE ||
+      selected.value.cold.length > THREAD_REFRESH_PAGE_SIZE
+    ) {
+      throw new Error('Thread refresh repository returned an oversized page');
+    }
+    const selectedThreadIds = [
+      ...selected.value.hot.map((candidate) => candidate.threadId),
+      ...selected.value.cold.map((candidate) => candidate.threadId)
+    ];
+    if (new Set(selectedThreadIds).size !== selectedThreadIds.length) {
+      throw new Error('Thread refresh pages contain duplicate thread ids');
+    }
+    const pageCount = selected.value.pageCount;
+    const coldPage = selected.value.coldPage;
+    if (
+      !Number.isSafeInteger(pageCount) ||
+      pageCount < 0 ||
+      (pageCount <= 1 && coldPage !== null) ||
+      (
+        pageCount > 1 &&
+        (coldPage === null || coldPage < 2 || coldPage > pageCount)
+      )
+    ) {
+      throw new Error('Thread refresh repository returned invalid pagination');
+    }
+    this.threadRefreshPageCount = pageCount;
+
+    const promptAdmission: ThreadRefreshPromptAdmission = {
+      enabled: this.lastUserPromptPreference.isEnabled(),
+      epoch: this.lastUserPromptPreferenceEpoch
+    };
+    if (coldPage === null) {
+      this.coldThreadRefreshPage = 2;
+    } else if (coldPage !== this.coldThreadRefreshPage) {
+      this.coldThreadRefreshPage = coldPage;
+    }
+
+    const hot = await this.refreshThreadBatch(
+      selected.value.hot,
+      context,
+      promptAdmission
+    );
+    if (!hot.completed) return hot.changed;
+    let changed = hot.changed;
+    if (coldPage === null) return changed;
+
+    let cold: ThreadRefreshBatchResult;
+    try {
+      cold = await this.refreshThreadBatch(
+        selected.value.cold,
+        context,
+        promptAdmission
+      );
+    } catch {
+      return changed;
+    }
+    changed = changed || cold.changed;
+    if (!cold.completed) return changed;
+    this.coldThreadRefreshPage = coldPage >= pageCount
+      ? 2
+      : coldPage + 1;
+    return changed;
+  }
+
+  private async refreshThreadBatch(
+    candidates: EyesOnAgentsThreadRefreshCandidate[],
+    context: AppServerContext,
+    promptAdmission: ThreadRefreshPromptAdmission
+  ): Promise<ThreadRefreshBatchResult> {
+    if (!this.isAppServerActive(context)) return { changed: false, completed: false };
+    if (new Set(candidates.map((candidate) => candidate.threadId)).size !== candidates.length) {
+      throw new Error('Thread refresh page contains duplicate thread ids');
+    }
+    if (candidates.length === 0) return { changed: false, completed: true };
+
+    const patches: Array<EyesOnAgentsThreadRefreshPatch | null> = new Array(
+      candidates.length
+    ).fill(null);
+    let nextIndex = 0;
+    let cancelled = false;
+    const worker = async (): Promise<void> => {
+      while (!cancelled) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= candidates.length) return;
+        const candidate = candidates[index];
+        if (!candidate || !this.isAppServerActive(context)) {
+          cancelled = true;
+          return;
+        }
+        const projected = await this.projectThreadRefreshCandidate(
+          candidate,
+          context,
+          promptAdmission
+        );
+        if (projected.state === 'cancelled') {
+          cancelled = true;
+          return;
+        }
+        if (projected.state === 'resolved') patches[index] = projected.value;
+      }
+    };
+    const workers: Promise<void>[] = [];
+    const workerCount = Math.min(THREAD_REFRESH_CONCURRENCY, candidates.length);
+    for (let index = 0; index < workerCount; index += 1) workers.push(worker());
+    await Promise.all(workers);
+    if (cancelled || !this.isAppServerActive(context)) {
+      return { changed: false, completed: false };
+    }
+
+    const promptWriteAllowed = promptAdmission.enabled &&
+      promptAdmission.epoch === this.lastUserPromptPreferenceEpoch &&
+      this.lastUserPromptPreference.isEnabled();
+    const semanticPatches: EyesOnAgentsThreadRefreshPatch[] = [];
+    for (const patch of patches) {
+      if (!patch) continue;
+      if (!promptWriteAllowed) delete patch.lastUserPrompt;
+      if (hasThreadRefreshPatch(patch)) semanticPatches.push(patch);
+    }
+    if (semanticPatches.length === 0) return { changed: false, completed: true };
+
+    const refreshed = await this.dependencies.repository.refreshThreadPage({
+      threads: semanticPatches
+    });
+    const repairedDiagnostic = semanticPatches.find((thread) => (
+      thread.threadId === this.titleEnrichmentDiagnostic?.threadId &&
+      thread.title !== undefined
+    ));
+    const clearedDiagnostic = repairedDiagnostic
+      ? this.clearTitleEnrichmentDiagnosticForThread(repairedDiagnostic.threadId)
+      : false;
+    if (!this.isAppServerActive(context)) {
+      return { changed: refreshed.changed, completed: false };
+    }
+    if (refreshed.changed || clearedDiagnostic) this.notify();
+    return { changed: refreshed.changed, completed: true };
+  }
+
+  private async projectThreadRefreshCandidate(
+    candidate: EyesOnAgentsThreadRefreshCandidate,
+    context: AppServerContext,
+    promptAdmission: ThreadRefreshPromptAdmission
+  ): Promise<CancellableResult<EyesOnAgentsThreadRefreshPatch | null>> {
+    const observedAt = this.now();
+    const read = await this.awaitUnlessCancelled(
+      Promise.resolve().then(
+        async () => await this.dependencies.appServer.readThread(candidate.threadId)
+      ),
+      context.controller.signal
+    );
+    if (read.state === 'cancelled') return read;
+    if (read.state === 'rejected') return { state: 'resolved', value: null };
+
+    let projection: ReturnType<typeof parseThreadRefreshRead>;
+    try {
+      projection = parseThreadRefreshRead(read.value, {
+        expectedThreadId: candidate.threadId,
+        observedAt
+      });
+    } catch {
+      return { state: 'resolved', value: null };
+    }
+    const shouldReadPrompt = promptAdmission.enabled &&
+      promptAdmission.epoch === this.lastUserPromptPreferenceEpoch &&
+      this.lastUserPromptPreference.isEnabled() &&
+      (
+        candidate.lastUserPromptCheckedAt === null ||
+        (
+          projection.providerActivityAt !== null &&
+          projection.providerActivityAt > candidate.lastUserPromptCheckedAt
+        )
+      );
+    if (shouldReadPrompt) {
+      const turns = await this.awaitUnlessCancelled(
+        Promise.resolve().then(
+          async () => await this.dependencies.appServer.listThreadTurns(candidate.threadId)
+        ),
+        context.controller.signal
+      );
+      if (turns.state === 'cancelled') return turns;
+      if (turns.state === 'resolved') {
+        try {
+          projection.patch.lastUserPrompt = lastUserPromptFromTurns(
+            turns.value,
+            {
+              checkedAt: projection.providerActivityAt ?? observedAt,
+              providerActivityAt: projection.providerActivityAt
+            }
+          );
+        } catch {
+          // A malformed content page must not suppress the metadata patch.
+        }
+      }
+    }
+    return {
+      state: 'resolved',
+      value: hasThreadRefreshPatch(projection.patch) ? projection.patch : null
+    };
   }
 
   async openThread(params: { threadId: string }): Promise<{
@@ -1108,6 +1784,65 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return this.bridgeStatus();
   }
 
+  async setLastUserPromptCaptureEnabled(
+    params: { enabled: boolean }
+  ): Promise<EyesOnAgentsSnapshot> {
+    if (typeof params?.enabled !== 'boolean') {
+      throw new Error('enabled must be a boolean');
+    }
+    if (params.enabled) {
+      const preferenceChanged = this.lastUserPromptPreference.enable();
+      if (preferenceChanged) {
+        this.lastUserPromptPreferenceEpoch += 1;
+      }
+      let snapshot: EyesOnAgentsSnapshot;
+      try {
+        snapshot = await this.getSnapshot();
+      } catch (error) {
+        if (preferenceChanged) {
+          try {
+            this.lastUserPromptPreference.disable();
+          } catch {
+            // Best-effort rollback must preserve the original snapshot error.
+          }
+          this.lastUserPromptPreferenceEpoch += 1;
+        }
+        throw error;
+      }
+      if (preferenceChanged) this.notify();
+      return snapshot;
+    }
+
+    const wasEnabled = this.lastUserPromptPreference.isEnabled();
+    this.lastUserPromptPreferenceEpoch += 1;
+    const preferenceChanged = this.lastUserPromptPreference.disable();
+    const inFlightPromptWrites: Promise<unknown>[] = [];
+    if (this.backgroundRefreshPromise) {
+      inFlightPromptWrites.push(this.backgroundRefreshPromise);
+    }
+    if (this.observationContext) {
+      inFlightPromptWrites.push(this.observationContext.hookWriteTail);
+    }
+    await Promise.allSettled(inFlightPromptWrites);
+    let cleared: EyesOnAgentsRepositoryMutationResult;
+    try {
+      cleared = await this.dependencies.repository.clearLastUserPrompts();
+    } catch (error) {
+      if (wasEnabled) {
+        try {
+          this.lastUserPromptPreference.enable();
+        } catch {
+          // Best-effort rollback must preserve the original clear error.
+        }
+        this.lastUserPromptPreferenceEpoch += 1;
+      }
+      throw error;
+    }
+    const snapshot = await this.getSnapshot();
+    if (preferenceChanged || cleared.changed) this.notify();
+    return snapshot;
+  }
+
   async reportCodexHookCoverageGap(): Promise<void> {
     this.hookCoverageGapDetected = true;
     this.dependencies.desktopBridge.setOperationalError(
@@ -1163,7 +1898,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       });
       if (!this.isAppServerActive(context)) return;
       this.notify();
-      await this.performSync(context);
+      this.foregroundAppServerOperationPending += 1;
+      try {
+        await this.joinBackgroundRefresh();
+        if (!this.isAppServerActive(context)) return;
+        await this.performSync(context);
+      } finally {
+        this.foregroundAppServerOperationPending -= 1;
+      }
       return;
     }
     let event: EyesOnAgentsRuntimeEvent | null = null;
@@ -1200,8 +1942,13 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       return;
     }
     if (!event || !this.isAppServerActive(context)) return;
-    await this.dependencies.repository.applyRuntimeEvent({ event });
-    if (this.isAppServerActive(context)) this.notify();
+    const persistence = await this.dependencies.repository.applyRuntimeEvent({ event });
+    if (this.isAppServerActive(context)) {
+      this.notify();
+      if (persistence?.titleMissing === true) {
+        this.scheduleMissingThreadTitleEnrichment(threadId);
+      }
+    }
   }
 
   async applyCodexHookEvent(event: CodexHookEvent): Promise<void> {
@@ -1210,7 +1957,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     const operation = this.performApplyCodexHookEvent(context, {
       event,
       deliveryId: null,
-      completion: null
+      completion: null,
+      lastUserPromptPreferenceEpoch: this.lastUserPromptPreferenceEpoch
     });
     this.activeHookOperations.add(operation);
     try {
@@ -1240,7 +1988,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       completion: {
         resolve: resolveCommit,
         reject: rejectCommit
-      }
+      },
+      lastUserPromptPreferenceEpoch: this.lastUserPromptPreferenceEpoch
     }).then(async () => await committed);
     this.activeHookOperations.add(operation);
     try {
@@ -1392,17 +2141,55 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         activeFlags: []
       };
     }
+    const hookLastUserPrompt = this.hookLastUserPromptCandidate(admission);
     if (admission.deliveryId === null) {
-      await this.dependencies.repository.applyRuntimeEvent({ event: runtimeEvent });
+      const persistence = await this.dependencies.repository.applyRuntimeEvent({
+        event: runtimeEvent,
+        ...(hookLastUserPrompt === undefined ? {} : { hookLastUserPrompt })
+      });
       this.notify();
+      if (persistence?.titleMissing === true) {
+        this.scheduleMissingThreadTitleEnrichment(runtimeEvent.threadId);
+      }
       return undefined;
     }
-    const result = await this.dependencies.repository.applyRuntimeEventDelivery({
+    const persistence = await this.dependencies.repository.applyRuntimeEventDelivery({
       deliveryId: admission.deliveryId,
-      event: runtimeEvent
+      event: runtimeEvent,
+      ...(hookLastUserPrompt === undefined ? {} : { hookLastUserPrompt })
     });
     this.notify();
-    return result;
+    if (!persistence.duplicate && persistence.titleMissing) {
+      this.scheduleMissingThreadTitleEnrichment(runtimeEvent.threadId);
+    }
+    return { duplicate: persistence.duplicate };
+  }
+
+  private hookLastUserPromptCandidate(
+    admission: PendingCodexHookEvent
+  ): EyesOnAgentsHookLastUserPromptCandidate | undefined {
+    const { event } = admission;
+    if (event.payload.hookEventName !== 'UserPromptSubmit') return undefined;
+    if (
+      admission.lastUserPromptPreferenceEpoch !== this.lastUserPromptPreferenceEpoch
+    ) {
+      return undefined;
+    }
+    try {
+      if (!this.lastUserPromptPreference.isEnabled()) return undefined;
+    } catch {
+      return undefined;
+    }
+    if (
+      event.schemaVersion === 2 &&
+      event.payload.userPromptPreview !== undefined
+    ) {
+      return {
+        preview: event.payload.userPromptPreview,
+        truncated: event.payload.userPromptTruncated
+      };
+    }
+    return { preview: null, truncated: false };
   }
 
   private notify(): void {

@@ -14,7 +14,7 @@ import {
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import type {
   CodexHookBridgeEndpoint,
-  CodexHookDelivery
+  CodexHookLiveDelivery
 } from '@shared/eyesOnAgents/codexHookBridge.type';
 import { parseEyesOnAgentsUuid } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import {
@@ -31,7 +31,7 @@ interface UnixSocketIdentity {
   birthtimeMs: number;
 }
 
-type EventConsumer = (delivery: CodexHookDelivery) => Promise<{ duplicate: boolean }>;
+type EventConsumer = (delivery: CodexHookLiveDelivery) => Promise<{ duplicate: boolean }>;
 type ServerFactory = (listener: (socket: Socket) => void) => Server;
 type CoverageGapConsumer = (gap: CodexHookOutboxCoverageGap) => Promise<void>;
 type OutboxReplayer = (params: {
@@ -260,7 +260,7 @@ export class CodexHookBridgeServer {
     }
   }
 
-  private enqueue(delivery: CodexHookDelivery): Promise<{ duplicate: boolean }> {
+  private enqueue(delivery: CodexHookLiveDelivery): Promise<{ duplicate: boolean }> {
     if (!this.consume) return Promise.reject(new Error('Codex hook listener is unavailable'));
     const consume = this.consume;
     const operation = this.consumeQueue.then(async () => await consume(delivery));

@@ -1,6 +1,7 @@
 <template>
   <div class="todo-app">
     <MenuBar :is-standalone="isStandalone" />
+    <SyncClockBanner />
     <div class="todo-app__board">
       <div class="todo-app__board-scroll" ref="boardScrollRef" @scroll="onBoardScroll" @click="onBoardClick">
         <FocusedColumn v-if="todoSettingStore.showFocused" />
@@ -42,16 +43,19 @@ import FocusedColumn from './components/FocusedColumn/FocusedColumn.vue';
 import AddDomainButton from './components/AddDomainButton/AddDomainButton.vue';
 import TodoDetail from './components/TodoDetail/TodoDetail.vue';
 import MenuBar from './components/MenuBar/MenuBar.vue';
+import SyncClockBanner from './components/SyncClockBanner/SyncClockBanner.vue';
 import { todoStore } from './store/todo.store';
 import { todoSettingStore } from './store/todoSetting.store';
 import { initTodoSubscriber } from './xpc/update.subscriber';
 import { todoEnv } from './contextBridge/todoEnv.bridge';
 import { todoWindowEmitter } from './emitter/todoWindow.emitter';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
+import { todoistSyncStore } from './store/todoistSync.store';
 
 const isStandalone = ref(false);
 const boardScrollRef = ref<HTMLElement | null>(null);
 const showScrollToLeft = ref(false);
+let clockTimer: ReturnType<typeof setInterval> | null = null;
 
 const onBoardScroll = () => {
   showScrollToLeft.value = (boardScrollRef.value?.scrollLeft ?? 0) > 150;
@@ -82,6 +86,15 @@ const onKeydown = (e: KeyboardEvent) => {
 onMounted(async () => {
   isStandalone.value = todoEnv?.isStandalone ?? false;
   initTodoSubscriber();
+  void todoistSyncStore.initialize().catch((error) => {
+    console.warn('[todoist sync] renderer clock initialization failed:', error);
+  });
+  window.addEventListener('focus', handleWindowFocus);
+  clockTimer = setInterval(() => {
+    void todoistSyncStore.checkClock().catch((error) => {
+      console.warn('[todoist sync] scheduled clock check failed:', error);
+    });
+  }, 15 * 60 * 1000);
   await todoSettingStore.load();
   await todoStore.loadAll();
   if (isStandalone.value && uaHelper.isMac && todoSettingStore.alwaysOnTop) {
@@ -92,7 +105,15 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('focus', handleWindowFocus);
+  if (clockTimer) clearInterval(clockTimer);
 });
+
+const handleWindowFocus = (): void => {
+  void todoistSyncStore.checkClock().catch((error) => {
+    console.warn('[todoist sync] focus clock check failed:', error);
+  });
+};
 </script>
 
 <style lang="less">

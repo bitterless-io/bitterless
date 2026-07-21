@@ -9,6 +9,10 @@ verify:
 
 # Main Window Drag And Layout
 
+> Bounds-only persistence in this completed task is superseded by the shared
+> [top-level window state contract](../../features/window-state-persistence.md), which also owns
+> window mode, display affinity, off-screen recovery, and legacy import.
+
 ## Goal
 
 Make the frameless login window draggable and reliably restore the main window's last position and

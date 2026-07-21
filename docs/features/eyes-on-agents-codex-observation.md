@@ -1,6 +1,6 @@
 # EyesOnAgents Codex Observation
 
-Status: implemented and independently verified
+Status: lifecycle and four-step consent guide implemented; owner verification pending for task 020
 
 Date: 2026-07-17
 
@@ -26,7 +26,7 @@ losing events.
 ```text
 Codex Desktop / CLI
         |
-        | four metadata-only user hooks
+        | four allowlisted user hooks
         v
 stable Bitterless shim
         |
@@ -45,9 +45,24 @@ Bitterless-managed App Server
         +---- exact owned-hook re-enable through config/batchWrite
 ```
 
-The hook payload remains metadata-only. It may identify a thread, lifecycle transition, working
-directory, and observation time; it never includes prompts, responses, tool payloads, diffs, or
-transcripts.
+The bridge remains metadata-only unless the separate default-off **Store latest user question**
+preference is enabled. In that case only `UserPromptSubmit.prompt` may become one Unicode-safe,
+8,192-byte preview in a live V2 frame. The main listener checks the preference again before the
+preview can join the receipt/lifecycle SQLite transaction. A failed send or lost acknowledgement
+projects the same delivery identity to metadata-only form before any outbox write. `Stop` may include
+`last_assistant_message`, but that and every non-user-prompt content field are always discarded.
+
+The task-019 tiered All-thread refresh may separately call
+`thread/read({ includeTurns: false })` for metadata and one bounded
+`thread/turns/list(itemsView: "full")` page for the latest question; it never calls
+`thread/read({ includeTurns: true })` or `thread/turns/items/list`. See the official
+[Codex Hooks](https://learn.chatgpt.com/docs/hooks) and
+[App Server](https://learn.chatgpt.com/docs/app-server) contracts.
+
+The complete exception is [EyesOnAgents Last User Prompt](eyes-on-agents-last-user-prompt.md): task
+018 owns consent and storage, task 019 expands bounded recovery across All, and task 016 adds trusted
+live Hook capture while every offline artifact remains content-free. Responses, reasoning, tools,
+diffs, approvals, attachments, earlier questions, and transcripts remain prohibited.
 
 ## Independent user intents
 
@@ -95,11 +110,12 @@ and bounds the event, then follows this protocol:
 
 1. If the authenticated local listener is available, send `{ deliveryId, event }` and wait for an
    acknowledgement.
-2. The listener asks the SQLite repository to record the delivery receipt and apply the runtime
-   event in one transaction.
+2. The listener asks the SQLite repository to record the delivery receipt, apply the runtime event,
+   and conditionally replace the one latest prompt in one transaction.
 3. Only after that transaction commits does the listener return `committed`.
-4. A connection error, timeout, lost acknowledgement, or closed Bitterless process writes the same
-   delivery ID and event as one atomic outbox file (`temporary file -> rename`).
+4. A connection error, timeout, lost acknowledgement, or closed Bitterless process retains the same
+   delivery/event identity but removes prompt fields before writing one atomic outbox file
+   (`temporary file -> rename`).
 5. Listener startup and each successful intake drain the outbox oldest-first. A replayed delivery
    already present in the receipt table is acknowledged without applying the event twice; its file
    is then deleted.
@@ -107,10 +123,11 @@ and bounds the event, then follows this protocol:
 This covers the ambiguous case where SQLite commits but the acknowledgement is lost. Dedupe is
 persistent across Bitterless restarts, not an in-memory set.
 
-Outbox inputs are bounded by schema, file size, and file count. Invalid or corrupt files move to a
-quarantine directory and surface a bounded observation error; an overflow marker also invalidates
-live hook evidence so EyesOnAgents never presents incomplete coverage as current. Receipt cleanup
-may remove old committed IDs only after no matching outbox file remains.
+Outbox inputs are bounded by schema, file size, and file count. Invalid or corrupt bytes are deleted
+and replaced by a content-free quarantine descriptor that surfaces a bounded observation error; an
+overflow marker also invalidates live hook evidence so EyesOnAgents never presents incomplete
+coverage as current. Receipt cleanup may remove old committed IDs only after no matching outbox file
+remains.
 
 All SQLite timestamps are integers. The migration is idempotent and must pass the retained
 multi-version migration audit before packaging.
@@ -142,11 +159,18 @@ not listening, never **Observing**.
 
 ```text
 ┌ Codex observation ────────────────────────────────────────────┐
-│ Needs review · hooks are installed but Codex has not trusted  │
+│ Current state · actions remain state-specific                  │
+│                                                              │
+│ Codex observation setup                                     │
+│ 1. Enable when absent; Repair only for definition drift.     │
+│ 2. If review is requested, Trust only Codex-flagged items.   │
+│    CLI users can enter /hooks.                               │
+│ 3. Check again while pending; Check status after install.    │
+│ 4. Optional question preview is separate and Off by default. │
+│    Enabling stores one bounded local preview; Off clears it. │
+│ Only Codex grants trust; Bitterless never bypasses review.   │
 │                                                              │
 │ [Review in Codex]  [Check again]                   [Disable]  │
-│ Open Codex Settings → Hooks and review Bitterless Hooks.      │
-│ CLI users can enter /hooks.                                  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -158,11 +182,24 @@ not listening, never **Observing**.
 - Review then opens the supported fixed deep link `codex://settings`. There is no supported Hook
   page deep link or trust RPC, so the UI truthfully instructs the user to select Settings → Hooks
   (or enter `/hooks` in the CLI). Bitterless never automates the Trust click.
+- Whenever the connection drawer is open, it presents the complete conditional lifecycle: Enable
+  only when absent or Repair drift, use Review in Codex and Trust only Codex-flagged items when
+  review is requested, then Check again while pending or Check status after installation. A fourth
+  step says the separate **Store latest user question** permission is off by default, retains one
+  bounded local preview only, and clears previews when disabled; Hook trust never grants that
+  permission, and replies/history remain prohibited. The same
+  neutral guide remains visible for absent, drifted, review-needed, error, and installed states;
+  action buttons still expose only valid current-state operations. A disabled Hook may retain trust
+  and need only re-enabling. Reason-specific review text remains a separate amber live summary, and
+  the guide explicitly says that only Codex can record trust.
 - **Check again** performs a new `hooks/list`. If the long-lived App Server is connected it is
   reused. Otherwise Bitterless starts a short inspection connection, checks status, terminates it,
   and leaves the user's App Server auto-connect choice unchanged.
-- Window activation performs the same recheck whenever observation is installed or awaiting
-  review. It does not poll continuously or silently restore a deliberately disconnected App Server.
+- Window activation performs the same Hook-trust recheck whenever observation is installed or
+  awaiting review. There is no independent Hook polling timer. The single ten-second poll uses the
+  separate parameter-free `refreshThreadPages()` operation. It never inspects Hook definitions,
+  rewrites trust state, or performs full inventory discovery; explicit Disconnect prevents it from
+  reconnecting when auto-connect intent is disabled.
 - **Repair** is reserved for missing/drifted definitions. Review and Check never rewrite an exact
   definition merely to provoke a new trust prompt.
 

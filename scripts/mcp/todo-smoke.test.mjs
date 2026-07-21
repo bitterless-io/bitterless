@@ -13,6 +13,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const cliPath = join(scriptDirectory, 'todo-smoke.mjs');
 const fixturePath = join(scriptDirectory, 'fixtures', 'todo-mcp.fixture.mjs');
 const tempDirectory = mkdtempSync(join(tmpdir(), 'bitterless-todo-smoke-'));
+const FIXTURE_DOMAIN_ID = '00000000000000000007';
 
 const runCli = (args, timeout = 10000, env = {}) => {
   return spawnSync(process.execPath, [cliPath, ...args], {
@@ -70,7 +71,7 @@ const assertFreshSessionCleanup = (run, options) => {
   const listCalls = run.state.calls.filter((call) => call.name === 'todo.list');
   assert.ok(listCalls.length >= 2);
   assert.ok(listCalls.every((call) => call.sessionId === deleteCall.sessionId));
-  assert.ok(listCalls.every((call) => call.args.domainId === 7));
+  assert.ok(listCalls.every((call) => call.args.domainId === FIXTURE_DOMAIN_ID));
 
   const deleteIndex = run.state.calls.indexOf(deleteCall);
   const ownershipGet = run.state.calls.slice(0, deleteIndex).findLast((call) => {

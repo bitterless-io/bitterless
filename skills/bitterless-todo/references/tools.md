@@ -44,7 +44,7 @@ Returns the todo row. Use it for one known ID.
 
 ### `todo.status`
 
-Arguments: `{ ids }`, where `ids` contains 1–100 positive integer IDs.
+Arguments: `{ ids }`, where `ids` contains 1–100 unique 20-character decimal Snowflake strings.
 
 Returns `{ items, summary }`. Each item has a `state` of `active`, `completed`, `deleted`, or
 `missing`. Prefer this over list polling for tracked IDs.
@@ -55,7 +55,7 @@ Returns `{ items, summary }`. Each item has a `state` of `active`, `completed`, 
 
 ```json
 {
-  "domainId": 1,
+  "domainId": "00000000000000000001",
   "title": "Concise personal action",
   "dueAt": null,
   "remindAt": null,

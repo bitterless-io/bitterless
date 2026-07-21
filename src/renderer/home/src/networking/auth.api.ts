@@ -1,7 +1,7 @@
 import { authEmitter } from '@/emitter/auth.emitter';
 
 const TEST_CORE_URL = 'https://bl-test-api.terncloud.com';
-const PROD_CORE_URL = 'https://api.bitterless.io';
+const PROD_CORE_URL = 'https://prod-bitterless-hcqmtqwtox.cn-shanghai.fcapp.run';
 const DEFAULT_PROD_CORE_URL = PROD_CORE_URL;
 const DEFAULT_DEV_CORE_URL = TEST_CORE_URL;
 const TOKEN_HEADER = '-x-bl-token';

@@ -47,6 +47,12 @@ export class EyesOnAgentsTable extends BaseTable {
       status_source TEXT NOT NULL DEFAULT 'discovery',
       status_observed_at INTEGER,
       last_activity_at INTEGER,
+      last_user_prompt_preview TEXT,
+      last_user_prompt_turn_id TEXT,
+      last_user_prompt_at INTEGER,
+      last_user_prompt_truncated INTEGER NOT NULL DEFAULT 0,
+      last_user_prompt_source TEXT,
+      last_user_prompt_checked_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY (domain_id) REFERENCES eyes_on_agents_domain(id)

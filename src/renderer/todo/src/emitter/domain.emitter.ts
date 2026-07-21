@@ -1,4 +1,5 @@
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { DomainDao } from '@preload/sqlite/dao/domain.dao';
+import type { DomainMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 
-export const domainEmitter = createXpcRendererEmitter<DomainDao>('DomainDao');
+export const domainEmitter =
+  createXpcRendererEmitter<DomainMcpDaoApi>('TodoistSyncDomainHandler');

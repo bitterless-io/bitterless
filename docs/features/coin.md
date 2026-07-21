@@ -55,8 +55,9 @@ Node.js access, Maestro's preload, browser automation, wallet signing, or tradin
 | Auth activation | Unlock Coin opening; do not open it automatically. |
 | Host quit/update | Await Coin cleanup before destroying host resources. |
 
-Default size is `1360x860`; minimum size is `800x600`. Geometry is persisted under
-`userData/coin/window-state.json` and restored only when visible on a connected display.
+Default size is `1360x860`; minimum size is `800x600`. Geometry follows the shared
+[top-level window state contract](window-state-persistence.md); the legacy
+`userData/coin/window-state.json` value is imported once when the unified Coin key is absent.
 
 ## Pages and tabs
 

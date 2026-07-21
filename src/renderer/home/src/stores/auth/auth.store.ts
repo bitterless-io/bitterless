@@ -1,6 +1,8 @@
 import { reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { authEmitter } from '@/emitter/auth.emitter';
+import { scheduleBestEffort, settleBestEffort } from '@/stores/auth/authSession.service';
+import { todoistSyncSessionEmitter } from '@/stores/auth/todoistSyncSession.emitter';
 import {
   changePasswordApi,
   loginApi,
@@ -87,6 +89,7 @@ const decodeJwtPayload = (token: string): { sub?: number; scope?: string } | nul
 class AuthStore {
   current: CurrentCustomer | null = null;
   loading = false;
+  loggingOut = false;
   sendingOtp = false;
   resettingPassword = false;
   checking = false;
@@ -107,36 +110,51 @@ class AuthStore {
     return ensureSessionEligibleCustomer(await meApi(token));
   }
 
-  private async activateAuthenticatedSession(current: CurrentCustomer): Promise<void> {
+  private activateAuthenticatedSession(current: CurrentCustomer): void {
     ensureSessionEligibleCustomer(current);
     if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
       throw new Error('账号尚未完成首次密码设置');
     }
 
-    try {
-      await authEmitter.activateSession();
-    } catch (err) {
-      this.clearLocalSession();
-      throw err;
+    scheduleBestEffort(() => authEmitter.activateSession(), (err) => {
+      console.error('[AuthStore] Failed to activate optional authenticated runtimes:', err);
+    });
+    const coreToken = getToken();
+    const deviceId = this.deviceId;
+    if (!coreToken || !deviceId) {
+      console.error('[AuthStore] Todo sync activation is missing the Core token or device ID');
+      return;
     }
+    scheduleBestEffort(
+      () => todoistSyncSessionEmitter.activate({
+        coreToken,
+        customerId: current.id,
+        deviceId,
+      }),
+      (err) => {
+        console.error('[AuthStore] Failed to activate Todo sync:', err);
+      },
+    );
   }
 
   private async activateToken(token: string, deviceId: string): Promise<CurrentCustomer> {
+    let current: CurrentCustomer;
     try {
-      const current = await this.fetchValidatedCustomer(token);
-      localStorage.setItem(DEVICE_ID_KEY, deviceId);
-      setToken(token);
-      this.current = current;
-
-      if (!customerNeedsPasswordSetup(current)) {
-        await this.activateAuthenticatedSession(current);
-      }
-      return current;
+      current = await this.fetchValidatedCustomer(token);
     } catch (err) {
       this.clearLocalSession();
       await logoutApi(token).catch(() => undefined);
       throw err;
     }
+
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+    setToken(token);
+    this.current = current;
+
+    if (!customerNeedsPasswordSetup(current)) {
+      this.activateAuthenticatedSession(current);
+    }
+    return current;
   }
 
   async loginWithPassword(email: string, password: string): Promise<void> {
@@ -231,7 +249,7 @@ class AuthStore {
         this.clearLocalSession();
         throw new Error('账号尚未完成激活，请使用新密码重新登录');
       }
-      await this.activateAuthenticatedSession(current);
+      this.activateAuthenticatedSession(current);
     } catch (err: any) {
       Message.error(err?.message || '密码设置失败');
       throw err;
@@ -255,7 +273,9 @@ class AuthStore {
       }
       return me;
     } catch (err) {
-      this.clearLocalSession();
+      if (getToken() === token) {
+        this.clearLocalSession();
+      }
       throw err;
     } finally {
       this.checking = false;
@@ -265,7 +285,7 @@ class AuthStore {
   async restoreSession(): Promise<CurrentCustomer> {
     const current = await this.fetchMe();
     if (!customerNeedsPasswordSetup(current)) {
-      await this.activateAuthenticatedSession(current);
+      this.activateAuthenticatedSession(current);
     }
     return current;
   }
@@ -276,15 +296,23 @@ class AuthStore {
   }
 
   async logout(): Promise<void> {
+    if (this.loggingOut) return;
+
     const token = getToken();
-    try {
-      if (token) {
-        await logoutApi(token);
-      }
-    } catch {
-      // Local logout should still complete when the server token is already gone.
-    }
+    this.loggingOut = true;
     this.clearLocalSession();
+    try {
+      const cleanup = [
+        () => authEmitter.deactivateSession(),
+        () => todoistSyncSessionEmitter.deactivate(),
+      ];
+      if (token) cleanup.push(() => logoutApi(token));
+      scheduleBestEffort(() => settleBestEffort(cleanup), (err) => {
+        console.error('[AuthStore] Failed to settle optional logout cleanup:', err);
+      });
+    } finally {
+      this.loggingOut = false;
+    }
   }
 }
 

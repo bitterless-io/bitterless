@@ -9,6 +9,9 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-eyes-core-'));
 const THREAD_ID = '019f653a-2ef7-7031-8f6b-c770bacffbb2';
 const ARCHIVED_THREAD_ID = '11111111-1111-4111-8111-111111111111';
+const refreshThreadId = (index) => (
+  `${index.toString(16).padStart(8, '0')}-0000-4000-8000-${index.toString(16).padStart(12, '0')}`
+);
 
 const loadTypeScriptModule = async (name, entry) => {
   const outfile = join(buildRoot, `${name}.mjs`);
@@ -32,6 +35,50 @@ try {
   assert.equal(contract.parseEyesOnAgentsUuid(THREAD_ID.toUpperCase()), THREAD_ID);
   assert.throws(() => contract.parseEyesOnAgentsUuid('not-a-thread'), /must be a UUID/);
   assert.equal(contract.buildEyesOnAgentsDeepLink(THREAD_ID), `codex://threads/${THREAD_ID}`);
+  const nameFirstProviderThread = { name: 'Name wins' };
+  Object.defineProperty(nameFirstProviderThread, 'preview', {
+    get: () => {
+      throw new Error('a valid name must short-circuit preview access');
+    }
+  });
+  assert.equal(
+    contract.normalizeEyesOnAgentsProviderThreadTitle(nameFirstProviderThread),
+    'Name wins'
+  );
+  assert.equal(
+    contract.normalizeEyesOnAgentsProviderThreadTitle({
+      name: null,
+      preview: `  line one\n${'x'.repeat(400)}😀suffix  `
+    }),
+    `line one ${'x'.repeat(291)}`,
+    'preview fallback must fold whitespace and safely enforce the 300 UTF-16 code-unit bound'
+  );
+  assert.equal(
+    contract.normalizeEyesOnAgentsProviderThreadTitle({
+      preview: `${'x'.repeat(299)}😀suffix`
+    }),
+    'x'.repeat(299),
+    'the 300-code-unit boundary must never retain half of a surrogate pair'
+  );
+  assert.equal(
+    contract.normalizeEyesOnAgentsProviderThreadTitle({
+      name: '\0invalid',
+      preview: 'Fallback title'
+    }),
+    'Fallback title'
+  );
+  assert.equal(
+    contract.normalizeEyesOnAgentsProviderThreadTitle({ preview: 'bad\0preview' }),
+    null
+  );
+  assert.equal(
+    contract.normalizeEyesOnAgentsProviderThreadTitle({ preview: '\ud800' }),
+    null
+  );
+  assert.equal(
+    contract.normalizeEyesOnAgentsProviderThreadTitle({ preview: 42 }),
+    null
+  );
   assert.throws(
     () => contract.parseEyesOnAgentsThreadIdParams({
       threadId: THREAD_ID,
@@ -178,8 +225,16 @@ try {
     upsertThreadSnapshots: async () => undefined,
     setThreadArchived: async () => undefined,
     markThreadsArchived: async () => undefined,
-    applyRuntimeEvent: async () => undefined,
-    applyRuntimeEventDelivery: async () => ({ duplicate: false }),
+    applyRuntimeEvent: async () => ({ created: false, titleMissing: false }),
+    applyRuntimeEventDelivery: async () => ({
+      duplicate: false,
+      created: false,
+      titleMissing: false
+    }),
+    enrichMissingThreadTitle: async () => ({ changed: false }),
+    getThreadRefreshPages: async () => ({ hot: [], cold: [], pageCount: 0, coldPage: null }),
+    refreshThreadPage: async () => ({ changed: false }),
+    clearLastUserPrompts: async () => ({ changed: false }),
     createDomain: async () => undefined,
     renameDomain: async () => undefined,
     deleteDomain: async () => undefined,
@@ -302,12 +357,27 @@ try {
       },
       listThreads: async () => {
         reconnectOrder.push('list');
-        return [{
-          id: THREAD_ID,
-          name: 'Not loaded task',
-          cwd: '/repo',
-          status: { type: 'notLoaded' }
-        }];
+        return [
+          {
+            id: THREAD_ID,
+            name: 'Not loaded task',
+            preview: `private\n${'preview'.repeat(60)}`,
+            cwd: '/repo',
+            status: { type: 'notLoaded' }
+          },
+          {
+            id: refreshThreadId(1),
+            name: null,
+            preview: `fallback\n${'x'.repeat(400)}`,
+            cwd: '/invalid\npath',
+            status: {
+              get type() {
+                throw new Error('optional status getter failure');
+              },
+              toJSON: () => ({ type: 'provider-malformed' })
+            }
+          }
+        ];
       },
       listArchivedThreads: async () => {
         reconnectOrder.push('list-archived');
@@ -387,7 +457,7 @@ try {
     ],
     'old managed-server evidence must be invalidated before a replacement server connects'
   );
-  assert.deepEqual(synchronizedThreads, [{
+  assert.deepEqual(synchronizedThreads[0], {
     threadId: THREAD_ID,
     title: 'Not loaded task',
     cwd: '/repo',
@@ -396,8 +466,18 @@ try {
     statusSource: 'discovery',
     statusObservedAt: 789,
     lastActivityAt: null
-  }], 'notLoaded sync evidence must carry the current server observation time');
-  assert.equal(synchronizedSnapshots.length, 2);
+  }, 'a valid name must admit the row without validating an unusable preview fallback');
+  assert.deepEqual(synchronizedThreads[1], {
+    threadId: refreshThreadId(1),
+    title: `fallback ${'x'.repeat(291)}`,
+    cwd: null,
+    runtimeState: 'unknown',
+    activeFlags: [],
+    statusSource: 'discovery',
+    statusObservedAt: 789,
+    lastActivityAt: null
+  }, 'optional preview, cwd, and status failures must degrade without dropping a valid UUID');
+  assert.equal(synchronizedSnapshots.length, 3);
   assert.deepEqual(
     synchronizedSnapshots.map((snapshot) => ({
       threadId: snapshot.threadId,
@@ -413,8 +493,21 @@ try {
         payload: {
           id: THREAD_ID,
           name: 'Not loaded task',
+          preview: `private\n${'preview'.repeat(60)}`,
           cwd: '/repo',
           status: { type: 'notLoaded' }
+        }
+      },
+      {
+        threadId: refreshThreadId(1),
+        archived: false,
+        syncedAt: 789,
+        payload: {
+          id: refreshThreadId(1),
+          name: null,
+          preview: `fallback\n${'x'.repeat(400)}`,
+          cwd: '/invalid\npath',
+          status: { type: 'provider-malformed' }
         }
       },
       {
@@ -432,7 +525,636 @@ try {
     'archive reconciliation must skip malformed entries without discarding valid ids'
   );
 
-  const createLifecycleHarness = (autoOnStart) => {
+  const tieredDesktopBridge = {
+    ...desktopBridge,
+    hasInstallationIntent: () => false,
+    hasExactInstallation: () => false,
+    refreshInstalledArtifacts: () => desktopBridge.getStatus(),
+    getDisabledExactHookKeys: () => []
+  };
+  const connectedAppServerStatus = () => ({
+    state: 'connected',
+    lastSyncedAt: null,
+    error: null,
+    autoConnectEnabled: true
+  });
+  const tieredHot = Array.from({ length: 5 }, (_, index) => ({
+    threadId: refreshThreadId(index + 10),
+    lastUserPromptCheckedAt: null
+  }));
+  const tieredColdPages = new Map([
+    [2, [{ threadId: refreshThreadId(20), lastUserPromptCheckedAt: null }]],
+    [3, [{ threadId: refreshThreadId(30), lastUserPromptCheckedAt: null }]]
+  ]);
+  const tieredPageRequests = [];
+  const tieredCommits = [];
+  let tieredActiveReads = 0;
+  let tieredMaxActiveReads = 0;
+  let tieredBroadcasts = 0;
+  let tieredPromptReads = 0;
+  const tieredService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async ({ coldPage, previousPageCount }) => {
+        tieredPageRequests.push({ coldPage, previousPageCount });
+        return {
+          hot: tieredHot,
+          cold: tieredColdPages.get(coldPage) ?? tieredColdPages.get(2),
+          pageCount: 3,
+          coldPage: coldPage > 3 ? 2 : coldPage
+        };
+      },
+      refreshThreadPage: async ({ threads }) => {
+        tieredCommits.push(threads);
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async (threadId) => {
+        tieredActiveReads += 1;
+        tieredMaxActiveReads = Math.max(tieredMaxActiveReads, tieredActiveReads);
+        await new Promise((resolve) => setImmediate(resolve));
+        tieredActiveReads -= 1;
+        return {
+          id: threadId,
+          name: `Thread ${threadId}`,
+          updatedAt: 2,
+          status: { type: 'idle' }
+        };
+      },
+      listThreadTurns: async () => {
+        tieredPromptReads += 1;
+        return [];
+      }
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    broadcastChanged: () => {
+      tieredBroadcasts += 1;
+    },
+    now: () => 2_500
+  });
+  assert.deepEqual(await tieredService.refreshThreadPages(), { changed: true });
+  assert.deepEqual(await tieredService.refreshThreadPages(), { changed: true });
+  assert.deepEqual(await tieredService.refreshThreadPages(), { changed: true });
+  assert.deepEqual(
+    tieredPageRequests,
+    [
+      { coldPage: 2, previousPageCount: null },
+      { coldPage: 3, previousPageCount: 3 },
+      { coldPage: 2, previousPageCount: 3 }
+    ],
+    'cold pages must cycle 2 -> 3 -> 2 while Main carries the previous page count'
+  );
+  assert.deepEqual(
+    tieredCommits.map((batch) => batch.map((thread) => thread.threadId)),
+    [
+      tieredHot.map((thread) => thread.threadId),
+      [refreshThreadId(20)],
+      tieredHot.map((thread) => thread.threadId),
+      [refreshThreadId(30)],
+      tieredHot.map((thread) => thread.threadId),
+      [refreshThreadId(20)]
+    ],
+    'each tick must commit the hot batch before exactly one cold batch'
+  );
+  assert.equal(tieredMaxActiveReads, 4, 'one batch must run no more than four row pipelines');
+  assert.equal(tieredBroadcasts, 6, 'each changed batch must broadcast exactly once');
+  assert.equal(tieredPromptReads, 0, 'disabled prompt retention must never request content');
+  for (const batch of tieredCommits) {
+    for (const patch of batch) {
+      assert.equal(patch.title, `Thread ${patch.threadId}`);
+      assert.equal(patch.lastActivityAt, 2_000);
+      assert.deepEqual(patch.status, {
+        runtimeState: 'idle',
+        activeFlags: [],
+        activeTurnId: null,
+        source: 'app_server',
+        observedAt: 2_500
+      });
+      assert.equal(patch.lastUserPrompt, undefined);
+    }
+  }
+
+  let promptPageSelectionCount = 0;
+  let promptContentReads = 0;
+  let promptBroadcasts = 0;
+  const promptCommits = [];
+  const promptThreadId = refreshThreadId(40);
+  const promptTieredService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async () => {
+        promptPageSelectionCount += 1;
+        return {
+          hot: [{
+            threadId: promptThreadId,
+            lastUserPromptCheckedAt: promptPageSelectionCount === 1 ? null : 3_000
+          }],
+          cold: [],
+          pageCount: 1,
+          coldPage: null
+        };
+      },
+      refreshThreadPage: async ({ threads }) => {
+        promptCommits.push(threads);
+        return { changed: promptCommits.length === 1 };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async () => ({
+        id: promptThreadId,
+        name: 'Prompt-aware title',
+        updatedAt: 3,
+        status: { type: 'active', activeFlags: ['waitingOnUserInput'] }
+      }),
+      listThreadTurns: async () => {
+        promptContentReads += 1;
+        return [{
+          id: 'turn-latest-user',
+          startedAt: 2.5,
+          itemsView: 'full',
+          items: [{
+            type: 'userMessage',
+            content: [
+              { type: 'text', text: '  Latest user question  ' },
+              { type: 'image', url: 'must-not-be-retained' }
+            ]
+          }]
+        }];
+      }
+    },
+    lastUserPromptPreference: {
+      isEnabled: () => true,
+      enable: () => false,
+      disable: () => false
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    broadcastChanged: () => {
+      promptBroadcasts += 1;
+    },
+    now: () => 3_500
+  });
+  assert.deepEqual(await promptTieredService.refreshThreadPages(), { changed: true });
+  assert.deepEqual(await promptTieredService.refreshThreadPages(), { changed: false });
+  assert.equal(promptContentReads, 1, 'prompt content reads must use the activity watermark gate');
+  assert.equal(promptBroadcasts, 1, 'a semantic no-op page must not broadcast');
+  assert.deepEqual(promptCommits[0], [{
+    threadId: promptThreadId,
+    title: 'Prompt-aware title',
+    status: {
+      runtimeState: 'waiting_input',
+      activeFlags: ['waitingOnUserInput'],
+      source: 'app_server',
+      observedAt: 3_500
+    },
+    lastActivityAt: 3_000,
+    lastUserPrompt: {
+      preview: 'Latest user question',
+      turnId: 'turn-latest-user',
+      observedAt: 2_500,
+      checkedAt: 3_000,
+      truncated: false,
+      source: 'app_server'
+    }
+  }], 'one opted-in page patch must combine title, status, activity, and latest question');
+  assert.equal(
+    promptCommits[1][0].lastUserPrompt,
+    undefined,
+    'an unchanged provider watermark must skip content while retaining metadata refresh'
+  );
+
+  const partialThreadIds = [
+    refreshThreadId(50),
+    refreshThreadId(51),
+    refreshThreadId(52)
+  ];
+  const partialCommits = [];
+  let partialBroadcasts = 0;
+  const partialTieredService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async () => ({
+        hot: partialThreadIds.map((threadId) => ({
+          threadId,
+          lastUserPromptCheckedAt: null
+        })),
+        cold: [],
+        pageCount: 1,
+        coldPage: null
+      }),
+      refreshThreadPage: async ({ threads }) => {
+        partialCommits.push(threads);
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async (threadId) => {
+        if (threadId === partialThreadIds[1]) throw new Error('per-row read failure');
+        if (threadId === partialThreadIds[2]) {
+          return { id: refreshThreadId(99), name: 'Mismatched row', updatedAt: 4 };
+        }
+        return {
+          id: threadId,
+          name: 'Only valid row',
+          updatedAt: 4,
+          status: {
+            get type() {
+              throw new Error('optional thread/read status getter failure');
+            }
+          }
+        };
+      }
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    broadcastChanged: () => {
+      partialBroadcasts += 1;
+    },
+    now: () => 4_500
+  });
+  assert.deepEqual(await partialTieredService.refreshThreadPages(), { changed: true });
+  assert.deepEqual(
+    partialCommits.map((batch) => batch.map((patch) => patch.threadId)),
+    [[partialThreadIds[0]]],
+    'failed or malformed row reads must not roll back a valid row in the same page'
+  );
+  assert.equal(
+    partialCommits[0][0].status,
+    undefined,
+    'an unusable optional status must not discard a valid thread/read title patch'
+  );
+  assert.equal(partialBroadcasts, 1);
+
+  const failedColdPageRequests = [];
+  const failedColdId = refreshThreadId(61);
+  let failedColdBroadcasts = 0;
+  const failedColdService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async ({ coldPage, previousPageCount }) => {
+        failedColdPageRequests.push({ coldPage, previousPageCount });
+        return {
+          hot: [{ threadId: refreshThreadId(60), lastUserPromptCheckedAt: 5_000 }],
+          cold: [{ threadId: failedColdId, lastUserPromptCheckedAt: 5_000 }],
+          pageCount: 3,
+          coldPage
+        };
+      },
+      refreshThreadPage: async ({ threads }) => {
+        if (threads.some((thread) => thread.threadId === failedColdId)) {
+          throw new Error('cold persistence failure');
+        }
+        return { changed: false };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async (threadId) => ({ id: threadId, name: 'No-op', updatedAt: 5 })
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    broadcastChanged: () => {
+      failedColdBroadcasts += 1;
+    },
+    now: () => 5_500
+  });
+  assert.deepEqual(await failedColdService.refreshThreadPages(), { changed: false });
+  assert.deepEqual(await failedColdService.refreshThreadPages(), { changed: false });
+  assert.deepEqual(
+    failedColdPageRequests,
+    [
+      { coldPage: 2, previousPageCount: null },
+      { coldPage: 2, previousPageCount: 3 }
+    ],
+    'a failed cold persistence batch must not advance the round-robin cursor'
+  );
+  assert.equal(failedColdBroadcasts, 0, 'no-op hot and failed cold batches must stay silent');
+
+  let releaseSharedSelection;
+  let markSharedSelectionStarted;
+  const sharedSelectionStarted = new Promise((resolve) => {
+    markSharedSelectionStarted = resolve;
+  });
+  const sharedSelectionGate = new Promise((resolve) => {
+    releaseSharedSelection = resolve;
+  });
+  let sharedSelectionCount = 0;
+  const sharedRefreshService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async () => {
+        sharedSelectionCount += 1;
+        markSharedSelectionStarted();
+        await sharedSelectionGate;
+        return { hot: [], cold: [], pageCount: 0, coldPage: null };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    now: () => 6_000
+  });
+  const firstSharedRefresh = sharedRefreshService.refreshThreadPages();
+  await sharedSelectionStarted;
+  const secondSharedRefresh = sharedRefreshService.refreshThreadPages();
+  releaseSharedSelection();
+  assert.deepEqual(
+    await Promise.all([firstSharedRefresh, secondSharedRefresh]),
+    [{ changed: false }, { changed: false }]
+  );
+  assert.equal(sharedSelectionCount, 1, 'overlapping ticks must share one result-bearing refresh');
+
+  const staleReadThreadId = refreshThreadId(65);
+  let staleReadNow = 10_000;
+  let releaseStaleRead;
+  let markStaleReadStarted;
+  const staleReadStarted = new Promise((resolve) => {
+    markStaleReadStarted = resolve;
+  });
+  const staleReadGate = new Promise((resolve) => {
+    releaseStaleRead = resolve;
+  });
+  const staleReadStatus = {
+    runtimeState: 'unknown',
+    observedAt: null
+  };
+  const staleReadPatches = [];
+  const staleReadService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async () => ({
+        hot: [{ threadId: staleReadThreadId, lastUserPromptCheckedAt: 10_000 }],
+        cold: [],
+        pageCount: 1,
+        coldPage: null
+      }),
+      applyRuntimeEvent: async ({ event }) => {
+        if (event.type !== 'thread_status') return;
+        staleReadStatus.runtimeState = event.runtimeState;
+        staleReadStatus.observedAt = event.observedAt;
+      },
+      refreshThreadPage: async ({ threads }) => {
+        staleReadPatches.push(...threads);
+        for (const thread of threads) {
+          if (
+            thread.status &&
+            (
+              staleReadStatus.observedAt === null ||
+              thread.status.observedAt >= staleReadStatus.observedAt
+            )
+          ) {
+            staleReadStatus.runtimeState = thread.status.runtimeState;
+            staleReadStatus.observedAt = thread.status.observedAt;
+          }
+        }
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async () => {
+        markStaleReadStarted();
+        await staleReadGate;
+        return {
+          id: staleReadThreadId,
+          name: 'Older read response',
+          updatedAt: 9,
+          status: { type: 'idle' }
+        };
+      }
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    now: () => staleReadNow
+  });
+  const staleReadRefresh = staleReadService.refreshThreadPages();
+  await staleReadStarted;
+  staleReadNow = 20_000;
+  await staleReadService.handleAppServerNotification('thread/status/changed', {
+    threadId: staleReadThreadId,
+    status: { type: 'active', activeFlags: [] }
+  });
+  releaseStaleRead();
+  await staleReadRefresh;
+  assert.equal(
+    staleReadPatches[0].status.observedAt,
+    10_000,
+    'thread/read status must retain its request-start watermark'
+  );
+  assert.deepEqual(
+    staleReadStatus,
+    { runtimeState: 'working', observedAt: 20_000 },
+    'a read requested before a newer lifecycle notification must not overwrite that notification'
+  );
+
+  let cancelledReadConnected = true;
+  let cancelledColdReadCount = 0;
+  let releaseCancelledColdRead;
+  let markCancelledColdReadStarted;
+  const cancelledColdReadStarted = new Promise((resolve) => {
+    markCancelledColdReadStarted = resolve;
+  });
+  const cancelledColdReadGate = new Promise((resolve) => {
+    releaseCancelledColdRead = resolve;
+  });
+  const cancelledReadPageRequests = [];
+  const cancelledReadHotId = refreshThreadId(66);
+  const cancelledReadColdId = refreshThreadId(67);
+  const cancelledReadService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async ({ coldPage, previousPageCount }) => {
+        cancelledReadPageRequests.push({ coldPage, previousPageCount });
+        return {
+          hot: [{ threadId: cancelledReadHotId, lastUserPromptCheckedAt: 10_000 }],
+          cold: [{ threadId: cancelledReadColdId, lastUserPromptCheckedAt: 10_000 }],
+          pageCount: 3,
+          coldPage
+        };
+      },
+      refreshThreadPage: async () => ({ changed: false })
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: (autoConnectEnabled) => ({
+        state: cancelledReadConnected ? 'connected' : 'disconnected',
+        lastSyncedAt: null,
+        error: null,
+        autoConnectEnabled
+      }),
+      isConnected: () => cancelledReadConnected,
+      disconnect: async () => {
+        cancelledReadConnected = false;
+      },
+      readThread: async (threadId) => {
+        if (threadId === cancelledReadColdId && cancelledColdReadCount === 0) {
+          cancelledColdReadCount += 1;
+          markCancelledColdReadStarted();
+          await cancelledColdReadGate;
+        }
+        return { id: threadId, name: 'Cancellation read', updatedAt: 10 };
+      }
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    now: () => 11_000
+  });
+  const cancelledReadRefresh = cancelledReadService.refreshThreadPages();
+  await cancelledColdReadStarted;
+  const cancelledReadDisconnect = cancelledReadService.disconnectAppServer();
+  const [cancelledReadResult] = await Promise.all([
+    cancelledReadRefresh,
+    cancelledReadDisconnect
+  ]);
+  releaseCancelledColdRead();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(cancelledReadResult, { changed: false });
+  cancelledReadConnected = true;
+  await cancelledReadService.refreshThreadPages();
+  assert.deepEqual(
+    cancelledReadPageRequests,
+    [
+      { coldPage: 2, previousPageCount: null },
+      { coldPage: 2, previousPageCount: 3 }
+    ],
+    'disconnecting during a cold read must not advance its cursor'
+  );
+
+  let drainingMutationConnected = true;
+  let releaseDrainingMutation;
+  let markDrainingMutationStarted;
+  const drainingMutationStarted = new Promise((resolve) => {
+    markDrainingMutationStarted = resolve;
+  });
+  const drainingMutationGate = new Promise((resolve) => {
+    releaseDrainingMutation = resolve;
+  });
+  const drainingMutationPageRequests = [];
+  const drainingMutationHotId = refreshThreadId(68);
+  const drainingMutationColdId = refreshThreadId(69);
+  let drainingMutationColdCount = 0;
+  let drainingMutationBroadcasts = 0;
+  const drainingMutationService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async ({ coldPage, previousPageCount }) => {
+        drainingMutationPageRequests.push({ coldPage, previousPageCount });
+        return {
+          hot: [{ threadId: drainingMutationHotId, lastUserPromptCheckedAt: 12_000 }],
+          cold: [{ threadId: drainingMutationColdId, lastUserPromptCheckedAt: 12_000 }],
+          pageCount: 3,
+          coldPage
+        };
+      },
+      refreshThreadPage: async ({ threads }) => {
+        if (
+          threads.some((thread) => thread.threadId === drainingMutationColdId) &&
+          drainingMutationColdCount === 0
+        ) {
+          drainingMutationColdCount += 1;
+          markDrainingMutationStarted();
+          await drainingMutationGate;
+          return { changed: true };
+        }
+        return { changed: false };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: (autoConnectEnabled) => ({
+        state: drainingMutationConnected ? 'connected' : 'disconnected',
+        lastSyncedAt: null,
+        error: null,
+        autoConnectEnabled
+      }),
+      isConnected: () => drainingMutationConnected,
+      disconnect: async () => {
+        drainingMutationConnected = false;
+      },
+      readThread: async (threadId) => ({
+        id: threadId,
+        name: 'Drained mutation',
+        updatedAt: 12
+      })
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    broadcastChanged: () => {
+      drainingMutationBroadcasts += 1;
+    },
+    now: () => 13_000
+  });
+  const drainingMutationRefresh = drainingMutationService.refreshThreadPages();
+  await drainingMutationStarted;
+  let drainingDisconnectResolved = false;
+  const drainingDisconnect = drainingMutationService.disconnectAppServer().then(() => {
+    drainingDisconnectResolved = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    drainingDisconnectResolved,
+    false,
+    'disconnect must drain a repository mutation that already started'
+  );
+  releaseDrainingMutation();
+  const [drainingMutationResult] = await Promise.all([
+    drainingMutationRefresh,
+    drainingDisconnect
+  ]);
+  assert.deepEqual(drainingMutationResult, { changed: true });
+  assert.equal(
+    drainingMutationBroadcasts,
+    0,
+    'a drained mutation completing after cancellation must not emit a stale broadcast'
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  drainingMutationConnected = true;
+  await drainingMutationService.refreshThreadPages();
+  assert.deepEqual(
+    drainingMutationPageRequests,
+    [
+      { coldPage: 2, previousPageCount: null },
+      { coldPage: 2, previousPageCount: 3 }
+    ],
+    'a drained-but-cancelled cold mutation must not advance its cursor'
+  );
+
+  const createLifecycleHarness = (autoOnStart, options = {}) => {
     const calls = [];
     const runtimeEvents = [];
     const archiveTransitions = [];
@@ -440,6 +1162,7 @@ try {
     const discoveredBatches = [];
     const snapshotBatches = [];
     const openedUrls = [];
+    const titleEnrichments = [];
     let lifecycleNow = 1_000;
     let appServerConnected = false;
     let activeInventory = [];
@@ -455,6 +1178,7 @@ try {
     let duringListenerStart = async () => undefined;
     let duringListenerStop = async () => undefined;
     let duringRuntimeEvent = async () => undefined;
+    let duringPromptClear = async () => undefined;
     let duringSettingGet = async () => undefined;
     let duringSettingUpsert = async () => undefined;
     let duringThreadList = async () => undefined;
@@ -464,6 +1188,12 @@ try {
     let disabledHookKeys = ['fresh-owned-disabled-key'];
     let observationInstalled = true;
     let localInstallationExact = true;
+    let lastUserPromptCaptureEnabled = options.lastUserPromptCaptureEnabled === true;
+    let promptClearCount = 0;
+    const runtimePersistenceResult = options.runtimePersistenceResult ?? {
+      created: false,
+      titleMissing: false
+    };
     let bridgeStatus = {
       state: 'needs_trust',
       reviewReason: 'untrusted',
@@ -496,18 +1226,40 @@ try {
         await duringArchiveTransition(params);
       },
       markThreadsArchived: async (params) => archivedBatches.push(params),
-      applyRuntimeEvent: async ({ event }) => {
-        runtimeEvents.push({ event, callIndex: calls.length });
+      clearLastUserPrompts: async () => {
+        calls.push('prompt-clear');
+        promptClearCount += 1;
+        await duringPromptClear();
+        return { changed: true };
+      },
+      getThreadRefreshPages: async (params) => {
+        if (options.getThreadRefreshPages) {
+          return await options.getThreadRefreshPages(params);
+        }
+        return await repository.getThreadRefreshPages(params);
+      },
+      refreshThreadPage: async (params) => {
+        if (options.refreshThreadPage) return await options.refreshThreadPage(params);
+        return await repository.refreshThreadPage(params);
+      },
+      applyRuntimeEvent: async ({ event, hookLastUserPrompt }) => {
+        runtimeEvents.push({ event, hookLastUserPrompt, callIndex: calls.length });
         calls.push(`event:${event.type}`);
         await duringRuntimeEvent(event);
         calls.push(`event-finished:${event.type}`);
+        return runtimePersistenceResult;
       },
-      applyRuntimeEventDelivery: async ({ deliveryId, event }) => {
-        runtimeEvents.push({ event, deliveryId, callIndex: calls.length });
+      applyRuntimeEventDelivery: async ({ deliveryId, event, hookLastUserPrompt }) => {
+        runtimeEvents.push({ event, deliveryId, hookLastUserPrompt, callIndex: calls.length });
         calls.push(`delivery:${event.type}`);
         await duringRuntimeEvent(event);
         calls.push(`delivery-finished:${event.type}`);
-        return { duplicate: false };
+        return { duplicate: false, ...runtimePersistenceResult };
+      },
+      enrichMissingThreadTitle: async (params) => {
+        titleEnrichments.push(params);
+        calls.push('title-enriched');
+        return { changed: true };
       }
     };
     const lifecycleBridge = {
@@ -613,6 +1365,11 @@ try {
           return activeInventory;
         },
         listArchivedThreads: async () => archivedInventory,
+        readThread: async (threadId) => {
+          calls.push(`thread-read:${threadId}`);
+          if (options.readThread) return await options.readThread(threadId);
+          return { id: threadId, name: 'Targeted title' };
+        },
         listHooks: async () => {
           calls.push('hooks-list');
           await duringHooksList();
@@ -642,6 +1399,19 @@ try {
           bridgeStatus = { ...bridgeStatus, listening: false, listeningSince: null };
         }
       },
+      lastUserPromptPreference: {
+        isEnabled: () => lastUserPromptCaptureEnabled,
+        enable: () => {
+          if (lastUserPromptCaptureEnabled) return false;
+          lastUserPromptCaptureEnabled = true;
+          return true;
+        },
+        disable: () => {
+          if (!lastUserPromptCaptureEnabled) return false;
+          lastUserPromptCaptureEnabled = false;
+          return true;
+        }
+      },
       openExternal: async (url) => {
         openedUrls.push(url);
       },
@@ -656,6 +1426,7 @@ try {
       snapshotBatches,
       lifecycleBridge,
       runtimeEvents,
+      titleEnrichments,
       openedUrls,
       service,
       advance: () => { lifecycleNow += 1_000; },
@@ -673,6 +1444,7 @@ try {
       duringListenerStart: (callback) => { duringListenerStart = callback; },
       duringListenerStop: (callback) => { duringListenerStop = callback; },
       duringRuntimeEvent: (callback) => { duringRuntimeEvent = callback; },
+      duringPromptClear: (callback) => { duringPromptClear = callback; },
       duringSettingGet: (callback) => { duringSettingGet = callback; },
       duringSettingUpsert: (callback) => { duringSettingUpsert = callback; },
       duringThreadList: (callback) => { duringThreadList = callback; },
@@ -698,6 +1470,8 @@ try {
         activeInventory = active;
         archivedInventory = archived;
       },
+      lastUserPromptCaptureEnabled: () => lastUserPromptCaptureEnabled,
+      promptClearCount: () => promptClearCount,
       isAppServerConnected: () => appServerConnected,
       settingValue: () => settingValue,
       status: () => bridgeStatus
@@ -2140,6 +2914,423 @@ try {
       turnId: 'turn-focus'
     }
   };
+  const hookPromptEvent = {
+    ...hookEvent,
+    schemaVersion: 2,
+    payload: {
+      ...hookEvent.payload,
+      userPromptPreview: 'First line\nSecond line',
+      userPromptTruncated: false
+    }
+  };
+
+  let titleReadMode = 'success';
+  let releaseOldTitleRead;
+  let markOldTitleReadStarted;
+  const oldTitleReadStarted = new Promise((resolve) => {
+    markOldTitleReadStarted = resolve;
+  });
+  const oldTitleReadGate = new Promise((resolve) => {
+    releaseOldTitleRead = resolve;
+  });
+  const titleEnrichmentHarness = createLifecycleHarness(false, {
+    runtimePersistenceResult: { created: true, titleMissing: true },
+    readThread: async (threadId) => {
+      if (titleReadMode === 'rejected') throw new Error('provider details stay private');
+      if (titleReadMode === 'unusable') {
+        return { id: threadId, name: null, preview: 'bad\0preview' };
+      }
+      if (titleReadMode === 'old-rejected') {
+        markOldTitleReadStarted();
+        await oldTitleReadGate;
+        throw new Error('late provider failure stays private');
+      }
+      return {
+        id: threadId,
+        name: 'Targeted title repair',
+        preview: 'must not be retained by title repair',
+        status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
+        updatedAt: 500
+      };
+    }
+  });
+  await titleEnrichmentHarness.service.connectAppServer();
+  await titleEnrichmentHarness.service.handleAppServerNotification('turn/started', {
+    threadId: THREAD_ID,
+    turn: { id: 'title-repair-a' }
+  });
+  await titleEnrichmentHarness.service.handleAppServerNotification('thread/status/changed', {
+    threadId: THREAD_ID,
+    status: { type: 'active', activeFlags: [] }
+  });
+  assert.equal(
+    titleEnrichmentHarness.calls.filter((call) => call.startsWith('thread-read:')).length,
+    0,
+    'title-only repair must begin after the lifecycle commit returns'
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    titleEnrichmentHarness.calls.filter((call) => call.startsWith('thread-read:')).length,
+    1,
+    'concurrent missing-title evidence for one thread must share one targeted read'
+  );
+  assert.deepEqual(titleEnrichmentHarness.titleEnrichments, [{
+    threadId: THREAD_ID,
+    title: 'Targeted title repair'
+  }], 'targeted repair must persist only the normalized title with a NULL-title CAS');
+  assert.equal(
+    (await titleEnrichmentHarness.service.getSnapshot()).titleEnrichmentDiagnostic,
+    null
+  );
+
+  titleReadMode = 'rejected';
+  titleEnrichmentHarness.advance();
+  await titleEnrichmentHarness.service.handleAppServerNotification('turn/started', {
+    threadId: THREAD_ID,
+    turn: { id: 'title-repair-b' }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const rejectedTitleSnapshot = await titleEnrichmentHarness.service.getSnapshot();
+  assert.deepEqual(rejectedTitleSnapshot.titleEnrichmentDiagnostic, {
+    state: 'rejected',
+    reason: 'thread_read_rejected',
+    threadId: THREAD_ID,
+    observedAt: new Date(2_000).toISOString()
+  });
+  assert.equal(rejectedTitleSnapshot.connection.state, 'connected');
+  assert.equal(
+    JSON.stringify(rejectedTitleSnapshot.titleEnrichmentDiagnostic).includes('provider details'),
+    false,
+    'title diagnostics must never retain provider errors or response content'
+  );
+
+  titleReadMode = 'unusable';
+  titleEnrichmentHarness.advance();
+  await titleEnrichmentHarness.service.handleAppServerNotification('turn/started', {
+    threadId: THREAD_ID,
+    turn: { id: 'title-repair-c' }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    (await titleEnrichmentHarness.service.getSnapshot()).titleEnrichmentDiagnostic.reason,
+    'unusable_response'
+  );
+
+  titleReadMode = 'old-rejected';
+  await titleEnrichmentHarness.service.handleAppServerNotification('turn/started', {
+    threadId: THREAD_ID,
+    turn: { id: 'title-repair-d' }
+  });
+  await oldTitleReadStarted;
+  await titleEnrichmentHarness.service.syncThreads();
+  releaseOldTitleRead();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    (await titleEnrichmentHarness.service.getSnapshot()).titleEnrichmentDiagnostic,
+    null,
+    'an old targeted failure must not overwrite a later successful full sync'
+  );
+
+  await titleEnrichmentHarness.service.disconnectAppServer();
+  const disconnectedDelivery = await titleEnrichmentHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '17171717-1717-4717-8717-171717171717',
+    event: {
+      ...hookEvent,
+      eventId: '17171717-1717-4717-8717-171717171717',
+      payload: { ...hookEvent.payload, turnId: 'title-repair-hook' }
+    }
+  });
+  assert.deepEqual(
+    disconnectedDelivery,
+    { duplicate: false },
+    'the public Hook ACK must not expose internal created/titleMissing fields'
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    (await titleEnrichmentHarness.service.getSnapshot()).titleEnrichmentDiagnostic,
+    {
+      state: 'skipped',
+      reason: 'app_server_unavailable',
+      threadId: THREAD_ID,
+      observedAt: new Date(3_000).toISOString()
+    }
+  );
+
+  const diagnosticThreadA = refreshThreadId(80);
+  const targetedThreadB = refreshThreadId(81);
+  let generationPhase = 'diagnostic-a';
+  let releaseTieredA;
+  let markTieredAStarted;
+  const tieredAStarted = new Promise((resolve) => {
+    markTieredAStarted = resolve;
+  });
+  const tieredAGate = new Promise((resolve) => {
+    releaseTieredA = resolve;
+  });
+  let releaseTargetedB;
+  let markTargetedBStarted;
+  const targetedBStarted = new Promise((resolve) => {
+    markTargetedBStarted = resolve;
+  });
+  const targetedBGate = new Promise((resolve) => {
+    releaseTargetedB = resolve;
+  });
+  const generationFenceHarness = createLifecycleHarness(false, {
+    runtimePersistenceResult: { created: true, titleMissing: true },
+    getThreadRefreshPages: async () => ({
+      hot: [{ threadId: diagnosticThreadA, lastUserPromptCheckedAt: null }],
+      cold: [],
+      pageCount: 1,
+      coldPage: null
+    }),
+    refreshThreadPage: async () => ({ changed: true }),
+    readThread: async (threadId) => {
+      if (threadId === diagnosticThreadA && generationPhase === 'diagnostic-a') {
+        throw new Error('initial diagnostic A');
+      }
+      if (threadId === diagnosticThreadA) {
+        markTieredAStarted();
+        await tieredAGate;
+        return { id: threadId, name: 'Tiered repair A' };
+      }
+      markTargetedBStarted();
+      await targetedBGate;
+      throw new Error('targeted failure B');
+    }
+  });
+  await generationFenceHarness.service.connectAppServer();
+  await generationFenceHarness.service.handleAppServerNotification('turn/started', {
+    threadId: diagnosticThreadA,
+    turn: { id: 'diagnostic-a' }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    (await generationFenceHarness.service.getSnapshot()).titleEnrichmentDiagnostic.threadId,
+    diagnosticThreadA
+  );
+
+  generationPhase = 'concurrent';
+  const tieredRepairA = generationFenceHarness.service.refreshThreadPages();
+  await tieredAStarted;
+  await generationFenceHarness.service.handleAppServerNotification('turn/started', {
+    threadId: targetedThreadB,
+    turn: { id: 'targeted-b' }
+  });
+  await targetedBStarted;
+  releaseTieredA();
+  await tieredRepairA;
+  assert.equal(
+    (await generationFenceHarness.service.getSnapshot()).titleEnrichmentDiagnostic,
+    null,
+    'tiered success may clear diagnostic A without advancing targeted generation B'
+  );
+  releaseTargetedB();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    (await generationFenceHarness.service.getSnapshot()).titleEnrichmentDiagnostic,
+    {
+      state: 'rejected',
+      reason: 'thread_read_rejected',
+      threadId: targetedThreadB,
+      observedAt: new Date(1_000).toISOString()
+    },
+    'tiered repair A must not suppress a later failure from in-flight targeted B'
+  );
+  await generationFenceHarness.service.disconnectAppServer();
+
+  const shutdownRaceHarness = createLifecycleHarness(false, {
+    runtimePersistenceResult: { created: true, titleMissing: true }
+  });
+  await shutdownRaceHarness.service.connectAppServer();
+  let releaseShutdownHookWrite;
+  let markShutdownHookWriteStarted;
+  const shutdownHookWriteStarted = new Promise((resolve) => {
+    markShutdownHookWriteStarted = resolve;
+  });
+  const shutdownHookWriteGate = new Promise((resolve) => {
+    releaseShutdownHookWrite = resolve;
+  });
+  shutdownRaceHarness.duringRuntimeEvent(async (event) => {
+    if (event.turnId !== 'shutdown-title-race') return;
+    markShutdownHookWriteStarted();
+    await shutdownHookWriteGate;
+  });
+  const shutdownRaceDelivery = shutdownRaceHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '18181818-1818-4818-8818-181818181818',
+    event: {
+      ...hookEvent,
+      eventId: '18181818-1818-4818-8818-181818181818',
+      payload: { ...hookEvent.payload, turnId: 'shutdown-title-race' }
+    }
+  });
+  await shutdownHookWriteStarted;
+  let shutdownRaceSettled = false;
+  const shutdownRace = shutdownRaceHarness.service.shutdown().finally(() => {
+    shutdownRaceSettled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    shutdownRaceHarness.isAppServerConnected(),
+    false,
+    'the first App Server teardown join may finish while the Hook write is still gated'
+  );
+  releaseShutdownHookWrite();
+  await Promise.all([shutdownRaceDelivery, shutdownRace]);
+  assert.equal(shutdownRaceSettled, true);
+  const shutdownNotifyCount = shutdownRaceHarness.calls.filter(
+    (call) => call === 'notify'
+  ).length;
+  assert.equal(
+    (await shutdownRaceHarness.service.getSnapshot()).titleEnrichmentDiagnostic.reason,
+    'app_server_unavailable',
+    'shutdown must drain the title operation scheduled by the final Hook write'
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    shutdownRaceHarness.calls.filter((call) => call === 'notify').length,
+    shutdownNotifyCount,
+    'shutdown must not return with a late title diagnostic broadcast still queued'
+  );
+
+  const promptCaptureHarness = createLifecycleHarness(false, {
+    lastUserPromptCaptureEnabled: true
+  });
+  await promptCaptureHarness.service.connectAppServer();
+  await promptCaptureHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '15151515-1515-4515-8515-151515151515',
+    event: hookPromptEvent
+  });
+  assert.deepEqual(
+    promptCaptureHarness.runtimeEvents.at(-1)?.hookLastUserPrompt,
+    { preview: 'First line\nSecond line', truncated: false },
+    'an enabled trusted V2 UserPromptSubmit must atomically carry its bounded preview'
+  );
+  await promptCaptureHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '16161616-1616-4616-8616-161616161616',
+    event: {
+      ...hookEvent,
+      eventId: '16161616-1616-4616-8616-161616161616',
+      occurredAt: 1_002,
+      payload: { ...hookEvent.payload, turnId: 'turn-metadata-only' }
+    }
+  });
+  assert.deepEqual(
+    promptCaptureHarness.runtimeEvents.at(-1)?.hookLastUserPrompt,
+    { preview: null, truncated: false },
+    'an enabled V1 UserPromptSubmit must establish pending recovery without content'
+  );
+  await promptCaptureHarness.service.disconnectAppServer();
+
+  const promptOffHarness = createLifecycleHarness(false);
+  await promptOffHarness.service.connectAppServer();
+  await promptOffHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '17171717-1717-4717-8717-171717171717',
+    event: {
+      ...hookPromptEvent,
+      eventId: '17171717-1717-4717-8717-171717171717'
+    }
+  });
+  assert.equal(
+    promptOffHarness.runtimeEvents.at(-1)?.hookLastUserPrompt,
+    undefined,
+    'the default-off main-process gate must preserve lifecycle delivery without prompt state'
+  );
+  await promptOffHarness.service.disconnectAppServer();
+
+  const stalePromptHarness = createLifecycleHarness(false, {
+    lastUserPromptCaptureEnabled: true
+  });
+  let releaseStalePromptInspection;
+  let markStalePromptBuffered;
+  const stalePromptBuffered = new Promise((resolve) => {
+    markStalePromptBuffered = resolve;
+  });
+  const stalePromptInspectionGate = new Promise((resolve) => {
+    releaseStalePromptInspection = resolve;
+  });
+  stalePromptHarness.duringHooksList(async () => {
+    await stalePromptHarness.service.applyCodexHookEvent({
+      ...hookPromptEvent,
+      eventId: '18181818-1818-4818-8818-181818181818',
+      payload: { ...hookPromptEvent.payload, turnId: 'turn-stale-preference' }
+    });
+    markStalePromptBuffered();
+    await stalePromptInspectionGate;
+  });
+  const stalePromptConnect = stalePromptHarness.service.connectAppServer();
+  await stalePromptBuffered;
+  await stalePromptHarness.service.setLastUserPromptCaptureEnabled({ enabled: false });
+  await stalePromptHarness.service.setLastUserPromptCaptureEnabled({ enabled: true });
+  releaseStalePromptInspection();
+  await stalePromptConnect;
+  assert.equal(
+    stalePromptHarness.runtimeEvents.at(-1)?.event.turnId,
+    'turn-stale-preference',
+    'a preference epoch change must not discard lifecycle metadata from a trusted queue'
+  );
+  assert.equal(
+    stalePromptHarness.runtimeEvents.at(-1)?.hookLastUserPrompt,
+    undefined,
+    'disable then re-enable must not let an older queued prompt cross the preference epoch'
+  );
+  await stalePromptHarness.service.disconnectAppServer();
+
+  const promptDisableFenceHarness = createLifecycleHarness(false, {
+    lastUserPromptCaptureEnabled: true
+  });
+  await promptDisableFenceHarness.service.connectAppServer();
+  let releasePromptWrite;
+  let markPromptWriteStarted;
+  const promptWriteStarted = new Promise((resolve) => {
+    markPromptWriteStarted = resolve;
+  });
+  const promptWriteGate = new Promise((resolve) => {
+    releasePromptWrite = resolve;
+  });
+  promptDisableFenceHarness.duringRuntimeEvent(async (event) => {
+    if (event.turnId !== 'turn-disable-fence') return;
+    markPromptWriteStarted();
+    await promptWriteGate;
+  });
+  const fencedPromptDelivery = promptDisableFenceHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '19191919-1919-4919-8919-191919191919',
+    event: {
+      ...hookPromptEvent,
+      eventId: '19191919-1919-4919-8919-191919191919',
+      payload: { ...hookPromptEvent.payload, turnId: 'turn-disable-fence' }
+    }
+  });
+  await promptWriteStarted;
+  const fencedPromptDisable = promptDisableFenceHarness.service
+    .setLastUserPromptCaptureEnabled({ enabled: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    promptDisableFenceHarness.promptClearCount(),
+    0,
+    'disable must wait for the Hook write tail before clearing cached prompts'
+  );
+  releasePromptWrite();
+  await Promise.all([fencedPromptDelivery, fencedPromptDisable]);
+  assert.equal(promptDisableFenceHarness.promptClearCount(), 1);
+  assert.equal(promptDisableFenceHarness.lastUserPromptCaptureEnabled(), false);
+  assert.ok(
+    promptDisableFenceHarness.calls.indexOf('delivery-finished:turn_started') <
+      promptDisableFenceHarness.calls.indexOf('prompt-clear'),
+    'the clear must commit after the previously started lifecycle/prompt transaction'
+  );
+  await promptDisableFenceHarness.service.disconnectAppServer();
+
   const explicitHarness = createLifecycleHarness(false);
   explicitHarness.duringThreadList(async () => {
     await explicitHarness.service.applyCodexHookEvent(hookEvent);

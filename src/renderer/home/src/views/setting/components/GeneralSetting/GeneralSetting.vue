@@ -19,6 +19,25 @@
         </a-radio-group>
       </div>
     </div>
+
+    <div name="general-setting__account" class="general-setting__section">
+      <h4 class="general-setting__section-title">{{ i18nHelper.setting.general.account.label }}</h4>
+      <div class="general-setting__account">
+        <span class="general-setting__account-email" :title="generalSettingStore.accountEmail">
+          {{ generalSettingStore.accountEmail }}
+        </span>
+        <a-button
+          type="text"
+          status="danger"
+          size="mini"
+          :loading="generalSettingStore.loggingOut"
+          :disabled="generalSettingStore.loggingOut"
+          @click="generalSettingStore.logout()"
+        >
+          {{ i18nHelper.setting.general.account.logout }}
+        </a-button>
+      </div>
+    </div>
   </div>
 </template>
 

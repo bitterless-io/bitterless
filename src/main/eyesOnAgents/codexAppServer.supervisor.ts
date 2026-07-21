@@ -62,6 +62,7 @@ const MAX_THREADS = 10_000;
 const MAX_PAGES = 100;
 const MAX_HOOKS = 1_000;
 const MAX_HOOK_TEXT_LENGTH = 8_192;
+const THREAD_TURN_LIMIT = 10;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 const fixedCodexCandidates = (): string[] => {
@@ -354,6 +355,62 @@ export class CodexAppServerSupervisor {
 
   async listArchivedThreads(): Promise<unknown[]> {
     return await this.listThreadInventory(true);
+  }
+
+  async readThread(threadId: string): Promise<unknown> {
+    const connection = this.connection;
+    if (!connection || !this.isConnected()) {
+      throw new Error('Codex App Server is not connected');
+    }
+    const result = await this.request(connection, 'thread/read', {
+      threadId,
+      includeTurns: false
+    });
+    if (!isEyesOnAgentsRecord(result) || !isEyesOnAgentsRecord(result.thread)) {
+      throw new Error('Codex thread/read response is invalid');
+    }
+    return result.thread;
+  }
+
+  async listThreadTurns(threadId: string): Promise<unknown[]> {
+    const connection = this.connection;
+    if (!connection || !this.isConnected()) {
+      throw new Error('Codex App Server is not connected');
+    }
+    const result = await this.request(connection, 'thread/turns/list', {
+      threadId,
+      cursor: null,
+      itemsView: 'full',
+      sortDirection: 'desc',
+      limit: THREAD_TURN_LIMIT
+    });
+    if (
+      !isEyesOnAgentsRecord(result) ||
+      !Array.isArray(result.data) ||
+      result.data.length > THREAD_TURN_LIMIT ||
+      (
+        result.nextCursor !== null &&
+        result.nextCursor !== undefined &&
+        typeof result.nextCursor !== 'string'
+      ) ||
+      (
+        result.backwardsCursor !== null &&
+        result.backwardsCursor !== undefined &&
+        typeof result.backwardsCursor !== 'string'
+      )
+    ) {
+      throw new Error('Codex thread/turns/list response is invalid');
+    }
+    for (const turn of result.data) {
+      if (
+        isEyesOnAgentsRecord(turn)
+        && Object.prototype.hasOwnProperty.call(turn, 'itemsView')
+        && turn.itemsView !== 'full'
+      ) {
+        throw new Error('Codex thread/turns/list itemsView is not full');
+      }
+    }
+    return result.data;
   }
 
   private async listThreadInventory(archived: boolean): Promise<unknown[]> {

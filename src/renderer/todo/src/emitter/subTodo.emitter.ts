@@ -1,4 +1,5 @@
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { SubTodoDao } from '@preload/sqlite/dao/subTodo.dao';
+import type { SubTodoMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 
-export const subTodoEmitter = createXpcRendererEmitter<SubTodoDao>('SubTodoDao');
+export const subTodoEmitter =
+  createXpcRendererEmitter<SubTodoMcpDaoApi>('TodoistSyncSubTodoHandler');

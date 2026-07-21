@@ -1,8 +1,13 @@
 import { BrowserWindow, BrowserWindowConstructorOptions, app, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { WindowStateStore, captureWindowState, computeRestoreBounds, throttle } from './windowState'
+import { WindowStateStore as LegacyWindowStateStore } from './windowState'
 import { MAESTRO_PARTITION, maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import {
+  windowStateService,
+  type WindowStateController
+} from '@main/windows/windowState.service'
+import type { WindowStateKey } from '@shared/window/window.types'
 
 /**
  * Lean window base (bitterless WindowHelper pattern, trimmed for the MVP):
@@ -24,13 +29,8 @@ export abstract class WindowHelper {
    * Stable id under which this window's geometry (size + position + display) is
    * remembered across restarts. Leave null to opt out of persistence.
    */
-  protected windowStateKey: string | null = null
-
-  private static stateStore: WindowStateStore | null = null
-  private static getStateStore(): WindowStateStore {
-    if (!WindowHelper.stateStore) WindowHelper.stateStore = new WindowStateStore(maestroDataRoot())
-    return WindowHelper.stateStore
-  }
+  protected windowStateKey: WindowStateKey | null = null
+  private windowStateController: WindowStateController | null = null
 
   create(): BrowserWindow {
     // Maestro uses in-window chrome. Bitterless retains ownership of the application menu.
@@ -38,9 +38,13 @@ export abstract class WindowHelper {
     // Restore remembered geometry: size always, position only when it still lands
     // on a connected display (else mapped onto the primary display, same relative
     // spot — see windowState.ts). null key / no saved state -> constructor defaults.
-    const store = this.windowStateKey ? WindowHelper.getStateStore() : null
-    const saved = store ? store.read(this.windowStateKey!) : null
-    const restored = computeRestoreBounds(saved)
+    if (this.windowStateKey === 'maestro' && !windowStateService.has('maestro')) {
+      const legacy = new LegacyWindowStateStore(maestroDataRoot()).read('cowork-main')
+      if (legacy) windowStateService.importLegacy('maestro', legacy)
+    }
+    const restored = this.windowStateKey
+      ? windowStateService.resolve(this.windowStateKey)
+      : null
 
     const win = new BrowserWindow({
       show: false,
@@ -57,7 +61,7 @@ export abstract class WindowHelper {
       // y=11: centered in the 48px MenuBar header (~18px light block ⇒ 15), nudged up 4px.
       trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 13 } : undefined,
       ...this.windowOptions,
-      ...(restored ?? {}),
+      ...(restored?.bounds ?? {}),
       webPreferences: {
         preload: join(__dirname, `../preload/${this.preloadFile}`),
         sandbox: false,
@@ -68,23 +72,9 @@ export abstract class WindowHelper {
       }
     })
     this.browserWindow = win
-
-    // Persist geometry while dragging/resizing — throttled (leading + trailing) so a
-    // drag stream caps at one write per interval yet still saves the final size/
-    // position — and once more on close.
-    if (store) {
-      const key = this.windowStateKey!
-      const persist = throttle(() => {
-        const state = captureWindowState(win)
-        if (state) store.save(key, state)
-      }, 400)
-      win.on('resize', persist)
-      win.on('move', persist)
-      win.on('close', () => {
-        const state = captureWindowState(win)
-        if (state) store.save(key, state)
-      })
-    }
+    this.windowStateController = this.windowStateKey
+      ? windowStateService.register(this.windowStateKey, win)
+      : null
 
     // Apply the saved window mode + position on ready-to-show, when the screen config has
     // settled — NOT only at construction. macOS otherwise drops construction-time bounds for
@@ -93,16 +83,9 @@ export abstract class WindowHelper {
     // fullscreen are applied here too (fullscreen must run after show()).
     if (this.showOnReady) {
       win.once('ready-to-show', () => {
-        if (saved?.fullScreen) {
-          win.show()
-          win.setFullScreen(true)
-        } else if (saved?.maximized) {
-          win.maximize()
-          win.show()
+        if (this.windowStateController) {
+          this.windowStateController.show()
         } else {
-          if (restored && restored.x != null && restored.y != null) {
-            win.setBounds({ x: restored.x, y: restored.y, width: restored.width, height: restored.height })
-          }
           win.show()
         }
       })
@@ -129,8 +112,12 @@ export abstract class WindowHelper {
   show(): void {
     const win = this.browserWindow
     if (win && !win.isDestroyed()) {
-      if (win.isMinimized()) win.restore()
-      win.show()
+      if (this.windowStateController) {
+        this.windowStateController.show()
+      } else {
+        if (win.isMinimized()) win.restore()
+        win.show()
+      }
       if (process.platform === 'darwin') {
         app.focus({ steal: true })
         win.moveTop()
@@ -141,9 +128,11 @@ export abstract class WindowHelper {
 
   destroy(): void {
     if (this.browserWindow && !this.browserWindow.isDestroyed()) {
+      this.windowStateController?.flushAndDispose()
       this.browserWindow.destroy()
     }
     this.browserWindow = null
+    this.windowStateController = null
   }
 }
 

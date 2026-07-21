@@ -106,6 +106,73 @@
   color: #68708a;
 }
 
+.agent-domain__search-trigger.arco-btn {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  color: oklch(0.5 0.035 265);
+  background: transparent;
+  box-shadow: none;
+}
+
+.agent-domain__search-trigger.arco-btn:hover,
+.agent-domain__search-trigger.arco-btn[aria-expanded='true'] {
+  color: oklch(0.34 0.055 265);
+  background: oklch(0.9 0.014 265);
+}
+
+.agent-domain__search-trigger.arco-btn:focus-visible,
+.agent-domain__search-clear.arco-btn:focus-visible {
+  outline: 2px solid var(--eyes-focus-ring);
+  outline-offset: 1px;
+}
+
+.agent-domain__search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 9px 5px;
+  padding: 3px;
+  border-radius: 6px;
+  background: oklch(0.925 0.008 265);
+}
+
+.agent-domain__search-input.arco-input-wrapper {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  color: oklch(0.36 0.025 265);
+  background: oklch(0.985 0.004 265);
+  box-shadow: none;
+}
+
+.agent-domain__search-input.arco-input-wrapper:hover {
+  background: oklch(1 0 0);
+}
+
+.agent-domain__search-input.arco-input-wrapper:focus-within {
+  outline: 2px solid var(--eyes-focus-ring);
+  outline-offset: 1px;
+}
+
+.agent-domain__search-clear.arco-btn {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  color: oklch(0.5 0.035 265);
+  background: transparent;
+  box-shadow: none;
+}
+
+.agent-domain__search-clear.arco-btn:hover {
+  color: oklch(0.34 0.055 265);
+  background: oklch(0.87 0.016 265);
+}
+
 .agent-domain__body {
   flex: 1 1 auto;
   min-height: 0;

@@ -72,8 +72,8 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 | Main app remains open | Closing Maestro must not close Todo, Omni Browser, or Bitterless Home. |
 
 Maestro keeps its large working size (`1360x900`) and never permits a window below `800x600`.
-Window geometry is persisted under a legacy-compatible Maestro key and restored only when it
-remains visible on a connected display.
+Window geometry follows the shared [top-level window state contract](window-state-persistence.md);
+the legacy Cowork `cowork-main` entry is imported once when the unified Maestro key is absent.
 
 ## Feature parity surface
 

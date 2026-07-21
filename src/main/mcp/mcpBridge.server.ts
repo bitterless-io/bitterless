@@ -1,5 +1,4 @@
 import { app } from 'electron';
-import { xpcMain, createXpcMainEmitter } from 'electron-xpc/main';
 import { dirname } from 'path';
 import { randomUUID } from 'crypto';
 import {
@@ -23,16 +22,17 @@ import type {
 } from '@shared/mcp/mcpBridge.shared';
 import { MCP_LOCAL_RPC_MAX_BYTES, getMcpBridgeEndpoint } from '@shared/mcp/mcpBridge.shared';
 import type {
-  DomainMcpDaoApi,
   McpDomainRow,
   McpTodoEventItem,
   McpTodoEventListResult,
   McpTodoRow,
   McpTodoStatusByIdsResult,
   McpTodoStatusItem,
-  TodoEventMcpDaoApi,
+  TodoEntityId,
   TodoMcpDaoApi,
 } from '@shared/mcp/todoMcpDao.type';
+import { todoistSyncSession } from '@main/todoistSync/todoistSync.session';
+import { assertTodoistSyncEntityId } from '@main/todoistSync/todoistSyncSnowflake.service';
 
 type RpcParams = Record<string, unknown>;
 type DomainRow = McpDomainRow;
@@ -65,9 +65,7 @@ interface UnixStartLockSnapshot {
   ownerRaw: string | null;
 }
 
-const todoEmitter = createXpcMainEmitter<TodoMcpDaoApi>('TodoDao');
-const domainEmitter = createXpcMainEmitter<DomainMcpDaoApi>('DomainDao');
-const eventEmitter = createXpcMainEmitter<TodoEventMcpDaoApi>('TodoEventDao');
+const todoRepository = () => todoistSyncSession.getRepository();
 
 const MCP_FOCUS_DESCRIPTION = 'Focus 是当前立刻要做的任务视图。只有未完成且被打星标/important 的 todo 才会进入 Focus。';
 const MCP_STAR_RULE = '打星标 means todo.important=true. Use it only when current agent work is blocked on a human next action in the live conversation/current session. Do not star deferred follow-ups that can wait several days or do not block the current session.';
@@ -87,12 +85,9 @@ const isNullableIntegerAtLeast = (value: unknown, minimum = 0): value is number 
   return value === null || isIntegerAtLeast(value, minimum);
 };
 
-const getRequiredNumber = (params: RpcParams, key: string): number => {
+const getRequiredId = (params: RpcParams, key: string): TodoEntityId => {
   const value = params[key];
-  if (!isIntegerAtLeast(value, 1)) {
-    throw new Error(`${key} must be a positive integer`);
-  }
-  return value;
+  return assertTodoistSyncEntityId(value, key);
 };
 
 const getOptionalInteger = (
@@ -110,7 +105,7 @@ const getOptionalInteger = (
   return value;
 };
 
-const getRequiredIdList = (params: RpcParams, key: string): number[] => {
+const getRequiredIdList = (params: RpcParams, key: string): TodoEntityId[] => {
   const value = params[key];
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`${key} must be a non-empty array`);
@@ -118,15 +113,13 @@ const getRequiredIdList = (params: RpcParams, key: string): number[] => {
   if (value.length > 100) {
     throw new Error(`${key} can contain at most 100 ids`);
   }
-  const ids: number[] = [];
-  const seen = new Set<number>();
+  const ids: TodoEntityId[] = [];
+  const seen = new Set<TodoEntityId>();
   for (const id of value) {
-    if (!Number.isInteger(id) || id < 1) {
-      throw new Error(`${key} must contain positive integer ids`);
-    }
-    if (!seen.has(id)) {
-      seen.add(id);
-      ids.push(id);
+    const normalized = assertTodoistSyncEntityId(id, key);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      ids.push(normalized);
     }
   }
   return ids;
@@ -332,11 +325,14 @@ const requireArray = <T>(value: unknown, source: string): T[] => {
 const requireDomainRow = (value: unknown, source: string): DomainRow => {
   if (
     !isRecord(value) ||
-    !isIntegerAtLeast(value.id, 1) ||
+    typeof value.id !== 'string' ||
+    !/^\d{20}$/.test(value.id) ||
+    typeof value.customer_id !== 'string' ||
     typeof value.title !== 'string' ||
     typeof value.description !== 'string' ||
     (value.archived !== 0 && value.archived !== 1) ||
     (value.is_deleted !== 0 && value.is_deleted !== 1) ||
+    !isIntegerAtLeast(value.position) ||
     !isIntegerAtLeast(value.created_at) ||
     !isIntegerAtLeast(value.updated_at)
   ) {
@@ -358,13 +354,16 @@ const requireDomainRows = (value: unknown, source: string): DomainRow[] => {
 const requireTodoRow = (
   value: unknown,
   source: string,
-  expectedId?: number,
-  expectedDomainId?: number,
+  expectedId?: TodoEntityId,
+  expectedDomainId?: TodoEntityId,
 ): TodoRow => {
   if (
     !isRecord(value) ||
-    !isIntegerAtLeast(value.id, 1) ||
-    !isIntegerAtLeast(value.domain_id, 1) ||
+    typeof value.id !== 'string' ||
+    !/^\d{20}$/.test(value.id) ||
+    typeof value.customer_id !== 'string' ||
+    typeof value.domain_id !== 'string' ||
+    !/^\d{20}$/.test(value.domain_id) ||
     typeof value.title !== 'string' ||
     (value.status !== 0 && value.status !== 1) ||
     (value.important !== 0 && value.important !== 1) ||
@@ -380,6 +379,7 @@ const requireTodoRow = (
     typeof value.note !== 'string' ||
     (value.source !== 'human' && value.source !== 'ai') ||
     (value.is_deleted !== 0 && value.is_deleted !== 1) ||
+    !isIntegerAtLeast(value.position) ||
     !isIntegerAtLeast(value.created_at) ||
     !isIntegerAtLeast(value.updated_at) ||
     (expectedId !== undefined && value.id !== expectedId) ||
@@ -393,7 +393,7 @@ const requireTodoRow = (
 const requireTodoRows = (
   value: unknown,
   source: string,
-  expectedDomainId?: number,
+  expectedDomainId?: TodoEntityId,
 ): TodoRow[] => {
   return requireArray<unknown>(value, source).map((row, index) => {
     return requireTodoRow(row, `${source}[${index}]`, undefined, expectedDomainId);
@@ -426,8 +426,8 @@ const requireEventItem = (value: unknown, source: string): TodoEventItem => {
     !isRecord(value) ||
     !isIntegerAtLeast(value.id, 1) ||
     !isTodoEventType(value.type) ||
-    (value.todo_id !== null && !isIntegerAtLeast(value.todo_id, 1)) ||
-    (value.domain_id !== null && !isIntegerAtLeast(value.domain_id, 1)) ||
+    (value.todo_id !== null && (typeof value.todo_id !== 'string' || !/^\d{20}$/.test(value.todo_id))) ||
+    (value.domain_id !== null && (typeof value.domain_id !== 'string' || !/^\d{20}$/.test(value.domain_id))) ||
     !isTodoEventActor(value.actor) ||
     !isRecord(value.payload) ||
     !isIntegerAtLeast(value.created_at)
@@ -488,7 +488,7 @@ const isTodoLookupState = (value: unknown): value is TodoStatusItem['state'] => 
 const requireStatusItem = (
   value: unknown,
   source: string,
-  expectedId: number,
+  expectedId: TodoEntityId,
 ): TodoStatusItem => {
   if (
     !isRecord(value) ||
@@ -498,7 +498,7 @@ const requireStatusItem = (
     typeof value.completed !== 'boolean' ||
     typeof value.deleted !== 'boolean' ||
     (value.title !== null && typeof value.title !== 'string') ||
-    !isNullableIntegerAtLeast(value.domain_id, 1) ||
+    (value.domain_id !== null && (typeof value.domain_id !== 'string' || !/^\d{20}$/.test(value.domain_id))) ||
     !isNullableIntegerAtLeast(value.updated_at) ||
     !isNullableIntegerAtLeast(value.completed_at) ||
     !isNullableIntegerAtLeast(value.deleted_at) ||
@@ -513,7 +513,7 @@ const requireStatusItem = (
     (value.state === 'missing' && !value.exists && !value.completed && !value.deleted)
   );
   const domainMatches = value.state === 'active' || value.state === 'completed'
-    ? isIntegerAtLeast(value.domain_id, 1)
+    ? typeof value.domain_id === 'string' && /^\d{20}$/.test(value.domain_id)
     : value.domain_id === null;
   const titleMatches = value.state === 'active' || value.state === 'completed'
     ? typeof value.title === 'string'
@@ -532,7 +532,7 @@ const requireStatusItem = (
 const requireStatusResult = (
   value: unknown,
   source: string,
-  expectedIds: number[],
+  expectedIds: TodoEntityId[],
 ): TodoStatusByIdsResult => {
   if (!isRecord(value)) {
     return throwInvalidDaoResult(value, source, 'todo status result');
@@ -900,8 +900,8 @@ export class McpBridgeServer {
     };
   }> {
     const domains = requireDomainRows(
-      await domainEmitter.getAll(),
-      'DomainDao.getAll',
+      await todoRepository().getDomains(),
+      'TodoistSyncRepository.getDomains',
     ).filter(isActiveDomain);
     return {
       domains,
@@ -952,41 +952,40 @@ export class McpBridgeServer {
     }
 
     const activeDomains = requireDomainRows(
-      await domainEmitter.getAll(),
-      'DomainDao.getAll',
+      await todoRepository().getDomains(),
+      'TodoistSyncRepository.getDomains',
     ).filter(isActiveDomain);
     if (activeDomains.length >= MCP_MAX_ACTIVE_DOMAINS) {
       throw new Error(`Cannot create domain: the active domain limit is ${MCP_MAX_ACTIVE_DOMAINS}`);
     }
 
     const domain = requireDomainRow(
-      await domainEmitter.create({ title, description }),
-      'DomainDao.create',
+      await todoRepository().createDomain({ title, description }),
+      'TodoistSyncRepository.createDomain',
     );
     if (
       domain.title !== title ||
       domain.description !== description ||
       !isActiveDomain(domain)
     ) {
-      throw new Error('DomainDao.create returned a domain that does not match the request');
+      throw new Error('TodoistSyncRepository.createDomain returned a domain that does not match the request');
     }
-    this.broadcastTodoUpdated();
     return { domain };
   }
 
   private async listTodos(params: RpcParams): Promise<{
     domains: DomainRow[];
     todos: TodoRow[];
-    todosByDomain: Record<number, TodoRow[]>;
+    todosByDomain: Record<string, TodoRow[]>;
   }> {
     assertTodoListActiveStatus(params.status);
     const domains = requireDomainRows(
-      await domainEmitter.getAll(),
-      'DomainDao.getAll',
+      await todoRepository().getDomains(),
+      'TodoistSyncRepository.getDomains',
     ).filter(isActiveDomain);
     const requestedDomainId = params.domainId === undefined
       ? undefined
-      : getRequiredNumber(params, 'domainId');
+      : getRequiredId(params, 'domainId');
     const targetDomains = requestedDomainId
       ? domains.filter((domain) => domain.id === requestedDomainId)
       : domains;
@@ -994,22 +993,22 @@ export class McpBridgeServer {
       throw new Error(`Active domain not found: ${requestedDomainId}`);
     }
 
-    const todosByDomain: Record<number, TodoRow[]> = {};
+    const todosByDomain: Record<string, TodoRow[]> = {};
     const todos: TodoRow[] = [];
     for (const domain of targetDomains) {
       const domainTodos = requireTodoRows(
-        await todoEmitter.getByDomainId({ domainId: domain.id, status: 0 }),
-        'TodoDao.getByDomainId',
+        await todoRepository().getTodosByDomain({ domainId: domain.id, status: 0 }),
+        'TodoistSyncRepository.getTodosByDomain',
         domain.id,
       );
       if (domainTodos.some((todo) => todo.status !== 0 || todo.is_deleted !== 0)) {
-        throw new Error('TodoDao.getByDomainId returned a non-active todo');
+        throw new Error('TodoistSyncRepository.getTodosByDomain returned a non-active todo');
       }
       todosByDomain[domain.id] = domainTodos;
       todos.push(...domainTodos);
     }
     if (new Set(todos.map((todo) => todo.id)).size !== todos.length) {
-      throw new Error('TodoDao.getByDomainId returned duplicate todo ids');
+      throw new Error('TodoistSyncRepository.getTodosByDomain returned duplicate todo ids');
     }
     return { domains: targetDomains, todos, todosByDomain };
   }
@@ -1018,8 +1017,8 @@ export class McpBridgeServer {
     const afterEventId = getOptionalInteger(params, 'afterEventId', 0, 0);
     const limit = getOptionalInteger(params, 'limit', 50, 1, 100);
     return requireEventListResult(
-      await eventEmitter.listAfter({ afterEventId, limit }),
-      'TodoEventDao.listAfter',
+      await todoRepository().listAfter({ afterEventId, limit }),
+      'TodoistSyncRepository.listAfter',
       afterEventId,
       limit,
     );
@@ -1041,30 +1040,30 @@ export class McpBridgeServer {
   }
 
   private async getTodo(params: RpcParams): Promise<TodoRow> {
-    const id = getRequiredNumber(params, 'id');
-    const value = await todoEmitter.getById({ id });
+    const id = getRequiredId(params, 'id');
+    const value = await todoRepository().getTodoById({ id });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
-    return requireTodoRow(value, 'TodoDao.getById', id);
+    return requireTodoRow(value, 'TodoistSyncRepository.getTodoById', id);
   }
 
   private async getTodoStatus(params: RpcParams): Promise<TodoStatusByIdsResult> {
     const ids = getRequiredIdList(params, 'ids');
     return requireStatusResult(
-      await todoEmitter.getStatusByIds({ ids }),
-      'TodoDao.getStatusByIds',
+      await todoRepository().getStatusByIds({ ids }),
+      'TodoistSyncRepository.getStatusByIds',
       ids,
     );
   }
 
   private async createTodo(params: RpcParams): Promise<{ todo: TodoRow }> {
-    const domainId = getRequiredNumber(params, 'domainId');
+    const domainId = getRequiredId(params, 'domainId');
     if (typeof params.title !== 'string' || params.title.trim().length === 0) {
       throw new Error('title must be a non-empty string');
     }
     const title = params.title.trim();
     if (title.length > 200) throw new Error('title can contain at most 200 characters');
     const requestedUpdate = this.toTodoUpdateParams({
-      id: 1,
+      id: '00000000000000000000',
       dueAt: params.dueAt,
       due_at: params.due_at,
       remindAt: params.remindAt,
@@ -1075,13 +1074,13 @@ export class McpBridgeServer {
     await this.requireActiveDomain(domainId);
 
     let todo = requireTodoRow(
-      await todoEmitter.create({
+      await todoRepository().createTodo({
         domainId,
         title,
         source: 'ai',
         actor: 'ai',
       }),
-      'TodoDao.create',
+      'TodoistSyncRepository.createTodo',
       undefined,
       domainId,
     );
@@ -1091,110 +1090,107 @@ export class McpBridgeServer {
       todo.status !== 0 ||
       todo.is_deleted !== 0
     ) {
-      throw new Error('TodoDao.create returned a todo that does not match the request');
+      throw new Error('TodoistSyncRepository.createTodo returned a todo that does not match the request');
     }
     const updateParams: TodoUpdateCallParams = { ...requestedUpdate, id: todo.id };
     updateParams.actor = 'ai';
     if (Object.keys(updateParams).length > 2) {
       todo = requireTodoRow(
-        await todoEmitter.update(updateParams),
-        'TodoDao.update after create',
+        await todoRepository().updateTodo(updateParams),
+        'TodoistSyncRepository.updateTodo after create',
         todo.id,
         domainId,
       );
-      assertTodoMatchesUpdate(todo, updateParams, 'TodoDao.update after create');
+      assertTodoMatchesUpdate(todo, updateParams, 'TodoistSyncRepository.updateTodo after create');
     }
-    this.broadcastTodoUpdated();
     return { todo };
   }
 
   private async updateTodo(params: RpcParams): Promise<{ todo: TodoRow }> {
     const updateParams = this.toTodoUpdateParams(params);
     updateParams.actor = 'ai';
-    const value = await todoEmitter.update(updateParams);
+    const value = await todoRepository().updateTodo(updateParams);
     if (value === undefined) throw new Error(`Todo not found: ${updateParams.id}`);
     const todo = requireTodoRow(
       value,
-      'TodoDao.update',
+      'TodoistSyncRepository.updateTodo',
       updateParams.id,
     );
-    assertTodoMatchesUpdate(todo, updateParams, 'TodoDao.update');
-    this.broadcastTodoUpdated();
+    assertTodoMatchesUpdate(todo, updateParams, 'TodoistSyncRepository.updateTodo');
     return { todo };
   }
 
   private async completeTodo(params: RpcParams): Promise<{ todo: TodoRow }> {
-    const id = getRequiredNumber(params, 'id');
-    const value = await todoEmitter.completeTodo({ id, actor: 'ai' });
+    const id = getRequiredId(params, 'id');
+    const value = await todoRepository().completeTodo({ id, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     const todo = requireTodoRow(
       value,
-      'TodoDao.completeTodo',
+      'TodoistSyncRepository.completeTodo',
       id,
     );
-    this.broadcastTodoUpdated();
     return { todo };
   }
 
   private async uncompleteTodo(params: RpcParams): Promise<{ todo: TodoRow }> {
-    const id = getRequiredNumber(params, 'id');
-    const value = await todoEmitter.uncompleteTodo({ id, actor: 'ai' });
+    const id = getRequiredId(params, 'id');
+    const value = await todoRepository().uncompleteTodo({ id, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     const todo = requireTodoRow(
       value,
-      'TodoDao.uncompleteTodo',
+      'TodoistSyncRepository.uncompleteTodo',
       id,
     );
     if (todo.status !== 0) {
-      throw new Error('TodoDao.uncompleteTodo returned a todo that is not active');
+      throw new Error('TodoistSyncRepository.uncompleteTodo returned a todo that is not active');
     }
-    this.broadcastTodoUpdated();
     return { todo };
   }
 
-  private async deleteTodo(params: RpcParams): Promise<{ deleted: true; id: number }> {
-    const id = getRequiredNumber(params, 'id');
-    const deleted = await todoEmitter.hardDelete({ id, actor: 'ai' });
+  private async deleteTodo(params: RpcParams): Promise<{ deleted: true; id: TodoEntityId }> {
+    const id = getRequiredId(params, 'id');
+    const deleted = await todoRepository().deleteTodo(id, 'ai');
     if (deleted !== true) {
       if (deleted === null || deleted === undefined) {
-        throwInvalidDaoResult(deleted, 'TodoDao.hardDelete', 'delete confirmation');
+        throwInvalidDaoResult(deleted, 'TodoistSyncRepository.deleteTodo', 'delete confirmation');
       }
       throw new Error(deleted === false
         ? `Todo not found or not deleted: ${id}`
-        : 'TodoDao.hardDelete did not confirm deletion');
+        : 'TodoistSyncRepository.deleteTodo did not confirm deletion');
     }
-    this.broadcastTodoUpdated();
     return { deleted: true, id };
   }
 
-  private async moveTodo(params: RpcParams): Promise<{ moved: true; id: number; domainId: number }> {
-    const id = getRequiredNumber(params, 'id');
-    const domainId = getRequiredNumber(params, 'domainId');
+  private async moveTodo(params: RpcParams): Promise<{ moved: true; id: TodoEntityId; domainId: TodoEntityId }> {
+    const id = getRequiredId(params, 'id');
+    const domainId = getRequiredId(params, 'domainId');
     await this.requireActiveDomain(domainId);
-    const value = await todoEmitter.moveToDomain({ id, domainId, actor: 'ai' });
+    const value = await todoRepository().moveToDomain({ id, domainId, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     const todo = requireTodoRow(
       value,
-      'TodoDao.moveToDomain',
+      'TodoistSyncRepository.moveToDomain',
       id,
       domainId,
     );
     if (todo.domain_id !== domainId) {
-      throw new Error('TodoDao.moveToDomain returned a todo in the wrong domain');
+      throw new Error('TodoistSyncRepository.moveToDomain returned a todo in the wrong domain');
     }
-    this.broadcastTodoUpdated();
     return { moved: true, id, domainId };
   }
 
-  private async requireActiveDomain(domainId: number): Promise<DomainRow> {
-    const domains = requireDomainRows(await domainEmitter.getAll(), 'DomainDao.getAll');
+  private async requireActiveDomain(domainId: TodoEntityId): Promise<DomainRow> {
+    const domains = requireDomainRows(
+      await todoRepository().getDomains(),
+      'TodoistSyncRepository.getDomains',
+    );
     const matches = domains.filter((domain) => domain.id === domainId && isActiveDomain(domain));
     if (matches.length !== 1) throw new Error(`Active domain not found: ${domainId}`);
     return matches[0];
   }
 
   private toTodoUpdateParams(params: RpcParams, requireChange = true): TodoUpdateCallParams {
-    const id = getRequiredNumber(params, 'id');
+    const id = getRequiredId(params, 'id');
     const updateParams: TodoUpdateCallParams = { id };
 
     if (params.title !== undefined) {
@@ -1238,9 +1234,6 @@ export class McpBridgeServer {
     return updateParams;
   }
 
-  private broadcastTodoUpdated(): void {
-    xpcMain.broadcast('todo/data_updated', { source: 'mcp' });
-  }
 }
 
 export const mcpBridgeServer = new McpBridgeServer();

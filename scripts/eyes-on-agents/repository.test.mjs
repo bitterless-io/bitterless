@@ -13,12 +13,19 @@ const THREAD_B = '22222222-2222-4222-8222-222222222222';
 const THREAD_C = '33333333-3333-4333-8333-333333333333';
 const THREAD_D = '66666666-6666-4666-8666-666666666666';
 const THREAD_E = '77777777-7777-4777-8777-777777777777';
+const THREAD_F = '88888888-8888-4888-8888-888888888888';
+const THREAD_G = '99999999-9999-4999-8999-999999999999';
+const THREAD_H = 'abababab-abab-4bab-8bab-abababababab';
 const DELIVERY_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const DELIVERY_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const DELIVERY_C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const DELIVERY_D = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const INVALID_VERSION_THREAD = '33333333-3333-0333-8333-333333333333';
 const INVALID_VARIANT_THREAD = '44444444-4444-4444-7444-444444444444';
 const EXTRA_HYPHEN_THREAD = '55555555-5555-4555-8555-55555555555-';
+const refreshThreadId = (index) => (
+  `${index.toString(16).padStart(8, '0')}-0000-4000-8000-${index.toString(16).padStart(12, '0')}`
+);
 
 class TestDatabase {
   constructor(path = ':memory:') {
@@ -101,6 +108,7 @@ try {
   const {
     ensureEyesOnAgentsArchiveSchema,
     ensureEyesOnAgentsHookDeliverySchema,
+    ensureEyesOnAgentsLastUserPromptSchema,
     ensureEyesOnAgentsLegacyImport,
     ensureEyesOnAgentsProjectMetadataSchema,
     ensureEyesOnAgentsSyncPersistenceSchema
@@ -122,6 +130,8 @@ try {
   ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
   ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
   ensureEyesOnAgentsHookDeliverySchema(repairDb);
+  ensureEyesOnAgentsLastUserPromptSchema(repairDb);
+  ensureEyesOnAgentsLastUserPromptSchema(repairDb);
   repairDb.prepare(
     `INSERT INTO eyes_on_agents_hook_delivery_receipt (
       delivery_id, thread_id, observed_at, committed_at
@@ -173,6 +183,8 @@ try {
   ensureEyesOnAgentsSyncPersistenceSchema(oldDb);
   ensureEyesOnAgentsHookDeliverySchema(oldDb);
   ensureEyesOnAgentsHookDeliverySchema(oldDb);
+  ensureEyesOnAgentsLastUserPromptSchema(oldDb);
+  ensureEyesOnAgentsLastUserPromptSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -190,6 +202,20 @@ try {
     migratedColumns.some((column) => column.name === 'is_unread'),
     true,
     'old databases must receive the persistent unread migration'
+  );
+  assert.deepEqual(
+    migratedColumns
+      .map((column) => column.name)
+      .filter((name) => name.startsWith('last_user_prompt_')),
+    [
+      'last_user_prompt_preview',
+      'last_user_prompt_turn_id',
+      'last_user_prompt_at',
+      'last_user_prompt_truncated',
+      'last_user_prompt_source',
+      'last_user_prompt_checked_at'
+    ],
+    'old databases must receive the idempotent latest-user-prompt columns migration'
   );
   assert.equal(
     oldDb.prepare('SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?')
@@ -342,7 +368,12 @@ try {
       },
       {
         threadId: THREAD_C,
-        payloadJson: JSON.stringify({ id: THREAD_C, preview: 'archived preview', turns: [] }),
+        payloadJson: JSON.stringify({
+          id: THREAD_C,
+          name: 'Stored Hook title',
+          preview: `private\n${'preview'.repeat(60)}`,
+          turns: []
+        }),
         archived: true,
         syncedAt: 101
       }
@@ -448,7 +479,7 @@ try {
   assert.equal(updatedProjectA.projectKey, '/repo/new-a');
   assert.equal(updatedProjectA.domainId, custom.id, 'Project updates must not change Domain');
 
-  await repository.applyRuntimeEvent({
+  const hookCreateResult = await repository.applyRuntimeEvent({
     event: {
       type: 'turn_started',
       threadId: THREAD_C,
@@ -465,11 +496,47 @@ try {
   });
   snapshot = await repository.getSnapshot();
   const hookCreated = snapshot.threads.find((thread) => thread.threadId === THREAD_C);
+  assert.deepEqual(hookCreateResult, { created: true, titleMissing: false });
+  assert.equal(
+    hookCreated.title,
+    'Stored Hook title',
+    'a Hook-first row must restore its name-first title from the raw snapshot transaction'
+  );
   assert.equal(hookCreated.projectKey, '/repo/hook', 'hook-created rows must persist Project metadata');
   assert.equal(
     hookCreated.domainId,
     snapshot.domains.find((domain) => domain.domainKey === 'uncategorized').id
   );
+  db.prepare(
+    `INSERT INTO eyes_on_agents_thread_snapshot (
+      thread_id, payload_json, is_archived, synced_at, created_at, updated_at
+    ) VALUES (?, ?, 0, 180, 180, 180)`
+  ).run(THREAD_H, '{malformed-json');
+  const corruptSnapshotResult = await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_H,
+      turnId: 'corrupt-snapshot-runtime',
+      observedAt: 190,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    corruptSnapshotResult,
+    { created: true, titleMissing: true },
+    'a corrupt optional raw snapshot must not roll back lifecycle persistence'
+  );
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT title, runtime_state FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(THREAD_H) },
+    { title: null, runtime_state: 'working' }
+  );
+  await repository.setThreadArchived({
+    threadId: THREAD_H,
+    archived: true,
+    observedAt: 191
+  });
   await repository.applyRuntimeEvent({
     event: {
       type: 'thread_status',
@@ -846,6 +913,202 @@ try {
   );
 
   await assert.rejects(
+    () => repository.applyRuntimeEvent({
+      event: {
+        type: 'thread_status',
+        threadId: THREAD_G,
+        runtimeState: 'working',
+        activeFlags: [],
+        observedAt: 1_099,
+        source: 'codex_hook'
+      },
+      hookLastUserPrompt: { preview: 'invalid event pairing', truncated: false }
+    }),
+    /requires a codex_hook turn_started event/
+  );
+  await assert.rejects(
+    () => repository.applyRuntimeEvent({
+      event: {
+        type: 'turn_started',
+        threadId: THREAD_G,
+        turnId: 'invalid-unicode-turn',
+        observedAt: 1_099,
+        source: 'codex_hook'
+      },
+      hookLastUserPrompt: { preview: '\ud800', truncated: false }
+    }),
+    /forbidden character/
+  );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_G,
+      turnId: 'prompt-turn-a',
+      observedAt: 1_100,
+      source: 'codex_hook'
+    },
+    hookLastUserPrompt: { preview: 'Newest Hook question', truncated: false }
+  });
+  snapshot = await repository.getSnapshot();
+  assert.deepEqual(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_G).lastUserPrompt,
+    {
+      state: 'available',
+      preview: 'Newest Hook question',
+      turnId: 'prompt-turn-a',
+      observedAt: new Date(1_100).toISOString(),
+      checkedAt: null,
+      truncated: false
+    }
+  );
+  db.prepare(
+    'UPDATE eyes_on_agents_thread SET last_user_prompt_checked_at = ? WHERE thread_id = ?'
+  ).run(1_150, THREAD_G);
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_G,
+      turnId: 'equal-time-turn',
+      observedAt: 1_100,
+      source: 'codex_hook'
+    },
+    hookLastUserPrompt: { preview: 'Equal time must lose', truncated: false }
+  });
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_G,
+      turnId: 'older-turn',
+      observedAt: 1_050,
+      source: 'codex_hook'
+    },
+    hookLastUserPrompt: { preview: 'Older must lose', truncated: false }
+  });
+  let promptRow = db.prepare(
+    `SELECT last_user_prompt_preview, last_user_prompt_turn_id,
+      last_user_prompt_at, last_user_prompt_checked_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(THREAD_G);
+  assert.deepEqual({ ...promptRow }, {
+    last_user_prompt_preview: 'Newest Hook question',
+    last_user_prompt_turn_id: 'prompt-turn-a',
+    last_user_prompt_at: 1_100,
+    last_user_prompt_checked_at: 1_150
+  }, 'equal and older Hook candidates must preserve every newer prompt field');
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_G,
+      turnId: 'prompt-turn-b',
+      observedAt: 1_200,
+      source: 'codex_hook'
+    },
+    hookLastUserPrompt: { preview: null, truncated: false }
+  });
+  snapshot = await repository.getSnapshot();
+  assert.deepEqual(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_G).lastUserPrompt,
+    {
+      state: 'pending',
+      preview: null,
+      turnId: 'prompt-turn-b',
+      observedAt: new Date(1_200).toISOString(),
+      checkedAt: null,
+      truncated: false
+    },
+    'a newer metadata-only Hook event must clear an older preview and trigger recovery'
+  );
+  await repository.refreshThreadPage({
+    threads: [{
+      threadId: THREAD_G,
+      lastUserPrompt: {
+        preview: 'Recovered question',
+        turnId: 'prompt-turn-b',
+        observedAt: 1_200,
+        checkedAt: 1_250,
+        truncated: false,
+        source: 'app_server'
+      }
+    }]
+  });
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === THREAD_G).lastUserPrompt.preview,
+    'Recovered question',
+    'App Server may fill the same non-null Hook-owned pending turn'
+  );
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_G,
+      turnId: 'prompt-turn-c',
+      observedAt: 1_300,
+      source: 'codex_hook'
+    },
+    hookLastUserPrompt: { preview: 'Later Hook question', truncated: true }
+  });
+  promptRow = db.prepare(
+    `SELECT last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
+      last_user_prompt_truncated, last_user_prompt_source, last_user_prompt_checked_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(THREAD_G);
+  assert.deepEqual({ ...promptRow }, {
+    last_user_prompt_preview: 'Later Hook question',
+    last_user_prompt_turn_id: 'prompt-turn-c',
+    last_user_prompt_at: 1_300,
+    last_user_prompt_truncated: 1,
+    last_user_prompt_source: 'codex_hook',
+    last_user_prompt_checked_at: null
+  }, 'an accepted newer Hook candidate must replace atomically and clear the recovery watermark');
+  await repository.refreshThreadPage({
+    threads: [{
+      threadId: THREAD_G,
+      lastUserPrompt: {
+        preview: 'Same-turn App Server must not replace Hook',
+        turnId: 'prompt-turn-c',
+        observedAt: 1_400,
+        checkedAt: 1_450,
+        truncated: false,
+        source: 'app_server'
+      }
+    }]
+  });
+  promptRow = db.prepare(
+    `SELECT last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
+      last_user_prompt_source, last_user_prompt_checked_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(THREAD_G);
+  assert.deepEqual({ ...promptRow }, {
+    last_user_prompt_preview: 'Later Hook question',
+    last_user_prompt_turn_id: 'prompt-turn-c',
+    last_user_prompt_at: 1_300,
+    last_user_prompt_source: 'codex_hook',
+    last_user_prompt_checked_at: 1_450
+  }, 'same-turn App Server recovery must preserve an available Hook prompt and only advance its watermark');
+  await repository.setThreadArchived({
+    threadId: THREAD_G,
+    archived: true,
+    observedAt: 1_310
+  });
+  assert.equal(
+    db.prepare(
+      'SELECT last_user_prompt_preview FROM eyes_on_agents_thread WHERE thread_id = ?'
+    ).get(THREAD_G).last_user_prompt_preview,
+    'Later Hook question',
+    'archive transitions must preserve the retained prompt'
+  );
+  assert.deepEqual(
+    await repository.enrichMissingThreadTitle({
+      threadId: THREAD_G,
+      title: 'Must not revive archived title'
+    }),
+    { changed: false },
+    'targeted title repair must never mutate an archived row'
+  );
+
+  await assert.rejects(
     () => repository.applyRuntimeEventDelivery({
       deliveryId: DELIVERY_C,
       event: {
@@ -867,9 +1130,14 @@ try {
       turnId: 'delivery-turn',
       observedAt: 800,
       source: 'codex_hook'
-    }
+    },
+    hookLastUserPrompt: { preview: 'Delivered question', truncated: false }
   });
-  assert.deepEqual(firstDelivery, { duplicate: false });
+  assert.deepEqual(firstDelivery, {
+    duplicate: false,
+    created: true,
+    titleMissing: true
+  });
   const receipt = db.prepare(
     `SELECT delivery_id, thread_id, observed_at, committed_at,
       typeof(observed_at) AS observed_at_type,
@@ -885,6 +1153,33 @@ try {
       .get(THREAD_D).runtime_state,
     'working',
     'a fresh delivery must apply its event in the receipt transaction'
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT last_user_prompt_preview FROM eyes_on_agents_thread WHERE thread_id = ?'
+    ).get(THREAD_D).last_user_prompt_preview,
+    'Delivered question',
+    'a fresh delivery must apply its prompt candidate in the receipt transaction'
+  );
+  assert.deepEqual(
+    await repository.enrichMissingThreadTitle({
+      threadId: THREAD_D,
+      title: 'Targeted delivery title'
+    }),
+    { changed: true }
+  );
+  assert.deepEqual(
+    await repository.enrichMissingThreadTitle({
+      threadId: THREAD_D,
+      title: 'Stale replacement title'
+    }),
+    { changed: false },
+    'title enrichment must compare-and-set NULL and never overwrite a newer title'
+  );
+  assert.equal(
+    db.prepare('SELECT title FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_D).title,
+    'Targeted delivery title'
   );
 
   db.close();
@@ -902,9 +1197,13 @@ try {
       source: 'codex_hook'
     }
   });
-  assert.deepEqual(replayedDelivery, { duplicate: true });
+  assert.deepEqual(replayedDelivery, {
+    duplicate: true,
+    created: false,
+    titleMissing: false
+  });
   const replayedThread = db.prepare(
-    `SELECT runtime_state, last_completed_at
+    `SELECT runtime_state, last_completed_at, last_user_prompt_preview
      FROM eyes_on_agents_thread WHERE thread_id = ?`
   ).get(THREAD_D);
   assert.equal(replayedThread.runtime_state, 'working');
@@ -912,6 +1211,11 @@ try {
     replayedThread.last_completed_at,
     null,
     'a persisted receipt must dedupe replay after a repository and SQLite restart'
+  );
+  assert.equal(
+    replayedThread.last_user_prompt_preview,
+    'Delivered question',
+    'a duplicate receipt must not reapply or clear prompt state'
   );
 
   db.exec(`
@@ -955,7 +1259,7 @@ try {
       deliveryId: DELIVERY_B,
       event: failedDeliveryEvent
     }),
-    { duplicate: false },
+    { duplicate: false, created: true, titleMissing: true },
     'a rolled-back delivery ID must remain retryable'
   );
   assert.equal(
@@ -968,6 +1272,398 @@ try {
     db.prepare('SELECT runtime_state FROM eyes_on_agents_thread WHERE thread_id = ?')
       .get(THREAD_E).runtime_state,
     'working'
+  );
+
+  db.exec(`
+    CREATE TRIGGER abort_eyes_hook_prompt_update
+    BEFORE UPDATE OF last_user_prompt_preview ON eyes_on_agents_thread
+    WHEN NEW.thread_id = '${THREAD_F}'
+    BEGIN
+      SELECT RAISE(ABORT, 'injected hook prompt failure');
+    END;
+  `);
+  const failedPromptDelivery = {
+    deliveryId: DELIVERY_D,
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_F,
+      turnId: 'failed-prompt-turn',
+      observedAt: 1_100,
+      source: 'codex_hook'
+    },
+    hookLastUserPrompt: { preview: 'Must roll back', truncated: false }
+  };
+  await assert.rejects(
+    () => repository.applyRuntimeEventDelivery(failedPromptDelivery),
+    /injected hook prompt failure/
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT COUNT(*) AS count FROM eyes_on_agents_hook_delivery_receipt WHERE delivery_id = ?'
+    ).get(DELIVERY_D).count,
+    0,
+    'a prompt mutation failure must roll back the delivery receipt'
+  );
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(THREAD_F).count,
+    0,
+    'a prompt mutation failure must roll back the lifecycle insert'
+  );
+  db.exec('DROP TRIGGER abort_eyes_hook_prompt_update;');
+  assert.deepEqual(
+    await repository.applyRuntimeEventDelivery(failedPromptDelivery),
+    { duplicate: false, created: true, titleMissing: true },
+    'a prompt-rolled-back delivery must remain retryable'
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT last_user_prompt_preview FROM eyes_on_agents_thread WHERE thread_id = ?'
+    ).get(THREAD_F).last_user_prompt_preview,
+    'Must roll back'
+  );
+
+  db.close();
+  db = new TestDatabase();
+  db.exec(eyesOnAgentsTable.createSql);
+  globalThis.__eyesTestSqliteManager.db = db;
+  repository = new EyesOnAgentsRepositoryDao();
+  const refreshDomainId = db.prepare(
+    "SELECT id FROM eyes_on_agents_domain WHERE domain_key = 'uncategorized'"
+  ).get().id;
+  const insertRefreshThread = db.prepare(
+    `INSERT INTO eyes_on_agents_thread (
+      thread_id, domain_id, title, is_archived, last_activity_at,
+      last_user_prompt_checked_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  for (let index = 1; index <= 86; index += 1) {
+    const tiedHotActivity = index === 84 || index === 85;
+    insertRefreshThread.run(
+      refreshThreadId(index),
+      refreshDomainId,
+      `Refresh ${index}`,
+      index === 86 ? 1 : 0,
+      tiedHotActivity ? 10_000 : index,
+      index,
+      index,
+      tiedHotActivity ? 10_000 : index
+    );
+  }
+  const selectedThirdPage = await repository.getThreadRefreshPages({
+    coldPage: 3,
+    previousPageCount: null
+  });
+  await assert.rejects(
+    () => repository.getThreadRefreshPages({ coldPage: 2, previousPageCount: -1 }),
+    /pagination is invalid/
+  );
+  assert.equal(selectedThirdPage.pageCount, 3);
+  assert.equal(selectedThirdPage.hot.length, 40);
+  assert.equal(selectedThirdPage.cold.length, 5);
+  assert.equal(selectedThirdPage.coldPage, 3);
+  assert.deepEqual(
+    selectedThirdPage.hot.slice(0, 2).map((thread) => thread.threadId),
+    [refreshThreadId(84), refreshThreadId(85)],
+    'equal recency must use thread_id ASC as the deterministic final key'
+  );
+  assert.equal(
+    [...selectedThirdPage.hot, ...selectedThirdPage.cold]
+      .some((thread) => thread.threadId === refreshThreadId(86)),
+    false,
+    'archived rows must never enter tiered refresh pages'
+  );
+  assert.equal(
+    new Set(selectedThirdPage.hot.map((thread) => thread.threadId)).size,
+    selectedThirdPage.hot.length,
+    'one refresh batch must contain unique rows'
+  );
+  assert.equal(
+    selectedThirdPage.hot.some(
+      (hot) => selectedThirdPage.cold.some((cold) => cold.threadId === hot.threadId)
+    ),
+    false,
+    'the atomically selected hot and cold pages must not overlap'
+  );
+  assert.equal(
+    selectedThirdPage.hot[0].lastUserPromptCheckedAt,
+    84,
+    'refresh candidates must carry their persisted prompt recovery watermark'
+  );
+  const shrinkResetWithinRange = await repository.getThreadRefreshPages({
+    coldPage: 3,
+    previousPageCount: 4
+  });
+  assert.equal(shrinkResetWithinRange.pageCount, 3);
+  assert.equal(
+    shrinkResetWithinRange.coldPage,
+    2,
+    'any page-count shrink must reset to page 2 even when the old cursor remains in range'
+  );
+  for (const candidate of selectedThirdPage.cold) {
+    db.prepare(
+      'UPDATE eyes_on_agents_thread SET is_archived = 1 WHERE thread_id = ?'
+    ).run(candidate.threadId);
+  }
+  const resetColdPage = await repository.getThreadRefreshPages({
+    coldPage: 3,
+    previousPageCount: selectedThirdPage.pageCount
+  });
+  assert.equal(resetColdPage.pageCount, 2);
+  assert.equal(resetColdPage.coldPage, 2, 'a cold cursor beyond a shrunken page count must reset');
+  assert.equal(resetColdPage.cold.length, 40);
+
+  const refreshTargetId = selectedThirdPage.hot[0].threadId;
+  const refreshTargetBefore = db.prepare(
+    `SELECT title, runtime_state, is_unread, last_activity_at, updated_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(refreshTargetId);
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{
+        threadId: refreshTargetId,
+        title: refreshTargetBefore.title,
+        lastActivityAt: refreshTargetBefore.last_activity_at - 1
+      }]
+    }),
+    { changed: false },
+    'equal fields and an older activity watermark must perform no write'
+  );
+  assert.equal(
+    db.prepare('SELECT updated_at FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(refreshTargetId).updated_at,
+    refreshTargetBefore.updated_at
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{
+        threadId: refreshTargetId,
+        title: 'Refresh title changed',
+        lastActivityAt: 20_000,
+        status: {
+          runtimeState: 'working',
+          activeFlags: [],
+          source: 'app_server',
+          observedAt: 20_000
+        },
+        lastUserPrompt: {
+          preview: 'Refresh-page latest question',
+          turnId: 'refresh-turn',
+          observedAt: 19_500,
+          checkedAt: 20_000,
+          truncated: false,
+          source: 'app_server'
+        }
+      }]
+    }),
+    { changed: true }
+  );
+  let refreshTarget = db.prepare(
+    `SELECT title, runtime_state, is_unread, last_activity_at,
+      last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
+      last_user_prompt_checked_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(refreshTargetId);
+  assert.deepEqual({ ...refreshTarget }, {
+    title: 'Refresh title changed',
+    runtime_state: 'working',
+    is_unread: 1,
+    last_activity_at: 20_000,
+    last_user_prompt_preview: 'Refresh-page latest question',
+    last_user_prompt_turn_id: 'refresh-turn',
+    last_user_prompt_at: 19_500,
+    last_user_prompt_checked_at: 20_000
+  });
+  await repository.refreshThreadPage({
+    threads: [{
+      threadId: refreshTargetId,
+      lastActivityAt: 19_999,
+      status: {
+        runtimeState: 'idle',
+        activeFlags: [],
+        activeTurnId: null,
+        source: 'app_server',
+        observedAt: 20_001
+      }
+    }]
+  });
+  refreshTarget = db.prepare(
+    `SELECT runtime_state, is_unread, last_activity_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(refreshTargetId);
+  assert.deepEqual({ ...refreshTarget }, {
+    runtime_state: 'idle',
+    is_unread: 1,
+    last_activity_at: 20_000
+  }, 'idle must preserve unread and activity must advance monotonically');
+  const beforeUnknownStatus = db.prepare(
+    `SELECT runtime_state, status_observed_at, updated_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(refreshTargetId);
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{
+        threadId: refreshTargetId,
+        status: {
+          runtimeState: 'unknown',
+          activeFlags: [],
+          source: 'app_server',
+          observedAt: 30_000
+        },
+        lastUserPrompt: {
+          preview: 'Refresh-page latest question',
+          turnId: 'refresh-turn',
+          observedAt: 19_500,
+          checkedAt: 20_000,
+          truncated: false,
+          source: 'app_server'
+        }
+      }]
+    }),
+    { changed: false },
+    'unknown status and identical prompt fields must be a semantic no-op'
+  );
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT runtime_state, status_observed_at, updated_at
+       FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(refreshTargetId) },
+    { ...beforeUnknownStatus },
+    'unknown provider evidence must not overwrite stronger idle state or touch updated_at'
+  );
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'thread_status',
+      threadId: refreshTargetId,
+      runtimeState: 'working',
+      activeFlags: [],
+      observedAt: 40_000,
+      source: 'app_server'
+    }
+  });
+  const equalWatermarkLifecycleRow = db.prepare(
+    `SELECT runtime_state, status_observed_at, is_unread, updated_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(refreshTargetId);
+  assert.deepEqual(
+    { ...equalWatermarkLifecycleRow },
+    {
+      runtime_state: 'working',
+      status_observed_at: 40_000,
+      is_unread: 1,
+      updated_at: equalWatermarkLifecycleRow.updated_at
+    }
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{
+        threadId: refreshTargetId,
+        status: {
+          runtimeState: 'idle',
+          activeFlags: [],
+          activeTurnId: null,
+          source: 'app_server',
+          observedAt: 40_000
+        }
+      }]
+    }),
+    { changed: false },
+    'an old read with the same millisecond watermark as lifecycle evidence must be rejected'
+  );
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT runtime_state, status_observed_at, is_unread, updated_at
+       FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(refreshTargetId) },
+    { ...equalWatermarkLifecycleRow },
+    'equal-ms rejection must preserve working state, watermark, unread, and updated_at'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{
+        threadId: refreshTargetId,
+        status: {
+          runtimeState: 'idle',
+          activeFlags: [],
+          activeTurnId: null,
+          source: 'app_server',
+          observedAt: 30_000
+        }
+      }]
+    }),
+    { changed: false },
+    'a thread/read patch with an older request watermark must be rejected'
+  );
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT runtime_state, status_observed_at, is_unread
+       FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(refreshTargetId) },
+    { runtime_state: 'working', status_observed_at: 40_000, is_unread: 1 },
+    'a newer lifecycle notification must remain authoritative over an older read response'
+  );
+  const promotedHotPage = await repository.getThreadRefreshPages({
+    coldPage: 2,
+    previousPageCount: resetColdPage.pageCount
+  });
+  assert.equal(
+    promotedHotPage.hot[0].threadId,
+    refreshTargetId,
+    'a monotonically newer provider activity watermark must promote the row into page 1'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{ threadId: refreshThreadId(999), title: 'Missing' }]
+    }),
+    { changed: false },
+    'a missing row must be skipped'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{
+        threadId: selectedThirdPage.cold[0].threadId,
+        title: 'Archived after selection must skip'
+      }]
+    }),
+    { changed: false },
+    'a row archived after frozen selection must be skipped'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [
+        { threadId: refreshThreadId(999), title: 'Missing in mixed batch' },
+        {
+          threadId: selectedThirdPage.cold[0].threadId,
+          title: 'Archived in mixed batch'
+        },
+        { threadId: refreshTargetId, title: 'Valid row survives skipped siblings' }
+      ]
+    }),
+    { changed: true },
+    'missing and archived rows must not roll back a valid sibling patch'
+  );
+  assert.equal(
+    db.prepare('SELECT title FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(refreshTargetId).title,
+    'Valid row survives skipped siblings'
+  );
+  await assert.rejects(
+    () => repository.refreshThreadPage({
+      threads: Array.from({ length: 41 }, (_, index) => ({
+        threadId: refreshThreadId(index + 200),
+        title: `Oversized ${index}`
+      }))
+    }),
+    /must not exceed 40/
+  );
+  await assert.rejects(
+    () => repository.refreshThreadPage({
+      threads: [
+        { threadId: refreshTargetId, title: 'Duplicate A' },
+        { threadId: refreshTargetId, title: 'Duplicate B' }
+      ]
+    }),
+    /unique threadIds/
   );
 
   db.close();

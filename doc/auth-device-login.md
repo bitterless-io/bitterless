@@ -68,9 +68,10 @@ Minimum keys:
 
 ## Human/backend support needed
 
-- The development desktop Core API is `https://bl-test-api.terncloud.com`; production and
-  `yarn dev:prod` use `https://api.bitterless.io`. Keep `VITE_BITTERLESS_CORE_URL` aligned
-  across the environment profiles and renderer fallback.
+- The development desktop Core API is `https://bl-test-api.terncloud.com`. After the Shanghai
+  backend release gate passes, production and `yarn dev:prod` use
+  `https://prod-bitterless-hcqmtqwtox.cn-shanghai.fcapp.run`. Keep
+  `VITE_BITTERLESS_CORE_URL`, the renderer fallback, CSP, and the main-process allowlist aligned.
 - Create or invite the real customer accounts in `bitterless-private`.
 - Add backend device APIs:
   - `POST /auth/login` returns `{ token, customer, device }` and generates device id server-side.

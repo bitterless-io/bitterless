@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, type Display } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { is } from '@electron-toolkit/utils';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
@@ -10,14 +10,11 @@ import {
   COIN_WINDOW_MIN_HEIGHT,
   COIN_WINDOW_MIN_WIDTH,
   CoinWindowStateStore,
-  type CoinDisplayBounds,
-  type CoinPersistedWindowState,
 } from './coinWindowState';
-
-const GEOMETRY_SAVE_DELAY_MS = 250;
-
-const displayWorkAreas = (displays: Display[]): CoinDisplayBounds[] =>
-  displays.map(({ workArea }) => ({ ...workArea }));
+import {
+  windowStateService,
+  type WindowStateController,
+} from '@main/windows/windowState.service';
 
 const normalizedRendererUrl = (value: string): string => {
   const url = new URL(value);
@@ -27,8 +24,7 @@ const normalizedRendererUrl = (value: string): string => {
 
 class CoinWindowManager {
   private currentWindow: BrowserWindow | null = null;
-  private stateStore: CoinWindowStateStore | null = null;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private windowStateController: WindowStateController | null = null;
   private closeCleanup: (() => void) | null = null;
 
   get browserWindow(): BrowserWindow | null {
@@ -48,14 +44,24 @@ class CoinWindowManager {
     if (existing && !existing.isDestroyed()) return existing;
     if (signal.aborted) throw new Error('[coin] startup aborted');
 
-    this.stateStore = new CoinWindowStateStore(app.getPath('userData'));
-    const saved = this.stateStore.read(displayWorkAreas(screen.getAllDisplays()));
+    if (!windowStateService.has('coin')) {
+      const legacy = new CoinWindowStateStore(app.getPath('userData')).readLegacy();
+      if (legacy) {
+        windowStateService.importLegacy('coin', {
+          ...legacy.bounds,
+          maximized: legacy.maximized,
+        });
+      }
+    }
+    const restored = windowStateService.resolve('coin');
     const rendererUrl = this.getRendererUrl();
     const isMac = process.platform === 'darwin';
     const window = new BrowserWindow({
-      width: saved?.bounds.width ?? COIN_WINDOW_DEFAULT_WIDTH,
-      height: saved?.bounds.height ?? COIN_WINDOW_DEFAULT_HEIGHT,
-      ...(saved ? { x: saved.bounds.x, y: saved.bounds.y } : { center: true }),
+      width: restored?.bounds.width ?? COIN_WINDOW_DEFAULT_WIDTH,
+      height: restored?.bounds.height ?? COIN_WINDOW_DEFAULT_HEIGHT,
+      ...(restored
+        ? { x: restored.bounds.x, y: restored.bounds.y }
+        : { center: true }),
       minWidth: COIN_WINDOW_MIN_WIDTH,
       minHeight: COIN_WINDOW_MIN_HEIGHT,
       show: false,
@@ -75,9 +81,13 @@ class CoinWindowManager {
       },
     });
     this.currentWindow = window;
+    this.windowStateController = windowStateService.register('coin', window);
 
     const abortStartup = (): void => {
-      if (!window.isDestroyed()) window.destroy();
+      if (!window.isDestroyed()) {
+        this.windowStateController?.flushAndDispose();
+        window.destroy();
+      }
     };
     signal.addEventListener('abort', abortStartup, { once: true });
 
@@ -89,20 +99,16 @@ class CoinWindowManager {
       }
     });
 
-    const scheduleGeometrySave = (): void => this.scheduleGeometrySave(window);
-    window.on('move', scheduleGeometrySave);
-    window.on('resize', scheduleGeometrySave);
-    window.on('maximize', scheduleGeometrySave);
-    window.on('unmaximize', scheduleGeometrySave);
     window.on('close', () => {
       this.closeCleanup?.();
-      this.flushGeometry(window);
     });
     window.on('closed', () => {
       this.closeCleanup?.();
       signal.removeEventListener('abort', abortStartup);
-      this.clearSaveTimer();
-      if (this.currentWindow === window) this.currentWindow = null;
+      if (this.currentWindow === window) {
+        this.currentWindow = null;
+        this.windowStateController = null;
+      }
     });
 
     try {
@@ -112,18 +118,24 @@ class CoinWindowManager {
         await window.loadFile(join(__dirname, '../renderer/coin/index.html'));
       }
       if (signal.aborted || window.isDestroyed()) throw new Error('[coin] startup aborted');
-      if (saved?.maximized) window.maximize();
       return window;
     } catch (error) {
-      if (!window.isDestroyed()) window.destroy();
+      if (!window.isDestroyed()) {
+        this.windowStateController?.flushAndDispose();
+        window.destroy();
+      }
       throw error;
     }
   }
 
   showAndFocus(window: BrowserWindow): void {
     if (window.isDestroyed()) return;
-    if (window.isMinimized()) window.restore();
-    window.show();
+    if (this.windowStateController) {
+      this.windowStateController.show();
+    } else {
+      if (window.isMinimized()) window.restore();
+      window.show();
+    }
     window.focus();
   }
 
@@ -132,9 +144,12 @@ class CoinWindowManager {
       if (this.currentWindow === window) this.currentWindow = null;
       return;
     }
-    this.flushGeometry(window);
+    this.windowStateController?.flushAndDispose();
     window.destroy();
-    if (this.currentWindow === window) this.currentWindow = null;
+    if (this.currentWindow === window) {
+      this.currentWindow = null;
+      this.windowStateController = null;
+    }
   }
 
   sendLanguageSnapshot(snapshot: ApplicationLanguageSnapshot): void {
@@ -150,30 +165,6 @@ class CoinWindowManager {
     return pathToFileURL(join(__dirname, '../renderer/coin/index.html')).href;
   }
 
-  private scheduleGeometrySave(window: BrowserWindow): void {
-    this.clearSaveTimer();
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null;
-      this.flushGeometry(window);
-    }, GEOMETRY_SAVE_DELAY_MS);
-  }
-
-  private clearSaveTimer(): void {
-    if (!this.saveTimer) return;
-    clearTimeout(this.saveTimer);
-    this.saveTimer = null;
-  }
-
-  private flushGeometry(window: BrowserWindow): void {
-    this.clearSaveTimer();
-    if (!this.stateStore || window.isDestroyed()) return;
-    const state: CoinPersistedWindowState = {
-      version: 1,
-      bounds: window.getNormalBounds(),
-      maximized: window.isMaximized(),
-    };
-    this.stateStore.save(state, displayWorkAreas(screen.getAllDisplays()));
-  }
 }
 
 export const coinWindowManager = new CoinWindowManager();

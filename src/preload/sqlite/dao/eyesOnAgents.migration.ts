@@ -98,6 +98,21 @@ export const ensureEyesOnAgentsHookDeliverySchema = (db: MigrationDatabase): voi
   `);
 };
 
+export const ensureEyesOnAgentsLastUserPromptSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'last_user_prompt_preview', 'TEXT');
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'last_user_prompt_turn_id', 'TEXT');
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'last_user_prompt_at', 'INTEGER');
+  addColumnIfMissing(
+    db,
+    'eyes_on_agents_thread',
+    'last_user_prompt_truncated',
+    'INTEGER NOT NULL DEFAULT 0'
+  );
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'last_user_prompt_source', 'TEXT');
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'last_user_prompt_checked_at', 'INTEGER');
+};
+
 export const ensureEyesOnAgentsLegacyImport = (db: MigrationDatabase): void => {
   const importLegacy = db.transaction(() => {
     const now = Date.now();

@@ -23,6 +23,7 @@ interface McpTool {
 }
 
 const REQUEST_TIMEOUT_MS = 10000;
+const TODO_ID_SCHEMA = { type: 'string', pattern: '^\\d{20}$' } as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -86,7 +87,7 @@ const tools: McpTool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        domainId: { type: 'integer', minimum: 1 },
+        domainId: TODO_ID_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -98,7 +99,7 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: { type: 'integer', minimum: 1 },
+        id: TODO_ID_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -114,7 +115,7 @@ const tools: McpTool[] = [
           type: 'array',
           minItems: 1,
           maxItems: 100,
-          items: { type: 'integer', minimum: 1 },
+          items: TODO_ID_SCHEMA,
         },
       },
       additionalProperties: false,
@@ -127,7 +128,7 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['domainId', 'title'],
       properties: {
-        domainId: { type: 'integer', minimum: 1 },
+        domainId: TODO_ID_SCHEMA,
         title: { type: 'string', minLength: 1, maxLength: 200 },
         dueAt: { type: ['integer', 'null'] },
         remindAt: { type: ['integer', 'null'] },
@@ -151,7 +152,7 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: { type: 'integer', minimum: 1 },
+        id: TODO_ID_SCHEMA,
         title: { type: 'string', minLength: 1, maxLength: 200 },
         dueAt: { type: ['integer', 'null'] },
         remindAt: { type: ['integer', 'null'] },
@@ -175,7 +176,7 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: { type: 'integer', minimum: 1 },
+        id: TODO_ID_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -187,7 +188,7 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: { type: 'integer', minimum: 1 },
+        id: TODO_ID_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -199,7 +200,7 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: { type: 'integer', minimum: 1 },
+        id: TODO_ID_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -211,8 +212,8 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id', 'domainId'],
       properties: {
-        id: { type: 'integer', minimum: 1 },
-        domainId: { type: 'integer', minimum: 1 },
+        id: TODO_ID_SCHEMA,
+        domainId: TODO_ID_SCHEMA,
       },
       additionalProperties: false,
     },

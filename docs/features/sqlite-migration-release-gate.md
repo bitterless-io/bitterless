@@ -7,17 +7,18 @@ Date: 2026-07-16
 ## Objective
 
 No signed Bitterless package may be built or published until the exact runtime migration manifests
-prove that supported historical Core and Maestro databases can reach the current schema without
-data loss, skipped versions, partial ledger writes, or Electron startup.
+prove that supported historical Core, Maestro, and customer Todo databases can reach the current
+schema without data loss, skipped versions, partial ledger writes, or a blocked Electron startup.
 
 ## Scope
 
-The gate covers both persisted application databases:
+The gate covers all persisted application database families:
 
 | Database | Runtime owner | Upgrade surface |
 |---|---|---|
 | Core `main.db` | Core SQLite preload | Todo, Domain, Setting, legacy coding-agent import, EyesOnAgents |
 | Maestro `config.db` | Maestro SQLite preload | capture rules, tabs, chat persistence, inject buttons |
+| Todoist sync `todoist-sync-v1/customer-<customerId>.db` | Main-process `todoistSync` session | synchronized Domain/Todo/SubTodo rows, outbox, sync state, local Todo events |
 
 Linux is not a supported Bitterless release platform. A successful production release updates
 macOS ARM64, macOS x64, and Windows x64.
@@ -32,6 +33,9 @@ macOS ARM64, macOS x64, and Windows x64.
   lexical, subtraction, or width-based comparisons are forbidden.
 - Each database owns one ordered migration manifest. Runtime boot and the release audit import the
   same manifest; a copied list in a test is not acceptable.
+- The customer Todo database manifest is driver-neutral and lives under `src/main/todoistSync/`.
+  The Main-process SQLCipher owner and the pure-Node audit execute that same ordered manifest; the
+  audit may create an unencrypted disposable adapter database but may not restate its DDL.
 - Migration identifiers are unique, strictly increasing 12-digit `YYMMDDHHmmss` strings. Historical
   shorter ledger values remain valid upgrade starting points but no new migration may use them.
 - One migration and its ledger insert run in the same SQLite transaction. A failure rolls back both,
@@ -58,12 +62,31 @@ macOS ARM64, macOS x64, and Windows x64.
   final Core schema verification all complete. Target registration and ready RPC have no elapsed-
   time failure threshold and never block foreground GUI startup.
 
+## Runtime Todo readiness
+
+- The authenticated Main-process `todoistSync` session is the only owner of a customer Todo
+  database. UI and MCP reach it through the repository/XPC boundary and never open the file.
+- The session resolves a customer-isolated path, decrypts its random key through Electron
+  `safeStorage`, applies the SQLCipher key before any schema read, runs the shared Todo manifest,
+  then executes `integrity_check`, `foreign_key_check`, and final schema verification before making
+  the repository active.
+- Migration/key/open failure leaves the existing file and outbox intact, closes the handle, and
+  exposes a typed startup diagnostic. It must not fall back to `main.db`, create an unencrypted
+  replacement, or invalidate an otherwise valid Core login.
+- Account switches and logout close the current handle before another customer path can open. A
+  stale session generation can never complete readiness for the newly active account.
+- Automated/local database tests inject one fixed test password and never call `safeStorage` or the
+  operating-system keychain. That password is test-only; an actual development/packaged app
+  session still uses the runtime-protected random password.
+
 ## Historical upgrade matrix
 
 The audit creates disposable SQLite databases through a pure-Node adapter matching the production
 driver contract and exercises:
 
 - fresh Core and Maestro databases;
+- fresh and current-v1 customer Todo databases, including every resource, outbox, state, event,
+  index, foreign-key, and migration-ledger invariant;
 - pre-ledger legacy databases;
 - Core ledgers from the historical 10-digit series and the later 8-digit series;
 - Core schemas before Setting `sub_key`, Todo columns, Domain metadata, and each EyesOnAgents schema
@@ -71,14 +94,27 @@ driver contract and exercises:
 - Maestro checkpoints before/after capture-filter rebuild and each chat/inject-button migration;
 - direct jumps over several checkpoints, not only one-version upgrades.
 
+Todoist sync v1 has no released historical schema at introduction and deliberately ignores the
+legacy Todo rows in `main.db`. Its matrix therefore starts with an empty fresh database, a database
+stamped at the v1 baseline, an incomplete/invalid ledger, and an injected future migration failure.
+There is no legacy import fixture. Every later released Todo schema must add its real pre-upgrade
+checkpoint fixture to this matrix before packaging that change.
+
 Every case must finish with `integrity_check = ok`, an empty `foreign_key_check`, the complete current
 column/index contract, every expected ledger entry, and preserved sentinel rows. The test must also
 inject a failing migration and prove transaction rollback plus absence from the ledger.
 
+The pure-Node audit proves migration/schema behavior but does not pretend to open a SQLCipher file.
+A separate Electron-ABI Todo cipher smoke uses the production native module and manifest to prove
+create/reopen, wrong-key failure, restart preservation, and customer-path isolation. Runtime asset
+inspection proves the same native module is present in development plus packaged macOS/Windows
+outputs. Both checks are release gates.
+
 ## Packaging hook
 
-`yarn audit:sqlite-migrations` is the reusable local/CI command. Production build entry points call
-it before environment preparation, application compilation, signing, notarization, or upload.
+`yarn audit:sqlite-migrations` is the reusable local/CI command. It covers all three database
+families. Production build entry points call it before environment preparation, application
+compilation, signing, notarization, or upload.
 `scripts/publish.js --build` is the authoritative all-platform release path and must fail closed if
 the audit exits non-zero.
 
@@ -97,7 +133,7 @@ binary or an Electron ABI dependency.
 Production publication may start only after:
 
 1. migration audit passes;
-2. focused audit tests and TypeScript checks pass;
+2. focused audit tests, Todo SQLCipher/asset smoke, and TypeScript checks pass;
 3. the new release version and release notes are committed and synchronized;
 4. each supported platform is built from that same commit and `version_code`;
 5. publication compares the local and existing platform manifests with `compare-versions` and

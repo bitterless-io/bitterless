@@ -1,11 +1,14 @@
 import { app, BrowserWindow, type BrowserWindowConstructorOptions } from 'electron';
 import { is } from '@electron-toolkit/utils';
-import { throttle } from 'es-toolkit';
 import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main';
 import { join } from 'path';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
 import type { EyesOnAgentsWindowApi } from '@shared/eyesOnAgents/eyesOnAgentsWindow.type';
+import {
+  windowStateService,
+  type WindowStateController,
+} from '@main/windows/windowState.service';
 
 const WINDOW_LAYOUT_KEY = 'window_layout';
 const WINDOW_LAYOUT_SUB_KEY = 'eyes-on-agents';
@@ -23,17 +26,17 @@ const resolveEyesOnAgentsOutPath = (...segments: string[]): string =>
 class EyesOnAgentsWindowHandler extends XpcMainHandler implements EyesOnAgentsWindowApi {
   private window: BrowserWindow | null = null;
   private creationPromise: Promise<BrowserWindow> | null = null;
-  private readonly saveLayoutThrottled = throttle(
-    () => void this.saveLayout(),
-    100,
-    { trailing: true },
-  );
+  private windowStateController: WindowStateController | null = null;
 
   async openEyesOnAgentsWindow(): Promise<void> {
     const current = this.window;
     if (current && !current.isDestroyed()) {
       if (current.isMinimized()) current.restore();
-      current.show();
+      if (this.windowStateController) {
+        this.windowStateController.show();
+      } else {
+        current.show();
+      }
       current.focus();
       return;
     }
@@ -46,7 +49,11 @@ class EyesOnAgentsWindowHandler extends XpcMainHandler implements EyesOnAgentsWi
 
     const created = await this.creationPromise;
     if (!created.isDestroyed()) {
-      created.show();
+      if (this.windowStateController) {
+        this.windowStateController.show();
+      } else {
+        created.show();
+      }
       created.focus();
     }
   }
@@ -100,9 +107,11 @@ class EyesOnAgentsWindowHandler extends XpcMainHandler implements EyesOnAgentsWi
       await pending.catch(() => undefined);
     }
     if (this.window && !this.window.isDestroyed()) {
+      this.windowStateController?.flushAndDispose();
       this.window.destroy();
     }
     this.window = null;
+    this.windowStateController = null;
   }
 
   async destroyForHostQuit(): Promise<void> {
@@ -110,14 +119,18 @@ class EyesOnAgentsWindowHandler extends XpcMainHandler implements EyesOnAgentsWi
   }
 
   private async createWindow(): Promise<BrowserWindow> {
-    const [savedLayout, preferences] = await Promise.all([
-      this.loadLayout(),
+    const [legacyLayout, preferences] = await Promise.all([
+      windowStateService.has('eyes-on-agents') ? null : this.loadLayout(),
       this.loadPreferences(),
     ]);
+    if (legacyLayout) {
+      windowStateService.importLegacy('eyes-on-agents', legacyLayout);
+    }
+    const restored = windowStateService.resolve('eyes-on-agents');
     const isMac = process.platform === 'darwin';
     const options: BrowserWindowConstructorOptions = {
-      width: savedLayout?.width ?? 1120,
-      height: savedLayout?.height ?? 720,
+      width: restored?.bounds.width ?? 1120,
+      height: restored?.bounds.height ?? 720,
       minWidth: 800,
       minHeight: 600,
       show: false,
@@ -133,22 +146,27 @@ class EyesOnAgentsWindowHandler extends XpcMainHandler implements EyesOnAgentsWi
       },
     };
 
-    if (savedLayout) {
-      options.x = savedLayout.x;
-      options.y = savedLayout.y;
+    if (restored) {
+      options.x = restored.bounds.x;
+      options.y = restored.bounds.y;
     }
 
     const created = new BrowserWindow(options);
     this.window = created;
+    this.windowStateController = windowStateService.register(
+      'eyes-on-agents',
+      created,
+    );
     created.setAlwaysOnTop(preferences.alwaysOnTop, preferences.alwaysOnTop ? 'floating' : 'normal');
     if (preferences.alwaysOnTop) {
       created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     }
 
-    created.on('move', this.saveLayoutThrottled);
-    created.on('resize', this.saveLayoutThrottled);
     created.once('closed', () => {
-      if (this.window === created) this.window = null;
+      if (this.window === created) {
+        this.window = null;
+        this.windowStateController = null;
+      }
     });
 
     try {
@@ -167,29 +185,16 @@ class EyesOnAgentsWindowHandler extends XpcMainHandler implements EyesOnAgentsWi
       }
       return created;
     } catch (error) {
-      if (!created.isDestroyed()) created.destroy();
-      if (this.window === created) this.window = null;
+      if (!created.isDestroyed()) {
+        this.windowStateController?.flushAndDispose();
+        created.destroy();
+      }
+      if (this.window === created) {
+        this.window = null;
+        this.windowStateController = null;
+      }
       throw error;
     }
-  }
-
-  private async saveLayout(): Promise<void> {
-    const current = this.window;
-    if (!current || current.isDestroyed() || current.isMaximized()) return;
-    const bounds = current.getBounds();
-    const layout: WindowLayout = {
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: bounds.height,
-    };
-    await settingEmitter.upsert({
-      key: WINDOW_LAYOUT_KEY,
-      sub_key: WINDOW_LAYOUT_SUB_KEY,
-      value: layout,
-    }).catch((error) => {
-      console.error('[EyesOnAgentsWindowHandler] Failed to save layout:', error);
-    });
   }
 
   private async loadLayout(): Promise<WindowLayout | null> {

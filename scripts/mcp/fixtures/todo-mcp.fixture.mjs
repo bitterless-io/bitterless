@@ -5,7 +5,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import readline from 'node:readline';
 
-const DOMAIN_ID = 7;
+const toTodoId = (value) => String(value).padStart(20, '0');
+const DOMAIN_ID = toTodoId(7);
 const toolNames = [
   'domain.list',
   'event.list',
@@ -110,7 +111,7 @@ const handleCreate = (id, args) => {
     return;
   }
   const todo = {
-    id: state.nextId,
+    id: toTodoId(state.nextId),
     domain_id: DOMAIN_ID,
     title: args.title,
     status: 0,
@@ -134,13 +135,13 @@ const handleCreate = (id, args) => {
     state.todos.push(
       {
         ...todo,
-        id: state.nextId,
+        id: toTodoId(state.nextId),
         source: 'human',
         fixtureRole: 'human-decoy'
       },
       {
         ...todo,
-        id: state.nextId + 1,
+        id: toTodoId(state.nextId + 1),
         note: 'wrong ownership marker',
         fixtureRole: 'wrong-marker-decoy'
       }
@@ -149,14 +150,14 @@ const handleCreate = (id, args) => {
   }
 
   if (mode === 'ambiguous-owned') {
-    state.todos.push({ ...todo, id: state.nextId, fixtureRole: 'owned-duplicate' });
+    state.todos.push({ ...todo, id: toTodoId(state.nextId), fixtureRole: 'owned-duplicate' });
     state.nextId += 1;
   }
 
   if (mode === 'wrong-response-id') {
     const decoy = {
       ...todo,
-      id: state.nextId,
+      id: toTodoId(state.nextId),
       title: 'Unrelated human todo',
       note: 'not a smoke todo',
       source: 'human',

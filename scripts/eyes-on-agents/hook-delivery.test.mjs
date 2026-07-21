@@ -135,6 +135,26 @@ try {
     });
   };
 
+  const makeLivePromptDelivery = (occurredAt, prompt = 'PROMPT-LIVE-SENTINEL') => {
+    const deliveryId = randomUUID();
+    return contract.createCodexHookDelivery({
+      deliveryId,
+      event: contract.createCodexHookEventV2({
+        rawInput: {
+          session_id: THREAD_ID,
+          cwd: '/repo',
+          hook_event_name: 'UserPromptSubmit',
+          turn_id: 'turn-live',
+          prompt
+        },
+        installationId: INSTALLATION_ID,
+        eventId: deliveryId,
+        occurredAt,
+        captureUserPrompt: true
+      })
+    });
+  };
+
   const delivery = makeDelivery(500);
   assert.deepEqual(contract.parseCodexHookDelivery(delivery), delivery);
   assert.deepEqual(
@@ -148,6 +168,81 @@ try {
   assert.throws(
     () => contract.parseCodexHookDelivery({ ...delivery, payload: 'not-allowed' }),
     /Invalid Codex hook delivery envelope/
+  );
+
+  const livePromptDelivery = makeLivePromptDelivery(550, 'first line\n第二行🙂');
+  assert.equal(livePromptDelivery.event.schemaVersion, 2);
+  assert.equal(livePromptDelivery.event.payload.userPromptPreview, 'first line\n第二行🙂');
+  assert.equal(livePromptDelivery.event.payload.userPromptTruncated, false);
+  assert.deepEqual(contract.parseCodexHookDelivery(livePromptDelivery), livePromptDelivery);
+
+  const oversizedPromptDelivery = makeLivePromptDelivery(551, '🙂'.repeat(3_000));
+  assert.equal(oversizedPromptDelivery.event.payload.userPromptTruncated, true);
+  assert.ok(
+    Buffer.byteLength(oversizedPromptDelivery.event.payload.userPromptPreview, 'utf8') <=
+      contract.CODEX_HOOK_USER_PROMPT_MAX_BYTES
+  );
+  assert.doesNotMatch(oversizedPromptDelivery.event.payload.userPromptPreview, /\ufffd/);
+
+  for (const invalidPrompt of ['', ' \n ', 'contains\0nul', '\ud800']) {
+    const invalidDelivery = makeLivePromptDelivery(552, invalidPrompt);
+    assert.equal(invalidDelivery.event.schemaVersion, 2);
+    assert.equal(
+      Object.hasOwn(invalidDelivery.event.payload, 'userPromptPreview'),
+      false,
+      'invalid prompt input must degrade to metadata-only delivery'
+    );
+  }
+
+  const promptlessStop = contract.createCodexHookEventV2({
+    rawInput: {
+      session_id: THREAD_ID,
+      cwd: '/repo',
+      hook_event_name: 'Stop',
+      turn_id: 'turn-live',
+      prompt: 'PROMPT-NON-USER-SENTINEL',
+      last_assistant_message: 'ASSISTANT-SENTINEL'
+    },
+    installationId: INSTALLATION_ID,
+    eventId: randomUUID(),
+    occurredAt: 553,
+    captureUserPrompt: true
+  });
+  assert.doesNotMatch(JSON.stringify(promptlessStop), /PROMPT-NON-USER-SENTINEL|ASSISTANT-SENTINEL/);
+  assert.throws(
+    () => contract.parseCodexHookEvent({
+      ...promptlessStop,
+      payload: {
+        ...promptlessStop.payload,
+        userPromptPreview: 'forbidden',
+        userPromptTruncated: false
+      }
+    }),
+    /only allowed for UserPromptSubmit/
+  );
+  assert.throws(
+    () => contract.parseCodexHookEvent({
+      ...livePromptDelivery.event,
+      payload: {
+        ...livePromptDelivery.event.payload,
+        userPromptTruncated: undefined
+      }
+    }),
+    /userPromptTruncated must be a boolean/
+  );
+
+  const metadataOnlyLivePrompt = contract.toMetadataOnlyCodexHookDelivery(livePromptDelivery);
+  assert.equal(metadataOnlyLivePrompt.deliveryId, livePromptDelivery.deliveryId);
+  assert.equal(metadataOnlyLivePrompt.event.eventId, livePromptDelivery.event.eventId);
+  assert.equal(metadataOnlyLivePrompt.event.schemaVersion, 2);
+  assert.doesNotMatch(JSON.stringify(metadataOnlyLivePrompt), /first line|第二行/);
+  assert.deepEqual(
+    contract.parseCodexHookMetadataOnlyDelivery(metadataOnlyLivePrompt),
+    metadataOnlyLivePrompt
+  );
+  assert.throws(
+    () => contract.parseCodexHookMetadataOnlyDelivery(livePromptDelivery),
+    /must be metadata-only/
   );
 
   const bridgeEndpoint = {
@@ -216,6 +311,7 @@ try {
   let acceptReplayConnection = () => undefined;
   let replayCalls = 0;
   let coverageSignals = 0;
+  let replayConsumedDelivery = null;
   const replayServer = new CodexHookBridgeServer(
     Date.now,
     (listener) => {
@@ -248,7 +344,10 @@ try {
     },
     installationId: INSTALLATION_ID,
     outboxPath: join(testRoot, 'scheduled-replay'),
-    consume: async () => ({ duplicate: false }),
+    consume: async (value) => {
+      replayConsumedDelivery = value;
+      return { duplicate: false };
+    },
     onCoverageGap: async () => {
       coverageSignals += 1;
     }
@@ -269,12 +368,14 @@ try {
   assert.equal(
     await outbox.sendCodexHookDelivery(
       replayEndpoint,
-      makeDelivery(502),
+      makeLivePromptDelivery(502, 'SERVER-LIVE-PROMPT'),
       2_000,
       () => new LoopbackClientSocket(acceptReplayConnection)
     ),
     'committed'
   );
+  assert.equal(replayConsumedDelivery.event.schemaVersion, 2);
+  assert.equal(replayConsumedDelivery.event.payload.userPromptPreview, 'SERVER-LIVE-PROMPT');
   for (let attempt = 0; attempt < 10 && replayCalls < 2; attempt += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
@@ -286,6 +387,11 @@ try {
     installationId: INSTALLATION_ID,
     outboxPath: join(testRoot, 'helper-outbox')
   };
+  const promptMarkerPath = join(testRoot, 'last-user-prompt.enabled');
+  assert.equal(
+    helper.isCodexHookLastUserPromptCaptureEnabled(helperArgs.outboxPath),
+    false
+  );
   let idCalls = 0;
   let sentDelivery = null;
   let persistedDelivery = null;
@@ -317,19 +423,51 @@ try {
   );
   assert.equal(idCalls, 1, 'one delivery ID must be created per invocation');
   assert.equal(sentDelivery.deliveryId, sentDelivery.event.eventId);
+  assert.equal(sentDelivery.event.schemaVersion, 2, 'the stable helper must emit V2 live events');
   assert.doesNotMatch(JSON.stringify(sentDelivery), /PROMPT-SENTINEL/);
   assert.equal(persistedDelivery, null, 'a committed delivery must not enter the outbox');
 
+  writeFileSync(promptMarkerPath, '');
+  assert.equal(
+    helper.isCodexHookLastUserPromptCaptureEnabled(helperArgs.outboxPath),
+    true,
+    'the helper must derive the capability marker as a sibling of the outbox'
+  );
   await helper.runCodexHookHelper(
     ['helper'],
     Readable.from([JSON.stringify({
       session_id: THREAD_ID,
       cwd: '/repo',
-      hook_event_name: 'SessionStart'
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'turn-live-helper',
+      prompt: 'HELPER-LIVE-PROMPT\n第二行'
     })]),
     {
       parseArgs: () => helperArgs,
       idFactory: () => '33333333-3333-4333-8333-333333333333',
+      now: () => 750,
+      send: async (_args, value) => {
+        sentDelivery = value;
+        return 'committed';
+      }
+    }
+  );
+  assert.equal(sentDelivery.event.payload.userPromptPreview, 'HELPER-LIVE-PROMPT\n第二行');
+  assert.equal(sentDelivery.event.payload.userPromptTruncated, false);
+
+  persistedDelivery = null;
+  await helper.runCodexHookHelper(
+    ['helper'],
+    Readable.from([JSON.stringify({
+      session_id: THREAD_ID,
+      cwd: '/repo',
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'turn-lost-ack',
+      prompt: 'LOST-ACK-PROMPT-SENTINEL'
+    })]),
+    {
+      parseArgs: () => helperArgs,
+      idFactory: () => '44444444-4444-4444-8444-444444444444',
       now: () => 800,
       send: async () => {
         throw new Error('lost acknowledgement');
@@ -342,8 +480,66 @@ try {
   );
   assert.equal(
     persistedDelivery.deliveryId,
-    '33333333-3333-4333-8333-333333333333',
+    '44444444-4444-4444-8444-444444444444',
     'a send failure must persist the same delivery ID'
+  );
+  assert.equal(persistedDelivery.event.eventId, persistedDelivery.deliveryId);
+  assert.equal(persistedDelivery.event.schemaVersion, 2);
+  assert.doesNotMatch(
+    JSON.stringify(persistedDelivery),
+    /LOST-ACK-PROMPT-SENTINEL/,
+    'the helper persist seam must receive metadata-only delivery after a lost ACK'
+  );
+
+  rmSync(promptMarkerPath);
+  let promptReads = 0;
+  await helper.runCodexHookHelper(
+    ['helper'],
+    Readable.from([]),
+    {
+      parseArgs: () => helperArgs,
+      readInput: async () => ({
+        session_id: THREAD_ID,
+        cwd: '/repo',
+        hook_event_name: 'UserPromptSubmit',
+        turn_id: 'turn-marker-off',
+        get prompt() {
+          promptReads += 1;
+          return 'MUST-NOT-BE-DERIVED';
+        }
+      }),
+      idFactory: () => '55555555-5555-4555-8555-555555555555',
+      now: () => 850,
+      send: async (_args, value) => {
+        sentDelivery = value;
+        return 'committed';
+      }
+    }
+  );
+  assert.equal(promptReads, 0, 'marker-off helper flow must not read or derive prompt content');
+  assert.doesNotMatch(JSON.stringify(sentDelivery), /MUST-NOT-BE-DERIVED/);
+
+  const liveOutboxPath = join(testRoot, 'live-outbox-strip');
+  const liveOutboxDelivery = makeLivePromptDelivery(900, 'OUTBOX-PROMPT-SENTINEL');
+  assert.equal(outbox.persistCodexHookOutboxDelivery({
+    outboxPath: liveOutboxPath,
+    delivery: liveOutboxDelivery,
+    now: 900
+  }), 'stored');
+  const liveOutboxFile = join(
+    liveOutboxPath,
+    'pending',
+    readdirSync(join(liveOutboxPath, 'pending'))[0]
+  );
+  const liveOutboxText = readFileSync(liveOutboxFile, 'utf8');
+  assert.doesNotMatch(liveOutboxText, /OUTBOX-PROMPT-SENTINEL/);
+  const storedMetadataOnlyDelivery = JSON.parse(liveOutboxText);
+  assert.equal(storedMetadataOnlyDelivery.deliveryId, liveOutboxDelivery.deliveryId);
+  assert.equal(storedMetadataOnlyDelivery.event.eventId, liveOutboxDelivery.event.eventId);
+  assert.equal(storedMetadataOnlyDelivery.event.schemaVersion, 2);
+  assert.equal(
+    Object.hasOwn(storedMetadataOnlyDelivery.event.payload, 'userPromptPreview'),
+    false
   );
 
   const replayPath = join(testRoot, 'replay');
@@ -410,6 +606,36 @@ try {
     /CORRUPT-PAYLOAD-SENTINEL/,
     'coverage signals must not include quarantined payloads'
   );
+  const corruptMarker = readFileSync(
+    join(corruptPath, 'quarantine', readdirSync(join(corruptPath, 'quarantine'))[0]),
+    'utf8'
+  );
+  assert.doesNotMatch(
+    corruptMarker,
+    /CORRUPT-PAYLOAD-SENTINEL/,
+    'quarantine must replace rejected input with a content-free marker'
+  );
+
+  const promptBearingOutboxPath = join(testRoot, 'prompt-bearing-corrupt');
+  const promptBearingPending = join(promptBearingOutboxPath, 'pending');
+  mkdirSync(promptBearingPending, { recursive: true });
+  const promptBearingFileName = `${String(livePromptDelivery.event.occurredAt).padStart(16, '0')}-${livePromptDelivery.deliveryId}.json`;
+  writeFileSync(
+    join(promptBearingPending, promptBearingFileName),
+    `${JSON.stringify(livePromptDelivery)}\n`
+  );
+  const promptBearingInspection = outbox.inspectCodexHookOutbox(promptBearingOutboxPath, 6_100);
+  assert.equal(promptBearingInspection.pendingCount, 0);
+  assert.equal(promptBearingInspection.quarantinedCount, 1);
+  const promptBearingMarker = readFileSync(
+    join(
+      promptBearingOutboxPath,
+      'quarantine',
+      readdirSync(join(promptBearingOutboxPath, 'quarantine'))[0]
+    ),
+    'utf8'
+  );
+  assert.doesNotMatch(promptBearingMarker, /first line|第二行/);
 
   const overflowPath = join(testRoot, 'overflow');
   const overflowPending = join(overflowPath, 'pending');

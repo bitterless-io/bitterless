@@ -1,6 +1,8 @@
 import type {
   EyesOnAgentsBridgeState,
   EyesOnAgentsDiscoveredThread,
+  EyesOnAgentsThreadRefreshPatch,
+  EyesOnAgentsHookLastUserPromptCandidate,
   EyesOnAgentsProjectMetadata,
   EyesOnAgentsRuntimeEvent,
   EyesOnAgentsRuntimeState
@@ -8,6 +10,10 @@ import type {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CONTROL_CHARACTER_PATTERN = /[\0\r\n]/;
+const NUL_CHARACTER_PATTERN = /\0/;
+const MAX_LAST_USER_PROMPT_BYTES = 8_192;
+const MAX_THREAD_TITLE_LENGTH = 300;
+const UTF8_ENCODER = new TextEncoder();
 const RUNTIME_STATES = new Set<EyesOnAgentsRuntimeState>([
   'working',
   'waiting_approval',
@@ -24,8 +30,26 @@ const ACTIVE_STATES = new Set<EyesOnAgentsRuntimeState>([
   'waiting_input'
 ]);
 
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!Number.isFinite(next) || next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export const isEyesOnAgentsRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const hasOwn = (value: Record<string, unknown>, key: string): boolean => {
+  return Object.prototype.hasOwnProperty.call(value, key);
 };
 
 const assertOnlyKeys = (
@@ -77,6 +101,86 @@ export const parseEyesOnAgentsText = (
     throw new Error(`${label} contains a forbidden control character`);
   }
   return normalized;
+};
+
+const providerThreadName = (value: unknown): string | null => {
+  try {
+    const name = parseEyesOnAgentsText(
+      value,
+      'thread name',
+      MAX_THREAD_TITLE_LENGTH
+    );
+    if (name === null || hasUnpairedSurrogate(name)) return null;
+    return name;
+  } catch {
+    return null;
+  }
+};
+
+const providerThreadPreview = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  if (NUL_CHARACTER_PATTERN.test(value) || hasUnpairedSurrogate(value)) return null;
+  const folded = value.replace(/\s+/gu, ' ').trim();
+  if (!folded) return null;
+  if (folded.length <= MAX_THREAD_TITLE_LENGTH) return folded;
+  let end = MAX_THREAD_TITLE_LENGTH;
+  const lastCodeUnit = folded.charCodeAt(end - 1);
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) end -= 1;
+  return folded.slice(0, end).trimEnd() || null;
+};
+
+export const normalizeEyesOnAgentsProviderThreadTitle = (
+  value: unknown
+): string | null => {
+  if (!isEyesOnAgentsRecord(value)) return null;
+  let name: unknown;
+  try {
+    name = value.name;
+  } catch {
+    name = null;
+  }
+  const normalizedName = providerThreadName(name);
+  if (normalizedName !== null) return normalizedName;
+  let preview: unknown;
+  try {
+    preview = value.preview;
+  } catch {
+    return null;
+  }
+  return providerThreadPreview(preview);
+};
+
+export const parseEyesOnAgentsLastUserPromptPreview = (value: unknown): string | null => {
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new Error('last user prompt preview must be a string or null');
+  if (!value.trim()) return null;
+  if (NUL_CHARACTER_PATTERN.test(value) || hasUnpairedSurrogate(value)) {
+    throw new Error('last user prompt preview contains a forbidden character');
+  }
+  if (UTF8_ENCODER.encode(value).byteLength > MAX_LAST_USER_PROMPT_BYTES) {
+    throw new Error(`last user prompt preview must be at most ${MAX_LAST_USER_PROMPT_BYTES} UTF-8 bytes`);
+  }
+  return value;
+};
+
+export const parseEyesOnAgentsHookLastUserPromptCandidate = (
+  value: unknown
+): EyesOnAgentsHookLastUserPromptCandidate => {
+  if (!isEyesOnAgentsRecord(value)) {
+    throw new Error('hook last user prompt candidate must be an object');
+  }
+  assertOnlyKeys(value, ['preview', 'truncated'], 'hook last user prompt candidate');
+  if (!hasOwn(value, 'preview') || value.preview === undefined) {
+    throw new Error('hook last user prompt preview is required');
+  }
+  if (typeof value.truncated !== 'boolean') {
+    throw new Error('hook last user prompt truncated must be a boolean');
+  }
+  const preview = parseEyesOnAgentsLastUserPromptPreview(value.preview);
+  if (preview === null && value.truncated) {
+    throw new Error('a missing hook last user prompt preview cannot be truncated');
+  }
+  return { preview, truncated: value.truncated };
 };
 
 export const parseEyesOnAgentsPath = (value: unknown): string | null => {
@@ -281,6 +385,121 @@ export const parseEyesOnAgentsMoveThreadParams = (
     threadId: parseEyesOnAgentsUuid(value.threadId),
     domainId: parsePositiveId(value.domainId, 'domainId')
   };
+};
+
+export const parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams = (
+  value: unknown
+): { enabled: boolean } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('prompt capture params must be an object');
+  assertOnlyKeys(value, ['enabled'], 'prompt capture params');
+  if (typeof value.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  return { enabled: value.enabled };
+};
+
+export const parseEyesOnAgentsThreadRefreshPatch = (
+  value: unknown
+): EyesOnAgentsThreadRefreshPatch => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('thread refresh patch must be an object');
+  assertOnlyKeys(
+    value,
+    ['threadId', 'title', 'status', 'lastActivityAt', 'lastUserPrompt'],
+    'thread refresh patch'
+  );
+  const result: EyesOnAgentsThreadRefreshPatch = {
+    threadId: parseEyesOnAgentsUuid(value.threadId)
+  };
+  if (hasOwn(value, 'title')) {
+    if (value.title === undefined) throw new Error('title must not be undefined');
+    result.title = parseEyesOnAgentsText(value.title, 'thread title', 300);
+  }
+  if (hasOwn(value, 'status')) {
+    if (!isEyesOnAgentsRecord(value.status)) {
+      throw new Error('thread refresh status patch must be an object');
+    }
+    assertOnlyKeys(
+      value.status,
+      ['runtimeState', 'activeFlags', 'activeTurnId', 'source', 'observedAt'],
+      'thread refresh status patch'
+    );
+    if (value.status.source !== 'app_server') {
+      throw new Error('thread refresh status source must be app_server');
+    }
+    const status: Omit<
+      NonNullable<EyesOnAgentsThreadRefreshPatch['status']>,
+      'activeTurnId'
+    > = {
+      runtimeState: parseEyesOnAgentsRuntimeState(value.status.runtimeState),
+      activeFlags: parseEyesOnAgentsActiveFlags(value.status.activeFlags),
+      source: value.status.source,
+      observedAt: parseEyesOnAgentsTimestamp(
+        value.status.observedAt,
+        'status observedAt',
+        false
+      ) as number
+    };
+    if (hasOwn(value.status, 'activeTurnId')) {
+      if (value.status.activeTurnId === undefined) {
+        throw new Error('activeTurnId must not be undefined');
+      }
+      result.status = {
+        ...status,
+        activeTurnId: parseEyesOnAgentsText(value.status.activeTurnId, 'activeTurnId', 200)
+      };
+    } else {
+      result.status = status;
+    }
+  }
+  if (hasOwn(value, 'lastActivityAt')) {
+    if (value.lastActivityAt === undefined) {
+      throw new Error('lastActivityAt must not be undefined');
+    }
+    result.lastActivityAt = parseEyesOnAgentsTimestamp(
+      value.lastActivityAt,
+      'lastActivityAt',
+      false
+    ) as number;
+  }
+  if (hasOwn(value, 'lastUserPrompt')) {
+    if (!isEyesOnAgentsRecord(value.lastUserPrompt)) {
+      throw new Error('last user prompt patch must be an object');
+    }
+    assertOnlyKeys(
+      value.lastUserPrompt,
+      ['preview', 'turnId', 'observedAt', 'checkedAt', 'truncated', 'source'],
+      'last user prompt patch'
+    );
+    if (value.lastUserPrompt.source !== 'app_server') {
+      throw new Error('last user prompt source must be app_server');
+    }
+    if (typeof value.lastUserPrompt.truncated !== 'boolean') {
+      throw new Error('last user prompt truncated must be a boolean');
+    }
+    if (!hasOwn(value.lastUserPrompt, 'preview') || value.lastUserPrompt.preview === undefined) {
+      throw new Error('last user prompt preview is required');
+    }
+    if (!hasOwn(value.lastUserPrompt, 'turnId') || value.lastUserPrompt.turnId === undefined) {
+      throw new Error('last user prompt turnId is required');
+    }
+    if (!hasOwn(value.lastUserPrompt, 'observedAt') || value.lastUserPrompt.observedAt === undefined) {
+      throw new Error('last user prompt observedAt is required');
+    }
+    result.lastUserPrompt = {
+      preview: parseEyesOnAgentsLastUserPromptPreview(value.lastUserPrompt.preview),
+      turnId: parseEyesOnAgentsText(value.lastUserPrompt.turnId, 'last user prompt turnId', 200),
+      observedAt: parseEyesOnAgentsTimestamp(
+        value.lastUserPrompt.observedAt,
+        'last user prompt observedAt'
+      ),
+      checkedAt: parseEyesOnAgentsTimestamp(
+        value.lastUserPrompt.checkedAt,
+        'last user prompt checkedAt',
+        false
+      ) as number,
+      truncated: value.lastUserPrompt.truncated,
+      source: value.lastUserPrompt.source
+    };
+  }
+  return result;
 };
 
 export const parseEyesOnAgentsRuntimeEvent = (

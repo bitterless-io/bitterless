@@ -1,6 +1,6 @@
 # EyesOnAgents Layout
 
-Status: implemented and independently statically reviewed through task 012
+Status: compact latest-question card and four-step observation guide implemented; owner verification pending
 
 ## Product stance
 
@@ -25,20 +25,20 @@ for live signals.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  EyesOnAgents        ● App Server connected  [↻ Refresh] [Bridge] [Settings]│
+│  EyesOnAgents  [+ Add Domain] ● Connections [↻ Refresh] [Bridge] [Settings]│
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  ┌ Focus ─────────┐ ┌ All ────────────┐ ┌ Bitterless ─────┐                │
-│  │ API pagination◌│ │ [overmind (4)▾]│ │ App Server RPC  │                │
-│  │ now      [⌂][↗]│ │ Release notes   │ │ now      [⌂][↗]│                │
-│  │ Fix migrations │ │ 2h       [⌂][↗]│ │                 │                │
+│  ┌ Focus ─────────┐ ┌ All ──────── [⌕]┐ ┌ Bitterless ─────┐                │
+│  │ API pagination◌│ │ [Search titles][×]│ │ App Server RPC  │                │
+│  │ now      [⌂][↗]│ │ [overmind (4)▾]│ │ now      [⌂][↗]│                │
+│  │ Fix migrations │ │ Release notes   │ │                 │                │
 │  │ 1m       [⌂][↗]│ │                 │ │                 │                │
 │  └─────────────────┘ └─────────────────┘ └─────────────────┘                │
 │                                                                              │
-│  ┌ Research ──────┐ ┌ Release ────────┐ ┌ + Domain ───────┐                │
-│  │ Project notes   │ │ Fix migrations │ │                 │                │
-│  │ 4h       [⌂][↗]│ │ 1d       [⌂][↗]│ │                 │                │
-│  └─────────────────┘ └─────────────────┘ └─────────────────┘                │
+│  ┌ Research ──────┐ ┌ Release ────────┐                                   │
+│  │ Project notes   │ │ Fix migrations │                                   │
+│  │ 4h       [⌂][↗]│ │ 1d       [⌂][↗]│                                   │
+│  └─────────────────┘ └─────────────────┘                                   │
 │                           wrapped rows; board scrolls vertically ↓           │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -71,7 +71,7 @@ Typography stays on the product's existing system-font stack. Hierarchy comes fr
 spacing, and alignment rather than a new font dependency.
 
 Surface hierarchy follows Todo: background contrast separates the board, Domains, Focus, and
-thread items. Domain shells, Domain headers, thread items, and the add-Domain surface have no
+thread items. Domain shells, Domain headers, thread items, and the menubar Add Domain popup have no
 decorative outline or persistent shadow. A thread item may gain one quiet shadow
 on pointer hover without moving; keyboard focus uses a visible outline and a light background
 rather than reintroducing a permanent card border.
@@ -86,9 +86,13 @@ red dot only after the thread has returned to `idle`, so neither state consumes 
 The menu bar shows:
 
 - application title;
+- a labelled `Add Domain` control whose anchored form creates a custom Domain without occupying a
+  board column;
 - App Server connection dot and compact state text;
 - labelled `Refresh`, available from connected, disconnected, and error states and disabled while
-  another board action, connection, or synchronization is in flight;
+  another board action, connection, or synchronization is in flight; while the renderer remains
+  mounted, one idempotent store-owned poll requests a silent tiered field refresh every 10 seconds
+  when connection intent allows it;
 - independent Codex observation status/action;
 - a compact settings/always-on-top control and platform window controls.
 
@@ -97,7 +101,10 @@ Clicking the connection status opens a small panel with:
 - managed App Server status and `Connect`/`Disconnect`;
 - last successful sync time and latest error, if any;
 - an explicit note that this connection does not attach to Codex Desktop's private stdio process;
-- Codex observation status with `Enable`, `Review in Codex`, `Check again`, `Repair`, or `Disable`.
+- Codex observation status with `Enable`, `Review in Codex`, `Check again`, `Repair`, or `Disable`;
+- an always-visible four-step guide covering installation/repair, Codex review, Bitterless
+  verification, and the independent default-off latest-question permission; reason-specific review
+  text appears above it only when attention is needed.
 
 The panel separates the two lifecycles visually and semantically:
 
@@ -108,7 +115,12 @@ The panel separates the two lifecycles visually and semantically:
 │                                                            │
 │ Codex observation · Needs review              [Review]     │
 │ Installed globally · Listener active          [Check again]│
-│ Open Codex Settings → Hooks, or enter /hooks.  [Disable]    │
+│ ┌ Codex observation setup ──────────────────────────────┐ │
+│ │ 1 Install/Repair  2 Review if asked  3 Verify status  │ │
+│ │ 4 Optional question preview · Off by default          │ │
+│ │ CLI: /hooks · Hook trust is not content permission    │ │
+│ └────────────────────────────────────────────────────────┘ │
+│                                                [Disable]    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -117,17 +129,46 @@ local installation, Codex trust, and current listener as separate facts. It repo
 paused** rather than **Observing** when trusted hooks exist but the listener is not running. A user
 who skipped trust or disabled a hook always retains Review and Check actions.
 
+The Hook guide is always present while the drawer is open and uses a real conditional lifecycle
+rather than another paragraph: Enable only when absent or Repair drift, use Review in Codex only
+when requested, open Settings → Hooks (or enter `/hooks` in the CLI), inspect every Bitterless
+definition and choose `Trust` only for items Codex marks for review, then use Check again while
+pending or Check status after installation. Step 4 explains that **Store latest user question** is
+independent and off by default, retains one bounded local preview only, and clears saved previews
+when turned off. A disabled Hook may need only re-enabling. The
+reason-specific disabled, modified, untrusted, or unavailable summary appears above the guide only
+while relevant. The always-visible guide uses a quiet neutral background; amber is reserved for
+that attention summary. Neither surface adds a decorative border or shadow.
+
+The Codex observation card includes a default-off **Store latest user question** switch. Its
+complete consent, busy, cleanup, error, and privacy contract lives in
+[EyesOnAgents Last User Prompt](../features/eyes-on-agents-last-user-prompt.md). The connection
+drawer never displays question text; the ThreadCard may display only the normalized bounded value
+under the optional presentation contract below.
+
+Clicking Add Domain opens a compact form anchored below the menubar control. The input receives
+focus, uses the existing required/duplicate/`All` validation, and creates through the existing store
+action. Escape, Cancel, outside dismissal, and success close and reset it. Domain creation is never
+rendered as a board column.
+
 Errors stay in this panel and as a compact board banner. They never clear already persisted threads.
 The header Refresh action reconnects when necessary and reconciles active plus archived inventories;
-it is always visible as the manual fallback for missed activation or lifecycle updates.
+it is always visible as the manual fallback for missed activation or lifecycle updates. The
+automatic ten-second refresh skips rather than queues a tick while any snapshot load, connection,
+sync, board action, or earlier poll is in flight. It never overrides an explicit Disconnect, starts
+a second interval, or adds a Hook polling path. Its dedicated background promise does not drive
+either Refresh loading indicator. Each tick processes the 40 most recent persisted All rows, then
+one round-robin cold page of at most 40, updating title, runtime/activity, and opted-in
+latest-question data; activation and manual Refresh retain full inventory reconciliation.
 
 ## Domain column
 
-Each Domain header contains only its title and management control; no Domain, Focus, All, or
-filtered-result count is rendered in the header. A custom Domain title enters inline edit when clicked,
-matching Todo: the input measures its content between 40px and 200px, focuses and selects on entry,
-commits through blur or Enter, and cancels with Escape. Focus and All never show an editable cursor
-or input. The custom Domain overflow menu contains Delete only; the separate Rename action is
+Each Domain header contains its title and at most one projection-specific action: a custom Domain
+shows its management control, All shows Search, and Focus has no action. No Domain, Focus, All, or
+filtered-result count is rendered in the header. A custom Domain title enters inline edit when
+clicked, matching Todo: the input measures its content between 40px and 200px, focuses and selects on
+entry, commits through blur or Enter, and cancels with Escape. Focus and All never show an editable
+cursor or input. The custom Domain overflow menu contains Delete only; the separate Rename action is
 removed. Custom Domains remain reorderable. Deleting requires confirmation and states that its
 threads remain available in All; it never deletes Codex tasks.
 
@@ -145,10 +186,18 @@ a quiet background instead of a decorative border and retains a visible keyboard
 Filtering never changes Focus, custom Domains, or the stored Domain of any thread. Project option
 counts remain available inside the filter, without adding a separate Domain-header count row.
 
-The final narrow add column creates a Domain inline. Empty or duplicate titles remain editable with
-an inline validation message. Its button/form uses the regular Domain background without a dashed
-outline. Hover deepens the background; keyboard focus retains a visible outline. `Esc` cancels and
-`Enter` confirms.
+The All header also contains one icon-only Search button. It expands a compact title-search row above
+the Project filter and moves focus into the input. The query is trimmed and matched as a
+case-insensitive substring of `thread.title` only; it does not search IDs, paths, Project names,
+prompts, or response content. Title and Project filters compose, while Focus and custom Domains remain
+unchanged. The explicit clear button empties the title query and restores the result set for the
+currently selected Project filter. Pressing Escape or closing the Search control also clears the
+query before hiding the row, so no invisible filter remains active. The row and controls use quiet
+background contrast, mini sizing, visible focus, and no decorative border or shadow.
+
+Domain creation does not occupy a board column. The labelled menubar control opens the anchored form
+described in Header behavior; required, duplicate, and reserved-`All` errors remain inline there.
+Keyboard focus is visible, `Esc` or Cancel closes and resets, and `Enter` submits the form.
 
 Thread cards can be dragged between custom Domain columns. Focus and All are not sortable storage
 lists and do not participate in Domain ordering. A card dragged from Focus or All is cloned into a
@@ -163,6 +212,8 @@ A card displays only observation metadata:
 - title, falling back to a shortened UUID; its default/minimum height is one 18px line and it grows
   only when text wraps, up to a 36px/two-line maximum before clamping;
 - a compact loading indicator to the title's right only while the thread is actively working;
+- one optional quiet question echo between title and actions: the bounded latest user question on
+  `available`, localized **last user question pending** on `pending`, and no row on `unavailable`;
 - relative last-activity time at the far left of the action row, derived from one renderer-global
   reactive clock that advances every 10 seconds so visible cards update without receiving a new
   thread snapshot;
@@ -193,6 +244,19 @@ The whole card may focus keyboard navigation, but only `Open`, double-click, or 
 Codex and marks the observed turn read after the deep link succeeds. Dragging or selecting never
 marks read.
 
+```text
+┌────────────────────────────────────────┐
+│ Thread title, one or two lines       ◌ │
+│ latest user question…                  │  available or pending only
+│ now                         [⌂][↗][…] │
+└────────────────────────────────────────┘
+```
+
+The question echo is 11px/14px, single-line, muted, and ellipsized. It has no icon, label badge,
+border, background, or spinner. Display-only whitespace folding does not rewrite SQLite. Its native
+tooltip and card accessibility label retain the full stored bounded preview and disclose
+truncation. Pending says **待同步/pending**, not **fetching**, because the App Server may be offline.
+
 Cards sort by attention first, then `last_activity_at` descending. Domain assignment is manual;
 thread order is intentionally not persisted in the first delivery.
 
@@ -220,10 +284,19 @@ card leaves it in Focus until the runtime state changes.
 | no Focus items | quiet “Nothing needs attention” state |
 | working unread | title-side loader; no Open unread dot |
 | working completes to idle unread | loader disappears; unread dot appears at Open's upper-right |
+| latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
+| latest question pending | one muted localized pending line; no spinner or false claim that a request is running |
+| latest question unavailable/default-off | no question line and no additional card height |
 | All Project filter has no matches | selected option remains available with scoped empty text |
+| All title search closed | Search icon remains in the All header; no title query affects the list |
+| All title search open | compact focused input plus explicit Clear control appears above Project filter |
+| All title search has no matches | title-search-specific empty text appears; Focus/custom Domains remain unchanged |
+| Add Domain closed/open | labelled menubar control; opening shows a focused anchored form and no board placeholder column |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
-| bridge needs review | Review opens Codex Settings and gives Settings → Hooks plus `/hooks` instructions; Check remains available |
+| any bridge state | Install/Repair → Review if requested → Check status → optional default-off question permission guide remains visible in the open drawer |
+| bridge needs review | ordered guide shows Review → inspect Hooks/Trust flagged items → Check again, includes `/hooks`, and keeps Review plus Check available |
+| bridge trust inspection unavailable | the same ordered manual guide remains visible without claiming that the Hooks are trusted |
 | bridge disabled in Codex | Review safely re-enables only exact Bitterless entries, then still requires Codex trust when applicable |
 | bridge installed, listener stopped | explicit `Installed, paused`; never claim live observation |
 | unknown runtime | accessible runtime label remains `Unknown`; no working loader is shown |
@@ -250,14 +323,14 @@ MiniApp card -> EyesOnAgentsWindowHandler -> standalone renderer
 
 EyesOnAgentsApp
   ├─ EyesOnAgentsMenuBar
+  │    └─ AddDomainPopover (anchored form)
   ├─ ConnectionPanel
   └─ AgentBoard
        ├─ FocusColumn (derived)
        ├─ AllColumn (all non-archived threads)
        │    └─ ProjectFilter
-       ├─ CustomDomainColumn × N
-       │    └─ ThreadCard × N
-       └─ AddDomainColumn
+       └─ CustomDomainColumn × N
+            └─ ThreadCard × N
 ```
 
 Components may follow Todo's interaction pattern, but they must not import Todo-private stores or

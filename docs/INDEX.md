@@ -16,16 +16,25 @@ design document.
   states, and responsive constraints.
 - [Todo MCP integration](features/todo-mcp.md) - production-first local Todo access with isolated
   development instances.
+- [Todoist-style Todo synchronization](features/todoist-sync.md) - independent encrypted
+  per-customer SQLite, HTTP command/outbox sync, working-set-first bootstrap, and shared UI/MCP
+  refresh without PowerSync or logical WAL.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
   Project metadata and an All-column source filter.
 - [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
   lifecycle, lightweight reliable delivery, Codex trust review, and App Server independence.
+- [EyesOnAgents last user prompt](features/eyes-on-agents-last-user-prompt.md) - narrow capture of one
+  bounded latest user question per thread with content-free offline delivery and tiered All-thread
+  App Server recovery.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
   or local Todo/EyesOnAgents operation views with development and packaged runtime mapping.
 - [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
   upgrade audit required before signed production packaging.
 - [Startup diagnostics](features/startup-diagnostics.md) - SQLite-first but non-blocking GUI
   startup with main-owned failures surfaced from the Home menubar.
+- [Top-level window state persistence](features/window-state-persistence.md) - normal bounds,
+  window mode, physical-display affinity, off-screen recovery, and legacy geometry import for every
+  user-visible Main-owned window.
 
 ## Guides
 
@@ -46,8 +55,9 @@ design document.
 - [Design system](design/README.md)
 - [Color system](design/colors.md) - Royal Blue theme, accent-orange provenance, menu states, and
   the Maestro icon contract.
-- [Customer authentication](design/customer-authentication.md) - account lifecycle, password
-  recovery, first-password modal, and login/home visual contract.
+- [Customer authentication](design/customer-authentication.md) - account lifecycle, deterministic
+  login transition, password recovery, General account/logout controls, and login/home visual
+  contract.
 
 ## Delivery
 
@@ -57,9 +67,17 @@ design document.
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
 - [Omni mini-app cells delivery analysis](plan/analysis/omni-miniapp-cells.md)
 - [SQLite migration release-gate analysis](plan/analysis/sqlite-migration-release-gate.md)
+- [Todoist-style Todo sync delivery analysis](plan/analysis/todoist-sync.md)
 
 ## Issues
 
+- [Customer login session transition](issues/customer-auth-login-session-transition.md) - client
+  fix implemented; Shanghai backend gate and owner verification pending: valid Core login is no
+  longer blocked or misreported by optional local runtime activation, and General now exposes the
+  current account and Logout.
+- [EyesOnAgents existing-thread normalized ingestion](issues/eyes-on-agents-thread-normalization-drops-existing-sessions.md) - implemented; owner verification pending:
+  valid Codex threads can be omitted from All and remain Untitled when an optional preview is
+  multiline or longer than the display bound.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
   retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:

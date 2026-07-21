@@ -18,11 +18,14 @@ import { basename, dirname, join, resolve } from 'node:path';
 import {
   CODEX_HOOK_BRIDGE_MAX_FRAME_BYTES,
   parseCodexHookDelivery,
-  parseCodexHookDeliveryAck
+  parseCodexHookDeliveryAck,
+  parseCodexHookMetadataOnlyDelivery,
+  toMetadataOnlyCodexHookDelivery
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import type {
   CodexHookBridgeEndpoint,
-  CodexHookDelivery
+  CodexHookDelivery,
+  CodexHookMetadataOnlyDelivery
 } from '@shared/eyesOnAgents/codexHookBridge.type';
 
 export const CODEX_HOOK_OUTBOX_MAX_FILES = 512;
@@ -79,12 +82,12 @@ interface CodexHookOutboxPaths {
 
 interface CodexHookOutboxEntry {
   filePath: string;
-  delivery: CodexHookDelivery;
+  delivery: CodexHookMetadataOnlyDelivery;
 }
 
-type DeliverySender = (
+type OutboxDeliverySender = (
   endpoint: CodexHookBridgeEndpoint,
-  delivery: CodexHookDelivery
+  delivery: CodexHookMetadataOnlyDelivery
 ) => Promise<CodexHookDeliveryResult>;
 type SocketFactory = (path: string) => Socket;
 
@@ -260,13 +263,13 @@ const consumeEmergencyGap = (paths: CodexHookOutboxPaths, now: number): void => 
   unlinkSync(paths.emergencyGap);
 };
 
-const deliveryFileName = (delivery: CodexHookDelivery): string => {
+const deliveryFileName = (delivery: CodexHookMetadataOnlyDelivery): string => {
   const occurredAt = String(delivery.event.occurredAt).padStart(16, '0');
   return `${occurredAt}-${delivery.deliveryId}.json`;
 };
 
-const serializeDelivery = (delivery: CodexHookDelivery): string => {
-  const parsed = parseCodexHookDelivery(delivery);
+const serializeDelivery = (delivery: CodexHookMetadataOnlyDelivery): string => {
+  const parsed = parseCodexHookMetadataOnlyDelivery(delivery);
   const serialized = `${JSON.stringify(parsed)}\n`;
   if (Buffer.byteLength(serialized, 'utf8') > CODEX_HOOK_OUTBOX_MAX_FILE_BYTES) {
     throw new Error('Codex hook delivery exceeds the outbox limit');
@@ -306,26 +309,22 @@ const quarantinePendingPath = (
   if (!directChild(paths.pending, filePath) || !existsSync(filePath)) return;
   trimQuarantine(paths);
   const quarantinePath = join(paths.quarantine, `${String(now).padStart(16, '0')}-${randomUUID()}.bad`);
-  const stats = lstatSync(filePath);
-  if (stats.isFile() && stats.size <= CODEX_HOOK_OUTBOX_MAX_FILE_BYTES) {
-    renameSync(filePath, quarantinePath);
-    applyPrivateMode(quarantinePath, 0o600);
-  } else {
-    rmSync(filePath, { recursive: true, force: true });
-    atomicWrite(
-      quarantinePath,
-      `${JSON.stringify({ schemaVersion: 1, reason: 'invalid-or-oversized', detectedAt: now })}\n`
-    );
-  }
+  rmSync(filePath, { recursive: true, force: true });
+  atomicWrite(
+    quarantinePath,
+    `${JSON.stringify({ schemaVersion: 1, reason: 'invalid-outbox-entry', detectedAt: now })}\n`
+  );
   recordCoverageGap(paths, 'corrupt_file', now);
 };
 
-const readDeliveryFile = (filePath: string): CodexHookDelivery => {
+const readDeliveryFile = (filePath: string): CodexHookMetadataOnlyDelivery => {
   const stats = lstatSync(filePath);
   if (!stats.isFile() || stats.size > CODEX_HOOK_OUTBOX_MAX_FILE_BYTES) {
     throw new Error('invalid outbox file');
   }
-  return parseCodexHookDelivery(JSON.parse(readFileSync(filePath, 'utf8')) as unknown);
+  return parseCodexHookMetadataOnlyDelivery(
+    JSON.parse(readFileSync(filePath, 'utf8')) as unknown
+  );
 };
 
 const recoverTemporaryFiles = (paths: CodexHookOutboxPaths, now: number): void => {
@@ -433,10 +432,10 @@ export const persistCodexHookOutboxDelivery = (params: {
   delivery: CodexHookDelivery;
   now?: number;
 }): CodexHookOutboxPersistResult => {
-  let delivery: CodexHookDelivery;
+  let delivery: CodexHookMetadataOnlyDelivery;
   let serialized: string;
   try {
-    delivery = parseCodexHookDelivery(params.delivery);
+    delivery = toMetadataOnlyCodexHookDelivery(params.delivery);
     serialized = serializeDelivery(delivery);
   } catch {
     return 'unavailable';
@@ -515,7 +514,7 @@ export const replayCodexHookOutbox = async (params: {
   endpoint: CodexHookBridgeEndpoint;
   outboxPath: string;
   onCoverageGap?: (gap: CodexHookOutboxCoverageGap) => void | Promise<void>;
-  send?: DeliverySender;
+  send?: OutboxDeliverySender;
   now?: () => number;
 }): Promise<CodexHookOutboxReplayResult> => {
   const now = params.now ?? Date.now;

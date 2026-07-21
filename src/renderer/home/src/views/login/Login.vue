@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { isNavigationFailure, useRoute, useRouter } from 'vue-router';
 import { Message } from '@arco-design/web-vue';
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { authStore, customerNeedsPasswordSetup } from '@/stores/auth/auth.store';
 
 type LoginMode = 'password' | 'otp';
@@ -24,18 +25,32 @@ const resetCode = ref('');
 const resetNewPassword = ref('');
 const resetPasswordConfirmation = ref('');
 const resetCooldown = ref(0);
+const transitioning = ref(false);
+const passwordSetupComplete = ref(false);
 let cooldownTimer: number | undefined;
 let resetCooldownTimer: number | undefined;
 
-const redirectAfterLogin = (): void => {
+const redirectAfterLogin = async (): Promise<void> => {
   const redirect = (route.query.redirect as string) || '/chat';
-  router.replace(redirect);
+  transitioning.value = true;
+  try {
+    const failure = await router.replace(redirect);
+    if (isNavigationFailure(failure)) {
+      throw failure;
+    }
+  } catch (err) {
+    Message.error(i18nHelper.auth.navigationFailed);
+    throw err;
+  } finally {
+    transitioning.value = false;
+  }
 };
 
-const continueAfterLogin = (): void => {
+const continueAfterLogin = async (): Promise<void> => {
   const current = authStore.current;
   if (customerNeedsPasswordSetup(current)) {
     email.value = current?.email || email.value;
+    passwordSetupComplete.value = false;
     step.value = 'set-password';
     return;
   }
@@ -44,8 +59,8 @@ const continueAfterLogin = (): void => {
     Message.error('账号状态无效，请重新登录');
     return;
   }
+  await redirectAfterLogin();
   Message.success('登录成功');
-  redirectAfterLogin();
 };
 
 const startCooldown = (): void => {
@@ -76,9 +91,14 @@ onMounted(async () => {
   if (!authStore.isAuthenticated()) return;
   try {
     await authStore.restoreSession();
-    continueAfterLogin();
   } catch {
     authStore.clearLocalSession();
+    return;
+  }
+  try {
+    await continueAfterLogin();
+  } catch (err) {
+    console.error('[Login] Failed to continue restored session:', err);
   }
 });
 
@@ -172,7 +192,7 @@ const onResetPassword = async (): Promise<void> => {
 };
 
 const onSubmit = async (): Promise<void> => {
-  if (authStore.loading) return;
+  if (authStore.loading || authStore.checking || authStore.loggingOut || transitioning.value) return;
 
   if (!email.value.trim()) {
     Message.warning('请输入邮箱');
@@ -193,14 +213,24 @@ const onSubmit = async (): Promise<void> => {
       }
       await authStore.loginWithOtp(email.value.trim(), code.value.trim());
     }
-    continueAfterLogin();
+    await continueAfterLogin();
   } catch {
     /* error already shown by store */
   }
 };
 
 const onSetPassword = async (): Promise<void> => {
-  if (authStore.loading) return;
+  if (authStore.loading || authStore.loggingOut || transitioning.value) return;
+
+  if (passwordSetupComplete.value) {
+    try {
+      await redirectAfterLogin();
+      Message.success(i18nHelper.auth.passwordSetupSuccess);
+    } catch {
+      /* navigation error already shown by redirectAfterLogin */
+    }
+    return;
+  }
 
   if (newPassword.value.length < 8) {
     Message.warning('密码至少 8 位');
@@ -212,8 +242,11 @@ const onSetPassword = async (): Promise<void> => {
   }
   try {
     await authStore.changePassword(newPassword.value);
-    Message.success('密码设置成功');
-    redirectAfterLogin();
+    passwordSetupComplete.value = true;
+    newPassword.value = '';
+    passwordConfirmation.value = '';
+    await redirectAfterLogin();
+    Message.success(i18nHelper.auth.passwordSetupSuccess);
   } catch {
     /* error already shown by store */
   }
@@ -223,11 +256,6 @@ const onSetPassword = async (): Promise<void> => {
 <template>
   <main name="login" class="login-view">
     <section name="login__panel" class="login-view__panel">
-      <div class="login-view__mark">
-        <span class="login-view__mark-line" aria-hidden="true"></span>
-        <span>Bitterless</span>
-      </div>
-
       <div name="login__copy" class="login-view__copy">
         <h1>登录 Bitterless</h1>
         <p>使用受邀客户账号进入桌面工作区。</p>
@@ -291,8 +319,8 @@ const onSetPassword = async (): Promise<void> => {
           long
           type="primary"
           size="large"
-          :loading="authStore.loading"
-          :disabled="authStore.loading"
+          :loading="authStore.loading || transitioning"
+          :disabled="authStore.loading || authStore.checking || authStore.loggingOut || transitioning"
           @click="onSubmit"
         >
           {{ mode === 'password' ? '登录' : '验证并登录' }}
@@ -395,41 +423,62 @@ const onSetPassword = async (): Promise<void> => {
       :unmount-on-close="false"
       modal-class="login-view__password-dialog"
     >
-      <template #title>设置登录密码</template>
+      <template #title>
+        {{
+          passwordSetupComplete
+            ? i18nHelper.auth.passwordSetupCompleteTitle
+            : i18nHelper.auth.passwordSetupTitle
+        }}
+      </template>
       <div name="login__password-setup" class="login-view__password-modal">
-        <p>首次登录必须先设置密码，完成后才能进入工作区。</p>
-        <p class="login-view__account">{{ authStore.current?.email }}</p>
+        <template v-if="!passwordSetupComplete">
+          <p>{{ i18nHelper.auth.passwordSetupDescription }}</p>
+          <p class="login-view__account">{{ authStore.current?.email }}</p>
 
-        <a-form layout="vertical" :model="{}" class="login-view__form" @submit.prevent>
-          <a-form-item label="新密码">
-            <a-input-password
-              v-model="newPassword"
+          <a-form layout="vertical" :model="{}" class="login-view__form" @submit.prevent>
+            <a-form-item :label="i18nHelper.auth.newPassword">
+              <a-input-password
+                v-model="newPassword"
+                size="large"
+                :placeholder="i18nHelper.auth.passwordMinimum"
+                autocomplete="new-password"
+                @press-enter="onSetPassword"
+              />
+            </a-form-item>
+            <a-form-item :label="i18nHelper.auth.confirmPassword">
+              <a-input-password
+                v-model="passwordConfirmation"
+                size="large"
+                :placeholder="i18nHelper.auth.confirmPasswordPlaceholder"
+                autocomplete="new-password"
+                @press-enter="onSetPassword"
+              />
+            </a-form-item>
+            <a-button
+              long
+              type="primary"
               size="large"
-              placeholder="至少 8 位"
-              autocomplete="new-password"
-              @press-enter="onSetPassword"
-            />
-          </a-form-item>
-          <a-form-item label="确认密码">
-            <a-input-password
-              v-model="passwordConfirmation"
-              size="large"
-              placeholder="再次输入密码"
-              autocomplete="new-password"
-              @press-enter="onSetPassword"
-            />
-          </a-form-item>
+              :loading="authStore.loading || transitioning"
+              :disabled="authStore.loading || authStore.loggingOut || transitioning"
+              @click="onSetPassword"
+            >
+              {{ i18nHelper.auth.setPasswordAndContinue }}
+            </a-button>
+          </a-form>
+        </template>
+        <template v-else>
+          <p>{{ i18nHelper.auth.passwordSetupCompleteDescription }}</p>
           <a-button
             long
             type="primary"
             size="large"
-            :loading="authStore.loading"
-            :disabled="authStore.loading"
+            :loading="transitioning"
+            :disabled="authStore.loggingOut || transitioning"
             @click="onSetPassword"
           >
-            设置密码并继续
+            {{ i18nHelper.auth.continueToWorkspace }}
           </a-button>
-        </a-form>
+        </template>
       </div>
     </a-modal>
   </main>

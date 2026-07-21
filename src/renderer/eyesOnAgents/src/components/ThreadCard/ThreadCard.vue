@@ -4,7 +4,7 @@
     class="thread-card"
     :data-thread-id="thread.threadId"
     tabindex="0"
-    :aria-label="`${displayTitle}, ${runtimeLabel}`"
+    :aria-label="cardAriaLabel"
     @dblclick="handleDoubleClick"
     @keydown.enter.prevent="handleOpen"
   >
@@ -20,6 +20,15 @@
           <a-spin :size="12" aria-hidden="true" />
         </span>
       </div>
+
+      <p
+        v-if="promptDisplay !== null"
+        class="thread-card__prompt"
+        :title="promptAriaLabel"
+        :aria-label="promptAriaLabel"
+      >
+        {{ promptDisplay }}
+      </p>
 
       <div class="thread-card__actions">
         <span class="thread-card__time">{{ activityLabel }}</span>
@@ -123,6 +132,33 @@ const runtimeLabel = computed(() => {
     default: return i18nHelper.eyesOnAgents.thread.unknown;
   }
 });
+const storedPrompt = computed(() => props.thread.lastUserPrompt.preview ?? '');
+const hasAvailablePrompt = computed(() =>
+  props.thread.lastUserPrompt.state === 'available'
+  && Boolean(props.thread.lastUserPrompt.preview));
+const promptDisplay = computed(() => {
+  if (props.thread.lastUserPrompt.state === 'pending') {
+    return i18nHelper.eyesOnAgents.thread.latestQuestionPending;
+  }
+  if (!hasAvailablePrompt.value) return null;
+  return storedPrompt.value.replace(/\s+/gu, ' ').trim() || null;
+});
+const promptAriaLabel = computed(() => {
+  if (props.thread.lastUserPrompt.state === 'pending') {
+    return i18nHelper.eyesOnAgents.thread.latestQuestionPending;
+  }
+  if (!hasAvailablePrompt.value || promptDisplay.value === null) return '';
+  const prompt = i18nHelper.eyesOnAgents.thread.latestQuestion
+    .replace('{question}', storedPrompt.value);
+  return props.thread.lastUserPrompt.truncated
+    ? `${prompt} ${i18nHelper.eyesOnAgents.thread.latestQuestionTruncated}`
+    : prompt;
+});
+const cardAriaLabel = computed(() => [
+  displayTitle.value,
+  runtimeLabel.value,
+  promptAriaLabel.value,
+].filter(Boolean).join(', '));
 const folderLabel = computed(() => i18nHelper.eyesOnAgents.thread.workingDirectory
   .replace('{path}', props.thread.cwd ?? ''));
 const showUnreadDot = computed(() =>

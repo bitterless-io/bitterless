@@ -55,6 +55,304 @@ test('window activation refreshes thread discovery without leaking its listener'
   assert.match(store, /if \(this\.activationPromise\) return await this\.activationPromise/);
 });
 
+test('silent tiered All polling owns one non-overlapping refresh interval', () => {
+  const app = read('src/renderer/eyesOnAgents/src/App.vue');
+  const menuBar = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue'
+  );
+  const connectionPanel = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
+  );
+  const sharedTypes = read('src/shared/eyesOnAgents/eyesOnAgents.type.ts');
+  const mainService = read('src/main/eyesOnAgents/eyesOnAgents.service.ts');
+  const mainHandler = read('src/main/xpc/eyesOnAgents.handler.ts');
+  const repositoryDao = read('src/preload/sqlite/dao/eyesOnAgents.dao.ts');
+  const appServerSupervisor = read(
+    'src/main/eyesOnAgents/codexAppServer.supervisor.ts'
+  );
+  const storePath = 'src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts';
+  const globalStorePath = 'src/renderer/eyesOnAgents/src/store/global.store.ts';
+  const store = read(storePath);
+  const globalStore = read(globalStorePath);
+  const mounted = app.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
+  const unmounted = app.match(/onBeforeUnmount\(\(\) => \{[\s\S]*?\n\}\);/);
+  const startPolling = store.match(
+    /  startRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  stopRefreshPolling)/
+  );
+  const stopPolling = store.match(
+    /  stopRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  threadsForDomain)/
+  );
+  const pollingTick = store.match(
+    /  private async performRefreshPollingTick\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async performBackgroundThreadPagesRefresh)/
+  );
+  const backgroundRefresh = store.match(
+    /  private async performBackgroundThreadPagesRefresh\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async performWindowActivationRefresh)/
+  );
+  const mainTieredRefresh = mainService.match(
+    /  private async performRefreshThreadPages\(context: AppServerContext\): Promise<boolean> \{[\s\S]*?\n  \}(?=\n\n  private async refreshThreadBatch)/
+  );
+  const mainThreadBatch = mainService.match(
+    /  private async refreshThreadBatch\([\s\S]*?\n  \}(?=\n\n  private async projectThreadRefreshCandidate)/
+  );
+  const mainThreadProjection = mainService.match(
+    /  private async projectThreadRefreshCandidate\([\s\S]*?\n  \}(?=\n\n  async openThread)/
+  );
+  const repositoryPageSelection = repositoryDao.match(
+    /  async getThreadRefreshPages\(params: \{[\s\S]*?\n  \}(?=\n\n  async refreshThreadPage)/
+  );
+  const timerOwners = walk('src/renderer/eyesOnAgents')
+    .filter((path) => /\.(?:ts|vue)$/.test(path))
+    .filter((path) => /\bsetInterval\(/.test(read(path)))
+    .sort();
+
+  assert.ok(mounted, 'Missing EyesOnAgents mount lifecycle');
+  assert.ok(unmounted, 'Missing EyesOnAgents unmount lifecycle');
+  assert.match(mounted[0], /eyesOnAgentsStore\.startRefreshPolling\(\)/);
+  const startPollingIndex = mounted[0].indexOf('eyesOnAgentsStore.startRefreshPolling()');
+  const firstAwaitIndex = mounted[0].indexOf('await ');
+  assert.ok(firstAwaitIndex >= 0, 'Missing awaited EyesOnAgents mount work');
+  assert.ok(
+    startPollingIndex < firstAwaitIndex,
+    'Refresh polling must start before the first mounted await',
+  );
+  assert.match(unmounted[0], /eyesOnAgentsStore\.stopRefreshPolling\(\)/);
+  assert.equal((app.match(/eyesOnAgentsStore\.startRefreshPolling\(\)/g) ?? []).length, 1);
+  assert.equal((app.match(/eyesOnAgentsStore\.stopRefreshPolling\(\)/g) ?? []).length, 1);
+
+  assert.match(store, /private refreshTimer: number \| null = null/);
+  assert.match(store, /private backgroundRefreshPromise: Promise<void> \| null = null/);
+  assert.ok(startPolling, 'Missing refresh polling start method');
+  assert.match(startPolling[0], /if \(this\.refreshTimer !== null\) return/);
+  assert.match(
+    startPolling[0],
+    /this\.refreshTimer = window\.setInterval\(\(\) => \{\s*void this\.performRefreshPollingTick\(\)\.catch\(\(\) => undefined\);\s*\}, 10_000\)/
+  );
+  assert.ok(stopPolling, 'Missing refresh polling stop method');
+  assert.match(stopPolling[0], /if \(this\.refreshTimer === null\) return/);
+  assert.match(stopPolling[0], /window\.clearInterval\(this\.refreshTimer\)/);
+  assert.match(stopPolling[0], /this\.refreshTimer = null/);
+  assert.doesNotMatch(stopPolling[0], /backgroundRefreshPromise/);
+  assert.equal((store.match(/\bsetInterval\(/g) ?? []).length, 1);
+  assert.equal((store.match(/\bclearInterval\(/g) ?? []).length, 1);
+  assert.equal((globalStore.match(/\bsetInterval\(/g) ?? []).length, 1);
+  assert.deepEqual(timerOwners, [storePath, globalStorePath].sort());
+
+  assert.ok(pollingTick, 'Missing refresh polling tick');
+  assert.ok(mainTieredRefresh, 'Missing Main-owned tiered All scheduler');
+  assert.ok(mainThreadBatch, 'Missing bounded thread refresh batch');
+  assert.ok(mainThreadProjection, 'Missing thread/read projection pipeline');
+  assert.ok(repositoryPageSelection, 'Missing transactional thread page selector');
+  assert.match(
+    pollingTick[0],
+    /if \(this\.snapshotPromise \|\| this\.busyAction \|\| this\.backgroundRefreshPromise\) return/
+  );
+  assert.match(
+    pollingTick[0],
+    /!connection[\s\S]*connection\.state === 'connecting'[\s\S]*connection\.state === 'syncing'/
+  );
+  assert.match(
+    pollingTick[0],
+    /connection\.state === 'connected'[\s\S]*connection\.autoConnectEnabled[\s\S]*connection\.state === 'disconnected'[\s\S]*connection\.state === 'error'/
+  );
+  assert.match(
+    pollingTick[0],
+    /if \(!shouldSync\) return;[\s\S]*const request = this\.performBackgroundThreadPagesRefresh\(\);[\s\S]*this\.backgroundRefreshPromise = request\.finally\(\(\) => \{[\s\S]*this\.backgroundRefreshPromise = null;[\s\S]*await this\.backgroundRefreshPromise/
+  );
+  assert.ok(backgroundRefresh, 'Missing silent tiered All refresh helper');
+  assert.match(
+    backgroundRefresh[0],
+    /try \{\s*await eyesOnAgentsEmitter\.refreshThreadPages\(\);\s*\} catch/
+  );
+  assert.doesNotMatch(backgroundRefresh[0], /applySnapshot/);
+  assert.match(backgroundRefresh[0], /catch \{[\s\S]*\}/);
+  assert.doesNotMatch(backgroundRefresh[0], /actionError|loadError|throw/);
+  const backgroundPollingFlow = `${pollingTick[0]}\n${backgroundRefresh[0]}`;
+  assert.doesNotMatch(
+    backgroundPollingFlow,
+    /runSnapshotAction\(|syncThreads\(|busyAction\s*=/,
+  );
+  assert.equal((store.match(/eyesOnAgentsEmitter\.refreshThreadPages\(\)/g) ?? []).length, 1);
+  assert.match(
+    sharedTypes,
+    /export interface EyesOnAgentsThreadPagesRefreshResult \{\s*changed: boolean;\s*\}/,
+  );
+  assert.match(
+    sharedTypes,
+    /refreshThreadPages\(\): Promise<EyesOnAgentsThreadPagesRefreshResult>/,
+  );
+  assert.doesNotMatch(sharedTypes, /refreshThreadPages\(params/);
+  assert.match(
+    sharedTypes,
+    /getThreadRefreshPages\(params: \{\s*coldPage: number;\s*previousPageCount: number \| null;\s*\}\): Promise<EyesOnAgentsThreadRefreshPages>/,
+  );
+  assert.match(
+    mainService,
+    /private backgroundRefreshPromise: Promise<EyesOnAgentsThreadPagesRefreshResult> \| null = null/,
+  );
+  assert.match(
+    mainService,
+    /if \(this\.backgroundRefreshPromise\) \{\s*return await this\.backgroundRefreshPromise;\s*\}/,
+  );
+  assert.match(
+    mainService,
+    /private foregroundAppServerOperationPending = 0/,
+  );
+  assert.match(
+    mainService,
+    /async refreshThreadPages\(\): Promise<EyesOnAgentsThreadPagesRefreshResult> \{\s*if \(this\.backgroundRefreshPromise\) \{\s*return await this\.backgroundRefreshPromise;\s*\}\s*if \(this\.foregroundAppServerOperationPending > 0\) return \{ changed: false \}/,
+  );
+  assert.match(mainService, /const THREAD_REFRESH_PAGE_SIZE = 40/);
+  assert.match(mainService, /const THREAD_REFRESH_CONCURRENCY = 4/);
+  assert.match(mainService, /private coldThreadRefreshPage = 2/);
+  assert.match(mainService, /private threadRefreshPageCount: number \| null = null/);
+  assert.match(repositoryDao, /const THREAD_REFRESH_PAGE_SIZE = 40/);
+  assert.match(
+    repositoryDao,
+    /getThreadRefreshPages\(params: \{\s*coldPage: number;\s*previousPageCount: number \| null;\s*\}\): Promise<EyesOnAgentsThreadRefreshPages>/,
+  );
+  assert.match(
+    repositoryDao,
+    /const transaction = sqliteManager\.db\.transaction\(\(\): EyesOnAgentsThreadRefreshPages => \{[\s\S]*SELECT COUNT\(\*\) AS count[\s\S]*const hotRows = selectPage\.all\([\s\S]*const coldRows = coldPage === null[\s\S]*return \{\s*hot: hotRows\.map\(toCandidate\),\s*cold: coldRows\.map\(toCandidate\),\s*pageCount,\s*coldPage\s*\};\s*\}\);\s*return transaction\(\)/,
+  );
+  assert.doesNotMatch(
+    repositoryPageSelection[0],
+    /domain_id|project_key|runtime_state|is_unread|title\s+LIKE|isEyesOnAgentsFocused/,
+  );
+  assert.match(
+    repositoryDao,
+    /ORDER BY COALESCE\(last_activity_at, updated_at\) DESC,\s*updated_at DESC, thread_id ASC\s*LIMIT \? OFFSET \?/,
+  );
+  assert.match(
+    repositoryDao,
+    /const pageCountShrank = params\.previousPageCount !== null &&\s*pageCount < params\.previousPageCount;[\s\S]*const coldPage = pageCount <= 1\s*\? null\s*: pageCountShrank \|\| params\.coldPage > pageCount\s*\? 2\s*: params\.coldPage/,
+  );
+  assert.match(
+    mainService,
+    /const selected = await this\.awaitUnlessCancelled\(\s*this\.dependencies\.repository\.getThreadRefreshPages\(\{\s*coldPage: this\.coldThreadRefreshPage,\s*previousPageCount: this\.threadRefreshPageCount\s*\}\)/,
+  );
+  assert.match(
+    mainService,
+    /const pageCount = selected\.value\.pageCount;\s*const coldPage = selected\.value\.coldPage;[\s\S]*this\.threadRefreshPageCount = pageCount/,
+  );
+  assert.match(
+    mainTieredRefresh[0],
+    /selected\.value\.hot\.length > THREAD_REFRESH_PAGE_SIZE \|\|\s*selected\.value\.cold\.length > THREAD_REFRESH_PAGE_SIZE[\s\S]*new Set\(selectedThreadIds\)\.size !== selectedThreadIds\.length/,
+  );
+  assert.doesNotMatch(
+    mainTieredRefresh[0],
+    /getSnapshot\(|isEyesOnAgentsFocused|domainId|projectKey|titleQuery/,
+  );
+  assert.match(
+    mainService,
+    /const hot = await this\.refreshThreadBatch\([\s\S]*if \(!hot\.completed\) return hot\.changed;[\s\S]*let cold: ThreadRefreshBatchResult;[\s\S]*cold = await this\.refreshThreadBatch\([\s\S]*if \(!cold\.completed\) return changed;[\s\S]*this\.coldThreadRefreshPage = coldPage >= pageCount\s*\? 2\s*: coldPage \+ 1/,
+  );
+  assert.match(
+    mainService,
+    /if \(cancelled \|\| !this\.isAppServerActive\(context\)\) \{\s*return \{ changed: false, completed: false \};\s*\}/,
+  );
+  assert.match(
+    mainThreadProjection[0],
+    /\): Promise<CancellableResult<EyesOnAgentsThreadRefreshPatch \| null>> \{\s*const observedAt = this\.now\(\);\s*const read = await this\.awaitUnlessCancelled\([\s\S]*readThread\(candidate\.threadId\)[\s\S]*parseThreadRefreshRead\(read\.value, \{\s*expectedThreadId: candidate\.threadId,\s*observedAt\s*\}\)/,
+  );
+  assert.match(
+    mainService,
+    /const workerCount = Math\.min\(THREAD_REFRESH_CONCURRENCY, candidates\.length\);[\s\S]*for \(let index = 0; index < workerCount; index \+= 1\) workers\.push\(worker\(\)\);[\s\S]*await Promise\.all\(workers\)/,
+  );
+  assert.match(
+    mainService,
+    /readThread\(candidate\.threadId\)[\s\S]*projection\.providerActivityAt[\s\S]*listThreadTurns\(candidate\.threadId\)/,
+  );
+  assert.match(
+    mainService,
+    /promptAdmission\.enabled[\s\S]*candidate\.lastUserPromptCheckedAt === null[\s\S]*projection\.providerActivityAt > candidate\.lastUserPromptCheckedAt/,
+  );
+  assert.match(
+    mainService,
+    /if \(!promptWriteAllowed\) delete patch\.lastUserPrompt;[\s\S]*if \(refreshed\.changed\) this\.notify\(\)/,
+  );
+  assert.match(
+    mainThreadBatch[0],
+    /const refreshed = await this\.dependencies\.repository\.refreshThreadPage\(\{\s*threads: semanticPatches\s*\}\);\s*if \(!this\.isAppServerActive\(context\)\) \{\s*return \{ changed: refreshed\.changed, completed: false \};\s*\}\s*if \(refreshed\.changed\) this\.notify\(\);\s*return \{ changed: refreshed\.changed, completed: true \}/,
+  );
+  assert.doesNotMatch(
+    mainThreadBatch[0],
+    /awaitUnlessCancelled\([\s\S]*repository\.refreshThreadPage/,
+  );
+  assert.match(
+    mainService,
+    /const operation = callback\(context\);\s*this\.activeAppServerOperations\.add\(operation\);\s*try \{\s*await operation;\s*\} finally \{\s*this\.activeAppServerOperations\.delete\(operation\);\s*\}/,
+  );
+  assert.match(
+    mainService,
+    /private async joinAppServerWork\(\): Promise<void> \{[\s\S]*this\.activeAppServerOperations,[\s\S]*this\.activeAppServerRuntimeOperations[\s\S]*await Promise\.allSettled\(\[\.\.\.pending\]\)[\s\S]*private async performAppServerTeardown\(\): Promise<void> \{[\s\S]*await this\.joinAppServerWork\(\)/,
+  );
+  assert.match(
+    repositoryDao,
+    /thread\.lastActivityAt > row\.last_activity_at[\s\S]*updates\.set\('last_activity_at', thread\.lastActivityAt\)/,
+  );
+  assert.match(
+    repositoryDao,
+    /row\.status_observed_at === null\s*\|\| thread\.status\.observedAt > row\.status_observed_at/,
+  );
+  assert.doesNotMatch(
+    repositoryDao,
+    /thread\.status\.observedAt >= row\.status_observed_at/,
+  );
+  assert.match(
+    repositoryDao,
+    /if \(updates\.size === 0\) continue;[\s\S]*WHERE thread_id = \? AND is_archived = 0/,
+  );
+  assert.match(
+    mainService,
+    /async connectAppServer\(\): Promise<EyesOnAgentsSnapshot> \{\s*this\.foregroundAppServerOperationPending \+= 1;[\s\S]*?await this\.joinBackgroundRefresh\(\)[\s\S]*?finally \{\s*this\.foregroundAppServerOperationPending -= 1;/,
+  );
+  assert.match(
+    mainService,
+    /async syncThreads\(\): Promise<EyesOnAgentsSnapshot> \{\s*this\.foregroundAppServerOperationPending \+= 1;[\s\S]*?await this\.joinBackgroundRefresh\(\)[\s\S]*?finally \{\s*this\.foregroundAppServerOperationPending -= 1;/,
+  );
+  assert.match(
+    mainService,
+    /lastUserPrompt: lastUserPromptCaptureEnabled[\s\S]*?state: 'unavailable' as const,[\s\S]*?checkedAt: null,[\s\S]*?truncated: false/,
+  );
+  assert.match(
+    mainService,
+    /Object\.prototype\.hasOwnProperty\.call\(turnValue, 'itemsView'\)[\s\S]*?turnValue\.itemsView !== 'full'/,
+  );
+  assert.match(
+    appServerSupervisor,
+    /Object\.prototype\.hasOwnProperty\.call\(turn, 'itemsView'\)[\s\S]*?turn\.itemsView !== 'full'/,
+  );
+  assert.match(
+    appServerSupervisor,
+    /this\.request\(connection, 'thread\/read', \{\s*threadId,\s*includeTurns: false\s*\}\)/,
+  );
+  assert.match(
+    appServerSupervisor,
+    /this\.request\(connection, 'thread\/turns\/list', \{\s*threadId,\s*cursor: null,\s*itemsView: 'full',\s*sortDirection: 'desc',\s*limit: THREAD_TURN_LIMIT\s*\}\)/,
+  );
+  const handlerRefresh = mainHandler.match(
+    /async refreshThreadPages\(\): Promise<EyesOnAgentsThreadPagesRefreshResult> \{[\s\S]*?\n  \}/,
+  );
+  assert.ok(handlerRefresh, 'Missing changed-only tiered All refresh handler');
+  assert.match(
+    handlerRefresh[0],
+    /return await eyesOnAgentsService\.refreshThreadPages\(\)/,
+  );
+  assert.doesNotMatch(handlerRefresh[0], /EyesOnAgentsSnapshot|getSnapshot\(/);
+  assert.match(
+    store,
+    /async syncThreads\(\): Promise<void> \{\s*await this\.runSnapshotAction\('sync', \(\) => eyesOnAgentsEmitter\.syncThreads\(\)\);\s*\}/,
+  );
+  assert.equal(
+    (menuBar.match(/:loading="eyesOnAgentsStore\.busyAction === 'sync'"/g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (connectionPanel.match(/:loading="eyesOnAgentsStore\.busyAction === 'sync'"/g) ?? []).length,
+    1,
+  );
+});
+
 test('relative thread times share one renderer-global reactive clock', () => {
   const app = read('src/renderer/eyesOnAgents/src/App.vue');
   const globalStore = read('src/renderer/eyesOnAgents/src/store/global.store.ts');
@@ -110,7 +408,7 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
   );
   const addDomain = read(
-    'src/renderer/eyesOnAgents/src/components/AddDomainColumn/AddDomainColumn.less'
+    'src/renderer/eyesOnAgents/src/components/AddDomainPopover/AddDomainPopover.less'
   );
   const projectFilter = read(
     'src/renderer/eyesOnAgents/src/components/ProjectFilter/ProjectFilter.less'
@@ -156,13 +454,12 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   assert.match(threadFocus, /outline-offset: 2px/);
 
   assert.doesNotMatch(addDomain, /border:\s*1px\s+dashed|\bdashed\b/);
-  assert.match(
-    addDomain,
-    /\.add-domain-column__button,\s*\.add-domain-column__form\s*\{[^}]*border: 0;[^}]*background: var\(--eyes-column\)/
-  );
-  const addDomainFocus = cssRule(addDomain, '.add-domain-column__button:focus-visible');
-  assert.match(addDomainFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
-  assert.match(addDomainFocus, /outline-offset: 2px/);
+  const addDomainForm = cssRule(addDomain, '.add-domain-popover__form');
+  assert.match(addDomainForm, /border: 0/);
+  assert.match(addDomainForm, /background: oklch/);
+  const addDomainFocus = cssRule(addDomain, '.add-domain-popover__trigger:focus-visible');
+  assert.match(addDomainFocus, /outline: 2px solid oklch/);
+  assert.match(addDomainFocus, /outline-offset: 1px/);
 
   const projectSelect = cssRule(projectFilter, '.project-filter__select.arco-select-view');
   assert.match(projectSelect, /border: 0/);
@@ -195,7 +492,7 @@ test('thread cards use compact title and action rows with accessible status mark
     /thread-card__(?:signal|source|status-row|runtime|new-badge|meta|path)|thread-signal-pulse/
   );
 
-  assert.match(component, /:aria-label="`\$\{displayTitle\}, \$\{runtimeLabel\}`"/);
+  assert.match(component, /:aria-label="cardAriaLabel"/);
   assert.match(component, /@dblclick="handleDoubleClick"/);
   assert.match(component, /@keydown\.enter\.prevent="handleOpen"/);
   assert.match(component, /eyesOnAgentsStore\.openThread\(props\.thread\.threadId\)/);
@@ -293,6 +590,64 @@ test('thread cards use compact title and action rows with accessible status mark
   );
 });
 
+test('thread cards disclose only the bounded latest-question projection', () => {
+  const component = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
+  );
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
+  );
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  const prompt = component.match(
+    /<p\s+v-if="promptDisplay !== null"\s+class="thread-card__prompt"[\s\S]*?<\/p>/
+  );
+  assert.ok(prompt, 'Missing optional latest-question row');
+  assert.match(prompt[0], /:title="promptAriaLabel"/);
+  assert.match(prompt[0], /:aria-label="promptAriaLabel"/);
+  assert.match(prompt[0], /\{\{ promptDisplay \}\}/);
+  assert.doesNotMatch(prompt[0], /<Icon|<a-spin|badge/);
+
+  assert.match(
+    component,
+    /const storedPrompt = computed\(\(\) => props\.thread\.lastUserPrompt\.preview \?\? ''\)/
+  );
+  assert.match(
+    component,
+    /const hasAvailablePrompt = computed\(\(\) =>[\s\S]*lastUserPrompt\.state === 'available'[\s\S]*Boolean\(props\.thread\.lastUserPrompt\.preview\)\)/
+  );
+  assert.match(
+    component,
+    /lastUserPrompt\.state === 'pending'[\s\S]*latestQuestionPending[\s\S]*if \(!hasAvailablePrompt\.value\) return null;[\s\S]*storedPrompt\.value\.replace\(\/\\s\+\/gu, ' '\)\.trim\(\) \|\| null/
+  );
+  assert.match(
+    component,
+    /latestQuestion[\s\S]*?\.replace\('\{question\}', storedPrompt\.value\)[\s\S]*lastUserPrompt\.truncated[\s\S]*latestQuestionTruncated/
+  );
+  assert.match(
+    component,
+    /const cardAriaLabel = computed\(\(\) => \[[\s\S]*displayTitle\.value,[\s\S]*runtimeLabel\.value,[\s\S]*promptAriaLabel\.value,[\s\S]*\.filter\(Boolean\)\.join\(', '\)\)/
+  );
+  assert.doesNotMatch(component, /lastUserPrompt\.preview\s*=/);
+
+  const promptStyles = cssRule(styles, '.thread-card__prompt');
+  assert.match(promptStyles, /font-size: 11px/);
+  assert.match(promptStyles, /line-height: 14px/);
+  assert.match(promptStyles, /white-space: nowrap/);
+  assert.match(promptStyles, /overflow: hidden/);
+  assert.match(promptStyles, /text-overflow: ellipsis/);
+  assert.match(promptStyles, /margin: 0/);
+  assert.doesNotMatch(promptStyles, /\bborder\s*:|background|box-shadow|line-clamp/);
+
+  assert.match(english, /latestQuestion: 'Latest user question: \{question\}'/);
+  assert.match(english, /latestQuestionPending: 'Latest user question pending'/);
+  assert.match(english, /latestQuestionTruncated: '[^']*8192-byte local limit[^']*'/);
+  assert.match(chinese, /latestQuestion: '最后一个用户问题：\{question\}'/);
+  assert.match(chinese, /latestQuestionPending: '最后一个用户问题待同步'/);
+  assert.match(chinese, /latestQuestionTruncated: '[^']*本机 8192 字节上限[^']*'/);
+});
+
 test('All projects every thread while Focus and custom Domains retain their scopes', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
@@ -330,6 +685,188 @@ test('All projects every thread while Focus and custom Domains retain their scop
   assert.match(chinese, /noProject: '无 Project'/);
 });
 
+test('All title search is title-only, transient, and lifecycle-safe', () => {
+  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
+  const domainPath = 'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue';
+  const storePath = 'src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts';
+  const domain = read(domainPath);
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
+  );
+  const store = read(storePath);
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  const searchTrigger = domain.match(
+    /<a-button\s+v-if="all"[\s\S]*?name="eyesOnAgents__domainColumn__titleSearchToggle"[\s\S]*?<\/a-button>/
+  );
+  assert.ok(searchTrigger, 'Missing All-only title search trigger');
+  assert.match(searchTrigger[0], /size="mini"/);
+  assert.match(searchTrigger[0], /:aria-label="i18nHelper\.eyesOnAgents\.actions\.searchTitles"/);
+  assert.match(searchTrigger[0], /:aria-expanded="titleSearchOpen"/);
+  assert.match(searchTrigger[0], /aria-controls="eyes-on-agents-all-title-search"/);
+  assert.match(searchTrigger[0], /<IconSearch :size="13" aria-hidden="true" \/>/);
+
+  const searchRow = domain.match(
+    /<div\s+v-if="all && titleSearchOpen"[\s\S]*?id="eyes-on-agents-all-title-search"[\s\S]*?<\/div>/
+  );
+  assert.ok(searchRow, 'Missing All-only title search row');
+  assert.ok(
+    domain.indexOf(searchRow[0]) < domain.indexOf('<ProjectFilter v-if="projectFilter" />'),
+    'Title search row must render above the Project filter',
+  );
+  assert.match(searchRow[0], /role="search"/);
+  assert.match(searchRow[0], /@keydown\.esc\.prevent\.stop="closeTitleSearch"/);
+  assert.match(
+    searchRow[0],
+    /<a-input[\s\S]*?v-model="eyesOnAgentsStore\.allTitleQuery"[\s\S]*?size="mini"/
+  );
+  assert.match(searchRow[0], /titleSearchPlaceholder/);
+  assert.match(
+    searchRow[0],
+    /name="eyesOnAgents__domainColumn__clearTitleSearch"[\s\S]*?size="mini"[\s\S]*?:aria-label="i18nHelper\.eyesOnAgents\.actions\.clearTitleSearch"[\s\S]*?@click="clearTitleSearch"/
+  );
+  assert.match(searchRow[0], /<IconX :size="12" aria-hidden="true" \/>/);
+
+  const focusSearch = domain.match(
+    /const focusTitleSearchInput = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  );
+  const closeSearch = domain.match(
+    /const closeTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  );
+  const toggleSearch = domain.match(
+    /const toggleTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  );
+  const clearSearch = domain.match(
+    /const clearTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  );
+  assert.ok(focusSearch, 'Missing title search focus helper');
+  assert.match(focusSearch[0], /await nextTick\(\)/);
+  assert.match(focusSearch[0], /titleSearchInputRef\.value\?\.focus\?\.\(\)/);
+  assert.match(
+    domain,
+    /const titleSearchButtonRef = ref<\{ \$el\?: HTMLElement \} \| null>\(null\)/
+  );
+  assert.ok(closeSearch, 'Missing title search close lifecycle');
+  assert.match(
+    closeSearch[0],
+    /clearAllTitleQuery\(\);\s*titleSearchOpen\.value = false/
+  );
+  assert.match(
+    closeSearch[0],
+    /await nextTick\(\);\s*titleSearchButtonRef\.value\?\.\$el\?\.focus\(\)/
+  );
+  assert.doesNotMatch(closeSearch[0], /titleSearchButtonRef\.value\?\.focus/);
+  assert.ok(toggleSearch, 'Missing title search toggle lifecycle');
+  assert.match(
+    toggleSearch[0],
+    /if \(titleSearchOpen\.value\) \{\s*await closeTitleSearch\(\);\s*return;\s*\}[\s\S]*titleSearchOpen\.value = true;[\s\S]*await focusTitleSearchInput\(\)/
+  );
+  assert.ok(clearSearch, 'Missing explicit title search clear lifecycle');
+  assert.match(clearSearch[0], /clearAllTitleQuery\(\);\s*await focusTitleSearchInput\(\)/);
+  assert.doesNotMatch(clearSearch[0], /allProjectFilter|selectAllProjectFilter/);
+  assert.match(
+    domain,
+    /onBeforeUnmount\(\(\) => \{\s*if \(props\.all\) eyesOnAgentsStore\.clearAllTitleQuery\(\);\s*\}\)/
+  );
+
+  const filteredAllThreads = store.match(
+    /get filteredAllThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
+  );
+  assert.ok(filteredAllThreads, 'Missing composed All filters');
+  assert.match(
+    filteredAllThreads[0],
+    /const projectThreads = filterEyesOnAgentsThreadsByProject\(\s*this\.allThreads,\s*this\.allProjectFilter,\s*\)/
+  );
+  assert.match(
+    filteredAllThreads[0],
+    /const query = this\.allTitleQuery\.trim\(\)\.toLocaleLowerCase\(\)/
+  );
+  assert.match(filteredAllThreads[0], /if \(!query\) return projectThreads/);
+  const titlePredicate = filteredAllThreads[0].match(
+    /return projectThreads\.filter\(\s*\(thread\) =>[\s\S]*?\n    \);/
+  );
+  assert.ok(titlePredicate, 'Missing title-only substring predicate');
+  assert.match(
+    titlePredicate[0],
+    /thread\.title !== null[\s\S]*thread\.title\.toLocaleLowerCase\(\)\.includes\(query\)/
+  );
+  assert.doesNotMatch(
+    titlePredicate[0],
+    /thread\.(?:threadId|cwd|projectKey|projectRoot|projectName|lastUserPrompt|prompt|preview|response|content)/
+  );
+  assert.match(store, /allTitleQuery = ''/);
+  assert.match(
+    store,
+    /get isAllTitleFiltered\(\): boolean \{\s*return Boolean\(this\.allTitleQuery\.trim\(\)\);\s*\}/
+  );
+  const storeClear = store.match(
+    /clearAllTitleQuery\(\): void \{[\s\S]*?\n  \}/
+  );
+  assert.ok(storeClear, 'Missing renderer-store title query clear');
+  assert.match(storeClear[0], /this\.allTitleQuery = ''/);
+  assert.doesNotMatch(storeClear[0], /allProjectFilter|eyesOnAgentsEmitter/);
+  const applySnapshot = store.match(
+    /private applySnapshot\(snapshot: EyesOnAgentsSnapshot\): void \{[\s\S]*?\n  \}/
+  );
+  assert.ok(applySnapshot, 'Missing snapshot application boundary');
+  assert.doesNotMatch(applySnapshot[0], /allTitleQuery/);
+  const titleQueryOwners = walk('src')
+    .filter((path) => /\.(?:ts|vue)$/.test(path))
+    .filter((path) => read(path).includes('allTitleQuery'))
+    .sort();
+  assert.deepEqual(titleQueryOwners, [domainPath, storePath].sort());
+
+  const emptyLabel = domain.match(
+    /const emptyLabel = computed\(\(\) => \{[\s\S]*?\n\}\);/
+  );
+  assert.ok(emptyLabel, 'Missing Domain empty-label precedence');
+  assert.match(
+    emptyLabel[0],
+    /props\.all && eyesOnAgentsStore\.isAllTitleFiltered[\s\S]*emptyTitleSearch[\s\S]*isAllProjectFiltered/
+  );
+
+  const searchStyles = styles.match(
+    /\.agent-domain__search-trigger[\s\S]*?(?=\.agent-domain__body)/
+  );
+  assert.ok(searchStyles, 'Missing compact title search styles');
+  assert.doesNotMatch(searchStyles[0], /#[\da-f]{3,8}\b|\brgba?\(/i);
+  const triggerStyle = cssRule(styles, '.agent-domain__search-trigger.arco-btn');
+  assert.match(triggerStyle, /width: 22px/);
+  assert.match(triggerStyle, /border: 0/);
+  assert.match(triggerStyle, /background: transparent/);
+  assert.match(triggerStyle, /box-shadow: none/);
+  const rowStyle = cssRule(styles, '.agent-domain__search-row');
+  assert.match(rowStyle, /background: oklch/);
+  assert.doesNotMatch(rowStyle, /\bborder\s*:|box-shadow/);
+  const inputStyle = cssRule(styles, '.agent-domain__search-input.arco-input-wrapper');
+  assert.match(inputStyle, /border: 0/);
+  assert.match(inputStyle, /background: oklch/);
+  assert.match(inputStyle, /box-shadow: none/);
+  const inputFocus = cssRule(
+    styles,
+    '.agent-domain__search-input.arco-input-wrapper:focus-within'
+  );
+  assert.match(inputFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
+  const clearStyle = cssRule(styles, '.agent-domain__search-clear.arco-btn');
+  assert.match(clearStyle, /width: 20px/);
+  assert.match(clearStyle, /border: 0/);
+  assert.match(clearStyle, /background: transparent/);
+  assert.match(clearStyle, /box-shadow: none/);
+
+  assert.match(english, /searchTitles: 'Search thread titles'/);
+  assert.match(english, /clearTitleSearch: 'Clear title search'/);
+  assert.match(english, /titleSearchPlaceholder: 'Search titles'/);
+  assert.match(english, /emptyTitleSearch: 'No thread titles match this search'/);
+  assert.match(chinese, /searchTitles: '搜索任务标题'/);
+  assert.match(chinese, /clearTitleSearch: '清除标题搜索'/);
+  assert.match(chinese, /titleSearchPlaceholder: '搜索标题'/);
+  assert.match(chinese, /emptyTitleSearch: '没有匹配此搜索的任务标题'/);
+
+  assert.match(board, /:threads="eyesOnAgentsStore\.filteredAllThreads"[\s\S]*\sall\s+[\s\S]*project-filter/);
+  assert.doesNotMatch(domain, /debounce|setTimeout/);
+});
+
 test('Domain headers cannot restore counts or their obsolete height', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
@@ -342,7 +879,6 @@ test('Domain headers cannot restore counts or their obsolete height', () => {
     .filter((path) => /\.(vue|less|ts|html)$/.test(path))
     .map(read)
     .join('\n');
-
   assert.doesNotMatch(rendererSource, /agent-domain__count/);
   assert.doesNotMatch(board, /:total-count=|totalCount/);
   assert.doesNotMatch(domain, /agent-domain__count|countLabel|totalCount/);
@@ -366,13 +902,10 @@ test('Domain board wraps one draggable list and uses clone-only fixed projection
   const domainStyles = read(
     'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
   );
-  const addDomainStyles = read(
-    'src/renderer/eyesOnAgents/src/components/AddDomainColumn/AddDomainColumn.less'
-  );
 
   assert.equal((board.match(/<draggable/g) ?? []).length, 1);
   assert.match(board, /<template #header>[\s\S]*eyesOnAgents__focusColumn[\s\S]*eyesOnAgents__allColumn[\s\S]*<template #item/);
-  assert.match(board, /<template #footer>[\s\S]*<AddDomainColumn \/>/);
+  assert.doesNotMatch(board, /<template #footer>|AddDomainColumn|add-domain-column/);
   assert.doesNotMatch(board, /direction="horizontal"|scrollToFocus|showJumpToFocus|IconArrowLeft/);
   assert.match(board, /oldDraggableIndex\?: number/);
   assert.match(board, /newDraggableIndex\?: number/);
@@ -391,7 +924,6 @@ test('Domain board wraps one draggable list and uses clone-only fixed projection
   assert.match(domainBody, /overflow-y: auto/);
   assert.match(domainBody, /padding: 0 9px 9px/);
   assert.doesNotMatch(domainBody, /padding:\s*9px\s*;/);
-  assert.doesNotMatch(addDomainStyles, /height:\s*100%/);
 });
 
 test('custom Domain titles edit on click with Todo-sized inputs and no Rename menu item', () => {
@@ -400,7 +932,7 @@ test('custom Domain titles edit on click with Todo-sized inputs and no Rename me
     'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
   );
   const addDomain = read(
-    'src/renderer/eyesOnAgents/src/components/AddDomainColumn/AddDomainColumn.vue'
+    'src/renderer/eyesOnAgents/src/components/AddDomainPopover/AddDomainPopover.vue'
   );
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
@@ -420,6 +952,107 @@ test('custom Domain titles edit on click with Todo-sized inputs and no Rename me
   assert.doesNotMatch(chinese, /rename: '重命名'|renameTitle:/);
   assert.match(domainStyles, /\.agent-domain__title-sizer\s*\{[^}]*visibility: hidden;/);
   assert.match(domainStyles, /\.agent-domain__title-input\s*\{[^}]*min-width: 40px;[^}]*max-width: 200px;/);
+});
+
+test('Add Domain is an anchored menubar form with the existing creation contract', () => {
+  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
+  const menuBar = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue'
+  );
+  const component = read(
+    'src/renderer/eyesOnAgents/src/components/AddDomainPopover/AddDomainPopover.vue'
+  );
+  const rendererSource = walk('src/renderer/eyesOnAgents')
+    .filter((path) => /\.(vue|less|ts|html)$/.test(path))
+    .map(read)
+    .join('\n');
+  const rendererPaths = walk('src/renderer/eyesOnAgents').join('\n');
+
+  assert.match(menuBar, /<AddDomainPopover \/>/);
+  assert.match(menuBar, /import AddDomainPopover from '\.\.\/AddDomainPopover\/AddDomainPopover\.vue'/);
+  assert.doesNotMatch(board, /<template #footer>|AddDomain/);
+  assert.doesNotMatch(rendererSource, /AddDomainColumn|add-domain-column/);
+  assert.doesNotMatch(rendererPaths, /AddDomainColumn|add-domain-column/);
+
+  assert.match(component, /<Trigger[\s\S]*v-model:popup-visible="popupVisible"[\s\S]*trigger="click"[\s\S]*position="br"[\s\S]*:unmount-on-close="true"/);
+  assert.match(component, /name="eyesOnAgents__menuBar__addDomain"/);
+  assert.match(component, /<template #icon><IconPlus :size="14" aria-hidden="true" \/><\/template>/);
+  assert.match(component, /:aria-expanded="popupVisible"/);
+  assert.equal(
+    (component.match(/:disabled="Boolean\(eyesOnAgentsStore\.busyAction\)"/g) ?? []).length,
+    2
+  );
+  assert.match(component, /size="mini"/);
+  assert.match(component, /role="dialog"[\s\S]*aria-labelledby="eyes-on-agents-add-domain-title"/);
+  assert.match(component, /@keydown\.esc\.prevent\.stop="close"/);
+  assert.match(component, /@click="close"/);
+  assert.match(component, /watch\(popupVisible,[\s\S]*if \(!visible\)[\s\S]*reset\(\)[\s\S]*nextTick\(\)[\s\S]*inputRef\.value\?\.focus/);
+
+  assert.match(component, /const normalizedTitle = computed\(\(\) => title\.value\.trim\(\)\)/);
+  assert.match(component, /domain\.title\.trim\(\)\.toLocaleLowerCase\(\) === normalizedTitle\.value\.toLocaleLowerCase\(\)/);
+  assert.match(component, /normalizedTitle\.value\.toLocaleLowerCase\(\) === 'all'/);
+  assert.match(component, /const submit = async \(\): Promise<void> => \{\s*if \(eyesOnAgentsStore\.busyAction\) return;/);
+  assert.match(component, /await eyesOnAgentsStore\.createDomain\(normalizedTitle\.value\)/);
+  assert.match(component, /try \{[\s\S]*createDomain[\s\S]*close\(\);[\s\S]*\} catch \{/);
+
+  const menuBarStyles = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.less'
+  );
+  assert.match(
+    menuBarStyles,
+    /\.eyes-menu-bar__actions \.eyes-menu-bar__refresh,\s*\.eyes-menu-bar__actions \.add-domain-popover__trigger\s*\{[^}]*width: auto/
+  );
+});
+
+test('Codex observation exposes explicit local latest-question retention', () => {
+  const panel = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
+  );
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.less'
+  );
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  assert.match(panel, /name="eyesOnAgents__connections__promptRetention"/);
+  assert.match(panel, /eyesOnAgents\.bridge\.promptRetentionLabel/);
+  assert.match(panel, /eyesOnAgents\.bridge\.promptRetentionDescription/);
+  const captureSwitch = panel.match(
+    /<a-switch[\s\S]*?:model-value="lastUserPromptCaptureEnabled"[\s\S]*?\/>/
+  );
+  assert.ok(captureSwitch, 'Missing latest-question retention switch');
+  assert.match(captureSwitch[0], /size="small"/);
+  assert.match(
+    captureSwitch[0],
+    /:loading="eyesOnAgentsStore\.busyAction === 'prompt-retention'"/,
+  );
+  assert.match(
+    captureSwitch[0],
+    /:disabled="Boolean\(eyesOnAgentsStore\.busyAction\)"/,
+  );
+  assert.match(captureSwitch[0], /aria-labelledby="eyes-on-agents-prompt-retention-label"/);
+  assert.match(captureSwitch[0], /aria-describedby="eyes-on-agents-prompt-retention-description"/);
+  assert.match(
+    panel,
+    /const lastUserPromptCaptureEnabled = computed\([\s\S]*eyesOnAgentsStore\.snapshot\?\.lastUserPromptCaptureEnabled \?\? false/,
+  );
+  assert.match(
+    panel,
+    /handleLastUserPromptCaptureChange[\s\S]*eyesOnAgentsStore\.setLastUserPromptCaptureEnabled\(Boolean\(enabled\)\)/,
+  );
+  assert.match(
+    store,
+    /async setLastUserPromptCaptureEnabled\(enabled: boolean\): Promise<void> \{[\s\S]*this\.runSnapshotAction\('prompt-retention',[\s\S]*eyesOnAgentsEmitter\.setLastUserPromptCaptureEnabled\(\{ enabled \}\)/,
+  );
+
+  const preference = cssRule(styles, '.eyes-connection-card__preference');
+  assert.match(preference, /background: oklch/);
+  assert.doesNotMatch(preference, /\bborder\s*:|box-shadow/);
+  assert.match(english, /promptRetentionLabel: 'Store latest user question'/);
+  assert.match(english, /promptRetentionDescription: '[^']*off by default[^']*8192 bytes[^']*local SQLite only[^']*turning it off clears saved previews[^']*Replies and history are not stored\.'/);
+  assert.match(chinese, /promptRetentionLabel: '保存最后一个用户问题'/);
+  assert.match(chinese, /promptRetentionDescription: '[^']*默认关闭[^']*本机 SQLite[^']*8192 字节[^']*关闭会清空已保存的预览[^']*不保存回答或历史记录。'/);
 });
 
 test('connection panel presents independent Codex observation onboarding and review', () => {
@@ -448,15 +1081,178 @@ test('connection panel presents independent Codex observation onboarding and rev
   assert.match(english, /Review in Codex/);
   assert.match(english, /Re-enable and review/);
   assert.match(english, /Check again/);
-  assert.match(english, /Codex Settings → Hooks[\s\S]*\/hooks/);
+  assert.match(english, /Install or repair[\s\S]*Settings → Hooks[\s\S]*\/hooks/);
   assert.match(chinese, /全局 Codex 观测/);
   assert.match(chinese, /已安装，监听暂停/);
   assert.match(chinese, /在 Codex 中审核/);
   assert.match(chinese, /重新启用并审核/);
   assert.match(chinese, /再次检查/);
-  assert.match(chinese, /Codex 设置 → Hooks[\s\S]*\/hooks/);
+  assert.match(chinese, /安装或修复[\s\S]*设置 → Hooks[\s\S]*\/hooks/);
   assert.doesNotMatch(english, /Managed by Connect/);
   assert.doesNotMatch(chinese, /由“连接”统一管理/);
+});
+
+test('connection panel renders an ordered Codex observation and consent guide', () => {
+  const panel = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
+  );
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.less'
+  );
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  const guideOpeningTag = panel.match(
+    /<section\s+name="eyesOnAgents__connections__hookGuide"[^>]*>/
+  );
+  assert.ok(guideOpeningTag, 'Missing Hook guide opening tag');
+  assert.doesNotMatch(guideOpeningTag[0], /\bv-(?:if|show)\s*=/);
+  const guide = panel.match(
+    /<section\s+name="eyesOnAgents__connections__hookGuide"[\s\S]*?<\/section>/
+  );
+  assert.ok(guide, 'Missing Hook trust guide');
+  assert.match(guide[0], /<ol class="eyes-connection-card__hook-steps">/);
+  assert.match(
+    guide[0],
+    /hookGuideOpenTitle[\s\S]*hookGuideReviewTitle[\s\S]*hookGuideConfirmTitle[\s\S]*hookGuideContentTitle/
+  );
+  assert.equal(
+    (guide[0].match(/<li name="eyesOnAgents__connections__hookGuideStep">/g) ?? []).length,
+    4
+  );
+  assert.doesNotMatch(guide[0], /role="status"/);
+  assert.match(
+    panel,
+    /v-if="showReviewGuidance"[\s\S]*?class="eyes-connection-card__trust-summary"[\s\S]*?role="status"[\s\S]*?\{\{ reviewGuidance \}\}/
+  );
+  assert.equal((panel.match(/v-if="showReviewGuidance"/g) ?? []).length, 1);
+  assert.match(
+    panel,
+    /const showReviewGuidance = computed\(\s*\(\) =>\s*bridgeState\.value === 'needs_trust'\s*\|\|\s*bridgeState\.value === 'error',?\s*\);/
+  );
+  assert.doesNotMatch(panel, /hookGuideOpenDescription[\s\S]*?replace\('\{action\}'/);
+  assert.match(panel, /hookGuideReviewDescription/);
+  assert.match(panel, /hookGuideConfirmDescription/);
+  assert.match(panel, /hookGuideContentDescription/);
+  assert.match(panel, /hookGuideTrustBoundary/);
+  assert.match(panel, /@click="handleReviewBridge"[\s\S]*?\{\{ reviewActionLabel \}\}/);
+  assert.match(panel, /@click="handleRefreshBridge"[\s\S]*?bridge\.checkAgain/);
+  assert.match(panel, /@click="handleRemoveBridge"[\s\S]*?bridge\.disable/);
+  assert.match(panel, /eyesOnAgentsStore\.reviewCodexBridge\(\)/);
+  assert.match(panel, /eyesOnAgentsStore\.refreshCodexBridgeStatus\(\)/);
+  assert.match(panel, /eyesOnAgentsStore\.removeCodexBridge\(\)/);
+  assert.doesNotMatch(
+    panel,
+    /Open Codex Settings|Review the Bitterless Hooks|Only Codex grants trust|打开 Codex 设置|只有 Codex 能授予信任/
+  );
+
+  const trustSummary = cssRule(styles, '.eyes-connection-card__trust-summary');
+  assert.match(trustSummary, /background: oklch/);
+  assert.doesNotMatch(trustSummary, /\bborder\s*:|box-shadow/);
+  const hookGuide = cssRule(styles, '.eyes-connection-card__hook-guide');
+  assert.match(hookGuide, /background: oklch/);
+  assert.doesNotMatch(hookGuide, /\bborder\s*:|box-shadow/);
+  const hookStep = cssRule(styles, '.eyes-connection-card__hook-steps li');
+  assert.match(hookStep, /background: oklch\(1 0 0 \/ 68%\)/);
+  assert.doesNotMatch(hookStep, /\bborder\s*:|box-shadow/);
+  const trustBoundary = cssRule(
+    styles,
+    '.eyes-connection-card .eyes-connection-card__trust-boundary'
+  );
+  assert.match(trustBoundary, /color: inherit/);
+  assert.match(trustBoundary, /background: oklch\([^)]*\/ 7%\)/);
+  const hookGuideStyles = styles.match(
+    /\.eyes-connection-card__hook-guide h3[\s\S]*?(?=\.eyes-connection-panel__boundary)/
+  );
+  assert.ok(hookGuideStyles, 'Missing Hook guide styles');
+  assert.doesNotMatch(hookGuideStyles[0], /#[\da-f]{3,8}\b|\brgba?\(/i);
+
+  assert.match(english, /hookGuideTitle: 'Codex observation setup'/);
+  assert.match(english, /hookGuideOpenTitle: 'Install or repair'/);
+  assert.match(english, /Enable observation only when absent/);
+  assert.match(english, /Repair only when the status reports drift/);
+  assert.match(english, /hookGuideReviewTitle: 'Review only when requested'/);
+  assert.match(english, /inspect every Bitterless definition/);
+  assert.match(english, /select Trust only for hooks Codex flags/);
+  assert.match(english, /Check again while review or status is pending/);
+  assert.match(english, /Check status after installation/);
+  assert.match(english, /hookGuideContentTitle: 'Optional content: Store latest user question'/);
+  assert.match(english, /Lifecycle observation is metadata-only by default/);
+  assert.match(english, /optional question storage is controlled separately below/);
+  assert.match(english, /This permission is independent and off by default/);
+  assert.match(english, /Hook trust does not grant it/);
+  assert.match(english, /one bounded local preview per thread/);
+  assert.match(english, /turning it off clears all saved previews/);
+  assert.match(english, /Replies, reasoning, tools, attachments, earlier questions, and history are never stored/);
+  assert.match(english, /may re-enable only exact disabled hooks/);
+  assert.match(english, /Only Codex grants trust; Bitterless cannot bypass review/);
+  assert.match(chinese, /hookGuideTitle: 'Codex 观测设置'/);
+  assert.match(chinese, /hookGuideOpenTitle: '安装或修复'/);
+  assert.match(chinese, /仅在未安装时选择“启用观测”/);
+  assert.match(chinese, /仅在状态提示定义漂移时选择“修复”/);
+  assert.match(chinese, /hookGuideReviewTitle: '仅在状态要求时审核'/);
+  assert.match(chinese, /检查每个 Bitterless 定义/);
+  assert.match(chinese, /仅信任 Codex 标记的项目/);
+  assert.match(chinese, /审核或状态待确认时选择“再次检查”/);
+  assert.match(chinese, /安装完成后选择“检查状态”/);
+  assert.match(chinese, /hookGuideContentTitle: '可选内容：保存最后一个用户问题'/);
+  assert.match(chinese, /生命周期观测默认只保留元数据/);
+  assert.match(chinese, /问题预览由下方独立控制/);
+  assert.match(chinese, /此权限独立且默认关闭/);
+  assert.match(chinese, /信任 Hook 不会授予此内容权限/);
+  assert.match(chinese, /每个任务仅保存一条有界的本地预览/);
+  assert.match(chinese, /关闭会清空所有已保存预览/);
+  assert.match(chinese, /回答、推理、工具、附件、更早的问题和历史记录均不会保存/);
+  assert.match(chinese, /只能重新启用精确匹配且已禁用的 hooks/);
+  assert.match(chinese, /只有 Codex 能授予信任；Bitterless 无法绕过审核/);
+});
+
+test('title enrichment diagnostics stay bounded and drawer-only', () => {
+  const panel = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
+  );
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.less'
+  );
+  const app = read('src/renderer/eyesOnAgents/src/App.vue');
+  const menuBar = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue'
+  );
+  const board = read(
+    'src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue'
+  );
+  const sharedTypes = read('src/shared/eyesOnAgents/eyesOnAgents.type.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  assert.match(
+    sharedTypes,
+    /titleEnrichmentDiagnostic: EyesOnAgentsTitleEnrichmentDiagnostic \| null/
+  );
+  assert.match(
+    panel,
+    /v-if="titleEnrichmentDiagnostic"[\s\S]*name="eyesOnAgents__connections__titleEnrichmentDiagnostic"[\s\S]*class="eyes-connection-card__diagnostic"[\s\S]*role="status"[\s\S]*eyesOnAgents\.connection\.titleEnrichment[\s\S]*titleEnrichmentDiagnosticLabel/
+  );
+  assert.match(
+    panel,
+    /eyesOnAgentsStore\.snapshot\?\.titleEnrichmentDiagnostic \?\? null/
+  );
+  assert.match(panel, /diagnostic\.threadId\.slice\(0, 8\)/);
+  assert.match(panel, /case 'thread_read_rejected'/);
+  assert.match(panel, /case 'unusable_response'/);
+  assert.match(panel, /titleEnrichmentDeferred/);
+  assert.doesNotMatch(panel, /titleEnrichmentDiagnostic\.(?:error|message|content|response)/);
+  assert.doesNotMatch(`${app}\n${menuBar}\n${board}`, /titleEnrichmentDiagnostic/);
+  const diagnostic = cssRule(styles, '.eyes-connection-card__diagnostic');
+  assert.match(diagnostic, /background: oklch/);
+  assert.doesNotMatch(diagnostic, /\bborder\s*:|box-shadow|#[\da-f]{3,8}\b|\brgba?\(/i);
+
+  assert.match(english, /titleEnrichmentDeferred: '[^']*\{thread\}[^']*App Server unavailable[^']*A later Refresh can retry\.'/);
+  assert.match(english, /titleEnrichmentReadRejected: '[^']*\{thread\}[^']*A later Refresh can retry\.'/);
+  assert.match(english, /titleEnrichmentUnusable: '[^']*\{thread\}[^']*A later Refresh can retry\.'/);
+  assert.match(chinese, /titleEnrichmentDeferred: '[^']*\{thread\}[^']*App Server 不可用[^']*稍后可通过刷新重试。'/);
+  assert.match(chinese, /titleEnrichmentReadRejected: '[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
+  assert.match(chinese, /titleEnrichmentUnusable: '[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
 });
 
 test('header Refresh is visible and can recover disconnected or error state', () => {

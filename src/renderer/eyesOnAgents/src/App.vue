@@ -95,12 +95,14 @@ const handleWindowFocus = (): void => {
 onMounted(async () => {
   globalStore.startCurrentTimeLoop();
   eyesOnAgentsStore.initialize();
+  eyesOnAgentsStore.startRefreshPolling();
   window.addEventListener('focus', handleWindowFocus);
   await eyesOnAgentsStore.loadSnapshot();
 });
 
 onBeforeUnmount(() => {
   globalStore.stopCurrentTimeLoop();
+  eyesOnAgentsStore.stopRefreshPolling();
   window.removeEventListener('focus', handleWindowFocus);
 });
 </script>

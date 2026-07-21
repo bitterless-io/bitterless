@@ -420,7 +420,10 @@ const requireRecord = (value, label) => {
 const requireTodoResult = (value, label) => {
   const result = requireRecord(value, label);
   const todo = requireRecord(result.todo, `${label}.todo`);
-  assert(Number.isInteger(todo.id) && todo.id > 0, `${label}.todo.id must be a positive integer.`);
+  assert(
+    typeof todo.id === 'string' && /^\d{20}$/.test(todo.id),
+    `${label}.todo.id must be a 20-character decimal string.`
+  );
   return todo;
 };
 
@@ -434,9 +437,8 @@ const resolveDomain = (value, selector) => {
   );
 
   let matches;
-  if (/^[1-9]\d*$/.test(selector)) {
-    const id = Number(selector);
-    matches = domains.filter((domain) => domain.id === id);
+  if (/^\d{20}$/.test(selector)) {
+    matches = domains.filter((domain) => domain.id === selector);
   } else {
     const normalizedSelector = selector.trim().toLocaleLowerCase();
     matches = domains.filter((domain) => {
@@ -459,7 +461,10 @@ const resolveDomain = (value, selector) => {
     `Domain selector "${selector}" is ambiguous. Matches: ${matches.map((domain) => domain.id).join(', ')}`
   );
   const domain = matches[0];
-  assert(Number.isInteger(domain.id) && domain.id > 0, 'Selected domain has an invalid id.');
+  assert(
+    typeof domain.id === 'string' && /^\d{20}$/.test(domain.id),
+    'Selected domain must have a 20-character decimal string id.'
+  );
   return domain;
 };
 
@@ -476,8 +481,8 @@ const isOwnedTodo = (value, domainId, state) => {
   if (!isRecord(value)) return false;
   const validTitle = value.title === state.originalTitle || value.title === state.updatedTitle;
   return (
-    Number.isInteger(value.id) &&
-    value.id > 0 &&
+    typeof value.id === 'string' &&
+    /^\d{20}$/.test(value.id) &&
     value.domain_id === domainId &&
     value.source === 'ai' &&
     (value.important === 0 || value.important === false) &&
