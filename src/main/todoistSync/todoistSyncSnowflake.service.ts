@@ -37,6 +37,14 @@ export class TodoistSyncSnowflakeService {
     return this.nodeId;
   }
 
+  resetUncommittedNodeId(nodeId: number): void {
+    if (this.nodeId !== nodeId) {
+      throw new Error('[todoist sync] cannot reset a different Snowflake node');
+    }
+    this.nodeId = null;
+    this.snowflake = null;
+  }
+
   generate(): string {
     if (!this.snowflake) {
       throw new Error('[todoist sync] first sync must assign this device a Snowflake node before creating Todo data');

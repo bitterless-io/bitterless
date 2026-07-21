@@ -863,6 +863,8 @@ export class TodoistSyncRepository {
     batch: TodoistSyncOutboxBatch | null,
     isCommitAllowed: () => boolean = () => true,
   ): Promise<void> {
+    const previousNodeId = this.ids.getNodeId();
+    this.ids.setNodeId(response.snowflake_node_id);
     let changed = false;
     const eventTodoIds = new Set(response.todos.map((todo) => todo.id));
     for (const command of batch?.commands ?? []) {
@@ -962,8 +964,10 @@ export class TodoistSyncRepository {
       changed ||= affected.size > 0 || !!batch;
     }, () => {
       if (!isCommitAllowed()) throw new TodoistSyncGenerationFenceError();
+    }).catch((error: unknown) => {
+      if (previousNodeId === null) this.ids.resetUncommittedNodeId(response.snowflake_node_id);
+      throw error;
     });
-    this.ids.setNodeId(response.snowflake_node_id);
     if (changed) this.broadcastDataUpdated();
   }
 

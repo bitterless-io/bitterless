@@ -259,3 +259,54 @@ backend behavior.
   Maestro, and shared baseline. No remaining diagnostic path starts with `src/renderer/todo/`.
 - No Electron GUI, real Core request, remote database, backend/PostgreSQL operation, or two-client
   smoke was run.
+
+# handoff checkpoint — 2026-07-22 (final cross-repo desktop HTTP smoke)
+
+The task remains `in-progress` only for the backend release task's final database lifecycle and
+deployed Function Compute/Bruno smoke. The built-Core two-client desktop gate and all requested local
+automated gates are complete.
+
+## Todo 7-8 completion
+
+- [x] Todo 7: `typecheck:todoist-sync`, `typecheck:todo-web`, `typecheck:mcp`, the native Electron-ABI
+  SQLCipher suite, Todo-window runtime check, and production build all pass.
+- [x] Todo 8: the backend-authorized real Core/PostgreSQL child smoke passes with two device JWTs for
+  one customer and an isolated second customer. Secrets enter only through child environments and
+  are rejected if found in output; no device JWT or database password is logged or persisted by the
+  harness. The opaque sync token remains persisted by the production repository as required for the
+  restart proof.
+
+## lifecycle evidence
+
+- Client A used a dedicated encrypted repository, bootstrapped through the real HTTP
+  client/coordinator/session, then created an optimistic Domain/Todo/SubTodo while simulated offline.
+  All three commands settled back to `pending`; the online retry reused at least one exact command
+  UUID, drained the outbox, and advanced three canonical ACK baselines.
+- Client B used a second encrypted repository and bootstrapped the exact canonical A state. B updated
+  and completed the Todo and completed its SubTodo. A's incremental pull converged and emitted one
+  `actor=system` completion event without creating a feedback outbox command.
+- B shut down and restarted in a distinct Electron-as-Node child process over the same SQLCipher
+  file. Its first HTTP request reused the persisted sync token. Final reopened A/B resource snapshots
+  were byte-for-byte equal; the second customer's seeded Domain was absent from both.
+- Both repositories used distinct fixed injected test passwords, non-plaintext SQLCipher files, and
+  no key sidecars. Tripwires recorded zero Electron `safeStorage`, macOS Keychain, Windows Credential
+  Manager, or legacy `main.db` access. The runner removed its local bundle/state temp roots.
+- The smoke found and fixed a concrete first-bootstrap bug: remote Todo event creation ran before the
+  response's assigned Snowflake node was installed. The node is now available during the response
+  transaction and reset when an initially-unassigned transaction rolls back or is generation-fenced.
+  Focused native tests prove successful first-bootstrap event creation and, on a fenced first
+  response, unchanged `sync_token='*'`, persisted node `null`, `ids.getNodeId()===null`, zero
+  baselines, and zero events.
+
+## verification
+
+- Full backend `yarn test:todoist-sync:integration` passed A+B1+B2a+B2b1+B2b2+desktop-two-client in
+  29.68 seconds. The desktop child reported `resources=3`, `offline_retry=1`, `system_events=1`,
+  `outbox_feedback=0`, `persisted_token_reused=1`, `isolation_customers=2`, exact convergence, and two
+  SQLCipher repositories.
+- Post-fence `TODOIST_SYNC_DESKTOP_ONLY=1 yarn test:todoist-sync:integration` passed in 15.79 seconds;
+  remote cleanup removed 16 Todo rows and five Core rows, all isolated application rows returned to
+  zero, and DSH fingerprint `50b181787fae35a3` was unchanged.
+- `yarn typecheck:todoist-sync` passed; `yarn test:todoist-sync` passed 19/19 native tests.
+- `yarn typecheck:todo-web`, `yarn typecheck:mcp`, `yarn check:todo-window-runtime`, `yarn build`, and
+  `git diff --check` passed.

@@ -720,6 +720,65 @@ test('remote Todo projections emit exact system events without feedback outbox c
   }
 });
 
+test('first bootstrap installs the assigned node before emitting a remote Todo event', { concurrency: false }, async () => {
+  const root = createRoot('bitterless-todoist-first-bootstrap-event');
+  const userDataPath = join(root, 'userData');
+  const paths = resolveTodoistSyncDatabasePaths(userDataPath, '1');
+  const database = new TodoistSyncDatabase(paths.databasePath, TEST_PASSWORD);
+  try {
+    const repository = new TodoistSyncRepository(
+      database,
+      '1',
+      TEST_DEVICE_ID,
+      new TodoistSyncSnowflakeService(null),
+    );
+    await repository.initialize();
+    await repository.applySyncResponse(syncResponse({
+      token: 'first-bootstrap-token',
+      domains: [domainResource('1', 'Remote bootstrap domain')],
+      todos: [todoResource('2', { domainId: REMOTE_DOMAIN_ID, title: 'Remote bootstrap Todo' })],
+    }), null);
+    const events = (await repository.listAfter({ limit: 100 })).events;
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'todo.created');
+    assert.equal(events[0].actor, 'system');
+    assert.equal((await repository.getSyncState()).snowflake_node_id, 7);
+    assert.deepEqual(await outboxRows(database), []);
+  } finally {
+    database.close();
+    cleanupRoot(root);
+  }
+});
+
+test('a fenced first bootstrap restores the unassigned in-memory and persisted node state', { concurrency: false }, async () => {
+  const root = createRoot('bitterless-todoist-first-bootstrap-fence');
+  const userDataPath = join(root, 'userData');
+  const paths = resolveTodoistSyncDatabasePaths(userDataPath, '1');
+  const database = new TodoistSyncDatabase(paths.databasePath, TEST_PASSWORD);
+  const ids = new TodoistSyncSnowflakeService(null);
+  try {
+    const repository = new TodoistSyncRepository(database, '1', TEST_DEVICE_ID, ids);
+    await repository.initialize();
+    await assert.rejects(
+      () => repository.applySyncResponse(syncResponse({
+        token: 'must-not-commit-first-bootstrap',
+        domains: [domainResource('1', 'Fenced bootstrap domain')],
+        todos: [todoResource('2', { domainId: REMOTE_DOMAIN_ID, title: 'Fenced bootstrap Todo' })],
+      }), null, () => false),
+      /response generation is stale/,
+    );
+    const state = await repository.getSyncState();
+    assert.equal(state.sync_token, '*');
+    assert.equal(state.snowflake_node_id, null);
+    assert.equal(ids.getNodeId(), null);
+    assert.equal((await database.get<{ count: number }>('SELECT COUNT(*) AS count FROM todo_sync_baselines')).count, 0);
+    assert.equal((await repository.listAfter({ limit: 100 })).events.length, 0);
+  } finally {
+    database.close();
+    cleanupRoot(root);
+  }
+});
+
 test('in-flight commands and local projections recover across a SQLCipher restart', { concurrency: false }, async () => {
   const runtime = await createRuntime('bitterless-todoist-restart');
   const paths = resolveTodoistSyncDatabasePaths(runtime.userDataPath, '1');

@@ -21,6 +21,7 @@
     "typecheck:sqlite-migrations": "tsc -p scripts/sqlite-migrations/tsconfig.strict.json",
     "typecheck:todoist-sync": "tsc -p scripts/todoist-sync/tsconfig.strict.json",
     "test:todoist-sync": "node scripts/todoist-sync/runNativeTests.mjs",
+    "test:todoist-sync:cross-repo-child": "node scripts/todoist-sync/runCrossRepoSmoke.mjs",
     "check:renderer-i18n": "node scripts/renderer-i18n/check-renderer-i18n.mjs",
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
