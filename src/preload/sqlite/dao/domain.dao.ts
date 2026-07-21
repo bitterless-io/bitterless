@@ -1,6 +1,5 @@
 import { BaseDao } from './base.dao';
 import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
-import type { DomainMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 
 export interface DomainRow {
   id: number;
@@ -18,7 +17,7 @@ export type RestoreDomainResult =
   | 'limit_reached'
   | 'not_found';
 
-export class DomainDao extends BaseDao implements DomainMcpDaoApi {
+export class DomainDao extends BaseDao {
   async create(params: { title?: string; description?: string }): Promise<DomainRow | undefined> {
     const now = Date.now();
     const result = await sqliteHelper.safeRun(

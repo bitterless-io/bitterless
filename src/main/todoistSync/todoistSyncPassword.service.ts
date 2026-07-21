@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { safeStorage } from 'electron';
 import type { TodoistSyncDatabasePaths } from './todoistSync.database';
 
@@ -9,6 +9,11 @@ export interface TodoistSyncPasswordProtection {
   decryptString(value: Buffer): string;
 }
 
+export interface TodoistSyncRuntimePasswordOptions {
+  protection?: TodoistSyncPasswordProtection;
+  generatePassword?: () => string;
+}
+
 const assertPassword = (value: string): string => {
   if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('[todoist sync] protected database password is invalid');
   return value;
@@ -16,8 +21,12 @@ const assertPassword = (value: string): string => {
 
 export const getOrCreateTodoistSyncRuntimePassword = (
   paths: TodoistSyncDatabasePaths,
-  protection: TodoistSyncPasswordProtection = safeStorage,
+  options: TodoistSyncRuntimePasswordOptions = {},
 ): string => {
+  const protection = options.protection ?? safeStorage;
+  const generatePassword = options.generatePassword ?? (() => randomBytes(32).toString('hex'));
+  mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(paths.directory, 0o700);
   if (!protection.isEncryptionAvailable()) {
     throw new Error('[todoist sync] Electron safeStorage is unavailable');
   }
@@ -28,7 +37,7 @@ export const getOrCreateTodoistSyncRuntimePassword = (
   if (existsSync(paths.databasePath)) {
     throw new Error('[todoist sync] customer database exists but its protected password is missing');
   }
-  const password = randomBytes(32).toString('hex');
+  const password = assertPassword(generatePassword());
   try {
     writeFileSync(paths.keyPath, protection.encryptString(password), { flag: 'wx', mode: 0o600 });
   } catch (error) {

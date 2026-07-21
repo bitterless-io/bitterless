@@ -138,7 +138,7 @@ done until the `bitterless-private` tasks `todoist-sync-backend-001` and
 `todoist-sync-backend-integration-002` have passed and the non-production two-client HTTP smoke uses
 their real Core/PostgreSQL endpoint.
 
-# handoff checkpoint — 2026-07-21
+# handoff checkpoint — 2026-07-21 (docs-sprint develop batch 1)
 
 The implementation is intentionally left `in-progress`. Electron was not launched, no Core API was
 called, no production/test remote database was contacted, and the old `main.db` was not opened,
@@ -161,33 +161,44 @@ imported, migrated, or deleted.
   source scan found no remaining PowerSync symbol at the checkpoint.
 - Actual runtime still uses `safeStorage`; the intended automated/local test boundary is an injected
   fixed password with a tripwire that fails on any OS credential or `safeStorage` access.
+- Added a focused strict Node TypeScript project for Todoist sync and kept the legacy numeric
+  Domain/Todo/event DAOs separate from the new string-ID Main/MCP contract.
+- Registered the runtime schema-v1 ordered manifest in the pure-Node SQLite audit. Fresh creation,
+  current-v1 reopen/idempotence, incomplete and injected-failure rollback, ledger fail-closed,
+  `integrity_check`, and `foreign_key_check` baselines now run without a fabricated legacy chain.
+- Added native Electron-ABI SQLCipher tests using `better-sqlite3-multiple-ciphers`, one fixed injected
+  password, and hard tripwires for Electron `safeStorage`, macOS Keychain, Windows Credential Manager,
+  and legacy `main.db` filesystem access. Runtime password storage now creates its protected directory
+  before first-run key creation.
+- Covered encrypted fresh/reopen/wrong-password behavior, repository CRUD/outbox atomicity,
+  soft-delete cascades, event persistence, monotonic baselines, ACK/error waiting, retry/discard, and
+  restart recovery against the real native database.
 
 ## evidence obtained
 
-- `yarn typecheck:node` passed, but that project script contains `--noCheck` and therefore only
-  proves build-level parsing.
-- A strict `./node_modules/.bin/tsc --noEmit -p tsconfig.node.json --composite false` run was started
-  and interrupted before it produced a result.
-- No Electron GUI, real SQLite/SQLCipher operation, Core request, MCP smoke, web/MCP typecheck,
-  SQLite release audit, or production build was run.
+- `yarn typecheck:todoist-sync` passed.
+- `yarn typecheck:sqlite-migrations` passed.
+- `yarn typecheck:mcp` passed while preserving the legacy numeric DAO boundary.
+- `yarn test:todoist-sync` passed: 5 native SQLCipher tests, 5 passed.
+- `yarn test:sqlite-migrations` passed: 11 tests, 11 passed.
+- `yarn audit:sqlite-migrations` passed: 11 Core + 7 Maestro + 5 Todoist-sync baselines.
+- `yarn install` passed and restored the declared `compare-versions` dependency; `yarn.lock` did not
+  change.
+- The full-project strict Node check was terminated after more than ten minutes without a result and
+  was not restarted per Ral's instruction. It is not counted as passing evidence for this batch.
+- No Electron GUI, real Core request, remote database, web/build pass, or two-client smoke was run.
 
-## remaining Todo
+Todos 1-4 are complete for this develop batch. The task remains `in-progress` for Todos 5-8.
 
-1. Run strict node TypeScript checking first and fix every error before adding more behavior.
-2. Register the Todo schema-v1 manifest in `scripts/sqlite-migrations/auditRunner.ts` without adding
-   a fabricated legacy chain.
-3. Add `scripts/todoist-sync/` tests using one fixed injected password plus a hard tripwire against
-   Keychain, Credential Manager, and `safeStorage`. Cover fresh/reopen/wrong-password/rollback,
-   integrity and foreign-key checks, and prove legacy `main.db` is never touched.
-4. Execute real repository/SQLCipher tests for SQL placeholders, CRUD/outbox atomicity, soft-delete
-   cascades, baseline monotonicity, ACK/error waiting states, restart recovery, and event behavior.
+## remaining Todo 5-8
+
 5. Add strict wire fixtures shared with the backend, scheduler/session fencing, NTP healthy/wrong/
    unreachable/boundary/late-result tests, exact `CLOCK_SKEW` batch recovery, and Core-clock
    disagreement diagnostics.
 6. Complete remote `actor=system` Todo events and verify a newly confirmed wrong clock stops or
    safely fences any already-running HTTP request.
-7. Run all web/MCP/runtime/audit/build commands below. Validate the manually edited Yarn lockfile by
-   a successful Yarn install when dependency access is available.
+7. Run the remaining web/runtime/build commands below. Dependency installation and focused MCP/audit
+   checks passed in this batch.
 8. After the backend disposable-PostgreSQL gate passes, run the non-production two-client HTTP
    smoke; only then can this task leave `in-progress`.
 
@@ -195,7 +206,8 @@ imported, migrated, or deleted.
 
 ```bash
 cd /Users/ral/Documents/projects/overmind/projects/bitterless
-./node_modules/.bin/tsc --noEmit -p tsconfig.node.json --composite false
+yarn typecheck:todoist-sync
+yarn test:todoist-sync
 yarn typecheck:web
 yarn typecheck:mcp
 yarn audit:sqlite-migrations

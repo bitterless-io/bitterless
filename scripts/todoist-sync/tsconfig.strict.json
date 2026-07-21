@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "noCheck": false,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "*.ts",
+    "../../src/main/todoistSync/**/*.ts",
+    "../../src/main/env.d.ts",
+    "../../src/shared/todoistSync/**/*.ts",
+    "../../src/shared/mcp/todoMcpDao.type.ts"
+  ]
+}

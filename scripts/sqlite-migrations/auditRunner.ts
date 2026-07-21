@@ -20,6 +20,14 @@ import {
   createMaestroSqliteSchema,
   maestroSqliteMigrations,
 } from '../../src/preload/maestro/sqlite/maestroSqlite.release'
+import {
+  applyTodoistSyncMigrations,
+  assertTodoistSyncSchemaV1,
+  todoistSyncMigrations,
+  TodoistSyncMigrationError,
+  type TodoistSyncMigration,
+  type TodoistSyncMigrationDatabase,
+} from '../../src/main/todoistSync/todoistSync.migration'
 
 interface TableColumnInfo {
   name: string
@@ -853,6 +861,190 @@ const auditMaestroBaselines = (): void => {
   }
 }
 
+interface TodoistLedgerRow {
+  version: number
+  name: string
+}
+
+const asTodoistMigrationDatabase = (db: Database.Database): TodoistSyncMigrationDatabase => {
+  return db as unknown as TodoistSyncMigrationDatabase
+}
+
+const getTodoistLedger = (db: Database.Database): TodoistLedgerRow[] => {
+  const rows = db.prepare(
+    'SELECT version, name FROM todoist_sync_schema ORDER BY version',
+  ).all() as TodoistLedgerRow[]
+  return rows.map((row) => ({ version: row.version, name: row.name }))
+}
+
+const verifyTodoistSchema = (db: Database.Database): void => {
+  assertTodoistSyncSchemaV1(asTodoistMigrationDatabase(db))
+  assert.deepEqual(getTodoistLedger(db), [
+    { version: todoistSyncMigrations[0].version, name: todoistSyncMigrations[0].name },
+  ])
+  assertHealthy(db)
+}
+
+const auditTodoistFresh = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-fresh.db'))
+  try {
+    db.exec('PRAGMA foreign_keys = ON;')
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(db))
+    verifyTodoistSchema(db)
+    console.log('✓ Todoist sync fresh schema-v1')
+  } finally {
+    db.close()
+  }
+}
+
+const auditTodoistCurrentReopen = (): void => {
+  const dbPath = join(auditDir, 'todoist-current-v1.db')
+  const initial = openAuditDatabase(dbPath)
+  try {
+    initial.exec('PRAGMA foreign_keys = ON;')
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(initial))
+    initial.prepare(
+      `INSERT INTO todo_sync_state (
+        customer_id, device_id, sync_token, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+    ).run('1', 'audit-device', 'audit-token', 1, 1)
+  } finally {
+    initial.close()
+  }
+
+  const reopened = openAuditDatabase(dbPath)
+  try {
+    reopened.exec('PRAGMA foreign_keys = ON;')
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(reopened))
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(reopened))
+    verifyTodoistSchema(reopened)
+    const sentinel = reopened.prepare(
+      'SELECT device_id, sync_token FROM todo_sync_state WHERE customer_id = ?',
+    ).get('1') as { device_id: string; sync_token: string }
+    assert.equal(sentinel.device_id, 'audit-device')
+    assert.equal(sentinel.sync_token, 'audit-token')
+    console.log('✓ Todoist sync current-v1 reopen and idempotence')
+  } finally {
+    reopened.close()
+  }
+}
+
+const auditTodoistIncompleteSchema = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-incomplete.db'))
+  try {
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE todos (id TEXT PRIMARY KEY, sentinel TEXT NOT NULL);
+      INSERT INTO todos (id, sentinel) VALUES ('00000000000000000001', 'preserve-me');
+    `)
+    assert.throws(
+      () => applyTodoistSyncMigrations(asTodoistMigrationDatabase(db)),
+      (error: unknown) => error instanceof TodoistSyncMigrationError && error.version === 1,
+    )
+    const columns = getColumns(db, 'todos')
+    assert.deepEqual(columns, ['id', 'sentinel'])
+    const sentinel = db.prepare(
+      "SELECT sentinel FROM todos WHERE id = '00000000000000000001'",
+    ).get() as { sentinel: string }
+    assert.equal(sentinel.sentinel, 'preserve-me')
+    const ledger = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='todoist_sync_schema'",
+    ).get()
+    assert.equal(ledger, undefined)
+    assertHealthy(db)
+    console.log('✓ Todoist sync incomplete schema rollback')
+  } finally {
+    db.close()
+  }
+}
+
+const auditTodoistInvalidLedger = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-invalid-ledger.db'))
+  try {
+    db.exec(`
+      CREATE TABLE todoist_sync_schema (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at INTEGER NOT NULL
+      );
+      INSERT INTO todoist_sync_schema (version, name, applied_at)
+      VALUES (1, 'not-the-runtime-manifest', 1);
+    `)
+    assert.throws(
+      () => applyTodoistSyncMigrations(asTodoistMigrationDatabase(db)),
+      /unknown entry 1/,
+    )
+    assert.deepEqual(getTodoistLedger(db), [
+      { version: 1, name: 'not-the-runtime-manifest' },
+    ])
+    console.log('✓ Todoist sync invalid ledger fail-closed')
+  } finally {
+    db.close()
+  }
+}
+
+const auditTodoistFutureMigrationRollback = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-future-rollback.db'))
+  try {
+    db.exec('PRAGMA foreign_keys = ON;')
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(db))
+    db.prepare(
+      `INSERT INTO todo_sync_state (
+        customer_id, device_id, sync_token, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+    ).run('1', 'audit-device', 'before-failure', 1, 1)
+    const injectedMigrations: readonly TodoistSyncMigration[] = [
+      ...todoistSyncMigrations,
+      {
+        version: 2,
+        name: 'audit-injected-failure',
+        up: (migrationDb) => {
+          migrationDb.exec(`
+            UPDATE todo_sync_state SET sync_token = 'must-roll-back' WHERE customer_id = '1';
+            CREATE TABLE todoist_rolled_back_probe (id INTEGER PRIMARY KEY);
+          `)
+          throw new Error('intentional Todoist sync migration failure')
+        },
+      },
+      {
+        version: 3,
+        name: 'audit-must-not-run',
+        up: (migrationDb) => migrationDb.exec(
+          'CREATE TABLE todoist_must_not_run (id INTEGER PRIMARY KEY);',
+        ),
+      },
+    ]
+    assert.throws(
+      () => applyTodoistSyncMigrations(asTodoistMigrationDatabase(db), injectedMigrations),
+      (error: unknown) => error instanceof TodoistSyncMigrationError && error.version === 2,
+    )
+    const state = db.prepare(
+      'SELECT sync_token FROM todo_sync_state WHERE customer_id = ?',
+    ).get('1') as { sync_token: string }
+    assert.equal(state.sync_token, 'before-failure')
+    const rolledBackProbe = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='todoist_rolled_back_probe'",
+    ).get()
+    const mustNotRun = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='todoist_must_not_run'",
+    ).get()
+    assert.equal(rolledBackProbe, undefined)
+    assert.equal(mustNotRun, undefined)
+    verifyTodoistSchema(db)
+    console.log('✓ Todoist sync future migration rollback and stop')
+  } finally {
+    db.close()
+  }
+}
+
+const auditTodoistBaselines = (): void => {
+  auditTodoistFresh()
+  auditTodoistCurrentReopen()
+  auditTodoistIncompleteSchema()
+  auditTodoistInvalidLedger()
+  auditTodoistFutureMigrationRollback()
+}
+
 const auditRunnerFailurePolicy = (): void => {
   const db = openAuditDatabase(join(auditDir, 'runner-rollback.db'))
   try {
@@ -922,6 +1114,8 @@ const auditManifestValidation = (): void => {
   ], '260716000000'))
   assertSqliteMigrationManifest(coreSqliteMigrations, currentVersionCode)
   assertSqliteMigrationManifest(maestroSqliteMigrations, currentVersionCode)
+  assert.equal(todoistSyncMigrations.length, 1)
+  assert.equal(todoistSyncMigrations[0].version, 1)
   console.log('✓ Version-code and manifest validation')
 }
 
@@ -930,8 +1124,9 @@ try {
   auditRunnerFailurePolicy()
   auditCoreBaselines()
   auditMaestroBaselines()
+  auditTodoistBaselines()
   console.log(
-    `SQLite migration audit passed (${coreBaselines.length} Core + ${maestroBaselines.length} Maestro baselines).`,
+    `SQLite migration audit passed (${coreBaselines.length} Core + ${maestroBaselines.length} Maestro + 5 Todoist sync baselines).`,
   )
 } finally {
   rmSync(auditDir, { recursive: true, force: true })

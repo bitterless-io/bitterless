@@ -17,10 +17,12 @@ import type {
 import type {
   TodoistSyncCommand,
   TodoistSyncCommandType,
+  TodoistSyncDomainResource,
   TodoistSyncOutboxState,
-  TodoistSyncResourceBase,
   TodoistSyncResourceType,
   TodoistSyncResponse,
+  TodoistSyncSubTodoResource,
+  TodoistSyncTodoResource,
 } from '@shared/todoistSync/todoistSync.type';
 import type {
   TodoistSyncRepositoryDatabase,
@@ -100,6 +102,10 @@ const assertInteger = (value: unknown, label: string, minimum = 0, maximum = Num
 const assertFlag = (value: unknown, label: string): 0 | 1 => {
   if (value !== 0 && value !== 1) throw new Error(`${label} must be 0 or 1`);
   return value;
+};
+const assertLiveFlag = (value: unknown, label: string): 0 => {
+  if (value !== 0) throw new Error(`${label} must be 0`);
+  return 0;
 };
 const assertActor = (value: McpTodoEventActor | undefined): McpTodoEventActor => {
   if (value === undefined) return 'human';
@@ -1023,7 +1029,7 @@ export class TodoistSyncRepository {
   private async applyBaseline(
     tx: TodoistSyncSqlExecutor,
     type: TodoistSyncResourceType,
-    resource: TodoistSyncResourceBase & Record<string, unknown>,
+    resource: TodoistSyncDomainResource | TodoistSyncTodoResource | TodoistSyncSubTodoResource,
   ): Promise<boolean> {
     const stored = await tx.getOptional<BaselineRow>(
       'SELECT * FROM todo_sync_baselines WHERE resource_type=? AND resource_id=?', [type, resource.id],
@@ -1084,7 +1090,7 @@ export class TodoistSyncRepository {
     const baseline = await tx.getOptional<BaselineRow>(
       'SELECT * FROM todo_sync_baselines WHERE resource_type=? AND resource_id=?', [type, id],
     );
-    let projection = baseline
+    let projection: Record<string, unknown> | null = baseline
       ? { ...parseJson<Record<string, unknown>>(baseline.payload_json, 'baseline'), reconcile_pending: baseline.reconcile_pending }
       : null;
     const overlays = await tx.getAll<OutboxRow>(
@@ -1259,7 +1265,7 @@ export class TodoistSyncRepository {
   }
 
   private assertDomain(row: McpDomainRow): McpDomainRow {
-    return { ...row, id: assertTodoistSyncEntityId(row.id), customer_id: this.assertCustomer(row.customer_id), title: assertText(row.title, 'domain.title', 512), description: assertText(row.description, 'domain.description', 10_000), is_deleted: assertFlag(row.is_deleted, 'domain.is_deleted'), archived: assertFlag(row.archived, 'domain.archived'), position: assertInteger(row.position, 'domain.position', -2147483648, 2147483647), created_at: assertInteger(row.created_at, 'domain.created_at'), updated_at: assertInteger(row.updated_at, 'domain.updated_at') };
+    return { ...row, id: assertTodoistSyncEntityId(row.id), customer_id: this.assertCustomer(row.customer_id), title: assertText(row.title, 'domain.title', 512), description: assertText(row.description, 'domain.description', 10_000), is_deleted: assertLiveFlag(row.is_deleted, 'domain.is_deleted'), archived: assertFlag(row.archived, 'domain.archived'), position: assertInteger(row.position, 'domain.position', -2147483648, 2147483647), created_at: assertInteger(row.created_at, 'domain.created_at'), updated_at: assertInteger(row.updated_at, 'domain.updated_at') };
   }
 
   private assertTodo(row: McpTodoRow): McpTodoRow {
@@ -1275,13 +1281,13 @@ export class TodoistSyncRepository {
       week_day: row.week_day === null ? null : assertInteger(row.week_day, 'todo.week_day', 1, 7),
       monthly_day: row.monthly_day === null ? null : assertInteger(row.monthly_day, 'todo.monthly_day', 1, 31),
       yearly_day: row.yearly_day === null ? null : assertInteger(row.yearly_day, 'todo.yearly_day', 1, 31),
-      note: assertText(row.note, 'todo.note', 50_000), source: assertSource(row.source), is_deleted: assertFlag(row.is_deleted, 'todo.is_deleted'),
+      note: assertText(row.note, 'todo.note', 50_000), source: assertSource(row.source), is_deleted: assertLiveFlag(row.is_deleted, 'todo.is_deleted'),
       position: assertInteger(row.position, 'todo.position', -2147483648, 2147483647), created_at: assertInteger(row.created_at, 'todo.created_at'), updated_at: assertInteger(row.updated_at, 'todo.updated_at'),
     };
   }
 
   private assertSubTodo(row: McpSubTodoRow): McpSubTodoRow {
-    return { ...row, id: assertTodoistSyncEntityId(row.id), customer_id: this.assertCustomer(row.customer_id), todo_id: assertTodoistSyncEntityId(row.todo_id), title: assertText(row.title, 'subTodo.title', 512), status: assertFlag(row.status, 'subTodo.status'), is_deleted: assertFlag(row.is_deleted, 'subTodo.is_deleted'), position: assertInteger(row.position, 'subTodo.position', -2147483648, 2147483647), created_at: assertInteger(row.created_at, 'subTodo.created_at'), updated_at: assertInteger(row.updated_at, 'subTodo.updated_at') };
+    return { ...row, id: assertTodoistSyncEntityId(row.id), customer_id: this.assertCustomer(row.customer_id), todo_id: assertTodoistSyncEntityId(row.todo_id), title: assertText(row.title, 'subTodo.title', 512), status: assertFlag(row.status, 'subTodo.status'), is_deleted: assertLiveFlag(row.is_deleted, 'subTodo.is_deleted'), position: assertInteger(row.position, 'subTodo.position', -2147483648, 2147483647), created_at: assertInteger(row.created_at, 'subTodo.created_at'), updated_at: assertInteger(row.updated_at, 'subTodo.updated_at') };
   }
 
   private assertCustomer(value: unknown): string {

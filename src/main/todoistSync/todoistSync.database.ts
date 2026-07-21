@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3-multiple-ciphers';
 import { chmodSync, mkdirSync } from 'fs';
-import { dirname, join, normalize } from 'path';
+import { basename, dirname, join, normalize } from 'path';
 import { applyTodoistSyncMigrations } from './todoistSync.migration';
 
 export interface TodoistSyncDatabasePaths {
@@ -65,6 +65,9 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
   private closed = false;
 
   constructor(path: string, password: string) {
+    if (basename(normalize(path)).toLowerCase() === 'main.db') {
+      throw new Error('[todoist sync] refusing to open legacy main.db');
+    }
     if (typeof password !== 'string' || password.length < 16 || password.length > 256) {
       throw new Error('[todoist sync] injected database password is invalid');
     }
@@ -72,6 +75,8 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
     if (process.platform !== 'win32') chmodSync(dirname(path), 0o700);
     this.raw = new Database(path);
     try {
+      this.raw.pragma("cipher = 'sqlcipher'");
+      this.raw.pragma('legacy = 4');
       this.raw.pragma(`key = ${quoteSqliteText(password)}`);
       this.raw.pragma('cipher_page_size = 8192');
       this.raw.pragma('foreign_keys = ON');

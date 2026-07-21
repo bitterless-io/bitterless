@@ -17,6 +17,8 @@
     "audit:sqlite-migrations": "node scripts/sqlite-migrations/audit.mjs",
     "test:sqlite-migrations": "node --test scripts/sqlite-migrations/release-hook.test.mjs",
     "typecheck:sqlite-migrations": "tsc -p scripts/sqlite-migrations/tsconfig.strict.json",
+    "typecheck:todoist-sync": "tsc -p scripts/todoist-sync/tsconfig.strict.json",
+    "test:todoist-sync": "node scripts/todoist-sync/runNativeTests.mjs",
     "check:renderer-i18n": "node scripts/renderer-i18n/check-renderer-i18n.mjs",
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
