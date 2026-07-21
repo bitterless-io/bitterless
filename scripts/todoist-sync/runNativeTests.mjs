@@ -34,6 +34,11 @@ const runtimeTripwires = {
             export const safeStorage = new Proxy({}, {
               get: (_target, property) => fail('safeStorage.' + String(property))
             });
+            export const app = {
+              getPath: () => {
+                throw new Error('[todoist sync test] app.getPath must be injected');
+              }
+            };
           `,
         };
       }

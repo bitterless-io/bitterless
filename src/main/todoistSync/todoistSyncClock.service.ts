@@ -144,6 +144,10 @@ export class TodoistSyncClockService {
     return this.state?.status === 'clock_wrong';
   }
 
+  getGeneration(): number {
+    return this.checkGeneration;
+  }
+
   async check(acceptResult: (checkGeneration: number) => boolean): Promise<TodoistSyncClockCheckResult> {
     const generation = ++this.checkGeneration;
     const results = await Promise.allSettled(TODOIST_SYNC_NTP_SOURCES.map((source) => this.query(source)));

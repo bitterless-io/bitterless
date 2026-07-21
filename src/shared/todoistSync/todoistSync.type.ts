@@ -33,6 +33,11 @@ export interface TodoistSyncCommand {
   };
 }
 
+export interface TodoistSyncRequest {
+  sync_token: string;
+  commands: TodoistSyncCommand[];
+}
+
 export interface TodoistSyncResourceBase {
   id: string;
   created_at: number;
@@ -92,11 +97,21 @@ export type TodoistSyncCommandStatus =
     }
   | {
       status: 'error';
-      error_code: string;
+      error_code: TodoistSyncCommandErrorCode;
       error: string;
       sync_revision: string | null;
       canonical_resource: TodoistSyncCanonicalReference | null;
     };
+
+export type TodoistSyncCommandErrorCode =
+  | 'RESOURCE_ALREADY_EXISTS'
+  | 'RESOURCE_DELETED'
+  | 'RESOURCE_NOT_FOUND'
+  | 'PARENT_NOT_FOUND'
+  | 'PARENT_DELETED'
+  | 'SNOWFLAKE_NODE_MISMATCH'
+  | 'COMMAND_UUID_REUSED'
+  | 'COMMAND_UUID_DEVICE_MISMATCH';
 
 export interface TodoistSyncResponse {
   sync_token: string;

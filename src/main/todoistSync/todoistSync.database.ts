@@ -22,7 +22,10 @@ export interface TodoistSyncSqlExecutor {
 }
 
 export interface TodoistSyncRepositoryDatabase extends TodoistSyncSqlExecutor {
-  writeTransaction<T>(runner: (tx: TodoistSyncSqlExecutor) => Promise<T>): Promise<T>;
+  writeTransaction<T>(
+    runner: (tx: TodoistSyncSqlExecutor) => Promise<T>,
+    beforeCommit?: () => void,
+  ): Promise<T>;
 }
 
 const normalizeCustomerId = (customerId: string | number): string => {
@@ -116,7 +119,10 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
     return result;
   }
 
-  async writeTransaction<T>(runner: (tx: TodoistSyncSqlExecutor) => Promise<T>): Promise<T> {
+  async writeTransaction<T>(
+    runner: (tx: TodoistSyncSqlExecutor) => Promise<T>,
+    beforeCommit?: () => void,
+  ): Promise<T> {
     this.assertOpen();
     const depth = this.transactionDepth;
     const savepoint = `todoist_sync_${depth}`;
@@ -124,6 +130,7 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
     this.raw.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`);
     try {
       const result = await runner(this);
+      beforeCommit?.();
       this.raw.exec(depth === 0 ? 'COMMIT' : `RELEASE SAVEPOINT ${savepoint}`);
       return result;
     } catch (error) {

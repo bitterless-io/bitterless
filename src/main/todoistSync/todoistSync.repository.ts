@@ -24,6 +24,7 @@ import type {
   TodoistSyncSubTodoResource,
   TodoistSyncTodoResource,
 } from '@shared/todoistSync/todoistSync.type';
+import { TODOIST_SYNC_MAX_FUTURE_MS } from '@shared/todoistSync/todoistSync.contract';
 import type {
   TodoistSyncRepositoryDatabase,
   TodoistSyncSqlExecutor,
@@ -74,6 +75,16 @@ export interface TodoistSyncOutboxBatch {
   commands: TodoistSyncCommand[];
 }
 
+export const TODOIST_SYNC_CORE_CLOCK_DISAGREEMENT =
+  '[todoist sync] Core CLOCK_SKEW disagrees with the healthy trusted-time sample';
+
+export class TodoistSyncGenerationFenceError extends Error {
+  constructor() {
+    super('[todoist sync] response generation is stale');
+    this.name = 'TodoistSyncGenerationFenceError';
+  }
+}
+
 const ACTIVE_OVERLAY_STATES: readonly TodoistSyncOutboxState[] = [
   'pending',
   'in_flight',
@@ -86,6 +97,11 @@ const EVENT_TYPES = new Set<McpTodoEventType>([
   'todo.created', 'todo.updated', 'todo.completed', 'todo.uncompleted',
   'todo.deleted', 'todo.moved', 'todo.starred', 'todo.unstarred',
 ]);
+const TODO_EVENT_FIELDS = [
+  'domain_id', 'title', 'status', 'important', 'due_at', 'repeat_type', 'repeat_interval',
+  'remind_at', 'last_remind_at', 'last_complete_at', 'week_day', 'monthly_day', 'yearly_day',
+  'note', 'source', 'position',
+] as const;
 
 const assertText = (value: unknown, label: string, maxLength = 100_000): string => {
   if (typeof value !== 'string' || value.length > maxLength) {
@@ -744,7 +760,10 @@ export class TodoistSyncRepository {
     );
   }
 
-  async markClockRejected(batch: TodoistSyncOutboxBatch): Promise<void> {
+  async markClockRejected(
+    batch: TodoistSyncOutboxBatch,
+    isCommitAllowed: () => boolean = () => true,
+  ): Promise<void> {
     await this.db.writeTransaction(async (tx) => {
       const state = await tx.get<{ rejected_batch_id: string | null }>('SELECT rejected_batch_id FROM todo_sync_state WHERE customer_id=?', [this.customerId]);
       if (state.rejected_batch_id && state.rejected_batch_id !== batch.id) throw new Error('[todoist sync] another clock-rejected batch is already quarantined');
@@ -755,51 +774,105 @@ export class TodoistSyncRepository {
         );
         if ((result.rows?._array.length ?? 0) !== 1) throw new Error('[todoist sync] rejected batch membership changed');
       }
+      const members = await tx.getAll<{ command_uuid: string }>(
+        'SELECT command_uuid FROM todo_sync_outbox WHERE batch_id=? ORDER BY command_order',
+        [batch.id],
+      );
+      if (
+        members.length !== batch.commands.length ||
+        members.some((member, index) => member.command_uuid !== batch.commands[index].uuid)
+      ) {
+        throw new Error('[todoist sync] rejected batch membership changed');
+      }
       await tx.execute('UPDATE todo_sync_state SET rejected_batch_id=?,updated_at=? WHERE customer_id=?', [batch.id, Date.now(), this.customerId]);
+    }, () => {
+      if (!isCommitAllowed()) throw new TodoistSyncGenerationFenceError();
     });
   }
 
-  async recoverClockRejected(trustedTimeMs: number, localNow = Date.now()): Promise<boolean> {
+  async recoverClockRejected(
+    trustedTimeMs: number,
+    localNow = Date.now(),
+    isCommitAllowed: () => boolean = () => true,
+  ): Promise<boolean> {
+    assertInteger(trustedTimeMs, 'trustedTimeMs');
+    assertInteger(localNow, 'localNow');
     return await this.db.writeTransaction(async (tx) => {
       const state = await tx.get<{ rejected_batch_id: string | null }>('SELECT rejected_batch_id FROM todo_sync_state WHERE customer_id=?', [this.customerId]);
       if (!state.rejected_batch_id) return true;
       const rows = await tx.getAll<OutboxRow>(
-        "SELECT * FROM todo_sync_outbox WHERE state='clock_rejected' AND batch_id=? ORDER BY command_order",
+        'SELECT * FROM todo_sync_outbox WHERE batch_id=? ORDER BY command_order',
         [state.rejected_batch_id],
       );
       if (rows.length === 0) throw new Error('[todoist sync] rejected batch marker has no commands');
-      const future = rows.filter((row) => Number(parseJson<Record<string, unknown>>(row.args_json, 'outbox args').client_updated_at) > trustedTimeMs + 180_000);
-      if (future.length === 0) return false;
+      if (rows.some((row) => row.state !== 'clock_rejected')) {
+        throw new Error('[todoist sync] rejected batch membership changed');
+      }
+      const future = new Set(rows.filter((row) => (
+        Number(parseJson<Record<string, unknown>>(row.args_json, 'outbox args').client_updated_at) >
+        trustedTimeMs + TODOIST_SYNC_MAX_FUTURE_MS
+      )).map((row) => row.command_uuid));
+      if (future.size === 0) {
+        await tx.execute(
+          'UPDATE todo_sync_state SET last_error=?,updated_at=? WHERE customer_id=?',
+          [TODOIST_SYNC_CORE_CLOCK_DISAGREEMENT, localNow, this.customerId],
+        );
+        return false;
+      }
+      let terminalOrder = (await tx.get<{ command_order: number | null }>(
+        'SELECT MAX(command_order) AS command_order FROM todo_sync_outbox',
+      )).command_order ?? 0;
       for (const row of rows) {
-        if (!future.includes(row)) {
+        if (!future.has(row.command_uuid)) {
           await tx.execute("UPDATE todo_sync_outbox SET state='pending',batch_id=NULL,updated_at=? WHERE command_uuid=?", [localNow, row.command_uuid]);
           continue;
         }
         const version = await this.nextVersion(tx, localNow);
         const args = parseJson<Record<string, unknown>>(row.args_json, 'outbox args');
         Object.assign(args, { client_updated_at: version.now, client_sequence: version.sequence });
-        await tx.execute("UPDATE todo_sync_outbox SET state='superseded',batch_id=NULL,updated_at=? WHERE command_uuid=?", [localNow, row.command_uuid]);
+        terminalOrder += 1;
+        await tx.execute(
+          "UPDATE todo_sync_outbox SET command_order=?,state='superseded',batch_id=NULL,updated_at=? WHERE command_uuid=?",
+          [terminalOrder, localNow, row.command_uuid],
+        );
         await tx.execute(
           `INSERT INTO todo_sync_outbox (
-            command_uuid,command_type,resource_type,resource_id,parent_resource_id,args_json,
+            command_order,command_uuid,command_type,resource_type,resource_id,parent_resource_id,args_json,
             preimage_json,state,created_at,updated_at
-          ) VALUES (?,?,?,?,?,?,?,'pending',?,?)`,
-          [version.uuid, row.command_type, row.resource_type, row.resource_id, row.parent_resource_id, JSON.stringify(args), row.preimage_json, localNow, localNow],
+          ) VALUES (?,?,?,?,?,?,?,?,'pending',?,?)`,
+          [row.command_order, version.uuid, row.command_type, row.resource_type, row.resource_id, row.parent_resource_id, JSON.stringify(args), row.preimage_json, localNow, localNow],
         );
       }
-      await tx.execute('UPDATE todo_sync_state SET rejected_batch_id=NULL,updated_at=? WHERE customer_id=?', [localNow, this.customerId]);
+      await tx.execute(
+        'UPDATE todo_sync_state SET rejected_batch_id=NULL,last_error=NULL,updated_at=? WHERE customer_id=?',
+        [localNow, this.customerId],
+      );
       const affected = new Set(rows.map((row) => `${row.resource_type}:${row.resource_id}`));
       for (const key of affected) {
         const [type, id] = key.split(':') as [TodoistSyncResourceType, string];
         await this.materialize(tx, type, id);
       }
       return true;
+    }, () => {
+      if (!isCommitAllowed()) throw new TodoistSyncGenerationFenceError();
     });
   }
 
-  async applySyncResponse(response: TodoistSyncResponse, batch: TodoistSyncOutboxBatch | null): Promise<void> {
+  async applySyncResponse(
+    response: TodoistSyncResponse,
+    batch: TodoistSyncOutboxBatch | null,
+    isCommitAllowed: () => boolean = () => true,
+  ): Promise<void> {
     let changed = false;
+    const eventTodoIds = new Set(response.todos.map((todo) => todo.id));
+    for (const command of batch?.commands ?? []) {
+      if (command.type.startsWith('todo_')) eventTodoIds.add(command.args.id);
+    }
     await this.db.writeTransaction(async (tx) => {
+      const todoBefore = new Map<string, Record<string, unknown> | null>();
+      for (const id of eventTodoIds) {
+        todoBefore.set(id, await this.getProjectionWith(tx, 'todo', id));
+      }
       const state = await tx.get<{ bootstrap_started: number }>(
         'SELECT bootstrap_started FROM todo_sync_state WHERE customer_id=?',
         [this.customerId],
@@ -872,6 +945,11 @@ export class TodoistSyncRepository {
         }
       }
 
+      for (const id of eventTodoIds) {
+        const after = await this.getProjectionWith(tx, 'todo', id);
+        if (await this.insertRemoteTodoEvent(tx, todoBefore.get(id) ?? null, after)) changed = true;
+      }
+
       const catchup = response.full_sync && response.sync_phase === 'reconcile' && !response.has_more ? 1 : 0;
       await tx.execute(
         `UPDATE todo_sync_state SET sync_token=?,sync_phase=?,snowflake_node_id=?,
@@ -882,20 +960,30 @@ export class TodoistSyncRepository {
         await tx.execute('UPDATE todo_sync_state SET bootstrap_catchup_pending=0 WHERE customer_id=?', [this.customerId]);
       }
       changed ||= affected.size > 0 || !!batch;
+    }, () => {
+      if (!isCommitAllowed()) throw new TodoistSyncGenerationFenceError();
     });
     this.ids.setNodeId(response.snowflake_node_id);
     if (changed) this.broadcastDataUpdated();
   }
 
-  async recordSyncError(message: string): Promise<void> {
-    await this.db.execute('UPDATE todo_sync_state SET last_error=?,updated_at=? WHERE customer_id=?', [message.slice(0, 1000), Date.now(), this.customerId]);
+  async recordSyncError(message: string, isCommitAllowed: () => boolean = () => true): Promise<void> {
+    await this.db.writeTransaction(async (tx) => {
+      await tx.execute('UPDATE todo_sync_state SET last_error=?,updated_at=? WHERE customer_id=?', [message.slice(0, 1000), Date.now(), this.customerId]);
+    }, () => {
+      if (!isCommitAllowed()) throw new TodoistSyncGenerationFenceError();
+    });
   }
 
-  async resetSyncTokenForBootstrap(): Promise<void> {
-    await this.db.execute(
-      "UPDATE todo_sync_state SET sync_token='*',sync_phase=NULL,bootstrap_started=0,bootstrap_catchup_pending=0,updated_at=? WHERE customer_id=?",
-      [Date.now(), this.customerId],
-    );
+  async resetSyncTokenForBootstrap(isCommitAllowed: () => boolean = () => true): Promise<void> {
+    await this.db.writeTransaction(async (tx) => {
+      await tx.execute(
+        "UPDATE todo_sync_state SET sync_token='*',sync_phase=NULL,bootstrap_started=0,bootstrap_catchup_pending=0,updated_at=? WHERE customer_id=?",
+        [Date.now(), this.customerId],
+      );
+    }, () => {
+      if (!isCommitAllowed()) throw new TodoistSyncGenerationFenceError();
+    });
   }
 
   async hasClockRejectedBatch(): Promise<boolean> {
@@ -1225,6 +1313,53 @@ export class TodoistSyncRepository {
   ): Promise<number> {
     const row = await tx.get<{ position: number | null }>(`SELECT MAX(position) AS position FROM ${table} WHERE ${where}`, values);
     return row.position === null ? 0 : row.position + 1;
+  }
+
+  private async insertRemoteTodoEvent(
+    tx: TodoistSyncSqlExecutor,
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+  ): Promise<boolean> {
+    const beforeLive = before !== null && before.deleted_flag === '';
+    const afterLive = after !== null && after.deleted_flag === '';
+    if (!beforeLive && afterLive && after) {
+      await this.insertEvent(
+        tx,
+        'todo.created',
+        assertTodoistSyncEntityId(after.id),
+        assertTodoistSyncEntityId(after.domain_id),
+        'system',
+        { title: assertText(after.title, 'todo.title', 512), source: assertSource(after.source as McpTodoSource) },
+      );
+      return true;
+    }
+    if (beforeLive && !afterLive && before) {
+      await this.insertEvent(
+        tx,
+        'todo.deleted',
+        assertTodoistSyncEntityId(before.id),
+        assertTodoistSyncEntityId(before.domain_id),
+        'system',
+        { title: assertText(before.title, 'todo.title', 512) },
+      );
+      return true;
+    }
+    if (!beforeLive || !afterLive || !before || !after) return false;
+    const changedFields = TODO_EVENT_FIELDS.filter((field) => before[field] !== after[field]);
+    if (changedFields.length === 0) return false;
+    let type: McpTodoEventType = 'todo.updated';
+    if (before.status !== after.status) type = after.status === 1 ? 'todo.completed' : 'todo.uncompleted';
+    else if (before.domain_id !== after.domain_id) type = 'todo.moved';
+    else if (before.important !== after.important) type = after.important === 1 ? 'todo.starred' : 'todo.unstarred';
+    await this.insertEvent(
+      tx,
+      type,
+      assertTodoistSyncEntityId(after.id),
+      assertTodoistSyncEntityId(before.domain_id),
+      'system',
+      { title: assertText(before.title, 'todo.title', 512), changedFields },
+    );
+    return true;
   }
 
   private async insertEvent(

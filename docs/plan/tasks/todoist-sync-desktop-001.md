@@ -188,34 +188,41 @@ imported, migrated, or deleted.
   was not restarted per Ral's instruction. It is not counted as passing evidence for this batch.
 - No Electron GUI, real Core request, remote database, web/build pass, or two-client smoke was run.
 
-Todos 1-4 are complete for this develop batch. The task remains `in-progress` for Todos 5-8.
+Todos 1-4 are complete for this develop batch.
 
-## remaining Todo 5-8
+# handoff checkpoint — 2026-07-21 (docs-sprint develop batch 2)
 
-5. Add strict wire fixtures shared with the backend, scheduler/session fencing, NTP healthy/wrong/
-   unreachable/boundary/late-result tests, exact `CLOCK_SKEW` batch recovery, and Core-clock
-   disagreement diagnostics.
-6. Complete remote `actor=system` Todo events and verify a newly confirmed wrong clock stops or
-   safely fences any already-running HTTP request.
-7. Run the remaining web/runtime/build commands below. Dependency installation and focused MCP/audit
-   checks passed in this batch.
-8. After the backend disposable-PostgreSQL gate passes, run the non-production two-client HTTP
-   smoke; only then can this task leave `in-progress`.
+The task remains `in-progress`. This batch was limited to the Main/shared Todoist-sync module,
+focused native tests, strict wire fixtures, and this task record. It did not change or run renderer
+UI, MCP, web/build, remote HTTP, or backend/PostgreSQL work.
 
-## resume here
+## Todo 5-8 progress
 
-```bash
-cd /Users/ral/Documents/projects/overmind/projects/bitterless
-yarn typecheck:todoist-sync
-yarn test:todoist-sync
-yarn typecheck:web
-yarn typecheck:mcp
-yarn audit:sqlite-migrations
-yarn check:todo-window-runtime
-yarn test:mcp:todo-smoke
-yarn build
-git diff --check
-```
+- [x] Todo 5: added strict request/response/error wire fixtures and parsing for all nine command
+  variants; deterministic coverage now includes coordinator/session single flight, coalesced rerun,
+  completion-relative scheduling, restart/token persistence, NTP boundary and late-result generation
+  fencing, exact whole-batch `CLOCK_SKEW` recovery, and Core-vs-NTP disagreement diagnostics.
+- [x] Todo 6: remote-applied Todo changes now emit the contract event sequence with `actor=system`
+  without feedback outbox commands. An HTTP response is revalidated against both session and clock
+  generations after return and again immediately before SQLite commit, so stale resource, receipt,
+  token, and baseline state cannot commit or schedule an unsafe follow-up.
+- [ ] Todo 7: run the remaining renderer/web/runtime/MCP/build gates and Electron handoff in the next
+  batch; no full-project TypeScript check was run here.
+- [ ] Todo 8: after the backend disposable-PostgreSQL gate passes, run the non-production two-client
+  HTTP smoke. This external prerequisite still prevents task completion.
 
-Do not start with Electron manual testing: first obtain strict typecheck and fixed-password SQLite
-evidence. Ral will perform the Electron GUI pass after the code/build gates are clean.
+## batch 2 evidence
+
+- `yarn typecheck:todoist-sync` passed.
+- `yarn test:todoist-sync` passed: 17 native deterministic tests, 17 passed.
+- `git diff --check` passed.
+- The focused test run left no SQLite, log, temporary, or compiled test artifacts under `tmp/` or
+  `scripts/todoist-sync/`.
+- No renderer UI, MCP, web/build, Electron GUI, real Core request, remote database, or two-client
+  smoke was run in this batch.
+
+## next batch
+
+Run Todo 7's renderer/web/runtime/MCP/build verification without expanding Main sync behavior, then
+run Todo 8's non-production HTTP smoke only after its backend prerequisite is green. Ral will perform
+the Electron GUI pass after the code/build gates are clean.
