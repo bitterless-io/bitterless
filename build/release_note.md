@@ -1,5 +1,4 @@
-- 👀 Added EyesOnAgents with Codex project filtering, Focus monitoring, and archive synchronization.
-- 🔄 Added a manual Refresh fallback and automatic activation refresh for Codex titles and archive state.
-- 💾 Persists Codex thread inventory snapshots separately from Bitterless Domain and unread markers.
-- 🎯 Running or newly completed tasks become unread; opening them from EyesOnAgents marks them read.
-- 🛡️ Added fail-closed, multi-version SQLite migration checks before every production package.
+- 🔄 Consolidated Todo synchronization into one Refresh control with live progress, last-success time, and failure details.
+- 🧭 Reuses one installation device identity across password and email-code login to keep Snowflake assignment stable.
+- ✅ Fixed Todo refresh after creating a task with no SubTodos by returning explicit zero counts.
+- 🛡️ Keeps conflicting Snowflake-node responses fail-closed so local synchronized task IDs remain protected.
