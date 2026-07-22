@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import { parseHTML } from 'linkedom';
+import { parseHTML } from 'linkedom/worker';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import type { ProxyConfig } from '../langGraph/model.adaptor';
 

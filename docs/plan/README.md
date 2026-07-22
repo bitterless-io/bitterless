@@ -63,6 +63,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-hook-coverage-recovery-022](tasks/eyes-on-agents-hook-coverage-recovery-022.md) | recover durable Hook coverage gaps without blocking App Server inventory | implemented; owner verification pending | eyes-on-agents-hook-delivery-007, eyes-on-agents-global-onboarding-008 |
 | [eyes-on-agents-flex-columns-023](tasks/eyes-on-agents-flex-columns-023.md) | 300–500px flex-width wrapped Domain columns | implemented; owner verification pending | eyes-on-agents-all-board-011 |
 | [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and observable SQLite-first startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
+| [preload-linkedom-worker-003](tasks/preload-linkedom-worker-003.md) | canvas-free LinkeDOM preload bundling and production development startup | done | desktop-helper-process-isolation-001 |
 | [desktop-package-size-002](tasks/desktop-package-size-002.md) | production dependency boundary and pre-sign desktop package-size gate | done | — |
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |

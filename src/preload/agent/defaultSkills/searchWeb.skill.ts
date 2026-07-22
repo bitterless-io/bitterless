@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { parseHTML } from 'linkedom';
+import { parseHTML } from 'linkedom/worker';
 import { Readability } from '@mozilla/readability';
 import { chromium } from 'playwright';
 import { pathHelper } from '@shared/pathHelper/preload/pathPreload.helper';
