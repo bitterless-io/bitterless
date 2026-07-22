@@ -96,6 +96,11 @@ Settings exposes account identity inside the existing General page without addin
 | Window controls while logged out | Keep the shared macOS drag region or Windows minimize/maximize/close controls interactive above the login content |
 | Logout | Clear local authentication and route to Login immediately; best-effort revoke the Core token and silently tear down authenticated secondary windows |
 
+The desktop owns one installation-level `device_id`. If the persisted value is absent, it creates
+and saves one before authentication; if present, it reuses it unchanged. Password login,
+email-code login, restored sessions, and token issuance all send that same value. Customer identity
+and login method never derive or replace `device_id`.
+
 All request buttons expose a loading state and block re-entry. Reset-password completion never logs
 the customer in automatically; the customer signs in with the new password. Restoring an inactive
 or otherwise invalid session clears only that still-current local token. Initial restore and a new

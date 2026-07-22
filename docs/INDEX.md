@@ -71,6 +71,10 @@ design document.
 
 ## Issues
 
+- [Todo sync device identity changes across login methods](issues/todo-sync-device-identity-node-mismatch.md) - fixed:
+  one persisted installation identity must be shared by password and email-code login.
+- [Todo batch SubTodo counts omit zero rows](issues/todo-subtodo-count-map-omits-zero.md) - fixed:
+  dense repository counts keep a newly created zero-SubTodo Todo refreshable.
 - [Customer login session transition](issues/customer-auth-login-session-transition.md) - client
   fix implemented; Shanghai backend gate and owner verification pending: valid Core login is no
   longer blocked or misreported by optional local runtime activation, and General now exposes the

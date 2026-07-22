@@ -661,6 +661,7 @@ export class TodoistSyncRepository {
       [this.customerId, ...ids],
     );
     const result: Record<string, { total: number; done: number }> = {};
+    for (const id of ids) result[id] = { total: 0, done: 0 };
     for (const row of rows) result[assertTodoistSyncEntityId(row.todo_id)] = { total: row.total, done: row.done };
     return result;
   }

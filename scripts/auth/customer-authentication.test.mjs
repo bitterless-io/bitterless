@@ -50,6 +50,61 @@ test('production auth consistently uses the released Shanghai endpoint', () => {
   assert.match(main, new RegExp(`authOrigins[\\s\\S]*'${CURRENT_PROD_CORE_URL}'`));
 });
 
+test('password, OTP, restore, and Todo activation reuse one create-once installation device ID', () => {
+  const store = read('src/renderer/home/src/stores/auth/auth.store.ts');
+  const createDeviceId = store.match(
+    /const getOrCreateDeviceId = \(\): string => \{[\s\S]*?\n\};/
+  );
+  const passwordLogin = store.match(
+    /  async loginWithPassword\([\s\S]*?\n  \}(?=\n\n  async sendOtp)/
+  );
+  const otpLogin = store.match(
+    /  async loginWithOtp\([\s\S]*?\n  \}(?=\n\n  async changePassword)/
+  );
+  const activation = store.match(
+    /  private activateAuthenticatedSession\([\s\S]*?\n  \}(?=\n\n  private async activateToken)/
+  );
+  const readiness = store.match(
+    /  async ensureTodoistSyncReady\([\s\S]*?\n  \}(?=\n\n  private activateAuthenticatedSession)/
+  );
+  const restore = store.match(
+    /  async restoreSession\([\s\S]*?\n  \}(?=\n\n  clearLocalSession)/
+  );
+
+  assert.ok(createDeviceId, 'Missing installation device ID factory');
+  assert.ok(passwordLogin, 'Missing password login flow');
+  assert.ok(otpLogin, 'Missing OTP login flow');
+  assert.ok(activation, 'Missing authenticated Todo activation flow');
+  assert.ok(readiness, 'Missing explicit Todo readiness flow');
+  assert.ok(restore, 'Missing session restore flow');
+  assert.match(createDeviceId[0], /localStorage\.getItem\(DEVICE_ID_KEY\)/);
+  assert.match(createDeviceId[0], /if \(existingDeviceId !== null\) return existingDeviceId/);
+  assert.match(createDeviceId[0], /const deviceId = createRandomHex32\(\)/);
+  assert.match(createDeviceId[0], /localStorage\.setItem\(DEVICE_ID_KEY, deviceId\)/);
+  assert.equal(
+    (store.match(/localStorage\.setItem\(DEVICE_ID_KEY/g) ?? []).length,
+    1,
+    'DEVICE_ID_KEY must have exactly one create-only write site'
+  );
+  assert.doesNotMatch(store, /localStorage\.removeItem\(DEVICE_ID_KEY/);
+  assert.match(store, /private readonly installationDeviceId = getOrCreateDeviceId\(\)/);
+  assert.match(store, /get deviceId\(\): string \{\n    return this\.installationDeviceId/);
+
+  assert.equal((passwordLogin[0].match(/loginApi\(/g) ?? []).length, 1);
+  assert.match(passwordLogin[0], /device_id: this\.deviceId/);
+  assert.match(passwordLogin[0], /await this\.activateToken\(result\.token\)/);
+  assert.match(otpLogin[0], /verifyOtpApi\(\{ email, code, device_id: this\.deviceId \}\)/);
+  assert.match(otpLogin[0], /await this\.activateToken\(result\.token\)/);
+  assert.match(activation[0], /getTodoistSyncActivateParams\(current, getToken\(\), this\.deviceId\)/);
+  assert.match(readiness[0], /getTodoistSyncActivateParams\(current, getToken\(\), this\.deviceId\)/);
+  assert.match(restore[0], /this\.activateAuthenticatedSession\(current\)/);
+
+  assert.doesNotMatch(
+    store,
+    /DEVICE_SEED_KEY|BOOTSTRAP_DEVICE_PREFIX|getBootstrapDeviceId|getCustomerDeviceId|decodeJwtPayload/
+  );
+});
+
 test('Core authentication commits without awaiting optional local runtimes', () => {
   const store = read('src/renderer/home/src/stores/auth/auth.store.ts');
   const activation = store.match(

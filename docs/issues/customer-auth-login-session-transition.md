@@ -54,10 +54,12 @@ Consequences:
 - login submission can overlap initial session restoration because it is gated by `loading` but not
   by `checking`.
 
-Password login also retains a documented two-request compatibility bridge for canonical device IDs.
-This repair keeps that device contract and ensures only Core login or `/auth/me` failures are treated
-as authentication failures. Restoring password access for the reported account remains a Core
-account-lifecycle operation (invitation/first-password setup when eligible, otherwise password
+The former password two-request device-ID compatibility bridge was superseded on 2026-07-22 by
+[`todo-sync-refresh-identity-004`](../plan/tasks/todo-sync-refresh-identity-004.md). Password and
+email-code login now reuse one create-once installation identity, and password login makes one Core
+request. This does not change the session-transition conclusion: only Core login or `/auth/me`
+failures are authentication failures. Restoring password access for the reported account remains a
+Core account-lifecycle operation (invitation/first-password setup when eligible, otherwise password
 recovery); it is separate from the desktop navigation defect.
 
 ## 2026-07-22 first-password navigation recurrence

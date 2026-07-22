@@ -18,9 +18,7 @@ import {
 } from '@/networking/auth.api';
 
 const TOKEN_KEY = 'bitterless-desktop-token';
-const DEVICE_SEED_KEY = 'bitterless-desktop-device-seed';
 const DEVICE_ID_KEY = 'bitterless-desktop-device-id';
-const BOOTSTRAP_DEVICE_PREFIX = 'bootstrap';
 
 const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
 
@@ -41,20 +39,13 @@ const createRandomHex32 = (): string => {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 };
 
-const getOrCreateDeviceSeed = (): string => {
-  let seed = localStorage.getItem(DEVICE_SEED_KEY);
-  if (!seed) {
-    seed = createRandomHex32();
-    localStorage.setItem(DEVICE_SEED_KEY, seed);
-  }
-  return seed;
-};
+const getOrCreateDeviceId = (): string => {
+  const existingDeviceId = localStorage.getItem(DEVICE_ID_KEY);
+  if (existingDeviceId !== null) return existingDeviceId;
 
-const getBootstrapDeviceId = (): string => `${BOOTSTRAP_DEVICE_PREFIX}-${getOrCreateDeviceSeed()}`;
-
-const getCustomerDeviceId = (customerId: number): string => {
-  const tail = String(customerId).padStart(8, '0').slice(-8);
-  return `${tail}${getOrCreateDeviceSeed()}`;
+  const deviceId = createRandomHex32();
+  localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  return deviceId;
 };
 
 const getTodoistSyncActivateParams = (
@@ -81,24 +72,6 @@ const ensureSessionEligibleCustomer = (customer: CurrentCustomer): CurrentCustom
   throw new Error('账号状态无效，请重新登录');
 };
 
-const decodeJwtPayload = (token: string): { sub?: number; scope?: string } | null => {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return null;
-    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const json = decodeURIComponent(
-      atob(padded)
-        .split('')
-        .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`)
-        .join('')
-    );
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-};
-
 class AuthStore {
   current: CurrentCustomer | null = null;
   loading = false;
@@ -106,6 +79,7 @@ class AuthStore {
   sendingOtp = false;
   resettingPassword = false;
   checking = false;
+  private readonly installationDeviceId = getOrCreateDeviceId();
   private readonly todoistSyncActivation = markRaw(new TodoistSyncActivationService(
     async (params) => await todoistSyncSessionEmitter.activate(params),
   ));
@@ -119,7 +93,7 @@ class AuthStore {
   }
 
   get deviceId(): string {
-    return localStorage.getItem(DEVICE_ID_KEY) || '';
+    return this.installationDeviceId;
   }
 
   private async fetchValidatedCustomer(token: string): Promise<CurrentCustomer> {
@@ -162,7 +136,7 @@ class AuthStore {
     );
   }
 
-  private async activateToken(token: string, deviceId: string): Promise<CurrentCustomer> {
+  private async activateToken(token: string): Promise<CurrentCustomer> {
     let current: CurrentCustomer;
     try {
       current = await this.fetchValidatedCustomer(token);
@@ -173,7 +147,6 @@ class AuthStore {
     }
 
     this.todoistSyncActivation.invalidate();
-    localStorage.setItem(DEVICE_ID_KEY, deviceId);
     setToken(token);
     this.current = current;
 
@@ -186,24 +159,12 @@ class AuthStore {
   async loginWithPassword(email: string, password: string): Promise<void> {
     this.loading = true;
     try {
-      const bootstrapDeviceId = getBootstrapDeviceId();
-      const bootstrapLogin = await loginApi({ email, password, device_id: bootstrapDeviceId });
-      const payload = decodeJwtPayload(bootstrapLogin.token);
-      const customerId = payload?.scope === 'customer' ? payload.sub : undefined;
-
-      if (!customerId) {
-        await this.activateToken(bootstrapLogin.token, bootstrapDeviceId);
-        return;
-      }
-
-      const customerDeviceId = getCustomerDeviceId(customerId);
-      const finalLogin = await loginApi({
+      const result = await loginApi({
         email,
         password,
-        device_id: customerDeviceId
-      }).finally(() => logoutApi(bootstrapLogin.token).catch(() => undefined));
-
-      await this.activateToken(finalLogin.token, customerDeviceId);
+        device_id: this.deviceId
+      });
+      await this.activateToken(result.token);
     } catch (err: any) {
       Message.error(err?.message || '登录失败');
       throw err;
@@ -252,9 +213,8 @@ class AuthStore {
   async loginWithOtp(email: string, code: string): Promise<void> {
     this.loading = true;
     try {
-      const bootstrapDeviceId = getBootstrapDeviceId();
-      const result = await verifyOtpApi({ email, code, device_id: bootstrapDeviceId });
-      await this.activateToken(result.token, bootstrapDeviceId);
+      const result = await verifyOtpApi({ email, code, device_id: this.deviceId });
+      await this.activateToken(result.token);
     } catch (err: any) {
       Message.error(err?.message || '验证码登录失败');
       throw err;
@@ -294,9 +254,6 @@ class AuthStore {
     try {
       const me = await this.fetchValidatedCustomer(token);
       this.current = me;
-      if (!localStorage.getItem(DEVICE_ID_KEY)) {
-        localStorage.setItem(DEVICE_ID_KEY, getCustomerDeviceId(me.id));
-      }
       return me;
     } catch (err) {
       if (getToken() === token) {

@@ -636,6 +636,83 @@ test('Todo UI mutation observation contains null XPC guard failures without unha
   }
 });
 
+test('Todo menubar exposes one hover Refresh control with truthful sync status', { concurrency: false }, () => {
+  const menuSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/components/MenuBar/MenuBar.vue'),
+    'utf8',
+  );
+  const styleSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/components/MenuBar/MenuBar.less'),
+    'utf8',
+  );
+  const englishSource = originalFs.readFileSync(
+    resolve('src/renderer/common/i18n/en.ts'),
+    'utf8',
+  );
+  const chineseSource = originalFs.readFileSync(
+    resolve('src/renderer/common/i18n/zh.ts'),
+    'utf8',
+  );
+  const refreshPopover = menuSource.match(
+    /<a-popover trigger="hover" position="br">[\s\S]*?<\/a-popover>/,
+  );
+  const refreshHandler = menuSource.match(
+    /const handleRefresh = \(\) => \{[\s\S]*?\n\};/,
+  );
+  const statusLabel = menuSource.match(
+    /const syncStatusLabel = computed\(\(\) => \{[\s\S]*?\n\}\);/,
+  );
+
+  assert.ok(refreshPopover, 'Refresh must own the hover sync-status popover');
+  assert.ok(refreshHandler, 'Missing Refresh handler');
+  assert.ok(statusLabel, 'Missing localized current-result projection');
+  assert.equal((menuSource.match(/<IconRefresh\b/g) ?? []).length, 1);
+  assert.equal((menuSource.match(/@click="handleRefresh"/g) ?? []).length, 1);
+  assert.doesNotMatch(menuSource, /IconCloud/);
+  assert.match(refreshPopover[0], /<a-badge :count="todoistSyncStore\.failures\.length"/);
+  assert.match(
+    refreshPopover[0],
+    /<IconRefresh :class="\{ 'menubar__refresh-icon--active': todoistSyncStore\.status\?\.syncing \}"/,
+  );
+  assert.match(refreshPopover[0], /i18nHelper\.todo\.syncCurrentResult/);
+  assert.match(refreshPopover[0], /i18nHelper\.todo\.syncLastSuccessful/);
+  assert.match(refreshPopover[0], /i18nHelper\.todo\.syncErrorReason/);
+  assert.match(refreshPopover[0], /i18nHelper\.todo\.syncPermanentFailures/);
+  assert.match(refreshPopover[0], /handleRetrySync\(failure\.uuid\)/);
+  assert.match(refreshPopover[0], /handleDiscardSync\(failure\.uuid\)/);
+
+  assert.match(refreshHandler[0], /todoistSyncStore\.requestSync\(\)/);
+  assert.match(refreshHandler[0], /todoStore\.loadAll\(\)/);
+  assert.match(refreshHandler[0], /Promise\.all/);
+  assert.match(statusLabel[0], /i18nHelper\.todo\.syncStatusSyncing/);
+  assert.match(statusLabel[0], /i18nHelper\.todo\.syncStatusPullOnly/);
+  assert.match(statusLabel[0], /i18nHelper\.todo\.syncStatusFailed/);
+  assert.match(statusLabel[0], /i18nHelper\.todo\.syncStatusSucceeded/);
+  assert.doesNotMatch(statusLabel[0], /return todoistSyncStore\.status\.last_error/);
+  assert.match(menuSource, /dayjs\(value\)\.format\('YYYY-MM-DD HH:mm:ss'\)/);
+  assert.match(menuSource, /i18nHelper\.todo\.syncNeverSynchronized/);
+  assert.match(
+    menuSource,
+    /SNOWFLAKE_NODE_MISMATCH_ERROR = '\[todoist sync\] server changed this device Snowflake node'/,
+  );
+  assert.match(menuSource, /i18nHelper\.todo\.syncErrorDeviceIdentityMismatch/);
+  assert.match(styleSource, /\.menubar__refresh-icon--active \{\n  animation: todo-sync-spin/);
+
+  for (const key of [
+    'syncStatusSucceeded',
+    'syncStatusFailed',
+    'syncCurrentResult',
+    'syncLastSuccessful',
+    'syncNeverSynchronized',
+    'syncErrorReason',
+    'syncErrorDeviceIdentityMismatch',
+    'syncPermanentFailures',
+  ]) {
+    assert.match(englishSource, new RegExp(`${key}:`));
+    assert.match(chineseSource, new RegExp(`${key}:`));
+  }
+});
+
 test('fixed-password SQLCipher create, protected-key first run, reopen, and wrong password', { concurrency: false }, () => {
   const root = createRoot('bitterless-todoist-cipher');
   const userDataPath = join(root, 'userData');
@@ -827,6 +904,36 @@ test('real repository CRUD is atomic with outbox, events, and soft-delete cascad
     assert(eventsAfterDelete.events.some((event) => event.type === 'todo.deleted'));
     assert((await outboxRows(runtime.database)).length >= 10);
     runtime.database.assertHealthy();
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
+test('real repository returns dense SubTodo counts for every unique requested Todo', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-dense-subtodo-counts');
+  try {
+    const domain = await runtime.repository.createDomain({ title: 'Count domain' });
+    assert(domain);
+    const emptyTodo = await runtime.repository.createTodo({ domainId: domain.id, title: 'No steps' });
+    const populatedTodo = await runtime.repository.createTodo({ domainId: domain.id, title: 'Two steps' });
+    assert(emptyTodo);
+    assert(populatedTodo);
+    const incompleteSubTodo = await runtime.repository.createSubTodo({ todoId: populatedTodo.id, title: 'Incomplete' });
+    const completedSubTodo = await runtime.repository.createSubTodo({ todoId: populatedTodo.id, title: 'Complete' });
+    assert(incompleteSubTodo);
+    assert(completedSubTodo);
+    await runtime.repository.toggleSubTodoStatus({ id: completedSubTodo.id });
+
+    assert.deepEqual(
+      await runtime.repository.getCountsByTodoIds({
+        todoIds: [emptyTodo.id, populatedTodo.id, emptyTodo.id],
+      }),
+      {
+        [emptyTodo.id]: { total: 0, done: 0 },
+        [populatedTodo.id]: { total: 2, done: 1 },
+      },
+    );
+    assert.deepEqual(await runtime.repository.getCountsByTodoIds({ todoIds: [] }), {});
   } finally {
     closeRuntime(runtime);
   }
@@ -1101,6 +1208,28 @@ test('first bootstrap installs the assigned node before emitting a remote Todo e
   } finally {
     database.close();
     cleanupRoot(root);
+  }
+});
+
+test('a conflicting server Snowflake node leaves the cached node and sync state unchanged', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-conflicting-node');
+  try {
+    const before = await runtime.repository.getSyncState();
+    const conflictingResponse = syncResponse({ token: 'must-not-commit-conflicting-node' });
+    conflictingResponse.snowflake_node_id = 8;
+
+    await assert.rejects(
+      () => runtime.repository.applySyncResponse(conflictingResponse, null),
+      /server changed this device Snowflake node/,
+    );
+    assert.deepEqual(await runtime.repository.getSyncState(), before);
+
+    await runtime.repository.applySyncResponse(syncResponse({ token: 'cached-node-remains-valid' }), null);
+    const recovered = await runtime.repository.getSyncState();
+    assert.equal(recovered.snowflake_node_id, 7);
+    assert.equal(recovered.sync_token, 'cached-node-remains-valid');
+  } finally {
+    closeRuntime(runtime);
   }
 });
 

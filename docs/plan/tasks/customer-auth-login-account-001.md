@@ -47,8 +47,10 @@ Login                                  Settings → General
   `router.replace` before declaring the UI transition complete.
 - Once first-password mutation succeeds, record completion before routing. A route failure exposes
   a navigation-only retry and must never submit the password mutation again.
-- Keep the existing password device-ID compatibility bridge; authentication errors must arise only
-  from its Core requests or `/auth/me`, not from local worker initialization.
+- Authentication errors must arise only from Core login or `/auth/me`, not from local worker
+  initialization. The former password device-ID compatibility bridge was superseded on 2026-07-22
+  by [`todo-sync-refresh-identity-004`](todo-sync-refresh-identity-004.md): every login method now
+  reuses one create-once installation identity and password login makes one request.
 - Add `AuthHandler.deactivateSession()` for manual logout. It reuses authenticated secondary-window
   cleanup without broadcasting a 401 warning.
 - Manual logout clears local state synchronously, routes to Login immediately, and lets Core token

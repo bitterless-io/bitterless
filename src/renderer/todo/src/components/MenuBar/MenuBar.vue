@@ -23,24 +23,37 @@
           </template>
         </a-button>
       </a-tooltip>
-      <a-button size="mini" type="text" :title="i18nHelper.todo.refresh" @click="handleRefresh">
-        <template #icon>
-          <IconRefresh />
-        </template>
-      </a-button>
-      <a-popover trigger="click" position="br">
+      <a-popover trigger="hover" position="br">
         <a-badge :count="todoistSyncStore.failures.length" :max-count="99">
-          <a-button size="mini" type="text" :title="i18nHelper.todo.syncStatusTitle">
+          <a-button
+            size="mini"
+            type="text"
+            :title="i18nHelper.todo.refresh"
+            :aria-label="i18nHelper.todo.refresh"
+            @click="handleRefresh"
+          >
             <template #icon>
-              <IconCloud :class="{ 'menubar__sync-icon--active': todoistSyncStore.status?.syncing }" />
+              <IconRefresh :class="{ 'menubar__refresh-icon--active': todoistSyncStore.status?.syncing }" />
             </template>
           </a-button>
         </a-badge>
         <template #content>
           <div class="todo-sync-status">
             <strong>{{ i18nHelper.todo.syncStatusTitle }}</strong>
-            <span>{{ syncStatusLabel }}</span>
+            <div class="todo-sync-status__row">
+              <span class="todo-sync-status__label">{{ i18nHelper.todo.syncCurrentResult }}</span>
+              <span class="todo-sync-status__value">{{ syncStatusLabel }}</span>
+            </div>
+            <div class="todo-sync-status__row">
+              <span class="todo-sync-status__label">{{ i18nHelper.todo.syncLastSuccessful }}</span>
+              <span class="todo-sync-status__value">{{ syncLastSuccessLabel }}</span>
+            </div>
+            <div v-if="syncErrorLabel" class="todo-sync-status__row">
+              <span class="todo-sync-status__label">{{ i18nHelper.todo.syncErrorReason }}</span>
+              <span class="todo-sync-status__value">{{ syncErrorLabel }}</span>
+            </div>
             <div v-if="todoistSyncStore.failures.length" class="todo-sync-status__failures">
+              <span class="todo-sync-status__label">{{ i18nHelper.todo.syncPermanentFailures }}</span>
               <div v-for="failure in todoistSyncStore.failures" :key="failure.uuid" class="todo-sync-status__failure">
                 <span>{{ failure.command_type }} · {{ failure.error_message || failure.error_code }}</span>
                 <div class="todo-sync-status__actions">
@@ -110,9 +123,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
 import { Message } from '@arco-design/web-vue';
+import dayjs from 'dayjs';
 import {
   IconArchive,
-  IconCloud,
   IconExternalLink,
   IconMaximize,
   IconMinus,
@@ -135,6 +148,8 @@ import type { McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
 import { resolveMcpIntegrationSkillState } from '@shared/mcp/mcpIntegrationInfo.shared';
 import { todoistSyncStore } from '../../store/todoistSync.store';
 
+const SNOWFLAKE_NODE_MISMATCH_ERROR = '[todoist sync] server changed this device Snowflake node';
+
 const props = defineProps<{
   isStandalone: boolean;
 }>();
@@ -148,8 +163,24 @@ const archivedDomainsLoading = ref(false);
 const syncStatusLabel = computed(() => {
   if (todoistSyncStore.status?.syncing) return i18nHelper.todo.syncStatusSyncing;
   if (todoistSyncStore.status?.pull_only) return i18nHelper.todo.syncStatusPullOnly;
-  if (todoistSyncStore.status?.last_error) return todoistSyncStore.status.last_error;
+  if (todoistSyncStore.status?.last_error) return i18nHelper.todo.syncStatusFailed;
+  if (todoistSyncStore.status?.last_success_at !== null && todoistSyncStore.status?.last_success_at !== undefined) {
+    return i18nHelper.todo.syncStatusSucceeded;
+  }
   return i18nHelper.todo.syncStatusReady;
+});
+const syncLastSuccessLabel = computed(() => {
+  const value = todoistSyncStore.status?.last_success_at;
+  if (value === null || value === undefined) return i18nHelper.todo.syncNeverSynchronized;
+  return dayjs(value).format('YYYY-MM-DD HH:mm:ss');
+});
+const syncErrorLabel = computed(() => {
+  const error = todoistSyncStore.status?.last_error;
+  if (!error) return '';
+  if (error === SNOWFLAKE_NODE_MISMATCH_ERROR) {
+    return i18nHelper.todo.syncErrorDeviceIdentityMismatch;
+  }
+  return error;
 });
 
 const menubarClass = computed(() => {

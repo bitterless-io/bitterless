@@ -61,6 +61,12 @@ new userData/db/todoist-sync-v1/customer-<customerId>.db
   and non-interactive while exercising the same encrypted schema and repository.
 - Synchronized IDs are fixed-width 20-character decimal Snowflake strings. The backend assigns a
   stable node `0..1023` per customer/device. A cached node permits later offline creation.
+- `device_id` is one installation-level persistent identity. The renderer creates and stores it
+  once when absent, then password login, email-code login, session restore, and every later token
+  request reuse that exact value. Login method and customer discovery must never derive a second
+  identity or replace an existing one. A cached Snowflake node mismatch remains a fail-closed
+  integrity error; the client never silently adopts another node for a database that may contain
+  locally generated IDs.
 
 Local resource rows additionally keep:
 
@@ -76,6 +82,13 @@ remote page therefore never needs to overwrite local fields before outbox overla
 Wire resources omit legacy compatibility fields: the repository projects
 `updated_at = client_updated_at` and `is_deleted = deleted_flag === "" ? 0 : 1` for existing UI/MCP
 types.
+
+SubTodo count reads use a dense batch contract. `getCountsByTodoIds` returns one validated
+`{ total, done }` entry for every unique requested Todo ID. A Todo with no live, reconciled SubTodo
+returns `{ total: 0, done: 0 }`; omission of a requested key, `null`, or an invalid count is a
+contract error. This zero is the result of the aggregate query, not a renderer
+fallback for missing required data.
+
 For each resource, its baseline revision is monotonic:
 
 | incoming revision | baseline action | other permitted effects |
@@ -360,6 +373,38 @@ The Todo surface exposes one Arco/BEM/i18n banner only for confirmed `clock_wron
 time, trusted time, signed offset, last successful check, and an action that opens macOS or Windows
 Date & Time settings. It explains that synchronization is paused while local data/outbox remains
 safe. When a later successful check is healthy, the banner clears and the coordinator resumes.
+
+## Refresh and synchronization status
+
+Todo exposes one visible Refresh control rather than separate Refresh and cloud-sync buttons.
+
+```text
+Todo menubar
+┌──────────────────────────────────────────────────────────────┐
+│ Todo                         [Archive] [MCP] [Refresh] [Menu] │
+└──────────────────────────────────────────────────────────────┘
+                                             │ hover
+                                             ▼
+                               ┌──────────────────────────────┐
+                               │ Todo sync · current result   │
+                               │ Last successful sync · time  │
+                               │ Failure reason, when present │
+                               │ Failed command actions       │
+                               └──────────────────────────────┘
+```
+
+- Clicking Refresh requests an immediate coordinator cycle and reloads the current local
+  projection. A later committed remote change continues to refresh the board through the existing
+  `todo/data_updated` broadcast.
+- The Tabler Refresh icon rotates while any foreground or background cycle reports `syncing`; no
+  separate cloud icon is rendered.
+- An Arco hover popover shows the current result, the persisted `last_success_at` value (labelled as
+  the last successful sync, never as a failed-attempt timestamp), the current transient
+  `last_error`, and permanent command failures. Retry/discard remain inside the popover and do not
+  add another menubar control.
+- The popover reports “never synchronized” when no success exists. A Snowflake-node mismatch is
+  described as an authenticated-device identity mismatch rather than claiming that Core reassigned
+  an existing device.
 
 ## Coordinator lifecycle
 
