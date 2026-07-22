@@ -37,6 +37,7 @@ const createSyntheticApplication = async ({ platform = 'mac', archiveFiles = {},
   mkdirSync(archiveSource, { recursive: true });
   writeFixtureFiles(archiveSource, {
     'package.json': '{"name":"synthetic-app"}\n',
+    'out/main/app.main.js': 'module.exports = {};\n',
     ...archiveFiles,
   });
 
@@ -65,7 +66,14 @@ test.afterEach(() => {
 
 test('synthetic app.asar passes the desktop package audit', async () => {
   const fixture = await createSyntheticApplication({
-    archiveFiles: { 'out/main/app.main.js': 'module.exports = {};\n' },
+    archiveFiles: {
+      'out/main/app.main.js': [
+        '// require("comment-only-package")',
+        'const example = \'import("string-only-package")\';',
+        'module.exports = { example };',
+        '',
+      ].join('\n'),
+    },
   });
 
   const result = auditDesktopPackage(fixture.outputPath);
@@ -126,6 +134,40 @@ test('synthetic app.asar containing a banned package root fails', async () => {
   );
 });
 
+test('synthetic app.asar missing an external runtime package root fails', async () => {
+  const fixture = await createSyntheticApplication({
+    archiveFiles: {
+      'out/main/app.main.js': 'module.exports = require("missing-runtime/subpath");\n',
+    },
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(fixture.applicationPath),
+    /missing external package roots: missing-runtime \(required by \/out\/main\/app\.main\.js\)/,
+  );
+});
+
+test('synthetic package subpath imports pass when their package root is present', async () => {
+  const fixture = await createSyntheticApplication({
+    archiveFiles: {
+      'out/preload/connector.js': [
+        'import fs from "node:fs";',
+        'import electron from "electron";',
+        'import protobuf from "protobufjs/minimal";',
+        'const path = require("path");',
+        'const local = require("./local");',
+        'void import("protobufjs/light");',
+        'export default { electron, fs, local, path, protobuf };',
+        '',
+      ].join('\n'),
+      'node_modules/protobufjs/package.json': '{"name":"protobufjs"}\n',
+    },
+  });
+
+  const result = auditDesktopPackage(fixture.applicationPath);
+  assert.deepEqual(result.externalPackageRoots, ['protobufjs']);
+});
+
 test('dependency classification keeps external runtime roots and bundles selected pure JavaScript packages', () => {
   const packageJson = JSON.parse(readProjectFile('package.json'));
   const externalRuntimeDependencies = [
@@ -147,6 +189,7 @@ test('dependency classification keeps external runtime roots and bundles selecte
     'node-llama-cpp',
     'playwright',
     'postman-request',
+    'protobufjs',
     'reflect-metadata',
     'undici',
     'yaml',
@@ -209,6 +252,8 @@ test('dependency classification keeps external runtime roots and bundles selecte
   ];
 
   assert.deepEqual(Object.keys(packageJson.dependencies), externalRuntimeDependencies);
+  assert.equal(packageJson.dependencies.protobufjs, '^7.2.6');
+  assert.equal(packageJson.devDependencies.acorn, '^8.15.0');
   for (const packageName of movedToDev) {
     assert(packageJson.devDependencies[packageName], `${packageName} must be a devDependency`);
   }

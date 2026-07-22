@@ -3,12 +3,16 @@
 'use strict';
 
 const fs = require('fs');
+const { builtinModules } = require('module');
 const path = require('path');
-const { listPackage } = require('@electron/asar');
+const { parse } = require('acorn');
+const { extractFile, listPackage } = require('@electron/asar');
 
 const MIB = 1024 * 1024;
 const DEFAULT_MAX_ASAR_BYTES = 220 * MIB;
 const DEFAULT_MAX_APP_BYTES = 650 * MIB;
+const ELECTRON_BUILTINS = new Set(['electron', 'original-fs']);
+const NODE_BUILTINS = new Set(builtinModules.map((moduleName) => moduleName.replace(/^node:/, '')));
 
 const BANNED_PACKAGES = Object.freeze([
   '@arco-design/web-vue',
@@ -119,6 +123,109 @@ const packageIsPresent = (entries, packageName) => {
   return entries.some((entry) => entry === root || entry.startsWith(`${root}/`));
 };
 
+const getLiteralString = (node) => {
+  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0]?.value.cooked;
+  }
+  return undefined;
+};
+
+const getExternalPackageRoot = (specifier) => {
+  if (
+    !specifier
+    || specifier.startsWith('.')
+    || specifier.startsWith('/')
+    || specifier.startsWith('\\\\')
+    || specifier.startsWith('#')
+    || /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(specifier)
+  ) {
+    return undefined;
+  }
+
+  const parts = specifier.split('/');
+  const root = specifier.startsWith('@')
+    ? parts.length >= 2 ? `${parts[0]}/${parts[1]}` : undefined
+    : parts[0];
+  if (!root) throw new Error(`Invalid external module specifier: ${specifier}`);
+  if (ELECTRON_BUILTINS.has(root) || NODE_BUILTINS.has(root)) return undefined;
+  return root;
+};
+
+const parseJavaScript = (source, archiveEntry) => {
+  const options = {
+    allowHashBang: true,
+    ecmaVersion: 'latest',
+  };
+  try {
+    return parse(source, { ...options, sourceType: 'script' });
+  } catch {
+    try {
+      return parse(source, { ...options, sourceType: 'module' });
+    } catch (error) {
+      throw new Error(`Could not parse ${archiveEntry}: ${error.message}`);
+    }
+  }
+};
+
+const walkAst = (node, visit) => {
+  if (!node || typeof node !== 'object') return;
+  if (typeof node.type === 'string') visit(node);
+  for (const value of Object.values(node)) {
+    if (Array.isArray(value)) {
+      for (const child of value) walkAst(child, visit);
+    } else if (value && typeof value === 'object') {
+      walkAst(value, visit);
+    }
+  }
+};
+
+const collectExternalPackageReferences = (asarPath, archiveEntries) => {
+  const javascriptEntries = archiveEntries.filter((entry) => {
+    return /^\/out\/(?:main|preload)\/.+\.js$/.test(entry);
+  });
+  if (javascriptEntries.length === 0) {
+    throw new Error('app.asar contains no Main or Preload JavaScript to inspect');
+  }
+
+  const references = new Map();
+  for (const archiveEntry of javascriptEntries) {
+    let source;
+    try {
+      source = extractFile(asarPath, archiveEntry.slice(1)).toString('utf-8');
+    } catch (error) {
+      throw new Error(`Could not read ${archiveEntry}: ${error.message}`);
+    }
+    const ast = parseJavaScript(source, archiveEntry);
+    walkAst(ast, (node) => {
+      let specifier;
+      if (
+        node.type === 'CallExpression'
+        && node.callee?.type === 'Identifier'
+        && node.callee.name === 'require'
+        && node.arguments.length === 1
+      ) {
+        specifier = getLiteralString(node.arguments[0]);
+      } else if (node.type === 'ImportExpression') {
+        specifier = getLiteralString(node.source);
+      } else if (
+        node.type === 'ImportDeclaration'
+        || node.type === 'ExportAllDeclaration'
+        || node.type === 'ExportNamedDeclaration'
+      ) {
+        specifier = getLiteralString(node.source);
+      }
+
+      if (specifier === undefined) return;
+      const root = getExternalPackageRoot(specifier);
+      if (!root) return;
+      if (!references.has(root)) references.set(root, new Set());
+      references.get(root).add(archiveEntry);
+    });
+  }
+  return references;
+};
+
 const auditDesktopPackage = (inputPath, options = {}) => {
   const maxAsarBytes = options.maxAsarBytes ?? DEFAULT_MAX_ASAR_BYTES;
   const maxAppBytes = options.maxAppBytes ?? DEFAULT_MAX_APP_BYTES;
@@ -156,6 +263,23 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     return packageIsPresent(archiveEntries, packageName);
   });
   const failures = [];
+  let externalPackageReferences;
+  try {
+    externalPackageReferences = collectExternalPackageReferences(asarPath, archiveEntries);
+  } catch (error) {
+    failures.push(`could not inspect packaged runtime imports: ${error.message}`);
+  }
+  if (externalPackageReferences) {
+    const missingExternalPackages = [...externalPackageReferences]
+      .filter(([packageName]) => !packageIsPresent(archiveEntries, packageName))
+      .sort(([left], [right]) => left.localeCompare(right));
+    if (missingExternalPackages.length > 0) {
+      const details = missingExternalPackages.map(([packageName, entries]) => {
+        return `${packageName} (required by ${[...entries].sort().join(', ')})`;
+      });
+      failures.push(`app.asar is missing external package roots: ${details.join('; ')}`);
+    }
+  }
   if (asarBytes > maxAsarBytes) {
     failures.push(
       `app.asar is ${formatMiB(asarBytes)} MiB, above the ${formatMiB(maxAsarBytes)} MiB limit`,
@@ -179,6 +303,7 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     asarPath,
     asarBytes,
     appBytes,
+    externalPackageRoots: [...externalPackageReferences.keys()].sort(),
   };
 };
 
@@ -219,6 +344,8 @@ module.exports.BANNED_PACKAGES = BANNED_PACKAGES;
 module.exports.DEFAULT_MAX_APP_BYTES = DEFAULT_MAX_APP_BYTES;
 module.exports.DEFAULT_MAX_ASAR_BYTES = DEFAULT_MAX_ASAR_BYTES;
 module.exports.auditDesktopPackage = auditDesktopPackage;
+module.exports.collectExternalPackageReferences = collectExternalPackageReferences;
+module.exports.getExternalPackageRoot = getExternalPackageRoot;
 module.exports.getPathSize = getPathSize;
 module.exports.packageIsPresent = packageIsPresent;
 module.exports.resolveApplicationPath = resolveApplicationPath;
