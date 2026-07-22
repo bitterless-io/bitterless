@@ -2,3 +2,4 @@
 - 🧭 Reuses one installation device identity across password and email-code login to keep Snowflake assignment stable.
 - ✅ Fixed Todo refresh after creating a task with no SubTodos by returning explicit zero counts.
 - 🛡️ Keeps conflicting Snowflake-node responses fail-closed so local synchronized task IDs remain protected.
+- 📦 Reduced desktop package size and added a pre-sign package composition gate.

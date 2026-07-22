@@ -31,6 +31,22 @@ const maestroBuildDefine = {
   __COACH_AI_CRMS_RELAY_BASE_URL_ID__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_ID || '')
 }
 
+const bundledRuntimeDependencies = [
+  '@langchain/anthropic',
+  '@langchain/core',
+  '@langchain/google-genai',
+  '@langchain/langgraph',
+  '@langchain/openai',
+  '@larksuiteoapi/node-sdk',
+  '@mozilla/readability',
+  'docx',
+  'exceljs',
+  'linkedom',
+  'mammoth',
+  'typebox',
+  'unpdf'
+]
+
 const maestroSqliteDevCspPlugin = {
   name: 'bitterless:maestro-sqlite-dev-csp',
   apply: 'serve' as const,
@@ -74,6 +90,7 @@ export default defineConfig({
   main: {
     define: { ...generateEnvDefines(), ...maestroBuildDefine },
     build: {
+      externalizeDeps: { exclude: bundledRuntimeDependencies },
       rollupOptions: {
         input: {
           'app.main': resolve('src/main/app.main.ts'),
@@ -105,6 +122,7 @@ export default defineConfig({
   preload: {
     define: { ...maestroBuildDefine, ...bitterlessPreloadBuildDefine },
     build: {
+      externalizeDeps: { exclude: bundledRuntimeDependencies },
       rollupOptions: {
         input: {
           home: resolve('src/preload/home/home.preload.ts'),
@@ -119,7 +137,7 @@ export default defineConfig({
           maestroCoach: resolve('src/preload/maestro/coach.preload.ts'),
           maestroSqlite: resolve('src/preload/maestro/sqlite.preload.ts')
         },
-        external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp', /tiktoken/, /js-tiktoken/, 'linkedom', '@mozilla/readability', 'playwright', 'playwright-core']
+        external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp', 'playwright', 'playwright-core']
       }
     },
     resolve: {

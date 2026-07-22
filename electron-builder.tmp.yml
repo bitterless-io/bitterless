@@ -2,9 +2,12 @@ appId: io.bitterless.app
 productName: Bitterless
 directories:
   buildResources: build
+afterPack: scripts/package/desktopPackage.audit.cjs
 files:
   - '!src/*'
   - '!scripts/*'
+  - '!tests/**'
+  - '!output/**'
   - '!doc/*'
   - '!rig_dev/*'
   - '!rig_indies/*'
@@ -14,6 +17,8 @@ files:
   - '!downloads/*'
   - '!external_resources/*'
   - '!packages/micromeet-cli/**'
+  - '!node_modules/@micromeet/cli{,/**}'
+  - '!node_modules/**/*.map'
   - '!electron-builder.tmp.yml'
   - '!dump/*'
   - '!.vscode/*'

@@ -9,6 +9,7 @@ const yaml = require('js-yaml');
 const OSS = require('ali-oss');
 const { appBuilderPath } = require('app-builder-bin');
 const { compareVersions } = require('compare-versions');
+const { auditDesktopPackage } = require('./package/desktopPackage.audit.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 const distDir = path.join(rootDir, 'dist');
@@ -22,16 +23,19 @@ const defaultSigningCertificatePath = path.join(keychainDir, 'Certificates.p12')
 const platformConfigs = {
   mac_arm: {
     buildArgs: ['--mac', '--arm64'],
+    appOutputDir: 'mac-arm64',
     artifactExtensions: ['.dmg', '.zip', '.blockmap'],
     updaterFiles: ['latest-mac.yml'],
   },
   mac_intel: {
     buildArgs: ['--mac', '--x64'],
+    appOutputDir: 'mac',
     artifactExtensions: ['.dmg', '.zip', '.blockmap'],
     updaterFiles: ['latest-mac.yml'],
   },
   win64: {
     buildArgs: ['--win', '--x64'],
+    appOutputDir: 'win-unpacked',
     artifactExtensions: ['.exe', '.blockmap'],
     updaterFiles: ['latest.yml'],
   },
@@ -219,6 +223,12 @@ const runBuild = (options) => {
   run('yarn', ['build']);
   run('node', ['scripts/prepare-maestro-cli.cjs', options.platform]);
   run('node', ['scripts/signedBuild.js', ...platformConfigs[options.platform].buildArgs]);
+};
+
+const auditPackagedApplication = (platform) => {
+  const appOutputPath = path.join(distDir, platformConfigs[platform].appOutputDir);
+  console.log(`[publish.js] Auditing packaged application: ${appOutputPath}`);
+  auditDesktopPackage(appOutputPath);
 };
 
 const listFiles = (dir) => {
@@ -708,6 +718,8 @@ const main = async () => {
   if (options.build) {
     runBuild(options);
   }
+
+  auditPackagedApplication(options.platform);
 
   if (!options.dryRun) {
     finalizeMacDmg(options.platform);
