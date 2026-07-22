@@ -1,5 +1,12 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
+import {
+  IconColumnInsertLeft,
+  IconColumnInsertRight,
+  IconRowInsertBottom,
+  IconRowInsertTop,
+  IconX,
+} from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { OmniContentMode } from '../types/layout.types';
 
@@ -61,10 +68,46 @@ const closePane = () => {
 <template>
   <div class="omni-pane-menubar">
     <div class="omni-pane-menubar__split-actions">
-      <button class="omni-pane-menubar__btn" title="向左分裂" @click="splitLeft">←</button>
-      <button class="omni-pane-menubar__btn" title="向上分裂" @click="splitUp">↑</button>
-      <button class="omni-pane-menubar__btn" title="向下分裂" @click="splitDown">↓</button>
-      <button class="omni-pane-menubar__btn" title="向右分裂" @click="splitRight">→</button>
+      <a-button
+        class="omni-pane-menubar__btn"
+        type="text"
+        size="mini"
+        :title="i18nHelper.omni.splitLeft"
+        :aria-label="i18nHelper.omni.splitLeft"
+        @click="splitLeft"
+      >
+        <IconColumnInsertLeft :size="14" aria-hidden="true" />
+      </a-button>
+      <a-button
+        class="omni-pane-menubar__btn"
+        type="text"
+        size="mini"
+        :title="i18nHelper.omni.splitUp"
+        :aria-label="i18nHelper.omni.splitUp"
+        @click="splitUp"
+      >
+        <IconRowInsertTop :size="14" aria-hidden="true" />
+      </a-button>
+      <a-button
+        class="omni-pane-menubar__btn"
+        type="text"
+        size="mini"
+        :title="i18nHelper.omni.splitDown"
+        :aria-label="i18nHelper.omni.splitDown"
+        @click="splitDown"
+      >
+        <IconRowInsertBottom :size="14" aria-hidden="true" />
+      </a-button>
+      <a-button
+        class="omni-pane-menubar__btn"
+        type="text"
+        size="mini"
+        :title="i18nHelper.omni.splitRight"
+        :aria-label="i18nHelper.omni.splitRight"
+        @click="splitRight"
+      >
+        <IconColumnInsertRight :size="14" aria-hidden="true" />
+      </a-button>
     </div>
     <div
       class="omni-pane-menubar__url"
@@ -73,7 +116,8 @@ const closePane = () => {
       <a-input
         v-model="localUrl"
         size="mini"
-        placeholder="URL..."
+        :placeholder="i18nHelper.omni.urlPlaceholder"
+        :input-attrs="{ 'aria-label': i18nHelper.omni.urlInput }"
         :readonly="contentMode === 'miniapp'"
         @press-enter="onUrlSubmit"
         @focus="onInputFocus"
@@ -89,8 +133,17 @@ const closePane = () => {
       <a-option value="browser">{{ i18nHelper.omni.website }}</a-option>
       <a-option value="miniapp">{{ i18nHelper.omni.miniApp }}</a-option>
     </a-select>
-    <button class="omni-pane-menubar__btn omni-pane-menubar__btn--close" title="关闭"
-            @click.stop="closePane">✕</button>
+    <a-button
+      class="omni-pane-menubar__btn omni-pane-menubar__btn--close"
+      type="text"
+      status="danger"
+      size="mini"
+      :title="i18nHelper.omni.closePane"
+      :aria-label="i18nHelper.omni.closePane"
+      @click.stop="closePane"
+    >
+      <IconX :size="14" aria-hidden="true" />
+    </a-button>
   </div>
 </template>
 

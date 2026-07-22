@@ -4,9 +4,11 @@ Status: Analysis workspace and background Codex analysis implemented; owner veri
 
 ## Purpose
 
-Add **Coin** to Bitterless Mini Apps as an authenticated desktop workspace for cryptocurrency
-research and decisions. Coin is one full-width local analysis panel organized by business tabs. It
-has no chat region, message composer, remote browser, address bar, Workbench, or Maestro tools.
+Coin remains integrated as an authenticated desktop workspace for cryptocurrency research and
+decisions, but its Home Mini Apps card and launch action are temporarily hidden. Its runtime,
+window lifecycle, packaged resources, and persisted data stay intact for later reopening. Coin is
+one full-width local analysis panel organized by business tabs. It has no chat region, message
+composer, remote browser, address bar, Workbench, or Maestro tools.
 
 Coin provides source-backed Monitor, Screener, Meme, History, deterministic Strategy, and bounded
 background Codex interpretation for stored structured results. The user never chats with Codex
@@ -47,7 +49,7 @@ Node.js access, Maestro's preload, browser automation, wallet signing, or tradin
 
 | Event | Required behavior |
 |---|---|
-| Mini Apps renders | Show a bilingual Coin card with its own icon and Open action. |
+| Mini Apps renders | Do not render the Coin card or Home launch action while the entry is dormant. |
 | First Open | Create one Coin window, load persisted Coin state, then show it. |
 | Repeated Open | Await any active boot, restore/focus the same window, and never create a duplicate. |
 | Window close | Abort active polling/data work, flush Coin state, and destroy the window. |

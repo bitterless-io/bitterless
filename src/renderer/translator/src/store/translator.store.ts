@@ -108,12 +108,13 @@ class TranslatorState {
   }
 
   setSourceText(value: string): void {
-    if (value === this.sourceText) return;
-    this.sourceText = value;
+    const boundedValue = Array.from(value).slice(0, this.maxSourceLength).join('');
+    if (boundedValue === this.sourceText) return;
+    this.sourceText = boundedValue;
     this.revision += 1;
     this.error = null;
 
-    if (!value.trim()) {
+    if (!boundedValue.trim()) {
       this.translation = '';
       this.lastSubmittedSource = null;
       void this.cancelActiveRequest();

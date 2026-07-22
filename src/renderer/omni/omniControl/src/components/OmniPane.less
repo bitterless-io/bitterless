@@ -68,8 +68,8 @@
   border-radius: 6px;
   background: oklch(0.985 0.008 270);
   color: oklch(0.3 0.025 270);
-  cursor: pointer;
   text-align: left;
+  justify-content: flex-start;
 }
 
 .omni-pane__miniapp-item:hover {
@@ -94,6 +94,30 @@
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
+  text-align: left;
+}
+
+.omni-pane__miniapp-check {
+  flex: 0 0 auto;
+  color: oklch(0.46 0.11 270);
+}
+
+.omni-pane__miniapp-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid oklch(0.84 0.047 27);
+  border-radius: 6px;
+  color: oklch(0.45 0.12 29);
+  background: oklch(0.97 0.025 27);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.omni-pane__miniapp-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .splitpanes__splitter {

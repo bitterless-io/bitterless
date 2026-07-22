@@ -78,6 +78,8 @@ instruction.
 5. A newer request aborts the older request from the same Translator cell. Renderer revision
    fencing also ignores late responses. Different cells keep independent client IDs.
 6. Identical source text is not submitted twice.
+7. Source input is bounded to 12,000 Unicode code points in both renderer and Main; Main also keeps
+   a 24,000 UTF-16-unit hard bound so surrogate-pair input cannot bypass the contract.
 
 ## Runtime And Output Contract
 
@@ -88,6 +90,8 @@ instruction.
 - The system prompt requires exactly one JSON object with one `translation` string.
 - Main parses JSON and validates it with `z.object({ translation: ... }).strict()`. Fenced JSON,
   extra keys, empty output, and oversized output fail as `invalid-output`.
+- A 60-second request deadline aborts Pi session creation or `session.prompt()` even if the Pi
+  promise never settles. Streamed and final output collection stop at the 64 KiB UTF-8 ceiling.
 - Only the parsed string crosses back to the renderer.
 
 ## State Variants
@@ -124,4 +128,3 @@ Omni selects translator
 - `src/renderer/translator/`
 - `src/shared/omni/omni.types.ts`
 - `src/main/windows/omniWindow.helper.ts`
-

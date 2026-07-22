@@ -37,6 +37,13 @@ Local Pi `hasConfiguredAuth()` can establish initial `ready` versus `login_requi
 clear a persisted `invalidated` state because it only proves credential presence. `invalidated`
 clears only after a completed login or a real successful provider request.
 
+SQLite read failures and records that fail the strict schema are fail-closed: Main exposes
+`unavailable` and publishes no selectable target. Normal state changes are persisted before they
+are broadcast. If a write fails, Main immediately exposes the safe `unavailable` or `invalidated`
+fallback, retries once, and continues bounded trailing persistence retries; once persistence
+recovers, credential status is reconciled again instead of leaving a valid login stuck as
+unavailable.
+
 ## XPC Contract
 
 ```text
@@ -58,6 +65,12 @@ Each snapshot includes the provider records and an `availableTargets` list. A ta
 only while its provider is `ready`; a provider that merely has a configured record or an on-disk
 credential is not selectable while login is required or invalidated.
 
+Every runtime request captures the provider credential epoch. Runtime success or authentication
+failure may update provider state only while that epoch is still current, so an old request cannot
+overwrite a later login, logout, or semantic credential-state change. Snapshot timestamps are
+strictly monotonic inside Main so a late initial fetch cannot replace a newer broadcast in a
+renderer.
+
 Login may start from Home or Translator. State transitions are persisted and broadcast, so both
 surfaces show `authenticating` and the final `ready` or failure state without polling each other.
 The shared Codex credential service also emits value-free `login-succeeded` and
@@ -67,7 +80,9 @@ singleton therefore update this registry without exposing credentials to a rende
 Main watches the shared Pi auth file for creation, deletion, and modification so external logout
 and ordinary credential changes are observed. File presence or modification alone never clears a
 persisted `invalidated` state; that requires an explicit successful-login transition or a real
-successful provider request.
+successful provider request. Watch suppression always schedules a trailing reconciliation. An
+ordinary token-file refresh advances the credential epoch only when the effective auth state
+changes; a healthy `ready` to `ready` refresh therefore cannot cancel the final Translator result.
 
 ## Credential Invalidation
 

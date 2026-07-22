@@ -19,7 +19,11 @@ export const translatorTranslateInputSchema = z
     sourceText: z
       .string()
       .min(1)
-      .max(TRANSLATOR_MAX_SOURCE_LENGTH)
+      .max(TRANSLATOR_MAX_SOURCE_LENGTH * 2)
+      .refine(
+        (value) => Array.from(value).length <= TRANSLATOR_MAX_SOURCE_LENGTH,
+        `Source text must contain at most ${TRANSLATOR_MAX_SOURCE_LENGTH} Unicode characters.`
+      )
       .refine((value) => value.trim().length > 0, 'Source text must contain visible content.')
   })
   .strict();

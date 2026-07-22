@@ -23,7 +23,7 @@ class OmniWindowHandler extends XpcMainHandler {
     console.log('[OmniWindowHandler] omni window created');
   }
 
-  async updateLayout(params: { cells: OmniCellLayout[]; tree?: OmniLayoutConfig['tree'] }): Promise<void> {
+  async updateLayout(params: { cells: OmniCellLayout[]; tree: OmniLayoutConfig['tree'] }): Promise<void> {
     console.log('[OmniWindowHandler] updateLayout called, cells:', params.cells.length);
     omniWindowHelper.updateLayout(params.cells, params.tree);
   }

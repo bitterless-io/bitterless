@@ -7,10 +7,11 @@ Upstream baseline: `projects/micromeet-cowork` commit
 
 ## Purpose
 
-Expose the runtime originally migrated from Micromeet Cowork as the Bitterless **Maestro** Mini
-App. The user opens Maestro from the authenticated **Mini Apps** page in the same way as Todo:
-clicking **Open** creates one independent top-level window, and subsequent clicks focus that same
-instance.
+The runtime originally migrated from Micromeet Cowork remains integrated as the Bitterless
+**Maestro** Mini App, but its authenticated Home card and launch action are temporarily hidden.
+The runtime, window graph, packaged resources, and persisted data stay intact for later reopening.
+When the entry is restored, clicking **Open** creates one independent top-level window, and
+subsequent clicks focus that same instance.
 
 This is a runtime migration, not a visual rewrite. Maestro's existing browser, chat, agent, capture,
 Workbench, skill, file, integration, and model behavior stays intact unless this document assigns a
@@ -63,7 +64,7 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 
 | Event | Required behavior |
 |---|---|
-| Mini Apps renders | Show a bilingual Maestro card alongside Todo and Omni Browser. |
+| Mini Apps renders | Do not render the Maestro card or Home launch action while the entry is dormant. |
 | First Open | Boot the hidden Maestro database, then show the Maestro window only after required renderers are ready. |
 | Repeated Open | Restore/focus the existing Maestro window; never create a second graph. |
 | Window close | Stop or preserve work safely without quitting Bitterless; a later Open must produce a usable Maestro window. |

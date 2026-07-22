@@ -46,7 +46,7 @@ export interface TranslatorServiceDependencies {
   runtime: Pick<CodexRuntimeService, 'run'>;
   providers: Pick<
     ModelProviderService,
-    'getSnapshot' | 'noteRuntimeAuthRequired' | 'noteRuntimeSuccess'
+    'getRuntimeContext' | 'noteRuntimeAuthRequired' | 'noteRuntimeSuccess'
   >;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
@@ -164,9 +164,12 @@ export class TranslatorService {
     };
     this.active.set(input.clientId, current);
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let providerEpoch = -1;
 
     try {
-      const snapshot = await this.dependencies.providers.getSnapshot();
+      const context = await this.dependencies.providers.getRuntimeContext();
+      const snapshot = context.snapshot;
+      providerEpoch = context.epoch;
       if (!this.isCurrent(input, current)) return this.cancelled(input);
       const provider = snapshot.providers.find(({ provider }) => provider === TRANSLATOR_PROVIDER);
       if (!provider || provider.authState === 'unavailable') {
@@ -209,7 +212,8 @@ export class TranslatorService {
         throw new TranslatorServiceError('target-mismatch');
       }
 
-      await this.dependencies.providers.noteRuntimeSuccess();
+      const observation = await this.dependencies.providers.noteRuntimeSuccess(providerEpoch);
+      if (!observation.applied) return this.cancelled(input);
       if (!this.isCurrent(input, current)) return this.cancelled(input);
       const output = parseRuntimeText(result.text);
       return {
@@ -221,8 +225,10 @@ export class TranslatorService {
       };
     } catch (error) {
       if (error instanceof CodexRuntimeAuthRequiredError) {
-        await this.noteAuthRequired(error.reason);
+        const observation = await this.noteAuthRequired(error.reason, providerEpoch);
         if (!this.isCurrent(input, current)) return this.cancelled(input);
+        if (!observation) return this.failed(input, 'provider-unavailable');
+        if (!observation.applied) return this.cancelled(input);
         return this.failed(input, 'login-required');
       }
       if (current.timedOut) return this.failed(input, 'timeout');
@@ -233,8 +239,10 @@ export class TranslatorService {
       }
       if (error instanceof CodexRuntimeError) {
         if (error.code === 'not-configured') {
-          await this.noteAuthRequired('sign-in-required');
+          const observation = await this.noteAuthRequired('sign-in-required', providerEpoch);
           if (!this.isCurrent(input, current)) return this.cancelled(input);
+          if (!observation) return this.failed(input, 'provider-unavailable');
+          if (!observation.applied) return this.cancelled(input);
           return this.failed(input, 'login-required');
         }
         return this.failed(input, runtimeErrorCode(error));
@@ -263,11 +271,15 @@ export class TranslatorService {
     return { clientId: input.clientId, requestId: input.requestId, cancelled };
   }
 
-  private async noteAuthRequired(reason: ModelProviderInvalidationReason): Promise<void> {
+  private async noteAuthRequired(
+    reason: ModelProviderInvalidationReason,
+    expectedEpoch: number
+  ): Promise<Awaited<ReturnType<ModelProviderService['noteRuntimeAuthRequired']>> | null> {
     try {
-      await this.dependencies.providers.noteRuntimeAuthRequired(reason);
+      return await this.dependencies.providers.noteRuntimeAuthRequired(reason, expectedEpoch);
     } catch {
       // The provider service still keeps and broadcasts its in-memory invalidated state.
+      return null;
     }
   }
 

@@ -7,14 +7,18 @@ The Bitterless home renderer owns discovery and launch. Each sub-application own
 UI and domain runtime, while the Bitterless main process owns the Electron application lifecycle,
 authentication invalidation, updates, packaging, and final cleanup.
 
+Maestro and Coin remain integrated runtimes, but their Home Mini Apps cards and launch actions are
+temporarily hidden. Todo, EyesOnAgents, and Omni Browser remain visible. Hiding these two entries
+does not remove their window handlers, renderer entries, packaged resources, or persisted data.
+
 ```text
 Bitterless Home / Mini Apps
             |
             +---- TodoWindowHandler ---- Todo BrowserWindow
             |
-            +---- MaestroWindowHandler -- Maestro BrowserWindow graph
+            +---- MaestroWindowHandler -- Maestro BrowserWindow graph (entry dormant)
             |
-            +---- CoinWindowHandler ----- Coin BrowserWindow
+            +---- CoinWindowHandler ----- Coin BrowserWindow (entry dormant)
 ```
 
 ## Ownership

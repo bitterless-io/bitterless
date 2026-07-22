@@ -54,6 +54,29 @@ export class ModelProviderServiceError extends Error {
   }
 }
 
+export interface ModelProviderRuntimeContext {
+  snapshot: ModelProviderSnapshot;
+  epoch: number;
+}
+
+export interface ModelProviderRuntimeObservation {
+  applied: boolean;
+  snapshot: ModelProviderSnapshot;
+  epoch: number;
+}
+
+const PERSISTENCE_RETRY_DELAY_MS = 50;
+const DIRTY_RETRY_DELAYS_MS = [250, 1_000, 5_000, 15_000, 60_000] as const;
+type CredentialStateLock = 'persistence-unavailable' | 'record-invalid';
+
+const waitForPersistenceRetry = async (): Promise<void> =>
+  await new Promise((resolve) => setTimeout(resolve, PERSISTENCE_RETRY_DELAY_MS));
+
+const unrefTimer = (timer: ReturnType<typeof setTimeout>): void => {
+  const candidate = timer as ReturnType<typeof setTimeout> & { unref?: () => void };
+  candidate.unref?.();
+};
+
 const fixedTarget = () => ({
   provider: MODEL_PROVIDER_CODEX_ID,
   model: MODEL_PROVIDER_CODEX_MODEL,
@@ -108,16 +131,25 @@ const statusAuthState = (status: CodexCredentialStatus): ModelProviderRecord['au
 export class ModelProviderService {
   private readonly now: () => number;
   private record: ModelProviderRecord | null = null;
+  private epoch = 0;
+  private lastSnapshotObservedAt = -1;
   private initializePromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
   private stopCredentialWatcher: (() => void) | null = null;
   private credentialOperation: 'connect' | 'disconnect' | null = null;
+  private credentialStateLock: CredentialStateLock | null = null;
   private suppressCredentialWatchUntil = 0;
+  private suppressedCredentialReconcileTimer: ReturnType<typeof setTimeout> | null = null;
+  private initializationRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private dirtyRecord: ModelProviderRecord | null = null;
+  private dirtyRetryAttempt = 0;
+  private dirtyRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly dependencies: ModelProviderServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
     dependencies.credentials.subscribeTransitions((transition) => {
       this.suppressCredentialWatchUntil = this.now() + 2_000;
+      this.scheduleSuppressedCredentialReconcile();
       if (this.credentialOperation) return;
       void this.handleCredentialTransition(transition).catch(() => undefined);
     });
@@ -126,6 +158,11 @@ export class ModelProviderService {
   async getSnapshot(): Promise<ModelProviderSnapshot> {
     await this.ensureInitialized();
     return this.snapshot();
+  }
+
+  async getRuntimeContext(): Promise<ModelProviderRuntimeContext> {
+    await this.ensureInitialized();
+    return { snapshot: this.snapshot(), epoch: this.epoch };
   }
 
   async connect(value: unknown): Promise<ModelProviderActionResult> {
@@ -144,18 +181,28 @@ export class ModelProviderService {
         return { ok: true, snapshot: this.snapshot() };
       }
 
-      try {
-        await this.commit(
-          createRecord('authenticating', this.now(), {
-            lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
-          })
-        );
-      } catch {
+      if (this.credentialStateLock === 'persistence-unavailable') {
         return {
           ok: false,
           snapshot: this.snapshot(),
           error: actionError('persistence-unavailable')
         };
+      }
+
+      if (this.credentialStateLock !== 'record-invalid') {
+        try {
+          await this.commit(
+            createRecord('authenticating', this.now(), {
+              lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
+            })
+          );
+        } catch {
+          return {
+            ok: false,
+            snapshot: this.snapshot(),
+            error: actionError('persistence-unavailable')
+          };
+        }
       }
 
       const observer: CodexConnectObserver = {
@@ -169,6 +216,7 @@ export class ModelProviderService {
         }
       };
 
+      let credentialConnected = false;
       try {
         this.credentialOperation = 'connect';
         const status = await this.dependencies.credentials.connect({
@@ -178,6 +226,8 @@ export class ModelProviderService {
         if (!status.connected) {
           throw new CodexCredentialError('login-failed', 'Codex sign-in did not complete.');
         }
+        credentialConnected = true;
+        this.credentialStateLock = null;
         await this.commit(
           createRecord('ready', this.now(), {
             lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
@@ -185,7 +235,17 @@ export class ModelProviderService {
         );
         return { ok: true, snapshot: this.snapshot() };
       } catch (error) {
+        if (credentialConnected && error instanceof ModelProviderServiceError) {
+          return {
+            ok: false,
+            snapshot: this.snapshot(),
+            error: actionError('persistence-unavailable')
+          };
+        }
         const errorCode = mapCredentialError(error, 'login-failed');
+        if (this.credentialStateLock) {
+          return { ok: false, snapshot: this.snapshot(), error: actionError(errorCode) };
+        }
         const next = previous.invalidationReason
           ? createRecord('invalidated', this.now(), {
               invalidationReason: previous.invalidationReason,
@@ -222,12 +282,20 @@ export class ModelProviderService {
     await this.ensureInitialized();
     return await this.mutate(async () => {
       const previous = this.requiredRecord();
+      if (this.credentialStateLock === 'persistence-unavailable') {
+        return {
+          ok: false,
+          snapshot: this.snapshot(),
+          error: actionError('persistence-unavailable')
+        };
+      }
       try {
         this.credentialOperation = 'disconnect';
         const status = await this.dependencies.credentials.disconnect();
         if (status.connected) {
           throw new CodexCredentialError('logout-failed', 'Codex remained connected.');
         }
+        this.credentialStateLock = null;
         const next = previous.invalidationReason
           ? createRecord('invalidated', this.now(), {
               invalidationReason: previous.invalidationReason,
@@ -251,38 +319,45 @@ export class ModelProviderService {
   }
 
   async noteRuntimeAuthRequired(
-    reason: ModelProviderInvalidationReason
-  ): Promise<ModelProviderSnapshot> {
+    reason: ModelProviderInvalidationReason,
+    expectedEpoch: number
+  ): Promise<ModelProviderRuntimeObservation> {
     await this.ensureInitialized();
     return await this.mutate(async () => {
+      if (expectedEpoch !== this.epoch) return this.runtimeObservation(false);
       const previous = this.requiredRecord();
+      this.credentialStateLock = null;
       await this.commit(
         createRecord('invalidated', this.now(), {
           invalidationReason: reason,
           lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
         })
       );
-      return this.snapshot();
+      return this.runtimeObservation(true);
     });
   }
 
-  async noteRuntimeSuccess(): Promise<ModelProviderSnapshot> {
+  async noteRuntimeSuccess(expectedEpoch: number): Promise<ModelProviderRuntimeObservation> {
     await this.ensureInitialized();
     return await this.mutate(async () => {
+      if (expectedEpoch !== this.epoch) return this.runtimeObservation(false);
+      const previous = this.requiredRecord();
       const observedAt = this.now();
+      this.credentialStateLock = null;
       await this.commit(
         createRecord('ready', observedAt, {
-          lastSuccessfulRuntimeAt: observedAt
-        })
+          lastSuccessfulRuntimeAt: Math.max(previous.lastSuccessfulRuntimeAt ?? 0, observedAt)
+        }),
+        { advanceEpoch: previous.authState !== 'ready' }
       );
-      return this.snapshot();
+      return this.runtimeObservation(true);
     });
   }
 
-  async refreshCredentialState(): Promise<ModelProviderSnapshot> {
+  async refreshCredentialState(forceCredentialEpoch = true): Promise<ModelProviderSnapshot> {
     await this.ensureInitialized();
     return await this.mutate(async () => {
-      await this.reconcileCredentialStatus();
+      await this.reconcileCredentialStatus(forceCredentialEpoch);
       return this.snapshot();
     });
   }
@@ -306,19 +381,30 @@ export class ModelProviderService {
         sub_key: MODEL_PROVIDER_CODEX_ID
       });
     } catch {
-      this.record = createRecord('unavailable', observedAt);
+      this.credentialStateLock = 'persistence-unavailable';
+      this.applyInMemory(createRecord('unavailable', observedAt), true);
       this.dependencies.broadcastSnapshot(this.snapshot());
       this.startCredentialWatcher();
+      this.scheduleInitializationRetry();
       return;
     }
 
     let persisted: ModelProviderRecord | null = null;
+    let persistedRecordInvalid = false;
     if (stored !== null) {
       try {
         persisted = parseModelProviderRecord(stored);
       } catch {
-        persisted = null;
+        persistedRecordInvalid = true;
       }
+    }
+
+    if (persistedRecordInvalid) {
+      this.credentialStateLock = 'record-invalid';
+      this.applyInMemory(createRecord('unavailable', observedAt), true);
+      this.dependencies.broadcastSnapshot(this.snapshot());
+      this.startCredentialWatcher();
+      return;
     }
 
     let status: CodexCredentialStatus;
@@ -336,44 +422,45 @@ export class ModelProviderService {
 
     let next: ModelProviderRecord;
     if (persisted?.authState === 'invalidated') {
+      this.credentialStateLock = null;
       next = createRecord('invalidated', observedAt, {
         invalidationReason: persisted.invalidationReason,
         lastSuccessfulRuntimeAt: persisted.lastSuccessfulRuntimeAt
       });
     } else if (persisted?.authState === 'authenticating') {
+      this.credentialStateLock = null;
       next = createRecord('login_required', observedAt, {
         lastSuccessfulRuntimeAt: persisted.lastSuccessfulRuntimeAt
       });
     } else {
+      this.credentialStateLock = null;
       next = createRecord(statusAuthState(status), observedAt, {
         lastSuccessfulRuntimeAt: persisted?.lastSuccessfulRuntimeAt ?? null
       });
     }
-    this.record = next;
     try {
-      await this.persist(next);
+      await this.commit(next);
     } catch {
-      this.record =
-        persisted?.authState === 'invalidated'
-          ? next
-          : createRecord('unavailable', observedAt, {
-              lastSuccessfulRuntimeAt: persisted?.lastSuccessfulRuntimeAt ?? null
-            });
+      // commit already installed and broadcast its fail-closed fallback.
+      this.scheduleSuppressedCredentialReconcile();
     }
-    this.dependencies.broadcastSnapshot(this.snapshot());
     this.startCredentialWatcher();
   }
 
   private startCredentialWatcher(): void {
     if (this.stopCredentialWatcher || !this.dependencies.watchCredentialChanges) return;
     this.stopCredentialWatcher = this.dependencies.watchCredentialChanges(() => {
-      if (this.now() < this.suppressCredentialWatchUntil) return;
-      void this.refreshCredentialState().catch(() => undefined);
+      if (this.now() < this.suppressCredentialWatchUntil) {
+        this.scheduleSuppressedCredentialReconcile();
+        return;
+      }
+      void this.refreshCredentialState(false).catch(() => undefined);
     });
   }
 
-  private async reconcileCredentialStatus(): Promise<void> {
+  private async reconcileCredentialStatus(forceCredentialEpoch: boolean): Promise<void> {
     const previous = this.requiredRecord();
+    if (this.credentialStateLock) return;
 
     let status: CodexCredentialStatus;
     try {
@@ -398,7 +485,23 @@ export class ModelProviderService {
         : createRecord(statusAuthState(status), observedAt, {
             lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
           });
-    await this.commit(next);
+    const authStateChanged =
+      next.authState !== previous.authState ||
+      next.invalidationReason !== previous.invalidationReason;
+    if (!forceCredentialEpoch && !authStateChanged) return;
+    await this.commit(next, { advanceEpoch: forceCredentialEpoch || authStateChanged });
+  }
+
+  private scheduleSuppressedCredentialReconcile(): void {
+    if (this.suppressedCredentialReconcileTimer) {
+      clearTimeout(this.suppressedCredentialReconcileTimer);
+    }
+    const delay = Math.max(0, this.suppressCredentialWatchUntil - this.now()) + 25;
+    this.suppressedCredentialReconcileTimer = setTimeout(() => {
+      this.suppressedCredentialReconcileTimer = null;
+      void this.refreshCredentialState(false).catch(() => undefined);
+    }, delay);
+    unrefTimer(this.suppressedCredentialReconcileTimer);
   }
 
   private async handleCredentialTransition(
@@ -407,6 +510,7 @@ export class ModelProviderService {
     await this.ensureInitialized();
     return await this.mutate(async () => {
       const previous = this.requiredRecord();
+      this.credentialStateLock = null;
       const next =
         transition.kind === 'login-succeeded'
           ? createRecord('ready', transition.observedAt, {
@@ -425,15 +529,44 @@ export class ModelProviderService {
     });
   }
 
-  private async commit(record: ModelProviderRecord): Promise<void> {
+  private async commit(
+    record: ModelProviderRecord,
+    options: { advanceEpoch?: boolean } = {}
+  ): Promise<void> {
     const next = parseModelProviderRecord(record);
-    this.record = next;
     try {
       await this.persist(next);
     } catch {
+      const fallback =
+        next.authState === 'invalidated' || next.authState === 'unavailable'
+          ? next
+          : createRecord('unavailable', this.now(), {
+              lastSuccessfulRuntimeAt: next.lastSuccessfulRuntimeAt
+            });
+      this.applyInMemory(fallback, true);
       this.dependencies.broadcastSnapshot(this.snapshot());
+
+      let fallbackPersisted = false;
+      try {
+        await waitForPersistenceRetry();
+        await this.persist(fallback);
+        fallbackPersisted = true;
+        this.clearDirtyPersistence();
+      } catch {
+        this.markDirtyPersistence(fallback);
+      }
+
+      const requestedStateApplied =
+        fallback.authState === next.authState &&
+        fallback.invalidationReason === next.invalidationReason;
+      if (fallbackPersisted && fallback.authState === 'unavailable' && !this.credentialStateLock) {
+        this.scheduleSuppressedCredentialReconcile();
+      }
+      if (fallbackPersisted && requestedStateApplied) return;
       throw new ModelProviderServiceError('persistence-unavailable');
     }
+    this.applyInMemory(next, options.advanceEpoch ?? true);
+    this.clearDirtyPersistence();
     this.dependencies.broadcastSnapshot(this.snapshot());
   }
 
@@ -445,11 +578,79 @@ export class ModelProviderService {
     });
   }
 
+  private applyInMemory(record: ModelProviderRecord, advanceEpoch: boolean): void {
+    this.record = record;
+    if (advanceEpoch) this.epoch += 1;
+  }
+
+  private markDirtyPersistence(record: ModelProviderRecord): void {
+    this.dirtyRecord = record;
+    this.dirtyRetryAttempt = 0;
+    this.scheduleDirtyPersistenceRetry();
+  }
+
+  private clearDirtyPersistence(): void {
+    this.dirtyRecord = null;
+    this.dirtyRetryAttempt = 0;
+    if (this.dirtyRetryTimer) clearTimeout(this.dirtyRetryTimer);
+    this.dirtyRetryTimer = null;
+  }
+
+  private scheduleDirtyPersistenceRetry(): void {
+    if (!this.dirtyRecord || this.dirtyRetryTimer) return;
+    const delay =
+      DIRTY_RETRY_DELAYS_MS[Math.min(this.dirtyRetryAttempt, DIRTY_RETRY_DELAYS_MS.length - 1)];
+    this.dirtyRetryAttempt += 1;
+    this.dirtyRetryTimer = setTimeout(() => {
+      this.dirtyRetryTimer = null;
+      void this.retryDirtyPersistence().catch(() => undefined);
+    }, delay);
+    unrefTimer(this.dirtyRetryTimer);
+  }
+
+  private async retryDirtyPersistence(): Promise<void> {
+    await this.ensureInitialized();
+    await this.mutate(async () => {
+      const dirty = this.dirtyRecord;
+      if (!dirty) return;
+      try {
+        await this.persist(dirty);
+      } catch {
+        this.scheduleDirtyPersistenceRetry();
+        return;
+      }
+      if (this.dirtyRecord === dirty) {
+        this.clearDirtyPersistence();
+        if (dirty.authState === 'unavailable' && !this.credentialStateLock) {
+          this.scheduleSuppressedCredentialReconcile();
+        }
+      }
+    });
+  }
+
+  private scheduleInitializationRetry(): void {
+    if (this.initializationRetryTimer) return;
+    this.initializationRetryTimer = setTimeout(() => {
+      this.initializationRetryTimer = null;
+      void this.mutate(async () => {
+        this.initializePromise = null;
+        await this.ensureInitialized();
+      }).catch(() => undefined);
+    }, 1_000);
+    unrefTimer(this.initializationRetryTimer);
+  }
+
+  private runtimeObservation(applied: boolean): ModelProviderRuntimeObservation {
+    return { applied, snapshot: this.snapshot(), epoch: this.epoch };
+  }
+
   private snapshot(): ModelProviderSnapshot {
     const record = this.requiredRecord();
+    const observedAt = Math.max(this.now(), this.lastSnapshotObservedAt + 1);
+    this.lastSnapshotObservedAt = observedAt;
     return parseModelProviderSnapshot({
       schema: MODEL_PROVIDER_SNAPSHOT_SCHEMA,
-      observedAt: this.now(),
+      observedAt,
       providers: [{ ...record, configuredModels: [...record.configuredModels] }],
       availableTargets: record.authState === 'ready' ? [fixedTarget()] : []
     });

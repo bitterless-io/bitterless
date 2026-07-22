@@ -77,6 +77,13 @@ Rules:
 6. Unknown modes and mini-app IDs fail explicitly. A failed persisted-layout load shows a localized
    recovery error and keeps a default browser leaf; it must not silently open an arbitrary target.
 
+Main and Omni Control use one shared bounded parser before restoring, applying, or saving a tree.
+It requires valid leaf/split node types, non-empty unique IDs, HTTP(S) leaf URLs, `h`/`v` split
+directions, at least two children per split, and finite positive sizes with matching arity. Missing
+legacy URL/mode/mini-app fields migrate to the default browser URL, `browser`, and `todo`.
+Oversized/deep trees fail closed. Main retains the recovery state and replays it after the Control
+renderer loads or reopens, so the localized warning cannot be lost to renderer subscription order.
+
 ## Runtime Mapping
 
 | Content | Operation preload | Development renderer | Packaged renderer | Session |

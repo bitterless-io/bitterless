@@ -47,6 +47,8 @@
         :model-value="translatorStore.sourceText"
         :placeholder="i18nHelper.translator.sourcePlaceholder"
         :max-length="translatorStore.maxSourceLength"
+        :word-length="countCharacters"
+        :word-slice="sliceCharacters"
         :auto-size="{ minRows: 3, maxRows: 7 }"
         :textarea-attrs="{
           autofocus: true,
@@ -54,6 +56,7 @@
         }"
         size="mini"
         @input="handleInput"
+        @update:model-value="handleInput"
       />
 
       <div class="translator__composer-footer">
@@ -85,6 +88,10 @@ import { computed, onMounted } from 'vue';
 import { IconLanguage } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { translatorStore } from './store/translator.store';
+
+const countCharacters = (value: string): number => Array.from(value).length;
+const sliceCharacters = (value: string, length: number): string =>
+  Array.from(value).slice(0, length).join('');
 
 const handleInput = (value: string): void => {
   translatorStore.setSourceText(value);
@@ -118,6 +125,7 @@ const showLogin = computed(
   () =>
     translatorStore.authState === 'login_required' ||
     translatorStore.authState === 'invalidated' ||
+    translatorStore.authState === 'unavailable' ||
     translatorStore.authState === 'authenticating'
 );
 
@@ -141,7 +149,7 @@ const resultEmptyBody = computed(() =>
 
 const characterCount = computed(() =>
   i18nHelper.translator.characterCount
-    .replace('{count}', String(Array.from(translatorStore.sourceText).length))
+    .replace('{count}', String(countCharacters(translatorStore.sourceText)))
     .replace('{limit}', String(translatorStore.maxSourceLength))
 );
 

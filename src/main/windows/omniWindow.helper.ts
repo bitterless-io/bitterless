@@ -1,17 +1,24 @@
 import { app, BaseWindow, WebContentsView, screen, session, shell } from 'electron';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { is } from '@electron-toolkit/utils';
 import { throttle } from 'es-toolkit';
 import {
+  DEFAULT_OMNI_BROWSER_URL,
   DEFAULT_OMNI_MINI_APP_ID,
+  OMNI_LAYOUT_RECOVERY_STATE_EVENT,
   OMNI_MINI_APP_DISPLAY_URLS,
-  parseOmniMiniAppId,
+  OMNI_MINI_APP_LOAD_STATE_EVENT,
+  createDefaultOmniLayoutTree,
+  parseOmniLayoutConfig,
+  parseOmniPaneTree,
 } from '@shared/omni/omni.types';
 import type {
   OmniCellLayout,
   OmniContentMode,
-  OmniLayoutConfig,
+  OmniLayoutRecoveryState,
+  OmniMiniAppLoadState,
   OmniMiniAppId,
   OmniPaneNode,
 } from '@shared/omni/omni.types';
@@ -64,6 +71,16 @@ interface OmniMiniAppRuntime {
   rendererName: string;
 }
 
+interface OmniMiniAppRendererTarget {
+  filePath: string | null;
+  url: string;
+}
+
+interface ResolvedOmniMiniAppRuntime {
+  preloadPath: string;
+  rendererTarget: OmniMiniAppRendererTarget;
+}
+
 const OMNI_MINI_APP_RUNTIME: Record<OmniMiniAppId, OmniMiniAppRuntime> = {
   todo: { preloadFile: 'todo.js', rendererName: 'todo' },
   eyesOnAgents: { preloadFile: 'eyesOnAgents.js', rendererName: 'eyesOnAgents' },
@@ -114,14 +131,6 @@ function flattenTreePixels(
   return results;
 }
 
-const resolveContentMode = (node: Pick<OmniPaneNode, 'contentMode'>): OmniContentMode =>
-  node.contentMode === 'miniapp' ? 'miniapp' : 'browser';
-
-const resolveMiniAppId = (node: Pick<OmniPaneNode, 'miniAppId'>): OmniMiniAppId =>
-  node.miniAppId === undefined
-    ? DEFAULT_OMNI_MINI_APP_ID
-    : parseOmniMiniAppId(node.miniAppId);
-
 const getCellDisplayUrl = (cell: Pick<
   OmniCellLayout,
   'contentMode' | 'miniAppId' | 'url'
@@ -137,9 +146,9 @@ const extractTreeLeaves = (node: OmniPaneNode): Array<Pick<
   if (node.type === 'leaf') {
     return [{
       id: node.id,
-      url: node.url || '',
-      contentMode: resolveContentMode(node),
-      miniAppId: resolveMiniAppId(node),
+      url: node.url!,
+      contentMode: node.contentMode!,
+      miniAppId: node.miniAppId!,
     }];
   }
   const results: Array<Pick<
@@ -154,7 +163,7 @@ const extractTreeLeaves = (node: OmniPaneNode): Array<Pick<
 
 interface CellViewPair {
   id: string;
-  menubar: WebContentsView;
+  menubar: WebContentsView | null;
   content: WebContentsView;
   contentMode: OmniContentMode;
   miniAppId: OmniMiniAppId;
@@ -167,6 +176,8 @@ export class OmniWindowHelper {
   private controlView: WebContentsView | null = null;
   private controlVisible = false;
   private cells: CellViewPair[] = [];
+  private miniAppLoadFailures = new Map<string, OmniMiniAppId>();
+  private recoveredFromInvalidLayout = false;
   private currentLayout: OmniCellLayout[] = [];
   private currentLayoutTree: OmniPaneNode | null = null;
   private _throttledApplyLayoutFn: (() => void) | null = null;
@@ -238,14 +249,19 @@ export class OmniWindowHelper {
         if (this.controlVisible) {
           this.baseWindow.contentView.removeChildView(this.controlView);
         }
-      } catch {}
+      } catch {
+        // The control view may already be detached during window teardown.
+      }
     }
     this.controlVisible = false;
 
-    for (const cell of this.cells) {
+    const cells = this.cells;
+    this.cells = [];
+    this.miniAppLoadFailures.clear();
+    for (const cell of cells) {
       try {
         if (this.baseWindow && !this.baseWindow.isDestroyed()) {
-          this.baseWindow.contentView.removeChildView(cell.menubar);
+          if (cell.menubar) this.baseWindow.contentView.removeChildView(cell.menubar);
           this.baseWindow.contentView.removeChildView(cell.content);
         }
         this.closeWebContentsView(cell.menubar);
@@ -254,8 +270,6 @@ export class OmniWindowHelper {
         // view may already be destroyed
       }
     }
-    this.cells = [];
-
     this.closeWebContentsView(this.menubarView);
     this.menubarView = null;
     this.currentLayout = [];
@@ -383,6 +397,9 @@ export class OmniWindowHelper {
     if (!this.controlView || !this.isWebContentsAlive(this.controlView.webContents)) {
       this.controlView = this.createWebContentsView('omniControl');
       this.controlView.setBackgroundColor('#00000000');
+      this.controlView.webContents.on('did-finish-load', () => {
+        this.replayControlState();
+      });
       console.log('[OmniWindowHelper] controlView singleton created');
     }
     // Set proper bounds even when hidden — prevents splitpanes layout thrashing in a 0×0 container
@@ -435,6 +452,7 @@ export class OmniWindowHelper {
       this.baseWindow.contentView.addChildView(this.controlView);
       this.controlView.setVisible(true);
       this.updateControlBounds();
+      this.replayControlState();
     } else {
       this.controlView.setVisible(false);
       this.baseWindow.contentView.removeChildView(this.controlView);
@@ -442,17 +460,30 @@ export class OmniWindowHelper {
   }
 
   setLayoutTree(tree: OmniPaneNode): void {
-    this.currentLayoutTree = tree;
+    this.currentLayoutTree = parseOmniPaneTree(tree);
   }
 
-  updateLayout(cells: OmniCellLayout[], tree?: OmniPaneNode): void {
-    const normalizedCells = cells.map((cell) => ({
-      ...cell,
-      contentMode: cell.contentMode === 'miniapp' ? 'miniapp' : 'browser',
-      miniAppId: parseOmniMiniAppId(cell.miniAppId),
-    }) satisfies OmniCellLayout);
+  updateLayout(_cells: OmniCellLayout[], tree: OmniPaneNode): void {
+    const normalizedTree = parseOmniPaneTree(tree);
+    const normalizedCells: OmniCellLayout[] = extractTreeLeaves(normalizedTree).map((leaf) => ({
+      ...leaf,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+    }));
     this.currentLayout = normalizedCells;
-    if (tree) this.currentLayoutTree = tree;
+    this.currentLayoutTree = normalizedTree;
+
+    const nextCellsById = new Map(normalizedCells.map((cell) => [cell.id, cell]));
+    for (const [cellId, failedMiniAppId] of this.miniAppLoadFailures) {
+      const nextCell = nextCellsById.get(cellId);
+      if (
+        !nextCell ||
+        nextCell.contentMode !== 'miniapp' ||
+        nextCell.miniAppId !== failedMiniAppId
+      ) this.miniAppLoadFailures.delete(cellId);
+    }
 
     // Remove deleted cells and recreate only cells whose content runtime changed.
     const toRemove = this.cells.filter((cell) => {
@@ -461,10 +492,10 @@ export class OmniWindowHelper {
         next.contentMode !== cell.contentMode ||
         next.miniAppId !== cell.miniAppId;
     });
+    this.cells = this.cells.filter((cell) => !toRemove.includes(cell));
     for (const cell of toRemove) {
       this.removeCellViews(cell);
     }
-    this.cells = this.cells.filter((cell) => !toRemove.includes(cell));
 
     // Add new cells
     for (const layoutCell of normalizedCells) {
@@ -518,8 +549,9 @@ export class OmniWindowHelper {
   closeCell(cellId: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
     if (cell) {
-      this.removeCellViews(cell);
       this.cells = this.cells.filter((c) => c.id !== cellId);
+      this.miniAppLoadFailures.delete(cellId);
+      this.removeCellViews(cell);
     }
   }
 
@@ -544,11 +576,10 @@ export class OmniWindowHelper {
     });
   }
 
-  private createMiniAppCellContentView(miniAppId: OmniMiniAppId): WebContentsView {
-    const runtime = OMNI_MINI_APP_RUNTIME[miniAppId];
+  private createMiniAppCellContentView(preloadPath: string): WebContentsView {
     return new WebContentsView({
       webPreferences: {
-        preload: join(app.getAppPath(), 'out', 'preload', runtime.preloadFile),
+        preload: preloadPath,
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
@@ -557,10 +588,7 @@ export class OmniWindowHelper {
     });
   }
 
-  private getMiniAppRendererTarget(miniAppId: OmniMiniAppId): {
-    filePath: string | null;
-    url: string;
-  } {
+  private getMiniAppRendererTarget(miniAppId: OmniMiniAppId): OmniMiniAppRendererTarget {
     const { rendererName } = OMNI_MINI_APP_RUNTIME[miniAppId];
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       const rendererBaseUrl = process.env['ELECTRON_RENDERER_URL'].replace(/\/+$/, '');
@@ -576,16 +604,107 @@ export class OmniWindowHelper {
     };
   }
 
+  private resolveMiniAppRuntime(miniAppId: OmniMiniAppId): ResolvedOmniMiniAppRuntime {
+    const runtime = OMNI_MINI_APP_RUNTIME[miniAppId];
+    const preloadPath = join(app.getAppPath(), 'out', 'preload', runtime.preloadFile);
+    if (!existsSync(preloadPath)) {
+      throw new Error(`expected preload does not exist: ${preloadPath}`);
+    }
+
+    const rendererTarget = this.getMiniAppRendererTarget(miniAppId);
+    if (rendererTarget.filePath && !existsSync(rendererTarget.filePath)) {
+      throw new Error(`expected renderer does not exist: ${rendererTarget.filePath}`);
+    }
+
+    return { preloadPath, rendererTarget };
+  }
+
+  private broadcastMiniAppLoadState(params: OmniMiniAppLoadState): void {
+    if (params.status === 'failed') {
+      this.miniAppLoadFailures.set(params.cellId, params.miniAppId);
+    } else {
+      this.miniAppLoadFailures.delete(params.cellId);
+    }
+    xpcMain.broadcast(OMNI_MINI_APP_LOAD_STATE_EVENT, params);
+  }
+
+  private replayMiniAppLoadFailures(): void {
+    for (const [cellId, miniAppId] of this.miniAppLoadFailures) {
+      xpcMain.broadcast(OMNI_MINI_APP_LOAD_STATE_EVENT, {
+        cellId,
+        miniAppId,
+        status: 'failed',
+      } satisfies OmniMiniAppLoadState);
+    }
+  }
+
+  private broadcastLayoutRecoveryState(): void {
+    xpcMain.broadcast(OMNI_LAYOUT_RECOVERY_STATE_EVENT, {
+      recoveredFromInvalidLayout: this.recoveredFromInvalidLayout,
+    } satisfies OmniLayoutRecoveryState);
+  }
+
+  private replayControlState(): void {
+    this.replayMiniAppLoadFailures();
+    this.broadcastLayoutRecoveryState();
+  }
+
+  private setLayoutRecoveryState(recoveredFromInvalidLayout: boolean): void {
+    this.recoveredFromInvalidLayout = recoveredFromInvalidLayout;
+    this.broadcastLayoutRecoveryState();
+  }
+
+  private reportMiniAppLoadFailure(params: {
+    cellId: string;
+    miniAppId: OmniMiniAppId;
+    stage: 'target-validation' | 'renderer-load' | 'renderer-process';
+    expectedTarget: string;
+    error: unknown;
+  }): void {
+    const detail = params.error instanceof Error ? params.error.message : 'unknown error';
+    console.error(
+      `[OmniWindowHelper] Mini app ${params.miniAppId} ${params.stage} failed; expected ${params.expectedTarget}: ${detail}`,
+    );
+    this.broadcastMiniAppLoadState({
+      cellId: params.cellId,
+      miniAppId: params.miniAppId,
+      status: 'failed',
+    });
+  }
+
   private loadMiniAppCellContent(
     content: WebContentsView,
-    miniAppId: OmniMiniAppId,
+    params: {
+      cellId: string;
+      miniAppId: OmniMiniAppId;
+      target: OmniMiniAppRendererTarget;
+    },
   ): void {
-    const target = this.getMiniAppRendererTarget(miniAppId);
-    if (!target.filePath) {
-      content.webContents.loadURL(target.url).catch(() => {});
-      return;
-    }
-    content.webContents.loadFile(target.filePath).catch(() => {});
+    const { cellId, miniAppId, target } = params;
+    const loadPromise = target.filePath
+      ? content.webContents.loadFile(target.filePath)
+      : content.webContents.loadURL(target.url);
+    loadPromise.then(() => {
+      const cell = this.cells.find(
+        (candidate) => candidate.id === cellId && candidate.content === content,
+      );
+      if (!cell) return;
+      this.broadcastMiniAppLoadState({ cellId, miniAppId, status: 'ready' });
+    }).catch((error) => {
+      const cell = this.cells.find(
+        (candidate) => candidate.id === cellId && candidate.content === content,
+      );
+      if (!cell) return;
+      this.reportMiniAppLoadFailure({
+        cellId,
+        miniAppId,
+        stage: 'renderer-load',
+        expectedTarget: target.url,
+        error,
+      });
+      this.cells = this.cells.filter((candidate) => candidate !== cell);
+      this.removeCellViews(cell);
+    });
   }
 
   private addCell(layoutCell: OmniCellLayout): void {
@@ -593,18 +712,35 @@ export class OmniWindowHelper {
 
     const { id, url, contentMode, miniAppId } = layoutCell;
     const displayUrl = getCellDisplayUrl(layoutCell);
+    let miniAppRuntime: ResolvedOmniMiniAppRuntime | null = null;
 
-    // Cell menubar
-    const menubar = this.createWebContentsView('omniCell', [
-      `--cellId=${id}`,
-      `--initialUrl=${displayUrl}`,
-      `--contentMode=${contentMode}`,
-    ]);
-    this.baseWindow.contentView.addChildView(menubar);
+    if (contentMode === 'miniapp') {
+      try {
+        miniAppRuntime = this.resolveMiniAppRuntime(miniAppId);
+      } catch (error) {
+        this.reportMiniAppLoadFailure({
+          cellId: id,
+          miniAppId,
+          stage: 'target-validation',
+          expectedTarget: join(app.getAppPath(), 'out'),
+          error,
+        });
+        return;
+      }
+    }
+
+    const menubar = contentMode === 'browser'
+      ? this.createWebContentsView('omniCell', [
+        `--cellId=${id}`,
+        `--initialUrl=${displayUrl}`,
+        `--contentMode=${contentMode}`,
+      ])
+      : null;
+    if (menubar) this.baseWindow.contentView.addChildView(menubar);
 
     const content = contentMode === 'browser'
       ? this.createBrowserCellContentView()
-      : this.createMiniAppCellContentView(miniAppId);
+      : this.createMiniAppCellContentView(miniAppRuntime!.preloadPath);
     this.baseWindow.contentView.addChildView(content);
 
     if (contentMode === 'browser') {
@@ -624,7 +760,7 @@ export class OmniWindowHelper {
       });
     } else {
       // Mini-app cells have privileged first-party preloads. Never allow one to become a browser.
-      const expectedRendererUrl = this.getMiniAppRendererTarget(miniAppId).url;
+      const expectedRendererUrl = miniAppRuntime!.rendererTarget.url;
       content.webContents.setWindowOpenHandler((details) => {
         if (/^https?:\/\//i.test(details.url)) shell.openExternal(details.url);
         return { action: 'deny' };
@@ -636,29 +772,28 @@ export class OmniWindowHelper {
       });
     }
 
-    // After menubar finishes loading, send the current browser URL to it
-    // (did-navigate may have already fired before the menubar's Vue app mounted)
-    menubar.webContents.on('did-finish-load', () => {
-      if (!this.isWebContentsAlive(menubar.webContents)) return;
-      if (!this.isWebContentsAlive(content.webContents)) return;
-      if (contentMode === 'miniapp') {
-        xpcMain.broadcast('omniCell/urlChanged', { cellId: id, url: displayUrl });
-        return;
-      }
-      const currentUrl = content.webContents.getURL();
-      xpcMain.broadcast('omniCell/urlChanged', { cellId: id, url: currentUrl || url });
-      this.notifyControlUrlChanged(id, currentUrl || url);
-    });
+    // Browser-only chrome may mount after the page has already navigated.
+    if (menubar) {
+      menubar.webContents.on('did-finish-load', () => {
+        if (!this.isWebContentsAlive(menubar.webContents)) return;
+        if (!this.isWebContentsAlive(content.webContents)) return;
+        const currentUrl = content.webContents.getURL();
+        xpcMain.broadcast('omniCell/urlChanged', { cellId: id, url: currentUrl || url });
+        this.notifyControlUrlChanged(id, currentUrl || url);
+      });
+    }
 
     // Track active cell on content focus
     content.webContents.on('focus' as any, () => {
       if (!this.isWebContentsAlive(content.webContents)) return;
       this.broadcastActiveCell(id);
     });
-    menubar.webContents.on('focus' as any, () => {
-      if (!this.isWebContentsAlive(menubar.webContents)) return;
-      this.broadcastActiveCell(id);
-    });
+    if (menubar) {
+      menubar.webContents.on('focus' as any, () => {
+        if (!this.isWebContentsAlive(menubar.webContents)) return;
+        this.broadcastActiveCell(id);
+      });
+    }
 
     if (contentMode === 'browser') {
       // Block remote pages from setting app badge (e.g. Telegram Web)
@@ -716,13 +851,30 @@ export class OmniWindowHelper {
 
     // Auto-cleanup crashed cell
     content.webContents.on('render-process-gone', (_e, details) => {
-      console.warn(`[OmniWindowHelper] Cell ${id} renderer crashed:`, details.reason);
-      this.removeCellViews(cell);
+      if (!this.cells.includes(cell)) return;
+      if (contentMode === 'miniapp' && miniAppRuntime) {
+        this.reportMiniAppLoadFailure({
+          cellId: id,
+          miniAppId,
+          stage: 'renderer-process',
+          expectedTarget: miniAppRuntime.rendererTarget.url,
+          error: new Error(details.reason),
+        });
+      } else {
+        console.warn(`[OmniWindowHelper] Cell ${id} renderer crashed:`, details.reason);
+      }
       this.cells = this.cells.filter((c) => c.id !== id);
+      this.removeCellViews(cell);
     });
 
-    if (contentMode === 'miniapp') {
-      this.loadMiniAppCellContent(content, miniAppId);
+    this.cells.push(cell);
+
+    if (contentMode === 'miniapp' && miniAppRuntime) {
+      this.loadMiniAppCellContent(content, {
+        cellId: id,
+        miniAppId,
+        target: miniAppRuntime.rendererTarget,
+      });
     } else if (url) {
       // Semaphore (capacity 3): stagger concurrent URL loads to avoid overwhelming the shared session.
       // aborted is set to true by drain() path — checked after acquire() resolves to skip destroyed views.
@@ -751,8 +903,6 @@ export class OmniWindowHelper {
       });
     }
 
-    this.cells.push(cell);
-
     // Ensure control overlay stays on top
     if (this.controlVisible && this.controlView) {
       this.baseWindow.contentView.removeChildView(this.controlView);
@@ -763,7 +913,7 @@ export class OmniWindowHelper {
   private removeCellViews(cell: CellViewPair): void {
     try {
       if (this.baseWindow && !this.baseWindow.isDestroyed()) {
-        this.baseWindow.contentView.removeChildView(cell.menubar);
+        if (cell.menubar) this.baseWindow.contentView.removeChildView(cell.menubar);
         this.baseWindow.contentView.removeChildView(cell.content);
       }
       this.closeWebContentsView(cell.menubar);
@@ -813,23 +963,38 @@ export class OmniWindowHelper {
 
   private async restoreSavedLayout(creationGeneration: number): Promise<void> {
     try {
-      const config = await settingEmitter.get<OmniLayoutConfig>({ key: LAYOUT_KEY });
+      const persistedValue = await settingEmitter.get<unknown>({ key: LAYOUT_KEY });
       if (this._creationGeneration !== creationGeneration) return;
-      if (config?.tree) {
-        const leaves = extractTreeLeaves(config.tree);
-        const cells: OmniCellLayout[] = leaves.map((leaf) => ({
-          ...leaf,
-          x: 0,
-          y: 0,
-          width: 100,
-          height: 100,
-        }));
-        this.updateLayout(cells, config.tree);
-        console.log('[OmniWindowHelper] Restored saved layout with', leaves.length, 'cells');
+      if (persistedValue === null || persistedValue === undefined) {
+        this.restoreDefaultBrowserLayout();
+        this.setLayoutRecoveryState(false);
+        return;
       }
+      const config = parseOmniLayoutConfig(persistedValue);
+      const leaves = extractTreeLeaves(config.tree);
+      this.updateLayout([], config.tree);
+      this.setLayoutRecoveryState(false);
+      console.log('[OmniWindowHelper] Restored saved layout with', leaves.length, 'cells');
     } catch (err) {
       console.error('[OmniWindowHelper] Failed to restore saved layout:', err);
+      if (this._creationGeneration !== creationGeneration) return;
+      this.restoreDefaultBrowserLayout();
+      this.setLayoutRecoveryState(true);
     }
+  }
+
+  private restoreDefaultBrowserLayout(): void {
+    const tree = createDefaultOmniLayoutTree();
+    this.updateLayout([{
+      id: tree.id,
+      url: tree.url ?? DEFAULT_OMNI_BROWSER_URL,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      contentMode: 'browser',
+      miniAppId: DEFAULT_OMNI_MINI_APP_ID,
+    }], tree);
   }
 
   private isCreationActive(
@@ -855,12 +1020,35 @@ export class OmniWindowHelper {
   async saveLayoutToDao(): Promise<void> {
     if (!this.currentLayoutTree) return;
     try {
-      const config: OmniLayoutConfig = { tree: JSON.parse(JSON.stringify(this.currentLayoutTree)) };
+      const config = parseOmniLayoutConfig({ tree: this.currentLayoutTree });
+      this.currentLayoutTree = config.tree;
       await settingEmitter.upsert({ key: LAYOUT_KEY, value: config });
       console.log('[OmniWindowHelper] Layout saved to SettingDao');
     } catch (err) {
       console.error('[OmniWindowHelper] Failed to save layout:', err);
     }
+  }
+
+  private setCellBounds(
+    cell: CellViewPair,
+    bounds: { x: number; y: number; width: number; height: number },
+  ): void {
+    const width = Math.max(bounds.width, 0);
+    const chromeHeight = cell.menubar ? CELL_MENUBAR_HEIGHT : 0;
+    if (cell.menubar) {
+      cell.menubar.setBounds({
+        x: bounds.x,
+        y: bounds.y,
+        width,
+        height: chromeHeight,
+      });
+    }
+    cell.content.setBounds({
+      x: bounds.x,
+      y: bounds.y + chromeHeight,
+      width,
+      height: Math.max(bounds.height - chromeHeight, 0),
+    });
   }
 
   private applyLayoutInternal(): void {
@@ -876,13 +1064,7 @@ export class OmniWindowHelper {
         const cell = this.cells.find((c) => c.id === layoutCell.id);
         if (!cell) continue;
         const { x, y, width: w, height: h } = layoutCell;
-        cell.menubar.setBounds({ x, y, width: Math.max(w, 0), height: CELL_MENUBAR_HEIGHT });
-        cell.content.setBounds({
-          x,
-          y: y + CELL_MENUBAR_HEIGHT,
-          width: Math.max(w, 0),
-          height: Math.max(h - CELL_MENUBAR_HEIGHT, 0),
-        });
+        this.setCellBounds(cell, { x, y, width: w, height: h });
       }
       return;
     }
@@ -895,13 +1077,7 @@ export class OmniWindowHelper {
       const y = Math.round(areaTop + areaHeight * (layoutCell.y / 100));
       const w = Math.round(areaWidth * (layoutCell.width / 100));
       const h = Math.round(areaHeight * (layoutCell.height / 100));
-      cell.menubar.setBounds({ x, y, width: Math.max(w, 0), height: CELL_MENUBAR_HEIGHT });
-      cell.content.setBounds({
-        x,
-        y: y + CELL_MENUBAR_HEIGHT,
-        width: Math.max(w, 0),
-        height: Math.max(h - CELL_MENUBAR_HEIGHT, 0),
-      });
+      this.setCellBounds(cell, { x, y, width: w, height: h });
     }
   }
 

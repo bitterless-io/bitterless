@@ -1,7 +1,7 @@
 ---
 id: translator-miniapp-001
 scope: omni-translator
-status: in-progress
+status: done
 depends-on: [chat-production-entry-flag-001]
 ---
 

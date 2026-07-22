@@ -8,6 +8,19 @@ import { assert, assertMaestroAliasBoundary, assertNoStandaloneEntry, readMaestr
 
 const require = createRequire(import.meta.url)
 
+const stripJsTsComments = (source) => {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source)
+  let sourceWithoutComments = ''
+  let token = scanner.scan()
+  while (token !== ts.SyntaxKind.EndOfFileToken) {
+    if (token !== ts.SyntaxKind.SingleLineCommentTrivia && token !== ts.SyntaxKind.MultiLineCommentTrivia) {
+      sourceWithoutComments += scanner.getTokenText()
+    }
+    token = scanner.scan()
+  }
+  return sourceWithoutComments
+}
+
 assertMaestroAliasBoundary()
 assertNoStandaloneEntry()
 
@@ -24,6 +37,7 @@ const sqlitePreload = readMaestro('preload/sqlite.preload.ts')
 const maestroWindow = readMaestro('main/windows/maestroWindow.helper.ts')
 const windowHelper = readMaestro('main/windows/window.helper.ts')
 const workbenchStore = readMaestro('renderer/workbench/src/workbench.store.ts')
+const activeApps = stripJsTsComments(apps)
 
 assert(handler.includes('async openMaestroWindow()'), 'host must expose the Maestro open operation')
 assert(handler.includes('current && !current.isDestroyed()') && handler.includes('maestroWindowHelper.show()'), 'repeat open must focus the existing Maestro instance')
@@ -54,7 +68,15 @@ for (const entry of ['maestroHome', 'maestroControl', 'maestroWorkbench', 'maest
 assert(vite.includes("maestroCoach: resolve('src/preload/maestro/coach.preload.ts')") && vite.includes("maestroSqlite: resolve('src/preload/maestro/sqlite.preload.ts')"), 'build must include both Maestro preloads')
 assert(vite.includes('bytecode: false'), 'main bytecode must stay disabled for the embedded dynamic runtime')
 assert(card.includes(':data-mini-app-id="app.id"'), 'Mini Apps cards need stable E2E identities')
-assert(apps.includes("id: 'maestro'") && apps.includes('action: openMaestro'), 'Mini Apps must expose Maestro through its host action')
+assert(!activeApps.includes("id: 'maestro'") && !activeApps.includes('action: openMaestro'), 'Mini Apps must keep the Maestro card and Home launch action dormant')
+assert(!activeApps.includes("id: 'coin'") && !activeApps.includes('action: openCoin'), 'Mini Apps must keep the Coin card and Home launch action dormant')
+assert(apps.includes("id: 'maestro'") && apps.includes('action: openMaestro'), 'Mini Apps source must retain the dormant Maestro card for restoration')
+assert(apps.includes("id: 'coin'") && apps.includes('action: openCoin'), 'Mini Apps source must retain the dormant Coin card for restoration')
+assert(activeApps.includes('openMaestro: () => void') && activeApps.includes('openCoin: () => void'), 'Mini Apps factory must retain the dormant launch callbacks')
+assert(card.includes('await maestroWindowEmitter.openMaestroWindow()') && card.includes('await coinWindowEmitter.openCoinWindow()'), 'Home must retain Maestro and Coin host action wiring')
+for (const [id, action] of [['todo', 'openTodo'], ['eyes-on-agents', 'openEyesOnAgents'], ['omni-browser', 'openOmniBrowser']]) {
+  assert(activeApps.includes(`id: '${id}'`) && activeApps.includes(`action: ${action}`), `Mini Apps must keep ${id} visible`)
+}
 assert(builder.includes('from: build/maestro-tools') && builder.includes('to: maestro-tools'), 'packaging must include the Maestro CLI bundle')
 assert(prepareCli.includes("packages', 'micromeet-cli'"), 'CLI preparation must source the vendored workspace package')
 

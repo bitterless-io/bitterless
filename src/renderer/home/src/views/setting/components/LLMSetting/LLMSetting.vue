@@ -136,6 +136,7 @@ const canLogin = computed(
   () =>
     llmSettingStore.authState === 'login_required' ||
     llmSettingStore.authState === 'invalidated' ||
+    llmSettingStore.authState === 'unavailable' ||
     llmSettingStore.authState === 'authenticating'
 );
 

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useThrottleFn } from '@vueuse/core';
 import { Splitpanes, Pane } from 'splitpanes';
+import { IconAlertTriangle, IconCheck } from '@tabler/icons-vue';
 import 'splitpanes/dist/splitpanes.css';
 import OmniPaneMenuBar from './OmniPaneMenuBar.vue';
 import todoIcon from '@renderer/common/assets/icons/menu-icons/todo.png';
@@ -45,6 +46,14 @@ const miniApps = computed<Array<{
     name: i18nHelper.miniApp.translator.name,
   },
 ]);
+
+const failedMiniApp = computed(() => layoutStore.getMiniAppLoadFailure(props.node.id));
+const miniAppFailureMessage = computed(() => {
+  const failedId = failedMiniApp.value;
+  if (!failedId) return '';
+  const failedName = miniApps.value.find((miniApp) => miniApp.id === failedId)?.name ?? failedId;
+  return i18nHelper.omni.miniAppLoadFailed.replace('{name}', failedName);
+});
 
 // Suppress spurious @resize events fired during splitpanes initial mount/render
 const isMounted = ref(false);
@@ -125,18 +134,35 @@ const handleClose = async (nodeId: string) => {
           v-if="getNodeContentMode(node) === 'miniapp'"
           class="omni-pane__miniapp-list"
         >
-          <button
+          <div
+            v-if="miniAppFailureMessage"
+            class="omni-pane__miniapp-error"
+            role="alert"
+          >
+            <IconAlertTriangle :size="15" aria-hidden="true" />
+            <span>{{ miniAppFailureMessage }}</span>
+          </div>
+          <a-button
             v-for="miniApp in miniApps"
             :key="miniApp.id"
             name="omniPane__miniApp"
             class="omni-pane__miniapp-item"
             :class="{ 'omni-pane__miniapp-item--active': node.miniAppId === miniApp.id }"
-            type="button"
+            type="text"
+            size="mini"
+            long
+            :aria-pressed="node.miniAppId === miniApp.id"
             @click="handleMiniAppSelect(node.id, miniApp.id)"
           >
             <img class="omni-pane__miniapp-icon" :src="miniApp.icon" alt="" />
             <span class="omni-pane__miniapp-name">{{ miniApp.name }}</span>
-          </button>
+            <IconCheck
+              v-if="node.miniAppId === miniApp.id"
+              class="omni-pane__miniapp-check"
+              :size="16"
+              aria-hidden="true"
+            />
+          </a-button>
         </div>
         <template v-else>
           <span class="omni-pane__preview-id">{{ node.id.slice(0, 6) }}</span>
@@ -156,6 +182,7 @@ const handleClose = async (nodeId: string) => {
       >
         <Pane
           v-for="(child, i) in node.children"
+          :key="child.id"
           :size="node.sizes?.[i] ?? 50"
         >
           <OmniPane :node="child" />
