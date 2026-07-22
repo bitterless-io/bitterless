@@ -1,7 +1,7 @@
 ---
 id: todoist-sync-desktop-001
 scope: independent Todoist-style desktop synchronization and complete UI/MCP/Electron cutover
-status: in-progress
+status: done
 depends-on: []
 ---
 
@@ -310,3 +310,14 @@ automated gates are complete.
 - `yarn typecheck:todoist-sync` passed; `yarn test:todoist-sync` passed 19/19 native tests.
 - `yarn typecheck:todo-web`, `yarn typecheck:mcp`, `yarn check:todo-window-runtime`, `yarn build`, and
   `git diff --check` passed.
+
+## external prerequisite completion — 2026-07-22
+
+- Backend tasks `todoist-sync-backend-001` and `todoist-sync-backend-integration-002` are complete.
+  Their real PostgreSQL matrix, built-Core two-client desktop smoke, clean production lifecycle,
+  Shanghai Function Compute activation, and deployed Bruno HTTP smoke all passed.
+- The deployed smoke finished with zero Todo application rows and zero matching synthetic
+  Core/Auth fixtures; the source DSH metadata fingerprint remained unchanged. This satisfies the
+  desktop task's final external completion prerequisite without changing desktop runtime code.
+
+This task is complete.
