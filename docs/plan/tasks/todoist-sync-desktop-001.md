@@ -1,7 +1,7 @@
 ---
 id: todoist-sync-desktop-001
 scope: independent Todoist-style desktop synchronization and complete UI/MCP/Electron cutover
-status: in-progress
+status: done
 depends-on: []
 ---
 
@@ -362,4 +362,13 @@ duplicate/skip.
   outside this patch. The already verified Shanghai FC deployment and clean production Todo database
   remain unchanged.
 
-This task remains `in-progress` only until the independent P1 re-review passes.
+## independent P1 re-review — 2026-07-22
+
+Independent review of commit `99f8ad0` found no P1 or P2 issue and returned `APPROVED`. It verified
+the shared transaction boundary, parent-first writes, child-first terminal rollback, recursive
+dependency blocking, restrictive-FK guards, delayed ACK materialization, event deduplication, and
+the indexed baseline-parent lookup. The reviewer independently passed the 23/23 native suite,
+strict Todo sync/Web/MCP checks, SQLite release tests and migration audit, Todo runtime check, MCP
+smoke, and `git diff --check`; this task's own final gate also passed the complete Electron build.
+
+This task is complete.
