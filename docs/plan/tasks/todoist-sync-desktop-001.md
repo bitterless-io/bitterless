@@ -1,7 +1,7 @@
 ---
 id: todoist-sync-desktop-001
 scope: independent Todoist-style desktop synchronization and complete UI/MCP/Electron cutover
-status: in-progress
+status: done
 depends-on: []
 ---
 
@@ -138,7 +138,7 @@ done until the `bitterless-private` tasks `todoist-sync-backend-001` and
 `todoist-sync-backend-integration-002` have passed and the non-production two-client HTTP smoke uses
 their real Core/PostgreSQL endpoint.
 
-# handoff checkpoint — 2026-07-21
+# handoff checkpoint — 2026-07-21 (docs-sprint develop batch 1)
 
 The implementation is intentionally left `in-progress`. Electron was not launched, no Core API was
 called, no production/test remote database was contacted, and the old `main.db` was not opened,
@@ -161,49 +161,163 @@ imported, migrated, or deleted.
   source scan found no remaining PowerSync symbol at the checkpoint.
 - Actual runtime still uses `safeStorage`; the intended automated/local test boundary is an injected
   fixed password with a tripwire that fails on any OS credential or `safeStorage` access.
+- Added a focused strict Node TypeScript project for Todoist sync and kept the legacy numeric
+  Domain/Todo/event DAOs separate from the new string-ID Main/MCP contract.
+- Registered the runtime schema-v1 ordered manifest in the pure-Node SQLite audit. Fresh creation,
+  current-v1 reopen/idempotence, incomplete and injected-failure rollback, ledger fail-closed,
+  `integrity_check`, and `foreign_key_check` baselines now run without a fabricated legacy chain.
+- Added native Electron-ABI SQLCipher tests using `better-sqlite3-multiple-ciphers`, one fixed injected
+  password, and hard tripwires for Electron `safeStorage`, macOS Keychain, Windows Credential Manager,
+  and legacy `main.db` filesystem access. Runtime password storage now creates its protected directory
+  before first-run key creation.
+- Covered encrypted fresh/reopen/wrong-password behavior, repository CRUD/outbox atomicity,
+  soft-delete cascades, event persistence, monotonic baselines, ACK/error waiting, retry/discard, and
+  restart recovery against the real native database.
 
 ## evidence obtained
 
-- `yarn typecheck:node` passed, but that project script contains `--noCheck` and therefore only
-  proves build-level parsing.
-- A strict `./node_modules/.bin/tsc --noEmit -p tsconfig.node.json --composite false` run was started
-  and interrupted before it produced a result.
-- No Electron GUI, real SQLite/SQLCipher operation, Core request, MCP smoke, web/MCP typecheck,
-  SQLite release audit, or production build was run.
+- `yarn typecheck:todoist-sync` passed.
+- `yarn typecheck:sqlite-migrations` passed.
+- `yarn typecheck:mcp` passed while preserving the legacy numeric DAO boundary.
+- `yarn test:todoist-sync` passed: 5 native SQLCipher tests, 5 passed.
+- `yarn test:sqlite-migrations` passed: 11 tests, 11 passed.
+- `yarn audit:sqlite-migrations` passed: 11 Core + 7 Maestro + 5 Todoist-sync baselines.
+- `yarn install` passed and restored the declared `compare-versions` dependency; `yarn.lock` did not
+  change.
+- The full-project strict Node check was terminated after more than ten minutes without a result and
+  was not restarted per Ral's instruction. It is not counted as passing evidence for this batch.
+- No Electron GUI, real Core request, remote database, web/build pass, or two-client smoke was run.
 
-## remaining Todo
+Todos 1-4 are complete for this develop batch.
 
-1. Run strict node TypeScript checking first and fix every error before adding more behavior.
-2. Register the Todo schema-v1 manifest in `scripts/sqlite-migrations/auditRunner.ts` without adding
-   a fabricated legacy chain.
-3. Add `scripts/todoist-sync/` tests using one fixed injected password plus a hard tripwire against
-   Keychain, Credential Manager, and `safeStorage`. Cover fresh/reopen/wrong-password/rollback,
-   integrity and foreign-key checks, and prove legacy `main.db` is never touched.
-4. Execute real repository/SQLCipher tests for SQL placeholders, CRUD/outbox atomicity, soft-delete
-   cascades, baseline monotonicity, ACK/error waiting states, restart recovery, and event behavior.
-5. Add strict wire fixtures shared with the backend, scheduler/session fencing, NTP healthy/wrong/
-   unreachable/boundary/late-result tests, exact `CLOCK_SKEW` batch recovery, and Core-clock
-   disagreement diagnostics.
-6. Complete remote `actor=system` Todo events and verify a newly confirmed wrong clock stops or
-   safely fences any already-running HTTP request.
-7. Run all web/MCP/runtime/audit/build commands below. Validate the manually edited Yarn lockfile by
-   a successful Yarn install when dependency access is available.
-8. After the backend disposable-PostgreSQL gate passes, run the non-production two-client HTTP
-   smoke; only then can this task leave `in-progress`.
+# handoff checkpoint — 2026-07-21 (docs-sprint develop batch 2)
 
-## resume here
+The task remains `in-progress`. This batch was limited to the Main/shared Todoist-sync module,
+focused native tests, strict wire fixtures, and this task record. It did not change or run renderer
+UI, MCP, web/build, remote HTTP, or backend/PostgreSQL work.
 
-```bash
-cd /Users/ral/Documents/projects/overmind/projects/bitterless
-./node_modules/.bin/tsc --noEmit -p tsconfig.node.json --composite false
-yarn typecheck:web
-yarn typecheck:mcp
-yarn audit:sqlite-migrations
-yarn check:todo-window-runtime
-yarn test:mcp:todo-smoke
-yarn build
-git diff --check
-```
+## Todo 5-8 progress
 
-Do not start with Electron manual testing: first obtain strict typecheck and fixed-password SQLite
-evidence. Ral will perform the Electron GUI pass after the code/build gates are clean.
+- [x] Todo 5: added strict request/response/error wire fixtures and parsing for all nine command
+  variants; deterministic coverage now includes coordinator/session single flight, coalesced rerun,
+  completion-relative scheduling, restart/token persistence, NTP boundary and late-result generation
+  fencing, exact whole-batch `CLOCK_SKEW` recovery, and Core-vs-NTP disagreement diagnostics.
+- [x] Todo 6: remote-applied Todo changes now emit the contract event sequence with `actor=system`
+  without feedback outbox commands. An HTTP response is revalidated against both session and clock
+  generations after return and again immediately before SQLite commit, so stale resource, receipt,
+  token, and baseline state cannot commit or schedule an unsafe follow-up.
+- [ ] Todo 7: run the remaining renderer/web/runtime/MCP/build gates and Electron handoff in the next
+  batch; no full-project TypeScript check was run here.
+- [ ] Todo 8: after the backend disposable-PostgreSQL gate passes, run the non-production two-client
+  HTTP smoke. This external prerequisite still prevents task completion.
+
+## batch 2 evidence
+
+- `yarn typecheck:todoist-sync` passed.
+- `yarn test:todoist-sync` passed: 17 native deterministic tests, 17 passed.
+- `git diff --check` passed.
+- The focused test run left no SQLite, log, temporary, or compiled test artifacts under `tmp/` or
+  `scripts/todoist-sync/`.
+- No renderer UI, MCP, web/build, Electron GUI, real Core request, remote database, or two-client
+  smoke was run in this batch.
+
+## next batch
+
+Run Todo 7's renderer/web/runtime/MCP/build verification without expanding Main sync behavior, then
+run Todo 8's non-production HTTP smoke only after its backend prerequisite is green. Ral will perform
+the Electron GUI pass after the code/build gates are clean.
+
+# handoff checkpoint — 2026-07-21 (Todo-scoped web TypeScript gate)
+
+The task remains `in-progress`. This batch changed only the Todo renderer TypeScript boundary, a
+focused Todo web typecheck, its package scripts, and this task record. It did not change connector,
+Coin, Poker, Home, Omni, Maestro, shared runtime, Main runtime, preload runtime, MCP runtime, or
+backend behavior.
+
+## Todo 7-8 progress
+
+- [ ] Todo 7: the requested Todo-scoped renderer/MCP/native/build slice is complete. The strict
+  `typecheck:todo-web` gate covers the Todo renderer and the shared/preload contracts it consumes
+  without loading unrelated renderer modules. Main handler declaration contracts are regenerated
+  from their real source classes and compared before the strict Vue check, so the existing
+  `@main` emitter types remain exact without pulling unrelated Main implementation diagnostics into
+  this focused gate. The Electron GUI and the separate Todo-window runtime check were not run in
+  this batch.
+- [ ] Todo 8: the backend-dependent non-production two-client Core/PostgreSQL smoke remains blocked
+  on `todoist-sync-backend-001` and `todoist-sync-backend-integration-002`. This external gate still
+  prevents task completion.
+
+## Todo-scoped web evidence
+
+- `yarn typecheck:todo-web` passed with strict null checks, `noImplicitAny`, and no unchecked Todo
+  renderer source.
+- `yarn typecheck:mcp` passed.
+- `yarn test:todoist-sync` passed: 17 native deterministic tests, 17 passed.
+- `yarn build` passed for Main, preload, and renderer production bundles.
+- `git diff --check` passed.
+- Full `yarn typecheck:web` still failed in the pre-existing connector, Coin, Poker, Home, Omni,
+  Maestro, and shared baseline. No remaining diagnostic path starts with `src/renderer/todo/`.
+- No Electron GUI, real Core request, remote database, backend/PostgreSQL operation, or two-client
+  smoke was run.
+
+# handoff checkpoint — 2026-07-22 (final cross-repo desktop HTTP smoke)
+
+The task remains `in-progress` only for the backend release task's final database lifecycle and
+deployed Function Compute/Bruno smoke. The built-Core two-client desktop gate and all requested local
+automated gates are complete.
+
+## Todo 7-8 completion
+
+- [x] Todo 7: `typecheck:todoist-sync`, `typecheck:todo-web`, `typecheck:mcp`, the native Electron-ABI
+  SQLCipher suite, Todo-window runtime check, and production build all pass.
+- [x] Todo 8: the backend-authorized real Core/PostgreSQL child smoke passes with two device JWTs for
+  one customer and an isolated second customer. Secrets enter only through child environments and
+  are rejected if found in output; no device JWT or database password is logged or persisted by the
+  harness. The opaque sync token remains persisted by the production repository as required for the
+  restart proof.
+
+## lifecycle evidence
+
+- Client A used a dedicated encrypted repository, bootstrapped through the real HTTP
+  client/coordinator/session, then created an optimistic Domain/Todo/SubTodo while simulated offline.
+  All three commands settled back to `pending`; the online retry reused at least one exact command
+  UUID, drained the outbox, and advanced three canonical ACK baselines.
+- Client B used a second encrypted repository and bootstrapped the exact canonical A state. B updated
+  and completed the Todo and completed its SubTodo. A's incremental pull converged and emitted one
+  `actor=system` completion event without creating a feedback outbox command.
+- B shut down and restarted in a distinct Electron-as-Node child process over the same SQLCipher
+  file. Its first HTTP request reused the persisted sync token. Final reopened A/B resource snapshots
+  were byte-for-byte equal; the second customer's seeded Domain was absent from both.
+- Both repositories used distinct fixed injected test passwords, non-plaintext SQLCipher files, and
+  no key sidecars. Tripwires recorded zero Electron `safeStorage`, macOS Keychain, Windows Credential
+  Manager, or legacy `main.db` access. The runner removed its local bundle/state temp roots.
+- The smoke found and fixed a concrete first-bootstrap bug: remote Todo event creation ran before the
+  response's assigned Snowflake node was installed. The node is now available during the response
+  transaction and reset when an initially-unassigned transaction rolls back or is generation-fenced.
+  Focused native tests prove successful first-bootstrap event creation and, on a fenced first
+  response, unchanged `sync_token='*'`, persisted node `null`, `ids.getNodeId()===null`, zero
+  baselines, and zero events.
+
+## verification
+
+- Full backend `yarn test:todoist-sync:integration` passed A+B1+B2a+B2b1+B2b2+desktop-two-client in
+  29.68 seconds. The desktop child reported `resources=3`, `offline_retry=1`, `system_events=1`,
+  `outbox_feedback=0`, `persisted_token_reused=1`, `isolation_customers=2`, exact convergence, and two
+  SQLCipher repositories.
+- Post-fence `TODOIST_SYNC_DESKTOP_ONLY=1 yarn test:todoist-sync:integration` passed in 15.79 seconds;
+  remote cleanup removed 16 Todo rows and five Core rows, all isolated application rows returned to
+  zero, and DSH fingerprint `50b181787fae35a3` was unchanged.
+- `yarn typecheck:todoist-sync` passed; `yarn test:todoist-sync` passed 19/19 native tests.
+- `yarn typecheck:todo-web`, `yarn typecheck:mcp`, `yarn check:todo-window-runtime`, `yarn build`, and
+  `git diff --check` passed.
+
+## external prerequisite completion — 2026-07-22
+
+- Backend tasks `todoist-sync-backend-001` and `todoist-sync-backend-integration-002` are complete.
+  Their real PostgreSQL matrix, built-Core two-client desktop smoke, clean production lifecycle,
+  Shanghai Function Compute activation, and deployed Bruno HTTP smoke all passed.
+- The deployed smoke finished with zero Todo application rows and zero matching synthetic
+  Core/Auth fixtures; the source DSH metadata fingerprint remained unchanged. This satisfies the
+  desktop task's final external completion prerequisite without changing desktop runtime code.
+
+This task is complete.

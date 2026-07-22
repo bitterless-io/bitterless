@@ -195,6 +195,7 @@ test('migration audit is pure Node and uses runtime manifests', () => {
   const source = read('scripts/sqlite-migrations/auditRunner.ts')
   assert.match(source, /coreSqliteMigrations/)
   assert.match(source, /maestroSqliteMigrations/)
+  assert.match(source, /todoistSyncMigrations/)
   assert.doesNotMatch(source, /from ['"]electron['"]/)
   assert.doesNotMatch(source, /electron-vite|BrowserWindow/)
 })

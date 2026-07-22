@@ -49,9 +49,10 @@ class TodoistSyncState {
   }
 
   async refreshStatus(): Promise<void> {
-    this.status = await todoistSyncStatusEmitter.getStatus();
-    this.clockState = this.status.clock_state;
-    this.failures = this.status.active ? await todoistSyncStatusEmitter.getFailures() : [];
+    const status = await todoistSyncStatusEmitter.getStatus();
+    this.status = status;
+    this.clockState = status.clock_state;
+    this.failures = status.active ? await todoistSyncStatusEmitter.getFailures() : [];
   }
 
   async requestSync(): Promise<void> {

@@ -1,5 +1,10 @@
 export interface TodoistSyncMigrationDatabase {
   exec(sql: string): void;
+  prepare(sql: string): {
+    get(...values: unknown[]): unknown;
+    all(...values: unknown[]): unknown[];
+    run(...values: unknown[]): unknown;
+  };
 }
 
 export interface TodoistSyncMigration {
@@ -172,6 +177,99 @@ const SCHEMA_V1 = `
   CREATE INDEX todo_event_sequence ON todo_events(sequence);
 `;
 
+export const TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS = {
+  todoist_sync_schema: ['version', 'name', 'applied_at'],
+  todo_sync_state: [
+    'customer_id', 'device_id', 'sync_token', 'sync_phase', 'snowflake_node_id',
+    'device_sequence', 'interval_seconds', 'bootstrap_started', 'bootstrap_catchup_pending',
+    'last_success_at', 'last_error', 'rejected_batch_id', 'created_at', 'updated_at',
+  ],
+  todo_domains: [
+    'id', 'customer_id', 'title', 'description', 'archived', 'position', 'created_at',
+    'client_updated_at', 'version_device_id', 'version_client_sequence',
+    'version_command_uuid', 'sync_revision', 'deleted_flag', 'deleted_at', 'reconcile_pending',
+  ],
+  todos: [
+    'id', 'customer_id', 'domain_id', 'title', 'status', 'important', 'due_at', 'repeat_type',
+    'repeat_interval', 'remind_at', 'last_remind_at', 'last_complete_at', 'week_day',
+    'monthly_day', 'yearly_day', 'note', 'source', 'position', 'created_at',
+    'client_updated_at', 'version_device_id', 'version_client_sequence',
+    'version_command_uuid', 'sync_revision', 'deleted_flag', 'deleted_at', 'reconcile_pending',
+  ],
+  sub_todos: [
+    'id', 'customer_id', 'todo_id', 'title', 'status', 'position', 'created_at',
+    'client_updated_at', 'version_device_id', 'version_client_sequence',
+    'version_command_uuid', 'sync_revision', 'deleted_flag', 'deleted_at', 'reconcile_pending',
+  ],
+  todo_sync_baselines: [
+    'resource_type', 'resource_id', 'sync_revision', 'payload_json', 'reconcile_pending', 'updated_at',
+  ],
+  todo_sync_outbox: [
+    'command_order', 'command_uuid', 'command_type', 'resource_type', 'resource_id',
+    'parent_resource_id', 'args_json', 'preimage_json', 'state', 'batch_id', 'ack_revision',
+    'canonical_resource_type', 'canonical_resource_id', 'error_code', 'error_message',
+    'created_at', 'updated_at',
+  ],
+  todo_events: ['id', 'sequence', 'type', 'todo_id', 'domain_id', 'actor', 'payload', 'created_at'],
+} as const;
+
+export const TODOIST_SYNC_SCHEMA_V1_INDEXES = [
+  'todo_domain_customer_position',
+  'todo_customer_domain_position',
+  'todo_customer_status',
+  'sub_todo_customer_todo_position',
+  'todo_sync_outbox_send',
+  'todo_sync_outbox_resource',
+  'todo_event_sequence',
+] as const;
+
+interface TodoistSyncSchemaColumn {
+  name: unknown;
+}
+
+interface TodoistSyncSchemaIndex {
+  name: unknown;
+}
+
+interface TodoistSyncForeignKey {
+  table: unknown;
+  from: unknown;
+  to: unknown;
+}
+
+const quoteIdentifier = (value: string): string => `"${value.replace(/"/g, '""')}"`;
+
+export const assertTodoistSyncSchemaV1 = (db: TodoistSyncMigrationDatabase): void => {
+  for (const [table, expectedColumns] of Object.entries(TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS)) {
+    const rows = db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as TodoistSyncSchemaColumn[];
+    const actualColumns = rows.map((row) => row.name);
+    if (
+      actualColumns.length !== expectedColumns.length ||
+      expectedColumns.some((column, index) => actualColumns[index] !== column)
+    ) {
+      throw new Error(`[todoist sync] schema-v1 table ${table} does not match its column contract`);
+    }
+  }
+
+  const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all() as TodoistSyncSchemaIndex[];
+  const indexNames = new Set(indexes.map((row) => row.name));
+  for (const index of TODOIST_SYNC_SCHEMA_V1_INDEXES) {
+    if (!indexNames.has(index)) throw new Error(`[todoist sync] schema-v1 index ${index} is missing`);
+  }
+
+  const todoForeignKeys = db.prepare('PRAGMA foreign_key_list(todos)').all() as TodoistSyncForeignKey[];
+  const subTodoForeignKeys = db.prepare('PRAGMA foreign_key_list(sub_todos)').all() as TodoistSyncForeignKey[];
+  const hasTodoDomainKey = todoForeignKeys.some((row) => (
+    row.table === 'todo_domains' && row.from === 'domain_id' && row.to === 'id'
+  ));
+  const hasSubTodoKey = subTodoForeignKeys.some((row) => (
+    row.table === 'todos' && row.from === 'todo_id' && row.to === 'id'
+  ));
+  if (!hasTodoDomainKey || !hasSubTodoKey) {
+    throw new Error('[todoist sync] schema-v1 foreign-key contract is incomplete');
+  }
+};
+
 export const todoistSyncMigrations: readonly TodoistSyncMigration[] = [
   {
     version: 1,
@@ -180,42 +278,84 @@ export const todoistSyncMigrations: readonly TodoistSyncMigration[] = [
   },
 ];
 
+export class TodoistSyncMigrationError extends Error {
+  constructor(
+    readonly version: number,
+    readonly migrationName: string,
+    cause: unknown,
+  ) {
+    super(`[todoist sync] migration ${version} (${migrationName}) failed`, { cause });
+    this.name = 'TodoistSyncMigrationError';
+  }
+}
+
+interface TodoistSyncLedgerRow {
+  version: unknown;
+  name: unknown;
+}
+
+const assertTodoistSyncMigrationManifest = (migrations: readonly TodoistSyncMigration[]): void => {
+  let previous = 0;
+  for (const migration of migrations) {
+    if (!Number.isSafeInteger(migration.version) || migration.version <= previous) {
+      throw new Error('[todoist sync] migration manifest must contain ordered positive integer versions');
+    }
+    if (!migration.name.trim()) throw new Error('[todoist sync] migration name is required');
+    previous = migration.version;
+  }
+};
+
+const getTodoistSyncLedger = (db: TodoistSyncMigrationDatabase): TodoistSyncLedgerRow[] => {
+  const table = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='todoist_sync_schema'",
+  ).get();
+  if (!table) return [];
+  return db.prepare('SELECT version, name FROM todoist_sync_schema ORDER BY version').all() as TodoistSyncLedgerRow[];
+};
+
+const assertTodoistSyncLedger = (
+  rows: readonly TodoistSyncLedgerRow[],
+  migrations: readonly TodoistSyncMigration[],
+): number => {
+  const manifest = new Map(migrations.map((migration) => [migration.version, migration.name]));
+  let previous = 0;
+  for (const row of rows) {
+    if (!Number.isSafeInteger(row.version) || (row.version as number) <= previous) {
+      throw new Error('[todoist sync] migration ledger contains an invalid or unordered version');
+    }
+    const expectedName = manifest.get(row.version as number);
+    if (expectedName === undefined || row.name !== expectedName) {
+      throw new Error(`[todoist sync] migration ledger contains unknown entry ${String(row.version)}`);
+    }
+    previous = row.version as number;
+  }
+  return previous;
+};
+
 export const applyTodoistSyncMigrations = (
   db: TodoistSyncMigrationDatabase,
   migrations: readonly TodoistSyncMigration[] = todoistSyncMigrations,
 ): void => {
-  const ordered = [...migrations].sort((left, right) => left.version - right.version);
-  if (ordered.length !== migrations.length || ordered.some((migration, index) => migration !== migrations[index])) {
-    throw new Error('[todoist sync] migration manifest must already be ordered');
-  }
-  if (new Set(ordered.map((migration) => migration.version)).size !== ordered.length) {
-    throw new Error('[todoist sync] migration manifest contains duplicate versions');
-  }
-
-  db.exec('BEGIN IMMEDIATE;');
-  try {
-    const tableExists = (db as { prepare?: (sql: string) => { get(): unknown } }).prepare?.(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='todoist_sync_schema'",
-    ).get();
-    const current = tableExists
-      ? ((db as { prepare: (sql: string) => { get(): { version?: number } | undefined } }).prepare(
-        'SELECT MAX(version) AS version FROM todoist_sync_schema',
-      ).get()?.version ?? 0)
-      : 0;
-    for (const migration of ordered) {
-      if (migration.version <= current) continue;
+  assertTodoistSyncMigrationManifest(migrations);
+  const current = assertTodoistSyncLedger(getTodoistSyncLedger(db), migrations);
+  for (const migration of migrations) {
+    if (migration.version <= current) continue;
+    db.exec('BEGIN IMMEDIATE;');
+    try {
       migration.up(db);
-      (db as { prepare: (sql: string) => { run(...values: unknown[]): unknown } }).prepare(
+      db.prepare(
         'INSERT INTO todoist_sync_schema (version, name, applied_at) VALUES (?, ?, ?)',
       ).run(migration.version, migration.name, Date.now());
+      db.exec('COMMIT;');
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK;');
+      } catch {
+        // The failing runner may already have ended its transaction.
+      }
+      throw new TodoistSyncMigrationError(migration.version, migration.name, error);
     }
-    db.exec('COMMIT;');
-  } catch (error) {
-    try {
-      db.exec('ROLLBACK;');
-    } catch {
-      // The migration that failed may have rolled back the outer transaction itself.
-    }
-    throw error;
   }
+  assertTodoistSyncLedger(getTodoistSyncLedger(db), migrations);
+  assertTodoistSyncSchemaV1(db);
 };

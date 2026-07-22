@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3-multiple-ciphers';
 import { chmodSync, mkdirSync } from 'fs';
-import { dirname, join, normalize } from 'path';
+import { basename, dirname, join, normalize } from 'path';
 import { applyTodoistSyncMigrations } from './todoistSync.migration';
 
 export interface TodoistSyncDatabasePaths {
@@ -22,7 +22,10 @@ export interface TodoistSyncSqlExecutor {
 }
 
 export interface TodoistSyncRepositoryDatabase extends TodoistSyncSqlExecutor {
-  writeTransaction<T>(runner: (tx: TodoistSyncSqlExecutor) => Promise<T>): Promise<T>;
+  writeTransaction<T>(
+    runner: (tx: TodoistSyncSqlExecutor) => Promise<T>,
+    beforeCommit?: () => void,
+  ): Promise<T>;
 }
 
 const normalizeCustomerId = (customerId: string | number): string => {
@@ -65,6 +68,9 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
   private closed = false;
 
   constructor(path: string, password: string) {
+    if (basename(normalize(path)).toLowerCase() === 'main.db') {
+      throw new Error('[todoist sync] refusing to open legacy main.db');
+    }
     if (typeof password !== 'string' || password.length < 16 || password.length > 256) {
       throw new Error('[todoist sync] injected database password is invalid');
     }
@@ -72,6 +78,8 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
     if (process.platform !== 'win32') chmodSync(dirname(path), 0o700);
     this.raw = new Database(path);
     try {
+      this.raw.pragma("cipher = 'sqlcipher'");
+      this.raw.pragma('legacy = 4');
       this.raw.pragma(`key = ${quoteSqliteText(password)}`);
       this.raw.pragma('cipher_page_size = 8192');
       this.raw.pragma('foreign_keys = ON');
@@ -111,7 +119,10 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
     return result;
   }
 
-  async writeTransaction<T>(runner: (tx: TodoistSyncSqlExecutor) => Promise<T>): Promise<T> {
+  async writeTransaction<T>(
+    runner: (tx: TodoistSyncSqlExecutor) => Promise<T>,
+    beforeCommit?: () => void,
+  ): Promise<T> {
     this.assertOpen();
     const depth = this.transactionDepth;
     const savepoint = `todoist_sync_${depth}`;
@@ -119,6 +130,7 @@ export class TodoistSyncDatabase implements TodoistSyncRepositoryDatabase {
     this.raw.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`);
     try {
       const result = await runner(this);
+      beforeCommit?.();
       this.raw.exec(depth === 0 ? 'COMMIT' : `RELEASE SAVEPOINT ${savepoint}`);
       return result;
     } catch (error) {

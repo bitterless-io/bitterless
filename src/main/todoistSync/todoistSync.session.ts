@@ -13,20 +13,51 @@ import {
 } from './todoistSync.database';
 import { getOrCreateTodoistSyncRuntimePassword } from './todoistSyncPassword.service';
 import { TodoistSyncSnowflakeService } from './todoistSyncSnowflake.service';
-import { TodoistSyncRepository } from './todoistSync.repository';
+import {
+  TodoistSyncGenerationFenceError,
+  TodoistSyncRepository,
+} from './todoistSync.repository';
 import { TodoistSyncClient } from './todoistSync.client';
-import { TodoistSyncCoordinator } from './todoistSync.coordinator';
+import {
+  TodoistSyncCoordinator,
+  type TodoistSyncRunGeneration,
+} from './todoistSync.coordinator';
 import {
   TodoistSyncClockService,
   TodoistSyncClockStateStore,
 } from './todoistSyncClock.service';
 
-interface ActiveTodoistSyncSession {
+export interface TodoistSyncSessionCoordinator {
+  start(): void;
+  trigger(): void;
+  getStatus(clockState: TodoistSyncStatus['clock_state']): Promise<TodoistSyncStatus>;
+  dispose(): Promise<void>;
+}
+
+export interface TodoistSyncSessionRuntime {
+  database: { close(): void };
+  repository: TodoistSyncRepository;
+  coordinator: TodoistSyncSessionCoordinator;
+}
+
+export interface TodoistSyncSessionRuntimeContext {
+  sessionGeneration: number;
+  captureGeneration: () => TodoistSyncRunGeneration;
+  isGenerationCurrent: (generation: TodoistSyncRunGeneration) => boolean;
+  isClockWrong: () => boolean;
+}
+
+export interface TodoistSyncSessionServiceOptions {
+  clock?: TodoistSyncClockService;
+  createRuntime?: (
+    params: TodoistSyncActivateParams,
+    context: TodoistSyncSessionRuntimeContext,
+  ) => Promise<TodoistSyncSessionRuntime>;
+}
+
+interface ActiveTodoistSyncSession extends TodoistSyncSessionRuntime {
   identity: string;
   generation: number;
-  database: TodoistSyncDatabase;
-  repository: TodoistSyncRepository;
-  coordinator: TodoistSyncCoordinator;
 }
 
 const assertParams = (params: TodoistSyncActivateParams): TodoistSyncActivateParams => {
@@ -43,6 +74,17 @@ export class TodoistSyncSessionService {
   private transition: Promise<void> = Promise.resolve();
   private latestClockRequestGeneration = 0;
   private clock: TodoistSyncClockService | null = null;
+  private readonly createRuntime: (
+    params: TodoistSyncActivateParams,
+    context: TodoistSyncSessionRuntimeContext,
+  ) => Promise<TodoistSyncSessionRuntime>;
+
+  constructor(options: TodoistSyncSessionServiceOptions = {}) {
+    this.clock = options.clock ?? null;
+    this.createRuntime = options.createRuntime ?? (async (params, context) => (
+      await this.createDefaultRuntime(params, context)
+    ));
+  }
 
   activate(paramsValue: TodoistSyncActivateParams): Promise<void> {
     const params = assertParams(paramsValue);
@@ -80,12 +122,32 @@ export class TodoistSyncSessionService {
     this.latestClockRequestGeneration = params.request_generation;
     const sessionGeneration = this.generation;
     const requestGeneration = params.request_generation;
-    const result = await this.getClock().check(() => (
+    const clock = this.getClock();
+    const result = await clock.check(() => (
       sessionGeneration === this.generation && requestGeneration === this.latestClockRequestGeneration
     ));
+    const clockGeneration = clock.getGeneration();
+    const isCurrent = (): boolean => (
+      sessionGeneration === this.generation &&
+      requestGeneration === this.latestClockRequestGeneration &&
+      clockGeneration === clock.getGeneration()
+    );
+    if (!isCurrent()) return { status: 'stale', clock_state: clock.getState() };
     if (result.status === 'healthy' && this.active?.generation === sessionGeneration) {
-      const recovered = await this.active.repository.recoverClockRejected(result.clock_state.trusted_time_ms);
-      if (recovered) this.active.coordinator.trigger();
+      try {
+        await this.active.repository.recoverClockRejected(
+          result.clock_state.trusted_time_ms,
+          Date.now(),
+          isCurrent,
+        );
+        if (!isCurrent()) return { status: 'stale', clock_state: clock.getState() };
+        this.active.coordinator.trigger();
+      } catch (error) {
+        if (error instanceof TodoistSyncGenerationFenceError) {
+          return { status: 'stale', clock_state: clock.getState() };
+        }
+        throw error;
+      }
     }
     return result;
   }
@@ -116,6 +178,32 @@ export class TodoistSyncSessionService {
     if (this.active?.identity === identity && this.active.generation === generation) return;
     await this.closeActive();
     if (generation !== this.generation) return;
+    const context: TodoistSyncSessionRuntimeContext = {
+      sessionGeneration: generation,
+      captureGeneration: () => ({
+        session_generation: this.generation,
+        clock_generation: this.getClock().getGeneration(),
+      }),
+      isGenerationCurrent: (value) => (
+        value.session_generation === this.generation &&
+        value.clock_generation === this.getClock().getGeneration()
+      ),
+      isClockWrong: () => this.getClock().isWrong(),
+    };
+    const runtime = await this.createRuntime(params, context);
+    if (generation !== this.generation) {
+      await runtime.coordinator.dispose();
+      runtime.database.close();
+      return;
+    }
+    this.active = { identity, generation, ...runtime };
+    runtime.coordinator.start();
+  }
+
+  private async createDefaultRuntime(
+    params: TodoistSyncActivateParams,
+    context: TodoistSyncSessionRuntimeContext,
+  ): Promise<TodoistSyncSessionRuntime> {
     const paths = resolveTodoistSyncDatabasePaths(app.getPath('userData'), params.customerId);
     assertTodoistSyncDatabaseIsolation(paths, app.getPath('userData'));
     const password = getOrCreateTodoistSyncRuntimePassword(paths);
@@ -129,16 +217,12 @@ export class TodoistSyncSessionService {
       const coordinator = new TodoistSyncCoordinator({
         repository,
         client,
-        sessionGeneration: generation,
-        isClockWrong: () => this.getClock().isWrong(),
+        sessionGeneration: context.sessionGeneration,
+        captureGeneration: context.captureGeneration,
+        isGenerationCurrent: context.isGenerationCurrent,
+        isClockWrong: context.isClockWrong,
       });
-      if (generation !== this.generation) {
-        await coordinator.dispose();
-        database.close();
-        return;
-      }
-      this.active = { identity, generation, database, repository, coordinator };
-      coordinator.start();
+      return { database, repository, coordinator };
     } catch (error) {
       database.close();
       throw error;

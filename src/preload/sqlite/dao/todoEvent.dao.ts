@@ -1,6 +1,5 @@
 import { BaseDao } from './base.dao';
 import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
-import type { TodoEventMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 
 export type TodoEventActor = 'human' | 'ai' | 'system';
 
@@ -103,7 +102,7 @@ export const recordTodoEvent = async (params: TodoEventCreateParams): Promise<To
   return row ? toEventItem(row) : undefined;
 };
 
-export class TodoEventDao extends BaseDao implements TodoEventMcpDaoApi {
+export class TodoEventDao extends BaseDao {
   async create(params: TodoEventCreateParams): Promise<TodoEventItem | undefined> {
     return recordTodoEvent(params);
   }

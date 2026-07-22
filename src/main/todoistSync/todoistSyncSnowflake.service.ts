@@ -25,6 +25,7 @@ export class TodoistSyncSnowflakeService {
     if (this.nodeId !== null && this.nodeId !== nodeId) {
       throw new Error('[todoist sync] server changed this device Snowflake node');
     }
+    if (this.nodeId === nodeId) return;
     const snowflake = new Snowflake(TODOIST_SYNC_SNOWFLAKE_EPOCH);
     snowflake.workerId = nodeId >> 5;
     snowflake.processId = nodeId & 31;
@@ -34,6 +35,14 @@ export class TodoistSyncSnowflakeService {
 
   getNodeId(): number | null {
     return this.nodeId;
+  }
+
+  resetUncommittedNodeId(nodeId: number): void {
+    if (this.nodeId !== nodeId) {
+      throw new Error('[todoist sync] cannot reset a different Snowflake node');
+    }
+    this.nodeId = null;
+    this.snowflake = null;
   }
 
   generate(): string {

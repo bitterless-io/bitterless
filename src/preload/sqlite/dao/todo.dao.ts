@@ -3,7 +3,6 @@ import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
 import moment from 'moment';
 import { recordTodoEvent } from './todoEvent.dao';
 import type { TodoEventActor } from './todoEvent.dao';
-import type { TodoMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 
 export type TodoSource = 'human' | 'ai';
 
@@ -105,7 +104,7 @@ const parseEventPayload = (payload: string): Record<string, unknown> => {
   return {};
 };
 
-export class TodoDao extends BaseDao implements TodoMcpDaoApi {
+export class TodoDao extends BaseDao {
   async create(params: TodoInsertParams): Promise<TodoRow | undefined> {
     const now = Date.now();
     const source = normalizeTodoSource(params.source);

@@ -1,6 +1,7 @@
 import {
   TODOIST_SYNC_PATH,
   TODOIST_SYNC_TOKEN_HEADER,
+  parseTodoistSyncRequest,
   parseTodoistSyncRequestError,
   parseTodoistSyncResponse,
 } from '@shared/todoistSync/todoistSync.contract';
@@ -51,8 +52,8 @@ export class TodoistSyncClient {
   }
 
   async sync(syncToken: string, commands: TodoistSyncCommand[]): Promise<TodoistSyncResponse> {
-    if (commands.length > 100) throw new Error('[todoist sync] command batch exceeds 100');
     this.assertActive();
+    const request = parseTodoistSyncRequest({ sync_token: syncToken, commands });
     const controller = new AbortController();
     this.controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -63,7 +64,7 @@ export class TodoistSyncClient {
           'content-type': 'application/json',
           [TODOIST_SYNC_TOKEN_HEADER]: this.coreToken,
         },
-        body: JSON.stringify({ sync_token: syncToken, commands }),
+        body: JSON.stringify(request),
         signal: controller.signal,
       });
       const text = await response.text();
