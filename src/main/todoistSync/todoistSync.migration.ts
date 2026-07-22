@@ -122,6 +122,7 @@ const SCHEMA_V1 = `
   CREATE TABLE todo_sync_baselines (
     resource_type TEXT NOT NULL,
     resource_id TEXT NOT NULL,
+    parent_resource_id TEXT,
     sync_revision TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     reconcile_pending INTEGER NOT NULL DEFAULT 0,
@@ -174,6 +175,7 @@ const SCHEMA_V1 = `
   CREATE INDEX sub_todo_customer_todo_position ON sub_todos(customer_id, todo_id, position);
   CREATE INDEX todo_sync_outbox_send ON todo_sync_outbox(state, command_order);
   CREATE INDEX todo_sync_outbox_resource ON todo_sync_outbox(resource_type, resource_id, command_order);
+  CREATE INDEX todo_sync_baseline_parent ON todo_sync_baselines(resource_type, parent_resource_id, resource_id);
   CREATE INDEX todo_event_sequence ON todo_events(sequence);
 `;
 
@@ -202,7 +204,8 @@ export const TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS = {
     'version_command_uuid', 'sync_revision', 'deleted_flag', 'deleted_at', 'reconcile_pending',
   ],
   todo_sync_baselines: [
-    'resource_type', 'resource_id', 'sync_revision', 'payload_json', 'reconcile_pending', 'updated_at',
+    'resource_type', 'resource_id', 'parent_resource_id', 'sync_revision', 'payload_json',
+    'reconcile_pending', 'updated_at',
   ],
   todo_sync_outbox: [
     'command_order', 'command_uuid', 'command_type', 'resource_type', 'resource_id',
@@ -220,6 +223,7 @@ export const TODOIST_SYNC_SCHEMA_V1_INDEXES = [
   'sub_todo_customer_todo_position',
   'todo_sync_outbox_send',
   'todo_sync_outbox_resource',
+  'todo_sync_baseline_parent',
   'todo_event_sequence',
 ] as const;
 

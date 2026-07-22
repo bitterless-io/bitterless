@@ -55,6 +55,7 @@ interface OutboxRow {
 interface BaselineRow {
   resource_type: TodoistSyncResourceType;
   resource_id: string;
+  parent_resource_id: string | null;
   sync_revision: string;
   payload_json: string;
   reconcile_pending: number;
@@ -69,6 +70,8 @@ interface EventRow {
   payload: string;
   created_at: number;
 }
+
+type MaterializeResult = 'materialized' | 'removed' | 'deferred';
 
 export interface TodoistSyncOutboxBatch {
   id: string;
@@ -888,6 +891,7 @@ export class TodoistSyncRepository {
         changed = true;
       }
 
+      const affected = new Set<string>();
       if (batch) {
         for (const command of batch.commands) {
           const status = response.sync_status[command.uuid.toLowerCase()];
@@ -912,12 +916,12 @@ export class TodoistSyncRepository {
                WHERE command_uuid=? AND state='in_flight' AND batch_id=?`,
               [status.error_code, status.error, Date.now(), command.uuid, batch.id],
             );
-            await this.blockFailedDependencies(tx, command.uuid);
+            const blocked = await this.blockFailedDependencies(tx, command.uuid);
+            for (const target of blocked) affected.add(`${target.type}:${target.id}`);
           }
         }
       }
 
-      const affected = new Set<string>();
       for (const resource of response.todo_domains) {
         if (await this.applyBaseline(tx, 'todo_domain', resource)) affected.add(`todo_domain:${resource.id}`);
       }
@@ -928,11 +932,6 @@ export class TodoistSyncRepository {
         if (await this.applyBaseline(tx, 'sub_todo', resource)) affected.add(`sub_todo:${resource.id}`);
       }
 
-      for (const key of affected) {
-        const [type, id] = key.split(':') as [TodoistSyncResourceType, string];
-        await this.proveWaitingCommands(tx, type, id);
-        await this.materialize(tx, type, id);
-      }
       if (batch) {
         const batchRows = await tx.getAll<OutboxRow>(
           'SELECT * FROM todo_sync_outbox WHERE batch_id=? OR command_uuid IN (' + batch.commands.map(() => '?').join(',') + ')',
@@ -941,9 +940,42 @@ export class TodoistSyncRepository {
         for (const row of batchRows) {
           affected.add(`${row.resource_type}:${row.resource_id}`);
         }
-        for (const key of affected) {
-          const [type, id] = key.split(':') as [TodoistSyncResourceType, string];
-          await this.materialize(tx, type, id);
+      }
+
+      const rank: Record<TodoistSyncResourceType, number> = { todo_domain: 0, todo: 1, sub_todo: 2 };
+      const removals: Array<[TodoistSyncResourceType, string]> = [];
+      const materializations: Array<[TodoistSyncResourceType, string]> = [];
+      for (const key of affected) {
+        const target = key.split(':') as [TodoistSyncResourceType, string];
+        (await this.hasProjectionSource(tx, ...target) ? materializations : removals).push(target);
+      }
+      removals.sort((left, right) => rank[right[0]] - rank[left[0]] || left[1].localeCompare(right[1]));
+      materializations.sort((left, right) => rank[left[0]] - rank[right[0]] || left[1].localeCompare(right[1]));
+      const queue = [...removals, ...materializations];
+      const queued = new Set(queue.map(([type, id]) => `${type}:${id}`));
+      for (let index = 0; index < queue.length; index += 1) {
+        const [type, id] = queue[index];
+        if (type === 'todo' && !todoBefore.has(id)) {
+          eventTodoIds.add(id);
+          todoBefore.set(id, await this.getProjectionWith(tx, type, id));
+        }
+        const blocked = await this.proveWaitingCommands(tx, type, id);
+        blocked.sort((left, right) => rank[right.type] - rank[left.type] || left.id.localeCompare(right.id));
+        for (const target of blocked) {
+          const key = `${target.type}:${target.id}`;
+          affected.add(key);
+          if (queued.has(key)) continue;
+          queued.add(key);
+          queue.push([target.type, target.id]);
+        }
+        if (await this.materialize(tx, type, id) !== 'materialized') continue;
+        const dependents = await this.pendingDependentBaselines(tx, type, id);
+        for (const dependent of dependents) {
+          const key = `${dependent.type}:${dependent.id}`;
+          affected.add(key);
+          if (queued.has(key)) continue;
+          queued.add(key);
+          queue.push([dependent.type, dependent.id]);
         }
       }
 
@@ -1123,6 +1155,9 @@ export class TodoistSyncRepository {
     type: TodoistSyncResourceType,
     resource: TodoistSyncDomainResource | TodoistSyncTodoResource | TodoistSyncSubTodoResource,
   ): Promise<boolean> {
+    const parentResourceId = type === 'todo'
+      ? (resource as TodoistSyncTodoResource).domain_id
+      : type === 'sub_todo' ? (resource as TodoistSyncSubTodoResource).todo_id : null;
     const stored = await tx.getOptional<BaselineRow>(
       'SELECT * FROM todo_sync_baselines WHERE resource_type=? AND resource_id=?', [type, resource.id],
     );
@@ -1138,19 +1173,26 @@ export class TodoistSyncRepository {
       }
     }
     await tx.execute(
-      `INSERT INTO todo_sync_baselines (resource_type,resource_id,sync_revision,payload_json,reconcile_pending,updated_at)
-       VALUES (?,?,?,?,0,?) ON CONFLICT(resource_type,resource_id) DO UPDATE SET
-       sync_revision=excluded.sync_revision,payload_json=excluded.payload_json,reconcile_pending=0,updated_at=excluded.updated_at`,
-      [type, resource.id, resource.sync_revision, JSON.stringify(resource), Date.now()],
+      `INSERT INTO todo_sync_baselines (
+         resource_type,resource_id,parent_resource_id,sync_revision,payload_json,reconcile_pending,updated_at
+       ) VALUES (?,?,?,?,?,0,?) ON CONFLICT(resource_type,resource_id) DO UPDATE SET
+       parent_resource_id=excluded.parent_resource_id,sync_revision=excluded.sync_revision,
+       payload_json=excluded.payload_json,reconcile_pending=0,updated_at=excluded.updated_at`,
+      [type, resource.id, parentResourceId, resource.sync_revision, JSON.stringify(resource), Date.now()],
     );
     return true;
   }
 
-  private async proveWaitingCommands(tx: TodoistSyncSqlExecutor, type: TodoistSyncResourceType, id: string): Promise<void> {
+  private async proveWaitingCommands(
+    tx: TodoistSyncSqlExecutor,
+    type: TodoistSyncResourceType,
+    id: string,
+  ): Promise<Array<{ type: TodoistSyncResourceType; id: string }>> {
     const baseline = await tx.getOptional<BaselineRow>(
       'SELECT * FROM todo_sync_baselines WHERE resource_type=? AND resource_id=?', [type, id],
     );
-    if (!baseline) return;
+    if (!baseline) return [];
+    const blocked: Array<{ type: TodoistSyncResourceType; id: string }> = [];
     const rows = await tx.getAll<OutboxRow>(
       `SELECT * FROM todo_sync_outbox WHERE canonical_resource_type=? AND canonical_resource_id=?
        AND state IN ('acknowledged_waiting_resource','error_waiting_resource') ORDER BY command_order`,
@@ -1162,23 +1204,60 @@ export class TodoistSyncRepository {
         await tx.execute('DELETE FROM todo_sync_outbox WHERE command_uuid=?', [row.command_uuid]);
       } else {
         await tx.execute("UPDATE todo_sync_outbox SET state='permanent_failed',updated_at=? WHERE command_uuid=?", [Date.now(), row.command_uuid]);
-        await this.blockFailedDependencies(tx, row.command_uuid);
+        blocked.push(...await this.blockFailedDependencies(tx, row.command_uuid));
       }
     }
+    return blocked;
   }
 
-  private async blockFailedDependencies(tx: TodoistSyncSqlExecutor, failedUuid: string): Promise<void> {
+  private async blockFailedDependencies(
+    tx: TodoistSyncSqlExecutor,
+    failedUuid: string,
+  ): Promise<Array<{ type: TodoistSyncResourceType; id: string }>> {
     const failed = await tx.getOptional<OutboxRow>('SELECT * FROM todo_sync_outbox WHERE command_uuid=?', [failedUuid]);
-    if (!failed || !failed.command_type.endsWith('_add')) return;
-    await tx.execute(
-      `UPDATE todo_sync_outbox SET state='blocked_by_failed_dependency',error_code='FAILED_DEPENDENCY',updated_at=?
-       WHERE command_order>? AND state IN ('pending','clock_rejected')
-       AND (resource_id=? OR parent_resource_id=?)`,
-      [Date.now(), failed.command_order, failed.resource_id, failed.resource_id],
+    if (!failed || !failed.command_type.endsWith('_add')) return [];
+    const affected: Array<{ type: TodoistSyncResourceType; id: string }> = [];
+    const queue = [failed];
+    const expanded = new Set<string>();
+    for (let index = 0; index < queue.length; index += 1) {
+      const parent = queue[index];
+      if (expanded.has(parent.command_uuid)) continue;
+      expanded.add(parent.command_uuid);
+      const result = await tx.execute(
+        `UPDATE todo_sync_outbox SET state='blocked_by_failed_dependency',error_code='FAILED_DEPENDENCY',updated_at=?
+         WHERE command_order>? AND state IN ('pending','clock_rejected')
+         AND (resource_id=? OR parent_resource_id=?) RETURNING *`,
+        [Date.now(), parent.command_order, parent.resource_id, parent.resource_id],
+      );
+      const rows = (result.rows?._array ?? []) as OutboxRow[];
+      for (const row of rows) {
+        affected.push({ type: row.resource_type, id: row.resource_id });
+        if (row.command_type.endsWith('_add')) queue.push(row);
+      }
+    }
+    return affected;
+  }
+
+  private async hasProjectionSource(
+    tx: TodoistSyncSqlExecutor,
+    type: TodoistSyncResourceType,
+    id: string,
+  ): Promise<boolean> {
+    if (await tx.getOptional<{ resource_id: string }>(
+      'SELECT resource_id FROM todo_sync_baselines WHERE resource_type=? AND resource_id=?', [type, id],
+    )) return true;
+    return !!await tx.getOptional<{ command_uuid: string }>(
+      `SELECT command_uuid FROM todo_sync_outbox WHERE resource_type=? AND resource_id=?
+       AND command_type LIKE '%_add' AND state IN (${ACTIVE_OVERLAY_STATES.map(() => '?').join(',')}) LIMIT 1`,
+      [type, id, ...ACTIVE_OVERLAY_STATES],
     );
   }
 
-  private async materialize(tx: TodoistSyncSqlExecutor, type: TodoistSyncResourceType, id: string): Promise<void> {
+  private async materialize(
+    tx: TodoistSyncSqlExecutor,
+    type: TodoistSyncResourceType,
+    id: string,
+  ): Promise<MaterializeResult> {
     const baseline = await tx.getOptional<BaselineRow>(
       'SELECT * FROM todo_sync_baselines WHERE resource_type=? AND resource_id=?', [type, id],
     );
@@ -1229,10 +1308,62 @@ export class TodoistSyncRepository {
       }
     }
     if (!projection) {
+      if (type === 'todo_domain' && await tx.getOptional<{ id: string }>(
+        'SELECT id FROM todos WHERE domain_id=? AND customer_id=? LIMIT 1', [id, this.customerId],
+      )) return 'deferred';
+      if (type === 'todo' && await tx.getOptional<{ id: string }>(
+        'SELECT id FROM sub_todos WHERE todo_id=? AND customer_id=? LIMIT 1', [id, this.customerId],
+      )) return 'deferred';
       await tx.execute(`DELETE FROM ${this.tableFor(type)} WHERE id=? AND customer_id=?`, [id, this.customerId]);
-      return;
+      return 'removed';
+    }
+    if (type === 'todo') {
+      const parentId = assertTodoistSyncEntityId(projection.domain_id);
+      const parent = await tx.getOptional<{ id: string }>(
+        'SELECT id FROM todo_domains WHERE id=? AND customer_id=?', [parentId, this.customerId],
+      );
+      if (!parent) return 'deferred';
+    } else if (type === 'sub_todo') {
+      const parentId = assertTodoistSyncEntityId(projection.todo_id);
+      const parent = await tx.getOptional<{ id: string }>(
+        'SELECT id FROM todos WHERE id=? AND customer_id=?', [parentId, this.customerId],
+      );
+      if (!parent) return 'deferred';
     }
     await this.upsertProjection(tx, type, projection);
+    return 'materialized';
+  }
+
+  private async pendingDependentBaselines(
+    tx: TodoistSyncSqlExecutor,
+    type: TodoistSyncResourceType,
+    id: string,
+  ): Promise<Array<{ type: TodoistSyncResourceType; id: string }>> {
+    if (type === 'sub_todo') return [];
+    if (type === 'todo_domain') {
+      const rows = await tx.getAll<{ id: string }>(
+        `SELECT baseline.resource_id AS id
+         FROM todo_sync_baselines baseline
+         LEFT JOIN todos projection ON projection.id=baseline.resource_id AND projection.customer_id=?
+         WHERE baseline.resource_type='todo'
+           AND baseline.parent_resource_id=?
+           AND (projection.id IS NULL OR projection.sync_revision<>baseline.sync_revision)
+         ORDER BY baseline.resource_id`,
+        [this.customerId, id],
+      );
+      return rows.map((row) => ({ type: 'todo', id: row.id }));
+    }
+    const rows = await tx.getAll<{ id: string }>(
+      `SELECT baseline.resource_id AS id
+       FROM todo_sync_baselines baseline
+       LEFT JOIN sub_todos projection ON projection.id=baseline.resource_id AND projection.customer_id=?
+       WHERE baseline.resource_type='sub_todo'
+         AND baseline.parent_resource_id=?
+         AND (projection.id IS NULL OR projection.sync_revision<>baseline.sync_revision)
+       ORDER BY baseline.resource_id`,
+      [this.customerId, id],
+    );
+    return rows.map((row) => ({ type: 'sub_todo', id: row.id }));
   }
 
   private async upsertProjection(tx: TodoistSyncSqlExecutor, type: TodoistSyncResourceType, value: Record<string, unknown>): Promise<void> {

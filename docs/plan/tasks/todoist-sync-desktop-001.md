@@ -320,4 +320,55 @@ automated gates are complete.
   Core/Auth fixtures; the source DSH metadata fingerprint remained unchanged. This satisfies the
   desktop task's final external completion prerequisite without changing desktop runtime code.
 
+## post-deploy independent review P1 — 2026-07-22
+
+An independent final review found one release blocker after the first production rollout. Reconcile
+orders a fixed-H snapshot by revision and can return a Todo or SubTodo before its archived/completed
+parent crosses a 500-row page boundary. A concurrently rewritten parent can likewise move above H
+and arrive only in immediate incremental catch-up. Canonical baselines may commit in that order, but
+the desktop currently materializes every baseline immediately into SQLite tables whose parent foreign
+keys are restrictive; the transaction rolls back and the sync token cannot advance.
+
+The desktop fix must commit child baselines and advance the token while their parent projection is
+missing, defer only the entity-table materialization, and automatically materialize the waiting
+hierarchy when the parent later arrives. Deferred Todos must still emit their exact `actor=system`
+event when they become visible, without a feedback outbox command. Regression coverage must include
+an archived Domain arriving after a 500-Todo reconcile page and a completed Todo arriving after a
+500-SubTodo reconcile page, with restart-safe baselines, token advancement, final FK health, and no
+duplicate/skip.
+
+## P1 fix evidence — 2026-07-22
+
+- The schema-v1 baseline now records the optional parent resource ID behind a composite lookup
+  index. A response always commits the canonical baseline and opaque sync token, while projection
+  materialization returns a deferred result when its required parent row is not present.
+- Materialized Domains wake waiting Todo baselines; materialized Todos wake waiting SubTodo
+  baselines. Projection writes run Domain -> Todo -> SubTodo, while terminal optimistic rollbacks run
+  SubTodo -> Todo -> Domain. A null-canonical failed add recursively blocks unsent descendant adds
+  and includes them in the same child-first cleanup; physical parent removal also refuses to cross a
+  remaining child FK.
+- The native suite now covers an archived Domain arriving after exactly 500 Todos and a completed
+  Todo arriving after exactly 500 SubTodos. Both cases prove token advancement, 500 persisted child
+  baselines, zero premature child projections, eventual complete materialization, zero feedback
+  outbox rows, no duplicate event after replay, and healthy foreign keys. It additionally proves an
+  ACK baseline can settle its outbox before a missing parent projection arrives, and that a permanent
+  Todo-add failure removes an unsent blocked SubTodo before the Todo. The suite passes 23/23.
+- `yarn typecheck:todoist-sync`, `yarn audit:sqlite-migrations`, `yarn typecheck:todo-web`,
+  `yarn typecheck:mcp`, `yarn check:todo-window-runtime`, `yarn test:mcp:todo-smoke`, and
+  `yarn build` pass. `git diff --check` also passes.
+- This P1 changes only the desktop SQLCipher projection layer and its unreleased schema-v1 baseline.
+  It does not change the backend runtime, PostgreSQL schema, FC environment, or deployed archive;
+  publishing an identical replacement FC package would not exercise this fix and is intentionally
+  outside this patch. The already verified Shanghai FC deployment and clean production Todo database
+  remain unchanged.
+
+## independent P1 re-review — 2026-07-22
+
+Independent review of commit `99f8ad0` found no P1 or P2 issue and returned `APPROVED`. It verified
+the shared transaction boundary, parent-first writes, child-first terminal rollback, recursive
+dependency blocking, restrictive-FK guards, delayed ACK materialization, event deduplication, and
+the indexed baseline-parent lookup. The reviewer independently passed the 23/23 native suite,
+strict Todo sync/Web/MCP checks, SQLite release tests and migration audit, Todo runtime check, MCP
+smoke, and `git diff --check`; this task's own final gate also passed the complete Electron build.
+
 This task is complete.

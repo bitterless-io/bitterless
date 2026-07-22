@@ -9,6 +9,7 @@ import type {
   TodoistSyncCommandStatus,
   TodoistSyncDomainResource,
   TodoistSyncResponse,
+  TodoistSyncSubTodoResource,
   TodoistSyncTodoResource,
 } from '../../src/shared/todoistSync/todoistSync.type';
 import {
@@ -268,23 +269,45 @@ const todoResource = (
   deleted_at: options.deletedFlag ? 1_700_000_000_400 : null,
 });
 
+const subTodoResource = (
+  revision: string,
+  options: { id: string; todoId: string; title?: string; status?: 0 | 1 },
+): TodoistSyncSubTodoResource => ({
+  id: options.id,
+  todo_id: options.todoId,
+  title: options.title ?? 'Remote SubTodo',
+  status: options.status ?? 0,
+  position: 0,
+  created_at: 1_700_000_000_000,
+  client_updated_at: 1_700_000_000_100 + Number(revision),
+  version_device_id: 'remote-device',
+  version_client_sequence: 1,
+  version_command_uuid: REMOTE_UUID,
+  sync_revision: revision,
+  deleted_flag: '',
+  deleted_at: null,
+});
+
 const syncResponse = (options: {
   token: string;
   domains?: TodoistSyncDomainResource[];
   todos?: TodoistSyncTodoResource[];
+  subTodos?: TodoistSyncSubTodoResource[];
   statuses?: Record<string, TodoistSyncCommandStatus>;
   hasMore?: boolean;
+  fullSync?: boolean;
+  phase?: TodoistSyncResponse['sync_phase'];
 }): TodoistSyncResponse => ({
   sync_token: options.token,
-  full_sync: false,
-  sync_phase: 'incremental',
+  full_sync: options.fullSync ?? false,
+  sync_phase: options.phase ?? 'incremental',
   has_more: options.hasMore ?? false,
   server_time_ms: 1_700_000_000_500,
   snowflake_node_id: 7,
   sync_status: options.statuses ?? {},
   todo_domains: options.domains ?? [],
   todos: options.todos ?? [],
-  sub_todos: [],
+  sub_todos: options.subTodos ?? [],
 });
 
 const outboxRows = async (database: TodoistSyncDatabase): Promise<OutboxStateRow[]> => {
@@ -720,6 +743,191 @@ test('remote Todo projections emit exact system events without feedback outbox c
   }
 });
 
+test('reconcile commits 500 Todo baselines before an archived Domain and materializes them after restart', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-reconcile-domain-after-todos');
+  const domainId = '00000000000001000000';
+  const todos = Array.from({ length: 500 }, (_, index) => todoResource('1', {
+    id: (2_000_000n + BigInt(index)).toString().padStart(20, '0'),
+    domainId,
+    title: `Deferred Todo ${index}`,
+  }));
+  let activeDatabase: TodoistSyncDatabase | null = runtime.database;
+  try {
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'reconcile-domain-page-1',
+      todos,
+      fullSync: true,
+      phase: 'reconcile',
+      hasMore: true,
+    }), null);
+    assert.equal((await runtime.repository.getSyncState()).sync_token, 'reconcile-domain-page-1');
+    assert.equal((await runtime.database.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM todo_sync_baselines WHERE resource_type='todo' AND parent_resource_id=?",
+      [domainId],
+    )).count, 500);
+    assert.equal((await runtime.database.get<{ count: number }>('SELECT COUNT(*) AS count FROM todos')).count, 0);
+    assert.equal((await runtime.database.get<{ count: number }>('SELECT COUNT(*) AS count FROM todo_events')).count, 0);
+    runtime.database.assertHealthy();
+
+    activeDatabase.close();
+    activeDatabase = null;
+    const paths = resolveTodoistSyncDatabasePaths(runtime.userDataPath, '1');
+    const reopenedDatabase = new TodoistSyncDatabase(paths.databasePath, TEST_PASSWORD);
+    activeDatabase = reopenedDatabase;
+    const reopenedRepository = new TodoistSyncRepository(
+      reopenedDatabase,
+      '1',
+      TEST_DEVICE_ID,
+      new TodoistSyncSnowflakeService(7),
+    );
+    await reopenedRepository.initialize();
+    assert.equal((await reopenedRepository.getSyncState()).sync_token, 'reconcile-domain-page-1');
+    const parent = domainResource('2', 'Archived parent', { id: domainId, archived: 1 });
+    await reopenedRepository.applySyncResponse(syncResponse({
+      token: 'reconcile-domain-page-2',
+      domains: [parent],
+      fullSync: true,
+      phase: 'reconcile',
+    }), null);
+    assert.equal((await reopenedDatabase.get<{ count: number }>('SELECT COUNT(*) AS count FROM todos')).count, 500);
+    assert.equal((await reopenedDatabase.get<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM todos WHERE domain_id=?', [domainId],
+    )).count, 500);
+    assert.equal((await reopenedDatabase.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM todo_events WHERE type='todo.created' AND actor='system'",
+    )).count, 500);
+    assert.deepEqual(await outboxRows(reopenedDatabase), []);
+    await reopenedRepository.applySyncResponse(syncResponse({
+      token: 'reconcile-domain-repeat',
+      domains: [parent],
+      fullSync: true,
+      phase: 'reconcile',
+    }), null);
+    assert.equal((await reopenedDatabase.get<{ count: number }>('SELECT COUNT(*) AS count FROM todos')).count, 500);
+    assert.equal((await reopenedDatabase.get<{ count: number }>('SELECT COUNT(*) AS count FROM todo_events')).count, 500);
+    reopenedDatabase.assertHealthy();
+  } finally {
+    activeDatabase?.close();
+    cleanupRoot(runtime.root);
+  }
+});
+
+test('reconcile commits 500 SubTodo baselines before a completed Todo and materializes them once', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-reconcile-todo-after-subtodos');
+  const domainId = '00000000000002000000';
+  const todoId = '00000000000003000000';
+  const subTodos = Array.from({ length: 500 }, (_, index) => subTodoResource('2', {
+    id: (4_000_000n + BigInt(index)).toString().padStart(20, '0'),
+    todoId,
+    title: `Deferred SubTodo ${index}`,
+  }));
+  try {
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'completed-parent-domain',
+      domains: [domainResource('1', 'Live parent Domain', { id: domainId })],
+    }), null);
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'reconcile-subtodo-page-1',
+      subTodos,
+      fullSync: true,
+      phase: 'reconcile',
+      hasMore: true,
+    }), null);
+    assert.equal((await runtime.repository.getSyncState()).sync_token, 'reconcile-subtodo-page-1');
+    assert.equal((await runtime.database.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM todo_sync_baselines WHERE resource_type='sub_todo' AND parent_resource_id=?",
+      [todoId],
+    )).count, 500);
+    assert.equal((await runtime.database.get<{ count: number }>('SELECT COUNT(*) AS count FROM sub_todos')).count, 0);
+
+    const completedParent = todoResource('3', { id: todoId, domainId, status: 1, title: 'Completed parent' });
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'reconcile-subtodo-page-2',
+      todos: [completedParent],
+      fullSync: true,
+      phase: 'reconcile',
+    }), null);
+    assert.equal((await runtime.database.get<{ count: number }>('SELECT COUNT(*) AS count FROM sub_todos')).count, 500);
+    assert.equal((await runtime.database.get<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM sub_todos WHERE todo_id=?', [todoId],
+    )).count, 500);
+    assert.equal((await runtime.repository.getTodoById({ id: todoId }))?.status, 1);
+    assert.deepEqual(await outboxRows(runtime.database), []);
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'reconcile-subtodo-repeat',
+      todos: [completedParent],
+      fullSync: true,
+      phase: 'reconcile',
+    }), null);
+    assert.equal((await runtime.database.get<{ count: number }>('SELECT COUNT(*) AS count FROM sub_todos')).count, 500);
+    assert.equal((await runtime.database.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM todo_events WHERE type='todo.created' AND actor='system'",
+    )).count, 1);
+    runtime.database.assertHealthy();
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
+test('an acknowledged Todo baseline waits for its missing Domain projection without retaining outbox state', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-ack-before-parent');
+  const sourceDomainId = '00000000000005000000';
+  const targetDomainId = '00000000000006000000';
+  try {
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'ack-source-domain',
+      domains: [domainResource('1', 'Source Domain', { id: sourceDomainId })],
+    }), null);
+    const todo = await runtime.repository.createTodo({ domainId: sourceDomainId, title: 'Pending canonical parent' });
+    assert(todo);
+    const batch = await runtime.repository.takePendingBatch();
+    assert(batch);
+    assert.equal(batch.commands.length, 1);
+    const commandUuid = batch.commands[0].uuid;
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'ack-before-parent',
+      todos: [todoResource('2', { id: todo.id, domainId: targetDomainId, title: todo.title })],
+      statuses: {
+        [commandUuid]: {
+          status: 'ok',
+          applied: true,
+          sync_revision: '2',
+          canonical_resource: { resource_type: 'todo', id: todo.id },
+        },
+      },
+    }), batch);
+    assert.equal((await runtime.repository.getSyncState()).sync_token, 'ack-before-parent');
+    assert.deepEqual(await outboxRows(runtime.database), []);
+    assert.equal((await runtime.repository.getTodoById({ id: todo.id }))?.domain_id, sourceDomainId);
+    assert.equal((await runtime.database.get<{ parent_resource_id: string }>(
+      "SELECT parent_resource_id FROM todo_sync_baselines WHERE resource_type='todo' AND resource_id=?",
+      [todo.id],
+    )).parent_resource_id, targetDomainId);
+
+    const targetDomain = domainResource('3', 'Target Domain', { id: targetDomainId, archived: 1 });
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'ack-parent-arrived',
+      domains: [targetDomain],
+    }), null);
+    assert.equal((await runtime.repository.getTodoById({ id: todo.id }))?.domain_id, targetDomainId);
+    assert.equal((await runtime.database.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM todo_events WHERE type='todo.moved' AND actor='system' AND todo_id=?",
+      [todo.id],
+    )).count, 1);
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'ack-parent-repeat',
+      domains: [targetDomain],
+    }), null);
+    assert.equal((await runtime.database.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM todo_events WHERE type='todo.moved' AND actor='system' AND todo_id=?",
+      [todo.id],
+    )).count, 1);
+    runtime.database.assertHealthy();
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
 test('first bootstrap installs the assigned node before emitting a remote Todo event', { concurrency: false }, async () => {
   const root = createRoot('bitterless-todoist-first-bootstrap-event');
   const userDataPath = join(root, 'userData');
@@ -991,6 +1199,54 @@ test('permanent errors wait for canonical proof, then retry with a new UUID or d
       'discarded',
     );
     assert.equal((await runtime.repository.getDomainById({ id: REMOTE_DOMAIN_ID }))?.title, 'server-21');
+    runtime.database.assertHealthy();
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
+test('a null-canonical Todo add failure removes blocked SubTodo projections before their parent', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-terminal-parent-child');
+  const domainId = '00000000000007000000';
+  try {
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'terminal-parent-domain',
+      domains: [domainResource('1', 'Remote parent Domain', { id: domainId })],
+    }), null);
+    const todo = await runtime.repository.createTodo({ domainId, title: 'Rejected local Todo' });
+    assert(todo);
+    const subTodo = await runtime.repository.createSubTodo({ todoId: todo.id, title: 'Blocked local SubTodo' });
+    assert(subTodo);
+    const parentBatch = await runtime.repository.takePendingBatch(1);
+    assert(parentBatch);
+    assert.equal(parentBatch.commands.length, 1);
+    assert.equal(parentBatch.commands[0].type, 'todo_add');
+    const parentUuid = parentBatch.commands[0].uuid;
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'terminal-parent-child-committed',
+      statuses: {
+        [parentUuid]: {
+          status: 'error',
+          error_code: 'RESOURCE_NOT_FOUND',
+          error: 'parent no longer exists',
+          sync_revision: null,
+          canonical_resource: null,
+        },
+      },
+    }), parentBatch);
+
+    assert.equal((await runtime.repository.getSyncState()).sync_token, 'terminal-parent-child-committed');
+    assert.equal(await runtime.repository.getTodoById({ id: todo.id }), undefined);
+    assert.equal(await runtime.repository.getSubTodoById({ id: subTodo.id }), undefined);
+    assert.equal((await runtime.database.get<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM todos WHERE id=?', [todo.id],
+    )).count, 0);
+    assert.equal((await runtime.database.get<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM sub_todos WHERE id=?', [subTodo.id],
+    )).count, 0);
+    const rows = await outboxRows(runtime.database);
+    assert.equal(rows.find((row) => row.command_type === 'todo_add')?.state, 'permanent_failed');
+    assert.equal(rows.find((row) => row.command_type === 'sub_todo_add')?.state, 'blocked_by_failed_dependency');
     runtime.database.assertHealthy();
   } finally {
     closeRuntime(runtime);
