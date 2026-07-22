@@ -71,6 +71,18 @@ const coinDevCspPlugin = {
   }
 }
 
+const translatorDevCspPlugin = {
+  name: 'bitterless:translator-dev-csp',
+  apply: 'serve' as const,
+  transformIndexHtml(html: string, context: { path: string }) {
+    if (!context.path.includes('/translator/')) return html
+    return html.replace(
+      "connect-src 'none'",
+      "connect-src 'self' ws://localhost:* wss://localhost:*"
+    )
+  }
+}
+
 const generateEnvDefines = () => {
   const envRigPath = resolve('env.rig.json5');
   const envRigContent = readFileSync(envRigPath, 'utf-8');
@@ -131,6 +143,7 @@ export default defineConfig({
           llama: resolve('src/preload/llama/llama.preload.ts'),
           todo: resolve('src/preload/todo/todo.preload.ts'),
           eyesOnAgents: resolve('src/preload/eyesOnAgents/eyesOnAgents.preload.ts'),
+          translator: resolve('src/preload/translator/translator.preload.ts'),
           omni: resolve('src/preload/omni/omni.preload.ts'),
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
           coin: resolve('src/preload/coin/coin.preload.ts'),
@@ -169,6 +182,7 @@ export default defineConfig({
           llama: resolve('src/renderer/llama/index.html'),
           todo: resolve('src/renderer/todo/index.html'),
           eyesOnAgents: resolve('src/renderer/eyesOnAgents/index.html'),
+          translator: resolve('src/renderer/translator/index.html'),
           'omni/omniCell': resolve('src/renderer/omni/omniCell/index.html'),
           'omni/omniControl': resolve('src/renderer/omni/omniControl/index.html'),
           'omni/omniWindow': resolve('src/renderer/omni/omniWindow/index.html'),
@@ -207,6 +221,7 @@ export default defineConfig({
     plugins: [
       vue(),
       coinDevCspPlugin,
+      translatorDevCspPlugin,
       maestroSqliteDevCspPlugin,
       monacoEditorPlugin({ customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork') })
     ],

@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import type { RouteRecordNormalized } from 'vue-router';
+import {
+  generalSettingStore,
+  loadChatMenuVisibility,
+} from '@/views/setting/components/GeneralSetting/generalSetting.store';
 import HomeMenuItem from './homeMenuItem/HomeMenuItem.vue';
 
 const router = useRouter();
@@ -13,9 +16,14 @@ const menuItems = computed(() => {
     return [];
   }
   return layoutRoute.children
-    .filter((child) => child.meta?.icon && child.name !== 'setting')
+    .filter(
+      (child) =>
+        child.meta?.icon &&
+        child.name !== 'setting' &&
+        (child.name !== 'chat' || generalSettingStore.showChatMenu),
+    )
     .map((child) => ({
-      icon: child.meta.icon as string,
+      icon: child.meta?.icon as string,
       routeName: child.name as string,
     }));
 });
@@ -33,6 +41,10 @@ const settingItem = computed(() => {
 const navigate = (routeName: string) => {
   router.push({ name: routeName });
 };
+
+onMounted(() => {
+  void loadChatMenuVisibility();
+});
 </script>
 
 <template>

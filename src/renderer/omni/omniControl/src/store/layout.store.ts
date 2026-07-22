@@ -8,23 +8,27 @@ import type {
   OmniContentMode,
   OmniMiniAppId,
 } from '../types/layout.types';
-
-export const TODO_MINIAPP_URL = 'bl://miniapp/todo';
-export const EYES_ON_AGENTS_MINIAPP_URL = 'bl://miniapp/eyes-on-agents';
+import {
+  DEFAULT_OMNI_MINI_APP_ID,
+  OMNI_MINI_APP_DISPLAY_URLS,
+  parseOmniMiniAppId,
+} from '@shared/omni/omni.types';
 
 const createLeaf = (url = 'https://www.bing.com'): OmniPaneNode => ({
   id: nanoid(),
   type: 'leaf',
   url,
   contentMode: 'browser',
-  miniAppId: 'todo',
+  miniAppId: DEFAULT_OMNI_MINI_APP_ID,
 });
 
 const resolveContentMode = (node: OmniPaneNode): OmniContentMode =>
   node.contentMode === 'miniapp' ? 'miniapp' : 'browser';
 
 const resolveMiniAppId = (node: OmniPaneNode): OmniMiniAppId =>
-  node.miniAppId === 'eyesOnAgents' ? 'eyesOnAgents' : 'todo';
+  node.miniAppId === undefined
+    ? DEFAULT_OMNI_MINI_APP_ID
+    : parseOmniMiniAppId(node.miniAppId);
 
 export const getNodeContentMode = (node: OmniPaneNode): OmniContentMode =>
   resolveContentMode(node);
@@ -32,9 +36,7 @@ export const getNodeContentMode = (node: OmniPaneNode): OmniContentMode =>
 export const getNodeDisplayUrl = (node: OmniPaneNode): string =>
   getNodeContentMode(node) === 'browser'
     ? node.url || ''
-    : resolveMiniAppId(node) === 'eyesOnAgents'
-      ? EYES_ON_AGENTS_MINIAPP_URL
-      : TODO_MINIAPP_URL;
+    : OMNI_MINI_APP_DISPLAY_URLS[resolveMiniAppId(node)];
 
 const normalizeTree = (node: OmniPaneNode): OmniPaneNode => {
   if (node.type === 'leaf') {
@@ -218,7 +220,7 @@ class LayoutStore {
     const origCount = (node.children || []).length;
     const newChildren: OmniPaneNode[] = [];
     for (const child of node.children || []) {
-      let kept = null;
+      let kept: OmniPaneNode | null = null;
       kept = this.removeNodeFromTree(child, id);
       if (kept !== null) newChildren.push(kept);
     }

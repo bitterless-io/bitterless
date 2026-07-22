@@ -125,9 +125,22 @@ persistent across Bitterless restarts, not an in-memory set.
 
 Outbox inputs are bounded by schema, file size, and file count. Invalid or corrupt bytes are deleted
 and replaced by a content-free quarantine descriptor that surfaces a bounded observation error; an
-overflow marker also invalidates live hook evidence so EyesOnAgents never presents incomplete
-coverage as current. Receipt cleanup may remove old committed IDs only after no matching outbox file
-remains.
+overflow or storage marker invalidates live hook evidence so EyesOnAgents never presents incomplete
+coverage as current. A marker pauses replay until a fresh trusted Hook inspection establishes a
+recovery fence. Under the outbox lock, Bitterless discards only the untrustworthy prefix through the
+marker cutoff, acknowledges the marker last, and then replays the preserved suffix oldest-first.
+The cutover is bound to the exact durable marker inspected before recovery; a changed marker deletes
+nothing and starts a new generation. Failure to acquire the recovery lock does not fabricate a new
+delivery gap or move the cutoff.
+Removing observation is never a recovery instruction because it deletes the outbox. Receipt cleanup
+may remove old committed IDs only after no matching outbox file remains.
+
+Listener startup invalidates active Hook evidence before the socket accepts a new lifetime. That
+successful invalidation is the lifetime boundary: a durable delivery committed by the current
+listener may restore active state even when its provider occurrence time predates listener startup.
+The repository grants that current-listener authority only over `discovery + unknown`; newer
+concrete App Server or Hook evidence still wins by provider time. This permits offline replay without
+allowing a pre-start persisted working row to remain current.
 
 All SQLite timestamps are integers. The migration is idempotent and must pass the retained
 multi-version migration audit before packaging.
@@ -194,7 +207,9 @@ not listening, never **Observing**.
   the guide explicitly says that only Codex can record trust.
 - **Check again** performs a new `hooks/list`. If the long-lived App Server is connected it is
   reused. Otherwise Bitterless starts a short inspection connection, checks status, terminates it,
-  and leaves the user's App Server auto-connect choice unchanged.
+  and leaves the user's App Server auto-connect choice unchanged. When a durable coverage marker is
+  present, the same explicit check performs the fenced cutover and preserved-suffix replay after
+  trust is confirmed.
 - Window activation performs the same Hook-trust recheck whenever observation is installed or
   awaiting review. There is no independent Hook polling timer. The single ten-second poll uses the
   separate parameter-free `refreshThreadPages()` operation. It never inspects Hook definitions,
@@ -234,6 +249,8 @@ accepted from the renderer.
 - Events emitted while Bitterless is closed replay after launch; a lost acknowledgement cannot
   duplicate a runtime transition across restart.
 - Corrupt and overflowed outbox states fail visibly and invalidate live hook evidence.
+- A trusted recheck recovers a durable coverage marker without deleting the valid post-cutover
+  suffix; a failed or racing recovery retains truthful error state and remains retryable.
 - Shutdown, sign-out/resume, Disconnect, Disable, and overlapping actions preserve their separate
   intent and write-drain fences.
 - Core, bridge, App Server, repository, activation, UI-source, i18n, migration-audit, typecheck, and

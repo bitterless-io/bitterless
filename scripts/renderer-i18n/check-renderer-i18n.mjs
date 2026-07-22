@@ -11,6 +11,7 @@ const rendererEntries = [
   ['home', 'src/renderer/home/src/main.ts'],
   ['todo', 'src/renderer/todo/src/main.ts'],
   ['eyesOnAgents', 'src/renderer/eyesOnAgents/src/main.ts'],
+  ['translator', 'src/renderer/translator/src/main.ts'],
   ['connector', 'src/renderer/connector/src/main.ts'],
   ['omniWindow', 'src/renderer/omni/omniWindow/src/main.ts'],
   ['omniControl', 'src/renderer/omni/omniControl/src/main.ts'],
@@ -20,7 +21,7 @@ const rendererEntries = [
   ['maestroWorkbench', 'src/renderer/maestro/workbench/src/workbench.ts']
 ]
 
-assert.equal(rendererEntries.length, 10, 'renderer i18n inventory must own exactly ten entries')
+assert.equal(rendererEntries.length, 11, 'renderer i18n inventory must own exactly eleven entries')
 assert.equal(new Set(rendererEntries.map(([name]) => name)).size, rendererEntries.length)
 
 for (const [name, path] of rendererEntries) {

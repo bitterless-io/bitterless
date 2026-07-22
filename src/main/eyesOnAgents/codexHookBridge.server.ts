@@ -18,8 +18,10 @@ import type {
 } from '@shared/eyesOnAgents/codexHookBridge.type';
 import { parseEyesOnAgentsUuid } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import {
+  recoverCodexHookOutboxCoverageGap,
   replayCodexHookOutbox,
   type CodexHookOutboxCoverageGap,
+  type CodexHookOutboxCoverageRecoveryResult,
   type CodexHookOutboxReplayResult
 } from './codexHookOutbox.service';
 
@@ -39,6 +41,11 @@ type OutboxReplayer = (params: {
   outboxPath: string;
   onCoverageGap?: (gap: CodexHookOutboxCoverageGap) => void | Promise<void>;
 }) => Promise<CodexHookOutboxReplayResult>;
+type OutboxCoverageRecoverer = (params: {
+  outboxPath: string;
+  expectedGap: CodexHookOutboxCoverageGap;
+  now?: number;
+}) => CodexHookOutboxCoverageRecoveryResult;
 
 const getSocketIdentity = (path: string): UnixSocketIdentity => {
   const stats = lstatSync(path);
@@ -110,7 +117,9 @@ export class CodexHookBridgeServer {
   constructor(
     private readonly now: () => number = Date.now,
     private readonly serverFactory: ServerFactory = net.createServer,
-    private readonly outboxReplayer: OutboxReplayer = replayCodexHookOutbox
+    private readonly outboxReplayer: OutboxReplayer = replayCodexHookOutbox,
+    private readonly outboxCoverageRecoverer: OutboxCoverageRecoverer =
+      recoverCodexHookOutboxCoverageGap
   ) {}
 
   isListening(): boolean {
@@ -222,6 +231,56 @@ export class CodexHookBridgeServer {
     await this.consumeQueue;
   }
 
+  async recoverOutboxCoverageGap(expectedGap: CodexHookOutboxCoverageGap): Promise<void> {
+    const expectedGapSnapshot: CodexHookOutboxCoverageGap = {
+      schemaVersion: expectedGap.schemaVersion,
+      reasons: [...expectedGap.reasons],
+      firstDetectedAt: expectedGap.firstDetectedAt,
+      lastDetectedAt: expectedGap.lastDetectedAt,
+      occurrences: expectedGap.occurrences
+    };
+    const endpoint = this.endpoint;
+    const outboxPath = this.outboxPath;
+    if (!this.replayEnabled || !endpoint || !outboxPath) {
+      throw new Error('Codex hook outbox recovery is unavailable');
+    }
+    await this.waitForReplayDrain();
+    if (
+      !this.replayEnabled ||
+      this.endpoint !== endpoint ||
+      this.outboxPath !== outboxPath
+    ) {
+      throw new Error('Codex hook outbox recovery is unavailable');
+    }
+    const recovery = this.outboxCoverageRecoverer({
+      outboxPath,
+      expectedGap: expectedGapSnapshot,
+      now: this.now()
+    });
+    if (recovery.coverageGap) {
+      await this.reportCoverageGap(recovery.coverageGap);
+      throw new Error('Codex hook outbox coverage changed during recovery');
+    }
+    this.reportedCoverageGap = null;
+  }
+
+  async replayOutbox(): Promise<void> {
+    const endpoint = this.endpoint;
+    const outboxPath = this.outboxPath;
+    if (!this.replayEnabled || !endpoint || !outboxPath) {
+      throw new Error('Codex hook outbox replay is unavailable');
+    }
+    this.requestOutboxReplay();
+    await this.waitForReplayDrain();
+    if (
+      !this.replayEnabled ||
+      this.endpoint !== endpoint ||
+      this.outboxPath !== outboxPath
+    ) {
+      throw new Error('Codex hook outbox replay is unavailable');
+    }
+  }
+
   private requestOutboxReplay(): void {
     if (!this.replayEnabled || !this.endpoint || !this.outboxPath) return;
     this.replayRequested = true;
@@ -234,6 +293,20 @@ export class CodexHookBridgeServer {
       if (this.replayRequested) this.requestOutboxReplay();
     };
     void operation.then(clear, clear);
+  }
+
+  private async waitForReplayDrain(): Promise<void> {
+    while (this.replayPromise) {
+      const replayPromise = this.replayPromise;
+      await replayPromise;
+    }
+  }
+
+  private async reportCoverageGap(gap: CodexHookOutboxCoverageGap): Promise<void> {
+    const signature = JSON.stringify(gap);
+    if (signature === this.reportedCoverageGap) return;
+    if (this.onCoverageGap) await this.onCoverageGap(gap);
+    this.reportedCoverageGap = signature;
   }
 
   private async performOutboxReplay(): Promise<void> {
@@ -250,13 +323,7 @@ export class CodexHookBridgeServer {
           detectedGap = gap;
         }
       });
-      if (detectedGap && this.onCoverageGap) {
-        const signature = JSON.stringify(detectedGap);
-        if (signature !== this.reportedCoverageGap) {
-          await this.onCoverageGap(detectedGap);
-          this.reportedCoverageGap = signature;
-        }
-      }
+      if (detectedGap) await this.reportCoverageGap(detectedGap);
     }
   }
 

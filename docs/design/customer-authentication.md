@@ -118,9 +118,11 @@ awaited by navigation. A local runtime rejection is reported separately and cann
 mislabel the valid Core session as a credential failure.
 
 The Home renderer statically loads the public Login route shell and the authenticated Layout plus
-default Chat route in its entry graph. Moving from `/login` to `/chat`, including immediately after
+the experimental Chat route in its entry graph. Moving from `/login` to `/chat`, including immediately after
 first-password setup, is an in-memory route switch and must not request `Layout.vue` or `Chat.vue`
-from the development server at navigation time. Less-frequent Home routes may remain lazy-loaded.
+from the development server at navigation time. Development lands on Chat; production lands on the
+lazy-loaded Mini Apps route unless an explicit redirect is requested. Less-frequent Home routes may
+remain lazy-loaded.
 
 ## Visual contract
 

@@ -1,114 +1,167 @@
 <template>
-  <div class="llm-setting">
-    <div class="llm-setting__form">
-      <div class="llm-setting__field">
-        <label class="llm-setting__label">{{ i18nHelper.setting.llm.provider }}</label>
-        <a-select
-          v-model="llmSettingStore.llmSetting.provider"
-          :placeholder="i18nHelper.setting.llm.providerPlaceholder"
-          class="llm-setting__input"
-          allow-search
-          @change="onProviderChange"
-        >
-          <a-option v-for="p in PROVIDER_LIST" :key="p" :value="p">{{ p }}</a-option>
-        </a-select>
-      </div>
-      <div class="llm-setting__field">
-        <label class="llm-setting__label">{{ i18nHelper.setting.llm.model }}</label>
-        <a-select
-          v-model="llmSettingStore.llmSetting.model"
-          :placeholder="i18nHelper.setting.llm.modelPlaceholder"
-          class="llm-setting__input"
-          allow-search
-        >
-          <a-option v-for="m in filteredModels" :key="m.name" :value="m.name">{{ m.name }}</a-option>
-        </a-select>
-      </div>
-      <div class="llm-setting__field">
-        <label class="llm-setting__label">{{ i18nHelper.setting.llm.apiKey }}</label>
-        <a-input-password
-          v-model="llmSettingStore.llmSetting.apiKey"
-          :placeholder="i18nHelper.setting.llm.apiKeyPlaceholder"
-          class="llm-setting__input"
-          allow-clear
-        />
-      </div>
-      <div class="llm-setting__field">
-        <label class="llm-setting__label">{{ i18nHelper.setting.llm.endpoint }}</label>
-        <BLDropdownList trigger="click" :popup-max-height="200">
-          <a-input
-            ref="endpointInputRef"
-            v-model="llmSettingStore.llmSetting.endpoint"
-            :placeholder="i18nHelper.setting.llm.endpointPlaceholder"
-            class="llm-setting__input"
-            allow-clear
-          />
-          <template #content>
-            <BLDropdownListItem
-              v-for="item in filteredEndpointOptions"
-              :key="item.value"
-              :item-key="item.value"
-              @click="applyEndpoint"
+  <div name="modelConfig__page" class="model-config">
+    <a-spin :loading="llmSettingStore.loading" class="model-config__spin">
+      <section name="modelConfig__summary" class="model-config__summary">
+        <span class="model-config__eyebrow">{{ i18nHelper.setting.llm.activeModel }}</span>
+        <div class="model-config__summary-grid">
+          <div class="model-config__summary-item">
+            <span>{{ i18nHelper.setting.llm.provider }}</span>
+            <strong>{{ i18nHelper.setting.llm.codex }}</strong>
+          </div>
+          <div class="model-config__summary-item">
+            <span>{{ i18nHelper.setting.llm.model }}</span>
+            <strong>{{ modelLabel }}</strong>
+          </div>
+          <div class="model-config__summary-item">
+            <span>{{ i18nHelper.setting.llm.effort }}</span>
+            <strong>{{ effortLabel }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <div name="modelConfig__workspace" class="model-config__workspace">
+        <aside name="modelConfig__providers" class="model-config__providers">
+          <span class="model-config__providers-title">{{ i18nHelper.setting.llm.providers }}</span>
+          <button class="model-config__provider model-config__provider--active" type="button">
+            <span>{{ i18nHelper.setting.llm.codex }}</span>
+            <span
+              class="model-config__provider-dot"
+              :class="providerDotClass"
+              aria-hidden="true"
+            ></span>
+          </button>
+        </aside>
+
+        <section name="modelConfig__detail" class="model-config__detail">
+          <div class="model-config__auth" :class="authClass">
+            <div class="model-config__auth-copy">
+              <IconCheck v-if="llmSettingStore.authState === 'ready'" :size="16" />
+              <IconAlertTriangle v-else :size="16" />
+              <div>
+                <strong>{{ authTitle }}</strong>
+                <span v-if="authDescription">{{ authDescription }}</span>
+              </div>
+            </div>
+            <a-button
+              v-if="canLogin"
+              type="primary"
+              size="mini"
+              :loading="
+                llmSettingStore.action === 'login' || llmSettingStore.authState === 'authenticating'
+              "
+              :disabled="llmSettingStore.authState === 'authenticating'"
+              @click="llmSettingStore.login()"
             >
-              {{ item.label }}
-            </BLDropdownListItem>
-          </template>
-        </BLDropdownList>
-        <div class="llm-setting__hint">{{ i18nHelper.setting.llm.endpointHint }}</div>
+              <template #icon><IconLogin :size="14" /></template>
+              {{ i18nHelper.setting.llm.login }}
+            </a-button>
+            <a-button
+              v-else-if="llmSettingStore.authState === 'ready'"
+              size="mini"
+              :loading="llmSettingStore.action === 'logout'"
+              @click="llmSettingStore.logout()"
+            >
+              <template #icon><IconLogout :size="14" /></template>
+              {{ i18nHelper.setting.llm.logout }}
+            </a-button>
+          </div>
+
+          <div v-if="errorMessage" class="model-config__error" role="alert">
+            {{ errorMessage }}
+          </div>
+
+          <div class="model-config__fixed-fields">
+            <div class="model-config__field">
+              <div class="model-config__field-label">
+                <IconCpu :size="16" />
+                <span>{{ i18nHelper.setting.llm.model }}</span>
+              </div>
+              <div class="model-config__field-value">
+                <strong>{{ modelLabel }}</strong>
+                <span>{{ i18nHelper.setting.llm.fixed }}</span>
+              </div>
+            </div>
+            <div class="model-config__field">
+              <div class="model-config__field-label">
+                <IconGauge :size="16" />
+                <span>{{ i18nHelper.setting.llm.effort }}</span>
+              </div>
+              <div class="model-config__field-value">
+                <strong>{{ effortLabel }}</strong>
+                <span>{{ i18nHelper.setting.llm.fixed }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
-      <div class="llm-setting__actions">
-        <a-button type="primary" :loading="llmSettingStore.loading" @click="handleSave">
-          {{ i18nHelper.setting.llm.save  }}
-        </a-button>
-        <span v-if="llmSettingStore.saveStatus === 'success'" class="llm-setting__status--success">
-          {{ i18nHelper.setting.llm.saveSuccess }}
-        </span>
-        <span v-if="llmSettingStore.saveStatus === 'failed'" class="llm-setting__status--failed">
-          {{ i18nHelper.setting.llm.saveFailed }}
-        </span>
-      </div>
-    </div>
+    </a-spin>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { llmSettingStore, loadLLMSetting, saveLLMSetting } from './llmSetting.store';
+import { computed, onMounted } from 'vue';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconCpu,
+  IconGauge,
+  IconLogin,
+  IconLogout
+} from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import { PROVIDER_LIST, getModelsByProvider } from '../../store/model.constant';
-import { ENDPOINT_OPTIONS } from '../../store/endpoint.constant';
-import { BLDropdownList, BLDropdownListItem } from '@renderer/common/components/BLDropdownList';
+import {
+  MODEL_PROVIDER_CODEX_EFFORT,
+  MODEL_PROVIDER_CODEX_MODEL
+} from '@shared/modelProvider/modelProvider.contract';
+import { llmSettingStore } from './llmSetting.store';
 
-const filteredModels = computed(() => getModelsByProvider(llmSettingStore.llmSetting.provider));
+const modelLabel = MODEL_PROVIDER_CODEX_MODEL.toUpperCase();
+const effortLabel = MODEL_PROVIDER_CODEX_EFFORT;
 
-const onProviderChange = (): void => {
-  llmSettingStore.llmSetting.model = '';
-};
-
-const endpointInputRef = ref();
-
-const filteredEndpointOptions = computed(() => {
-  const keyword = (llmSettingStore.llmSetting.endpoint || '').toLowerCase();
-  if (!keyword) {
-    return ENDPOINT_OPTIONS;
-  }
-  return ENDPOINT_OPTIONS.filter((item) =>
-    item.label.toLowerCase().includes(keyword) || item.value.toLowerCase().includes(keyword),
-  );
+const authTitle = computed(() => {
+  if (llmSettingStore.authState === 'ready') return i18nHelper.setting.llm.connected;
+  if (llmSettingStore.authState === 'invalidated') return i18nHelper.setting.llm.invalidated;
+  if (llmSettingStore.authState === 'authenticating') return i18nHelper.setting.llm.authenticating;
+  if (llmSettingStore.authState === 'unavailable') return i18nHelper.setting.llm.unavailable;
+  return i18nHelper.setting.llm.loginRequired;
 });
 
-const applyEndpoint = (value: string | number | null): void => {
-  if (typeof value === 'string') {
-    llmSettingStore.llmSetting.endpoint = value;
-  }
-};
+const authDescription = computed(() =>
+  llmSettingStore.authState === 'ready'
+    ? `${i18nHelper.setting.llm.model} ${modelLabel} · ${i18nHelper.setting.llm.effort} ${effortLabel}`
+    : ''
+);
 
-const handleSave = async (): Promise<void> => {
-  await saveLLMSetting();
-};
+const canLogin = computed(
+  () =>
+    llmSettingStore.authState === 'login_required' ||
+    llmSettingStore.authState === 'invalidated' ||
+    llmSettingStore.authState === 'authenticating'
+);
+
+const authClass = computed(() => ({
+  'model-config__auth--ready': llmSettingStore.authState === 'ready',
+  'model-config__auth--warning': llmSettingStore.authState !== 'ready'
+}));
+
+const providerDotClass = computed(() => ({
+  'model-config__provider-dot--ready': llmSettingStore.authState === 'ready',
+  'model-config__provider-dot--busy': llmSettingStore.authState === 'authenticating',
+  'model-config__provider-dot--blocked':
+    llmSettingStore.authState !== null &&
+    llmSettingStore.authState !== 'ready' &&
+    llmSettingStore.authState !== 'authenticating'
+}));
+
+const errorMessage = computed(() => {
+  if (llmSettingStore.error === 'load') return i18nHelper.setting.llm.loadFailed;
+  if (llmSettingStore.error === 'login') return i18nHelper.setting.llm.loginFailed;
+  if (llmSettingStore.error === 'logout') return i18nHelper.setting.llm.logoutFailed;
+  return '';
+});
 
 onMounted(() => {
-  loadLLMSetting();
+  void llmSettingStore.initialize();
 });
 </script>
 

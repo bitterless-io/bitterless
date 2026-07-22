@@ -261,6 +261,7 @@ export interface EyesOnAgentsRepositoryApi {
   applyRuntimeEventDelivery(params: {
     deliveryId: string;
     event: EyesOnAgentsRuntimeEvent;
+    replayAuthority?: 'current_listener';
     hookLastUserPrompt?: EyesOnAgentsHookLastUserPromptCandidate;
   }): Promise<EyesOnAgentsRuntimeDeliveryPersistenceResult>;
   enrichMissingThreadTitle(params: {

@@ -1,10 +1,11 @@
 .agent-domain {
-  width: 300px;
+  width: auto;
   min-width: 300px;
+  max-width: 500px;
   max-height: 600px;
   min-height: 0;
   display: flex;
-  flex: 0 0 300px;
+  flex: 1 1 300px;
   flex-direction: column;
   align-self: flex-start;
   position: relative;
@@ -229,12 +230,4 @@
 
 .agent-domain__delete-option {
   color: #a13d35;
-}
-
-@media (max-width: 900px) {
-  .agent-domain {
-    width: 280px;
-    min-width: 280px;
-    flex-basis: 280px;
-  }
 }

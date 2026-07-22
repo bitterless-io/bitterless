@@ -60,8 +60,12 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-tiered-all-polling-019](tasks/eyes-on-agents-tiered-all-polling-019.md) | hot-page plus round-robin cold-page field refresh across All | done | eyes-on-agents-silent-focus-polling-018, eyes-on-agents-last-user-prompt-016 |
 | [eyes-on-agents-thread-ingestion-prompt-card-020](tasks/eyes-on-agents-thread-ingestion-prompt-card-020.md) | tolerant thread admission, title repair, compact latest-question echo, and consent guide | implemented; owner verification pending | eyes-on-agents-tiered-all-polling-019, eyes-on-agents-last-user-prompt-016 |
 | [eyes-on-agents-focus-read-all-021](tasks/eyes-on-agents-focus-read-all-021.md) | persistent Focus Read all action without falsifying Codex opens | implemented; owner verification pending | eyes-on-agents-sync-persistence-006, eyes-on-agents-compact-card-012 |
+| [eyes-on-agents-hook-coverage-recovery-022](tasks/eyes-on-agents-hook-coverage-recovery-022.md) | recover durable Hook coverage gaps without blocking App Server inventory | implemented; owner verification pending | eyes-on-agents-hook-delivery-007, eyes-on-agents-global-onboarding-008 |
+| [eyes-on-agents-flex-columns-023](tasks/eyes-on-agents-flex-columns-023.md) | 300–500px flex-width wrapped Domain columns | implemented; owner verification pending | eyes-on-agents-all-board-011 |
 | [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and observable SQLite-first startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
 | [desktop-package-size-002](tasks/desktop-package-size-002.md) | production dependency boundary and pre-sign desktop package-size gate | done | — |
+| [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
+| [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | in-progress | chat-production-entry-flag-001 |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | final three-family SQLite audit and production packaging proof | pending | todoist-sync-desktop-001 |
 | [window-state-persistence-001](tasks/window-state-persistence-001.md) | unified bounds, mode, and physical-display persistence for every visible top-level window | implemented; owner verification pending | — |
@@ -70,6 +74,7 @@ Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md
 [Coin sub-application](analysis/coin-subapp.md),
 [Coding-agent sessions](analysis/coding-agent-sessions.md),
 [EyesOnAgents](analysis/eyes-on-agents.md), and
+[Translator](analysis/translator.md),
 [Omni mini-app cells](analysis/omni-miniapp-cells.md), and
 [SQLite migration release gate](analysis/sqlite-migration-release-gate.md).
 

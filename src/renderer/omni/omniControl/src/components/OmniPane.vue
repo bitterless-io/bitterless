@@ -6,6 +6,7 @@ import 'splitpanes/dist/splitpanes.css';
 import OmniPaneMenuBar from './OmniPaneMenuBar.vue';
 import todoIcon from '@renderer/common/assets/icons/menu-icons/todo.png';
 import eyesOnAgentsIcon from '@renderer/common/assets/icons/eyes-on-agents.svg';
+import translatorIcon from '@renderer/common/assets/icons/translator.svg';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import {
   getNodeContentMode,
@@ -23,6 +24,27 @@ const props = defineProps<{
 }>();
 
 const isHorizontal = computed(() => props.node.direction === 'h');
+const miniApps = computed<Array<{
+  id: OmniMiniAppId;
+  icon: string;
+  name: string;
+}>>(() => [
+  {
+    id: 'todo',
+    icon: todoIcon,
+    name: i18nHelper.miniApp.todo.name,
+  },
+  {
+    id: 'eyesOnAgents',
+    icon: eyesOnAgentsIcon,
+    name: i18nHelper.miniApp.eyesOnAgents.name,
+  },
+  {
+    id: 'translator',
+    icon: translatorIcon,
+    name: i18nHelper.miniApp.translator.name,
+  },
+]);
 
 // Suppress spurious @resize events fired during splitpanes initial mount/render
 const isMounted = ref(false);
@@ -32,7 +54,7 @@ onMounted(() => {
 
 const throttledApplyLayout = useThrottleFn(() => {
   layoutStore.applyLayout();
-}, 50, { leading: false, trailing: true });
+}, 50, true, false);
 
 const onResize = (event: { panes: { min: number; max: number; size: number }[] }) => {
   if (!isMounted.value) return;
@@ -104,22 +126,16 @@ const handleClose = async (nodeId: string) => {
           class="omni-pane__miniapp-list"
         >
           <button
+            v-for="miniApp in miniApps"
+            :key="miniApp.id"
+            name="omniPane__miniApp"
             class="omni-pane__miniapp-item"
-            :class="{ 'omni-pane__miniapp-item--active': node.miniAppId !== 'eyesOnAgents' }"
+            :class="{ 'omni-pane__miniapp-item--active': node.miniAppId === miniApp.id }"
             type="button"
-            @click="handleMiniAppSelect(node.id, 'todo')"
+            @click="handleMiniAppSelect(node.id, miniApp.id)"
           >
-            <img class="omni-pane__miniapp-icon" :src="todoIcon" alt="" />
-            <span class="omni-pane__miniapp-name">{{ i18nHelper.miniApp.todo.name }}</span>
-          </button>
-          <button
-            class="omni-pane__miniapp-item"
-            :class="{ 'omni-pane__miniapp-item--active': node.miniAppId === 'eyesOnAgents' }"
-            type="button"
-            @click="handleMiniAppSelect(node.id, 'eyesOnAgents')"
-          >
-            <img class="omni-pane__miniapp-icon" :src="eyesOnAgentsIcon" alt="" />
-            <span class="omni-pane__miniapp-name">{{ i18nHelper.miniApp.eyesOnAgents.name }}</span>
+            <img class="omni-pane__miniapp-icon" :src="miniApp.icon" alt="" />
+            <span class="omni-pane__miniapp-name">{{ miniApp.name }}</span>
           </button>
         </div>
         <template v-else>

@@ -16,6 +16,8 @@ import './coinWindow.handler';
 import './maestroWindow.handler';
 import './applicationLanguage.handler';
 import './todoistSync.handler';
+import './modelProvider.handler';
+import './translator.handler';
 import { initMaestroXpc } from '@maestro-main/xpc/xpc.helper';
 // import { ptyManager } from '../ptyHelper/ptyManager';
 // import { PtyService } from '../ptyHelper/ptyXpc';

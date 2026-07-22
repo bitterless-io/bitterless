@@ -27,7 +27,13 @@ design document.
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
-  or local Todo/EyesOnAgents operation views with development and packaged runtime mapping.
+  or local Todo/EyesOnAgents/Translator operation views with development and packaged runtime mapping.
+- [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
+  cross-renderer XPC status, login synchronization, and persisted credential invalidation.
+- [Translator mini app](features/translator.md) - fixed GPT-5.5 low-effort realtime bilingual
+  translation inside Omni with strict Zod output.
+- [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
+  with a persisted General override and Mini Apps production landing.
 - [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
   upgrade audit required before signed production packaging.
 - [Startup diagnostics](features/startup-diagnostics.md) - SQLite-first but non-blocking GUI
@@ -66,6 +72,7 @@ design document.
 - [Coin delivery analysis](plan/analysis/coin-subapp.md)
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
 - [Omni mini-app cells delivery analysis](plan/analysis/omni-miniapp-cells.md)
+- [Translator delivery analysis](plan/analysis/translator.md)
 - [SQLite migration release-gate analysis](plan/analysis/sqlite-migration-release-gate.md)
 - [Todoist-style Todo sync delivery analysis](plan/analysis/todoist-sync.md)
 
@@ -74,6 +81,9 @@ design document.
 - [Desktop package includes build-only dependencies](issues/desktop-package-includes-build-only-dependencies.md) - fixed:
   renderer/build-only production dependencies and a duplicated CLI workspace inflated the macOS
   app to about 1.1 GiB; the committed package is now guarded at 220 MiB ASAR / 650 MiB app.
+- [EyesOnAgents Hook coverage recovery](issues/eyes-on-agents-hook-coverage-gap-deadlock.md) - fixed; owner verification pending:
+  a historical outbox coverage marker permanently blocks a currently trusted listener and also
+  prevents Refresh from reconciling the independent App Server inventory.
 - [Todo sync device identity changes across login methods](issues/todo-sync-device-identity-node-mismatch.md) - fixed:
   one persisted installation identity must be shared by password and email-code login.
 - [Todo batch SubTodo counts omit zero rows](issues/todo-subtodo-count-map-omits-zero.md) - fixed:

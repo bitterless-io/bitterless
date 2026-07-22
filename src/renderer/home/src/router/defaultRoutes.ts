@@ -4,6 +4,7 @@ import Layout from '@/views/layout/Layout.vue';
 import Login from '@/views/login/Login.vue';
 
 const isDev = import.meta.env.VITE_ENV === 'dev';
+const defaultHomePath = isDev ? '/chat' : '/mini-app';
 
 const baseRoutes: RouteRecordRaw[] = [
   {
@@ -71,11 +72,11 @@ export const defaultRoutes: RouteRecordRaw[] = [
   {
     path: '/',
     component: Layout,
-    redirect: '/chat',
+    redirect: defaultHomePath,
     children: [...baseRoutes, ...(isDev ? devRoutes : [])]
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/chat'
+    redirect: defaultHomePath
   }
 ];

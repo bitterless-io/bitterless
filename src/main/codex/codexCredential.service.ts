@@ -23,6 +23,16 @@ export interface CodexCredentialStatus {
   errorCode?: 'status-unavailable';
 }
 
+export type CodexCredentialTransitionKind = 'login-succeeded' | 'logout-succeeded';
+
+export interface CodexCredentialTransition {
+  provider: 'openai-codex';
+  kind: CodexCredentialTransitionKind;
+  observedAt: number;
+}
+
+export type CodexCredentialTransitionListener = (transition: CodexCredentialTransition) => void;
+
 export interface CodexDeviceCodeNotice {
   userCode: string;
   verificationHost: string;
@@ -127,6 +137,7 @@ export class CodexCredentialService {
   private readonly now: () => number;
   private readonly ensureDirectory: (path: string) => void;
   private readonly observers = new Set<CodexConnectObserver>();
+  private readonly transitionListeners = new Set<CodexCredentialTransitionListener>();
   private loginPromise: Promise<CodexCredentialStatus> | null = null;
 
   constructor(private readonly dependencies: CodexCredentialServiceDependencies) {
@@ -156,6 +167,11 @@ export class CodexCredentialService {
         errorCode: 'status-unavailable',
       };
     }
+  }
+
+  subscribeTransitions(listener: CodexCredentialTransitionListener): () => void {
+    this.transitionListeners.add(listener);
+    return () => this.transitionListeners.delete(listener);
   }
 
   connect(params: { method: CodexLoginMethod } & CodexConnectObserver): Promise<CodexCredentialStatus> {
@@ -188,7 +204,9 @@ export class CodexCredentialService {
     try {
       const pi = await this.dependencies.loadPiAuthModule();
       pi.AuthStorage.create(this.dependencies.authPath()).logout(CODEX_PROVIDER);
-      return await this.getStatus();
+      const status = await this.getStatus();
+      if (!status.connected && !status.errorCode) this.notifyTransition('logout-succeeded');
+      return status;
     } catch {
       throw new CodexCredentialError('logout-failed', 'Codex could not be disconnected.');
     }
@@ -252,6 +270,7 @@ export class CodexCredentialService {
       if (!status.connected) {
         throw new CodexCredentialError('login-failed', 'Codex sign-in did not create a usable credential.');
       }
+      this.notifyTransition('login-succeeded');
       return status;
     } catch (error) {
       if (timedOut) {
@@ -263,6 +282,21 @@ export class CodexCredentialService {
       if (timer) clearTimeout(timer);
       controller.abort();
       if (capture) await capture.close().catch(() => undefined);
+    }
+  }
+
+  private notifyTransition(kind: CodexCredentialTransitionKind): void {
+    const transition: CodexCredentialTransition = {
+      provider: CODEX_PROVIDER,
+      kind,
+      observedAt: this.now(),
+    };
+    for (const listener of this.transitionListeners) {
+      try {
+        listener(transition);
+      } catch {
+        // Credential operations must not fail because an observer is unavailable.
+      }
     }
   }
 }

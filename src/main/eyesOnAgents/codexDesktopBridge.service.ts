@@ -68,8 +68,8 @@ const HOOKS: HookSpec[] = [
 ];
 
 const MAX_BRIDGE_ERROR_LENGTH = 300;
-const HOOK_INSPECTION_ERROR = 'Codex hook inspection failed; reconnect or Sync to retry';
-const HOOK_OPERATIONAL_ERROR = 'Codex hook observation failed; reconnect or Sync to retry';
+const HOOK_INSPECTION_ERROR = 'Codex hook inspection failed; use Check status or Refresh to retry';
+const HOOK_OPERATIONAL_ERROR = 'Codex hook observation failed; use Check status or Refresh to retry';
 const MAX_HELPER_ARTIFACT_FILES = 16;
 const MAX_HELPER_ARTIFACT_BYTES = 512 * 1024;
 const RELATIVE_REQUIRE_PATTERN = /require\(["'](\.[^"']+)["']\)/g;

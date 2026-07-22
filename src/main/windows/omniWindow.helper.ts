@@ -1,7 +1,13 @@
 import { app, BaseWindow, WebContentsView, screen, session, shell } from 'electron';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 import { is } from '@electron-toolkit/utils';
 import { throttle } from 'es-toolkit';
+import {
+  DEFAULT_OMNI_MINI_APP_ID,
+  OMNI_MINI_APP_DISPLAY_URLS,
+  parseOmniMiniAppId,
+} from '@shared/omni/omni.types';
 import type {
   OmniCellLayout,
   OmniContentMode,
@@ -50,10 +56,19 @@ const MENUBAR_HEIGHT = 32;
 const CELL_MENUBAR_HEIGHT = 36;
 const DIVIDER_SIZE = 4;
 const OMNI_PARTITION = 'persist:omni';
-const TODO_MINIAPP_URL = 'bl://miniapp/todo';
-const EYES_ON_AGENTS_MINIAPP_URL = 'bl://miniapp/eyes-on-agents';
 const CHROME_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36';
+
+interface OmniMiniAppRuntime {
+  preloadFile: string;
+  rendererName: string;
+}
+
+const OMNI_MINI_APP_RUNTIME: Record<OmniMiniAppId, OmniMiniAppRuntime> = {
+  todo: { preloadFile: 'todo.js', rendererName: 'todo' },
+  eyesOnAgents: { preloadFile: 'eyesOnAgents.js', rendererName: 'eyesOnAgents' },
+  translator: { preloadFile: 'translator.js', rendererName: 'translator' },
+};
 
 function flattenTreePixels(
   node: OmniPaneNode,
@@ -103,16 +118,16 @@ const resolveContentMode = (node: Pick<OmniPaneNode, 'contentMode'>): OmniConten
   node.contentMode === 'miniapp' ? 'miniapp' : 'browser';
 
 const resolveMiniAppId = (node: Pick<OmniPaneNode, 'miniAppId'>): OmniMiniAppId =>
-  node.miniAppId === 'eyesOnAgents' ? 'eyesOnAgents' : 'todo';
+  node.miniAppId === undefined
+    ? DEFAULT_OMNI_MINI_APP_ID
+    : parseOmniMiniAppId(node.miniAppId);
 
 const getCellDisplayUrl = (cell: Pick<
   OmniCellLayout,
   'contentMode' | 'miniAppId' | 'url'
 >): string => {
   if (cell.contentMode === 'browser') return cell.url;
-  return cell.miniAppId === 'eyesOnAgents'
-    ? EYES_ON_AGENTS_MINIAPP_URL
-    : TODO_MINIAPP_URL;
+  return OMNI_MINI_APP_DISPLAY_URLS[cell.miniAppId];
 };
 
 const extractTreeLeaves = (node: OmniPaneNode): Array<Pick<
@@ -434,7 +449,7 @@ export class OmniWindowHelper {
     const normalizedCells = cells.map((cell) => ({
       ...cell,
       contentMode: cell.contentMode === 'miniapp' ? 'miniapp' : 'browser',
-      miniAppId: cell.miniAppId === 'eyesOnAgents' ? 'eyesOnAgents' : 'todo',
+      miniAppId: parseOmniMiniAppId(cell.miniAppId),
     }) satisfies OmniCellLayout);
     this.currentLayout = normalizedCells;
     if (tree) this.currentLayoutTree = tree;
@@ -529,50 +544,48 @@ export class OmniWindowHelper {
     });
   }
 
-  private createTodoCellContentView(): WebContentsView {
-    return new WebContentsView({
-      webPreferences: {
-        preload: join(app.getAppPath(), 'out', 'preload', 'todo.js'),
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        additionalArguments: ['--mode=omni'],
-      },
-    });
-  }
-
-  private createEyesOnAgentsCellContentView(): WebContentsView {
-    return new WebContentsView({
-      webPreferences: {
-        preload: join(app.getAppPath(), 'out', 'preload', 'eyesOnAgents.js'),
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        additionalArguments: ['--mode=omni'],
-      },
-    });
-  }
-
   private createMiniAppCellContentView(miniAppId: OmniMiniAppId): WebContentsView {
-    return miniAppId === 'eyesOnAgents'
-      ? this.createEyesOnAgentsCellContentView()
-      : this.createTodoCellContentView();
+    const runtime = OMNI_MINI_APP_RUNTIME[miniAppId];
+    return new WebContentsView({
+      webPreferences: {
+        preload: join(app.getAppPath(), 'out', 'preload', runtime.preloadFile),
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        additionalArguments: ['--mode=omni'],
+      },
+    });
+  }
+
+  private getMiniAppRendererTarget(miniAppId: OmniMiniAppId): {
+    filePath: string | null;
+    url: string;
+  } {
+    const { rendererName } = OMNI_MINI_APP_RUNTIME[miniAppId];
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      const rendererBaseUrl = process.env['ELECTRON_RENDERER_URL'].replace(/\/+$/, '');
+      return {
+        filePath: null,
+        url: `${rendererBaseUrl}/${rendererName}/index.html`,
+      };
+    }
+    const filePath = join(app.getAppPath(), 'out', 'renderer', rendererName, 'index.html');
+    return {
+      filePath,
+      url: pathToFileURL(filePath).href,
+    };
   }
 
   private loadMiniAppCellContent(
     content: WebContentsView,
     miniAppId: OmniMiniAppId,
   ): void {
-    const rendererName = miniAppId === 'eyesOnAgents' ? 'eyesOnAgents' : 'todo';
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      content.webContents.loadURL(
-        `${process.env['ELECTRON_RENDERER_URL']}/${rendererName}/index.html`,
-      ).catch(() => {});
+    const target = this.getMiniAppRendererTarget(miniAppId);
+    if (!target.filePath) {
+      content.webContents.loadURL(target.url).catch(() => {});
       return;
     }
-    content.webContents.loadFile(
-      join(app.getAppPath(), 'out', 'renderer', rendererName, 'index.html'),
-    ).catch(() => {});
+    content.webContents.loadFile(target.filePath).catch(() => {});
   }
 
   private addCell(layoutCell: OmniCellLayout): void {
@@ -610,12 +623,14 @@ export class OmniWindowHelper {
         this.notifyCellUrl(id, navUrl);
       });
     } else {
-      // A Todo cell has a privileged first-party preload. Never allow it to become a web browser.
+      // Mini-app cells have privileged first-party preloads. Never allow one to become a browser.
+      const expectedRendererUrl = this.getMiniAppRendererTarget(miniAppId).url;
       content.webContents.setWindowOpenHandler((details) => {
         if (/^https?:\/\//i.test(details.url)) shell.openExternal(details.url);
         return { action: 'deny' };
       });
       content.webContents.on('will-navigate', (event, navigationUrl) => {
+        if (navigationUrl === expectedRendererUrl) return;
         event.preventDefault();
         if (/^https?:\/\//i.test(navigationUrl)) shell.openExternal(navigationUrl);
       });

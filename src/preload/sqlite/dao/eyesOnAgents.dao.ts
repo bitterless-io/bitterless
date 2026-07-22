@@ -402,7 +402,8 @@ const runtimePersistenceResult = (
 };
 
 const applyRuntimeEventInTransaction = (
-  event: EyesOnAgentsRuntimeEvent
+  event: EyesOnAgentsRuntimeEvent,
+  hasCurrentListenerReplayAuthority = false
 ): EyesOnAgentsRuntimePersistenceResult => {
   const now = Date.now();
   const domainId = defaultDomainId();
@@ -450,13 +451,23 @@ const applyRuntimeEventInTransaction = (
   const created = Number(inserted.changes) === 1;
 
   const existing = sqliteManager.db.prepare(
-    `SELECT status_observed_at, active_turn_id
+    `SELECT runtime_state, status_source, status_observed_at, active_turn_id
      FROM eyes_on_agents_thread WHERE thread_id = ?`
   ).get(event.threadId) as {
+    runtime_state: string;
+    status_source: string;
     status_observed_at: number | null;
     active_turn_id: string | null;
   };
-  if (existing.status_observed_at !== null && existing.status_observed_at > event.observedAt) {
+  const mayRestoreUnknownDiscovery = hasCurrentListenerReplayAuthority
+    && event.source === 'codex_hook'
+    && existing.status_source === 'discovery'
+    && parseEyesOnAgentsRuntimeState(existing.runtime_state) === 'unknown';
+  if (
+    !mayRestoreUnknownDiscovery
+    && existing.status_observed_at !== null
+    && existing.status_observed_at > event.observedAt
+  ) {
     return runtimePersistenceResult(event.threadId, created);
   }
   if (event.project !== undefined) {
@@ -1132,6 +1143,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
   async applyRuntimeEventDelivery(params: {
     deliveryId: string;
     event: EyesOnAgentsRuntimeEvent;
+    replayAuthority?: 'current_listener';
     hookLastUserPrompt?: EyesOnAgentsHookLastUserPromptCandidate;
   }): Promise<EyesOnAgentsRuntimeDeliveryPersistenceResult> {
     if (!params) throw new Error('delivery params are required');
@@ -1139,6 +1151,12 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     const event = parseEyesOnAgentsRuntimeEvent(params.event);
     if (event.source !== 'codex_hook') {
       throw new Error('delivery event source must be codex_hook');
+    }
+    if (
+      params.replayAuthority !== undefined
+      && params.replayAuthority !== 'current_listener'
+    ) {
+      throw new Error('delivery replay authority is unsupported');
     }
     const hookLastUserPrompt = normalizeHookLastUserPromptCandidate(
       event,
@@ -1155,7 +1173,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         if (Number(result.changes) === 0) {
           return { duplicate: true, created: false, titleMissing: false };
         }
-        const persistence = applyRuntimeEventInTransaction(event);
+        const persistence = applyRuntimeEventInTransaction(
+          event,
+          params.replayAuthority === 'current_listener'
+        );
         if (hookLastUserPrompt !== undefined && event.type === 'turn_started') {
           applyHookLastUserPromptInTransaction(event, hookLastUserPrompt);
         }

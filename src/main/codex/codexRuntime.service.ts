@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import type { ModelProviderInvalidationReason } from '@shared/modelProvider/modelProvider.contract';
 
 export const CODEX_RUNTIME_PROVIDER = 'openai-codex' as const;
 export const CODEX_RUNTIME_MODELS = ['gpt-5.5', 'gpt-5.4'] as const;
@@ -107,6 +108,67 @@ export class CodexRuntimeError extends Error {
     this.name = 'CodexRuntimeError';
   }
 }
+
+export class CodexRuntimeAuthRequiredError extends CodexRuntimeError {
+  readonly kind = 'auth-required' as const;
+
+  constructor(readonly reason: ModelProviderInvalidationReason) {
+    super('provider-error');
+    this.name = 'CodexRuntimeAuthRequiredError';
+  }
+}
+
+const authErrorText = (value: unknown): string => {
+  if (typeof value === 'string') return value.slice(0, 4_096);
+  if (value instanceof Error) {
+    const cause = 'cause' in value ? authErrorText(value.cause) : '';
+    return `${value.name} ${value.message} ${cause}`.slice(0, 4_096);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const record = value as Record<string, unknown>;
+  const fields = ['code', 'status', 'statusCode', 'message', 'error', 'errorMessage', 'body'];
+  const parts: string[] = [];
+  for (const field of fields) {
+    const part = record[field];
+    if (typeof part === 'string' || typeof part === 'number') parts.push(String(part));
+  }
+  return parts.join(' ').slice(0, 4_096);
+};
+
+export const classifyCodexRuntimeAuthError = (
+  value: unknown,
+): ModelProviderInvalidationReason | null => {
+  const text = authErrorText(value);
+  if (!text) return null;
+
+  if (/\binvalid[_-]?grant\b/i.test(text)) return 'invalid-grant';
+  if (/\b(?:token|credential|oauth|authentication)\b[^\n]{0,80}\b(?:revoked|invalidated)\b/i.test(text)) {
+    return 'revoked';
+  }
+  if (/\b(?:invalid[_-]?token|token[_ -]invalid|invalid authentication token)\b/i.test(text)) {
+    return 'invalid-token';
+  }
+  if (/\b(?:token|credential|oauth|authentication|session)\b[^\n]{0,80}\bexpired\b|\bexpired\b[^\n]{0,80}\b(?:token|credential|oauth|authentication|session)\b/i.test(text)) {
+    return 'expired';
+  }
+  if (/\bexpired or incomplete\b/i.test(text)) return 'expired';
+  if (/\b(?:sign[ -]?in|required to sign in|not signed in|login required|authentication required)\b/i.test(text)) {
+    return 'sign-in-required';
+  }
+
+  if (/\b(?:403|forbidden|cloudflare|timed?\s*out|timeout|rate[ -]?limit|blocked)\b/i.test(text)) {
+    return null;
+  }
+  if (/\b401\b|\bunauthori[sz]ed\b|\bauthentication failed\b/i.test(text)) {
+    return 'unauthorized';
+  }
+  return null;
+};
+
+const throwIfAuthRequired = (value: unknown): void => {
+  const reason = classifyCodexRuntimeAuthError(value);
+  if (reason) throw new CodexRuntimeAuthRequiredError(reason);
+};
 
 const extractMessageText = (message?: CodexRuntimePiMessage): string => {
   if (!message) return '';
@@ -249,6 +311,7 @@ export class CodexRuntimeService {
     let finalText = '';
     let stopReason = '';
     let providerError = false;
+    const providerErrorDetails: string[] = [];
     let outputLimit = false;
     let toolViolation = false;
 
@@ -288,6 +351,8 @@ export class CodexRuntimeService {
             finalText = extractMessageText(message);
             stopReason = typeof inner.reason === 'string' ? inner.reason : '';
             providerError = inner.type === 'error' || Boolean((inner.message ?? inner.error)?.errorMessage);
+            if (message?.errorMessage) providerErrorDetails.push(message.errorMessage);
+            if (inner.type === 'error') providerErrorDetails.push(extractMessageText(message));
             acceptText(finalText);
           }
         }
@@ -296,6 +361,7 @@ export class CodexRuntimeService {
           finalText = extractMessageText(event.message);
           stopReason = event.message.stopReason ?? stopReason;
           providerError = providerError || Boolean(event.message.errorMessage);
+          if (event.message.errorMessage) providerErrorDetails.push(event.message.errorMessage);
           acceptText(finalText);
         }
       });
@@ -309,6 +375,7 @@ export class CodexRuntimeService {
       if (toolViolation) throw new CodexRuntimeError('tool-violation');
       if (outputLimit) throw new CodexRuntimeError('output-limit');
       if (providerError || ['error', 'length', 'aborted'].includes(stopReason)) {
+        throwIfAuthRequired(providerErrorDetails.join('\n'));
         throw new CodexRuntimeError('provider-error');
       }
 
@@ -327,6 +394,7 @@ export class CodexRuntimeService {
       if (input.signal.aborted) throw new CodexRuntimeError('cancelled');
       if (toolViolation) throw new CodexRuntimeError('tool-violation');
       if (outputLimit) throw new CodexRuntimeError('output-limit');
+      throwIfAuthRequired(error);
       throw new CodexRuntimeError('provider-error');
     } finally {
       unsubscribe?.();

@@ -1006,6 +1006,10 @@ test('Domain board wraps one draggable list and uses clone-only fixed projection
   assert.match(domain, /props\.focus \|\| props\.all[\s\S]*pull: 'clone', put: false/);
   assert.match(domain, /:sort="!focus && !all"/);
   assert.match(domainStyles, /\.agent-domain\s*\{[^}]*max-height: 600px;/);
+  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*min-width: 300px;/);
+  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*max-width: 500px;/);
+  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*flex: 1 1 300px;/);
+  assert.doesNotMatch(domainStyles, /flex:\s*0 0 300px|min-width:\s*280px|flex-basis:\s*280px/);
   const domainBody = cssRule(domainStyles, '.agent-domain__body');
   assert.match(domainBody, /overflow-y: auto/);
   assert.match(domainBody, /padding: 0 9px 9px/);

@@ -22,6 +22,7 @@ import {
   parseEyesOnAgentsThreadIdParams,
 } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import { codexHookBridgeServer } from '../eyesOnAgents/codexHookBridge.server';
+import type { CodexHookOutboxCoverageGap } from '../eyesOnAgents/codexHookOutbox.service';
 import { CodexDesktopBridgeService } from '../eyesOnAgents/codexDesktopBridge.service';
 import { CodexAppServerSupervisor } from '../eyesOnAgents/codexAppServer.supervisor';
 import { EyesOnAgentsService } from '../eyesOnAgents/eyesOnAgents.service';
@@ -58,8 +59,8 @@ const startBridgeListener = async (): Promise<void> => {
       consume: async (delivery) => {
         return await eyesOnAgentsService.commitCodexHookDelivery(delivery);
       },
-      onCoverageGap: async () => {
-        await eyesOnAgentsService.reportCodexHookCoverageGap();
+      onCoverageGap: async (gap) => {
+        await eyesOnAgentsService.reportCodexHookCoverageGap(gap);
       }
     });
   })();
@@ -92,7 +93,13 @@ eyesOnAgentsService = new EyesOnAgentsService({
   desktopBridge,
   bridgeListener: {
     start: startBridgeListener,
-    stop: stopBridgeListener
+    stop: stopBridgeListener,
+    recoverOutboxCoverageGap: async (expectedGap: CodexHookOutboxCoverageGap) => {
+      await codexHookBridgeServer.recoverOutboxCoverageGap(expectedGap);
+    },
+    replayOutbox: async () => {
+      await codexHookBridgeServer.replayOutbox();
+    }
   },
   openExternal: async (url) => await shell.openExternal(url),
   broadcastChanged: () => xpcMain.broadcast('eyes-on-agents/changed', {})

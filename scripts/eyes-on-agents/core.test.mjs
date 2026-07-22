@@ -9,6 +9,20 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-eyes-core-'));
 const THREAD_ID = '019f653a-2ef7-7031-8f6b-c770bacffbb2';
 const ARCHIVED_THREAD_ID = '11111111-1111-4111-8111-111111111111';
+const COVERAGE_GAP = {
+  schemaVersion: 1,
+  reasons: ['storage_unavailable'],
+  firstDetectedAt: 500,
+  lastDetectedAt: 600,
+  occurrences: 1
+};
+const NEWER_COVERAGE_GAP = {
+  schemaVersion: 1,
+  reasons: ['storage_unavailable', 'outbox_overflow'],
+  firstDetectedAt: 500,
+  lastDetectedAt: 700,
+  occurrences: 2
+};
 const refreshThreadId = (index) => (
   `${index.toString(16).padStart(8, '0')}-0000-4000-8000-${index.toString(16).padStart(12, '0')}`
 );
@@ -180,7 +194,8 @@ try {
       hookBridgeListening: true,
       hookBridgeListeningSince: 120_002
     }),
-    'unknown'
+    'working',
+    'current-listener replay remains active after listener-start invalidation even with an older provider timestamp'
   );
   assert.equal(
     contract.effectiveEyesOnAgentsRuntimeState({
@@ -284,7 +299,9 @@ try {
   };
   const bridgeListener = {
     start: async () => undefined,
-    stop: async () => undefined
+    stop: async () => undefined,
+    recoverOutboxCoverageGap: async () => undefined,
+    replayOutbox: async () => undefined
   };
   const failedService = new EyesOnAgentsService({
     repository,
@@ -489,7 +506,9 @@ try {
       stop: async () => {
         reconnectOrder.push('bridge-stop');
         setReconnectListening(false);
-      }
+      },
+      recoverOutboxCoverageGap: async () => undefined,
+      replayOutbox: async () => undefined
     },
     openExternal: async () => undefined,
     now: () => 789
@@ -1214,6 +1233,7 @@ try {
     const snapshotBatches = [];
     const openedUrls = [];
     const titleEnrichments = [];
+    const recoveredCoverageGaps = [];
     let lifecycleNow = 1_000;
     let appServerConnected = false;
     let activeInventory = [];
@@ -1228,6 +1248,8 @@ try {
     let duringHookEnable = async () => undefined;
     let duringListenerStart = async () => undefined;
     let duringListenerStop = async () => undefined;
+    let duringOutboxRecovery = async () => undefined;
+    let duringOutboxReplay = async () => undefined;
     let duringRuntimeEvent = async () => undefined;
     let duringPromptClear = async () => undefined;
     let duringSettingGet = async () => undefined;
@@ -1256,6 +1278,9 @@ try {
     };
     const lifecycleRepository = {
       ...repository,
+      getSnapshot: async () => options.getSnapshot
+        ? await options.getSnapshot()
+        : await repository.getSnapshot(),
       invalidateAppServerStatuses: async () => {
         calls.push('invalidate-app-server');
         await duringAppServerInvalidation();
@@ -1300,8 +1325,19 @@ try {
         calls.push(`event-finished:${event.type}`);
         return runtimePersistenceResult;
       },
-      applyRuntimeEventDelivery: async ({ deliveryId, event, hookLastUserPrompt }) => {
-        runtimeEvents.push({ event, deliveryId, hookLastUserPrompt, callIndex: calls.length });
+      applyRuntimeEventDelivery: async ({
+        deliveryId,
+        event,
+        replayAuthority,
+        hookLastUserPrompt
+      }) => {
+        runtimeEvents.push({
+          event,
+          deliveryId,
+          replayAuthority,
+          hookLastUserPrompt,
+          callIndex: calls.length
+        });
         calls.push(`delivery:${event.type}`);
         await duringRuntimeEvent(event);
         calls.push(`delivery-finished:${event.type}`);
@@ -1448,6 +1484,15 @@ try {
           calls.push('listener-stop');
           await duringListenerStop();
           bridgeStatus = { ...bridgeStatus, listening: false, listeningSince: null };
+        },
+        recoverOutboxCoverageGap: async (expectedGap) => {
+          recoveredCoverageGaps.push(expectedGap);
+          calls.push('outbox-recover');
+          await duringOutboxRecovery(expectedGap);
+        },
+        replayOutbox: async () => {
+          calls.push('outbox-replay');
+          await duringOutboxReplay();
         }
       },
       lastUserPromptPreference: {
@@ -1477,6 +1522,7 @@ try {
       snapshotBatches,
       lifecycleBridge,
       runtimeEvents,
+      recoveredCoverageGaps,
       titleEnrichments,
       openedUrls,
       service,
@@ -1494,6 +1540,8 @@ try {
       duringHookEnable: (callback) => { duringHookEnable = callback; },
       duringListenerStart: (callback) => { duringListenerStart = callback; },
       duringListenerStop: (callback) => { duringListenerStop = callback; },
+      duringOutboxRecovery: (callback) => { duringOutboxRecovery = callback; },
+      duringOutboxReplay: (callback) => { duringOutboxReplay = callback; },
       duringRuntimeEvent: (callback) => { duringRuntimeEvent = callback; },
       duringPromptClear: (callback) => { duringPromptClear = callback; },
       duringSettingGet: (callback) => { duringSettingGet = callback; },
@@ -1582,6 +1630,47 @@ try {
     'the short launch inspector must restore the explicit disconnected state'
   );
   assert.equal(installedAutoOffHarness.calls.includes('thread-list'), false);
+
+  const initializeObservationFailureHarness = createLifecycleHarness(true);
+  initializeObservationFailureHarness.setThreadInventories({
+    active: [{ id: THREAD_ID, name: 'Launch inventory', status: { type: 'notLoaded' } }],
+    archived: []
+  });
+  initializeObservationFailureHarness.duringHookInvalidation(async () => {
+    throw new Error('simulated launch observation failure');
+  });
+  await initializeObservationFailureHarness.service.initialize();
+  assert.equal(initializeObservationFailureHarness.status().state, 'error');
+  assert.equal(
+    initializeObservationFailureHarness.calls.includes('thread-list'),
+    true,
+    'launch inventory must continue after observation startup fails'
+  );
+  assert.equal(
+    initializeObservationFailureHarness.discoveredBatches.at(-1)?.[0]?.runtimeState,
+    'unknown',
+    'managed App Server notLoaded inventory must remain unknown after observation failure'
+  );
+  initializeObservationFailureHarness.duringHookInvalidation(async () => undefined);
+  await initializeObservationFailureHarness.service.shutdown();
+
+  const connectObservationFailureHarness = createLifecycleHarness(false);
+  connectObservationFailureHarness.setThreadInventories({
+    active: [{ id: THREAD_ID, name: 'Connect inventory', status: { type: 'notLoaded' } }],
+    archived: []
+  });
+  connectObservationFailureHarness.duringHookInvalidation(async () => {
+    throw new Error('simulated Connect observation failure');
+  });
+  await connectObservationFailureHarness.service.connectAppServer();
+  assert.equal(connectObservationFailureHarness.status().state, 'error');
+  assert.equal(
+    connectObservationFailureHarness.calls.includes('thread-list'),
+    true,
+    'Connect inventory must continue after observation startup fails'
+  );
+  connectObservationFailureHarness.duringHookInvalidation(async () => undefined);
+  await connectObservationFailureHarness.service.disconnectAppServer();
 
   const reviewHarness = createLifecycleHarness(false);
   await reviewHarness.service.initialize();
@@ -1860,7 +1949,7 @@ try {
   await inspectionTimestampHarness.service.connectAppServer();
   const successfulInspectionAt = inspectionTimestampHarness.status().lastInspectedAt;
   inspectionTimestampHarness.advance();
-  await inspectionTimestampHarness.service.reportCodexHookCoverageGap();
+  await inspectionTimestampHarness.service.reportCodexHookCoverageGap(COVERAGE_GAP);
   assert.equal(inspectionTimestampHarness.status().state, 'error');
   assert.equal(
     inspectionTimestampHarness.status().lastInspectedAt,
@@ -1868,6 +1957,148 @@ try {
     'a runtime coverage gap must not move the last hooks/list inspection time'
   );
   await inspectionTimestampHarness.service.disconnectAppServer();
+
+  let recoveredWorkingThread = null;
+  const recoveryHarness = createLifecycleHarness(false, {
+    getSnapshot: async () => ({
+      domains: [{
+        id: 1,
+        domainKey: 'uncategorized',
+        title: 'Uncategorized',
+        sortIndex: 0,
+        isSystem: true
+      }],
+      threads: recoveredWorkingThread ? [recoveredWorkingThread] : []
+    })
+  });
+  recoveryHarness.duringListenerStart(async () => {
+    await recoveryHarness.service.reportCodexHookCoverageGap(COVERAGE_GAP);
+  });
+  recoveryHarness.duringRuntimeEvent(async (event) => {
+    if (event.turnId !== 'turn-recovered-working') return;
+    const observedAt = new Date(event.observedAt).toISOString();
+    recoveredWorkingThread = {
+      threadId: event.threadId,
+      domainId: 1,
+      title: 'Recovered working task',
+      cwd: event.cwd,
+      projectKey: null,
+      projectRoot: null,
+      projectName: null,
+      runtimeState: 'working',
+      activeFlags: [],
+      activeTurnId: event.turnId,
+      lastCompletedTurnId: null,
+      lastCompletedAt: null,
+      lastOpenedTurnId: null,
+      lastOpenedAt: null,
+      statusSource: 'codex_hook',
+      statusObservedAt: observedAt,
+      lastActivityAt: observedAt,
+      isUnread: true,
+      isFocused: false,
+      lastUserPrompt: {
+        state: 'unavailable',
+        preview: null,
+        turnId: null,
+        observedAt: null,
+        checkedAt: null,
+        truncated: false
+      }
+    };
+  });
+  recoveryHarness.duringOutboxRecovery(async () => {
+    throw new Error('simulated outbox cutover failure');
+  });
+  await recoveryHarness.service.connectAppServer();
+  assert.equal(recoveryHarness.status().state, 'error');
+  assert.equal(
+    recoveryHarness.calls.filter((call) => call === 'outbox-replay').length,
+    0,
+    'failed cutover must retain the suffix without replaying it'
+  );
+  assert.equal(
+    recoveryHarness.calls.filter((call) => call === 'thread-list').length,
+    1,
+    'Connect inventory must continue when startup observation recovery fails'
+  );
+  recoveryHarness.duringOutboxRecovery(async () => undefined);
+  recoveryHarness.duringOutboxReplay(async () => {
+    await recoveryHarness.service.commitCodexHookDelivery({
+      schemaVersion: 1,
+      deliveryId: '15151515-1515-4515-8515-151515151515',
+      event: {
+        ...pendingStartEvent,
+        eventId: '15151515-1515-4515-8515-151515151515',
+        occurredAt: 500,
+        payload: {
+          ...pendingStartEvent.payload,
+          turnId: 'turn-recovered-working'
+        }
+      }
+    });
+  });
+  const recoveryCallsStart = recoveryHarness.calls.length;
+  const recoveredSnapshot = await recoveryHarness.service.syncThreads();
+  const recoveryCalls = recoveryHarness.calls.slice(recoveryCallsStart);
+  assert.ok(
+    recoveryCalls.indexOf('hooks-list') < recoveryCalls.indexOf('bridge-inspect') &&
+      recoveryCalls.indexOf('bridge-inspect') < recoveryCalls.indexOf('outbox-recover') &&
+      recoveryCalls.indexOf('outbox-recover') < recoveryCalls.indexOf('outbox-replay'),
+    'recovery must inspect fresh trusted hooks, cut over the gap, establish trust, then replay'
+  );
+  assert.deepEqual(
+    recoveryHarness.recoveredCoverageGaps,
+    [COVERAGE_GAP, COVERAGE_GAP],
+    'each retry must acknowledge the exact durable gap snapshot that started the attempt'
+  );
+  assert.equal(
+    recoveryHarness.runtimeEvents.at(-1)?.replayAuthority,
+    'current_listener',
+    'current-listener durable replay must carry explicit repository authority'
+  );
+  assert.equal(recoveredSnapshot.bridge.state, 'installed');
+  assert.deepEqual(
+    recoveredSnapshot.threads.map(({ runtimeState, isUnread, isFocused }) => ({
+      runtimeState,
+      isUnread,
+      isFocused
+    })),
+    [{ runtimeState: 'working', isUnread: true, isFocused: true }],
+    'a preserved pre-listener prompt suffix must restore working unread Focus'
+  );
+  await recoveryHarness.service.disconnectAppServer();
+
+  const recoveryRaceHarness = createLifecycleHarness(false);
+  await recoveryRaceHarness.service.connectAppServer();
+  await recoveryRaceHarness.service.reportCodexHookCoverageGap(COVERAGE_GAP);
+  let injectNewCoverageGap = true;
+  recoveryRaceHarness.duringOutboxRecovery(async () => {
+    if (!injectNewCoverageGap) return;
+    injectNewCoverageGap = false;
+    await recoveryRaceHarness.service.reportCodexHookCoverageGap(NEWER_COVERAGE_GAP);
+  });
+  await recoveryRaceHarness.service.syncThreads();
+  assert.equal(recoveryRaceHarness.status().state, 'error');
+  assert.equal(
+    recoveryRaceHarness.calls.filter((call) => call === 'outbox-replay').length,
+    0,
+    'an old in-flight recovery must not replay or clear a newly reported gap'
+  );
+  recoveryRaceHarness.duringOutboxRecovery(async () => undefined);
+  await recoveryRaceHarness.service.syncThreads();
+  assert.equal(recoveryRaceHarness.status().state, 'installed');
+  assert.deepEqual(
+    recoveryRaceHarness.recoveredCoverageGaps,
+    [COVERAGE_GAP, NEWER_COVERAGE_GAP],
+    'the retry must target the newer marker instead of reusing the consumed attempt snapshot'
+  );
+  assert.equal(
+    recoveryRaceHarness.calls.filter((call) => call === 'outbox-replay').length,
+    1,
+    'a fresh retry must recover the new gap generation'
+  );
+  await recoveryRaceHarness.service.disconnectAppServer();
 
   const failedInspectionTimestampHarness = createLifecycleHarness(false);
   await failedInspectionTimestampHarness.service.connectAppServer();
@@ -1907,12 +2138,14 @@ try {
     }));
     throw new Error('simulated repository failure');
   });
-  await assert.rejects(
-    () => failedFlushHarness.service.connectAppServer(),
-    /simulated repository failure/
-  );
+  await failedFlushHarness.service.connectAppServer();
   await Promise.all(failedFlushTailAdmissions);
   assert.equal(failedFlushHarness.status().state, 'error');
+  assert.equal(
+    failedFlushHarness.calls.includes('thread-list'),
+    true,
+    'Connect inventory must continue after a buffered observation write fails'
+  );
   assert.deepEqual(
     failedFlushHarness.runtimeEvents.map(({ event }) => event.turnId),
     [failedFlushTurnId],

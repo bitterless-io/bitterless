@@ -89,9 +89,10 @@ non-archived and archived `thread/list` inventories from the shared store.
 
 The Codex hook bridge is therefore the Desktop observation source. It is enabled and disabled
 explicitly and independently from App Server Connect/Disconnect. It reports lifecycle transitions
-for Desktop/CLI work after installation, but it does not provide transcripts and cannot prove a
-turn that was already running before the current listener started. Stale or contradictory evidence
-becomes `unknown`.
+for Desktop/CLI work after installation but does not provide transcripts. A prior-lifetime active
+row becomes `unknown` when listener-start invalidation establishes a new lifetime. A durable event
+accepted and committed by that new listener may then restore state even when the provider event
+occurred while Bitterless was closed. Stale or contradictory evidence becomes `unknown`.
 
 The upstream protocols can expose conversation content: `UserPromptSubmit` supplies the exact
 submitted `prompt`, `Stop` may supply `last_assistant_message`, and App Server can return history.
@@ -115,9 +116,14 @@ The global helper runs as a dedicated `ELECTRON_RUN_AS_NODE` entry, never the fu
 application. When Bitterless is unavailable, it atomically stores one bounded outbox file per
 delivery. The listener acknowledges only after SQLite records the delivery receipt and runtime
 transition in one transaction. Startup replay plus persistent receipt dedupe covers both offline
-events and a lost acknowledgement after commit. Corruption or overflow is reported as a coverage
-error and invalidates live hook evidence rather than presenting it as current. The complete
-contract is [EyesOnAgents Codex Observation](../features/eyes-on-agents-codex-observation.md).
+events and a lost acknowledgement after commit. Corruption, overflow, or unavailable storage is
+reported as a coverage error and invalidates live hook evidence rather than presenting it as
+current. Replay pauses at that marker. After a fresh trusted inspection, one locked cutover removes
+only the untrustworthy pending prefix through the marker time, acknowledges the marker last, and
+replays the preserved suffix. Recovery compares the exact marker snapshot under the lock; a marker
+that changed after inspection is retained and reported as a new generation instead of being cleared
+by the older attempt. Recovery lock failure does not widen the delivery cutoff. The complete contract is
+[EyesOnAgents Codex Observation](../features/eyes-on-agents-codex-observation.md).
 
 While a fresh `hooks/list` inspection is pending, current-listener events remain only in a bounded
 in-memory queue. EyesOnAgents writes them to SQLite in arrival order only after that inspection
@@ -171,6 +177,12 @@ runs the same full active-plus-archived reconciliation as connection and activat
 - while another board action, connection, or sync is in flight, it is disabled so no conflicting
   mutation or duplicate inventory request starts;
 - on failure, the last persisted source snapshots, Domains, and read markers remain available.
+
+When observation is installed, Refresh first attempts a fresh Hook inspection and any required
+coverage cutover so a preserved Desktop lifecycle suffix can reach SQLite before the returned
+snapshot is derived. Observation failure is reported independently and never prevents the managed
+App Server from reconciling active and archived inventory. Conversely, an inventory result of
+`notLoaded` cannot substitute for Desktop lifecycle evidence or fabricate Focus.
 
 Refresh never launches Electron helpers, scans transcripts, or accepts user-supplied commands. It
 is the manual recovery path when activation delivery, lifecycle notifications, or title propagation
@@ -440,11 +452,13 @@ thread's resulting idle state.
 
 Hook evidence may override discovery evidence when it is newer. App Server lifecycle events from
 the managed connection are authoritative for that connection. Hook-active evidence remains valid
-until terminal evidence only while its observation belongs to the current continuously listening
-bridge runtime and all owned hooks are trusted. A Bitterless restart establishes a new listener
-lifetime, so active evidence from a previous lifetime becomes `unknown` while durable
-completion/open markers remain. There is no 60-second active expiry because Codex emits no running
-heartbeat.
+until terminal evidence only while it was committed through the currently listening bridge runtime
+and all owned hooks are trusted. Listener startup first invalidates previous active Hook rows; a
+subsequent current-listener outbox replay is therefore valid even when the provider occurrence time
+predates `listeningSince`. That explicit authority can replace only `discovery + unknown`; it cannot
+overwrite newer concrete App Server or Hook evidence. A later Bitterless restart invalidates it again unless new delivery
+restores it. Durable completion/open markers remain. There is no 60-second active expiry because
+Codex emits no running heartbeat.
 
 ## Focus and unread semantics
 

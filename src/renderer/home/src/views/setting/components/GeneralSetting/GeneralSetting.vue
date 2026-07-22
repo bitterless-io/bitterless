@@ -20,6 +20,26 @@
       </div>
     </div>
 
+    <div name="general-setting__experimental" class="general-setting__section">
+      <h4 class="general-setting__section-title">{{ i18nHelper.setting.general.experimental.label }}</h4>
+      <div name="general-setting__show-chat-menu" class="general-setting__control">
+        <div class="general-setting__control-copy">
+          <div class="general-setting__control-label">
+            {{ i18nHelper.setting.general.experimental.showChatMenu }}
+          </div>
+          <div class="general-setting__control-description">
+            {{ i18nHelper.setting.general.experimental.showChatMenuDescription }}
+          </div>
+        </div>
+        <a-switch
+          :model-value="generalSettingStore.showChatMenu"
+          :loading="generalSettingStore.chatMenuLoading || generalSettingStore.chatMenuSaving"
+          :disabled="generalSettingStore.chatMenuLoading || generalSettingStore.chatMenuSaving"
+          @change="onChatMenuVisibilityChange"
+        />
+      </div>
+    </div>
+
     <div name="general-setting__account" class="general-setting__section">
       <h4 class="general-setting__section-title">{{ i18nHelper.setting.general.account.label }}</h4>
       <div class="general-setting__account">
@@ -56,6 +76,10 @@ const onLanguageChange = async (): Promise<void> => {
 
 const onSearchEngineChange = (): void => {
   generalSettingStore.changeSearchEngine(generalSettingStore.currentSearchEngine);
+};
+
+const onChatMenuVisibilityChange = (value: string | number | boolean): void => {
+  void generalSettingStore.changeChatMenuVisibility(value === true);
 };
 </script>
 

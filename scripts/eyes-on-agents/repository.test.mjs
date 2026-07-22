@@ -20,6 +20,10 @@ const DELIVERY_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const DELIVERY_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const DELIVERY_C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const DELIVERY_D = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const DELIVERY_E = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const DELIVERY_F = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+const DELIVERY_G = '12121212-1212-4212-8212-121212121212';
+const DELIVERY_H = '13131313-1313-4313-8313-131313131313';
 const INVALID_VERSION_THREAD = '33333333-3333-0333-8333-333333333333';
 const INVALID_VARIANT_THREAD = '44444444-4444-4444-7444-444444444444';
 const EXTRA_HYPHEN_THREAD = '55555555-5555-4555-8555-55555555555-';
@@ -867,6 +871,141 @@ try {
     hookAfterDisconnectB.isFocused,
     false,
     'disconnect then reconnect must not resurrect an old active hook turn'
+  );
+
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_E,
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_B,
+      turnId: 'unadmitted-old-hook',
+      observedAt: 650,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT runtime_state, status_source, status_observed_at
+       FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(THREAD_B) },
+    { runtime_state: 'unknown', status_source: 'discovery', status_observed_at: 710 },
+    'an old delivery without current-listener authority must remain behind the invalidation fence'
+  );
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_F,
+    replayAuthority: 'current_listener',
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_B,
+      turnId: 'admitted-replayed-hook',
+      observedAt: 650,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT runtime_state, status_source, status_observed_at, active_turn_id
+       FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(THREAD_B) },
+    {
+      runtime_state: 'working',
+      status_source: 'codex_hook',
+      status_observed_at: 650,
+      active_turn_id: 'admitted-replayed-hook'
+    },
+    'an admitted current-listener replay must restore concrete Hook state over discovery unknown'
+  );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'thread_status',
+      threadId: THREAD_B,
+      runtimeState: 'waiting_input',
+      activeFlags: ['waitingOnUserInput'],
+      turnId: 'newer-app-server-turn',
+      observedAt: 800,
+      source: 'app_server'
+    }
+  });
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_G,
+    replayAuthority: 'current_listener',
+    event: {
+      type: 'turn_completed',
+      threadId: THREAD_B,
+      turnId: 'admitted-replayed-hook',
+      outcome: 'completed',
+      observedAt: 750,
+      source: 'codex_hook'
+    }
+  });
+  const concreteAppServerRow = db.prepare(
+    `SELECT runtime_state, status_source, status_observed_at, active_turn_id
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(THREAD_B);
+  assert.deepEqual({ ...concreteAppServerRow }, {
+    runtime_state: 'waiting_input',
+    status_source: 'app_server',
+    status_observed_at: 800,
+    active_turn_id: 'newer-app-server-turn'
+  }, 'replay authority must not bypass a newer concrete App Server watermark');
+  assert.deepEqual(
+    await repository.applyRuntimeEventDelivery({
+      deliveryId: DELIVERY_G,
+      replayAuthority: 'current_listener',
+      event: {
+        type: 'turn_started',
+        threadId: THREAD_B,
+        turnId: 'duplicate-must-not-reapply',
+        observedAt: 850,
+        source: 'codex_hook'
+      }
+    }),
+    { duplicate: true, created: false, titleMissing: false },
+    'a stale delivery receipt must still dedupe even if a retry carries newer content'
+  );
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT runtime_state, status_source, status_observed_at, active_turn_id
+       FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(THREAD_B) },
+    { ...concreteAppServerRow },
+    'receipt dedupe must preserve the concrete state that rejected the stale delivery'
+  );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_B,
+      turnId: 'newer-hook-turn',
+      observedAt: 900,
+      source: 'codex_hook'
+    }
+  });
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_H,
+    replayAuthority: 'current_listener',
+    event: {
+      type: 'turn_completed',
+      threadId: THREAD_B,
+      turnId: 'newer-hook-turn',
+      outcome: 'completed',
+      observedAt: 850,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    { ...db.prepare(
+      `SELECT runtime_state, status_source, status_observed_at, active_turn_id
+       FROM eyes_on_agents_thread WHERE thread_id = ?`
+    ).get(THREAD_B) },
+    {
+      runtime_state: 'working',
+      status_source: 'codex_hook',
+      status_observed_at: 900,
+      active_turn_id: 'newer-hook-turn'
+    },
+    'replay authority must not overwrite newer concrete Hook evidence'
   );
 
   await repository.createDomain({ title: 'Rollback check' });

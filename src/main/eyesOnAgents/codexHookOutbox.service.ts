@@ -71,6 +71,11 @@ export interface CodexHookOutboxReplayResult extends CodexHookOutboxInspection {
   replayedCount: number;
 }
 
+export interface CodexHookOutboxCoverageRecoveryResult extends CodexHookOutboxInspection {
+  discardedCount: number;
+  recoveredGap: CodexHookOutboxCoverageGap | null;
+}
+
 interface CodexHookOutboxPaths {
   root: string;
   pending: string;
@@ -143,27 +148,47 @@ const tryAcquireLock = (paths: CodexHookOutboxPaths, now: number): boolean => {
   return false;
 };
 
-const writeEmergencyGap = (paths: CodexHookOutboxPaths): void => {
+const writeEmergencyGap = (paths: CodexHookOutboxPaths, detectedAt: number): void => {
   try {
-    writeFileSync(paths.emergencyGap, '', { flag: 'wx', mode: 0o600 });
+    writeFileSync(paths.emergencyGap, `${detectedAt}\n`, { flag: 'a', mode: 0o600 });
     applyPrivateMode(paths.emergencyGap, 0o600);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-      // There is no safer fallback when the private outbox directory itself is unavailable.
-    }
+  } catch {
+    // There is no safer fallback when the private outbox directory itself is unavailable.
   }
+};
+
+const readEmergencyGapDetectedAt = (
+  paths: CodexHookOutboxPaths,
+  fallback: number
+): number => {
+  const stats = statSync(paths.emergencyGap);
+  if (stats.size === 0 || stats.size > CODEX_HOOK_OUTBOX_MAX_FILE_BYTES) {
+    const modifiedAt = Math.floor(stats.mtimeMs);
+    return Number.isSafeInteger(modifiedAt) && modifiedAt >= 0 ? modifiedAt : fallback;
+  }
+  let detectedAt: number | null = null;
+  for (const line of readFileSync(paths.emergencyGap, 'utf8').split('\n')) {
+    if (!line) continue;
+    const value = Number(line);
+    if (!Number.isSafeInteger(value) || value < 0) continue;
+    detectedAt = Math.max(detectedAt ?? value, value);
+  }
+  if (detectedAt !== null) return detectedAt;
+  const modifiedAt = Math.floor(stats.mtimeMs);
+  return Number.isSafeInteger(modifiedAt) && modifiedAt >= 0 ? modifiedAt : fallback;
 };
 
 const withOutboxLock = <T>(params: {
   outboxPath: string;
   now: number;
+  recordEmergencyGap?: boolean;
   action: (paths: CodexHookOutboxPaths) => T;
 }): T | null => {
   const paths = outboxPaths(params.outboxPath);
   try {
     ensureDirectories(paths);
     if (!tryAcquireLock(paths, params.now)) {
-      writeEmergencyGap(paths);
+      if (params.recordEmergencyGap !== false) writeEmergencyGap(paths, params.now);
       return null;
     }
     try {
@@ -176,7 +201,7 @@ const withOutboxLock = <T>(params: {
       }
     }
   } catch {
-    writeEmergencyGap(paths);
+    if (params.recordEmergencyGap !== false) writeEmergencyGap(paths, params.now);
     return null;
   }
 };
@@ -225,6 +250,17 @@ const parseCoverageGap = (value: unknown): CodexHookOutboxCoverageGap => {
   };
 };
 
+const sameCoverageGap = (
+  left: CodexHookOutboxCoverageGap,
+  right: CodexHookOutboxCoverageGap
+): boolean => {
+  return left.schemaVersion === right.schemaVersion &&
+    left.firstDetectedAt === right.firstDetectedAt &&
+    left.lastDetectedAt === right.lastDetectedAt &&
+    left.occurrences === right.occurrences &&
+    [...left.reasons].sort().join(',') === [...right.reasons].sort().join(',');
+};
+
 const readCoverageGap = (paths: CodexHookOutboxPaths): CodexHookOutboxCoverageGap | null => {
   if (!existsSync(paths.coverageGap)) return null;
   try {
@@ -249,8 +285,8 @@ const recordCoverageGap = (
   const next: CodexHookOutboxCoverageGap = {
     schemaVersion: 1,
     reasons,
-    firstDetectedAt: current?.firstDetectedAt ?? now,
-    lastDetectedAt: now,
+    firstDetectedAt: current ? Math.min(current.firstDetectedAt, now) : now,
+    lastDetectedAt: current ? Math.max(current.lastDetectedAt, now) : now,
     occurrences: Math.min((current?.occurrences ?? 0) + 1, MAX_GAP_OCCURRENCES)
   };
   atomicWrite(paths.coverageGap, `${JSON.stringify(next)}\n`);
@@ -259,7 +295,8 @@ const recordCoverageGap = (
 
 const consumeEmergencyGap = (paths: CodexHookOutboxPaths, now: number): void => {
   if (!existsSync(paths.emergencyGap)) return;
-  recordCoverageGap(paths, 'storage_unavailable', now);
+  const detectedAt = readEmergencyGapDetectedAt(paths, now);
+  recordCoverageGap(paths, 'storage_unavailable', detectedAt);
   unlinkSync(paths.emergencyGap);
 };
 
@@ -485,29 +522,100 @@ export const inspectCodexHookOutbox = (
   };
 };
 
+interface RemoveCommittedEntryResult {
+  removed: boolean;
+  coverageGap: CodexHookOutboxCoverageGap | null;
+}
+
 const removeCommittedEntry = (params: {
   outboxPath: string;
   entry: CodexHookOutboxEntry;
   now: number;
-}): boolean => {
-  return withOutboxLock({
+}): RemoveCommittedEntryResult => {
+  const result = withOutboxLock({
     outboxPath: params.outboxPath,
     now: params.now,
-    action: (paths): boolean => {
+    action: (paths): RemoveCommittedEntryResult => {
+      consumeEmergencyGap(paths, params.now);
+      const coverageGap = readCoverageGap(paths);
+      if (coverageGap) return { removed: false, coverageGap };
       if (!directChild(paths.pending, params.entry.filePath) || !existsSync(params.entry.filePath)) {
-        return false;
+        return { removed: false, coverageGap: null };
       }
       try {
         const current = readDeliveryFile(params.entry.filePath);
-        if (current.deliveryId !== params.entry.delivery.deliveryId) return false;
+        if (current.deliveryId !== params.entry.delivery.deliveryId) {
+          return { removed: false, coverageGap: null };
+        }
         unlinkSync(params.entry.filePath);
-        return true;
+        return { removed: true, coverageGap: null };
       } catch {
         quarantinePendingPath(paths, params.entry.filePath, params.now);
-        return false;
+        return { removed: false, coverageGap: readCoverageGap(paths) };
       }
     }
-  }) ?? false;
+  });
+  if (result) return result;
+  const inspection = inspectCodexHookOutbox(params.outboxPath, params.now);
+  return { removed: false, coverageGap: inspection.coverageGap };
+};
+
+export const recoverCodexHookOutboxCoverageGap = (params: {
+  outboxPath: string;
+  expectedGap: CodexHookOutboxCoverageGap;
+  now?: number;
+}): CodexHookOutboxCoverageRecoveryResult => {
+  const expectedGap = parseCoverageGap(params.expectedGap);
+  const now = params.now ?? Date.now();
+  const result = withOutboxLock({
+    outboxPath: params.outboxPath,
+    now,
+    recordEmergencyGap: false,
+    action: (paths): CodexHookOutboxCoverageRecoveryResult => {
+      const entries = listEntries(paths, now);
+      const coverageGap = readCoverageGap(paths);
+      if (!coverageGap) {
+        return {
+          pendingCount: entries.length,
+          quarantinedCount: quarantineCount(paths),
+          coverageGap: null,
+          discardedCount: 0,
+          recoveredGap: null
+        };
+      }
+      if (!sameCoverageGap(coverageGap, expectedGap)) {
+        return {
+          pendingCount: entries.length,
+          quarantinedCount: quarantineCount(paths),
+          coverageGap,
+          discardedCount: 0,
+          recoveredGap: null
+        };
+      }
+      let discardedCount = 0;
+      for (const entry of entries) {
+        if (entry.delivery.event.occurredAt > coverageGap.lastDetectedAt) continue;
+        if (!directChild(paths.pending, entry.filePath) || !existsSync(entry.filePath)) continue;
+        const current = readDeliveryFile(entry.filePath);
+        if (current.deliveryId !== entry.delivery.deliveryId) {
+          throw new Error('Codex hook outbox entry changed during coverage recovery');
+        }
+        unlinkSync(entry.filePath);
+        discardedCount += 1;
+      }
+      const recoveryResult: CodexHookOutboxCoverageRecoveryResult = {
+        pendingCount: entries.length - discardedCount,
+        quarantinedCount: quarantineCount(paths),
+        coverageGap: null,
+        discardedCount,
+        recoveredGap: coverageGap
+      };
+      unlinkSync(paths.coverageGap);
+      return recoveryResult;
+    }
+  });
+  if (!result) throw new Error('Codex hook outbox coverage recovery is unavailable');
+  return result;
 };
 
 export const replayCodexHookOutbox = async (params: {
@@ -518,6 +626,13 @@ export const replayCodexHookOutbox = async (params: {
   now?: () => number;
 }): Promise<CodexHookOutboxReplayResult> => {
   const now = params.now ?? Date.now;
+  let reportedCoverageGap: string | null = null;
+  const reportCoverageGap = async (gap: CodexHookOutboxCoverageGap): Promise<void> => {
+    const signature = JSON.stringify(gap);
+    if (signature === reportedCoverageGap) return;
+    reportedCoverageGap = signature;
+    await params.onCoverageGap?.(gap);
+  };
   const listed = withOutboxLock({
     outboxPath: params.outboxPath,
     now: now(),
@@ -528,23 +643,38 @@ export const replayCodexHookOutbox = async (params: {
   });
   if (!listed) {
     const inspection = inspectCodexHookOutbox(params.outboxPath, now());
-    if (inspection.coverageGap) await params.onCoverageGap?.(inspection.coverageGap);
+    if (inspection.coverageGap) await reportCoverageGap(inspection.coverageGap);
     return { ...inspection, replayedCount: 0 };
   }
-  if (listed.coverageGap) await params.onCoverageGap?.(listed.coverageGap);
+  if (listed.coverageGap) {
+    await reportCoverageGap(listed.coverageGap);
+    const inspection = inspectCodexHookOutbox(params.outboxPath, now());
+    if (inspection.coverageGap) await reportCoverageGap(inspection.coverageGap);
+    return {
+      ...inspection,
+      replayedCount: 0
+    };
+  }
   const send = params.send ?? sendCodexHookDelivery;
   let replayedCount = 0;
   for (const entry of listed.entries) {
     if (await send(params.endpoint, entry.delivery) !== 'committed') break;
-    if (!removeCommittedEntry({
+    const removal = removeCommittedEntry({
       outboxPath: params.outboxPath,
       entry,
       now: now()
-    })) break;
+    });
+    if (removal.coverageGap) {
+      await reportCoverageGap(removal.coverageGap);
+      break;
+    }
+    if (!removal.removed) break;
     replayedCount += 1;
   }
+  const inspection = inspectCodexHookOutbox(params.outboxPath, now());
+  if (inspection.coverageGap) await reportCoverageGap(inspection.coverageGap);
   return {
-    ...inspectCodexHookOutbox(params.outboxPath, now()),
+    ...inspection,
     replayedCount
   };
 };

@@ -314,8 +314,7 @@ export const effectiveEyesOnAgentsRuntimeState = (
     statusSource === 'codex_hook' &&
     hookBridgeState === 'installed' &&
     hookBridgeListening &&
-    hookBridgeListeningSince !== null &&
-    statusObservedAt >= hookBridgeListeningSince
+    hookBridgeListeningSince !== null
   ) {
     return runtimeState;
   }

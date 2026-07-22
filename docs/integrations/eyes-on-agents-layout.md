@@ -1,6 +1,6 @@
 # EyesOnAgents Layout
 
-Status: compact latest-question card, four-step observation guide, and Focus Read all implemented; owner verification pending
+Status: compact latest-question card, flexible Domain board, four-step observation guide, and Focus Read all implemented; owner verification pending
 
 ## Product stance
 
@@ -44,8 +44,10 @@ for live signals.
 ```
 
 The 32px menu bar is the drag region. The board wraps columns into as many rows as the window width
-allows and owns vertical page scrolling. Each 300px Domain column grows only as needed, is capped at
-600px, and owns its own thread-list scrolling beyond that limit.
+allows and owns vertical page scrolling. Each Domain has a 300px flex basis and minimum, shares the
+remaining row width up to a 500px maximum, is capped at 600px high, and owns its own thread-list
+scrolling beyond that height. A capped incomplete final row may retain trailing canvas space so
+column alignment and drag placement stay consistent.
 
 Focus is fixed first and visually distinct; All is fixed second. Both are projections: Focus shows
 attention and All shows every non-archived thread, while cards also remain in their stored custom
@@ -320,7 +322,7 @@ card leaves it in Focus until the runtime state changes.
 - Status never depends on color alone: the card's accessible label retains the normalized runtime
   text, the working loader has a status label, and visible idle-unread augments the Open control's
   label.
-- At the minimum window size, columns remain 280-300px, wrap into multiple rows, and the board owns
+- At the minimum window size, columns remain at least 300px, wrap into multiple rows, and the board owns
   vertical scrolling instead of collapsing into an unreadable grid.
 - No column exceeds 600px; a longer thread list scrolls inside that column without stretching its
   row or the surrounding columns.
