@@ -16,6 +16,10 @@
   border-color: #4e5882;
 }
 
+.omni-cell-menubar--miniapp {
+  background: oklch(0.965 0.022 270);
+}
+
 .omni-cell-menubar__nav-btn {
   display: flex;
   align-items: center;
@@ -38,6 +42,16 @@
   }
 }
 
+.omni-cell-menubar__nav-btn:disabled {
+  cursor: default;
+  color: oklch(0.72 0.015 270);
+}
+
+.omni-cell-menubar__nav-btn:disabled:hover,
+.omni-cell-menubar__nav-btn:disabled:active {
+  background: transparent;
+}
+
 .omni-cell-menubar__url-input {
   flex: 1;
   height: 28px;
@@ -49,3 +63,7 @@
   }
 }
 
+.omni-cell-menubar--miniapp .omni-cell-menubar__url-input .arco-input-wrapper {
+  color: oklch(0.42 0.08 270);
+  background: oklch(0.99 0.008 270);
+}

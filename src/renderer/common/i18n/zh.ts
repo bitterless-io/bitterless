@@ -47,6 +47,9 @@ export const zh: typeof en = {
   omni: {
     title: '全能浏览器',
     layout: '布局',
+    contentType: '内容类型',
+    website: 'Website',
+    miniApp: 'Mini App',
   },
   chat: {
     inputPlaceHolder: '输入消息，Enter 发送，Shift+Enter 换行',

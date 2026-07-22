@@ -46,6 +46,9 @@ export const en = {
   omni: {
     title: 'Omni Browser',
     layout: 'Layout',
+    contentType: 'Content type',
+    website: 'Website',
+    miniApp: 'Mini App',
   },
   chat: {
     inputPlaceHolder: 'Enter to send, Shift+Enter for new line',

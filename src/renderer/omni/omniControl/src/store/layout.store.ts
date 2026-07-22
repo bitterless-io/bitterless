@@ -1,21 +1,74 @@
 import { reactive } from 'vue';
 import { nanoid } from 'nanoid';
 import { xpcRenderer } from 'electron-xpc/renderer';
-import type { OmniPaneNode, OmniCellLayout, OmniLayoutConfig } from '../types/layout.types';
+import type {
+  OmniPaneNode,
+  OmniCellLayout,
+  OmniLayoutConfig,
+  OmniContentMode,
+  OmniMiniAppId,
+} from '../types/layout.types';
 
-function createLeaf(url = 'https://www.bing.com'): OmniPaneNode {
-  return { id: nanoid(), type: 'leaf', url };
-}
+export const TODO_MINIAPP_URL = 'bl://miniapp/todo';
+export const EYES_ON_AGENTS_MINIAPP_URL = 'bl://miniapp/eyes-on-agents';
 
-function flattenTree(
+const createLeaf = (url = 'https://www.bing.com'): OmniPaneNode => ({
+  id: nanoid(),
+  type: 'leaf',
+  url,
+  contentMode: 'browser',
+  miniAppId: 'todo',
+});
+
+const resolveContentMode = (node: OmniPaneNode): OmniContentMode =>
+  node.contentMode === 'miniapp' ? 'miniapp' : 'browser';
+
+const resolveMiniAppId = (node: OmniPaneNode): OmniMiniAppId =>
+  node.miniAppId === 'eyesOnAgents' ? 'eyesOnAgents' : 'todo';
+
+export const getNodeContentMode = (node: OmniPaneNode): OmniContentMode =>
+  resolveContentMode(node);
+
+export const getNodeDisplayUrl = (node: OmniPaneNode): string =>
+  getNodeContentMode(node) === 'browser'
+    ? node.url || ''
+    : resolveMiniAppId(node) === 'eyesOnAgents'
+      ? EYES_ON_AGENTS_MINIAPP_URL
+      : TODO_MINIAPP_URL;
+
+const normalizeTree = (node: OmniPaneNode): OmniPaneNode => {
+  if (node.type === 'leaf') {
+    return {
+      ...node,
+      contentMode: resolveContentMode(node),
+      miniAppId: resolveMiniAppId(node),
+    };
+  }
+
+  return {
+    ...node,
+    children: (node.children || []).map((child) => normalizeTree(child)),
+  };
+};
+
+const flattenTree = (
   node: OmniPaneNode,
   x: number,
   y: number,
   width: number,
   height: number,
-): OmniCellLayout[] {
+): OmniCellLayout[] => {
   if (node.type === 'leaf') {
-    return [{ id: node.id, url: node.url || '', x, y, width, height }];
+    return [{
+      id: node.id,
+      url: node.url || '',
+      x,
+      y,
+      width,
+      height,
+      contentMode: resolveContentMode(node),
+      miniAppId: resolveMiniAppId(node),
+    }];
   }
 
   const results: OmniCellLayout[] = [];
@@ -44,7 +97,7 @@ function flattenTree(
   }
 
   return results;
-}
+};
 
 class LayoutStore {
   tree: OmniPaneNode = createLeaf();
@@ -58,7 +111,13 @@ class LayoutStore {
     const found = this.findNode(this.tree, nodeId);
     if (!found || found.type !== 'leaf') return;
 
-    const originalLeaf: OmniPaneNode = { id: found.id, type: 'leaf', url: found.url };
+    const originalLeaf: OmniPaneNode = {
+      id: found.id,
+      type: 'leaf',
+      url: found.url,
+      contentMode: resolveContentMode(found),
+      miniAppId: resolveMiniAppId(found),
+    };
     const newLeaf = createLeaf();
 
     found.type = 'split';
@@ -67,6 +126,8 @@ class LayoutStore {
     found.children = position === 'before' ? [newLeaf, originalLeaf] : [originalLeaf, newLeaf];
     found.sizes = [50, 50];
     delete found.url;
+    delete found.contentMode;
+    delete found.miniAppId;
   }
 
   updateSizes(nodeId: string, sizes: number[]): void {
@@ -79,6 +140,20 @@ class LayoutStore {
     const found = this.findNode(this.tree, nodeId);
     if (!found || found.type !== 'leaf') return;
     found.url = url;
+  }
+
+  updateContentMode(nodeId: string, contentMode: OmniContentMode): void {
+    const found = this.findNode(this.tree, nodeId);
+    if (!found || found.type !== 'leaf') return;
+    found.contentMode = contentMode;
+    found.miniAppId = resolveMiniAppId(found);
+  }
+
+  updateMiniApp(nodeId: string, miniAppId: OmniMiniAppId): void {
+    const found = this.findNode(this.tree, nodeId);
+    if (!found || found.type !== 'leaf') return;
+    found.contentMode = 'miniapp';
+    found.miniAppId = miniAppId;
   }
 
   removePane(nodeId: string): void {
@@ -120,7 +195,7 @@ class LayoutStore {
   async loadLayout(): Promise<void> {
     const config = await xpcRenderer.send('OmniWindowHandler/loadLayout') as OmniLayoutConfig | null;
     if (config && config.tree) {
-      this.tree = config.tree;
+      this.tree = normalizeTree(config.tree);
     }
   }
 

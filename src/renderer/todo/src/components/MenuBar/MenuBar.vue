@@ -152,6 +152,7 @@ const SNOWFLAKE_NODE_MISMATCH_ERROR = '[todoist sync] server changed this device
 
 const props = defineProps<{
   isStandalone: boolean;
+  isOmni: boolean;
 }>();
 
 const isMac = uaHelper.isMac;
@@ -184,6 +185,7 @@ const syncErrorLabel = computed(() => {
 });
 
 const menubarClass = computed(() => {
+  if (props.isOmni) return 'menubar--omni';
   if (isMac) return 'menubar--mac';
   if (isWindows) return 'menubar--win';
   return '';

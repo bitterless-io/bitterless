@@ -1,5 +1,9 @@
 <template>
-  <div name="eyesOnAgents__app" class="eyes-on-agents">
+  <div
+    name="eyesOnAgents__app"
+    class="eyes-on-agents"
+    :class="{ 'eyes-on-agents--omni': isOmni }"
+  >
     <EyesOnAgentsMenuBar @open-connections="connectionsVisible = true" />
 
     <div
@@ -64,8 +68,10 @@ import ConnectionPanel from './components/ConnectionPanel/ConnectionPanel.vue';
 import EyesOnAgentsMenuBar from './components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue';
 import { eyesOnAgentsStore } from './store/eyesOnAgents.store';
 import { globalStore } from './store/global.store';
+import { eyesOnAgentsEnv } from './contextBridge/eyesOnAgentsEnv.bridge';
 
 const connectionsVisible = ref(false);
+const isOmni = eyesOnAgentsEnv?.host === 'omni';
 
 const emptyActionLabel = computed(() => {
   const state = eyesOnAgentsStore.snapshot?.connection.state;

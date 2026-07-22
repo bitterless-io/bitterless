@@ -157,6 +157,7 @@ class TodoState {
 
   async loadAll(): Promise<void> {
     this.loading = true;
+    const selectedTodoId = this.selectedTodo?.id ?? null;
     try {
       const allDomains = requireArray(await domainEmitter.getAll(), 'domain list', isDomainItem);
       const domains = allDomains.filter((domain) => domain.is_deleted === 0 && domain.archived === 0);
@@ -188,18 +189,36 @@ class TodoState {
       this.todosByDomain = {};
       this.completedTodosByDomain = {};
       this.subTodoCounts = {};
-      const activeDomainIds = new Set(domains.map((domain) => domain.id));
-      if (this.selectedTodo && !activeDomainIds.has(this.selectedTodo.domain_id)) {
-        this.closeDetail();
-      }
 
       // Load todos for each domain
       for (const domain of domains) {
         await this.loadTodosForDomain(domain.id);
       }
+
+      if (selectedTodoId) {
+        const refreshedTodo = this._findLoadedTodo(selectedTodoId);
+        if (!refreshedTodo) {
+          this.closeDetail();
+        } else {
+          this.selectedTodo = refreshedTodo;
+          if (this.detailVisible) await this.loadSubTodos(refreshedTodo.id);
+        }
+      }
     } finally {
       this.loading = false;
     }
+  }
+
+  private _findLoadedTodo(todoId: string): TodoItem | null {
+    for (const list of Object.values(this.todosByDomain)) {
+      const todo = list.find((item) => item.id === todoId);
+      if (todo) return todo;
+    }
+    for (const list of Object.values(this.completedTodosByDomain)) {
+      const todo = list.find((item) => item.id === todoId);
+      if (todo) return todo;
+    }
+    return null;
   }
 
   async loadArchivedDomains(): Promise<void> {

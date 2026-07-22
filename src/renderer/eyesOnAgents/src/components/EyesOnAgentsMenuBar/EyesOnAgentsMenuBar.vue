@@ -51,7 +51,7 @@
         </a-button>
       </a-tooltip>
 
-      <a-tooltip :content="pinLabel" position="br" mini>
+      <a-tooltip v-if="!isOmni" :content="pinLabel" position="br" mini>
         <a-button
           name="eyesOnAgents__menuBar__pin"
           size="mini"
@@ -64,7 +64,7 @@
         </a-button>
       </a-tooltip>
 
-      <template v-if="isWindows">
+      <template v-if="isWindows && !isOmni">
         <a-button
           name="eyesOnAgents__menuBar__minimize"
           size="mini"
@@ -114,6 +114,7 @@ import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 import AddDomainPopover from '../AddDomainPopover/AddDomainPopover.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 import { eyesOnAgentsWindowEmitter } from '../../emitter/eyesOnAgentsWindow.emitter';
+import { eyesOnAgentsEnv } from '../../contextBridge/eyesOnAgentsEnv.bridge';
 
 defineEmits<{
   (event: 'open-connections'): void;
@@ -121,10 +122,12 @@ defineEmits<{
 
 const isMac = uaHelper.isMac;
 const isWindows = uaHelper.isWindows;
+const isOmni = eyesOnAgentsEnv?.host === 'omni';
 const alwaysOnTop = ref(false);
 const platformClass = computed(() => ({
-  'eyes-menu-bar--mac': isMac,
-  'eyes-menu-bar--windows': isWindows,
+  'eyes-menu-bar--mac': isMac && !isOmni,
+  'eyes-menu-bar--windows': isWindows && !isOmni,
+  'eyes-menu-bar--omni': isOmni,
 }));
 const connectionState = computed(
   () => eyesOnAgentsStore.snapshot?.connection.state ?? 'disconnected',
@@ -192,11 +195,13 @@ const handleTogglePin = async (): Promise<void> => {
 };
 
 const handleDoubleClick = async (event: MouseEvent): Promise<void> => {
+  if (isOmni) return;
   if ((event.target as HTMLElement).closest('.eyes-menu-bar__actions')) return;
   await eyesOnAgentsWindowEmitter.toggleMaximize();
 };
 
 onMounted(async () => {
+  if (isOmni) return;
   alwaysOnTop.value = await eyesOnAgentsWindowEmitter.getAlwaysOnTop().catch(() => false);
 });
 </script>

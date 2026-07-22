@@ -1,6 +1,6 @@
 <template>
   <div class="todo-app">
-    <MenuBar :is-standalone="isStandalone" />
+    <MenuBar :is-standalone="isStandalone" :is-omni="isOmni" />
     <SyncClockBanner />
     <div class="todo-app__board">
       <div class="todo-app__board-scroll" ref="boardScrollRef" @scroll="onBoardScroll" @click="onBoardClick">
@@ -56,6 +56,7 @@ import { todoistSyncStore } from './store/todoistSync.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
 const isStandalone = ref(false);
+const isOmni = todoEnv?.host === 'omni';
 const boardScrollRef = ref<HTMLElement | null>(null);
 const showScrollToLeft = ref(false);
 let clockTimer: ReturnType<typeof setInterval> | null = null;
@@ -118,6 +119,9 @@ onUnmounted(() => {
 });
 
 const handleWindowFocus = (): void => {
+  void todoStore.loadAll().catch((error) => {
+    console.warn('[todo] focus data refresh failed:', error);
+  });
   void todoistSyncStore.checkClock().catch((error) => {
     console.warn('[todoist sync] focus clock check failed:', error);
   });

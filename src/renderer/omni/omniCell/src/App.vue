@@ -5,6 +5,7 @@ import { omniCellEnv } from './contextBridge/cellEnv.bridge';
 
 const cellId = omniCellEnv.cellId;
 const initialUrl = omniCellEnv.initialUrl || '';
+const isMiniApp = omniCellEnv.contentMode === 'miniapp';
 
 const state = reactive({
   url: initialUrl,
@@ -27,12 +28,12 @@ xpcRenderer.subscribe('omniCell/activeChanged', (payload) => {
 });
 
 const goBack = () => {
-  if (!cellId) return;
+  if (!cellId || isMiniApp) return;
   xpcRenderer.send('OmniWindowHandler/cellGoBack', { cellId });
 };
 
 const goForward = () => {
-  if (!cellId) return;
+  if (!cellId || isMiniApp) return;
   xpcRenderer.send('OmniWindowHandler/cellGoForward', { cellId });
 };
 
@@ -42,7 +43,7 @@ const refresh = () => {
 };
 
 const navigate = () => {
-  if (!cellId || !state.inputUrl) return;
+  if (!cellId || !state.inputUrl || isMiniApp) return;
   let url = state.inputUrl.trim();
   if (!/^https?:\/\//i.test(url)) {
     url = 'https://' + url;
@@ -57,6 +58,7 @@ const onKeydown = (e: KeyboardEvent) => {
 };
 
 const onInputFocus = (e: FocusEvent) => {
+  if (isMiniApp) return;
   const target = e.target as HTMLInputElement;
   if (!target) return;
   requestAnimationFrame(() => target.select());
@@ -64,11 +66,17 @@ const onInputFocus = (e: FocusEvent) => {
 </script>
 
 <template>
-  <div class="omni-cell-menubar" :class="{ 'omni-cell-menubar--active': state.active }">
-    <button class="omni-cell-menubar__nav-btn" title="后退" @click="goBack">
+  <div
+    class="omni-cell-menubar"
+    :class="{
+      'omni-cell-menubar--active': state.active,
+      'omni-cell-menubar--miniapp': isMiniApp,
+    }"
+  >
+    <button class="omni-cell-menubar__nav-btn" title="后退" :disabled="isMiniApp" @click="goBack">
       ←
     </button>
-    <button class="omni-cell-menubar__nav-btn" title="前进" @click="goForward">
+    <button class="omni-cell-menubar__nav-btn" title="前进" :disabled="isMiniApp" @click="goForward">
       →
     </button>
     <button class="omni-cell-menubar__nav-btn" title="刷新" @click="refresh">
@@ -79,6 +87,7 @@ const onInputFocus = (e: FocusEvent) => {
         v-model="state.inputUrl"
         size="small"
         placeholder="输入 URL..."
+        :readonly="isMiniApp"
         @keydown="onKeydown"
         @press-enter="navigate"
         @focus="onInputFocus"

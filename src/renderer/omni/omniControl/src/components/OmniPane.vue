@@ -4,8 +4,19 @@ import { useThrottleFn } from '@vueuse/core';
 import { Splitpanes, Pane } from 'splitpanes';
 import 'splitpanes/dist/splitpanes.css';
 import OmniPaneMenuBar from './OmniPaneMenuBar.vue';
-import { layoutStore } from '../store/layout.store';
-import type { OmniPaneNode } from '../types/layout.types';
+import todoIcon from '@renderer/common/assets/icons/menu-icons/todo.png';
+import eyesOnAgentsIcon from '@renderer/common/assets/icons/eyes-on-agents.svg';
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import {
+  getNodeContentMode,
+  getNodeDisplayUrl,
+  layoutStore,
+} from '../store/layout.store';
+import type {
+  OmniContentMode,
+  OmniMiniAppId,
+  OmniPaneNode,
+} from '../types/layout.types';
 
 const props = defineProps<{
   node: OmniPaneNode;
@@ -57,6 +68,16 @@ const handleUrlUpdate = (nodeId: string, url: string) => {
   // via omniControl/cellUrlChanged subscriber without needing a full layout sync
 };
 
+const handleContentModeUpdate = async (nodeId: string, contentMode: OmniContentMode) => {
+  layoutStore.updateContentMode(nodeId, contentMode);
+  await layoutStore.syncLayout();
+};
+
+const handleMiniAppSelect = async (nodeId: string, miniAppId: OmniMiniAppId) => {
+  layoutStore.updateMiniApp(nodeId, miniAppId);
+  await layoutStore.syncLayout();
+};
+
 const handleClose = async (nodeId: string) => {
   await nextTick();
   layoutStore.removePane(nodeId);
@@ -70,14 +91,41 @@ const handleClose = async (nodeId: string) => {
     <template v-if="node.type === 'leaf'">
       <OmniPaneMenuBar
         :node-id="node.id"
-        :url="node.url"
+        :display-url="getNodeDisplayUrl(node)"
+        :content-mode="getNodeContentMode(node)"
         @split="(dir, pos) => handleSplit(node.id, dir, pos)"
         @update-url="(url) => handleUrlUpdate(node.id, url)"
+        @update-content-mode="(contentMode) => handleContentModeUpdate(node.id, contentMode)"
         @close="handleClose(node.id)"
       />
       <div class="omni-pane__preview">
-        <span class="omni-pane__preview-id">{{ node.id.slice(0, 6) }}</span>
-        <span class="omni-pane__preview-url">{{ node.url }}</span>
+        <div
+          v-if="getNodeContentMode(node) === 'miniapp'"
+          class="omni-pane__miniapp-list"
+        >
+          <button
+            class="omni-pane__miniapp-item"
+            :class="{ 'omni-pane__miniapp-item--active': node.miniAppId !== 'eyesOnAgents' }"
+            type="button"
+            @click="handleMiniAppSelect(node.id, 'todo')"
+          >
+            <img class="omni-pane__miniapp-icon" :src="todoIcon" alt="" />
+            <span class="omni-pane__miniapp-name">{{ i18nHelper.miniApp.todo.name }}</span>
+          </button>
+          <button
+            class="omni-pane__miniapp-item"
+            :class="{ 'omni-pane__miniapp-item--active': node.miniAppId === 'eyesOnAgents' }"
+            type="button"
+            @click="handleMiniAppSelect(node.id, 'eyesOnAgents')"
+          >
+            <img class="omni-pane__miniapp-icon" :src="eyesOnAgentsIcon" alt="" />
+            <span class="omni-pane__miniapp-name">{{ i18nHelper.miniApp.eyesOnAgents.name }}</span>
+          </button>
+        </div>
+        <template v-else>
+          <span class="omni-pane__preview-id">{{ node.id.slice(0, 6) }}</span>
+          <span class="omni-pane__preview-url">{{ getNodeDisplayUrl(node) }}</span>
+        </template>
       </div>
     </template>
 
