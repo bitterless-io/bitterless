@@ -3,3 +3,4 @@
 - ✅ Fixed Todo refresh after creating a task with no SubTodos by returning explicit zero counts.
 - 🛡️ Keeps conflicting Snowflake-node responses fail-closed so local synchronized task IDs remain protected.
 - 📦 Reduced desktop package size and added a pre-sign package composition gate.
+- 🧩 Fixed an optional preload dependency that could prevent Core SQLite from starting on macOS.
