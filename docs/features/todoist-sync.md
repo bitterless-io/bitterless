@@ -50,10 +50,11 @@ new userData/db/todoist-sync-v1/customer-<customerId>.db
 - Each customer has a separate database and key. Logout closes it; account switch opens another.
 - Existing legacy Todo rows are irrelevant. This is an intentional new database and clean remote
   bootstrap; no compatibility import or old-Todo migration is implemented.
-- Todo sync has not shipped, so its first release has only the ordered schema-v1 manifest and no
-  invented historical Todo upgrade chain. The release migration audit covers fresh creation,
-  current-v1 reopen/idempotence, incomplete/failed migration rollback, and integrity checks. Future
-  released schema versions add real upgrade checkpoints to the same runtime/audit manifest.
+- The original schema-v1 became observable in DEBUG before the parent-order fix. It is immutable.
+  Ordered schema-v2 adds the nullable canonical-baseline parent reference and its lookup index while
+  preserving every v1 row. The upgrader also accepts development v1-ledger databases that already
+  contain those two objects. The release migration audit covers fresh creation, both v1 upgrade
+  shapes, current-v2 reopen/idempotence, failed migration rollback, and integrity checks.
 - Real Electron runtime creates a random database password and protects it with `safeStorage`.
   Automated/local tests inject a fixed test password through the database factory and must fail if
   any Keychain, Credential Manager, or `safeStorage` API is touched; this keeps tests deterministic
@@ -383,6 +384,12 @@ that preserves and replays the local outbox. Repeated failure stays visible and 
 Logout/auth invalidation increments the session generation, aborts HTTP, stops timers, closes the
 database, and prevents stale responses from applying. Account switching never mixes rows or keys.
 
+Authentication may start Todo synchronization as optional background work so it cannot delay a
+valid Core login. Home retains that activation request per authenticated customer. Embedded and
+standalone Todo entry points await it before creating the Todo renderer and retry a failed request
+when the user opens Todo again. Required renderer XPC values are validated: a transport `null` is a
+runtime failure, never an empty list or the Domain-capacity result.
+
 ## Packaging and removal
 
 - Retain exact `better-sqlite3-multiple-ciphers` and `@sapphire/snowflake` dependencies.
@@ -390,7 +397,7 @@ database, and prevents stale responses from applying. Account switching never mi
   PowerSync connector/schema/session symbols, and PowerSync-specific tests.
 - Bundle the existing SQLite cipher native module for macOS and Windows through the normal Electron
   path. Development and packaged builds must resolve the same new database implementation.
-- Runtime and the release audit consume one ordered Todo schema-v1 manifest. Native/runtime smoke
+- Runtime and the release audit consume one ordered Todo v1-to-v2 manifest. Native/runtime smoke
   uses the injected fixed test password and must not touch `safeStorage`; only the real application
   password provider may call `safeStorage`.
 
@@ -400,8 +407,8 @@ Required evidence:
 
 - fixed-password encrypted create/reopen and wrong-password failure, with a tripwire proving tests
   never access `safeStorage`/OS credentials and the Todo module never opens legacy `main.db`;
-- schema-v1 runtime/audit manifest fresh creation, current reopen, failed migration rollback,
-  `integrity_check`, and `foreign_key_check` (no fabricated historical Todo migration);
+- schema-v1 pre-parent-reference upgrade, already-shaped v1-ledger upgrade, current-v2 reopen,
+  failed migration rollback, `integrity_check`, and `foreign_key_check`;
 - resource CRUD, repeat/complete, reorder, archive/restore, cascade tombstones, and local events;
 - mutation + outbox atomicity across thrown errors and restart;
 - every outbox transition, lost-response UUID retry, exact ACK/resource proof, permanent add/update/

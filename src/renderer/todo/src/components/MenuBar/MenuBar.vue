@@ -44,8 +44,8 @@
               <div v-for="failure in todoistSyncStore.failures" :key="failure.uuid" class="todo-sync-status__failure">
                 <span>{{ failure.command_type }} · {{ failure.error_message || failure.error_code }}</span>
                 <div class="todo-sync-status__actions">
-                  <a-button size="mini" @click="todoistSyncStore.retry(failure.uuid)">{{ i18nHelper.todo.syncRetry }}</a-button>
-                  <a-button size="mini" status="danger" @click="todoistSyncStore.discard(failure.uuid)">{{ i18nHelper.todo.syncDiscard }}</a-button>
+                  <a-button size="mini" @click="handleRetrySync(failure.uuid)">{{ i18nHelper.todo.syncRetry }}</a-button>
+                  <a-button size="mini" status="danger" @click="handleDiscardSync(failure.uuid)">{{ i18nHelper.todo.syncDiscard }}</a-button>
                 </div>
               </div>
             </div>
@@ -125,6 +125,7 @@ import {
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoSettingStore } from '../../store/todoSetting.store';
 import { todoStore } from '../../store/todo.store';
+import { observeTodoMutation } from '../../store/todoMutation.service';
 import { todoWindowEmitter } from '../../emitter/todoWindow.emitter';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 import { mcpEmitter } from '../../emitter/mcp.emitter';
@@ -157,8 +158,18 @@ const menubarClass = computed(() => {
   return '';
 });
 
-const handleRefresh = async () => {
-  await Promise.all([todoistSyncStore.requestSync(), todoStore.loadAll()]);
+const handleRefresh = () => {
+  void observeTodoMutation(
+    () => Promise.all([todoistSyncStore.requestSync(), todoStore.loadAll()]),
+  );
+};
+
+const handleRetrySync = (uuid: string): void => {
+  void observeTodoMutation(() => todoistSyncStore.retry(uuid));
+};
+
+const handleDiscardSync = (uuid: string): void => {
+  void observeTodoMutation(() => todoistSyncStore.discard(uuid));
 };
 
 const handleOpenMcpGuide = async () => {
@@ -192,44 +203,50 @@ const handleOpenArchivedDomains = async () => {
   }
 };
 
-const handleToggleShowCompleted = async () => {
-  await todoSettingStore.toggleShowCompleted();
-  await todoStore.loadAll();
+const handleToggleShowCompleted = () => {
+  void observeTodoMutation(async () => {
+    await todoSettingStore.toggleShowCompleted();
+    await todoStore.loadAll();
+  });
 };
 
-const handleToggleShowFocused = async () => {
-  await todoSettingStore.toggleShowFocused();
-  if (todoSettingStore.showFocused) {
-    await nextTick();
-    const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
-    boardScroll?.scrollTo({ left: 0, behavior: 'smooth' });
-  }
+const handleToggleShowFocused = () => {
+  void observeTodoMutation(async () => {
+    await todoSettingStore.toggleShowFocused();
+    if (todoSettingStore.showFocused) {
+      await nextTick();
+      const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
+      boardScroll?.scrollTo({ left: 0, behavior: 'smooth' });
+    }
+  });
 };
 
 const handleOpenInWindow = () => {
-  todoWindowEmitter.openTodoWindow();
+  void observeTodoMutation(() => todoWindowEmitter.openTodoWindow());
 };
 
-const handleDoubleClick = async () => {
+const handleDoubleClick = () => {
   if (!props.isStandalone) return;
-  await todoWindowEmitter.toggleMaximize();
+  void observeTodoMutation(() => todoWindowEmitter.toggleMaximize());
 };
 
-const handleMinimize = async () => {
-  await todoWindowEmitter.minimize();
+const handleMinimize = () => {
+  void observeTodoMutation(() => todoWindowEmitter.minimize());
 };
 
-const handleMaximize = async () => {
-  await todoWindowEmitter.toggleMaximize();
+const handleMaximize = () => {
+  void observeTodoMutation(() => todoWindowEmitter.toggleMaximize());
 };
 
-const handleClose = async () => {
-  await todoWindowEmitter.close();
+const handleClose = () => {
+  void observeTodoMutation(() => todoWindowEmitter.close());
 };
 
-const handleTogglePin = async () => {
-  await todoSettingStore.setAlwaysOnTop(!todoSettingStore.alwaysOnTop);
-  await todoWindowEmitter.setAlwaysOnTop({ enable: todoSettingStore.alwaysOnTop });
+const handleTogglePin = () => {
+  void observeTodoMutation(async () => {
+    await todoSettingStore.setAlwaysOnTop(!todoSettingStore.alwaysOnTop);
+    await todoWindowEmitter.setAlwaysOnTop({ enable: todoSettingStore.alwaysOnTop });
+  });
 };
 
 </script>

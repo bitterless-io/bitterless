@@ -4,7 +4,7 @@
 
 | module | input | output | dependencies |
 |---|---|---|---|
-| `todoistSync.database` | customer ID, injected/runtime password | encrypted schema-v1 manifest | cipher SQLite |
+| `todoistSync.database` | customer ID, injected/runtime password | encrypted ordered v1-to-v2 manifest | cipher SQLite |
 | `todoistSync.repository` | UI/MCP commands and remote pages | baseline + visible projection + outbox | database, Snowflake IDs |
 | `todoistSync.client` | Core token, token, command batch | strict sync response | HTTP `/todo/sync` |
 | `todoistSync.coordinator` | triggers, outbox, token | serialized push/pull/reconcile | client, repository |
@@ -19,10 +19,11 @@ compatibility layer.
 
 The database factory has two explicit password providers. Production Electron uses a generated
 password wrapped by `safeStorage`; every automated/local test injects a fixed password and asserts
-that `safeStorage`/OS credential APIs were never called. Todo sync is unreleased, so schema v1 is a
-new database with no fabricated legacy upgrade or `main.db` import. Its ordered runtime manifest is
-also consumed by the SQLite release audit for fresh create, current-v1 reopen, failure rollback, and
-integrity checks.
+that `safeStorage`/OS credential APIs were never called. Todo sync still has no `main.db` import, but
+the original schema-v1 became observable in DEBUG and is therefore immutable. Ordered schema-v2
+adds the canonical-baseline parent lookup. The same runtime manifest drives the SQLite release audit
+for fresh creation, both observed v1 shapes, current-v2 reopen, failure rollback, and integrity
+checks.
 
 ## Repository state and remote monotonicity
 

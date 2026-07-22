@@ -17,7 +17,8 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-mcp-portable-skill](tasks/todo-mcp-portable-skill.md) | exportable Codex/Claude personal multi-device Todo skill package | done | todo-mcp-multi-instance |
 | [todo-preload-runtime-001](tasks/todo-preload-runtime-001.md) | chunk-safe Todo preload and renderer asset resolution | done | renderer-i18n-sync |
 | [todo-agent-skill-onboarding-002](tasks/todo-agent-skill-onboarding-002.md) | two-step MCP plus portable skill onboarding | done | todo-mcp-portable-skill, renderer-arco-bem-controls |
-| [todoist-sync-desktop-001](tasks/todoist-sync-desktop-001.md) | independent encrypted SQLite/HTTP sync plus complete Todo UI, MCP, clock, migration-audit, and Electron cutover | in-progress | — |
+| [todoist-sync-desktop-001](tasks/todoist-sync-desktop-001.md) | independent encrypted SQLite/HTTP sync plus complete Todo UI, MCP, clock, migration-audit, and Electron cutover | done | — |
+| [todo-sync-runtime-recovery-002](tasks/todo-sync-runtime-recovery-002.md) | v1-to-v2 Todo database recovery, session-ready renderer startup, and truthful XPC failures | done | todoist-sync-desktop-001 |
 | [maestro-source-layout-migration](tasks/maestro-source-layout-migration.md) | rename Sidekick to Maestro and keep sources distributed by Electron process | done | cowork-subapp-001, cowork-subapp-002 |
 | [renderer-arco-bem-controls](tasks/renderer-arco-bem-controls.md) | MCP guide modal and Maestro ChatPanel control consistency | done | maestro-source-layout-migration, todo-mcp-domain-create |
 | [renderer-tailwind-removal](tasks/renderer-tailwind-removal.md) | remove renderer Tailwind usage, retain dormant dependencies, and enforce shallow business BEM | done | renderer-arco-bem-controls, maestro-source-layout-migration |
@@ -56,6 +57,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-silent-focus-polling-018](tasks/eyes-on-agents-silent-focus-polling-018.md) | silent field-level title, state, and opted-in question refresh for Focus | done | eyes-on-agents-refresh-polling-015, eyes-on-agents-hook-delivery-007 |
 | [eyes-on-agents-tiered-all-polling-019](tasks/eyes-on-agents-tiered-all-polling-019.md) | hot-page plus round-robin cold-page field refresh across All | done | eyes-on-agents-silent-focus-polling-018, eyes-on-agents-last-user-prompt-016 |
 | [eyes-on-agents-thread-ingestion-prompt-card-020](tasks/eyes-on-agents-thread-ingestion-prompt-card-020.md) | tolerant thread admission, title repair, compact latest-question echo, and consent guide | implemented; owner verification pending | eyes-on-agents-tiered-all-polling-019, eyes-on-agents-last-user-prompt-016 |
+| [eyes-on-agents-focus-read-all-021](tasks/eyes-on-agents-focus-read-all-021.md) | persistent Focus Read all action without falsifying Codex opens | implemented; owner verification pending | eyes-on-agents-sync-persistence-006, eyes-on-agents-compact-card-012 |
 | [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and observable SQLite-first startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | final three-family SQLite audit and production packaging proof | pending | todoist-sync-desktop-001 |

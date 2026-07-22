@@ -8,6 +8,18 @@ import { Message } from '@arco-design/web-vue';
 import { playSuccessSound } from '@renderer/common/utils/sound.util';
 import { todoSettingStore } from './todoSetting.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import {
+  hasNumberFields,
+  hasStringFields,
+  isNullableNumber,
+  isRecord,
+  requireArray,
+  requireOptionalItem,
+  requireRecordMap,
+  requireStringArray,
+  requireVoidResult,
+  type UnknownRecord,
+} from './todoResult.guard';
 
 export interface DomainItem {
   id: string;
@@ -59,6 +71,50 @@ export interface SubTodoItem {
   updated_at: number;
 }
 
+const isDomainItem = (value: unknown): value is DomainItem => {
+  if (!isRecord(value)) return false;
+  return hasStringFields(value, ['id', 'customer_id', 'title', 'description']) && hasNumberFields(value, [
+    'is_deleted', 'archived', 'position', 'created_at', 'updated_at',
+  ]);
+};
+
+const isTodoItem = (value: unknown): value is TodoItem => {
+  if (!isRecord(value)) return false;
+  return hasStringFields(value, ['id', 'customer_id', 'domain_id', 'title', 'note', 'source']) &&
+    hasNumberFields(value, [
+      'status', 'important', 'repeat_interval', 'is_deleted', 'position', 'created_at', 'updated_at',
+    ]) &&
+    [
+      'due_at', 'remind_at', 'last_remind_at', 'last_complete_at', 'week_day', 'monthly_day',
+      'yearly_day',
+    ].every((field) => isNullableNumber(value[field])) &&
+    (value.repeat_type === null || typeof value.repeat_type === 'string') &&
+    (value.source === 'human' || value.source === 'ai');
+};
+
+const isSubTodoItem = (value: unknown): value is SubTodoItem => {
+  if (!isRecord(value)) return false;
+  return hasStringFields(value, ['id', 'customer_id', 'todo_id', 'title']) && hasNumberFields(value, [
+    'status', 'is_deleted', 'position', 'created_at', 'updated_at',
+  ]);
+};
+
+const isSubTodoCount = (value: unknown): value is { total: number; done: number } => (
+  isRecord(value) &&
+  Number.isSafeInteger(value.total) &&
+  Number.isSafeInteger(value.done) &&
+  (value.total as number) >= 0 &&
+  (value.done as number) >= 0
+);
+
+const requireSubTodoCounts = (
+  value: unknown,
+  todoIds: readonly string[],
+  label: string,
+): Record<string, { total: number; done: number }> => {
+  return requireRecordMap(value, todoIds, label, isSubTodoCount);
+};
+
 const toInlineMarkdownText = (value: string): string => {
   return value
     .replace(/\r\n/g, '\n')
@@ -102,12 +158,15 @@ class TodoState {
   async loadAll(): Promise<void> {
     this.loading = true;
     try {
-      const allDomains = await domainEmitter.getAll();
+      const allDomains = requireArray(await domainEmitter.getAll(), 'domain list', isDomainItem);
       const domains = allDomains.filter((domain) => domain.is_deleted === 0 && domain.archived === 0);
       this.archivedDomainList = allDomains
         .filter((domain) => domain.is_deleted === 0 && domain.archived === 1)
         .sort((a, b) => b.updated_at - a.updated_at);
-      const domainOrder = (await todoEmitter.getSortOrder({ key: 'domain' })) ?? [];
+      const domainOrder = requireStringArray(
+        await todoEmitter.getSortOrder({ key: 'domain' }),
+        'domain sort order',
+      );
 
       // Sort domains by sort order, unordered ones at end by created_at ASC
       if (domainOrder.length > 0) {
@@ -144,7 +203,7 @@ class TodoState {
   }
 
   async loadArchivedDomains(): Promise<void> {
-    const domains = await domainEmitter.getAll();
+    const domains = requireArray(await domainEmitter.getAll(), 'archived domain list', isDomainItem);
     this.archivedDomainList = domains
       .filter((domain) => domain.is_deleted === 0 && domain.archived === 1)
       .sort((a, b) => b.updated_at - a.updated_at);
@@ -152,9 +211,16 @@ class TodoState {
 
   async loadTodosForDomain(domainId: string): Promise<void> {
     const statusFilter = todoSettingStore.showCompleted ? undefined : 0;
-    const todos = await todoEmitter.getByDomainId({ domainId, status: statusFilter });
+    const todos = requireArray(
+      await todoEmitter.getByDomainId({ domainId, status: statusFilter }),
+      'Todo list',
+      isTodoItem,
+    );
     const sortKey = `todo__${domainId}`;
-    const sortOrder = (await todoEmitter.getSortOrder({ key: sortKey })) ?? [];
+    const sortOrder = requireStringArray(
+      await todoEmitter.getSortOrder({ key: sortKey }),
+      'Todo sort order',
+    );
 
     const sortFn = (a: TodoItem, b: TodoItem) => {
       if (sortOrder.length > 0) {
@@ -187,9 +253,13 @@ class TodoState {
     // Batch load sub-todo counts
     const todoIds = todos.map((t) => t.id);
     if (todoIds.length > 0) {
-      const countsMap = await subTodoEmitter.getCountsByTodoIds({ todoIds });
+      const countsMap = requireSubTodoCounts(
+        await subTodoEmitter.getCountsByTodoIds({ todoIds }),
+        todoIds,
+        'SubTodo count map',
+      );
       for (const todo of todos) {
-        this.subTodoCounts[todo.id] = countsMap[todo.id] ?? { total: 0, done: 0 };
+        this.subTodoCounts[todo.id] = countsMap[todo.id];
       }
     }
   }
@@ -227,17 +297,24 @@ class TodoState {
       Message.warning(i18nHelper.todo.domainLimitReached);
       return;
     }
-    const domain = await domainEmitter.create({ title: title ?? 'Untitled' });
-    if (domain) {
-      this.domainList.push(domain);
-      this.todosByDomain[domain.id] = [];
-    } else {
+    const domain = requireOptionalItem(
+      await domainEmitter.create({ title: title ?? 'Untitled' }),
+      'Domain create',
+      isDomainItem,
+    );
+    if (domain === undefined) {
       Message.warning(i18nHelper.todo.domainLimitReached);
+      return;
     }
+    this.domainList.push(domain);
+    this.todosByDomain[domain.id] = [];
   }
 
   async updateDomainTitle(id: string, title: string): Promise<void> {
-    await domainEmitter.updateTitle({ id, title });
+    requireVoidResult(
+      await domainEmitter.updateTitle({ id, title }),
+      'Domain title update',
+    );
     const domain = this.domainList.find((d) => d.id === id);
     if (domain) {
       domain.title = title;
@@ -245,7 +322,10 @@ class TodoState {
   }
 
   async updateDomainDescription(id: string, description: string): Promise<void> {
-    await domainEmitter.updateDescription({ id, description });
+    requireVoidResult(
+      await domainEmitter.updateDescription({ id, description }),
+      'Domain description update',
+    );
     const domain = this.domainList.find((d) => d.id === id);
     if (domain) {
       domain.description = description;
@@ -253,7 +333,7 @@ class TodoState {
   }
 
   async deleteDomain(id: string): Promise<void> {
-    await domainEmitter.hardDelete({ id });
+    requireVoidResult(await domainEmitter.hardDelete({ id }), 'Domain delete');
     await this._writeSortOrder(id, []);
     this.domainList = this.domainList.filter((d) => d.id !== id);
     delete this.todosByDomain[id];
@@ -261,7 +341,10 @@ class TodoState {
   }
 
   async archiveDomain(id: string): Promise<void> {
-    await domainEmitter.setArchived({ id, archived: 1 });
+    requireVoidResult(
+      await domainEmitter.setArchived({ id, archived: 1 }),
+      'Domain archive',
+    );
     const domain = this.domainList.find((d) => d.id === id);
     if (domain) {
       domain.archived = 1;
@@ -279,6 +362,14 @@ class TodoState {
   async restoreDomain(id: string): Promise<boolean> {
     const archivedDomain = this.archivedDomainList.find((domain) => domain.id === id);
     const result = await domainEmitter.restore({ id });
+    if (
+      result !== 'restored' &&
+      result !== 'already_active' &&
+      result !== 'limit_reached' &&
+      result !== 'not_found'
+    ) {
+      throw new Error('[todo] Domain restore returned an invalid required result');
+    }
     if (result === 'limit_reached') {
       Message.warning(i18nHelper.todo.domainLimitReached);
       return false;
@@ -290,11 +381,11 @@ class TodoState {
     let restoredDomain = archivedDomain
       ? { ...archivedDomain, archived: 0, updated_at: Date.now() }
       : undefined;
-    try {
-      restoredDomain = (await domainEmitter.getById({ id })) ?? restoredDomain;
-    } catch (error) {
-      console.error('[todo] domain restored but its latest row could not be read:', error);
-    }
+    restoredDomain = requireOptionalItem(
+      await domainEmitter.getById({ id }),
+      'restored Domain read',
+      isDomainItem,
+    ) ?? restoredDomain;
 
     this.archivedDomainList = this.archivedDomainList.filter((domain) => domain.id !== id);
     if (restoredDomain) {
@@ -316,7 +407,10 @@ class TodoState {
   }
 
   async saveDomainOrder(order: string[]): Promise<void> {
-    await todoEmitter.setSortOrder({ key: 'domain', order });
+    requireVoidResult(
+      await todoEmitter.setSortOrder({ key: 'domain', order }),
+      'Domain sort order update',
+    );
   }
 
   async createTodo(domainId: string, title: string): Promise<void> {
@@ -325,7 +419,11 @@ class TodoState {
       Message.warning(i18nHelper.todo.todoLimitReached);
       return;
     }
-    const todo = await todoEmitter.create({ domainId, title });
+    const todo = requireOptionalItem(
+      await todoEmitter.create({ domainId, title }),
+      'Todo create',
+      isTodoItem,
+    );
     if (todo) {
       await this._appendToSortOrder(domainId, todo.id);
       const activeList = this.todosByDomain[domainId] ?? [];
@@ -339,7 +437,7 @@ class TodoState {
   }
 
   async completeTodo(id: string): Promise<void> {
-    const result = await todoEmitter.completeTodo({ id });
+    const result = requireOptionalItem(await todoEmitter.completeTodo({ id }), 'Todo complete', isTodoItem);
     if (result) {
       playSuccessSound();
       if (result.status === 0) {
@@ -362,7 +460,7 @@ class TodoState {
   }
 
   async uncompleteTodo(id: string): Promise<void> {
-    const result = await todoEmitter.uncompleteTodo({ id });
+    const result = requireOptionalItem(await todoEmitter.uncompleteTodo({ id }), 'Todo uncomplete', isTodoItem);
     if (result) {
       await this._appendToSortOrder(result.domain_id, id);
       this._removeFromCompletedList(result.domain_id, id);
@@ -376,7 +474,7 @@ class TodoState {
   }
 
   async toggleImportant(id: string): Promise<void> {
-    const result = await todoEmitter.toggleImportant({ id });
+    const result = requireOptionalItem(await todoEmitter.toggleImportant({ id }), 'Todo importance', isTodoItem);
     if (result) {
       const domainId = result.domain_id;
       if (result.important === 1) {
@@ -418,7 +516,7 @@ class TodoState {
     note?: string;
     important?: number;
   }): Promise<void> {
-    const result = await todoEmitter.update(params);
+    const result = requireOptionalItem(await todoEmitter.update(params), 'Todo update', isTodoItem);
     if (result) {
       this._replaceInActiveList(result);
       this._replaceInCompletedList(result);
@@ -429,7 +527,11 @@ class TodoState {
   }
 
   async updateRepeatType(id: string, repeatType: string | null): Promise<void> {
-    const result = await todoEmitter.updateRepeatType({ id, repeatType });
+    const result = requireOptionalItem(
+      await todoEmitter.updateRepeatType({ id, repeatType }),
+      'Todo repeat type update',
+      isTodoItem,
+    );
     if (result) {
       this._replaceInActiveList(result);
       this._replaceInCompletedList(result);
@@ -440,7 +542,11 @@ class TodoState {
   }
 
   async updateRepeatInterval(id: string, interval: number): Promise<void> {
-    const result = await todoEmitter.updateRepeatInterval({ id, interval });
+    const result = requireOptionalItem(
+      await todoEmitter.updateRepeatInterval({ id, interval }),
+      'Todo repeat interval update',
+      isTodoItem,
+    );
     if (result) {
       this._replaceInActiveList(result);
       this._replaceInCompletedList(result);
@@ -451,7 +557,7 @@ class TodoState {
   }
 
   async skipToCurrent(id: string): Promise<void> {
-    const result = await todoEmitter.skipToCurrent({ id });
+    const result = requireOptionalItem(await todoEmitter.skipToCurrent({ id }), 'Todo skip', isTodoItem);
     if (result) {
       this._replaceInActiveList(result);
       if (this.selectedTodo?.id === id) {
@@ -504,12 +610,15 @@ class TodoState {
 
   private async _readSortOrder(domainId: string): Promise<string[]> {
     const sortKey = `todo__${domainId}`;
-    return (await todoEmitter.getSortOrder({ key: sortKey })) ?? [];
+    return requireStringArray(await todoEmitter.getSortOrder({ key: sortKey }), 'Todo sort order');
   }
 
   private async _writeSortOrder(domainId: string, order: string[]): Promise<void> {
     const sortKey = `todo__${domainId}`;
-    await todoEmitter.setSortOrder({ key: sortKey, order });
+    requireVoidResult(
+      await todoEmitter.setSortOrder({ key: sortKey, order }),
+      'Todo sort order update',
+    );
   }
 
   private async _appendToSortOrder(domainId: string, todoId: string): Promise<void> {
@@ -533,7 +642,8 @@ class TodoState {
   }
 
   async deleteTodo(id: string, domainId: string): Promise<void> {
-    await todoEmitter.hardDelete({ id });
+    const deleted = await todoEmitter.hardDelete({ id });
+    if (typeof deleted !== 'boolean') throw new Error('[todo] Todo delete returned an invalid required result');
     await this._removeFromSortOrder(domainId, id);
     if (this.selectedTodo?.id === id) {
       this.selectedTodo = null;
@@ -544,7 +654,11 @@ class TodoState {
   }
 
   async moveTodoToDomain(id: string, fromDomainId: string, toDomainId: string, options?: { targetOrder?: string[] }): Promise<void> {
-    await todoEmitter.moveToDomain({ id, domainId: toDomainId });
+    requireOptionalItem(
+      await todoEmitter.moveToDomain({ id, domainId: toDomainId }),
+      'Todo move',
+      isTodoItem,
+    );
     await this._removeFromSortOrder(fromDomainId, id);
     if (options?.targetOrder) {
       await this.saveTodoOrder(toDomainId, options.targetOrder);
@@ -557,7 +671,10 @@ class TodoState {
 
   async saveTodoOrder(domainId: string, order: string[]): Promise<void> {
     const sortKey = `todo__${domainId}`;
-    await todoEmitter.setSortOrder({ key: sortKey, order });
+    requireVoidResult(
+      await todoEmitter.setSortOrder({ key: sortKey, order }),
+      'Todo sort order update',
+    );
   }
 
   async selectTodo(todo: TodoItem): Promise<void> {
@@ -667,9 +784,16 @@ class TodoState {
   }
 
   private async _loadSortedSubTodos(todoId: string): Promise<SubTodoItem[]> {
-    const subs = await subTodoEmitter.getByTodoId({ todoId });
+    const subs = requireArray(
+      await subTodoEmitter.getByTodoId({ todoId }),
+      'SubTodo list',
+      isSubTodoItem,
+    );
     const sortKey = `subtodo__${todoId}`;
-    const sortOrder = (await todoEmitter.getSortOrder({ key: sortKey })) ?? [];
+    const sortOrder = requireStringArray(
+      await todoEmitter.getSortOrder({ key: sortKey }),
+      'SubTodo sort order',
+    );
 
     if (sortOrder.length > 0) {
       const orderMap = new Map<string, number>();
@@ -691,17 +815,24 @@ class TodoState {
 
   async refreshSubTodoCounts(todoId: string): Promise<void> {
     const counts = await subTodoEmitter.getCountByTodoId({ todoId });
+    if (!isSubTodoCount(counts)) {
+      throw new Error('[todo] SubTodo count returned an invalid required result');
+    }
     this.subTodoCounts[todoId] = counts;
   }
 
   async createSubTodo(todoId: string, title: string): Promise<void> {
-    await subTodoEmitter.create({ todoId, title });
+    requireOptionalItem(await subTodoEmitter.create({ todoId, title }), 'SubTodo create', isSubTodoItem);
     await this.loadSubTodos(todoId);
     await this.refreshSubTodoCounts(todoId);
   }
 
   async toggleSubTodoStatus(id: string, options?: { wasCompleted: boolean }): Promise<void> {
-    const result = await subTodoEmitter.toggleStatus({ id });
+    const result = requireOptionalItem(
+      await subTodoEmitter.toggleStatus({ id }),
+      'SubTodo status update',
+      isSubTodoItem,
+    );
     if (result && this.selectedTodo) {
       if (!options?.wasCompleted) {
         playSuccessSound();
@@ -712,14 +843,17 @@ class TodoState {
   }
 
   async updateSubTodoTitle(id: string, title: string): Promise<void> {
-    await subTodoEmitter.updateTitle({ id, title });
+    requireVoidResult(
+      await subTodoEmitter.updateTitle({ id, title }),
+      'SubTodo title update',
+    );
     if (this.selectedTodo) {
       await this.loadSubTodos(this.selectedTodo.id);
     }
   }
 
   async deleteSubTodo(id: string): Promise<void> {
-    await subTodoEmitter.hardDelete({ id });
+    requireVoidResult(await subTodoEmitter.hardDelete({ id }), 'SubTodo delete');
     if (this.selectedTodo) {
       await this.loadSubTodos(this.selectedTodo.id);
       await this.refreshSubTodoCounts(this.selectedTodo.id);
@@ -728,7 +862,10 @@ class TodoState {
 
   async saveSubTodoOrder(todoId: string, order: string[]): Promise<void> {
     const sortKey = `subtodo__${todoId}`;
-    await todoEmitter.setSortOrder({ key: sortKey, order });
+    requireVoidResult(
+      await todoEmitter.setSortOrder({ key: sortKey, order }),
+      'SubTodo sort order update',
+    );
   }
 }
 

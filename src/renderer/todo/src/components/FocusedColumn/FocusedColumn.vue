@@ -61,6 +61,7 @@ import { IconArrowUp } from '@tabler/icons-vue';
 import TodoRow from '../TodoRow/TodoRow.vue';
 import { todoStore } from '../../store/todo.store';
 import { todoSettingStore } from '../../store/todoSetting.store';
+import { observeTodoMutation } from '../../store/todoMutation.service';
 import type { FocusedFilters } from '../../store/todoSetting.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
@@ -76,7 +77,9 @@ const scrollToTop = () => {
 };
 
 const toggleFilter = (key: keyof FocusedFilters, value: boolean) => {
-  todoSettingStore.setFocusedFilters({ ...todoSettingStore.focusedFilters, [key]: value });
+  void observeTodoMutation(
+    () => todoSettingStore.setFocusedFilters({ ...todoSettingStore.focusedFilters, [key]: value }),
+  );
 };
 </script>
 

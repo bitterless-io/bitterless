@@ -9,6 +9,7 @@ import type {
   EyesOnAgentsLastUserPrompt,
   EyesOnAgentsProjectMetadata,
   EyesOnAgentsRepositoryApi,
+  EyesOnAgentsRepositoryMutationResult,
   EyesOnAgentsRuntimeDeliveryPersistenceResult,
   EyesOnAgentsRuntimeEvent,
   EyesOnAgentsRuntimePersistenceResult,
@@ -1191,6 +1192,17 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       [openedAt, Date.now(), threadId]
     );
     if (Number(result.changes) === 0) throw new Error('Thread was not found');
+  }
+
+  async markAllRead(): Promise<EyesOnAgentsRepositoryMutationResult> {
+    const result = await sqliteHelper.safeRun(
+      `UPDATE eyes_on_agents_thread SET is_unread = 0
+       WHERE is_archived = 0
+         AND is_unread = 1
+         AND runtime_state NOT IN ('working', 'waiting_approval', 'waiting_input')`,
+      []
+    );
+    return { changed: Number(result.changes) > 0 };
   }
 
   async createDomain(params: { title: string }): Promise<void> {

@@ -219,6 +219,7 @@ try {
       threads: []
     }),
     markOpened: async (params) => marked.push(params),
+    markAllRead: async () => ({ changed: false }),
     invalidateAppServerStatuses: async () => undefined,
     invalidateCodexHookStatuses: async () => undefined,
     upsertDiscoveredThreads: async () => undefined,
@@ -312,6 +313,56 @@ try {
   await successfulService.openThread({ threadId: THREAD_ID });
   assert.deepEqual(openedUrls, [`codex://threads/${THREAD_ID}`]);
   assert.deepEqual(marked, [{ threadId: THREAD_ID, openedAt: 456 }]);
+
+  const markAllReadCalls = [];
+  let markAllReadChanged = false;
+  let readSnapshotRevision = 0;
+  const markAllReadService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      markAllRead: async () => {
+        markAllReadCalls.push('mark-all-read');
+        return { changed: markAllReadChanged };
+      },
+      getSnapshot: async () => {
+        readSnapshotRevision += 1;
+        markAllReadCalls.push(`snapshot:${readSnapshotRevision}`);
+        return {
+          domains: [{
+            id: 1,
+            domainKey: 'uncategorized',
+            title: `Snapshot ${readSnapshotRevision}`,
+            sortIndex: 0,
+            isSystem: true
+          }],
+          threads: []
+        };
+      }
+    },
+    settings,
+    appServer,
+    desktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    broadcastChanged: () => markAllReadCalls.push('notify'),
+    now: () => 789
+  });
+  const unchangedReadSnapshot = await markAllReadService.markAllRead();
+  assert.equal(unchangedReadSnapshot.domains[0].title, 'Snapshot 1');
+  assert.deepEqual(
+    markAllReadCalls,
+    ['mark-all-read', 'snapshot:1'],
+    'Read all must return the latest snapshot without broadcasting a no-op write'
+  );
+  markAllReadChanged = true;
+  markAllReadCalls.length = 0;
+  const changedReadSnapshot = await markAllReadService.markAllRead();
+  assert.equal(changedReadSnapshot.domains[0].title, 'Snapshot 2');
+  assert.deepEqual(
+    markAllReadCalls,
+    ['mark-all-read', 'notify', 'snapshot:2'],
+    'Read all must broadcast only after persistence changes and still return the latest snapshot'
+  );
 
   const reconnectOrder = [];
   let synchronizedThreads = null;

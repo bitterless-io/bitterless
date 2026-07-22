@@ -85,8 +85,8 @@ The audit creates disposable SQLite databases through a pure-Node adapter matchi
 driver contract and exercises:
 
 - fresh Core and Maestro databases;
-- fresh and current-v1 customer Todo databases, including every resource, outbox, state, event,
-  index, foreign-key, and migration-ledger invariant;
+- fresh/current-v2 customer Todo databases plus both observable v1 upgrade shapes, including every
+  resource, outbox, state, event, index, foreign-key, and migration-ledger invariant;
 - pre-ledger legacy databases;
 - Core ledgers from the historical 10-digit series and the later 8-digit series;
 - Core schemas before Setting `sub_key`, Todo columns, Domain metadata, and each EyesOnAgents schema
@@ -94,11 +94,12 @@ driver contract and exercises:
 - Maestro checkpoints before/after capture-filter rebuild and each chat/inject-button migration;
 - direct jumps over several checkpoints, not only one-version upgrades.
 
-Todoist sync v1 has no released historical schema at introduction and deliberately ignores the
-legacy Todo rows in `main.db`. Its matrix therefore starts with an empty fresh database, a database
-stamped at the v1 baseline, an incomplete/invalid ledger, and an injected future migration failure.
-There is no legacy import fixture. Every later released Todo schema must add its real pre-upgrade
-checkpoint fixture to this matrix before packaging that change.
+Todoist sync deliberately ignores the legacy Todo rows in `main.db`. Its original v1 nevertheless
+became observable in DEBUG before the baseline-parent fix, so the matrix now upgrades the immutable
+pre-parent v1 and the development v1-ledger shape that already contains the parent column/index.
+It also covers empty fresh v2, current-v2 reopen, an incomplete/invalid ledger, and injected v2/future
+migration failures. There is no `main.db` import fixture. Every later released Todo schema adds its
+real pre-upgrade checkpoint fixture to this matrix before packaging that change.
 
 Every case must finish with `integrity_check = ok`, an empty `foreign_key_check`, the complete current
 column/index contract, every expected ledger entry, and preserved sentinel rows. The test must also

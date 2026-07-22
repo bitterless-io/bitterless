@@ -31,8 +31,9 @@ EyesOnAgents never reads or displays them.
   changing manual Domain assignment.
 - Show running threads and newly completed unread threads in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
-- Persist unread explicitly: every observed running state or terminal event sets unread, and only a
-  successful Open from EyesOnAgents clears it until running is observed again.
+- Persist unread explicitly: every observed running state or terminal event sets unread; a
+  successful Open from EyesOnAgents or explicit Focus `Read all` clears eligible completed
+  attention until activity is observed again.
 - Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
   activated again.
 - Hide archived Codex threads and restore unarchived threads without losing their Domain or local
@@ -365,7 +366,7 @@ nor Focus is stored as a separate table row.
 | `last_completed_at` | most recent observed terminal time |
 | `last_opened_turn_id` | terminal/active turn seen when opened through EyesOnAgents |
 | `last_opened_at` | successful Codex deep-link open time |
-| `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open clears it |
+| `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open or eligible Focus `Read all` clears it |
 | `status_source` | `app_server`, `codex_hook`, or `discovery` |
 | `status_observed_at` | freshness boundary for runtime evidence |
 | `last_activity_at` | sort/display timestamp from reliable metadata or events |
@@ -457,24 +458,36 @@ in Focus = runtime state is working/waiting_approval/waiting_input
 Every accepted `turn_started`, active `thread_status`, active `thread/list` observation, and
 `turn_completed` sets `is_unread = true`. This includes the completion of a turn that was opened
 while running: completion is a new attention transition and becomes unread again. A successful Open
-sets `is_unread = false`; if a later refresh still observes that thread running, it sets unread again
-as required. Idle, unknown, archive, and invalidation transitions preserve the current marker.
+sets `is_unread = false`; Focus `Read all` clears the marker for non-running unread rows. If a later
+refresh observes a cleared thread running, it sets unread again as required. Idle, unknown, archive,
+and invalidation transitions otherwise preserve the current marker.
 
 The legacy completion/open comparison is used once by migration to backfill the new column, so an
 upgrade preserves previously unread completed threads without flooding Focus with historical rows.
 A running thread remains in Focus after Open because runtime state independently keeps it there,
 even while its unread badge is temporarily clear.
 
+Focus `Read all` clears `is_unread` for every currently non-archived unread row whose runtime state
+is not `working`, `waiting_approval`, or `waiting_input`, in one repository mutation. It is not
+filtered by renderer DOM, current scroll position, Domain, Project, or title search. Idle rows that
+were focused only because they were unread leave Focus. Active rows are deliberately not
+acknowledged: they remain in Focus and retain the latent marker that makes a later idle observation
+unread even if no terminal event arrives. The operation does not deep-link to Codex and never
+changes `last_opened_turn_id` or `last_opened_at`. A lifecycle or polling observation committed after
+the read mutation may set a cleared thread unread again, preserving newer activity.
+
 `last_opened_*` changes only after `shell.openExternal(codex://threads/<id>)` resolves successfully.
 Selecting a card, moving it, or opening the same thread directly inside Codex does not mark it read.
-This means "unread" precisely means "attention observed by EyesOnAgents since the last successful
-Open from EyesOnAgents". Bitterless cannot observe arbitrary manual navigation inside Codex Desktop.
+This means "unread" precisely means "attention observed by EyesOnAgents and not yet acknowledged by
+a successful Open or eligible Focus `Read all`". Bitterless cannot observe arbitrary manual
+navigation inside Codex Desktop.
 
 A `Stop` Hook proves only that the turn stopped; it is not a read receipt and contains no supported
 signal that Codex still has this thread selected, frontmost, or viewed. App Server likewise exposes
 no documented selected-thread or read event. Consequently, if the user remains in Codex and reads
 the answer as it completes, EyesOnAgents conservatively keeps the completion unread until Open
-succeeds from EyesOnAgents. Completion must never auto-clear unread.
+succeeds from EyesOnAgents or the user explicitly selects `Read all`. Completion must never
+auto-clear unread.
 
 ## XPC surface
 
@@ -489,6 +502,7 @@ EyesOnAgentsHandler (main)
   syncThreads()
   refreshThreadPages() -> { changed }
   openThread({ threadId })
+  markAllRead()
   installCodexBridge()
   reviewCodexBridge()
   refreshCodexBridgeStatus()
@@ -506,6 +520,7 @@ EyesOnAgentsRepositoryHandler (SQLite preload)
   upsertThreadSnapshots({ snapshots })
   applyRuntimeEvent({ event })
   markOpened({ threadId, openedAt })
+  markAllRead() -> { changed }
   createDomain({ title })
   renameDomain({ domainId, title })
   deleteDomain({ domainId })

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import test, { after } from 'node:test';
+import CipherDatabase from 'better-sqlite3-multiple-ciphers';
 import type {
   TodoistSyncCommand,
   TodoistSyncCommandStatus,
@@ -26,6 +27,10 @@ import {
   type TodoistSyncRepositoryDatabase,
   type TodoistSyncSqlExecutor,
 } from '../../src/main/todoistSync/todoistSync.database';
+import {
+  applyTodoistSyncMigrations,
+  todoistSyncMigrations,
+} from '../../src/main/todoistSync/todoistSync.migration';
 import {
   getOrCreateTodoistSyncRuntimePassword,
   type TodoistSyncPasswordProtection,
@@ -55,6 +60,14 @@ import {
   type TodoistSyncSessionCoordinator,
 } from '../../src/main/todoistSync/todoistSync.session';
 import {
+  isRecord,
+  requireArray,
+  requireOptionalItem,
+  requireRecordMap,
+  requireVoidResult,
+} from '../../src/renderer/todo/src/store/todoResult.guard';
+import { observeTodoMutation } from '../../src/renderer/todo/src/store/todoMutation.service';
+import {
   TODOIST_SYNC_HTTP_ERROR_FIXTURES,
   TODOIST_SYNC_HTTP_OK_FIXTURE,
   TODOIST_SYNC_WIRE_IDS,
@@ -65,6 +78,7 @@ import {
 declare global {
   var __todoistSyncSafeStorageTripwireHits: number | undefined;
   var __todoistSyncBroadcasts: Array<{ event: string; payload: unknown }> | undefined;
+  var __todoMutationErrorMessages: unknown[] | undefined;
 }
 
 const TEST_PASSWORD = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -543,6 +557,85 @@ test('shared wire fixtures enforce exact request, HTTP 200, permanent status, an
   client.dispose();
 });
 
+test('Todo renderer result guards reject null/malformed data and reserve undefined for capacity', { concurrency: false }, () => {
+  const isIdRow = (value: unknown): value is { id: string } => (
+    isRecord(value) && typeof value.id === 'string'
+  );
+  const isCount = (value: unknown): value is { total: number; done: number } => (
+    isRecord(value) && Number.isSafeInteger(value.total) && Number.isSafeInteger(value.done)
+  );
+  assert.deepEqual(requireArray([{ id: '1' }], 'rows', isIdRow), [{ id: '1' }]);
+  assert.throws(() => requireArray(null, 'rows', isIdRow), /invalid required result/);
+  assert.throws(() => requireArray([{}], 'rows', isIdRow), /invalid required result/);
+  assert.deepEqual(
+    requireRecordMap({ '1': { total: 1, done: 0 } }, ['1'], 'counts', isCount),
+    { '1': { total: 1, done: 0 } },
+  );
+  assert.throws(() => requireRecordMap(null, ['1'], 'counts', isCount), /invalid required result/);
+  assert.throws(() => requireRecordMap({}, ['1'], 'counts', isCount), /omitted required key 1/);
+  assert.equal(requireOptionalItem(undefined, 'Domain create', isIdRow), undefined);
+  assert.throws(() => requireOptionalItem(null, 'Domain create', isIdRow), /invalid optional result/);
+  assert.equal(requireVoidResult(undefined, 'Domain update'), undefined);
+  assert.throws(() => requireVoidResult(null, 'Domain update'), /invalid void result/);
+  assert.throws(() => requireVoidResult(false, 'Domain update'), /invalid void result/);
+
+  const storeSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/store/todo.store.ts'),
+    'utf8',
+  );
+  const createDomainSource = storeSource.match(
+    /  async createDomain\([\s\S]*?\n  \}(?=\n\n  async updateDomainTitle)/,
+  );
+  assert(createDomainSource);
+  assert.match(createDomainSource[0], /if \(domain === undefined\)/);
+  assert.match(createDomainSource[0], /Message\.warning\(i18nHelper\.todo\.domainLimitReached\)/);
+  assert.doesNotMatch(createDomainSource[0], /if \(!domain\)|if \(domain\)/);
+});
+
+test('Todo UI mutation observation contains null XPC guard failures without unhandled rejection', { concurrency: false }, async () => {
+  const fakeTodoEmitter = {
+    update: async (): Promise<null> => null,
+    setSortOrder: async (): Promise<null> => null,
+  };
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    unhandledRejections.push(reason);
+  };
+  const originalConsoleError = console.error;
+  globalThis.__todoMutationErrorMessages = [];
+  console.error = () => undefined;
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    void observeTodoMutation(async () => {
+      requireOptionalItem(await fakeTodoEmitter.update(), 'Todo update', isRecord);
+    });
+    void observeTodoMutation(async () => {
+      requireVoidResult(await fakeTodoEmitter.setSortOrder(), 'Todo sort order update');
+    });
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    assert.deepEqual(unhandledRejections, []);
+    assert.equal(globalThis.__todoMutationErrorMessages.length, 2);
+  } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
+    console.error = originalConsoleError;
+    globalThis.__todoMutationErrorMessages = undefined;
+  }
+
+  const guardedComponentSources = [
+    'src/renderer/todo/src/App.vue',
+    'src/renderer/todo/src/components/DomainColumn/DomainColumn.vue',
+    'src/renderer/todo/src/components/FocusedColumn/FocusedColumn.vue',
+    'src/renderer/todo/src/components/MenuBar/MenuBar.vue',
+    'src/renderer/todo/src/components/TodoDetail/TodoDetail.vue',
+    'src/renderer/todo/src/components/TodoRow/TodoRow.vue',
+  ];
+  for (const sourcePath of guardedComponentSources) {
+    const source = originalFs.readFileSync(resolve(sourcePath), 'utf8');
+    assert.match(source, /observeTodoMutation/);
+  }
+});
+
 test('fixed-password SQLCipher create, protected-key first run, reopen, and wrong password', { concurrency: false }, () => {
   const root = createRoot('bitterless-todoist-cipher');
   const userDataPath = join(root, 'userData');
@@ -606,6 +699,59 @@ test('fixed-password SQLCipher create, protected-key first run, reopen, and wron
     assert.equal(legacyAfter.size, legacyBefore.size);
     assert.equal(legacyAfter.mtimeMs, legacyBefore.mtimeMs);
   } finally {
+    cleanupRoot(root);
+  }
+});
+
+test('encrypted pre-parent v1 upgrades to the exact v2 ledger without losing state or baseline rows', { concurrency: false }, () => {
+  const root = createRoot('bitterless-todoist-encrypted-v1-upgrade');
+  const paths = resolveTodoistSyncDatabasePaths(join(root, 'userData'), '1');
+  originalFs.mkdirSync(paths.directory, { recursive: true });
+  const v1 = new CipherDatabase(paths.databasePath);
+  try {
+    v1.pragma("cipher = 'sqlcipher'");
+    v1.pragma('legacy = 4');
+    v1.pragma(`key = '${TEST_PASSWORD}'`);
+    v1.pragma('cipher_page_size = 8192');
+    v1.pragma('foreign_keys = ON');
+    applyTodoistSyncMigrations(v1, [todoistSyncMigrations[0]]);
+    v1.prepare(
+      `INSERT INTO todo_sync_state (
+        customer_id, device_id, sync_token, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+    ).run('1', TEST_DEVICE_ID, 'encrypted-v1-sentinel', 1, 1);
+    v1.prepare(
+      `INSERT INTO todo_sync_baselines (
+        resource_type, resource_id, sync_revision, payload_json, reconcile_pending, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run('todo_domain', REMOTE_DOMAIN_ID, '9', '{"title":"encrypted-v1"}', 0, 1);
+  } finally {
+    v1.close();
+  }
+
+  const upgraded = new TodoistSyncDatabase(paths.databasePath, TEST_PASSWORD);
+  try {
+    const ledger = upgraded.raw.prepare(
+      'SELECT version, name FROM todoist_sync_schema ORDER BY version',
+    ).all();
+    assert.deepEqual(ledger, todoistSyncMigrations.map((migration) => ({
+      version: migration.version,
+      name: migration.name,
+    })));
+    const state = upgraded.raw.prepare(
+      'SELECT sync_token FROM todo_sync_state WHERE customer_id = ?',
+    ).get('1') as { sync_token: string };
+    assert.equal(state.sync_token, 'encrypted-v1-sentinel');
+    const baseline = upgraded.raw.prepare(
+      `SELECT payload_json, parent_resource_id FROM todo_sync_baselines
+       WHERE resource_type = 'todo_domain' AND resource_id = ?`,
+    ).get(REMOTE_DOMAIN_ID) as { payload_json: string; parent_resource_id: string | null };
+    assert.equal(baseline.payload_json, '{"title":"encrypted-v1"}');
+    assert.equal(baseline.parent_resource_id, null);
+    assert.equal(upgraded.raw.pragma('integrity_check', { simple: true }), 'ok');
+    assert.deepEqual(upgraded.raw.pragma('foreign_key_check'), []);
+  } finally {
+    upgraded.close();
     cleanupRoot(root);
   }
 });
@@ -1761,7 +1907,14 @@ test('session transitions are serialized, latest-generation wins, and customer r
 
     const skipped = session.activate({ coreToken: 'token-a', customerId: 1, deviceId: 'session-device-0001' });
     const latest = session.activate({ coreToken: 'token-b', customerId: 2, deviceId: 'session-device-0002' });
-    await Promise.all([skipped, latest]);
+    const [skippedResult, latestResult] = await Promise.all([skipped, latest]);
+    assert.equal(skippedResult.status, 'failed');
+    assert.deepEqual(latestResult, {
+      status: 'active',
+      customerId: 2,
+      deviceId: 'session-device-0002',
+      sessionGeneration: 2,
+    });
     assert.deepEqual(createdCustomers, [2]);
     const customerTwoDomain = await (await session.getRepositoryAsync()).createDomain({ title: 'Customer two' });
     assert(customerTwoDomain);

@@ -145,8 +145,17 @@ export interface TodoistSyncActivateParams {
   deviceId: string;
 }
 
+export type TodoistSyncActivationResult =
+  | {
+      status: 'active';
+      customerId: number;
+      deviceId: string;
+      sessionGeneration: number;
+    }
+  | { status: 'failed'; error: string };
+
 export interface TodoistSyncSessionApi {
-  activate(params: TodoistSyncActivateParams): Promise<void>;
+  activate(params: TodoistSyncActivateParams): Promise<TodoistSyncActivationResult>;
   deactivate(): Promise<void>;
 }
 

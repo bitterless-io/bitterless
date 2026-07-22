@@ -44,11 +44,13 @@ import { omniWindowEmitter } from '@/emitter/omniWindow.emitter';
 import { maestroWindowEmitter } from '@/emitter/maestroWindow.emitter';
 import { coinWindowEmitter } from '@/emitter/coinWindow.emitter';
 import { eyesOnAgentsWindowEmitter } from '@/emitter/eyesOnAgentsWindow.emitter';
+import { authStore } from '@/stores/auth/auth.store';
 import { createMiniApps, type MiniApp } from './miniApps.constant';
 
 const openingAppIds = ref(new Set<string>());
 
 const openTodo = async () => {
+  await authStore.ensureTodoistSyncReady();
   await todoWindowEmitter.openTodoWindow();
 };
 

@@ -123,12 +123,13 @@ import {
 } from '@tabler/icons-vue';
 import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import { todoStore } from '../../store/todo.store';
+import { observeTodoMutation } from '../../store/todoMutation.service';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { TodoItem } from '../../store/todo.store';
 
 const props = defineProps<{
   todo: TodoItem;
-  overrideSelect?: () => void;
+  overrideSelect?: () => void | Promise<void>;
 }>();
 
 const editing = ref(false);
@@ -192,30 +193,32 @@ const startEditing = async () => {
 const onTitleBlur = () => {
   const value = _editingText.value.trim();
   if (value && value !== props.todo.title) {
-    todoStore.updateTodo({ id: props.todo.id, title: value });
+    void observeTodoMutation(() => todoStore.updateTodo({ id: props.todo.id, title: value }));
   }
   editing.value = false;
 };
 
+const selectTodo = (): void => {
+  void observeTodoMutation(async () => {
+    if (props.overrideSelect) {
+      await props.overrideSelect();
+      return;
+    }
+    await todoStore.selectTodo(props.todo);
+  });
+};
+
 const handleTitleClick = () => {
   if (!todoStore.detailVisible || todoStore.selectedTodo?.id !== props.todo.id) {
-    if (props.overrideSelect) {
-      props.overrideSelect();
-    } else {
-      todoStore.selectTodo(props.todo);
-    }
+    selectTodo();
   } else {
-    startEditing();
+    void startEditing();
   }
 };
 
 const handleRowClick = () => {
   if (!editing.value) {
-    if (props.overrideSelect) {
-      props.overrideSelect();
-    } else {
-      todoStore.selectTodo(props.todo);
-    }
+    selectTodo();
   }
 };
 
@@ -235,27 +238,29 @@ const canSkipToCurrent = computed(() => {
 
 const handleSkipToCurrent = () => {
   contextMenuVisible.value = false;
-  todoStore.skipToCurrent(props.todo.id);
+  void observeTodoMutation(() => todoStore.skipToCurrent(props.todo.id));
 };
 
 const handleCopyTitle = () => {
   contextMenuVisible.value = false;
-  todoStore.copyTodoTitle(props.todo);
+  void observeTodoMutation(() => todoStore.copyTodoTitle(props.todo));
 };
 
 const handleCopyWithSteps = () => {
   contextMenuVisible.value = false;
-  todoStore.copyTodoWithSteps(props.todo);
+  void observeTodoMutation(() => todoStore.copyTodoWithSteps(props.todo));
 };
 
 const handleCopyAll = () => {
   contextMenuVisible.value = false;
-  todoStore.copyTodoAll(props.todo);
+  void observeTodoMutation(() => todoStore.copyTodoAll(props.todo));
 };
 
 const handleDelete = () => {
   contextMenuVisible.value = false;
-  const doAction = () => todoStore.deleteTodo(props.todo.id, props.todo.domain_id);
+  const doAction = () => observeTodoMutation(
+    () => todoStore.deleteTodo(props.todo.id, props.todo.domain_id),
+  );
 
   let onKeydown: (e: KeyboardEvent) => void;
   const cleanup = () => document.removeEventListener('keydown', onKeydown);
@@ -264,7 +269,7 @@ const handleDelete = () => {
     if (e.key === 'Enter') {
       e.preventDefault();
       cleanup();
-      doAction();
+      void doAction();
       modal.close();
     }
   };
@@ -279,7 +284,7 @@ const handleDelete = () => {
     cancelButtonProps: { size: 'mini' },
     onOk: () => {
       cleanup();
-      doAction();
+      return doAction();
     },
     onCancel: cleanup
   });
@@ -289,14 +294,14 @@ const handleDelete = () => {
 
 const handleToggleStatus = () => {
   if (props.todo.status === 0) {
-    todoStore.completeTodo(props.todo.id);
+    void observeTodoMutation(() => todoStore.completeTodo(props.todo.id));
   } else {
-    todoStore.uncompleteTodo(props.todo.id);
+    void observeTodoMutation(() => todoStore.uncompleteTodo(props.todo.id));
   }
 };
 
 const handleToggleImportant = () => {
-  todoStore.toggleImportant(props.todo.id);
+  void observeTodoMutation(() => todoStore.toggleImportant(props.todo.id));
 };
 </script>
 

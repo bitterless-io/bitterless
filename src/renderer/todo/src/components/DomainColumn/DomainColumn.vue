@@ -112,6 +112,7 @@ import ContextMenu from '../ContextMenu/ContextMenu.vue';
 import TodoRow from '../TodoRow/TodoRow.vue';
 import { todoStore } from '../../store/todo.store';
 import { todoSettingStore } from '../../store/todoSetting.store';
+import { observeTodoMutation } from '../../store/todoMutation.service';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { DomainItem } from '../../store/todo.store';
 
@@ -182,7 +183,7 @@ const startEditing = async () => {
 const onTitleBlur = () => {
   const value = _editingText.value.trim();
   if (value && value !== props.domain.title) {
-    todoStore.updateDomainTitle(props.domain.id, value);
+    void observeTodoMutation(() => todoStore.updateDomainTitle(props.domain.id, value));
   }
   editing.value = false;
 };
@@ -190,7 +191,9 @@ const onTitleBlur = () => {
 const onDescriptionBlur = () => {
   const value = _descriptionText.value.trim();
   if (value !== (props.domain.description ?? '')) {
-    todoStore.updateDomainDescription(props.domain.id, value);
+    void observeTodoMutation(
+      () => todoStore.updateDomainDescription(props.domain.id, value),
+    );
   }
 };
 
@@ -205,12 +208,12 @@ const onHeaderContextMenu = (e: MouseEvent) => {
 
 const handleArchiveDomain = () => {
   contextMenuVisible.value = false;
-  todoStore.archiveDomain(props.domain.id);
+  void observeTodoMutation(() => todoStore.archiveDomain(props.domain.id));
 };
 
 const handleDeleteDomain = () => {
   contextMenuVisible.value = false;
-  const doAction = () => todoStore.deleteDomain(props.domain.id);
+  const doAction = () => observeTodoMutation(() => todoStore.deleteDomain(props.domain.id));
 
   let onKeydown: (e: KeyboardEvent) => void;
   const cleanup = () => document.removeEventListener('keydown', onKeydown);
@@ -219,7 +222,7 @@ const handleDeleteDomain = () => {
     if (e.key === 'Enter') {
       e.preventDefault();
       cleanup();
-      doAction();
+      void doAction();
       modal.close();
     }
   };
@@ -232,39 +235,48 @@ const handleDeleteDomain = () => {
     escToClose: true,
     okButtonProps: { status: 'danger', size: 'mini' },
     cancelButtonProps: { size: 'mini' },
-    onOk: () => { cleanup(); doAction(); },
+    onOk: () => { cleanup(); return doAction(); },
     onCancel: cleanup,
   });
 
   document.addEventListener('keydown', onKeydown);
 };
 
-const handleAddTodo = async () => {
+const handleAddTodo = () => {
   const title = newTodoTitle.value.trim();
   if (!title) return;
   newTodoTitle.value = '';
-  await todoStore.createTodo(props.domain.id, title);
-  await nextTick();
-  bodyRef.value?.scrollTo({ top: bodyRef.value.scrollHeight, behavior: 'smooth' });
+  void observeTodoMutation(async () => {
+    await todoStore.createTodo(props.domain.id, title);
+    await nextTick();
+    bodyRef.value?.scrollTo({ top: bodyRef.value.scrollHeight, behavior: 'smooth' });
+  });
 };
 
 const onTodoListUpdate = (newList: any[]) => {
   todoStore.todosByDomain[props.domain.id] = newList;
 };
 
-const onTodoAdd = async (evt: any) => {
+const onTodoAdd = (evt: any) => {
   const currentList = todoStore.todosByDomain[props.domain.id] ?? [];
   const moved = currentList[evt.newIndex];
   if (moved && moved.domain_id !== props.domain.id) {
     const targetOrder = currentList.map((t) => t.id);
-    await todoStore.moveTodoToDomain(moved.id, moved.domain_id, props.domain.id, { targetOrder });
+    void observeTodoMutation(
+      () => todoStore.moveTodoToDomain(
+        moved.id,
+        moved.domain_id,
+        props.domain.id,
+        { targetOrder },
+      ),
+    );
   }
 };
 
 const onTodoDragEnd = () => {
   const currentList = todoStore.todosByDomain[props.domain.id] ?? [];
   const order = currentList.map((t) => t.id);
-  todoStore.saveTodoOrder(props.domain.id, order);
+  void observeTodoMutation(() => todoStore.saveTodoOrder(props.domain.id, order));
 };
 </script>
 

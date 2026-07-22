@@ -122,7 +122,6 @@ const SCHEMA_V1 = `
   CREATE TABLE todo_sync_baselines (
     resource_type TEXT NOT NULL,
     resource_id TEXT NOT NULL,
-    parent_resource_id TEXT,
     sync_revision TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     reconcile_pending INTEGER NOT NULL DEFAULT 0,
@@ -175,7 +174,6 @@ const SCHEMA_V1 = `
   CREATE INDEX sub_todo_customer_todo_position ON sub_todos(customer_id, todo_id, position);
   CREATE INDEX todo_sync_outbox_send ON todo_sync_outbox(state, command_order);
   CREATE INDEX todo_sync_outbox_resource ON todo_sync_outbox(resource_type, resource_id, command_order);
-  CREATE INDEX todo_sync_baseline_parent ON todo_sync_baselines(resource_type, parent_resource_id, resource_id);
   CREATE INDEX todo_event_sequence ON todo_events(sequence);
 `;
 
@@ -204,8 +202,8 @@ export const TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS = {
     'version_command_uuid', 'sync_revision', 'deleted_flag', 'deleted_at', 'reconcile_pending',
   ],
   todo_sync_baselines: [
-    'resource_type', 'resource_id', 'parent_resource_id', 'sync_revision', 'payload_json',
-    'reconcile_pending', 'updated_at',
+    'resource_type', 'resource_id', 'sync_revision', 'payload_json', 'reconcile_pending',
+    'updated_at',
   ],
   todo_sync_outbox: [
     'command_order', 'command_uuid', 'command_type', 'resource_type', 'resource_id',
@@ -223,15 +221,33 @@ export const TODOIST_SYNC_SCHEMA_V1_INDEXES = [
   'sub_todo_customer_todo_position',
   'todo_sync_outbox_send',
   'todo_sync_outbox_resource',
-  'todo_sync_baseline_parent',
   'todo_event_sequence',
+] as const;
+
+export const TODOIST_SYNC_SCHEMA_V2_TABLE_COLUMNS = {
+  ...TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS,
+  todo_sync_baselines: [
+    ...TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS.todo_sync_baselines,
+    'parent_resource_id',
+  ],
+} as const;
+
+export const TODOIST_SYNC_SCHEMA_V2_INDEXES = [
+  ...TODOIST_SYNC_SCHEMA_V1_INDEXES,
+  'todo_sync_baseline_parent',
 ] as const;
 
 interface TodoistSyncSchemaColumn {
   name: unknown;
+  type: unknown;
+  notnull: unknown;
 }
 
 interface TodoistSyncSchemaIndex {
+  name: unknown;
+}
+
+interface TodoistSyncIndexColumn {
   name: unknown;
 }
 
@@ -243,22 +259,42 @@ interface TodoistSyncForeignKey {
 
 const quoteIdentifier = (value: string): string => `"${value.replace(/"/g, '""')}"`;
 
-export const assertTodoistSyncSchemaV1 = (db: TodoistSyncMigrationDatabase): void => {
-  for (const [table, expectedColumns] of Object.entries(TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS)) {
+const assertTodoistSyncSchema = (
+  db: TodoistSyncMigrationDatabase,
+  version: 1 | 2,
+  expectedTables: Record<string, readonly string[]>,
+  expectedIndexes: readonly string[],
+): void => {
+  for (const [table, expectedColumns] of Object.entries(expectedTables)) {
     const rows = db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as TodoistSyncSchemaColumn[];
     const actualColumns = rows.map((row) => row.name);
-    if (
-      actualColumns.length !== expectedColumns.length ||
-      expectedColumns.some((column, index) => actualColumns[index] !== column)
-    ) {
-      throw new Error(`[todoist sync] schema-v1 table ${table} does not match its column contract`);
+    const expectedColumnOrders = version === 2 && table === 'todo_sync_baselines'
+      ? [
+          expectedColumns,
+          [
+            'resource_type',
+            'resource_id',
+            'parent_resource_id',
+            'sync_revision',
+            'payload_json',
+            'reconcile_pending',
+            'updated_at',
+          ],
+        ]
+      : [expectedColumns];
+    const hasExpectedOrder = expectedColumnOrders.some((order) => (
+      actualColumns.length === order.length &&
+      order.every((column, index) => actualColumns[index] === column)
+    ));
+    if (!hasExpectedOrder) {
+      throw new Error(`[todoist sync] schema-v${version} table ${table} does not match its column contract`);
     }
   }
 
   const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all() as TodoistSyncSchemaIndex[];
   const indexNames = new Set(indexes.map((row) => row.name));
-  for (const index of TODOIST_SYNC_SCHEMA_V1_INDEXES) {
-    if (!indexNames.has(index)) throw new Error(`[todoist sync] schema-v1 index ${index} is missing`);
+  for (const index of expectedIndexes) {
+    if (!indexNames.has(index)) throw new Error(`[todoist sync] schema-v${version} index ${index} is missing`);
   }
 
   const todoForeignKeys = db.prepare('PRAGMA foreign_key_list(todos)').all() as TodoistSyncForeignKey[];
@@ -270,8 +306,57 @@ export const assertTodoistSyncSchemaV1 = (db: TodoistSyncMigrationDatabase): voi
     row.table === 'todos' && row.from === 'todo_id' && row.to === 'id'
   ));
   if (!hasTodoDomainKey || !hasSubTodoKey) {
-    throw new Error('[todoist sync] schema-v1 foreign-key contract is incomplete');
+    throw new Error(`[todoist sync] schema-v${version} foreign-key contract is incomplete`);
   }
+};
+
+export const assertTodoistSyncSchemaV1 = (db: TodoistSyncMigrationDatabase): void => {
+  assertTodoistSyncSchema(
+    db,
+    1,
+    TODOIST_SYNC_SCHEMA_V1_TABLE_COLUMNS,
+    TODOIST_SYNC_SCHEMA_V1_INDEXES,
+  );
+};
+
+export const assertTodoistSyncSchemaV2 = (db: TodoistSyncMigrationDatabase): void => {
+  assertTodoistSyncSchema(
+    db,
+    2,
+    TODOIST_SYNC_SCHEMA_V2_TABLE_COLUMNS,
+    TODOIST_SYNC_SCHEMA_V2_INDEXES,
+  );
+  const columns = db.prepare('PRAGMA table_info(todo_sync_baselines)').all() as TodoistSyncSchemaColumn[];
+  const parentColumn = columns.find((column) => column.name === 'parent_resource_id');
+  if (parentColumn?.type !== 'TEXT' || parentColumn.notnull !== 0) {
+    throw new Error('[todoist sync] schema-v2 baseline parent column contract is invalid');
+  }
+  const indexColumns = db.prepare('PRAGMA index_info(todo_sync_baseline_parent)').all() as TodoistSyncIndexColumn[];
+  const actualIndexColumns = indexColumns.map((column) => column.name);
+  const expectedIndexColumns = ['resource_type', 'parent_resource_id', 'resource_id'];
+  if (
+    actualIndexColumns.length !== expectedIndexColumns.length ||
+    expectedIndexColumns.some((column, index) => actualIndexColumns[index] !== column)
+  ) {
+    throw new Error('[todoist sync] schema-v2 baseline parent index contract is invalid');
+  }
+};
+
+const addTodoistSyncBaselineParent = (db: TodoistSyncMigrationDatabase): void => {
+  const columns = db.prepare('PRAGMA table_info(todo_sync_baselines)').all() as TodoistSyncSchemaColumn[];
+  if (!columns.some((column) => column.name === 'parent_resource_id')) {
+    db.exec('ALTER TABLE todo_sync_baselines ADD COLUMN parent_resource_id TEXT;');
+  }
+  const index = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='index' AND name='todo_sync_baseline_parent'",
+  ).get();
+  if (!index) {
+    db.exec(`
+      CREATE INDEX todo_sync_baseline_parent
+      ON todo_sync_baselines(resource_type, parent_resource_id, resource_id);
+    `);
+  }
+  assertTodoistSyncSchemaV2(db);
 };
 
 export const todoistSyncMigrations: readonly TodoistSyncMigration[] = [
@@ -279,6 +364,11 @@ export const todoistSyncMigrations: readonly TodoistSyncMigration[] = [
     version: 1,
     name: 'todoist-sync-v1',
     up: (db) => db.exec(SCHEMA_V1),
+  },
+  {
+    version: 2,
+    name: 'todoist-sync-v2-baseline-parent',
+    up: addTodoistSyncBaselineParent,
   },
 ];
 
@@ -320,18 +410,22 @@ const getTodoistSyncLedger = (db: TodoistSyncMigrationDatabase): TodoistSyncLedg
 const assertTodoistSyncLedger = (
   rows: readonly TodoistSyncLedgerRow[],
   migrations: readonly TodoistSyncMigration[],
+  complete = false,
 ): number => {
-  const manifest = new Map(migrations.map((migration) => [migration.version, migration.name]));
   let previous = 0;
-  for (const row of rows) {
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
     if (!Number.isSafeInteger(row.version) || (row.version as number) <= previous) {
       throw new Error('[todoist sync] migration ledger contains an invalid or unordered version');
     }
-    const expectedName = manifest.get(row.version as number);
-    if (expectedName === undefined || row.name !== expectedName) {
+    const expected = migrations[index];
+    if (!expected || row.version !== expected.version || row.name !== expected.name) {
       throw new Error(`[todoist sync] migration ledger contains unknown entry ${String(row.version)}`);
     }
     previous = row.version as number;
+  }
+  if (complete && rows.length !== migrations.length) {
+    throw new Error('[todoist sync] migration ledger does not match the complete runtime manifest');
   }
   return previous;
 };
@@ -360,6 +454,11 @@ export const applyTodoistSyncMigrations = (
       throw new TodoistSyncMigrationError(migration.version, migration.name, error);
     }
   }
-  assertTodoistSyncLedger(getTodoistSyncLedger(db), migrations);
-  assertTodoistSyncSchemaV1(db);
+  assertTodoistSyncLedger(getTodoistSyncLedger(db), migrations, true);
+  const currentVersion = migrations.at(-1)?.version ?? 0;
+  if (currentVersion === 1) {
+    assertTodoistSyncSchemaV1(db);
+  } else if (currentVersion >= 2) {
+    assertTodoistSyncSchemaV2(db);
+  }
 };

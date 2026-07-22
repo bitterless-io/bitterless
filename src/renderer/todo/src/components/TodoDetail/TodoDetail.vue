@@ -66,7 +66,7 @@
                   :model-value="element.status === 1"
                   size="mini"
                   @click.stop
-                  @change="todoStore.toggleSubTodoStatus(element.id, { wasCompleted: element.status === 1 })"
+                  @change="handleToggleSubTodoStatus(element.id, element.status === 1)"
                 />
                 <textarea
                   class="todo-detail__subtodo-title"
@@ -247,6 +247,7 @@ import moment from 'moment';
 import draggable from 'vuedraggable';
 import { IconMapPin, IconPlayerSkipForward, IconPlus, IconTrash, IconX } from '@tabler/icons-vue';
 import { todoStore } from '../../store/todo.store';
+import { observeTodoMutation } from '../../store/todoMutation.service';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
 const TITLE_MAX_LENGTH = 250;
@@ -329,7 +330,8 @@ const selectedTodoIsAi = computed(() => {
 
 const handleSkipToCurrent = () => {
   if (!todoStore.selectedTodo) return;
-  todoStore.skipToCurrent(todoStore.selectedTodo.id);
+  const todoId = todoStore.selectedTodo.id;
+  void observeTodoMutation(() => todoStore.skipToCurrent(todoId));
 };
 
 const remindDateValue = computed(() => {
@@ -340,7 +342,8 @@ const remindDateValue = computed(() => {
 const onTitleBlur = (e: FocusEvent) => {
   const value = (e.target as HTMLTextAreaElement).value.trim();
   if (value && todoStore.selectedTodo && value !== todoStore.selectedTodo.title) {
-    todoStore.updateTodo({ id: todoStore.selectedTodo.id, title: value });
+    const todoId = todoStore.selectedTodo.id;
+    void observeTodoMutation(() => todoStore.updateTodo({ id: todoId, title: value }));
   }
   headerEditing.value = false;
 };
@@ -389,7 +392,7 @@ const onSubTitleBlur = (e: FocusEvent, id: string) => {
   const trimmed = (e.target as HTMLTextAreaElement).value.trim();
   subTodoEditingTexts[id] = trimmed;
   if (trimmed) {
-    todoStore.updateSubTodoTitle(id, trimmed);
+    void observeTodoMutation(() => todoStore.updateSubTodoTitle(id, trimmed));
   }
 };
 
@@ -402,14 +405,16 @@ const startAddStep = async () => {
 const handleAddStep = () => {
   const title = newStepTitle.value.trim();
   if (!title || !todoStore.selectedTodo) return;
-  todoStore.createSubTodo(todoStore.selectedTodo.id, title);
+  const todoId = todoStore.selectedTodo.id;
+  void observeTodoMutation(() => todoStore.createSubTodo(todoId, title));
   newStepTitle.value = '';
 };
 
 const handleAddStepBlur = () => {
   const title = newStepTitle.value.trim();
   if (title && todoStore.selectedTodo) {
-    todoStore.createSubTodo(todoStore.selectedTodo.id, title);
+    const todoId = todoStore.selectedTodo.id;
+    void observeTodoMutation(() => todoStore.createSubTodo(todoId, title));
   }
   newStepTitle.value = '';
   addingStep.value = false;
@@ -417,12 +422,13 @@ const handleAddStepBlur = () => {
 
 const onDueDateChange = (value: string | Date | undefined) => {
   if (!todoStore.selectedTodo) return;
+  const todoId = todoStore.selectedTodo.id;
   if (!value) {
-    todoStore.updateTodo({ id: todoStore.selectedTodo.id, due_at: null });
+    void observeTodoMutation(() => todoStore.updateTodo({ id: todoId, due_at: null }));
     return;
   }
   const ts = dayjs(value as string).startOf('day').valueOf();
-  todoStore.updateTodo({ id: todoStore.selectedTodo.id, due_at: ts });
+  void observeTodoMutation(() => todoStore.updateTodo({ id: todoId, due_at: ts }));
 };
 
 const repeatUnitLabel = computed(() => {
@@ -438,7 +444,8 @@ const repeatUnitLabel = computed(() => {
 const onRepeatChange = (value: string | number | boolean | Record<string, any> | (string | number | boolean | Record<string, any>)[]) => {
   if (!todoStore.selectedTodo) return;
   const repeatType = value === 'none' ? null : (value as string);
-  todoStore.updateRepeatType(todoStore.selectedTodo.id, repeatType);
+  const todoId = todoStore.selectedTodo.id;
+  void observeTodoMutation(() => todoStore.updateRepeatType(todoId, repeatType));
 };
 
 const intervalPickerRef = ref<HTMLElement | null>(null);
@@ -458,13 +465,14 @@ const onIntervalBlur = (e: FocusEvent) => {
   const parsed = parseInt(raw, 10);
   const clamped = Number.isFinite(parsed) ? Math.max(1, Math.min(999, parsed)) : 1;
   if (todoStore.selectedTodo && clamped !== todoStore.selectedTodo.repeat_interval) {
-    todoStore.updateRepeatInterval(todoStore.selectedTodo.id, clamped);
+    const todoId = todoStore.selectedTodo.id;
+    void observeTodoMutation(() => todoStore.updateRepeatInterval(todoId, clamped));
   }
   intervalDropdownVisible.value = false;
 };
 
 const _saveRepeatInterval = throttle((id: string, interval: number) => {
-  todoStore.updateRepeatInterval(id, interval);
+  void observeTodoMutation(() => todoStore.updateRepeatInterval(id, interval));
 }, 300, { edges: ['leading', 'trailing'] });
 
 const onIntervalInput = (e: Event) => {
@@ -480,22 +488,24 @@ const onIntervalInput = (e: Event) => {
 
 const selectInterval = (n: number) => {
   if (!todoStore.selectedTodo) return;
-  todoStore.updateRepeatInterval(todoStore.selectedTodo.id, n);
+  const todoId = todoStore.selectedTodo.id;
+  void observeTodoMutation(() => todoStore.updateRepeatInterval(todoId, n));
   intervalDropdownVisible.value = false;
 };
 
 const onRemindChange = (value: string | Date | undefined) => {
   if (!todoStore.selectedTodo) return;
+  const todoId = todoStore.selectedTodo.id;
   if (!value) {
-    todoStore.updateTodo({ id: todoStore.selectedTodo.id, remind_at: null });
+    void observeTodoMutation(() => todoStore.updateTodo({ id: todoId, remind_at: null }));
     return;
   }
   const ts = dayjs(value as string).valueOf();
-  todoStore.updateTodo({ id: todoStore.selectedTodo.id, remind_at: ts });
+  void observeTodoMutation(() => todoStore.updateTodo({ id: todoId, remind_at: ts }));
 };
 
 const _saveNote = throttle((id: string, value: string) => {
-  todoStore.updateTodo({ id, note: value.trim() });
+  void observeTodoMutation(() => todoStore.updateTodo({ id, note: value.trim() }));
 }, 150, { edges: ['leading', 'trailing'] });
 
 const onNoteInput = (e: Event) => {
@@ -517,7 +527,7 @@ onUnmounted(() => {
 });
 
 const handleDeleteSubTodo = (id: string) => {
-  const doAction = () => todoStore.deleteSubTodo(id);
+  const doAction = () => observeTodoMutation(() => todoStore.deleteSubTodo(id));
 
   let onKeydown: (e: KeyboardEvent) => void;
   const cleanup = () => document.removeEventListener('keydown', onKeydown);
@@ -526,7 +536,7 @@ const handleDeleteSubTodo = (id: string) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       cleanup();
-      doAction();
+      void doAction();
       modal.close();
     }
   };
@@ -539,19 +549,24 @@ const handleDeleteSubTodo = (id: string) => {
     escToClose: true,
     okButtonProps: { status: 'danger', size: 'mini' },
     cancelButtonProps: { size: 'mini' },
-    onOk: () => { cleanup(); doAction(); },
+    onOk: () => { cleanup(); return doAction(); },
     onCancel: cleanup,
   });
 
   document.addEventListener('keydown', onKeydown);
 };
 
+const handleToggleSubTodoStatus = (id: string, wasCompleted: boolean): void => {
+  void observeTodoMutation(() => todoStore.toggleSubTodoStatus(id, { wasCompleted }));
+};
+
 const handleToggleStatus = () => {
   if (!todoStore.selectedTodo) return;
+  const todoId = todoStore.selectedTodo.id;
   if (todoStore.selectedTodo.status === 1) {
-    todoStore.uncompleteTodo(todoStore.selectedTodo.id);
+    void observeTodoMutation(() => todoStore.uncompleteTodo(todoId));
   } else {
-    todoStore.completeTodo(todoStore.selectedTodo.id);
+    void observeTodoMutation(() => todoStore.completeTodo(todoId));
   }
 };
 
@@ -559,7 +574,7 @@ const handleDelete = () => {
   if (!todoStore.selectedTodo) return;
   const todoId = todoStore.selectedTodo.id;
   const domainId = todoStore.selectedTodo.domain_id;
-  const doAction = () => todoStore.deleteTodo(todoId, domainId);
+  const doAction = () => observeTodoMutation(() => todoStore.deleteTodo(todoId, domainId));
 
   let onKeydown: (e: KeyboardEvent) => void;
   const cleanup = () => document.removeEventListener('keydown', onKeydown);
@@ -568,7 +583,7 @@ const handleDelete = () => {
     if (e.key === 'Enter') {
       e.preventDefault();
       cleanup();
-      doAction();
+      void doAction();
       modal.close();
     }
   };
@@ -581,7 +596,7 @@ const handleDelete = () => {
     escToClose: true,
     okButtonProps: { status: 'danger', size: 'mini' },
     cancelButtonProps: { size: 'mini' },
-    onOk: () => { cleanup(); doAction(); },
+    onOk: () => { cleanup(); return doAction(); },
     onCancel: cleanup,
   });
 
@@ -591,7 +606,8 @@ const handleDelete = () => {
 const onSubTodoDragEnd = () => {
   if (!todoStore.selectedTodo) return;
   const order = todoStore.subTodos.map((s) => s.id);
-  todoStore.saveSubTodoOrder(todoStore.selectedTodo.id, order);
+  const todoId = todoStore.selectedTodo.id;
+  void observeTodoMutation(() => todoStore.saveSubTodoOrder(todoId, order));
 };
 
 const handleLocate = () => {

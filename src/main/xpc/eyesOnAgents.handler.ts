@@ -142,6 +142,10 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     return await eyesOnAgentsService.openThread(parseEyesOnAgentsThreadIdParams(params));
   }
 
+  async markAllRead(): Promise<EyesOnAgentsSnapshot> {
+    return await eyesOnAgentsService.markAllRead();
+  }
+
   async installCodexBridge(): Promise<EyesOnAgentsSnapshot> {
     return await eyesOnAgentsService.installCodexBridge();
   }

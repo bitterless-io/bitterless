@@ -22,6 +22,10 @@ const runtimeTripwires = {
       path: 'electron-xpc-main',
       namespace: 'todoist-sync-test',
     }));
+    buildApi.onResolve({ filter: /^@arco-design\/web-vue$/ }, () => ({
+      path: 'arco-design-web-vue',
+      namespace: 'todoist-sync-test',
+    }));
     buildApi.onLoad({ filter: /.*/, namespace: 'todoist-sync-test' }, (args) => {
       if (args.path === 'electron') {
         return {
@@ -37,6 +41,18 @@ const runtimeTripwires = {
             export const app = {
               getPath: () => {
                 throw new Error('[todoist sync test] app.getPath must be injected');
+              }
+            };
+          `,
+        };
+      }
+      if (args.path === 'arco-design-web-vue') {
+        return {
+          contents: `
+            export const Message = {
+              error: (message) => {
+                globalThis.__todoMutationErrorMessages ??= [];
+                globalThis.__todoMutationErrorMessages.push(message);
               }
             };
           `,

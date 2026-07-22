@@ -15,6 +15,7 @@ import type {
 } from '@shared/mcp/todoMcpDao.type';
 import type {
   TodoistSyncActivateParams,
+  TodoistSyncActivationResult,
   TodoistSyncClockApi,
   TodoistSyncClockCheckParams,
   TodoistSyncClockCheckResult,
@@ -27,8 +28,8 @@ import type {
 import { todoistSyncSession } from '@main/todoistSync/todoistSync.session';
 
 export class TodoistSyncSessionHandler extends XpcMainHandler implements TodoistSyncSessionApi {
-  async activate(params: TodoistSyncActivateParams): Promise<void> {
-    await todoistSyncSession.activate(params);
+  async activate(params: TodoistSyncActivateParams): Promise<TodoistSyncActivationResult> {
+    return await todoistSyncSession.activate(params);
   }
 
   async deactivate(): Promise<void> {

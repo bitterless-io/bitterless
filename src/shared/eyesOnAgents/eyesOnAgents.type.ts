@@ -268,6 +268,7 @@ export interface EyesOnAgentsRepositoryApi {
     title: string;
   }): Promise<EyesOnAgentsRepositoryMutationResult>;
   markOpened(params: { threadId: string; openedAt: number }): Promise<void>;
+  markAllRead(): Promise<EyesOnAgentsRepositoryMutationResult>;
   createDomain(params: { title: string }): Promise<void>;
   renameDomain(params: { domainId: number; title: string }): Promise<void>;
   deleteDomain(params: { domainId: number }): Promise<void>;
@@ -285,6 +286,7 @@ export interface EyesOnAgentsApi {
     url: string;
     snapshot: EyesOnAgentsSnapshot;
   }>;
+  markAllRead(): Promise<EyesOnAgentsSnapshot>;
   installCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   reviewCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   refreshCodexBridgeStatus(): Promise<EyesOnAgentsSnapshot>;

@@ -1706,6 +1706,12 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return { url, snapshot: await this.getSnapshot() };
   }
 
+  async markAllRead(): Promise<EyesOnAgentsSnapshot> {
+    const result = await this.dependencies.repository.markAllRead();
+    if (result.changed) this.notify();
+    return await this.getSnapshot();
+  }
+
   async createDomain(params: { title: string }): Promise<EyesOnAgentsSnapshot> {
     await this.dependencies.repository.createDomain(params);
     return await this.changedSnapshot();

@@ -1,6 +1,6 @@
 # EyesOnAgents Layout
 
-Status: compact latest-question card and four-step observation guide implemented; owner verification pending
+Status: compact latest-question card, four-step observation guide, and Focus Read all implemented; owner verification pending
 
 ## Product stance
 
@@ -28,7 +28,7 @@ for live signals.
 │  EyesOnAgents  [+ Add Domain] ● Connections [↻ Refresh] [Bridge] [Settings]│
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  ┌ Focus ─────────┐ ┌ All ──────── [⌕]┐ ┌ Bitterless ─────┐                │
+│  ┌ Focus [Read all]┐ ┌ All ──────── [⌕]┐ ┌ Bitterless ─────┐               │
 │  │ API pagination◌│ │ [Search titles][×]│ │ App Server RPC  │                │
 │  │ now      [⌂][↗]│ │ [overmind (4)▾]│ │ now      [⌂][↗]│                │
 │  │ Fix migrations │ │ Release notes   │ │                 │                │
@@ -164,8 +164,11 @@ latest-question data; activation and manual Refresh retain full inventory reconc
 ## Domain column
 
 Each Domain header contains its title and at most one projection-specific action: a custom Domain
-shows its management control, All shows Search, and Focus has no action. No Domain, Focus, All, or
-filtered-result count is rendered in the header. A custom Domain title enters inline edit when
+shows its management control, All shows Search, and Focus shows `Read all`. The compact Focus action
+is always present to keep the header stable and is disabled when no completed unread attention item
+can be cleared. While its mutation is in flight it shows the existing mini-button loading treatment
+and is disabled with the other foreground board actions. No Domain, Focus, All, or filtered-result
+count is rendered in the header. A custom Domain title enters inline edit when
 clicked, matching Todo: the input measures its content between 40px and 200px, focuses and selects on
 entry, commits through blur or Enter, and cancels with Escape. Focus and All never show an editable
 cursor or input. The custom Domain overflow menu contains Delete only; the separate Rename action is
@@ -194,6 +197,15 @@ unchanged. The explicit clear button empties the title query and restores the re
 currently selected Project filter. Pressing Escape or closing the Search control also clears the
 query before hiding the row, so no invisible filter remains active. The row and controls use quiet
 background contrast, mini sizing, visible focus, and no decorative border or shadow.
+
+The Focus header's `Read all` is a compact text action with the same transparent, borderless header
+treatment. Clicking it clears the persisted unread marker for every currently non-archived,
+non-running unread thread in one SQLite mutation. The same snapshot removes each corresponding red
+Open dot in Focus, All, and any custom Domain immediately; an idle thread that was present only
+because it was unread leaves Focus. Working or waiting rows are deliberately not acknowledged:
+they remain in Focus and retain the latent unread marker that makes a later idle transition visible
+even if its terminal event is missed. The action never opens Codex or changes `last_opened_*`, and a
+later accepted active or terminal observation may set a cleared thread unread again.
 
 Domain creation does not occupy a board column. The labelled menubar control opens the anchored form
 described in Header behavior; required, duplicate, and reserved-`All` errors remain inline there.

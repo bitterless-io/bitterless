@@ -79,6 +79,15 @@ class EyesOnAgentsState {
     return sortThreads(this.threads.filter((thread) => thread.isFocused));
   }
 
+  get readableFocusThreads(): EyesOnAgentsThread[] {
+    return this.focusThreads.filter(
+      (thread) => thread.isUnread
+        && thread.runtimeState !== 'working'
+        && thread.runtimeState !== 'waiting_approval'
+        && thread.runtimeState !== 'waiting_input',
+    );
+  }
+
   get allThreads(): EyesOnAgentsThread[] {
     return sortThreads(this.threads);
   }
@@ -255,6 +264,11 @@ class EyesOnAgentsState {
       next.delete(threadId);
       this.openingThreadIds = next;
     }
+  }
+
+  async markAllRead(): Promise<void> {
+    if (this.readableFocusThreads.length === 0) return;
+    await this.runSnapshotAction('focus-read-all', () => eyesOnAgentsEmitter.markAllRead());
   }
 
   async createDomain(title: string): Promise<void> {

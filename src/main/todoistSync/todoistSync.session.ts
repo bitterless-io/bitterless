@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import type {
   TodoistSyncActivateParams,
+  TodoistSyncActivationResult,
   TodoistSyncClockCheckParams,
   TodoistSyncClockCheckResult,
   TodoistSyncClockContext,
@@ -86,10 +87,21 @@ export class TodoistSyncSessionService {
     ));
   }
 
-  activate(paramsValue: TodoistSyncActivateParams): Promise<void> {
-    const params = assertParams(paramsValue);
+  activate(paramsValue: TodoistSyncActivateParams): Promise<TodoistSyncActivationResult> {
+    let params: TodoistSyncActivateParams;
+    try {
+      params = assertParams(paramsValue);
+    } catch (error) {
+      return Promise.resolve({
+        status: 'failed',
+        error: error instanceof Error ? error.message : '[todoist sync] activation parameters are invalid',
+      });
+    }
     const generation = ++this.generation;
-    return this.enqueue(async () => await this.activateGeneration(params, generation));
+    return this.enqueue(async () => await this.activateGeneration(params, generation)).catch((error) => ({
+      status: 'failed',
+      error: error instanceof Error ? error.message : '[todoist sync] runtime activation failed',
+    }));
   }
 
   deactivate(): Promise<void> {
@@ -167,17 +179,21 @@ export class TodoistSyncSessionService {
     return this.generation;
   }
 
-  private enqueue(operation: () => Promise<void>): Promise<void> {
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.transition.catch(() => undefined).then(operation);
-    this.transition = result.catch(() => undefined);
+    this.transition = result.then(() => undefined, () => undefined);
     return result;
   }
 
-  private async activateGeneration(params: TodoistSyncActivateParams, generation: number): Promise<void> {
+  private async activateGeneration(
+    params: TodoistSyncActivateParams,
+    generation: number,
+  ): Promise<TodoistSyncActivationResult> {
     const identity = `${params.customerId}:${params.deviceId}`;
-    if (this.active?.identity === identity && this.active.generation === generation) return;
     await this.closeActive();
-    if (generation !== this.generation) return;
+    if (generation !== this.generation) {
+      return { status: 'failed', error: '[todoist sync] activation was superseded' };
+    }
     const context: TodoistSyncSessionRuntimeContext = {
       sessionGeneration: generation,
       captureGeneration: () => ({
@@ -194,10 +210,16 @@ export class TodoistSyncSessionService {
     if (generation !== this.generation) {
       await runtime.coordinator.dispose();
       runtime.database.close();
-      return;
+      return { status: 'failed', error: '[todoist sync] activation was superseded' };
     }
     this.active = { identity, generation, ...runtime };
     runtime.coordinator.start();
+    return {
+      status: 'active',
+      customerId: params.customerId,
+      deviceId: params.deviceId,
+      sessionGeneration: generation,
+    };
   }
 
   private async createDefaultRuntime(

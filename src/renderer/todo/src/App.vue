@@ -36,6 +36,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
+import { Message } from '@arco-design/web-vue';
 import draggable from 'vuedraggable';
 import { IconArrowLeft } from '@tabler/icons-vue';
 import DomainColumn from './components/DomainColumn/DomainColumn.vue';
@@ -46,11 +47,13 @@ import MenuBar from './components/MenuBar/MenuBar.vue';
 import SyncClockBanner from './components/SyncClockBanner/SyncClockBanner.vue';
 import { todoStore } from './store/todo.store';
 import { todoSettingStore } from './store/todoSetting.store';
+import { observeTodoMutation } from './store/todoMutation.service';
 import { initTodoSubscriber } from './xpc/update.subscriber';
 import { todoEnv } from './contextBridge/todoEnv.bridge';
 import { todoWindowEmitter } from './emitter/todoWindow.emitter';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 import { todoistSyncStore } from './store/todoistSync.store';
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
 const isStandalone = ref(false);
 const boardScrollRef = ref<HTMLElement | null>(null);
@@ -74,7 +77,7 @@ const onBoardClick = (e: MouseEvent) => {
 
 const onDomainDragEnd = () => {
   const order = todoStore.domainList.map((d) => d.id);
-  todoStore.saveDomainOrder(order);
+  void observeTodoMutation(() => todoStore.saveDomainOrder(order));
 };
 
 const onKeydown = (e: KeyboardEvent) => {
@@ -84,23 +87,28 @@ const onKeydown = (e: KeyboardEvent) => {
 };
 
 onMounted(async () => {
-  isStandalone.value = todoEnv?.isStandalone ?? false;
-  initTodoSubscriber();
-  void todoistSyncStore.initialize().catch((error) => {
-    console.warn('[todoist sync] renderer clock initialization failed:', error);
-  });
-  window.addEventListener('focus', handleWindowFocus);
-  clockTimer = setInterval(() => {
-    void todoistSyncStore.checkClock().catch((error) => {
-      console.warn('[todoist sync] scheduled clock check failed:', error);
+  try {
+    isStandalone.value = todoEnv?.isStandalone ?? false;
+    initTodoSubscriber();
+    void todoistSyncStore.initialize().catch((error) => {
+      console.warn('[todoist sync] renderer clock initialization failed:', error);
     });
-  }, 15 * 60 * 1000);
-  await todoSettingStore.load();
-  await todoStore.loadAll();
-  if (isStandalone.value && uaHelper.isMac && todoSettingStore.alwaysOnTop) {
-    await todoWindowEmitter.setAlwaysOnTop({ enable: true });
+    window.addEventListener('focus', handleWindowFocus);
+    clockTimer = setInterval(() => {
+      void todoistSyncStore.checkClock().catch((error) => {
+        console.warn('[todoist sync] scheduled clock check failed:', error);
+      });
+    }, 15 * 60 * 1000);
+    await todoSettingStore.load();
+    await todoStore.loadAll();
+    if (isStandalone.value && uaHelper.isMac && todoSettingStore.alwaysOnTop) {
+      await todoWindowEmitter.setAlwaysOnTop({ enable: true });
+    }
+    document.addEventListener('keydown', onKeydown);
+  } catch (error) {
+    console.error('[todo] renderer initialization failed:', error);
+    Message.error(i18nHelper.todo.runtimeUnavailable);
   }
-  document.addEventListener('keydown', onKeydown);
 });
 
 onUnmounted(() => {

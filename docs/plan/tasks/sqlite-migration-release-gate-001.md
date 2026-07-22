@@ -49,9 +49,10 @@ macOS x64, and Windows x64 only if every gate passes.
 - Core matrix covers no ledger, historical 10-digit ledger, later 8-digit ledgers, and each
   EyesOnAgents shape;
 - Maestro matrix covers every registered checkpoint and multi-version jumps;
-- Todoist sync matrix imports the production manifest and covers fresh/current-v1, an invalid or
-  incomplete ledger, rollback of an injected future migration, sentinel preservation,
-  `integrity_check`, and `foreign_key_check`;
+- Todoist sync matrix imports the production manifest and covers fresh/current-v2, immutable
+  pre-parent v1, already-shaped v1-ledger and column-only v1 upgrades, invalid/incomplete ledgers,
+  rollback of injected v2/future migrations, sentinel preservation, `integrity_check`, and
+  `foreign_key_check`;
 - Electron-ABI Todo cipher smoke proves encrypted create/reopen, wrong-key failure, customer-path
   isolation, and that development plus packaged macOS/Windows outputs resolve the production
   `better-sqlite3-multiple-ciphers` native module;

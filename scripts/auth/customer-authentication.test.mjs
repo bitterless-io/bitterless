@@ -6,6 +6,7 @@ import {
   scheduleBestEffort,
   settleBestEffort,
 } from '../../src/renderer/home/src/stores/auth/authSession.service.ts';
+import { TodoistSyncActivationService } from '../../src/renderer/home/src/stores/auth/todoistSyncActivation.service.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
@@ -85,6 +86,93 @@ test('optional activation rejection is observed without becoming a session failu
   await new Promise((resolvePromise) => setImmediate(resolvePromise));
 
   assert.equal(observed, expected);
+});
+
+test('Todo readiness deduplicates, rejects null ACKs, retries failure, and fences logout/account changes', async () => {
+  const paramsA = { coreToken: 'token-a', customerId: 1, deviceId: 'session-device-0001' };
+  const paramsB = { coreToken: 'token-b', customerId: 2, deviceId: 'session-device-0002' };
+  let calls = 0;
+  let resolvePending;
+  const pending = new Promise((resolvePromise) => {
+    resolvePending = resolvePromise;
+  });
+  const deduplicated = new TodoistSyncActivationService(async () => {
+    calls += 1;
+    return await pending;
+  });
+  const first = deduplicated.start(paramsA);
+  const second = deduplicated.start(paramsA);
+  assert.equal(first, second);
+  assert.equal(calls, 1);
+  resolvePending({
+    status: 'active',
+    customerId: paramsA.customerId,
+    deviceId: paramsA.deviceId,
+    sessionGeneration: 1,
+  });
+  await first;
+  assert.equal(deduplicated.ensureReady(paramsA), first);
+  assert.equal(calls, 1);
+
+  let retryCalls = 0;
+  const retried = new TodoistSyncActivationService(async () => {
+    retryCalls += 1;
+    if (retryCalls === 1) return null;
+    return {
+      status: 'active',
+      customerId: paramsA.customerId,
+      deviceId: paramsA.deviceId,
+      sessionGeneration: 2,
+    };
+  });
+  const failed = retried.start(paramsA);
+  await assert.rejects(() => failed, /returned no result/);
+  assert.equal(retried.start(paramsA), failed);
+  assert.equal(retryCalls, 1);
+  await retried.ensureReady(paramsA);
+  assert.equal(retryCalls, 2);
+
+  const pendingByCustomer = [];
+  const fenced = new TodoistSyncActivationService(async () => await new Promise((resolvePromise) => {
+    pendingByCustomer.push(resolvePromise);
+  }));
+  const staleAccount = fenced.start(paramsA);
+  const currentAccount = fenced.start(paramsB);
+  pendingByCustomer[0]({
+    status: 'active',
+    customerId: paramsA.customerId,
+    deviceId: paramsA.deviceId,
+    sessionGeneration: 3,
+  });
+  await assert.rejects(() => staleAccount, /superseded/);
+  pendingByCustomer[1]({
+    status: 'active',
+    customerId: paramsB.customerId,
+    deviceId: paramsB.deviceId,
+    sessionGeneration: 4,
+  });
+  await currentAccount;
+
+  const staleLogout = fenced.start(paramsB);
+  assert.equal(staleLogout, currentAccount);
+  fenced.invalidate();
+  const afterLogout = fenced.start(paramsB);
+  assert.notEqual(afterLogout, currentAccount);
+});
+
+test('both Home Todo entry points await readiness before creating Todo content', () => {
+  const embedded = read('src/renderer/home/src/views/todo/Todo.vue');
+  const miniApp = read('src/renderer/home/src/views/miniApp/MiniApp.vue');
+  assert.ok(
+    embedded.indexOf('await authStore.ensureTodoistSyncReady()') <
+      embedded.indexOf('await todoWindowEmitter.showTodoView()'),
+  );
+  assert.ok(
+    miniApp.indexOf('await authStore.ensureTodoistSyncReady()') <
+      miniApp.indexOf('await todoWindowEmitter.openTodoWindow()'),
+  );
+  assert.match(embedded, /if \(!mounted\) await todoWindowEmitter\.hideTodoView\(\)/);
+  assert.match(embedded, /if \(mounted\) Message\.error\(i18nHelper\.todo\.runtimeUnavailable\)/);
 });
 
 test('logout cleanup starts every operation and settles rejected cleanup', async () => {

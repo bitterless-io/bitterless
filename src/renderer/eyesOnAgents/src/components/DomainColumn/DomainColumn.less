@@ -124,9 +124,32 @@
 }
 
 .agent-domain__search-trigger.arco-btn:focus-visible,
-.agent-domain__search-clear.arco-btn:focus-visible {
+.agent-domain__search-clear.arco-btn:focus-visible,
+.agent-domain__read-all.arco-btn:focus-visible {
   outline: 2px solid var(--eyes-focus-ring);
   outline-offset: 1px;
+}
+
+.agent-domain__read-all.arco-btn {
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border: 0;
+  color: oklch(0.46 0.04 265);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.agent-domain__read-all.arco-btn:hover {
+  color: oklch(0.32 0.06 265);
+  background: oklch(0.9 0.014 265);
+}
+
+.agent-domain__read-all.arco-btn.arco-btn-disabled {
+  color: oklch(0.65 0.02 265);
+  background: transparent;
 }
 
 .agent-domain__search-row {

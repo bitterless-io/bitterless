@@ -49,6 +49,22 @@
         <template #icon><IconSearch :size="13" aria-hidden="true" /></template>
       </a-button>
 
+      <a-button
+        v-if="focus"
+        name="eyesOnAgents__domainColumn__readAll"
+        class="agent-domain__read-all"
+        size="mini"
+        type="text"
+        :disabled="
+          eyesOnAgentsStore.readableFocusThreads.length === 0
+            || Boolean(eyesOnAgentsStore.busyAction)
+        "
+        :loading="eyesOnAgentsStore.busyAction === 'focus-read-all'"
+        @click="markAllRead"
+      >
+        {{ i18nHelper.eyesOnAgents.actions.readAll }}
+      </a-button>
+
       <a-dropdown v-if="canManage" trigger="click" position="br">
         <a-button
           size="mini"
@@ -210,6 +226,10 @@ const toggleTitleSearch = async (): Promise<void> => {
 const clearTitleSearch = async (): Promise<void> => {
   eyesOnAgentsStore.clearAllTitleQuery();
   await focusTitleSearchInput();
+};
+
+const markAllRead = async (): Promise<void> => {
+  await eyesOnAgentsStore.markAllRead().catch(() => undefined);
 };
 
 const measureTitleInput = (): void => {

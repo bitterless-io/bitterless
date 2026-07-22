@@ -1666,6 +1666,93 @@ try {
     /unique threadIds/
   );
 
+  const readAllIdleId = resetColdPage.hot[3].threadId;
+  const readAllWorkingId = refreshTargetId;
+  const readAllWaitingApprovalId = resetColdPage.hot[1].threadId;
+  const readAllWaitingInputId = resetColdPage.hot[2].threadId;
+  const readAllArchivedId = selectedThirdPage.cold[0].threadId;
+  assert.equal(
+    new Set([
+      readAllIdleId,
+      readAllWorkingId,
+      readAllWaitingApprovalId,
+      readAllWaitingInputId,
+      readAllArchivedId
+    ]).size,
+    5,
+    'Read all fixture threads must be distinct'
+  );
+  const seedReadAllRow = db.prepare(
+    `UPDATE eyes_on_agents_thread SET
+      is_archived = ?, runtime_state = ?, is_unread = 1,
+      last_opened_turn_id = ?, last_opened_at = ?, updated_at = ?
+     WHERE thread_id = ?`
+  );
+  const readAllFixtures = [
+    [0, 'idle', 'opened-idle', 50_001, 51_001, readAllIdleId],
+    [0, 'working', 'opened-working', 50_002, 51_002, readAllWorkingId],
+    [0, 'waiting_approval', 'opened-approval', 50_003, 51_003, readAllWaitingApprovalId],
+    [0, 'waiting_input', 'opened-input', 50_004, 51_004, readAllWaitingInputId],
+    [1, 'idle', 'opened-archived', 50_005, 51_005, readAllArchivedId]
+  ];
+  for (const fixture of readAllFixtures) {
+    assert.equal(seedReadAllRow.run(...fixture).changes, 1);
+  }
+  assert.deepEqual(
+    await repository.markAllRead(),
+    { changed: true },
+    'Read all must report when it clears an eligible unread row'
+  );
+  const readAllRows = new Map(
+    db.prepare(
+      `SELECT thread_id, is_archived, runtime_state, is_unread,
+        last_opened_turn_id, last_opened_at, updated_at
+       FROM eyes_on_agents_thread
+       WHERE thread_id IN (?, ?, ?, ?, ?)`
+    ).all(
+      readAllIdleId,
+      readAllWorkingId,
+      readAllWaitingApprovalId,
+      readAllWaitingInputId,
+      readAllArchivedId
+    ).map((row) => [row.thread_id, row])
+  );
+  assert.deepEqual(
+    { ...readAllRows.get(readAllIdleId) },
+    {
+      thread_id: readAllIdleId,
+      is_archived: 0,
+      runtime_state: 'idle',
+      is_unread: 0,
+      last_opened_turn_id: 'opened-idle',
+      last_opened_at: 50_001,
+      updated_at: 51_001
+    },
+    'Read all must clear only unread state without changing Open evidence or activity ordering'
+  );
+  for (const threadId of [
+    readAllWorkingId,
+    readAllWaitingApprovalId,
+    readAllWaitingInputId
+  ]) {
+    assert.equal(
+      readAllRows.get(threadId).is_unread,
+      1,
+      'Read all must preserve unread state while a thread still requires active attention'
+    );
+  }
+  assert.equal(readAllRows.get(readAllArchivedId).is_archived, 1);
+  assert.equal(
+    readAllRows.get(readAllArchivedId).is_unread,
+    1,
+    'Read all must not mutate archived unread rows'
+  );
+  assert.deepEqual(
+    await repository.markAllRead(),
+    { changed: false },
+    'repeating Read all without another eligible unread row must be a no-op'
+  );
+
   db.close();
   console.log('EyesOnAgents repository tests passed');
 } finally {

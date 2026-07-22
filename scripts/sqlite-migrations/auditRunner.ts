@@ -23,6 +23,7 @@ import {
 import {
   applyTodoistSyncMigrations,
   assertTodoistSyncSchemaV1,
+  assertTodoistSyncSchemaV2,
   todoistSyncMigrations,
   TodoistSyncMigrationError,
   type TodoistSyncMigration,
@@ -866,6 +867,30 @@ interface TodoistLedgerRow {
   name: string
 }
 
+const todoistV1BaselineColumns = [
+  'resource_type',
+  'resource_id',
+  'sync_revision',
+  'payload_json',
+  'reconcile_pending',
+  'updated_at',
+] as const
+
+const todoistV2AppendedBaselineColumns = [
+  ...todoistV1BaselineColumns,
+  'parent_resource_id',
+] as const
+
+const todoistV2EarlyBaselineColumns = [
+  'resource_type',
+  'resource_id',
+  'parent_resource_id',
+  'sync_revision',
+  'payload_json',
+  'reconcile_pending',
+  'updated_at',
+] as const
+
 const asTodoistMigrationDatabase = (db: Database.Database): TodoistSyncMigrationDatabase => {
   return db as unknown as TodoistSyncMigrationDatabase
 }
@@ -878,10 +903,14 @@ const getTodoistLedger = (db: Database.Database): TodoistLedgerRow[] => {
 }
 
 const verifyTodoistSchema = (db: Database.Database): void => {
-  assertTodoistSyncSchemaV1(asTodoistMigrationDatabase(db))
-  assert.deepEqual(getTodoistLedger(db), [
-    { version: todoistSyncMigrations[0].version, name: todoistSyncMigrations[0].name },
-  ])
+  assertTodoistSyncSchemaV2(asTodoistMigrationDatabase(db))
+  assert.deepEqual(
+    getTodoistLedger(db),
+    todoistSyncMigrations.map((migration) => ({
+      version: migration.version,
+      name: migration.name,
+    })),
+  )
   assertHealthy(db)
 }
 
@@ -891,23 +920,95 @@ const auditTodoistFresh = (): void => {
     db.exec('PRAGMA foreign_keys = ON;')
     applyTodoistSyncMigrations(asTodoistMigrationDatabase(db))
     verifyTodoistSchema(db)
-    console.log('✓ Todoist sync fresh schema-v1')
+    assert.deepEqual(getColumns(db, 'todo_sync_baselines'), todoistV2AppendedBaselineColumns)
+    console.log('✓ Todoist sync fresh schema-v2')
   } finally {
     db.close()
   }
 }
 
-const auditTodoistCurrentReopen = (): void => {
-  const dbPath = join(auditDir, 'todoist-current-v1.db')
+const createTodoistV1Fixture = (
+  db: Database.Database,
+  alreadyShaped: boolean,
+): void => {
+  applyTodoistSyncMigrations(
+    asTodoistMigrationDatabase(db),
+    [todoistSyncMigrations[0]],
+  )
+  assert.deepEqual(getColumns(db, 'todo_sync_baselines'), todoistV1BaselineColumns)
+  assert.equal(db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='index' AND name='todo_sync_baseline_parent'",
+  ).get(), undefined)
+  if (alreadyShaped) {
+    db.exec(`
+      ALTER TABLE todo_sync_baselines RENAME TO todo_sync_baselines_pre_parent;
+      CREATE TABLE todo_sync_baselines (
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        parent_resource_id TEXT,
+        sync_revision TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        reconcile_pending INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (resource_type, resource_id),
+        CHECK (resource_type IN ('todo_domain', 'todo', 'sub_todo')),
+        CHECK (reconcile_pending IN (0, 1))
+      );
+      INSERT INTO todo_sync_baselines (
+        resource_type, resource_id, sync_revision, payload_json, reconcile_pending, updated_at
+      )
+      SELECT resource_type, resource_id, sync_revision, payload_json, reconcile_pending, updated_at
+      FROM todo_sync_baselines_pre_parent;
+      DROP TABLE todo_sync_baselines_pre_parent;
+      CREATE INDEX todo_sync_baseline_parent
+      ON todo_sync_baselines(resource_type, parent_resource_id, resource_id);
+    `)
+    assert.deepEqual(getColumns(db, 'todo_sync_baselines'), todoistV2EarlyBaselineColumns)
+  }
+  db.prepare(
+    `INSERT INTO todo_sync_state (
+      customer_id, device_id, sync_token, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?)`,
+  ).run('1', 'audit-device', 'audit-token', 1, 1)
+  if (alreadyShaped) {
+    db.prepare(
+      `INSERT INTO todo_sync_baselines (
+        resource_type, resource_id, parent_resource_id, sync_revision,
+        payload_json, reconcile_pending, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('todo', '00000000000000000002', '00000000000000000001', '7', '{"title":"sentinel"}', 0, 1)
+  } else {
+    db.prepare(
+      `INSERT INTO todo_sync_baselines (
+        resource_type, resource_id, sync_revision, payload_json, reconcile_pending, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run('todo_domain', '00000000000000000001', '7', '{"title":"sentinel"}', 0, 1)
+  }
+}
+
+const assertTodoistSentinels = (
+  db: Database.Database,
+  expectedResourceType: 'todo_domain' | 'todo',
+): void => {
+  const state = db.prepare(
+    'SELECT device_id, sync_token FROM todo_sync_state WHERE customer_id = ?',
+  ).get('1') as { device_id: string; sync_token: string }
+  assert.equal(state.device_id, 'audit-device')
+  assert.equal(state.sync_token, 'audit-token')
+  const baseline = db.prepare(
+    `SELECT resource_type, payload_json FROM todo_sync_baselines
+     WHERE sync_revision = '7'`,
+  ).get() as { resource_type: string; payload_json: string }
+  assert.equal(baseline.resource_type, expectedResourceType)
+  assert.equal(baseline.payload_json, '{"title":"sentinel"}')
+}
+
+const auditTodoistPreV2Upgrade = (): void => {
+  const dbPath = join(auditDir, 'todoist-pre-v2.db')
   const initial = openAuditDatabase(dbPath)
   try {
     initial.exec('PRAGMA foreign_keys = ON;')
-    applyTodoistSyncMigrations(asTodoistMigrationDatabase(initial))
-    initial.prepare(
-      `INSERT INTO todo_sync_state (
-        customer_id, device_id, sync_token, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?)`,
-    ).run('1', 'audit-device', 'audit-token', 1, 1)
+    createTodoistV1Fixture(initial, false)
   } finally {
     initial.close()
   }
@@ -918,12 +1019,67 @@ const auditTodoistCurrentReopen = (): void => {
     applyTodoistSyncMigrations(asTodoistMigrationDatabase(reopened))
     applyTodoistSyncMigrations(asTodoistMigrationDatabase(reopened))
     verifyTodoistSchema(reopened)
-    const sentinel = reopened.prepare(
-      'SELECT device_id, sync_token FROM todo_sync_state WHERE customer_id = ?',
-    ).get('1') as { device_id: string; sync_token: string }
-    assert.equal(sentinel.device_id, 'audit-device')
-    assert.equal(sentinel.sync_token, 'audit-token')
-    console.log('✓ Todoist sync current-v1 reopen and idempotence')
+    assert.deepEqual(getColumns(reopened, 'todo_sync_baselines'), todoistV2AppendedBaselineColumns)
+    assertTodoistSentinels(reopened, 'todo_domain')
+    console.log('✓ Todoist sync pre-v2 upgrade and sentinel preservation')
+  } finally {
+    reopened.close()
+  }
+}
+
+const auditTodoistAlreadyShapedV1Upgrade = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-already-shaped-v1.db'))
+  try {
+    db.exec('PRAGMA foreign_keys = ON;')
+    createTodoistV1Fixture(db, true)
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(db))
+    verifyTodoistSchema(db)
+    assert.deepEqual(getColumns(db, 'todo_sync_baselines'), todoistV2EarlyBaselineColumns)
+    assertTodoistSentinels(db, 'todo')
+    const baseline = db.prepare(
+      `SELECT parent_resource_id FROM todo_sync_baselines
+       WHERE resource_type = 'todo'`,
+    ).get() as { parent_resource_id: string }
+    assert.equal(baseline.parent_resource_id, '00000000000000000001')
+    console.log('✓ Todoist sync already-shaped v1-ledger upgrade')
+  } finally {
+    db.close()
+  }
+}
+
+const auditTodoistColumnOnlyV1Upgrade = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-column-only-v1.db'))
+  try {
+    db.exec('PRAGMA foreign_keys = ON;')
+    createTodoistV1Fixture(db, true)
+    db.exec('DROP INDEX todo_sync_baseline_parent;')
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(db))
+    verifyTodoistSchema(db)
+    assert.deepEqual(getColumns(db, 'todo_sync_baselines'), todoistV2EarlyBaselineColumns)
+    assertTodoistSentinels(db, 'todo')
+    console.log('✓ Todoist sync column-only v1-ledger upgrade')
+  } finally {
+    db.close()
+  }
+}
+
+const auditTodoistCurrentReopen = (): void => {
+  const dbPath = join(auditDir, 'todoist-current-v2.db')
+  const initial = openAuditDatabase(dbPath)
+  try {
+    initial.exec('PRAGMA foreign_keys = ON;')
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(initial))
+  } finally {
+    initial.close()
+  }
+  const reopened = openAuditDatabase(dbPath)
+  try {
+    reopened.exec('PRAGMA foreign_keys = ON;')
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(reopened))
+    applyTodoistSyncMigrations(asTodoistMigrationDatabase(reopened))
+    verifyTodoistSchema(reopened)
+    assert.deepEqual(getColumns(reopened, 'todo_sync_baselines'), todoistV2AppendedBaselineColumns)
+    console.log('✓ Todoist sync current-v2 reopen and idempotence')
   } finally {
     reopened.close()
   }
@@ -983,6 +1139,70 @@ const auditTodoistInvalidLedger = (): void => {
   }
 }
 
+const auditTodoistV2Rollback = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-v2-rollback.db'))
+  try {
+    db.exec('PRAGMA foreign_keys = ON;')
+    createTodoistV1Fixture(db, false)
+    const failingV2: readonly TodoistSyncMigration[] = [
+      todoistSyncMigrations[0],
+      {
+        ...todoistSyncMigrations[1],
+        up: (migrationDb) => {
+          todoistSyncMigrations[1].up(migrationDb)
+          migrationDb.exec(`
+            UPDATE todo_sync_state SET sync_token = 'must-roll-back' WHERE customer_id = '1';
+          `)
+          throw new Error('intentional Todoist sync v2 migration failure')
+        },
+      },
+    ]
+    assert.throws(
+      () => applyTodoistSyncMigrations(asTodoistMigrationDatabase(db), failingV2),
+      (error: unknown) => error instanceof TodoistSyncMigrationError && error.version === 2,
+    )
+    assertTodoistSyncSchemaV1(asTodoistMigrationDatabase(db))
+    assert.deepEqual(getTodoistLedger(db), [
+      { version: todoistSyncMigrations[0].version, name: todoistSyncMigrations[0].name },
+    ])
+    assertTodoistSentinels(db, 'todo_domain')
+    assert(!getColumns(db, 'todo_sync_baselines').includes('parent_resource_id'))
+    const index = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='todo_sync_baseline_parent'",
+    ).get()
+    assert.equal(index, undefined)
+    assertHealthy(db)
+    console.log('✓ Todoist sync failed-v2 rollback and sentinel preservation')
+  } finally {
+    db.close()
+  }
+}
+
+const auditTodoistInvalidShapedV1 = (): void => {
+  const db = openAuditDatabase(join(auditDir, 'todoist-invalid-shaped-v1.db'))
+  try {
+    db.exec('PRAGMA foreign_keys = ON;')
+    createTodoistV1Fixture(db, true)
+    db.exec(`
+      DROP INDEX todo_sync_baseline_parent;
+      CREATE INDEX todo_sync_baseline_parent
+      ON todo_sync_baselines(parent_resource_id, resource_type, resource_id);
+    `)
+    assert.throws(
+      () => applyTodoistSyncMigrations(asTodoistMigrationDatabase(db)),
+      (error: unknown) => error instanceof TodoistSyncMigrationError && error.version === 2,
+    )
+    assert.deepEqual(getTodoistLedger(db), [
+      { version: todoistSyncMigrations[0].version, name: todoistSyncMigrations[0].name },
+    ])
+    assertTodoistSentinels(db, 'todo')
+    assertHealthy(db)
+    console.log('✓ Todoist sync invalid already-shaped v1 fails before v2 ledger commit')
+  } finally {
+    db.close()
+  }
+}
+
 const auditTodoistFutureMigrationRollback = (): void => {
   const db = openAuditDatabase(join(auditDir, 'todoist-future-rollback.db'))
   try {
@@ -996,7 +1216,7 @@ const auditTodoistFutureMigrationRollback = (): void => {
     const injectedMigrations: readonly TodoistSyncMigration[] = [
       ...todoistSyncMigrations,
       {
-        version: 2,
+        version: 3,
         name: 'audit-injected-failure',
         up: (migrationDb) => {
           migrationDb.exec(`
@@ -1007,7 +1227,7 @@ const auditTodoistFutureMigrationRollback = (): void => {
         },
       },
       {
-        version: 3,
+        version: 4,
         name: 'audit-must-not-run',
         up: (migrationDb) => migrationDb.exec(
           'CREATE TABLE todoist_must_not_run (id INTEGER PRIMARY KEY);',
@@ -1016,7 +1236,7 @@ const auditTodoistFutureMigrationRollback = (): void => {
     ]
     assert.throws(
       () => applyTodoistSyncMigrations(asTodoistMigrationDatabase(db), injectedMigrations),
-      (error: unknown) => error instanceof TodoistSyncMigrationError && error.version === 2,
+      (error: unknown) => error instanceof TodoistSyncMigrationError && error.version === 3,
     )
     const state = db.prepare(
       'SELECT sync_token FROM todo_sync_state WHERE customer_id = ?',
@@ -1039,9 +1259,14 @@ const auditTodoistFutureMigrationRollback = (): void => {
 
 const auditTodoistBaselines = (): void => {
   auditTodoistFresh()
+  auditTodoistPreV2Upgrade()
+  auditTodoistAlreadyShapedV1Upgrade()
+  auditTodoistColumnOnlyV1Upgrade()
   auditTodoistCurrentReopen()
   auditTodoistIncompleteSchema()
   auditTodoistInvalidLedger()
+  auditTodoistV2Rollback()
+  auditTodoistInvalidShapedV1()
   auditTodoistFutureMigrationRollback()
 }
 
@@ -1114,8 +1339,9 @@ const auditManifestValidation = (): void => {
   ], '260716000000'))
   assertSqliteMigrationManifest(coreSqliteMigrations, currentVersionCode)
   assertSqliteMigrationManifest(maestroSqliteMigrations, currentVersionCode)
-  assert.equal(todoistSyncMigrations.length, 1)
+  assert.equal(todoistSyncMigrations.length, 2)
   assert.equal(todoistSyncMigrations[0].version, 1)
+  assert.equal(todoistSyncMigrations[1].version, 2)
   console.log('✓ Version-code and manifest validation')
 }
 
@@ -1126,7 +1352,7 @@ try {
   auditMaestroBaselines()
   auditTodoistBaselines()
   console.log(
-    `SQLite migration audit passed (${coreBaselines.length} Core + ${maestroBaselines.length} Maestro + 5 Todoist sync baselines).`,
+    `SQLite migration audit passed (${coreBaselines.length} Core + ${maestroBaselines.length} Maestro + 10 Todoist sync baselines).`,
   )
 } finally {
   rmSync(auditDir, { recursive: true, force: true })

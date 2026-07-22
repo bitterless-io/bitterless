@@ -1,8 +1,10 @@
-import { reactive } from 'vue';
+import { markRaw, reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { authEmitter } from '@/emitter/auth.emitter';
 import { scheduleBestEffort, settleBestEffort } from '@/stores/auth/authSession.service';
 import { todoistSyncSessionEmitter } from '@/stores/auth/todoistSyncSession.emitter';
+import { TodoistSyncActivationService } from '@/stores/auth/todoistSyncActivation.service';
+import type { TodoistSyncActivateParams } from '@shared/todoistSync/todoistSync.type';
 import {
   changePasswordApi,
   loginApi,
@@ -55,6 +57,17 @@ const getCustomerDeviceId = (customerId: number): string => {
   return `${tail}${getOrCreateDeviceSeed()}`;
 };
 
+const getTodoistSyncActivateParams = (
+  current: CurrentCustomer,
+  coreToken: string | null,
+  deviceId: string,
+): TodoistSyncActivateParams => {
+  if (!coreToken || !deviceId) {
+    throw new Error('Todo sync activation is missing the Core token or device ID');
+  }
+  return { coreToken, customerId: current.id, deviceId };
+};
+
 export const customerNeedsPasswordSetup = (customer: CurrentCustomer | null | undefined): boolean =>
   !!customer &&
   (customer.status === 'invited' || customer.must_set_password || !customer.has_password);
@@ -93,6 +106,9 @@ class AuthStore {
   sendingOtp = false;
   resettingPassword = false;
   checking = false;
+  private readonly todoistSyncActivation = markRaw(new TodoistSyncActivationService(
+    async (params) => await todoistSyncSessionEmitter.activate(params),
+  ));
 
   isAuthenticated(): boolean {
     return !!getToken();
@@ -110,6 +126,17 @@ class AuthStore {
     return ensureSessionEligibleCustomer(await meApi(token));
   }
 
+  async ensureTodoistSyncReady(): Promise<void> {
+    const current = this.current;
+    if (!current) throw new Error('Todo runtime requires an authenticated customer');
+    ensureSessionEligibleCustomer(current);
+    if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
+      throw new Error('账号尚未完成首次密码设置');
+    }
+    const params = getTodoistSyncActivateParams(current, getToken(), this.deviceId);
+    await this.todoistSyncActivation.ensureReady(params);
+  }
+
   private activateAuthenticatedSession(current: CurrentCustomer): void {
     ensureSessionEligibleCustomer(current);
     if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
@@ -119,18 +146,16 @@ class AuthStore {
     scheduleBestEffort(() => authEmitter.activateSession(), (err) => {
       console.error('[AuthStore] Failed to activate optional authenticated runtimes:', err);
     });
-    const coreToken = getToken();
-    const deviceId = this.deviceId;
-    if (!coreToken || !deviceId) {
-      console.error('[AuthStore] Todo sync activation is missing the Core token or device ID');
+    let params: TodoistSyncActivateParams;
+    try {
+      params = getTodoistSyncActivateParams(current, getToken(), this.deviceId);
+    } catch (error) {
+      console.error('[AuthStore] Failed to prepare Todo sync activation:', error);
       return;
     }
+    const activation = this.todoistSyncActivation.start(params);
     scheduleBestEffort(
-      () => todoistSyncSessionEmitter.activate({
-        coreToken,
-        customerId: current.id,
-        deviceId,
-      }),
+      () => activation,
       (err) => {
         console.error('[AuthStore] Failed to activate Todo sync:', err);
       },
@@ -147,6 +172,7 @@ class AuthStore {
       throw err;
     }
 
+    this.todoistSyncActivation.invalidate();
     localStorage.setItem(DEVICE_ID_KEY, deviceId);
     setToken(token);
     this.current = current;
@@ -291,6 +317,7 @@ class AuthStore {
   }
 
   clearLocalSession(): void {
+    this.todoistSyncActivation.invalidate();
     clearToken();
     this.current = null;
   }

@@ -685,6 +685,92 @@ test('All projects every thread while Focus and custom Domains retain their scop
   assert.match(chinese, /noProject: '无 Project'/);
 });
 
+test('Focus header exposes a compact parameter-free Read all action', () => {
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
+  );
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
+  const sharedTypes = read('src/shared/eyesOnAgents/eyesOnAgents.type.ts');
+  const mainHandler = read('src/main/xpc/eyesOnAgents.handler.ts');
+  const mainService = read('src/main/eyesOnAgents/eyesOnAgents.service.ts');
+  const repository = read('src/preload/sqlite/dao/eyesOnAgents.dao.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  const button = domain.match(
+    /<a-button\s+v-if="focus"[\s\S]*?name="eyesOnAgents__domainColumn__readAll"[\s\S]*?<\/a-button>/
+  );
+  assert.ok(button, 'Missing Focus-only Read all header action');
+  assert.match(button[0], /class="agent-domain__read-all"/);
+  assert.match(button[0], /size="mini"/);
+  assert.match(button[0], /type="text"/);
+  assert.match(button[0], /eyesOnAgentsStore\.readableFocusThreads\.length === 0/);
+  assert.match(button[0], /Boolean\(eyesOnAgentsStore\.busyAction\)/);
+  assert.match(button[0], /:loading="eyesOnAgentsStore\.busyAction === 'focus-read-all'"/);
+  assert.match(button[0], /@click="markAllRead"/);
+  assert.match(button[0], /i18nHelper\.eyesOnAgents\.actions\.readAll/);
+
+  const readableFocusThreads = store.match(
+    /  get readableFocusThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
+  );
+  assert.ok(readableFocusThreads, 'Missing readable Focus projection');
+  assert.match(readableFocusThreads[0], /this\.focusThreads\.filter/);
+  assert.match(readableFocusThreads[0], /thread\.isUnread/);
+  assert.match(readableFocusThreads[0], /thread\.runtimeState !== 'working'/);
+  assert.match(readableFocusThreads[0], /thread\.runtimeState !== 'waiting_approval'/);
+  assert.match(readableFocusThreads[0], /thread\.runtimeState !== 'waiting_input'/);
+  const storeAction = store.match(
+    /  async markAllRead\(\): Promise<void> \{[\s\S]*?\n  \}/
+  );
+  assert.ok(storeAction, 'Missing renderer Read all action');
+  assert.match(storeAction[0], /if \(this\.readableFocusThreads\.length === 0\) return/);
+  assert.match(
+    storeAction[0],
+    /runSnapshotAction\('focus-read-all', \(\) => eyesOnAgentsEmitter\.markAllRead\(\)\)/
+  );
+
+  assert.match(
+    sharedTypes,
+    /markAllRead\(\): Promise<EyesOnAgentsRepositoryMutationResult>/
+  );
+  assert.match(sharedTypes, /markAllRead\(\): Promise<EyesOnAgentsSnapshot>/);
+  assert.doesNotMatch(sharedTypes, /markAllRead\(params/);
+  assert.match(
+    mainHandler,
+    /async markAllRead\(\): Promise<EyesOnAgentsSnapshot> \{\s*return await eyesOnAgentsService\.markAllRead\(\);\s*\}/
+  );
+  const serviceAction = mainService.match(
+    /  async markAllRead\(\): Promise<EyesOnAgentsSnapshot> \{[\s\S]*?\n  \}/
+  );
+  assert.ok(serviceAction, 'Missing Main Read all orchestration');
+  assert.match(serviceAction[0], /repository\.markAllRead\(\)/);
+  assert.match(serviceAction[0], /if \(result\.changed\) this\.notify\(\)/);
+  assert.match(serviceAction[0], /return await this\.getSnapshot\(\)/);
+  const repositoryAction = repository.match(
+    /  async markAllRead\(\): Promise<EyesOnAgentsRepositoryMutationResult> \{[\s\S]*?\n  \}/
+  );
+  assert.ok(repositoryAction, 'Missing persistent Read all mutation');
+  assert.match(repositoryAction[0], /is_archived = 0/);
+  assert.match(repositoryAction[0], /is_unread = 1/);
+  assert.match(
+    repositoryAction[0],
+    /runtime_state NOT IN \('working', 'waiting_approval', 'waiting_input'\)/
+  );
+  assert.doesNotMatch(repositoryAction[0], /last_opened_turn_id|last_opened_at|updated_at/);
+
+  const headerStyle = cssRule(styles, '.agent-domain__header');
+  assert.match(headerStyle, /justify-content: space-between/);
+  const readAllStyle = cssRule(styles, '.agent-domain__read-all.arco-btn');
+  assert.match(readAllStyle, /height: 20px/);
+  assert.match(readAllStyle, /border: 0/);
+  assert.match(readAllStyle, /background: transparent/);
+  assert.match(readAllStyle, /box-shadow: none/);
+  assert.match(readAllStyle, /font-size: 11px/);
+  assert.match(english, /readAll: 'Read all'/);
+  assert.match(chinese, /readAll: '全部已读'/);
+});
+
 test('All title search is title-only, transient, and lifecycle-safe', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domainPath = 'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue';

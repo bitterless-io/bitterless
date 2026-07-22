@@ -11,7 +11,7 @@
       </span>
     </div>
     <template #action>
-      <a-button size="mini" type="primary" @click="todoistSyncStore.openDateTimeSettings">
+      <a-button size="mini" type="primary" @click="handleOpenDateTimeSettings">
         {{ i18nHelper.todo.syncClockOpenSettings }}
       </a-button>
     </template>
@@ -23,12 +23,16 @@ import { computed } from 'vue';
 import dayjs from 'dayjs';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoistSyncStore } from '../../store/todoistSync.store';
+import { observeTodoMutation } from '../../store/todoMutation.service';
 
 const clock = computed(() => todoistSyncStore.clockState?.status === 'clock_wrong'
   ? todoistSyncStore.clockState
   : null);
 const formatTime = (value: number): string => dayjs(value).format('YYYY-MM-DD HH:mm:ss');
 const formatOffset = (value: number): string => `${value >= 0 ? '+' : ''}${Math.round(value / 1000)}s`;
+const handleOpenDateTimeSettings = (): void => {
+  void observeTodoMutation(() => todoistSyncStore.openDateTimeSettings());
+};
 </script>
 
 <style lang="less">
