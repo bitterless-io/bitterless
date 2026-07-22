@@ -71,9 +71,9 @@ design document.
 
 ## Issues
 
-- [Desktop package includes build-only dependencies](issues/desktop-package-includes-build-only-dependencies.md) - active:
+- [Desktop package includes build-only dependencies](issues/desktop-package-includes-build-only-dependencies.md) - fixed:
   renderer/build-only production dependencies and a duplicated CLI workspace inflated the macOS
-  app to about 1.1 GiB; a pre-sign content and size gate now defines the release boundary.
+  app to about 1.1 GiB; the committed package is now guarded at 220 MiB ASAR / 650 MiB app.
 - [Todo sync device identity changes across login methods](issues/todo-sync-device-identity-node-mismatch.md) - fixed:
   one persisted installation identity must be shared by password and email-code login.
 - [Todo batch SubTodo counts omit zero rows](issues/todo-subtodo-count-map-omits-zero.md) - fixed:

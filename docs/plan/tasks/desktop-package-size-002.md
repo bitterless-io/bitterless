@@ -1,7 +1,7 @@
 ---
 id: desktop-package-size-002
 scope: production Electron dependency boundary and pre-sign package-size gate
-status: in-progress
+status: done
 depends-on: []
 ---
 
@@ -61,3 +61,20 @@ notarization or upload.
 - direct package audit against the generated `.app`
 - `yarn test:sqlite-migrations`
 - `git diff --check`
+
+## Completion — 2026-07-22
+
+- Production dependencies now contain only external Main/Preload runtime roots. Renderer/build
+  dependencies remain available to Electron Vite, while selected pure-JavaScript runtime libraries
+  are bundled instead of copied as complete package trees.
+- Electron Builder excludes tests, temporary output, source maps, and the duplicate
+  `@micromeet/cli` workspace. The separately compiled `maestro-tools/micromeet` executable remains.
+- `afterPack` and the direct CLI enforce 220 MiB ASAR and 650 MiB application limits, banned roots,
+  and AST-derived packaged runtime imports before signing or publication.
+- The first independent review found one missing explicit `protobufjs` runtime root. The fix makes
+  it a production dependency and adds the AST-derived external-root gate. Round-two review passed
+  with no remaining P1, P2, or P3 finding.
+- The focused package tests passed 9/9, SQLite release tests passed 11/11, the production build
+  passed, and a clean committed macOS arm64 package passed at 209.75 MiB ASAR / 544.70 MiB app. See
+  [`desktop-package-size-002-1`](../reviews/desktop-package-size-002-1.md) and
+  [`desktop-package-size-002-2`](../reviews/desktop-package-size-002-2.md).

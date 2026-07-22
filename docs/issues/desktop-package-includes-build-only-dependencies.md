@@ -1,6 +1,6 @@
 # Desktop package includes build-only dependencies
 
-Status: Active
+Status: Fixed
 
 ## Symptom
 
@@ -44,3 +44,15 @@ already compile that CLI into a standalone binary under `Resources/maestro-tools
 - `app.asar` is no larger than 220 MiB and the unpacked `.app` is no larger than 650 MiB.
 - The audit proves that banned renderer/build-only roots and `@micromeet/cli` are absent.
 - Main/Preload external-runtime checks, production build, and existing release gates still pass.
+
+## Resolution — 2026-07-22
+
+Renderer/build-only packages now remain development dependencies, selected pure-JavaScript
+Main/Preload libraries are bundled, source maps and the duplicate CLI workspace are excluded, and
+`protobufjs` is an explicit production dependency for the Lark Connector preload. The `afterPack`
+audit parses packaged Main/Preload JavaScript to prove every literal external package root exists,
+then enforces the content and byte limits before signing.
+
+A clean committed macOS arm64 package passed at 209.75 MiB for `app.asar` and 544.70 MiB for the
+application. Independent review found no remaining P1, P2, or P3 finding. See
+[`desktop-package-size-002-2`](../plan/reviews/desktop-package-size-002-2.md).
