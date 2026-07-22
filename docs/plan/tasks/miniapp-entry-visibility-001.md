@@ -1,7 +1,7 @@
 ---
 id: miniapp-entry-visibility-001
 scope: authenticated Home Mini Apps entry visibility
-status: in-progress
+status: done
 depends-on: []
 ---
 
@@ -40,3 +40,12 @@ and persisted data intact so the entries can be restored later with a small sour
 - `yarn check:maestro`
 - Confirm Todo, EyesOnAgents, and Omni Browser remain in the Mini Apps collection.
 
+## Completion
+
+- Maestro and Coin card definitions remain in source but are block-commented out.
+- Home-to-XPC callbacks and both integrated runtimes remain intact.
+- Independent review passed with no findings:
+  `docs/plan/reviews/miniapp-entry-visibility-001-1.md`.
+- Focused visibility and comment-scanner checks plus `git diff --check` passed. Project-wide web
+  typecheck and Maestro checks remain blocked by task-unrelated baseline errors recorded in the
+  review.
