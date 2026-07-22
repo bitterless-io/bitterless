@@ -12,6 +12,31 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const CURRENT_PROD_CORE_URL = 'https://prod-bitterless-hcqmtqwtox.cn-shanghai.fcapp.run';
 
+test('login, authenticated layout, and initial chat view use the entry bundle', () => {
+  const routes = read('src/renderer/home/src/router/defaultRoutes.ts');
+
+  assert.match(routes, /import Chat from '@\/views\/chat\/Chat\.vue';/);
+  assert.match(routes, /import Layout from '@\/views\/layout\/Layout\.vue';/);
+  assert.match(routes, /import Login from '@\/views\/login\/Login\.vue';/);
+  assert.doesNotMatch(
+    routes,
+    /import\('@\/views\/(?:chat\/Chat|layout\/Layout|login\/Login)\.vue'\)/
+  );
+  assert.match(routes, /path: 'chat',\n    name: 'chat',\n    component: Chat,/);
+  assert.match(routes, /path: '\/login',\n    name: 'login',\n    component: Login,/);
+  assert.match(routes, /path: '\/',\n    component: Layout,\n    redirect: '\/chat',/);
+
+  for (const view of [
+    'miniApp/MiniApp',
+    'connector/Connector',
+    'setting/Setting',
+    'debug/Debug',
+    'plugins/pluginTest/PluginTest',
+  ]) {
+    assert.match(routes, new RegExp(`component: \\(\\) => import\\('@/views/${view}\\.vue'\\)`));
+  }
+});
+
 test('production auth consistently uses the released Shanghai endpoint', () => {
   const rig = read('env.rig.json5');
   const api = read('src/renderer/home/src/networking/auth.api.ts');

@@ -112,6 +112,11 @@ EyesOnAgents, Maestro, Coin, and other local runtime preparation starts after th
 awaited by navigation. A local runtime rejection is reported separately and cannot clear, revoke, or
 mislabel the valid Core session as a credential failure.
 
+The Home renderer statically loads the public Login route shell and the authenticated Layout plus
+default Chat route in its entry graph. Moving from `/login` to `/chat`, including immediately after
+first-password setup, is an in-memory route switch and must not request `Layout.vue` or `Chat.vue`
+from the development server at navigation time. Less-frequent Home routes may remain lazy-loaded.
+
 ## Visual contract
 
 - The complete native window, `html`, `body`, `#app`, and login surface use Royal Blue light
@@ -120,9 +125,13 @@ mislabel the valid Core session as a credential failure.
   pressed uses `royalblue-800` (`#323955`).
 - Login and account modals use `royalblue-50`, white, and `royalblue-200` surfaces where modal
   separation requires it.
+- Login, recovery, and first-password fields remain Arco inputs with a visible 1px
+  `royalblue-200` border. Hover strengthens the border, keyboard focus uses the primary Royal Blue
+  border plus a restrained focus ring, and disabled/error fields retain distinct semantic states.
 - The login panel has no visible outline or left accent edge. Its hierarchy comes from the white
   surface, restrained shadow, spacing, and the main login heading. The small `Bitterless` eyebrow is
-  absent.
+  absent. No invited-account helper sentence appears below the heading; the login mode selector is
+  the next control.
 - General Account follows the page's existing flat section rhythm and adds no bordered card.
 - At the `800x600` minimum window size, each modal remains fully reachable and owns its internal
   scrolling when necessary.

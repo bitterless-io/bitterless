@@ -1,4 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router';
+import Chat from '@/views/chat/Chat.vue';
+import Layout from '@/views/layout/Layout.vue';
+import Login from '@/views/login/Login.vue';
 
 const isDev = import.meta.env.VITE_ENV === 'dev';
 
@@ -6,7 +9,7 @@ const baseRoutes: RouteRecordRaw[] = [
   {
     path: 'chat',
     name: 'chat',
-    component: () => import('@/views/chat/Chat.vue'),
+    component: Chat,
     meta: {
       icon: 'chat.png'
     }
@@ -60,14 +63,14 @@ export const defaultRoutes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'login',
-    component: () => import('@/views/login/Login.vue'),
+    component: Login,
     meta: {
       public: true
     }
   },
   {
     path: '/',
-    component: () => import('@/views/layout/Layout.vue'),
+    component: Layout,
     redirect: '/chat',
     children: [...baseRoutes, ...(isDev ? devRoutes : [])]
   },

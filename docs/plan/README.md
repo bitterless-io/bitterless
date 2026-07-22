@@ -25,7 +25,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [renderer-i18n-sync](tasks/renderer-i18n-sync.md) | main-owned language state, live renderer updates, and correct recreated-window locale | done | — |
 | [customer-account-recovery](tasks/customer-account-recovery.md) | customer recovery, lifecycle enforcement, and Royal Blue home surface | done | — |
 | [login-shared-window-shell](tasks/login-shared-window-shell.md) | shared MenuBar and update controls across login and authenticated routes | done | customer-account-recovery |
-| [customer-auth-login-account-001](tasks/customer-auth-login-account-001.md) | deterministic login transition, General account identity, and manual logout | implemented; backend gate and owner verification pending | customer-account-recovery, login-shared-window-shell |
+| [customer-auth-login-account-001](tasks/customer-auth-login-account-001.md) | deterministic login transition, General account identity, and manual logout | implemented; owner verification pending | customer-account-recovery, login-shared-window-shell |
 | [coin-subapp-shell-001](tasks/coin-subapp-shell-001.md) | Coin singleton window, scoped bridge, and full-width analysis shell | done | — |
 | [coin-resource-settings-002](tasks/coin-resource-settings-002.md) | Codex/GMGN/service configuration and secure local probes; Alchemy adapter deferred | implemented; owner verification pending | coin-subapp-shell-001 |
 | [coin-analysis-workspace-003](tasks/coin-analysis-workspace-003.md) | Coin analysis tabs, truthful source adapters, persistence, and decisions | implemented; owner verification pending | coin-resource-settings-002 |

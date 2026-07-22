@@ -36,13 +36,6 @@
     line-height: 1.25;
     letter-spacing: -0.02em;
   }
-
-  p {
-    margin: 8px 0 0;
-    color: #606b9d;
-    font-size: 14px;
-    line-height: 1.65;
-  }
 }
 
 .login-view__account {
@@ -104,6 +97,53 @@
 
   .arco-input-wrapper {
     background: #ffffff;
+    border: 1px solid var(--bl-royalblue-200);
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .arco-input-wrapper:hover:not(.arco-input-disabled):not(.arco-input-error) {
+    background: #ffffff;
+    border-color: var(--bl-royalblue-300);
+  }
+
+  .arco-input-wrapper:focus-within:not(.arco-input-disabled),
+  .arco-input-wrapper.arco-input-focus:not(.arco-input-disabled) {
+    background: #ffffff;
+    border-color: var(--bl-royalblue-600);
+    box-shadow: 0 0 0 3px rgba(78, 88, 130, 0.14);
+  }
+
+  .arco-input-wrapper.arco-input-disabled,
+  .arco-input-wrapper.arco-input-disabled:hover,
+  .arco-input-wrapper.arco-input-disabled:focus-within {
+    background: var(--bl-royalblue-50);
+    border-color: var(--bl-royalblue-100);
+    box-shadow: none;
+  }
+
+  .arco-input-wrapper.arco-input-error:not(.arco-input-disabled),
+  .arco-form-item-status-error .arco-input-wrapper:not(.arco-input-disabled) {
+    background: var(--color-danger-light-1);
+    border-color: rgb(var(--danger-6));
+    box-shadow: none;
+  }
+
+  .arco-input-wrapper.arco-input-error:not(.arco-input-disabled):hover,
+  .arco-form-item-status-error .arco-input-wrapper:not(.arco-input-disabled):hover {
+    background: var(--color-danger-light-1);
+    border-color: rgb(var(--danger-6));
+  }
+
+  .arco-input-wrapper.arco-input-error:not(.arco-input-disabled):focus-within,
+  .arco-input-wrapper.arco-input-error.arco-input-focus:not(.arco-input-disabled),
+  .arco-form-item-status-error .arco-input-wrapper:not(.arco-input-disabled):focus-within,
+  .arco-form-item-status-error .arco-input-wrapper.arco-input-focus:not(.arco-input-disabled) {
+    background: #ffffff;
+    border-color: rgb(var(--danger-6));
+    box-shadow: 0 0 0 3px rgba(245, 63, 63, 0.12);
   }
 
   .arco-btn-primary {

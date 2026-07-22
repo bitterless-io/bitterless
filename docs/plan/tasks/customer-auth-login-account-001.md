@@ -1,7 +1,7 @@
 ---
 id: customer-auth-login-account-001
 scope: deterministic customer login transition, General account identity, and manual logout
-status: implemented; backend gate and owner verification pending
+status: implemented; owner verification pending
 depends-on: [customer-account-recovery, login-shared-window-shell]
 ---
 
@@ -27,7 +27,6 @@ manual Logout to Settings → General, and simplify the login surface as request
 Login                                  Settings → General
 ┌─────────────────────────────┐        ┌───────────────────────────────┐
 │ Log in to Bitterless        │        │ Display language              │
-│ Account access description  │        │ Search engine                 │
 │ [Password] [Email code]     │        │                               │
 │ Email                       │        │ Account                       │
 │ Password                    │        │ signed-in@example.test        │
@@ -58,8 +57,15 @@ Login                                  Settings → General
   one tracked teardown; a stale activation may stop itself but must not launch another teardown.
 - General Account displays only the current authenticated email and a localized Logout button. It
   adds no bordered card.
+- Remove the invited-account helper sentence below the login heading so the mode selector follows
+  the heading directly.
+- Keep every login, recovery, and first-password field as an Arco input and give its wrapper a
+  visible border with explicit default, hover, focus, disabled, and error states.
 - Delete the login eyebrow and both panel border declarations. Retain the main heading and existing
   Royal Blue surface hierarchy.
+- Statically import Login, Layout, and Chat in the Home route table. The first authenticated
+  transition must not lazy-fetch its shell or default destination after password setup has already
+  succeeded; less-frequent Home routes remain eligible for lazy loading.
 
 ## Path
 
@@ -89,6 +95,10 @@ Login                                  Settings → General
   with rejected cleanup, stale-activation teardown ownership, first-password navigation-only retry,
   silent Main teardown, and the border/eyebrow removal.
 - Renderer i18n source validation covers the new Account and Logout copy in English and Chinese.
+- Focused style verification confirms Arco input wrappers have visible default borders without
+  losing hover, focus, disabled, or error semantics.
+- Focused route-source verification rejects dynamic imports for Login, Layout, and Chat and confirms
+  those views belong to the Home entry graph rather than route-only chunks.
 - An independent verify agent reviews the implementation against this task and the issue/design
   contracts.
 - Before the endpoint change is considered releasable, the Shanghai FC function must authenticate
@@ -104,3 +114,8 @@ Login                                  Settings → General
   — accepted for source delivery after three review passes closed endpoint-gating, navigation,
   teardown ownership, background-cleanup, XPC typing, and first-password retry findings; backend
   release and Ral's runtime acceptance remain pending.
+- 2026-07-22 recurrence review: independent source review passed after Login, Layout, and Chat moved
+  into the Home entry graph. `yarn test:customer-auth` passed 9/9, `yarn build` passed without
+  Electron, and the renderer artifact contains no route-only `Login`, `Layout`, or `Chat` JavaScript
+  chunk while retaining lazy chunks for lower-frequency routes. Ral's restarted `dev:prod` runtime
+  confirmation remains pending.

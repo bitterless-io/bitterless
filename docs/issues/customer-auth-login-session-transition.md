@@ -1,6 +1,6 @@
 # Customer authentication does not complete in the current window
 
-状态：客户端修复与上海生产端点切换已实现；人工验证待完成
+状态：客户端静态路由修复已实现；owner verification pending
 
 Implementation: [customer-auth-login-account-001](../plan/tasks/customer-auth-login-account-001.md)
 
@@ -60,6 +60,20 @@ as authentication failures. Restoring password access for the reported account r
 account-lifecycle operation (invitation/first-password setup when eligible, otherwise password
 recovery); it is separate from the desktop navigation defect.
 
+## 2026-07-22 first-password navigation recurrence
+
+The first-password mutation completed and the authenticated session remained durable, but the
+visible transition failed after the renderer development server disappeared. The surviving Home
+window was an orphaned Electron process with no listener on its original renderer port. Vue Router
+then requested `Layout.vue` and `Chat.vue` because both default-route components were declared as
+dynamic imports, so navigation returned `ERR_CONNECTION_REFUSED` and showed the navigation-only
+retry state.
+
+Login, Layout, and the default Chat destination are one Home renderer application and form its
+critical authentication path. They must be static imports in the Home entry graph. A successful
+first-password transition therefore cannot depend on fetching those two view modules after the
+credential mutation has already committed.
+
 ## Required correction
 
 1. Commit an active Core session after login and `/auth/me` succeed. Optional local runtime
@@ -76,6 +90,9 @@ recovery); it is separate from the desktop navigation defect.
    teardown.
 5. Remove the visible login-panel border and the small `Bitterless` eyebrow. Keep the main login
    heading and use surface color, spacing, and restrained shadow for hierarchy.
+6. Statically load Login, Layout, and the default Chat destination in the Home route table. Keep the
+   route replacement awaited, but do not perform a development-server module request for Layout or
+   Chat during the authenticated transition.
 
 ## Acceptance
 
@@ -92,3 +109,5 @@ recovery); it is separate from the desktop navigation defect.
 - Login has no panel border, no left accent edge, and no small `Bitterless` eyebrow.
 - `dev:prod`, the production renderer and Todo PowerSync fallbacks, CSP, and the main-process
   production-origin allowlist all use the Shanghai public FC endpoint.
+- The Home route source contains no dynamic import for Login, Layout, or Chat, and the production
+  renderer keeps those three views in the entry graph rather than separate route chunks.

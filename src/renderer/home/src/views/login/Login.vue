@@ -258,7 +258,6 @@ const onSetPassword = async (): Promise<void> => {
     <section name="login__panel" class="login-view__panel">
       <div name="login__copy" class="login-view__copy">
         <h1>登录 Bitterless</h1>
-        <p>使用受邀客户账号进入桌面工作区。</p>
       </div>
 
       <a-radio-group v-model="mode" type="button" size="large" class="login-view__modes">
