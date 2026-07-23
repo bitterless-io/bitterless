@@ -1,6 +1,6 @@
 # macOS DMG notarization upload times out through S3 acceleration
 
-Status: fixed
+Status: active
 
 ## Report
 
@@ -9,26 +9,26 @@ consecutive DMG notarization submissions aborted during Apple's multipart upload
 `HTTPClientError.deadlineExceeded`. The first reached 37 parts and the retry stopped after 4 parts;
 neither submission reached an accepted/rejected notarization result.
 
-## Confirmed cause
+## Findings
 
 `notarytool submit` enables S3 Transfer Acceleration by default. The current Shanghai development
 network can reach Apple's notary service, as proven by the accepted application notarization, but
-the accelerated multipart path is unstable for the 207 MiB DMG. This is an upload transport
-failure, not a code-signing, package, architecture, or notarization-validation rejection.
+the 207 MiB DMG upload timed out on the accelerated path. Disabling S3 acceleration was then tested
+as a workaround, but the direct regional S3 path failed sooner with zero completed parts. The
+workaround is therefore a regression in this environment, not a confirmed resolution. The failure
+remains an upload transport problem rather than a code-signing, architecture, or Apple validation
+rejection.
 
-## Resolution
+## Current decision
 
-- Submit the DMG with Apple's supported `--no-s3-acceleration` option so the upload uses the direct
-  S3 path.
+- Restore `notarytool`'s default accelerated upload behavior by removing
+  `--no-s3-acceleration`.
 - Keep `--wait`, accepted-status validation, staple, and staple validation unchanged; do not bypass
   notarization.
-- Retain a release-hook source test so future publisher changes cannot silently restore the failing
-  accelerated path.
 
 ## Verification
 
-- `xcrun notarytool submit --help` confirms `--no-s3-acceleration` is supported and disables the
-  default accelerated upload.
-- `yarn test:sqlite-migrations` covers the publisher flag and existing signing/notarization gates.
+- `yarn test:sqlite-migrations` must continue covering the accepted-status and stapling gates without
+  requiring a specific S3 transport flag.
 - A successful DMG notarization, staple validation, production upload, and public manifest check
-  close the operational acceptance.
+  are still required to close the issue.

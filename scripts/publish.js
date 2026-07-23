@@ -460,7 +460,6 @@ const notarizeDmg = (dmgPath) => {
     password,
     '--team-id',
     teamId,
-    '--no-s3-acceleration',
     '--wait',
     '--output-format',
     'json',

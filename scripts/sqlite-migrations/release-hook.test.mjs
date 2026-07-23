@@ -79,7 +79,7 @@ test('DMG signing uses a private disposable keychain', () => {
   assert.doesNotMatch(source, /console\.(?:log|warn|error)\([^\n]*(?:certificatePassword|keychainPassword)/)
 })
 
-test('DMG notarization uses the direct S3 path and still waits for acceptance', () => {
+test('DMG notarization waits for acceptance and staples the artifact', () => {
   const source = read('scripts/publish.js')
   const start = source.indexOf('const notarizeDmg =')
   const end = source.indexOf('const regenerateBlockmap =', start)
@@ -87,7 +87,6 @@ test('DMG notarization uses the direct S3 path and still waits for acceptance', 
 
   assert(start >= 0)
   assert(end > start)
-  assert.match(notarizeSource, /'--no-s3-acceleration'/)
   assert.match(notarizeSource, /'--wait'/)
   assert.match(notarizeSource, /parsed\.status !== 'Accepted'/)
   assert.match(notarizeSource, /\['stapler', 'staple', dmgPath\]/)

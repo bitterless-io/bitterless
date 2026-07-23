@@ -82,8 +82,8 @@ design document.
 
 ## Issues
 
-- [macOS DMG notarization upload timeout](issues/macos-dmg-notarization-upload-timeout.md) - fixed:
-  DMG submissions use Apple's direct S3 path after repeated accelerated multipart upload deadlines.
+- [macOS DMG notarization upload timeout](issues/macos-dmg-notarization-upload-timeout.md) - active:
+  restore Apple's default accelerated upload after the direct regional S3 workaround failed sooner.
 - [Todo MCP empty-date rejection and missing Step CRUD](issues/todo-mcp-empty-date-and-step-crud-gap.md) - fixed:
   optional dates are validated before creation, and synchronized SubTodo operations now have a
   public, idempotent Step interface plus versioned agent guidance.
