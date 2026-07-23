@@ -2,6 +2,14 @@ appId: io.bitterless.app
 productName: Bitterless
 directories:
   buildResources: build
+electronLanguages:
+  - zh_CN
+  - zh_TW
+  - ja
+  - en
+  - id
+  - ko
+  - fr
 afterPack: scripts/package/desktopPackage.audit.cjs
 files:
   - '!src/*'

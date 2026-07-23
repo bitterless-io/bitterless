@@ -74,6 +74,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [preload-linkedom-worker-003](tasks/preload-linkedom-worker-003.md) | canvas-free LinkeDOM preload bundling and production development startup | done | desktop-helper-process-isolation-001 |
 | [desktop-package-size-002](tasks/desktop-package-size-002.md) | production dependency boundary and pre-sign desktop package-size gate | done | — |
 | [desktop-mac-dock-icon-004](tasks/desktop-mac-dock-icon-004.md) | current macOS bundle icon plus runtime Dock refresh | implemented; owner verification pending | desktop-package-size-002 |
+| [desktop-electron-locales-005](tasks/desktop-electron-locales-005.md) | seven-locale Electron package allowlist before macOS signing | in-progress | — |
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,7 @@ import test from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { createPackage } = require('@electron/asar');
+const { parse: parseYaml } = require('yaml');
 const afterPack = require('./desktopPackage.audit.cjs');
 const {
   BANNED_PACKAGES,
@@ -17,6 +18,7 @@ const {
 
 const projectRoot = path.resolve(new URL('../..', import.meta.url).pathname);
 const temporaryRoots = [];
+const ELECTRON_LANGUAGES = ['zh_CN', 'zh_TW', 'ja', 'en', 'id', 'ko', 'fr'];
 
 const readProjectFile = (filePath) => {
   return readFileSync(path.join(projectRoot, filePath), 'utf-8');
@@ -408,6 +410,45 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
   assert.match(builder, /^\s+- '!output\/\*\*'$/m);
   assert.match(builder, /^\s+- '!node_modules\/@micromeet\/cli\{,\/\*\*\}'$/m);
   assert.match(builder, /^\s+- '!node_modules\/\*\*\/\*\.map'$/m);
+});
+
+test('Electron Builder locale allowlist is exact in the template and optional generated config', () => {
+  const assertExactElectronLanguages = (actual, label) => {
+    assert.deepEqual(
+      actual,
+      ELECTRON_LANGUAGES,
+      `${label} must contain the exact ordered Electron locale allowlist`,
+    );
+  };
+
+  const templatePath = 'electron-builder.tmp.yml';
+  const template = parseYaml(readProjectFile(templatePath));
+  assertExactElectronLanguages(template.electronLanguages, templatePath);
+
+  const generator = readProjectFile('scripts/before.js');
+  assert.match(generator, /const builderTmpPath = path\.join\(rootDir, 'electron-builder\.tmp\.yml'\);/);
+  assert.match(generator, /const builderOutPath = path\.join\(rootDir, 'electron-builder\.yml'\);/);
+  assert.match(generator, /fs\.readFileSync\(builderTmpPath, 'utf-8'\)/);
+  assert.match(generator, /fs\.writeFileSync\(builderOutPath, builderContent, 'utf-8'\)/);
+
+  const generatedPath = 'electron-builder.yml';
+  if (existsSync(path.join(projectRoot, generatedPath))) {
+    const generated = parseYaml(readProjectFile(generatedPath));
+    assertExactElectronLanguages(generated.electronLanguages, generatedPath);
+  }
+
+  const invalidLists = {
+    missing: ELECTRON_LANGUAGES.slice(0, -1),
+    extra: [...ELECTRON_LANGUAGES, 'de'],
+    duplicated: [...ELECTRON_LANGUAGES, 'fr'],
+    reordered: [ELECTRON_LANGUAGES[1], ELECTRON_LANGUAGES[0], ...ELECTRON_LANGUAGES.slice(2)],
+  };
+  for (const [variant, languages] of Object.entries(invalidLists)) {
+    assert.throws(
+      () => assertExactElectronLanguages(languages, variant),
+      /must contain the exact ordered Electron locale allowlist/,
+    );
+  }
 });
 
 test('publish audits an existing packaged app before DMG finalization or upload', () => {
