@@ -75,6 +75,20 @@ try {
   assert.match(skillMetadata.description, /personal/i);
   assert.match(skillMetadata.description, /multi-device/i);
   assert.match(skillMarkdown, /Do not create a todo for internal agent steps/);
+  assert.match(skillMarkdown, /omit `dueAt` and `remindAt` entirely when unspecified/i);
+  assert.match(skillMarkdown, /retry at most once/i);
+  assert.match(skillMarkdown, /One\s+immediate empty list is insufficient/i);
+  assert.match(skillMarkdown, /Call `step\.list` before editing or deleting an unknown Step/);
+  assert.match(skillMarkdown, /`step\.complete` and `step\.uncomplete` as\s+idempotent/);
+
+  const toolReference = readFileSync(join(skillRoot, 'references', 'tools.md'), 'utf8');
+  assert.match(toolReference, /never send `""` or `null` on create/i);
+  assert.match(toolReference, /allow a delayed commit to settle and recheck/i);
+  assert.match(toolReference, /### `step\.list`[\s\S]*Returns `\{ todo, steps \}`/);
+  assert.match(toolReference, /### `step\.create`[\s\S]*Returns `\{ step \}`/);
+  assert.match(toolReference, /### `step\.update`[\s\S]*changes only the Step title/);
+  assert.match(toolReference, /### `step\.complete` and `step\.uncomplete`[\s\S]*idempotent/);
+  assert.match(toolReference, /### `step\.delete`[\s\S]*`\{ deleted: true, id, todoId \}`/);
 
   const openaiConfig = parseYaml(
     readFileSync(join(skillRoot, 'agents', 'openai.yaml'), 'utf8'),

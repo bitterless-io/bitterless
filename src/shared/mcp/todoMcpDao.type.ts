@@ -188,6 +188,10 @@ export interface SubTodoMcpDaoApi {
   getByTodoId(params: { todoId: TodoEntityId }): Promise<McpSubTodoRow[]>;
   getById(params: { id: TodoEntityId }): Promise<McpSubTodoRow | undefined>;
   updateTitle(params: { id: TodoEntityId; title: string }): Promise<void>;
+  setStatus(params: {
+    id: TodoEntityId;
+    status: 0 | 1;
+  }): Promise<McpSubTodoRow | undefined>;
   toggleStatus(params: { id: TodoEntityId }): Promise<McpSubTodoRow | undefined>;
   getCountByTodoId(params: {
     todoId: TodoEntityId;

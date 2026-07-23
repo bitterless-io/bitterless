@@ -1,6 +1,10 @@
 - 🔄 Consolidated Todo synchronization into one Refresh control with live progress, last-success time, and failure details.
 - 🧭 Reuses one installation device identity across password and email-code login to keep Snowflake assignment stable.
+- 🛡️ Recovers clean stale Todo device bindings with an immediate full bootstrap while keeping unsynchronized local work fail-closed.
 - ✅ Fixed Todo refresh after creating a task with no SubTodos by returning explicit zero counts.
+- 🧩 Todo MCP agents can now list, create, edit, complete, reopen, and delete individual Steps with idempotent status changes.
+- 📅 Todo MCP creation now rejects invalid date values before writing and guides agents to omit empty dates, check duplicates, and retry safely.
+- 📝 Todo Note editing now opens at 480px while retaining bounded vertical resizing and panel scrolling.
 - 🛡️ Keeps conflicting Snowflake-node responses fail-closed so local synchronized task IDs remain protected.
 - 📦 Reduced desktop package size and added a pre-sign package composition gate.
 - 🧩 Fixed an optional preload dependency that could prevent Core SQLite from starting on macOS.

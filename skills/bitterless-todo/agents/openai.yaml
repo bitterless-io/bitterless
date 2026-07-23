@@ -1,7 +1,7 @@
 interface:
   display_name: "Bitterless Todo"
-  short_description: "Manage personal synced todos through Bitterless MCP"
-  default_prompt: "Use $bitterless-todo to manage my personal multi-device todos through the production Bitterless MCP server."
+  short_description: "Manage personal synced todos and steps through Bitterless MCP"
+  default_prompt: "Use $bitterless-todo to manage my personal multi-device todos and their steps through the production Bitterless MCP server."
 dependencies:
   tools:
     - type: "mcp"

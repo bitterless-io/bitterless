@@ -22,7 +22,13 @@ const toolNames = [
   'todo.complete',
   'todo.uncomplete',
   'todo.delete',
-  'todo.move'
+  'todo.move',
+  'step.list',
+  'step.create',
+  'step.update',
+  'step.complete',
+  'step.uncomplete',
+  'step.delete'
 ];
 
 const readOption = (name, fallback) => {
@@ -35,13 +41,23 @@ const stateFile = readOption('--state-file', null);
 
 const loadState = () => {
   if (!stateFile || !existsSync(stateFile)) {
-    return { calls: [], listSnapshots: [], nextId: 4242, nextSession: 1, todos: [] };
+    return {
+      calls: [],
+      listSnapshots: [],
+      nextId: 4242,
+      nextSession: 1,
+      nextStepId: 8421,
+      steps: [],
+      todos: []
+    };
   }
   return JSON.parse(readFileSync(stateFile, 'utf8'));
 };
 
 const state = loadState();
 state.listSnapshots ??= [];
+state.nextStepId ??= 8421;
+state.steps ??= [];
 const sessionId = state.nextSession;
 state.nextSession += 1;
 
@@ -83,6 +99,10 @@ const getTodo = (id) => {
   return state.todos.find((todo) => todo.id === id);
 };
 
+const getStep = (id) => {
+  return state.steps.find((step) => step.id === id);
+};
+
 const statusResult = (ids) => {
   const summary = { active: 0, completed: 0, deleted: 0, missing: 0 };
   const items = ids.map((id) => {
@@ -109,7 +129,13 @@ const statusResult = (ids) => {
 };
 
 const handleCreate = (id, args) => {
-  if (args.domainId !== DOMAIN_ID || args.important !== false || typeof args.title !== 'string') {
+  if (
+    args.domainId !== DOMAIN_ID ||
+    args.important !== false ||
+    typeof args.title !== 'string' ||
+    Object.hasOwn(args, 'dueAt') ||
+    Object.hasOwn(args, 'remindAt')
+  ) {
     respondError(id, 'fixture received invalid todo.create arguments');
     return;
   }
@@ -183,6 +209,56 @@ const handleCreate = (id, args) => {
     return;
   }
   respond(id, toolResult({ todo }));
+};
+
+const handleStepCreate = (id, args) => {
+  const todo = getTodo(args.todoId);
+  if (!todo || todo.deleted || typeof args.title !== 'string' || args.title.length === 0) {
+    respondError(id, 'fixture received invalid step.create arguments');
+    return;
+  }
+  const now = 1_700_000_001_000 + state.nextStepId;
+  const step = {
+    id: toTodoId(state.nextStepId),
+    customer_id: 'fixture-customer',
+    todo_id: todo.id,
+    title: args.title,
+    status: 0,
+    is_deleted: 0,
+    position: state.steps.length,
+    created_at: now,
+    updated_at: now,
+    fixtureRole: 'owned'
+  };
+  state.nextStepId += 1;
+  state.steps.push(step);
+
+  if (mode === 'step-update-assertion') {
+    const decoyTodo = {
+      id: toTodoId(state.nextId),
+      domain_id: DOMAIN_ID,
+      title: 'Unrelated human todo with a Step',
+      status: 0,
+      important: 0,
+      note: 'not owned by the smoke run',
+      source: 'human',
+      deleted: false,
+      fixtureRole: 'human-step-decoy-parent'
+    };
+    state.nextId += 1;
+    state.todos.push(decoyTodo);
+    state.steps.push({
+      ...step,
+      id: toTodoId(state.nextStepId),
+      todo_id: decoyTodo.id,
+      title: 'Unrelated human Step',
+      fixtureRole: 'human-step-decoy'
+    });
+    state.nextStepId += 1;
+  }
+
+  saveState();
+  respond(id, toolResult({ step }));
 };
 
 const handleTool = (id, name, args) => {
@@ -291,8 +367,68 @@ const handleTool = (id, name, args) => {
   if (name === 'todo.delete') {
     const todo = getTodo(args.id);
     if (todo) todo.deleted = true;
+    for (const step of state.steps) {
+      if (step.todo_id === args.id) step.is_deleted = 1;
+    }
     saveState();
     respond(id, toolResult({ deleted: true, id: args.id }));
+    return;
+  }
+
+  if (name === 'step.list') {
+    const todo = getTodo(args.todoId);
+    const steps = state.steps
+      .filter((step) => step.todo_id === args.todoId && step.is_deleted === 0)
+      .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+    respond(id, toolResult({ todo, steps }));
+    return;
+  }
+
+  if (name === 'step.create') {
+    handleStepCreate(id, args);
+    return;
+  }
+
+  if (name === 'step.update') {
+    const step = getStep(args.id);
+    if (!step || step.is_deleted !== 0 || typeof args.title !== 'string') {
+      respondError(id, 'fixture received invalid step.update arguments');
+      return;
+    }
+    step.title = args.title;
+    step.updated_at += 1;
+    saveState();
+    const responseStep =
+      mode === 'step-update-assertion'
+        ? { ...step, title: 'fixture returned the wrong updated Step title' }
+        : step;
+    respond(id, toolResult({ step: responseStep }));
+    return;
+  }
+
+  if (name === 'step.complete' || name === 'step.uncomplete') {
+    const step = getStep(args.id);
+    if (!step || step.is_deleted !== 0) {
+      respondError(id, 'fixture received an unknown Step id');
+      return;
+    }
+    step.status = name === 'step.complete' ? 1 : 0;
+    step.updated_at += 1;
+    saveState();
+    respond(id, toolResult({ step }));
+    return;
+  }
+
+  if (name === 'step.delete') {
+    const step = getStep(args.id);
+    if (!step || step.is_deleted !== 0) {
+      respondError(id, 'fixture received an unknown Step id');
+      return;
+    }
+    step.is_deleted = 1;
+    step.updated_at += 1;
+    saveState();
+    respond(id, toolResult({ deleted: true, id: step.id, todoId: step.todo_id }));
     return;
   }
 

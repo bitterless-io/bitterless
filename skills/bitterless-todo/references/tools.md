@@ -3,7 +3,8 @@
 The production tools operate the user's personal, multi-device-synchronized Todo store. Bitterless
 owns synchronization; MCP calls read and write the local production app. All tools return MCP
 `content` plus machine-readable `structuredContent`; use `structuredContent` for decisions and
-assertions. Timestamps are integer Unix milliseconds or `null`.
+assertions. Timestamp arguments are nonnegative integer Unix milliseconds; `todo.update` also
+accepts `null` to clear an existing date.
 
 ## Domain operations and todo reads
 
@@ -77,21 +78,29 @@ Returns `{ items, summary }`. Each item has a `state` of `active`, `completed`, 
 {
   "domainId": "00000000000000000001",
   "title": "Concise personal action",
-  "dueAt": null,
-  "remindAt": null,
   "important": false,
   "note": "Optional context"
 }
 ```
 
 Required: `domainId`, `title`. Optional: `dueAt`, `remindAt`, `important`, `note`. Returns
-`{ todo }`. Resolve `domainId` through `domain.list` first.
+`{ todo }`. Resolve `domainId` through `domain.list` first. Omit `dueAt` and `remindAt` entirely
+when unspecified; never send `""` or `null` on create. When supplied, each date must be a
+nonnegative integer Unix-millisecond timestamp.
+
+Creation is non-idempotent because intentional identical Todos are valid. After a clear validation
+rejection, call `todo.list` for the target Domain and compare normalized title plus relevant note,
+timing, and context. If an obvious active duplicate exists, use it and do not retry; otherwise
+sanitize the arguments and retry at most once. After a timeout, disconnect, or missing response,
+allow a delayed commit to settle and recheck. One immediate empty list is insufficient evidence;
+ask instead of immediately retrying while the result remains ambiguous.
 
 ### `todo.update`
 
 Arguments: `{ id, title?, dueAt?, remindAt?, important?, note? }`. Returns `{ todo }`. Send only
-fields that should change. Use `null` to clear nullable timestamps; use `""` to clear the note.
-Never send `note: null`.
+fields that should change. Omit unchanged dates; use a nonnegative integer to set one or `null` to
+clear one. Never send an empty string for a date. Use `""` to clear the note; never send
+`note: null`.
 
 ### `todo.complete` and `todo.uncomplete`
 
@@ -106,6 +115,48 @@ Arguments: `{ id, domainId }`. Returns `{ moved: true, id, domainId }`. Resolve 
 
 Arguments: `{ id }`. Returns `{ deleted: true, id }`. Treat deletion as destructive and use it only
 when requested or for an owned smoke-test cleanup.
+
+## Step reads and writes
+
+A Step is a user-owned, independently checkable sub-action of one durable Todo. Keep a Todo atomic
+when it can be completed as a whole, use separate Todos for independently scheduled or prioritized
+outcomes, and never store agent-internal execution as Steps. All Todo and Step IDs below are
+20-digit decimal strings.
+
+### `step.list`
+
+Arguments: `{ todoId }`.
+
+Returns `{ todo, steps }`. `todo` is the validated live parent and `steps` contains every live,
+reconciled Step in stable repository order. Call this before editing or deleting a Step whose exact
+ID is not already known, and before retrying a failed or ambiguous `step.create`.
+
+### `step.create`
+
+Arguments: `{ todoId, title }`. `title` is required and trimmed to 1–200 characters.
+
+Returns `{ step }`. Preserve `step.id`. Creation is non-idempotent. After a clear validation error,
+call `step.list`; use an obvious matching live Step instead of retrying, otherwise retry at most once
+with corrected arguments. After a timeout, disconnect, or missing response, allow a delayed commit
+to settle and recheck; do not immediately retry from one empty list while the result is ambiguous.
+
+### `step.update`
+
+Arguments: `{ id, title }`. `title` is required and trimmed to 1–200 characters.
+
+Returns `{ step }` after the persisted reread. This changes only the Step title.
+
+### `step.complete` and `step.uncomplete`
+
+Arguments: `{ id }`. Each returns `{ step }` with the requested completion state. Both operations
+are idempotent: repeating the same request succeeds without toggling to the opposite state.
+
+### `step.delete`
+
+Arguments: `{ id }`.
+
+Returns `{ deleted: true, id, todoId }`. Treat deletion as destructive and call it only when the
+user requests removal or when cleaning up an agent-owned smoke-test Step.
 
 ## Change events
 

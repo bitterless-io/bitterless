@@ -670,6 +670,17 @@ export class TodoistSyncRepository {
     await this.applySubTodoUpdate(params.id, { title: assertText(params.title, 'title', 512) });
   }
 
+  async setSubTodoStatus(params: { id: TodoEntityId; status: 0 | 1 }): Promise<McpSubTodoRow | undefined> {
+    const id = assertTodoistSyncEntityId(params.id);
+    const status = assertFlag(params.status, 'status');
+    const row = await this.getSubTodoById({ id });
+    if (!row) return undefined;
+    if (row.status !== status) {
+      await this.applySubTodoUpdate(id, { status });
+    }
+    return await this.getSubTodoById({ id });
+  }
+
   async toggleSubTodoStatus(params: { id: TodoEntityId }): Promise<McpSubTodoRow | undefined> {
     const row = await this.getSubTodoById({ id: params.id });
     if (!row) return undefined;

@@ -51,6 +51,7 @@
     "test:mcp:domain-create": "node scripts/mcp/domain-create.test.mjs",
     "test:mcp:agent-onboarding": "node scripts/mcp/agent-onboarding.test.mjs",
     "test:mcp:multi-instance": "node scripts/mcp/multi-instance.test.mjs",
+    "test:mcp:todo-step-crud": "node scripts/mcp/todo-step-crud.test.mjs",
     "test:mcp:todo-skill-export": "node scripts/mcp/todo-skill-export.test.mjs",
     "test:mcp:todo-smoke": "node scripts/mcp/todo-smoke.test.mjs",
     "test:e2e:maestro": "playwright test -c tests/maestro/playwright.config.ts",
@@ -227,5 +228,5 @@
   ],
   "name": "Bitterless_DEBUG",
   "version": "0.0.37",
-  "version_code": "260723101142"
+  "version_code": "260723123759"
 }

@@ -82,6 +82,9 @@ design document.
 
 ## Issues
 
+- [Todo MCP empty-date rejection and missing Step CRUD](issues/todo-mcp-empty-date-and-step-crud-gap.md) - fixed:
+  optional dates are validated before creation, and synchronized SubTodo operations now have a
+  public, idempotent Step interface plus versioned agent guidance.
 - [Desktop package includes build-only dependencies](issues/desktop-package-includes-build-only-dependencies.md) - fixed:
   renderer/build-only production dependencies and a duplicated CLI workspace inflated the macOS
   app to about 1.1 GiB; the committed package is now guarded at 220 MiB ASAR / 650 MiB app.

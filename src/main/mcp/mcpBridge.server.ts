@@ -23,6 +23,7 @@ import type {
 import { MCP_LOCAL_RPC_MAX_BYTES, getMcpBridgeEndpoint } from '@shared/mcp/mcpBridge.shared';
 import type {
   McpDomainRow,
+  McpSubTodoRow,
   McpTodoEventItem,
   McpTodoEventListResult,
   McpTodoRow,
@@ -36,6 +37,7 @@ import { assertTodoistSyncEntityId } from '@main/todoistSync/todoistSyncSnowflak
 
 type RpcParams = Record<string, unknown>;
 type DomainRow = McpDomainRow;
+type StepRow = McpSubTodoRow;
 type TodoEventItem = McpTodoEventItem;
 type TodoEventListResult = McpTodoEventListResult;
 type TodoRow = McpTodoRow;
@@ -400,6 +402,60 @@ const requireTodoRows = (
   });
 };
 
+const requireStepRow = (
+  value: unknown,
+  source: string,
+  expectedId?: TodoEntityId,
+  expectedTodoId?: TodoEntityId,
+  expectedCustomerId?: string,
+): StepRow => {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    !/^\d{20}$/.test(value.id) ||
+    typeof value.customer_id !== 'string' ||
+    value.customer_id.length === 0 ||
+    typeof value.todo_id !== 'string' ||
+    !/^\d{20}$/.test(value.todo_id) ||
+    typeof value.title !== 'string' ||
+    value.title.length > 512 ||
+    (value.status !== 0 && value.status !== 1) ||
+    value.is_deleted !== 0 ||
+    !Number.isSafeInteger(value.position) ||
+    !Number.isSafeInteger(value.created_at) ||
+    (value.created_at as number) < 0 ||
+    !Number.isSafeInteger(value.updated_at) ||
+    (value.updated_at as number) < 0 ||
+    (expectedId !== undefined && value.id !== expectedId) ||
+    (expectedTodoId !== undefined && value.todo_id !== expectedTodoId) ||
+    (expectedCustomerId !== undefined && value.customer_id !== expectedCustomerId)
+  ) {
+    return throwInvalidDaoResult(value, source, 'Step row');
+  }
+  return value as unknown as StepRow;
+};
+
+const requireStepRows = (
+  value: unknown,
+  source: string,
+  expectedTodoId: TodoEntityId,
+  expectedCustomerId: string,
+): StepRow[] => {
+  const rows = requireArray<unknown>(value, source).map((row, index) => {
+    return requireStepRow(
+      row,
+      `${source}[${index}]`,
+      undefined,
+      expectedTodoId,
+      expectedCustomerId,
+    );
+  });
+  if (new Set(rows.map((row) => row.id)).size !== rows.length) {
+    return throwInvalidDaoResult(value, source, 'Step array result');
+  }
+  return rows;
+};
+
 const MCP_TODO_EVENT_TYPES = [
   'todo.created',
   'todo.updated',
@@ -617,7 +673,11 @@ const probeUnixSocket = (socketPath: string): Promise<'live' | 'stale'> => {
   });
 };
 
-const getOptionalTimestamp = (params: RpcParams, camelKey: string, snakeKey: string): number | null | undefined => {
+const getOptionalTimestamp = (
+  params: RpcParams,
+  camelKey: string,
+  snakeKey: string,
+): number | null | undefined => {
   const hasCamelValue = Object.hasOwn(params, camelKey);
   const hasSnakeValue = Object.hasOwn(params, snakeKey);
   if (
@@ -630,10 +690,10 @@ const getOptionalTimestamp = (params: RpcParams, camelKey: string, snakeKey: str
   const value = hasCamelValue ? params[camelKey] : params[snakeKey];
   if (value === undefined) return undefined;
   if (value === null) return null;
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
-    throw new Error(`${camelKey} must be an integer timestamp or null`);
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`${camelKey} must be a non-negative safe integer timestamp or null`);
   }
-  return value;
+  return value as number;
 };
 
 const isActiveDomain = (domain: DomainRow): boolean => {
@@ -888,6 +948,18 @@ export class McpBridgeServer {
         return this.deleteTodo(params);
       case 'todo.move':
         return this.moveTodo(params);
+      case 'step.list':
+        return this.listSteps(params);
+      case 'step.create':
+        return this.createStep(params);
+      case 'step.update':
+        return this.updateStep(params);
+      case 'step.complete':
+        return this.setStepCompleted(params, 1);
+      case 'step.uncomplete':
+        return this.setStepCompleted(params, 0);
+      case 'step.delete':
+        return this.deleteStep(params);
       default:
         throw new Error(`Unknown method: ${method}`);
     }
@@ -1117,15 +1189,13 @@ export class McpBridgeServer {
     }
     const title = params.title.trim();
     if (title.length > 200) throw new Error('title can contain at most 200 characters');
-    const requestedUpdate = this.toTodoUpdateParams({
-      id: '00000000000000000000',
-      dueAt: params.dueAt,
-      due_at: params.due_at,
-      remindAt: params.remindAt,
-      remind_at: params.remind_at,
-      important: params.important,
-      note: params.note,
-    }, false);
+    const createUpdateInput: RpcParams = { id: '00000000000000000000' };
+    for (const key of ['dueAt', 'due_at', 'remindAt', 'remind_at', 'important', 'note']) {
+      if (Object.hasOwn(params, key)) createUpdateInput[key] = params[key];
+    }
+    const requestedUpdate = this.toTodoUpdateParams(createUpdateInput, false);
+    if (requestedUpdate.due_at === null) delete requestedUpdate.due_at;
+    if (requestedUpdate.remind_at === null) delete requestedUpdate.remind_at;
     await this.requireActiveDomain(domainId);
 
     let todo = requireTodoRow(
@@ -1234,6 +1304,151 @@ export class McpBridgeServer {
     return { moved: true, id, domainId };
   }
 
+  private async listSteps(params: RpcParams): Promise<{ todo: TodoRow; steps: StepRow[] }> {
+    const todoId = getRequiredId(params, 'todoId');
+    const todo = await this.requireTodo(todoId, 'TodoistSyncRepository.getTodoById for step.list');
+    const steps = requireStepRows(
+      await todoRepository().getSubTodosByTodoId({ todoId }),
+      'TodoistSyncRepository.getSubTodosByTodoId',
+      todoId,
+      todo.customer_id,
+    );
+    return { todo, steps };
+  }
+
+  private async createStep(params: RpcParams): Promise<{ step: StepRow }> {
+    const todoId = getRequiredId(params, 'todoId');
+    const title = this.getRequiredStepTitle(params);
+    const todo = await this.requireTodo(todoId, 'TodoistSyncRepository.getTodoById for step.create');
+    const created = requireStepRow(
+      await todoRepository().createSubTodo({ todoId, title }),
+      'TodoistSyncRepository.createSubTodo',
+      undefined,
+      todoId,
+      todo.customer_id,
+    );
+    if (created.title !== title || created.status !== 0) {
+      throw new Error('TodoistSyncRepository.createSubTodo returned a Step that does not match the request');
+    }
+    const step = await this.requireStep(
+      created.id,
+      'TodoistSyncRepository.getSubTodoById after create',
+      todo,
+    );
+    if (step.title !== title || step.status !== 0) {
+      throw new Error('TodoistSyncRepository.createSubTodo did not persist the requested Step');
+    }
+    return { step };
+  }
+
+  private async updateStep(params: RpcParams): Promise<{ step: StepRow }> {
+    const id = getRequiredId(params, 'id');
+    const title = this.getRequiredStepTitle(params);
+    const { step: existing, todo } = await this.requireStepWithParent(
+      id,
+      'TodoistSyncRepository.getSubTodoById before update',
+    );
+    await todoRepository().updateSubTodoTitle({ id, title });
+    const step = await this.requireStep(
+      id,
+      'TodoistSyncRepository.getSubTodoById after update',
+      todo,
+    );
+    if (step.todo_id !== existing.todo_id || step.title !== title) {
+      throw new Error('TodoistSyncRepository.updateSubTodoTitle did not persist the requested Step title');
+    }
+    return { step };
+  }
+
+  private async setStepCompleted(
+    params: RpcParams,
+    status: 0 | 1,
+  ): Promise<{ step: StepRow }> {
+    const id = getRequiredId(params, 'id');
+    const { todo } = await this.requireStepWithParent(
+      id,
+      `TodoistSyncRepository.getSubTodoById before step.${status === 1 ? 'complete' : 'uncomplete'}`,
+    );
+    await todoRepository().setSubTodoStatus({ id, status });
+    const step = await this.requireStep(
+      id,
+      `TodoistSyncRepository.getSubTodoById after step.${status === 1 ? 'complete' : 'uncomplete'}`,
+      todo,
+    );
+    if (step.status !== status) {
+      throw new Error(`TodoistSyncRepository.setSubTodoStatus did not persist Step status ${status}`);
+    }
+    return { step };
+  }
+
+  private async deleteStep(
+    params: RpcParams,
+  ): Promise<{ deleted: true; id: TodoEntityId; todoId: TodoEntityId }> {
+    const id = getRequiredId(params, 'id');
+    const { step } = await this.requireStepWithParent(
+      id,
+      'TodoistSyncRepository.getSubTodoById before delete',
+    );
+    await todoRepository().deleteSubTodo({ id });
+    const remaining = await todoRepository().getSubTodoById({ id });
+    if (remaining !== undefined) {
+      requireStepRow(
+        remaining,
+        'TodoistSyncRepository.getSubTodoById after delete',
+        id,
+        step.todo_id,
+        step.customer_id,
+      );
+      throw new Error('TodoistSyncRepository.deleteSubTodo did not delete the requested Step');
+    }
+    return { deleted: true, id, todoId: step.todo_id };
+  }
+
+  private async requireTodo(id: TodoEntityId, source: string): Promise<TodoRow> {
+    const value = await todoRepository().getTodoById({ id });
+    if (value === undefined) throw new Error(`Todo not found: ${id}`);
+    return requireTodoRow(value, source, id);
+  }
+
+  private async requireStep(
+    id: TodoEntityId,
+    source: string,
+    todo?: TodoRow,
+  ): Promise<StepRow> {
+    const value = await todoRepository().getSubTodoById({ id });
+    if (value === undefined) throw new Error(`Step not found: ${id}`);
+    return requireStepRow(
+      value,
+      source,
+      id,
+      todo?.id,
+      todo?.customer_id,
+    );
+  }
+
+  private async requireStepWithParent(
+    id: TodoEntityId,
+    source: string,
+  ): Promise<{ step: StepRow; todo: TodoRow }> {
+    const step = await this.requireStep(id, source);
+    const todo = await this.requireTodo(
+      step.todo_id,
+      'TodoistSyncRepository.getTodoById for Step parent',
+    );
+    if (step.customer_id !== todo.customer_id) {
+      throw new Error(`${source} returned a Step whose customer does not match its parent Todo`);
+    }
+    return { step, todo };
+  }
+
+  private getRequiredStepTitle(params: RpcParams): string {
+    if (typeof params.title !== 'string') throw new Error('title must be a string');
+    const title = params.title.trim();
+    if (title.length === 0) throw new Error('title must be a non-empty string');
+    if (title.length > 200) throw new Error('title can contain at most 200 characters');
+    return title;
+  }
+
   private async requireActiveDomain(domainId: TodoEntityId): Promise<DomainRow> {
     const domains = requireDomainRows(
       await todoRepository().getDomains(),
@@ -1244,7 +1459,10 @@ export class McpBridgeServer {
     return matches[0];
   }
 
-  private toTodoUpdateParams(params: RpcParams, requireChange = true): TodoUpdateCallParams {
+  private toTodoUpdateParams(
+    params: RpcParams,
+    requireChange = true,
+  ): TodoUpdateCallParams {
     const id = getRequiredId(params, 'id');
     const updateParams: TodoUpdateCallParams = { id };
 

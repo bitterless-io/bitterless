@@ -48,6 +48,12 @@ const assertNoSmokeTodoRemains = (state) => {
   assert.equal(owned[0].deleted, true, JSON.stringify(state, null, 2));
 };
 
+const assertNoSmokeStepRemains = (state) => {
+  const owned = state.steps.filter((step) => step.fixtureRole === 'owned');
+  assert.equal(owned.length, 1);
+  assert.equal(owned[0].is_deleted, 1, JSON.stringify(state, null, 2));
+};
+
 const assertFreshSessionCleanup = (run, options) => {
   assert.equal(run.result.status, 1, `${run.result.stdout}\n${run.result.stderr}`);
   assert.doesNotMatch(run.result.stdout, /PASS/);
@@ -145,11 +151,17 @@ try {
   );
   assert.match(lifecycle.result.stdout, /connected to bitterless-todo-fixture/);
   assert.match(lifecycle.result.stdout, /create\/get ownership ok/);
+  assert.match(lifecycle.result.stdout, /step create\/list ownership ok/);
+  assert.match(lifecycle.result.stdout, /step update ok/);
+  assert.match(lifecycle.result.stdout, /step complete is idempotent/);
+  assert.match(lifecycle.result.stdout, /step uncomplete is idempotent/);
+  assert.match(lifecycle.result.stdout, /step delete\/list absence ok/);
   assert.match(lifecycle.result.stdout, /complete\/status ok/);
   assert.match(lifecycle.result.stdout, /uncomplete\/status ok/);
   assert.match(lifecycle.result.stdout, /delete\/status ok/);
   assert.match(lifecycle.result.stdout, /PASS \(todo cleaned up\)/);
   assertNoSmokeTodoRemains(lifecycle.state);
+  assertNoSmokeStepRemains(lifecycle.state);
   const lifecycleCreate = lifecycle.state.calls.find((call) => call.name === 'todo.create');
   const lifecycleUpdate = lifecycle.state.calls.find((call) => call.name === 'todo.update');
   const markerMatch = lifecycleCreate.args.title.match(
@@ -158,8 +170,37 @@ try {
   assert.ok(markerMatch, lifecycleCreate.args.title);
   const marker = `bitterless-mcp-smoke:${markerMatch[1]}`;
   assert.match(lifecycleCreate.args.note, new RegExp(marker));
+  assert.equal(Object.hasOwn(lifecycleCreate.args, 'dueAt'), false);
+  assert.equal(Object.hasOwn(lifecycleCreate.args, 'remindAt'), false);
   assert.match(lifecycleUpdate.args.title, new RegExp(marker));
   assert.match(lifecycleUpdate.args.note, new RegExp(marker));
+  const stepCalls = lifecycle.state.calls.filter((call) => call.name.startsWith('step.'));
+  assert.deepEqual(
+    stepCalls.map((call) => call.name),
+    [
+      'step.create',
+      'step.list',
+      'step.update',
+      'step.complete',
+      'step.complete',
+      'step.list',
+      'step.uncomplete',
+      'step.uncomplete',
+      'step.list',
+      'step.delete',
+      'step.list'
+    ]
+  );
+  const lifecycleTodo = lifecycle.state.todos.find((todo) => todo.fixtureRole === 'owned');
+  assert.equal(stepCalls[0].args.todoId, lifecycleTodo.id);
+  assert.match(stepCalls[0].args.title, new RegExp(marker));
+  assert.match(stepCalls[2].args.title, new RegExp(marker));
+  const lifecycleStep = lifecycle.state.steps.find((step) => step.fixtureRole === 'owned');
+  assert.equal(lifecycleStep.status, 0);
+  assert.match(lifecycleStep.title, / updated$/);
+  assert.ok(stepCalls.slice(3, 5).every((call) => call.args.id === lifecycleStep.id));
+  assert.ok(stepCalls.slice(6, 8).every((call) => call.args.id === lifecycleStep.id));
+  assert.equal(stepCalls[9].args.id, lifecycleStep.id);
 
   const readOnly = runFixture('read-only', { readOnly: true });
   assert.equal(readOnly.result.status, 0, `${readOnly.result.stdout}\n${readOnly.result.stderr}`);
@@ -173,6 +214,7 @@ try {
     readOnly.state.calls.some((call) => call.name === 'domain.description.update'),
     false
   );
+  assert.equal(readOnly.state.calls.some((call) => call.name.startsWith('step.')), false);
 
   const archivedDescriptionMissing = runFixture('archived-description-missing', {
     mode: 'archived-description-missing',
@@ -213,6 +255,18 @@ try {
     runFixture('post-create-assertion', { mode: 'post-create-assertion' }),
     { errorPattern: /did not persist the updated title/ }
   );
+
+  const stepUpdateAssertion = runFixture('step-update-assertion', {
+    mode: 'step-update-assertion'
+  });
+  assertFreshSessionCleanup(stepUpdateAssertion, {
+    errorPattern: /does not match this smoke run's Step ownership marker/
+  });
+  assertNoSmokeStepRemains(stepUpdateAssertion.state);
+  const humanStep = stepUpdateAssertion.state.steps.find((step) => {
+    return step.fixtureRole === 'human-step-decoy';
+  });
+  assert.equal(humanStep.is_deleted, 0);
 
   const wrongId = runFixture('wrong-response-id', { mode: 'wrong-response-id' });
   assertFreshSessionCleanup(wrongId, { errorPattern: /does not match this smoke run's ownership/ });

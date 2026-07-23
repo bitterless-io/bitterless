@@ -149,15 +149,25 @@ const tools: McpTool[] = [
   },
   {
     name: 'todo.create',
-    description: 'Create a Bitterless todo. Set important=true only when the current agent session is blocked on an immediate human action; leave false/unset for deferred follow-ups.',
+    description: 'Create a Bitterless todo. Prefer omitting dueAt and remindAt when unspecified; null is accepted for compatibility and treated as omitted, but an empty string is never valid. Set important=true only when the current agent session is blocked on an immediate human action; leave false/unset for deferred follow-ups.',
     inputSchema: {
       type: 'object',
       required: ['domainId', 'title'],
       properties: {
         domainId: TODO_ID_SCHEMA,
         title: { type: 'string', minLength: 1, maxLength: 200 },
-        dueAt: { type: ['integer', 'null'] },
-        remindAt: { type: ['integer', 'null'] },
+        dueAt: {
+          type: ['integer', 'null'],
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: 'Optional Unix-millisecond timestamp. Prefer omitting when unspecified; null is accepted for compatibility and treated as omitted. Never send an empty string.',
+        },
+        remindAt: {
+          type: ['integer', 'null'],
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: 'Optional Unix-millisecond timestamp. Prefer omitting when unspecified; null is accepted for compatibility and treated as omitted. Never send an empty string.',
+        },
         important: {
           type: 'boolean',
           description: 'Star the todo into Focus. Use true only for live-session human blockers; do not star backlog or deferrable work.',
@@ -173,15 +183,25 @@ const tools: McpTool[] = [
   },
   {
     name: 'todo.update',
-    description: 'Update a Bitterless todo. Set important=true only when the current agent session is blocked on an immediate human action; leave false/unset for deferred follow-ups.',
+    description: 'Update a Bitterless todo. Omit unchanged dueAt and remindAt fields, never send an empty string, and use null only to clear an existing timestamp. Set important=true only when the current agent session is blocked on an immediate human action; leave false/unset for deferred follow-ups.',
     inputSchema: {
       type: 'object',
       required: ['id'],
       properties: {
         id: TODO_ID_SCHEMA,
         title: { type: 'string', minLength: 1, maxLength: 200 },
-        dueAt: { type: ['integer', 'null'] },
-        remindAt: { type: ['integer', 'null'] },
+        dueAt: {
+          type: ['integer', 'null'],
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: 'Unix-millisecond timestamp, or null to clear it. Omit when unchanged; never send an empty string.',
+        },
+        remindAt: {
+          type: ['integer', 'null'],
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: 'Unix-millisecond timestamp, or null to clear it. Omit when unchanged; never send an empty string.',
+        },
         important: {
           type: 'boolean',
           description: 'Star the todo into Focus. Use true only for live-session human blockers; do not star backlog or deferrable work.',
@@ -240,6 +260,80 @@ const tools: McpTool[] = [
       properties: {
         id: TODO_ID_SCHEMA,
         domainId: TODO_ID_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'step.list',
+    description: 'List every live Step for one Bitterless todo in stable order, together with the validated parent todo. Use this before targeting an unknown Step for update or deletion.',
+    inputSchema: {
+      type: 'object',
+      required: ['todoId'],
+      properties: {
+        todoId: TODO_ID_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'step.create',
+    description: 'Create one independently checkable Step under an existing Bitterless todo.',
+    inputSchema: {
+      type: 'object',
+      required: ['todoId', 'title'],
+      properties: {
+        todoId: TODO_ID_SCHEMA,
+        title: { type: 'string', minLength: 1, maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'step.update',
+    description: 'Update the title of one existing Bitterless Step.',
+    inputSchema: {
+      type: 'object',
+      required: ['id', 'title'],
+      properties: {
+        id: TODO_ID_SCHEMA,
+        title: { type: 'string', minLength: 1, maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'step.complete',
+    description: 'Idempotently mark one existing Bitterless Step as completed.',
+    inputSchema: {
+      type: 'object',
+      required: ['id'],
+      properties: {
+        id: TODO_ID_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'step.uncomplete',
+    description: 'Idempotently mark one existing Bitterless Step as active.',
+    inputSchema: {
+      type: 'object',
+      required: ['id'],
+      properties: {
+        id: TODO_ID_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'step.delete',
+    description: 'Soft-delete one existing Bitterless Step after resolving its exact ID.',
+    inputSchema: {
+      type: 'object',
+      required: ['id'],
+      properties: {
+        id: TODO_ID_SCHEMA,
       },
       additionalProperties: false,
     },

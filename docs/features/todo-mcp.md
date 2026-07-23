@@ -148,6 +148,37 @@ description. It resolves the ID from `domain.list`, rejects archived/deleted/mis
 through `TodoistSyncRepository.updateDomainDescription`, and returns a validated reread. It must not
 write legacy Core tables or bypass the Todoist-style outbox/synchronization path.
 
+## Todo and Step tool contract
+
+Todo writes validate every optional field before creating the base row. `dueAt` and `remindAt` are
+safe, nonnegative Unix-millisecond integers. New agents omit unspecified dates; `todo.update` uses
+`null` only to clear one. For compatibility, create-time `null` is treated as unspecified, while an
+empty string remains an input error and cannot create data.
+
+`todo.create` is intentionally non-idempotent because identical intentional Todos are valid. After
+a clear validation rejection, an agent checks active Todos in the resolved Domain and retries the
+sanitized request at most once only when no obvious duplicate exists. A timeout or missing response
+may represent a delayed commit, so the agent waits and rechecks rather than treating one immediate
+empty list as permission to write again.
+
+The public Step surface maps directly to the synchronized `sub_todo` repository and its existing
+outbox commands:
+
+| Tool | Result | Contract |
+|---|---|---|
+| `step.list` | `{ todo, steps }` | live validated parent plus stable ordered live Steps |
+| `step.create` | `{ step }` | one trimmed 1–200-character user-owned sub-action |
+| `step.update` | `{ step }` | title-only persisted update |
+| `step.complete` | `{ step }` | deterministic, idempotent completed state |
+| `step.uncomplete` | `{ step }` | deterministic, idempotent active state |
+| `step.delete` | `{ deleted: true, id, todoId }` | synchronized soft deletion after exact-ID resolution |
+
+The MCP never exposes the repository's toggle operation as state assignment. Complete and
+uncomplete use a deterministic setter so retrying a request or racing another refresh cannot flip a
+Step into the opposite state. These tools need no new HTTP endpoint or database migration: normal
+SubTodo mutations already enqueue synchronization, refresh Todo renderers, and request the next
+sync cycle.
+
 ## Agent onboarding contract
 
 The in-app integration guide must present MCP registration and skill installation as two required,
@@ -215,8 +246,9 @@ full Todo data refresh.
 
 ## Compatibility and safety
 
-- The production key `bitterless`, existing tool names, schemas, and structured responses do not
-  change.
+- The production key `bitterless`, existing tool names, and structured responses remain compatible;
+  Step tools are additive. Legacy create-time `null` remains accepted even though current skill
+  instructions omit unspecified dates.
 - Production acceptance is read-only. Full smoke writes and cleanup run only against DEBUG unless
   Ral explicitly authorizes a production write test.
 - Helper routing is local-only. No network port or SQLite access is exposed to MCP hosts.

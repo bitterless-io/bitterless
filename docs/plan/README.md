@@ -24,6 +24,8 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-domain-board-layout-005](tasks/todo-domain-board-layout-005.md) | menu-bar Domain creation and wrapping 300–480px Todo columns | done | todo-sync-refresh-identity-004 |
 | [todo-ai-source-corner-006](tasks/todo-ai-source-corner-006.md) | overlay the AI source marker into the Todo item's top-left corner | done | todo-domain-board-layout-005 |
 | [todo-mcp-domain-catalog-skill-version-007](tasks/todo-mcp-domain-catalog-skill-version-007.md) | active/archived MCP Domain catalog, description updates, and versioned skill attention | done | todo-agent-skill-onboarding-002, todo-mcp-domain-create |
+| [todo-mcp-step-crud-009](tasks/todo-mcp-step-crud-009.md) | safe optional-date create recovery and synchronized Step CRUD | done | todo-mcp-domain-catalog-skill-version-007, todoist-sync-desktop-001 |
+| [todo-note-editor-height-010](tasks/todo-note-editor-height-010.md) | 480px default Todo Note editing canvas | done | todoist-sync-desktop-001 |
 | [todo-sync-device-binding-recovery-008](tasks/todo-sync-device-binding-recovery-008.md) | guarded recovery of stale local Todo device and Snowflake-node bindings | implemented; owner verification pending | todo-sync-refresh-identity-004 |
 | [maestro-source-layout-migration](tasks/maestro-source-layout-migration.md) | rename Sidekick to Maestro and keep sources distributed by Electron process | done | cowork-subapp-001, cowork-subapp-002 |
 | [renderer-arco-bem-controls](tasks/renderer-arco-bem-controls.md) | MCP guide modal and Maestro ChatPanel control consistency | done | maestro-source-layout-migration, todo-mcp-domain-create |

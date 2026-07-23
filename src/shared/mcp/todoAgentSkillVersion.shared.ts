@@ -1,6 +1,6 @@
 import { compareVersions } from 'compare-versions';
 
-export const TODO_AGENT_SKILL_VERSION_CODE = '260723104233';
+export const TODO_AGENT_SKILL_VERSION_CODE = '260723121906';
 export const TODO_AGENT_SKILL_BASELINE_VERSION_CODE = '000000000000';
 export const TODO_AGENT_SKILL_SETTING_KEY = 'todo_agent_skill';
 export const TODO_AGENT_SKILL_SETTING_SUB_KEY = 'acknowledged_version_code';

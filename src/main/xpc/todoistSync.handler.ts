@@ -71,6 +71,7 @@ export class TodoistSyncSubTodoHandler extends XpcMainHandler implements SubTodo
   async getByTodoId(params: { todoId: TodoEntityId }): Promise<McpSubTodoRow[]> { return await (await todoistSyncSession.getRepositoryAsync()).getSubTodosByTodoId(params); }
   async getById(params: { id: TodoEntityId }): Promise<McpSubTodoRow | undefined> { return await (await todoistSyncSession.getRepositoryAsync()).getSubTodoById(params); }
   async updateTitle(params: { id: TodoEntityId; title: string }): Promise<void> { await (await todoistSyncSession.getRepositoryAsync()).updateSubTodoTitle(params); }
+  async setStatus(params: Parameters<SubTodoMcpDaoApi['setStatus']>[0]): Promise<McpSubTodoRow | undefined> { return await (await todoistSyncSession.getRepositoryAsync()).setSubTodoStatus(params); }
   async toggleStatus(params: { id: TodoEntityId }): Promise<McpSubTodoRow | undefined> { return await (await todoistSyncSession.getRepositoryAsync()).toggleSubTodoStatus(params); }
   async getCountByTodoId(params: { todoId: TodoEntityId }): Promise<{ total: number; done: number }> { return await (await todoistSyncSession.getRepositoryAsync()).getCountByTodoId(params); }
   async getCountsByTodoIds(params: { todoIds: TodoEntityId[] }): Promise<Record<TodoEntityId, { total: number; done: number }>> { return await (await todoistSyncSession.getRepositoryAsync()).getCountsByTodoIds(params); }

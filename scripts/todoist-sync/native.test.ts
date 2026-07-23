@@ -1033,6 +1033,173 @@ test('real repository CRUD is atomic with outbox, events, and soft-delete cascad
   }
 });
 
+test('real repository Step CRUD is encrypted, sync-backed, and status setters are idempotent', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-step-crud');
+  type StepProjection = {
+    title: string;
+    status: number;
+    deleted_flag: string;
+    deleted_at: number | null;
+    client_updated_at: number;
+    version_device_id: string;
+    version_client_sequence: number;
+    version_command_uuid: string;
+    sync_revision: string;
+  };
+  type StepOutboxRow = {
+    command_order: number;
+    command_uuid: string;
+    command_type: string;
+    resource_type: string;
+    resource_id: string;
+    parent_resource_id: string | null;
+    state: string;
+    args_json: string;
+  };
+  const getProjection = async (id: string): Promise<StepProjection> => {
+    return await runtime.database.get<StepProjection>(
+      `SELECT title,status,deleted_flag,deleted_at,client_updated_at,version_device_id,
+        version_client_sequence,version_command_uuid,sync_revision
+       FROM sub_todos WHERE id=? AND customer_id=?`,
+      [id, '1'],
+    );
+  };
+  const getStepOutbox = async (id: string): Promise<StepOutboxRow[]> => {
+    return await runtime.database.getAll<StepOutboxRow>(
+      `SELECT command_order,command_uuid,command_type,resource_type,resource_id,
+        parent_resource_id,state,args_json
+       FROM todo_sync_outbox WHERE resource_type='sub_todo' AND resource_id=? ORDER BY command_order`,
+      [id],
+    );
+  };
+  const getDeviceSequence = async (): Promise<number> => {
+    return (await runtime.database.get<{ device_sequence: number }>(
+      'SELECT device_sequence FROM todo_sync_state WHERE customer_id=?',
+      ['1'],
+    )).device_sequence;
+  };
+  const assertCommandVersion = (
+    row: StepOutboxRow,
+    projection: StepProjection,
+    expectedType: string,
+    expectedParentId: string,
+  ): Record<string, unknown> => {
+    const args = JSON.parse(row.args_json) as Record<string, unknown>;
+    assert.equal(row.command_type, expectedType);
+    assert.equal(row.resource_type, 'sub_todo');
+    assert.equal(row.resource_id, args.id);
+    assert.equal(row.parent_resource_id, expectedParentId);
+    assert.equal(row.state, 'pending');
+    assert.equal(row.command_uuid, projection.version_command_uuid);
+    assert.equal(args.client_updated_at, projection.client_updated_at);
+    assert.equal(args.client_sequence, projection.version_client_sequence);
+    assert.equal(args.base_revision, '0');
+    return args;
+  };
+
+  try {
+    const domain = await runtime.repository.createDomain({ title: 'Step domain' });
+    assert(domain);
+    const todo = await runtime.repository.createTodo({ domainId: domain.id, title: 'Step parent' });
+    assert(todo);
+
+    const step = await runtime.repository.createSubTodo({ todoId: todo.id, title: 'Draft Step' });
+    assert(step);
+    assert.deepEqual(await runtime.repository.getSubTodosByTodoId({ todoId: todo.id }), [step]);
+    let projection = await getProjection(step.id);
+    assert.equal(projection.title, 'Draft Step');
+    assert.equal(projection.status, 0);
+    assert.equal(projection.deleted_flag, '');
+    assert.equal(projection.sync_revision, '0');
+    let commands = await getStepOutbox(step.id);
+    assert.equal(commands.length, 1);
+    const addArgs = assertCommandVersion(commands[0], projection, 'sub_todo_add', todo.id);
+    assert.deepEqual(
+      Object.keys(addArgs).sort(),
+      ['base_revision', 'client_sequence', 'client_updated_at', 'id', 'position', 'status', 'title', 'todo_id'],
+    );
+    assert.equal(addArgs.todo_id, todo.id);
+    assert.equal(addArgs.title, 'Draft Step');
+    assert.equal(addArgs.status, 0);
+
+    await runtime.repository.updateSubTodoTitle({ id: step.id, title: 'Ready Step' });
+    assert.equal((await runtime.repository.getSubTodoById({ id: step.id }))?.title, 'Ready Step');
+    const titleProjection = await getProjection(step.id);
+    assert.equal(titleProjection.title, 'Ready Step');
+    assert.equal(titleProjection.version_client_sequence, projection.version_client_sequence + 1);
+    commands = await getStepOutbox(step.id);
+    assert.equal(commands.length, 2);
+    const titleArgs = assertCommandVersion(commands[1], titleProjection, 'sub_todo_update', todo.id);
+    assert.deepEqual(
+      Object.keys(titleArgs).sort(),
+      ['base_revision', 'client_sequence', 'client_updated_at', 'id', 'title'],
+    );
+    assert.equal(titleArgs.title, 'Ready Step');
+    projection = titleProjection;
+
+    assert.equal((await runtime.repository.setSubTodoStatus({ id: step.id, status: 1 }))?.status, 1);
+    const completedProjection = await getProjection(step.id);
+    assert.equal(completedProjection.version_client_sequence, projection.version_client_sequence + 1);
+    commands = await getStepOutbox(step.id);
+    assert.equal(commands.length, 3);
+    const completeArgs = assertCommandVersion(commands[2], completedProjection, 'sub_todo_update', todo.id);
+    assert.deepEqual(
+      Object.keys(completeArgs).sort(),
+      ['base_revision', 'client_sequence', 'client_updated_at', 'id', 'status'],
+    );
+    assert.equal(completeArgs.status, 1);
+    const completedSequence = await getDeviceSequence();
+    const completedCommands = commands;
+
+    assert.equal((await runtime.repository.setSubTodoStatus({ id: step.id, status: 1 }))?.status, 1);
+    assert.deepEqual(await getProjection(step.id), completedProjection);
+    assert.deepEqual(await getStepOutbox(step.id), completedCommands);
+    assert.equal(await getDeviceSequence(), completedSequence);
+
+    assert.equal((await runtime.repository.setSubTodoStatus({ id: step.id, status: 0 }))?.status, 0);
+    const reopenedProjection = await getProjection(step.id);
+    assert.equal(reopenedProjection.version_client_sequence, completedProjection.version_client_sequence + 1);
+    commands = await getStepOutbox(step.id);
+    assert.equal(commands.length, 4);
+    const reopenArgs = assertCommandVersion(commands[3], reopenedProjection, 'sub_todo_update', todo.id);
+    assert.deepEqual(
+      Object.keys(reopenArgs).sort(),
+      ['base_revision', 'client_sequence', 'client_updated_at', 'id', 'status'],
+    );
+    assert.equal(reopenArgs.status, 0);
+    const reopenedSequence = await getDeviceSequence();
+    const reopenedCommands = commands;
+
+    assert.equal((await runtime.repository.setSubTodoStatus({ id: step.id, status: 0 }))?.status, 0);
+    assert.deepEqual(await getProjection(step.id), reopenedProjection);
+    assert.deepEqual(await getStepOutbox(step.id), reopenedCommands);
+    assert.equal(await getDeviceSequence(), reopenedSequence);
+
+    await runtime.repository.deleteSubTodo({ id: step.id });
+    assert.equal(await runtime.repository.getSubTodoById({ id: step.id }), undefined);
+    assert.deepEqual(await runtime.repository.getSubTodosByTodoId({ todoId: todo.id }), []);
+    assert.deepEqual(await runtime.repository.getCountByTodoId({ todoId: todo.id }), { total: 0, done: 0 });
+    const deletedProjection = await getProjection(step.id);
+    assert.match(deletedProjection.deleted_flag, /^local:/);
+    assert.equal(typeof deletedProjection.deleted_at, 'number');
+    assert.equal(deletedProjection.version_client_sequence, reopenedProjection.version_client_sequence + 1);
+    commands = await getStepOutbox(step.id);
+    assert.equal(commands.length, 5);
+    assert.deepEqual(
+      commands.map((row) => row.command_type),
+      ['sub_todo_add', 'sub_todo_update', 'sub_todo_update', 'sub_todo_update', 'sub_todo_delete'],
+    );
+    const deleteArgs = assertCommandVersion(commands[4], deletedProjection, 'sub_todo_delete', todo.id);
+    assert.deepEqual(
+      Object.keys(deleteArgs).sort(),
+      ['base_revision', 'client_sequence', 'client_updated_at', 'id'],
+    );
+    runtime.database.assertHealthy();
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
 test('real repository returns dense SubTodo counts for every unique requested Todo', { concurrency: false }, async () => {
   const runtime = await createRuntime('bitterless-todoist-dense-subtodo-counts');
   try {

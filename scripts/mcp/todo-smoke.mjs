@@ -24,7 +24,13 @@ const REQUIRED_TOOLS = [
   'todo.complete',
   'todo.status',
   'todo.uncomplete',
-  'todo.delete'
+  'todo.delete',
+  'step.list',
+  'step.create',
+  'step.update',
+  'step.complete',
+  'step.uncomplete',
+  'step.delete'
 ];
 
 const HELP = `Bitterless Todo MCP smoke test
@@ -429,6 +435,16 @@ const requireTodoResult = (value, label) => {
   return todo;
 };
 
+const requireStepResult = (value, label) => {
+  const result = requireRecord(value, label);
+  const step = requireRecord(result.step, `${label}.step`);
+  assert(
+    typeof step.id === 'string' && /^\d{20}$/.test(step.id),
+    `${label}.step.id must be a 20-character decimal string.`
+  );
+  return step;
+};
+
 const resolveDomain = (value, selector) => {
   const result = requireRecord(value, 'domain.list structuredContent');
   assert(Array.isArray(result.domains), 'domain.list structuredContent.domains must be an array.');
@@ -535,6 +551,77 @@ const assertOwnedTodo = (value, domainId, state, label) => {
   return todo;
 };
 
+const isOwnedStep = (value, todoId, state) => {
+  if (!isRecord(value)) return false;
+  const validTitle =
+    value.title === state.originalStepTitle || value.title === state.updatedStepTitle;
+  return (
+    typeof value.id === 'string' &&
+    /^\d{20}$/.test(value.id) &&
+    typeof value.customer_id === 'string' &&
+    value.customer_id.length > 0 &&
+    value.todo_id === todoId &&
+    validTitle &&
+    value.title.includes(state.marker) &&
+    (value.status === 0 || value.status === 1) &&
+    value.is_deleted === 0 &&
+    Number.isInteger(value.position) &&
+    value.position >= 0 &&
+    Number.isInteger(value.created_at) &&
+    value.created_at >= 0 &&
+    Number.isInteger(value.updated_at) &&
+    value.updated_at >= 0
+  );
+};
+
+const assertOwnedStep = (value, todoId, state, label, expectedTitle, expectedStatus) => {
+  const step = requireRecord(value, label);
+  assert(
+    isOwnedStep(step, todoId, state),
+    `${label} does not match this smoke run's Step ownership marker, parent Todo, title, and live row contract.`
+  );
+  assert(step.title === expectedTitle, `${label} did not return the expected Step title.`);
+  assert(step.status === expectedStatus, `${label} did not return the expected Step status.`);
+  return step;
+};
+
+const requireStepList = (value, todoId, domainId, state, label) => {
+  const result = requireRecord(value, label);
+  assertOwnedTodo(result.todo, domainId, state, `${label}.todo`);
+  assert(result.todo.id === todoId, `${label}.todo did not return the requested parent Todo.`);
+  assert(Array.isArray(result.steps), `${label}.steps must be an array.`);
+  return result.steps;
+};
+
+const requireListedOwnedStep = (
+  value,
+  todoId,
+  domainId,
+  state,
+  label,
+  expectedTitle,
+  expectedStatus
+) => {
+  const steps = requireStepList(value, todoId, domainId, state, label);
+  const matches = steps.filter((step) => isOwnedStep(step, todoId, state));
+  assert(
+    matches.length === 1,
+    `${label} must return exactly one Step owned by this smoke run; found ${matches.length}.`
+  );
+  assert(
+    matches[0].id === state.validatedOwnedStepId,
+    `${label} returned a different owned Step id.`
+  );
+  return assertOwnedStep(
+    matches[0],
+    todoId,
+    state,
+    `${label}.steps owned Step`,
+    expectedTitle,
+    expectedStatus
+  );
+};
+
 const deleteOwnedAndVerify = async (client, todoId, domainId, state) => {
   const current = await client.callTool('todo.get', { id: todoId });
   assertOwnedTodo(current, domainId, state, `todo.get before deleting ${todoId}`);
@@ -562,10 +649,15 @@ const createSmokeState = () => {
     deleted: false,
     marker,
     originalTitle,
+    originalStepTitle: `[MCP Step ${marker}]`,
     responseCandidateId: null,
+    responseCandidateStepId: null,
+    stepDeleted: false,
     token,
     updatedTitle: `${originalTitle} updated`,
-    validatedOwnedId: null
+    updatedStepTitle: `[MCP Step ${marker}] updated`,
+    validatedOwnedId: null,
+    validatedOwnedStepId: null
   };
 };
 
@@ -590,6 +682,124 @@ const runLifecycle = async (client, domain, keep, state) => {
   );
   state.validatedOwnedId = owned.id;
   console.log(`[todo-smoke] create/get ownership ok (todo ${state.validatedOwnedId})`);
+
+  const createdStep = assertOwnedStep(
+    requireStepResult(
+      await client.callTool('step.create', {
+        todoId: state.validatedOwnedId,
+        title: state.originalStepTitle
+      }),
+      'step.create'
+    ),
+    state.validatedOwnedId,
+    state,
+    'step.create.step',
+    state.originalStepTitle,
+    0
+  );
+  state.responseCandidateStepId = createdStep.id;
+  state.validatedOwnedStepId = createdStep.id;
+  requireListedOwnedStep(
+    await client.callTool('step.list', { todoId: state.validatedOwnedId }),
+    state.validatedOwnedId,
+    domain.id,
+    state,
+    'step.list after create',
+    state.originalStepTitle,
+    0
+  );
+  console.log(`[todo-smoke] step create/list ownership ok (step ${createdStep.id})`);
+
+  assertOwnedStep(
+    requireStepResult(
+      await client.callTool('step.update', {
+        id: state.validatedOwnedStepId,
+        title: state.updatedStepTitle
+      }),
+      'step.update'
+    ),
+    state.validatedOwnedId,
+    state,
+    'step.update.step',
+    state.updatedStepTitle,
+    0
+  );
+  console.log('[todo-smoke] step update ok');
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    assertOwnedStep(
+      requireStepResult(
+        await client.callTool('step.complete', { id: state.validatedOwnedStepId }),
+        `step.complete attempt ${attempt + 1}`
+      ),
+      state.validatedOwnedId,
+      state,
+      `step.complete attempt ${attempt + 1}.step`,
+      state.updatedStepTitle,
+      1
+    );
+  }
+  requireListedOwnedStep(
+    await client.callTool('step.list', { todoId: state.validatedOwnedId }),
+    state.validatedOwnedId,
+    domain.id,
+    state,
+    'step.list after repeated complete',
+    state.updatedStepTitle,
+    1
+  );
+  console.log('[todo-smoke] step complete is idempotent');
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    assertOwnedStep(
+      requireStepResult(
+        await client.callTool('step.uncomplete', { id: state.validatedOwnedStepId }),
+        `step.uncomplete attempt ${attempt + 1}`
+      ),
+      state.validatedOwnedId,
+      state,
+      `step.uncomplete attempt ${attempt + 1}.step`,
+      state.updatedStepTitle,
+      0
+    );
+  }
+  requireListedOwnedStep(
+    await client.callTool('step.list', { todoId: state.validatedOwnedId }),
+    state.validatedOwnedId,
+    domain.id,
+    state,
+    'step.list after repeated uncomplete',
+    state.updatedStepTitle,
+    0
+  );
+  console.log('[todo-smoke] step uncomplete is idempotent');
+
+  const deletedStep = requireRecord(
+    await client.callTool('step.delete', { id: state.validatedOwnedStepId }),
+    'step.delete'
+  );
+  assert(
+    deletedStep.deleted === true &&
+      deletedStep.id === state.validatedOwnedStepId &&
+      deletedStep.todoId === state.validatedOwnedId,
+    'step.delete did not confirm the expected Step and parent Todo ids.'
+  );
+  const remainingSteps = requireStepList(
+    await client.callTool('step.list', { todoId: state.validatedOwnedId }),
+    state.validatedOwnedId,
+    domain.id,
+    state,
+    'step.list after delete'
+  );
+  assert(
+    remainingSteps.every((step) => {
+      return step?.id !== state.validatedOwnedStepId && !step?.title?.includes(state.marker);
+    }),
+    'Deleted Step remains visible in step.list.'
+  );
+  state.stepDeleted = true;
+  state.validatedOwnedStepId = null;
+  console.log('[todo-smoke] step delete/list absence ok');
 
   const updated = requireTodoResult(
     await client.callTool('todo.update', {
