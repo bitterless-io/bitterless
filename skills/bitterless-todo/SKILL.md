@@ -1,5 +1,7 @@
 ---
 name: bitterless-todo
+metadata:
+  version_code: "260723104233"
 description: >-
   Manage the user's personal, multi-device-synchronized Bitterless todos and explicitly authorized
   domains through the local production `bitterless` MCP server. Use when an agent needs to list,
@@ -35,18 +37,22 @@ is unclear, ask instead of writing. Briefly report judgment-based creations to t
 
 ## Operate todos
 
-1. Call `domain.list` before a create or move. Select an existing active domain by meaning. Use an
+1. Call `domain.list` before a create or move. It is the default active-domain catalog; use each
+   returned `description` with its title to select an existing active domain by meaning. Use an
    existing general domain such as `Others` when appropriate; never create a domain merely because
-   no precise match exists.
+   no precise match exists. Use `domain.archived.list` only for explicitly requested historical
+   context. Archived domains are never valid Todo targets.
 2. Call `todo.list` for the selected domain before a judgment-based create and avoid an obvious
    duplicate. Do not turn this into broad polling.
 3. Call `domain.create` only when the user explicitly requests or authorizes that new domain. Treat
    it as non-idempotent: after a timeout, list domains and never retry the write automatically.
-4. Call the narrowest Todo tool needed. Preserve returned IDs for `todo.get`, `todo.status`, and
+4. Call `domain.description.update` only when the user explicitly asks to change an active domain's
+   description. Never infer this write from Todo placement and never update an archived domain.
+5. Call the narrowest Todo tool needed. Preserve returned IDs for `todo.get`, `todo.status`, and
    later writes.
-5. Read `structuredContent`, verify the returned ID/state, and report the resulting title, domain,
+6. Read `structuredContent`, verify the returned ID/state, and report the resulting title, domain,
    and state concisely.
-6. Delete only when the user requests deletion or when cleaning up an agent-owned smoke-test todo.
+7. Delete only when the user requests deletion or when cleaning up an agent-owned smoke-test todo.
 
 Set `important: true` only when the user must act now before the agent can continue the current
 session. Leave it false or unset for reminders, backlog, and non-blocking follow-ups. Focus is a

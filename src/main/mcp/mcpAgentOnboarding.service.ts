@@ -14,6 +14,7 @@ interface TodoAgentSetupInstructionOptions {
   configJson: string;
   serverName: string;
   skillPath: string;
+  skillVersionCode: string;
 }
 
 export const resolveTodoAgentSkillPath = ({
@@ -55,7 +56,8 @@ const createInstanceSafetyInstruction = (serverName: string): string => {
 export const createTodoAgentSetupInstruction = ({
   configJson,
   serverName,
-  skillPath
+  skillPath,
+  skillVersionCode,
 }: TodoAgentSetupInstructionOptions): string =>
   [
     '请完成两步配置：MCP 提供 Todo 工具，`bitterless-todo` 技能提供个人 Todo 语义、触发判断、分组选择、去重与安全规则。',
@@ -68,9 +70,12 @@ export const createTodoAgentSetupInstruction = ({
     '',
     skillPath,
     '',
+    `bitterless-todo version_code: ${skillVersionCode}`,
+    '',
     'Codex 目标目录：`~/.codex/skills/bitterless-todo/`',
     'Claude Code 目标目录：`~/.claude/skills/bitterless-todo/`（或项目内 `.claude/skills/bitterless-todo/`）',
+    '更新时把该目录内容增量复制到目标同名目录并覆盖同名文件，不要删除其它技能。',
     '',
-    '安装或更新技能后重新启动 agent session，并在使用 MCP 时保持当前 Bitterless 应用正在运行。',
+    '安装或更新技能后启动新的 agent session，并在使用 MCP 时保持当前 Bitterless 应用正在运行。',
     createInstanceSafetyInstruction(serverName)
   ].join('\n');

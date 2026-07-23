@@ -13,7 +13,12 @@ For Codex, extract it under `~/.codex/skills/`. For Claude Code, extract it unde
 `~/.claude/skills/` for user-wide use or `<project>/.claude/skills/` for one project. Claude Code
 ignores `agents/openai.yaml`; Codex uses it to discover the production `bitterless` dependency.
 
-Restart the agent session after installing or replacing the skill.
+For an update, copy the contents of the packaged `bitterless-todo/` folder additively into the same
+named destination folder. Replace matching files, but do not replace or delete the surrounding
+skills directory or any unrelated skill.
+
+Restart with a new agent session after installing or updating the skill. Existing sessions keep
+the previously loaded instructions and do not see the new domain catalog rules.
 
 ## Register production MCP on macOS
 

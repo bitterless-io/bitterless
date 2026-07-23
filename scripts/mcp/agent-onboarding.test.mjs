@@ -15,6 +15,7 @@ import {
 } from '../../src/main/mcp/mcpAgentOnboarding.service.ts';
 import { createMcpConfigJson } from '../../src/shared/mcp/mcpBridge.shared.ts';
 import { resolveMcpIntegrationSkillState } from '../../src/shared/mcp/mcpIntegrationInfo.shared.ts';
+import { TODO_AGENT_SKILL_VERSION_CODE } from '../../src/shared/mcp/todoAgentSkillVersion.shared.ts';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(scriptDirectory, '..', '..');
@@ -36,21 +37,48 @@ const readBuilderConfig = (fileName) =>
   YAML.parse(readFileSync(join(projectRoot, fileName), 'utf8'));
 
 try {
-  assert.deepEqual(resolveMcpIntegrationSkillState(null), {
+  assert.deepEqual(resolveMcpIntegrationSkillState(null, TODO_AGENT_SKILL_VERSION_CODE), {
     status: 'pending',
-    skillPath: null
+    skillPath: null,
+    skillVersionCode: null
   });
-  assert.deepEqual(resolveMcpIntegrationSkillState({ serverName: 'bitterless' }), {
+  assert.deepEqual(resolveMcpIntegrationSkillState(
+    { serverName: 'bitterless' },
+    TODO_AGENT_SKILL_VERSION_CODE
+  ), {
     status: 'restart-required',
-    skillPath: null
+    skillPath: null,
+    skillVersionCode: null
   });
-  assert.deepEqual(resolveMcpIntegrationSkillState({ skillPath: '   ' }), {
+  assert.deepEqual(resolveMcpIntegrationSkillState(
+    { skillPath: '   ' },
+    TODO_AGENT_SKILL_VERSION_CODE
+  ), {
     status: 'restart-required',
-    skillPath: null
+    skillPath: null,
+    skillVersionCode: null
   });
-  assert.deepEqual(resolveMcpIntegrationSkillState({ skillPath: `  ${canonicalSkillPath}  ` }), {
+  assert.deepEqual(resolveMcpIntegrationSkillState(
+    {
+      skillPath: `  ${canonicalSkillPath}  `,
+      skillVersionCode: '260723104232'
+    },
+    TODO_AGENT_SKILL_VERSION_CODE
+  ), {
+    status: 'restart-required',
+    skillPath: null,
+    skillVersionCode: null
+  });
+  assert.deepEqual(resolveMcpIntegrationSkillState(
+    {
+      skillPath: `  ${canonicalSkillPath}  `,
+      skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE
+    },
+    TODO_AGENT_SKILL_VERSION_CODE
+  ), {
     status: 'ready',
-    skillPath: canonicalSkillPath
+    skillPath: canonicalSkillPath,
+    skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE
   });
 
   assert.equal(
@@ -90,13 +118,19 @@ try {
   const productionInstruction = createTodoAgentSetupInstruction({
     configJson: productionConfig,
     serverName: 'bitterless',
-    skillPath: canonicalSkillPath
+    skillPath: canonicalSkillPath,
+    skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE
   });
   assert.ok(productionInstruction.includes(productionConfig));
   assert.ok(productionInstruction.includes(canonicalSkillPath));
   assert.match(productionInstruction, /~\/\.codex\/skills\/bitterless-todo/);
   assert.match(productionInstruction, /~\/\.claude\/skills\/bitterless-todo/);
-  assert.match(productionInstruction, /重新启动 agent session/);
+  assert.match(productionInstruction, /启动新的 agent session/);
+  assert.match(productionInstruction, /增量复制/);
+  assert.match(
+    productionInstruction,
+    new RegExp(`bitterless-todo version_code: ${TODO_AGENT_SKILL_VERSION_CODE}`)
+  );
   assert.match(productionInstruction, /保持当前 Bitterless 应用正在运行/);
   assert.match(productionInstruction, /真实、个人、多设备同步的 Todo 数据/);
   assert.doesNotMatch(productionInstruction, /测试实例，仅用于开发验证/);
@@ -108,7 +142,8 @@ try {
   const debugInstruction = createTodoAgentSetupInstruction({
     configJson: debugConfig,
     serverName: 'bitterless-debug',
-    skillPath: canonicalSkillPath
+    skillPath: canonicalSkillPath,
+    skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE
   });
   assert.ok(debugInstruction.includes(debugConfig));
   assert.match(debugInstruction, /`bitterless-debug` 是测试实例，仅用于开发验证/);
@@ -145,6 +180,7 @@ try {
   assert.match(mcpHandler, /appPath: app\.getAppPath\(\)/);
   assert.match(mcpHandler, /resourcesPath: process\.resourcesPath/);
   assert.match(mcpHandler, /skillPath,/);
+  assert.match(mcpHandler, /skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE/);
 
   const mcpGuide = readFileSync(
     join(
@@ -170,7 +206,10 @@ try {
     join(projectRoot, 'src', 'renderer', 'todo', 'src', 'components', 'MenuBar', 'MenuBar.vue'),
     'utf8'
   );
-  assert.match(menuBar, /resolveMcpIntegrationSkillState\(info\)/);
+  assert.match(
+    menuBar,
+    /resolveMcpIntegrationSkillState\(info, TODO_AGENT_SKILL_VERSION_CODE\)/
+  );
   assert.match(menuBar, /Message\.error\(i18nHelper\.todo\.mcpRestartRequiredDescription\)/);
   assert.match(menuBar, /mcpInfo\.value = \{ \.\.\.info, skillPath: skillState\.skillPath \}/);
 

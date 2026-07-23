@@ -99,9 +99,9 @@ design document.
 - [EyesOnAgents existing-thread normalized ingestion](issues/eyes-on-agents-thread-normalization-drops-existing-sessions.md) - implemented; owner verification pending:
   valid Codex threads can be omitted from All and remain Untitled when an optional preview is
   multiline or longer than the display bound.
-- [EyesOnAgents working state and Focus acknowledgement](issues/eyes-on-agents-working-focus-stale.md) - fixed; owner verification pending:
-  independent App Server metadata must not overwrite Hook working evidence, and Open acknowledges
-  the current active observation until newer lifecycle evidence arrives.
+- [EyesOnAgents working state and Focus acknowledgement](issues/eyes-on-agents-working-focus-stale.md) - fix in progress:
+  independent App Server thread status must not overwrite Hook working evidence; Open acknowledges
+  the current observation, while guarded content-free terminal-turn polling repairs a missed Stop.
 - [macOS stale Dock icon](issues/macos-dock-icon-stale.md) - fixed; owner verification pending: the current
   PNG must regenerate the bundle ICNS and refresh the runtime Dock tile.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:

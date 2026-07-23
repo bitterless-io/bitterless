@@ -46,6 +46,7 @@
     "mcp:todo:smoke": "node scripts/mcp/todo-smoke.mjs",
     "mcp:todo:smoke:debug": "node scripts/mcp/todo-smoke.mjs --profile debug",
     "mcp:todo:skill:export": "node scripts/mcp/export-todo-skill.mjs",
+    "test:mcp:domain-catalog": "node scripts/mcp/domain-catalog.test.mjs",
     "test:mcp:domain-create": "node scripts/mcp/domain-create.test.mjs",
     "test:mcp:agent-onboarding": "node scripts/mcp/agent-onboarding.test.mjs",
     "test:mcp:multi-instance": "node scripts/mcp/multi-instance.test.mjs",

@@ -16,6 +16,7 @@ import {
   requireTodoAgentSkillPath,
   resolveTodoAgentSkillPath,
 } from '../mcp/mcpAgentOnboarding.service';
+import { TODO_AGENT_SKILL_VERSION_CODE } from '@shared/mcp/todoAgentSkillVersion.shared';
 
 class McpHandler extends XpcMainHandler {
   async getIntegrationInfo(): Promise<McpIntegrationInfo> {
@@ -30,13 +31,19 @@ class McpHandler extends XpcMainHandler {
         resourcesPath: process.resourcesPath,
       }),
     );
-    const instruction = createTodoAgentSetupInstruction({ configJson, serverName, skillPath });
+    const instruction = createTodoAgentSetupInstruction({
+      configJson,
+      serverName,
+      skillPath,
+      skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE,
+    });
 
     return {
       serverName,
       commandPath,
       configJson,
       skillPath,
+      skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE,
       instruction,
       bridgePath: endpoint.path,
       transport: endpoint.transport,

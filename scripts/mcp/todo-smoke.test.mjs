@@ -161,6 +161,47 @@ try {
   assert.match(lifecycleUpdate.args.title, new RegExp(marker));
   assert.match(lifecycleUpdate.args.note, new RegExp(marker));
 
+  const readOnly = runFixture('read-only', { readOnly: true });
+  assert.equal(readOnly.result.status, 0, `${readOnly.result.stdout}\n${readOnly.result.stderr}`);
+  assert.match(readOnly.result.stdout, /archived domains ok \(1\)/);
+  assert.match(readOnly.result.stdout, /PASS \(read-only\)/);
+  assert.deepEqual(
+    readOnly.state.calls.map((call) => call.name),
+    ['domain.list', 'domain.archived.list']
+  );
+  assert.equal(
+    readOnly.state.calls.some((call) => call.name === 'domain.description.update'),
+    false
+  );
+
+  const archivedDescriptionMissing = runFixture('archived-description-missing', {
+    mode: 'archived-description-missing',
+    readOnly: true
+  });
+  assert.equal(archivedDescriptionMissing.result.status, 1);
+  assert.match(archivedDescriptionMissing.result.stderr, /description must be a string/);
+
+  const archivedActiveRow = runFixture('archived-active-row', {
+    mode: 'archived-active-row',
+    readOnly: true
+  });
+  assert.equal(archivedActiveRow.result.status, 1);
+  assert.match(archivedActiveRow.result.stderr, /archived must be 1/);
+
+  const archivedDeletedRow = runFixture('archived-deleted-row', {
+    mode: 'archived-deleted-row',
+    readOnly: true
+  });
+  assert.equal(archivedDeletedRow.result.status, 1);
+  assert.match(archivedDeletedRow.result.stderr, /is_deleted must be 0/);
+
+  const archivedExtraField = runFixture('archived-extra-field', {
+    mode: 'archived-extra-field',
+    readOnly: true
+  });
+  assert.equal(archivedExtraField.result.status, 1);
+  assert.match(archivedExtraField.result.stderr, /must contain only domains/);
+
   assertFreshSessionCleanup(
     runFixture('create-timeout', { mode: 'create-timeout', timeoutMs: 100 }),
     { errorPattern: /Timed out.*todo\.create/ }

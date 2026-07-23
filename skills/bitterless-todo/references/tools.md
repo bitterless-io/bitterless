@@ -12,7 +12,26 @@ assertions. Timestamps are integer Unix milliseconds or `null`.
 Arguments: `{}`.
 
 Returns `{ domains, focus }`. Each domain includes at least `id`, `title`, and `description`.
-Only active human-managed domains are returned. Call this before `todo.create` or `todo.move`.
+Only active, non-deleted human-managed domains are returned. Each row also includes `archived`,
+`position`, `created_at`, and `updated_at`. Use descriptions with titles for semantic placement and
+call this before `todo.create` or `todo.move`.
+
+### `domain.archived.list`
+
+Arguments: `{}`.
+
+Returns `{ domains }`. Only archived, non-deleted human-managed domains are returned, with the same
+required row fields as `domain.list`. Use this only for explicitly requested historical context.
+Archived rows are read-only context and are never valid targets for `todo.create` or `todo.move`.
+
+### `domain.description.update`
+
+Arguments: `{ id, description }`. `id` is a 20-digit decimal Domain Snowflake ID. `description` is
+required, trimmed, and may contain 0–500 characters; send `""` to clear it.
+
+Returns `{ domain }` after the persisted reread. Call this only when the user explicitly authorizes
+changing the description of an active Domain resolved through `domain.list`. Archived, deleted,
+missing, or malformed IDs are rejected. Do not infer this write from Todo placement.
 
 ### `domain.create`
 
@@ -23,7 +42,8 @@ trimming.
 Returns `{ domain }`, where `domain` is newly created and active. Call this only when the user
 explicitly requests or authorizes that new domain; never create one implicitly while handling a
 todo request. Creation is rejected when 17 active domains already exist. Domain rename, archive,
-restore, and delete are not exposed through MCP.
+restore, and delete are not exposed through MCP; only an explicitly authorized description update
+is available through `domain.description.update`.
 
 Call `domain.list` first. If an active domain already has the requested title, ask before creating
 an intentional duplicate. This write is non-idempotent: after a timeout, disconnect, or missing

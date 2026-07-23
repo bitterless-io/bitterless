@@ -95,7 +95,7 @@ assert(mcpGuide.includes("mcpTestInstanceTitle.replace('{serverName}', info.serv
 assert(mcpGuide.includes('mcpTestInstanceWarning'), 'MCP safety warning should visibly direct real personal Todo work to production')
 assert(rendererEn.includes("mcpTestInstanceTitle: 'Test-only MCP: {serverName}'") && rendererEn.includes('Do not store real personal todos in this instance') && rendererEn.includes('production bitterless server'), 'English MCP warning should identify the test server and direct real personal Todo work to production')
 assert(rendererZh.includes("mcpTestInstanceTitle: '仅限测试的 MCP：{serverName}'") && rendererZh.includes('不要在当前实例保存真实个人待办') && rendererZh.includes('生产 server bitterless'), 'Chinese MCP warning should identify the test server and direct real personal Todo work to production')
-assert(mcpGuide.includes('mcpCompleteSetup') && mcpGuide.includes('copyText(instruction)'), 'MCP guide should copy complete MCP and skill setup instructions')
+assert(mcpGuide.includes('mcpCompleteSetup') && mcpGuide.includes('@click="copyCompleteSetup"'), 'MCP guide should copy complete MCP and skill setup instructions')
 assert(mcpGuide.includes('copyText(skillPath)'), 'MCP guide should expose a copy action for the bundled skill directory')
 assert(mcpGuide.includes("skillState.status === 'restart-required'") && mcpGuide.includes('mcpRestartRequiredDescription'), 'a stale main-process response should surface a restart-required contract error')
 assert(!/info\?\.[a-zA-Z]+ \|\| i18nHelper\.todo\.mcpLoading/.test(mcpGuide), 'Loading should render only while integration info is genuinely pending')

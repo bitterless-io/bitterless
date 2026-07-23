@@ -858,6 +858,21 @@ test('real repository CRUD is atomic with outbox, events, and soft-delete cascad
 
     const domain = await runtime.repository.createDomain({ title: 'Inbox', description: 'Local' });
     assert(domain);
+    const updatedDomainDescription = 'Local domain placement guidance';
+    await runtime.repository.updateDomainDescription({
+      id: domain.id,
+      description: updatedDomainDescription,
+    });
+    assert.equal(
+      (await runtime.repository.getDomainById({ id: domain.id }))?.description,
+      updatedDomainDescription,
+    );
+    const descriptionUpdateOutbox = (await outboxRows(runtime.database)).find((row) => {
+      if (row.command_type !== 'domain_update' || row.state !== 'pending') return false;
+      const args = JSON.parse(row.args_json) as Record<string, unknown>;
+      return args.id === domain.id && args.description === updatedDomainDescription;
+    });
+    assert(descriptionUpdateOutbox, 'pending domain_update outbox args must include description');
     const todo = await runtime.repository.createTodo({ domainId: domain.id, title: 'First Todo' });
     assert(todo);
     const subTodo = await runtime.repository.createSubTodo({ todoId: todo.id, title: 'Step one' });

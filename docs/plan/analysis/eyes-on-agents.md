@@ -54,7 +54,7 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | App Server Disconnect -> observation remains | global hooks and listener intent survive without persistent App Server reconnect |
 | active observation/completion -> Focus | running or newly completed thread is unread; historical import does not flood Focus |
 | Open -> exact deep link -> mark opened | successful open clears unread; failed open does not; later active observation restores unread |
-| tiered metadata poll -> existing row | title/activity/authorized question may change; independent App Server status never replaces Desktop Hook evidence |
+| tiered metadata poll -> existing row | title/activity/authorized question may change; independent thread status never replaces Desktop Hook evidence; matching content-free terminal-turn proof may end stale working |
 | header Refresh while disconnected/error -> connect + reconcile | manual recovery refreshes raw and normalized state without duplicate jobs |
 | All Project filter -> renderer snapshot | Project counts span every visible non-archived thread without changing Domain assignment |
 | Domain drag/menu -> repository | assignment survives renderer and application restart |
@@ -66,8 +66,8 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | risk | control |
 |---|---|
 | separate App Server is mistaken for Desktop state | label source; `notLoaded -> unknown`; retain optional hook source |
-| independent metadata read overwrites Hook working | tiered `thread/read` never emits runtime patches; only lifecycle authorities update runtime |
-| interrupted task remains working without an interrupt Hook | successful Open acknowledges the current active observation; never guess paused or use a TTL |
+| independent metadata read overwrites Hook working | tiered `thread/read` never emits runtime patches; the only polling runtime mutation is guarded latest-turn terminal proof |
+| interrupted task remains working after missed terminal Hook | poll `thread/turns/list` with `itemsView: notLoaded`, limit one; require matching turn/timestamp and atomically reject stale proof |
 | old threads flood Focus | migration/sync never creates completion markers |
 | running thread is opened, completes, or remains active | persist explicit unread marker and set it on every accepted attention observation |
 | raw source payload leaks prompt preview | local-only table; no renderer DTO, logging, export, or `thread/read` |

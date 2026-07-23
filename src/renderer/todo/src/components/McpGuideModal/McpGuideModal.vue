@@ -27,6 +27,24 @@
         {{ i18nHelper.todo.mcpTestInstanceWarning }}
       </a-alert>
 
+      <div name="mcp-guide__complete-setup" class="mcp-guide__field mcp-guide__field--primary">
+        <div class="mcp-guide__field-head">
+          <span class="mcp-guide__field-title">{{ i18nHelper.todo.mcpCompleteSetup }}</span>
+          <IconBtn
+            class="mcp-guide__copy-button mcp-guide__copy-button--primary"
+            :disabled="skillState.status !== 'ready' || !instruction"
+            :title="i18nHelper.todo.mcpCopyCompleteSetup"
+            :aria-label="i18nHelper.todo.mcpCopyCompleteSetup"
+            @click="copyCompleteSetup"
+          >
+            <IconCopy class="mcp-guide__copy-icon" :size="18" stroke="1.8" />
+          </IconBtn>
+        </div>
+        <p class="mcp-guide__hint">{{ i18nHelper.todo.mcpCompleteSetupHint }}</p>
+      </div>
+
+      <h3 class="mcp-guide__details-title">{{ i18nHelper.todo.mcpDetailedInstructions }}</h3>
+
       <section name="mcp-guide__mcp-step" class="mcp-guide__step">
         <div class="mcp-guide__step-head">
           <span class="mcp-guide__step-index">1</span>
@@ -105,21 +123,6 @@
         </div>
       </section>
 
-      <div name="mcp-guide__complete-setup" class="mcp-guide__field mcp-guide__field--quiet">
-        <div class="mcp-guide__field-head">
-          <span class="mcp-guide__field-title">{{ i18nHelper.todo.mcpCompleteSetup }}</span>
-          <IconBtn
-            class="mcp-guide__copy-button mcp-guide__copy-button--primary"
-            :disabled="skillState.status !== 'ready' || !instruction"
-            :title="i18nHelper.todo.mcpCopyCompleteSetup"
-            :aria-label="i18nHelper.todo.mcpCopyCompleteSetup"
-            @click="copyText(instruction)"
-          >
-            <IconCopy class="mcp-guide__copy-icon" :size="18" stroke="1.8" />
-          </IconBtn>
-        </div>
-        <p class="mcp-guide__hint">{{ i18nHelper.todo.mcpCompleteSetupHint }}</p>
-      </div>
     </div>
   </a-modal>
 </template>
@@ -132,6 +135,8 @@ import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
 import { resolveMcpIntegrationSkillState } from '@shared/mcp/mcpIntegrationInfo.shared';
+import { todoAgentSkillStore } from '../../store/todoAgentSkill.store';
+import { TODO_AGENT_SKILL_VERSION_CODE } from '@shared/mcp/todoAgentSkillVersion.shared';
 
 const props = defineProps<{
   visible: boolean;
@@ -158,7 +163,9 @@ const displayRequiredText = (value: string): string =>
     : value || i18nHelper.todo.mcpRestartRequiredDescription;
 const commandPathText = computed(() => displayRequiredText(commandPath.value));
 const configJsonText = computed(() => displayRequiredText(configJson.value));
-const skillState = computed(() => resolveMcpIntegrationSkillState(props.info));
+const skillState = computed(() =>
+  resolveMcpIntegrationSkillState(props.info, TODO_AGENT_SKILL_VERSION_CODE),
+);
 const skillPath = computed(() =>
   skillState.value.status === 'ready' ? skillState.value.skillPath : '',
 );
@@ -166,10 +173,32 @@ const skillPathText = computed(() =>
   skillState.value.status === 'pending' ? i18nHelper.todo.mcpLoading : skillPath.value,
 );
 
-const copyText = async (text: string) => {
+const copyText = async (text: string): Promise<void> => {
   if (!text) return;
-  await navigator.clipboard.writeText(text);
-  Message.success(i18nHelper.todo.mcpCopied);
+  try {
+    await navigator.clipboard.writeText(text);
+    Message.success(i18nHelper.todo.mcpCopied);
+  } catch {
+    Message.error(i18nHelper.todo.mcpCopyFailed);
+  }
+};
+
+const copyCompleteSetup = async (): Promise<void> => {
+  if (!instruction.value || skillState.value.status !== 'ready') return;
+
+  try {
+    await navigator.clipboard.writeText(instruction.value);
+  } catch {
+    Message.error(i18nHelper.todo.mcpCopyFailed);
+    return;
+  }
+
+  try {
+    await todoAgentSkillStore.acknowledgeCurrentVersion(skillState.value.skillVersionCode);
+    Message.success(i18nHelper.todo.mcpCopied);
+  } catch {
+    Message.error(i18nHelper.todo.mcpSkillAcknowledgementFailed);
+  }
 };
 </script>
 

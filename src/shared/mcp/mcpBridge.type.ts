@@ -10,6 +10,7 @@ export interface McpIntegrationInfo {
   commandPath: string;
   configJson: string;
   skillPath: string;
+  skillVersionCode: string;
   instruction: string;
   bridgePath: string;
   transport: McpBridgeTransport;

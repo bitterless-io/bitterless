@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { TODO_AGENT_SKILL_VERSION_CODE } from '../../src/shared/mcp/todoAgentSkillVersion.shared.ts';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, '..', '..');
@@ -66,6 +67,11 @@ try {
   const skillMarkdown = readFileSync(join(skillRoot, 'SKILL.md'), 'utf8');
   const skillMetadata = parseFrontmatter(skillMarkdown);
   assert.equal(skillMetadata.name, skillName);
+  assert.equal(skillMetadata.metadata?.version_code, TODO_AGENT_SKILL_VERSION_CODE);
+  assert.match(
+    skillMarkdown,
+    new RegExp(`version_code: ["']${TODO_AGENT_SKILL_VERSION_CODE}["']`),
+  );
   assert.match(skillMetadata.description, /personal/i);
   assert.match(skillMetadata.description, /multi-device/i);
   assert.match(skillMarkdown, /Do not create a todo for internal agent steps/);
@@ -81,6 +87,8 @@ try {
   assert.match(setup, /Claude Code/);
   assert.match(setup, /codex mcp add bitterless/);
   assert.match(setup, /claude mcp add --scope user bitterless/);
+  assert.match(setup, /copy the contents .* additively/i);
+  assert.match(setup, /new agent session/i);
   assert.doesNotMatch(setup, /\/Users\//);
   assert.doesNotMatch(setup, /[A-Z]:\\Users\\/i);
 

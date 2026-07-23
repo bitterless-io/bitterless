@@ -7,8 +7,11 @@ import readline from 'node:readline';
 
 const toTodoId = (value) => String(value).padStart(20, '0');
 const DOMAIN_ID = toTodoId(7);
+const ARCHIVED_DOMAIN_ID = toTodoId(8);
 const toolNames = [
   'domain.list',
+  'domain.archived.list',
+  'domain.description.update',
   'event.list',
   'event.wait',
   'todo.list',
@@ -201,6 +204,24 @@ const handleTool = (id, name, args) => {
         focus: { id: 'focus', title: 'Focus' }
       })
     );
+    return;
+  }
+
+  if (name === 'domain.archived.list') {
+    const archivedDomain = {
+      id: ARCHIVED_DOMAIN_ID,
+      title: 'Archived fixture domain',
+      description: 'Fixture historical context',
+      archived: mode === 'archived-active-row' ? 0 : 1,
+      is_deleted: mode === 'archived-deleted-row' ? 1 : 0,
+      position: 2,
+      created_at: 1_700_000_000_000,
+      updated_at: 1_700_000_000_100
+    };
+    if (mode === 'archived-description-missing') delete archivedDomain.description;
+    const result = { domains: [archivedDomain] };
+    if (mode === 'archived-extra-field') result.focus = { id: 'focus' };
+    respond(id, toolResult(result));
     return;
   }
 

@@ -15,6 +15,8 @@ const SHUTDOWN_TIMEOUT_MS = 1500;
 const TERMINATE_TIMEOUT_MS = 1000;
 const REQUIRED_TOOLS = [
   'domain.list',
+  'domain.archived.list',
+  'domain.description.update',
   'todo.list',
   'todo.create',
   'todo.get',
@@ -468,6 +470,37 @@ const resolveDomain = (value, selector) => {
   return domain;
 };
 
+const requireArchivedDomains = (value) => {
+  const result = requireRecord(value, 'domain.archived.list structuredContent');
+  assert(
+    Object.keys(result).length === 1 && Object.hasOwn(result, 'domains'),
+    'domain.archived.list structuredContent must contain only domains.'
+  );
+  assert(
+    Array.isArray(result.domains),
+    'domain.archived.list structuredContent.domains must be an array.'
+  );
+  for (let index = 0; index < result.domains.length; index += 1) {
+    const domain = requireRecord(
+      result.domains[index],
+      `domain.archived.list structuredContent.domains[${index}]`
+    );
+    assert(
+      typeof domain.description === 'string',
+      `domain.archived.list structuredContent.domains[${index}].description must be a string.`
+    );
+    assert(
+      domain.archived === 1,
+      `domain.archived.list structuredContent.domains[${index}].archived must be 1.`
+    );
+    assert(
+      domain.is_deleted === 0,
+      `domain.archived.list structuredContent.domains[${index}].is_deleted must be 0.`
+    );
+  }
+  return result.domains;
+};
+
 const getStatusState = (value, todoId, label) => {
   const result = requireRecord(value, label);
   assert(Array.isArray(result.items), `${label}.items must be an array.`);
@@ -837,6 +870,10 @@ const main = async () => {
     console.log(`[todo-smoke] domain ok (${domain.id}:${domain.title})`);
 
     if (options.readOnly) {
+      const archivedDomains = requireArchivedDomains(
+        await client.callTool('domain.archived.list', {})
+      );
+      console.log(`[todo-smoke] archived domains ok (${archivedDomains.length})`);
       successMessage = '[todo-smoke] PASS (read-only)';
     } else {
       await runLifecycle(client, domain, options.keep, state);

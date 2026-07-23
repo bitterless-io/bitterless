@@ -47,6 +47,7 @@ import { todoWindowEmitter } from './emitter/todoWindow.emitter';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 import { todoistSyncStore } from './store/todoistSync.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import { todoAgentSkillStore } from './store/todoAgentSkill.store';
 
 const isStandalone = ref(false);
 const isOmni = todoEnv?.host === 'omni';
@@ -74,6 +75,9 @@ onMounted(async () => {
   try {
     isStandalone.value = todoEnv?.isStandalone ?? false;
     initTodoSubscriber();
+    void todoAgentSkillStore.initialize().catch((error) => {
+      console.warn('[todo agent skill] version initialization failed:', error);
+    });
     void todoistSyncStore.initialize().catch((error) => {
       console.warn('[todoist sync] renderer clock initialization failed:', error);
     });

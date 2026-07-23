@@ -36,12 +36,24 @@
           </template>
         </a-button>
       </a-tooltip>
-      <a-tooltip :content="i18nHelper.todo.mcpTitle" position="br" mini>
-        <a-button size="mini" type="text" @click="handleOpenMcpGuide">
-          <template #icon>
-            <IconRobot />
-          </template>
-        </a-button>
+      <a-tooltip :content="mcpGuideTooltip" position="br" mini>
+        <a-badge
+          class="menubar__agent-skill-badge"
+          dot
+          :count="todoAgentSkillStore.attention ? 1 : 0"
+        >
+          <a-button
+            size="mini"
+            type="text"
+            :title="mcpGuideTooltip"
+            :aria-label="mcpGuideTooltip"
+            @click="handleOpenMcpGuide"
+          >
+            <template #icon>
+              <IconRobot aria-hidden="true" />
+            </template>
+          </a-button>
+        </a-badge>
       </a-tooltip>
       <a-popover trigger="hover" position="br">
         <a-badge :count="todoistSyncStore.failures.length" :max-count="99">
@@ -168,6 +180,8 @@ import ArchivedDomainsModal from '../ArchivedDomainsModal/ArchivedDomainsModal.v
 import type { McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
 import { resolveMcpIntegrationSkillState } from '@shared/mcp/mcpIntegrationInfo.shared';
 import { todoistSyncStore } from '../../store/todoistSync.store';
+import { todoAgentSkillStore } from '../../store/todoAgentSkill.store';
+import { TODO_AGENT_SKILL_VERSION_CODE } from '@shared/mcp/todoAgentSkillVersion.shared';
 
 const SNOWFLAKE_NODE_MISMATCH_ERROR = '[todoist sync] server changed this device Snowflake node';
 
@@ -187,6 +201,21 @@ const domainLimitReached = computed(() => todoStore.domainList.length >= 17);
 const addDomainTooltip = computed(() => (
   domainLimitReached.value ? i18nHelper.todo.domainLimitReached : i18nHelper.todo.addDomain
 ));
+const mcpGuideTooltip = computed(() => {
+  if (todoAgentSkillStore.status === 'loading') {
+    return i18nHelper.todo.mcpSkillVersionChecking;
+  }
+  if (todoAgentSkillStore.status === 'install-required') {
+    return i18nHelper.todo.mcpSkillInstallRequired;
+  }
+  if (todoAgentSkillStore.status === 'update-required') {
+    return i18nHelper.todo.mcpSkillUpdateRequired;
+  }
+  if (todoAgentSkillStore.status === 'invalid') {
+    return i18nHelper.todo.mcpSkillVersionInvalid;
+  }
+  return i18nHelper.todo.mcpTitle;
+});
 const syncStatusLabel = computed(() => {
   if (todoistSyncStore.status?.syncing) return i18nHelper.todo.syncStatusSyncing;
   if (todoistSyncStore.status?.pull_only) return i18nHelper.todo.syncStatusPullOnly;
@@ -253,7 +282,7 @@ const handleDiscardSync = (uuid: string): void => {
 const handleOpenMcpGuide = async () => {
   try {
     const info = await mcpEmitter.getIntegrationInfo();
-    const skillState = resolveMcpIntegrationSkillState(info);
+    const skillState = resolveMcpIntegrationSkillState(info, TODO_AGENT_SKILL_VERSION_CODE);
     if (skillState.status !== 'ready') {
       Message.error(i18nHelper.todo.mcpRestartRequiredDescription);
       return;

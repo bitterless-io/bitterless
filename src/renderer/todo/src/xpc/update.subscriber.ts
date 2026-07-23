@@ -3,6 +3,8 @@ import { todoStore } from '../store/todo.store';
 import { todoSettingStore } from '../store/todoSetting.store';
 import type { TodoistSyncClockCheckRequested } from '@shared/todoistSync/todoistSync.type';
 import { todoistSyncStore } from '../store/todoistSync.store';
+import { todoAgentSkillStore } from '../store/todoAgentSkill.store';
+import { TODO_AGENT_SKILL_VERSION_UPDATED_EVENT } from '@shared/mcp/todoAgentSkillVersion.shared';
 
 const observeSubscriberOperation = (label: string, operation: Promise<unknown>): void => {
   void operation.catch((error) => {
@@ -33,6 +35,10 @@ export const initTodoSubscriber = () => {
         payload.params as TodoistSyncClockCheckRequested,
       ),
     );
+  });
+
+  xpcRenderer.subscribe(TODO_AGENT_SKILL_VERSION_UPDATED_EVENT, () => {
+    observeSubscriberOperation('agent skill version refresh', todoAgentSkillStore.refresh());
   });
 
 };

@@ -143,11 +143,15 @@ concrete App Server or Hook evidence still wins by provider time. This permits o
 allowing a pre-start persisted working row to remain current.
 
 The independent App Server used for inventory and `thread/read` metadata does not own Codex
-Desktop's turns. Its read status is therefore never allowed to overwrite Hook runtime evidence in
-the tiered poll. Codex also exposes no supported manual-interruption Hook. EyesOnAgents deliberately
-does not infer a paused state from private transcript/rollout formats or elapsed time. A successful
-Open acknowledges the current active observation; a later `UserPromptSubmit` supplies newer working
-evidence and restores Focus.
+Desktop's turns. Its thread read status is therefore never allowed to overwrite Hook runtime
+evidence in the tiered poll. If terminal Hook delivery is missed, the poll may make one narrow,
+content-free reconciliation request for a currently active Hook row: the newest turn through
+`thread/turns/list`, descending, limit one, with `itemsView: notLoaded`. Only a matching
+`completed`, `interrupted`, or `failed` turn may clear the persisted active state; `inProgress`,
+stale, mismatched, malformed, or unavailable evidence is a no-op. The completion remains unread.
+EyesOnAgents deliberately does not infer a paused state from private transcript/rollout formats or
+elapsed time. A successful Open still acknowledges the current active observation; a later
+`UserPromptSubmit` supplies newer working evidence and restores Focus.
 
 All SQLite timestamps are integers. The migration is idempotent and must pass the retained
 multi-version migration audit before packaging.
