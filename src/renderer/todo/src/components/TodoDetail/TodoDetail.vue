@@ -248,6 +248,7 @@ import draggable from 'vuedraggable';
 import { IconMapPin, IconPlayerSkipForward, IconPlus, IconTrash, IconX } from '@tabler/icons-vue';
 import { todoStore } from '../../store/todo.store';
 import { observeTodoMutation } from '../../store/todoMutation.service';
+import { reconcileSubTodoEditingTexts } from '../../store/todoRefresh.service';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
 const TITLE_MAX_LENGTH = 250;
@@ -255,6 +256,7 @@ const headerTitleRef = ref<HTMLTextAreaElement | null>(null);
 const _headerTitleText = ref('');
 const headerEditing = ref(false);
 const subTodoEditingTexts = reactive<Record<string, string>>({});
+const activeSubTodoId = ref<string | null>(null);
 
 const autoResize = (el: HTMLTextAreaElement) => {
   el.style.height = 'auto';
@@ -285,10 +287,14 @@ const onSubTitleInput = (id: string, el: HTMLTextAreaElement) => {
   autoResize(el);
 };
 
-watch(() => todoStore.subTodos, (subs) => {
-  for (const sub of subs) {
-    subTodoEditingTexts[sub.id] = sub.title;
-  }
+watch(() => todoStore.subTodos.map((subTodo) => ({
+  id: subTodo.id,
+  title: subTodo.title,
+})), (subTodos) => {
+  activeSubTodoId.value = reconcileSubTodoEditingTexts(subTodoEditingTexts, {
+    subTodos,
+    activeSubTodoId: activeSubTodoId.value,
+  });
   nextTick(() => {
     const textareas = document.querySelectorAll<HTMLTextAreaElement>('.todo-detail__subtodo-title');
     for (const ta of textareas) {
@@ -348,8 +354,16 @@ const onTitleBlur = (e: FocusEvent) => {
   headerEditing.value = false;
 };
 
-watch(() => todoStore.selectedTodo?.title, () => {
-  headerEditing.value = false;
+watch(() => ({
+  id: todoStore.selectedTodo?.id ?? null,
+  title: todoStore.selectedTodo?.title ?? '',
+}), (selectedTodo, previousTodo) => {
+  if (selectedTodo.id !== previousTodo?.id) {
+    headerEditing.value = false;
+    _headerTitleText.value = selectedTodo.title;
+    return;
+  }
+  if (!headerEditing.value) _headerTitleText.value = selectedTodo.title;
 }, { immediate: true });
 
 const _noteText = ref('');
@@ -374,8 +388,6 @@ const onSubTitleEnter = async (e: KeyboardEvent, id: string) => {
     startAddStep();
   }
 };
-
-const activeSubTodoId = ref<string | null>(null);
 
 const activateSubTodo = async (e: MouseEvent, id: string) => {
   if (activeSubTodoId.value === id) return;

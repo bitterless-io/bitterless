@@ -1,16 +1,12 @@
+// Runtime owner: the hidden Core SQLite preload process.
 import { Snowflake } from '@sapphire/snowflake';
-import { TODOIST_SYNC_ENTITY_ID_PATTERN } from '@shared/todoistSync/todoistSync.contract';
+import { assertTodoistSyncEntityId } from '@shared/todoistSync/todoistSync.contract';
 
 export const TODOIST_SYNC_SNOWFLAKE_EPOCH = new Date('2024-01-01T00:00:00.000Z');
 export const TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH =
   '[todoist sync] server changed this device Snowflake node';
 
-export const assertTodoistSyncEntityId = (value: unknown, label = 'id'): string => {
-  if (typeof value !== 'string' || !TODOIST_SYNC_ENTITY_ID_PATTERN.test(value)) {
-    throw new Error(`${label} must be a 20-character decimal Snowflake string`);
-  }
-  return value;
-};
+export { assertTodoistSyncEntityId };
 
 export class TodoistSyncSnowflakeService {
   private snowflake: Snowflake | null = null;

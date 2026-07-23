@@ -57,8 +57,10 @@ import {
 } from '../../src/main/todoistSync/todoistSyncClock.service';
 import {
   TodoistSyncSessionService,
+  todoistSyncSession,
   type TodoistSyncSessionCoordinator,
 } from '../../src/main/todoistSync/todoistSync.session';
+import { todoistSyncDomainHandler } from '../../src/main/xpc/todoistSync.handler';
 import {
   isRecord,
   requireArray,
@@ -66,7 +68,17 @@ import {
   requireRecordMap,
   requireVoidResult,
 } from '../../src/renderer/todo/src/store/todoResult.guard';
-import { observeTodoMutation } from '../../src/renderer/todo/src/store/todoMutation.service';
+import {
+  observeTodoMutation,
+  registerTodoMutationFailureRecovery,
+} from '../../src/renderer/todo/src/store/todoMutation.service';
+import {
+  createTodoDetailReadFence,
+  createTodoRefreshQueue,
+  reconcileById,
+  reconcileSubTodoEditingTexts,
+  shouldRefreshFromDataUpdated,
+} from '../../src/renderer/todo/src/store/todoRefresh.service';
 import {
   TODOIST_SYNC_HTTP_ERROR_FIXTURES,
   TODOIST_SYNC_HTTP_OK_FIXTURE,
@@ -702,6 +714,7 @@ test('Todo UI mutation observation contains null XPC guard failures without unha
 
   const guardedComponentSources = [
     'src/renderer/todo/src/App.vue',
+    'src/renderer/todo/src/components/ArchivedDomainsModal/ArchivedDomainsModal.vue',
     'src/renderer/todo/src/components/DomainColumn/DomainColumn.vue',
     'src/renderer/todo/src/components/FocusedColumn/FocusedColumn.vue',
     'src/renderer/todo/src/components/MenuBar/MenuBar.vue',
@@ -711,6 +724,50 @@ test('Todo UI mutation observation contains null XPC guard failures without unha
   for (const sourcePath of guardedComponentSources) {
     const source = originalFs.readFileSync(resolve(sourcePath), 'utf8');
     assert.match(source, /observeTodoMutation/);
+  }
+});
+
+test('Todo mutation failure recovery refreshes only after failure and contains recovery rejection', { concurrency: false }, async () => {
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    unhandledRejections.push(reason);
+  };
+  const originalConsoleError = console.error;
+  let recoveryAttempts = 0;
+  const unregisterRecovery = registerTodoMutationFailureRecovery(async () => {
+    recoveryAttempts += 1;
+    throw new Error('simulated atomic refresh failure');
+  });
+  console.error = () => undefined;
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    const success = await observeTodoMutation(async () => 'ok');
+    assert.equal(success, 'ok');
+    assert.equal(recoveryAttempts, 0);
+
+    const failure = await observeTodoMutation(async () => {
+      throw new Error('simulated post-commit failure');
+    });
+    assert.equal(failure, undefined);
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    assert.equal(recoveryAttempts, 1);
+    assert.deepEqual(unhandledRejections, []);
+
+    unregisterRecovery();
+    await observeTodoMutation(async () => {
+      throw new Error('simulated failure after unregister');
+    });
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    assert.equal(recoveryAttempts, 1);
+
+    const appSource = originalFs.readFileSync(resolve('src/renderer/todo/src/App.vue'), 'utf8');
+    assert.match(appSource, /registerTodoMutationFailureRecovery/);
+    assert.match(appSource, /\(\) => todoStore\.requestRefresh\(\)/);
+  } finally {
+    unregisterRecovery();
+    process.off('unhandledRejection', onUnhandledRejection);
+    console.error = originalConsoleError;
   }
 });
 
@@ -760,7 +817,8 @@ test('Todo menubar exposes one hover Refresh control with truthful sync status',
   assert.match(refreshPopover[0], /handleDiscardSync\(failure\.uuid\)/);
 
   assert.match(refreshHandler[0], /todoistSyncStore\.requestSync\(\)/);
-  assert.match(refreshHandler[0], /todoStore\.loadAll\(\)/);
+  assert.match(refreshHandler[0], /todoStore\.requestRefresh\(\)/);
+  assert.doesNotMatch(refreshHandler[0], /todoStore\.loadAll\(\)/);
   assert.match(refreshHandler[0], /Promise\.all/);
   assert.match(statusLabel[0], /i18nHelper\.todo\.syncStatusSyncing/);
   assert.match(statusLabel[0], /i18nHelper\.todo\.syncStatusPullOnly/);
@@ -788,6 +846,479 @@ test('Todo menubar exposes one hover Refresh control with truthful sync status',
   ]) {
     assert.match(englishSource, new RegExp(`${key}:`));
     assert.match(chineseSource, new RegExp(`${key}:`));
+  }
+});
+
+interface RefreshTestRow {
+  id: string;
+  title: string;
+}
+
+interface RefreshTestSnapshot {
+  domains: RefreshTestRow[];
+  todos: RefreshTestRow[];
+}
+
+test('Todo refresh queue keeps the visible snapshot atomic and coalesces burst invalidations', { concurrency: false }, async () => {
+  const originalDomain: RefreshTestRow = { id: 'domain-1', title: 'Visible domain' };
+  const originalTodo: RefreshTestRow = { id: 'todo-1', title: 'Visible Todo' };
+  const visible = {
+    domains: [originalDomain],
+    todos: [originalTodo],
+  };
+  const reads: Array<Deferred<RefreshTestSnapshot>> = [];
+  let activeReads = 0;
+  let maxActiveReads = 0;
+  let commitCount = 0;
+
+  const queue = createTodoRefreshQueue(async (context) => {
+    activeReads += 1;
+    maxActiveReads = Math.max(maxActiveReads, activeReads);
+    const read = deferred<RefreshTestSnapshot>();
+    reads.push(read);
+    try {
+      const snapshot = await read.promise;
+      if (!context.isCurrent()) return;
+      reconcileById(visible.domains, snapshot.domains);
+      reconcileById(visible.todos, snapshot.todos);
+      commitCount += 1;
+    } finally {
+      activeReads -= 1;
+    }
+  });
+
+  const completion = queue.request();
+  await waitFor(() => reads.length === 1, 'first Todo board snapshot read');
+  assert.equal(queue.isRunning(), true);
+  assert.deepEqual(visible.domains, [{ id: 'domain-1', title: 'Visible domain' }]);
+  assert.deepEqual(visible.todos, [{ id: 'todo-1', title: 'Visible Todo' }]);
+
+  void queue.request();
+  void queue.request();
+  void queue.request();
+  assert.equal(reads.length, 1);
+  reads[0].resolve({
+    domains: [{ id: 'domain-1', title: 'Stale domain' }],
+    todos: [{ id: 'todo-1', title: 'Stale Todo' }],
+  });
+  await waitFor(() => reads.length === 2, 'coalesced trailing Todo board snapshot read');
+  assert.equal(commitCount, 0);
+  assert.strictEqual(visible.domains[0], originalDomain);
+  assert.strictEqual(visible.todos[0], originalTodo);
+  assert.equal(originalDomain.title, 'Visible domain');
+  assert.equal(originalTodo.title, 'Visible Todo');
+
+  reads[1].resolve({
+    domains: [
+      { id: 'domain-1', title: 'Latest domain' },
+      { id: 'domain-2', title: 'New domain' },
+    ],
+    todos: [{ id: 'todo-1', title: 'Latest Todo' }],
+  });
+  await completion;
+  assert.equal(queue.isRunning(), false);
+  assert.equal(reads.length, 2);
+  assert.equal(maxActiveReads, 1);
+  assert.equal(commitCount, 1);
+  assert.strictEqual(visible.domains[0], originalDomain);
+  assert.strictEqual(visible.todos[0], originalTodo);
+  assert.equal(originalDomain.title, 'Latest domain');
+  assert.equal(originalTodo.title, 'Latest Todo');
+  assert.deepEqual(visible.domains.map((domain) => domain.id), ['domain-1', 'domain-2']);
+});
+
+test('Todo refresh queue does not lose an invalidation at the drain completion boundary', { concurrency: false }, async () => {
+  const firstGate = deferred<void>();
+  let firstRunPromise: Promise<void> | null = null;
+  let runCount = 0;
+  const queue = createTodoRefreshQueue(() => {
+    runCount += 1;
+    if (runCount !== 1) return Promise.resolve();
+    firstRunPromise = firstGate.promise.then(() => undefined);
+    return firstRunPromise;
+  });
+
+  const completion = queue.request();
+  await waitFor(() => firstRunPromise !== null, 'first boundary Todo refresh run');
+  const boundaryRun = firstRunPromise as Promise<void> | null;
+  assert(boundaryRun);
+  void boundaryRun.then(() => {
+    void queue.request();
+  });
+  firstGate.resolve();
+  await completion;
+  await waitFor(() => runCount === 2, 'refresh requested at drain completion boundary');
+  assert.equal(queue.isRunning(), false);
+  assert.equal(runCount, 2);
+});
+
+test('Todo local mutation invalidation is idle-safe and fences one active stale snapshot', { concurrency: false }, async () => {
+  const reads: Array<Deferred<void>> = [];
+  const currentRuns: boolean[] = [];
+  let activeReads = 0;
+  let maxActiveReads = 0;
+  const queue = createTodoRefreshQueue(async (context) => {
+    activeReads += 1;
+    maxActiveReads = Math.max(maxActiveReads, activeReads);
+    const read = deferred<void>();
+    reads.push(read);
+    try {
+      await read.promise;
+      currentRuns.push(context.isCurrent());
+    } finally {
+      activeReads -= 1;
+    }
+  });
+
+  queue.invalidateIfRunning();
+  assert.equal(queue.isRunning(), false);
+  assert.equal(reads.length, 0);
+
+  const completion = queue.request();
+  await waitFor(() => reads.length === 1, 'active Todo refresh before local mutation');
+  queue.invalidateIfRunning();
+  queue.invalidateIfRunning();
+  queue.invalidateIfRunning();
+  reads[0].resolve();
+  await waitFor(() => reads.length === 2, 'local-mutation trailing Todo refresh');
+  assert.deepEqual(currentRuns, [false]);
+  reads[1].resolve();
+  await completion;
+  assert.deepEqual(currentRuns, [false, true]);
+  assert.equal(reads.length, 2);
+  assert.equal(maxActiveReads, 1);
+  assert.equal(queue.isRunning(), false);
+});
+
+test('Todo detail reads reject A/B reordering and full-refresh invalidation', { concurrency: false }, () => {
+  const fence = createTodoDetailReadFence();
+  const selectA = fence.begin();
+  const selectB = fence.begin();
+  assert.equal(fence.isCurrent(selectA), false);
+  assert.equal(fence.isCurrent(selectB), true);
+
+  fence.invalidate();
+  assert.equal(fence.isCurrent(selectB), false);
+  const fullSnapshot = fence.begin();
+  assert.equal(fence.isCurrent(fullSnapshot), true);
+});
+
+test('idle same-origin board invalidation does not cancel an independent Todo detail read', { concurrency: false }, () => {
+  const detailFence = createTodoDetailReadFence();
+  const detailRead = detailFence.begin();
+  const boardQueue = createTodoRefreshQueue(async () => undefined);
+  boardQueue.invalidateIfRunning();
+  assert.equal(boardQueue.isRunning(), false);
+  assert.equal(detailFence.isCurrent(detailRead), true);
+});
+
+test('Todo Step editor accepts remote titles except for the active draft', { concurrency: false }, () => {
+  const editingTexts: Record<string, string> = {
+    'step-active': 'Local draft',
+    'step-idle': 'Old title',
+    'step-deleted': 'Deleted title',
+  };
+  const active = reconcileSubTodoEditingTexts(editingTexts, {
+    subTodos: [
+      { id: 'step-active', title: 'Remote active title' },
+      { id: 'step-idle', title: 'Remote idle title' },
+    ],
+    activeSubTodoId: 'step-active',
+  });
+  assert.equal(active, 'step-active');
+  assert.deepEqual(editingTexts, {
+    'step-active': 'Local draft',
+    'step-idle': 'Remote idle title',
+  });
+
+  const removedActive = reconcileSubTodoEditingTexts(editingTexts, {
+    subTodos: [{ id: 'step-idle', title: 'Newest idle title' }],
+    activeSubTodoId: active,
+  });
+  assert.equal(removedActive, null);
+  assert.deepEqual(editingTexts, { 'step-idle': 'Newest idle title' });
+});
+
+test('Todo refresh failure retains the last valid visible snapshot', { concurrency: false }, async () => {
+  const visible: RefreshTestSnapshot = {
+    domains: [{ id: 'domain-1', title: 'Last valid domain' }],
+    todos: [{ id: 'todo-1', title: 'Last valid Todo' }],
+  };
+  const failure = deferred<RefreshTestSnapshot>();
+  const queue = createTodoRefreshQueue(async (context) => {
+    const snapshot = await failure.promise;
+    if (!context.isCurrent()) return;
+    reconcileById(visible.domains, snapshot.domains);
+    reconcileById(visible.todos, snapshot.todos);
+  });
+
+  const completion = queue.request();
+  failure.reject(new Error('injected Todo snapshot read failure'));
+  await assert.rejects(completion, /injected Todo snapshot read failure/);
+  assert.equal(queue.isRunning(), false);
+  assert.deepEqual(visible, {
+    domains: [{ id: 'domain-1', title: 'Last valid domain' }],
+    todos: [{ id: 'todo-1', title: 'Last valid Todo' }],
+  });
+});
+
+test('Todo store reads a complete snapshot before one guarded live-state commit', { concurrency: false }, () => {
+  const storeSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/store/todo.store.ts'),
+    'utf8',
+  );
+  const requestRefresh = storeSource.match(
+    /  async requestRefresh\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  async loadAll)/,
+  );
+  const readSnapshot = storeSource.match(
+    /  private async _readBoardSnapshot\(\): Promise<TodoBoardSnapshot> \{[\s\S]*?\n  \}(?=\n\n  private _applyBoardSnapshot)/,
+  );
+  const applySnapshot = storeSource.match(
+    /  private _applyBoardSnapshot\(snapshot: TodoBoardSnapshot\): void \{[\s\S]*?\n  \}(?=\n\n  private _reconcileTodoMap)/,
+  );
+
+  assert.ok(requestRefresh, 'Todo store must expose the unified refresh queue entry point');
+  assert.ok(readSnapshot, 'Todo store must isolate snapshot reads from live state');
+  assert.ok(applySnapshot, 'Todo store must have one snapshot commit boundary');
+  assert.match(
+    requestRefresh[0],
+    /const snapshot = await this\._readBoardSnapshot\(\);\n\s+if \(context\.isCurrent\(\)\) this\._applyBoardSnapshot\(snapshot\);/,
+  );
+  for (const field of [
+    'domainList',
+    'archivedDomainList',
+    'todosByDomain',
+    'completedTodosByDomain',
+    'subTodos',
+    'subTodoCounts',
+  ]) {
+    assert.doesNotMatch(
+      readSnapshot[0],
+      new RegExp(`this\\.${field}`),
+      `snapshot read must not touch live ${field}`,
+    );
+  }
+  assert.doesNotMatch(readSnapshot[0], /this\.(loadTodosForDomain|loadSubTodos)\(/);
+  assert.match(applySnapshot[0], /reconcileById\(this\.domainList, snapshot\.domains/);
+  assert.match(applySnapshot[0], /this\._reconcileTodoMap\(this\.todosByDomain/);
+  assert.match(applySnapshot[0], /this\._reconcileTodoMap\(\n\s+this\.completedTodosByDomain/);
+  assert.match(requestRefresh[0], /this\._detailReadFence\.invalidate\(\)/);
+  assert.match(readSnapshot[0], /this\._detailReadFence\.begin\(\)/);
+  assert.match(applySnapshot[0], /this\._detailReadFence\.isCurrent\(snapshot\.selectedSubTodos\.detailGeneration\)/);
+
+  const restoreDomain = storeSource.match(
+    /  async restoreDomain\(id: string\): Promise<boolean> \{[\s\S]*?\n  \}(?=\n\n  async saveDomainOrder)/,
+  );
+  const moveTodo = storeSource.match(
+    /  async moveTodoToDomain\([\s\S]*?\n  \}(?=\n\n  async saveTodoOrder)/,
+  );
+  const menuSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/components/MenuBar/MenuBar.vue'),
+    'utf8',
+  );
+  const openArchived = menuSource.match(
+    /const handleOpenArchivedDomains = async \(\) => \{[\s\S]*?\n\};(?=\n\nconst handleToggleShowCompleted)/,
+  );
+  assert.ok(restoreDomain, 'Domain restore must finish through the atomic board refresh queue');
+  assert.ok(moveTodo, 'Todo move must finish through the atomic board refresh queue');
+  assert.ok(openArchived, 'Archived Domain opening must use the atomic board refresh queue');
+  assert.match(restoreDomain[0], /await this\.requestRefresh\(\)/);
+  assert.doesNotMatch(restoreDomain[0], /catch \(/);
+  assert.equal(moveTodo[0].match(/await this\.requestRefresh\(\)/g)?.length, 1);
+  assert.match(openArchived[0], /await todoStore\.requestRefresh\(\)/);
+  assert.doesNotMatch(storeSource, /async (loadTodosForDomain|loadArchivedDomains)\(/);
+  assert.doesNotMatch(storeSource, /async (loadSubTodos|refreshSubTodoCounts)\(/);
+  assert.doesNotMatch(menuSource, /todoStore\.loadArchivedDomains\(\)/);
+  const invalidateActiveRefresh = storeSource.match(
+    /  invalidateActiveRefresh\(\): void \{[\s\S]*?\n  \}/,
+  );
+  assert.ok(invalidateActiveRefresh);
+  assert.doesNotMatch(invalidateActiveRefresh[0], /_detailReadFence/);
+  assert.match(invalidateActiveRefresh[0], /_refreshQueue\?\.invalidateIfRunning\(\)/);
+
+  const selectedDetailCommit = storeSource.match(
+    /  private async _readAndCommitSelectedSubTodos\([\s\S]*?\n  \}(?=\n\n  async copyTodoTitle)/,
+  );
+  assert.ok(selectedDetailCommit, 'selected Todo Step reads must have a generation and identity fence');
+  assert.match(selectedDetailCommit[0], /this\._detailReadFence\.isCurrent\(detailGeneration\)/);
+  assert.match(selectedDetailCommit[0], /this\.selectedTodo\?\.id !== todoId/);
+  assert.match(selectedDetailCommit[0], /reconcileById\(this\.subTodos, subTodos\)/);
+  assert.match(
+    storeSource,
+    /if \(this\.selectedTodo\?\.id !== todo\.id\) reconcileById\(this\.subTodos, \[\]\);/,
+  );
+
+  for (const methodName of [
+    'createSubTodo',
+    'toggleSubTodoStatus',
+    'updateSubTodoTitle',
+    'deleteSubTodo',
+  ]) {
+    const method = storeSource.match(
+      new RegExp(`  async ${methodName}\\([\\s\\S]*?\\n  \\}(?=\\n\\n  (?:async|private))`),
+    );
+    assert.ok(method, `${methodName} must exist`);
+    assert.match(method[0], /await this\.requestRefresh\(\)/);
+    assert.doesNotMatch(method[0], /subTodoCounts\[/);
+  }
+
+  const detailSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/components/TodoDetail/TodoDetail.vue'),
+    'utf8',
+  );
+  assert.match(detailSource, /todoStore\.subTodos\.map\(\(subTodo\) => \(\{/);
+  assert.match(detailSource, /reconcileSubTodoEditingTexts\(subTodoEditingTexts/);
+  assert.ok(
+    detailSource.indexOf('const activeSubTodoId') < detailSource.indexOf('watch(() => todoStore.subTodos.map'),
+    'active Step draft state must exist before the immediate projection watch',
+  );
+});
+
+test('Todo snapshot reconciliation preserves stable Domain and Todo object identity', { concurrency: false }, () => {
+  const domain: RefreshTestRow = { id: 'domain-1', title: 'Old domain' };
+  const activeTodo: RefreshTestRow = { id: 'todo-1', title: 'Old Todo' };
+  const domains = [domain];
+  const activeTodos = [activeTodo];
+  const completedTodos: RefreshTestRow[] = [];
+  const existingTodos = new Map([[activeTodo.id, activeTodo]]);
+
+  assert.strictEqual(reconcileById(domains, [
+    { id: 'domain-1', title: 'Updated domain' },
+  ]), domains);
+  reconcileById(activeTodos, [], existingTodos);
+  reconcileById(completedTodos, [
+    { id: 'todo-1', title: 'Completed Todo' },
+  ], existingTodos);
+
+  assert.strictEqual(domains[0], domain);
+  assert.equal(domain.title, 'Updated domain');
+  assert.deepEqual(activeTodos, []);
+  assert.strictEqual(completedTodos[0], activeTodo);
+  assert.equal(activeTodo.title, 'Completed Todo');
+});
+
+test('Todo data-update routing ignores only the matching valid renderer origin', { concurrency: false }, () => {
+  const rendererA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rendererB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+  assert.equal(shouldRefreshFromDataUpdated({ originRendererId: rendererA }, rendererA), false);
+  assert.equal(shouldRefreshFromDataUpdated({ originRendererId: rendererA }, rendererB), true);
+  assert.equal(shouldRefreshFromDataUpdated({ originRendererId: rendererB }, rendererA), true);
+  assert.equal(shouldRefreshFromDataUpdated({ originRendererId: null }, rendererA), true);
+  assert.equal(shouldRefreshFromDataUpdated({}, rendererA), true);
+  assert.equal(shouldRefreshFromDataUpdated(undefined, rendererA), true);
+  assert.equal(shouldRefreshFromDataUpdated({ originRendererId: '' }, rendererA), true);
+  assert.equal(shouldRefreshFromDataUpdated({ originRendererId: 1 }, rendererA), true);
+  assert.equal(shouldRefreshFromDataUpdated({ originRendererId: rendererA }, 'invalid-own-origin'), true);
+});
+
+test('Todo renderer keeps one preload-lifetime origin across mutation and subscriber routing', { concurrency: false }, () => {
+  const preloadSource = originalFs.readFileSync(
+    resolve('src/preload/todo/todo.preload.ts'),
+    'utf8',
+  );
+  const mutationEmitterSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/emitter/todoMutation.emitter.ts'),
+    'utf8',
+  );
+  const subscriberSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/xpc/update.subscriber.ts'),
+    'utf8',
+  );
+
+  assert.match(preloadSource, /originRendererId: randomUUID\(\)/);
+  assert.match(
+    mutationEmitterSource,
+    /originRendererId: todoEnv\.originRendererId,\n\s+params,/,
+  );
+  assert.match(
+    subscriberSource,
+    /shouldRefreshFromDataUpdated\(payload\.params, todoEnv\.originRendererId\)/,
+  );
+  assert.match(
+    subscriberSource,
+    /if \(!shouldRefreshFromDataUpdated[\s\S]*?todoStore\.invalidateActiveRefresh\(\);[\s\S]*?return;/,
+  );
+  assert.match(subscriberSource, /todoStore\.requestRefresh\(\)/);
+});
+
+test('Todo renderer mutation handler validates and unwraps the raw XPC envelope', { concurrency: false }, async () => {
+  const rendererA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const mutableSession = todoistSyncSession as unknown as {
+    getRepositoryAsync(): Promise<TodoistSyncRepository>;
+  };
+  const originalGetRepositoryAsync = mutableSession.getRepositoryAsync;
+  const calls: Array<{
+    params: { title?: string; description?: string };
+    context: { originRendererId: string | null } | undefined;
+  }> = [];
+  const repository = {
+    createDomain: async (
+      params: { title?: string; description?: string },
+      context?: { originRendererId: string | null },
+    ) => {
+      calls.push({ params, context });
+      return undefined;
+    },
+  } as unknown as TodoistSyncRepository;
+  mutableSession.getRepositoryAsync = async () => repository;
+
+  try {
+    await assert.rejects(
+      todoistSyncDomainHandler.create(null as never),
+      /renderer mutation request is invalid/,
+    );
+    await assert.rejects(
+      todoistSyncDomainHandler.create({
+        originRendererId: 'invalid-origin',
+        params: { title: 'Rejected' },
+      } as never),
+      /renderer mutation origin is invalid/,
+    );
+    await assert.rejects(
+      todoistSyncDomainHandler.create({ originRendererId: rendererA } as never),
+      /renderer mutation params are missing/,
+    );
+    await todoistSyncDomainHandler.create({
+      originRendererId: rendererA,
+      params: { title: 'Accepted', description: 'Exact params' },
+    });
+    assert.deepEqual(calls, [{
+      params: { title: 'Accepted', description: 'Exact params' },
+      context: { originRendererId: rendererA },
+    }]);
+  } finally {
+    mutableSession.getRepositoryAsync = originalGetRepositoryAsync;
+  }
+});
+
+test('Todo repository broadcasts local origin once and never leaks it into remote apply', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todo-origin-routing');
+  const rendererA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  try {
+    globalThis.__todoistSyncBroadcasts = [];
+    const localDomain = await runtime.repository.createDomain(
+      { title: 'Renderer A domain' },
+      { originRendererId: rendererA },
+    );
+    assert(localDomain);
+    assert.deepEqual(globalThis.__todoistSyncBroadcasts, [{
+      event: 'todo/data_updated',
+      payload: { originRendererId: rendererA },
+    }]);
+
+    globalThis.__todoistSyncBroadcasts = [];
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'remote-origin-does-not-leak',
+      domains: [domainResource('1', 'Remote domain')],
+    }), null);
+    assert.deepEqual(globalThis.__todoistSyncBroadcasts, [{
+      event: 'todo/data_updated',
+      payload: { originRendererId: null },
+    }]);
+  } finally {
+    globalThis.__todoistSyncBroadcasts = undefined;
+    closeRuntime(runtime);
   }
 });
 

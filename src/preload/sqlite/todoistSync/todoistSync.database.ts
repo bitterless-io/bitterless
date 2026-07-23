@@ -1,3 +1,4 @@
+// Runtime owner: the hidden Core SQLite preload process.
 import Database from 'better-sqlite3-multiple-ciphers';
 import { chmodSync, mkdirSync } from 'fs';
 import { basename, dirname, join, normalize } from 'path';

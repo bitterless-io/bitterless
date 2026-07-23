@@ -5,6 +5,8 @@ import type { TodoistSyncClockCheckRequested } from '@shared/todoistSync/todoist
 import { todoistSyncStore } from '../store/todoistSync.store';
 import { todoAgentSkillStore } from '../store/todoAgentSkill.store';
 import { TODO_AGENT_SKILL_VERSION_UPDATED_EVENT } from '@shared/mcp/todoAgentSkillVersion.shared';
+import { todoEnv } from '../contextBridge/todoEnv.bridge';
+import { shouldRefreshFromDataUpdated } from '../store/todoRefresh.service';
 
 const observeSubscriberOperation = (label: string, operation: Promise<unknown>): void => {
   void operation.catch((error) => {
@@ -13,14 +15,18 @@ const observeSubscriberOperation = (label: string, operation: Promise<unknown>):
 };
 
 export const initTodoSubscriber = () => {
-  xpcRenderer.subscribe('todo/data_updated', () => {
-    observeSubscriberOperation('data refresh', todoStore.loadAll());
+  xpcRenderer.subscribe('todo/data_updated', (payload) => {
+    if (!shouldRefreshFromDataUpdated(payload.params, todoEnv.originRendererId)) {
+      todoStore.invalidateActiveRefresh();
+      return;
+    }
+    observeSubscriberOperation('data refresh', todoStore.requestRefresh());
   });
 
   xpcRenderer.subscribe('todo/setting_updated', () => {
     observeSubscriberOperation('setting refresh', (async () => {
       await todoSettingStore.load();
-      await todoStore.loadAll();
+      await todoStore.requestRefresh();
     })());
   });
 

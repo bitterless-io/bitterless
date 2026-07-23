@@ -82,6 +82,12 @@ design document.
 
 ## Issues
 
+- [Todo SQLCipher owned by Main](issues/todo-sqlite-owned-by-main-process.md) - active: move the
+  complete synchronized Todo runtime into the Core SQLite preload and leave Main as an XPC/OS
+  capability boundary only.
+- [Todo Domain refresh flicker](issues/todo-domain-refresh-flicker.md) - fixed; owner verification pending:
+  atomic snapshot reconciliation and origin-aware broadcasts keep synchronized updates from
+  emptying and rebuilding every visible column.
 - [macOS DMG notarization upload timeout](issues/macos-dmg-notarization-upload-timeout.md) - active:
   restore Apple's default accelerated upload after the direct regional S3 workaround failed sooner.
 - [Todo MCP empty-date rejection and missing Step CRUD](issues/todo-mcp-empty-date-and-step-crud-gap.md) - fixed:

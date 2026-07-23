@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron';
-import { XpcMainHandler, xpcMain } from 'electron-xpc/main';
+import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import type { AuthInvalidationPayload } from '@shared/auth/auth.type';
 import { connectorWindowHelper } from '@main/windows/connectorWindow.helper';
 import { llamaWindowHelper } from '@main/windows/llamaWindow.helper';
@@ -15,7 +15,10 @@ import {
 } from './eyesOnAgents.handler';
 import { coinWindowHandler } from './coinWindow.handler';
 import { maestroWindowHandler } from './maestroWindow.handler';
-import { todoistSyncSession } from '@main/todoistSync/todoistSync.session';
+import type { TodoistSyncSessionApi } from '@shared/todoistSync/todoistSync.type';
+
+const todoistSyncSessionClient =
+  createXpcMainEmitter<TodoistSyncSessionApi>('TodoistSyncSessionHandler');
 
 class AuthHandler extends XpcMainHandler {
   private invalidating = false;
@@ -122,7 +125,7 @@ class AuthHandler extends XpcMainHandler {
   }
 
   private async _closeSecondaryWindows(): Promise<void> {
-    await todoistSyncSession.deactivate().catch((err) => {
+    await todoistSyncSessionClient.deactivate().catch((err) => {
       console.warn('[AuthHandler] Failed to deactivate Todo sync:', err);
     });
     await suspendEyesOnAgentsForAuth().catch((err) => {

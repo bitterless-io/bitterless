@@ -1,6 +1,6 @@
+// Runtime owner: the hidden Core SQLite preload process.
 import { randomBytes } from 'crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { safeStorage } from 'electron';
 import type { TodoistSyncDatabasePaths } from './todoistSync.database';
 
 export interface TodoistSyncPasswordProtection {

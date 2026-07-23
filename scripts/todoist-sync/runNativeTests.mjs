@@ -43,6 +43,9 @@ const runtimeTripwires = {
                 throw new Error('[todoist sync test] app.getPath must be injected');
               }
             };
+            export const shell = {
+              openExternal: async () => undefined
+            };
           `,
         };
       }
@@ -60,6 +63,7 @@ const runtimeTripwires = {
       }
       return {
         contents: `
+          export class XpcMainHandler {}
           export const xpcMain = {
             broadcast: (event, payload) => {
               globalThis.__todoistSyncBroadcasts ??= [];

@@ -32,6 +32,7 @@
         :placeholder="i18nHelper.todo.domainDescriptionPlaceholder"
         rows="2"
         maxlength="500"
+        @focus="onDescriptionFocus"
         @blur="onDescriptionBlur"
         @click.stop
       />
@@ -124,6 +125,7 @@ const newTodoTitle = ref('');
 const editing = ref(false);
 const _editingText = ref('');
 const _descriptionText = ref(props.domain.description ?? '');
+const descriptionEditing = ref(false);
 const titleInputRef = ref<HTMLInputElement | null>(null);
 const sizerRef = ref<HTMLSpanElement | null>(null);
 const inputWidth = ref(40);
@@ -151,6 +153,7 @@ const completedTodoList = computed(() => {
 });
 
 watch(() => props.domain.description, (description) => {
+  if (descriptionEditing.value) return;
   _descriptionText.value = description ?? '';
 });
 
@@ -188,13 +191,18 @@ const onTitleBlur = () => {
   editing.value = false;
 };
 
-const onDescriptionBlur = () => {
+const onDescriptionFocus = (): void => {
+  descriptionEditing.value = true;
+};
+
+const onDescriptionBlur = (): void => {
   const value = _descriptionText.value.trim();
   if (value !== (props.domain.description ?? '')) {
     void observeTodoMutation(
       () => todoStore.updateDomainDescription(props.domain.id, value),
     );
   }
+  descriptionEditing.value = false;
 };
 
 const onHeaderContextMenu = (e: MouseEvent) => {

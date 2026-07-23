@@ -20,6 +20,13 @@ import {
   requireVoidResult,
   type UnknownRecord,
 } from './todoResult.guard';
+import {
+  createTodoDetailReadFence,
+  createTodoRefreshQueue,
+  reconcileById,
+  type TodoDetailReadFence,
+  type TodoRefreshQueue,
+} from './todoRefresh.service';
 
 export interface DomainItem {
   id: string;
@@ -69,6 +76,25 @@ export interface SubTodoItem {
   position: number;
   created_at: number;
   updated_at: number;
+}
+
+interface DomainTodoSnapshot {
+  active: TodoItem[];
+  completed: TodoItem[];
+  counts: Record<string, { total: number; done: number }>;
+}
+
+interface TodoBoardSnapshot {
+  domains: DomainItem[];
+  archivedDomains: DomainItem[];
+  todosByDomain: Record<string, TodoItem[]>;
+  completedTodosByDomain: Record<string, TodoItem[]>;
+  subTodoCounts: Record<string, { total: number; done: number }>;
+  selectedSubTodos: {
+    todoId: string;
+    detailGeneration: number;
+    items: SubTodoItem[];
+  } | null;
 }
 
 const isDomainItem = (value: unknown): value is DomainItem => {
@@ -133,6 +159,8 @@ class TodoState {
   loading = false;
   currentTime: Dayjs = dayjs();
   private _timerStarted = false;
+  private _refreshQueue: TodoRefreshQueue | null = null;
+  private readonly _detailReadFence: TodoDetailReadFence = createTodoDetailReadFence();
 
   constructor() {
     // this.startCurrentTimeLoop();
@@ -155,58 +183,164 @@ class TodoState {
   detailVisible = false;
   newlyCreatedTodoId: string | null = null;
 
-  async loadAll(): Promise<void> {
-    this.loading = true;
-    const selectedTodoId = this.selectedTodo?.id ?? null;
-    try {
-      const allDomains = requireArray(await domainEmitter.getAll(), 'domain list', isDomainItem);
-      const domains = allDomains.filter((domain) => domain.is_deleted === 0 && domain.archived === 0);
-      this.archivedDomainList = allDomains
-        .filter((domain) => domain.is_deleted === 0 && domain.archived === 1)
-        .sort((a, b) => b.updated_at - a.updated_at);
-      const domainOrder = requireStringArray(
-        await todoEmitter.getSortOrder({ key: 'domain' }),
-        'domain sort order',
-      );
-
-      // Sort domains by sort order, unordered ones at end by created_at ASC
-      if (domainOrder.length > 0) {
-        const orderMap = new Map<string, number>();
-        for (let i = 0; i < domainOrder.length; i++) {
-          orderMap.set(domainOrder[i], i);
-        }
-        domains.sort((a, b) => {
-          const aIdx = orderMap.get(a.id);
-          const bIdx = orderMap.get(b.id);
-          if (aIdx !== undefined && bIdx !== undefined) return aIdx - bIdx;
-          if (aIdx !== undefined) return -1;
-          if (bIdx !== undefined) return 1;
-          return a.created_at - b.created_at;
-        });
-      }
-
-      this.domainList = domains;
-      this.todosByDomain = {};
-      this.completedTodosByDomain = {};
-      this.subTodoCounts = {};
-
-      // Load todos for each domain
-      for (const domain of domains) {
-        await this.loadTodosForDomain(domain.id);
-      }
-
-      if (selectedTodoId) {
-        const refreshedTodo = this._findLoadedTodo(selectedTodoId);
-        if (!refreshedTodo) {
-          this.closeDetail();
-        } else {
-          this.selectedTodo = refreshedTodo;
-          if (this.detailVisible) await this.loadSubTodos(refreshedTodo.id);
-        }
-      }
-    } finally {
-      this.loading = false;
+  async requestRefresh(): Promise<void> {
+    this._detailReadFence.invalidate();
+    if (!this._refreshQueue) {
+      this._refreshQueue = createTodoRefreshQueue(async (context) => {
+        const snapshot = await this._readBoardSnapshot();
+        if (context.isCurrent()) this._applyBoardSnapshot(snapshot);
+      });
     }
+    const queue = this._refreshQueue;
+    this.loading = true;
+    try {
+      await queue.request();
+    } finally {
+      this.loading = queue.isRunning();
+    }
+  }
+
+  async loadAll(): Promise<void> {
+    await this.requestRefresh();
+  }
+
+  invalidateActiveRefresh(): void {
+    this._refreshQueue?.invalidateIfRunning();
+  }
+
+  private async _readBoardSnapshot(): Promise<TodoBoardSnapshot> {
+    const showCompleted = todoSettingStore.showCompleted;
+    const selectedTodoId = this.detailVisible ? this.selectedTodo?.id ?? null : null;
+    const selectedDetailGeneration = selectedTodoId
+      ? this._detailReadFence.begin()
+      : this._detailReadFence.current();
+    const [allDomainsValue, domainOrderValue] = await Promise.all([
+      domainEmitter.getAll(),
+      todoEmitter.getSortOrder({ key: 'domain' }),
+    ]);
+    const allDomains = requireArray(allDomainsValue, 'domain list', isDomainItem);
+    const domainOrder = requireStringArray(domainOrderValue, 'domain sort order');
+    const domains = allDomains.filter((domain) => domain.is_deleted === 0 && domain.archived === 0);
+    const archivedDomains = allDomains
+      .filter((domain) => domain.is_deleted === 0 && domain.archived === 1)
+      .sort((a, b) => b.updated_at - a.updated_at);
+    this._sortDomains(domains, domainOrder);
+
+    const domainSnapshots = await Promise.all(
+      domains.map(async (domain) => {
+        return {
+          domainId: domain.id,
+          snapshot: await this._readDomainTodoSnapshot(domain.id, showCompleted),
+        };
+      }),
+    );
+    const todosByDomain: Record<string, TodoItem[]> = {};
+    const completedTodosByDomain: Record<string, TodoItem[]> = {};
+    const subTodoCounts: Record<string, { total: number; done: number }> = {};
+    for (const entry of domainSnapshots) {
+      todosByDomain[entry.domainId] = entry.snapshot.active;
+      completedTodosByDomain[entry.domainId] = entry.snapshot.completed;
+      Object.assign(subTodoCounts, entry.snapshot.counts);
+    }
+
+    const selectedStillExists = selectedTodoId !== null && domainSnapshots.some((entry) => (
+      entry.snapshot.active.some((todo) => todo.id === selectedTodoId) ||
+      entry.snapshot.completed.some((todo) => todo.id === selectedTodoId)
+    ));
+    const selectedSubTodos = selectedStillExists && selectedTodoId
+      ? {
+        todoId: selectedTodoId,
+        detailGeneration: selectedDetailGeneration,
+        items: await this._loadSortedSubTodos(selectedTodoId),
+      }
+      : null;
+
+    return {
+      domains,
+      archivedDomains,
+      todosByDomain,
+      completedTodosByDomain,
+      subTodoCounts,
+      selectedSubTodos,
+    };
+  }
+
+  private _applyBoardSnapshot(snapshot: TodoBoardSnapshot): void {
+    const existingDomains = new Map<string, DomainItem>();
+    for (const domain of this.domainList) existingDomains.set(domain.id, domain);
+    for (const domain of this.archivedDomainList) existingDomains.set(domain.id, domain);
+    reconcileById(this.domainList, snapshot.domains, existingDomains);
+    reconcileById(this.archivedDomainList, snapshot.archivedDomains, existingDomains);
+
+    const existingTodos = new Map<string, TodoItem>();
+    for (const list of Object.values(this.todosByDomain)) {
+      for (const todo of list) existingTodos.set(todo.id, todo);
+    }
+    for (const list of Object.values(this.completedTodosByDomain)) {
+      for (const todo of list) existingTodos.set(todo.id, todo);
+    }
+    if (this.selectedTodo) existingTodos.set(this.selectedTodo.id, this.selectedTodo);
+    this._reconcileTodoMap(this.todosByDomain, snapshot.todosByDomain, existingTodos);
+    this._reconcileTodoMap(
+      this.completedTodosByDomain,
+      snapshot.completedTodosByDomain,
+      existingTodos,
+    );
+
+    for (const todoId of Object.keys(this.subTodoCounts)) {
+      if (!(todoId in snapshot.subTodoCounts)) delete this.subTodoCounts[todoId];
+    }
+    for (const [todoId, counts] of Object.entries(snapshot.subTodoCounts)) {
+      const current = this.subTodoCounts[todoId];
+      if (current) Object.assign(current, counts);
+      else this.subTodoCounts[todoId] = counts;
+    }
+
+    const selectedTodoId = this.selectedTodo?.id ?? null;
+    if (selectedTodoId) {
+      const refreshedTodo = this._findLoadedTodo(selectedTodoId);
+      if (!refreshedTodo) {
+        this.closeDetail();
+      } else {
+        this.selectedTodo = refreshedTodo;
+        if (
+          this.detailVisible &&
+          snapshot.selectedSubTodos?.todoId === selectedTodoId &&
+          this._detailReadFence.isCurrent(snapshot.selectedSubTodos.detailGeneration)
+        ) {
+          reconcileById(this.subTodos, snapshot.selectedSubTodos.items);
+        }
+      }
+    }
+  }
+
+  private _reconcileTodoMap(
+    target: Record<string, TodoItem[]>,
+    incoming: Record<string, TodoItem[]>,
+    existingTodos: ReadonlyMap<string, TodoItem>,
+  ): void {
+    for (const domainId of Object.keys(target)) {
+      if (!(domainId in incoming)) delete target[domainId];
+    }
+    for (const [domainId, todos] of Object.entries(incoming)) {
+      const targetList = target[domainId] ?? [];
+      if (!target[domainId]) target[domainId] = targetList;
+      reconcileById(targetList, todos, existingTodos);
+    }
+  }
+
+  private _sortDomains(domains: DomainItem[], domainOrder: readonly string[]): void {
+    if (domainOrder.length === 0) return;
+    const orderMap = new Map<string, number>();
+    for (let i = 0; i < domainOrder.length; i++) orderMap.set(domainOrder[i], i);
+    domains.sort((a, b) => {
+      const aIdx = orderMap.get(a.id);
+      const bIdx = orderMap.get(b.id);
+      if (aIdx !== undefined && bIdx !== undefined) return aIdx - bIdx;
+      if (aIdx !== undefined) return -1;
+      if (bIdx !== undefined) return 1;
+      return a.created_at - b.created_at;
+    });
   }
 
   private _findLoadedTodo(todoId: string): TodoItem | null {
@@ -221,15 +355,11 @@ class TodoState {
     return null;
   }
 
-  async loadArchivedDomains(): Promise<void> {
-    const domains = requireArray(await domainEmitter.getAll(), 'archived domain list', isDomainItem);
-    this.archivedDomainList = domains
-      .filter((domain) => domain.is_deleted === 0 && domain.archived === 1)
-      .sort((a, b) => b.updated_at - a.updated_at);
-  }
-
-  async loadTodosForDomain(domainId: string): Promise<void> {
-    const statusFilter = todoSettingStore.showCompleted ? undefined : 0;
+  private async _readDomainTodoSnapshot(
+    domainId: string,
+    showCompleted: boolean,
+  ): Promise<DomainTodoSnapshot> {
+    const statusFilter = showCompleted ? undefined : 0;
     const todos = requireArray(
       await todoEmitter.getByDomainId({ domainId, status: statusFilter }),
       'Todo list',
@@ -256,31 +386,28 @@ class TodoState {
       return b.created_at - a.created_at;
     };
 
-    if (todoSettingStore.showCompleted) {
-      const uncompleted = todos.filter((t) => t.status === 0);
-      const completed = todos.filter((t) => t.status === 1);
-      uncompleted.sort(sortFn);
+    let active: TodoItem[];
+    let completed: TodoItem[];
+    if (showCompleted) {
+      active = todos.filter((todo) => todo.status === 0);
+      completed = todos.filter((todo) => todo.status === 1);
+      active.sort(sortFn);
       completed.sort((a, b) => b.updated_at - a.updated_at);
-      this.todosByDomain[domainId] = uncompleted;
-      this.completedTodosByDomain[domainId] = completed;
     } else {
       todos.sort(sortFn);
-      this.todosByDomain[domainId] = todos;
-      this.completedTodosByDomain[domainId] = [];
+      active = todos;
+      completed = [];
     }
 
-    // Batch load sub-todo counts
     const todoIds = todos.map((t) => t.id);
-    if (todoIds.length > 0) {
-      const countsMap = requireSubTodoCounts(
+    const counts = todoIds.length > 0
+      ? requireSubTodoCounts(
         await subTodoEmitter.getCountsByTodoIds({ todoIds }),
         todoIds,
         'SubTodo count map',
-      );
-      for (const todo of todos) {
-        this.subTodoCounts[todo.id] = countsMap[todo.id];
-      }
-    }
+      )
+      : {};
+    return { active, completed, counts };
   }
 
   get focusedTodoList(): TodoItem[] {
@@ -325,8 +452,10 @@ class TodoState {
       Message.warning(i18nHelper.todo.domainLimitReached);
       return;
     }
-    this.domainList.push(domain);
-    this.todosByDomain[domain.id] = [];
+    const existingDomain = this.domainList.find((item) => item.id === domain.id);
+    if (existingDomain) Object.assign(existingDomain, domain);
+    else this.domainList.push(domain);
+    this.todosByDomain[domain.id] ??= [];
   }
 
   async updateDomainTitle(id: string, title: string): Promise<void> {
@@ -416,11 +545,7 @@ class TodoState {
       }
       this.todosByDomain[id] ??= [];
       this.completedTodosByDomain[id] ??= [];
-      try {
-        await this.loadTodosForDomain(id);
-      } catch (error) {
-        console.error('[todo] domain restored but its todos could not be reloaded:', error);
-      }
+      await this.requestRefresh();
     }
     return true;
   }
@@ -446,7 +571,9 @@ class TodoState {
     if (todo) {
       await this._appendToSortOrder(domainId, todo.id);
       const activeList = this.todosByDomain[domainId] ?? [];
-      activeList.push(todo);
+      const existingTodo = activeList.find((item) => item.id === todo.id);
+      if (existingTodo) Object.assign(existingTodo, todo);
+      else activeList.push(todo);
       this.todosByDomain[domainId] = activeList;
       this.newlyCreatedTodoId = todo.id;
       setTimeout(() => {
@@ -468,7 +595,13 @@ class TodoState {
         this._removeFromActiveList(result.domain_id, id);
         if (todoSettingStore.showCompleted) {
           const completedList = this.completedTodosByDomain[result.domain_id] ?? [];
-          completedList.unshift(result);
+          const existingIndex = completedList.findIndex((todo) => todo.id === result.id);
+          const completedTodo = existingIndex >= 0 ? completedList[existingIndex] : result;
+          if (existingIndex >= 0) {
+            Object.assign(completedTodo, result);
+            completedList.splice(existingIndex, 1);
+          }
+          completedList.unshift(completedTodo);
           this.completedTodosByDomain[result.domain_id] = completedList;
         }
       }
@@ -484,7 +617,9 @@ class TodoState {
       await this._appendToSortOrder(result.domain_id, id);
       this._removeFromCompletedList(result.domain_id, id);
       const activeList = this.todosByDomain[result.domain_id] ?? [];
-      activeList.push(result);
+      const existingTodo = activeList.find((todo) => todo.id === result.id);
+      if (existingTodo) Object.assign(existingTodo, result);
+      else activeList.push(result);
       this.todosByDomain[result.domain_id] = activeList;
       if (this.selectedTodo?.id === id) {
         this.selectedTodo = result;
@@ -684,8 +819,7 @@ class TodoState {
     } else {
       await this._appendToSortOrder(toDomainId, id);
     }
-    await this.loadTodosForDomain(fromDomainId);
-    await this.loadTodosForDomain(toDomainId);
+    await this.requestRefresh();
   }
 
   async saveTodoOrder(domainId: string, order: string[]): Promise<void> {
@@ -697,17 +831,22 @@ class TodoState {
   }
 
   async selectTodo(todo: TodoItem): Promise<void> {
-    this.selectedTodo = todo;
-    this.detailVisible = true;
-    await this.loadSubTodos(todo.id);
+    const detailGeneration = this._beginTodoSelection(todo);
+    if (!await this._readAndCommitSelectedSubTodos(todo.id, detailGeneration)) return;
     await nextTick();
     this.locateTodo(todo.id, todo.domain_id);
   }
 
   async selectTodoFromFocused(todo: TodoItem): Promise<void> {
+    const detailGeneration = this._beginTodoSelection(todo);
+    await this._readAndCommitSelectedSubTodos(todo.id, detailGeneration);
+  }
+
+  private _beginTodoSelection(todo: TodoItem): number {
+    if (this.selectedTodo?.id !== todo.id) reconcileById(this.subTodos, []);
     this.selectedTodo = todo;
     this.detailVisible = true;
-    await this.loadSubTodos(todo.id);
+    return this._detailReadFence.begin();
   }
 
   locateTodo(todoId: string, domainId: string): void {
@@ -728,13 +867,26 @@ class TodoState {
   }
 
   closeDetail(): void {
+    this._detailReadFence.invalidate();
     this.detailVisible = false;
     this.selectedTodo = null;
     this.subTodos = [];
   }
 
-  async loadSubTodos(todoId: string): Promise<void> {
-    this.subTodos = await this._loadSortedSubTodos(todoId);
+  private async _readAndCommitSelectedSubTodos(
+    todoId: string,
+    detailGeneration: number,
+  ): Promise<boolean> {
+    const subTodos = await this._loadSortedSubTodos(todoId);
+    if (
+      !this._detailReadFence.isCurrent(detailGeneration) ||
+      !this.detailVisible ||
+      this.selectedTodo?.id !== todoId
+    ) {
+      return false;
+    }
+    reconcileById(this.subTodos, subTodos);
+    return true;
   }
 
   async copyTodoTitle(todo: TodoItem): Promise<void> {
@@ -822,18 +974,9 @@ class TodoState {
     return subs;
   }
 
-  async refreshSubTodoCounts(todoId: string): Promise<void> {
-    const counts = await subTodoEmitter.getCountByTodoId({ todoId });
-    if (!isSubTodoCount(counts)) {
-      throw new Error('[todo] SubTodo count returned an invalid required result');
-    }
-    this.subTodoCounts[todoId] = counts;
-  }
-
   async createSubTodo(todoId: string, title: string): Promise<void> {
     requireOptionalItem(await subTodoEmitter.create({ todoId, title }), 'SubTodo create', isSubTodoItem);
-    await this.loadSubTodos(todoId);
-    await this.refreshSubTodoCounts(todoId);
+    await this.requestRefresh();
   }
 
   async toggleSubTodoStatus(id: string, options?: { wasCompleted: boolean }): Promise<void> {
@@ -842,12 +985,11 @@ class TodoState {
       'SubTodo status update',
       isSubTodoItem,
     );
-    if (result && this.selectedTodo) {
+    if (result) {
       if (!options?.wasCompleted) {
         playSuccessSound();
       }
-      await this.loadSubTodos(this.selectedTodo.id);
-      await this.refreshSubTodoCounts(this.selectedTodo.id);
+      await this.requestRefresh();
     }
   }
 
@@ -856,17 +998,12 @@ class TodoState {
       await subTodoEmitter.updateTitle({ id, title }),
       'SubTodo title update',
     );
-    if (this.selectedTodo) {
-      await this.loadSubTodos(this.selectedTodo.id);
-    }
+    await this.requestRefresh();
   }
 
   async deleteSubTodo(id: string): Promise<void> {
     requireVoidResult(await subTodoEmitter.hardDelete({ id }), 'SubTodo delete');
-    if (this.selectedTodo) {
-      await this.loadSubTodos(this.selectedTodo.id);
-      await this.refreshSubTodoCounts(this.selectedTodo.id);
-    }
+    await this.requestRefresh();
   }
 
   async saveSubTodoOrder(todoId: string, order: string[]): Promise<void> {

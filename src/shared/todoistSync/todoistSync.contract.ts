@@ -73,12 +73,14 @@ const assertNonEmptyText = (value: unknown, label: string, maximum: number): str
   return text;
 };
 
-const assertId = (value: unknown, label: string): string => {
+export const assertTodoistSyncEntityId = (value: unknown, label = 'id'): string => {
   const text = assertText(value, label, 20);
   if (!TODOIST_SYNC_ENTITY_ID_PATTERN.test(text)) throw new Error(`${label} is not a 20-digit ID`);
   if (BigInt(text) > 9223372036854775807n) throw new Error(`${label} exceeds the Snowflake range`);
   return text;
 };
+
+const assertId = assertTodoistSyncEntityId;
 
 const assertRevision = (value: unknown, label: string): string => {
   const text = assertText(value, label, 19);

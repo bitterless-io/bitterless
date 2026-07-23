@@ -1,6 +1,6 @@
+// Runtime owner: the hidden Core SQLite preload process.
 import { randomUUID } from 'crypto';
 import moment from 'moment';
-import { xpcMain } from 'electron-xpc/main';
 import type {
   McpDomainRow,
   McpSubTodoRow,
@@ -25,6 +25,10 @@ import type {
   TodoistSyncTodoResource,
 } from '@shared/todoistSync/todoistSync.type';
 import { TODOIST_SYNC_MAX_FUTURE_MS } from '@shared/todoistSync/todoistSync.contract';
+import type {
+  TodoDataUpdatedEvent,
+  TodoMutationContext,
+} from '@shared/todoistSync/todoDataUpdate.shared';
 import type {
   TodoistSyncRepositoryDatabase,
   TodoistSyncSqlExecutor,
@@ -265,7 +269,10 @@ export class TodoistSyncRepository {
     );
   }
 
-  async createDomain(params: { title?: string; description?: string }): Promise<McpDomainRow | undefined> {
+  async createDomain(
+    params: { title?: string; description?: string },
+    context?: TodoMutationContext,
+  ): Promise<McpDomainRow | undefined> {
     const title = assertText(params.title ?? 'Untitled', 'title', 512);
     const description = assertText(params.description ?? '', 'description', 10_000);
     const active = await this.db.get<{ count: number }>(
@@ -284,7 +291,7 @@ export class TodoistSyncRepository {
         ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, '0', '', NULL, 0)`,
         [id, this.customerId, title, description, position, version.now, version.now, this.deviceId, version.sequence, version.uuid],
       );
-    });
+    }, context);
     return await this.getDomainById({ id });
   }
 
@@ -311,22 +318,29 @@ export class TodoistSyncRepository {
     return row ? this.assertDomain(row) : undefined;
   }
 
-  async updateDomainTitle(params: { id: TodoEntityId; title: string }): Promise<void> {
+  async updateDomainTitle(
+    params: { id: TodoEntityId; title: string },
+    context?: TodoMutationContext,
+  ): Promise<void> {
     await this.updateDomain(params.id, {
       fields: { title: assertText(params.title, 'title', 512) },
-    });
+    }, context);
   }
 
-  async updateDomainDescription(params: { id: TodoEntityId; description: string }): Promise<void> {
+  async updateDomainDescription(
+    params: { id: TodoEntityId; description: string },
+    context?: TodoMutationContext,
+  ): Promise<void> {
     await this.updateDomain(params.id, {
       fields: { description: assertText(params.description, 'description', 10_000) },
       requireActive: true,
-    });
+    }, context);
   }
 
   private async updateDomain(
     idValue: TodoEntityId,
     params: { fields: Record<string, unknown>; requireActive?: boolean },
+    context?: TodoMutationContext,
   ): Promise<void> {
     const id = assertTodoistSyncEntityId(idValue);
     const current = await this.getProjection('todo_domain', id);
@@ -342,10 +356,13 @@ export class TodoistSyncRepository {
       if (params.requireActive && result.changes !== 1) {
         throw new Error(`[todoist sync] active domain was not found: ${id}`);
       }
-    });
+    }, context);
   }
 
-  async deleteDomain(params: { id: TodoEntityId }): Promise<void> {
+  async deleteDomain(
+    params: { id: TodoEntityId },
+    context?: TodoMutationContext,
+  ): Promise<void> {
     const id = assertTodoistSyncEntityId(params.id);
     const current = await this.getDomainById({ id });
     if (!current) return;
@@ -374,16 +391,22 @@ export class TodoistSyncRepository {
           version_client_sequence=?, version_command_uuid=? WHERE customer_id=? AND id=? AND deleted_flag=''`,
         [tombstone, version.now, version.now, this.deviceId, version.sequence, version.uuid, this.customerId, id],
       );
-    });
+    }, context);
   }
 
-  async setDomainArchived(params: { id: TodoEntityId; archived: number }): Promise<void> {
+  async setDomainArchived(
+    params: { id: TodoEntityId; archived: number },
+    context?: TodoMutationContext,
+  ): Promise<void> {
     await this.updateDomain(params.id, {
       fields: { archived: assertFlag(params.archived, 'archived') },
-    });
+    }, context);
   }
 
-  async restoreDomain(params: { id: TodoEntityId }): Promise<RestoreDomainResult> {
+  async restoreDomain(
+    params: { id: TodoEntityId },
+    context?: TodoMutationContext,
+  ): Promise<RestoreDomainResult> {
     const id = assertTodoistSyncEntityId(params.id);
     const domain = await this.getProjection('todo_domain', id) as Record<string, unknown> | null;
     if (!domain || domain.deleted_flag) return 'not_found';
@@ -393,7 +416,7 @@ export class TodoistSyncRepository {
       [this.customerId],
     );
     if (active.count >= 17) return 'limit_reached';
-    await this.updateDomain(id, { fields: { archived: 0 } });
+    await this.updateDomain(id, { fields: { archived: 0 } }, context);
     return 'restored';
   }
 
@@ -402,7 +425,7 @@ export class TodoistSyncRepository {
     title: string;
     source?: McpTodoSource;
     actor?: McpTodoEventActor;
-  }): Promise<McpTodoRow | undefined> {
+  }, context?: TodoMutationContext): Promise<McpTodoRow | undefined> {
     const domainId = assertTodoistSyncEntityId(params.domainId, 'domainId');
     const domain = await this.getDomainById({ id: domainId });
     if (!domain || domain.archived === 1) throw new Error(`Active Todo domain ${domainId} was not found`);
@@ -444,7 +467,7 @@ export class TodoistSyncRepository {
         [id, this.customerId, domainId, title, source, position, version.now, version.now, this.deviceId, version.sequence, version.uuid],
       );
       await this.insertEvent(tx, 'todo.created', id, domainId, assertActor(params.actor), { title, source });
-    });
+    }, context);
     return await this.getTodoById({ id });
   }
 
@@ -509,17 +532,20 @@ export class TodoistSyncRepository {
     important?: number;
     note?: string | null;
     actor?: McpTodoEventActor;
-  }): Promise<McpTodoRow | undefined> {
+  }, context?: TodoMutationContext): Promise<McpTodoRow | undefined> {
     const fields: Record<string, unknown> = {};
     if (params.title !== undefined) fields.title = assertText(params.title, 'title', 512);
     if (params.due_at !== undefined) fields.due_at = params.due_at === null ? null : assertInteger(params.due_at, 'due_at');
     if (params.remind_at !== undefined) fields.remind_at = params.remind_at === null ? null : assertInteger(params.remind_at, 'remind_at');
     if (params.important !== undefined) fields.important = assertFlag(params.important, 'important');
     if (params.note !== undefined) fields.note = params.note === null ? '' : assertText(params.note, 'note', 50_000);
-    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.updated');
+    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.updated', context);
   }
 
-  async updateRepeatType(params: { id: TodoEntityId; repeatType: string | null; actor?: McpTodoEventActor }): Promise<McpTodoRow | undefined> {
+  async updateRepeatType(
+    params: { id: TodoEntityId; repeatType: string | null; actor?: McpTodoEventActor },
+    context?: TodoMutationContext,
+  ): Promise<McpTodoRow | undefined> {
     if (params.repeatType !== null && !REPEAT_TYPES.has(params.repeatType)) throw new Error('repeatType is invalid');
     const todo = await this.getTodoById({ id: params.id });
     if (!todo) return undefined;
@@ -534,14 +560,20 @@ export class TodoistSyncRepository {
       if (params.repeatType === 'yearly') fields.yearly_day = due.date();
     }
     if (params.repeatType === null) Object.assign(fields, { week_day: null, monthly_day: null, yearly_day: null, repeat_interval: 1 });
-    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.updated');
+    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.updated', context);
   }
 
-  async updateRepeatInterval(params: { id: TodoEntityId; interval: number; actor?: McpTodoEventActor }): Promise<McpTodoRow | undefined> {
-    return await this.applyTodoUpdate(params.id, { repeat_interval: assertInteger(params.interval, 'interval', 1, 2147483647) }, assertActor(params.actor), 'todo.updated');
+  async updateRepeatInterval(
+    params: { id: TodoEntityId; interval: number; actor?: McpTodoEventActor },
+    context?: TodoMutationContext,
+  ): Promise<McpTodoRow | undefined> {
+    return await this.applyTodoUpdate(params.id, { repeat_interval: assertInteger(params.interval, 'interval', 1, 2147483647) }, assertActor(params.actor), 'todo.updated', context);
   }
 
-  async completeTodo(params: { id: TodoEntityId; actor?: McpTodoEventActor }): Promise<McpTodoRow | undefined> {
+  async completeTodo(
+    params: { id: TodoEntityId; actor?: McpTodoEventActor },
+    context?: TodoMutationContext,
+  ): Promise<McpTodoRow | undefined> {
     const todo = await this.getTodoById({ id: params.id });
     if (!todo) return undefined;
     const now = Date.now();
@@ -551,18 +583,24 @@ export class TodoistSyncRepository {
       Object.assign(fields, { status: 0, due_at: nextDue });
       if (todo.remind_at) Object.assign(fields, { remind_at: nextDue + (todo.remind_at - todo.due_at), last_remind_at: todo.remind_at });
     }
-    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.completed');
+    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.completed', context);
   }
 
-  async uncompleteTodo(params: { id: TodoEntityId; actor?: McpTodoEventActor }): Promise<McpTodoRow | undefined> {
-    return await this.applyTodoUpdate(params.id, { status: 0 }, assertActor(params.actor), 'todo.uncompleted');
+  async uncompleteTodo(
+    params: { id: TodoEntityId; actor?: McpTodoEventActor },
+    context?: TodoMutationContext,
+  ): Promise<McpTodoRow | undefined> {
+    return await this.applyTodoUpdate(params.id, { status: 0 }, assertActor(params.actor), 'todo.uncompleted', context);
   }
 
-  async toggleImportant(params: { id: TodoEntityId; actor?: McpTodoEventActor }): Promise<McpTodoRow | undefined> {
+  async toggleImportant(
+    params: { id: TodoEntityId; actor?: McpTodoEventActor },
+    context?: TodoMutationContext,
+  ): Promise<McpTodoRow | undefined> {
     const todo = await this.getTodoById({ id: params.id });
     if (!todo) return undefined;
     const important = todo.important === 1 ? 0 : 1;
-    return await this.applyTodoUpdate(params.id, { important }, assertActor(params.actor), important ? 'todo.starred' : 'todo.unstarred');
+    return await this.applyTodoUpdate(params.id, { important }, assertActor(params.actor), important ? 'todo.starred' : 'todo.unstarred', context);
   }
 
   private async applyTodoUpdate(
@@ -570,6 +608,7 @@ export class TodoistSyncRepository {
     fields: Record<string, unknown>,
     actor: McpTodoEventActor,
     eventType: McpTodoEventType,
+    context?: TodoMutationContext,
   ): Promise<McpTodoRow | undefined> {
     const id = assertTodoistSyncEntityId(idValue);
     const todo = await this.getTodoById({ id });
@@ -582,11 +621,19 @@ export class TodoistSyncRepository {
         [...Object.values(fields), version.now, this.deviceId, version.sequence, version.uuid, id, this.customerId],
       );
       await this.insertEvent(tx, eventType, id, todo.domain_id, actor, { title: todo.title, changedFields: Object.keys(fields) });
-    });
+    }, context);
     return await this.getTodoById({ id });
   }
 
-  async deleteTodo(idValue: TodoEntityId, actorValue?: McpTodoEventActor): Promise<boolean> {
+  async deleteTodo(
+    idValue: TodoEntityId,
+    options?: McpTodoEventActor | {
+      actor?: McpTodoEventActor;
+      context?: TodoMutationContext;
+    },
+  ): Promise<boolean> {
+    const actorValue = typeof options === 'string' ? options : options?.actor;
+    const context = typeof options === 'string' ? undefined : options?.context;
     const id = assertTodoistSyncEntityId(idValue);
     const todo = await this.getTodoById({ id });
     if (!todo) return false;
@@ -603,11 +650,14 @@ export class TodoistSyncRepository {
         [tombstone, version.now, version.now, this.deviceId, version.sequence, version.uuid, id, this.customerId],
       );
       await this.insertEvent(tx, 'todo.deleted', id, todo.domain_id, assertActor(actorValue), { title: todo.title });
-    });
+    }, context);
     return (await this.getTodoById({ id })) === undefined;
   }
 
-  async moveToDomain(params: { id: TodoEntityId; domainId: TodoEntityId; actor?: McpTodoEventActor }): Promise<McpTodoRow | undefined> {
+  async moveToDomain(
+    params: { id: TodoEntityId; domainId: TodoEntityId; actor?: McpTodoEventActor },
+    context?: TodoMutationContext,
+  ): Promise<McpTodoRow | undefined> {
     const id = assertTodoistSyncEntityId(params.id);
     const domainId = assertTodoistSyncEntityId(params.domainId, 'domainId');
     const todo = await this.getTodoById({ id });
@@ -615,20 +665,26 @@ export class TodoistSyncRepository {
     if (!todo) return undefined;
     if (!domain || domain.archived) throw new Error(`Active Todo domain ${domainId} was not found`);
     const position = await this.nextPosition(this.db, 'todos', "customer_id=? AND domain_id=? AND deleted_flag=''", [this.customerId, domainId]);
-    const updated = await this.applyTodoUpdate(id, { domain_id: domainId, position }, assertActor(params.actor), 'todo.moved');
+    const updated = await this.applyTodoUpdate(id, { domain_id: domainId, position }, assertActor(params.actor), 'todo.moved', context);
     return updated;
   }
 
-  async skipToCurrent(params: { id: TodoEntityId; actor?: McpTodoEventActor }): Promise<McpTodoRow | undefined> {
+  async skipToCurrent(
+    params: { id: TodoEntityId; actor?: McpTodoEventActor },
+    context?: TodoMutationContext,
+  ): Promise<McpTodoRow | undefined> {
     const todo = await this.getTodoById({ id: params.id });
     if (!todo || !todo.repeat_type || !todo.due_at || moment(todo.due_at).startOf('day').isSameOrAfter(moment().startOf('day'))) return todo;
     const nearest = this.computeNearestFutureDue(todo);
     const fields: Record<string, unknown> = { due_at: nearest };
     if (todo.remind_at) Object.assign(fields, { remind_at: nearest + (todo.remind_at - todo.due_at), last_remind_at: todo.remind_at });
-    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.updated');
+    return await this.applyTodoUpdate(params.id, fields, assertActor(params.actor), 'todo.updated', context);
   }
 
-  async createSubTodo(params: { todoId: TodoEntityId; title: string }): Promise<McpSubTodoRow | undefined> {
+  async createSubTodo(
+    params: { todoId: TodoEntityId; title: string },
+    context?: TodoMutationContext,
+  ): Promise<McpSubTodoRow | undefined> {
     const todoId = assertTodoistSyncEntityId(params.todoId, 'todoId');
     if (!await this.getTodoById({ id: todoId })) throw new Error(`Todo ${todoId} was not found`);
     const title = assertText(params.title, 'title', 512);
@@ -643,7 +699,7 @@ export class TodoistSyncRepository {
         ) VALUES (?,?,?,?,0,?,?,?, ?,?,?,'0','',NULL,0)`,
         [id, this.customerId, todoId, title, position, version.now, version.now, this.deviceId, version.sequence, version.uuid],
       );
-    });
+    }, context);
     return await this.getSubTodoById({ id });
   }
 
@@ -666,29 +722,42 @@ export class TodoistSyncRepository {
     return row ? this.assertSubTodo(row) : undefined;
   }
 
-  async updateSubTodoTitle(params: { id: TodoEntityId; title: string }): Promise<void> {
-    await this.applySubTodoUpdate(params.id, { title: assertText(params.title, 'title', 512) });
+  async updateSubTodoTitle(
+    params: { id: TodoEntityId; title: string },
+    context?: TodoMutationContext,
+  ): Promise<void> {
+    await this.applySubTodoUpdate(params.id, { title: assertText(params.title, 'title', 512) }, context);
   }
 
-  async setSubTodoStatus(params: { id: TodoEntityId; status: 0 | 1 }): Promise<McpSubTodoRow | undefined> {
+  async setSubTodoStatus(
+    params: { id: TodoEntityId; status: 0 | 1 },
+    context?: TodoMutationContext,
+  ): Promise<McpSubTodoRow | undefined> {
     const id = assertTodoistSyncEntityId(params.id);
     const status = assertFlag(params.status, 'status');
     const row = await this.getSubTodoById({ id });
     if (!row) return undefined;
     if (row.status !== status) {
-      await this.applySubTodoUpdate(id, { status });
+      await this.applySubTodoUpdate(id, { status }, context);
     }
     return await this.getSubTodoById({ id });
   }
 
-  async toggleSubTodoStatus(params: { id: TodoEntityId }): Promise<McpSubTodoRow | undefined> {
+  async toggleSubTodoStatus(
+    params: { id: TodoEntityId },
+    context?: TodoMutationContext,
+  ): Promise<McpSubTodoRow | undefined> {
     const row = await this.getSubTodoById({ id: params.id });
     if (!row) return undefined;
-    await this.applySubTodoUpdate(params.id, { status: row.status === 1 ? 0 : 1 });
+    await this.applySubTodoUpdate(params.id, { status: row.status === 1 ? 0 : 1 }, context);
     return await this.getSubTodoById({ id: params.id });
   }
 
-  private async applySubTodoUpdate(idValue: TodoEntityId, fields: Record<string, unknown>): Promise<void> {
+  private async applySubTodoUpdate(
+    idValue: TodoEntityId,
+    fields: Record<string, unknown>,
+    context?: TodoMutationContext,
+  ): Promise<void> {
     const id = assertTodoistSyncEntityId(idValue);
     const row = await this.getSubTodoById({ id });
     if (!row) return;
@@ -699,7 +768,7 @@ export class TodoistSyncRepository {
          WHERE id=? AND customer_id=? AND deleted_flag=''`,
         [...Object.values(fields), version.now, this.deviceId, version.sequence, version.uuid, id, this.customerId],
       );
-    });
+    }, context);
   }
 
   async getCountByTodoId(params: { todoId: TodoEntityId }): Promise<{ total: number; done: number }> {
@@ -727,7 +796,10 @@ export class TodoistSyncRepository {
     return result;
   }
 
-  async deleteSubTodo(params: { id: TodoEntityId }): Promise<void> {
+  async deleteSubTodo(
+    params: { id: TodoEntityId },
+    context?: TodoMutationContext,
+  ): Promise<void> {
     const id = assertTodoistSyncEntityId(params.id);
     const row = await this.getSubTodoById({ id });
     if (!row) return;
@@ -737,7 +809,7 @@ export class TodoistSyncRepository {
          version_client_sequence=?,version_command_uuid=? WHERE id=? AND customer_id=? AND deleted_flag=''`,
         [`local:${version.uuid}`, version.now, version.now, this.deviceId, version.sequence, version.uuid, id, this.customerId],
       );
-    });
+    }, context);
   }
 
   async getSortOrder(params: { key: string }): Promise<TodoEntityId[]> {
@@ -753,7 +825,10 @@ export class TodoistSyncRepository {
     return rows.map((row) => assertTodoistSyncEntityId(row.id));
   }
 
-  async setSortOrder(params: { key: string; order: TodoEntityId[] }): Promise<void> {
+  async setSortOrder(
+    params: { key: string; order: TodoEntityId[] },
+    context?: TodoMutationContext,
+  ): Promise<void> {
     const target = this.parseSortKey(params.key);
     const order = uniqueIds(params.order, 'order');
     if (order.length !== params.order.length) throw new Error('order contains duplicate IDs');
@@ -773,7 +848,7 @@ export class TodoistSyncRepository {
         await this.insertOutbox(tx, resourceType, id, target.type === 'domain' ? 'domain_update' : target.type === 'todo' ? 'todo_update' : 'sub_todo_update', target.parentId, { position: index }, current, version);
       }
     });
-    this.afterMutation();
+    this.afterMutation(context);
   }
 
   async listAfter(params: { afterEventId?: number; limit?: number }): Promise<McpTodoEventListResult> {
@@ -1069,7 +1144,7 @@ export class TodoistSyncRepository {
       if (previousNodeId === null) this.ids.resetUncommittedNodeId(response.snowflake_node_id);
       throw error;
     });
-    if (changed) this.broadcastDataUpdated();
+    if (changed) this.broadcastDataUpdated(null);
   }
 
   async recordSyncError(message: string, isCommitAllowed: () => boolean = () => true): Promise<void> {
@@ -1227,6 +1302,7 @@ export class TodoistSyncRepository {
     parentId: string | null,
     fields: Record<string, unknown>,
     operation: (tx: TodoistSyncSqlExecutor, version: { uuid: string; now: number; sequence: number }) => Promise<void>,
+    context?: TodoMutationContext,
   ): Promise<void> {
     await this.db.writeTransaction(async (tx) => {
       const preimage = await this.getProjectionWith(tx, resourceType, id);
@@ -1234,7 +1310,7 @@ export class TodoistSyncRepository {
       await operation(tx, version);
       await this.insertOutbox(tx, resourceType, id, commandType, parentId, fields, preimage, version);
     });
-    this.afterMutation();
+    this.afterMutation(context);
   }
 
   private async nextVersion(tx: TodoistSyncSqlExecutor, now = Date.now()): Promise<{ uuid: string; now: number; sequence: number }> {
@@ -1641,13 +1717,14 @@ export class TodoistSyncRepository {
     );
   }
 
-  private afterMutation(): void {
-    this.broadcastDataUpdated();
+  private afterMutation(context?: TodoMutationContext): void {
+    this.broadcastDataUpdated(context?.originRendererId ?? null);
     this.mutationCommitted?.();
   }
 
-  private broadcastDataUpdated(): void {
-    xpcMain.broadcast('todo/data_updated');
+  private broadcastDataUpdated(originRendererId: string | null): void {
+    const event: TodoDataUpdatedEvent = { originRendererId };
+    xpcMain.broadcast('todo/data_updated', event);
   }
 
   private todoSelectSql(): string {

@@ -1,4 +1,4 @@
-import { xpcMain } from 'electron-xpc/main';
+// Runtime owner: the hidden Core SQLite preload process.
 import {
   TODOIST_SYNC_INTERVAL_MAX_SECONDS,
   TODOIST_SYNC_INTERVAL_MIN_SECONDS,

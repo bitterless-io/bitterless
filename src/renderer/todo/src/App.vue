@@ -40,7 +40,10 @@ import MenuBar from './components/MenuBar/MenuBar.vue';
 import SyncClockBanner from './components/SyncClockBanner/SyncClockBanner.vue';
 import { todoStore } from './store/todo.store';
 import { todoSettingStore } from './store/todoSetting.store';
-import { observeTodoMutation } from './store/todoMutation.service';
+import {
+  observeTodoMutation,
+  registerTodoMutationFailureRecovery,
+} from './store/todoMutation.service';
 import { initTodoSubscriber } from './xpc/update.subscriber';
 import { todoEnv } from './contextBridge/todoEnv.bridge';
 import { todoWindowEmitter } from './emitter/todoWindow.emitter';
@@ -52,6 +55,7 @@ import { todoAgentSkillStore } from './store/todoAgentSkill.store';
 const isStandalone = ref(false);
 const isOmni = todoEnv?.host === 'omni';
 let clockTimer: ReturnType<typeof setInterval> | null = null;
+let unregisterMutationFailureRecovery: (() => void) | null = null;
 
 const onBoardClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement;
@@ -73,6 +77,9 @@ const onKeydown = (e: KeyboardEvent) => {
 
 onMounted(async () => {
   try {
+    unregisterMutationFailureRecovery = registerTodoMutationFailureRecovery(
+      () => todoStore.requestRefresh(),
+    );
     isStandalone.value = todoEnv?.isStandalone ?? false;
     initTodoSubscriber();
     void todoAgentSkillStore.initialize().catch((error) => {
@@ -88,7 +95,7 @@ onMounted(async () => {
       });
     }, 15 * 60 * 1000);
     await todoSettingStore.load();
-    await todoStore.loadAll();
+    await todoStore.requestRefresh();
     if (isStandalone.value && uaHelper.isMac && todoSettingStore.alwaysOnTop) {
       await todoWindowEmitter.setAlwaysOnTop({ enable: true });
     }
@@ -100,13 +107,15 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  unregisterMutationFailureRecovery?.();
+  unregisterMutationFailureRecovery = null;
   document.removeEventListener('keydown', onKeydown);
   window.removeEventListener('focus', handleWindowFocus);
   if (clockTimer) clearInterval(clockTimer);
 });
 
 const handleWindowFocus = (): void => {
-  void todoStore.loadAll().catch((error) => {
+  void todoStore.requestRefresh().catch((error) => {
     console.warn('[todo] focus data refresh failed:', error);
   });
   void todoistSyncStore.checkClock().catch((error) => {

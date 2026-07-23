@@ -71,6 +71,7 @@ import { Message } from '@arco-design/web-vue';
 import { IconArchive, IconRestore, IconSearch } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { todoStore } from '../../store/todo.store';
+import { observeTodoMutation } from '../../store/todoMutation.service';
 
 const props = defineProps<{
   visible: boolean;
@@ -113,12 +114,10 @@ const handleRestore = async (id: string) => {
 
   restoringDomainId.value = id;
   try {
-    const restored = await todoStore.restoreDomain(id);
+    const restored = await observeTodoMutation(() => todoStore.restoreDomain(id));
     if (restored) {
       Message.success(i18nHelper.todo.restoreDomainSuccess);
     }
-  } catch {
-    Message.error(i18nHelper.todo.restoreDomainFailed);
   } finally {
     restoringDomainId.value = null;
   }

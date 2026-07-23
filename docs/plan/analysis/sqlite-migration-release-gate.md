@@ -19,7 +19,7 @@ shorter values are accepted only as upgrade checkpoints.
 | Shared migration runner | DB, ordered manifest, build version, existing/fresh flag | atomic applied ledger or typed failure | SQLite driver |
 | Core release manifest | Core tables and idempotent upgrade runners | runtime/audit source of truth | Core DAO schemas |
 | Maestro release manifest | Maestro latest schemas and upgrade runners | runtime/audit source of truth | Maestro persistence schema |
-| Todoist sync release manifest | customer resource/outbox/state/event schema | runtime/audit source of truth | Main-process Todo repository |
+| Todoist sync release manifest | customer resource/outbox/state/event schema | runtime/audit source of truth | Core SQLite preload Todo repository |
 | Audit CLI | all three manifests plus historical fixtures | pass/fail report for every baseline | esbuild + SQLite driver |
 | Todo cipher smoke | production manifest + protected key | encrypted create/reopen and packaged-native proof | Electron ABI + `better-sqlite3-multiple-ciphers` |
 | Packaging hook | production build request | audit gate before build/sign/upload | audit CLI |
@@ -31,7 +31,7 @@ shorter values are accepted only as upgrade checkpoints.
    delegates execution to the shared strict runner.
 2. Maestro preload registers the Maestro manifest; its manager uses the same strict runner and the
    same latest-schema initializer used by audit.
-3. The authenticated Main-process Todoist sync session resolves one customer file/key, applies the
+3. The authenticated Core SQLite preload Todoist sync session resolves one customer file/key, applies the
    SQLCipher key, and executes its driver-neutral manifest through the same strict runner contract.
 4. Audit bundles the real TypeScript manifests, builds historical fixtures, executes the shared
    runner, and verifies schema/data/ledger invariants.

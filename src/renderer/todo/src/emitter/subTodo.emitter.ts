@@ -1,5 +1,20 @@
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
 import type { SubTodoMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
+import type { TodoRendererSubTodoApi } from '@shared/todoistSync/todoDataUpdate.shared';
+import { emitTodoMutation } from './todoMutation.emitter';
 
-export const subTodoEmitter =
-  createXpcRendererEmitter<SubTodoMcpDaoApi>('TodoistSyncSubTodoHandler') as SubTodoMcpDaoApi;
+const rendererSubTodoEmitter = createXpcRendererEmitter<TodoRendererSubTodoApi>(
+  'TodoistSyncSubTodoHandler',
+) as TodoRendererSubTodoApi;
+
+export const subTodoEmitter: SubTodoMcpDaoApi = {
+  create: (params) => emitTodoMutation(rendererSubTodoEmitter.create, params),
+  getByTodoId: (params) => rendererSubTodoEmitter.getByTodoId(params),
+  getById: (params) => rendererSubTodoEmitter.getById(params),
+  updateTitle: (params) => emitTodoMutation(rendererSubTodoEmitter.updateTitle, params),
+  setStatus: (params) => emitTodoMutation(rendererSubTodoEmitter.setStatus, params),
+  toggleStatus: (params) => emitTodoMutation(rendererSubTodoEmitter.toggleStatus, params),
+  getCountByTodoId: (params) => rendererSubTodoEmitter.getCountByTodoId(params),
+  getCountsByTodoIds: (params) => rendererSubTodoEmitter.getCountsByTodoIds(params),
+  hardDelete: (params) => emitTodoMutation(rendererSubTodoEmitter.hardDelete, params),
+};

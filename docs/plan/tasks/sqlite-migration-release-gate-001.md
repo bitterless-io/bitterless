@@ -2,7 +2,7 @@
 id: sqlite-migration-release-gate-001
 scope: strict Core, Maestro, and Todoist-sync SQLite upgrade audit before all production packages
 status: pending
-depends-on: [todoist-sync-desktop-001]
+depends-on: [todoist-sync-desktop-001, todo-sqlite-process-ownership-012]
 ---
 
 # SQLite Migration Release Gate
@@ -58,6 +58,8 @@ macOS x64, and Windows x64 only if every gate passes.
   `better-sqlite3-multiple-ciphers` native module;
 - Todo database tests inject a fixed test password and prove they never touch Electron
   `safeStorage`/the operating-system keychain; no legacy `main.db` Todo import is attempted;
+- process-boundary audit proves only the Core SQLite preload build graph reaches the Todo database,
+  migration, repository, coordinator, and session modules; Main and every other preload graph do not;
 - `yarn typecheck:node`
 - `yarn test:eyes-on-agents:repository`
 - production build hook source test proves audit runs before any build/sign/publish step;
@@ -75,6 +77,7 @@ macOS x64, and Windows x64 only if every gate passes.
 
 The existing Core/Maestro shared runner, audit CLI, and packaging hook are the already-present
 foundation. `todoist-sync-desktop-001` alone owns the new Todo runtime manifest, fixed-password
-fixtures, native cipher smoke, and registration into that foundation. This task starts only after
-that dependency and owns the final combined audit/package/publication proof; it must not redesign
-or duplicate the Todo manifest.
+fixtures, native cipher smoke, and registration into that foundation.
+`todo-sqlite-process-ownership-012` moves the unchanged runtime manifest and its sole production
+owner into the Core SQLite preload. This task starts only after both dependencies and owns the final
+combined audit/package/publication proof; it must not redesign or duplicate the Todo manifest.

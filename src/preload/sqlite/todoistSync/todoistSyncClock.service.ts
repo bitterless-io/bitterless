@@ -1,3 +1,4 @@
+// Runtime owner: the hidden Core SQLite preload process.
 import dgram from 'dgram';
 import {
   closeSync,

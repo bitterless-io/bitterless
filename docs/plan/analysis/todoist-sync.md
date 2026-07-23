@@ -10,10 +10,13 @@
 | `todoistSync.coordinator` | triggers, outbox, token | serialized push/pull/reconcile | client, repository |
 | `todoistSync.clock` | renderer check request | device-global successful sample/marker | parallel SNTP, atomic userData state |
 | `todoistSync.session` | customer/device/Core token | active isolated runtime + generation | key service, coordinator |
-| XPC/UI/MCP integration | existing Todo operations | shared projections, status, refresh | active session |
+| SQLite preload composition | Core SQLite readiness + active auth | sole Todo runtime owner | all modules above |
+| XPC/UI/MCP integration | existing Todo operations | shared projections, status, refresh | SQLite-owned active session |
 
-All protocol/storage implementation is contained by `src/main/todoistSync/` and
-`src/shared/todoistSync/`. The renderer owns check cadence and presentation, not UDP or persistence.
+All protocol/storage implementation is contained by `src/preload/sqlite/todoistSync/` and
+`src/shared/todoistSync/`. The Core SQLite preload owns UDP, HTTP, persistence, and the active Todo
+session. Web renderers own check cadence and presentation. Main is only the generic XPC router,
+MCP client bridge, and narrow OS-capability provider; it imports no Todo storage/runtime module.
 The old `src/main/todoSync/` PowerSync implementation is removed rather than retained as a
 compatibility layer.
 
@@ -66,8 +69,8 @@ row, restore rejected fields, or restore the rejected live row, then replay late
 ## Integration enumeration
 
 ```text
-AuthStore activates TodoistSyncHandler
-  → session opens encrypted customer database
+AuthStore activates SQLite-owned TodoistSyncSessionHandler through XPC
+  → SQLite preload session opens encrypted customer database
   → coordinator posts `*` or cached sync_token
   → working set commits and broadcasts refresh
   → reconcile pages populate Completed/archive/tombstones
@@ -89,17 +92,17 @@ atomicity, priority bootstrap, pending replay, remote deletion events, or accoun
 ```text
 Todo renderer mount/focus/15-minute cadence
   → TodoistSyncClockHandler.check(session_generation, request_generation)
-  → Main validates generations and starts both SNTP requests concurrently
+  → SQLite preload validates generations and starts both SNTP requests concurrently
   → only the latest accepted successful result may atomically replace userData clock-state.json
 
 Core HTTP CLOCK_SKEW
   → exact in-flight UUID set becomes clock_rejected; no command receipt exists
-  → Main broadcasts clock-check-requested(session_generation, request_generation)
+  → SQLite preload broadcasts clock-check-requested(session_generation, request_generation)
   → active Todo renderer invokes the same XPC check
   → healthy result atomically re-identifies only future-dated members, then resumes upload
 ```
 
-The clock record is Main-owned and device-global; customer databases never duplicate it. A stale
+The clock record is SQLite-preload-owned and device-global; customer databases never duplicate it. A stale
 renderer/session/check generation cannot persist evidence, recover an outbox, or resume a
 coordinator. Unreachable NTP leaves prior state unchanged. With no previously confirmed wrong
 sample, it causes no marker, banner, or global pause. A quarantined CLOCK_SKEW batch remains excluded

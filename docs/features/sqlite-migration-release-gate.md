@@ -18,7 +18,7 @@ The gate covers all persisted application database families:
 |---|---|---|
 | Core `main.db` | Core SQLite preload | Todo, Domain, Setting, legacy coding-agent import, EyesOnAgents |
 | Maestro `config.db` | Maestro SQLite preload | capture rules, tabs, chat persistence, inject buttons |
-| Todoist sync `todoist-sync-v1/customer-<customerId>.db` | Main-process `todoistSync` session | synchronized Domain/Todo/SubTodo rows, outbox, sync state, local Todo events |
+| Todoist sync `todoist-sync-v1/customer-<customerId>.db` | Core SQLite preload `todoistSync` session | synchronized Domain/Todo/SubTodo rows, outbox, sync state, local Todo events |
 
 Linux is not a supported Bitterless release platform. A successful production release updates
 macOS ARM64, macOS x64, and Windows x64.
@@ -33,8 +33,9 @@ macOS ARM64, macOS x64, and Windows x64.
   lexical, subtraction, or width-based comparisons are forbidden.
 - Each database owns one ordered migration manifest. Runtime boot and the release audit import the
   same manifest; a copied list in a test is not acceptable.
-- The customer Todo database manifest is driver-neutral and lives under `src/main/todoistSync/`.
-  The Main-process SQLCipher owner and the pure-Node audit execute that same ordered manifest; the
+- The customer Todo database manifest is driver-neutral and lives under
+  `src/preload/sqlite/todoistSync/`. The SQLite-preload SQLCipher owner and the pure-Node audit
+  execute that same ordered manifest; the
   audit may create an unencrypted disposable adapter database but may not restate its DDL.
 - Migration identifiers are unique, strictly increasing 12-digit `YYMMDDHHmmss` strings. Historical
   shorter ledger values remain valid upgrade starting points but no new migration may use them.
@@ -64,10 +65,12 @@ macOS ARM64, macOS x64, and Windows x64.
 
 ## Runtime Todo readiness
 
-- The authenticated Main-process `todoistSync` session is the only owner of a customer Todo
-  database. UI and MCP reach it through the repository/XPC boundary and never open the file.
-- The session resolves a customer-isolated path, decrypts its random key through Electron
-  `safeStorage`, applies the SQLCipher key before any schema read, runs the shared Todo manifest,
+- The authenticated Core SQLite preload `todoistSync` session is the only owner of a customer Todo
+  database. UI, MCP, auth, and Main lifecycle code reach it through typed XPC clients and never open
+  the file. Main's XPC center routes opaque payloads but registers no Todo storage handler.
+- The SQLite session resolves a customer-isolated path and owns protected-key file IO. It requests
+  only raw encryption/decryption from Main's Electron `safeStorage` capability, applies the
+  SQLCipher key before any schema read, runs the shared Todo manifest,
   then executes `integrity_check`, `foreign_key_check`, and final schema verification before making
   the repository active.
 - Migration/key/open failure leaves the existing file and outbox intact, closes the handle, and

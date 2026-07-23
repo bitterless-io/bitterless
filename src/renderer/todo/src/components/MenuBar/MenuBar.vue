@@ -248,7 +248,7 @@ const menubarClass = computed(() => {
 
 const handleRefresh = () => {
   void observeTodoMutation(
-    () => Promise.all([todoistSyncStore.requestSync(), todoStore.loadAll()]),
+    () => Promise.all([todoistSyncStore.requestSync(), todoStore.requestRefresh()]),
   );
 };
 
@@ -300,7 +300,7 @@ const handleOpenArchivedDomains = async () => {
 
   archivedDomainsLoading.value = true;
   try {
-    await todoStore.loadArchivedDomains();
+    await todoStore.requestRefresh();
     archivedDomainsVisible.value = true;
   } catch {
     archivedDomainsVisible.value = false;
@@ -313,7 +313,7 @@ const handleOpenArchivedDomains = async () => {
 const handleToggleShowCompleted = () => {
   void observeTodoMutation(async () => {
     await todoSettingStore.toggleShowCompleted();
-    await todoStore.loadAll();
+    await todoStore.requestRefresh();
   });
 };
 

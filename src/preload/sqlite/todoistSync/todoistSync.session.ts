@@ -1,4 +1,4 @@
-import { app } from 'electron';
+// Runtime owner: the hidden Core SQLite preload process.
 import type {
   TodoistSyncActivateParams,
   TodoistSyncActivationResult,

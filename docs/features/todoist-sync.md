@@ -15,21 +15,52 @@ logical-WAL dependency, Docker service, or server-side `todo_message` operation 
 Todoist-style synchronization is isolated from generic Todo UI and MCP code:
 
 ```text
-src/main/todoistSync/
-  encrypted SQLite, local repository, outbox, HTTP client, coordinator, session
+src/preload/sqlite/todoistSync/
+  encrypted SQLite, local repository, outbox, HTTP client, coordinator, clock, session
+
+src/preload/sqlite/sqlite.preload.ts
+  Core SQLite boot plus Todo runtime composition/handler registration
 
 src/shared/todoistSync/
-  wire contracts and session/status types
+  wire contracts, XPC contracts, and session/status types
 
-src/main/xpc/todoistSync.handler.ts
-  renderer-facing lifecycle/status boundary
+src/main/
+  generic XPC routing, MCP client bridge, safeStorage and OS settings capabilities only
 
 scripts/todoist-sync/
-  storage, protocol, scheduling, integration, and packaging tests
+  storage, protocol, scheduling, process-boundary, and migration tests
 ```
 
-No new file or exported symbol may retain `PowerSync` naming. UI and MCP consume the same
-`TodoistSyncRepository`; neither knows the HTTP protocol or writes the legacy Todo tables.
+No new file or exported symbol may retain `PowerSync` naming. The Core SQLite preload is the sole
+owner of the Todo runtime and `TodoistSyncRepository`. UI and MCP call its typed XPC handlers;
+neither knows the HTTP protocol or writes the legacy Todo tables. Electron Main may route opaque
+XPC messages and provide narrow OS capabilities, but it must not import the cipher driver,
+database, migrations, repository, or SQLite-owned session.
+
+## Process ownership boundary
+
+```text
+Todo/Home renderer ───────────────┐
+                                  ├─ electron-xpc ─> Core SQLite preload ─> Todo SQLCipher
+Main-owned MCP socket bridge ─────┤                    + HTTP coordinator
+Main lifecycle cleanup ───────────┘                    + clock/session
+
+Core SQLite preload ── XPC ─> Main safeStorage capability (encrypt/decrypt only)
+Core SQLite preload ── XPC ─> Main shell capability (open Date & Time settings only)
+```
+
+- Renderer requests target preload-owned handler names. There is no Main Todo CRUD/session proxy
+  handler; Main's XPC center only routes the request to the registered SQLite WebContents.
+- MCP remains a Main-owned local socket integration but uses a typed Main XPC emitter as a client.
+  It never receives a repository object, database path, key path, SQL statement, or database handle.
+- Protected-key file creation/read, database open/migrate/query/transaction/close, Snowflake state,
+  outbox reconciliation, HTTP synchronization, and clock persistence all execute in the SQLite
+  preload process.
+- Electron `safeStorage` and `shell.openExternal` are Main-only APIs. Their narrow handlers receive
+  only encryption plaintext/ciphertext or a fixed settings action; they cannot access Todo rows or
+  storage paths.
+- Todo commit broadcasts originate in the SQLite process. A renderer-originated mutation retains
+  its preload-lifetime `originRendererId`; MCP and remote synchronization use a null origin.
 
 ## Storage boundary
 
@@ -103,7 +134,8 @@ stored baseline is a protocol error; the page and its token are not committed.
 
 ## Wire contract
 
-The main process calls the Core endpoint `POST /todo/sync` with the existing `-x-bl-token`.
+The Core SQLite preload's Todo coordinator calls the Core endpoint `POST /todo/sync` with the
+existing `-x-bl-token`.
 
 ```json
 {
@@ -317,15 +349,15 @@ paused only when at least one successful trusted-time sample has confirmed `cloc
 ```text
 Todo renderer store (mount / focus / every 15 minutes)
   → calls TodoistSyncClockHandler.check through electron-xpc with active session/request generations
-  → Main queries SNTP sources concurrently (`ntp.aliyun.com`, `time.cloudflare.com`)
+  → Core SQLite preload queries SNTP sources concurrently (`ntp.aliyun.com`, `time.cloudflare.com`)
   → no successful source: return unreachable; persist nothing and create/clear no marker
   → successful sample and |offset| <= 180 seconds: atomically persist healthy state, clear clock_wrong
   → successful sample and |offset| > 180 seconds: atomically persist clock_wrong, pause upload/download
 ```
 
-- The renderer owns when checks happen and owns UI state. UDP/123 remains in the main-process
-  `src/main/todoistSync/` clock service because the sandboxed renderer has no Node socket access.
-- Main owns the device-global clock record at
+- The renderer owns when checks happen and owns UI state. UDP/123 runs in the Node-capable Core
+  SQLite preload clock service; the web renderer never receives Node socket access.
+- The Core SQLite preload owns the device-global clock record at
   `userData/todoist-sync/clock-state.json`; it is not stored in a customer database. A successful
   sample is written through a same-directory temporary file, file sync, and atomic rename. The
   record contains status, local/trusted sample times, signed offset, last-success time, and a
@@ -336,14 +368,14 @@ Todo renderer store (mount / focus / every 15 minutes)
   warning appears. If `clock_wrong` was already confirmed, an unreachable retry does not erase that
   evidence; only a later successful healthy sample clears it.
 - Overlapping checks are generation fenced. Each accepted renderer request carries the active
-  Todoist session generation and a renderer request generation; Main validates both before the
+  Todoist session generation and a renderer request generation; the SQLite session validates both before the
   query and again before committing its result. A newer accepted check supersedes an older one, so
   stale results cannot create/clear the marker, recover an old customer's outbox, or resume a stale
   coordinator.
 - Before applying a batch, Core rejects the whole request when any command time is more than 180
   seconds in the future. It applies no command and writes no UUID receipt. Past timestamps remain
   valid for genuine long-offline edits. A Core `CLOCK_SKEW` result cannot itself create
-  `clock_wrong`. Main atomically changes the exact ordered UUID set from that submitted `in_flight`
+  `clock_wrong`. The SQLite runtime atomically changes the exact ordered UUID set from that submitted `in_flight`
   batch to `clock_rejected`, persists the rejected batch ID, and broadcasts a typed
   `todoist-sync/clock-check-requested` event containing the current session and request generations.
   The active Todo renderer ignores stale generations and initiates the XPC check.
@@ -393,9 +425,19 @@ Todo menubar
                                └──────────────────────────────┘
 ```
 
-- Clicking Refresh requests an immediate coordinator cycle and reloads the current local
-  projection. A later committed remote change continues to refresh the board through the existing
-  `todo/data_updated` broadcast.
+- Clicking Refresh requests an immediate coordinator cycle and reloads the current local projection
+  through the renderer's single-flight snapshot queue. A later committed remote change continues to
+  refresh the board through the existing `todo/data_updated` broadcast.
+- Snapshot reads never clear the visible board. A complete current snapshot is reconciled by stable
+  Domain/Todo ID in one commit; failed or superseded reads retain the last valid projection.
+- Renderer-originated writes publish their opaque renderer-instance origin. The matching renderer
+  ignores its own broadcast because it already applied the mutation optimistically; other Todo
+  renderers refresh. MCP, Main, and remote-sync commits carry no renderer origin and refresh all.
+- A same-origin event received during an older board read invalidates only that read and requests one
+  trailing snapshot; it does not cancel an unrelated selected-Todo detail read. Multi-stage local
+  mutations that fail after an earlier commit schedule one recovery snapshot.
+- Stable-ID reconciliation retains open column/row component state. Active Domain-description,
+  Todo-title, and Step drafts are preserved while non-active fields continue to accept remote data.
 - The Tabler Refresh icon rotates while any foreground or background cycle reports `syncing`; no
   separate cloud icon is rendered.
 - An Arco hover popover shows the current result, the persisted `last_success_at` value (labelled as

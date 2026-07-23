@@ -116,7 +116,7 @@ test('Todo location uses vertical visibility and retains row centering', () => {
   const store = read('src/renderer/todo/src/store/todo.store.ts');
   const selection = store.match(/  async selectTodo\([\s\S]*?\n  \}(?=\n\n  async selectTodoFromFocused)/);
   const focusedSelection = store.match(
-    /  async selectTodoFromFocused\([\s\S]*?\n  \}(?=\n\n  locateTodo)/,
+    /  async selectTodoFromFocused\([\s\S]*?\n  \}(?=\n\n  private _beginTodoSelection)/,
   );
   const locateTodo = store.match(/  locateTodo\([\s\S]*?\n  \}(?=\n\n  closeDetail)/);
 
@@ -125,8 +125,9 @@ test('Todo location uses vertical visibility and retains row centering', () => {
   assert.ok(locateTodo, 'Missing Todo location behavior');
   assert.match(
     selection[0],
-    /await this\.loadSubTodos\(todo\.id\);\s*await nextTick\(\);\s*this\.locateTodo\(todo\.id, todo\.domain_id\)/,
+    /const detailGeneration = this\._beginTodoSelection\(todo\);\s*if \(!await this\._readAndCommitSelectedSubTodos\(todo\.id, detailGeneration\)\) return;\s*await nextTick\(\);\s*this\.locateTodo\(todo\.id, todo\.domain_id\)/,
   );
+  assert.doesNotMatch(selection[0], /loadSubTodos/);
   assert.doesNotMatch(focusedSelection[0], /scrollLeft|scrollTo\(\{\s*left|offsetLeft/);
   assert.doesNotMatch(locateTodo[0], /scrollLeft|scrollTo\(\{\s*left|offsetLeft|clientWidth/);
   assert.match(
@@ -137,6 +138,37 @@ test('Todo location uses vertical visibility and retains row centering', () => {
   assert.match(
     locateTodo[0],
     /columnBody\.scrollTo\(\{ top: Math\.max\(0, targetScrollTop\), behavior: 'smooth' \}\)/,
+  );
+});
+
+test('remote refresh preserves active Domain and Todo title drafts', () => {
+  const domain = read('src/renderer/todo/src/components/DomainColumn/DomainColumn.vue');
+  const detail = read('src/renderer/todo/src/components/TodoDetail/TodoDetail.vue');
+  const descriptionWatch = domain.match(
+    /watch\(\(\) => props\.domain\.description,[\s\S]*?\n\}\);/,
+  );
+  const descriptionBlur = domain.match(
+    /const onDescriptionBlur = \(\): void => \{[\s\S]*?\n\};/,
+  );
+  const selectedTitleWatch = detail.match(
+    /watch\(\(\) => \(\{\n\s+id: todoStore\.selectedTodo\?\.id[\s\S]*?\}, \{ immediate: true \}\);/,
+  );
+
+  assert.match(domain, /@focus="onDescriptionFocus"/);
+  assert.match(domain, /const descriptionEditing = ref\(false\)/);
+  assert.ok(descriptionWatch, 'Domain description must react to remote snapshot changes');
+  assert.match(descriptionWatch[0], /if \(descriptionEditing\.value\) return;/);
+  assert.ok(descriptionBlur, 'Domain description blur must save and end draft protection');
+  assert.match(descriptionBlur[0], /todoStore\.updateDomainDescription/);
+  assert.match(descriptionBlur[0], /descriptionEditing\.value = false;/);
+
+  assert.ok(selectedTitleWatch, 'Todo detail title must watch selected identity and title');
+  assert.match(selectedTitleWatch[0], /if \(selectedTodo\.id !== previousTodo\?\.id\)/);
+  assert.match(selectedTitleWatch[0], /headerEditing\.value = false;/);
+  assert.match(selectedTitleWatch[0], /if \(!headerEditing\.value\) _headerTitleText\.value = selectedTodo\.title;/);
+  assert.doesNotMatch(
+    detail,
+    /watch\(\(\) => todoStore\.selectedTodo\?\.title, \(\) => \{\s*headerEditing\.value = false;/,
   );
 });
 

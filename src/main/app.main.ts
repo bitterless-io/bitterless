@@ -26,7 +26,6 @@ import { coinWindowHandler } from './xpc/coinWindow.handler';
 import { maestroWindowHandler } from './xpc/maestroWindow.handler';
 import { eyesOnAgentsWindowHandler } from './xpc/eyesOnAgentsWindow.handler';
 import { todoWindowHandler } from './xpc/todoWindow.handler';
-import { todoistSyncSession } from './todoistSync/todoistSync.session';
 import { pluginTestHandler } from './xpc/pluginTest.handler';
 import { applicationLanguageService } from './i18n/applicationLanguage.service';
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot';
@@ -40,12 +39,15 @@ import {
 import { runSqliteFirstGuiStartup } from './startup/guiStartup.service';
 import { startupDiagnosticsService } from './startup/startupDiagnostics.service';
 import type { StartupDiagnosticStage } from '@shared/startup/startupDiagnostics';
+import type { TodoistSyncSessionApi } from '@shared/todoistSync/todoistSync.type';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
 const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
+const todoistSyncSessionClient =
+  createXpcMainEmitter<TodoistSyncSessionApi>('TodoistSyncSessionHandler');
 
 if (isHelperMode && process.platform === 'darwin') {
   app.setActivationPolicy('prohibited');
@@ -335,7 +337,7 @@ const cleanupResources = (): Promise<void> => {
       // Best-effort shutdown: the remaining application resources must still be released.
     }
     try { await mcpBridgeServer.stop(); } catch {}
-    try { await todoistSyncSession.deactivate(); } catch {}
+    try { await todoistSyncSessionClient.deactivate(); } catch {}
     try { await coinWindowHandler.destroyForHostQuit(); } catch {}
     try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
     try { await eyesOnAgentsWindowHandler.destroyForHostQuit(); } catch {}

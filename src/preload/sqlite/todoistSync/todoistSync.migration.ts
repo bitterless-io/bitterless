@@ -1,3 +1,4 @@
+// Runtime owner: the hidden Core SQLite preload process.
 export interface TodoistSyncMigrationDatabase {
   exec(sql: string): void;
   prepare(sql: string): {
