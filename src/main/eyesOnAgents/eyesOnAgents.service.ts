@@ -174,6 +174,16 @@ const parseProviderTimestamp = (value: unknown): number | null => {
   return Number.isSafeInteger(integerMilliseconds) ? integerMilliseconds : null;
 };
 
+const parseCompletedTurnTimestamp = (
+  value: unknown,
+  options: { notAfter: number }
+): number | null => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) return null;
+  const milliseconds = (value as number) * 1000;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds > options.notAfter) return null;
+  return milliseconds;
+};
+
 const hasUnpairedSurrogate = (value: string): boolean => {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -306,10 +316,52 @@ const lastUserPromptFromTurns = (
   };
 };
 
+const terminalTurnFromLatest = (
+  value: unknown,
+  options: {
+    activeTurnId: string;
+    statusObservedAt: number;
+    polledAt: number;
+  }
+): NonNullable<EyesOnAgentsThreadRefreshPatch['terminalTurn']> | undefined => {
+  if (!isEyesOnAgentsRecord(value)) return undefined;
+  let turnId: string;
+  try {
+    turnId = parseEyesOnAgentsText(
+      providerThreadField(value, 'id'),
+      'Codex terminal turn id',
+      200,
+      false
+    ) as string;
+  } catch {
+    return undefined;
+  }
+  if (turnId !== options.activeTurnId) return undefined;
+  const status = providerThreadField(value, 'status');
+  if (status === 'inProgress') return undefined;
+  if (status !== 'completed' && status !== 'interrupted' && status !== 'failed') {
+    return undefined;
+  }
+  const completedAt = parseCompletedTurnTimestamp(
+    providerThreadField(value, 'completedAt'),
+    { notAfter: options.polledAt }
+  );
+  if (completedAt === null) return undefined;
+  return {
+    turnId,
+    outcome: status,
+    completedAt,
+    expectedActiveTurnId: options.activeTurnId,
+    expectedStatusObservedAt: options.statusObservedAt,
+    source: 'app_server'
+  };
+};
+
 const hasThreadRefreshPatch = (patch: EyesOnAgentsThreadRefreshPatch): boolean => {
   return patch.title !== undefined ||
     patch.lastActivityAt !== undefined ||
-    patch.lastUserPrompt !== undefined;
+    patch.lastUserPrompt !== undefined ||
+    patch.terminalTurn !== undefined;
 };
 
 const turnIdFrom = (value: unknown): string | null => {
@@ -583,6 +635,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       await this.runAppServerOperation(intentVersion, async (context) => {
         if (!await this.ensureAppServerConnected(context)) return;
         await this.performSync(context);
+        if (!this.isAppServerActive(context)) return;
+        await this.performRefreshThreadPages(context);
       });
       return await this.getSnapshot();
     } finally {
@@ -1679,6 +1733,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     promptAdmission: ThreadRefreshPromptAdmission
   ): Promise<CancellableResult<EyesOnAgentsThreadRefreshPatch | null>> {
     const observedAt = this.now();
+    const hookActiveTurn = candidate.hookActiveTurn ?? null;
     const read = await this.awaitUnlessCancelled(
       Promise.resolve().then(
         async () => await this.dependencies.appServer.readThread(candidate.threadId)
@@ -1686,17 +1741,23 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       context.controller.signal
     );
     if (read.state === 'cancelled') return read;
-    if (read.state === 'rejected') return { state: 'resolved', value: null };
-
-    let projection: ReturnType<typeof parseThreadRefreshRead>;
-    try {
-      projection = parseThreadRefreshRead(read.value, {
-        expectedThreadId: candidate.threadId
-      });
-    } catch {
-      return { state: 'resolved', value: null };
+    let metadataReadSucceeded = false;
+    let projection: ReturnType<typeof parseThreadRefreshRead> = {
+      patch: { threadId: candidate.threadId },
+      providerActivityAt: null
+    };
+    if (read.state === 'resolved') {
+      try {
+        projection = parseThreadRefreshRead(read.value, {
+          expectedThreadId: candidate.threadId
+        });
+        metadataReadSucceeded = true;
+      } catch {
+        // Terminal reconciliation is independent from optional thread metadata.
+      }
     }
-    const shouldReadPrompt = promptAdmission.enabled &&
+    const shouldReadPrompt = metadataReadSucceeded &&
+      promptAdmission.enabled &&
       promptAdmission.epoch === this.lastUserPromptPreferenceEpoch &&
       this.lastUserPromptPreference.isEnabled() &&
       (
@@ -1726,6 +1787,25 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         } catch {
           // A malformed content page must not suppress the metadata patch.
         }
+      }
+    }
+    if (hookActiveTurn !== null) {
+      const latestTurn = await this.awaitUnlessCancelled(
+        Promise.resolve().then(
+          async () => await this.dependencies.appServer.readLatestThreadTurn(
+            candidate.threadId
+          )
+        ),
+        context.controller.signal
+      );
+      if (latestTurn.state === 'cancelled') return latestTurn;
+      if (latestTurn.state === 'resolved') {
+        const terminalTurn = terminalTurnFromLatest(latestTurn.value, {
+          activeTurnId: hookActiveTurn.turnId,
+          statusObservedAt: hookActiveTurn.statusObservedAt,
+          polledAt: observedAt
+        });
+        if (terminalTurn !== undefined) projection.patch.terminalTurn = terminalTurn;
       }
     }
     return {

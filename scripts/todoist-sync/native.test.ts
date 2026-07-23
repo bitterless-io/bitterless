@@ -179,6 +179,7 @@ interface TestRuntime {
   userDataPath: string;
   database: TodoistSyncDatabase;
   repository: TodoistSyncRepository;
+  ids: TodoistSyncSnowflakeService;
 }
 
 interface OutboxStateRow {
@@ -217,7 +218,7 @@ const createRuntime = async (label: string, customerId = '1'): Promise<TestRunti
   const repository = new TodoistSyncRepository(database, customerId, TEST_DEVICE_ID, ids);
   await repository.initialize();
   await repository.setSnowflakeNodeId(7);
-  return { root, userDataPath, database, repository };
+  return { root, userDataPath, database, repository, ids };
 };
 
 const closeRuntime = (runtime: TestRuntime): void => {
@@ -328,6 +329,83 @@ const outboxRows = async (database: TodoistSyncDatabase): Promise<OutboxStateRow
   return await database.getAll<OutboxStateRow>(
     'SELECT command_order, command_uuid, command_type, state, batch_id, args_json FROM todo_sync_outbox ORDER BY command_order',
   );
+};
+
+const deviceBindingState = async (database: TodoistSyncDatabase): Promise<Record<string, unknown>> => {
+  return await database.get<Record<string, unknown>>(
+    'SELECT * FROM todo_sync_state WHERE customer_id=?',
+    ['1'],
+  );
+};
+
+const insertBindingOutboxRow = async (
+  database: TodoistSyncDatabase,
+  params: { state: string; suffix: string },
+): Promise<void> => {
+  const now = Date.now();
+  await database.execute(
+    `INSERT INTO todo_sync_outbox (
+      command_uuid,command_type,resource_type,resource_id,args_json,state,created_at,updated_at
+    ) VALUES (?,'domain_update','todo_domain',?,?,?,?,?)`,
+    [`binding-${params.suffix}`, REMOTE_DOMAIN_ID, '{}', params.state, now, now],
+  );
+};
+
+interface DeviceBindingBlocker {
+  label: string;
+  install(runtime: TestRuntime): Promise<void>;
+}
+
+const OUTBOX_BINDING_BLOCKERS = [
+  'pending',
+  'in_flight',
+  'acknowledged_waiting_resource',
+  'error_waiting_resource',
+  'clock_rejected',
+  'permanent_failed',
+  'blocked_by_failed_dependency',
+] as const;
+
+const deviceBindingBlockers = (): DeviceBindingBlocker[] => {
+  const blockers: DeviceBindingBlocker[] = [];
+  for (const state of OUTBOX_BINDING_BLOCKERS) {
+    blockers.push({
+      label: `outbox-${state}`,
+      install: async (runtime) => {
+        await insertBindingOutboxRow(runtime.database, { state, suffix: state });
+      },
+    });
+  }
+  blockers.push({
+    label: 'rejected-batch-marker',
+    install: async (runtime) => {
+      await runtime.database.execute(
+        'UPDATE todo_sync_state SET rejected_batch_id=? WHERE customer_id=?',
+        ['orphaned-rejected-batch', '1'],
+      );
+    },
+  });
+  const projectionTables = ['todo_domains', 'todos', 'sub_todos'] as const;
+  for (const table of projectionTables) {
+    blockers.push({
+      label: `${table}-local-only`,
+      install: async (runtime) => {
+        await runtime.repository.applySyncResponse(syncResponse({
+          token: `${table}-baseline`,
+          domains: [domainResource('1', 'Binding guard Domain')],
+          todos: table === 'todo_domains' ? [] : [todoResource('2')],
+          subTodos: table === 'sub_todos'
+            ? [subTodoResource('3', {
+                id: TODOIST_SYNC_WIRE_IDS.subTodo,
+                todoId: TODOIST_SYNC_WIRE_IDS.todo,
+              })]
+            : [],
+        }), null);
+        await runtime.database.execute(`UPDATE ${table} SET sync_revision='0'`);
+      },
+    });
+  }
+  return blockers;
 };
 
 interface Deferred<T> {
@@ -889,7 +967,38 @@ test('real repository CRUD is atomic with outbox, events, and soft-delete cascad
     assert.deepEqual(await runtime.repository.getSortOrder({ key: 'domain' }), [domain.id]);
     await runtime.repository.setSortOrder({ key: 'domain', order: [domain.id] });
     await runtime.repository.setDomainArchived({ id: domain.id, archived: 1 });
+    const archivedDescription = (await runtime.repository.getDomainById({ id: domain.id }))?.description;
+    const archivedOutbox = await outboxRows(runtime.database);
+    const archivedSequence = (await runtime.database.get<{ device_sequence: number }>(
+      'SELECT device_sequence FROM todo_sync_state WHERE customer_id = ?',
+      ['1'],
+    )).device_sequence;
+    await assert.rejects(
+      () => runtime.repository.updateDomainDescription({
+        id: domain.id,
+        description: 'Archived domains cannot be updated through MCP',
+      }),
+      /active domain was not found/,
+    );
+    assert.equal(
+      (await runtime.repository.getDomainById({ id: domain.id }))?.description,
+      archivedDescription,
+    );
+    assert.deepEqual(await outboxRows(runtime.database), archivedOutbox);
+    assert.equal((await runtime.database.get<{ device_sequence: number }>(
+      'SELECT device_sequence FROM todo_sync_state WHERE customer_id = ?',
+      ['1'],
+    )).device_sequence, archivedSequence);
     assert.equal(await runtime.repository.restoreDomain({ id: domain.id }), 'restored');
+    const restoredDescription = 'Restored active domain guidance';
+    await runtime.repository.updateDomainDescription({
+      id: domain.id,
+      description: restoredDescription,
+    });
+    assert.equal(
+      (await runtime.repository.getDomainById({ id: domain.id }))?.description,
+      restoredDescription,
+    );
 
     const eventsBeforeDelete = await runtime.repository.listAfter({ limit: 100 });
     const eventTypes = eventsBeforeDelete.events.map((event) => event.type);
@@ -1226,10 +1335,217 @@ test('first bootstrap installs the assigned node before emitting a remote Todo e
   }
 });
 
-test('a conflicting server Snowflake node leaves the cached node and sync state unchanged', { concurrency: false }, async () => {
+test('a clean stored identity change clears the old node and starts a new full bootstrap', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-clean-identity-change');
+  try {
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'old-device-token',
+      domains: [domainResource('1', 'Old device projection')],
+    }), null);
+    await runtime.database.execute(
+      `UPDATE todo_sync_state SET device_sequence=41,sync_phase='incremental',
+       bootstrap_started=1,bootstrap_catchup_pending=1,last_error='old failure'
+       WHERE customer_id=?`,
+      ['1'],
+    );
+    await insertBindingOutboxRow(runtime.database, { state: 'superseded', suffix: 'terminal-superseded' });
+    await insertBindingOutboxRow(runtime.database, { state: 'discarded', suffix: 'terminal-discarded' });
+
+    const replacementIds = new TodoistSyncSnowflakeService(7);
+    const replacement = new TodoistSyncRepository(
+      runtime.database,
+      '1',
+      'replacement-device-0001',
+      replacementIds,
+    );
+    await replacement.initialize();
+    const reset = await deviceBindingState(runtime.database);
+    assert.equal(reset.device_id, 'replacement-device-0001');
+    assert.equal(reset.sync_token, '*');
+    assert.equal(reset.sync_phase, null);
+    assert.equal(reset.snowflake_node_id, null);
+    assert.equal(reset.device_sequence, 0);
+    assert.equal(reset.bootstrap_started, 0);
+    assert.equal(reset.bootstrap_catchup_pending, 0);
+    assert.equal(reset.last_error, null);
+    assert.equal(replacementIds.getNodeId(), null);
+    assert.deepEqual((await outboxRows(runtime.database)).map((row) => row.state), ['superseded', 'discarded']);
+    assert.equal((await replacement.getDomainById({ id: REMOTE_DOMAIN_ID }))?.title, 'Old device projection');
+
+    const bootstrap = syncResponse({
+      token: 'replacement-bootstrap',
+      fullSync: true,
+      phase: 'working_set',
+      domains: [domainResource('2', 'Replacement device projection')],
+    });
+    bootstrap.snowflake_node_id = 8;
+    await replacement.applySyncResponse(bootstrap, null);
+    assert.equal((await replacement.getSyncState()).snowflake_node_id, 8);
+    assert.equal((await replacement.getSyncState()).sync_token, 'replacement-bootstrap');
+    assert.equal((await replacement.getDomainById({ id: REMOTE_DOMAIN_ID }))?.title, 'Replacement device projection');
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
+test('same stored identity preserves its node, sequence, and sync cursor during initialization', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-same-identity');
+  try {
+    await runtime.database.execute(
+      "UPDATE todo_sync_state SET sync_token='same-token',device_sequence=29,last_error='visible failure' WHERE customer_id=?",
+      ['1'],
+    );
+    const before = await deviceBindingState(runtime.database);
+    const repository = new TodoistSyncRepository(
+      runtime.database,
+      '1',
+      TEST_DEVICE_ID,
+      new TodoistSyncSnowflakeService(7),
+    );
+    await repository.initialize();
+    assert.deepEqual(await deviceBindingState(runtime.database), before);
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
+test('every unsafe local state prevents a stored identity change without mutating the database', { concurrency: false }, async () => {
+  const blockers = deviceBindingBlockers();
+  for (let index = 0; index < blockers.length; index += 1) {
+    const blocker = blockers[index];
+    const runtime = await createRuntime(`bitterless-todoist-identity-blocker-${index}`);
+    try {
+      await blocker.install(runtime);
+      const beforeState = await deviceBindingState(runtime.database);
+      const beforeOutbox = await outboxRows(runtime.database);
+      const replacementIds = new TodoistSyncSnowflakeService(7);
+      const replacement = new TodoistSyncRepository(
+        runtime.database,
+        '1',
+        `replacement-device-${String(index).padStart(4, '0')}`,
+        replacementIds,
+      );
+      await assert.rejects(
+        () => replacement.initialize(),
+        /server changed this device Snowflake node/,
+        blocker.label,
+      );
+      assert.deepEqual(await deviceBindingState(runtime.database), beforeState, blocker.label);
+      assert.deepEqual(await outboxRows(runtime.database), beforeOutbox, blocker.label);
+      assert.equal(replacementIds.getNodeId(), 7, blocker.label);
+    } finally {
+      closeRuntime(runtime);
+    }
+  }
+});
+
+test('a clean legacy current-identity node conflict is discarded and immediately requests bootstrap', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-clean-legacy-node');
+  try {
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'legacy-node-token',
+      domains: [domainResource('1', 'Before legacy recovery')],
+    }), null);
+    await runtime.database.execute(
+      "UPDATE todo_sync_state SET device_sequence=37,bootstrap_started=1,last_error='old mismatch' WHERE customer_id=?",
+      ['1'],
+    );
+    const conflictingResponse = syncResponse({
+      token: 'must-not-apply-conflicting-response',
+      domains: [domainResource('2', 'Must not apply')],
+    });
+    conflictingResponse.snowflake_node_id = 8;
+
+    await runtime.repository.applySyncResponse(conflictingResponse, null);
+    const reset = await deviceBindingState(runtime.database);
+    assert.equal(reset.device_id, TEST_DEVICE_ID);
+    assert.equal(reset.sync_token, '*');
+    assert.equal(reset.sync_phase, null);
+    assert.equal(reset.snowflake_node_id, null);
+    assert.equal(reset.device_sequence, 37);
+    assert.equal(reset.bootstrap_started, 0);
+    assert.equal(reset.bootstrap_catchup_pending, 1);
+    assert.equal(reset.last_error, null);
+    assert.equal(runtime.ids.getNodeId(), null);
+    assert.equal((await runtime.repository.getDomainById({ id: REMOTE_DOMAIN_ID }))?.title, 'Before legacy recovery');
+    assert.equal((await runtime.database.get<{ sync_revision: string }>(
+      'SELECT sync_revision FROM todo_sync_baselines WHERE resource_type=? AND resource_id=?',
+      ['todo_domain', REMOTE_DOMAIN_ID],
+    )).sync_revision, '1');
+
+    const bootstrap = syncResponse({
+      token: 'legacy-recovery-bootstrap',
+      fullSync: true,
+      phase: 'working_set',
+      domains: [domainResource('2', 'After legacy recovery')],
+    });
+    bootstrap.snowflake_node_id = 8;
+    await runtime.repository.applySyncResponse(bootstrap, null);
+    assert.equal((await runtime.repository.getSyncState()).snowflake_node_id, 8);
+    assert.equal((await runtime.repository.getSyncState()).sync_token, 'legacy-recovery-bootstrap');
+    assert.equal((await runtime.repository.getDomainById({ id: REMOTE_DOMAIN_ID }))?.title, 'After legacy recovery');
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
+test('every unsafe local state keeps a conflicting legacy node fail-closed and unchanged', { concurrency: false }, async () => {
+  const blockers = deviceBindingBlockers();
+  for (let index = 0; index < blockers.length; index += 1) {
+    const blocker = blockers[index];
+    const runtime = await createRuntime(`bitterless-todoist-legacy-blocker-${index}`);
+    try {
+      await blocker.install(runtime);
+      const beforeState = await deviceBindingState(runtime.database);
+      const beforeOutbox = await outboxRows(runtime.database);
+      const conflictingResponse = syncResponse({ token: `blocked-conflict-${index}` });
+      conflictingResponse.snowflake_node_id = 8;
+      await assert.rejects(
+        () => runtime.repository.applySyncResponse(conflictingResponse, null),
+        /server changed this device Snowflake node/,
+        blocker.label,
+      );
+      assert.deepEqual(await deviceBindingState(runtime.database), beforeState, blocker.label);
+      assert.deepEqual(await outboxRows(runtime.database), beforeOutbox, blocker.label);
+      assert.equal(runtime.ids.getNodeId(), 7, blocker.label);
+    } finally {
+      closeRuntime(runtime);
+    }
+  }
+});
+
+test('a generation fence rolls back clean legacy recovery and retains the expected old node', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-legacy-recovery-fence');
+  try {
+    const before = await deviceBindingState(runtime.database);
+    const conflictingResponse = syncResponse({ token: 'must-not-commit-legacy-recovery' });
+    conflictingResponse.snowflake_node_id = 8;
+    await assert.rejects(
+      () => runtime.repository.applySyncResponse(conflictingResponse, null, () => false),
+      /response generation is stale/,
+    );
+    assert.deepEqual(await deviceBindingState(runtime.database), before);
+    assert.equal(runtime.ids.getNodeId(), 7);
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
+test('Snowflake node clearing requires the exact expected old node', () => {
+  const ids = new TodoistSyncSnowflakeService(7);
+  assert.throws(() => ids.clearNodeId(8), /cannot clear a different Snowflake node/);
+  assert.equal(ids.getNodeId(), 7);
+  ids.clearNodeId(7);
+  assert.equal(ids.getNodeId(), null);
+});
+
+test('a conflicting server Snowflake node with local work leaves the cached node and sync state unchanged', { concurrency: false }, async () => {
   const runtime = await createRuntime('bitterless-todoist-conflicting-node');
   try {
+    const localDomain = await runtime.repository.createDomain({ title: 'Unsynchronized local work' });
+    assert(localDomain);
     const before = await runtime.repository.getSyncState();
+    const beforeOutbox = await outboxRows(runtime.database);
     const conflictingResponse = syncResponse({ token: 'must-not-commit-conflicting-node' });
     conflictingResponse.snowflake_node_id = 8;
 
@@ -1238,6 +1554,7 @@ test('a conflicting server Snowflake node leaves the cached node and sync state 
       /server changed this device Snowflake node/,
     );
     assert.deepEqual(await runtime.repository.getSyncState(), before);
+    assert.deepEqual(await outboxRows(runtime.database), beforeOutbox);
 
     await runtime.repository.applySyncResponse(syncResponse({ token: 'cached-node-remains-valid' }), null);
     const recovered = await runtime.repository.getSyncState();
@@ -1792,6 +2109,74 @@ test('coordinator is single-flight, coalesces reruns, schedules from completion,
   } finally {
     reopened?.close();
     cleanupRoot(runtime.root);
+  }
+});
+
+test('coordinator immediately bootstraps after a clean legacy node conflict', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todoist-coordinator-legacy-node-recovery');
+  const scheduler = new ManualScheduler();
+  const client = new DeferredSyncClient();
+  try {
+    await runtime.repository.setSyncInterval(10);
+    await runtime.repository.applySyncResponse(syncResponse({
+      token: 'legacy-coordinator-token',
+      domains: [domainResource('1', 'Before coordinator recovery')],
+    }), null);
+    const initialState = await deviceBindingState(runtime.database);
+    assert.equal(initialState.device_id, TEST_DEVICE_ID);
+    assert.equal(initialState.snowflake_node_id, 7);
+    assert.equal(initialState.sync_token, 'legacy-coordinator-token');
+    const coordinator = new TodoistSyncCoordinator({
+      repository: runtime.repository,
+      client,
+      sessionGeneration: 1,
+      captureGeneration: () => ({ session_generation: 1, clock_generation: 0 }),
+      isGenerationCurrent: () => true,
+      isClockWrong: () => false,
+      onStatusUpdated: () => undefined,
+      scheduler,
+    });
+    coordinator.start();
+    await waitFor(() => client.calls.length === 1, 'legacy node conflict request');
+    assert.equal(client.calls[0].syncToken, 'legacy-coordinator-token');
+    const conflictingResponse = syncResponse({
+      token: 'must-not-apply-coordinator-conflict',
+      domains: [domainResource('2', 'Must not apply coordinator conflict')],
+    });
+    conflictingResponse.snowflake_node_id = 8;
+    client.responses[0].resolve(conflictingResponse);
+
+    await waitFor(() => client.calls.length === 2, 'immediate coordinator bootstrap request');
+    assert.equal(client.calls[1].syncToken, '*');
+    assert.deepEqual(client.calls[1].commands, []);
+    assert.equal(client.maxActive, 1);
+    assert.equal(scheduler.size, 0);
+    assert.equal((await runtime.repository.getSyncState()).snowflake_node_id, null);
+    assert.equal((await runtime.repository.getSyncState()).sync_token, '*');
+    assert.equal(
+      (await runtime.repository.getDomainById({ id: REMOTE_DOMAIN_ID }))?.title,
+      'Before coordinator recovery',
+    );
+
+    const bootstrap = syncResponse({
+      token: 'coordinator-recovery-bootstrap',
+      fullSync: true,
+      phase: 'working_set',
+      domains: [domainResource('3', 'After coordinator recovery')],
+    });
+    bootstrap.snowflake_node_id = 8;
+    client.responses[1].resolve(bootstrap);
+    await waitFor(() => scheduler.size === 1, 'coordinator recovery regular schedule');
+    assert.deepEqual(scheduler.delays, [10_000]);
+    assert.equal((await runtime.repository.getSyncState()).snowflake_node_id, 8);
+    assert.equal((await runtime.repository.getSyncState()).sync_token, 'coordinator-recovery-bootstrap');
+    assert.equal(
+      (await runtime.repository.getDomainById({ id: REMOTE_DOMAIN_ID }))?.title,
+      'After coordinator recovery',
+    );
+    await coordinator.dispose();
+  } finally {
+    closeRuntime(runtime);
   }
 });
 

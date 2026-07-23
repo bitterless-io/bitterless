@@ -90,6 +90,9 @@ design document.
   prevents Refresh from reconciling the independent App Server inventory.
 - [Todo sync device identity changes across login methods](issues/todo-sync-device-identity-node-mismatch.md) - fixed:
   one persisted installation identity must be shared by password and email-code login.
+- [Todo sync stale local device binding](issues/todo-sync-stale-local-device-binding.md) - fixed; owner verification pending:
+  a clean pre-release DEBUG database must safely rebind and bootstrap, while any unsynchronized
+  local work remains fail-closed.
 - [Todo batch SubTodo counts omit zero rows](issues/todo-subtodo-count-map-omits-zero.md) - fixed:
   dense repository counts keep a newly created zero-SubTodo Todo refreshable.
 - [Customer login session transition](issues/customer-auth-login-session-transition.md) - client
@@ -99,7 +102,7 @@ design document.
 - [EyesOnAgents existing-thread normalized ingestion](issues/eyes-on-agents-thread-normalization-drops-existing-sessions.md) - implemented; owner verification pending:
   valid Codex threads can be omitted from All and remain Untitled when an optional preview is
   multiline or longer than the display bound.
-- [EyesOnAgents working state and Focus acknowledgement](issues/eyes-on-agents-working-focus-stale.md) - fix in progress:
+- [EyesOnAgents working state and Focus acknowledgement](issues/eyes-on-agents-working-focus-stale.md) - implemented; owner verification pending:
   independent App Server thread status must not overwrite Hook working evidence; Open acknowledges
   the current observation, while guarded content-free terminal-turn polling repairs a missed Stop.
 - [macOS stale Dock icon](issues/macos-dock-icon-stale.md) - fixed; owner verification pending: the current

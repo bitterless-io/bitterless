@@ -142,7 +142,9 @@ The main process owns one connection supervisor for the entire Bitterless proces
 
 1. `Connect` resolves the installed Codex executable and starts `codex app-server --stdio` without a
    shell.
-2. The client completes the JSON-RPC initialize handshake before reporting `connected`.
+2. The client completes the JSON-RPC initialize handshake before reporting `connected`, opting into
+   `experimentalApi` because bounded `thread/turns/list` powers the authorized prompt recovery and
+   content-free terminal reconciliation paths.
 3. If Codex observation is already enabled, it may call `hooks/list` to refresh its separate trust
    status; it never installs or repairs hooks as a side effect.
 4. It pages through non-archived and archived `thread/list` inventories, stores each UUID-validated
@@ -177,6 +179,12 @@ runs the same full active-plus-archived reconciliation as connection and activat
 - while another board action, connection, or sync is in flight, it is disabled so no conflicting
   mutation or duplicate inventory request starts;
 - on failure, the last persisted source snapshots, Domains, and read markers remain available.
+
+After inventory reconciliation, manual Refresh also runs the same hot-first/current-cold-page detail
+pass used by the ten-second poll. This lets a recently active Hook-owned task consume exact
+metadata-only terminal-turn proof immediately, so a manually stopped task can lose its stale
+`working` presentation without waiting for the next interval. If a task is outside the selected
+pages, the existing cold-page rotation still provides eventual reconciliation.
 
 When observation is installed, Refresh first attempts a fresh Hook inspection and any required
 coverage cutover so a preserved Desktop lifecycle suffix can reach SQLite before the returned
@@ -480,7 +488,7 @@ Every accepted `turn_started`, active `thread_status`, active `thread/list` obse
 while running: completion is a new attention transition and becomes unread again. A successful Open
 sets `is_unread = false` and acknowledges the current status observation; Focus `Read all` clears
 the marker for non-running unread rows. If a later authoritative active event arrives, its newer
-status time sets unread again as required. Metadata polling cannot restore runtime attention. Idle,
+status time sets unread again as required. Metadata polling cannot restore active runtime attention. Idle,
 unknown, archive, and invalidation transitions otherwise preserve the current marker.
 
 The legacy completion/open comparison is used once by migration to backfill the new column, so an
@@ -512,10 +520,21 @@ the answer as it completes, EyesOnAgents conservatively keeps the completion unr
 succeeds from EyesOnAgents or the user explicitly selects `Read all`. Completion must never
 auto-clear unread.
 
-Codex exposes no reliable Hook for manual interruption. EyesOnAgents does not add a `paused` state,
-scan private rollout/transcript files, or expire working by elapsed time. If interruption leaves the
-last authoritative state as working, Open is the explicit acknowledgement that removes that current
-observation from Focus; a later prompt restores working through `UserPromptSubmit`.
+Codex Hook delivery may miss a manual interruption. EyesOnAgents does not add a `paused` state, scan
+private rollout/transcript files, or expire working by elapsed time. Instead, the existing hot/cold
+poll may inspect only the newest turn for a currently active Hook row through
+`thread/turns/list(itemsView: notLoaded, sortDirection: desc, limit: 1)`. This request does not load
+turn items or conversation content into Bitterless; Main projects only ID, status, and completion
+time from the response. `inProgress` changes nothing. A `completed`, `interrupted`, or
+`failed` result may reconcile the row only when its turn ID exactly matches the current active turn
+and it carries a non-null persisted completion time. The second-precision completion value is not
+ordered against the millisecond Hook observation and does not create a new status watermark;
+identity plus SQLite compare-and-set provides the freshness fence. The completed turn ID also blocks
+a delayed active event for that same turn, while a different turn ID may start normally. Missing
+identity or completion time is a no-op. SQLite repeats those guards against the current row so a
+delayed request cannot terminate a newer turn. Reconciliation clears active state but sets unread:
+the task remains in Focus as newly finished until Open or `Read all`, and a later prompt restores
+working through `UserPromptSubmit`.
 
 ## XPC surface
 

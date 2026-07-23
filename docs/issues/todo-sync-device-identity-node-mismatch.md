@@ -27,15 +27,19 @@ Core does not reassign a live device in this path.
 - Remove login-method/customer-derived replacement identities and the two-login password bridge.
 - Keep the cached-node mismatch fail-closed; never repair it by silently accepting a different
   server node.
-- Existing pre-release DEBUG databases already paired with two identities require a one-time local
-  database reset or an explicit future migration after Bitterless is stopped. That recovery is not
-  inferred automatically because the database may contain unsynchronized IDs.
+- Existing pre-release DEBUG databases already paired with two identities require guarded recovery.
+  A clean database may rebind and bootstrap automatically; any database with unsynchronized IDs or
+  commands must remain fail-closed. See
+  [`todo-sync-stale-local-device-binding`](todo-sync-stale-local-device-binding.md).
 
 ## Resolution — 2026-07-22
 
 The renderer now creates one installation ID only when `DEVICE_ID_KEY` is absent and captures it
 for the lifetime of the application session. Password login, email-code login, restored sessions,
 and Todo activation all reuse that value. The cached Snowflake-node mismatch remains fail-closed.
+
+The 2026-07-23 follow-up adds clean-only recovery for databases created before this identity fix;
+dirty legacy databases still retain the fail-closed contract.
 
 Independent verification passed the authentication contract suite, the real encrypted-repository
 node-conflict regression, Todo sync tests, renderer checks, and the production build. See

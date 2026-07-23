@@ -1700,6 +1700,188 @@ try {
     'a monotonically newer provider activity watermark must promote the row into page 1'
   );
   assert.deepEqual(
+    promotedHotPage.hot[0].hookActiveTurn,
+    { turnId: 'focus-turn-2', statusObservedAt: 40_002 },
+    'refresh selection must expose exact Hook-active evidence for guarded terminal polling'
+  );
+
+  const terminalPatch = ({ turnId, outcome, completedAt, expectedStatusObservedAt }) => ({
+    threadId: refreshTargetId,
+    terminalTurn: {
+      turnId,
+      outcome,
+      completedAt,
+      expectedActiveTurnId: turnId,
+      expectedStatusObservedAt,
+      source: 'app_server'
+    }
+  });
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [terminalPatch({
+        turnId: 'focus-turn-2',
+        outcome: 'interrupted',
+        completedAt: 40_000,
+        expectedStatusObservedAt: 40_002
+      })]
+    }),
+    { changed: true }
+  );
+  snapshot = await repository.getSnapshot();
+  refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
+  );
+  assert.equal(refreshTargetSnapshot.runtimeState, 'ended');
+  assert.equal(refreshTargetSnapshot.statusSource, 'app_server');
+  assert.equal(refreshTargetSnapshot.activeTurnId, null);
+  assert.equal(refreshTargetSnapshot.lastCompletedTurnId, 'focus-turn-2');
+  assert.equal(refreshTargetSnapshot.lastCompletedAt, new Date(40_000).toISOString());
+  assert.equal(refreshTargetSnapshot.isUnread, true);
+  assert.equal(
+    refreshTargetSnapshot.isFocused,
+    true,
+    'a reconciled Stop must cease working while remaining a newly finished unread task'
+  );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: 'focus-turn-2',
+      observedAt: 40_500,
+      source: 'codex_hook'
+    }
+  });
+  snapshot = await repository.getSnapshot();
+  refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
+  );
+  assert.equal(
+    refreshTargetSnapshot.runtimeState,
+    'ended',
+    'a delayed active Hook for the completed turn must not revive terminal state'
+  );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: 'focus-turn-3',
+      observedAt: 40_600,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [terminalPatch({
+        turnId: 'focus-turn-3',
+        outcome: 'completed',
+        completedAt: 40_000,
+        expectedStatusObservedAt: 40_600
+      })]
+    }),
+    { changed: true }
+  );
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === refreshTargetId).runtimeState,
+    'idle',
+    'completed terminal proof must reconcile to idle'
+  );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: 'focus-turn-4',
+      observedAt: 44_000,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [terminalPatch({
+        turnId: 'focus-turn-4',
+        outcome: 'failed',
+        completedAt: 45_000,
+        expectedStatusObservedAt: 44_000
+      })]
+    }),
+    { changed: true }
+  );
+  snapshot = await repository.getSnapshot();
+  assert.equal(
+    snapshot.threads.find((thread) => thread.threadId === refreshTargetId).runtimeState,
+    'failed',
+    'failed terminal proof must reconcile to failed'
+  );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: 'focus-turn-5',
+      observedAt: 46_000,
+      source: 'codex_hook'
+    }
+  });
+  const staleTerminalPatch = terminalPatch({
+    turnId: 'focus-turn-5',
+    outcome: 'interrupted',
+    completedAt: 47_000,
+    expectedStatusObservedAt: 46_000
+  });
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: 'focus-turn-6',
+      observedAt: 48_000,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [staleTerminalPatch] }),
+    { changed: false },
+    'one atomic CAS must reject terminal proof after a newer turn replaces the candidate'
+  );
+  snapshot = await repository.getSnapshot();
+  refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
+  );
+  assert.equal(refreshTargetSnapshot.runtimeState, 'working');
+  assert.equal(refreshTargetSnapshot.activeTurnId, 'focus-turn-6');
+  assert.equal(refreshTargetSnapshot.statusSource, 'codex_hook');
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: null,
+      observedAt: 49_000,
+      source: 'codex_hook'
+    }
+  });
+  const syntheticTurnPage = await repository.getThreadRefreshPages({
+    coldPage: 2,
+    previousPageCount: promotedHotPage.pageCount
+  });
+  assert.equal(syntheticTurnPage.hot[0].threadId, refreshTargetId);
+  assert.equal(
+    syntheticTurnPage.hot[0].hookActiveTurn,
+    null,
+    'a synthetic fallback turn identity must never authorize terminal reconciliation'
+  );
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: 'focus-turn-7',
+      observedAt: 50_000,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
     await repository.refreshThreadPage({
       threads: [{ threadId: refreshThreadId(999), title: 'Missing' }]
     }),

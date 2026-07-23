@@ -31,6 +31,7 @@ import type {
 } from './todoistSync.database';
 import {
   assertTodoistSyncEntityId,
+  TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH,
   TodoistSyncSnowflakeService,
 } from './todoistSyncSnowflake.service';
 
@@ -188,16 +189,51 @@ export class TodoistSyncRepository {
 
   async initialize(): Promise<void> {
     const now = Date.now();
-    await this.db.execute(
-      `INSERT INTO todo_sync_state (customer_id, device_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(customer_id) DO UPDATE SET device_id=excluded.device_id, updated_at=excluded.updated_at`,
-      [this.customerId, this.deviceId, now, now],
-    );
-    await this.db.execute(
-      "UPDATE todo_sync_outbox SET state='pending', batch_id=NULL, updated_at=? WHERE state='in_flight'",
-      [now],
-    );
+    let identityChanged = false;
+    let previousNodeId: number | null = null;
+    await this.db.writeTransaction(async (tx) => {
+      const state = await tx.getOptional<{
+        device_id: string;
+        snowflake_node_id: number | null;
+      }>(
+        'SELECT device_id,snowflake_node_id FROM todo_sync_state WHERE customer_id=?',
+        [this.customerId],
+      );
+      if (!state) {
+        await tx.execute(
+          `INSERT INTO todo_sync_state (customer_id, device_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?)`,
+          [this.customerId, this.deviceId, now, now],
+        );
+      } else if (state.device_id !== this.deviceId) {
+        if (!await this.isDeviceBindingRecoveryClean(tx)) {
+          throw new Error(TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH);
+        }
+        identityChanged = true;
+        previousNodeId = state.snowflake_node_id;
+        const result = await tx.execute(
+          `UPDATE todo_sync_state SET device_id=?,sync_token='*',sync_phase=NULL,
+           snowflake_node_id=NULL,device_sequence=0,bootstrap_started=0,
+           bootstrap_catchup_pending=0,last_error=NULL,updated_at=?
+           WHERE customer_id=? AND device_id=? AND snowflake_node_id IS ?`,
+          [this.deviceId, now, this.customerId, state.device_id, state.snowflake_node_id],
+        );
+        if (result.changes !== 1) {
+          throw new Error(TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH);
+        }
+      }
+      await tx.execute(
+        "UPDATE todo_sync_outbox SET state='pending', batch_id=NULL, updated_at=? WHERE state='in_flight'",
+        [now],
+      );
+    }, () => {
+      if (identityChanged && this.ids.getNodeId() !== previousNodeId) {
+        throw new Error(TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH);
+      }
+    });
+    if (identityChanged && previousNodeId !== null) {
+      this.ids.clearNodeId(previousNodeId);
+    }
   }
 
   async setSnowflakeNodeId(nodeId: number): Promise<void> {
@@ -276,24 +312,36 @@ export class TodoistSyncRepository {
   }
 
   async updateDomainTitle(params: { id: TodoEntityId; title: string }): Promise<void> {
-    await this.updateDomain(params.id, { title: assertText(params.title, 'title', 512) });
+    await this.updateDomain(params.id, {
+      fields: { title: assertText(params.title, 'title', 512) },
+    });
   }
 
   async updateDomainDescription(params: { id: TodoEntityId; description: string }): Promise<void> {
-    await this.updateDomain(params.id, { description: assertText(params.description, 'description', 10_000) });
+    await this.updateDomain(params.id, {
+      fields: { description: assertText(params.description, 'description', 10_000) },
+      requireActive: true,
+    });
   }
 
-  private async updateDomain(idValue: TodoEntityId, fields: Record<string, unknown>): Promise<void> {
+  private async updateDomain(
+    idValue: TodoEntityId,
+    params: { fields: Record<string, unknown>; requireActive?: boolean },
+  ): Promise<void> {
     const id = assertTodoistSyncEntityId(idValue);
     const current = await this.getProjection('todo_domain', id);
     if (!current) return;
-    await this.mutate('todo_domain', id, 'domain_update', null, fields, async (tx, version) => {
-      const assignments = Object.keys(fields).map((key) => `${key}=?`);
-      await tx.execute(
+    await this.mutate('todo_domain', id, 'domain_update', null, params.fields, async (tx, version) => {
+      const assignments = Object.keys(params.fields).map((key) => `${key}=?`);
+      const result = await tx.execute(
         `UPDATE todo_domains SET ${assignments.join(',')}, client_updated_at=?, version_device_id=?,
-          version_client_sequence=?, version_command_uuid=? WHERE id=? AND customer_id=? AND deleted_flag=''`,
-        [...Object.values(fields), version.now, this.deviceId, version.sequence, version.uuid, id, this.customerId],
+          version_client_sequence=?, version_command_uuid=? WHERE id=? AND customer_id=? AND deleted_flag=''
+          ${params.requireActive ? 'AND archived=0' : ''}`,
+        [...Object.values(params.fields), version.now, this.deviceId, version.sequence, version.uuid, id, this.customerId],
       );
+      if (params.requireActive && result.changes !== 1) {
+        throw new Error(`[todoist sync] active domain was not found: ${id}`);
+      }
     });
   }
 
@@ -330,7 +378,9 @@ export class TodoistSyncRepository {
   }
 
   async setDomainArchived(params: { id: TodoEntityId; archived: number }): Promise<void> {
-    await this.updateDomain(params.id, { archived: assertFlag(params.archived, 'archived') });
+    await this.updateDomain(params.id, {
+      fields: { archived: assertFlag(params.archived, 'archived') },
+    });
   }
 
   async restoreDomain(params: { id: TodoEntityId }): Promise<RestoreDomainResult> {
@@ -343,7 +393,7 @@ export class TodoistSyncRepository {
       [this.customerId],
     );
     if (active.count >= 17) return 'limit_reached';
-    await this.updateDomain(id, { archived: 0 });
+    await this.updateDomain(id, { fields: { archived: 0 } });
     return 'restored';
   }
 
@@ -868,6 +918,13 @@ export class TodoistSyncRepository {
     isCommitAllowed: () => boolean = () => true,
   ): Promise<void> {
     const previousNodeId = this.ids.getNodeId();
+    if (
+      previousNodeId !== null &&
+      previousNodeId !== response.snowflake_node_id &&
+      await this.recoverLegacyDeviceBinding(previousNodeId, isCommitAllowed)
+    ) {
+      return;
+    }
     this.ids.setNodeId(response.snowflake_node_id);
     let changed = false;
     const eventTodoIds = new Set(response.todos.map((todo) => todo.id));
@@ -1091,6 +1148,65 @@ export class TodoistSyncRepository {
     );
     if (!row) throw new Error('[todoist sync] failed command was not found');
     await this.db.execute("UPDATE todo_sync_outbox SET state='discarded',updated_at=? WHERE command_uuid=?", [Date.now(), uuid]);
+  }
+
+  private async recoverLegacyDeviceBinding(
+    expectedNodeId: number,
+    isCommitAllowed: () => boolean,
+  ): Promise<boolean> {
+    const recovered = await this.db.writeTransaction(async (tx) => {
+      const state = await tx.get<{
+        device_id: string;
+        snowflake_node_id: number | null;
+      }>(
+        'SELECT device_id,snowflake_node_id FROM todo_sync_state WHERE customer_id=?',
+        [this.customerId],
+      );
+      if (
+        state.device_id !== this.deviceId ||
+        state.snowflake_node_id !== expectedNodeId ||
+        !await this.isDeviceBindingRecoveryClean(tx)
+      ) {
+        return false;
+      }
+      const result = await tx.execute(
+        `UPDATE todo_sync_state SET sync_token='*',sync_phase=NULL,snowflake_node_id=NULL,
+         bootstrap_started=0,bootstrap_catchup_pending=1,last_error=NULL,updated_at=?
+         WHERE customer_id=? AND device_id=? AND snowflake_node_id=?`,
+        [Date.now(), this.customerId, this.deviceId, expectedNodeId],
+      );
+      if (result.changes !== 1) {
+        throw new Error(TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH);
+      }
+      return true;
+    }, () => {
+      if (!isCommitAllowed()) throw new TodoistSyncGenerationFenceError();
+      if (this.ids.getNodeId() !== expectedNodeId) {
+        throw new Error(TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH);
+      }
+    });
+    if (recovered) this.ids.clearNodeId(expectedNodeId);
+    return recovered;
+  }
+
+  private async isDeviceBindingRecoveryClean(tx: TodoistSyncSqlExecutor): Promise<boolean> {
+    const state = await tx.get<{ rejected_batch_id: string | null }>(
+      'SELECT rejected_batch_id FROM todo_sync_state WHERE customer_id=?',
+      [this.customerId],
+    );
+    if (state.rejected_batch_id !== null) return false;
+    const outbox = await tx.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM todo_sync_outbox WHERE state NOT IN ('superseded','discarded')",
+    );
+    if (outbox.count > 0) return false;
+    const projections = await tx.get<{ count: number }>(
+      `SELECT
+        (SELECT COUNT(*) FROM todo_domains WHERE customer_id=? AND sync_revision='0') +
+        (SELECT COUNT(*) FROM todos WHERE customer_id=? AND sync_revision='0') +
+        (SELECT COUNT(*) FROM sub_todos WHERE customer_id=? AND sync_revision='0') AS count`,
+      [this.customerId, this.customerId, this.customerId],
+    );
+    return projections.count === 0;
   }
 
   private async mutate(

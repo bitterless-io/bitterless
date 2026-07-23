@@ -2,6 +2,8 @@ import { Snowflake } from '@sapphire/snowflake';
 import { TODOIST_SYNC_ENTITY_ID_PATTERN } from '@shared/todoistSync/todoistSync.contract';
 
 export const TODOIST_SYNC_SNOWFLAKE_EPOCH = new Date('2024-01-01T00:00:00.000Z');
+export const TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH =
+  '[todoist sync] server changed this device Snowflake node';
 
 export const assertTodoistSyncEntityId = (value: unknown, label = 'id'): string => {
   if (typeof value !== 'string' || !TODOIST_SYNC_ENTITY_ID_PATTERN.test(value)) {
@@ -23,7 +25,7 @@ export class TodoistSyncSnowflakeService {
       throw new Error('snowflake_node_id must be an integer from 0 to 1023');
     }
     if (this.nodeId !== null && this.nodeId !== nodeId) {
-      throw new Error('[todoist sync] server changed this device Snowflake node');
+      throw new Error(TODOIST_SYNC_SNOWFLAKE_NODE_MISMATCH);
     }
     if (this.nodeId === nodeId) return;
     const snowflake = new Snowflake(TODOIST_SYNC_SNOWFLAKE_EPOCH);
@@ -40,6 +42,14 @@ export class TodoistSyncSnowflakeService {
   resetUncommittedNodeId(nodeId: number): void {
     if (this.nodeId !== nodeId) {
       throw new Error('[todoist sync] cannot reset a different Snowflake node');
+    }
+    this.nodeId = null;
+    this.snowflake = null;
+  }
+
+  clearNodeId(expectedNodeId: number): void {
+    if (this.nodeId !== expectedNodeId) {
+      throw new Error('[todoist sync] cannot clear a different Snowflake node');
     }
     this.nodeId = null;
     this.snowflake = null;

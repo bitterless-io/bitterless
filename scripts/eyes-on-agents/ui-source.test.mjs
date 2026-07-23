@@ -33,7 +33,8 @@ test('window contract enforces singleton-safe paths and minimum size', () => {
   assert.match(source, /creationPromise: Promise<BrowserWindow> \| null/);
   assert.match(source, /minWidth: 800/);
   assert.match(source, /minHeight: 600/);
-  assert.match(source, /width: savedLayout\?\.width \?\? 1120/);
+  assert.match(source, /width: restored\?\.bounds\.width \?\? 1120/);
+  assert.match(source, /windowStateService\.register\(\s*'eyes-on-agents',\s*created/);
   assert.match(source, /renderer', 'eyesOnAgents', 'index\.html'/);
   assert.match(source, /preload', 'eyesOnAgents\.js'/);
   assert.match(source, /_destroyForAuth\(\)/);
@@ -216,7 +217,11 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.doesNotMatch(
     repositoryPageSelection[0],
-    /domain_id|project_key|runtime_state|is_unread|title\s+LIKE|isEyesOnAgentsFocused/,
+    /domain_id|project_key|is_unread|title\s+LIKE|isEyesOnAgentsFocused/,
+  );
+  assert.match(
+    repositoryPageSelection[0],
+    /runtime_state, active_turn_id, status_source, status_observed_at[\s\S]*statusSource === 'codex_hook'[\s\S]*\['working', 'waiting_approval', 'waiting_input'\]\.includes\(runtimeState\)[\s\S]*activeTurnId !== `hook-\$\{statusObservedAt\}`[\s\S]*hookActiveTurn/,
   );
   assert.match(
     repositoryDao,
@@ -252,7 +257,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     mainThreadProjection[0],
-    /\): Promise<CancellableResult<EyesOnAgentsThreadRefreshPatch \| null>> \{\s*const observedAt = this\.now\(\);\s*const read = await this\.awaitUnlessCancelled\([\s\S]*readThread\(candidate\.threadId\)[\s\S]*parseThreadRefreshRead\(read\.value, \{\s*expectedThreadId: candidate\.threadId,\s*observedAt\s*\}\)/,
+    /\): Promise<CancellableResult<EyesOnAgentsThreadRefreshPatch \| null>> \{\s*const observedAt = this\.now\(\);[\s\S]*const read = await this\.awaitUnlessCancelled\([\s\S]*readThread\(candidate\.threadId\)[\s\S]*parseThreadRefreshRead\(read\.value, \{\s*expectedThreadId: candidate\.threadId\s*\}\)/,
   );
   assert.match(
     mainService,
@@ -268,11 +273,11 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     mainService,
-    /if \(!promptWriteAllowed\) delete patch\.lastUserPrompt;[\s\S]*if \(refreshed\.changed\) this\.notify\(\)/,
+    /if \(!promptWriteAllowed\) delete patch\.lastUserPrompt;[\s\S]*if \(refreshed\.changed \|\| clearedDiagnostic\) this\.notify\(\)/,
   );
   assert.match(
     mainThreadBatch[0],
-    /const refreshed = await this\.dependencies\.repository\.refreshThreadPage\(\{\s*threads: semanticPatches\s*\}\);\s*if \(!this\.isAppServerActive\(context\)\) \{\s*return \{ changed: refreshed\.changed, completed: false \};\s*\}\s*if \(refreshed\.changed\) this\.notify\(\);\s*return \{ changed: refreshed\.changed, completed: true \}/,
+    /const refreshed = await this\.dependencies\.repository\.refreshThreadPage\(\{\s*threads: semanticPatches\s*\}\);[\s\S]*if \(!this\.isAppServerActive\(context\)\) \{\s*return \{ changed: refreshed\.changed, completed: false \};\s*\}\s*if \(refreshed\.changed \|\| clearedDiagnostic\) this\.notify\(\);\s*return \{ changed: refreshed\.changed, completed: true \}/,
   );
   assert.doesNotMatch(
     mainThreadBatch[0],
@@ -292,15 +297,11 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     repositoryDao,
-    /row\.status_observed_at === null\s*\|\| thread\.status\.observedAt > row\.status_observed_at/,
-  );
-  assert.doesNotMatch(
-    repositoryDao,
-    /thread\.status\.observedAt >= row\.status_observed_at/,
+    /if \(updates\.size > 0\) \{[\s\S]*WHERE thread_id = \? AND is_archived = 0/,
   );
   assert.match(
     repositoryDao,
-    /if \(updates\.size === 0\) continue;[\s\S]*WHERE thread_id = \? AND is_archived = 0/,
+    /status_source = 'app_server'[\s\S]*WHERE thread_id = \?[\s\S]*AND is_archived = 0[\s\S]*AND status_source = 'codex_hook'[\s\S]*AND runtime_state IN \('working', 'waiting_approval', 'waiting_input'\)[\s\S]*AND active_turn_id = \?[\s\S]*AND status_observed_at = \?/,
   );
   assert.match(
     mainService,
@@ -309,6 +310,10 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   assert.match(
     mainService,
     /async syncThreads\(\): Promise<EyesOnAgentsSnapshot> \{\s*this\.foregroundAppServerOperationPending \+= 1;[\s\S]*?await this\.joinBackgroundRefresh\(\)[\s\S]*?finally \{\s*this\.foregroundAppServerOperationPending -= 1;/,
+  );
+  assert.match(
+    mainService,
+    /async syncThreads\(\): Promise<EyesOnAgentsSnapshot> \{[\s\S]*?await this\.performSync\(context\);\s*if \(!this\.isAppServerActive\(context\)\) return;\s*await this\.performRefreshThreadPages\(context\);/,
   );
   assert.match(
     mainService,
@@ -329,6 +334,18 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   assert.match(
     appServerSupervisor,
     /this\.request\(connection, 'thread\/turns\/list', \{\s*threadId,\s*cursor: null,\s*itemsView: 'full',\s*sortDirection: 'desc',\s*limit: THREAD_TURN_LIMIT\s*\}\)/,
+  );
+  assert.match(
+    appServerSupervisor,
+    /capabilities: \{ experimentalApi: true \}/,
+  );
+  assert.match(
+    appServerSupervisor,
+    /readLatestThreadTurn\(threadId: string\): Promise<unknown \| null>[\s\S]*this\.request\(connection, 'thread\/turns\/list', \{\s*threadId,\s*cursor: null,\s*itemsView: 'notLoaded',\s*sortDirection: 'desc',\s*limit: 1\s*\}\)[\s\S]*turn\.itemsView !== 'notLoaded'[\s\S]*turn\.items\.length !== 0/,
+  );
+  assert.match(
+    mainThreadProjection[0],
+    /const hookActiveTurn = candidate\.hookActiveTurn \?\? null[\s\S]*if \(hookActiveTurn !== null\)[\s\S]*readLatestThreadTurn\(\s*candidate\.threadId\s*\)[\s\S]*terminalTurnFromLatest/,
   );
   const handlerRefresh = mainHandler.match(
     /async refreshThreadPages\(\): Promise<EyesOnAgentsThreadPagesRefreshResult> \{[\s\S]*?\n  \}/,

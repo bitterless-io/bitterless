@@ -409,7 +409,7 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
   if (!isEyesOnAgentsRecord(value)) throw new Error('thread refresh patch must be an object');
   assertOnlyKeys(
     value,
-    ['threadId', 'title', 'lastActivityAt', 'lastUserPrompt'],
+    ['threadId', 'title', 'lastActivityAt', 'lastUserPrompt', 'terminalTurn'],
     'thread refresh patch'
   );
   const result: EyesOnAgentsThreadRefreshPatch = {
@@ -467,6 +467,62 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
       ) as number,
       truncated: value.lastUserPrompt.truncated,
       source: value.lastUserPrompt.source
+    };
+  }
+  if (hasOwn(value, 'terminalTurn')) {
+    if (!isEyesOnAgentsRecord(value.terminalTurn)) {
+      throw new Error('terminal turn patch must be an object');
+    }
+    assertOnlyKeys(
+      value.terminalTurn,
+      [
+        'turnId',
+        'outcome',
+        'completedAt',
+        'expectedActiveTurnId',
+        'expectedStatusObservedAt',
+        'source'
+      ],
+      'terminal turn patch'
+    );
+    if (value.terminalTurn.source !== 'app_server') {
+      throw new Error('terminal turn source must be app_server');
+    }
+    if (!['completed', 'failed', 'interrupted'].includes(String(value.terminalTurn.outcome))) {
+      throw new Error('terminal turn outcome is unsupported');
+    }
+    const turnId = parseEyesOnAgentsText(
+      value.terminalTurn.turnId,
+      'terminal turn id',
+      200,
+      false
+    ) as string;
+    const expectedActiveTurnId = parseEyesOnAgentsText(
+      value.terminalTurn.expectedActiveTurnId,
+      'expected active turn id',
+      200,
+      false
+    ) as string;
+    if (turnId !== expectedActiveTurnId) {
+      throw new Error('terminal turn id must match the expected active turn id');
+    }
+    const completedAt = parseEyesOnAgentsTimestamp(
+      value.terminalTurn.completedAt,
+      'terminal turn completedAt',
+      false
+    ) as number;
+    const expectedStatusObservedAt = parseEyesOnAgentsTimestamp(
+      value.terminalTurn.expectedStatusObservedAt,
+      'expected status observedAt',
+      false
+    ) as number;
+    result.terminalTurn = {
+      turnId,
+      outcome: value.terminalTurn.outcome as 'completed' | 'failed' | 'interrupted',
+      completedAt,
+      expectedActiveTurnId,
+      expectedStatusObservedAt,
+      source: value.terminalTurn.source
     };
   }
   return result;

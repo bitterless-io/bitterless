@@ -46,6 +46,7 @@ class FakeChild extends EventEmitter {
   signalCode = null;
   messages = [];
   killSignals = [];
+  latestTurnItems = [];
   input = '';
 
   constructor() {
@@ -76,6 +77,22 @@ class FakeChild extends EventEmitter {
       const result = cursor === null
         ? { data: [{ id: `${prefix}one` }], nextCursor: 'page-2' }
         : { data: [{ id: `${prefix}two` }], nextCursor: null };
+      queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+      return;
+    }
+    if (message.method === 'thread/turns/list') {
+      const result = {
+        data: [{
+          id: 'latest-turn',
+          status: 'interrupted',
+          completedAt: 2,
+          itemsView: message.params.itemsView,
+          items: this.latestTurnItems,
+          error: { message: 'must not escape the supervisor projection' }
+        }],
+        nextCursor: null,
+        backwardsCursor: null
+      };
       queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
       return;
     }
@@ -250,6 +267,11 @@ try {
   assert.equal(spawnCount, 1, 'concurrent connect calls must share one child process');
   assert.equal(supervisor.getStatus(false).state, 'connected');
   assert.equal(child.messages[0].method, 'initialize');
+  assert.deepEqual(
+    child.messages[0].params.capabilities,
+    { experimentalApi: true },
+    'initialize must opt into the experimental bounded turn-list API'
+  );
   assert.equal(child.messages[1].method, 'initialized');
   assert.equal('id' in child.messages[1], false, 'initialized must be a JSON-RPC notification');
 
@@ -277,6 +299,28 @@ try {
       .every((message) => message.params.archived === true),
     'archived inventory requests must explicitly request archived threads'
   );
+  assert.deepEqual(await supervisor.readLatestThreadTurn('thread-one'), {
+    id: 'latest-turn',
+    status: 'interrupted',
+    completedAt: 2
+  });
+  const latestTurnRequest = child.messages.find(
+    (message) => message.method === 'thread/turns/list'
+  );
+  assert.deepEqual(latestTurnRequest.params, {
+    threadId: 'thread-one',
+    cursor: null,
+    itemsView: 'notLoaded',
+    sortDirection: 'desc',
+    limit: 1
+  });
+  child.latestTurnItems = [{ type: 'agentMessage', text: 'must not cross the boundary' }];
+  await assert.rejects(
+    () => supervisor.readLatestThreadTurn('thread-one'),
+    /contains unexpected items/,
+    'terminal polling must reject a response that carries turn content'
+  );
+  child.latestTurnItems = [];
   assert.deepEqual(await supervisor.listHooks(), [{
     command: '/fixed/bitterless-hook',
     currentHash: 'hash',
@@ -494,7 +538,14 @@ try {
     upsertDiscoveredThreads: async () => undefined,
     upsertThreadSnapshots: async () => undefined,
     setThreadArchived: async () => undefined,
-    markThreadsArchived: async () => undefined
+    markThreadsArchived: async () => undefined,
+    getThreadRefreshPages: async () => ({
+      hot: [],
+      cold: [],
+      pageCount: 0,
+      coldPage: null
+    }),
+    refreshThreadPage: async () => ({ changed: false })
   };
   let delayedBridgeStatus = {
     state: 'not_installed',

@@ -28,6 +28,7 @@
     "check:renderer-i18n": "node scripts/renderer-i18n/check-renderer-i18n.mjs",
     "test:todo-layout": "node --test scripts/todo/todo-column-layout.test.mjs",
     "test:todo-ai-source": "node --test scripts/todo/todo-ai-source-corner.test.mjs",
+    "test:todo:agent-skill-version": "node scripts/todo/todo-agent-skill-version.test.mjs",
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
     "check:todo-window-runtime": "node scripts/todo/check-todo-window-runtime.mjs",

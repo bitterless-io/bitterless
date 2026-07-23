@@ -1,6 +1,6 @@
 # EyesOnAgents Working State and Focus Acknowledgement
 
-Status: fix in progress
+Status: implemented; owner verification pending
 
 ## Symptoms
 
@@ -20,16 +20,22 @@ authorized latest-question recovery, but it is not cross-process Desktop lifecyc
 The independent App Server's process-local `thread.status` cannot repair this safely. Codex does,
 however, persist each turn's own status. A bounded `thread/turns/list` request can read only the
 newest turn with `itemsView: notLoaded`, providing terminal proof without loading conversation
-content.
+content into Bitterless. The supervisor retains only ID, status, and completion time.
 
 ## Resolution contract
 
 - The ten-second tiered poll never derives runtime from `thread/read.status`.
+- Labelled manual `Refresh` runs the same terminal reconciliation once after full inventory sync;
+  it is the explicit fallback when waiting for the next ten-second tick is undesirable.
 - As a narrow exception, active Hook rows may consume metadata-only latest-turn terminal proof.
-- `inProgress` never clears working. A terminal result must match the persisted active turn ID, or
-  when the Hook supplied no usable turn ID, have a completion timestamp at least as new as the
-  persisted working observation.
+- `inProgress` never clears working. A terminal result must match the exact persisted active turn ID
+  and carry a persisted completion timestamp. Missing turn identity or completion time is
+  deliberately a no-op; second-precision completion time is not ordered against the millisecond
+  Hook observation.
 - SQLite rechecks that proof against the current row, so a late poll cannot end a newer turn.
+- Terminal reconciliation retains the original active observation watermark and records the
+  completed turn ID; a delayed active event for that same turn cannot revive working, while a new
+  turn ID still can.
 - Hook events and lifecycle notifications from the connection that owns a turn remain the only
   immediate runtime authorities; polling is eventual terminal reconciliation only.
 - A successful Open acknowledges the currently observed active state. The thread leaves Focus until

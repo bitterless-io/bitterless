@@ -288,7 +288,7 @@ export class CodexAppServerSupervisor {
     try {
       await this.request(connection, 'initialize', {
         clientInfo: { name: 'bitterless', title: 'Bitterless EyesOnAgents', version: '1' },
-        capabilities: null
+        capabilities: { experimentalApi: true }
       });
       this.notify(connection, 'initialized');
       if (this.connection === connection) this.setStatus('connected');
@@ -411,6 +411,52 @@ export class CodexAppServerSupervisor {
       }
     }
     return result.data;
+  }
+
+  async readLatestThreadTurn(threadId: string): Promise<unknown | null> {
+    const connection = this.connection;
+    if (!connection || !this.isConnected()) {
+      throw new Error('Codex App Server is not connected');
+    }
+    const result = await this.request(connection, 'thread/turns/list', {
+      threadId,
+      cursor: null,
+      itemsView: 'notLoaded',
+      sortDirection: 'desc',
+      limit: 1
+    });
+    if (
+      !isEyesOnAgentsRecord(result) ||
+      !Array.isArray(result.data) ||
+      result.data.length > 1 ||
+      (
+        result.nextCursor !== null &&
+        result.nextCursor !== undefined &&
+        typeof result.nextCursor !== 'string'
+      ) ||
+      (
+        result.backwardsCursor !== null &&
+        result.backwardsCursor !== undefined &&
+        typeof result.backwardsCursor !== 'string'
+      )
+    ) {
+      throw new Error('Codex latest thread turn response is invalid');
+    }
+    const turn = result.data[0];
+    if (turn === undefined) return null;
+    if (
+      !isEyesOnAgentsRecord(turn) ||
+      turn.itemsView !== 'notLoaded' ||
+      !Array.isArray(turn.items) ||
+      turn.items.length !== 0
+    ) {
+      throw new Error('Codex latest thread turn contains unexpected items');
+    }
+    return {
+      id: typeof turn.id === 'string' ? turn.id : null,
+      status: typeof turn.status === 'string' ? turn.status : null,
+      completedAt: typeof turn.completedAt === 'number' ? turn.completedAt : null
+    };
   }
 
   private async listThreadInventory(archived: boolean): Promise<unknown[]> {

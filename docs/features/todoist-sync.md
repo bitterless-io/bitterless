@@ -435,6 +435,20 @@ standalone Todo entry points await it before creating the Todo renderer and retr
 when the user opens Todo again. Required renderer XPC values are validated: a transport `null` is a
 runtime failure, never an empty list or the Domain-capacity result.
 
+Production and DEBUG profiles are separate devices: each profile owns its userData root,
+installation `device_id`, encrypted customer database, protected key, and server-assigned Snowflake
+node. They may run together and converge through the same customer-scoped HTTP stream; they never
+share a local database or identity.
+
+An existing state row is classified before its persisted `device_id` can change. A stale binding is
+recovered automatically only when `rejected_batch_id` is absent, every outbox row is terminal
+`superseded` or `discarded`, and no Domain, Todo, or SubTodo has `sync_revision='0'`. Recovery clears
+the cached node, resets the customer token to `*`, and performs a full working-set bootstrap. This
+same guard covers legacy databases whose original identity was already overwritten and can now be
+recognized only by a conflicting server node; the conflicting incremental response is not applied.
+Any pending, in-flight, acknowledgement-waiting, failed, blocked, clock-rejected, or local-only work
+keeps the database fail-closed and unchanged.
+
 ## Packaging and removal
 
 - Retain exact `better-sqlite3-multiple-ciphers` and `@sapphire/snowflake` dependencies.

@@ -147,8 +147,9 @@ Desktop's turns. Its thread read status is therefore never allowed to overwrite 
 evidence in the tiered poll. If terminal Hook delivery is missed, the poll may make one narrow,
 content-free reconciliation request for a currently active Hook row: the newest turn through
 `thread/turns/list`, descending, limit one, with `itemsView: notLoaded`. Only a matching
-`completed`, `interrupted`, or `failed` turn may clear the persisted active state; `inProgress`,
-stale, mismatched, malformed, or unavailable evidence is a no-op. The completion remains unread.
+`completed`, `interrupted`, or `failed` turn with the exact active turn ID and a persisted completion
+time may clear the active state; `inProgress`, missing-time, mismatched, malformed, or
+unavailable evidence is a no-op. The completion remains unread.
 EyesOnAgents deliberately does not infer a paused state from private transcript/rollout formats or
 elapsed time. A successful Open still acknowledges the current active observation; a later
 `UserPromptSubmit` supplies newer working evidence and restores Focus.

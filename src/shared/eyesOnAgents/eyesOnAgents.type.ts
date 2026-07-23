@@ -145,16 +145,32 @@ export interface EyesOnAgentsThreadRefreshLastUserPromptPatch {
   source: 'app_server';
 }
 
+export interface EyesOnAgentsThreadRefreshTerminalTurnPatch {
+  turnId: string;
+  outcome: 'completed' | 'failed' | 'interrupted';
+  completedAt: number;
+  expectedActiveTurnId: string;
+  expectedStatusObservedAt: number;
+  source: 'app_server';
+}
+
 export interface EyesOnAgentsThreadRefreshPatch {
   threadId: string;
   title?: string | null;
   lastActivityAt?: number;
   lastUserPrompt?: EyesOnAgentsThreadRefreshLastUserPromptPatch;
+  terminalTurn?: EyesOnAgentsThreadRefreshTerminalTurnPatch;
+}
+
+export interface EyesOnAgentsThreadRefreshHookActiveTurn {
+  turnId: string;
+  statusObservedAt: number;
 }
 
 export interface EyesOnAgentsThreadRefreshCandidate {
   threadId: string;
   lastUserPromptCheckedAt: number | null;
+  hookActiveTurn: EyesOnAgentsThreadRefreshHookActiveTurn | null;
 }
 
 export interface EyesOnAgentsThreadRefreshPages {

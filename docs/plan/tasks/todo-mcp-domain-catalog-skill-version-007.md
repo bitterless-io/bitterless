@@ -1,7 +1,7 @@
 ---
 id: todo-mcp-domain-catalog-skill-version-007
 scope: active/archived MCP Domain discovery, Domain descriptions, and versioned Todo agent-skill onboarding
-status: in-progress
+status: done
 depends-on: [todo-agent-skill-onboarding-002, todo-mcp-domain-create]
 verify:
   - domain.list returns only active non-deleted Domains and includes description
@@ -126,4 +126,30 @@ Todo can visibly prompt Ral when the current setup instructions need to be copie
 
 ## Result
 
-Pending implementation and independent review.
+The public MCP contract now keeps `domain.list` active-only, adds the exact read-only
+`domain.archived.list` catalog, and exposes explicit `domain.description.update` for active
+Domains. Description updates use the Todoist Sync repository, reread the persisted row, create the
+normal pending `domain_update` outbox command, and enforce `archived=0` inside the mutation
+transaction so an archive race rolls back both device sequence and outbox.
+
+The portable skill and application share revision `260723104233`. Todo startup atomically creates
+the local acknowledgement baseline, compares revisions with `compare-versions`, and shows an
+accessible Arco red dot on the Robot entry for install/update/invalid attention. Complete setup is
+the first modal action; only its successful clipboard copy acknowledges the exact main-process
+revision. Detailed copies, failures, future revisions, and stale main processes cannot incorrectly
+clear the dot.
+
+The canonical skill documents active descriptions, archived historical lookup, explicit
+description updates, additive installation, and new-session reload. It was copied additively to
+the workspace Codex/Claude trees and both user-level installations; all four trees are
+byte-identical to canonical and retain the production-only `bitterless` dependency.
+
+All frontmatter verification commands passed, including the 29/29 native Todoist Sync suite,
+focused MCP/onboarding/skill tests, renderer guards, i18n, MCP/Todo/Node type checks, and
+`git diff --check`. The host Python lacks `PyYAML`, so the Skill Creator Python wrapper could not
+start; the canonical and installed YAML were instead parsed and asserted with the project's Node
+`yaml` dependency. Per task boundary, no Electron, build, package, sign, publish, or deploy command
+ran.
+
+Independent review [round 1](../reviews/todo-mcp-domain-catalog-skill-version-007-1.md) resolved
+the initial mirror drift and archived-update race, then passed with no open P1, P2, or P3 finding.

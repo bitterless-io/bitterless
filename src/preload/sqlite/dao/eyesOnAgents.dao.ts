@@ -433,13 +433,15 @@ const applyRuntimeEventInTransaction = (
   const created = Number(inserted.changes) === 1;
 
   const existing = sqliteManager.db.prepare(
-    `SELECT runtime_state, status_source, status_observed_at, active_turn_id
+    `SELECT runtime_state, status_source, status_observed_at, active_turn_id,
+      last_completed_turn_id
      FROM eyes_on_agents_thread WHERE thread_id = ?`
   ).get(event.threadId) as {
     runtime_state: string;
     status_source: string;
     status_observed_at: number | null;
     active_turn_id: string | null;
+    last_completed_turn_id: string | null;
   };
   const mayRestoreUnknownDiscovery = hasCurrentListenerReplayAuthority
     && event.source === 'codex_hook'
@@ -449,6 +451,14 @@ const applyRuntimeEventInTransaction = (
     !mayRestoreUnknownDiscovery
     && existing.status_observed_at !== null
     && existing.status_observed_at > event.observedAt
+  ) {
+    return runtimePersistenceResult(event.threadId, created);
+  }
+  if (
+    (state === 'working' || state === 'waiting_approval' || state === 'waiting_input')
+    && event.turnId !== null
+    && event.turnId !== undefined
+    && existing.last_completed_turn_id === event.turnId
   ) {
     return runtimePersistenceResult(event.threadId, created);
   }
@@ -623,7 +633,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ? 2
           : params.coldPage;
       const selectPage = sqliteManager.db.prepare(
-        `SELECT thread_id, last_user_prompt_checked_at
+        `SELECT thread_id, runtime_state, active_turn_id, status_source, status_observed_at,
+          last_user_prompt_checked_at
          FROM eyes_on_agents_thread
          WHERE is_archived = 0
          ORDER BY COALESCE(last_activity_at, updated_at) DESC,
@@ -631,24 +642,62 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
          LIMIT ? OFFSET ?`
       );
       const toCandidate = (
-        row: { thread_id: string; last_user_prompt_checked_at: number | null }
-      ): EyesOnAgentsThreadRefreshCandidate => ({
-        threadId: parseEyesOnAgentsUuid(row.thread_id),
-        lastUserPromptCheckedAt: parseEyesOnAgentsTimestamp(
-          row.last_user_prompt_checked_at,
-          'last_user_prompt_checked_at'
-        )
-      });
+        row: {
+          thread_id: string;
+          runtime_state: string;
+          active_turn_id: string | null;
+          status_source: string;
+          status_observed_at: number | null;
+          last_user_prompt_checked_at: number | null;
+        }
+      ): EyesOnAgentsThreadRefreshCandidate => {
+        const runtimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
+        const statusSource = parseStatusSource(row.status_source);
+        const activeTurnId = parseTurnId(row.active_turn_id, 'active_turn_id');
+        const statusObservedAt = parseEyesOnAgentsTimestamp(
+          row.status_observed_at,
+          'status_observed_at'
+        );
+        const hookActiveTurn = statusSource === 'codex_hook' &&
+          ['working', 'waiting_approval', 'waiting_input'].includes(runtimeState) &&
+          activeTurnId !== null &&
+          statusObservedAt !== null &&
+          activeTurnId !== `hook-${statusObservedAt}`
+          ? { turnId: activeTurnId, statusObservedAt }
+          : null;
+        return {
+          threadId: parseEyesOnAgentsUuid(row.thread_id),
+          lastUserPromptCheckedAt: parseEyesOnAgentsTimestamp(
+            row.last_user_prompt_checked_at,
+            'last_user_prompt_checked_at'
+          ),
+          hookActiveTurn
+        };
+      };
       const hotRows = selectPage.all(
         THREAD_REFRESH_PAGE_SIZE,
         0
-      ) as Array<{ thread_id: string; last_user_prompt_checked_at: number | null }>;
+      ) as Array<{
+        thread_id: string;
+        runtime_state: string;
+        active_turn_id: string | null;
+        status_source: string;
+        status_observed_at: number | null;
+        last_user_prompt_checked_at: number | null;
+      }>;
       const coldRows = coldPage === null
         ? []
         : selectPage.all(
             THREAD_REFRESH_PAGE_SIZE,
             (coldPage - 1) * THREAD_REFRESH_PAGE_SIZE
-          ) as Array<{ thread_id: string; last_user_prompt_checked_at: number | null }>;
+          ) as Array<{
+            thread_id: string;
+            runtime_state: string;
+            active_turn_id: string | null;
+            status_source: string;
+            status_observed_at: number | null;
+            last_user_prompt_checked_at: number | null;
+          }>;
       return {
         hot: hotRows.map(toCandidate),
         cold: coldRows.map(toCandidate),
@@ -761,14 +810,51 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           }
         }
 
-        if (updates.size === 0) continue;
-        updates.set('updated_at', now);
-        const columns = [...updates.keys()];
-        const result = sqliteManager.db.prepare(
-          `UPDATE eyes_on_agents_thread SET ${columns.map((column) => `${column} = ?`).join(', ')}
-           WHERE thread_id = ? AND is_archived = 0`
-        ).run(...updates.values(), thread.threadId);
-        if (Number(result.changes) === 1) changed = true;
+        if (updates.size > 0) {
+          updates.set('updated_at', now);
+          const columns = [...updates.keys()];
+          const result = sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET ${columns.map((column) => `${column} = ?`).join(', ')}
+             WHERE thread_id = ? AND is_archived = 0`
+          ).run(...updates.values(), thread.threadId);
+          if (Number(result.changes) === 1) changed = true;
+        }
+
+        if (thread.terminalTurn !== undefined) {
+          const runtimeState = thread.terminalTurn.outcome === 'completed'
+            ? 'idle'
+            : thread.terminalTurn.outcome === 'interrupted'
+              ? 'ended'
+              : 'failed';
+          const result = sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET
+              runtime_state = ?,
+              active_flags_json = '[]',
+              active_turn_id = NULL,
+              last_completed_turn_id = ?,
+              last_completed_at = ?,
+              is_unread = 1,
+              status_source = 'app_server',
+              last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
+              updated_at = ?
+             WHERE thread_id = ?
+               AND is_archived = 0
+               AND status_source = 'codex_hook'
+               AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
+               AND active_turn_id = ?
+               AND status_observed_at = ?`
+          ).run(
+            runtimeState,
+            thread.terminalTurn.turnId,
+            thread.terminalTurn.completedAt,
+            thread.terminalTurn.completedAt,
+            now,
+            thread.threadId,
+            thread.terminalTurn.expectedActiveTurnId,
+            thread.terminalTurn.expectedStatusObservedAt
+          );
+          if (Number(result.changes) === 1) changed = true;
+        }
       }
       return { changed };
     });

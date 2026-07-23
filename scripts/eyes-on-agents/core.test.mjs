@@ -712,6 +712,119 @@ try {
     }
   }
 
+  const terminalThreadIds = Array.from({ length: 10 }, (_, index) => (
+    refreshThreadId(index + 70)
+  ));
+  const terminalCandidates = terminalThreadIds.map((threadId, index) => ({
+    threadId,
+    lastUserPromptCheckedAt: null,
+    hookActiveTurn: index === 8
+      ? null
+      : {
+          turnId: `terminal-turn-${index}`,
+          statusObservedAt: index === 0 ? 10_500 : 9_500 + index
+        }
+  }));
+  const terminalReads = [];
+  const terminalCommits = [];
+  const terminalService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async () => ({
+        hot: terminalCandidates,
+        cold: [],
+        pageCount: 1,
+        coldPage: null
+      }),
+      refreshThreadPage: async ({ threads }) => {
+        terminalCommits.push(threads);
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async (threadId) => {
+        if (threadId === terminalThreadIds[9]) throw new Error('metadata read failed');
+        return {
+          id: threadId,
+          name: `Terminal ${threadId}`,
+          updatedAt: 13
+        };
+      },
+      readLatestThreadTurn: async (threadId) => {
+        terminalReads.push(threadId);
+        const index = terminalThreadIds.indexOf(threadId);
+        if (index === 7) throw new Error('terminal status read failed');
+        if (index === 0) {
+          return { id: 'terminal-turn-0', status: 'interrupted', completedAt: 10 };
+        }
+        if (index === 1) {
+          return { id: 'terminal-turn-1', status: 'completed', completedAt: 11 };
+        }
+        if (index === 2) {
+          return { id: 'terminal-turn-2', status: 'failed', completedAt: 12 };
+        }
+        if (index === 3) {
+          return { id: 'terminal-turn-3', status: 'inProgress', completedAt: 12 };
+        }
+        if (index === 4) {
+          return { id: 'different-turn', status: 'interrupted', completedAt: 12 };
+        }
+        if (index === 5) {
+          return { id: 'terminal-turn-5', status: 'interrupted', completedAt: null };
+        }
+        if (index === 9) {
+          return { id: 'terminal-turn-9', status: 'interrupted', completedAt: 13 };
+        }
+        return { id: 'terminal-turn-6', status: 'interrupted', completedAt: 13_000 };
+      }
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    now: () => 13_500
+  });
+  assert.deepEqual(await terminalService.refreshThreadPages(), { changed: true });
+  assert.equal(
+    terminalReads.length,
+    terminalCandidates.filter((candidate) => candidate.hookActiveTurn !== null).length,
+    'only Hook-active candidates with an exact turn identity may request terminal metadata'
+  );
+  assert.equal(
+    terminalReads.includes(terminalThreadIds[8]),
+    false,
+    'an ordinary metadata candidate must not request turn status'
+  );
+  assert.equal(terminalCommits.length, 1);
+  const terminalPatches = new Map(
+    terminalCommits[0].map((patch) => [patch.threadId, patch])
+  );
+  assert.deepEqual(terminalPatches.get(terminalThreadIds[0]).terminalTurn, {
+    turnId: 'terminal-turn-0',
+    outcome: 'interrupted',
+    completedAt: 10_000,
+    expectedActiveTurnId: 'terminal-turn-0',
+    expectedStatusObservedAt: 10_500,
+    source: 'app_server'
+  });
+  assert.equal(terminalPatches.get(terminalThreadIds[1]).terminalTurn.outcome, 'completed');
+  assert.equal(terminalPatches.get(terminalThreadIds[2]).terminalTurn.outcome, 'failed');
+  assert.equal(
+    terminalPatches.get(terminalThreadIds[9]).terminalTurn.outcome,
+    'interrupted',
+    'an unrelated thread/read failure must not suppress valid terminal proof'
+  );
+  for (const threadId of terminalThreadIds.slice(3, 9)) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(terminalPatches.get(threadId), 'terminalTurn'),
+      false,
+      'in-progress, mismatched, missing, invalid, failed, and ineligible evidence must fail closed'
+    );
+  }
+
   let promptPageSelectionCount = 0;
   let promptContentReads = 0;
   let promptBroadcasts = 0;
@@ -1438,6 +1551,13 @@ try {
           if (options.readThread) return await options.readThread(threadId);
           return { id: threadId, name: 'Targeted title' };
         },
+        readLatestThreadTurn: async (threadId) => {
+          calls.push(`thread-latest-turn:${threadId}`);
+          if (options.readLatestThreadTurn) {
+            return await options.readLatestThreadTurn(threadId);
+          }
+          return null;
+        },
         listHooks: async () => {
           calls.push('hooks-list');
           await duringHooksList();
@@ -1823,6 +1943,53 @@ try {
     'no old-lifetime invalidation may run after the start-boundary event is consumed'
   );
   await boundaryHarness.service.disconnectAppServer();
+
+  const manuallyStoppedThreadId = refreshThreadId(95);
+  const manualRefreshPatches = [];
+  const manualRefreshHarness = createLifecycleHarness(false, {
+    getThreadRefreshPages: async () => ({
+      hot: [{
+        threadId: manuallyStoppedThreadId,
+        lastUserPromptCheckedAt: null,
+        hookActiveTurn: {
+          turnId: 'manual-stop-turn',
+          statusObservedAt: 900
+        }
+      }],
+      cold: [],
+      pageCount: 1,
+      coldPage: null
+    }),
+    readLatestThreadTurn: async () => ({
+      id: 'manual-stop-turn',
+      status: 'interrupted',
+      completedAt: 1
+    }),
+    refreshThreadPage: async ({ threads }) => {
+      manualRefreshPatches.push(...threads);
+      return { changed: true };
+    }
+  });
+  await manualRefreshHarness.service.connectAppServer();
+  assert.equal(
+    manualRefreshPatches.length,
+    0,
+    'Connect inventory must not masquerade as the labelled manual Refresh detail pass'
+  );
+  await manualRefreshHarness.service.syncThreads();
+  assert.deepEqual(
+    manualRefreshPatches[0].terminalTurn,
+    {
+      turnId: 'manual-stop-turn',
+      outcome: 'interrupted',
+      completedAt: 1_000,
+      expectedActiveTurnId: 'manual-stop-turn',
+      expectedStatusObservedAt: 900,
+      source: 'app_server'
+    },
+    'labelled manual Refresh must run terminal reconciliation after full inventory sync'
+  );
+  await manualRefreshHarness.service.disconnectAppServer();
 
   const pendingStartEvent = {
     schemaVersion: 1,
