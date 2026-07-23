@@ -25,10 +25,15 @@ rejection.
   `--no-s3-acceleration`.
 - Keep `--wait`, accepted-status validation, staple, and staple validation unchanged; do not bypass
   notarization.
+- `yarn fast_publish:mac_arm` enables the `electron-osx-sign` debug namespace for its macOS build
+  stage by default so the terminal shows the file currently being signed. The debug environment is
+  scoped to `yarn build:mac_arm`; it does not need to wrap source synchronization or artifact upload.
 
 ## Verification
 
 - `yarn test:sqlite-migrations` must continue covering the accepted-status and stapling gates without
   requiring a specific S3 transport flag.
+- The release-hook test must preserve the default per-file signing progress on
+  `fast_publish:mac_arm`.
 - A successful DMG notarization, staple validation, production upload, and public manifest check
   are still required to close the issue.

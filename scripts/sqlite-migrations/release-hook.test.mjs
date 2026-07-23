@@ -40,6 +40,14 @@ test('direct package scripts have migration pre-hooks', () => {
   assert.equal(pkg.scripts['prebuild_dev:win'], 'yarn audit:sqlite-migrations')
 })
 
+test('fast mac ARM publish enables signing debug for the build stage only', () => {
+  const pkg = JSON.parse(read('package.json'))
+  assert.equal(
+    pkg.scripts['fast_publish:mac_arm'],
+    'node scripts/git_pull.js && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm',
+  )
+})
+
 test('signedBuild cannot invoke electron-builder before the audit', () => {
   const source = read('scripts/signedBuild.js')
   const auditIndex = source.indexOf("spawnSync(auditCommand, ['audit:sqlite-migrations']")
