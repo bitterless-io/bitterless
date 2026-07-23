@@ -2,6 +2,26 @@
   <div name="menubar" class="menubar" :class="menubarClass" @dblclick="handleDoubleClick">
     <span class="menubar__title">{{ i18nHelper.todo.title }}</span>
     <div name="menubar__actions" class="menubar__actions">
+      <a-tooltip :content="addDomainTooltip" position="br" mini>
+        <span class="menubar__add-domain-tooltip">
+          <a-button
+            name="menubar__add-domain"
+            class="menubar__add-domain"
+            size="mini"
+            type="text"
+            :loading="addDomainLoading"
+            :disabled="addDomainLoading || domainLimitReached"
+            :title="addDomainTooltip"
+            :aria-label="i18nHelper.todo.addDomain"
+            @click="handleAddDomain"
+          >
+            <template #icon>
+              <IconPlus :size="14" aria-hidden="true" />
+            </template>
+            <span class="menubar__add-domain-label">{{ i18nHelper.todo.addDomain }}</span>
+          </a-button>
+        </span>
+      </a-tooltip>
       <a-tooltip :content="i18nHelper.todo.archivedDomains" position="br" mini>
         <a-button
           size="mini"
@@ -130,6 +150,7 @@ import {
   IconMaximize,
   IconMinus,
   IconPinned,
+  IconPlus,
   IconRefresh,
   IconRobot,
   IconSettings,
@@ -161,6 +182,11 @@ const mcpGuideVisible = ref(false);
 const mcpInfo = ref<McpIntegrationInfo | null>(null);
 const archivedDomainsVisible = ref(false);
 const archivedDomainsLoading = ref(false);
+const addDomainLoading = ref(false);
+const domainLimitReached = computed(() => todoStore.domainList.length >= 17);
+const addDomainTooltip = computed(() => (
+  domainLimitReached.value ? i18nHelper.todo.domainLimitReached : i18nHelper.todo.addDomain
+));
 const syncStatusLabel = computed(() => {
   if (todoistSyncStore.status?.syncing) return i18nHelper.todo.syncStatusSyncing;
   if (todoistSyncStore.status?.pull_only) return i18nHelper.todo.syncStatusPullOnly;
@@ -195,6 +221,25 @@ const handleRefresh = () => {
   void observeTodoMutation(
     () => Promise.all([todoistSyncStore.requestSync(), todoStore.loadAll()]),
   );
+};
+
+const handleAddDomain = async (): Promise<void> => {
+  if (addDomainLoading.value || domainLimitReached.value) return;
+
+  addDomainLoading.value = true;
+  const previousDomainIds = new Set(todoStore.domainList.map((domain) => domain.id));
+  try {
+    await observeTodoMutation(() => todoStore.createDomain());
+    const createdDomain = todoStore.domainList.find((domain) => !previousDomainIds.has(domain.id));
+    if (!createdDomain) return;
+
+    await nextTick();
+    document
+      .querySelector<HTMLElement>(`.domain-column[data-domain-id="${createdDomain.id}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } finally {
+    addDomainLoading.value = false;
+  }
 };
 
 const handleRetrySync = (uuid: string): void => {
@@ -248,8 +293,9 @@ const handleToggleShowFocused = () => {
     await todoSettingStore.toggleShowFocused();
     if (todoSettingStore.showFocused) {
       await nextTick();
-      const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
-      boardScroll?.scrollTo({ left: 0, behavior: 'smooth' });
+      document
+        .querySelector<HTMLElement>('.focused-column')
+        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   });
 };

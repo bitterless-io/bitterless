@@ -136,14 +136,6 @@ export interface EyesOnAgentsThreadSnapshot {
   syncedAt: number;
 }
 
-export interface EyesOnAgentsThreadRefreshStatusPatch {
-  runtimeState: EyesOnAgentsRuntimeState;
-  activeFlags: string[];
-  activeTurnId?: string | null;
-  source: Extract<EyesOnAgentsStatusSource, 'app_server'>;
-  observedAt: number;
-}
-
 export interface EyesOnAgentsThreadRefreshLastUserPromptPatch {
   preview: string | null;
   turnId: string | null;
@@ -156,7 +148,6 @@ export interface EyesOnAgentsThreadRefreshLastUserPromptPatch {
 export interface EyesOnAgentsThreadRefreshPatch {
   threadId: string;
   title?: string | null;
-  status?: EyesOnAgentsThreadRefreshStatusPatch;
   lastActivityAt?: number;
   lastUserPrompt?: EyesOnAgentsThreadRefreshLastUserPromptPatch;
 }

@@ -1,4 +1,4 @@
-import { reactive } from 'vue';
+import { nextTick, reactive } from 'vue';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { domainEmitter } from '../emitter/domain.emitter';
@@ -700,6 +700,7 @@ class TodoState {
     this.selectedTodo = todo;
     this.detailVisible = true;
     await this.loadSubTodos(todo.id);
+    await nextTick();
     this.locateTodo(todo.id, todo.domain_id);
   }
 
@@ -707,24 +708,13 @@ class TodoState {
     this.selectedTodo = todo;
     this.detailVisible = true;
     await this.loadSubTodos(todo.id);
-    const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
-    boardScroll?.scrollTo({ left: 0, behavior: 'smooth' });
   }
 
   locateTodo(todoId: string, domainId: string): void {
-    const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
-    if (!boardScroll) return;
-
-    const columnEl = boardScroll.querySelector<HTMLElement>(`.domain-column[data-domain-id="${domainId}"]`);
+    const columnEl = document.querySelector<HTMLElement>(`.domain-column[data-domain-id="${domainId}"]`);
     if (!columnEl) return;
 
-    const detailWidth = 320;
-    const visibleWidth = boardScroll.clientWidth - detailWidth;
-    const columnOffsetLeft = columnEl.offsetLeft;
-    const columnWidth = columnEl.offsetWidth;
-    const targetScrollLeft = columnOffsetLeft - (visibleWidth - columnWidth) / 2;
-
-    boardScroll.scrollTo({ left: Math.max(0, targetScrollLeft), behavior: 'smooth' });
+    columnEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 
     const todoRowEl = columnEl.querySelector<HTMLElement>(`[data-todo-id="${todoId}"]`);
     const columnBody = columnEl.querySelector<HTMLElement>('.domain-column__body');

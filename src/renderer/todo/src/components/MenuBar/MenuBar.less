@@ -54,6 +54,22 @@
   height: 16px;
 }
 
+.menubar__add-domain-tooltip {
+  display: inline-flex;
+}
+
+.menubar__actions .menubar__add-domain.arco-btn {
+  width: auto;
+  min-width: 28px;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.menubar__add-domain-label {
+  white-space: nowrap;
+}
+
 .menubar__actions .arco-btn.menubar__pin-btn--active {
   background-color: oklch(0.97 0 0 / 0.2);
   color: oklch(0.97 0 0);
@@ -120,5 +136,16 @@
 @media (prefers-reduced-motion: reduce) {
   .menubar__refresh-icon--active {
     animation-duration: 2.5s;
+  }
+}
+
+@media (max-width: 680px) {
+  .menubar__actions .menubar__add-domain.arco-btn {
+    width: 28px;
+    padding: 0;
+  }
+
+  .menubar__add-domain-label {
+    display: none;
   }
 }

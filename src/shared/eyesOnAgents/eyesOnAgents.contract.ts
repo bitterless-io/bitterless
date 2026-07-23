@@ -284,8 +284,16 @@ export const isEyesOnAgentsUnread = (value: {
 
 export const isEyesOnAgentsFocused = (
   runtimeState: EyesOnAgentsRuntimeState,
-  isUnread: boolean
-): boolean => ACTIVE_STATES.has(runtimeState) || isUnread;
+  isUnread: boolean,
+  statusObservedAt: number | null,
+  lastOpenedAt: number | null
+): boolean => isUnread || (
+  ACTIVE_STATES.has(runtimeState) &&
+  (
+    lastOpenedAt === null ||
+    (statusObservedAt !== null && statusObservedAt > lastOpenedAt)
+  )
+);
 
 export const effectiveEyesOnAgentsRuntimeState = (
   params: {
@@ -401,7 +409,7 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
   if (!isEyesOnAgentsRecord(value)) throw new Error('thread refresh patch must be an object');
   assertOnlyKeys(
     value,
-    ['threadId', 'title', 'status', 'lastActivityAt', 'lastUserPrompt'],
+    ['threadId', 'title', 'lastActivityAt', 'lastUserPrompt'],
     'thread refresh patch'
   );
   const result: EyesOnAgentsThreadRefreshPatch = {
@@ -410,43 +418,6 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
   if (hasOwn(value, 'title')) {
     if (value.title === undefined) throw new Error('title must not be undefined');
     result.title = parseEyesOnAgentsText(value.title, 'thread title', 300);
-  }
-  if (hasOwn(value, 'status')) {
-    if (!isEyesOnAgentsRecord(value.status)) {
-      throw new Error('thread refresh status patch must be an object');
-    }
-    assertOnlyKeys(
-      value.status,
-      ['runtimeState', 'activeFlags', 'activeTurnId', 'source', 'observedAt'],
-      'thread refresh status patch'
-    );
-    if (value.status.source !== 'app_server') {
-      throw new Error('thread refresh status source must be app_server');
-    }
-    const status: Omit<
-      NonNullable<EyesOnAgentsThreadRefreshPatch['status']>,
-      'activeTurnId'
-    > = {
-      runtimeState: parseEyesOnAgentsRuntimeState(value.status.runtimeState),
-      activeFlags: parseEyesOnAgentsActiveFlags(value.status.activeFlags),
-      source: value.status.source,
-      observedAt: parseEyesOnAgentsTimestamp(
-        value.status.observedAt,
-        'status observedAt',
-        false
-      ) as number
-    };
-    if (hasOwn(value.status, 'activeTurnId')) {
-      if (value.status.activeTurnId === undefined) {
-        throw new Error('activeTurnId must not be undefined');
-      }
-      result.status = {
-        ...status,
-        activeTurnId: parseEyesOnAgentsText(value.status.activeTurnId, 'activeTurnId', 200)
-      };
-    } else {
-      result.status = status;
-    }
   }
   if (hasOwn(value, 'lastActivityAt')) {
     if (value.lastActivityAt === undefined) {

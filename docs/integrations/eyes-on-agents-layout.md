@@ -284,8 +284,9 @@ Focus uses this stable order:
 4. newly completed unread;
 5. newest activity within the same group.
 
-Opening an unread completed card removes it from Focus after the open succeeds. Opening a running
-card leaves it in Focus until the runtime state changes.
+Opening any card acknowledges the current observation only after the deep link succeeds. An unread
+completed card leaves Focus, and an active card also leaves until a newer authoritative lifecycle
+event arrives. A later `UserPromptSubmit` restores working Focus.
 
 ## States
 
@@ -297,6 +298,7 @@ card leaves it in Focus until the runtime state changes.
 | no threads | concise prompt to connect/sync; no fake sample rows |
 | no Focus items | quiet “Nothing needs attention” state |
 | working unread | title-side loader; no Open unread dot |
+| working opened | current observation leaves Focus; a newer active event restores it |
 | working completes to idle unread | loader disappears; unread dot appears at Open's upper-right |
 | latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
 | latest question pending | one muted localized pending line; no spinner or false claim that a request is running |

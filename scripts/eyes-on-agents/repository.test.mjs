@@ -1554,7 +1554,7 @@ try {
 
   const refreshTargetId = selectedThirdPage.hot[0].threadId;
   const refreshTargetBefore = db.prepare(
-    `SELECT title, runtime_state, is_unread, last_activity_at, updated_at
+    `SELECT title, last_activity_at, updated_at
      FROM eyes_on_agents_thread WHERE thread_id = ?`
   ).get(refreshTargetId);
   assert.deepEqual(
@@ -1573,18 +1573,31 @@ try {
       .get(refreshTargetId).updated_at,
     refreshTargetBefore.updated_at
   );
+
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: refreshTargetId,
+      turnId: 'focus-turn-1',
+      observedAt: 40_000,
+      source: 'codex_hook'
+    }
+  });
+  snapshot = await repository.getSnapshot();
+  let refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
+  );
+  assert.equal(refreshTargetSnapshot.runtimeState, 'working');
+  assert.equal(refreshTargetSnapshot.statusSource, 'codex_hook');
+  assert.equal(refreshTargetSnapshot.isUnread, true);
+  assert.equal(refreshTargetSnapshot.isFocused, true);
+
   assert.deepEqual(
     await repository.refreshThreadPage({
       threads: [{
         threadId: refreshTargetId,
         title: 'Refresh title changed',
         lastActivityAt: 20_000,
-        status: {
-          runtimeState: 'working',
-          activeFlags: [],
-          source: 'app_server',
-          observedAt: 20_000
-        },
         lastUserPrompt: {
           preview: 'Refresh-page latest question',
           turnId: 'refresh-turn',
@@ -1598,7 +1611,7 @@ try {
     { changed: true }
   );
   let refreshTarget = db.prepare(
-    `SELECT title, runtime_state, is_unread, last_activity_at,
+    `SELECT title, runtime_state, status_source, status_observed_at, is_unread, last_activity_at,
       last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
       last_user_prompt_checked_at
      FROM eyes_on_agents_thread WHERE thread_id = ?`
@@ -1606,141 +1619,77 @@ try {
   assert.deepEqual({ ...refreshTarget }, {
     title: 'Refresh title changed',
     runtime_state: 'working',
+    status_source: 'codex_hook',
+    status_observed_at: 40_000,
     is_unread: 1,
-    last_activity_at: 20_000,
+    last_activity_at: 40_000,
     last_user_prompt_preview: 'Refresh-page latest question',
     last_user_prompt_turn_id: 'refresh-turn',
     last_user_prompt_at: 19_500,
     last_user_prompt_checked_at: 20_000
-  });
+  }, 'metadata refresh must preserve Hook-owned working attention');
+
+  await assert.rejects(
+    () => repository.refreshThreadPage({
+      threads: [{
+        threadId: refreshTargetId,
+        status: {
+          runtimeState: 'idle',
+          activeFlags: [],
+          activeTurnId: null,
+          source: 'app_server',
+          observedAt: 40_001
+        }
+      }]
+    }),
+    /unsupported field\(s\): status/,
+    'the repository contract must reject runtime patches from metadata refresh'
+  );
+
+  await repository.markOpened({ threadId: refreshTargetId, openedAt: 40_001 });
+  snapshot = await repository.getSnapshot();
+  refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
+  );
+  assert.equal(refreshTargetSnapshot.runtimeState, 'working');
+  assert.equal(refreshTargetSnapshot.isUnread, false);
+  assert.equal(refreshTargetSnapshot.isFocused, false);
+  assert.equal(refreshTargetSnapshot.lastOpenedTurnId, 'focus-turn-1');
+
   await repository.refreshThreadPage({
     threads: [{
       threadId: refreshTargetId,
-      lastActivityAt: 19_999,
-      status: {
-        runtimeState: 'idle',
-        activeFlags: [],
-        activeTurnId: null,
-        source: 'app_server',
-        observedAt: 20_001
-      }
+      title: 'Metadata after Open',
+      lastActivityAt: 40_001
     }]
   });
-  refreshTarget = db.prepare(
-    `SELECT runtime_state, is_unread, last_activity_at
-     FROM eyes_on_agents_thread WHERE thread_id = ?`
-  ).get(refreshTargetId);
-  assert.deepEqual({ ...refreshTarget }, {
-    runtime_state: 'idle',
-    is_unread: 1,
-    last_activity_at: 20_000
-  }, 'idle must preserve unread and activity must advance monotonically');
-  const beforeUnknownStatus = db.prepare(
-    `SELECT runtime_state, status_observed_at, updated_at
-     FROM eyes_on_agents_thread WHERE thread_id = ?`
-  ).get(refreshTargetId);
-  assert.deepEqual(
-    await repository.refreshThreadPage({
-      threads: [{
-        threadId: refreshTargetId,
-        status: {
-          runtimeState: 'unknown',
-          activeFlags: [],
-          source: 'app_server',
-          observedAt: 30_000
-        },
-        lastUserPrompt: {
-          preview: 'Refresh-page latest question',
-          turnId: 'refresh-turn',
-          observedAt: 19_500,
-          checkedAt: 20_000,
-          truncated: false,
-          source: 'app_server'
-        }
-      }]
-    }),
-    { changed: false },
-    'unknown status and identical prompt fields must be a semantic no-op'
+  snapshot = await repository.getSnapshot();
+  refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
   );
-  assert.deepEqual(
-    { ...db.prepare(
-      `SELECT runtime_state, status_observed_at, updated_at
-       FROM eyes_on_agents_thread WHERE thread_id = ?`
-    ).get(refreshTargetId) },
-    { ...beforeUnknownStatus },
-    'unknown provider evidence must not overwrite stronger idle state or touch updated_at'
-  );
+  assert.equal(refreshTargetSnapshot.title, 'Metadata after Open');
+  assert.equal(refreshTargetSnapshot.runtimeState, 'working');
+  assert.equal(refreshTargetSnapshot.statusSource, 'codex_hook');
+  assert.equal(refreshTargetSnapshot.isUnread, false);
+  assert.equal(refreshTargetSnapshot.isFocused, false);
+
   await repository.applyRuntimeEvent({
     event: {
-      type: 'thread_status',
+      type: 'turn_started',
       threadId: refreshTargetId,
-      runtimeState: 'working',
-      activeFlags: [],
-      observedAt: 40_000,
-      source: 'app_server'
+      turnId: 'focus-turn-2',
+      observedAt: 40_002,
+      source: 'codex_hook'
     }
   });
-  const equalWatermarkLifecycleRow = db.prepare(
-    `SELECT runtime_state, status_observed_at, is_unread, updated_at
-     FROM eyes_on_agents_thread WHERE thread_id = ?`
-  ).get(refreshTargetId);
-  assert.deepEqual(
-    { ...equalWatermarkLifecycleRow },
-    {
-      runtime_state: 'working',
-      status_observed_at: 40_000,
-      is_unread: 1,
-      updated_at: equalWatermarkLifecycleRow.updated_at
-    }
+  snapshot = await repository.getSnapshot();
+  refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
   );
-  assert.deepEqual(
-    await repository.refreshThreadPage({
-      threads: [{
-        threadId: refreshTargetId,
-        status: {
-          runtimeState: 'idle',
-          activeFlags: [],
-          activeTurnId: null,
-          source: 'app_server',
-          observedAt: 40_000
-        }
-      }]
-    }),
-    { changed: false },
-    'an old read with the same millisecond watermark as lifecycle evidence must be rejected'
-  );
-  assert.deepEqual(
-    { ...db.prepare(
-      `SELECT runtime_state, status_observed_at, is_unread, updated_at
-       FROM eyes_on_agents_thread WHERE thread_id = ?`
-    ).get(refreshTargetId) },
-    { ...equalWatermarkLifecycleRow },
-    'equal-ms rejection must preserve working state, watermark, unread, and updated_at'
-  );
-  assert.deepEqual(
-    await repository.refreshThreadPage({
-      threads: [{
-        threadId: refreshTargetId,
-        status: {
-          runtimeState: 'idle',
-          activeFlags: [],
-          activeTurnId: null,
-          source: 'app_server',
-          observedAt: 30_000
-        }
-      }]
-    }),
-    { changed: false },
-    'a thread/read patch with an older request watermark must be rejected'
-  );
-  assert.deepEqual(
-    { ...db.prepare(
-      `SELECT runtime_state, status_observed_at, is_unread
-       FROM eyes_on_agents_thread WHERE thread_id = ?`
-    ).get(refreshTargetId) },
-    { runtime_state: 'working', status_observed_at: 40_000, is_unread: 1 },
-    'a newer lifecycle notification must remain authoritative over an older read response'
-  );
+  assert.equal(refreshTargetSnapshot.runtimeState, 'working');
+  assert.equal(refreshTargetSnapshot.activeTurnId, 'focus-turn-2');
+  assert.equal(refreshTargetSnapshot.isUnread, true);
+  assert.equal(refreshTargetSnapshot.isFocused, true);
   const promotedHotPage = await repository.getThreadRefreshPages({
     coldPage: 2,
     previousPageCount: resetColdPage.pageCount

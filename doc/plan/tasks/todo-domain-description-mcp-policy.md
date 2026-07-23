@@ -7,6 +7,11 @@ depends-on: [todo-source-ai-tag]
 
 # Todo Domain Description And MCP Policy
 
+> Historical result only. The current public contract supersedes the read-only Domain policy:
+> `domain.create` is explicit-only, `domain.description.update` updates active Domain descriptions,
+> and `domain.archived.list` exposes archived metadata. See
+> [`docs/features/todo-mcp.md`](../../../docs/features/todo-mcp.md).
+
 ## Objective
 
 Add editable descriptions to todo domains, expose those descriptions through MCP `domain.list`, and make MCP domain management read-only so agents place todos into existing human-managed domains.

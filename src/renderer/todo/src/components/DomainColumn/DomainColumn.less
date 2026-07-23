@@ -1,12 +1,14 @@
 .domain-column {
+  width: auto;
   min-width: 300px;
-  width: 300px;
+  max-width: 480px;
   max-height: calc(100vh - 40px - 24px);
   display: flex;
+  flex: 1 1 300px;
   flex-direction: column;
+  align-self: flex-start;
   background-color: oklch(0.96 0 0);
   border-radius: 8px;
-  flex-shrink: 0;
   overflow: hidden;
   position: relative;
 }

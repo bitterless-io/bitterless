@@ -142,6 +142,13 @@ The repository grants that current-listener authority only over `discovery + unk
 concrete App Server or Hook evidence still wins by provider time. This permits offline replay without
 allowing a pre-start persisted working row to remain current.
 
+The independent App Server used for inventory and `thread/read` metadata does not own Codex
+Desktop's turns. Its read status is therefore never allowed to overwrite Hook runtime evidence in
+the tiered poll. Codex also exposes no supported manual-interruption Hook. EyesOnAgents deliberately
+does not infer a paused state from private transcript/rollout formats or elapsed time. A successful
+Open acknowledges the current active observation; a later `UserPromptSubmit` supplies newer working
+evidence and restores Focus.
+
 All SQLite timestamps are integers. The migration is idempotent and must pass the retained
 multi-version migration audit before packaging.
 

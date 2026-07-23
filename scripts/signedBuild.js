@@ -25,6 +25,14 @@ const audit = spawnSync(auditCommand, ['audit:sqlite-migrations'], {
 });
 if (audit.status !== 0) process.exit(audit.status ?? 1);
 
+console.log('[signedBuild.js] Running desktop application icon release gate');
+const iconAudit = spawnSync(auditCommand, ['test:desktop-app-icon'], {
+  stdio: 'inherit',
+  cwd: rootDir,
+  shell: process.platform === 'win32',
+});
+if (iconAudit.status !== 0) process.exit(iconAudit.status ?? 1);
+
 const unwrapEnvValue = (value) => {
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
     return value.slice(1, -1);
@@ -59,16 +67,17 @@ const loadSigningEnv = () => {
   return result;
 };
 
+const args = process.argv.slice(2);
+const targetsWindows = args.some((arg) => arg === '--win' || arg === '-w' || arg.startsWith('--win='));
 const signingEnv = loadSigningEnv();
 const env = { ...process.env, ...signingEnv };
-if (process.platform === 'win32') {
+if (targetsWindows) {
   delete env.CSC_LINK;
   delete env.CSC_KEY_PASSWORD;
-  console.log('[signedBuild.js] ⚠️  Windows platform: skipped macOS signing env vars');
+  console.log('[signedBuild.js] Windows target: skipped generic Apple signing env vars');
 }
-const args = process.argv.slice(2);
 const electronBuilderCommand = fs.existsSync(electronBuilderBin) ? electronBuilderBin : 'electron-builder';
-if (process.platform === 'darwin') {
+if (process.platform === 'darwin' && !targetsWindows) {
   const retryPreloadPath = path.join(rootDir, 'scripts', 'codesignRetry.preload.js');
   const retryPreloadOption = `--require=${JSON.stringify(retryPreloadPath)}`;
   env.NODE_OPTIONS = [env.NODE_OPTIONS, retryPreloadOption].filter(Boolean).join(' ');

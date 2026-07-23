@@ -1,4 +1,4 @@
-import { app, net, session } from 'electron';
+import { app, nativeImage, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { electronApp, optimizer } from '@electron-toolkit/utils';
@@ -50,6 +50,27 @@ const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDa
 if (isHelperMode && process.platform === 'darwin') {
   app.setActivationPolicy('prohibited');
 }
+
+const resolveMacDockIconPath = (): string =>
+  app.isPackaged
+    ? join(process.resourcesPath, 'app.png')
+    : join(app.getAppPath(), 'build', 'icon.png');
+
+const applyMacDockIcon = (): void => {
+  if (process.platform !== 'darwin' || isHelperMode) return;
+
+  const iconPath = resolveMacDockIconPath();
+  try {
+    const icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) {
+      console.warn(`[app] Dock icon is missing or invalid: ${iconPath}`);
+      return;
+    }
+    app.dock.setIcon(icon);
+  } catch (err) {
+    console.warn(`[app] Dock icon refresh failed for ${iconPath}:`, err);
+  }
+};
 
 interface CoreSqliteTargetRegistrationWaiter {
   promise: Promise<string>;
@@ -379,6 +400,7 @@ const startCoreSqliteRenderer = (): Promise<{ ok: boolean; error?: string }> => 
 };
 
 const startGui = async (): Promise<void> => {
+  applyMacDockIcon();
   await runSqliteFirstGuiStartup({
     initializeCorePrerequisites: async () => {
       const { initXpc } = await import('./xpc/xpc.helper');

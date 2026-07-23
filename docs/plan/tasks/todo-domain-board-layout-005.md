@@ -1,7 +1,7 @@
 ---
 id: todo-domain-board-layout-005
 scope: Todo menubar Domain creation and flexible wrapping Domain board
-status: in-progress
+status: done
 depends-on: [todo-sync-refresh-identity-004]
 ---
 
@@ -55,3 +55,15 @@ than its minimum width remains.
 - `git diff --check`
 - Independent source review passes before production packaging begins.
 
+## Completion
+
+- The board now uses one wrapping draggable with Focus fixed in its header slot and active Domains
+  retaining their persisted order across wrapped rows.
+- The fake Add Domain column and historical horizontal-navigation controls are removed. A labelled
+  Arco mini action in the menu bar preserves the existing one-click `Untitled` creation flow.
+- Focus and Domain columns share the 300–480px flexible-width contract. Normal detail mode reserves
+  the right 320px panel; constrained embedded mode intentionally overlays it.
+- Todo selection waits for the detail-driven reflow before vertically revealing the Domain and
+  centering its row.
+- `docs/plan/reviews/todo-domain-board-layout-005-1.md` records the independent PASS with no
+  P1/P2/P3 findings.

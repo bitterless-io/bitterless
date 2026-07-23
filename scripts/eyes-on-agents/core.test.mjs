@@ -168,9 +168,14 @@ try {
     }),
     true
   );
-  assert.equal(contract.isEyesOnAgentsFocused('working', false), true);
-  assert.equal(contract.isEyesOnAgentsFocused('idle', true), true);
-  assert.equal(contract.isEyesOnAgentsFocused('idle', false), false);
+  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, null), true);
+  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, 199), true);
+  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, 200), false);
+  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, 201), false);
+  assert.equal(contract.isEyesOnAgentsFocused('working', false, null, 200), false);
+  assert.equal(contract.isEyesOnAgentsFocused('working', true, 200, 200), true);
+  assert.equal(contract.isEyesOnAgentsFocused('idle', true, 200, 200), true);
+  assert.equal(contract.isEyesOnAgentsFocused('idle', false, 200, null), false);
   assert.equal(
     contract.effectiveEyesOnAgentsRuntimeState({
       runtimeState: 'working',
@@ -653,7 +658,9 @@ try {
           id: threadId,
           name: `Thread ${threadId}`,
           updatedAt: 2,
-          status: { type: 'idle' }
+          get status() {
+            throw new Error('tiered thread/read must not inspect status');
+          }
         };
       },
       listThreadTurns: async () => {
@@ -700,13 +707,7 @@ try {
     for (const patch of batch) {
       assert.equal(patch.title, `Thread ${patch.threadId}`);
       assert.equal(patch.lastActivityAt, 2_000);
-      assert.deepEqual(patch.status, {
-        runtimeState: 'idle',
-        activeFlags: [],
-        activeTurnId: null,
-        source: 'app_server',
-        observedAt: 2_500
-      });
+      assert.equal(patch.status, undefined);
       assert.equal(patch.lastUserPrompt, undefined);
     }
   }
@@ -783,12 +784,6 @@ try {
   assert.deepEqual(promptCommits[0], [{
     threadId: promptThreadId,
     title: 'Prompt-aware title',
-    status: {
-      runtimeState: 'waiting_input',
-      activeFlags: ['waitingOnUserInput'],
-      source: 'app_server',
-      observedAt: 3_500
-    },
     lastActivityAt: 3_000,
     lastUserPrompt: {
       preview: 'Latest user question',
@@ -798,7 +793,7 @@ try {
       truncated: false,
       source: 'app_server'
     }
-  }], 'one opted-in page patch must combine title, status, activity, and latest question');
+  }], 'one opted-in page patch must combine title, activity, and latest question');
   assert.equal(
     promptCommits[1][0].lastUserPrompt,
     undefined,
@@ -992,18 +987,6 @@ try {
       },
       refreshThreadPage: async ({ threads }) => {
         staleReadPatches.push(...threads);
-        for (const thread of threads) {
-          if (
-            thread.status &&
-            (
-              staleReadStatus.observedAt === null ||
-              thread.status.observedAt >= staleReadStatus.observedAt
-            )
-          ) {
-            staleReadStatus.runtimeState = thread.status.runtimeState;
-            staleReadStatus.observedAt = thread.status.observedAt;
-          }
-        }
         return { changed: true };
       }
     },
@@ -1019,7 +1002,9 @@ try {
           id: staleReadThreadId,
           name: 'Older read response',
           updatedAt: 9,
-          status: { type: 'idle' }
+          get status() {
+            throw new Error('metadata refresh must not inspect runtime status');
+          }
         };
       }
     },
@@ -1037,11 +1022,7 @@ try {
   });
   releaseStaleRead();
   await staleReadRefresh;
-  assert.equal(
-    staleReadPatches[0].status.observedAt,
-    10_000,
-    'thread/read status must retain its request-start watermark'
-  );
+  assert.equal(staleReadPatches[0].status, undefined);
   assert.deepEqual(
     staleReadStatus,
     { runtimeState: 'working', observedAt: 20_000 },
@@ -1209,8 +1190,8 @@ try {
   assert.deepEqual(drainingMutationResult, { changed: true });
   assert.equal(
     drainingMutationBroadcasts,
-    0,
-    'a drained mutation completing after cancellation must not emit a stale broadcast'
+    1,
+    'disconnect may broadcast once, but the drained mutation must not add a stale broadcast'
   );
   await new Promise((resolve) => setImmediate(resolve));
   drainingMutationConnected = true;

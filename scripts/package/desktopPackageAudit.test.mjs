@@ -30,7 +30,37 @@ const writeFixtureFiles = (root, files) => {
   }
 };
 
-const createSyntheticApplication = async ({ platform = 'mac', archiveFiles = {}, appFiles = {} } = {}) => {
+const createMachO64Binary = (arch) => {
+  const cpuTypes = { arm64: 0x0100000c, x64: 0x01000007 };
+  const binary = Buffer.alloc(64);
+  binary.writeUInt32LE(0xfeedfacf, 0);
+  binary.writeUInt32LE(cpuTypes[arch], 4);
+  binary.writeUInt32LE(0, 8);
+  binary.writeUInt32LE(8, 12);
+  return binary;
+};
+
+const createPe64Binary = (arch) => {
+  const machineTypes = { arm64: 0xaa64, x64: 0x8664 };
+  const binary = Buffer.alloc(512);
+  binary.write('MZ', 0, 'ascii');
+  binary.writeUInt32LE(0x80, 0x3c);
+  binary.write('PE\0\0', 0x80, 'binary');
+  binary.writeUInt16LE(machineTypes[arch], 0x84);
+  binary.writeUInt16LE(0xf0, 0x94);
+  binary.writeUInt16LE(0x20b, 0x98);
+  return binary;
+};
+
+const createSyntheticApplication = async ({
+  platform = 'mac',
+  arch,
+  archiveFiles = {},
+  appFiles = {},
+  includeBetterSqlite3Binary = true,
+  betterSqlite3Arch,
+  includeMacIcons = true,
+} = {}) => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'bitterless-desktop-package-'));
   temporaryRoots.push(fixtureRoot);
   const archiveSource = path.join(fixtureRoot, 'archive-source');
@@ -47,9 +77,29 @@ const createSyntheticApplication = async ({ platform = 'mac', archiveFiles = {},
   const resourcesPath = platform === 'mac'
     ? path.join(applicationPath, 'Contents', 'Resources')
     : path.join(applicationPath, 'resources');
+  const targetArch = arch ?? (platform === 'mac' ? 'arm64' : 'x64');
+  const createBinary = platform === 'mac' ? createMachO64Binary : createPe64Binary;
+  const executablePath = platform === 'mac'
+    ? 'Contents/MacOS/Synthetic'
+    : 'Synthetic.exe';
+  const nativeBinaryPath = platform === 'mac'
+    ? 'Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers/build/Release/better_sqlite3.node'
+    : 'resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers/build/Release/better_sqlite3.node';
   mkdirSync(resourcesPath, { recursive: true });
   await createPackage(archiveSource, path.join(resourcesPath, 'app.asar'));
-  writeFixtureFiles(applicationPath, appFiles);
+  writeFixtureFiles(applicationPath, {
+    [executablePath]: createBinary(targetArch),
+    ...(includeBetterSqlite3Binary
+      ? { [nativeBinaryPath]: createBinary(betterSqlite3Arch ?? targetArch) }
+      : {}),
+    ...(platform === 'mac' && includeMacIcons
+      ? {
+          'Contents/Resources/app.png': readFileSync(path.join(projectRoot, 'build/icon.png')),
+          'Contents/Resources/icon.icns': readFileSync(path.join(projectRoot, 'build/icon.icns')),
+        }
+      : {}),
+    ...appFiles,
+  });
 
   return {
     applicationPath,
@@ -81,7 +131,71 @@ test('synthetic app.asar passes the desktop package audit', async () => {
   assert.equal(result.asarPath, fixture.asarPath);
   assert(result.asarBytes > 0);
   assert(result.appBytes >= result.asarBytes);
-  await afterPack({ appOutDir: fixture.outputPath });
+  assert.equal(result.targetPlatform, 'darwin');
+  assert.equal(result.targetArch, 'arm64');
+  assert(result.applicationIconPaths.runtimePngPath.endsWith('app.png'));
+  assert(result.applicationIconPaths.bundleIcnsPath.endsWith('icon.icns'));
+  await afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 });
+});
+
+test('macOS application icon gate rejects missing or empty packaged icons', async () => {
+  const missing = await createSyntheticApplication({ includeMacIcons: false });
+  assert.throws(
+    () => auditDesktopPackage(missing.applicationPath),
+    /application icon gate failed:.*app\.png/,
+  );
+
+  const emptyRuntimePng = await createSyntheticApplication({
+    appFiles: { 'Contents/Resources/app.png': Buffer.alloc(0) },
+  });
+  assert.throws(
+    () => auditDesktopPackage(emptyRuntimePng.applicationPath),
+    /runtime PNG must be a non-empty real file/,
+  );
+
+  const emptyBundleIcns = await createSyntheticApplication({
+    appFiles: { 'Contents/Resources/icon.icns': Buffer.alloc(0) },
+  });
+  assert.throws(
+    () => auditDesktopPackage(emptyBundleIcns.applicationPath),
+    /bundle ICNS must be a non-empty real file/,
+  );
+});
+
+test('native runtime gate accepts macOS x64 and Windows x64 fixtures', async () => {
+  const cases = [
+    { platform: 'mac', arch: 'x64', expectedPlatform: 'darwin' },
+    { platform: 'windows', arch: 'x64', expectedPlatform: 'win32' },
+  ];
+  for (const fixtureCase of cases) {
+    const fixture = await createSyntheticApplication(fixtureCase);
+    const result = auditDesktopPackage(fixture.applicationPath);
+    assert.equal(result.targetPlatform, fixtureCase.expectedPlatform);
+    assert.equal(result.targetArch, fixtureCase.arch);
+    assert(result.betterSqlite3BinaryPath.endsWith('better_sqlite3.node'));
+  }
+});
+
+test('native runtime gate fails when unpacked better_sqlite3.node is missing', async () => {
+  const fixture = await createSyntheticApplication({ includeBetterSqlite3Binary: false });
+
+  assert.throws(
+    () => auditDesktopPackage(fixture.applicationPath),
+    /required unpacked better_sqlite3\.node is invalid/,
+  );
+});
+
+test('native runtime gate fails when better_sqlite3.node has the wrong architecture', async () => {
+  const fixture = await createSyntheticApplication({
+    platform: 'mac',
+    arch: 'arm64',
+    betterSqlite3Arch: 'x64',
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(fixture.applicationPath),
+    /better_sqlite3\.node targets darwin\/x64, expected darwin\/arm64/,
+  );
 });
 
 test('synthetic app.asar above the configured archive limit fails', async () => {
@@ -308,4 +422,12 @@ test('publish audits an existing packaged app before DMG finalization or upload'
   assert(auditIndex > buildIndex);
   assert(finalizeIndex > auditIndex);
   assert(uploadIndex > auditIndex);
+});
+
+test('signedBuild strips generic Apple certificate variables for a Windows target', () => {
+  const source = readProjectFile('scripts/signedBuild.js');
+
+  assert.match(source, /const targetsWindows = args\.some/);
+  assert.match(source, /if \(targetsWindows\) \{\s+delete env\.CSC_LINK;\s+delete env\.CSC_KEY_PASSWORD;/);
+  assert.doesNotMatch(source, /delete env\.WIN_CSC_(?:LINK|KEY_PASSWORD)/);
 });

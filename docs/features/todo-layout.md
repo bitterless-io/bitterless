@@ -1,6 +1,6 @@
 # Todo Domain Board Layout
 
-Status: implementation in progress
+Status: implemented and independently reviewed
 
 ## Product stance
 
@@ -71,6 +71,25 @@ its existing internal task-list scrolling and height behavior. At exceptionally 
 widths below one column plus board padding, local horizontal overflow is permitted rather than
 shrinking the Domain below 300px.
 
+## Todo item AI source marker
+
+AI-created Todos keep the existing compact `AI` source label, but it is a corner marker instead of
+its own metadata row:
+
+```text
+AI Todo                                  Human Todo
+╭AI┐──────────────────────────╮          ╭────────────────────────────╮
+│  ○  Finish integration   ☆  │          │  ○  Finish integration   ☆ │
+╰─────────────────────────────╯          ╰────────────────────────────╯
+```
+
+The Todo item is the positioning boundary. The marker is absolutely positioned at `top: 0` and
+`left: 0`, does not consume layout height, and does not intercept pointer input. Its top-left radius
+matches the Todo item's 6px radius; top-right and bottom-left are square; bottom-right retains a
+small 4px radius (`border-radius: 6px 0 4px 0`). Human-created Todos render no marker and use the
+same title, checkbox, subtitle, and star alignment as before. The obsolete metadata-row wrapper is
+not retained.
+
 ## Detail panel
 
 The Todo detail panel remains a right-side 320px overlay. At normal standalone widths, the board
@@ -99,4 +118,3 @@ button and left-scroll calculations do not exist in the wrapping layout.
 - Focus surface: `components/FocusedColumn/`.
 - Domain creation action: `components/MenuBar/` and the existing `todoStore.createDomain()` path.
 - Detail overlay: `components/TodoDetail/`.
-

@@ -640,6 +640,10 @@ const isActiveDomain = (domain: DomainRow): boolean => {
   return domain.archived === 0 && domain.is_deleted === 0;
 };
 
+const isArchivedDomain = (domain: DomainRow): boolean => {
+  return domain.archived === 1 && domain.is_deleted === 0;
+};
+
 const assertTodoListActiveStatus = (status: unknown): void => {
   if (status === undefined || status === null || status === 'active' || status === 0) return;
   throw new Error('todo.list only returns incomplete todos from unarchived domains');
@@ -856,6 +860,10 @@ export class McpBridgeServer {
     switch (method) {
       case 'domain.list':
         return this.listDomains();
+      case 'domain.archived.list':
+        return this.listArchivedDomains();
+      case 'domain.description.update':
+        return this.updateDomainDescription(params);
       case 'domain.create':
         return this.createDomain(params);
       case 'event.list':
@@ -917,6 +925,53 @@ export class McpBridgeServer {
         },
       },
     };
+  }
+
+  private async listArchivedDomains(): Promise<{ domains: DomainRow[] }> {
+    const domains = requireDomainRows(
+      await todoRepository().getDomains(),
+      'TodoistSyncRepository.getDomains',
+    ).filter(isArchivedDomain);
+    return { domains };
+  }
+
+  private async updateDomainDescription(params: RpcParams): Promise<{ domain: DomainRow }> {
+    const id = getRequiredId(params, 'id');
+    if (typeof params.description !== 'string') {
+      throw new Error('description must be a string');
+    }
+    const description = params.description.trim();
+    if (description.length > 500) {
+      throw new Error('description can contain at most 500 characters');
+    }
+
+    const repository = todoRepository();
+    const domains = requireDomainRows(
+      await repository.getDomains(),
+      'TodoistSyncRepository.getDomains',
+    );
+    const matches = domains.filter((domain) => domain.id === id && isActiveDomain(domain));
+    if (matches.length !== 1) {
+      throw new Error(`Active domain not found: ${id}`);
+    }
+
+    await repository.updateDomainDescription({ id, description });
+    const reread = await repository.getDomainById({ id });
+    if (reread === undefined) {
+      throw new Error(`Domain not found after description update: ${id}`);
+    }
+    const domain = requireDomainRow(
+      reread,
+      'TodoistSyncRepository.getDomainById after description update',
+    );
+    if (
+      domain.id !== id ||
+      domain.description !== description ||
+      !isActiveDomain(domain)
+    ) {
+      throw new Error('TodoistSyncRepository.updateDomainDescription did not persist the requested active domain description');
+    }
+    return { domain };
   }
 
   private createDomain(params: RpcParams): Promise<{ domain: DomainRow }> {

@@ -4,3 +4,7 @@
 - 🛡️ Keeps conflicting Snowflake-node responses fail-closed so local synchronized task IDs remain protected.
 - 📦 Reduced desktop package size and added a pre-sign package composition gate.
 - 🧩 Fixed an optional preload dependency that could prevent Core SQLite from starting on macOS.
+- 🧱 Todo Domains now fill each row at 300–480px and wrap vertically, with Add Domain available from the menu bar.
+- 🔍 Desktop packaging now rejects missing or wrong-architecture encrypted SQLite native binaries before signing or upload.
+- 👀 EyesOnAgents now preserves Codex Hook working state during metadata refresh and treats a successful Open as acknowledgement of the current Focus observation.
+- 🖼️ macOS now uses the current application artwork for both the signed bundle and the live Dock tile.

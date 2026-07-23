@@ -1,0 +1,28 @@
+# macOS Dock Shows a Stale Bitterless Icon
+
+Status: fixed; owner verification pending
+
+## Symptom
+
+Starting the current macOS application can show an earlier icon in the Dock even though
+`build/icon.png` contains the current Bitterless artwork.
+
+## Root cause
+
+- The builder configuration relies on implicit icon discovery instead of naming the macOS icon,
+  making the bundle contract unnecessarily ambiguous even though the current ICNS pixels match the
+  canonical PNG.
+- Main does not refresh the Dock tile from a bundled current PNG, so macOS can retain an older
+  cached Dock image during development or after an update.
+
+## Resolution contract
+
+- `build/icon.png` remains the canonical artwork source.
+- macOS packaging explicitly uses `build/icon.icns`, regenerated deterministically from the PNG
+  (the current regeneration is byte-identical).
+- The current PNG is copied into packaged resources.
+- On macOS GUI startup, Main applies that PNG to the Dock before creating Home. A missing or invalid
+  optional development asset is reported without blocking the GUI; packaged auditing prevents a
+  release with a missing icon.
+
+Delivery: [desktop-mac-dock-icon-004](../plan/tasks/desktop-mac-dock-icon-004.md)

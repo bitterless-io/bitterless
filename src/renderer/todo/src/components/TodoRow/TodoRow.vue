@@ -9,6 +9,7 @@
     @click="handleRowClick"
     @contextmenu.prevent="onContextMenu"
   >
+    <span v-if="isAiTodo" class="todo-row__source-tag">{{ i18nHelper.todo.aiSourceTag }}</span>
     <a-checkbox
       class="todo-row__checkbox"
       :model-value="todo.status === 1"
@@ -17,9 +18,6 @@
       @click.stop
     />
     <div class="todo-row__content">
-      <div v-if="isAiTodo" class="todo-row__meta">
-        <span class="todo-row__source-tag">{{ i18nHelper.todo.aiSourceTag }}</span>
-      </div>
       <div class="todo-row__title-row">
         <span
           v-if="!editing"

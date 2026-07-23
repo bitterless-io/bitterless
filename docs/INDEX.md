@@ -43,6 +43,8 @@ design document.
 - [Top-level window state persistence](features/window-state-persistence.md) - normal bounds,
   window mode, physical-display affinity, off-screen recovery, and legacy geometry import for every
   user-visible Main-owned window.
+- [Desktop application icon](features/desktop-app-icon.md) - one canonical artwork source, explicit
+  macOS bundle icon generation, and a startup Dock cache refresh.
 
 ## Guides
 
@@ -97,6 +99,11 @@ design document.
 - [EyesOnAgents existing-thread normalized ingestion](issues/eyes-on-agents-thread-normalization-drops-existing-sessions.md) - implemented; owner verification pending:
   valid Codex threads can be omitted from All and remain Untitled when an optional preview is
   multiline or longer than the display bound.
+- [EyesOnAgents working state and Focus acknowledgement](issues/eyes-on-agents-working-focus-stale.md) - fixed; owner verification pending:
+  independent App Server metadata must not overwrite Hook working evidence, and Open acknowledges
+  the current active observation until newer lifecycle evidence arrives.
+- [macOS stale Dock icon](issues/macos-dock-icon-stale.md) - fixed; owner verification pending: the current
+  PNG must regenerate the bundle ICNS and refresh the runtime Dock tile.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
   retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:

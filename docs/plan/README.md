@@ -21,7 +21,9 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-sync-runtime-recovery-002](tasks/todo-sync-runtime-recovery-002.md) | v1-to-v2 Todo database recovery, session-ready renderer startup, and truthful XPC failures | done | todoist-sync-desktop-001 |
 | [todo-subtodo-count-map-003](tasks/todo-subtodo-count-map-003.md) | dense zero-safe SubTodo batch counts after creating a Todo | done | todo-sync-runtime-recovery-002 |
 | [todo-sync-refresh-identity-004](tasks/todo-sync-refresh-identity-004.md) | one Refresh/status control and stable installation device identity | done | todo-sync-runtime-recovery-002 |
-| [todo-domain-board-layout-005](tasks/todo-domain-board-layout-005.md) | menu-bar Domain creation and wrapping 300–480px Todo columns | in-progress | todo-sync-refresh-identity-004 |
+| [todo-domain-board-layout-005](tasks/todo-domain-board-layout-005.md) | menu-bar Domain creation and wrapping 300–480px Todo columns | done | todo-sync-refresh-identity-004 |
+| [todo-ai-source-corner-006](tasks/todo-ai-source-corner-006.md) | overlay the AI source marker into the Todo item's top-left corner | done | todo-domain-board-layout-005 |
+| [todo-mcp-domain-catalog-skill-version-007](tasks/todo-mcp-domain-catalog-skill-version-007.md) | active/archived MCP Domain catalog, description updates, and versioned skill attention | in-progress | todo-agent-skill-onboarding-002, todo-mcp-domain-create |
 | [maestro-source-layout-migration](tasks/maestro-source-layout-migration.md) | rename Sidekick to Maestro and keep sources distributed by Electron process | done | cowork-subapp-001, cowork-subapp-002 |
 | [renderer-arco-bem-controls](tasks/renderer-arco-bem-controls.md) | MCP guide modal and Maestro ChatPanel control consistency | done | maestro-source-layout-migration, todo-mcp-domain-create |
 | [renderer-tailwind-removal](tasks/renderer-tailwind-removal.md) | remove renderer Tailwind usage, retain dormant dependencies, and enforce shallow business BEM | done | renderer-arco-bem-controls, maestro-source-layout-migration |
@@ -63,9 +65,11 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [eyes-on-agents-focus-read-all-021](tasks/eyes-on-agents-focus-read-all-021.md) | persistent Focus Read all action without falsifying Codex opens | implemented; owner verification pending | eyes-on-agents-sync-persistence-006, eyes-on-agents-compact-card-012 |
 | [eyes-on-agents-hook-coverage-recovery-022](tasks/eyes-on-agents-hook-coverage-recovery-022.md) | recover durable Hook coverage gaps without blocking App Server inventory | implemented; owner verification pending | eyes-on-agents-hook-delivery-007, eyes-on-agents-global-onboarding-008 |
 | [eyes-on-agents-flex-columns-023](tasks/eyes-on-agents-flex-columns-023.md) | 300–500px flex-width wrapped Domain columns | implemented; owner verification pending | eyes-on-agents-all-board-011 |
+| [eyes-on-agents-focus-acknowledgement-024](tasks/eyes-on-agents-focus-acknowledgement-024.md) | preserve Hook working authority and acknowledge current active Focus on Open | implemented; owner verification pending | eyes-on-agents-tiered-all-polling-019, eyes-on-agents-focus-read-all-021 |
 | [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and observable SQLite-first startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
 | [preload-linkedom-worker-003](tasks/preload-linkedom-worker-003.md) | canvas-free LinkeDOM preload bundling and production development startup | done | desktop-helper-process-isolation-001 |
 | [desktop-package-size-002](tasks/desktop-package-size-002.md) | production dependency boundary and pre-sign desktop package-size gate | done | — |
+| [desktop-mac-dock-icon-004](tasks/desktop-mac-dock-icon-004.md) | current macOS bundle icon plus runtime Dock refresh | implemented; owner verification pending | desktop-package-size-002 |
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |

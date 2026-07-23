@@ -36,10 +36,36 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
 const tools: McpTool[] = [
   {
     name: 'domain.list',
-    description: 'List unarchived human-managed Bitterless todo domains with descriptions and the virtual Focus/star policy. Agents must choose an existing domain before creating todos.',
+    description: 'List active, non-deleted human-managed Bitterless todo domains with descriptions and the virtual Focus/star policy. This is the default catalog; agents must choose an existing active domain before creating todos.',
     inputSchema: {
       type: 'object',
       properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'domain.archived.list',
+    description: 'List archived, non-deleted Bitterless todo domains with descriptions for read-only historical context. Archived domains are never valid targets for todo creation or movement.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'domain.description.update',
+    description: 'Update the description of one active, non-deleted Bitterless todo domain after explicit user authorization. The description is trimmed; use an empty string to clear it.',
+    inputSchema: {
+      type: 'object',
+      required: ['id', 'description'],
+      properties: {
+        id: TODO_ID_SCHEMA,
+        description: {
+          type: 'string',
+          maxLength: 500,
+          description: 'Trimmed domain purpose and placement guidance. Use an empty string to clear it.',
+        },
+      },
       additionalProperties: false,
     },
   },

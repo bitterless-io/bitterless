@@ -214,27 +214,9 @@ const parseThreadRefreshTitle = (
   value: Record<string, unknown>
 ): string | undefined => normalizeEyesOnAgentsProviderThreadTitle(value) ?? undefined;
 
-const threadRefreshStatusPatch = (
-  value: unknown,
-  observedAt: number
-): EyesOnAgentsThreadRefreshPatch['status'] | undefined => {
-  const status = normalizeProviderThreadStatus(value);
-  if (status.statusSource !== 'app_server') return undefined;
-  const active = status.runtimeState === 'working' ||
-    status.runtimeState === 'waiting_approval' ||
-    status.runtimeState === 'waiting_input';
-  return {
-    runtimeState: status.runtimeState,
-    activeFlags: status.activeFlags,
-    ...(active ? {} : { activeTurnId: null }),
-    source: 'app_server',
-    observedAt
-  };
-};
-
 const parseThreadRefreshRead = (
   value: unknown,
-  options: { expectedThreadId: string; observedAt: number }
+  options: { expectedThreadId: string }
 ): { patch: EyesOnAgentsThreadRefreshPatch; providerActivityAt: number | null } => {
   if (!isEyesOnAgentsRecord(value)) throw new Error('Codex thread/read thread is invalid');
   const threadId = parseEyesOnAgentsUuid(
@@ -245,17 +227,12 @@ const parseThreadRefreshRead = (
     throw new Error('Codex thread/read returned a different thread');
   }
   const title = parseThreadRefreshTitle(value);
-  const status = threadRefreshStatusPatch(
-    providerThreadField(value, 'status'),
-    options.observedAt
-  );
   const providerActivityAt = parseProviderTimestamp(providerThreadField(value, 'updatedAt')) ??
     parseProviderTimestamp(providerThreadField(value, 'createdAt'));
   return {
     patch: {
       threadId,
       ...(title === undefined ? {} : { title }),
-      ...(status === undefined ? {} : { status }),
       ...(providerActivityAt === null ? {} : { lastActivityAt: providerActivityAt })
     },
     providerActivityAt
@@ -331,7 +308,6 @@ const lastUserPromptFromTurns = (
 
 const hasThreadRefreshPatch = (patch: EyesOnAgentsThreadRefreshPatch): boolean => {
   return patch.title !== undefined ||
-    patch.status !== undefined ||
     patch.lastActivityAt !== undefined ||
     patch.lastUserPrompt !== undefined;
 };
@@ -515,6 +491,9 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       const observedAt = thread.statusObservedAt === null
         ? null
         : Date.parse(thread.statusObservedAt);
+      const lastOpenedAt = thread.lastOpenedAt === null
+        ? null
+        : Date.parse(thread.lastOpenedAt);
       const runtimeState = effectiveEyesOnAgentsRuntimeState({
         runtimeState: thread.runtimeState,
         statusSource: thread.statusSource,
@@ -527,7 +506,12 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       return {
         ...thread,
         runtimeState,
-        isFocused: isEyesOnAgentsFocused(runtimeState, thread.isUnread),
+        isFocused: isEyesOnAgentsFocused(
+          runtimeState,
+          thread.isUnread,
+          Number.isFinite(observedAt) ? observedAt : null,
+          Number.isFinite(lastOpenedAt) ? lastOpenedAt : null
+        ),
         lastUserPrompt: lastUserPromptCaptureEnabled
           ? thread.lastUserPrompt
           : {
@@ -1707,8 +1691,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     let projection: ReturnType<typeof parseThreadRefreshRead>;
     try {
       projection = parseThreadRefreshRead(read.value, {
-        expectedThreadId: candidate.threadId,
-        observedAt
+        expectedThreadId: candidate.threadId
       });
     } catch {
       return { state: 'resolved', value: null };

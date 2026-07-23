@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.36",
+  "_version": "0.0.37",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -17,7 +17,8 @@
     "typecheck:todo-web": "yarn check:todo-web-boundary-types && vue-tsc --noEmit -p scripts/todoist-sync/tsconfig.todo-web.json --composite false",
     "typecheck": "yarn typecheck:node && yarn typecheck:web",
     "audit:desktop-package": "node scripts/package/desktopPackage.audit.cjs",
-    "test:desktop-package-audit": "node --test scripts/package/desktopPackageAudit.test.mjs",
+    "test:desktop-app-icon": "node --test scripts/package/desktopAppIcon.test.mjs",
+    "test:desktop-package-audit": "node --test scripts/package/desktopPackageAudit.test.mjs scripts/package/desktopAppIcon.test.mjs",
     "audit:sqlite-migrations": "node scripts/sqlite-migrations/audit.mjs",
     "test:sqlite-migrations": "node --test scripts/sqlite-migrations/release-hook.test.mjs",
     "typecheck:sqlite-migrations": "tsc -p scripts/sqlite-migrations/tsconfig.strict.json",
@@ -25,6 +26,8 @@
     "test:todoist-sync": "node scripts/todoist-sync/runNativeTests.mjs",
     "test:todoist-sync:cross-repo-child": "node scripts/todoist-sync/runCrossRepoSmoke.mjs",
     "check:renderer-i18n": "node scripts/renderer-i18n/check-renderer-i18n.mjs",
+    "test:todo-layout": "node --test scripts/todo/todo-column-layout.test.mjs",
+    "test:todo-ai-source": "node --test scripts/todo/todo-ai-source-corner.test.mjs",
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
     "check:todo-window-runtime": "node scripts/todo/check-todo-window-runtime.mjs",
@@ -221,6 +224,6 @@
     "rig_dev/*"
   ],
   "name": "Bitterless_DEBUG",
-  "version": "0.0.36",
-  "version_code": "260722223239"
+  "version": "0.0.37",
+  "version_code": "260723101142"
 }

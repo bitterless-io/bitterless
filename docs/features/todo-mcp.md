@@ -123,27 +123,48 @@ The archive contains one top-level `bitterless-todo/` directory and no credentia
 machine-specific helper path. The workspace `.agents/skills/`, `.claude/skills/`, and
 `~/.codex/skills/` copies must remain byte-identical to this portable source.
 
+The skill contract carries a quoted 12-digit `metadata.version_code` in `SKILL.md`. The same value
+is hard-coded in the application as an independent Todo-skill revision; it advances only when the
+portable skill or its installation contract changes, not for every application build.
+
+## Domain catalog contract
+
+MCP keeps the active and archived catalogs explicit so an agent can understand the user's grouping
+without accidentally targeting an archived Domain:
+
+| Tool | Result | Write policy |
+|---|---|---|
+| `domain.list` | `{ domains, focus }`; only active, non-deleted Domains | read-only |
+| `domain.archived.list` | `{ domains }`; only archived, non-deleted Domains | read-only |
+| `domain.description.update` | `{ domain }`; one active Domain after the persisted update | explicit user-authorized write |
+
+Every returned Domain row includes at least `id`, `title`, `description`, `archived`, `position`,
+`created_at`, and `updated_at`. `domain.list` remains the default discovery tool before creating or
+moving a Todo. `domain.archived.list` is an opt-in historical lookup and its results are never valid
+targets for `todo.create` or `todo.move`.
+
+`domain.description.update` accepts one 20-digit Domain ID and a trimmed 0–500-character
+description. It resolves the ID from `domain.list`, rejects archived/deleted/missing Domains, writes
+through `TodoistSyncRepository.updateDomainDescription`, and returns a validated reread. It must not
+write legacy Core tables or bypass the Todoist-style outbox/synchronization path.
+
 ## Agent onboarding contract
 
 The in-app integration guide must present MCP registration and skill installation as two required,
 distinct steps:
 
 ```text
-┌──────────── Agent Todo access ─────────────┐
-│ MCP exposes the Todo tools.                │
-│ Skill teaches the agent when/how to use    │
-│ them for personal, cross-device follow-up. │
-├─────────────────────────────────────────────┤
+┌──────────── Agent Todo access ──────────────┐
+│ Complete setup instructions            copy │  ← primary, first
+├──────────────────────────────────────────────┤
+│ Detailed instructions                       │
 │ 1. Connect MCP                              │
 │    Helper path                         copy │
 │    MCP config                          copy │
-├─────────────────────────────────────────────┤
 │ 2. Install bitterless-todo skill            │
 │    Bundled skill folder                copy │
 │    Codex / Claude installation hint         │
-├─────────────────────────────────────────────┤
-│ Complete setup instructions            copy │
-└─────────────────────────────────────────────┘
+└──────────────────────────────────────────────┘
 ```
 
 MCP configuration alone only makes tool schemas callable. It does not reliably teach a general
@@ -161,6 +182,36 @@ allowed only while integration info is genuinely pending. Once an integration re
 missing or empty required fields such as `skillPath` are a contract mismatch: the guide must show
 an explicit restart-required error (or reject opening with that error), never leave a permanent
 loading placeholder.
+
+## Skill revision attention
+
+The Todo menubar Robot/AI entry shows an Arco red dot when setup instructions for the current
+portable skill revision have not been acknowledged on this Bitterless installation:
+
+```text
+Todo opens
+   │
+   ├─ atomically ensure SQLite baseline `000000000000` if the setting is absent
+   ├─ read `todo_agent_skill / acknowledged_version_code`
+   └─ compare stored revision with hard-coded current revision
+          │
+          ├─ stored < current ──► Robot red dot ──► copy Complete setup ──► store current
+          ├─ stored = current ──► no dot
+          └─ stored > current ──► no downgrade and no update dot
+```
+
+The baseline insert is `ON CONFLICT DO NOTHING` followed by a reread, so two Todo renderers cannot
+overwrite a newly acknowledged revision with the baseline. Comparisons use `compare-versions` on
+the 12-digit strings; JavaScript numeric comparison is forbidden.
+
+The stored value deliberately means "the setup instructions for this revision were copied and
+acknowledged", not proof that an external Codex or Claude process completed installation. Opening
+or closing the modal, copying an individual helper/config/path field, or a failed clipboard write
+does not update SQLite. Only a successful copy of the top-level Complete setup instructions records
+the exact revision returned by the current main process. A missing or mismatched main-process
+revision is a restart-required contract error, preventing a new renderer from acknowledging an old
+bundled skill. Successful acknowledgement is broadcast to other Todo renderers without forcing a
+full Todo data refresh.
 
 ## Compatibility and safety
 

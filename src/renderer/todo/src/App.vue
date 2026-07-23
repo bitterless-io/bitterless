@@ -2,33 +2,28 @@
   <div class="todo-app">
     <MenuBar :is-standalone="isStandalone" :is-omni="isOmni" />
     <SyncClockBanner />
-    <div class="todo-app__board">
-      <div class="todo-app__board-scroll" ref="boardScrollRef" @scroll="onBoardScroll" @click="onBoardClick">
-        <FocusedColumn v-if="todoSettingStore.showFocused" />
+    <div
+      class="todo-app__board"
+      :class="{ 'todo-app__board--detail-open': todoStore.detailVisible }"
+    >
+      <div class="todo-app__board-scroll" @click="onBoardClick">
         <draggable
           v-model="todoStore.domainList"
           group="domains"
           item-key="id"
           handle=".domain-column__header"
-          direction="horizontal"
           :animation="200"
           class="todo-app__board-draggable"
           @end="onDomainDragEnd"
         >
+          <template #header>
+            <FocusedColumn v-if="todoSettingStore.showFocused" />
+          </template>
           <template #item="{ element }">
             <DomainColumn :domain="element" />
           </template>
         </draggable>
-        <AddDomainButton />
-        <div v-if="todoStore.detailVisible" class="todo-app__detail-spacer" />
       </div>
-      <transition name="scroll-to-left">
-        <a-badge v-if="showScrollToLeft" class="todo-app__scroll-to-left-badge" :count="todoStore.focusedTodoList.length" :max-count="99">
-          <button class="todo-app__scroll-to-left" @click="scrollToLeft">
-            <IconArrowLeft :size="14" />
-          </button>
-        </a-badge>
-      </transition>
       <TodoDetail />
     </div>
   </div>
@@ -38,10 +33,8 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import draggable from 'vuedraggable';
-import { IconArrowLeft } from '@tabler/icons-vue';
 import DomainColumn from './components/DomainColumn/DomainColumn.vue';
 import FocusedColumn from './components/FocusedColumn/FocusedColumn.vue';
-import AddDomainButton from './components/AddDomainButton/AddDomainButton.vue';
 import TodoDetail from './components/TodoDetail/TodoDetail.vue';
 import MenuBar from './components/MenuBar/MenuBar.vue';
 import SyncClockBanner from './components/SyncClockBanner/SyncClockBanner.vue';
@@ -57,17 +50,7 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 
 const isStandalone = ref(false);
 const isOmni = todoEnv?.host === 'omni';
-const boardScrollRef = ref<HTMLElement | null>(null);
-const showScrollToLeft = ref(false);
 let clockTimer: ReturnType<typeof setInterval> | null = null;
-
-const onBoardScroll = () => {
-  showScrollToLeft.value = (boardScrollRef.value?.scrollLeft ?? 0) > 150;
-};
-
-const scrollToLeft = () => {
-  boardScrollRef.value?.scrollTo({ left: 0, behavior: 'smooth' });
-};
 
 const onBoardClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement;

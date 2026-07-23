@@ -20,9 +20,9 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | Hook trust | inspect with `hooks/list`; user approves in Codex; Bitterless never writes trust hashes |
 | classification | dedicated Domain table with internal immutable `uncategorized` fallback; renderer exposes it through fixed `All` |
 | source persistence | exact validated `thread/list` objects in a local-only snapshot table |
-| Focus | derived active + persistent unread projection |
+| Focus | derived unacknowledged active evidence + persistent unread projection |
 | unread | active/list/terminal observations set; successful EyesOnAgents Open clears |
-| opening | validated `codex://threads/<id>` in main process; mark read only after success |
+| opening | validated `codex://threads/<id>` in main process; acknowledge current active evidence and mark read only after success |
 | messages | deferred; no false `queue` RPC abstraction |
 
 ## Module decomposition
@@ -54,6 +54,7 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | App Server Disconnect -> observation remains | global hooks and listener intent survive without persistent App Server reconnect |
 | active observation/completion -> Focus | running or newly completed thread is unread; historical import does not flood Focus |
 | Open -> exact deep link -> mark opened | successful open clears unread; failed open does not; later active observation restores unread |
+| tiered metadata poll -> existing row | title/activity/authorized question may change; independent App Server status never replaces Desktop Hook evidence |
 | header Refresh while disconnected/error -> connect + reconcile | manual recovery refreshes raw and normalized state without duplicate jobs |
 | All Project filter -> renderer snapshot | Project counts span every visible non-archived thread without changing Domain assignment |
 | Domain drag/menu -> repository | assignment survives renderer and application restart |
@@ -65,6 +66,8 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | risk | control |
 |---|---|
 | separate App Server is mistaken for Desktop state | label source; `notLoaded -> unknown`; retain optional hook source |
+| independent metadata read overwrites Hook working | tiered `thread/read` never emits runtime patches; only lifecycle authorities update runtime |
+| interrupted task remains working without an interrupt Hook | successful Open acknowledges the current active observation; never guess paused or use a TTL |
 | old threads flood Focus | migration/sync never creates completion markers |
 | running thread is opened, completes, or remains active | persist explicit unread marker and set it on every accepted attention observation |
 | raw source payload leaks prompt preview | local-only table; no renderer DTO, logging, export, or `thread/read` |

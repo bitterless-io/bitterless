@@ -76,12 +76,6 @@ interface ThreadRow {
 
 interface ThreadRefreshPersistenceRow {
   title: string | null;
-  runtime_state: string;
-  active_flags_json: string;
-  active_turn_id: string | null;
-  is_unread: number;
-  status_source: string;
-  status_observed_at: number | null;
   last_activity_at: number | null;
   last_user_prompt_preview: string | null;
   last_user_prompt_turn_id: string | null;
@@ -94,11 +88,6 @@ interface ThreadRefreshPersistenceRow {
 const MAX_ARCHIVED_THREAD_IDS = 10_000;
 const MAX_THREAD_SNAPSHOTS = 20_000;
 const THREAD_REFRESH_PAGE_SIZE = 40;
-const ACTIVE_RUNTIME_STATES = new Set<EyesOnAgentsRuntimeState>([
-  'working',
-  'waiting_approval',
-  'waiting_input'
-]);
 type ThreadRefreshColumnValue = string | number | null;
 
 const parsePositiveId = (value: unknown, label: string): number => {
@@ -162,20 +151,6 @@ const toLastUserPrompt = (row: ThreadRow): EyesOnAgentsLastUserPrompt => {
     checkedAt: toIso(checkedAt),
     truncated: row.last_user_prompt_truncated === 1
   };
-};
-
-const parseStoredActiveFlags = (value: string): string[] => {
-  try {
-    return parseEyesOnAgentsActiveFlags(JSON.parse(value) as unknown);
-  } catch {
-    return [];
-  }
-};
-
-const haveSameActiveFlags = (left: string[], right: string[]): boolean => {
-  if (left.length !== right.length) return false;
-  const leftSet = new Set(left);
-  return right.every((flag) => leftSet.has(flag));
 };
 
 const canApplyAppServerPrompt = (
@@ -263,6 +238,10 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
   const lastOpenedTurnId = parseTurnId(row.last_opened_turn_id, 'last_opened_turn_id');
   if (row.is_unread !== 0 && row.is_unread !== 1) throw new Error('is_unread is invalid');
   const isUnread = row.is_unread === 1;
+  const statusObservedAt = parseEyesOnAgentsTimestamp(
+    row.status_observed_at,
+    'status_observed_at'
+  );
   const project = projectFromRow(row);
   return {
     threadId: parseEyesOnAgentsUuid(row.thread_id),
@@ -280,14 +259,17 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
     lastOpenedTurnId,
     lastOpenedAt: toIso(lastOpenedAt),
     statusSource: parseStatusSource(row.status_source),
-    statusObservedAt: toIso(
-      parseEyesOnAgentsTimestamp(row.status_observed_at, 'status_observed_at')
-    ),
+    statusObservedAt: toIso(statusObservedAt),
     lastActivityAt: toIso(
       parseEyesOnAgentsTimestamp(row.last_activity_at, 'last_activity_at')
     ),
     isUnread,
-    isFocused: isEyesOnAgentsFocused(runtimeState, isUnread),
+    isFocused: isEyesOnAgentsFocused(
+      runtimeState,
+      isUnread,
+      statusObservedAt,
+      lastOpenedAt
+    ),
     lastUserPrompt: toLastUserPrompt(row)
   };
 };
@@ -690,8 +672,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     }
     const transaction = sqliteManager.db.transaction((): { changed: boolean } => {
       const select = sqliteManager.db.prepare(
-        `SELECT title, runtime_state, active_flags_json, active_turn_id, is_unread,
-          status_source, status_observed_at, last_activity_at,
+        `SELECT title, last_activity_at,
           last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
           last_user_prompt_truncated, last_user_prompt_source, last_user_prompt_checked_at
          FROM eyes_on_agents_thread WHERE thread_id = ? AND is_archived = 0`
@@ -713,51 +694,6 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         if (thread.title !== undefined) {
           setIfDifferent('title', row.title, thread.title);
         }
-        if (
-          thread.status !== undefined
-          && thread.status.runtimeState !== 'unknown'
-          && (
-            row.status_observed_at === null
-            || thread.status.observedAt > row.status_observed_at
-          )
-        ) {
-          const currentRuntimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
-          const currentFlags = parseStoredActiveFlags(row.active_flags_json);
-          const currentSource = parseStatusSource(row.status_source);
-          const flagsChanged = !haveSameActiveFlags(currentFlags, thread.status.activeFlags);
-          const statusChanged = currentRuntimeState !== thread.status.runtimeState
-            || flagsChanged
-            || currentSource !== thread.status.source;
-          if (currentRuntimeState !== thread.status.runtimeState) {
-            updates.set('runtime_state', thread.status.runtimeState);
-          }
-          if (flagsChanged) {
-            updates.set('active_flags_json', JSON.stringify(thread.status.activeFlags));
-          }
-          if (currentSource !== thread.status.source) {
-            updates.set('status_source', thread.status.source);
-          }
-          if (statusChanged && row.status_observed_at !== thread.status.observedAt) {
-            updates.set('status_observed_at', thread.status.observedAt);
-          }
-
-          const isActive = ACTIVE_RUNTIME_STATES.has(thread.status.runtimeState);
-          const hasActiveTurnId = Object.prototype.hasOwnProperty.call(
-            thread.status,
-            'activeTurnId'
-          );
-          const nextActiveTurnId = isActive
-            ? hasActiveTurnId
-              ? thread.status.activeTurnId ?? null
-              : row.active_turn_id
-            : null;
-          setIfDifferent('active_turn_id', row.active_turn_id, nextActiveTurnId);
-          if (row.is_unread !== 0 && row.is_unread !== 1) {
-            throw new Error('is_unread is invalid');
-          }
-          if (isActive && row.is_unread !== 1) updates.set('is_unread', 1);
-        }
-
         if (
           thread.lastActivityAt !== undefined
           && (

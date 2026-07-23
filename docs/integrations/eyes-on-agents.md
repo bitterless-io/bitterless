@@ -29,7 +29,7 @@ EyesOnAgents never reads or displays them.
   system `uncategorized` Domain as the storage fallback.
 - Derive current Git Project metadata from `cwd` and filter `All` by Project without
   changing manual Domain assignment.
-- Show running threads and newly completed unread threads in a fixed Focus column.
+- Show unacknowledged running threads and newly completed unread threads in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
 - Persist unread explicitly: every observed running state or terminal event sets unread; a
   successful Open from EyesOnAgents or explicit Focus `Read all` clears eligible completed
@@ -203,13 +203,12 @@ alter coverage. A reduced page count resets the cold cursor to page 2. Cancellat
 failure does not advance it; individual malformed or failed rows are skipped so one row cannot
 starve the rest of the cold sweep.
 
-The status evidence time is captured before each `thread/read` request. A lifecycle notification
-that arrives while the request is pending therefore has a newer watermark and cannot be overwritten
-by the older response. Polling status applies only when that watermark is strictly newer than the
-stored status; equal-millisecond evidence preserves the already persisted lifecycle state. Once a
-SQLite page mutation has started, Main waits for that mutation to settle even if the App Server
-context is cancelled; teardown cannot lose track of a late write, and the cancelled page remains
-incomplete so its cold cursor does not advance.
+The independent App Server's `thread/read.status` describes that managed process, not Codex
+Desktop. The tiered poll therefore never projects a runtime patch. Hook events and lifecycle
+notifications from the connection that owns a turn are the runtime authorities. Once a SQLite page
+mutation has started, Main waits for that mutation to settle even if the App Server context is
+cancelled; teardown cannot lose track of a late write, and the cancelled page remains incomplete so
+its cold cursor does not advance.
 
 The poll follows persisted connection intent:
 
@@ -239,7 +238,7 @@ waiting for an already admitted poll; while that counter is nonzero, a new poll 
 The automatic full sync after `thread/unarchived` uses the same admission-and-join ordering. This
 prevents foreground/background App Server overlap independently of renderer state.
 
-The repository compares optional title, runtime, provider activity, and prompt patches independently
+The repository compares optional title, provider activity, and prompt patches independently
 and updates `updated_at` only with a real semantic change. A reliable provider activity watermark
 may advance `last_activity_at` monotonically so a newly active row joins the next hot page. An
 unchanged poll performs no SQLite UPDATE and no renderer broadcast. If **Store latest user
@@ -250,9 +249,10 @@ The other response items never leave main-process memory. Codex 0.137 does not i
 `itemsView` or explicitly report `full`; an explicit `summary`, `notLoaded`, or other view rejects the
 content page and does not advance the prompt check watermark.
 
-The tiered path can update title, activity, runtime/Focus evidence, and opted-in latest-question
-state only for already persisted rows. It cannot discover a new thread or reconcile archive and
-Project metadata; window activation and labelled manual Refresh remain the full-inventory fallback.
+The tiered path can update title, activity, and opted-in latest-question state only for already
+persisted rows. It cannot update runtime/Focus evidence, discover a new thread, or reconcile archive
+and Project metadata; window activation and labelled manual Refresh remain the full-inventory
+fallback.
 Explicit Disconnect still prevents the background operation from reconnecting.
 
 ### Normalized admission and Hook-first title repair
@@ -462,24 +462,32 @@ Codex emits no running heartbeat.
 
 ## Focus and unread semantics
 
-Focus is a derived view, never a persisted classification. Unread is a persisted Bitterless marker:
+Focus is a derived view, never a persisted classification. Unread and successful Open timestamps
+are persisted Bitterless markers:
 
 ```text
-in Focus = runtime state is working/waiting_approval/waiting_input
-        OR is_unread = true
+current active attention = runtime state is working/waiting_approval/waiting_input
+                        AND (
+                          last_opened_at is absent
+                          OR status_observed_at is newer than last_opened_at
+                        )
+
+in Focus = current active attention OR is_unread = true
 ```
 
 Every accepted `turn_started`, active `thread_status`, active `thread/list` observation, and
 `turn_completed` sets `is_unread = true`. This includes the completion of a turn that was opened
 while running: completion is a new attention transition and becomes unread again. A successful Open
-sets `is_unread = false`; Focus `Read all` clears the marker for non-running unread rows. If a later
-refresh observes a cleared thread running, it sets unread again as required. Idle, unknown, archive,
-and invalidation transitions otherwise preserve the current marker.
+sets `is_unread = false` and acknowledges the current status observation; Focus `Read all` clears
+the marker for non-running unread rows. If a later authoritative active event arrives, its newer
+status time sets unread again as required. Metadata polling cannot restore runtime attention. Idle,
+unknown, archive, and invalidation transitions otherwise preserve the current marker.
 
 The legacy completion/open comparison is used once by migration to backfill the new column, so an
 upgrade preserves previously unread completed threads without flooding Focus with historical rows.
-A running thread remains in Focus after Open because runtime state independently keeps it there,
-even while its unread badge is temporarily clear.
+An active thread leaves Focus after Open because that exact status observation has been
+acknowledged. A later `UserPromptSubmit`, approval/input wait, or other authoritative active event
+advances `status_observed_at`, sets unread, and restores Focus.
 
 Focus `Read all` clears `is_unread` for every currently non-archived unread row whose runtime state
 is not `working`, `waiting_approval`, or `waiting_input`, in one repository mutation. It is not
@@ -487,8 +495,9 @@ filtered by renderer DOM, current scroll position, Domain, Project, or title sea
 were focused only because they were unread leave Focus. Active rows are deliberately not
 acknowledged: they remain in Focus and retain the latent marker that makes a later idle observation
 unread even if no terminal event arrives. The operation does not deep-link to Codex and never
-changes `last_opened_turn_id` or `last_opened_at`. A lifecycle or polling observation committed after
-the read mutation may set a cleared thread unread again, preserving newer activity.
+changes `last_opened_turn_id` or `last_opened_at`. A newer lifecycle observation committed after the
+read mutation may set a cleared thread unread again, preserving newer activity. Metadata polling
+cannot do so.
 
 `last_opened_*` changes only after `shell.openExternal(codex://threads/<id>)` resolves successfully.
 Selecting a card, moving it, or opening the same thread directly inside Codex does not mark it read.
@@ -502,6 +511,11 @@ no documented selected-thread or read event. Consequently, if the user remains i
 the answer as it completes, EyesOnAgents conservatively keeps the completion unread until Open
 succeeds from EyesOnAgents or the user explicitly selects `Read all`. Completion must never
 auto-clear unread.
+
+Codex exposes no reliable Hook for manual interruption. EyesOnAgents does not add a `paused` state,
+scan private rollout/transcript files, or expire working by elapsed time. If interruption leaves the
+last authoritative state as working, Open is the explicit acknowledgement that removes that current
+observation from Focus; a later prompt restores working through `UserPromptSubmit`.
 
 ## XPC surface
 
