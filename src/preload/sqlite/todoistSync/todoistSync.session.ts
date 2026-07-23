@@ -3,16 +3,21 @@ import type {
   TodoistSyncActivateParams,
   TodoistSyncActivationResult,
   TodoistSyncClockCheckParams,
+  TodoistSyncClockCheckRequested,
   TodoistSyncClockCheckResult,
   TodoistSyncClockContext,
   TodoistSyncStatus,
 } from '@shared/todoistSync/todoistSync.type';
+import type { TodoDataUpdatedEvent } from '@shared/todoistSync/todoDataUpdate.shared';
 import {
   assertTodoistSyncDatabaseIsolation,
   resolveTodoistSyncDatabasePaths,
   TodoistSyncDatabase,
 } from './todoistSync.database';
-import { getOrCreateTodoistSyncRuntimePassword } from './todoistSyncPassword.service';
+import {
+  getOrCreateTodoistSyncRuntimePassword,
+  type TodoistSyncPasswordProtection,
+} from './todoistSyncPassword.service';
 import { TodoistSyncSnowflakeService } from './todoistSyncSnowflake.service';
 import {
   TodoistSyncGenerationFenceError,
@@ -50,6 +55,11 @@ export interface TodoistSyncSessionRuntimeContext {
 
 export interface TodoistSyncSessionServiceOptions {
   clock?: TodoistSyncClockService;
+  userDataPath?: string;
+  passwordProtection?: TodoistSyncPasswordProtection;
+  onDataUpdated?: (event: TodoDataUpdatedEvent) => void;
+  onClockCheckRequested?: (payload: TodoistSyncClockCheckRequested) => void;
+  onStatusUpdated?: () => void;
   createRuntime?: (
     params: TodoistSyncActivateParams,
     context: TodoistSyncSessionRuntimeContext,
@@ -75,6 +85,11 @@ export class TodoistSyncSessionService {
   private transition: Promise<void> = Promise.resolve();
   private latestClockRequestGeneration = 0;
   private clock: TodoistSyncClockService | null = null;
+  private readonly userDataPath: string | null;
+  private readonly passwordProtection: TodoistSyncPasswordProtection | null;
+  private readonly onDataUpdated: (event: TodoDataUpdatedEvent) => void;
+  private readonly onClockCheckRequested: (payload: TodoistSyncClockCheckRequested) => void;
+  private readonly onStatusUpdated: () => void;
   private readonly createRuntime: (
     params: TodoistSyncActivateParams,
     context: TodoistSyncSessionRuntimeContext,
@@ -82,6 +97,11 @@ export class TodoistSyncSessionService {
 
   constructor(options: TodoistSyncSessionServiceOptions = {}) {
     this.clock = options.clock ?? null;
+    this.userDataPath = options.userDataPath ?? null;
+    this.passwordProtection = options.passwordProtection ?? null;
+    this.onDataUpdated = options.onDataUpdated ?? (() => undefined);
+    this.onClockCheckRequested = options.onClockCheckRequested ?? (() => undefined);
+    this.onStatusUpdated = options.onStatusUpdated ?? (() => undefined);
     this.createRuntime = options.createRuntime ?? (async (params, context) => (
       await this.createDefaultRuntime(params, context)
     ));
@@ -226,14 +246,24 @@ export class TodoistSyncSessionService {
     params: TodoistSyncActivateParams,
     context: TodoistSyncSessionRuntimeContext,
   ): Promise<TodoistSyncSessionRuntime> {
-    const paths = resolveTodoistSyncDatabasePaths(app.getPath('userData'), params.customerId);
-    assertTodoistSyncDatabaseIsolation(paths, app.getPath('userData'));
-    const password = getOrCreateTodoistSyncRuntimePassword(paths);
+    const userDataPath = this.requireUserDataPath();
+    const passwordProtection = this.requirePasswordProtection();
+    const paths = resolveTodoistSyncDatabasePaths(userDataPath, params.customerId);
+    assertTodoistSyncDatabaseIsolation(paths, userDataPath);
+    const password = await getOrCreateTodoistSyncRuntimePassword(paths, {
+      protection: passwordProtection,
+    });
     const database = new TodoistSyncDatabase(paths.databasePath, password);
     try {
       const state = database.raw.prepare('SELECT snowflake_node_id FROM todo_sync_state WHERE customer_id=?').get(String(params.customerId)) as { snowflake_node_id: number | null } | undefined;
       const ids = new TodoistSyncSnowflakeService(state?.snowflake_node_id ?? null);
-      const repository = new TodoistSyncRepository(database, String(params.customerId), params.deviceId, ids);
+      const repository = new TodoistSyncRepository(
+        database,
+        String(params.customerId),
+        params.deviceId,
+        ids,
+        { onDataUpdated: this.onDataUpdated },
+      );
       await repository.initialize();
       const client = new TodoistSyncClient({ coreToken: params.coreToken });
       const coordinator = new TodoistSyncCoordinator({
@@ -243,6 +273,8 @@ export class TodoistSyncSessionService {
         captureGeneration: context.captureGeneration,
         isGenerationCurrent: context.isGenerationCurrent,
         isClockWrong: context.isClockWrong,
+        onClockCheckRequested: this.onClockCheckRequested,
+        onStatusUpdated: this.onStatusUpdated,
       });
       return { database, repository, coordinator };
     } catch (error) {
@@ -260,9 +292,42 @@ export class TodoistSyncSessionService {
   }
 
   private getClock(): TodoistSyncClockService {
-    if (!this.clock) this.clock = new TodoistSyncClockService(new TodoistSyncClockStateStore(app.getPath('userData')));
+    if (!this.clock) {
+      this.clock = new TodoistSyncClockService(
+        new TodoistSyncClockStateStore(this.requireUserDataPath()),
+      );
+    }
     return this.clock;
+  }
+
+  private requireUserDataPath(): string {
+    if (!this.userDataPath) {
+      throw new Error('[todoist sync] SQLite preload userData path is unavailable');
+    }
+    return this.userDataPath;
+  }
+
+  private requirePasswordProtection(): TodoistSyncPasswordProtection {
+    if (!this.passwordProtection) {
+      throw new Error('[todoist sync] OS password protection capability is unavailable');
+    }
+    return this.passwordProtection;
   }
 }
 
-export const todoistSyncSession = new TodoistSyncSessionService();
+export const createTodoistSyncSessionGetter = (
+  createSession: () => Promise<TodoistSyncSessionService>,
+): (() => Promise<TodoistSyncSessionService>) => {
+  let sessionPromise: Promise<TodoistSyncSessionService> | null = null;
+
+  return (): Promise<TodoistSyncSessionService> => {
+    if (sessionPromise) return sessionPromise;
+
+    const pending = createSession();
+    sessionPromise = pending;
+    void pending.catch(() => {
+      if (sessionPromise === pending) sessionPromise = null;
+    });
+    return pending;
+  };
+};

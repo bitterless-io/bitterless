@@ -20,7 +20,11 @@ if (
 }
 
 const bitterlessPreloadBuildDefine = {
-  __BITTERLESS_VERSION_CODE__: JSON.stringify(packageMetadata.version_code)
+  __BITTERLESS_VERSION_CODE__: JSON.stringify(packageMetadata.version_code),
+  'import.meta.env.VITE_BITTERLESS_CORE_URL': JSON.stringify(
+    process.env.VITE_BITTERLESS_CORE_URL || ''
+  ),
+  'import.meta.env.VITE_ENV': JSON.stringify(process.env.VITE_ENV || 'dev')
 }
 
 const maestroBuildDefine = {

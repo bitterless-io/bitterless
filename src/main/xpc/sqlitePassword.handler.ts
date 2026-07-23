@@ -1,8 +1,9 @@
 import { XpcMainHandler } from 'electron-xpc/main';
 import { safeStorage } from 'electron';
 import { dialogHelper } from '../dialog/dialog.helper';
+import type { TodoistSyncPasswordCapabilityApi } from '@shared/todoistSync/todoistSyncCapability.type';
 
-class SqlitePasswordHandler extends XpcMainHandler {
+class SqlitePasswordHandler extends XpcMainHandler implements TodoistSyncPasswordCapabilityApi {
   async encryptPassword(params: { password: string }): Promise<string> {
     if (!safeStorage.isEncryptionAvailable()) {
       if (process.platform === 'darwin') {

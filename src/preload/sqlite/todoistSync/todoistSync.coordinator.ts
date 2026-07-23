@@ -103,12 +103,8 @@ export class TodoistSyncCoordinator {
     this.captureGeneration = options.captureGeneration;
     this.isGenerationCurrent = options.isGenerationCurrent;
     this.isClockWrong = options.isClockWrong;
-    this.onClockCheckRequested = options.onClockCheckRequested ?? ((payload) => {
-      xpcMain.broadcast('todoist-sync/clock-check-requested', payload);
-    });
-    this.onStatusUpdated = options.onStatusUpdated ?? (() => {
-      xpcMain.broadcast('todoist-sync/status_updated');
-    });
+    this.onClockCheckRequested = options.onClockCheckRequested ?? (() => undefined);
+    this.onStatusUpdated = options.onStatusUpdated ?? (() => undefined);
     this.scheduler = options.scheduler ?? defaultScheduler;
     this.repository.setMutationCommittedListener(() => this.trigger());
   }

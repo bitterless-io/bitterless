@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { runSqliteFirstGuiStartup } from '../../src/main/startup/guiStartup.service.ts';
 import { onceAsync } from '../../src/preload/sqlite/sqliteHelper/onceAsync.ts';
 import { probeCoreSqliteReadable } from '../../src/preload/sqlite/sqliteHelper/coreSqliteReadProbe.ts';
+import { reloadCoreSqliteRuntime } from '../../src/main/startup/coreSqliteRuntimeRecovery.service.ts';
 import {
   StartupDiagnosticsState,
   selectNewerStartupDiagnosticsSnapshot,
@@ -173,6 +174,10 @@ const sqlitePreloadSource = readFileSync(
   join(projectRoot, 'src/preload/sqlite/sqlite.preload.ts'),
   'utf8',
 );
+const sqlitePasswordSource = readFileSync(
+  join(projectRoot, 'src/preload/sqlite/sqliteHelper/sqlitePassword.helper.ts'),
+  'utf8',
+);
 const appMainSource = readFileSync(join(projectRoot, 'src/main/app.main.ts'), 'utf8');
 const guiStartupSource = readFileSync(
   join(projectRoot, 'src/main/startup/guiStartup.service.ts'),
@@ -206,7 +211,17 @@ assert.ok(
     appMainSource.indexOf('sqliteWindowHelper.create('),
 );
 assert.match(appMainSource, /coreSqliteBoot\.ready\(\{ targetId \}\)/);
-assert.doesNotMatch(appMainSource, /withStartupTimeout|SQLITE_STARTUP_TIMEOUT_MS/);
+assert.match(appMainSource, /CORE_SQLITE_STARTUP_TIMEOUT_MS = 60_000/);
+assert.match(appMainSource, /createBoundedTodoXpcClient\(/);
+assert.match(appMainSource, /Core SQLite target registration/);
+assert.match(sqlitePreloadSource, /createBoundedTodoXpcClient\(pathHelper, 'PathMainHelper'\)/);
+assert.match(sqlitePreloadSource, /createXpcPreloadEmitter<TodoistSyncPasswordCapabilityApi>/);
+assert.match(sqlitePreloadSource, /createXpcPreloadEmitter<TodoSystemApi>/);
+assert.match(sqlitePasswordSource, /createBoundedTodoXpcClient\(/);
+assert.match(sqlitePasswordSource, /err instanceof TodoXpcTimeoutError/);
+assert.match(appMainSource, /webContents\.on\('render-process-gone'/);
+assert.match(appMainSource, /reloadCoreSqliteRuntime\(sqliteWindow, isShutdownStarted\)/);
+assert.match(appMainSource, /withTodoXpcTimeout\(/);
 assert.doesNotMatch(appMainSource, /app\.exit\(1\)/);
 assert.doesNotMatch(
   appMainSource,
@@ -227,6 +242,30 @@ assert.ok(
     menuBarStoreSource.indexOf('mainWindowEmitter.getStartupDiagnostics()'),
 );
 assert.match(menuBarStoreSource, /selectNewerStartupDiagnosticsSnapshot/);
+
+{
+  let reloads = 0;
+  let windowDestroyed = false;
+  let webContentsDestroyed = false;
+  const target = {
+    isDestroyed: () => windowDestroyed,
+    webContents: {
+      isDestroyed: () => webContentsDestroyed,
+      reload: () => {
+        reloads += 1;
+      },
+    },
+  };
+  assert.equal(reloadCoreSqliteRuntime(target, false), true);
+  assert.equal(reloads, 1);
+  assert.equal(reloadCoreSqliteRuntime(target, true), false);
+  windowDestroyed = true;
+  assert.equal(reloadCoreSqliteRuntime(target, false), false);
+  windowDestroyed = false;
+  webContentsDestroyed = true;
+  assert.equal(reloadCoreSqliteRuntime(target, false), false);
+  assert.equal(reloads, 1);
+}
 
 {
   const result = (objectCount) => ({

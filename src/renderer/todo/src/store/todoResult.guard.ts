@@ -32,7 +32,7 @@ export const requireStringArray = (value: unknown, label: string): string[] => (
 );
 
 export const requireVoidResult = (value: unknown, label: string): void => {
-  if (value !== undefined) {
+  if (value !== undefined && value !== null) {
     throw new Error(`[todo] ${label} returned an invalid void result`);
   }
 };
@@ -42,7 +42,7 @@ export const requireOptionalItem = <T>(
   label: string,
   isItem: (item: unknown) => item is T,
 ): T | undefined => {
-  if (value === undefined) return undefined;
+  if (value === undefined || value === null) return undefined;
   if (!isItem(value)) throw new Error(`[todo] ${label} returned an invalid optional result`);
   return value;
 };

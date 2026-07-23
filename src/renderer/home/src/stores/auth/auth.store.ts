@@ -111,15 +111,21 @@ class AuthStore {
     await this.todoistSyncActivation.ensureReady(params);
   }
 
-  private activateAuthenticatedSession(current: CurrentCustomer): void {
-    ensureSessionEligibleCustomer(current);
-    if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
-      throw new Error('账号尚未完成首次密码设置');
-    }
+  onTodoistSyncRuntimeRegistered(targetId: string): void {
+    if (!this.todoistSyncActivation.registerRuntimeTarget(targetId)) return;
 
-    scheduleBestEffort(() => authEmitter.activateSession(), (err) => {
-      console.error('[AuthStore] Failed to activate optional authenticated runtimes:', err);
-    });
+    const current = this.current;
+    if (
+      !current ||
+      current.status !== 'active' ||
+      customerNeedsPasswordSetup(current)
+    ) {
+      return;
+    }
+    this.activateTodoistSync(current);
+  }
+
+  private activateTodoistSync(current: CurrentCustomer): void {
     let params: TodoistSyncActivateParams;
     try {
       params = getTodoistSyncActivateParams(current, getToken(), this.deviceId);
@@ -134,6 +140,18 @@ class AuthStore {
         console.error('[AuthStore] Failed to activate Todo sync:', err);
       },
     );
+  }
+
+  private activateAuthenticatedSession(current: CurrentCustomer): void {
+    ensureSessionEligibleCustomer(current);
+    if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
+      throw new Error('账号尚未完成首次密码设置');
+    }
+
+    scheduleBestEffort(() => authEmitter.activateSession(), (err) => {
+      console.error('[AuthStore] Failed to activate optional authenticated runtimes:', err);
+    });
+    this.activateTodoistSync(current);
   }
 
   private async activateToken(token: string): Promise<CurrentCustomer> {

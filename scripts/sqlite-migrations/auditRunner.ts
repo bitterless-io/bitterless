@@ -28,7 +28,7 @@ import {
   TodoistSyncMigrationError,
   type TodoistSyncMigration,
   type TodoistSyncMigrationDatabase,
-} from '../../src/main/todoistSync/todoistSync.migration'
+} from '../../src/preload/sqlite/todoistSync/todoistSync.migration'
 
 interface TableColumnInfo {
   name: string

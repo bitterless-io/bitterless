@@ -30,24 +30,35 @@ import { pluginTestHandler } from './xpc/pluginTest.handler';
 import { applicationLanguageService } from './i18n/applicationLanguage.service';
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot';
 import {
-  CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT,
   MCP_BRIDGE_PATH_ARG,
   parseMcpBridgeEndpointArg,
   type CoreSqliteBootApi,
   type CoreSqliteTargetPreloadRegistration,
 } from '@shared/mcp/mcpBridge.shared';
+import { CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT } from '@shared/sqlite/coreSqliteRuntime.shared';
 import { runSqliteFirstGuiStartup } from './startup/guiStartup.service';
 import { startupDiagnosticsService } from './startup/startupDiagnostics.service';
+import { reloadCoreSqliteRuntime } from './startup/coreSqliteRuntimeRecovery.service';
 import type { StartupDiagnosticStage } from '@shared/startup/startupDiagnostics';
 import type { TodoistSyncSessionApi } from '@shared/todoistSync/todoistSync.type';
+import {
+  createBoundedTodoXpcClient,
+  withTodoXpcTimeout,
+} from '@shared/todoistSync/todoXpcCall.shared';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
-const coreSqliteBoot = createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao');
+const CORE_SQLITE_STARTUP_TIMEOUT_MS = 60_000;
+const coreSqliteBoot = createBoundedTodoXpcClient(
+  createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao'),
+  'CoreSqliteBootDao',
+  CORE_SQLITE_STARTUP_TIMEOUT_MS,
+);
 const todoistSyncSessionClient =
   createXpcMainEmitter<TodoistSyncSessionApi>('TodoistSyncSessionHandler');
+const TODOIST_SYNC_DEACTIVATE_TIMEOUT_MS = 2_000;
 
 if (isHelperMode && process.platform === 'darwin') {
   app.setActivationPolicy('prohibited');
@@ -337,7 +348,13 @@ const cleanupResources = (): Promise<void> => {
       // Best-effort shutdown: the remaining application resources must still be released.
     }
     try { await mcpBridgeServer.stop(); } catch {}
-    try { await todoistSyncSessionClient.deactivate(); } catch {}
+    try {
+      await withTodoXpcTimeout(
+        todoistSyncSessionClient.deactivate(),
+        'Todo SQLite session deactivation',
+        TODOIST_SYNC_DEACTIVATE_TIMEOUT_MS,
+      );
+    } catch {}
     try { await coinWindowHandler.destroyForHostQuit(); } catch {}
     try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
     try { await eyesOnAgentsWindowHandler.destroyForHostQuit(); } catch {}
@@ -383,8 +400,10 @@ const runDiagnosedStartupStage = async (
 
 const startCoreSqliteRenderer = (): Promise<{ ok: boolean; error?: string }> => {
   const registration = createCoreSqliteTargetRegistrationWaiter();
+  let sqliteWindow: Electron.BrowserWindow | null = null;
   try {
     sqliteWindowHelper.create((window) => {
+      sqliteWindow = window;
       registration.observeWindow(window);
     });
   } catch (err) {
@@ -392,10 +411,24 @@ const startCoreSqliteRenderer = (): Promise<{ ok: boolean; error?: string }> => 
     return Promise.reject(err);
   }
 
-  return registration.promise
+  return withTodoXpcTimeout(
+    registration.promise,
+    'Core SQLite target registration',
+    CORE_SQLITE_STARTUP_TIMEOUT_MS,
+  )
     .then(async (targetId) => {
       const result = await registration.guardCoreReady(coreSqliteBoot.ready({ targetId }));
-      if (result?.ok) console.log(`[app] Core SQLite ready: ${targetId}`);
+      if (result?.ok) {
+        console.log(`[app] Core SQLite ready: ${targetId}`);
+        sqliteWindow?.webContents.on('render-process-gone', (_event, details) => {
+          const reloaded = sqliteWindow
+            ? reloadCoreSqliteRuntime(sqliteWindow, isShutdownStarted)
+            : false;
+          if (reloaded) {
+            console.warn(`[app] Core SQLite renderer exited (${details.reason}); reloading runtime`);
+          }
+        });
+      }
       return result;
     })
     .finally(() => registration.dispose());

@@ -104,6 +104,7 @@ const updateDomainDescription = async ({ id, description }) => {
 installMcpSourceHooks({
   projectRoot,
   userDataPath: tempDirectory,
+  normalizeUndefinedXpcResultsToNull: true,
   todoRepository: {
     getDomainById,
     getDomains,

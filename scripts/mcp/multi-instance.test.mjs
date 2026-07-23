@@ -115,6 +115,7 @@ installMcpSourceHooks({
   projectRoot,
   userDataPath: wrongUserData,
   broadcasts,
+  normalizeUndefinedXpcResultsToNull: true,
   todoRepository: {
     completeTodo: async () => daoResults.todoComplete,
     createDomain: async () => daoResults.domainCreate,
@@ -670,7 +671,7 @@ try {
       null,
       'todo.update',
       { id: TODO_ID, title: 'Updated' },
-      /TodoistSyncRepository\.updateTodo is unavailable/
+      new RegExp(`Todo not found: ${TODO_ID}`)
     );
     await expectDaoFailure(
       'todoUpdate',
@@ -684,7 +685,7 @@ try {
       null,
       'todo.complete',
       { id: TODO_ID },
-      /TodoistSyncRepository\.completeTodo is unavailable/
+      new RegExp(`Todo not found: ${TODO_ID}`)
     );
     await expectDaoFailure(
       'todoUncomplete',
@@ -705,7 +706,7 @@ try {
       null,
       'todo.move',
       { id: TODO_ID, domainId: DOMAIN_ID },
-      /TodoistSyncRepository\.moveToDomain is unavailable/
+      new RegExp(`Todo not found: ${TODO_ID}`)
     );
 
     const invalidBefore = broadcasts.length;

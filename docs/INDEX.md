@@ -82,9 +82,9 @@ design document.
 
 ## Issues
 
-- [Todo SQLCipher owned by Main](issues/todo-sqlite-owned-by-main-process.md) - active: move the
-  complete synchronized Todo runtime into the Core SQLite preload and leave Main as an XPC/OS
-  capability boundary only.
+- [Todo SQLCipher owned by Main](issues/todo-sqlite-owned-by-main-process.md) - fixed; owner verification pending:
+  the complete synchronized Todo runtime now lives in Core SQLite preload; Main only routes XPC,
+  hosts MCP, exposes narrow OS capabilities, and recovers the hidden process lifecycle.
 - [Todo Domain refresh flicker](issues/todo-domain-refresh-flicker.md) - fixed; owner verification pending:
   atomic snapshot reconciliation and origin-aware broadcasts keep synchronized updates from
   emptying and rebuilding every visible column.

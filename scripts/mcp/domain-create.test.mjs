@@ -71,6 +71,7 @@ installMcpSourceHooks({
   projectRoot,
   userDataPath: tempDirectory,
   broadcasts,
+  normalizeUndefinedXpcResultsToNull: true,
   todoRepository: {
     createDomain,
     getDomains

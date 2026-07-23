@@ -16,7 +16,10 @@ import { i18n } from '@renderer/common/i18n/i18n.helper';
 import { initializeRendererLanguage } from '@renderer/common/i18n/rendererLanguage';
 import './xpc/test.subscriber';
 import { initAuthSubscriber } from './xpc/auth.subscriber';
+import { initTodoistSyncRuntimeSubscriber } from './xpc/todoistSyncRuntime.subscriber';
 import { initUpdateSubscriber } from './xpc/update.subscriber';
+
+initTodoistSyncRuntimeSubscriber();
 
 enableKatex();
 getUseMonaco();

@@ -32,8 +32,8 @@ import type {
   TodoEntityId,
   TodoMcpDaoApi,
 } from '@shared/mcp/todoMcpDao.type';
-import { todoistSyncSession } from '@main/todoistSync/todoistSync.session';
-import { assertTodoistSyncEntityId } from '@main/todoistSync/todoistSyncSnowflake.service';
+import { assertTodoistSyncEntityId } from '@shared/todoistSync/todoistSync.contract';
+import { todoSqliteClient } from './todoSqlite.client';
 
 type RpcParams = Record<string, unknown>;
 type DomainRow = McpDomainRow;
@@ -67,7 +67,7 @@ interface UnixStartLockSnapshot {
   ownerRaw: string | null;
 }
 
-const todoRepository = () => todoistSyncSession.getRepository();
+const todoDataClient = todoSqliteClient;
 
 const MCP_FOCUS_DESCRIPTION = 'Focus 是当前立刻要做的任务视图。只有未完成且被打星标/important 的 todo 才会进入 Focus。';
 const MCP_STAR_RULE = '打星标 means todo.important=true. Use it only when current agent work is blocked on a human next action in the live conversation/current session. Do not star deferred follow-ups that can wait several days or do not block the current session.';
@@ -980,7 +980,7 @@ export class McpBridgeServer {
     };
   }> {
     const domains = requireDomainRows(
-      await todoRepository().getDomains(),
+      await todoDataClient.getDomains(),
       'TodoistSyncRepository.getDomains',
     ).filter(isActiveDomain);
     return {
@@ -1001,7 +1001,7 @@ export class McpBridgeServer {
 
   private async listArchivedDomains(): Promise<{ domains: DomainRow[] }> {
     const domains = requireDomainRows(
-      await todoRepository().getDomains(),
+      await todoDataClient.getDomains(),
       'TodoistSyncRepository.getDomains',
     ).filter(isArchivedDomain);
     return { domains };
@@ -1017,9 +1017,9 @@ export class McpBridgeServer {
       throw new Error('description can contain at most 500 characters');
     }
 
-    const repository = todoRepository();
+    const dataClient = todoDataClient;
     const domains = requireDomainRows(
-      await repository.getDomains(),
+      await dataClient.getDomains(),
       'TodoistSyncRepository.getDomains',
     );
     const matches = domains.filter((domain) => domain.id === id && isActiveDomain(domain));
@@ -1027,8 +1027,8 @@ export class McpBridgeServer {
       throw new Error(`Active domain not found: ${id}`);
     }
 
-    await repository.updateDomainDescription({ id, description });
-    const reread = await repository.getDomainById({ id });
+    await dataClient.updateDomainDescription({ id, description });
+    const reread = await dataClient.getDomainById({ id });
     if (reread === undefined) {
       throw new Error(`Domain not found after description update: ${id}`);
     }
@@ -1079,7 +1079,7 @@ export class McpBridgeServer {
     }
 
     const activeDomains = requireDomainRows(
-      await todoRepository().getDomains(),
+      await todoDataClient.getDomains(),
       'TodoistSyncRepository.getDomains',
     ).filter(isActiveDomain);
     if (activeDomains.length >= MCP_MAX_ACTIVE_DOMAINS) {
@@ -1087,7 +1087,7 @@ export class McpBridgeServer {
     }
 
     const domain = requireDomainRow(
-      await todoRepository().createDomain({ title, description }),
+      await todoDataClient.createDomain({ title, description }),
       'TodoistSyncRepository.createDomain',
     );
     if (
@@ -1107,7 +1107,7 @@ export class McpBridgeServer {
   }> {
     assertTodoListActiveStatus(params.status);
     const domains = requireDomainRows(
-      await todoRepository().getDomains(),
+      await todoDataClient.getDomains(),
       'TodoistSyncRepository.getDomains',
     ).filter(isActiveDomain);
     const requestedDomainId = params.domainId === undefined
@@ -1124,7 +1124,7 @@ export class McpBridgeServer {
     const todos: TodoRow[] = [];
     for (const domain of targetDomains) {
       const domainTodos = requireTodoRows(
-        await todoRepository().getTodosByDomain({ domainId: domain.id, status: 0 }),
+        await todoDataClient.getTodosByDomain({ domainId: domain.id, status: 0 }),
         'TodoistSyncRepository.getTodosByDomain',
         domain.id,
       );
@@ -1144,7 +1144,7 @@ export class McpBridgeServer {
     const afterEventId = getOptionalInteger(params, 'afterEventId', 0, 0);
     const limit = getOptionalInteger(params, 'limit', 50, 1, 100);
     return requireEventListResult(
-      await todoRepository().listAfter({ afterEventId, limit }),
+      await todoDataClient.listAfter({ afterEventId, limit }),
       'TodoistSyncRepository.listAfter',
       afterEventId,
       limit,
@@ -1168,7 +1168,7 @@ export class McpBridgeServer {
 
   private async getTodo(params: RpcParams): Promise<TodoRow> {
     const id = getRequiredId(params, 'id');
-    const value = await todoRepository().getTodoById({ id });
+    const value = await todoDataClient.getTodoById({ id });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     return requireTodoRow(value, 'TodoistSyncRepository.getTodoById', id);
   }
@@ -1176,7 +1176,7 @@ export class McpBridgeServer {
   private async getTodoStatus(params: RpcParams): Promise<TodoStatusByIdsResult> {
     const ids = getRequiredIdList(params, 'ids');
     return requireStatusResult(
-      await todoRepository().getStatusByIds({ ids }),
+      await todoDataClient.getStatusByIds({ ids }),
       'TodoistSyncRepository.getStatusByIds',
       ids,
     );
@@ -1199,7 +1199,7 @@ export class McpBridgeServer {
     await this.requireActiveDomain(domainId);
 
     let todo = requireTodoRow(
-      await todoRepository().createTodo({
+      await todoDataClient.createTodo({
         domainId,
         title,
         source: 'ai',
@@ -1221,7 +1221,7 @@ export class McpBridgeServer {
     updateParams.actor = 'ai';
     if (Object.keys(updateParams).length > 2) {
       todo = requireTodoRow(
-        await todoRepository().updateTodo(updateParams),
+        await todoDataClient.updateTodo(updateParams),
         'TodoistSyncRepository.updateTodo after create',
         todo.id,
         domainId,
@@ -1234,7 +1234,7 @@ export class McpBridgeServer {
   private async updateTodo(params: RpcParams): Promise<{ todo: TodoRow }> {
     const updateParams = this.toTodoUpdateParams(params);
     updateParams.actor = 'ai';
-    const value = await todoRepository().updateTodo(updateParams);
+    const value = await todoDataClient.updateTodo(updateParams);
     if (value === undefined) throw new Error(`Todo not found: ${updateParams.id}`);
     const todo = requireTodoRow(
       value,
@@ -1247,7 +1247,7 @@ export class McpBridgeServer {
 
   private async completeTodo(params: RpcParams): Promise<{ todo: TodoRow }> {
     const id = getRequiredId(params, 'id');
-    const value = await todoRepository().completeTodo({ id, actor: 'ai' });
+    const value = await todoDataClient.completeTodo({ id, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     const todo = requireTodoRow(
       value,
@@ -1259,7 +1259,7 @@ export class McpBridgeServer {
 
   private async uncompleteTodo(params: RpcParams): Promise<{ todo: TodoRow }> {
     const id = getRequiredId(params, 'id');
-    const value = await todoRepository().uncompleteTodo({ id, actor: 'ai' });
+    const value = await todoDataClient.uncompleteTodo({ id, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     const todo = requireTodoRow(
       value,
@@ -1274,7 +1274,7 @@ export class McpBridgeServer {
 
   private async deleteTodo(params: RpcParams): Promise<{ deleted: true; id: TodoEntityId }> {
     const id = getRequiredId(params, 'id');
-    const deleted = await todoRepository().deleteTodo(id, 'ai');
+    const deleted = await todoDataClient.deleteTodo(id, 'ai');
     if (deleted !== true) {
       if (deleted === null || deleted === undefined) {
         throwInvalidDaoResult(deleted, 'TodoistSyncRepository.deleteTodo', 'delete confirmation');
@@ -1290,7 +1290,7 @@ export class McpBridgeServer {
     const id = getRequiredId(params, 'id');
     const domainId = getRequiredId(params, 'domainId');
     await this.requireActiveDomain(domainId);
-    const value = await todoRepository().moveToDomain({ id, domainId, actor: 'ai' });
+    const value = await todoDataClient.moveToDomain({ id, domainId, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     const todo = requireTodoRow(
       value,
@@ -1308,7 +1308,7 @@ export class McpBridgeServer {
     const todoId = getRequiredId(params, 'todoId');
     const todo = await this.requireTodo(todoId, 'TodoistSyncRepository.getTodoById for step.list');
     const steps = requireStepRows(
-      await todoRepository().getSubTodosByTodoId({ todoId }),
+      await todoDataClient.getSubTodosByTodoId({ todoId }),
       'TodoistSyncRepository.getSubTodosByTodoId',
       todoId,
       todo.customer_id,
@@ -1321,7 +1321,7 @@ export class McpBridgeServer {
     const title = this.getRequiredStepTitle(params);
     const todo = await this.requireTodo(todoId, 'TodoistSyncRepository.getTodoById for step.create');
     const created = requireStepRow(
-      await todoRepository().createSubTodo({ todoId, title }),
+      await todoDataClient.createSubTodo({ todoId, title }),
       'TodoistSyncRepository.createSubTodo',
       undefined,
       todoId,
@@ -1348,7 +1348,7 @@ export class McpBridgeServer {
       id,
       'TodoistSyncRepository.getSubTodoById before update',
     );
-    await todoRepository().updateSubTodoTitle({ id, title });
+    await todoDataClient.updateSubTodoTitle({ id, title });
     const step = await this.requireStep(
       id,
       'TodoistSyncRepository.getSubTodoById after update',
@@ -1369,7 +1369,7 @@ export class McpBridgeServer {
       id,
       `TodoistSyncRepository.getSubTodoById before step.${status === 1 ? 'complete' : 'uncomplete'}`,
     );
-    await todoRepository().setSubTodoStatus({ id, status });
+    await todoDataClient.setSubTodoStatus({ id, status });
     const step = await this.requireStep(
       id,
       `TodoistSyncRepository.getSubTodoById after step.${status === 1 ? 'complete' : 'uncomplete'}`,
@@ -1389,8 +1389,8 @@ export class McpBridgeServer {
       id,
       'TodoistSyncRepository.getSubTodoById before delete',
     );
-    await todoRepository().deleteSubTodo({ id });
-    const remaining = await todoRepository().getSubTodoById({ id });
+    await todoDataClient.deleteSubTodo({ id });
+    const remaining = await todoDataClient.getSubTodoById({ id });
     if (remaining !== undefined) {
       requireStepRow(
         remaining,
@@ -1405,7 +1405,7 @@ export class McpBridgeServer {
   }
 
   private async requireTodo(id: TodoEntityId, source: string): Promise<TodoRow> {
-    const value = await todoRepository().getTodoById({ id });
+    const value = await todoDataClient.getTodoById({ id });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
     return requireTodoRow(value, source, id);
   }
@@ -1415,7 +1415,7 @@ export class McpBridgeServer {
     source: string,
     todo?: TodoRow,
   ): Promise<StepRow> {
-    const value = await todoRepository().getSubTodoById({ id });
+    const value = await todoDataClient.getSubTodoById({ id });
     if (value === undefined) throw new Error(`Step not found: ${id}`);
     return requireStepRow(
       value,
@@ -1451,7 +1451,7 @@ export class McpBridgeServer {
 
   private async requireActiveDomain(domainId: TodoEntityId): Promise<DomainRow> {
     const domains = requireDomainRows(
-      await todoRepository().getDomains(),
+      await todoDataClient.getDomains(),
       'TodoistSyncRepository.getDomains',
     );
     const matches = domains.filter((domain) => domain.id === domainId && isActiveDomain(domain));

@@ -8,22 +8,22 @@ import {
   assertTodoistSyncDatabaseIsolation,
   resolveTodoistSyncDatabasePaths,
   TodoistSyncDatabase
-} from '../../src/main/todoistSync/todoistSync.database';
-import { TodoistSyncClient } from '../../src/main/todoistSync/todoistSync.client';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.database';
+import { TodoistSyncClient } from '../../src/preload/sqlite/todoistSync/todoistSync.client';
 import {
   TodoistSyncCoordinator,
   type TodoistSyncScheduler
-} from '../../src/main/todoistSync/todoistSync.coordinator';
-import { TodoistSyncRepository } from '../../src/main/todoistSync/todoistSync.repository';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.coordinator';
+import { TodoistSyncRepository } from '../../src/preload/sqlite/todoistSync/todoistSync.repository';
 import {
   TodoistSyncSessionService,
   type TodoistSyncSessionRuntime
-} from '../../src/main/todoistSync/todoistSync.session';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.session';
 import {
   TodoistSyncClockService,
   TodoistSyncClockStateStore
-} from '../../src/main/todoistSync/todoistSyncClock.service';
-import { TodoistSyncSnowflakeService } from '../../src/main/todoistSync/todoistSyncSnowflake.service';
+} from '../../src/preload/sqlite/todoistSync/todoistSyncClock.service';
+import { TodoistSyncSnowflakeService } from '../../src/preload/sqlite/todoistSync/todoistSyncSnowflake.service';
 
 declare global {
   var __todoistSyncSafeStorageTripwireHits: number | undefined;

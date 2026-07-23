@@ -20,10 +20,10 @@
   },
   "include": [
     "*.ts",
-    "../../src/main/todoistSync/**/*.ts",
-    "../../src/main/xpc/todoistSync.handler.ts",
+    "../../src/preload/sqlite/todoistSync/**/*.ts",
     "../../src/main/env.d.ts",
     "../../src/renderer/home/src/stores/auth/todoistSyncActivation.service.ts",
+    "../../src/renderer/home/src/stores/auth/todoistSyncSession.emitter.ts",
     "../../src/renderer/todo/src/store/todoMutation.service.ts",
     "../../src/renderer/todo/src/store/todoRefresh.service.ts",
     "../../src/renderer/todo/src/store/todoResult.guard.ts",

@@ -1,11 +1,15 @@
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
 import type { TodoMcpDaoApi } from '@shared/mcp/todoMcpDao.type';
 import type { TodoRendererTodoApi } from '@shared/todoistSync/todoDataUpdate.shared';
+import { createBoundedTodoXpcClient } from '@shared/todoistSync/todoXpcCall.shared';
 import { emitTodoMutation } from './todoMutation.emitter';
 
-const rendererTodoEmitter = createXpcRendererEmitter<TodoRendererTodoApi>(
+const rendererTodoEmitter = createBoundedTodoXpcClient(
+  createXpcRendererEmitter<TodoRendererTodoApi>(
+    'TodoistSyncTodoHandler',
+  ) as TodoRendererTodoApi,
   'TodoistSyncTodoHandler',
-) as TodoRendererTodoApi;
+);
 
 export const todoEmitter: TodoMcpDaoApi = {
   create: (params) => emitTodoMutation(rendererTodoEmitter.create, params),

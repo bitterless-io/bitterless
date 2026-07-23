@@ -1,6 +1,6 @@
 # Todo SQLCipher is owned by the Electron Main process
 
-Status: active
+Status: fixed; owner verification pending
 
 Implementation: [todo-sqlite-process-ownership-012](../plan/tasks/todo-sqlite-process-ownership-012.md)
 
@@ -45,6 +45,13 @@ and application lifecycle code must reach it through `electron-xpc`.
   refresh. MCP/remote operations use a null origin.
 - Shutdown, logout, and auth invalidation deactivate the SQLite-owned session through XPC before
   the hidden SQLite window is destroyed.
+- A new SQLite preload `targetId` invalidates Home's cached Todo activation and reactivates the
+  current eligible account. Main may reload the hidden renderer after a crash, but it never reads
+  or reconstructs Todo state. Shutdown deactivation is bounded so a lost XPC reply cannot block
+  application exit.
+- XPC results are interpreted per operation. Required reads reject absent/malformed data; optional
+  entity results treat `null`/`undefined` as no result; no-result writes accept the transport's
+  `null`/`undefined` without inventing a generic success ACK or result code.
 
 ## Acceptance
 
@@ -52,8 +59,9 @@ and application lifecycle code must reach it through `electron-xpc`.
   `TodoistSyncDatabase`, `TodoistSyncRepository`, Todo migrations, or the SQLite-owned session.
 - `src/main/xpc/` contains no Domain/Todo/Step/event/session/status storage handler. Main owns only
   the narrow OS-capability handler needed by the SQLite process.
-- The SQLite preload imports and registers the Todo runtime handlers after its target document is
-  identified, and activation opens the customer SQLCipher database there.
+- The SQLite preload registers Todo handlers only after its target document is identified, and
+  activation alone instantiates the session and opens the customer SQLCipher database there.
+  Static module evaluation in the same hidden preload process does not create database ownership.
 - Todo renderer CRUD routes directly to the SQLite handler name; MCP uses an XPC client adapter.
 - Main never constructs, returns, stores, or closes a Todo database/repository instance.
 - A static process-boundary check, focused type checks, and `git diff --check` pass. Ral performs the

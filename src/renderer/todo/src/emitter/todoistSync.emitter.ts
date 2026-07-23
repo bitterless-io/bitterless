@@ -3,9 +3,14 @@ import type {
   TodoistSyncClockApi,
   TodoistSyncStatusApi,
 } from '@shared/todoistSync/todoistSync.type';
+import { createBoundedTodoXpcClient } from '@shared/todoistSync/todoXpcCall.shared';
 
-export const todoistSyncClockEmitter =
-  createXpcRendererEmitter<TodoistSyncClockApi>('TodoistSyncClockHandler');
+export const todoistSyncClockEmitter = createBoundedTodoXpcClient(
+  createXpcRendererEmitter<TodoistSyncClockApi>('TodoistSyncClockHandler'),
+  'TodoistSyncClockHandler',
+);
 
-export const todoistSyncStatusEmitter =
-  createXpcRendererEmitter<TodoistSyncStatusApi>('TodoistSyncStatusHandler');
+export const todoistSyncStatusEmitter = createBoundedTodoXpcClient(
+  createXpcRendererEmitter<TodoistSyncStatusApi>('TodoistSyncStatusHandler'),
+  'TodoistSyncStatusHandler',
+);

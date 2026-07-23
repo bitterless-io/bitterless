@@ -808,11 +808,12 @@ class TodoState {
   }
 
   async moveTodoToDomain(id: string, fromDomainId: string, toDomainId: string, options?: { targetOrder?: string[] }): Promise<void> {
-    requireOptionalItem(
+    const movedTodo = requireOptionalItem(
       await todoEmitter.moveToDomain({ id, domainId: toDomainId }),
       'Todo move',
       isTodoItem,
     );
+    if (movedTodo === undefined) return;
     await this._removeFromSortOrder(fromDomainId, id);
     if (options?.targetOrder) {
       await this.saveTodoOrder(toDomainId, options.targetOrder);
@@ -975,7 +976,12 @@ class TodoState {
   }
 
   async createSubTodo(todoId: string, title: string): Promise<void> {
-    requireOptionalItem(await subTodoEmitter.create({ todoId, title }), 'SubTodo create', isSubTodoItem);
+    const createdSubTodo = requireOptionalItem(
+      await subTodoEmitter.create({ todoId, title }),
+      'SubTodo create',
+      isSubTodoItem,
+    );
+    if (createdSubTodo === undefined) return;
     await this.requestRefresh();
   }
 

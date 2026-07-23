@@ -28,7 +28,7 @@ local renderer A write
        -> renderer A ignores (already reconciled optimistically)
        -> renderer B queues one atomic snapshot refresh
 
-MCP / Main / remote sync commit
+MCP / remote sync commit
   -> data_updated(origin=null)
        -> every renderer queues one atomic snapshot refresh
 ```
@@ -55,9 +55,9 @@ MCP / Main / remote sync commit
 
 - Generate one opaque UUID for each Todo preload/renderer lifetime and expose it as static bridge
   data.
-- Attach that ID only to renderer-originated write requests. Main validates and removes the metadata
-  before repository business validation.
-- A local repository commit publishes `{ originRendererId }`; remote sync and MCP/Main commits
+- Attach that ID only to renderer-originated write requests. The SQLite preload handler validates
+  and removes the metadata before repository business validation.
+- A local repository commit publishes `{ originRendererId }`; remote sync and MCP commits
   publish `{ originRendererId: null }`.
 - The matching renderer skips only that event. Unknown, absent, malformed, or null origins refresh
   fail-open.
@@ -75,8 +75,8 @@ MCP / Main / remote sync commit
 - `src/renderer/todo/src/emitter/`
 - `src/renderer/todo/src/store/todo.store.ts`
 - `src/renderer/todo/src/xpc/update.subscriber.ts`
-- `src/main/xpc/todoistSync.handler.ts`
-- `src/main/todoistSync/todoistSync.repository.ts`
+- `src/preload/sqlite/todoistSync/todoistSync.handler.ts`
+- `src/preload/sqlite/todoistSync/todoistSync.repository.ts`
 - focused Todo test files
 
 ## Verification
@@ -97,9 +97,10 @@ MCP / Main / remote sync commit
 - Board reads now build a detached, generation-guarded snapshot and reconcile it into stable
   Domain, Todo, completed-Todo, Step-count, and selected-detail collections only after every read
   succeeds. Burst events run at most one in-flight plus one trailing refresh.
-- Renderer mutations carry a validated preload-lifetime origin through Main and repository commit.
+- Renderer mutations carry a validated preload-lifetime origin through the SQLite preload handler
+  and repository commit.
   Only the matching renderer skips that broadcast; other renderer instances refresh, while MCP,
-  Main, and remote-sync commits continue to refresh all renderers.
+  and remote-sync commits continue to refresh all renderers.
 - Same-origin events fence a stale board read without cancelling an independent detail read.
   Selected-detail generations reject A/B selection races, and a failed multi-stage optimistic
   mutation schedules one contained recovery refresh.

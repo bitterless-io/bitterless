@@ -25,9 +25,7 @@ export interface CoreSqliteReadyParams {
   targetId: string;
 }
 
-export interface CoreSqliteTargetPreloadRegistration {
-  targetId: string;
-}
+export type { CoreSqliteTargetPreloadRegistration } from '../sqlite/coreSqliteRuntime.shared';
 
 export interface CoreSqliteBootApi {
   ready(params: CoreSqliteReadyParams): Promise<CoreSqliteBootResult>;

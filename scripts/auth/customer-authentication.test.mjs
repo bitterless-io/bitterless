@@ -7,13 +7,17 @@ import {
   settleBestEffort,
 } from '../../src/renderer/home/src/stores/auth/authSession.service.ts';
 import { TodoistSyncActivationService } from '../../src/renderer/home/src/stores/auth/todoistSyncActivation.service.ts';
+import {
+  CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT,
+  readCoreSqliteTargetPreloadRegistration,
+} from '../../src/shared/sqlite/coreSqliteRuntime.shared.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const CURRENT_PROD_CORE_URL = 'https://prod-bitterless-hcqmtqwtox.cn-shanghai.fcapp.run';
 
-test('login, authenticated layout, and initial chat view use the entry bundle', () => {
+test('login, authenticated layout, and initial Home view use the entry bundle', () => {
   const routes = read('src/renderer/home/src/router/defaultRoutes.ts');
 
   assert.match(routes, /import Chat from '@\/views\/chat\/Chat\.vue';/);
@@ -25,7 +29,8 @@ test('login, authenticated layout, and initial chat view use the entry bundle', 
   );
   assert.match(routes, /path: 'chat',\n    name: 'chat',\n    component: Chat,/);
   assert.match(routes, /path: '\/login',\n    name: 'login',\n    component: Login,/);
-  assert.match(routes, /path: '\/',\n    component: Layout,\n    redirect: '\/chat',/);
+  assert.match(routes, /const defaultHomePath = isDev \? '\/chat' : '\/mini-app'/);
+  assert.match(routes, /path: '\/',\n    component: Layout,\n    redirect: defaultHomePath,/);
 
   for (const view of [
     'miniApp/MiniApp',
@@ -64,8 +69,11 @@ test('password, OTP, restore, and Todo activation reuse one create-once installa
   const activation = store.match(
     /  private activateAuthenticatedSession\([\s\S]*?\n  \}(?=\n\n  private async activateToken)/
   );
+  const todoActivation = store.match(
+    /  private activateTodoistSync\([\s\S]*?\n  \}(?=\n\n  private activateAuthenticatedSession)/
+  );
   const readiness = store.match(
-    /  async ensureTodoistSyncReady\([\s\S]*?\n  \}(?=\n\n  private activateAuthenticatedSession)/
+    /  async ensureTodoistSyncReady\([\s\S]*?\n  \}(?=\n\n  onTodoistSyncRuntimeRegistered)/
   );
   const restore = store.match(
     /  async restoreSession\([\s\S]*?\n  \}(?=\n\n  clearLocalSession)/
@@ -75,6 +83,7 @@ test('password, OTP, restore, and Todo activation reuse one create-once installa
   assert.ok(passwordLogin, 'Missing password login flow');
   assert.ok(otpLogin, 'Missing OTP login flow');
   assert.ok(activation, 'Missing authenticated Todo activation flow');
+  assert.ok(todoActivation, 'Missing dedicated Todo activation flow');
   assert.ok(readiness, 'Missing explicit Todo readiness flow');
   assert.ok(restore, 'Missing session restore flow');
   assert.match(createDeviceId[0], /localStorage\.getItem\(DEVICE_ID_KEY\)/);
@@ -95,7 +104,11 @@ test('password, OTP, restore, and Todo activation reuse one create-once installa
   assert.match(passwordLogin[0], /await this\.activateToken\(result\.token\)/);
   assert.match(otpLogin[0], /verifyOtpApi\(\{ email, code, device_id: this\.deviceId \}\)/);
   assert.match(otpLogin[0], /await this\.activateToken\(result\.token\)/);
-  assert.match(activation[0], /getTodoistSyncActivateParams\(current, getToken\(\), this\.deviceId\)/);
+  assert.match(
+    todoActivation[0],
+    /getTodoistSyncActivateParams\(current, getToken\(\), this\.deviceId\)/,
+  );
+  assert.match(activation[0], /this\.activateTodoistSync\(current\)/);
   assert.match(readiness[0], /getTodoistSyncActivateParams\(current, getToken\(\), this\.deviceId\)/);
   assert.match(restore[0], /this\.activateAuthenticatedSession\(current\)/);
 
@@ -143,7 +156,7 @@ test('optional activation rejection is observed without becoming a session failu
   assert.equal(observed, expected);
 });
 
-test('Todo readiness deduplicates, rejects null ACKs, retries failure, and fences logout/account changes', async () => {
+test('Todo readiness deduplicates, rejects absent activation results, retries failure, and fences logout/account changes', async () => {
   const paramsA = { coreToken: 'token-a', customerId: 1, deviceId: 'session-device-0001' };
   const paramsB = { coreToken: 'token-b', customerId: 2, deviceId: 'session-device-0002' };
   let calls = 0;
@@ -213,6 +226,77 @@ test('Todo readiness deduplicates, rejects null ACKs, retries failure, and fence
   fenced.invalidate();
   const afterLogout = fenced.start(paramsB);
   assert.notEqual(afterLogout, currentAccount);
+});
+
+test('Core SQLite runtime generations ignore duplicates and fence pending Todo activation', async () => {
+  const params = { coreToken: 'token-a', customerId: 1, deviceId: 'session-device-0001' };
+  const pendingActivations = [];
+  const activation = new TodoistSyncActivationService(
+    async () => await new Promise((resolvePromise) => {
+      pendingActivations.push(resolvePromise);
+    }),
+  );
+
+  assert.equal(activation.registerRuntimeTarget('sqlite-generation-a'), true);
+  assert.equal(activation.registerRuntimeTarget('sqlite-generation-a'), false);
+  assert.throws(() => activation.registerRuntimeTarget('  '), /target ID is required/);
+
+  const stale = activation.start(params);
+  assert.equal(activation.registerRuntimeTarget('sqlite-generation-b'), true);
+  const recovered = activation.start(params);
+  assert.notEqual(recovered, stale);
+  assert.equal(pendingActivations.length, 2);
+
+  pendingActivations[0]({
+    status: 'active',
+    customerId: params.customerId,
+    deviceId: params.deviceId,
+    sessionGeneration: 1,
+  });
+  await assert.rejects(() => stale, /superseded/);
+
+  pendingActivations[1]({
+    status: 'active',
+    customerId: params.customerId,
+    deviceId: params.deviceId,
+    sessionGeneration: 1,
+  });
+  await recovered;
+});
+
+test('Home observes browser-safe Core SQLite registrations before loading App and router', () => {
+  const main = read('src/renderer/home/src/main.ts');
+  const subscriber = read('src/renderer/home/src/xpc/todoistSyncRuntime.subscriber.ts');
+  const store = read('src/renderer/home/src/stores/auth/auth.store.ts');
+  const recovery = store.match(
+    /  onTodoistSyncRuntimeRegistered\([\s\S]*?\n  \}(?=\n\n  private activateTodoistSync)/,
+  );
+
+  assert.equal(
+    CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT,
+    'core-sqlite/target-preload-registered',
+  );
+  assert.deepEqual(
+    readCoreSqliteTargetPreloadRegistration({ targetId: 'sqlite-generation-a' }),
+    { targetId: 'sqlite-generation-a' },
+  );
+  assert.equal(readCoreSqliteTargetPreloadRegistration({ targetId: '  ' }), null);
+  assert.equal(readCoreSqliteTargetPreloadRegistration(null), null);
+
+  assert.ok(
+    main.indexOf('initTodoistSyncRuntimeSubscriber();') < main.indexOf("import('./App.vue')"),
+    'Core SQLite runtime subscriber must initialize before the dynamic Home application imports',
+  );
+  assert.match(
+    subscriber,
+    /xpcRenderer\.subscribe\([\s\S]*CORE_SQLITE_TARGET_PRELOAD_REGISTERED_EVENT/,
+  );
+  assert.match(subscriber, /readCoreSqliteTargetPreloadRegistration\(payload\.params\)/);
+  assert.match(subscriber, /authStore\.onTodoistSyncRuntimeRegistered\(registration\.targetId\)/);
+  assert.ok(recovery, 'Missing Home Todo runtime generation recovery');
+  assert.match(recovery[0], /this\.todoistSyncActivation\.registerRuntimeTarget\(targetId\)/);
+  assert.match(recovery[0], /this\.activateTodoistSync\(current\)/);
+  assert.doesNotMatch(recovery[0], /activateAuthenticatedSession|authEmitter/);
 });
 
 test('both Home Todo entry points await readiness before creating Todo content', () => {

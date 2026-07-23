@@ -12,27 +12,43 @@ import type {
   TodoistSyncSubTodoApi,
   TodoistSyncTodoApi,
 } from '@shared/todoistSync/todoDataUpdate.shared';
+import { createBoundedTodoXpcClient } from '@shared/todoistSync/todoXpcCall.shared';
 
-const domainEmitter =
-  createXpcMainEmitter<TodoistSyncDomainApi>('TodoistSyncDomainHandler');
-const todoEmitter =
-  createXpcMainEmitter<TodoistSyncTodoApi>('TodoistSyncTodoHandler');
-const subTodoEmitter =
-  createXpcMainEmitter<TodoistSyncSubTodoApi>('TodoistSyncSubTodoHandler');
-const eventEmitter =
-  createXpcMainEmitter<TodoEventMcpDaoApi>('TodoistSyncEventHandler');
+const domainEmitter = createBoundedTodoXpcClient(
+  createXpcMainEmitter<TodoistSyncDomainApi>('TodoistSyncDomainHandler'),
+  'TodoistSyncDomainHandler',
+);
+const todoEmitter = createBoundedTodoXpcClient(
+  createXpcMainEmitter<TodoistSyncTodoApi>('TodoistSyncTodoHandler'),
+  'TodoistSyncTodoHandler',
+);
+const subTodoEmitter = createBoundedTodoXpcClient(
+  createXpcMainEmitter<TodoistSyncSubTodoApi>('TodoistSyncSubTodoHandler'),
+  'TodoistSyncSubTodoHandler',
+);
+const eventEmitter = createBoundedTodoXpcClient(
+  createXpcMainEmitter<TodoEventMcpDaoApi>('TodoistSyncEventHandler'),
+  'TodoistSyncEventHandler',
+);
 
 const fromMcp = <Params>(params: Params): { originRendererId: null; params: Params } => ({
   originRendererId: null,
   params,
 });
 
+const normalizeOptionalEntity = async <Entity>(
+  resultPromise: Promise<Entity | undefined>,
+): Promise<Entity | undefined> => {
+  const result = await resultPromise as Entity | null | undefined;
+  return result === null ? undefined : result;
+};
+
 export const todoSqliteClient = {
   getDomains: () => domainEmitter.getAll(),
   getDomainById: (params: Parameters<DomainMcpDaoApi['getById']>[0]) =>
-    domainEmitter.getById(params),
+    normalizeOptionalEntity(domainEmitter.getById(params)),
   createDomain: (params: Parameters<DomainMcpDaoApi['create']>[0]) =>
-    domainEmitter.create(fromMcp(params)),
+    normalizeOptionalEntity(domainEmitter.create(fromMcp(params))),
   updateDomainDescription: (
     params: Parameters<DomainMcpDaoApi['updateDescription']>[0],
   ) => domainEmitter.updateDescription(fromMcp(params)),
@@ -40,32 +56,32 @@ export const todoSqliteClient = {
   getTodosByDomain: (params: Parameters<TodoMcpDaoApi['getByDomainId']>[0]) =>
     todoEmitter.getByDomainId(params),
   getTodoById: (params: Parameters<TodoMcpDaoApi['getById']>[0]) =>
-    todoEmitter.getById(params),
+    normalizeOptionalEntity(todoEmitter.getById(params)),
   getStatusByIds: (params: Parameters<TodoMcpDaoApi['getStatusByIds']>[0]) =>
     todoEmitter.getStatusByIds(params),
   createTodo: (params: Parameters<TodoMcpDaoApi['create']>[0]) =>
-    todoEmitter.create(fromMcp(params)),
+    normalizeOptionalEntity(todoEmitter.create(fromMcp(params))),
   updateTodo: (params: Parameters<TodoMcpDaoApi['update']>[0]) =>
-    todoEmitter.update(fromMcp(params)),
+    normalizeOptionalEntity(todoEmitter.update(fromMcp(params))),
   completeTodo: (params: Parameters<TodoMcpDaoApi['completeTodo']>[0]) =>
-    todoEmitter.completeTodo(fromMcp(params)),
+    normalizeOptionalEntity(todoEmitter.completeTodo(fromMcp(params))),
   uncompleteTodo: (params: Parameters<TodoMcpDaoApi['uncompleteTodo']>[0]) =>
-    todoEmitter.uncompleteTodo(fromMcp(params)),
+    normalizeOptionalEntity(todoEmitter.uncompleteTodo(fromMcp(params))),
   deleteTodo: (id: TodoEntityId, actor: McpTodoEventActor) =>
     todoEmitter.hardDelete(fromMcp({ id, actor })),
   moveToDomain: (params: Parameters<TodoMcpDaoApi['moveToDomain']>[0]) =>
-    todoEmitter.moveToDomain(fromMcp(params)),
+    normalizeOptionalEntity(todoEmitter.moveToDomain(fromMcp(params))),
 
   getSubTodosByTodoId: (params: Parameters<SubTodoMcpDaoApi['getByTodoId']>[0]) =>
     subTodoEmitter.getByTodoId(params),
   getSubTodoById: (params: Parameters<SubTodoMcpDaoApi['getById']>[0]) =>
-    subTodoEmitter.getById(params),
+    normalizeOptionalEntity(subTodoEmitter.getById(params)),
   createSubTodo: (params: Parameters<SubTodoMcpDaoApi['create']>[0]) =>
-    subTodoEmitter.create(fromMcp(params)),
+    normalizeOptionalEntity(subTodoEmitter.create(fromMcp(params))),
   updateSubTodoTitle: (params: Parameters<SubTodoMcpDaoApi['updateTitle']>[0]) =>
     subTodoEmitter.updateTitle(fromMcp(params)),
   setSubTodoStatus: (params: Parameters<SubTodoMcpDaoApi['setStatus']>[0]) =>
-    subTodoEmitter.setStatus(fromMcp(params)),
+    normalizeOptionalEntity(subTodoEmitter.setStatus(fromMcp(params))),
   deleteSubTodo: (params: Parameters<SubTodoMcpDaoApi['hardDelete']>[0]) =>
     subTodoEmitter.hardDelete(fromMcp(params)),
 

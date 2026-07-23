@@ -4,13 +4,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'f
 import type { TodoistSyncDatabasePaths } from './todoistSync.database';
 
 export interface TodoistSyncPasswordProtection {
-  isEncryptionAvailable(): boolean;
-  encryptString(value: string): Buffer;
-  decryptString(value: Buffer): string;
+  encryptString(value: string): Buffer | Promise<Buffer>;
+  decryptString(value: Buffer): string | Promise<string>;
 }
 
 export interface TodoistSyncRuntimePasswordOptions {
-  protection?: TodoistSyncPasswordProtection;
+  protection: TodoistSyncPasswordProtection;
   generatePassword?: () => string;
 }
 
@@ -21,28 +20,32 @@ const assertPassword = (value: string): string => {
 
 export const getOrCreateTodoistSyncRuntimePassword = (
   paths: TodoistSyncDatabasePaths,
-  options: TodoistSyncRuntimePasswordOptions = {},
-): string => {
-  const protection = options.protection ?? safeStorage;
+  options: TodoistSyncRuntimePasswordOptions,
+): Promise<string> => {
+  return getOrCreateTodoistSyncRuntimePasswordAsync(paths, options);
+};
+
+const getOrCreateTodoistSyncRuntimePasswordAsync = async (
+  paths: TodoistSyncDatabasePaths,
+  options: TodoistSyncRuntimePasswordOptions,
+): Promise<string> => {
+  const protection = options.protection;
   const generatePassword = options.generatePassword ?? (() => randomBytes(32).toString('hex'));
   mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
   if (process.platform !== 'win32') chmodSync(paths.directory, 0o700);
-  if (!protection.isEncryptionAvailable()) {
-    throw new Error('[todoist sync] Electron safeStorage is unavailable');
-  }
   if (existsSync(paths.keyPath)) {
     if (process.platform !== 'win32') chmodSync(paths.keyPath, 0o600);
-    return assertPassword(protection.decryptString(readFileSync(paths.keyPath)));
+    return assertPassword(await protection.decryptString(readFileSync(paths.keyPath)));
   }
   if (existsSync(paths.databasePath)) {
     throw new Error('[todoist sync] customer database exists but its protected password is missing');
   }
   const password = assertPassword(generatePassword());
   try {
-    writeFileSync(paths.keyPath, protection.encryptString(password), { flag: 'wx', mode: 0o600 });
+    writeFileSync(paths.keyPath, await protection.encryptString(password), { flag: 'wx', mode: 0o600 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    return assertPassword(protection.decryptString(readFileSync(paths.keyPath)));
+    return assertPassword(await protection.decryptString(readFileSync(paths.keyPath)));
   }
   return password;
 };

@@ -28,7 +28,9 @@ No open P1, P2, or P3 finding remains.
 ## Broadcast and refresh assessment
 
 - Each Todo preload lifetime exposes one opaque UUID. Every renderer mutation is enveloped with that
-  origin, validated in Main, and passed explicitly to the repository commit.
+  origin, validated by the Todo XPC handler, and passed explicitly to the repository commit. Follow-up
+  task `todo-sqlite-process-ownership-012` moved that handler and repository from Main into the Core
+  SQLite preload without changing the routing rule.
 - Repository-origin context is scoped to the direct mutation call and cannot leak through the
   coordinator's later remote apply. Renderer A ignores only origin A; renderer B refreshes. Null,
   missing, malformed, MCP, Main, and remote origins refresh fail-open.

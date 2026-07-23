@@ -47,6 +47,7 @@ export class TodoistSyncActivationService {
   private state: TodoistSyncActivationState = 'idle';
   private activationPromise: Promise<void> | null = null;
   private generation = 0;
+  private runtimeTargetId: string | null = null;
   private readonly activateRuntime: TodoistSyncActivator;
 
   constructor(activateRuntime: TodoistSyncActivator) {
@@ -59,6 +60,16 @@ export class TodoistSyncActivationService {
 
   ensureReady(params: TodoistSyncActivateParams): Promise<void> {
     return this.getOrStart(params, true);
+  }
+
+  registerRuntimeTarget(targetId: string): boolean {
+    const nextTargetId = targetId.trim();
+    if (!nextTargetId) throw new Error('Todo runtime target ID is required');
+    if (nextTargetId === this.runtimeTargetId) return false;
+
+    this.runtimeTargetId = nextTargetId;
+    this.invalidate();
+    return true;
   }
 
   invalidate(): void {

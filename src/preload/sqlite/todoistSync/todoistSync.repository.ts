@@ -83,6 +83,10 @@ export interface TodoistSyncOutboxBatch {
   commands: TodoistSyncCommand[];
 }
 
+export interface TodoistSyncRepositoryOptions {
+  onDataUpdated?: (event: TodoDataUpdatedEvent) => void;
+}
+
 export const TODOIST_SYNC_CORE_CLOCK_DISAGREEMENT =
   '[todoist sync] Core CLOCK_SKEW disagrees with the healthy trusted-time sample';
 
@@ -176,15 +180,18 @@ const uniqueIds = (ids: TodoEntityId[], label: string): TodoEntityId[] => {
 
 export class TodoistSyncRepository {
   private mutationCommitted: (() => void) | null = null;
+  private readonly onDataUpdated: (event: TodoDataUpdatedEvent) => void;
 
   constructor(
     private readonly db: TodoistSyncRepositoryDatabase,
     private readonly customerId: string,
     private readonly deviceId: string,
     private readonly ids: TodoistSyncSnowflakeService,
+    options: TodoistSyncRepositoryOptions = {},
   ) {
     if (!/^[1-9]\d*$/.test(customerId)) throw new Error('[todoist sync] repository customerId is invalid');
     if (!deviceId || deviceId.length > 64) throw new Error('[todoist sync] repository deviceId is invalid');
+    this.onDataUpdated = options.onDataUpdated ?? (() => undefined);
   }
 
   setMutationCommittedListener(listener: (() => void) | null): void {
@@ -1724,7 +1731,7 @@ export class TodoistSyncRepository {
 
   private broadcastDataUpdated(originRendererId: string | null): void {
     const event: TodoDataUpdatedEvent = { originRendererId };
-    xpcMain.broadcast('todo/data_updated', event);
+    this.onDataUpdated(event);
   }
 
   private todoSelectSql(): string {

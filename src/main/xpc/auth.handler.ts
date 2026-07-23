@@ -16,9 +16,12 @@ import {
 import { coinWindowHandler } from './coinWindow.handler';
 import { maestroWindowHandler } from './maestroWindow.handler';
 import type { TodoistSyncSessionApi } from '@shared/todoistSync/todoistSync.type';
+import { createBoundedTodoXpcClient } from '@shared/todoistSync/todoXpcCall.shared';
 
-const todoistSyncSessionClient =
-  createXpcMainEmitter<TodoistSyncSessionApi>('TodoistSyncSessionHandler');
+const todoistSyncSessionClient = createBoundedTodoXpcClient(
+  createXpcMainEmitter<TodoistSyncSessionApi>('TodoistSyncSessionHandler'),
+  'TodoistSyncSessionHandler',
+);
 
 class AuthHandler extends XpcMainHandler {
   private invalidating = false;

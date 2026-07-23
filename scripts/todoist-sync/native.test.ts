@@ -26,41 +26,45 @@ import {
   type TodoistSyncExecuteResult,
   type TodoistSyncRepositoryDatabase,
   type TodoistSyncSqlExecutor,
-} from '../../src/main/todoistSync/todoistSync.database';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.database';
 import {
   applyTodoistSyncMigrations,
   todoistSyncMigrations,
-} from '../../src/main/todoistSync/todoistSync.migration';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.migration';
 import {
   getOrCreateTodoistSyncRuntimePassword,
   type TodoistSyncPasswordProtection,
-} from '../../src/main/todoistSync/todoistSyncPassword.service';
+} from '../../src/preload/sqlite/todoistSync/todoistSyncPassword.service';
 import {
   TODOIST_SYNC_CORE_CLOCK_DISAGREEMENT,
   TodoistSyncRepository,
   type TodoistSyncOutboxBatch,
-} from '../../src/main/todoistSync/todoistSync.repository';
-import { TodoistSyncSnowflakeService } from '../../src/main/todoistSync/todoistSyncSnowflake.service';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.repository';
+import { TodoistSyncSnowflakeService } from '../../src/preload/sqlite/todoistSync/todoistSyncSnowflake.service';
 import {
   TodoistSyncClient,
   TodoistSyncHttpError,
-} from '../../src/main/todoistSync/todoistSync.client';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.client';
 import {
   TodoistSyncCoordinator,
   type TodoistSyncCoordinatorClient,
   type TodoistSyncScheduler,
-} from '../../src/main/todoistSync/todoistSync.coordinator';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.coordinator';
 import {
   TodoistSyncClockService,
   TodoistSyncClockStateStore,
   type TodoistSyncTimeSample,
-} from '../../src/main/todoistSync/todoistSyncClock.service';
+} from '../../src/preload/sqlite/todoistSync/todoistSyncClock.service';
 import {
+  createTodoistSyncSessionGetter,
   TodoistSyncSessionService,
-  todoistSyncSession,
   type TodoistSyncSessionCoordinator,
-} from '../../src/main/todoistSync/todoistSync.session';
-import { todoistSyncDomainHandler } from '../../src/main/xpc/todoistSync.handler';
+} from '../../src/preload/sqlite/todoistSync/todoistSync.session';
+import {
+  TodoistSyncDomainHandler,
+  TodoistSyncSubTodoHandler,
+  TodoistSyncTodoHandler,
+} from '../../src/preload/sqlite/todoistSync/todoistSync.handler';
 import {
   isRecord,
   requireArray,
@@ -86,6 +90,11 @@ import {
   TODOIST_SYNC_WIRE_REQUEST_FIXTURE,
   TODOIST_SYNC_WIRE_UUIDS,
 } from './wire.fixtures';
+import {
+  createBoundedTodoXpcClient,
+  TodoXpcTimeoutError,
+  withTodoXpcTimeout,
+} from '../../src/shared/todoistSync/todoXpcCall.shared';
 
 declare global {
   var __todoistSyncSafeStorageTripwireHits: number | undefined;
@@ -227,7 +236,11 @@ const createRuntime = async (label: string, customerId = '1'): Promise<TestRunti
   assertTodoistSyncDatabaseIsolation(paths, userDataPath);
   const database = new TodoistSyncDatabase(paths.databasePath, TEST_PASSWORD);
   const ids = new TodoistSyncSnowflakeService(7);
-  const repository = new TodoistSyncRepository(database, customerId, TEST_DEVICE_ID, ids);
+  const repository = new TodoistSyncRepository(database, customerId, TEST_DEVICE_ID, ids, {
+    onDataUpdated: (payload) => {
+      globalThis.__todoistSyncBroadcasts?.push({ event: 'todo/data_updated', payload });
+    },
+  });
   await repository.initialize();
   await repository.setSnowflakeNodeId(7);
   return { root, userDataPath, database, repository, ids };
@@ -647,7 +660,7 @@ test('shared wire fixtures enforce exact request, HTTP 200, permanent status, an
   client.dispose();
 });
 
-test('Todo renderer result guards reject null/malformed data and reserve undefined for capacity', { concurrency: false }, () => {
+test('Todo renderer result guards distinguish required data from nullable optional and void results', { concurrency: false }, () => {
   const isIdRow = (value: unknown): value is { id: string } => (
     isRecord(value) && typeof value.id === 'string'
   );
@@ -664,9 +677,9 @@ test('Todo renderer result guards reject null/malformed data and reserve undefin
   assert.throws(() => requireRecordMap(null, ['1'], 'counts', isCount), /invalid required result/);
   assert.throws(() => requireRecordMap({}, ['1'], 'counts', isCount), /omitted required key 1/);
   assert.equal(requireOptionalItem(undefined, 'Domain create', isIdRow), undefined);
-  assert.throws(() => requireOptionalItem(null, 'Domain create', isIdRow), /invalid optional result/);
+  assert.equal(requireOptionalItem(null, 'Domain create', isIdRow), undefined);
   assert.equal(requireVoidResult(undefined, 'Domain update'), undefined);
-  assert.throws(() => requireVoidResult(null, 'Domain update'), /invalid void result/);
+  assert.equal(requireVoidResult(null, 'Domain update'), undefined);
   assert.throws(() => requireVoidResult(false, 'Domain update'), /invalid void result/);
 
   const storeSource = originalFs.readFileSync(
@@ -682,7 +695,7 @@ test('Todo renderer result guards reject null/malformed data and reserve undefin
   assert.doesNotMatch(createDomainSource[0], /if \(!domain\)|if \(domain\)/);
 });
 
-test('Todo UI mutation observation contains null XPC guard failures without unhandled rejection', { concurrency: false }, async () => {
+test('Todo UI treats nullable optional and void XPC results as no-op values', { concurrency: false }, async () => {
   const fakeTodoEmitter = {
     update: async (): Promise<null> => null,
     setSortOrder: async (): Promise<null> => null,
@@ -705,7 +718,7 @@ test('Todo UI mutation observation contains null XPC guard failures without unha
     await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
     await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
     assert.deepEqual(unhandledRejections, []);
-    assert.equal(globalThis.__todoMutationErrorMessages.length, 2);
+    assert.equal(globalThis.__todoMutationErrorMessages.length, 0);
   } finally {
     process.off('unhandledRejection', onUnhandledRejection);
     console.error = originalConsoleError;
@@ -725,6 +738,37 @@ test('Todo UI mutation observation contains null XPC guard failures without unha
     const source = originalFs.readFileSync(resolve(sourcePath), 'utf8');
     assert.match(source, /observeTodoMutation/);
   }
+});
+
+test('Todo renderer stops dependent work when an optional mutation returns no entity', { concurrency: false }, () => {
+  const storeSource = originalFs.readFileSync(
+    resolve('src/renderer/todo/src/store/todo.store.ts'),
+    'utf8',
+  );
+  const moveTodo = storeSource.match(
+    /  async moveTodoToDomain\([\s\S]*?\n  \}(?=\n\n  async saveTodoOrder)/,
+  );
+  const createSubTodo = storeSource.match(
+    /  async createSubTodo\([\s\S]*?\n  \}(?=\n\n  async toggleSubTodoStatus)/,
+  );
+
+  assert.ok(moveTodo, 'Todo move must guard its optional returned entity');
+  assert.match(moveTodo[0], /const movedTodo = requireOptionalItem\(/);
+  assert.match(moveTodo[0], /if \(movedTodo === undefined\) return;/);
+  assert.ok(
+    moveTodo[0].indexOf('if (movedTodo === undefined) return;') <
+      moveTodo[0].indexOf('await this._removeFromSortOrder'),
+    'Todo move must not rewrite sort orders when XPC returns null or undefined',
+  );
+
+  assert.ok(createSubTodo, 'Step create must guard its optional returned entity');
+  assert.match(createSubTodo[0], /const createdSubTodo = requireOptionalItem\(/);
+  assert.match(createSubTodo[0], /if \(createdSubTodo === undefined\) return;/);
+  assert.ok(
+    createSubTodo[0].indexOf('if (createdSubTodo === undefined) return;') <
+      createSubTodo[0].indexOf('await this.requestRefresh()'),
+    'Step create must not refresh when XPC returns null or undefined',
+  );
 });
 
 test('Todo mutation failure recovery refreshes only after failure and contains recovery rejection', { concurrency: false }, async () => {
@@ -1244,10 +1288,6 @@ test('Todo renderer keeps one preload-lifetime origin across mutation and subscr
 
 test('Todo renderer mutation handler validates and unwraps the raw XPC envelope', { concurrency: false }, async () => {
   const rendererA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-  const mutableSession = todoistSyncSession as unknown as {
-    getRepositoryAsync(): Promise<TodoistSyncRepository>;
-  };
-  const originalGetRepositoryAsync = mutableSession.getRepositoryAsync;
   const calls: Array<{
     params: { title?: string; description?: string };
     context: { originRendererId: string | null } | undefined;
@@ -1261,35 +1301,110 @@ test('Todo renderer mutation handler validates and unwraps the raw XPC envelope'
       return undefined;
     },
   } as unknown as TodoistSyncRepository;
-  mutableSession.getRepositoryAsync = async () => repository;
+  const session = {
+    getRepositoryAsync: async () => repository,
+  } as TodoistSyncSessionService;
+  const handler = new TodoistSyncDomainHandler({
+    getSession: async () => session,
+    openDateTimeSettings: async () => undefined,
+  });
 
-  try {
-    await assert.rejects(
-      todoistSyncDomainHandler.create(null as never),
-      /renderer mutation request is invalid/,
-    );
-    await assert.rejects(
-      todoistSyncDomainHandler.create({
-        originRendererId: 'invalid-origin',
-        params: { title: 'Rejected' },
-      } as never),
-      /renderer mutation origin is invalid/,
-    );
-    await assert.rejects(
-      todoistSyncDomainHandler.create({ originRendererId: rendererA } as never),
-      /renderer mutation params are missing/,
-    );
-    await todoistSyncDomainHandler.create({
-      originRendererId: rendererA,
-      params: { title: 'Accepted', description: 'Exact params' },
-    });
-    assert.deepEqual(calls, [{
-      params: { title: 'Accepted', description: 'Exact params' },
-      context: { originRendererId: rendererA },
-    }]);
-  } finally {
-    mutableSession.getRepositoryAsync = originalGetRepositoryAsync;
+  await assert.rejects(
+    handler.create(null as never),
+    /mutation request is invalid/,
+  );
+  await assert.rejects(
+    handler.create({
+      originRendererId: 'invalid-origin',
+      params: { title: 'Rejected' },
+    } as never),
+    /mutation origin is invalid/,
+  );
+  await assert.rejects(
+    handler.create({ originRendererId: rendererA } as never),
+    /mutation params are missing/,
+  );
+  await handler.create({
+    originRendererId: rendererA,
+    params: { title: 'Accepted', description: 'Exact params' },
+  });
+  assert.deepEqual(calls, [{
+    params: { title: 'Accepted', description: 'Exact params' },
+    context: { originRendererId: rendererA },
+  }]);
+});
+
+test('preload Todo void mutations retain origin without requiring a transport result', { concurrency: false }, async () => {
+  const rendererA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const calls: Array<{ method: string; originRendererId: string | null }> = [];
+  const record = (
+    method: string,
+    context: { originRendererId: string | null } | undefined,
+  ): void => {
+    calls.push({ method, originRendererId: context?.originRendererId ?? null });
+  };
+  const repository = {
+    updateDomainTitle: async (_params: unknown, context?: { originRendererId: string | null }) => {
+      record('domain.updateTitle', context);
+    },
+    updateDomainDescription: async (_params: unknown, context?: { originRendererId: string | null }) => {
+      record('domain.updateDescription', context);
+    },
+    deleteDomain: async (_params: unknown, context?: { originRendererId: string | null }) => {
+      record('domain.delete', context);
+    },
+    setDomainArchived: async (_params: unknown, context?: { originRendererId: string | null }) => {
+      record('domain.archive', context);
+    },
+    setSortOrder: async (_params: unknown, context?: { originRendererId: string | null }) => {
+      record('todo.setSortOrder', context);
+    },
+    updateSubTodoTitle: async (_params: unknown, context?: { originRendererId: string | null }) => {
+      record('subTodo.updateTitle', context);
+    },
+    deleteSubTodo: async (_params: unknown, context?: { originRendererId: string | null }) => {
+      record('subTodo.delete', context);
+    },
+  } as unknown as TodoistSyncRepository;
+  const session = {
+    getRepositoryAsync: async () => repository,
+  } as TodoistSyncSessionService;
+  const runtime = {
+    getSession: async () => session,
+    openDateTimeSettings: async () => undefined,
+  };
+  const domainHandler = new TodoistSyncDomainHandler(runtime);
+  const todoHandler = new TodoistSyncTodoHandler(runtime);
+  const subTodoHandler = new TodoistSyncSubTodoHandler(runtime);
+  const request = <Params>(params: Params) => ({ originRendererId: rendererA, params });
+
+  const results = [
+    await domainHandler.updateTitle(request({ id: '00000000000000000001', title: 'Title' })),
+    await domainHandler.updateDescription(request({ id: '00000000000000000001', description: 'Description' })),
+    await domainHandler.hardDelete(request({ id: '00000000000000000001' })),
+    await domainHandler.setArchived(request({ id: '00000000000000000001', archived: 1 })),
+    await todoHandler.setSortOrder(request({ key: 'domain', order: [] })),
+    await subTodoHandler.updateTitle(request({ id: '00000000000000000002', title: 'Step' })),
+    await subTodoHandler.hardDelete(request({ id: '00000000000000000002' })),
+  ];
+
+  for (const result of results) {
+    const serializedXpcResult = result ?? null;
+    assert.equal(serializedXpcResult, null);
   }
+  assert.deepEqual(
+    calls,
+    [
+      'domain.updateTitle',
+      'domain.updateDescription',
+      'domain.delete',
+      'domain.archive',
+      'todo.setSortOrder',
+      'subTodo.updateTitle',
+      'subTodo.delete',
+    ].map((method) => ({ method, originRendererId: rendererA })),
+  );
+
 });
 
 test('Todo repository broadcasts local origin once and never leaks it into remote apply', { concurrency: false }, async () => {
@@ -1322,7 +1437,7 @@ test('Todo repository broadcasts local origin once and never leaks it into remot
   }
 });
 
-test('fixed-password SQLCipher create, protected-key first run, reopen, and wrong password', { concurrency: false }, () => {
+test('fixed-password SQLCipher create, protected-key first run, reopen, and wrong password', { concurrency: false }, async () => {
   const root = createRoot('bitterless-todoist-cipher');
   const userDataPath = join(root, 'userData');
   const legacyPath = resolve(userDataPath, 'db', 'main.db');
@@ -1336,16 +1451,15 @@ test('fixed-password SQLCipher create, protected-key first run, reopen, and wron
     assert.equal(basename(paths.databasePath), 'customer-1.db');
     assertTodoistSyncDatabaseIsolation(paths, userDataPath);
     const protection: TodoistSyncPasswordProtection = {
-      isEncryptionAvailable: () => true,
-      encryptString: (value) => Buffer.from(`wrapped:${value}`),
-      decryptString: (value) => value.toString().slice('wrapped:'.length),
+      encryptString: async (value) => Buffer.from(`wrapped:${value}`),
+      decryptString: async (value) => value.toString().slice('wrapped:'.length),
     };
-    const password = getOrCreateTodoistSyncRuntimePassword(paths, {
+    const password = await getOrCreateTodoistSyncRuntimePassword(paths, {
       protection,
       generatePassword: () => TEST_PASSWORD,
     });
     assert.equal(password, TEST_PASSWORD);
-    assert.equal(getOrCreateTodoistSyncRuntimePassword(paths, { protection }), TEST_PASSWORD);
+    assert.equal(await getOrCreateTodoistSyncRuntimePassword(paths, { protection }), TEST_PASSWORD);
     if (process.platform !== 'win32') {
       assert.equal(originalFs.statSync(paths.directory).mode & 0o777, 0o700);
       assert.equal(originalFs.statSync(paths.keyPath).mode & 0o777, 0o600);
@@ -3074,6 +3188,63 @@ test('transient scheduler backoff is bounded and interval configuration enforces
     await coordinator.dispose();
   } finally {
     closeRuntime(runtime);
+  }
+});
+
+test('SQLite preload session getter retries after transient creation failure and caches success', { concurrency: false }, async () => {
+  const expected = new TodoistSyncSessionService();
+  let attempts = 0;
+  const getSession = createTodoistSyncSessionGetter(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('transient capability failure');
+    return expected;
+  });
+
+  await assert.rejects(() => getSession(), /transient capability failure/);
+  assert.equal(await getSession(), expected);
+  assert.equal(await getSession(), expected);
+  assert.equal(attempts, 2);
+});
+
+test('Todo XPC clients bound a lost target request without changing returned values', { concurrency: false }, async () => {
+  assert.deepEqual(
+    await withTodoXpcTimeout(Promise.resolve({ id: 'value' }), 'fixture.read', 50),
+    { id: 'value' },
+  );
+  await assert.rejects(
+    () => withTodoXpcTimeout(Promise.reject(new Error('transport failed')), 'fixture.read', 50),
+    /transport failed/,
+  );
+  await assert.rejects(
+    () => withTodoXpcTimeout(new Promise(() => undefined), 'fixture.read', 5),
+    (error) => error instanceof TodoXpcTimeoutError && /fixture\.read timed out after 5ms/.test(error.message),
+  );
+
+  const client = createBoundedTodoXpcClient({
+    pending: async () => await new Promise(() => undefined),
+    value: async () => null,
+  }, 'FixtureHandler', 5);
+  assert.equal(await client.value(), null);
+  await assert.rejects(
+    () => client.pending(),
+    /FixtureHandler\.pending timed out after 5ms/,
+  );
+
+  for (const path of [
+    'src/main/mcp/todoSqlite.client.ts',
+    'src/main/xpc/auth.handler.ts',
+    'src/renderer/home/src/stores/auth/todoistSyncSession.emitter.ts',
+    'src/renderer/todo/src/emitter/domain.emitter.ts',
+    'src/renderer/todo/src/emitter/setting.emitter.ts',
+    'src/renderer/todo/src/emitter/subTodo.emitter.ts',
+    'src/renderer/todo/src/emitter/todo.emitter.ts',
+    'src/renderer/todo/src/emitter/todoistSync.emitter.ts',
+  ]) {
+    assert.match(
+      originalFs.readFileSync(resolve(path), 'utf8'),
+      /createBoundedTodoXpcClient/,
+      `${path} must bound Todo SQLite XPC calls`,
+    );
   }
 });
 

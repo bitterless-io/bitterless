@@ -61,6 +61,29 @@ Core SQLite preload ── XPC ─> Main shell capability (open Date & Time sett
   storage paths.
 - Todo commit broadcasts originate in the SQLite process. A renderer-originated mutation retains
   its preload-lifetime `originRendererId`; MCP and remote synchronization use a null origin.
+- The hidden SQLite renderer's initial non-target document may evaluate the preload bundle, but no
+  Todo handler is registered and no Todo session/database is instantiated until the real SQLite
+  target document is identified and activated.
+- Each real SQLite preload document broadcasts a random `targetId`. A later generation invalidates
+  Home's cached activation and reactivates Todo sync for the current eligible account. Main reloads
+  a crashed hidden renderer as window lifecycle only; it never reconstructs Todo state.
+
+XPC return values follow each method's own contract; there is no global Todo success ACK:
+
+- The installed `electron-xpc@1.1.x` Main center normalizes an `undefined` handler result to `null`
+  before returning it across processes. Todo cross-process code therefore never relies on receiving
+  `undefined`; a boundary test will flag a future library change so the contract can be reviewed.
+- Required reads such as Domain lists and dense count maps require valid data and reject `null`.
+- Optional entity results treat `null` and `undefined` as no entity and stop dependent UI work.
+- Writes declared with no result accept `null` or `undefined`; the transport value alone is not a
+  success/failure signal.
+- Writes that return an entity or boolean keep validating that method-specific result before using
+  it.
+- Todo/Core XPC clients apply a bounded wait so a hidden-preload crash cannot leave renderer, MCP,
+  auth, or lifecycle callers pending forever. This timeout rejects the call; it does not reinterpret
+  a resolved `null`, `undefined`, entity, collection, map, or boolean. The bound also exists on the
+  inner Core registration/ready, path, safeStorage, legacy Core-password, and fixed system-settings
+  capability calls; otherwise an outer timeout could leave a cached inner promise pending forever.
 
 ## Storage boundary
 
@@ -432,7 +455,7 @@ Todo menubar
   Domain/Todo ID in one commit; failed or superseded reads retain the last valid projection.
 - Renderer-originated writes publish their opaque renderer-instance origin. The matching renderer
   ignores its own broadcast because it already applied the mutation optimistically; other Todo
-  renderers refresh. MCP, Main, and remote-sync commits carry no renderer origin and refresh all.
+  renderers refresh. MCP and remote-sync commits carry no renderer origin and refresh all.
 - A same-origin event received during an older board read invalidates only that read and requests one
   trailing snapshot; it does not cancel an unrelated selected-Todo detail read. Multi-stage local
   mutations that fail after an earlier commit schedule one recovery snapshot.

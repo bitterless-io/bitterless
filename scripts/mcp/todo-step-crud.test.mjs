@@ -182,6 +182,7 @@ const updateTodo = async (params) => {
 installMcpSourceHooks({
   projectRoot,
   userDataPath: tempDirectory,
+  normalizeUndefinedXpcResultsToNull: true,
   todoRepository: {
     createSubTodo,
     createTodo: createTodoCall,

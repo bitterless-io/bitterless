@@ -18,8 +18,8 @@ const runtimeTripwires = {
       path: 'electron',
       namespace: 'todoist-sync-test',
     }));
-    buildApi.onResolve({ filter: /^electron-xpc\/main$/ }, () => ({
-      path: 'electron-xpc-main',
+    buildApi.onResolve({ filter: /^electron-xpc\/preload$/ }, () => ({
+      path: 'electron-xpc-preload',
       namespace: 'todoist-sync-test',
     }));
     buildApi.onResolve({ filter: /^@arco-design\/web-vue$/ }, () => ({
@@ -63,8 +63,8 @@ const runtimeTripwires = {
       }
       return {
         contents: `
-          export class XpcMainHandler {}
-          export const xpcMain = {
+          export class XpcPreloadHandler {}
+          export const xpcRenderer = {
             broadcast: (event, payload) => {
               globalThis.__todoistSyncBroadcasts ??= [];
               globalThis.__todoistSyncBroadcasts.push({ event, payload });

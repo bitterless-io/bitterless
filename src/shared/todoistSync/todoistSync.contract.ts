@@ -74,8 +74,10 @@ const assertNonEmptyText = (value: unknown, label: string, maximum: number): str
 };
 
 export const assertTodoistSyncEntityId = (value: unknown, label = 'id'): string => {
-  const text = assertText(value, label, 20);
-  if (!TODOIST_SYNC_ENTITY_ID_PATTERN.test(text)) throw new Error(`${label} is not a 20-digit ID`);
+  if (typeof value !== 'string' || !TODOIST_SYNC_ENTITY_ID_PATTERN.test(value)) {
+    throw new Error(`${label} must be a 20-character decimal Snowflake string`);
+  }
+  const text = value;
   if (BigInt(text) > 9223372036854775807n) throw new Error(`${label} exceeds the Snowflake range`);
   return text;
 };

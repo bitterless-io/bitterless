@@ -1,5 +1,9 @@
 import { createXpcPreloadEmitter } from 'electron-xpc/preload';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  createBoundedTodoXpcClient,
+  TodoXpcTimeoutError,
+} from '@shared/todoistSync/todoXpcCall.shared';
 
 const STORAGE_KEY = 'sqk';
 const DEV_PASSWORD = '123456';
@@ -15,7 +19,10 @@ export interface SqlitePasswordResult {
 }
 
 class SqlitePasswordHelper {
-  private passwordEmitter = createXpcPreloadEmitter<SqlitePasswordHandlerType>('SqlitePasswordHandler');
+  private passwordEmitter = createBoundedTodoXpcClient(
+    createXpcPreloadEmitter<SqlitePasswordHandlerType>('SqlitePasswordHandler'),
+    'SqlitePasswordHandler',
+  );
 
   async getOrCreatePassword(): Promise<SqlitePasswordResult> {
     const viteMode = import.meta.env.VITE_MODE;
@@ -37,6 +44,7 @@ class SqlitePasswordHelper {
         console.log('[sqlitePassword] password decrypted successfully');
         return { password, isReset: false };
       } catch (err: any) {
+        if (err instanceof TodoXpcTimeoutError) throw err;
         console.error('[sqlitePassword] failed to decrypt password, clearing invalid ciphertext:', err.message);
         localStorage.removeItem(STORAGE_KEY);
         isReset = true;
