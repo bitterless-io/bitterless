@@ -32,6 +32,7 @@
     "test:todo:agent-skill-version": "node scripts/todo/todo-agent-skill-version.test.mjs",
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
+    "test:translator-language": "node --test tests/translator/translatorLanguage.service.test.mjs",
     "check:todo-window-runtime": "node scripts/todo/check-todo-window-runtime.mjs",
     "test:eyes-on-agents:core": "node scripts/eyes-on-agents/core.test.mjs",
     "test:eyes-on-agents:project-resolver": "node scripts/eyes-on-agents/project-resolver.test.mjs",

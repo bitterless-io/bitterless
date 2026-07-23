@@ -18,6 +18,7 @@ import {
   parseTranslatorOutput,
   parseTranslatorTranslateInput
 } from '@shared/translator/translator.schema';
+import { resolveTranslatorTargetLanguage } from '@shared/translator/translatorLanguage.service';
 import type { ModelProviderInvalidationReason } from '@shared/modelProvider/modelProvider.contract';
 import {
   ModelProviderServiceError,
@@ -68,19 +69,6 @@ const safeRequestField = (value: unknown, field: 'clientId' | 'requestId'): stri
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
   const candidate = (value as Record<string, unknown>)[field];
   return typeof candidate === 'string' ? candidate.slice(0, 128) : '';
-};
-
-export const resolveTranslatorTargetLanguage = (sourceText: string): TranslatorTargetLanguage => {
-  let hanCount = 0;
-  let latinCount = 0;
-  for (const character of sourceText) {
-    if (/\p{Script=Han}/u.test(character)) {
-      hanCount += 1;
-    } else if (/\p{Script=Latin}/u.test(character)) {
-      latinCount += 1;
-    }
-  }
-  return latinCount > hanCount ? 'zh-CN' : 'en';
 };
 
 const requestPrompt = (sourceText: string, targetLanguage: TranslatorTargetLanguage): string =>
