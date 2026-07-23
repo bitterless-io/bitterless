@@ -331,9 +331,21 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
     appServerSupervisor,
     /this\.request\(connection, 'thread\/read', \{\s*threadId,\s*includeTurns: false\s*\}\)/,
   );
+  const fullTurnPagination = appServerSupervisor.match(
+    /async listThreadTurns\(threadId: string\): Promise<unknown\[]> \{[\s\S]*?\n  \}\n\n  async readLatestThreadTurn/,
+  );
+  assert.ok(fullTurnPagination, 'Missing bounded full-turn pagination');
   assert.match(
-    appServerSupervisor,
-    /this\.request\(connection, 'thread\/turns\/list', \{\s*threadId,\s*cursor: null,\s*itemsView: 'full',\s*sortDirection: 'desc',\s*limit: THREAD_TURN_LIMIT\s*\}\)/,
+    fullTurnPagination[0],
+    /for \(let page = 0; page < THREAD_TURN_LIMIT; page \+= 1\)/,
+  );
+  assert.match(
+    fullTurnPagination[0],
+    /this\.request\(connection, 'thread\/turns\/list', \{\s*threadId,\s*cursor,\s*itemsView: 'full',\s*sortDirection: 'desc',\s*limit: 1\s*\}\)/,
+  );
+  assert.match(
+    fullTurnPagination[0],
+    /parseTurnCursor\(result\.nextCursor, 'nextCursor'\)[\s\S]*parseTurnCursor\(result\.backwardsCursor, 'backwardsCursor'\)[\s\S]*turnContainsTextualUserMessage\(turn\)[\s\S]*visitedCursors\.has\(nextCursor\)/,
   );
   assert.match(
     appServerSupervisor,

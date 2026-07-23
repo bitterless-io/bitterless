@@ -116,6 +116,9 @@ design document.
 - [EyesOnAgents working state and Focus acknowledgement](issues/eyes-on-agents-working-focus-stale.md) - implemented; owner verification pending:
   independent App Server thread status must not overwrite Hook working evidence; Open acknowledges
   the current observation, while guarded content-free terminal-turn polling repairs a missed Stop.
+- [EyesOnAgents App Server frame overflow](issues/eyes-on-agents-app-server-frame-overflow.md) - implemented; owner verification pending:
+  opted-in latest-question recovery must not aggregate ten complete turns into a frame that kills
+  the managed Codex App Server connection.
 - [macOS stale Dock icon](issues/macos-dock-icon-stale.md) - fixed; owner verification pending: the current
   PNG must regenerate the bundle ICNS and refresh the runtime Dock tile.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:

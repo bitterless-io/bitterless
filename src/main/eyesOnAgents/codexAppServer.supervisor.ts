@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { constants as fsConstants, accessSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import type {
   EyesOnAgentsConnectionState,
   EyesOnAgentsConnectionStatus
@@ -12,12 +13,15 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
+  responseFrameLimitBytes: number;
 }
 
 interface AppServerConnection {
   generation: number;
   child: ChildProcessWithoutNullStreams;
   stdoutBuffer: string;
+  stdoutBufferBytes: number;
+  stdoutDecoder: StringDecoder;
   stderrTail: string;
   pending: Map<number, PendingRequest>;
   disconnecting: boolean;
@@ -58,12 +62,77 @@ export interface CodexAppServerSupervisorOptions {
 }
 
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
+const MAX_FULL_TURN_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_THREADS = 10_000;
 const MAX_PAGES = 100;
 const MAX_HOOKS = 1_000;
 const MAX_HOOK_TEXT_LENGTH = 8_192;
+const MAX_TURN_CURSOR_LENGTH = 8_192;
 const THREAD_TURN_LIMIT = 10;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+
+const responseFrameLimitBytes = (method: string, params: unknown): number => {
+  if (
+    method === 'thread/turns/list' &&
+    isEyesOnAgentsRecord(params) &&
+    params.itemsView === 'full'
+  ) {
+    return MAX_FULL_TURN_FRAME_BYTES;
+  }
+  return MAX_FRAME_BYTES;
+};
+
+const parseTurnCursor = (value: unknown, label: string): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' || !value || value.length > MAX_TURN_CURSOR_LENGTH) {
+    throw new Error(`Codex thread/turns/list ${label} is invalid`);
+  }
+  return value;
+};
+
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!Number.isFinite(next) || next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const turnContainsTextualUserMessage = (turn: unknown): boolean => {
+  if (!isEyesOnAgentsRecord(turn) || !Array.isArray(turn.items)) {
+    throw new Error('Codex thread/turns/list turn is invalid');
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(turn, 'itemsView') &&
+    turn.itemsView !== 'full'
+  ) {
+    throw new Error('Codex thread/turns/list itemsView is not full');
+  }
+  for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = turn.items[itemIndex];
+    if (!isEyesOnAgentsRecord(item) || item.type !== 'userMessage') continue;
+    if (!Array.isArray(item.content)) {
+      throw new Error('Codex thread/turns/list userMessage content is invalid');
+    }
+    const textSegments: string[] = [];
+    for (const segment of item.content) {
+      if (!isEyesOnAgentsRecord(segment) || segment.type !== 'text') continue;
+      if (typeof segment.text !== 'string') {
+        throw new Error('Codex thread/turns/list userMessage text is invalid');
+      }
+      textSegments.push(segment.text);
+    }
+    const text = textSegments.join('').trim();
+    if (text && !text.includes('\0') && !hasUnpairedSurrogate(text)) return true;
+  }
+  return false;
+};
 
 const fixedCodexCandidates = (): string[] => {
   const home = homedir();
@@ -274,6 +343,8 @@ export class CodexAppServerSupervisor {
       generation: ++this.generation,
       child,
       stdoutBuffer: '',
+      stdoutBufferBytes: 0,
+      stdoutDecoder: new StringDecoder('utf8'),
       stderrTail: '',
       pending: new Map(),
       disconnecting: false
@@ -377,40 +448,39 @@ export class CodexAppServerSupervisor {
     if (!connection || !this.isConnected()) {
       throw new Error('Codex App Server is not connected');
     }
-    const result = await this.request(connection, 'thread/turns/list', {
-      threadId,
-      cursor: null,
-      itemsView: 'full',
-      sortDirection: 'desc',
-      limit: THREAD_TURN_LIMIT
-    });
-    if (
-      !isEyesOnAgentsRecord(result) ||
-      !Array.isArray(result.data) ||
-      result.data.length > THREAD_TURN_LIMIT ||
-      (
-        result.nextCursor !== null &&
-        result.nextCursor !== undefined &&
-        typeof result.nextCursor !== 'string'
-      ) ||
-      (
-        result.backwardsCursor !== null &&
-        result.backwardsCursor !== undefined &&
-        typeof result.backwardsCursor !== 'string'
-      )
-    ) {
-      throw new Error('Codex thread/turns/list response is invalid');
-    }
-    for (const turn of result.data) {
+    const turns: unknown[] = [];
+    const visitedCursors = new Set<string>();
+    let cursor: string | null = null;
+    for (let page = 0; page < THREAD_TURN_LIMIT; page += 1) {
+      const result = await this.request(connection, 'thread/turns/list', {
+        threadId,
+        cursor,
+        itemsView: 'full',
+        sortDirection: 'desc',
+        limit: 1
+      });
       if (
-        isEyesOnAgentsRecord(turn)
-        && Object.prototype.hasOwnProperty.call(turn, 'itemsView')
-        && turn.itemsView !== 'full'
+        !isEyesOnAgentsRecord(result) ||
+        !Array.isArray(result.data) ||
+        result.data.length > 1
       ) {
-        throw new Error('Codex thread/turns/list itemsView is not full');
+        throw new Error('Codex thread/turns/list response is invalid');
       }
+      const nextCursor = parseTurnCursor(result.nextCursor, 'nextCursor');
+      parseTurnCursor(result.backwardsCursor, 'backwardsCursor');
+      const turn = result.data[0];
+      if (turn !== undefined) {
+        turns.push(turn);
+        if (turnContainsTextualUserMessage(turn)) return turns;
+      }
+      if (nextCursor === null) return turns;
+      if (visitedCursors.has(nextCursor)) {
+        throw new Error('Codex thread/turns/list nextCursor looped');
+      }
+      visitedCursors.add(nextCursor);
+      cursor = nextCursor;
     }
-    return result.data;
+    return turns;
   }
 
   async readLatestThreadTurn(threadId: string): Promise<unknown | null> {
@@ -575,7 +645,12 @@ export class CodexAppServerSupervisor {
         reject(new Error(`Codex App Server ${method} timed out after ${this.requestTimeoutMs}ms`));
       }, this.requestTimeoutMs);
       timeout.unref();
-      connection.pending.set(id, { resolve, reject, timeout });
+      connection.pending.set(id, {
+        resolve,
+        reject,
+        timeout,
+        responseFrameLimitBytes: responseFrameLimitBytes(method, params)
+      });
       try {
         child.stdin.write(`${JSON.stringify({ method, id, params })}\n`);
       } catch (error) {
@@ -595,25 +670,67 @@ export class CodexAppServerSupervisor {
 
   private handleStdout(connection: AppServerConnection, chunk: Buffer): void {
     if (this.connection !== connection) return;
-    connection.stdoutBuffer += chunk.toString('utf8');
-    if (Buffer.byteLength(connection.stdoutBuffer, 'utf8') > MAX_FRAME_BYTES) {
-      this.handleProcessFailure(connection, new Error('Codex App Server frame exceeded the size limit'));
-      return;
-    }
+    connection.stdoutBufferBytes += chunk.length;
+    connection.stdoutBuffer += connection.stdoutDecoder.write(chunk);
     let newline = connection.stdoutBuffer.indexOf('\n');
     while (newline >= 0) {
       if (this.connection !== connection) return;
-      const line = connection.stdoutBuffer.slice(0, newline).trim();
+      const rawLine = connection.stdoutBuffer.slice(0, newline);
       connection.stdoutBuffer = connection.stdoutBuffer.slice(newline + 1);
+      const frameBytes = Buffer.byteLength(rawLine, 'utf8');
+      connection.stdoutBufferBytes -= frameBytes + 1;
+      if (frameBytes > MAX_FULL_TURN_FRAME_BYTES) {
+        this.handleProcessFailure(
+          connection,
+          new Error('Codex App Server frame exceeded the size limit')
+        );
+        return;
+      }
+      const line = rawLine.trim();
       if (line) {
+        let value: unknown;
         try {
-          this.handleMessage(connection, JSON.parse(line) as unknown);
+          value = JSON.parse(line) as unknown;
         } catch {
-          this.handleProcessFailure(connection, new Error('Codex App Server returned invalid JSON'));
+          this.handleProcessFailure(
+            connection,
+            new Error(
+              frameBytes > MAX_FRAME_BYTES
+                ? 'Codex App Server frame exceeded the size limit'
+                : 'Codex App Server returned invalid JSON'
+            )
+          );
           return;
         }
+        const frameLimitBytes = isEyesOnAgentsRecord(value) && typeof value.id === 'number'
+          ? connection.pending.get(value.id)?.responseFrameLimitBytes ?? MAX_FRAME_BYTES
+          : MAX_FRAME_BYTES;
+        if (frameBytes > frameLimitBytes) {
+          this.handleProcessFailure(
+            connection,
+            new Error('Codex App Server frame exceeded the size limit')
+          );
+          return;
+        }
+        this.handleMessage(connection, value);
+      } else if (frameBytes > MAX_FRAME_BYTES) {
+        this.handleProcessFailure(
+          connection,
+          new Error('Codex App Server frame exceeded the size limit')
+        );
+        return;
       }
       newline = connection.stdoutBuffer.indexOf('\n');
+    }
+    let residualLimitBytes = MAX_FRAME_BYTES;
+    for (const pending of connection.pending.values()) {
+      residualLimitBytes = Math.max(residualLimitBytes, pending.responseFrameLimitBytes);
+    }
+    if (connection.stdoutBufferBytes > residualLimitBytes) {
+      this.handleProcessFailure(
+        connection,
+        new Error('Codex App Server frame exceeded the size limit')
+      );
     }
   }
 

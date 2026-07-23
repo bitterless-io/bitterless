@@ -250,9 +250,10 @@ The repository compares optional title, provider activity, and prompt patches in
 and updates `updated_at` only with a real semantic change. A reliable provider activity watermark
 may advance `last_activity_at` monotonically so a newly active row joins the next hot page. An
 unchanged poll performs no SQLite UPDATE and no renderer broadcast. If **Store latest user
-question** is enabled, one bounded full-items turn page is read only when provider activity has
-advanced beyond the persisted content-check watermark.
-The other response items never leave main-process memory. Codex 0.137 does not implement
+question** is enabled, descending one-turn full-items pages are read only when provider activity has
+advanced beyond the persisted content-check watermark. Recovery stops at the newest textual user
+message and scans no more than ten turns. The other response items never leave main-process memory.
+Codex 0.137 does not implement
 `thread/turns/items/list`, so EyesOnAgents does not call it. Every returned turn must either omit
 `itemsView` or explicitly report `full`; an explicit `summary`, `notLoaded`, or other view rejects the
 content page and does not advance the prompt check watermark.

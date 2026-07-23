@@ -147,7 +147,7 @@ lifecycle state. At most four row pipelines run concurrently within each 40-row 
 reliable watermark advances `last_activity_at` monotonically so newly active rows enter the next hot
 page. Prompt content is requested only when
 the watermark is newer than `last_user_prompt_checked_at` or the row has never been checked. The
-content read is one request:
+content read uses descending one-turn pages:
 
 ```text
 thread/turns/list({
@@ -155,7 +155,7 @@ thread/turns/list({
   cursor: null,
   itemsView: "full",
   sortDirection: "desc",
-  limit: 10
+  limit: 1
 })
 ```
 
@@ -164,12 +164,19 @@ because the method is not implemented. EyesOnAgents therefore never calls it. `i
 is also insufficient because it keeps only the first user message in a turn and can miss a later
 same-turn steer.
 
-The single returned content page is visited newest-turn-first and newest-item-first. EyesOnAgents stops at
-the first valid `userMessage`, concatenates only its textual content segments in original segment
-order, bounds the value to 8,192 UTF-8 bytes, and discards all other items immediately. No cursor is
-followed. If the page contains no textual user message, the row is marked checked/pending at the
-provider activity watermark without fabricating content; the same unchanged rollout is not replayed
-again ten seconds later.
+EyesOnAgents follows the validated `nextCursor` through at most ten turns and stops as soon as the
+newest textual `userMessage` is found. Each page is visited newest-item-first; only textual content
+segments are concatenated in original segment order and bounded to 8,192 UTF-8 bytes. All other
+items are discarded immediately. This preserves same-turn steer while avoiding one response that
+aggregates ten complete turns. If no scanned turn contains a textual user message, the row is marked
+checked/pending at the provider activity watermark without fabricating content; the same unchanged
+rollout is not replayed again ten seconds later.
+
+Ordinary App Server responses and notifications retain a 4 MiB UTF-8 frame limit. A complete
+response may use the separate 16 MiB cap only when its numeric ID matches a pending,
+Bitterless-authored `thread/turns/list(itemsView: full)` request. The parser consumes complete JSONL
+frames before checking its unfinished residual buffer, and its UTF-8 decoder preserves characters
+split across stdout chunks. An unfinished frame may never exceed the 16 MiB absolute cap.
 
 Do not use `thread/read({ includeTurns: true })`: it returns full history. Full inventory Refresh and
 activation never fetch prompt content; they remain the discovery/archive fallback, while the tiered
@@ -380,8 +387,8 @@ runtime/unread evidence.
 - Offline and lost-ACK deliveries write metadata-only outbox files; no prompt fragment appears in
   pending, quarantine, coverage, receipt, or log data.
 - Metadata-only replay changes the prompt state to pending without leaving an older preview visible.
-- Tiered All recovery finds the newest textual `userMessage`, including same-turn steer, through one
-  explicitly capped descending `thread/turns/list(itemsView: "full")` page and persists only its
+- Tiered All recovery finds the newest textual `userMessage`, including same-turn steer, through at
+  most ten descending one-turn `thread/turns/list(itemsView: "full")` pages and persists only its
   bounded preview. An unchanged checked thread does not replay the rollout on the next poll.
 - App Server Unix-second turn times are validated and normalized to safe integer milliseconds
   before they can compete with Hook timestamps.
