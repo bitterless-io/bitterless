@@ -21,6 +21,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-sync-runtime-recovery-002](tasks/todo-sync-runtime-recovery-002.md) | v1-to-v2 Todo database recovery, session-ready renderer startup, and truthful XPC failures | done | todoist-sync-desktop-001 |
 | [todo-subtodo-count-map-003](tasks/todo-subtodo-count-map-003.md) | dense zero-safe SubTodo batch counts after creating a Todo | done | todo-sync-runtime-recovery-002 |
 | [todo-sync-refresh-identity-004](tasks/todo-sync-refresh-identity-004.md) | one Refresh/status control and stable installation device identity | done | todo-sync-runtime-recovery-002 |
+| [todo-domain-board-layout-005](tasks/todo-domain-board-layout-005.md) | menu-bar Domain creation and wrapping 300–480px Todo columns | in-progress | todo-sync-refresh-identity-004 |
 | [maestro-source-layout-migration](tasks/maestro-source-layout-migration.md) | rename Sidekick to Maestro and keep sources distributed by Electron process | done | cowork-subapp-001, cowork-subapp-002 |
 | [renderer-arco-bem-controls](tasks/renderer-arco-bem-controls.md) | MCP guide modal and Maestro ChatPanel control consistency | done | maestro-source-layout-migration, todo-mcp-domain-create |
 | [renderer-tailwind-removal](tasks/renderer-tailwind-removal.md) | remove renderer Tailwind usage, retain dormant dependencies, and enforce shallow business BEM | done | renderer-arco-bem-controls, maestro-source-layout-migration |

@@ -19,6 +19,8 @@ design document.
 - [Todoist-style Todo synchronization](features/todoist-sync.md) - independent encrypted
   per-customer SQLite, HTTP command/outbox sync, working-set-first bootstrap, and shared UI/MCP
   refresh without PowerSync or logical WAL.
+- [Todo Domain board layout](features/todo-layout.md) - menu-bar Domain creation and wrapping
+  300–480px Focus/Domain columns without horizontal board navigation.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
   Project metadata and an All-column source filter.
 - [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
