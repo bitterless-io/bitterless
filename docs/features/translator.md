@@ -56,14 +56,26 @@ messages.
 
 ## Language Direction
 
-Before calling the model, Main counts Unicode Han and Latin letters while ignoring digits,
-punctuation, symbols, and whitespace:
+Before calling the model, Main classifies Unicode code points with explicit ranges. CJK Unified
+Ideographs and their extension/compatibility ranges count as Chinese, ASCII `A-Z` / `a-z` count as
+English, and every other non-whitespace code point counts as other. Whitespace does not influence
+the direction:
 
 | Input composition | Target |
 |---|---|
-| Latin count is greater than Han count | Simplified Chinese |
-| Han count is greater than Latin count | English |
-| tie, neither script, or another language | English |
+| Chinese count is strictly greater than both English and other counts | English |
+| English count is strictly greater than both Chinese and other counts | Simplified Chinese |
+| other count is greatest, any counts tie, or no visible character is classified | Simplified Chinese |
+
+Main and Renderer use the same shared classifier so the displayed direction always matches the
+request sent to the model.
+
+When the target is Simplified Chinese and the source is an English abbreviation or acronym, the
+translation string lists its common Chinese interpretations rather than echoing only the short
+form. Each established meaning includes its English expansion when useful, the most common general
+meaning comes first, and multiple meanings appear only when they are genuinely common. The model
+must not invent an expansion. This list remains translation content inside the single validated
+`translation` field, not additional commentary.
 
 The chosen target and source text are serialized as data. Source text is never treated as an
 instruction.

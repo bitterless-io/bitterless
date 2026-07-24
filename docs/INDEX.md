@@ -123,6 +123,9 @@ design document.
   PNG must regenerate the bundle ICNS and refresh the runtime Dock tile.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
   retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
+- [Translator language-direction detection](issues/translator-language-direction-detection.md) - in progress:
+  use a shared explicit-range classifier, default non-Chinese-majority input to Simplified Chinese,
+  and list common Chinese interpretations for English abbreviations.
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:
   decorative borders replaced by Todo-style background-led Domain and thread-item hierarchy.
 - [EyesOnAgents Desktop Focus](issues/archived/eyes-on-agents-desktop-focus.md) - fixed: active Codex Desktop tasks

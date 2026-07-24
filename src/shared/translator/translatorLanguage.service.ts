@@ -46,8 +46,7 @@ const isInRanges = (codePoint: number, ranges: readonly CodePointRange[]): boole
 };
 
 const isAsciiEnglishLetter = (codePoint: number): boolean =>
-  (codePoint >= 0x0041 && codePoint <= 0x005a) ||
-  (codePoint >= 0x0061 && codePoint <= 0x007a);
+  (codePoint >= 0x0041 && codePoint <= 0x005a) || (codePoint >= 0x0061 && codePoint <= 0x007a);
 
 export const classifyTranslatorCharacters = (sourceText: string): TranslatorCharacterCounts => {
   const counts: TranslatorCharacterCounts = {
@@ -71,9 +70,7 @@ export const classifyTranslatorCharacters = (sourceText: string): TranslatorChar
   return counts;
 };
 
-export const resolveTranslatorTargetLanguage = (
-  sourceText: string
-): TranslatorTargetLanguage => {
+export const resolveTranslatorTargetLanguage = (sourceText: string): TranslatorTargetLanguage => {
   const counts = classifyTranslatorCharacters(sourceText);
   return counts.chinese > counts.english && counts.chinese > counts.other ? 'en' : 'zh-CN';
 };

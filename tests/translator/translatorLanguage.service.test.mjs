@@ -20,7 +20,7 @@ test('English-majority input targets Simplified Chinese', () => {
 });
 
 test('other scripts, symbols, and digits count as other and fall back to Simplified Chinese', () => {
-  verifyDirection('日本語', { chinese: 2, english: 0, other: 1 }, 'en');
+  verifyDirection('日かなカ', { chinese: 1, english: 0, other: 3 }, 'zh-CN');
   verifyDirection('かなカナ', { chinese: 0, english: 0, other: 4 }, 'zh-CN');
   verifyDirection('🙂!?123', { chinese: 0, english: 0, other: 6 }, 'zh-CN');
 });

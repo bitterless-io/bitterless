@@ -24,6 +24,9 @@ Simplified Chinese fallback.
 - Target Simplified Chinese when English or other characters dominate, when counts tie, or when no
   visible code point is classified.
 - Use one shared classifier in Main and Renderer so the rail cannot disagree with the model request.
+- When an English abbreviation or acronym targets Simplified Chinese, require the translation to
+  list its common Chinese interpretations, include established English expansions when useful,
+  order the general meaning first, and never invent expansions.
 
 ## Acceptance
 
@@ -33,4 +36,6 @@ Simplified Chinese fallback.
   Chinese.
 - Mixed inputs with tied leading counts target Simplified Chinese.
 - CJK extension-plane characters count as Chinese.
+- Common English abbreviations produce concise Chinese meaning lists inside the validated
+  `translation` string; ambiguous abbreviations include only genuinely common meanings.
 - Focused unit tests, Node/Web type checks for touched boundaries, and `git diff --check` pass.
