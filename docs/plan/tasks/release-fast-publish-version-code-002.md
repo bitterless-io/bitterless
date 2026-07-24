@@ -1,7 +1,7 @@
 ---
 id: release-fast-publish-version-code-002
 scope: macOS ARM fast-publish version-code preparation
-status: in-progress
+status: done
 depends-on: []
 ---
 
@@ -62,3 +62,7 @@ The release branch retained this completed task and review but later contained t
 documented `git_pull.js` → `patch.js` → signing-debug build → publish chain. The recovery is
 complete only after a new independent review and merge into `release/2604`, because the shortcut's
 initial `git_pull.js` discards uncommitted local repairs.
+
+Recovery commit `5e8f0a3` restored the contract and exact source test. Independent regression review
+passed with no P1, P2, or P3 finding, and the focused release-hook suite passed 13/13; see
+[`release-fast-publish-version-code-002-2`](../reviews/release-fast-publish-version-code-002-2.md).
