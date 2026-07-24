@@ -44,7 +44,7 @@ design document.
   window mode, physical-display affinity, off-screen recovery, and legacy geometry import for every
   user-visible Main-owned window.
 - [Desktop application icon](features/desktop-app-icon.md) - one canonical artwork source, explicit
-  macOS bundle icon generation, and a startup Dock cache refresh.
+  macOS bundle icon generation, and bundle-only Dock rendering without a runtime override.
 
 ## Guides
 
