@@ -1,6 +1,6 @@
 # Translator language-direction detection selects the wrong fallback
 
-Status: in progress
+Status: fixed
 
 Implementation: [translator-language-direction-002](../plan/tasks/translator-language-direction-002.md)
 
@@ -39,3 +39,18 @@ Simplified Chinese fallback.
 - Common English abbreviations produce concise Chinese meaning lists inside the validated
   `translation` string; ambiguous abbreviations include only genuinely common meanings.
 - Focused unit tests, Node/Web type checks for touched boundaries, and `git diff --check` pass.
+
+## Resolution
+
+- Main and Renderer now call the same shared code-point classifier. Explicit CJK Unified,
+  extension, and compatibility ranges count as Chinese; ASCII letters count as English; other
+  visible code points use the Simplified Chinese fallback.
+- English is selected only for a strict Chinese majority. English-majority, other-majority, tied,
+  and empty classifications select Simplified Chinese.
+- The strict Translator prompt now requires English abbreviations and acronyms to return common
+  Chinese interpretations in newline-separated `translation` content, with useful established
+  English expansions and no invented meanings or extra JSON fields.
+- Independent review found no P1, P2, or P3 finding. Focused tests pass 7/7 and Node type checking
+  passes; the full Web check remains blocked only by documented unrelated baseline errors with no
+  Translator diagnostic. See
+  [translator-language-direction-002 round 1](../plan/reviews/translator-language-direction-002-1.md).

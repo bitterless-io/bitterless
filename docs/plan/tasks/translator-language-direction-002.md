@@ -1,7 +1,7 @@
 ---
 id: translator-language-direction-002
 scope: omni-translator
-status: in-progress
+status: done
 depends-on: [translator-miniapp-001]
 ---
 
