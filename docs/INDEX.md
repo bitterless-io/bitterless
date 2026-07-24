@@ -128,7 +128,7 @@ design document.
 - [Translator language-direction detection](issues/translator-language-direction-detection.md) - fixed:
   use a shared explicit-range classifier, default non-Chinese-majority input to Simplified Chinese,
   and list common Chinese interpretations for English abbreviations.
-- [Translator inline retry](issues/translator-inline-retry.md) - in progress: place a clickable
+- [Translator inline retry](issues/translator-inline-retry.md) - fixed: place a clickable
   `Try again` action directly beside retryable translation failures and resubmit the unchanged source.
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:
   decorative borders replaced by Todo-style background-led Domain and thread-item hierarchy.

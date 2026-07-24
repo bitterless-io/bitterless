@@ -1,6 +1,6 @@
 # Translator failure requires editing before retry
 
-Status: in progress
+Status: fixed
 
 Implementation: [translator-inline-retry-003](../plan/tasks/translator-inline-retry-003.md)
 
@@ -44,3 +44,17 @@ edit even when the original input is valid and the failure is transient.
 - Existing edit-triggered, stale-response, cancellation, and login behavior remains unchanged.
 - Focused source/interaction tests, renderer i18n check, touched type checks, and `git diff --check`
   pass.
+
+## Resolution
+
+- Retryable failures now render a localized Arco mini text button directly after the error sentence.
+  The Royal Blue action is keyboard accessible and uses the existing visible-focus treatment.
+- The Store exposes retry only for the five documented transient/output errors and force-submits the
+  unchanged source through the existing request lifecycle. Ready, source, busy, and error guards
+  prevent invalid or concurrent requests.
+- Empty and whitespace-only sources cannot retry. Clearing the composer clears the error, previous
+  result, and duplicate marker, then cancels active work without scheduling another translation.
+- Independent review found no P1, P2, or P3 finding. Retry tests pass 5/5, existing Translator tests
+  pass 7/7, renderer i18n and Node type checking pass, and the full Web check reports only unrelated
+  baseline diagnostics. See
+  [translator-inline-retry-003 round 1](../plan/reviews/translator-inline-retry-003-1.md).

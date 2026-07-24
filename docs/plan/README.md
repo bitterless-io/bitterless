@@ -83,7 +83,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |
 | [translator-language-direction-002](tasks/translator-language-direction-002.md) | explicit-range direction detection and English-abbreviation Chinese meanings | done | translator-miniapp-001 |
-| [translator-inline-retry-003](tasks/translator-inline-retry-003.md) | inline retry action for unchanged-source translation failures | in-progress | translator-language-direction-002 |
+| [translator-inline-retry-003](tasks/translator-inline-retry-003.md) | inline retry action for unchanged-source translation failures | done | translator-language-direction-002 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | final three-family SQLite audit and production packaging proof | pending | todoist-sync-desktop-001 |
