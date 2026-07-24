@@ -1,6 +1,6 @@
 # Desktop Application Icon
 
-Status: in progress
+Status: implemented; owner verification pending
 
 ## Ownership
 

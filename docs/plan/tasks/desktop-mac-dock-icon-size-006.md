@@ -1,7 +1,7 @@
 ---
 id: desktop-mac-dock-icon-size-006
 scope: keep the macOS Dock icon at the bundle-default visual size while Bitterless is running
-status: in-progress
+status: done
 depends-on: [desktop-mac-dock-icon-004]
 ---
 
@@ -51,3 +51,12 @@ the correctly sized default tile with a differently normalized runtime PNG.
 - Source review proves no runtime Dock override remains and both builder YAML files match.
 - No Electron launch, package, signing, notarization, or publication; Ral verifies the visual Dock
   behavior with the next local package.
+
+## Delivery evidence
+
+- The runtime `app.dock.setIcon` override and packaged `app.png` resource are absent.
+- The canonical source gate passes 4/4 and rejects any reintroduced runtime Dock override.
+- The desktop package audit passes 19/19 and still rejects missing or empty bundle ICNS resources.
+- Independent review passed after the documentation index was aligned with the bundle-only contract.
+- Electron launch, packaging, signing, notarization, and publication remain intentionally unrun;
+  Ral owns final visual verification with the next local package.

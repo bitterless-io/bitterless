@@ -1,6 +1,6 @@
 # macOS Dock Icon Changes Size When Bitterless Opens
 
-Status: in progress
+Status: fixed; owner verification pending
 
 ## Symptom
 
