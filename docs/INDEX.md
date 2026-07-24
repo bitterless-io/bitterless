@@ -44,7 +44,7 @@ design document.
   window mode, physical-display affinity, off-screen recovery, and legacy geometry import for every
   user-visible Main-owned window.
 - [Desktop application icon](features/desktop-app-icon.md) - one canonical artwork source, explicit
-  macOS bundle icon generation, and a startup Dock cache refresh.
+  macOS bundle icon generation, and bundle-only Dock rendering without a runtime override.
 
 ## Guides
 
@@ -119,8 +119,10 @@ design document.
 - [EyesOnAgents App Server frame overflow](issues/eyes-on-agents-app-server-frame-overflow.md) - implemented; owner verification pending:
   opted-in latest-question recovery must not aggregate ten complete turns into a frame that kills
   the managed Codex App Server connection.
-- [macOS stale Dock icon](issues/macos-dock-icon-stale.md) - fixed; owner verification pending: the current
-  PNG must regenerate the bundle ICNS and refresh the runtime Dock tile.
+- [macOS stale Dock icon](issues/macos-dock-icon-stale.md) - superseded: explicit ICNS generation
+  remains, while the size-mismatch follow-up below removes the runtime PNG refresh.
+- [macOS Dock icon runtime size mismatch](issues/macos-dock-icon-runtime-size-mismatch.md) - fixed;
+  owner verification pending: the running tile now keeps the bundle-default size without a PNG override.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
   retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
 - [Translator language-direction detection](issues/translator-language-direction-detection.md) - fixed:

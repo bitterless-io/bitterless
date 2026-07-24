@@ -66,7 +66,7 @@ const assertSameImage = (actual, expected, label) => {
   assert(actual.data.equals(expected.data), `${label} pixels differ from build/icon.png`);
 };
 
-test('builder configs use and package the canonical macOS icon', () => {
+test('builder configs use the canonical macOS ICNS without a runtime PNG', () => {
   const builderConfigs = ['electron-builder.tmp.yml'];
   if (existsSync(resolve(projectRoot, 'electron-builder.yml'))) {
     builderConfigs.push('electron-builder.yml');
@@ -74,32 +74,19 @@ test('builder configs use and package the canonical macOS icon', () => {
   for (const relativePath of builderConfigs) {
     const config = parseYaml(readProjectText(relativePath));
     assert.equal(config.mac?.icon, 'build/icon.icns', `${relativePath} must name the ICNS`);
-    assert(
+    assert.equal(
       config.extraResources?.some(
-        (resource) => resource?.from === 'build/icon.png' && resource?.to === 'app.png'
+        (resource) => resource?.from === 'build/icon.png' || resource?.to === 'app.png'
       ),
-      `${relativePath} must package build/icon.png as resources/app.png`
+      false,
+      `${relativePath} must not package a runtime Dock PNG`
     );
   }
 });
 
-test('main refreshes only the macOS GUI Dock before creating Home', () => {
+test('main leaves the macOS Dock icon to the bundle ICNS', () => {
   const source = readProjectText('src/main/app.main.ts');
-  assert.match(source, /import \{ app, nativeImage, net, session \} from 'electron';/);
-  assert.match(source, /if \(process\.platform !== 'darwin' \|\| isHelperMode\) return;/);
-  assert.match(
-    source,
-    /app\.isPackaged\s*\? join\(process\.resourcesPath, 'app\.png'\)\s*: join\(app\.getAppPath\(\), 'build', 'icon\.png'\)/
-  );
-  assert.match(source, /nativeImage\.createFromPath\(iconPath\)/);
-  assert.match(source, /if \(icon\.isEmpty\(\)\) \{[\s\S]*?console\.warn\(/);
-  assert.match(source, /app\.dock\.setIcon\(icon\)/);
-
-  const startGui = source.indexOf('const startGui =');
-  const refresh = source.indexOf('applyMacDockIcon();', startGui);
-  const createHome = source.indexOf('createHome:', startGui);
-  assert(startGui >= 0 && refresh > startGui, 'GUI startup must call applyMacDockIcon');
-  assert(createHome > refresh, 'Dock icon must be applied before the Home startup stage');
+  assert.doesNotMatch(source, /app\.dock\.setIcon\s*\(/);
 });
 
 test('signed package builds run the icon source gate before Electron Builder', () => {
