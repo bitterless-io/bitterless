@@ -61,7 +61,7 @@ const createSyntheticApplication = async ({
   appFiles = {},
   includeBetterSqlite3Binary = true,
   betterSqlite3Arch,
-  includeMacIcons = true,
+  includeMacIcon = true,
 } = {}) => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'bitterless-desktop-package-'));
   temporaryRoots.push(fixtureRoot);
@@ -94,9 +94,8 @@ const createSyntheticApplication = async ({
     ...(includeBetterSqlite3Binary
       ? { [nativeBinaryPath]: createBinary(betterSqlite3Arch ?? targetArch) }
       : {}),
-    ...(platform === 'mac' && includeMacIcons
+    ...(platform === 'mac' && includeMacIcon
       ? {
-          'Contents/Resources/app.png': readFileSync(path.join(projectRoot, 'build/icon.png')),
           'Contents/Resources/icon.icns': readFileSync(path.join(projectRoot, 'build/icon.icns')),
         }
       : {}),
@@ -135,24 +134,15 @@ test('synthetic app.asar passes the desktop package audit', async () => {
   assert(result.appBytes >= result.asarBytes);
   assert.equal(result.targetPlatform, 'darwin');
   assert.equal(result.targetArch, 'arm64');
-  assert(result.applicationIconPaths.runtimePngPath.endsWith('app.png'));
   assert(result.applicationIconPaths.bundleIcnsPath.endsWith('icon.icns'));
   await afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 });
 });
 
-test('macOS application icon gate rejects missing or empty packaged icons', async () => {
-  const missing = await createSyntheticApplication({ includeMacIcons: false });
+test('macOS application icon gate rejects a missing or empty packaged ICNS', async () => {
+  const missing = await createSyntheticApplication({ includeMacIcon: false });
   assert.throws(
     () => auditDesktopPackage(missing.applicationPath),
-    /application icon gate failed:.*app\.png/,
-  );
-
-  const emptyRuntimePng = await createSyntheticApplication({
-    appFiles: { 'Contents/Resources/app.png': Buffer.alloc(0) },
-  });
-  assert.throws(
-    () => auditDesktopPackage(emptyRuntimePng.applicationPath),
-    /runtime PNG must be a non-empty real file/,
+    /application icon gate failed:.*icon\.icns/,
   );
 
   const emptyBundleIcns = await createSyntheticApplication({

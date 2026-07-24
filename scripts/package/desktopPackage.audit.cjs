@@ -104,51 +104,6 @@ const readRealFile = (filePath, label) => {
   return fs.readFileSync(filePath);
 };
 
-const inspectPngFile = (filePath) => {
-  const content = readRealFile(filePath, 'runtime PNG');
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  if (content.length < 45 || !content.subarray(0, signature.length).equals(signature)) {
-    throw new Error(`runtime PNG signature is invalid: ${filePath}`);
-  }
-
-  let offset = signature.length;
-  let chunkIndex = 0;
-  let hasImageData = false;
-  let hasImageEnd = false;
-  while (offset < content.length) {
-    if (offset + 12 > content.length) {
-      throw new Error(`runtime PNG chunk is truncated: ${filePath}`);
-    }
-    const chunkLength = content.readUInt32BE(offset);
-    const chunkType = content.subarray(offset + 4, offset + 8).toString('ascii');
-    const nextOffset = offset + 12 + chunkLength;
-    if (nextOffset > content.length) {
-      throw new Error(`runtime PNG ${chunkType} chunk is truncated: ${filePath}`);
-    }
-    if (chunkIndex === 0) {
-      if (chunkType !== 'IHDR' || chunkLength !== 13) {
-        throw new Error(`runtime PNG IHDR is invalid: ${filePath}`);
-      }
-      if (content.readUInt32BE(offset + 8) === 0 || content.readUInt32BE(offset + 12) === 0) {
-        throw new Error(`runtime PNG dimensions are invalid: ${filePath}`);
-      }
-    }
-    if (chunkType === 'IDAT' && chunkLength > 0) hasImageData = true;
-    if (chunkType === 'IEND') {
-      if (chunkLength !== 0 || nextOffset !== content.length) {
-        throw new Error(`runtime PNG IEND is invalid: ${filePath}`);
-      }
-      hasImageEnd = true;
-    }
-    offset = nextOffset;
-    chunkIndex += 1;
-  }
-  if (!hasImageData || !hasImageEnd) {
-    throw new Error(`runtime PNG structure is incomplete: ${filePath}`);
-  }
-  return filePath;
-};
-
 const inspectIcnsFile = (filePath) => {
   const content = readRealFile(filePath, 'bundle ICNS');
   if (
@@ -179,9 +134,8 @@ const inspectIcnsFile = (filePath) => {
 };
 
 const inspectApplicationIcons = (resourcesPath) => {
-  const runtimePngPath = inspectPngFile(path.join(resourcesPath, 'app.png'));
   const bundleIcnsPath = inspectIcnsFile(path.join(resourcesPath, 'icon.icns'));
-  return { runtimePngPath, bundleIcnsPath };
+  return { bundleIcnsPath };
 };
 
 const machArchForCpuType = (cpuType) => {
@@ -536,7 +490,7 @@ const auditDesktopPackage = (inputPath, options = {}) => {
   if (applicationTarget?.platform === 'darwin') {
     try {
       applicationIconPaths = inspectApplicationIcons(resourcesPath);
-      console.log('[desktop-package-audit] macOS runtime PNG and bundle ICNS verified');
+      console.log('[desktop-package-audit] macOS bundle ICNS verified');
     } catch (error) {
       failures.push(`application icon gate failed: ${error.message}`);
     }

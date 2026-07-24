@@ -43,8 +43,6 @@ files:
 extraResources:
   - from: asar_unpacked
     to: app.asar.unpacked
-  - from: build/icon.png
-    to: app.png
   - from: skills/bitterless-todo
     to: agent-skills/bitterless-todo
   - from: build/maestro-tools

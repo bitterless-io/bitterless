@@ -1,6 +1,6 @@
 # macOS Dock Shows a Stale Bitterless Icon
 
-Status: fixed; owner verification pending
+Status: superseded by the runtime-size fix
 
 ## Symptom
 
@@ -20,9 +20,10 @@ Starting the current macOS application can show an earlier icon in the Dock even
 - `build/icon.png` remains the canonical artwork source.
 - macOS packaging explicitly uses `build/icon.icns`, regenerated deterministically from the PNG
   (the current regeneration is byte-identical).
-- The current PNG is copied into packaged resources.
-- On macOS GUI startup, Main applies that PNG to the Dock before creating Home. A missing or invalid
-  optional development asset is reported without blocking the GUI; packaged auditing prevents a
-  release with a missing icon.
+- The runtime PNG refresh originally added here was removed after it proved to be normalized at a
+  different visual size than the bundle icon. The explicit bundle ICNS is now the sole Dock source;
+  its packaged audit prevents release with a missing icon.
 
 Delivery: [desktop-mac-dock-icon-004](../plan/tasks/desktop-mac-dock-icon-004.md)
+
+Follow-up: [desktop-mac-dock-icon-size-006](../plan/tasks/desktop-mac-dock-icon-size-006.md)
