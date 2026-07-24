@@ -54,3 +54,15 @@ packaging so both the patch version and `version_code` advance automatically.
   signing, notarization, upload, or CDN refresh was run.
 - Independent review passed with no P1, P2, or P3 finding; see
   [`release-fast-publish-version-code-002-1`](../reviews/release-fast-publish-version-code-002-1.md).
+
+## Regression recovery — 2026-07-24
+
+The release branch retained this completed task and review but later contained the old
+`fast_publish:mac_arm` command and matching old source test. Reopen the task and restore the
+documented `git_pull.js` → `patch.js` → signing-debug build → publish chain. The recovery is
+complete only after a new independent review and merge into `release/2604`, because the shortcut's
+initial `git_pull.js` discards uncommitted local repairs.
+
+Recovery commit `5e8f0a3` restored the contract and exact source test. Independent regression review
+passed with no P1, P2, or P3 finding, and the focused release-hook suite passed 13/13; see
+[`release-fast-publish-version-code-002-2`](../reviews/release-fast-publish-version-code-002-2.md).
