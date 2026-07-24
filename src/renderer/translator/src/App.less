@@ -109,12 +109,38 @@
 
 .translator__error {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
   padding: 7px 12px;
   border-top: 1px solid oklch(0.84 0.047 27);
   color: oklch(0.45 0.12 29);
   background: oklch(0.97 0.025 27);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.translator__error-message {
+  min-width: 0;
+}
+
+.translator__retry {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 4px;
+  color: var(--translator-royal);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.translator__retry:hover {
+  color: var(--translator-royal);
+  background: var(--translator-royal-soft);
+}
+
+.translator__retry:focus-visible {
+  outline: 2px solid var(--translator-royal);
+  outline-offset: 1px;
 }
 
 .translator__composer {

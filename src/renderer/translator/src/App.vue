@@ -26,7 +26,20 @@
     </main>
 
     <div v-if="errorMessage" name="translator__error" class="translator__error" role="alert">
-      {{ errorMessage }}
+      <span name="translator__error-message" class="translator__error-message">
+        {{ errorMessage }}
+      </span>
+      <a-button
+        v-if="translatorStore.canRetryTranslation"
+        name="translator__retry"
+        class="translator__retry"
+        type="text"
+        size="mini"
+        :disabled="translatorStore.translating"
+        @click="translatorStore.retryTranslation()"
+      >
+        {{ i18nHelper.translator.tryAgain }}
+      </a-button>
     </div>
 
     <section name="translator__composer" class="translator__composer">

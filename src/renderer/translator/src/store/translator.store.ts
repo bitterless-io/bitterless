@@ -21,6 +21,17 @@ import {
 
 export type TranslatorUiError = TranslatorErrorCode | 'load-provider' | 'login';
 
+const RETRYABLE_TRANSLATION_ERRORS = new Set<TranslatorUiError>([
+  'provider-error',
+  'runtime-unavailable',
+  'timeout',
+  'invalid-output',
+  'output-too-large'
+]);
+
+const isRetryableTranslationError = (error: TranslatorUiError | null): boolean =>
+  Boolean(error && RETRYABLE_TRANSLATION_ERRORS.has(error));
+
 class TranslatorState {
   readonly clientId = globalThis.crypto.randomUUID();
   readonly maxSourceLength = TRANSLATOR_MAX_SOURCE_LENGTH;
@@ -62,6 +73,15 @@ class TranslatorState {
 
   get targetLanguage(): TranslatorTargetLanguage {
     return resolveTranslatorTargetLanguage(this.sourceText);
+  }
+
+  get canRetryTranslation(): boolean {
+    return (
+      this.ready &&
+      Boolean(this.sourceText.trim()) &&
+      !this.translating &&
+      isRetryableTranslationError(this.error)
+    );
   }
 
   configureScheduler(scheduleTranslation: () => void): void {
@@ -170,6 +190,11 @@ class TranslatorState {
         this.translating = false;
       }
     }
+  }
+
+  async retryTranslation(): Promise<void> {
+    if (!this.canRetryTranslation) return;
+    await this.translateLatest({ force: true });
   }
 
   private applyProviderSnapshot(snapshot: ModelProviderSnapshot): void {

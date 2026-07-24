@@ -42,6 +42,8 @@ uses the existing monospace utility stack.
 │                                                                    │
 │  empty / loading / error guidance occupies this same region        │
 │                                                                    │
+├──────────────── conditional error strip ──────────────────────────┤
+│ Translation failed.  [Try again]                                   │
 ├──────────────────────── translation rail ──────────────────────────┤
 │ Auto direction                               Ready / Translating   │
 ├──────────────────────── input dock ─────────────────────────────────┤
@@ -53,6 +55,14 @@ uses the existing monospace utility stack.
 The result region is the only place that renders model output. It renders the validated
 `translation` string and never raw JSON, reasoning, Markdown fences, explanations, or provider
 messages.
+
+The conditional error strip keeps recovery beside the failure message. For retryable translation
+failures it renders the localized sentence followed immediately by a compact `Try again` text
+button. Activating it resubmits the current unchanged source with duplicate suppression bypassed;
+the action is guarded against a second activation, then the error strip clears as the normal
+Translating state takes over. Login-required and non-retryable errors keep their existing guidance
+without this action. Empty or whitespace-only source never exposes retry; clearing the source
+clears the error and previous translation, cancels active work, and returns to the empty state.
 
 ## Language Direction
 
@@ -115,8 +125,18 @@ instruction.
 | empty + ready | localized invitation to type or paste | focused and enabled |
 | translating | previous result remains visible but subdued | enabled |
 | complete | validated translation only | enabled |
-| invalid output / provider error | localized actionable error, never raw provider detail | enabled for retry-by-edit |
+| retryable translation failure | localized error plus inline `Try again`, never raw provider detail | enabled; action force-retries current source |
+| non-retryable / auth failure | localized actionable guidance, never raw provider detail | no retry action; login or edit remains explicit |
 | constrained pane | result scrolls; metadata wraps | input dock stays at bottom |
+
+## Error Recovery Interaction
+
+| Input | Scope | Behavior |
+|---|---|---|
+| click / `Enter` / `Space` | inline `Try again` button | force-submit the current non-empty source once |
+| repeated activation while translating | inline `Try again` button | ignored by the existing translating guard |
+| source edit | composer | clears the old error and resumes the normal throttled translation path |
+| source cleared / whitespace only | composer | hide retry, clear error/result, cancel active work, issue no request |
 
 ## Integration Flow
 
