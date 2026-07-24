@@ -179,6 +179,26 @@ Step into the opposite state. These tools need no new HTTP endpoint or database 
 SubTodo mutations already enqueue synchronization, refresh Todo renderers, and request the next
 sync cycle.
 
+## Important and Focus intent
+
+`important` is the Todo star flag. An active Todo with `important: true` appears in the virtual
+Focus view; Focus is not a Domain. The existing `todo.create` and `todo.update` tools own this
+state, so no separate star tool is needed.
+
+Agents interpret user intent rather than waiting for one exact keyword:
+
+| User intent | MCP write |
+|---|---|
+| “星标 / 重点 / important / 放进 Focus / 优先处理” or equivalent clear priority intent | create with `important: true`, or update the known Todo with `important: true` |
+| “取消星标 / 不再重点 / 移出 Focus” or equivalent | update the known Todo with `important: false` |
+| immediate human action blocks the current agent session | set `important: true` under the Focus policy |
+| ordinary reminder, backlog item, or due date without priority intent | leave false/unset |
+
+For `todo.update`, omitting `important` preserves the current star state. An agent must not clear or
+set it merely because another field is edited. Explicit user intent overrides the normal heuristic;
+when priority intent is genuinely ambiguous, preserve the existing state or ask instead of guessing.
+Tool descriptions, the portable skill, and its tool reference must expose the same policy.
+
 ## Agent onboarding contract
 
 The in-app integration guide must present MCP registration and skill installation as two required,

@@ -69,8 +69,8 @@ interface UnixStartLockSnapshot {
 
 const todoDataClient = todoSqliteClient;
 
-const MCP_FOCUS_DESCRIPTION = 'Focus 是当前立刻要做的任务视图。只有未完成且被打星标/important 的 todo 才会进入 Focus。';
-const MCP_STAR_RULE = '打星标 means todo.important=true. Use it only when current agent work is blocked on a human next action in the live conversation/current session. Do not star deferred follow-ups that can wait several days or do not block the current session.';
+const MCP_FOCUS_DESCRIPTION = 'Focus 是未完成且被打星标/important 的 todo 视图，不是 Domain。明确的“星标/重点/important/优先/放进 Focus”意图使用 important=true；取消星标或移出 Focus 使用 important=false。';
+const MCP_STAR_RULE = 'Interpret explicit priority intent instead of requiring one exact keyword. Set important=true for a clear star/important/priority/Focus-placement request or when an immediate human action blocks the current agent session. Set important=false for clear unstar/remove-from-Focus intent. A due date, reminder, ordinary backlog item, or unrelated edit alone does not imply a star. On todo.update, omit important to preserve the current state.';
 const MCP_MAX_ACTIVE_DOMAINS = 17;
 const MCP_START_LOCK_WAIT_MS = 3000;
 const MCP_MALFORMED_LOCK_RECOVERY_AGE_MS = 500;
@@ -975,7 +975,9 @@ export class McpBridgeServer {
       starPolicy: {
         field: 'important';
         starWhen: string;
+        unstarWhen: string;
         doNotStarWhen: string;
+        preserveWhenOmitted: string;
       };
     };
   }> {
@@ -992,8 +994,10 @@ export class McpBridgeServer {
         rule: MCP_STAR_RULE,
         starPolicy: {
           field: 'important',
-          starWhen: 'The agent cannot continue current work until Ral acts now: approve, provide missing input, create an account/domain, confirm a decision, or perform a manual step.',
-          doNotStarWhen: 'The todo is a backlog item, a reminder, can wait several days, or does not block the current live work session.',
+          starWhen: 'Set important=true when the user clearly asks to star/星标, mark important/重点 or priority/优先, add/place in Focus, or when the agent cannot continue current work until Ral performs an immediate human action.',
+          unstarWhen: 'Set important=false when the user clearly asks to unstar/取消星标, mark no longer important/不再重点, or remove the Todo from Focus.',
+          doNotStarWhen: 'A due date, reminder, ordinary backlog item, deferrable follow-up, or unrelated edit alone does not imply important=true.',
+          preserveWhenOmitted: 'On todo.update, omit important when star intent is absent so the current star/Focus state is preserved.',
         },
       },
     };

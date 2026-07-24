@@ -1,7 +1,7 @@
 interface:
   display_name: "Bitterless Todo"
-  short_description: "Manage personal synced todos and steps through Bitterless MCP"
-  default_prompt: "Use $bitterless-todo to manage my personal multi-device todos and their steps through the production Bitterless MCP server."
+  short_description: "Create, update, star, and organize personal synced todos"
+  default_prompt: "Use $bitterless-todo to create or update my personal synced todos, including explicit star, unstar, and Focus intent, through the production Bitterless MCP server."
 dependencies:
   tools:
     - type: "mcp"

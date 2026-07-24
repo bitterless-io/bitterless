@@ -1,13 +1,15 @@
 ---
 name: bitterless-todo
 metadata:
-  version_code: "260723121906"
+  version_code: "260724175151"
 description: >-
   Manage the user's personal, multi-device-synchronized Bitterless todos and explicitly authorized
   domains through the local production `bitterless` MCP server. Use when an agent needs to list,
   create, inspect, update, complete, reopen, move, delete, or monitor personal todos and their
-  independently checkable steps; preserve a concrete user-owned follow-up across devices; or record
-  an immediate human action blocking the current session. DEBUG MCP aliases are test-only.
+  independently checkable steps; create or update them with explicit star/unstar,
+  important/priority (重点/优先), or Focus placement/removal intent; preserve a concrete user-owned
+  follow-up across devices; or record an immediate human action blocking the current session. DEBUG
+  MCP aliases are test-only.
 ---
 
 # Bitterless Todo
@@ -73,9 +75,21 @@ priority. Never record the agent's own execution plan as personal Steps.
 8. Delete a Todo or Step only when the user requests deletion or when cleaning up agent-owned
    smoke-test data.
 
-Set `important: true` only when the user must act now before the agent can continue the current
-session. Leave it false or unset for reminders, backlog, and non-blocking follow-ups. Focus is a
-virtual view of active important todos, not a domain.
+## Apply important and Focus intent
+
+Use the existing optional `important` boolean on `todo.create` and `todo.update`; do not look for or
+invent a separate star tool. `important: true` stars an active Todo into the virtual Focus view, and
+`important: false` unstars it and removes it from Focus. Focus is not a Domain.
+
+- When the user clearly says 星标, 重点, important, priority/优先, add to Focus, or an equivalent,
+  create or update with `important: true`.
+- When the user clearly says 取消星标, 不再重点, unstar, remove from Focus, or an equivalent, update
+  the existing Todo with `important: false`.
+- When no star intent is expressed, an ordinary reminder, due date, backlog item, or unrelated edit
+  does not imply priority. For `todo.create`, use `important: false` or omit it. For `todo.update`,
+  omit `important` so the existing star state is preserved.
+- An agent may still set `important: true` when an immediate human action blocks the current agent
+  session. If priority intent is otherwise ambiguous, preserve the current state or ask.
 
 For exact arguments and response shapes, read [references/tools.md](references/tools.md).
 

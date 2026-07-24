@@ -161,21 +161,24 @@ const deleteSubTodo = async ({ id }) => {
 
 const createTodoCall = async (params) => {
   state.calls.createTodo.push(params);
-  return createTodo({
+  const todo = createTodo({
     id: OTHER_TODO_ID,
     domain_id: params.domainId,
     title: params.title,
     due_at: null,
     remind_at: null
   });
+  state.todos.set(todo.id, todo);
+  return clone(todo);
 };
 
 const updateTodo = async (params) => {
   state.calls.updateTodo.push(params);
   const todo = state.todos.get(params.id);
   if (!todo) return undefined;
-  if (Object.hasOwn(params, 'due_at')) todo.due_at = params.due_at;
-  if (Object.hasOwn(params, 'remind_at')) todo.remind_at = params.remind_at;
+  for (const field of ['title', 'due_at', 'remind_at', 'important', 'note']) {
+    if (Object.hasOwn(params, field)) todo[field] = params[field];
+  }
   return clone(todo);
 };
 
@@ -363,6 +366,56 @@ try {
   assert.match(toolsByName.get('step.complete').description, /Idempotently/);
   assert.match(toolsByName.get('step.uncomplete').description, /Idempotently/);
 
+  const domainListMetadata = toolsByName.get('domain.list');
+  assert.match(domainListMetadata.description, /Focus\/star policy/);
+  assert.match(domainListMetadata.description, /explicit priority intent/);
+  assert.match(domainListMetadata.description, /unstar intent/);
+  assert.match(domainListMetadata.description, /live-session blockers/);
+  assert.match(domainListMetadata.description, /preserve-on-omission/);
+
+  const createMetadata = toolsByName.get('todo.create');
+  const createImportantMetadata = createMetadata.inputSchema.properties.important;
+  assert.match(createMetadata.description, /star\/星标/);
+  assert.match(createMetadata.description, /important\/重点/);
+  assert.match(createMetadata.description, /priority\/优先/);
+  assert.match(createMetadata.description, /Focus/);
+  assert.match(createMetadata.description, /important=true/);
+  assert.match(createMetadata.description, /blocking the current agent session/);
+  assert.match(createMetadata.description, /due date, reminder, or ordinary backlog item alone/);
+  assert.match(createImportantMetadata.description, /explicit star\/important\/priority\/Focus-placement intent/);
+
+  const updateMetadata = toolsByName.get('todo.update');
+  const updateImportantMetadata = updateMetadata.inputSchema.properties.important;
+  assert.match(updateMetadata.description, /important=true/);
+  assert.match(updateMetadata.description, /unstar\/取消星标/);
+  assert.match(updateMetadata.description, /remove from Focus/);
+  assert.match(updateMetadata.description, /important=false/);
+  assert.match(updateMetadata.description, /blocking the current agent session/);
+  assert.match(updateMetadata.description, /unrelated edit alone must not change the star/);
+  assert.match(updateMetadata.description, /omit important to preserve its current state/);
+  assert.match(updateImportantMetadata.description, /true stars\/adds to Focus/);
+  assert.match(updateImportantMetadata.description, /false unstars\/removes from Focus/);
+  assert.match(updateImportantMetadata.description, /omit this field to preserve the current state/);
+
+  const domainList = assertEnvelope(
+    await client.callTool('domain.list', {}),
+    'domain.list',
+    'completed'
+  );
+  assert.match(domainList.focus.description, /important=true/);
+  assert.match(domainList.focus.description, /important=false/);
+  assert.match(domainList.focus.rule, /explicit priority intent/);
+  assert.match(domainList.focus.rule, /immediate human action blocks the current agent session/);
+  assert.match(domainList.focus.rule, /due date, reminder, ordinary backlog item, or unrelated edit alone/);
+  assert.match(domainList.focus.rule, /omit important to preserve the current state/);
+  assert.match(domainList.focus.starPolicy.starWhen, /important=true/);
+  assert.match(domainList.focus.starPolicy.starWhen, /star\/星标/);
+  assert.match(domainList.focus.starPolicy.unstarWhen, /important=false/);
+  assert.match(domainList.focus.starPolicy.unstarWhen, /unstar\/取消星标/);
+  assert.match(domainList.focus.starPolicy.doNotStarWhen, /due date, reminder, ordinary backlog item/);
+  assert.match(domainList.focus.starPolicy.preserveWhenOmitted, /omit important/);
+  assert.match(domainList.focus.starPolicy.preserveWhenOmitted, /preserved/);
+
   const createDateSchema = toolsByName.get('todo.create').inputSchema.properties.dueAt;
   assert.deepEqual(createDateSchema.type, ['integer', 'null']);
   assert.equal(createDateSchema.minimum, 0);
@@ -402,6 +455,46 @@ try {
   assert.equal(compatibleNullCreate.todo.due_at, null);
   assert.equal(compatibleNullCreate.todo.remind_at, null);
   assert.equal(state.calls.updateTodo.length, beforeCompatibleNullUpdateCalls);
+
+  const starredCreate = assertEnvelope(
+    await client.callTool('todo.create', {
+      domainId: DOMAIN_ID,
+      title: 'Star this explicit priority',
+      important: true
+    }),
+    'todo.create'
+  );
+  assert.equal(starredCreate.todo.important, 1);
+  assert.deepEqual(state.calls.updateTodo.at(-1), {
+    id: OTHER_TODO_ID,
+    important: 1,
+    actor: 'ai'
+  });
+
+  const preservedStar = assertEnvelope(
+    await client.callTool('todo.update', {
+      id: OTHER_TODO_ID,
+      title: 'Edit without changing priority'
+    }),
+    'todo.update'
+  );
+  assert.equal(preservedStar.todo.important, 1);
+  assert.equal(Object.hasOwn(state.calls.updateTodo.at(-1), 'important'), false);
+
+  const unstarredUpdate = assertEnvelope(
+    await client.callTool('todo.update', {
+      id: OTHER_TODO_ID,
+      important: false
+    }),
+    'todo.update'
+  );
+  assert.equal(unstarredUpdate.todo.important, 0);
+  assert.deepEqual(state.calls.updateTodo.at(-1), {
+    id: OTHER_TODO_ID,
+    important: 0,
+    actor: 'ai'
+  });
+
   for (const badValue of ['', -1, Number.MAX_SAFE_INTEGER + 1]) {
     const before = state.calls.updateTodo.length;
     await assert.rejects(
