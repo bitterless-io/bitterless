@@ -12,6 +12,7 @@ import {
   type TranslatorErrorCode,
   type TranslatorTargetLanguage
 } from '@shared/translator/translator.contract';
+import { resolveTranslatorTargetLanguage } from '@shared/translator/translatorLanguage.service';
 import {
   modelProviderEmitter,
   subscribeModelProviderSnapshots,
@@ -19,24 +20,6 @@ import {
 } from '../emitter/translator.emitter';
 
 export type TranslatorUiError = TranslatorErrorCode | 'load-provider' | 'login';
-
-const countScriptCharacters = (
-  value: string
-): {
-  han: number;
-  latin: number;
-} => {
-  let han = 0;
-  let latin = 0;
-  for (const character of value) {
-    if (/\p{Script=Han}/u.test(character)) {
-      han += 1;
-    } else if (/\p{Script=Latin}/u.test(character)) {
-      latin += 1;
-    }
-  }
-  return { han, latin };
-};
 
 class TranslatorState {
   readonly clientId = globalThis.crypto.randomUUID();
@@ -78,8 +61,7 @@ class TranslatorState {
   }
 
   get targetLanguage(): TranslatorTargetLanguage {
-    const counts = countScriptCharacters(this.sourceText);
-    return counts.latin > counts.han ? 'zh-CN' : 'en';
+    return resolveTranslatorTargetLanguage(this.sourceText);
   }
 
   configureScheduler(scheduleTranslation: () => void): void {
