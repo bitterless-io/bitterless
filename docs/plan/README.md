@@ -25,6 +25,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-ai-source-corner-006](tasks/todo-ai-source-corner-006.md) | overlay the AI source marker into the Todo item's top-left corner | done | todo-domain-board-layout-005 |
 | [todo-mcp-domain-catalog-skill-version-007](tasks/todo-mcp-domain-catalog-skill-version-007.md) | active/archived MCP Domain catalog, description updates, and versioned skill attention | done | todo-agent-skill-onboarding-002, todo-mcp-domain-create |
 | [todo-mcp-step-crud-009](tasks/todo-mcp-step-crud-009.md) | safe optional-date create recovery and synchronized Step CRUD | done | todo-mcp-domain-catalog-skill-version-007, todoist-sync-desktop-001 |
+| [todo-mcp-important-intent-013](tasks/todo-mcp-important-intent-013.md) | star/important intent for Todo create, edit, and Focus placement | done | todo-mcp-step-crud-009 |
 | [todo-note-editor-height-010](tasks/todo-note-editor-height-010.md) | 480px default Todo Note editing canvas | done | todoist-sync-desktop-001 |
 | [todo-renderer-refresh-stability-011](tasks/todo-renderer-refresh-stability-011.md) | atomic board refresh and origin-aware cross-renderer invalidation | implemented; owner verification pending | todo-sync-refresh-identity-004 |
 | [todo-sqlite-process-ownership-012](tasks/todo-sqlite-process-ownership-012.md) | move synchronized Todo SQLCipher ownership out of Main into Core SQLite preload | implemented; owner verification pending | todoist-sync-desktop-001, todo-renderer-refresh-stability-011 |

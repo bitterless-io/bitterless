@@ -74,12 +74,22 @@ try {
   );
   assert.match(skillMetadata.description, /personal/i);
   assert.match(skillMetadata.description, /multi-device/i);
+  assert.match(skillMetadata.description, /create or update them with explicit star\/unstar/i);
+  assert.match(skillMetadata.description, /important\/priority \(重点\/优先\)/i);
+  assert.match(skillMetadata.description, /Focus placement\/removal/i);
   assert.match(skillMarkdown, /Do not create a todo for internal agent steps/);
   assert.match(skillMarkdown, /omit `dueAt` and `remindAt` entirely when unspecified/i);
   assert.match(skillMarkdown, /retry at most once/i);
   assert.match(skillMarkdown, /One\s+immediate empty list is insufficient/i);
   assert.match(skillMarkdown, /Call `step\.list` before editing or deleting an unknown Step/);
   assert.match(skillMarkdown, /`step\.complete` and `step\.uncomplete` as\s+idempotent/);
+  assert.match(skillMarkdown, /optional `important` boolean on `todo\.create` and `todo\.update`/i);
+  assert.match(skillMarkdown, /create or update with `important: true`/i);
+  assert.match(skillMarkdown, /update[\s\S]*?with `important: false`/i);
+  assert.match(skillMarkdown, /For `todo\.create`, use `important: false` or omit it/i);
+  assert.match(skillMarkdown, /For `todo\.update`,\s+omit `important`/i);
+  assert.match(skillMarkdown, /immediate human action blocks the current agent\s+session/i);
+  assert.match(skillMarkdown, /do not look for or\s+invent a separate star tool/i);
 
   const toolReference = readFileSync(join(skillRoot, 'references', 'tools.md'), 'utf8');
   assert.match(toolReference, /never send `""` or `null` on create/i);
@@ -89,12 +99,22 @@ try {
   assert.match(toolReference, /### `step\.update`[\s\S]*changes only the Step title/);
   assert.match(toolReference, /### `step\.complete` and `step\.uncomplete`[\s\S]*idempotent/);
   assert.match(toolReference, /### `step\.delete`[\s\S]*`\{ deleted: true, id, todoId \}`/);
+  assert.match(toolReference, /Set `important: true`[\s\S]*place it in Focus/i);
+  assert.match(toolReference, /Otherwise use `important: false` or omit it/i);
+  assert.match(toolReference, /Send\s+`important: false` for explicit unstar/i);
+  assert.match(toolReference, /Omit `important`[\s\S]*existing star\s+state is preserved/i);
+  assert.match(toolReference, /due date, reminder, ordinary backlog item, or unrelated edit alone\s+never changes importance/i);
+  assert.match(toolReference, /do not\s+invent or call a separate star tool/i);
+  assert.doesNotMatch(toolReference, /### `(?:todo\.)?star`/i);
 
   const openaiConfig = parseYaml(
     readFileSync(join(skillRoot, 'agents', 'openai.yaml'), 'utf8'),
   );
   assert.deepEqual(openaiConfig.dependencies?.tools?.map((tool) => tool.value), ['bitterless']);
   assert.equal(openaiConfig.dependencies.tools[0].transport, 'stdio');
+  assert.match(openaiConfig.interface?.short_description, /create, update, star/i);
+  assert.match(openaiConfig.interface?.default_prompt, /create or update/i);
+  assert.match(openaiConfig.interface?.default_prompt, /star, unstar, and Focus intent/i);
 
   const setup = readFileSync(join(skillRoot, 'references', 'mcp-setup.md'), 'utf8');
   assert.match(setup, /Codex/);

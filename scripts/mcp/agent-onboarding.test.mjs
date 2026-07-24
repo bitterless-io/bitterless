@@ -220,6 +220,13 @@ try {
     openAiConfig.dependencies.tools.map((dependency) => dependency.value),
     ['bitterless']
   );
+  assert.match(openAiConfig.interface.short_description, /create, update, star/i);
+  assert.match(openAiConfig.interface.default_prompt, /create or update/i);
+  assert.match(openAiConfig.interface.default_prompt, /star, unstar, and Focus intent/i);
+
+  const portableSkill = readFileSync(join(canonicalSkillPath, 'SKILL.md'), 'utf8');
+  assert.match(portableSkill, /optional `important` boolean on `todo\.create` and `todo\.update`/i);
+  assert.match(portableSkill, /do not look for or\s+invent a separate star tool/i);
 
   const readableFixture = join(temporaryDirectory, 'readable-skill');
   mkdirSync(readableFixture, { recursive: true });

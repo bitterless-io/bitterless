@@ -88,6 +88,11 @@ Required: `domainId`, `title`. Optional: `dueAt`, `remindAt`, `important`, `note
 when unspecified; never send `""` or `null` on create. When supplied, each date must be a
 nonnegative integer Unix-millisecond timestamp.
 
+Set `important: true` when the user explicitly asks to star or prioritize the new Todo, mark it as
+important/重点/优先, or place it in Focus. An agent may also set it when an immediate human action
+blocks the current session. Otherwise use `important: false` or omit it; a reminder, due date, or
+ordinary backlog item alone does not imply a star.
+
 Creation is non-idempotent because intentional identical Todos are valid. After a clear validation
 rejection, call `todo.list` for the target Domain and compare normalized title plus relevant note,
 timing, and context. If an obvious active duplicate exists, use it and do not retry; otherwise
@@ -101,6 +106,11 @@ Arguments: `{ id, title?, dueAt?, remindAt?, important?, note? }`. Returns `{ to
 fields that should change. Omit unchanged dates; use a nonnegative integer to set one or `null` to
 clear one. Never send an empty string for a date. Use `""` to clear the note; never send
 `note: null`.
+
+Send `important: true` for explicit star/important/重点/优先/add-to-Focus intent. Send
+`important: false` for explicit unstar/cancel-priority/remove-from-Focus intent. Omit `important`
+when changing only the title, note, timing, Domain, or another unrelated field so the existing star
+state is preserved.
 
 ### `todo.complete` and `todo.uncomplete`
 
@@ -175,6 +185,14 @@ during an active wait.
 
 ## Important/Focus policy
 
-`important: true` stars an active todo into Focus. Use it only for a human action blocking the
-current live agent session, such as an approval, missing input, account/domain creation, decision,
-or manual step. Do not star deferred reminders or backlog items.
+The optional `important` field on `todo.create` and `todo.update` is the complete star API; do not
+invent or call a separate star tool. `important: true` stars an active Todo into Focus, while
+`important: false` unstars it and removes it from Focus. Focus is a virtual view, not a Domain.
+
+Honor clear user meaning rather than requiring one exact field name: 星标, 重点, important,
+priority/优先, or Focus placement means `true`; 取消星标, 不再重点, unstar, or removal from Focus
+means `false`. Without that intent, create with `false` or omit the field, and omit it on update to
+preserve the existing state. A due date, reminder, ordinary backlog item, or unrelated edit alone
+never changes importance. An agent may autonomously use `true` for an immediate human action that
+blocks the current live session, such as an approval, missing input, account/domain creation,
+decision, or manual step.

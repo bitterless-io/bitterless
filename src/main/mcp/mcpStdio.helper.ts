@@ -36,7 +36,7 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
 const tools: McpTool[] = [
   {
     name: 'domain.list',
-    description: 'List active, non-deleted human-managed Bitterless todo domains with descriptions and the virtual Focus/star policy. This is the default catalog; agents must choose an existing active domain before creating todos.',
+    description: 'List active, non-deleted human-managed Bitterless todo domains with descriptions and the virtual Focus/star policy, including explicit priority intent, unstar intent, live-session blockers, and preserve-on-omission guidance. This is the default catalog; agents must choose an existing active domain before creating todos.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -149,7 +149,7 @@ const tools: McpTool[] = [
   },
   {
     name: 'todo.create',
-    description: 'Create a Bitterless todo. Prefer omitting dueAt and remindAt when unspecified; null is accepted for compatibility and treated as omitted, but an empty string is never valid. Set important=true only when the current agent session is blocked on an immediate human action; leave false/unset for deferred follow-ups.',
+    description: 'Create a Bitterless todo. Prefer omitting dueAt and remindAt when unspecified; null is accepted for compatibility and treated as omitted, but an empty string is never valid. Clear user intent such as star/星标, important/重点, priority/优先, or add/place in Focus means important=true. An immediate human action blocking the current agent session also means important=true. A due date, reminder, or ordinary backlog item alone must not imply a star; otherwise leave important false or unset.',
     inputSchema: {
       type: 'object',
       required: ['domainId', 'title'],
@@ -170,7 +170,7 @@ const tools: McpTool[] = [
         },
         important: {
           type: 'boolean',
-          description: 'Star the todo into Focus. Use true only for live-session human blockers; do not star backlog or deferrable work.',
+          description: 'Todo star/Focus flag. Use true for explicit star/important/priority/Focus-placement intent or an immediate human action blocking the current session. A due date, reminder, or ordinary backlog item alone does not imply true; otherwise use false or omit.',
         },
         note: {
           type: 'string',
@@ -183,7 +183,7 @@ const tools: McpTool[] = [
   },
   {
     name: 'todo.update',
-    description: 'Update a Bitterless todo. Omit unchanged dueAt and remindAt fields, never send an empty string, and use null only to clear an existing timestamp. Set important=true only when the current agent session is blocked on an immediate human action; leave false/unset for deferred follow-ups.',
+    description: 'Update a Bitterless todo. Omit unchanged dueAt and remindAt fields, never send an empty string, and use null only to clear an existing timestamp. Clear star/星标, important/重点, priority/优先, or add/place in Focus intent means important=true; unstar/取消星标, no longer important/不再重点, or remove from Focus means important=false. An immediate human action blocking the current agent session still means important=true. A due date, reminder, ordinary backlog item, or unrelated edit alone must not change the star; omit important to preserve its current state.',
     inputSchema: {
       type: 'object',
       required: ['id'],
@@ -204,7 +204,7 @@ const tools: McpTool[] = [
         },
         important: {
           type: 'boolean',
-          description: 'Star the todo into Focus. Use true only for live-session human blockers; do not star backlog or deferrable work.',
+          description: 'Todo star/Focus flag. true stars/adds to Focus; false unstars/removes from Focus. Follow explicit user priority intent, keep immediate human blockers true, and omit this field to preserve the current state during unrelated edits.',
         },
         note: {
           type: 'string',
