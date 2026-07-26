@@ -1,5 +1,6 @@
 import { BaseDao } from './base.dao';
-import { sqliteHelper, sanitizeValue } from '../sqliteHelper/sqlite.helper';
+import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
+import { serializeSettingValue } from '@shared/setting/settingValue.service';
 
 interface SettingRow {
   key: string;
@@ -66,7 +67,7 @@ export class SettingDao extends BaseDao {
     value: any;
   }): Promise<boolean> {
     const subKey = params.sub_key ?? '';
-    const jsonValue = sanitizeValue(JSON.stringify(params.value));
+    const jsonValue = serializeSettingValue(params.value);
     const result = await sqliteHelper.safeRun(
       `INSERT INTO setting (key, sub_key, value, updated_at)
        VALUES (?, ?, ?, ?)
@@ -83,7 +84,7 @@ export class SettingDao extends BaseDao {
     value: any;
   }): Promise<boolean> {
     const subKey = params.sub_key ?? '';
-    const jsonValue = sanitizeValue(JSON.stringify(params.value));
+    const jsonValue = serializeSettingValue(params.value);
     const result = await sqliteHelper.safeRun(
       `UPDATE setting
        SET value = ?, updated_at = ?
@@ -97,7 +98,7 @@ export class SettingDao extends BaseDao {
   async upsert(params: { key: string; sub_key?: string; value: any }): Promise<string> {
     const subKey = params.sub_key ?? '';
     console.log('upserting value', params);
-    const jsonValue = sanitizeValue(JSON.stringify(params.value));
+    const jsonValue = serializeSettingValue(params.value);
     const now = Date.now();
     await sqliteHelper.safeRun(
       `INSERT INTO setting (key, sub_key, value, updated_at)

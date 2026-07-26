@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.43",
+  "_version": "0.0.44",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -33,6 +33,7 @@
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
     "test:translator-language": "node --test tests/translator/translatorLanguage.service.test.mjs tests/translator/translatorPrompt.test.mjs",
+    "test:omni-layout": "node --test tests/omni/omniLayoutLifecycle.test.mjs",
     "check:todo-window-runtime": "node scripts/todo/check-todo-window-runtime.mjs",
     "test:eyes-on-agents:core": "node scripts/eyes-on-agents/core.test.mjs",
     "test:eyes-on-agents:project-resolver": "node scripts/eyes-on-agents/project-resolver.test.mjs",
@@ -113,7 +114,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@sapphire/snowflake": "^3.5.5",
     "@seald-io/nedb": "^4.1.2",
-    "better-sqlite3-multiple-ciphers": "12.6.2",
+    "better-sqlite3-multiple-ciphers": "12.11.1",
     "compare-versions": "^6.1.1",
     "dingtalk-stream": "^2.1.4",
     "electron-updater": "^6.8.3",
@@ -169,7 +170,7 @@
     "dayjs": "^1.11.19",
     "diff-match-patch-es": "^1.0.1",
     "docx": "^9.6.1",
-    "electron": "40.10.6",
+    "electron": "43.2.0",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",
@@ -220,7 +221,8 @@
     "youtube-dl-exec": "^3.1.5"
   },
   "resolutions": {
-    "entities": "^6.0.0"
+    "entities": "^6.0.0",
+    "node-abi": "^4.33.0"
   },
   "private": true,
   "workspaces": [
@@ -229,6 +231,6 @@
     "rig_dev/*"
   ],
   "name": "Bitterless",
-  "version": "0.0.43",
-  "version_code": "260724114012"
+  "version": "0.0.44",
+  "version_code": "260725230514"
 }

@@ -22,7 +22,7 @@ onMounted(async () => {
       <IconAlertTriangle :size="15" aria-hidden="true" />
       <span>{{ i18nHelper.omni.layoutRecoveryError }}</span>
     </div>
-    <OmniPane :node="layoutStore.tree" />
+    <OmniPane :key="layoutStore.structureRevision" :node="layoutStore.tree" />
   </div>
 </template>
 

@@ -1,6 +1,6 @@
 import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main';
 import { omniWindowHelper } from '../windows/omniWindow.helper';
-import type { OmniCellLayout, OmniLayoutConfig } from '@shared/omni/omni.types';
+import type { OmniLayoutConfig, OmniPaneNode } from '@shared/omni/omni.types';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 
 const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
@@ -23,9 +23,12 @@ class OmniWindowHandler extends XpcMainHandler {
     console.log('[OmniWindowHandler] omni window created');
   }
 
-  async updateLayout(params: { cells: OmniCellLayout[]; tree: OmniLayoutConfig['tree'] }): Promise<void> {
-    console.log('[OmniWindowHandler] updateLayout called, cells:', params.cells.length);
-    omniWindowHelper.updateLayout(params.cells, params.tree);
+  async updateLayout(params: { tree: OmniPaneNode }): Promise<void> {
+    omniWindowHelper.updateLayout(params.tree);
+  }
+
+  async commitLayout(params: { tree: OmniPaneNode }): Promise<void> {
+    await omniWindowHelper.commitLayout(params.tree);
   }
 
   async navigateCell(params: { cellId: string; url: string }): Promise<void> {
@@ -80,15 +83,10 @@ class OmniWindowHandler extends XpcMainHandler {
     return false;
   }
 
-  async saveLayout(params: { config: OmniLayoutConfig }): Promise<void> {
-    console.log('[OmniWindowHandler] saveLayout called');
-    omniWindowHelper.setLayoutTree(params.config.tree);
-    await omniWindowHelper.saveLayoutToDao();
-  }
-
   async loadLayout(): Promise<OmniLayoutConfig | null> {
     console.log('[OmniWindowHandler] loadLayout called');
-    return await settingEmitter.get<OmniLayoutConfig>({ key: LAYOUT_KEY });
+    return omniWindowHelper.getLayoutConfig() ??
+      await settingEmitter.get<OmniLayoutConfig>({ key: LAYOUT_KEY });
   }
 }
 

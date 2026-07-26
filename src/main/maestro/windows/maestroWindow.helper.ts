@@ -644,10 +644,36 @@ const shouldOpenWorkbenchDevTools = (): boolean => {
 
 // A pre-warmed live view + its capture/replay, not yet bound to a tab. Reused to make a cold tab
 // warm instantly (see ensureWarm) — the heavy WebContentsView + CDP attach is paid ahead of time.
+// Wait for a tab's CDP attach before its first REMOTE navigation, so the UA / client-hint override
+// is in place on the very first document request. Bounded: a hung attach degrades to navigating
+// without the override (the old behaviour) instead of hanging the tab forever.
+const ATTACH_BEFORE_NAVIGATE_TIMEOUT_MS = 3000
+
+async function awaitAttach(ready: Promise<void> | undefined): Promise<void> {
+  if (!ready) return
+  let timer: NodeJS.Timeout | undefined
+  try {
+    await Promise.race([
+      ready,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ATTACH_BEFORE_NAVIGATE_TIMEOUT_MS)
+      })
+    ])
+  } catch {
+    // attach already reported its own error; navigating un-overridden is the fallback
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 interface ViewSlot {
   view: WebContentsView
   capture: DebuggerCapture
   replay: ReplayEngine
+  // Resolves once the background CDP attach has finished (or failed). Display never waits on it,
+  // but the FIRST remote navigation does — that request is the one a bot-detection edge scores, and
+  // until the attach lands there is no Sec-CH-UA / navigator.userAgentData override on it.
+  attachReady?: Promise<void>
 }
 
 interface OperationTab {
@@ -659,6 +685,8 @@ interface OperationTab {
   view: WebContentsView | null
   capture: DebuggerCapture | null
   replay: ReplayEngine | null
+  // Mirrors ViewSlot.attachReady for the slot currently bound to this tab.
+  attachReady?: Promise<void>
   url: string
   title: string
   favicon: string
@@ -1030,11 +1058,20 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
       tab.debuggerEnabled = enabled
       if (tab.capture && tab.view && !tab.view.webContents.isDestroyed()) {
         if (enabled) {
-          await tab.capture.resume().catch((err) => {
+          // Re-attaching also re-applies the UA / client-hint override, so republish attachReady:
+          // a navigation issued right after the toggle must wait for it, exactly like a fresh tab.
+          tab.attachReady = tab.capture.resume().catch((err) => {
             this.emit({ kind: 'error', msg: 'debugger attach: ' + (err as Error).message, ts: Date.now() })
           })
+          await tab.attachReady
         } else {
+          // Detaching ends the CDP session, and with it Network.setUserAgentOverride: the UA STRING
+          // survives (it is set on the WebContents and derived from the real Chromium), but
+          // Sec-CH-UA* stops being sent and navigator.userAgentData reverts to Electron's own
+          // brand list. Version-consistent, brand-incomplete — so a site that cross-checks
+          // client hints sees a different (weaker) identity than while attached.
           tab.capture.suspend()
+          tab.attachReady = undefined
         }
       }
     }
@@ -5862,7 +5899,8 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
       const slot = this.buildViewSlot()
       // Attach CDP in the BACKGROUND — display + navigation don't need the debugger, so a slow or
       // hung attach must NEVER block warming a tab. Recording/snapshot uses it once attached.
-      void slot.capture
+      // The promise is retained so the first REMOTE navigation can wait on it (see awaitAttach).
+      slot.attachReady = slot.capture
         .attach()
         .catch((err) => this.emit({ kind: 'error', msg: 'spare view attach: ' + (err as Error).message, ts: Date.now() }))
       this.spareSlot = slot
@@ -5883,13 +5921,14 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
       slot = this.buildViewSlot()
       // Background attach (non-blocking) — see prewarmSpare. The view must display immediately even
       // if CDP attach is slow or hangs on a never-loaded view.
-      void slot.capture
+      slot.attachReady = slot.capture
         .attach()
         .catch((err) => this.emit({ kind: 'error', msg: 'warm view attach: ' + (err as Error).message, ts: Date.now() }))
     }
     tab.view = slot.view
     tab.capture = slot.capture
     tab.replay = slot.replay
+    tab.attachReady = slot.attachReady
     if (!tab.debuggerEnabled) tab.capture.suspend()
     // Mark as just-touched so the LRU pass below never evicts the tab we just warmed (it has
     // lastActive=0 until activateTab bumps it, which happens AFTER this).
@@ -5906,6 +5945,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
     const wc = tab.view?.webContents
     if (!wc || wc.isDestroyed()) return
     if (wasCold && tab.url && wc.getURL() !== tab.url) {
+      await awaitAttach(tab.attachReady)
       await wc.loadURL(tab.url).catch((err) => {
         if (!wc.isDestroyed()) this.emit({ kind: 'error', msg: 'warm load: ' + (err as Error).message, ts: Date.now() })
       })
@@ -6146,7 +6186,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
     // from an earlier error) must never become a tab's view; build a fresh one instead.
     if (!slot || slot.view.webContents.isDestroyed()) {
       slot = this.buildViewSlot()
-      void slot.capture
+      slot.attachReady = slot.capture
         .attach()
         .catch((err) => this.emit({ kind: 'error', msg: 'tab attach: ' + (err as Error).message, ts: Date.now() }))
     }
@@ -6156,6 +6196,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
       view: slot.view,
       capture: slot.capture,
       replay: slot.replay,
+      attachReady: slot.attachReady,
       url: meta.url || '',
       title: meta.title || '',
       favicon: meta.favicon || '',
@@ -6190,6 +6231,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
     await this.activateTab({ id: tab.id })
     const wc = tab.view?.webContents
     if (wc && !wc.isDestroyed()) {
+      await awaitAttach(tab.attachReady)
       await wc.loadURL(url).catch((err) => {
         if (!wc.isDestroyed()) this.emit({ kind: 'error', msg: 'tab load: ' + (err as Error).message, ts: Date.now() })
       })
@@ -6308,9 +6350,11 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
       // header progress bar (in the BACKGROUND; the blank view shows immediately).
       if (needsLoad) {
         const cwc = tab.view.webContents
-        void cwc.loadURL(tab.url).catch((err) => {
-          if (!cwc.isDestroyed()) this.emit({ kind: 'error', msg: 'tab load: ' + (err as Error).message, ts: Date.now() })
-        })
+        void awaitAttach(tab.attachReady)
+          .then(() => (cwc.isDestroyed() ? undefined : cwc.loadURL(tab.url)))
+          .catch((err) => {
+            if (!cwc.isDestroyed()) this.emit({ kind: 'error', msg: 'tab load: ' + (err as Error).message, ts: Date.now() })
+          })
       }
     }
     // Reflect the visible browser tab in the address bar + header title.

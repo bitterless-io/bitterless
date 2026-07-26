@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useThrottleFn } from '@vueuse/core';
 import { Splitpanes, Pane } from 'splitpanes';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-vue';
@@ -23,6 +23,11 @@ import type {
 const props = defineProps<{
   node: OmniPaneNode;
 }>();
+
+interface SplitpanesResizeEvent {
+  event?: Event;
+  panes?: Array<{ min: number; max: number; size: number }>;
+}
 
 const isHorizontal = computed(() => props.node.direction === 'h');
 const miniApps = computed<Array<{
@@ -57,39 +62,53 @@ const miniAppFailureMessage = computed(() => {
 
 // Suppress spurious @resize events fired during splitpanes initial mount/render
 const isMounted = ref(false);
+let mountTimer: ReturnType<typeof setTimeout> | null = null;
 onMounted(() => {
-  setTimeout(() => { isMounted.value = true; }, 200);
+  mountTimer = setTimeout(() => {
+    isMounted.value = true;
+    mountTimer = null;
+  }, 200);
+});
+onBeforeUnmount(() => {
+  isMounted.value = false;
+  if (mountTimer) clearTimeout(mountTimer);
+  mountTimer = null;
 });
 
 const throttledApplyLayout = useThrottleFn(() => {
   layoutStore.applyLayout();
 }, 50, true, false);
 
-const onResize = (event: { panes: { min: number; max: number; size: number }[] }) => {
+const onResize = (event: SplitpanesResizeEvent) => {
   if (!isMounted.value) return;
-  if (layoutStore.splitting) return;
+  if (layoutStore.structureChanging) return;
+  if (!event?.event) return;
   if (!event?.panes || !Array.isArray(event.panes)) return;
-  const sizes = event.panes.map((p) => p.size);
-  layoutStore.updateSizes(props.node.id, sizes);
+  const sizes = event.panes.map((pane) => pane.size);
+  if (!layoutStore.updateSizes(props.node.id, sizes)) return;
   throttledApplyLayout();
 };
 
-const onResizeEnd = (event: { panes: { min: number; max: number; size: number }[] }) => {
-  if (layoutStore.splitting) return;
-  if (event?.panes && Array.isArray(event.panes)) {
-    const sizes = event.panes.map((p) => p.size);
-    layoutStore.updateSizes(props.node.id, sizes);
-  }
-  layoutStore.syncLayout();
+const onResizeEnd = async (event: SplitpanesResizeEvent) => {
+  if (!isMounted.value) return;
+  if (layoutStore.structureChanging) return;
+  if (!event?.event) return;
+  if (!event.panes || !Array.isArray(event.panes)) return;
+  const sizes = event.panes.map((pane) => pane.size);
+  if (!layoutStore.updateSizes(props.node.id, sizes)) return;
+  await layoutStore.syncLayout();
 };
 
 const handleSplit = async (nodeId: string, direction: 'h' | 'v', position: 'before' | 'after') => {
-  layoutStore.splitting = true;
-  layoutStore.splitPane(nodeId, direction, position);
-  layoutStore.syncLayout();
-  await nextTick();
-  await nextTick();
-  layoutStore.splitting = false;
+  layoutStore.structureChanging = true;
+  try {
+    layoutStore.splitPane(nodeId, direction, position);
+    await layoutStore.syncLayout();
+    await nextTick();
+    await nextTick();
+  } finally {
+    layoutStore.structureChanging = false;
+  }
 };
 
 const handleUrlUpdate = (nodeId: string, url: string) => {
@@ -110,9 +129,15 @@ const handleMiniAppSelect = async (nodeId: string, miniAppId: OmniMiniAppId) => 
 };
 
 const handleClose = async (nodeId: string) => {
-  await nextTick();
-  layoutStore.removePane(nodeId);
-  layoutStore.syncLayout();
+  layoutStore.structureChanging = true;
+  try {
+    layoutStore.removePane(nodeId);
+    await layoutStore.syncLayout();
+    await nextTick();
+    await nextTick();
+  } finally {
+    layoutStore.structureChanging = false;
+  }
 };
 </script>
 

@@ -82,6 +82,9 @@ design document.
 
 ## Issues
 
+- [Omni root-axis collapse size mismatch](issues/omni-root-axis-collapse-size-mismatch.md) -
+  implemented; owner verification pending: immutable tree edits, lifecycle-event rejection, and one
+  serialized Main commit keep `H[V,V]` renderer borders and native bounds on the same geometry.
 - [Todo SQLCipher owned by Main](issues/todo-sqlite-owned-by-main-process.md) - fixed; owner verification pending:
   the complete synchronized Todo runtime now lives in Core SQLite preload; Main only routes XPC,
   hosts MCP, exposes narrow OS capabilities, and recovers the hidden process lifecycle.

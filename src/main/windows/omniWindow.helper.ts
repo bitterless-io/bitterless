@@ -4,19 +4,26 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { is } from '@electron-toolkit/utils';
 import { throttle } from 'es-toolkit';
+import { chromeIdentity } from '@maestro-main/capture/chromeIdentity';
 import {
-  DEFAULT_OMNI_BROWSER_URL,
-  DEFAULT_OMNI_MINI_APP_ID,
   OMNI_LAYOUT_RECOVERY_STATE_EVENT,
+  OMNI_LAYOUT_SNAPSHOT_EVENT,
   OMNI_MINI_APP_DISPLAY_URLS,
   OMNI_MINI_APP_LOAD_STATE_EVENT,
   createDefaultOmniLayoutTree,
   parseOmniLayoutConfig,
   parseOmniPaneTree,
 } from '@shared/omni/omni.types';
+import {
+  OMNI_BROWSER_HEADER_HEIGHT,
+  OmniLayoutCommitQueue,
+  flattenOmniPaneTreePixels,
+  resolveOmniCellViewBounds,
+} from '@shared/omni/omniLayout.service';
 import type {
   OmniCellLayout,
   OmniContentMode,
+  OmniLayoutConfig,
   OmniLayoutRecoveryState,
   OmniMiniAppLoadState,
   OmniMiniAppId,
@@ -60,11 +67,18 @@ class Semaphore {
 }
 
 const MENUBAR_HEIGHT = 32;
-const CELL_MENUBAR_HEIGHT = 36;
-const DIVIDER_SIZE = 4;
 const OMNI_PARTITION = 'persist:omni';
-const CHROME_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36';
+// Derived from the Chromium actually bundled in this Electron, NOT hardcoded. The previous constant
+// claimed Chrome/146 on a Chromium-144 engine (and a macOS UA on every platform), so the UA string,
+// navigator.userAgentData and the Sec-CH-UA headers all disagreed with each other — worse than not
+// spoofing at all. See areas/agent-runtime/anti-bot/cloudflare.html #3 in the overmind workspace.
+//
+// Residual gap, deliberately not fixed here: full client-hint parity (Sec-CH-UA +
+// navigator.userAgentData) needs a CDP Network.setUserAgentOverride, and omni cells intentionally
+// run without an attached debugger so DevTools stays available. What remains is stock-Electron
+// behaviour (no Sec-CH-UA on top-level navigations, no "Google Chrome" brand) — incomplete, but no
+// longer self-contradictory.
+const CHROME_USER_AGENT = chromeIdentity().userAgent;
 
 interface OmniMiniAppRuntime {
   preloadFile: string;
@@ -86,50 +100,6 @@ const OMNI_MINI_APP_RUNTIME: Record<OmniMiniAppId, OmniMiniAppRuntime> = {
   eyesOnAgents: { preloadFile: 'eyesOnAgents.js', rendererName: 'eyesOnAgents' },
   translator: { preloadFile: 'translator.js', rendererName: 'translator' },
 };
-
-function flattenTreePixels(
-  node: OmniPaneNode,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): Array<{ id: string; url: string; x: number; y: number; width: number; height: number }> {
-  if (node.type === 'leaf') {
-    return [{ id: node.id, url: node.url || '', x, y, width, height }];
-  }
-
-  const results: Array<{ id: string; url: string; x: number; y: number; width: number; height: number }> = [];
-  const children = node.children || [];
-  const n = children.length;
-  if (n === 0) return results;
-
-  const rawSizes = node.sizes && node.sizes.length === n ? node.sizes : children.map(() => 100 / n);
-  // Normalize sizes to sum exactly to 100
-  const totalSize = rawSizes.reduce((s, v) => s + v, 0);
-  const sizes = rawSizes.map((v) => (v / totalSize) * 100);
-
-  const totalDividers = (n - 1) * DIVIDER_SIZE;
-
-  if (node.direction === 'h') {
-    const available = width - totalDividers;
-    let offsetX = x;
-    for (let i = 0; i < n; i++) {
-      const paneW = i === n - 1 ? x + width - offsetX : Math.round(available * sizes[i] / 100);
-      results.push(...flattenTreePixels(children[i], offsetX, y, paneW, height));
-      offsetX += paneW + DIVIDER_SIZE;
-    }
-  } else {
-    const available = height - totalDividers;
-    let offsetY = y;
-    for (let i = 0; i < n; i++) {
-      const paneH = i === n - 1 ? y + height - offsetY : Math.round(available * sizes[i] / 100);
-      results.push(...flattenTreePixels(children[i], x, offsetY, width, paneH));
-      offsetY += paneH + DIVIDER_SIZE;
-    }
-  }
-
-  return results;
-}
 
 const getCellDisplayUrl = (cell: Pick<
   OmniCellLayout,
@@ -182,6 +152,7 @@ export class OmniWindowHelper {
   private currentLayoutTree: OmniPaneNode | null = null;
   private _throttledApplyLayoutFn: (() => void) | null = null;
   private _throttledSaveLayoutToDaoFn: (() => void) | null = null;
+  private readonly layoutCommitQueue = new OmniLayoutCommitQueue();
   private creationPromise: Promise<BaseWindow> | null = null;
   private _creationGeneration = 0;
   private _loadSemaphore = new Semaphore(3);
@@ -459,11 +430,20 @@ export class OmniWindowHelper {
     }
   }
 
-  setLayoutTree(tree: OmniPaneNode): void {
-    this.currentLayoutTree = parseOmniPaneTree(tree);
+  getLayoutConfig(): OmniLayoutConfig | null {
+    if (!this.currentLayoutTree) return null;
+    return { tree: parseOmniPaneTree(this.currentLayoutTree) };
   }
 
-  updateLayout(_cells: OmniCellLayout[], tree: OmniPaneNode): void {
+  async commitLayout(tree: OmniPaneNode): Promise<void> {
+    const committedTree = parseOmniPaneTree(tree);
+    await this.layoutCommitQueue.enqueue(async () => {
+      this.updateLayout(committedTree);
+      await this.persistLayoutToDao();
+    });
+  }
+
+  updateLayout(tree: OmniPaneNode): void {
     const normalizedTree = parseOmniPaneTree(tree);
     const normalizedCells: OmniCellLayout[] = extractTreeLeaves(normalizedTree).map((leaf) => ({
       ...leaf,
@@ -647,6 +627,8 @@ export class OmniWindowHelper {
   private replayControlState(): void {
     this.replayMiniAppLoadFailures();
     this.broadcastLayoutRecoveryState();
+    const config = this.getLayoutConfig();
+    if (config) xpcMain.broadcast(OMNI_LAYOUT_SNAPSHOT_EVENT, config);
   }
 
   private setLayoutRecoveryState(recoveredFromInvalidLayout: boolean): void {
@@ -972,7 +954,7 @@ export class OmniWindowHelper {
       }
       const config = parseOmniLayoutConfig(persistedValue);
       const leaves = extractTreeLeaves(config.tree);
-      this.updateLayout([], config.tree);
+      this.updateLayout(config.tree);
       this.setLayoutRecoveryState(false);
       console.log('[OmniWindowHelper] Restored saved layout with', leaves.length, 'cells');
     } catch (err) {
@@ -985,16 +967,7 @@ export class OmniWindowHelper {
 
   private restoreDefaultBrowserLayout(): void {
     const tree = createDefaultOmniLayoutTree();
-    this.updateLayout([{
-      id: tree.id,
-      url: tree.url ?? DEFAULT_OMNI_BROWSER_URL,
-      x: 0,
-      y: 0,
-      width: 100,
-      height: 100,
-      contentMode: 'browser',
-      miniAppId: DEFAULT_OMNI_MINI_APP_ID,
-    }], tree);
+    this.updateLayout(tree);
   }
 
   private isCreationActive(
@@ -1018,37 +991,31 @@ export class OmniWindowHelper {
   }
 
   async saveLayoutToDao(): Promise<void> {
-    if (!this.currentLayoutTree) return;
     try {
-      const config = parseOmniLayoutConfig({ tree: this.currentLayoutTree });
-      this.currentLayoutTree = config.tree;
-      await settingEmitter.upsert({ key: LAYOUT_KEY, value: config });
-      console.log('[OmniWindowHelper] Layout saved to SettingDao');
+      await this.persistLayoutToDao();
     } catch (err) {
       console.error('[OmniWindowHelper] Failed to save layout:', err);
     }
+  }
+
+  private async persistLayoutToDao(): Promise<void> {
+    if (!this.currentLayoutTree) return;
+    const config = parseOmniLayoutConfig({ tree: this.currentLayoutTree });
+    this.currentLayoutTree = config.tree;
+    await settingEmitter.upsert({ key: LAYOUT_KEY, value: config });
+    console.log('[OmniWindowHelper] Layout saved to SettingDao');
   }
 
   private setCellBounds(
     cell: CellViewPair,
     bounds: { x: number; y: number; width: number; height: number },
   ): void {
-    const width = Math.max(bounds.width, 0);
-    const chromeHeight = cell.menubar ? CELL_MENUBAR_HEIGHT : 0;
-    if (cell.menubar) {
-      cell.menubar.setBounds({
-        x: bounds.x,
-        y: bounds.y,
-        width,
-        height: chromeHeight,
-      });
-    }
-    cell.content.setBounds({
-      x: bounds.x,
-      y: bounds.y + chromeHeight,
-      width,
-      height: Math.max(bounds.height - chromeHeight, 0),
-    });
+    const viewBounds = resolveOmniCellViewBounds(
+      bounds,
+      cell.menubar ? OMNI_BROWSER_HEADER_HEIGHT : 0,
+    );
+    if (cell.menubar && viewBounds.header) cell.menubar.setBounds(viewBounds.header);
+    cell.content.setBounds(viewBounds.content);
   }
 
   private applyLayoutInternal(): void {
@@ -1059,7 +1026,12 @@ export class OmniWindowHelper {
     const areaHeight = contentHeight - MENUBAR_HEIGHT;
 
     if (this.currentLayoutTree) {
-      const pixelCells = flattenTreePixels(this.currentLayoutTree, 0, areaTop, areaWidth, areaHeight);
+      const pixelCells = flattenOmniPaneTreePixels(this.currentLayoutTree, {
+        x: 0,
+        y: areaTop,
+        width: areaWidth,
+        height: areaHeight,
+      });
       for (const layoutCell of pixelCells) {
         const cell = this.cells.find((c) => c.id === layoutCell.id);
         if (!cell) continue;

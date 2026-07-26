@@ -3,7 +3,6 @@ import { nanoid } from 'nanoid';
 import { xpcRenderer } from 'electron-xpc/renderer';
 import type {
   OmniPaneNode,
-  OmniCellLayout,
   OmniContentMode,
   OmniMiniAppId,
 } from '../types/layout.types';
@@ -11,6 +10,7 @@ import {
   DEFAULT_OMNI_BROWSER_URL,
   DEFAULT_OMNI_MINI_APP_ID,
   OMNI_LAYOUT_RECOVERY_STATE_EVENT,
+  OMNI_LAYOUT_SNAPSHOT_EVENT,
   OMNI_MINI_APP_DISPLAY_URLS,
   OMNI_MINI_APP_LOAD_STATE_EVENT,
   createDefaultOmniLayoutTree,
@@ -19,6 +19,10 @@ import {
   parseOmniPaneTree,
 } from '@shared/omni/omni.types';
 import type { OmniLayoutRecoveryState } from '@shared/omni/omni.types';
+import {
+  removeOmniPaneTree,
+  splitOmniPaneTree,
+} from '@shared/omni/omniLayout.service';
 
 const createLeaf = (
   url = DEFAULT_OMNI_BROWSER_URL,
@@ -39,92 +43,38 @@ export const getNodeDisplayUrl = (node: OmniPaneNode): string =>
     ? node.url ?? DEFAULT_OMNI_BROWSER_URL
     : OMNI_MINI_APP_DISPLAY_URLS[node.miniAppId ?? DEFAULT_OMNI_MINI_APP_ID];
 
-const flattenTree = (
-  node: OmniPaneNode,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): OmniCellLayout[] => {
-  if (node.type === 'leaf') {
-    return [{
-      id: node.id,
-      url: node.url || '',
-      x,
-      y,
-      width,
-      height,
-      contentMode: node.contentMode!,
-      miniAppId: node.miniAppId!,
-    }];
-  }
-
-  const results: OmniCellLayout[] = [];
-  const children = node.children || [];
-  const sizes = node.sizes || children.map(() => 100 / children.length);
-  let offset = 0;
-
-  for (let i = 0; i < children.length; i++) {
-    const size = sizes[i];
-    let cx: number, cy: number, cw: number, ch: number;
-
-    if (node.direction === 'h') {
-      cx = x + (width * offset) / 100;
-      cy = y;
-      cw = (width * size) / 100;
-      ch = height;
-    } else {
-      cx = x;
-      cy = y + (height * offset) / 100;
-      cw = width;
-      ch = (height * size) / 100;
-    }
-
-    results.push(...flattenTree(children[i], cx, cy, cw, ch));
-    offset += size;
-  }
-
-  return results;
-};
-
 class LayoutStore {
   tree: OmniPaneNode = createDefaultOmniLayoutTree();
-  splitting = false;
+  structureChanging = false;
+  structureRevision = 0;
   layoutRecoveryError = false;
   miniAppLoadFailures: Record<string, OmniMiniAppId> = {};
 
   reset(): void {
     this.tree = createDefaultOmniLayoutTree();
+    this.structureRevision += 1;
     this.miniAppLoadFailures = {};
   }
 
   splitPane(nodeId: string, direction: 'h' | 'v', position: 'before' | 'after' = 'after'): void {
-    const found = this.findNode(this.tree, nodeId);
-    if (!found || found.type !== 'leaf') return;
-
-    const originalLeaf: OmniPaneNode = {
-      id: found.id,
-      type: 'leaf',
-      url: found.url,
-      contentMode: getNodeContentMode(found),
-      miniAppId: found.miniAppId ?? DEFAULT_OMNI_MINI_APP_ID,
-    };
-    const newLeaf = createLeaf();
-
-    found.type = 'split';
-    found.direction = direction;
-    found.id = nanoid();
-    found.children = position === 'before' ? [newLeaf, originalLeaf] : [originalLeaf, newLeaf];
-    found.sizes = [50, 50];
-    delete found.url;
-    delete found.contentMode;
-    delete found.miniAppId;
+    const result = splitOmniPaneTree(this.tree, nodeId, {
+      direction,
+      position,
+      splitId: nanoid(),
+      newLeaf: createLeaf(),
+    });
+    if (!result.changed || !result.tree) return;
+    this.tree = result.tree;
+    this.structureRevision += 1;
   }
 
-  updateSizes(nodeId: string, sizes: number[]): void {
+  updateSizes(nodeId: string, sizes: number[]): boolean {
     const found = this.findNode(this.tree, nodeId);
-    if (!found || found.type !== 'split') return;
-    found.sizes = sizes;
+    if (!found || found.type !== 'split') return false;
+    if (sizes.length !== found.children?.length) return false;
+    if (sizes.some((size) => !Number.isFinite(size) || size <= 0)) return false;
+    found.sizes = [...sizes];
+    return true;
   }
 
   updateUrl(nodeId: string, url: string): void {
@@ -150,39 +100,26 @@ class LayoutStore {
   }
 
   removePane(nodeId: string): void {
-    const result = this.removeNodeFromTree(this.tree, nodeId);
-    if (result === null) {
-      this.tree = createLeaf();
-    } else {
-      this.tree = result;
-    }
+    const result = removeOmniPaneTree(this.tree, nodeId);
+    if (!result.changed) return;
+    this.tree = result.tree ?? createLeaf();
+    this.structureRevision += 1;
     this.clearMiniAppLoadFailure(nodeId);
   }
 
   async applyLayout(): Promise<void> {
     const tree = parseOmniPaneTree(this.tree);
-    this.tree = tree;
-    const cells = flattenTree(tree, 0, 0, 100, 100);
-    await xpcRenderer.send('OmniWindowHandler/updateLayout', { cells, tree });
+    await xpcRenderer.send('OmniWindowHandler/updateLayout', { tree });
   }
 
   async syncLayout(): Promise<void> {
     const config = parseOmniLayoutConfig({ tree: this.tree });
     this.tree = config.tree;
-    const cells = flattenTree(config.tree, 0, 0, 100, 100);
-    const tree = config.tree;
-    await xpcRenderer.send('OmniWindowHandler/updateLayout', { cells, tree });
-    await xpcRenderer.send('OmniWindowHandler/saveLayout', { config });
+    await xpcRenderer.send('OmniWindowHandler/commitLayout', { tree: config.tree });
   }
 
   async navigateCell(nodeId: string, url: string): Promise<void> {
     await xpcRenderer.send('OmniWindowHandler/navigateCell', { cellId: nodeId, url });
-  }
-
-  async saveConfig(): Promise<void> {
-    const config = parseOmniLayoutConfig({ tree: this.tree });
-    this.tree = config.tree;
-    await xpcRenderer.send('OmniWindowHandler/saveLayout', { config });
   }
 
   async loadLayout(): Promise<void> {
@@ -191,7 +128,7 @@ class LayoutStore {
         'OmniWindowHandler/loadLayout',
       ) as unknown;
       if (persistedValue === null || persistedValue === undefined) return;
-      this.tree = parseOmniLayoutConfig(persistedValue).tree;
+      this.replaceLayout(parseOmniLayoutConfig(persistedValue).tree);
     } catch (error) {
       console.error('[Omni control] Failed to restore saved layout:', error);
       this.reset();
@@ -223,6 +160,12 @@ class LayoutStore {
     this.layoutRecoveryError = params.recoveredFromInvalidLayout;
   }
 
+  replaceLayout(tree: OmniPaneNode): void {
+    if (this.structureChanging) return;
+    this.tree = parseOmniPaneTree(tree);
+    this.structureRevision += 1;
+  }
+
   private clearMiniAppLoadFailure(nodeId: string): void {
     if (!(nodeId in this.miniAppLoadFailures)) return;
     const nextFailures = { ...this.miniAppLoadFailures };
@@ -239,34 +182,6 @@ class LayoutStore {
       }
     }
     return null;
-  }
-
-  private removeNodeFromTree(node: OmniPaneNode, id: string): OmniPaneNode | null {
-    if (node.type === 'leaf') {
-      return node.id === id ? null : node;
-    }
-
-    const origCount = (node.children || []).length;
-    const newChildren: OmniPaneNode[] = [];
-    for (const child of node.children || []) {
-      let kept: OmniPaneNode | null = null;
-      kept = this.removeNodeFromTree(child, id);
-      if (kept !== null) newChildren.push(kept);
-    }
-
-
-    if (newChildren?.length === 0) return null;
-
-    // Collapse: promote the single remaining child upward
-    if (newChildren?.length === 1) {
-      return newChildren[0];
-    }
-
-    node.children = newChildren;
-    if (newChildren.length !== origCount) {
-      node.sizes = newChildren.map(() => 100 / newChildren.length);
-    }
-    return node;
   }
 }
 
@@ -302,4 +217,12 @@ xpcRenderer.subscribe(OMNI_LAYOUT_RECOVERY_STATE_EVENT, (payload) => {
   layoutStore.setLayoutRecoveryState({
     recoveredFromInvalidLayout: params.recoveredFromInvalidLayout,
   });
+});
+
+xpcRenderer.subscribe(OMNI_LAYOUT_SNAPSHOT_EVENT, (payload) => {
+  try {
+    layoutStore.replaceLayout(parseOmniLayoutConfig(payload.params).tree);
+  } catch (error) {
+    console.error('[Omni control] Ignored invalid Main layout snapshot:', error);
+  }
 });
