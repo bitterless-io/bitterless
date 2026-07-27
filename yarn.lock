@@ -5012,10 +5012,10 @@ electron-xpc@^1.1.0:
   dependencies:
     "@rig-lib/semaphore" "^1.0.2"
 
-electron@43.2.0:
-  version "43.2.0"
-  resolved "https://registry.npmmirror.com/electron/-/electron-43.2.0.tgz#adb0811aaa744b287b3f2a6a2dd4b50f9dcaa43f"
-  integrity sha512-80zvrgG7ZRXD+tD0IyLvrnN9n+veSxadMRsMaC9wKKP3iUbtC7rGM8+dVuCmOb0Rrwwv8ESW4awnUZh9Hbp1fA==
+electron@40.10.6:
+  version "40.10.6"
+  resolved "https://registry.npmmirror.com/electron/-/electron-40.10.6.tgz#4d6fedded9b2a789f3b42ece9b251961192d87f9"
+  integrity sha512-TGjlkOU9Lg6K4KjDbsErywCWCIDaNgLh0q+xj0nlpRoQhevI7VBIxBTtJI/V30lypyLAaXMpnP9O9jui1/qRFw==
   dependencies:
     "@electron-internal/extract-zip" "^1.0.1"
     "@electron/get" "^5.0.0"
@@ -7557,10 +7557,17 @@ negotiator@^1.0.0:
   resolved "https://registry.npmmirror.com/negotiator/-/negotiator-1.0.0.tgz#b6c91bb47172d69f93cfd7c357bbb529019b5f6a"
   integrity sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==
 
-node-abi@^3.3.0, node-abi@^4.2.0, node-abi@^4.33.0:
-  version "4.33.0"
-  resolved "https://registry.npmmirror.com/node-abi/-/node-abi-4.33.0.tgz#cce9b7bce0cbfa1d5d5a9b6908bc5eed698969cc"
-  integrity sha512-vLBWCKb+7LWsX+TbfzWOkw0W81m377tyx3hOweBTjO43CXZnRGS1/JPWs20fr0PgZyDXk6ROYrylsEycK8raDA==
+node-abi@^3.3.0:
+  version "3.87.0"
+  resolved "https://registry.npmmirror.com/node-abi/-/node-abi-3.87.0.tgz#423e28fea5c2f195fddd98acded9938c001ae6dd"
+  integrity sha512-+CGM1L1CgmtheLcBuleyYOn7NWPVu0s0EJH2C4puxgEZb9h8QpR9G2dBfZJOAUhi7VQxuBPMd0hiISWcTyiYyQ==
+  dependencies:
+    semver "^7.3.5"
+
+node-abi@^4.2.0:
+  version "4.26.0"
+  resolved "https://registry.npmmirror.com/node-abi/-/node-abi-4.26.0.tgz#7068474b3a945c08372995d823b71053e3ed85af"
+  integrity sha512-8QwIZqikRvDIkXS2S93LjzhsSPJuIbfaMETWH+Bx8oOT9Sa9UsUtBFQlc3gBNd1+QINjaTloitXr1W3dQLi9Iw==
   dependencies:
     semver "^7.6.3"
 
