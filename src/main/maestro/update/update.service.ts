@@ -1,5 +1,5 @@
 import { updateService as bitterlessUpdateService } from '@main/updateHelper/update.service'
-import type { UpdateCheckResult } from '@maestro-shared/coach.api'
+import type { UpdateCheckResult, UpdateInfo } from '@maestro-shared/coach.api'
 
 class MaestroUpdateAdapter {
   async checkForUpdates(): Promise<UpdateCheckResult> {
@@ -12,6 +12,11 @@ class MaestroUpdateAdapter {
         : undefined,
       error: result.error
     }
+  }
+
+  getReadyUpdate(): UpdateInfo | null {
+    const info = bitterlessUpdateService.getReadyUpdate()
+    return info ? { version: info.version, versionCode: info.versionCode } : null
   }
 
   quitAndInstall(): void {

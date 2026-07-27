@@ -8,13 +8,34 @@ interface UpdateInfo {
   downloadUrl: string;
 }
 
+export const parseUpdateInfo = (value: unknown): UpdateInfo | null => {
+  if (typeof value !== 'object' || value === null) return null;
+
+  const candidate = value as Partial<Record<keyof UpdateInfo, unknown>>;
+  if (
+    typeof candidate.version !== 'string' ||
+    typeof candidate.versionCode !== 'string' ||
+    typeof candidate.releaseNotes !== 'string' ||
+    typeof candidate.downloadUrl !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    version: candidate.version,
+    versionCode: candidate.versionCode,
+    releaseNotes: candidate.releaseNotes,
+    downloadUrl: candidate.downloadUrl
+  };
+};
+
 class UpdateState {
   updateAvailable = false;
   updateInfo: UpdateInfo | null = null;
 
   setUpdateInfo(info: UpdateInfo): void {
     this.updateAvailable = true;
-    this.updateInfo = info;
+    this.updateInfo = { ...info };
     console.log('[UpdateStore] Update available:', info);
   }
 

@@ -10,6 +10,10 @@ export const initUpdateHandler = (): void => {
     return await updateService.manualCheck();
   });
 
+  xpcMain.handle('UpdateHandler/getReadyUpdate', async () => {
+    return updateService.getReadyUpdate();
+  });
+
   xpcMain.handle('UpdateHandler/quitAndInstall', async () => {
     updateService.quitAndInstall();
   });

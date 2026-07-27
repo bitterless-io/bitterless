@@ -62,6 +62,7 @@ import type {
   SnapshotResult,
   TabInfo,
   UpdateCheckResult,
+  UpdateInfo,
   ViewRect,
   WorkspaceRefResult
 } from '@maestro-shared/coach.api'
@@ -431,6 +432,10 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async checkForUpdates(): Promise<UpdateCheckResult> {
     return await updateService.checkForUpdates()
+  }
+
+  async getReadyUpdate(): Promise<UpdateInfo | null> {
+    return updateService.getReadyUpdate()
   }
 
   async quitAndInstall(): Promise<void> {

@@ -24,7 +24,7 @@ If `versionCode` is newer but `electron-updater` reports `isUpdateAvailable: fal
 retryable metadata-disagreement error. It must not report a successful download, must not leave a
 sticky lock, and the next scheduled or manual check must fetch the metadata again.
 
-## State and Home UI
+## State and renderer UI
 
 - `isDownloading` is true only around the actual `downloadUpdate` call and is reset in `finally`,
   including failures.
@@ -32,6 +32,15 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
   update, and broadcasts `app/updated` after the package is downloaded and ready to install.
 - Home registers its update subscriber before mounting the root application and starting the first
   poll. XPC subscribers consume the typed update value from `payload.params`.
+- Main retains the latest download-ready `UpdateInfo` in memory for the lifetime of the process and
+  exposes it as an optional snapshot. A recreated Home or Maestro renderer must subscribe to live
+  events first, then request that snapshot without blocking renderer mount.
+- A valid live update event wins over an in-flight snapshot response. In Maestro this includes the
+  downloading event for precedence without treating it as install-ready; a stale ready snapshot
+  must not overwrite newer live downloading state. An absent snapshot is a normal optional lookup;
+  malformed event or snapshot data is rejected and logged rather than applied.
+- Main normalizes `electron-updater` release notes (`string`, note array, or absent) to the string
+  field required by Home before storing or broadcasting ready state.
 - The Home update button continues to mean "download completed and ready to install"; detecting an
   outer manifest alone must not expose that button.
 
@@ -47,5 +56,6 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
 
 Automated coverage uses a controlled scheduler and deferred checks to prove immediate start,
 idempotent timer ownership, non-overlap, and release after success or failure. Source-contract
-coverage protects the two-gate decision, download-only state, and Home subscription order. This task
-does not package, sign, notarize, publish, or mutate the production update feed.
+coverage protects the two-gate decision, download-only state, subscribe-before-mount ordering, and
+race-safe ready-state replay in Home and Maestro. This task does not package, sign, notarize,
+publish, or mutate the production update feed.

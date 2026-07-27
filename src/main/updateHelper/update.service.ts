@@ -7,6 +7,21 @@ import { compareVersions } from 'compare-versions';
 import type { UpdateInfo, ManifestData, PlatformType, UpdateCheckResult } from './update.type';
 import { UpdatePollingService } from './updatePolling.service';
 
+type UpdaterReleaseNotes =
+  | string
+  | ReadonlyArray<{ readonly version: string; readonly note: string | null }>
+  | null
+  | undefined;
+
+const normalizeUpdateReleaseNotes = (releaseNotes: UpdaterReleaseNotes): string => {
+  if (typeof releaseNotes === 'string') return releaseNotes;
+  if (!releaseNotes) return '';
+
+  return releaseNotes
+    .map(({ version, note }) => (note === null ? version : `${version}: ${note}`))
+    .join('\n\n');
+};
+
 export class UpdateMetadataDisagreementError extends Error {
   constructor(currentVersionCode: string, manifestVersionCode: string) {
     super(
@@ -23,6 +38,7 @@ class UpdateService {
   private viteMode: string;
   private disabledForE2E: boolean;
   private isDownloading = false;
+  private readyUpdate: UpdateInfo | null = null;
   private readonly updatePollingService: UpdatePollingService<UpdateCheckResult>;
   isUpdating = false;
   constructor() {
@@ -97,7 +113,7 @@ class UpdateService {
       this.notifyUpdateReady({
         version: info.version,
         versionCode: '0',
-        releaseNotes: (info.releaseNotes as string) || '',
+        releaseNotes: normalizeUpdateReleaseNotes(info.releaseNotes),
         downloadUrl: ''
       });
     });
@@ -210,8 +226,13 @@ class UpdateService {
 
   private notifyUpdateReady(updateInfo: UpdateInfo): void {
     console.log('[UpdateService] Notifying update ready:', updateInfo);
+    this.readyUpdate = { ...updateInfo };
     xpcMain.broadcast('app/updated', updateInfo);
     xpcMain.broadcast('coach/update-downloaded', updateInfo);
+  }
+
+  public getReadyUpdate(): UpdateInfo | null {
+    return this.readyUpdate ? { ...this.readyUpdate } : null;
   }
 
   public startPolling(): void {
