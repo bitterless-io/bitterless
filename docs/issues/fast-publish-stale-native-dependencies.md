@@ -1,0 +1,50 @@
+# Fast publish omits stale native dependencies
+
+Status: Fix in progress
+
+## Symptom
+
+`yarn fast_publish:mac_arm` completed application signing and notarization preparation but failed
+the desktop package audit because both of these runtime assets were absent:
+
+- `app.asar` had no `better-sqlite3-multiple-ciphers` package root;
+- `app.asar.unpacked` had no `better_sqlite3.node` native binding.
+
+Electron Builder also reported that it could not find the requested
+`better-sqlite3-multiple-ciphers@12.11.1`. The other missing-package messages in the same output
+were platform-specific optional dependencies and were not the release blocker.
+
+## Root cause
+
+The committed manifest and lockfile require Electron `43.2.0` and
+`better-sqlite3-multiple-ciphers@12.11.1`, but the local Yarn installation still contained
+Electron `40.10.6` and `better-sqlite3-multiple-ciphers@12.6.2`. `yarn check --integrity` therefore
+failed.
+
+`fast_publish:mac_arm` synchronized Git source and immediately patched the release version before
+building. It never synchronized `node_modules` with the newly pulled lockfile. Electron Builder's
+Yarn dependency collector requested `12.11.1`, could only find the stale `12.6.2` package on disk,
+and omitted the entire native dependency from the application.
+
+This is an installed-dependency freshness failure, not an ASAR-unpack, signing, locale, or 7zip
+configuration failure.
+
+## Fix contract
+
+- After Git synchronization and before version preparation, fast publish must run a frozen-lockfile
+  Yarn install so the installed Electron and native modules match the checked-out release source.
+- A failed dependency install must stop before `patch.js`, preventing a release version bump when
+  the build cannot safely start.
+- Keep `electron-builder.tmp.yml` as the builder source of truth; no ASAR override is needed for a
+  dependency that Electron Builder already handles when its installed metadata is correct.
+- Lock the command order in the focused release-hook tests.
+- Repair the current local installation and verify the required package version and native binding
+  without running packaging, signing, notarization, upload, or publication.
+
+## Acceptance
+
+- `yarn check --integrity` passes after dependency repair.
+- Installed Electron is `43.2.0` and installed `better-sqlite3-multiple-ciphers` is `12.11.1`.
+- The arm64 `better_sqlite3.node` binding exists.
+- The focused release-hook suite proves pull → frozen install → patch → build → publish ordering.
+
