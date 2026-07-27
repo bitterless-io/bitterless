@@ -28,6 +28,7 @@ export const en = {
   },
   menuBar: {
     restartToUpdate: 'upate',
+    updateToVersion: 'Update to {version}',
     proxy: 'Proxy',
     startupDiagnostics: {
       title: 'Startup issues',

@@ -17,6 +17,13 @@ const menubarClass = computed(() => {
   if (isWindows.value) return 'omni-menubar--win';
   return '';
 });
+const updateTitle = computed(() => {
+  if (!updateStore.updateInfo) return i18nHelper.menuBar.restartToUpdate;
+  return i18nHelper.menuBar.updateToVersion.replace(
+    '{version}',
+    updateStore.updateInfo.version
+  );
+});
 
 const toggleControl = () => {
   controlVisible.value = !controlVisible.value;
@@ -67,11 +74,7 @@ onMounted(async () => {
       v-if="updateStore.updateAvailable"
       type="button"
       class="omni-menubar__update"
-      :title="
-        updateStore.updateInfo
-          ? `Update to ${updateStore.updateInfo.version}`
-          : i18nHelper.menuBar.restartToUpdate
-      "
+      :title="updateTitle"
       @click.stop="handleRestartUpdate"
     >
       {{ i18nHelper.menuBar.restartToUpdate }}

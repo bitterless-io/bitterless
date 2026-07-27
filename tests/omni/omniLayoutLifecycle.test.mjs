@@ -325,6 +325,9 @@ test('only the Omni window Menu Bar owns the compact ready update action', () =>
   assert.match(appSource, /v-if="updateStore\.updateAvailable"/);
   assert.match(appSource, /class="omni-menubar__update"/);
   assert.match(appSource, /\{\{ i18nHelper\.menuBar\.restartToUpdate \}\}/);
+  assert.match(appSource, /i18nHelper\.menuBar\.updateToVersion\.replace\(/);
+  assert.match(appSource, /:title="updateTitle"/);
+  assert.doesNotMatch(appSource, /`Update to \$\{/);
   assert.match(appSource, /@click\.stop="handleRestartUpdate"/);
   assert.match(appSource, /updateStore\.restartAndUpdate\(\)/);
 

@@ -29,6 +29,7 @@ export const zh: typeof en = {
   },
   menuBar: {
     restartToUpdate: 'upate',
+    updateToVersion: '更新到 {version}',
     proxy: '代理',
     startupDiagnostics: {
       title: '启动异常',

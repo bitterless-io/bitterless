@@ -53,14 +53,18 @@ for (const [name, path] of rendererEntries) {
 
 const englishMessages = readProject('src/renderer/common/i18n/en.ts')
 const chineseMessages = readProject('src/renderer/common/i18n/zh.ts')
-for (const [language, source] of [
-  ['en', englishMessages],
-  ['zh', chineseMessages]
+for (const [language, source, updateTitle] of [
+  ['en', englishMessages, 'Update to {version}'],
+  ['zh', chineseMessages, '更新到 {version}']
 ]) {
   assert.match(
     source,
     /menuBar:\s*\{[\s\S]*?restartToUpdate: 'upate'/,
     `${language} must expose the exact compact update label`
+  )
+  assert(
+    source.includes(`updateToVersion: '${updateTitle}'`),
+    `${language} must localize the target-version update title`
   )
 }
 
@@ -75,6 +79,13 @@ for (const [surface, path] of [
     `${surface} update action must use the shared compact label`
   )
 }
+
+const omniMenuBar = readProject('src/renderer/omni/omniWindow/src/App.vue')
+assert(
+  omniMenuBar.includes("i18nHelper.menuBar.updateToVersion.replace("),
+  'Omni update title must interpolate shared renderer i18n'
+)
+assert(!omniMenuBar.includes('`Update to ${'), 'Omni update title must not hard-code English')
 
 const rendererI18n = readProject('src/renderer/common/i18n/i18n.helper.ts')
 assert(!rendererI18n.includes('navigator.language'), 'renderer i18n must not infer the runtime language from the browser')
