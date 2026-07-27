@@ -4,8 +4,8 @@ Status: Fix in progress
 
 ## Symptom
 
-`yarn fast_publish:mac_arm` completed application signing and notarization preparation but failed
-the desktop package audit because both of these runtime assets were absent:
+`yarn fast_publish:mac_arm` reached Electron Builder's `afterPack` desktop package audit and failed
+because both of these runtime assets were absent:
 
 - `app.asar` had no `better-sqlite3-multiple-ciphers` package root;
 - `app.asar.unpacked` had no `better_sqlite3.node` native binding.
@@ -47,4 +47,3 @@ configuration failure.
 - Installed Electron is `43.2.0` and installed `better-sqlite3-multiple-ciphers` is `12.11.1`.
 - The arm64 `better_sqlite3.node` binding exists.
 - The focused release-hook suite proves pull → frozen install → patch → build → publish ordering.
-
