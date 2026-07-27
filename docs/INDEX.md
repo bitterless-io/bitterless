@@ -10,7 +10,7 @@ design document.
   live updates for every first-party renderer, and correct locale before recreated windows mount.
 - [Maestro sub-application](features/maestro.md) - the Bitterless Mini App migrated from the
   Micromeet Cowork runtime.
-- [Coin sub-application](features/coin.md) - full-width crypto analysis tabs with background Codex
+- [Trench sub-application](features/coin.md) - full-width trench analysis tabs with background Codex
   analysis and local resource configuration.
 - [Coin layout](features/coin-layout.md) - full-width analysis console, Resources page, tab layouts,
   states, and responsive constraints.
@@ -125,6 +125,10 @@ design document.
   independent App Server thread status must not overwrite Hook working evidence, while guarded
   content-free terminal-turn polling repairs a missed Stop. Its Open-acknowledges-active rule is
   superseded by the active Focus and read semantics issue below.
+- [EyesOnAgents Open does not resolve an unknown task](issues/eyes-on-agents-open-does-not-resolve-unknown.md) - implemented; owner verification pending:
+  an explicit Open was strictly weaker than waiting for a poll tick; it now runs the same
+  content-free newest-turn sync for that one thread and can reclaim an active row whose Hook
+  authority is currently absent.
 - [EyesOnAgents missed working recovery](issues/eyes-on-agents-working-recovery-gap.md) - implemented; owner verification pending:
   a task left unread `discovery + unknown` by a Hook listener boundary shows no working spinner and
   neither polling nor `Refresh` repairs it; content-free newest-turn metadata now restores `working`

@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-open-status-sync-029
 scope: sync one thread's runtime status on Open and reclaim an unauthoritative active row
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [eyes-on-agents-working-recovery-027, eyes-on-agents-active-focus-read-semantics-028]
 ---
 

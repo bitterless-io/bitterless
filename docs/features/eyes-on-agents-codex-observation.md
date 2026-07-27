@@ -156,6 +156,11 @@ task as unread `discovery + unknown` with no active turn, and Codex never replay
 real ID and a persisted start time no later than the poll restores `working` under a distinct
 `app_server_turn` source, compare-and-set against the exact selected candidate. Terminal, ID-less,
 start-time-less, future-dated, malformed, or unavailable evidence never recovers working.
+A successful `Open` triggers that same single-thread sync on demand, best effort, so an explicit
+user action is at least as strong as waiting for the next poll tick. It also reclaims the other
+`unknown` shape: when a persisted-active Hook row's authority is currently absent and App Server
+confirms the same exact turn is `inProgress`, the row moves to `app_server_turn` while keeping its
+observed runtime state and flags. `inProgress` stays a no-op whenever authority is present.
 EyesOnAgents deliberately does not infer a paused state from private transcript/rollout formats or
 elapsed time. A successful Open records deep-link evidence but acknowledges unread only for a
 confirmed terminal row, so an active or `unknown` thread stays in Focus while it is open; a later

@@ -1,6 +1,6 @@
 # EyesOnAgents Open Does Not Resolve An Unknown Task
 
-Status: in progress
+Status: implemented; owner verification pending
 
 ## Symptom
 

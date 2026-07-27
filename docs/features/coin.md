@@ -1,18 +1,18 @@
-# Coin Sub-application
+# Trench Sub-application
 
-Status: Analysis workspace and background Codex analysis implemented; owner verification pending
+Status: Analysis workspace and background Codex analysis implemented; Trench Mini Apps entry restored; owner verification pending
 
 ## Purpose
 
-Coin remains integrated as an authenticated desktop workspace for cryptocurrency research and
-decisions, but its Home Mini Apps card and launch action are temporarily hidden. Its runtime,
-window lifecycle, packaged resources, and persisted data stay intact for later reopening. Coin is
-one full-width local analysis panel organized by business tabs. It has no chat region, message
-composer, remote browser, address bar, Workbench, or Maestro tools.
+Trench is the user-visible name for the existing Coin runtime. It remains integrated as an
+authenticated desktop workspace for trench research and decisions. Its Home Mini Apps card launches
+the singleton Trench window while its runtime, window lifecycle, packaged resources, and persisted
+data stay intact. Trench is one full-width local analysis panel organized by business tabs. It has
+no chat region, message composer, remote browser, address bar, Workbench, or Maestro tools.
 
-Coin provides source-backed Monitor, Screener, Meme, History, deterministic Strategy, and bounded
+Trench provides source-backed Monitor, Screener, Meme, History, deterministic Strategy, and bounded
 background Codex interpretation for stored structured results. The user never chats with Codex
-inside Coin.
+inside Trench.
 
 ## Boundary
 
@@ -49,8 +49,8 @@ Node.js access, Maestro's preload, browser automation, wallet signing, or tradin
 
 | Event | Required behavior |
 |---|---|
-| Mini Apps renders | Do not render the Coin card or Home launch action while the entry is dormant. |
-| First Open | Create one Coin window, load persisted Coin state, then show it. |
+| Mini Apps renders | Render the Trench card and route Open through the narrow Home `openCoinWindow` contract. |
+| First Open | Create one Trench window, load persisted Coin runtime state, then show it. |
 | Repeated Open | Await any active boot, restore/focus the same window, and never create a duplicate. |
 | Window close | Abort active polling/data work, flush Coin state, and destroy the window. |
 | Auth invalidation/logout | Lock new opens, abort work, and destroy Coin before the secondary-window sweep. |

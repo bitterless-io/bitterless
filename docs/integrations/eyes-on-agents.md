@@ -586,6 +586,50 @@ A successful `Open` does not block recovery. Open records deep-link evidence and
 only for a confirmed terminal row, so an opened-but-still-`unknown` task is exactly the case this
 repair exists for.
 
+### Open status sync and authority reclaim
+
+A successful `Open` runs one status sync for that thread alone, after `markOpened`, using the same
+newest-turn request and the same candidate classification as the tiered poll. It is an on-demand
+trigger of existing evidence, never a new authority, and it makes an explicit user action at least
+as strong as waiting for the next tick. The sync is best effort: a disconnected App Server, a
+rejected request, a malformed response, a teardown, or a lost race leaves the successful deep link
+and its recorded Open evidence intact and raises no action error. A thread that is neither an
+active candidate nor a recovery candidate issues no request. The sync runs inside the existing App
+Server operation fencing, so it cannot overlap a teardown, a foreground sync, or the background
+refresh, and it never requests the latest user question.
+
+The sync also covers the second way a row renders `unknown`. A row persisted as `codex_hook` with
+an active runtime state and a real active turn degrades to `unknown` whenever the Hook bridge is
+not listening — correct, because stale Hook evidence must not survive a listener gap. But the
+managed App Server may still be connected and can still answer, content-free, whether that exact
+turn is in progress. `inProgress` therefore stops being an unconditional no-op:
+
+- When the shared projection already degrades a `codex_hook`-sourced active row to `unknown` — that
+  is, when its authority is absent — and the newest turn is `inProgress` with an ID matching the
+  exact persisted active turn and a persisted start time no later than the poll, Bitterless
+  **reclaims** the row under the `app_server_turn` source.
+- `inProgress` remains a no-op for a row whose authority is present. Nothing is inferred while Hook
+  evidence is live.
+- A reclaim writes only the source, the status watermark (the persisted start time), and an activity
+  floor. It preserves `runtime_state` and `active_flags_json`, so a task last observed
+  `waiting_approval` is not silently downgraded to `working` and dropped from the top of the Focus
+  order. App Server proves the turn is still running; it does not claim to know the sub-state, and
+  the previously observed wait remains the best available detail until newer Hook evidence replaces
+  it.
+- SQLite compare-and-sets against the exact prior row — non-archived, `codex_hook`-sourced, an
+  active runtime state, the exact active turn ID and status watermark, and a turn not already
+  recorded as completed. Any concurrent change makes the patch a no-op.
+- A reclaimed row then behaves exactly like a recovered one: it survives full inventory discovery
+  and App Server reconnect invalidation, it is an ordinary exact-ID terminal reconciliation
+  candidate under its own expected source, it renders active only while the managed reader is
+  connected, and real Hook evidence supersedes it through the normal watermark rule.
+
+Terminal reconciliation, missed working recovery, and reclaim are mutually exclusive for one thread
+in one pass; the shared XPC/repository boundary rejects a patch carrying more than one. Because the
+projection is shared, the ten-second poll gains the same reclaim: `Open` is the immediate trigger
+and the poll is the passive one, with no new interval and still at most one newest-turn request per
+selected task.
+
 ## XPC surface
 
 All renderer/main/preload communication uses `electron-xpc`; each method accepts zero or one object
