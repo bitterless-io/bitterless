@@ -1,6 +1,6 @@
 # Desktop Automatic Updates
 
-Status: in progress
+Status: implemented; owner verification pending
 
 ## Ownership and cadence
 

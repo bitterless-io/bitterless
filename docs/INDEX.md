@@ -128,8 +128,8 @@ design document.
   remains, while the size-mismatch follow-up below removes the runtime PNG refresh.
 - [macOS Dock icon runtime size mismatch](issues/macos-dock-icon-runtime-size-mismatch.md) - fixed;
   owner verification pending: the running tile now keeps the bundle-default size without a PNG override.
-- [Desktop automatic-update polling stalls](issues/desktop-auto-update-polling-stalls.md) - active:
-  an updater metadata disagreement can leave the process permanently skipping every later poll until restart.
+- [Desktop automatic-update polling stalls](issues/desktop-auto-update-polling-stalls.md) - fixed;
+  owner verification pending: metadata disagreement now releases the shared check so later polls retry.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
   retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
 - [Translator language-direction detection](issues/translator-language-direction-detection.md) - fixed:

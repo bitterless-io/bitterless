@@ -1,7 +1,7 @@
 ---
 id: desktop-auto-update-polling-007
 scope: recover automatic-update polling after metadata disagreement without restarting Bitterless
-status: in-progress
+status: implemented; owner verification pending
 depends-on: []
 ---
 
@@ -61,3 +61,23 @@ published version is found and downloaded by a running older application without
 - `git diff --check` and an independent review pass.
 - Do not launch Electron, package, sign, notarize, upload, refresh CDN, or publish; Ral performs the
   final real-device update check with a later release.
+
+## Delivery evidence — 2026-07-27
+
+- Commit `9dd43d9` replaces the sticky event-flag gate with the returned platform updater result and
+  keeps feed setup, updater checking, metadata disagreement, and downloading inside one retryable
+  error boundary.
+- One polling coordinator owns the immediate check and 60-second timer, deduplicates scheduled and
+  manual calls, and releases the shared operation after fulfillment or rejection.
+- Home subscribes before App mount and reads `payload.params`; the Maestro contract comment now
+  describes the same two-gate behavior.
+- `yarn test:desktop-auto-update` passed 5/5. Focused strict Main and Home TypeScript checks,
+  updater-specific Maestro UX, renderer-i18n, customer-auth 14/14, Node preflight, targeted lint,
+  and diff checks passed.
+- The broad Web typecheck and Maestro aggregate retain unrelated parent-baseline failures. A clean
+  `b47be1d` comparison proves the task removes the former Home updater-payload type diagnostic and
+  introduces no updater-file diagnostic.
+- Independent review found no open P1, P2, or P3 issue; see
+  [`desktop-auto-update-polling-007-1`](../reviews/desktop-auto-update-polling-007-1.md).
+- Electron launch, packaging, signing, notarization, publication, upload, CDN refresh, and remote
+  feed access were intentionally not run. Ral owns real-device acceptance with a later release.

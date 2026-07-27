@@ -1,6 +1,6 @@
 # Desktop Automatic-Update Polling Stalls Until Restart
 
-Status: active
+Status: fixed; owner verification pending
 
 ## Symptom
 

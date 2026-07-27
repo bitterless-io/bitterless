@@ -80,7 +80,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [desktop-mac-dock-icon-004](tasks/desktop-mac-dock-icon-004.md) | current macOS bundle icon plus runtime Dock refresh | implemented; owner verification pending | desktop-package-size-002 |
 | [desktop-electron-locales-005](tasks/desktop-electron-locales-005.md) | seven-locale Electron package allowlist before macOS signing | in-progress | — |
 | [desktop-mac-dock-icon-size-006](tasks/desktop-mac-dock-icon-size-006.md) | preserve bundle-default macOS Dock icon size while running | done | desktop-mac-dock-icon-004 |
-| [desktop-auto-update-polling-007](tasks/desktop-auto-update-polling-007.md) | recoverable, idempotent desktop automatic-update polling | in-progress | — |
+| [desktop-auto-update-polling-007](tasks/desktop-auto-update-polling-007.md) | recoverable, idempotent desktop automatic-update polling | implemented; owner verification pending | — |
 | [release-fast-publish-version-code-002](tasks/release-fast-publish-version-code-002.md) | restore version preparation before macOS ARM fast-publish build | done | — |
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |
