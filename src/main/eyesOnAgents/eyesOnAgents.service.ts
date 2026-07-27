@@ -393,12 +393,50 @@ const recoveredTurnFromLatest = (
   };
 };
 
+const reclaimedTurnFromLatest = (
+  value: unknown,
+  options: {
+    activeTurnId: string;
+    statusObservedAt: number;
+    polledAt: number;
+  }
+): NonNullable<EyesOnAgentsThreadRefreshPatch['reclaimedTurn']> | undefined => {
+  if (!isEyesOnAgentsRecord(value)) return undefined;
+  if (providerThreadField(value, 'status') !== 'inProgress') return undefined;
+  let turnId: string;
+  try {
+    turnId = parseEyesOnAgentsText(
+      providerThreadField(value, 'id'),
+      'Codex reclaimed turn id',
+      200,
+      false
+    ) as string;
+  } catch {
+    return undefined;
+  }
+  if (turnId !== options.activeTurnId) return undefined;
+  const startedAt = parseProviderTurnTimestamp(
+    providerThreadField(value, 'startedAt'),
+    { notAfter: options.polledAt }
+  );
+  if (startedAt === null) return undefined;
+  return {
+    turnId,
+    startedAt,
+    expectedActiveTurnId: options.activeTurnId,
+    expectedStatusObservedAt: options.statusObservedAt,
+    expectedStatusSource: 'codex_hook',
+    source: 'app_server_turn'
+  };
+};
+
 const hasThreadRefreshPatch = (patch: EyesOnAgentsThreadRefreshPatch): boolean => {
   return patch.title !== undefined ||
     patch.lastActivityAt !== undefined ||
     patch.lastUserPrompt !== undefined ||
     patch.terminalTurn !== undefined ||
-    patch.recoveredTurn !== undefined;
+    patch.recoveredTurn !== undefined ||
+    patch.reclaimedTurn !== undefined;
 };
 
 const turnIdFrom = (value: unknown): string | null => {
@@ -1756,6 +1794,25 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return { changed: refreshed.changed, completed: true };
   }
 
+  private isActiveTurnAuthorityAbsent(
+    activeTurn: NonNullable<EyesOnAgentsThreadRefreshCandidate['activeTurn']>
+  ): boolean {
+    if (activeTurn.statusSource !== 'codex_hook') return false;
+    const bridge = this.bridgeStatus();
+    const listeningSince = bridge.listeningSince === null
+      ? null
+      : Date.parse(bridge.listeningSince);
+    return effectiveEyesOnAgentsRuntimeState({
+      runtimeState: activeTurn.runtimeState,
+      statusSource: activeTurn.statusSource,
+      statusObservedAt: activeTurn.statusObservedAt,
+      managedServerConnected: this.dependencies.appServer.isConnected(),
+      hookBridgeState: bridge.state,
+      hookBridgeListening: bridge.listening,
+      hookBridgeListeningSince: Number.isFinite(listeningSince) ? listeningSince : null
+    }) === 'unknown';
+  }
+
   private async projectThreadRefreshCandidate(
     candidate: EyesOnAgentsThreadRefreshCandidate,
     context: AppServerContext,
@@ -1838,7 +1895,16 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           statusSource: activeTurn.statusSource,
           polledAt: observedAt
         });
-        if (terminalTurn !== undefined) projection.patch.terminalTurn = terminalTurn;
+        if (terminalTurn !== undefined) {
+          projection.patch.terminalTurn = terminalTurn;
+        } else if (this.isActiveTurnAuthorityAbsent(activeTurn)) {
+          const reclaimedTurn = reclaimedTurnFromLatest(latestTurn.value, {
+            activeTurnId: activeTurn.turnId,
+            statusObservedAt: activeTurn.statusObservedAt,
+            polledAt: observedAt
+          });
+          if (reclaimedTurn !== undefined) projection.patch.reclaimedTurn = reclaimedTurn;
+        }
       }
       if (latestTurn.state === 'resolved' && recoveryCandidate !== null) {
         const recoveredTurn = recoveredTurnFromLatest(latestTurn.value, {
@@ -1862,8 +1928,39 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     const url = buildEyesOnAgentsDeepLink(threadId);
     await this.dependencies.openExternal(url);
     await this.dependencies.repository.markOpened({ threadId, openedAt: this.now() });
+    await this.syncOpenedThreadStatus(threadId);
     this.notify();
     return { url, snapshot: await this.getSnapshot() };
+  }
+
+  private async syncOpenedThreadStatus(threadId: string): Promise<void> {
+    try {
+      if (this.appServerTeardownPromise) return;
+      if (!this.dependencies.appServer.isConnected()) return;
+      const candidate = await this.dependencies.repository.getThreadRefreshCandidate({
+        threadId
+      });
+      if (!candidate) return;
+      if (candidate.activeTurn === null && candidate.recoveryCandidate === null) return;
+      await this.joinBackgroundRefresh();
+      const intentVersion = this.appServerLifecycleVersion;
+      await this.runAppServerOperation(intentVersion, async (context) => {
+        if (!this.dependencies.appServer.isConnected()) return;
+        if (!this.isAppServerActive(context)) return;
+        const projected = await this.projectThreadRefreshCandidate(
+          candidate,
+          context,
+          { enabled: false, epoch: this.lastUserPromptPreferenceEpoch }
+        );
+        if (projected.state !== 'resolved' || projected.value === null) return;
+        if (!this.isAppServerActive(context)) return;
+        await this.dependencies.repository.refreshThreadPage({
+          threads: [projected.value]
+        });
+      });
+    } catch {
+      // A successful deep link and its Open evidence must survive any status-sync failure.
+    }
   }
 
   async markAllRead(): Promise<EyesOnAgentsSnapshot> {

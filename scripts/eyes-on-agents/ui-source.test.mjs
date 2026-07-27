@@ -99,7 +99,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
     /  private async projectThreadRefreshCandidate\([\s\S]*?\n  \}(?=\n\n  async openThread)/
   );
   const repositoryPageSelection = repositoryDao.match(
-    /  async getThreadRefreshPages\(params: \{[\s\S]*?\n  \}(?=\n\n  async refreshThreadPage)/
+    /  async getThreadRefreshPages\(params: \{[\s\S]*?\n  \}(?=\n\n  async getThreadRefreshCandidate)/
   );
   const timerOwners = walk('src/renderer/eyesOnAgents')
     .filter((path) => /\.(?:ts|vue)$/.test(path))
@@ -213,7 +213,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     repositoryDao,
-    /const transaction = sqliteManager\.db\.transaction\(\(\): EyesOnAgentsThreadRefreshPages => \{[\s\S]*SELECT COUNT\(\*\) AS count[\s\S]*const hotRows = selectPage\.all\([\s\S]*const coldRows = coldPage === null[\s\S]*return \{\s*hot: hotRows\.map\(toCandidate\),\s*cold: coldRows\.map\(toCandidate\),\s*pageCount,\s*coldPage\s*\};\s*\}\);\s*return transaction\(\)/,
+    /const transaction = sqliteManager\.db\.transaction\(\(\): EyesOnAgentsThreadRefreshPages => \{[\s\S]*SELECT COUNT\(\*\) AS count[\s\S]*const hotRows = selectPage\.all\([\s\S]*const coldRows = coldPage === null[\s\S]*return \{\s*hot: hotRows\.map\(toRefreshCandidate\),\s*cold: coldRows\.map\(toRefreshCandidate\),\s*pageCount,\s*coldPage\s*\};\s*\}\);\s*return transaction\(\)/,
   );
   assert.doesNotMatch(
     repositoryPageSelection[0],
@@ -221,12 +221,25 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     repositoryPageSelection[0],
-    /runtime_state, active_turn_id, is_unread, status_source,\s*status_observed_at[\s\S]*statusSource === 'codex_hook' \|\| statusSource === 'app_server_turn'[\s\S]*\['working', 'waiting_approval', 'waiting_input'\]\.includes\(runtimeState\)[\s\S]*activeTurnId !== `hook-\$\{statusObservedAt\}`[\s\S]*activeTurn/,
+    /SELECT \$\{THREAD_REFRESH_CANDIDATE_COLUMNS\}/,
+  );
+  const repositoryCandidate = repositoryDao.match(
+    /const toRefreshCandidate = \([\s\S]*?\n\};/,
+  );
+  assert.ok(repositoryCandidate, 'Missing shared refresh candidate classifier');
+  assert.match(
+    repositoryCandidate[0],
+    /statusSource === 'codex_hook' \|\| statusSource === 'app_server_turn'[\s\S]*\['working', 'waiting_approval', 'waiting_input'\]\.includes\(runtimeState\)[\s\S]*activeTurnId !== `hook-\$\{statusObservedAt\}`[\s\S]*\{ turnId: activeTurnId, statusObservedAt, statusSource, runtimeState \}/,
   );
   assert.match(
-    repositoryPageSelection[0],
+    repositoryCandidate[0],
     /const recoveryCandidate = activeTurn === null &&\s*statusSource === 'discovery' &&\s*runtimeState === 'unknown' &&\s*row\.is_unread === 1 &&\s*activeTurnId === null &&\s*statusObservedAt !== null/,
     'missed-working recovery must select only unread discovery+unknown rows with no active turn',
+  );
+  assert.match(
+    repositoryDao,
+    /async getThreadRefreshCandidate\(params: \{[\s\S]*?WHERE thread_id = \? AND is_archived = 0[\s\S]*?toRefreshCandidate\(row\)/,
+    'one-thread status sync must reuse the same candidate classification',
   );
   assert.match(
     repositoryDao,

@@ -274,6 +274,57 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
   };
 };
 
+const THREAD_REFRESH_CANDIDATE_COLUMNS =
+  `thread_id, runtime_state, active_turn_id, is_unread, status_source,
+    status_observed_at, last_user_prompt_checked_at`;
+
+interface ThreadRefreshCandidateRow {
+  thread_id: string;
+  runtime_state: string;
+  active_turn_id: string | null;
+  is_unread: number;
+  status_source: string;
+  status_observed_at: number | null;
+  last_user_prompt_checked_at: number | null;
+}
+
+const toRefreshCandidate = (
+  row: ThreadRefreshCandidateRow
+): EyesOnAgentsThreadRefreshCandidate => {
+  const runtimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
+  const statusSource = parseStatusSource(row.status_source);
+  const activeTurnId = parseTurnId(row.active_turn_id, 'active_turn_id');
+  if (row.is_unread !== 0 && row.is_unread !== 1) throw new Error('is_unread is invalid');
+  const statusObservedAt = parseEyesOnAgentsTimestamp(
+    row.status_observed_at,
+    'status_observed_at'
+  );
+  const activeTurn = (statusSource === 'codex_hook' || statusSource === 'app_server_turn') &&
+    ['working', 'waiting_approval', 'waiting_input'].includes(runtimeState) &&
+    activeTurnId !== null &&
+    statusObservedAt !== null &&
+    activeTurnId !== `hook-${statusObservedAt}`
+    ? { turnId: activeTurnId, statusObservedAt, statusSource, runtimeState }
+    : null;
+  const recoveryCandidate = activeTurn === null &&
+    statusSource === 'discovery' &&
+    runtimeState === 'unknown' &&
+    row.is_unread === 1 &&
+    activeTurnId === null &&
+    statusObservedAt !== null
+    ? { statusObservedAt }
+    : null;
+  return {
+    threadId: parseEyesOnAgentsUuid(row.thread_id),
+    lastUserPromptCheckedAt: parseEyesOnAgentsTimestamp(
+      row.last_user_prompt_checked_at,
+      'last_user_prompt_checked_at'
+    ),
+    activeTurn,
+    recoveryCandidate
+  };
+};
+
 const defaultDomainId = (): number => {
   const row = sqliteManager.db.prepare(
     `SELECT id FROM eyes_on_agents_domain
@@ -633,92 +684,44 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ? 2
           : params.coldPage;
       const selectPage = sqliteManager.db.prepare(
-        `SELECT thread_id, runtime_state, active_turn_id, is_unread, status_source,
-          status_observed_at, last_user_prompt_checked_at
+        `SELECT ${THREAD_REFRESH_CANDIDATE_COLUMNS}
          FROM eyes_on_agents_thread
          WHERE is_archived = 0
          ORDER BY COALESCE(last_activity_at, updated_at) DESC,
            updated_at DESC, thread_id ASC
          LIMIT ? OFFSET ?`
       );
-      const toCandidate = (
-        row: {
-          thread_id: string;
-          runtime_state: string;
-          active_turn_id: string | null;
-          is_unread: number;
-          status_source: string;
-          status_observed_at: number | null;
-          last_user_prompt_checked_at: number | null;
-        }
-      ): EyesOnAgentsThreadRefreshCandidate => {
-        const runtimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
-        const statusSource = parseStatusSource(row.status_source);
-        const activeTurnId = parseTurnId(row.active_turn_id, 'active_turn_id');
-        if (row.is_unread !== 0 && row.is_unread !== 1) throw new Error('is_unread is invalid');
-        const statusObservedAt = parseEyesOnAgentsTimestamp(
-          row.status_observed_at,
-          'status_observed_at'
-        );
-        const activeTurn = (statusSource === 'codex_hook' || statusSource === 'app_server_turn') &&
-          ['working', 'waiting_approval', 'waiting_input'].includes(runtimeState) &&
-          activeTurnId !== null &&
-          statusObservedAt !== null &&
-          activeTurnId !== `hook-${statusObservedAt}`
-          ? { turnId: activeTurnId, statusObservedAt, statusSource }
-          : null;
-        const recoveryCandidate = activeTurn === null &&
-          statusSource === 'discovery' &&
-          runtimeState === 'unknown' &&
-          row.is_unread === 1 &&
-          activeTurnId === null &&
-          statusObservedAt !== null
-          ? { statusObservedAt }
-          : null;
-        return {
-          threadId: parseEyesOnAgentsUuid(row.thread_id),
-          lastUserPromptCheckedAt: parseEyesOnAgentsTimestamp(
-            row.last_user_prompt_checked_at,
-            'last_user_prompt_checked_at'
-          ),
-          activeTurn,
-          recoveryCandidate
-        };
-      };
       const hotRows = selectPage.all(
         THREAD_REFRESH_PAGE_SIZE,
         0
-      ) as Array<{
-        thread_id: string;
-        runtime_state: string;
-        active_turn_id: string | null;
-        is_unread: number;
-        status_source: string;
-        status_observed_at: number | null;
-        last_user_prompt_checked_at: number | null;
-      }>;
+      ) as ThreadRefreshCandidateRow[];
       const coldRows = coldPage === null
         ? []
         : selectPage.all(
             THREAD_REFRESH_PAGE_SIZE,
             (coldPage - 1) * THREAD_REFRESH_PAGE_SIZE
-          ) as Array<{
-            thread_id: string;
-            runtime_state: string;
-            active_turn_id: string | null;
-            is_unread: number;
-            status_source: string;
-            status_observed_at: number | null;
-            last_user_prompt_checked_at: number | null;
-          }>;
+          ) as ThreadRefreshCandidateRow[];
       return {
-        hot: hotRows.map(toCandidate),
-        cold: coldRows.map(toCandidate),
+        hot: hotRows.map(toRefreshCandidate),
+        cold: coldRows.map(toRefreshCandidate),
         pageCount,
         coldPage
       };
     });
     return transaction();
+  }
+
+  async getThreadRefreshCandidate(params: {
+    threadId: string;
+  }): Promise<EyesOnAgentsThreadRefreshCandidate | null> {
+    const threadId = parseEyesOnAgentsUuid(params?.threadId);
+    const row = await sqliteHelper.safeGet<ThreadRefreshCandidateRow>(
+      `SELECT ${THREAD_REFRESH_CANDIDATE_COLUMNS}
+       FROM eyes_on_agents_thread
+       WHERE thread_id = ? AND is_archived = 0`,
+      [threadId]
+    );
+    return row ? toRefreshCandidate(row) : null;
   }
 
   async refreshThreadPage(params: {
@@ -897,6 +900,33 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             thread.threadId,
             thread.recoveredTurn.expectedStatusObservedAt,
             thread.recoveredTurn.turnId
+          );
+          if (Number(result.changes) === 1) changed = true;
+        }
+
+        if (thread.reclaimedTurn !== undefined) {
+          const result = sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET
+              status_source = 'app_server_turn',
+              status_observed_at = ?,
+              last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
+              updated_at = ?
+             WHERE thread_id = ?
+               AND is_archived = 0
+               AND status_source = ?
+               AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
+               AND active_turn_id = ?
+               AND status_observed_at = ?
+               AND COALESCE(last_completed_turn_id, '') <> ?`
+          ).run(
+            thread.reclaimedTurn.startedAt,
+            thread.reclaimedTurn.startedAt,
+            now,
+            thread.threadId,
+            thread.reclaimedTurn.expectedStatusSource,
+            thread.reclaimedTurn.expectedActiveTurnId,
+            thread.reclaimedTurn.expectedStatusObservedAt,
+            thread.reclaimedTurn.turnId
           );
           if (Number(result.changes) === 1) changed = true;
         }

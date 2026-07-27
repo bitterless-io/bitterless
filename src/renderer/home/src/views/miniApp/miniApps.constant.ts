@@ -38,8 +38,6 @@ export const createMiniApps = (
     action: openMaestro,
   },
   */
-  /*
-  // Temporarily hidden: remove this block comment to restore the Coin Mini App entry.
   {
     id: 'coin',
     name: i18n.miniApp.coin.name,
@@ -47,7 +45,6 @@ export const createMiniApps = (
     icon: coinIcon,
     action: openCoin,
   },
-  */
   {
     id: 'eyes-on-agents',
     name: i18n.miniApp.eyesOnAgents.name,

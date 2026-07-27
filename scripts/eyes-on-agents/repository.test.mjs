@@ -1726,7 +1726,12 @@ try {
   );
   assert.deepEqual(
     promotedHotPage.hot[0].activeTurn,
-    { turnId: 'focus-turn-2', statusObservedAt: 40_002, statusSource: 'codex_hook' },
+    {
+      turnId: 'focus-turn-2',
+      statusObservedAt: 40_002,
+      statusSource: 'codex_hook',
+      runtimeState: 'working'
+    },
     'refresh selection must expose exact active evidence for guarded terminal polling'
   );
   assert.equal(
@@ -2110,7 +2115,12 @@ try {
   );
   assert.deepEqual(
     recoveredSelection.activeTurn,
-    { turnId: 'missed-turn', statusObservedAt: 59_000, statusSource: 'app_server_turn' },
+    {
+      turnId: 'missed-turn',
+      statusObservedAt: 59_000,
+      statusSource: 'app_server_turn',
+      runtimeState: 'working'
+    },
     'a recovered row becomes an exact-identity terminal reconciliation candidate'
   );
   assert.equal(recoveredSelection.recoveryCandidate, null);

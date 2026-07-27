@@ -419,7 +419,8 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
       'lastActivityAt',
       'lastUserPrompt',
       'terminalTurn',
-      'recoveredTurn'
+      'recoveredTurn',
+      'reclaimedTurn'
     ],
     'thread refresh patch'
   );
@@ -576,8 +577,67 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
       source: value.recoveredTurn.source
     };
   }
-  if (result.terminalTurn !== undefined && result.recoveredTurn !== undefined) {
-    throw new Error('a thread refresh patch must not both end and recover a turn');
+  if (hasOwn(value, 'reclaimedTurn')) {
+    if (!isEyesOnAgentsRecord(value.reclaimedTurn)) {
+      throw new Error('reclaimed turn patch must be an object');
+    }
+    assertOnlyKeys(
+      value.reclaimedTurn,
+      [
+        'turnId',
+        'startedAt',
+        'expectedActiveTurnId',
+        'expectedStatusObservedAt',
+        'expectedStatusSource',
+        'source'
+      ],
+      'reclaimed turn patch'
+    );
+    if (value.reclaimedTurn.source !== 'app_server_turn') {
+      throw new Error('reclaimed turn source must be app_server_turn');
+    }
+    if (value.reclaimedTurn.expectedStatusSource !== 'codex_hook') {
+      throw new Error('reclaimed turn expected status source must be codex_hook');
+    }
+    const turnId = parseEyesOnAgentsText(
+      value.reclaimedTurn.turnId,
+      'reclaimed turn id',
+      200,
+      false
+    ) as string;
+    const expectedActiveTurnId = parseEyesOnAgentsText(
+      value.reclaimedTurn.expectedActiveTurnId,
+      'expected active turn id',
+      200,
+      false
+    ) as string;
+    if (turnId !== expectedActiveTurnId) {
+      throw new Error('reclaimed turn id must match the expected active turn id');
+    }
+    result.reclaimedTurn = {
+      turnId,
+      startedAt: parseEyesOnAgentsTimestamp(
+        value.reclaimedTurn.startedAt,
+        'reclaimed turn startedAt',
+        false
+      ) as number,
+      expectedActiveTurnId,
+      expectedStatusObservedAt: parseEyesOnAgentsTimestamp(
+        value.reclaimedTurn.expectedStatusObservedAt,
+        'expected status observedAt',
+        false
+      ) as number,
+      expectedStatusSource: value.reclaimedTurn.expectedStatusSource,
+      source: value.reclaimedTurn.source
+    };
+  }
+  const turnTransitions = [
+    result.terminalTurn,
+    result.recoveredTurn,
+    result.reclaimedTurn
+  ].filter((transition) => transition !== undefined).length;
+  if (turnTransitions > 1) {
+    throw new Error('a thread refresh patch must carry at most one turn transition');
   }
   return result;
 };

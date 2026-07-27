@@ -171,6 +171,15 @@ export interface EyesOnAgentsThreadRefreshRecoveredTurnPatch {
   source: 'app_server_turn';
 }
 
+export interface EyesOnAgentsThreadRefreshReclaimedTurnPatch {
+  turnId: string;
+  startedAt: number;
+  expectedActiveTurnId: string;
+  expectedStatusObservedAt: number;
+  expectedStatusSource: Extract<EyesOnAgentsStatusSource, 'codex_hook'>;
+  source: 'app_server_turn';
+}
+
 export interface EyesOnAgentsThreadRefreshPatch {
   threadId: string;
   title?: string | null;
@@ -178,12 +187,14 @@ export interface EyesOnAgentsThreadRefreshPatch {
   lastUserPrompt?: EyesOnAgentsThreadRefreshLastUserPromptPatch;
   terminalTurn?: EyesOnAgentsThreadRefreshTerminalTurnPatch;
   recoveredTurn?: EyesOnAgentsThreadRefreshRecoveredTurnPatch;
+  reclaimedTurn?: EyesOnAgentsThreadRefreshReclaimedTurnPatch;
 }
 
 export interface EyesOnAgentsThreadRefreshActiveTurn {
   turnId: string;
   statusObservedAt: number;
   statusSource: EyesOnAgentsActiveTurnSource;
+  runtimeState: EyesOnAgentsRuntimeState;
 }
 
 export interface EyesOnAgentsThreadRefreshRecoveryCandidate {
@@ -267,6 +278,9 @@ export interface EyesOnAgentsRepositoryApi {
     coldPage: number;
     previousPageCount: number | null;
   }): Promise<EyesOnAgentsThreadRefreshPages>;
+  getThreadRefreshCandidate(params: {
+    threadId: string;
+  }): Promise<EyesOnAgentsThreadRefreshCandidate | null>;
   refreshThreadPage(params: {
     threads: EyesOnAgentsThreadRefreshPatch[];
   }): Promise<EyesOnAgentsRepositoryMutationResult>;
