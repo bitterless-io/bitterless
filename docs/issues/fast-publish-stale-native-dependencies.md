@@ -64,4 +64,9 @@ version or reach packaging. The focused suite passed 14/14 and independent revie
 or P3 finding. See
 [`release-fast-publish-dependency-sync-003-1`](../plan/reviews/release-fast-publish-dependency-sync-003-1.md).
 
+After merge, `yarn install --frozen-lockfile` completed with Electron Builder rebuilding the native
+dependency for Electron `40.10.6` arm64. Yarn integrity passed, the installed SQLite package is
+`12.11.1`, the binding is an arm64 Mach-O bundle, and an Electron-run-as-Node smoke opened and
+closed an in-memory database under Electron ABI 143.
+
 The owner will run the final signed macOS ARM package through `yarn fast_publish:mac_arm`.

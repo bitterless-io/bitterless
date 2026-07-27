@@ -69,6 +69,9 @@ locked dependencies before it changes release metadata or starts the signed buil
 - The focused release-hook suite passed 14/14 and `git diff --check` passed. No install, build,
   packaging, signing, notarization, upload, or publication was run in the isolated verification
   worktree.
+- After merge, the primary workspace frozen-lockfile install and Yarn integrity check passed.
+  Installed Electron `40.10.6` loaded SQLite `12.11.1` through its arm64 native binding under ABI
+  143 and opened an in-memory database successfully.
 - Independent review passed without P1, P2, or P3 finding; see
   [`release-fast-publish-dependency-sync-003-1`](../reviews/release-fast-publish-dependency-sync-003-1.md).
 - Owner verification remains the final signed macOS ARM fast-publish run.
