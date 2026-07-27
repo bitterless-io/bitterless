@@ -5,7 +5,8 @@ import type {
   EyesOnAgentsHookLastUserPromptCandidate,
   EyesOnAgentsProjectMetadata,
   EyesOnAgentsRuntimeEvent,
-  EyesOnAgentsRuntimeState
+  EyesOnAgentsRuntimeState,
+  EyesOnAgentsStatusSource
 } from './eyesOnAgents.type';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -28,6 +29,11 @@ const ACTIVE_STATES = new Set<EyesOnAgentsRuntimeState>([
   'working',
   'waiting_approval',
   'waiting_input'
+]);
+const TERMINAL_STATES = new Set<EyesOnAgentsRuntimeState>([
+  'idle',
+  'failed',
+  'ended'
 ]);
 
 const hasUnpairedSurrogate = (value: string): boolean => {
@@ -282,23 +288,19 @@ export const isEyesOnAgentsUnread = (value: {
   return value.lastOpenedAt === null || value.lastCompletedAt > value.lastOpenedAt;
 };
 
+export const isEyesOnAgentsTerminal = (
+  runtimeState: EyesOnAgentsRuntimeState
+): boolean => TERMINAL_STATES.has(runtimeState);
+
 export const isEyesOnAgentsFocused = (
   runtimeState: EyesOnAgentsRuntimeState,
-  isUnread: boolean,
-  statusObservedAt: number | null,
-  lastOpenedAt: number | null
-): boolean => isUnread || (
-  ACTIVE_STATES.has(runtimeState) &&
-  (
-    lastOpenedAt === null ||
-    (statusObservedAt !== null && statusObservedAt > lastOpenedAt)
-  )
-);
+  isUnread: boolean
+): boolean => isUnread || ACTIVE_STATES.has(runtimeState);
 
 export const effectiveEyesOnAgentsRuntimeState = (
   params: {
     runtimeState: EyesOnAgentsRuntimeState;
-    statusSource: 'app_server' | 'codex_hook' | 'discovery';
+    statusSource: EyesOnAgentsStatusSource;
     statusObservedAt: number | null;
     managedServerConnected: boolean;
     hookBridgeState: EyesOnAgentsBridgeState;
@@ -317,7 +319,9 @@ export const effectiveEyesOnAgentsRuntimeState = (
   } = params;
   if (!ACTIVE_STATES.has(runtimeState)) return runtimeState;
   if (statusObservedAt === null) return 'unknown';
-  if (statusSource === 'app_server') return managedServerConnected ? runtimeState : 'unknown';
+  if (statusSource === 'app_server' || statusSource === 'app_server_turn') {
+    return managedServerConnected ? runtimeState : 'unknown';
+  }
   if (
     statusSource === 'codex_hook' &&
     hookBridgeState === 'installed' &&
@@ -409,7 +413,14 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
   if (!isEyesOnAgentsRecord(value)) throw new Error('thread refresh patch must be an object');
   assertOnlyKeys(
     value,
-    ['threadId', 'title', 'lastActivityAt', 'lastUserPrompt', 'terminalTurn'],
+    [
+      'threadId',
+      'title',
+      'lastActivityAt',
+      'lastUserPrompt',
+      'terminalTurn',
+      'recoveredTurn'
+    ],
     'thread refresh patch'
   );
   const result: EyesOnAgentsThreadRefreshPatch = {
@@ -481,12 +492,19 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
         'completedAt',
         'expectedActiveTurnId',
         'expectedStatusObservedAt',
+        'expectedStatusSource',
         'source'
       ],
       'terminal turn patch'
     );
     if (value.terminalTurn.source !== 'app_server') {
       throw new Error('terminal turn source must be app_server');
+    }
+    if (
+      value.terminalTurn.expectedStatusSource !== 'codex_hook' &&
+      value.terminalTurn.expectedStatusSource !== 'app_server_turn'
+    ) {
+      throw new Error('expected status source must be codex_hook or app_server_turn');
     }
     if (!['completed', 'failed', 'interrupted'].includes(String(value.terminalTurn.outcome))) {
       throw new Error('terminal turn outcome is unsupported');
@@ -522,8 +540,44 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
       completedAt,
       expectedActiveTurnId,
       expectedStatusObservedAt,
+      expectedStatusSource: value.terminalTurn.expectedStatusSource,
       source: value.terminalTurn.source
     };
+  }
+  if (hasOwn(value, 'recoveredTurn')) {
+    if (!isEyesOnAgentsRecord(value.recoveredTurn)) {
+      throw new Error('recovered turn patch must be an object');
+    }
+    assertOnlyKeys(
+      value.recoveredTurn,
+      ['turnId', 'startedAt', 'expectedStatusObservedAt', 'source'],
+      'recovered turn patch'
+    );
+    if (value.recoveredTurn.source !== 'app_server_turn') {
+      throw new Error('recovered turn source must be app_server_turn');
+    }
+    result.recoveredTurn = {
+      turnId: parseEyesOnAgentsText(
+        value.recoveredTurn.turnId,
+        'recovered turn id',
+        200,
+        false
+      ) as string,
+      startedAt: parseEyesOnAgentsTimestamp(
+        value.recoveredTurn.startedAt,
+        'recovered turn startedAt',
+        false
+      ) as number,
+      expectedStatusObservedAt: parseEyesOnAgentsTimestamp(
+        value.recoveredTurn.expectedStatusObservedAt,
+        'expected status observedAt',
+        false
+      ) as number,
+      source: value.recoveredTurn.source
+    };
+  }
+  if (result.terminalTurn !== undefined && result.recoveredTurn !== undefined) {
+    throw new Error('a thread refresh patch must not both end and recover a turn');
   }
   return result;
 };

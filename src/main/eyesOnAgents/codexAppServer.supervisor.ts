@@ -525,6 +525,7 @@ export class CodexAppServerSupervisor {
     return {
       id: typeof turn.id === 'string' ? turn.id : null,
       status: typeof turn.status === 'string' ? turn.status : null,
+      startedAt: typeof turn.startedAt === 'number' ? turn.startedAt : null,
       completedAt: typeof turn.completedAt === 'number' ? turn.completedAt : null
     };
   }

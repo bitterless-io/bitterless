@@ -7,7 +7,16 @@ export type EyesOnAgentsRuntimeState =
   | 'ended'
   | 'unknown';
 
-export type EyesOnAgentsStatusSource = 'app_server' | 'codex_hook' | 'discovery';
+export type EyesOnAgentsStatusSource =
+  | 'app_server'
+  | 'app_server_turn'
+  | 'codex_hook'
+  | 'discovery';
+
+export type EyesOnAgentsActiveTurnSource = Extract<
+  EyesOnAgentsStatusSource,
+  'codex_hook' | 'app_server_turn'
+>;
 
 export type EyesOnAgentsConnectionState =
   | 'disconnected'
@@ -151,7 +160,15 @@ export interface EyesOnAgentsThreadRefreshTerminalTurnPatch {
   completedAt: number;
   expectedActiveTurnId: string;
   expectedStatusObservedAt: number;
+  expectedStatusSource: EyesOnAgentsActiveTurnSource;
   source: 'app_server';
+}
+
+export interface EyesOnAgentsThreadRefreshRecoveredTurnPatch {
+  turnId: string;
+  startedAt: number;
+  expectedStatusObservedAt: number;
+  source: 'app_server_turn';
 }
 
 export interface EyesOnAgentsThreadRefreshPatch {
@@ -160,17 +177,24 @@ export interface EyesOnAgentsThreadRefreshPatch {
   lastActivityAt?: number;
   lastUserPrompt?: EyesOnAgentsThreadRefreshLastUserPromptPatch;
   terminalTurn?: EyesOnAgentsThreadRefreshTerminalTurnPatch;
+  recoveredTurn?: EyesOnAgentsThreadRefreshRecoveredTurnPatch;
 }
 
-export interface EyesOnAgentsThreadRefreshHookActiveTurn {
+export interface EyesOnAgentsThreadRefreshActiveTurn {
   turnId: string;
+  statusObservedAt: number;
+  statusSource: EyesOnAgentsActiveTurnSource;
+}
+
+export interface EyesOnAgentsThreadRefreshRecoveryCandidate {
   statusObservedAt: number;
 }
 
 export interface EyesOnAgentsThreadRefreshCandidate {
   threadId: string;
   lastUserPromptCheckedAt: number | null;
-  hookActiveTurn: EyesOnAgentsThreadRefreshHookActiveTurn | null;
+  activeTurn: EyesOnAgentsThreadRefreshActiveTurn | null;
+  recoveryCandidate: EyesOnAgentsThreadRefreshRecoveryCandidate | null;
 }
 
 export interface EyesOnAgentsThreadRefreshPages {

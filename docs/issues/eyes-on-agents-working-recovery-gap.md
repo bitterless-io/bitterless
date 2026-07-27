@@ -37,8 +37,11 @@ for the latest persisted turn, leaving the valid combination `unknown + unread` 
 - A valid latest `inProgress` turn with a real ID and non-future persisted start time may recover
   `working`. SQLite must compare-and-set against the exact candidate state, unread bit, source,
   active-turn absence, and observation watermark, and must reject a turn already recorded as
-  completed. A concurrent Open, newer Hook event, archive, or other status change makes the patch a
-  no-op.
+  completed. A newer Hook event, archive, or other status change makes the patch a no-op.
+  The original "concurrent Open" clause is superseded by
+  [eyes-on-agents-active-focus-read-semantics](eyes-on-agents-active-focus-read-semantics.md): Open
+  no longer acknowledges an `unknown` row, so an opened but still-unresolved task is precisely the
+  case this repair exists for and must not be excluded.
 - Record recovered evidence with a distinct `app_server_turn` source, not the process-local
   `app_server` source. Inventory `notLoaded` observations and App Server reconnect invalidation must
   not erase this persisted turn identity. Keep the task unread and use the persisted start time for

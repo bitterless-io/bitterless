@@ -29,10 +29,10 @@ EyesOnAgents never reads or displays them.
   system `uncategorized` Domain as the storage fallback.
 - Derive current Git Project metadata from `cwd` and filter `All` by Project without
   changing manual Domain assignment.
-- Show unacknowledged running threads and newly completed unread threads in a fixed Focus column.
+- Show every running thread and every newly completed unread thread in a fixed Focus column.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
 - Persist unread explicitly: every observed running state or terminal event sets unread; a
-  successful Open from EyesOnAgents or explicit Focus `Read all` clears eligible completed
+  successful Open from EyesOnAgents or explicit Focus `Read all` clears confirmed terminal
   attention until activity is observed again.
 - Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
   activated again.
@@ -387,8 +387,8 @@ nor Focus is stored as a separate table row.
 | `last_completed_at` | most recent observed terminal time |
 | `last_opened_turn_id` | terminal/active turn seen when opened through EyesOnAgents |
 | `last_opened_at` | successful Codex deep-link open time |
-| `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open or eligible Focus `Read all` clears it |
-| `status_source` | `app_server`, `codex_hook`, or `discovery` |
+| `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open or Focus `Read all` clears it for confirmed terminal rows only |
+| `status_source` | `app_server`, `app_server_turn`, `codex_hook`, or `discovery`; `app_server_turn` marks active state recovered from persisted newest-turn metadata rather than process-local status |
 | `status_observed_at` | freshness boundary for runtime evidence |
 | `last_activity_at` | sort/display timestamp from reliable metadata or events |
 | `created_at`, `updated_at` | local lifecycle timestamps |
@@ -451,6 +451,7 @@ type EyesOnAgentsRuntimeState =
 
 type EyesOnAgentsStatusSource =
   | "app_server"
+  | "app_server_turn"
   | "codex_hook"
   | "discovery";
 ```
@@ -460,7 +461,10 @@ App Server active flags map approval/input waits ahead of generic working. `notL
 thread's resulting idle state.
 
 Hook evidence may override discovery evidence when it is newer. App Server lifecycle events from
-the managed connection are authoritative for that connection. Hook-active evidence remains valid
+the managed connection are authoritative for that connection. `app_server_turn` is not a lifecycle
+source: it marks active state reconstructed from persisted newest-turn metadata and is ranked below
+Hook evidence, which supersedes it through the normal watermark rule. See *Missed working recovery*
+below for its full precedence, preservation, and rendering rules. Hook-active evidence remains valid
 until terminal evidence only while it was committed through the currently listening bridge runtime
 and all owned hooks are trusted. Listener startup first invalidates previous active Hook rows; a
 subsequent current-listener outbox replay is therefore valid even when the provider occurrence time
@@ -475,38 +479,41 @@ Focus is a derived view, never a persisted classification. Unread and successful
 are persisted Bitterless markers:
 
 ```text
-current active attention = runtime state is working/waiting_approval/waiting_input
-                        AND (
-                          last_opened_at is absent
-                          OR status_observed_at is newer than last_opened_at
-                        )
-
-in Focus = current active attention OR is_unread = true
+in Focus = runtime state is working/waiting_approval/waiting_input
+        OR is_unread = true
 ```
+
+Focus membership is a pure function of the currently displayed runtime state and the unread marker.
+`last_opened_at` and `last_opened_turn_id` remain durable deep-link evidence, but neither field is
+allowed to hide a task that is still running. Runtime attention and read acknowledgement are
+separate facts, so a running task that the user opened stays in Focus until the observation actually
+resolves. `isEyesOnAgentsFocused` therefore takes only runtime state and unread; Main derives it
+from the effective runtime state, and the renderer derives the Focus column in memory from the same
+shared predicate.
 
 Every accepted `turn_started`, active `thread_status`, active `thread/list` observation, and
 `turn_completed` sets `is_unread = true`. This includes the completion of a turn that was opened
-while running: completion is a new attention transition and becomes unread again. A successful Open
-sets `is_unread = false` and acknowledges the current status observation; Focus `Read all` clears
-the marker for non-running unread rows. If a later authoritative active event arrives, its newer
-status time sets unread again as required. Metadata polling cannot restore active runtime attention. Idle,
-unknown, archive, and invalidation transitions otherwise preserve the current marker.
+while running: completion is a new attention transition and becomes unread again. Metadata polling
+cannot restore active runtime attention. Idle, unknown, archive, and invalidation transitions
+otherwise preserve the current marker.
 
 The legacy completion/open comparison is used once by migration to backfill the new column, so an
 upgrade preserves previously unread completed threads without flooding Focus with historical rows.
-An active thread leaves Focus after Open because that exact status observation has been
-acknowledged. A later `UserPromptSubmit`, approval/input wait, or other authoritative active event
-advances `status_observed_at`, sets unread, and restores Focus.
 
-Focus `Read all` clears `is_unread` for every currently non-archived unread row whose runtime state
-is not `working`, `waiting_approval`, or `waiting_input`, in one repository mutation. It is not
-filtered by renderer DOM, current scroll position, Domain, Project, or title search. Idle rows that
-were focused only because they were unread leave Focus. Active rows are deliberately not
-acknowledged: they remain in Focus and retain the latent marker that makes a later idle observation
-unread even if no terminal event arrives. The operation does not deep-link to Codex and never
-changes `last_opened_turn_id` or `last_opened_at`. A newer lifecycle observation committed after the
-read mutation may set a cleared thread unread again, preserving newer activity. Metadata polling
-cannot do so.
+Both acknowledgement paths share one positive terminal allowlist — `idle`, `failed`, and `ended`:
+
+- A successful Open always records `last_opened_turn_id` and `last_opened_at`. It clears
+  `is_unread` only when the row is in a confirmed terminal state. Active and `unknown` rows keep
+  their latent marker, so neither a still-running turn nor a temporary authority gap can be
+  acknowledged away.
+- Focus `Read all` clears `is_unread` for every non-archived unread terminal row in one repository
+  mutation. It is not filtered by renderer DOM, current scroll position, Domain, Project, or title
+  search, it does not deep-link to Codex, and it never changes runtime evidence or `last_opened_*`.
+  The renderer enables the action from the same allowlist.
+
+Acknowledged terminal rows leave Focus. A newer lifecycle observation committed after either
+mutation may set a cleared thread unread again, preserving newer activity. Metadata polling cannot
+do so.
 
 `last_opened_*` changes only after `shell.openExternal(codex://threads/<id>)` resolves successfully.
 Selecting a card, moving it, or opening the same thread directly inside Codex does not mark it read.
@@ -523,10 +530,13 @@ auto-clear unread.
 
 Codex Hook delivery may miss a manual interruption. EyesOnAgents does not add a `paused` state, scan
 private rollout/transcript files, or expire working by elapsed time. Instead, the existing hot/cold
-poll may inspect only the newest turn for a currently active Hook row through
+poll may inspect only the newest turn for a selected row through
 `thread/turns/list(itemsView: notLoaded, sortDirection: desc, limit: 1)`. This request does not load
-turn items or conversation content into Bitterless; Main projects only ID, status, and completion
-time from the response. `inProgress` changes nothing. A `completed`, `interrupted`, or
+turn items or conversation content into Bitterless; Main projects only ID, status, start time, and
+completion time from the response. Exactly one of two candidate kinds may consume that single
+request per selected task: an already-active row with an exact turn identity, which may only be
+reconciled terminally, or a missed-working recovery candidate (see below), which may only be
+recovered. `inProgress` changes nothing for the first kind. A `completed`, `interrupted`, or
 `failed` result may reconcile the row only when its turn ID exactly matches the current active turn
 and it carries a non-null persisted completion time. The second-precision completion value is not
 ordered against the millisecond Hook observation and does not create a new status watermark;
@@ -536,6 +546,45 @@ identity or completion time is a no-op. SQLite repeats those guards against the 
 delayed request cannot terminate a newer turn. Reconciliation clears active state but sets unread:
 the task remains in Focus as newly finished until Open or `Read all`, and a later prompt restores
 working through `UserPromptSubmit`.
+
+### Missed working recovery
+
+A Hook listener lifetime boundary invalidates old Hook-owned active evidence to
+`discovery + unknown` with no active turn while preserving unread. Codex does not replay
+`UserPromptSubmit` for a turn that was already running before the new listener, so nothing can push
+that row back to `working` on its own. Because terminal reconciliation only ever asked for rows that
+were already active, such a row stayed `unknown + unread` indefinitely: visibly in Focus, with no
+working spinner, and unrepaired by both the ten-second poll and labelled `Refresh`.
+
+The same content-free newest-turn request therefore also serves a **missed-working recovery
+candidate**: a non-archived, unread, `discovery + unknown` row with no active turn and a concrete
+`status_observed_at` watermark. A latest turn whose status is `inProgress`, whose ID is real, and
+whose persisted start time is no later than the poll may restore `working`. Everything else —
+terminal, empty, malformed, ID-less, start-time-less, or future-dated evidence — is a no-op. No
+elapsed-time guess, private transcript scan, response content, or `paused` state is introduced, and
+`thread/list.status` / `thread/read.status` remain outside the Desktop runtime authority boundary.
+
+Recovered evidence is recorded under a distinct `app_server_turn` status source, never the
+process-local `app_server` source:
+
+- SQLite compare-and-sets against the exact selected candidate — unread bit, `discovery` source,
+  `unknown` runtime, absent active turn, unchanged watermark — and rejects a turn already recorded
+  as completed. A newer Hook event, archive, replacement turn, or acknowledgement makes a delayed
+  patch a no-op.
+- The write sets `working`, the real active turn ID, the persisted start time as both the status
+  watermark and an activity floor, and keeps the row unread.
+- Full `notLoaded` inventory discovery and App Server reconnect invalidation both preserve
+  `app_server_turn` identity, so labelled `Refresh`'s sync-before-detail order stays safe.
+- A recovered row is an ordinary exact-ID terminal reconciliation candidate afterwards. The terminal
+  compare-and-set includes the expected status source, so a Hook expectation cannot end a recovered
+  row and vice versa.
+- Real Hook evidence supersedes recovered evidence through the normal watermark rule.
+- Snapshot projection renders a recovered active state only while the managed App Server reader is
+  connected; otherwise it degrades to `unknown` exactly like process-local `app_server` evidence.
+
+A successful `Open` does not block recovery. Open records deep-link evidence and acknowledges unread
+only for a confirmed terminal row, so an opened-but-still-`unknown` task is exactly the case this
+repair exists for.
 
 ## XPC surface
 

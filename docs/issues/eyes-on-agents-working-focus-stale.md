@@ -38,10 +38,13 @@ content into Bitterless. The supervisor retains only ID, status, and completion 
   turn ID still can.
 - Hook events and lifecycle notifications from the connection that owns a turn remain the only
   immediate runtime authorities; polling is eventual terminal reconciliation only.
-- A successful Open acknowledges the currently observed active state. The thread leaves Focus until
-  a newer active event arrives.
+- A successful Open records deep-link evidence for every thread but acknowledges unread only for a
+  confirmed terminal row. Superseded by
+  [eyes-on-agents-active-focus-read-semantics](eyes-on-agents-active-focus-read-semantics.md): the
+  original rule here let Open dismiss the current active observation, which removed a still-running
+  task from Focus.
 - A later `UserPromptSubmit` always creates newer `working` evidence, restores unread attention, and
-  returns the thread to Focus.
+  keeps the thread in Focus.
 - No timeout guesses that a long-running task has stopped.
 - Reconciliation records the terminal state as unread. The row may remain in Focus as a newly
   finished task, but it no longer displays working.

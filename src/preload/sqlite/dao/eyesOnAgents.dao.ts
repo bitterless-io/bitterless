@@ -110,7 +110,12 @@ const toDomain = (row: DomainRow): EyesOnAgentsDomain => ({
 });
 
 const parseStatusSource = (value: unknown): EyesOnAgentsStatusSource => {
-  if (value === 'app_server' || value === 'codex_hook' || value === 'discovery') return value;
+  if (
+    value === 'app_server'
+    || value === 'app_server_turn'
+    || value === 'codex_hook'
+    || value === 'discovery'
+  ) return value;
   throw new Error('status source is unsupported');
 };
 
@@ -264,12 +269,7 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
       parseEyesOnAgentsTimestamp(row.last_activity_at, 'last_activity_at')
     ),
     isUnread,
-    isFocused: isEyesOnAgentsFocused(
-      runtimeState,
-      isUnread,
-      statusObservedAt,
-      lastOpenedAt
-    ),
+    isFocused: isEyesOnAgentsFocused(runtimeState, isUnread),
     lastUserPrompt: toLastUserPrompt(row)
   };
 };
@@ -633,8 +633,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ? 2
           : params.coldPage;
       const selectPage = sqliteManager.db.prepare(
-        `SELECT thread_id, runtime_state, active_turn_id, status_source, status_observed_at,
-          last_user_prompt_checked_at
+        `SELECT thread_id, runtime_state, active_turn_id, is_unread, status_source,
+          status_observed_at, last_user_prompt_checked_at
          FROM eyes_on_agents_thread
          WHERE is_archived = 0
          ORDER BY COALESCE(last_activity_at, updated_at) DESC,
@@ -646,6 +646,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           thread_id: string;
           runtime_state: string;
           active_turn_id: string | null;
+          is_unread: number;
           status_source: string;
           status_observed_at: number | null;
           last_user_prompt_checked_at: number | null;
@@ -654,16 +655,25 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         const runtimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
         const statusSource = parseStatusSource(row.status_source);
         const activeTurnId = parseTurnId(row.active_turn_id, 'active_turn_id');
+        if (row.is_unread !== 0 && row.is_unread !== 1) throw new Error('is_unread is invalid');
         const statusObservedAt = parseEyesOnAgentsTimestamp(
           row.status_observed_at,
           'status_observed_at'
         );
-        const hookActiveTurn = statusSource === 'codex_hook' &&
+        const activeTurn = (statusSource === 'codex_hook' || statusSource === 'app_server_turn') &&
           ['working', 'waiting_approval', 'waiting_input'].includes(runtimeState) &&
           activeTurnId !== null &&
           statusObservedAt !== null &&
           activeTurnId !== `hook-${statusObservedAt}`
-          ? { turnId: activeTurnId, statusObservedAt }
+          ? { turnId: activeTurnId, statusObservedAt, statusSource }
+          : null;
+        const recoveryCandidate = activeTurn === null &&
+          statusSource === 'discovery' &&
+          runtimeState === 'unknown' &&
+          row.is_unread === 1 &&
+          activeTurnId === null &&
+          statusObservedAt !== null
+          ? { statusObservedAt }
           : null;
         return {
           threadId: parseEyesOnAgentsUuid(row.thread_id),
@@ -671,7 +681,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             row.last_user_prompt_checked_at,
             'last_user_prompt_checked_at'
           ),
-          hookActiveTurn
+          activeTurn,
+          recoveryCandidate
         };
       };
       const hotRows = selectPage.all(
@@ -681,6 +692,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         thread_id: string;
         runtime_state: string;
         active_turn_id: string | null;
+        is_unread: number;
         status_source: string;
         status_observed_at: number | null;
         last_user_prompt_checked_at: number | null;
@@ -694,6 +706,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             thread_id: string;
             runtime_state: string;
             active_turn_id: string | null;
+            is_unread: number;
             status_source: string;
             status_observed_at: number | null;
             last_user_prompt_checked_at: number | null;
@@ -839,7 +852,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               updated_at = ?
              WHERE thread_id = ?
                AND is_archived = 0
-               AND status_source = 'codex_hook'
+               AND status_source = ?
                AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
                AND active_turn_id = ?
                AND status_observed_at = ?`
@@ -850,8 +863,40 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             thread.terminalTurn.completedAt,
             now,
             thread.threadId,
+            thread.terminalTurn.expectedStatusSource,
             thread.terminalTurn.expectedActiveTurnId,
             thread.terminalTurn.expectedStatusObservedAt
+          );
+          if (Number(result.changes) === 1) changed = true;
+        }
+
+        if (thread.recoveredTurn !== undefined) {
+          const result = sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET
+              runtime_state = 'working',
+              active_flags_json = '[]',
+              active_turn_id = ?,
+              is_unread = 1,
+              status_source = 'app_server_turn',
+              status_observed_at = ?,
+              last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
+              updated_at = ?
+             WHERE thread_id = ?
+               AND is_archived = 0
+               AND is_unread = 1
+               AND status_source = 'discovery'
+               AND runtime_state = 'unknown'
+               AND active_turn_id IS NULL
+               AND status_observed_at = ?
+               AND COALESCE(last_completed_turn_id, '') <> ?`
+          ).run(
+            thread.recoveredTurn.turnId,
+            thread.recoveredTurn.startedAt,
+            thread.recoveredTurn.startedAt,
+            now,
+            thread.threadId,
+            thread.recoveredTurn.expectedStatusObservedAt,
+            thread.recoveredTurn.turnId
           );
           if (Number(result.changes) === 1) changed = true;
         }
@@ -941,6 +986,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           cwd = COALESCE(excluded.cwd, eyes_on_agents_thread.cwd),
           is_archived = 0,
           runtime_state = CASE
+            WHEN eyes_on_agents_thread.status_source = 'app_server_turn'
+              THEN eyes_on_agents_thread.runtime_state
             WHEN excluded.status_source = 'discovery'
               AND eyes_on_agents_thread.status_source IN ('app_server', 'discovery')
               AND COALESCE(excluded.status_observed_at, 0) >= COALESCE(eyes_on_agents_thread.status_observed_at, 0)
@@ -951,6 +998,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             ELSE eyes_on_agents_thread.runtime_state
           END,
           active_flags_json = CASE
+            WHEN eyes_on_agents_thread.status_source = 'app_server_turn'
+              THEN eyes_on_agents_thread.active_flags_json
             WHEN excluded.status_source = 'discovery'
               AND eyes_on_agents_thread.status_source IN ('app_server', 'discovery')
               AND COALESCE(excluded.status_observed_at, 0) >= COALESCE(eyes_on_agents_thread.status_observed_at, 0)
@@ -961,6 +1010,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             ELSE eyes_on_agents_thread.active_flags_json
           END,
           active_turn_id = CASE
+            WHEN eyes_on_agents_thread.status_source = 'app_server_turn'
+              THEN eyes_on_agents_thread.active_turn_id
             WHEN excluded.status_source = 'discovery'
               AND eyes_on_agents_thread.status_source IN ('app_server', 'discovery')
               AND COALESCE(excluded.status_observed_at, 0) >= COALESCE(eyes_on_agents_thread.status_observed_at, 0)
@@ -972,6 +1023,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             ELSE eyes_on_agents_thread.is_unread
           END,
           status_source = CASE
+            WHEN eyes_on_agents_thread.status_source = 'app_server_turn'
+              THEN eyes_on_agents_thread.status_source
             WHEN excluded.status_source = 'discovery'
               AND eyes_on_agents_thread.status_source IN ('app_server', 'discovery')
               AND COALESCE(excluded.status_observed_at, 0) >= COALESCE(eyes_on_agents_thread.status_observed_at, 0)
@@ -982,6 +1035,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             ELSE eyes_on_agents_thread.status_source
           END,
           status_observed_at = CASE
+            WHEN eyes_on_agents_thread.status_source = 'app_server_turn'
+              THEN eyes_on_agents_thread.status_observed_at
             WHEN excluded.status_source = 'discovery'
               AND eyes_on_agents_thread.status_source IN ('app_server', 'discovery')
               AND COALESCE(excluded.status_observed_at, 0) >= COALESCE(eyes_on_agents_thread.status_observed_at, 0)
@@ -1229,7 +1284,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       `UPDATE eyes_on_agents_thread SET
         last_opened_turn_id = COALESCE(active_turn_id, last_completed_turn_id),
         last_opened_at = ?,
-        is_unread = 0,
+        is_unread = CASE
+          WHEN runtime_state IN ('idle', 'failed', 'ended') THEN 0
+          ELSE is_unread
+        END,
         updated_at = ?
        WHERE thread_id = ?`,
       [openedAt, Date.now(), threadId]
@@ -1242,7 +1300,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       `UPDATE eyes_on_agents_thread SET is_unread = 0
        WHERE is_archived = 0
          AND is_unread = 1
-         AND runtime_state NOT IN ('working', 'waiting_approval', 'waiting_input')`,
+         AND runtime_state IN ('idle', 'failed', 'ended')`,
       []
     );
     return { changed: Number(result.changes) > 0 };

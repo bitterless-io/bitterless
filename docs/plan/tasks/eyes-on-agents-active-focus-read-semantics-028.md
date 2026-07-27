@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-active-focus-read-semantics-028
 scope: decouple active Focus membership from unread acknowledgement
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [eyes-on-agents-focus-read-all-021, eyes-on-agents-focus-acknowledgement-024]
 ---
 
@@ -52,3 +52,26 @@ terminal unread attention. Preserve the existing evidence-based Hook and ten-sec
 - Renderer source coverage proves the action eligibility uses the same terminal allowlist.
 - Run the EyesOnAgents non-Electron suites, Node typecheck, and `git diff --check`. Ral owns runtime
   verification in Electron.
+
+## Delivery evidence
+
+- Re-delivered on 2026-07-27. The source that
+  [round 1](../reviews/eyes-on-agents-active-focus-read-semantics-028-1.md) passed on 2026-07-25 was
+  never committed — `git log --all -S` finds it in no reachable ref and the sibling worktrees are
+  clean — so this task was re-implemented from the issue and task contracts. See
+  [round 2](../reviews/eyes-on-agents-active-focus-read-semantics-028-2.md).
+- `isEyesOnAgentsFocused(runtimeState, isUnread)` no longer accepts `status_observed_at` or
+  `last_opened_at`; `isEyesOnAgentsTerminal` is the single `idle`/`failed`/`ended` allowlist shared
+  by Open, `Read all`, and the renderer action gate.
+- `markOpened` always writes `last_opened_turn_id` and `last_opened_at` and clears `is_unread` only
+  for a terminal row; `markAllRead` switched from the negative active list to the same positive
+  allowlist, so `unknown` rows keep their latent marker.
+- The renderer derives `focusThreads` in memory through the shared predicate instead of the
+  snapshot's `isFocused` flag.
+- `yarn test:eyes-on-agents` passes (core, project resolver, repository, App Server, bridge and hook
+  delivery, project filter, UI source — 35 UI assertions). `yarn typecheck:node` passes and
+  `yarn build` succeeds. `yarn typecheck:web`, `typecheck:eyes-on-agents:core`, and
+  `typecheck:eyes-on-agents:ui` still report their pre-existing failures in
+  `codexHookBridge.contract.ts`, `pathMain.helper.ts`, `omniWindow`, `maestro`, and
+  `eyesOnAgentsEnv.bridge.ts`; none are in the changed files and all reproduce on a clean tree.
+- No Electron UI run; Ral owns final runtime verification.

@@ -119,8 +119,16 @@ design document.
   valid Codex threads can be omitted from All and remain Untitled when an optional preview is
   multiline or longer than the display bound.
 - [EyesOnAgents working state and Focus acknowledgement](issues/eyes-on-agents-working-focus-stale.md) - implemented; owner verification pending:
-  independent App Server thread status must not overwrite Hook working evidence; Open acknowledges
-  the current observation, while guarded content-free terminal-turn polling repairs a missed Stop.
+  independent App Server thread status must not overwrite Hook working evidence, while guarded
+  content-free terminal-turn polling repairs a missed Stop. Its Open-acknowledges-active rule is
+  superseded by the active Focus and read semantics issue below.
+- [EyesOnAgents missed working recovery](issues/eyes-on-agents-working-recovery-gap.md) - implemented; owner verification pending:
+  a task left unread `discovery + unknown` by a Hook listener boundary shows no working spinner and
+  neither polling nor `Refresh` repairs it; content-free newest-turn metadata now restores `working`
+  under a distinct `app_server_turn` source.
+- [EyesOnAgents active Focus and read semantics](issues/eyes-on-agents-active-focus-read-semantics.md) - implemented; owner verification pending:
+  a still-working thread must not leave Focus after Open or `Read all`; Focus is `active runtime OR
+  unread`, and both acknowledgement paths clear unread only for confirmed terminal rows.
 - [EyesOnAgents App Server frame overflow](issues/eyes-on-agents-app-server-frame-overflow.md) - implemented; owner verification pending:
   opted-in latest-question recovery must not aggregate ten complete turns into a frame that kills
   the managed Codex App Server connection.

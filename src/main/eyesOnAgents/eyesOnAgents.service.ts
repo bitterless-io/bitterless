@@ -1,5 +1,6 @@
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type {
+  EyesOnAgentsActiveTurnSource,
   EyesOnAgentsApi,
   EyesOnAgentsBridgeStatus,
   EyesOnAgentsDiscoveredThread,
@@ -174,7 +175,7 @@ const parseProviderTimestamp = (value: unknown): number | null => {
   return Number.isSafeInteger(integerMilliseconds) ? integerMilliseconds : null;
 };
 
-const parseCompletedTurnTimestamp = (
+const parseProviderTurnTimestamp = (
   value: unknown,
   options: { notAfter: number }
 ): number | null => {
@@ -321,6 +322,7 @@ const terminalTurnFromLatest = (
   options: {
     activeTurnId: string;
     statusObservedAt: number;
+    statusSource: EyesOnAgentsActiveTurnSource;
     polledAt: number;
   }
 ): NonNullable<EyesOnAgentsThreadRefreshPatch['terminalTurn']> | undefined => {
@@ -342,7 +344,7 @@ const terminalTurnFromLatest = (
   if (status !== 'completed' && status !== 'interrupted' && status !== 'failed') {
     return undefined;
   }
-  const completedAt = parseCompletedTurnTimestamp(
+  const completedAt = parseProviderTurnTimestamp(
     providerThreadField(value, 'completedAt'),
     { notAfter: options.polledAt }
   );
@@ -353,7 +355,41 @@ const terminalTurnFromLatest = (
     completedAt,
     expectedActiveTurnId: options.activeTurnId,
     expectedStatusObservedAt: options.statusObservedAt,
+    expectedStatusSource: options.statusSource,
     source: 'app_server'
+  };
+};
+
+const recoveredTurnFromLatest = (
+  value: unknown,
+  options: {
+    statusObservedAt: number;
+    polledAt: number;
+  }
+): NonNullable<EyesOnAgentsThreadRefreshPatch['recoveredTurn']> | undefined => {
+  if (!isEyesOnAgentsRecord(value)) return undefined;
+  if (providerThreadField(value, 'status') !== 'inProgress') return undefined;
+  let turnId: string;
+  try {
+    turnId = parseEyesOnAgentsText(
+      providerThreadField(value, 'id'),
+      'Codex recovered turn id',
+      200,
+      false
+    ) as string;
+  } catch {
+    return undefined;
+  }
+  const startedAt = parseProviderTurnTimestamp(
+    providerThreadField(value, 'startedAt'),
+    { notAfter: options.polledAt }
+  );
+  if (startedAt === null) return undefined;
+  return {
+    turnId,
+    startedAt,
+    expectedStatusObservedAt: options.statusObservedAt,
+    source: 'app_server_turn'
   };
 };
 
@@ -361,7 +397,8 @@ const hasThreadRefreshPatch = (patch: EyesOnAgentsThreadRefreshPatch): boolean =
   return patch.title !== undefined ||
     patch.lastActivityAt !== undefined ||
     patch.lastUserPrompt !== undefined ||
-    patch.terminalTurn !== undefined;
+    patch.terminalTurn !== undefined ||
+    patch.recoveredTurn !== undefined;
 };
 
 const turnIdFrom = (value: unknown): string | null => {
@@ -543,9 +580,6 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       const observedAt = thread.statusObservedAt === null
         ? null
         : Date.parse(thread.statusObservedAt);
-      const lastOpenedAt = thread.lastOpenedAt === null
-        ? null
-        : Date.parse(thread.lastOpenedAt);
       const runtimeState = effectiveEyesOnAgentsRuntimeState({
         runtimeState: thread.runtimeState,
         statusSource: thread.statusSource,
@@ -558,12 +592,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       return {
         ...thread,
         runtimeState,
-        isFocused: isEyesOnAgentsFocused(
-          runtimeState,
-          thread.isUnread,
-          Number.isFinite(observedAt) ? observedAt : null,
-          Number.isFinite(lastOpenedAt) ? lastOpenedAt : null
-        ),
+        isFocused: isEyesOnAgentsFocused(runtimeState, thread.isUnread),
         lastUserPrompt: lastUserPromptCaptureEnabled
           ? thread.lastUserPrompt
           : {
@@ -1733,7 +1762,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     promptAdmission: ThreadRefreshPromptAdmission
   ): Promise<CancellableResult<EyesOnAgentsThreadRefreshPatch | null>> {
     const observedAt = this.now();
-    const hookActiveTurn = candidate.hookActiveTurn ?? null;
+    const activeTurn = candidate.activeTurn ?? null;
+    const recoveryCandidate = activeTurn === null
+      ? candidate.recoveryCandidate ?? null
+      : null;
     const read = await this.awaitUnlessCancelled(
       Promise.resolve().then(
         async () => await this.dependencies.appServer.readThread(candidate.threadId)
@@ -1789,7 +1821,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         }
       }
     }
-    if (hookActiveTurn !== null) {
+    if (activeTurn !== null || recoveryCandidate !== null) {
       const latestTurn = await this.awaitUnlessCancelled(
         Promise.resolve().then(
           async () => await this.dependencies.appServer.readLatestThreadTurn(
@@ -1799,13 +1831,21 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         context.controller.signal
       );
       if (latestTurn.state === 'cancelled') return latestTurn;
-      if (latestTurn.state === 'resolved') {
+      if (latestTurn.state === 'resolved' && activeTurn !== null) {
         const terminalTurn = terminalTurnFromLatest(latestTurn.value, {
-          activeTurnId: hookActiveTurn.turnId,
-          statusObservedAt: hookActiveTurn.statusObservedAt,
+          activeTurnId: activeTurn.turnId,
+          statusObservedAt: activeTurn.statusObservedAt,
+          statusSource: activeTurn.statusSource,
           polledAt: observedAt
         });
         if (terminalTurn !== undefined) projection.patch.terminalTurn = terminalTurn;
+      }
+      if (latestTurn.state === 'resolved' && recoveryCandidate !== null) {
+        const recoveredTurn = recoveredTurnFromLatest(latestTurn.value, {
+          statusObservedAt: recoveryCandidate.statusObservedAt,
+          polledAt: observedAt
+        });
+        if (recoveredTurn !== undefined) projection.patch.recoveredTurn = recoveredTurn;
       }
     }
     return {

@@ -5,6 +5,7 @@
     "../../src/renderer/eyesOnAgents/src/**/*.vue",
     "../../src/renderer/common/i18n/**/*",
     "../../src/renderer/common/utils/userAgentHelper/ua.helper.ts",
+    "../../src/shared/eyesOnAgents/eyesOnAgents.contract.ts",
     "../../src/shared/eyesOnAgents/eyesOnAgents.type.ts",
     "../../src/shared/eyesOnAgents/eyesOnAgentsWindow.type.ts",
     "../../src/env.d.ts",

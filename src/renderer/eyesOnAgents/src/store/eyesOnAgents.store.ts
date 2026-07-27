@@ -5,6 +5,10 @@ import type {
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
+  isEyesOnAgentsFocused,
+  isEyesOnAgentsTerminal,
+} from '@shared/eyesOnAgents/eyesOnAgents.contract';
+import {
   eyesOnAgentsEmitter,
   subscribeEyesOnAgentsChanges,
 } from '../emitter/eyesOnAgents.emitter';
@@ -76,15 +80,16 @@ class EyesOnAgentsState {
   }
 
   get focusThreads(): EyesOnAgentsThread[] {
-    return sortThreads(this.threads.filter((thread) => thread.isFocused));
+    return sortThreads(
+      this.threads.filter(
+        (thread) => isEyesOnAgentsFocused(thread.runtimeState, thread.isUnread),
+      ),
+    );
   }
 
   get readableFocusThreads(): EyesOnAgentsThread[] {
     return this.focusThreads.filter(
-      (thread) => thread.isUnread
-        && thread.runtimeState !== 'working'
-        && thread.runtimeState !== 'waiting_approval'
-        && thread.runtimeState !== 'waiting_input',
+      (thread) => thread.isUnread && isEyesOnAgentsTerminal(thread.runtimeState),
     );
   }
 

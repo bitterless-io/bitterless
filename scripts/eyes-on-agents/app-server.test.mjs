@@ -85,6 +85,7 @@ class FakeChild extends EventEmitter {
         data: [{
           id: 'latest-turn',
           status: 'interrupted',
+          startedAt: 1,
           completedAt: 2,
           itemsView: message.params.itemsView,
           items: this.latestTurnItems,
@@ -346,11 +347,16 @@ try {
       .every((message) => message.params.archived === true),
     'archived inventory requests must explicitly request archived threads'
   );
-  assert.deepEqual(await supervisor.readLatestThreadTurn('thread-one'), {
-    id: 'latest-turn',
-    status: 'interrupted',
-    completedAt: 2
-  });
+  assert.deepEqual(
+    await supervisor.readLatestThreadTurn('thread-one'),
+    {
+      id: 'latest-turn',
+      status: 'interrupted',
+      startedAt: 1,
+      completedAt: 2
+    },
+    'the supervisor may project only turn identity, status, and persisted turn times'
+  );
   const latestTurnRequest = child.messages.find(
     (message) => message.method === 'thread/turns/list'
   );

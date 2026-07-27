@@ -592,11 +592,23 @@ try {
   );
   await repository.markOpened({ threadId: THREAD_A, openedAt: 210 });
   snapshot = await repository.getSnapshot();
+  const openedRunningA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
   assert.equal(
-    snapshot.threads.find((thread) => thread.threadId === THREAD_A).isUnread,
-    false,
-    'a successful Open must clear unread'
+    openedRunningA.isUnread,
+    true,
+    'Open must not acknowledge a task that is still running'
   );
+  assert.equal(
+    openedRunningA.isFocused,
+    true,
+    'a running task must stay in Focus after Open'
+  );
+  assert.equal(
+    openedRunningA.lastOpenedTurnId,
+    'hook-200',
+    'Open must still record deep-link evidence for a running task'
+  );
+  assert.equal(openedRunningA.lastOpenedAt, new Date(210).toISOString());
   await repository.upsertDiscoveredThreads({
     threads: [{
       threadId: THREAD_A,
@@ -613,7 +625,7 @@ try {
   assert.equal(
     snapshot.threads.find((thread) => thread.threadId === THREAD_A).isUnread,
     true,
-    'a later thread/list running observation must set unread again'
+    'a later thread/list running observation must keep unread attention'
   );
   await repository.markOpened({ threadId: THREAD_A, openedAt: 216 });
   await repository.applyRuntimeEvent({
@@ -868,9 +880,14 @@ try {
     'hook invalidation must preserve durable opened markers'
   );
   assert.equal(
+    hookAfterDisconnectB.isUnread,
+    true,
+    'Open must not acknowledge a hook-owned running task, so the authority gap stays visible'
+  );
+  assert.equal(
     hookAfterDisconnectB.isFocused,
-    false,
-    'disconnect then reconnect must not resurrect an old active hook turn'
+    true,
+    'an unknown row keeps its latent unread marker instead of silently leaving Focus'
   );
 
   await repository.applyRuntimeEventDelivery({
@@ -1652,8 +1669,12 @@ try {
     (thread) => thread.threadId === refreshTargetId
   );
   assert.equal(refreshTargetSnapshot.runtimeState, 'working');
-  assert.equal(refreshTargetSnapshot.isUnread, false);
-  assert.equal(refreshTargetSnapshot.isFocused, false);
+  assert.equal(refreshTargetSnapshot.isUnread, true);
+  assert.equal(
+    refreshTargetSnapshot.isFocused,
+    true,
+    'Open records deep-link evidence without removing a running task from Focus'
+  );
   assert.equal(refreshTargetSnapshot.lastOpenedTurnId, 'focus-turn-1');
 
   await repository.refreshThreadPage({
@@ -1670,8 +1691,12 @@ try {
   assert.equal(refreshTargetSnapshot.title, 'Metadata after Open');
   assert.equal(refreshTargetSnapshot.runtimeState, 'working');
   assert.equal(refreshTargetSnapshot.statusSource, 'codex_hook');
-  assert.equal(refreshTargetSnapshot.isUnread, false);
-  assert.equal(refreshTargetSnapshot.isFocused, false);
+  assert.equal(refreshTargetSnapshot.isUnread, true);
+  assert.equal(
+    refreshTargetSnapshot.isFocused,
+    true,
+    'metadata-only refresh must not disturb running Focus membership'
+  );
 
   await repository.applyRuntimeEvent({
     event: {
@@ -1700,12 +1725,23 @@ try {
     'a monotonically newer provider activity watermark must promote the row into page 1'
   );
   assert.deepEqual(
-    promotedHotPage.hot[0].hookActiveTurn,
-    { turnId: 'focus-turn-2', statusObservedAt: 40_002 },
-    'refresh selection must expose exact Hook-active evidence for guarded terminal polling'
+    promotedHotPage.hot[0].activeTurn,
+    { turnId: 'focus-turn-2', statusObservedAt: 40_002, statusSource: 'codex_hook' },
+    'refresh selection must expose exact active evidence for guarded terminal polling'
+  );
+  assert.equal(
+    promotedHotPage.hot[0].recoveryCandidate,
+    null,
+    'an already-active row must never also be offered for working recovery'
   );
 
-  const terminalPatch = ({ turnId, outcome, completedAt, expectedStatusObservedAt }) => ({
+  const terminalPatch = ({
+    turnId,
+    outcome,
+    completedAt,
+    expectedStatusObservedAt,
+    expectedStatusSource = 'codex_hook'
+  }) => ({
     threadId: refreshTargetId,
     terminalTurn: {
       turnId,
@@ -1713,6 +1749,7 @@ try {
       completedAt,
       expectedActiveTurnId: turnId,
       expectedStatusObservedAt,
+      expectedStatusSource,
       source: 'app_server'
     }
   });
@@ -1816,6 +1853,23 @@ try {
     'failed terminal proof must reconcile to failed'
   );
 
+  await repository.markOpened({ threadId: refreshTargetId, openedAt: 45_500 });
+  snapshot = await repository.getSnapshot();
+  refreshTargetSnapshot = snapshot.threads.find(
+    (thread) => thread.threadId === refreshTargetId
+  );
+  assert.equal(
+    refreshTargetSnapshot.isUnread,
+    false,
+    'Open must acknowledge a confirmed terminal task'
+  );
+  assert.equal(
+    refreshTargetSnapshot.isFocused,
+    false,
+    'an acknowledged terminal task must leave Focus'
+  );
+  assert.equal(refreshTargetSnapshot.lastOpenedTurnId, 'focus-turn-4');
+
   await repository.applyRuntimeEvent({
     event: {
       type: 'turn_started',
@@ -1868,9 +1922,14 @@ try {
   });
   assert.equal(syntheticTurnPage.hot[0].threadId, refreshTargetId);
   assert.equal(
-    syntheticTurnPage.hot[0].hookActiveTurn,
+    syntheticTurnPage.hot[0].activeTurn,
     null,
     'a synthetic fallback turn identity must never authorize terminal reconciliation'
+  );
+  assert.equal(
+    syntheticTurnPage.hot[0].recoveryCandidate,
+    null,
+    'a Hook-owned working row is not a missed-working recovery candidate'
   );
   await repository.applyRuntimeEvent({
     event: {
@@ -1936,10 +1995,227 @@ try {
     /unique threadIds/
   );
 
+  const recoveryThreadId = refreshThreadId(300);
+  db.prepare(
+    `INSERT INTO eyes_on_agents_thread (
+      thread_id, domain_id, title, is_archived, runtime_state, status_source,
+      status_observed_at, is_unread, last_activity_at, created_at, updated_at
+    ) VALUES (?, ?, 'Missed working', 0, 'unknown', 'discovery', ?, 1, ?, ?, ?)`
+  ).run(recoveryThreadId, refreshDomainId, 60_000, 60_000, 60_000, 60_000);
+  const recoveryRow = () => db.prepare(
+    `SELECT runtime_state, status_source, status_observed_at, active_turn_id, is_unread,
+      last_activity_at, last_completed_turn_id
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(recoveryThreadId);
+  const recoveredPatch = (overrides = {}) => ({
+    threadId: recoveryThreadId,
+    recoveredTurn: {
+      turnId: 'missed-turn',
+      startedAt: 59_000,
+      expectedStatusObservedAt: 60_000,
+      source: 'app_server_turn',
+      ...overrides
+    }
+  });
+  const resetRecoveryRow = (columns) => {
+    const entries = Object.entries({
+      runtime_state: 'unknown',
+      status_source: 'discovery',
+      status_observed_at: 60_000,
+      active_turn_id: null,
+      is_unread: 1,
+      is_archived: 0,
+      last_completed_turn_id: null,
+      ...columns
+    });
+    db.prepare(
+      `UPDATE eyes_on_agents_thread
+       SET ${entries.map(([column]) => `${column} = ?`).join(', ')}
+       WHERE thread_id = ?`
+    ).run(...entries.map(([, value]) => value), recoveryThreadId);
+  };
+
+  const recoveryPage = await repository.getThreadRefreshPages({
+    coldPage: 2,
+    previousPageCount: null
+  });
+  const recoverySelection = recoveryPage.hot.find(
+    (candidate) => candidate.threadId === recoveryThreadId
+  );
+  assert.ok(recoverySelection, 'a missed-working row must be selectable for refresh');
+  assert.deepEqual(
+    recoverySelection.recoveryCandidate,
+    { statusObservedAt: 60_000 },
+    'an unread discovery+unknown row with no active turn is a missed-working candidate'
+  );
+  assert.equal(
+    recoverySelection.activeTurn,
+    null,
+    'a recovery candidate carries no active turn identity'
+  );
+
+  for (const rejection of [
+    { columns: {}, patch: { expectedStatusObservedAt: 59_999 }, reason: 'a changed observation watermark' },
+    { columns: { is_unread: 0 }, patch: {}, reason: 'an already acknowledged row' },
+    { columns: { is_archived: 1 }, patch: {}, reason: 'an archived row' },
+    { columns: { active_turn_id: 'other-turn' }, patch: {}, reason: 'a replacement active turn' },
+    { columns: { runtime_state: 'idle' }, patch: {}, reason: 'a confirmed terminal row' },
+    { columns: { status_source: 'codex_hook' }, patch: {}, reason: 'live Hook ownership' },
+    { columns: { last_completed_turn_id: 'missed-turn' }, patch: {}, reason: 'an already completed turn' }
+  ]) {
+    resetRecoveryRow(rejection.columns);
+    assert.deepEqual(
+      await repository.refreshThreadPage({ threads: [recoveredPatch(rejection.patch)] }),
+      { changed: false },
+      `${rejection.reason} must make delayed working recovery a no-op`
+    );
+    assert.equal(
+      recoveryRow().runtime_state,
+      rejection.columns.runtime_state ?? 'unknown',
+      'a rejected recovery must not mutate runtime state'
+    );
+  }
+
+  resetRecoveryRow({});
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [recoveredPatch()] }),
+    { changed: true },
+    'valid latest inProgress turn metadata must recover working'
+  );
+  assert.deepEqual(
+    { ...recoveryRow() },
+    {
+      runtime_state: 'working',
+      status_source: 'app_server_turn',
+      status_observed_at: 59_000,
+      active_turn_id: 'missed-turn',
+      is_unread: 1,
+      last_activity_at: 60_000,
+      last_completed_turn_id: null
+    },
+    'recovery records the real turn identity and persisted start time and keeps unread'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [recoveredPatch()] }),
+    { changed: false },
+    'a recovered row is no longer a recovery target'
+  );
+
+  const recoveredPage = await repository.getThreadRefreshPages({
+    coldPage: 2,
+    previousPageCount: recoveryPage.pageCount
+  });
+  const recoveredSelection = recoveredPage.hot.find(
+    (candidate) => candidate.threadId === recoveryThreadId
+  );
+  assert.deepEqual(
+    recoveredSelection.activeTurn,
+    { turnId: 'missed-turn', statusObservedAt: 59_000, statusSource: 'app_server_turn' },
+    'a recovered row becomes an exact-identity terminal reconciliation candidate'
+  );
+  assert.equal(recoveredSelection.recoveryCandidate, null);
+
+  await repository.upsertDiscoveredThreads({
+    threads: [{
+      threadId: recoveryThreadId,
+      title: 'Inventory notLoaded',
+      cwd: null,
+      runtimeState: 'unknown',
+      activeFlags: [],
+      statusSource: 'discovery',
+      statusObservedAt: 70_000,
+      lastActivityAt: 70_000
+    }]
+  });
+  assert.deepEqual(
+    {
+      runtime_state: recoveryRow().runtime_state,
+      status_source: recoveryRow().status_source,
+      active_turn_id: recoveryRow().active_turn_id,
+      status_observed_at: recoveryRow().status_observed_at
+    },
+    {
+      runtime_state: 'working',
+      status_source: 'app_server_turn',
+      active_turn_id: 'missed-turn',
+      status_observed_at: 59_000
+    },
+    'a full notLoaded inventory sync must preserve recovered active identity'
+  );
+  await repository.invalidateAppServerStatuses({ observedAt: 71_000 });
+  assert.equal(
+    recoveryRow().runtime_state,
+    'working',
+    'App Server reconnect invalidation must not clear turn-metadata evidence'
+  );
+
+  const recoveredTerminalPatch = (expectedStatusSource) => ({
+    threadId: recoveryThreadId,
+    terminalTurn: {
+      turnId: 'missed-turn',
+      outcome: 'completed',
+      completedAt: 72_000,
+      expectedActiveTurnId: 'missed-turn',
+      expectedStatusObservedAt: 59_000,
+      expectedStatusSource,
+      source: 'app_server'
+    }
+  });
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [recoveredTerminalPatch('codex_hook')] }),
+    { changed: false },
+    'a Hook expectation must not end a row recovered from turn metadata'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [recoveredTerminalPatch('app_server_turn')] }),
+    { changed: true },
+    'exact-identity terminal proof must end a recovered row'
+  );
+  assert.deepEqual(
+    {
+      runtime_state: recoveryRow().runtime_state,
+      active_turn_id: recoveryRow().active_turn_id,
+      last_completed_turn_id: recoveryRow().last_completed_turn_id,
+      is_unread: recoveryRow().is_unread
+    },
+    {
+      runtime_state: 'idle',
+      active_turn_id: null,
+      last_completed_turn_id: 'missed-turn',
+      is_unread: 1
+    },
+    'a reconciled recovery becomes a newly finished unread task'
+  );
+
+  resetRecoveryRow({});
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [recoveredPatch()] }),
+    { changed: true }
+  );
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: recoveryThreadId,
+      turnId: 'live-hook-turn',
+      observedAt: 80_000,
+      source: 'codex_hook'
+    }
+  });
+  assert.deepEqual(
+    {
+      status_source: recoveryRow().status_source,
+      active_turn_id: recoveryRow().active_turn_id
+    },
+    { status_source: 'codex_hook', active_turn_id: 'live-hook-turn' },
+    'real Hook evidence must supersede recovered App Server turn evidence'
+  );
+  db.prepare('DELETE FROM eyes_on_agents_thread WHERE thread_id = ?').run(recoveryThreadId);
+
   const readAllIdleId = resetColdPage.hot[3].threadId;
   const readAllWorkingId = refreshTargetId;
   const readAllWaitingApprovalId = resetColdPage.hot[1].threadId;
   const readAllWaitingInputId = resetColdPage.hot[2].threadId;
+  const readAllUnknownId = resetColdPage.hot[4].threadId;
   const readAllArchivedId = selectedThirdPage.cold[0].threadId;
   assert.equal(
     new Set([
@@ -1947,9 +2223,10 @@ try {
       readAllWorkingId,
       readAllWaitingApprovalId,
       readAllWaitingInputId,
+      readAllUnknownId,
       readAllArchivedId
     ]).size,
-    5,
+    6,
     'Read all fixture threads must be distinct'
   );
   const seedReadAllRow = db.prepare(
@@ -1963,6 +2240,7 @@ try {
     [0, 'working', 'opened-working', 50_002, 51_002, readAllWorkingId],
     [0, 'waiting_approval', 'opened-approval', 50_003, 51_003, readAllWaitingApprovalId],
     [0, 'waiting_input', 'opened-input', 50_004, 51_004, readAllWaitingInputId],
+    [0, 'unknown', 'opened-unknown', 50_006, 51_006, readAllUnknownId],
     [1, 'idle', 'opened-archived', 50_005, 51_005, readAllArchivedId]
   ];
   for (const fixture of readAllFixtures) {
@@ -1978,12 +2256,13 @@ try {
       `SELECT thread_id, is_archived, runtime_state, is_unread,
         last_opened_turn_id, last_opened_at, updated_at
        FROM eyes_on_agents_thread
-       WHERE thread_id IN (?, ?, ?, ?, ?)`
+       WHERE thread_id IN (?, ?, ?, ?, ?, ?)`
     ).all(
       readAllIdleId,
       readAllWorkingId,
       readAllWaitingApprovalId,
       readAllWaitingInputId,
+      readAllUnknownId,
       readAllArchivedId
     ).map((row) => [row.thread_id, row])
   );
@@ -2003,12 +2282,13 @@ try {
   for (const threadId of [
     readAllWorkingId,
     readAllWaitingApprovalId,
-    readAllWaitingInputId
+    readAllWaitingInputId,
+    readAllUnknownId
   ]) {
     assert.equal(
       readAllRows.get(threadId).is_unread,
       1,
-      'Read all must preserve unread state while a thread still requires active attention'
+      'Read all must clear only confirmed terminal rows, never active or unknown attention'
     );
   }
   assert.equal(readAllRows.get(readAllArchivedId).is_archived, 1);

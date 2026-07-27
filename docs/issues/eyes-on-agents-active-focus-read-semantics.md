@@ -1,6 +1,6 @@
 # EyesOnAgents Active Focus and Read Semantics
 
-Status: in progress
+Status: implemented; owner verification pending
 
 ## Symptom
 

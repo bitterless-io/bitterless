@@ -168,14 +168,32 @@ try {
     }),
     true
   );
-  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, null), true);
-  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, 199), true);
-  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, 200), false);
-  assert.equal(contract.isEyesOnAgentsFocused('working', false, 200, 201), false);
-  assert.equal(contract.isEyesOnAgentsFocused('working', false, null, 200), false);
-  assert.equal(contract.isEyesOnAgentsFocused('working', true, 200, 200), true);
-  assert.equal(contract.isEyesOnAgentsFocused('idle', true, 200, 200), true);
-  assert.equal(contract.isEyesOnAgentsFocused('idle', false, 200, null), false);
+  assert.equal(
+    contract.isEyesOnAgentsFocused.length,
+    2,
+    'Focus membership must depend only on runtime state and unread, never on Open evidence'
+  );
+  assert.equal(contract.isEyesOnAgentsFocused('working', false), true);
+  assert.equal(contract.isEyesOnAgentsFocused('waiting_approval', false), true);
+  assert.equal(contract.isEyesOnAgentsFocused('waiting_input', false), true);
+  assert.equal(contract.isEyesOnAgentsFocused('working', true), true);
+  assert.equal(contract.isEyesOnAgentsFocused('idle', true), true);
+  assert.equal(contract.isEyesOnAgentsFocused('unknown', true), true);
+  assert.equal(contract.isEyesOnAgentsFocused('idle', false), false);
+  assert.equal(contract.isEyesOnAgentsFocused('failed', false), false);
+  assert.equal(contract.isEyesOnAgentsFocused('ended', false), false);
+  assert.equal(contract.isEyesOnAgentsFocused('unknown', false), false);
+  assert.equal(contract.isEyesOnAgentsTerminal('idle'), true);
+  assert.equal(contract.isEyesOnAgentsTerminal('failed'), true);
+  assert.equal(contract.isEyesOnAgentsTerminal('ended'), true);
+  assert.equal(contract.isEyesOnAgentsTerminal('working'), false);
+  assert.equal(contract.isEyesOnAgentsTerminal('waiting_approval'), false);
+  assert.equal(contract.isEyesOnAgentsTerminal('waiting_input'), false);
+  assert.equal(
+    contract.isEyesOnAgentsTerminal('unknown'),
+    false,
+    'an unresolved authority gap must never be acknowledged as a finished task'
+  );
   assert.equal(
     contract.effectiveEyesOnAgentsRuntimeState({
       runtimeState: 'working',
@@ -188,6 +206,32 @@ try {
     }),
     'working',
     'hook-active evidence must not expire after 60 seconds in one listener lifetime'
+  );
+  assert.equal(
+    contract.effectiveEyesOnAgentsRuntimeState({
+      runtimeState: 'working',
+      statusSource: 'app_server_turn',
+      statusObservedAt: 40_000,
+      managedServerConnected: true,
+      hookBridgeState: 'not_installed',
+      hookBridgeListening: false,
+      hookBridgeListeningSince: null
+    }),
+    'working',
+    'recovered turn-metadata evidence renders active while the managed reader is connected'
+  );
+  assert.equal(
+    contract.effectiveEyesOnAgentsRuntimeState({
+      runtimeState: 'working',
+      statusSource: 'app_server_turn',
+      statusObservedAt: 40_000,
+      managedServerConnected: false,
+      hookBridgeState: 'installed',
+      hookBridgeListening: true,
+      hookBridgeListeningSince: 1
+    }),
+    'unknown',
+    'a disconnected managed reader must degrade recovered active state exactly like app_server'
   );
   assert.equal(
     contract.effectiveEyesOnAgentsRuntimeState({
@@ -718,12 +762,14 @@ try {
   const terminalCandidates = terminalThreadIds.map((threadId, index) => ({
     threadId,
     lastUserPromptCheckedAt: null,
-    hookActiveTurn: index === 8
+    activeTurn: index === 8
       ? null
       : {
           turnId: `terminal-turn-${index}`,
-          statusObservedAt: index === 0 ? 10_500 : 9_500 + index
-        }
+          statusObservedAt: index === 0 ? 10_500 : 9_500 + index,
+          statusSource: index === 2 ? 'app_server_turn' : 'codex_hook'
+        },
+    recoveryCandidate: null
   }));
   const terminalReads = [];
   const terminalCommits = [];
@@ -790,8 +836,8 @@ try {
   assert.deepEqual(await terminalService.refreshThreadPages(), { changed: true });
   assert.equal(
     terminalReads.length,
-    terminalCandidates.filter((candidate) => candidate.hookActiveTurn !== null).length,
-    'only Hook-active candidates with an exact turn identity may request terminal metadata'
+    terminalCandidates.filter((candidate) => candidate.activeTurn !== null).length,
+    'only active candidates with an exact turn identity may request terminal metadata'
   );
   assert.equal(
     terminalReads.includes(terminalThreadIds[8]),
@@ -808,10 +854,16 @@ try {
     completedAt: 10_000,
     expectedActiveTurnId: 'terminal-turn-0',
     expectedStatusObservedAt: 10_500,
+    expectedStatusSource: 'codex_hook',
     source: 'app_server'
   });
   assert.equal(terminalPatches.get(terminalThreadIds[1]).terminalTurn.outcome, 'completed');
   assert.equal(terminalPatches.get(terminalThreadIds[2]).terminalTurn.outcome, 'failed');
+  assert.equal(
+    terminalPatches.get(terminalThreadIds[2]).terminalTurn.expectedStatusSource,
+    'app_server_turn',
+    'a row recovered from turn metadata must carry its own source into the terminal guard'
+  );
   assert.equal(
     terminalPatches.get(terminalThreadIds[9]).terminalTurn.outcome,
     'interrupted',
@@ -824,6 +876,102 @@ try {
       'in-progress, mismatched, missing, invalid, failed, and ineligible evidence must fail closed'
     );
   }
+
+  const recoveryThreadIds = Array.from({ length: 7 }, (_, index) => (
+    refreshThreadId(index + 120)
+  ));
+  const recoveryCandidates = recoveryThreadIds.map((threadId, index) => ({
+    threadId,
+    lastUserPromptCheckedAt: null,
+    activeTurn: index === 6
+      ? { turnId: 'already-active', statusObservedAt: 20_000, statusSource: 'codex_hook' }
+      : null,
+    recoveryCandidate: index === 5 ? null : { statusObservedAt: 20_000 + index }
+  }));
+  const recoveryReads = [];
+  const recoveryCommits = [];
+  const recoveryService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async () => ({
+        hot: recoveryCandidates,
+        cold: [],
+        pageCount: 1,
+        coldPage: null
+      }),
+      refreshThreadPage: async ({ threads }) => {
+        recoveryCommits.push(threads);
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async (threadId) => ({
+        id: threadId,
+        name: `Recovery ${threadId}`,
+        updatedAt: 20
+      }),
+      readLatestThreadTurn: async (threadId) => {
+        recoveryReads.push(threadId);
+        const index = recoveryThreadIds.indexOf(threadId);
+        // 0 recovers; 1 is terminal; 2 has no id; 3 has no start time; 4 starts in the future;
+        // 6 is already active and may only reconcile terminally.
+        if (index === 0) return { id: 'recovered-turn', status: 'inProgress', startedAt: 19 };
+        if (index === 1) {
+          return { id: 'ended-turn', status: 'completed', startedAt: 18, completedAt: 19 };
+        }
+        if (index === 2) return { id: null, status: 'inProgress', startedAt: 19 };
+        if (index === 3) return { id: 'no-start', status: 'inProgress', startedAt: null };
+        if (index === 4) return { id: 'future-start', status: 'inProgress', startedAt: 900 };
+        return { id: 'already-active', status: 'inProgress', startedAt: 19 };
+      }
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    now: () => 21_000
+  });
+  assert.deepEqual(await recoveryService.refreshThreadPages(), { changed: true });
+  assert.equal(
+    recoveryReads.includes(recoveryThreadIds[5]),
+    false,
+    'a row that is neither active nor a recovery candidate must not request turn metadata'
+  );
+  assert.equal(recoveryCommits.length, 1);
+  const recoveryPatches = new Map(
+    recoveryCommits[0].map((patch) => [patch.threadId, patch])
+  );
+  assert.deepEqual(
+    recoveryPatches.get(recoveryThreadIds[0]).recoveredTurn,
+    {
+      turnId: 'recovered-turn',
+      startedAt: 19_000,
+      expectedStatusObservedAt: 20_000,
+      source: 'app_server_turn'
+    },
+    'a valid latest inProgress turn must recover working from turn metadata alone'
+  );
+  for (const index of [1, 2, 3, 4]) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        recoveryPatches.get(recoveryThreadIds[index]) ?? {},
+        'recoveredTurn'
+      ),
+      false,
+      'terminal, id-less, start-less, and future-start evidence must not recover working'
+    );
+  }
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      recoveryPatches.get(recoveryThreadIds[6]) ?? {},
+      'recoveredTurn'
+    ),
+    false,
+    'an already-active row must never take the recovery path'
+  );
 
   let promptPageSelectionCount = 0;
   let promptContentReads = 0;
@@ -1951,10 +2099,12 @@ try {
       hot: [{
         threadId: manuallyStoppedThreadId,
         lastUserPromptCheckedAt: null,
-        hookActiveTurn: {
+        activeTurn: {
           turnId: 'manual-stop-turn',
-          statusObservedAt: 900
-        }
+          statusObservedAt: 900,
+          statusSource: 'codex_hook'
+        },
+        recoveryCandidate: null
       }],
       cold: [],
       pageCount: 1,
@@ -1985,6 +2135,7 @@ try {
       completedAt: 1_000,
       expectedActiveTurnId: 'manual-stop-turn',
       expectedStatusObservedAt: 900,
+      expectedStatusSource: 'codex_hook',
       source: 'app_server'
     },
     'labelled manual Refresh must run terminal reconciliation after full inventory sync'

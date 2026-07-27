@@ -217,11 +217,16 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.doesNotMatch(
     repositoryPageSelection[0],
-    /domain_id|project_key|is_unread|title\s+LIKE|isEyesOnAgentsFocused/,
+    /domain_id|project_key|title\s+LIKE|isEyesOnAgentsFocused/,
   );
   assert.match(
     repositoryPageSelection[0],
-    /runtime_state, active_turn_id, status_source, status_observed_at[\s\S]*statusSource === 'codex_hook'[\s\S]*\['working', 'waiting_approval', 'waiting_input'\]\.includes\(runtimeState\)[\s\S]*activeTurnId !== `hook-\$\{statusObservedAt\}`[\s\S]*hookActiveTurn/,
+    /runtime_state, active_turn_id, is_unread, status_source,\s*status_observed_at[\s\S]*statusSource === 'codex_hook' \|\| statusSource === 'app_server_turn'[\s\S]*\['working', 'waiting_approval', 'waiting_input'\]\.includes\(runtimeState\)[\s\S]*activeTurnId !== `hook-\$\{statusObservedAt\}`[\s\S]*activeTurn/,
+  );
+  assert.match(
+    repositoryPageSelection[0],
+    /const recoveryCandidate = activeTurn === null &&\s*statusSource === 'discovery' &&\s*runtimeState === 'unknown' &&\s*row\.is_unread === 1 &&\s*activeTurnId === null &&\s*statusObservedAt !== null/,
+    'missed-working recovery must select only unread discovery+unknown rows with no active turn',
   );
   assert.match(
     repositoryDao,
@@ -301,7 +306,17 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     repositoryDao,
-    /status_source = 'app_server'[\s\S]*WHERE thread_id = \?[\s\S]*AND is_archived = 0[\s\S]*AND status_source = 'codex_hook'[\s\S]*AND runtime_state IN \('working', 'waiting_approval', 'waiting_input'\)[\s\S]*AND active_turn_id = \?[\s\S]*AND status_observed_at = \?/,
+    /status_source = 'app_server'[\s\S]*WHERE thread_id = \?[\s\S]*AND is_archived = 0[\s\S]*AND status_source = \?[\s\S]*AND runtime_state IN \('working', 'waiting_approval', 'waiting_input'\)[\s\S]*AND active_turn_id = \?[\s\S]*AND status_observed_at = \?/,
+  );
+  assert.match(
+    repositoryDao,
+    /runtime_state = 'working',[\s\S]*status_source = 'app_server_turn',[\s\S]*WHERE thread_id = \?[\s\S]*AND is_archived = 0[\s\S]*AND is_unread = 1[\s\S]*AND status_source = 'discovery'[\s\S]*AND runtime_state = 'unknown'[\s\S]*AND active_turn_id IS NULL[\s\S]*AND status_observed_at = \?[\s\S]*AND COALESCE\(last_completed_turn_id, ''\) <> \?/,
+    'working recovery must compare-and-set against the exact selected candidate',
+  );
+  assert.match(
+    repositoryDao,
+    /WHEN eyes_on_agents_thread\.status_source = 'app_server_turn'\s*THEN eyes_on_agents_thread\.active_turn_id/,
+    'full inventory discovery must preserve recovered active identity',
   );
   assert.match(
     mainService,
@@ -357,7 +372,12 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     mainThreadProjection[0],
-    /const hookActiveTurn = candidate\.hookActiveTurn \?\? null[\s\S]*if \(hookActiveTurn !== null\)[\s\S]*readLatestThreadTurn\(\s*candidate\.threadId\s*\)[\s\S]*terminalTurnFromLatest/,
+    /const activeTurn = candidate\.activeTurn \?\? null[\s\S]*if \(activeTurn !== null \|\| recoveryCandidate !== null\)[\s\S]*readLatestThreadTurn\(\s*candidate\.threadId\s*\)[\s\S]*terminalTurnFromLatest[\s\S]*recoveredTurnFromLatest/,
+  );
+  assert.match(
+    mainThreadProjection[0],
+    /const recoveryCandidate = activeTurn === null\s*\? candidate\.recoveryCandidate \?\? null\s*: null/,
+    'one thread may take either terminal reconciliation or working recovery, never both',
   );
   const handlerRefresh = mainHandler.match(
     /async refreshThreadPages\(\): Promise<EyesOnAgentsThreadPagesRefreshResult> \{[\s\S]*?\n  \}/,
@@ -688,6 +708,20 @@ test('All projects every thread while Focus and custom Domains retain their scop
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
   assert.match(board, /:threads="eyesOnAgentsStore\.focusThreads"/);
+  const focusThreads = store.match(
+    /  get focusThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
+  );
+  assert.ok(focusThreads, 'Missing Focus projection');
+  assert.match(
+    focusThreads[0],
+    /isEyesOnAgentsFocused\(thread\.runtimeState, thread\.isUnread\)/,
+    'Focus membership must be derived in memory from runtime state and unread'
+  );
+  assert.doesNotMatch(
+    focusThreads[0],
+    /thread\.isFocused/,
+    'Focus membership must not depend on a snapshot flag the renderer cannot recompute'
+  );
   assert.match(board, /:title="i18nHelper\.eyesOnAgents\.board\.all"/);
   assert.match(board, /:threads="eyesOnAgentsStore\.filteredAllThreads"/);
   assert.doesNotMatch(board, /total-count|totalCount/);
@@ -746,9 +780,16 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
   assert.ok(readableFocusThreads, 'Missing readable Focus projection');
   assert.match(readableFocusThreads[0], /this\.focusThreads\.filter/);
   assert.match(readableFocusThreads[0], /thread\.isUnread/);
-  assert.match(readableFocusThreads[0], /thread\.runtimeState !== 'working'/);
-  assert.match(readableFocusThreads[0], /thread\.runtimeState !== 'waiting_approval'/);
-  assert.match(readableFocusThreads[0], /thread\.runtimeState !== 'waiting_input'/);
+  assert.match(
+    readableFocusThreads[0],
+    /isEyesOnAgentsTerminal\(thread\.runtimeState\)/,
+    'Read all eligibility must reuse the shared terminal allowlist'
+  );
+  assert.doesNotMatch(
+    readableFocusThreads[0],
+    /runtimeState !==/,
+    'Read all eligibility must not re-derive a negative active list'
+  );
   const storeAction = store.match(
     /  async markAllRead\(\): Promise<void> \{[\s\S]*?\n  \}/
   );
@@ -784,7 +825,8 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
   assert.match(repositoryAction[0], /is_unread = 1/);
   assert.match(
     repositoryAction[0],
-    /runtime_state NOT IN \('working', 'waiting_approval', 'waiting_input'\)/
+    /runtime_state IN \('idle', 'failed', 'ended'\)/,
+    'Read all must use the positive terminal allowlist'
   );
   assert.doesNotMatch(repositoryAction[0], /last_opened_turn_id|last_opened_at|updated_at/);
 

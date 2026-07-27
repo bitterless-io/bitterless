@@ -201,13 +201,15 @@ query before hiding the row, so no invisible filter remains active. The row and 
 background contrast, mini sizing, visible focus, and no decorative border or shadow.
 
 The Focus header's `Read all` is a compact text action with the same transparent, borderless header
-treatment. Clicking it clears the persisted unread marker for every currently non-archived,
-non-running unread thread in one SQLite mutation. The same snapshot removes each corresponding red
-Open dot in Focus, All, and any custom Domain immediately; an idle thread that was present only
-because it was unread leaves Focus. Working or waiting rows are deliberately not acknowledged:
-they remain in Focus and retain the latent unread marker that makes a later idle transition visible
-even if its terminal event is missed. The action never opens Codex or changes `last_opened_*`, and a
-later accepted active or terminal observation may set a cleared thread unread again.
+treatment. Clicking it clears the persisted unread marker for every currently non-archived unread
+thread in a confirmed terminal state — `idle`, `failed`, or `ended` — in one SQLite mutation. The
+same snapshot removes each corresponding red Open dot in Focus, All, and any custom Domain
+immediately; a terminal thread that was present only because it was unread leaves Focus. Working,
+waiting, and `unknown` rows are deliberately not acknowledged: they remain in Focus and retain the
+latent unread marker that makes a later idle transition visible even if its terminal event is
+missed. The action is enabled only while such a terminal unread row exists, never opens Codex or
+changes `last_opened_*`, and a later accepted active or terminal observation may set a cleared
+thread unread again.
 
 Domain creation does not occupy a board column. The labelled menubar control opens the anchored form
 described in Header behavior; required, duplicate, and reserved-`All` errors remain inline there.
@@ -284,9 +286,10 @@ Focus uses this stable order:
 4. newly completed unread;
 5. newest activity within the same group.
 
-Opening any card acknowledges the current observation only after the deep link succeeds. An unread
-completed card leaves Focus, and an active card also leaves until a newer authoritative lifecycle
-event arrives. A later `UserPromptSubmit` restores working Focus.
+Opening any card records deep-link evidence only after the deep link succeeds, and acknowledges
+unread only for a confirmed terminal card. An unread completed card leaves Focus. A working,
+waiting, or `unknown` card stays in Focus while it is opened and keeps its latent unread marker
+until its state actually resolves.
 
 ## States
 
@@ -298,7 +301,7 @@ event arrives. A later `UserPromptSubmit` restores working Focus.
 | no threads | concise prompt to connect/sync; no fake sample rows |
 | no Focus items | quiet “Nothing needs attention” state |
 | working unread | title-side loader; no Open unread dot |
-| working opened | current observation leaves Focus; a newer active event restores it |
+| working opened | card stays in Focus with its loader; only a terminal observation can retire it |
 | working completes to idle unread | loader disappears; unread dot appears at Open's upper-right |
 | latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
 | latest question pending | one muted localized pending line; no spinner or false claim that a request is running |

@@ -145,14 +145,21 @@ allowing a pre-start persisted working row to remain current.
 The independent App Server used for inventory and `thread/read` metadata does not own Codex
 Desktop's turns. Its thread read status is therefore never allowed to overwrite Hook runtime
 evidence in the tiered poll. If terminal Hook delivery is missed, the poll may make one narrow,
-content-free reconciliation request for a currently active Hook row: the newest turn through
-`thread/turns/list`, descending, limit one, with `itemsView: notLoaded`. Only a matching
-`completed`, `interrupted`, or `failed` turn with the exact active turn ID and a persisted completion
-time may clear the active state; `inProgress`, missing-time, mismatched, malformed, or
-unavailable evidence is a no-op. The completion remains unread.
+content-free reconciliation request for one selected row: the newest turn through
+`thread/turns/list`, descending, limit one, with `itemsView: notLoaded`. For an already-active row,
+only a matching `completed`, `interrupted`, or `failed` turn with the exact active turn ID and a
+persisted completion time may clear the active state; `inProgress`, missing-time, mismatched,
+malformed, or unavailable evidence is a no-op. The completion remains unread.
+The same request also repairs the opposite gap. A listener lifetime boundary leaves a still-running
+task as unread `discovery + unknown` with no active turn, and Codex never replays
+`UserPromptSubmit` for a turn that started earlier. For such a row a latest `inProgress` turn with a
+real ID and a persisted start time no later than the poll restores `working` under a distinct
+`app_server_turn` source, compare-and-set against the exact selected candidate. Terminal, ID-less,
+start-time-less, future-dated, malformed, or unavailable evidence never recovers working.
 EyesOnAgents deliberately does not infer a paused state from private transcript/rollout formats or
-elapsed time. A successful Open still acknowledges the current active observation; a later
-`UserPromptSubmit` supplies newer working evidence and restores Focus.
+elapsed time. A successful Open records deep-link evidence but acknowledges unread only for a
+confirmed terminal row, so an active or `unknown` thread stays in Focus while it is open; a later
+`UserPromptSubmit` supplies newer working evidence and keeps it there.
 
 All SQLite timestamps are integers. The migration is idempotent and must pass the retained
 multi-version migration audit before packaging.

@@ -20,9 +20,9 @@ task in Codex with source snapshots, Domain, and read state preserved across res
 | Hook trust | inspect with `hooks/list`; user approves in Codex; Bitterless never writes trust hashes |
 | classification | dedicated Domain table with internal immutable `uncategorized` fallback; renderer exposes it through fixed `All` |
 | source persistence | exact validated `thread/list` objects in a local-only snapshot table |
-| Focus | derived unacknowledged active evidence + persistent unread projection |
+| Focus | derived active runtime + persistent unread projection |
 | unread | active/list/terminal observations set; successful EyesOnAgents Open clears |
-| opening | validated `codex://threads/<id>` in main process; acknowledge current active evidence and mark read only after success |
+| opening | validated `codex://threads/<id>` in main process; record Open evidence after success and mark read only for a confirmed terminal row |
 | messages | deferred; no false `queue` RPC abstraction |
 
 ## Module decomposition
