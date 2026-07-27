@@ -11,8 +11,11 @@ because both of these runtime assets were absent:
 - `app.asar.unpacked` had no `better_sqlite3.node` native binding.
 
 Electron Builder also reported that it could not find the requested
-`better-sqlite3-multiple-ciphers@12.11.1`. The other missing-package messages in the same output
-were platform-specific optional dependencies and were not the release blocker.
+`better-sqlite3-multiple-ciphers@12.11.1`. Most other missing-package messages in the same output
+were platform-specific optional dependencies. The remaining `@rig-lib/semaphore`, `node-abi`, and
+`@types/node` collector warnings were not named by the `afterPack` failure; the stale `node-abi`
+version was another symptom of the same outdated installation. None was the missing runtime root
+that stopped this package.
 
 ## Root cause
 
