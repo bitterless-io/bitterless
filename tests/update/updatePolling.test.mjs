@@ -89,7 +89,8 @@ const createRendererXpc = (snapshotRequest) => {
       },
       send: (channel) => {
         calls.push(`send:${channel}`);
-        return snapshotRequest.promise;
+        if (channel === 'UpdateHandler/getReadyUpdate') return snapshotRequest.promise;
+        return Promise.resolve();
       }
     }
   };
@@ -124,6 +125,10 @@ const loadHomeUpdateRuntime = () => {
     updateStore: updateStoreModule.updateStore
   };
 };
+
+// Omni imports the same Home store and subscriber, so this exercises the exact shared production
+// runtime rather than duplicating the replay algorithm in a test-only model.
+const loadOmniUpdateRuntime = () => loadHomeUpdateRuntime();
 
 const loadMaestroUpdateRuntime = () => {
   const snapshotRequest = createDeferred();
@@ -474,6 +479,61 @@ test('Home ignores malformed input without closing replay and logs request failu
   assert.match(failedRequest.errors[0][0], /Failed to replay update-ready snapshot/);
 });
 
+test('Omni reuses ready-only replay after subscribing and routes install through Main', async () => {
+  const absent = loadOmniUpdateRuntime();
+  assert.deepEqual(absent.calls, ['subscribe:app/updated', 'send:UpdateHandler/getReadyUpdate']);
+  absent.snapshotRequest.resolve(null);
+  await settle(absent.snapshotRequest.promise);
+  assert.equal(absent.updateStore.updateAvailable, false);
+  assert.equal(absent.updateStore.updateInfo, null);
+
+  const replay = loadOmniUpdateRuntime();
+  const snapshot = homeUpdate('omni-snapshot');
+  replay.snapshotRequest.resolve(snapshot);
+  await settle(replay.snapshotRequest.promise);
+  assert.equal(replay.updateStore.updateAvailable, true);
+  assert.deepEqual(replay.updateStore.updateInfo, snapshot);
+
+  await replay.updateStore.restartAndUpdate();
+  assert.equal(replay.calls.at(-1), 'send:UpdateHandler/quitAndInstall');
+});
+
+test('Omni live readiness wins over stale replay and malformed values stay hidden', async () => {
+  const liveFirst = loadOmniUpdateRuntime();
+  const live = homeUpdate('omni-live');
+  liveFirst.subscribers.get('app/updated')({ params: live });
+  liveFirst.snapshotRequest.resolve(homeUpdate('omni-stale-snapshot'));
+  await settle(liveFirst.snapshotRequest.promise);
+  assert.deepEqual(liveFirst.updateStore.updateInfo, live);
+
+  const malformedLive = loadOmniUpdateRuntime();
+  malformedLive.subscribers.get('app/updated')({
+    params: { ...homeUpdate('omni-invalid-live'), releaseNotes: [] }
+  });
+  const validSnapshot = homeUpdate('omni-valid-snapshot');
+  malformedLive.snapshotRequest.resolve(validSnapshot);
+  await settle(malformedLive.snapshotRequest.promise);
+  assert.deepEqual(malformedLive.updateStore.updateInfo, validSnapshot);
+  assert.match(malformedLive.errors[0][0], /malformed live update-ready payload/);
+
+  const malformedSnapshot = loadOmniUpdateRuntime();
+  malformedSnapshot.snapshotRequest.resolve({
+    ...homeUpdate('omni-invalid-snapshot'),
+    downloadUrl: undefined
+  });
+  await settle(malformedSnapshot.snapshotRequest.promise);
+  assert.equal(malformedSnapshot.updateStore.updateAvailable, false);
+  assert.equal(malformedSnapshot.updateStore.updateInfo, null);
+  assert.match(malformedSnapshot.errors[0][0], /malformed update-ready snapshot/);
+
+  const failedRequest = loadOmniUpdateRuntime();
+  failedRequest.snapshotRequest.reject(new Error('omni snapshot unavailable'));
+  await assert.rejects(failedRequest.snapshotRequest.promise, /omni snapshot unavailable/);
+  await Promise.resolve();
+  assert.equal(failedRequest.updateStore.updateAvailable, false);
+  assert.match(failedRequest.errors[0][0], /Failed to replay update-ready snapshot/);
+});
+
 test('Maestro replays an optional ready snapshot after both live subscriptions', async () => {
   const absent = loadMaestroUpdateRuntime();
   assert.deepEqual(absent.calls, [
@@ -675,6 +735,31 @@ test('Home subscribes before mount, then requests race-safe ready replay', () =>
   assert.ok(liveSubscribe >= 0, 'Missing Home live ready subscription');
   assert.ok(snapshotRequest > liveSubscribe, 'Home must subscribe before requesting its snapshot');
   assert.doesNotMatch(subscriber, /await xpcRenderer\.send\('UpdateHandler\/getReadyUpdate'/);
+});
+
+test('Omni subscribes before language bootstrap and mount without owning update polling', () => {
+  const main = read('src/renderer/omni/omniWindow/src/main.ts');
+  const app = read('src/renderer/omni/omniWindow/src/App.vue');
+
+  assert.match(
+    main,
+    /import \{ initUpdateSubscriber \} from '@renderer\/home\/src\/xpc\/update\.subscriber';/
+  );
+  assert.match(
+    app,
+    /import \{ updateStore \} from '@renderer\/home\/src\/store\/update\.store';/
+  );
+
+  const subscriber = main.indexOf('initUpdateSubscriber();');
+  const language = main.indexOf('await initializeRendererLanguage();');
+  const productImport = main.indexOf("await import('./App.vue')");
+  const mount = main.indexOf("createApp(App).use(ArcoVue).use(i18n).mount('#app');");
+  assert.ok(subscriber >= 0, 'Missing Omni update subscriber initialization');
+  assert.ok(language > subscriber, 'Omni must subscribe before waiting for language');
+  assert.ok(productImport > language, 'Omni must evaluate App after language initialization');
+  assert.ok(mount > productImport, 'Omni must mount after loading App');
+  assert.doesNotMatch(main, /startPolling|checkForUpdates/);
+  assert.doesNotMatch(app, /startPolling|checkForUpdates/);
 });
 
 test('Maestro subscribes to both live states before typed race-safe replay', () => {

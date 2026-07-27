@@ -46,7 +46,7 @@ design document.
 - [Desktop application icon](features/desktop-app-icon.md) - one canonical artwork source, explicit
   macOS bundle icon generation, and bundle-only Dock rendering without a runtime override.
 - [Desktop automatic updates](features/desktop-auto-update.md) - one non-overlapping main-process
-  poll, retryable metadata disagreement, and a download-ready Home update signal.
+  poll, retryable metadata disagreement, and compact Home, Maestro, and Omni update actions.
 
 ## Guides
 

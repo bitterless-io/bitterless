@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { xpcRenderer, createXpcRendererEmitter } from 'electron-xpc/renderer';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import { updateStore } from '@renderer/home/src/store/update.store';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 import type { OmniWindowHandler } from '@main/xpc/omniWindow.handler';
 
@@ -15,6 +16,13 @@ const menubarClass = computed(() => {
   if (isMac.value) return 'omni-menubar--mac';
   if (isWindows.value) return 'omni-menubar--win';
   return '';
+});
+const updateTitle = computed(() => {
+  if (!updateStore.updateInfo) return i18nHelper.menuBar.restartToUpdate;
+  return i18nHelper.menuBar.updateToVersion.replace(
+    '{version}',
+    updateStore.updateInfo.version
+  );
 });
 
 const toggleControl = () => {
@@ -37,6 +45,10 @@ const toggleMaximize = async () => {
 
 const close = () => omniWindowEmitter.close();
 
+const handleRestartUpdate = (): void => {
+  void updateStore.restartAndUpdate();
+};
+
 onMounted(async () => {
   if (isWindows.value) {
     maximized.value = await omniWindowEmitter.isMaximized();
@@ -58,6 +70,15 @@ onMounted(async () => {
         </button>
       </div>
     </div>
+    <button
+      v-if="updateStore.updateAvailable"
+      type="button"
+      class="omni-menubar__update"
+      :title="updateTitle"
+      @click.stop="handleRestartUpdate"
+    >
+      {{ i18nHelper.menuBar.restartToUpdate }}
+    </button>
     <div v-if="isWindows" class="omni-menubar__win-controls">
       <button class="omni-menubar__win-btn" @click.stop="minimize()">
         <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>

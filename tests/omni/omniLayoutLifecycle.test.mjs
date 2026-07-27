@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 import {
   OMNI_BROWSER_HEADER_HEIGHT,
@@ -17,6 +17,19 @@ import {
 } from '../../src/shared/setting/settingValue.service.ts';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+
+const readSourceTree = (directory) => {
+  const sources = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const target = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory);
+    if (entry.isDirectory()) {
+      sources.push(readSourceTree(target));
+      continue;
+    }
+    if (/\.(?:ts|vue|less)$/.test(entry.name)) sources.push(readFileSync(target, 'utf8'));
+  }
+  return sources.join('\n');
+};
 
 const leaf = (id, contentMode = 'browser') => ({
   id,
@@ -297,4 +310,59 @@ test('renderer remounts after structural changes and rejects lifecycle resize wr
   );
   assert.match(settingDaoSource, /serializeSettingValue\(params\.value\)/);
   assert.doesNotMatch(settingDaoSource, /sanitizeValue/);
+});
+
+test('only the Omni window Menu Bar owns the compact ready update action', () => {
+  const appSource = read('src/renderer/omni/omniWindow/src/App.vue');
+  const styleSource = read('src/renderer/omni/omniWindow/src/App.less');
+  const cellSources = readSourceTree(
+    new URL('../../src/renderer/omni/omniCell/', import.meta.url)
+  );
+  const controlSources = readSourceTree(
+    new URL('../../src/renderer/omni/omniControl/', import.meta.url)
+  );
+
+  assert.match(appSource, /v-if="updateStore\.updateAvailable"/);
+  assert.match(appSource, /class="omni-menubar__update"/);
+  assert.match(appSource, /\{\{ i18nHelper\.menuBar\.restartToUpdate \}\}/);
+  assert.match(appSource, /i18nHelper\.menuBar\.updateToVersion\.replace\(/);
+  assert.match(appSource, /:title="updateTitle"/);
+  assert.doesNotMatch(appSource, /`Update to \$\{/);
+  assert.match(appSource, /@click\.stop="handleRestartUpdate"/);
+  assert.match(appSource, /updateStore\.restartAndUpdate\(\)/);
+
+  const updateAction = appSource.indexOf('class="omni-menubar__update"');
+  const windowsControls = appSource.indexOf('class="omni-menubar__win-controls"');
+  assert.ok(updateAction >= 0, 'Omni window must contain one update action');
+  assert.ok(
+    windowsControls > updateAction,
+    'Omni update action must sit before native Windows controls'
+  );
+  assert.equal(
+    (appSource.match(/class="omni-menubar__update"/g) ?? []).length,
+    1,
+    'Omni window must render exactly one update action'
+  );
+
+  const updateStyle = styleSource.match(/\.omni-menubar__update\s*\{([\s\S]*?)\}/)?.[1];
+  assert.ok(updateStyle, 'Omni update action must have Menu Bar styling');
+  assert.doesNotMatch(updateStyle, /(?:min-|max-)?width\s*:/);
+  assert.match(updateStyle, /-webkit-app-region:\s*no-drag/);
+
+  for (const [scope, source] of [
+    ['omniCell', cellSources],
+    ['omniControl', controlSources]
+  ]) {
+    assert.doesNotMatch(source, /updateStore/, `${scope} must not own update state`);
+    assert.doesNotMatch(
+      source,
+      /initUpdateSubscriber/,
+      `${scope} must not subscribe to updates`
+    );
+    assert.doesNotMatch(
+      source,
+      /restartToUpdate|\bupate\b/,
+      `${scope} must not render the update label`
+    );
+  }
 });
