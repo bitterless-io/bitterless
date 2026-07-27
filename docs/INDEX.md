@@ -45,6 +45,8 @@ design document.
   user-visible Main-owned window.
 - [Desktop application icon](features/desktop-app-icon.md) - one canonical artwork source, explicit
   macOS bundle icon generation, and bundle-only Dock rendering without a runtime override.
+- [Desktop automatic updates](features/desktop-auto-update.md) - one non-overlapping main-process
+  poll, retryable metadata disagreement, and a download-ready Home update signal.
 
 ## Guides
 
@@ -126,6 +128,8 @@ design document.
   remains, while the size-mismatch follow-up below removes the runtime PNG refresh.
 - [macOS Dock icon runtime size mismatch](issues/macos-dock-icon-runtime-size-mismatch.md) - fixed;
   owner verification pending: the running tile now keeps the bundle-default size without a PNG override.
+- [Desktop automatic-update polling stalls](issues/desktop-auto-update-polling-stalls.md) - fixed;
+  owner verification pending: metadata disagreement now releases the shared check so later polls retry.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
   retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
 - [Translator language-direction detection](issues/translator-language-direction-detection.md) - fixed:

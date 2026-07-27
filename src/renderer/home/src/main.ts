@@ -40,10 +40,10 @@ const bootstrap = async (): Promise<void> => {
     import('./App.vue'),
     import('./router'),
   ]);
+  initUpdateSubscriber();
   createApp(App).use(ArcoVue).use(router).use(i18n).mount('#app');
 
   initAuthSubscriber();
-  initUpdateSubscriber();
 };
 
 void bootstrap();

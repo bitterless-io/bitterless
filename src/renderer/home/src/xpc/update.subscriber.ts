@@ -1,4 +1,4 @@
-import { xpcRenderer } from 'electron-xpc/renderer';
+import { xpcRenderer, type XpcPayload } from 'electron-xpc/renderer';
 import { updateStore } from '../store/update.store';
 
 interface UpdateInfo {
@@ -8,8 +8,9 @@ interface UpdateInfo {
   downloadUrl: string;
 }
 
-export const initUpdateSubscriber = () => {
-  xpcRenderer.subscribe('app/updated', (updateInfo: UpdateInfo) => {
+export const initUpdateSubscriber = (): void => {
+  xpcRenderer.subscribe('app/updated', (payload: XpcPayload) => {
+    const updateInfo = payload.params as UpdateInfo;
     console.log('[UpdateSubscriber] Received update notification:', updateInfo);
     updateStore.setUpdateInfo(updateInfo);
   });

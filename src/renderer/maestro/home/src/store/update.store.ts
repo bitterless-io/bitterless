@@ -6,11 +6,11 @@ import type { CoachXpcContract } from '@maestro-shared/coach.api'
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
 /**
- * Controller for the header Update button (see features/release-and-update.md §6).
+ * Controller for the header Update button (see docs/features/desktop-auto-update.md).
  *
- * Silent background download: UpdateService (main) broadcasts update-available as soon
- * as the version_info gate passes, then downloads in the background. The button shows
- * disabled "Updating" while downloading and switches to enabled "Update" when
+ * Silent background download: UpdateService (main) broadcasts update-available after both the
+ * versionCode and platform-updater gates confirm availability, then downloads in the background.
+ * The button shows disabled "Updating" while downloading and switches to enabled "Update" when
  * 'coach/update-downloaded' arrives.
  */
 class UpdateState {

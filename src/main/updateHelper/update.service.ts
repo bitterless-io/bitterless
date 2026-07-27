@@ -5,16 +5,25 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { compareVersions } from 'compare-versions';
 import type { UpdateInfo, ManifestData, PlatformType, UpdateCheckResult } from './update.type';
+import { UpdatePollingService } from './updatePolling.service';
+
+export class UpdateMetadataDisagreementError extends Error {
+  constructor(currentVersionCode: string, manifestVersionCode: string) {
+    super(
+      `Update metadata disagreement: versionCode ${manifestVersionCode} is newer than ${currentVersionCode}, but the platform updater reported no downloadable update`
+    );
+    this.name = 'UpdateMetadataDisagreementError';
+  }
+}
 
 class UpdateService {
-  private pollingInterval: NodeJS.Timeout | null = null;
   private currentVersionCode: string;
   private platform: PlatformType | null;
   private viteEnv: string;
   private viteMode: string;
   private disabledForE2E: boolean;
   private isDownloading = false;
-  private updateAvailable = false;
+  private readonly updatePollingService: UpdatePollingService<UpdateCheckResult>;
   isUpdating = false;
   constructor() {
     this.disabledForE2E = process.env.BITTERLESS_E2E === '1';
@@ -24,6 +33,13 @@ class UpdateService {
     this.viteMode = import.meta.env.VITE_MODE || 'debug';
 
     if (!this.disabledForE2E) this.setupAutoUpdater();
+
+    this.updatePollingService = new UpdatePollingService({
+      checkForUpdates: () => this.checkAndDownloadUpdate(),
+      onCheckError: (error) => {
+        console.error('[UpdateService] Scheduled update check failed:', error);
+      }
+    });
   }
 
   private getCurrentVersionCode(): string {
@@ -65,12 +81,10 @@ class UpdateService {
 
     autoUpdater.on('update-available', (info) => {
       console.log('[UpdateService] Update available:', info);
-      this.updateAvailable = true;
     });
 
     autoUpdater.on('update-not-available', (info) => {
       console.log('[UpdateService] Update not available:', info);
-      this.updateAvailable = false;
     });
 
     autoUpdater.on('download-progress', (progressObj) => {
@@ -79,7 +93,6 @@ class UpdateService {
 
     autoUpdater.on('update-downloaded', (info) => {
       console.log('[UpdateService] Update downloaded:', info);
-      this.isDownloading = false;
 
       this.notifyUpdateReady({
         version: info.version,
@@ -127,10 +140,6 @@ class UpdateService {
     if (this.disabledForE2E) {
       return { status: 'disabled', currentVersionCode: this.currentVersionCode };
     }
-    if (this.isDownloading) {
-      console.log('[UpdateService] Already downloading update, skipping...');
-      return { status: 'available', currentVersionCode: this.currentVersionCode };
-    }
 
     const manifest = await this.fetchManifest();
     if (!manifest) {
@@ -145,7 +154,7 @@ class UpdateService {
     console.log('[UpdateService] Manifest versionCode:', manifest.versionCode);
 
     if (compareVersions(manifest.versionCode, this.currentVersionCode) > 0) {
-      console.log('[UpdateService] Update available, downloading...');
+      console.log('[UpdateService] Newer release metadata found, checking platform updater...');
 
       const updateInfo: UpdateInfo = {
         version: manifest.version,
@@ -153,25 +162,29 @@ class UpdateService {
         releaseNotes: manifest.releaseNotes,
         downloadUrl: manifest.downloadUrl
       };
-      xpcMain.broadcast('coach/update-available', updateInfo);
-
-      const updateEndpoint = this.constructUpdateEndpoint(manifest.downloadUrl);
-      console.log('[UpdateService] Update endpoint:', updateEndpoint);
-      autoUpdater.setFeedURL({
-        provider: 'generic',
-        url: manifest.downloadUrl
-      });
-
-      this.isDownloading = true;
 
       try {
-        await autoUpdater.checkForUpdates();
-        if (this.updateAvailable) {
+        const updateEndpoint = this.constructUpdateEndpoint(manifest.downloadUrl);
+        console.log('[UpdateService] Update endpoint:', updateEndpoint);
+        autoUpdater.setFeedURL({
+          provider: 'generic',
+          url: manifest.downloadUrl
+        });
+
+        const updateCheck = await autoUpdater.checkForUpdates();
+        if (updateCheck?.isUpdateAvailable !== true) {
+          throw new UpdateMetadataDisagreementError(this.currentVersionCode, manifest.versionCode);
+        }
+
+        xpcMain.broadcast('coach/update-available', updateInfo);
+        this.isDownloading = true;
+        try {
           await autoUpdater.downloadUpdate();
+        } finally {
+          this.isDownloading = false;
         }
       } catch (error) {
         console.error('[UpdateService] Error during update check/download:', error);
-        this.isDownloading = false;
         return {
           status: 'error',
           currentVersionCode: this.currentVersionCode,
@@ -211,22 +224,16 @@ class UpdateService {
     //   return;
     // }
 
+    if (!this.updatePollingService.startPolling()) return;
+
     console.log('[UpdateService] Starting update polling (every 60 seconds)...');
     console.log('[UpdateService] Platform:', this.platform);
     console.log('[UpdateService] Environment:', this.viteEnv);
     console.log('[UpdateService] Mode:', this.viteMode);
-
-    this.checkAndDownloadUpdate();
-
-    this.pollingInterval = setInterval(() => {
-      this.checkAndDownloadUpdate();
-    }, 60000);
   }
 
   public stopPolling(): void {
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
+    if (this.updatePollingService.stopPolling()) {
       console.log('[UpdateService] Stopped update polling');
     }
   }
@@ -236,7 +243,7 @@ class UpdateService {
       return { status: 'disabled', currentVersionCode: this.currentVersionCode };
     }
     console.log('[UpdateService] Manual update check triggered');
-    return await this.checkAndDownloadUpdate();
+    return await this.updatePollingService.checkForUpdates();
   }
 
   public quitAndInstall(): void {
