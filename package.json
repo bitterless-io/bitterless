@@ -18,6 +18,7 @@
     "typecheck": "yarn typecheck:node && yarn typecheck:web",
     "audit:desktop-package": "node scripts/package/desktopPackage.audit.cjs",
     "test:desktop-app-icon": "node --test scripts/package/desktopAppIcon.test.mjs",
+    "test:desktop-auto-update": "node --test tests/update/updatePolling.test.mjs",
     "test:desktop-package-audit": "node --test scripts/package/desktopPackageAudit.test.mjs scripts/package/desktopAppIcon.test.mjs",
     "audit:sqlite-migrations": "node scripts/sqlite-migrations/audit.mjs",
     "test:sqlite-migrations": "node --test scripts/sqlite-migrations/release-hook.test.mjs",
