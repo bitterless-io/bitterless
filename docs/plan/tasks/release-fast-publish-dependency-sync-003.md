@@ -1,7 +1,7 @@
 ---
 id: release-fast-publish-dependency-sync-003
 scope: Electron 40 runtime pin and macOS ARM fast-publish locked dependency synchronization
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [release-fast-publish-version-code-002]
 ---
 
@@ -59,3 +59,16 @@ locked dependencies before it changes release metadata or starts the signed buil
 - Independent review before merge.
 - In the primary workspace only: frozen-lockfile install, Yarn integrity check, installed-version
   checks, and native-binding architecture inspection.
+
+## Completion — 2026-07-27
+
+- Electron is restored to exact `40.10.6`; SQLite remains upgraded to exact `12.11.1`; the
+  Electron 43-only `node-abi@4.33.0` resolution is gone from manifest and lockfile.
+- `fast_publish:mac_arm` now runs pull → frozen install → patch → signing-debug build → publish in
+  strict fail-fast order.
+- The focused release-hook suite passed 14/14 and `git diff --check` passed. No install, build,
+  packaging, signing, notarization, upload, or publication was run in the isolated verification
+  worktree.
+- Independent review passed without P1, P2, or P3 finding; see
+  [`release-fast-publish-dependency-sync-003-1`](../reviews/release-fast-publish-dependency-sync-003-1.md).
+- Owner verification remains the final signed macOS ARM fast-publish run.

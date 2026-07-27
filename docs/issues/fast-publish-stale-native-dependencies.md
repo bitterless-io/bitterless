@@ -1,6 +1,6 @@
 # Fast publish omits stale native dependencies
 
-Status: Fix in progress
+Status: Fixed; owner packaging verification pending
 
 ## Symptom
 
@@ -54,3 +54,14 @@ configuration failure.
 - Installed Electron is `40.10.6` and installed `better-sqlite3-multiple-ciphers` is `12.11.1`.
 - The arm64 `better_sqlite3.node` binding exists.
 - The focused release-hook suite proves pull → frozen install → patch → build → publish ordering.
+
+## Resolution — 2026-07-27
+
+The manifest and lockfile now retain Electron `40.10.6`, upgrade SQLite to `12.11.1`, and remove
+the Electron 43-only `node-abi` override. Fast publish installs the frozen lockfile immediately
+after source synchronization and before `patch.js`, so dependency failure cannot consume a release
+version or reach packaging. The focused suite passed 14/14 and independent review found no P1, P2,
+or P3 finding. See
+[`release-fast-publish-dependency-sync-003-1`](../plan/reviews/release-fast-publish-dependency-sync-003-1.md).
+
+The owner will run the final signed macOS ARM package through `yarn fast_publish:mac_arm`.

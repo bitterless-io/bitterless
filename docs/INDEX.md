@@ -101,7 +101,7 @@ design document.
 - [Desktop package includes build-only dependencies](issues/desktop-package-includes-build-only-dependencies.md) - fixed:
   renderer/build-only production dependencies and a duplicated CLI workspace inflated the macOS
   app to about 1.1 GiB; the committed package is now guarded at 220 MiB ASAR / 650 MiB app.
-- [Fast publish omits stale native dependencies](issues/fast-publish-stale-native-dependencies.md) - fix in progress:
+- [Fast publish omits stale native dependencies](issues/fast-publish-stale-native-dependencies.md) - fixed; owner packaging verification pending:
   source synchronization can leave `node_modules` behind the locked Electron and SQLCipher versions,
   causing Electron Builder to omit the required native runtime package.
 - [EyesOnAgents Hook coverage recovery](issues/eyes-on-agents-hook-coverage-gap-deadlock.md) - fixed; owner verification pending:
