@@ -973,6 +973,195 @@ try {
     'an already-active row must never take the recovery path'
   );
 
+  const listeningDesktopBridge = {
+    ...tieredDesktopBridge,
+    getStatus: () => ({
+      state: 'installed',
+      listening: true,
+      listeningSince: new Date(1).toISOString(),
+      lastEventAt: null,
+      error: null
+    })
+  };
+  const reclaimActiveTurn = {
+    turnId: 'reclaim-turn',
+    statusObservedAt: 30_000,
+    statusSource: 'codex_hook',
+    runtimeState: 'waiting_approval'
+  };
+  const reclaimCase = async (bridge) => {
+    const commits = [];
+    const service = new EyesOnAgentsService({
+      repository: {
+        ...repository,
+        getThreadRefreshPages: async () => ({
+          hot: [{
+            threadId: THREAD_ID,
+            lastUserPromptCheckedAt: null,
+            activeTurn: reclaimActiveTurn,
+            recoveryCandidate: null
+          }],
+          cold: [],
+          pageCount: 1,
+          coldPage: null
+        }),
+        refreshThreadPage: async ({ threads }) => {
+          commits.push(...threads);
+          return { changed: true };
+        }
+      },
+      settings,
+      appServer: {
+        ...appServer,
+        getStatus: connectedAppServerStatus,
+        isConnected: () => true,
+        readThread: async () => ({ id: THREAD_ID, name: 'Reclaim', updatedAt: 30 }),
+        readLatestThreadTurn: async () => ({
+          id: 'reclaim-turn',
+          status: 'inProgress',
+          startedAt: 29
+        })
+      },
+      desktopBridge: bridge,
+      bridgeListener,
+      openExternal: async () => undefined,
+      now: () => 31_000
+    });
+    await service.refreshThreadPages();
+    return commits;
+  };
+  const absentAuthorityCommits = await reclaimCase(tieredDesktopBridge);
+  assert.deepEqual(
+    absentAuthorityCommits[0]?.reclaimedTurn,
+    {
+      turnId: 'reclaim-turn',
+      startedAt: 29_000,
+      expectedActiveTurnId: 'reclaim-turn',
+      expectedStatusObservedAt: 30_000,
+      expectedStatusSource: 'codex_hook',
+      source: 'app_server_turn'
+    },
+    'an inProgress turn may reclaim a row whose Hook authority is currently absent'
+  );
+  const presentAuthorityCommits = await reclaimCase(listeningDesktopBridge);
+  assert.equal(
+    presentAuthorityCommits.some((patch) => patch.reclaimedTurn !== undefined),
+    false,
+    'inProgress must stay a no-op while the row already has present authority'
+  );
+
+  const openSyncCase = async (options) => {
+    const requests = [];
+    const commits = [];
+    const marks = [];
+    const service = new EyesOnAgentsService({
+      repository: {
+        ...repository,
+        markOpened: async (params) => marks.push(params),
+        getThreadRefreshCandidate: async () => options.candidate,
+        refreshThreadPage: async ({ threads }) => {
+          commits.push(...threads);
+          return { changed: true };
+        }
+      },
+      settings,
+      appServer: {
+        ...appServer,
+        getStatus: connectedAppServerStatus,
+        isConnected: () => options.connected !== false,
+        readThread: async () => ({ id: THREAD_ID, name: 'Opened', updatedAt: 30 }),
+        readLatestThreadTurn: async (threadId) => {
+          requests.push(threadId);
+          if (options.throws) throw new Error('latest turn read failed');
+          return { id: 'open-sync-turn', status: 'inProgress', startedAt: 29 };
+        }
+      },
+      desktopBridge: tieredDesktopBridge,
+      bridgeListener,
+      openExternal: async () => undefined,
+      now: () => 31_000
+    });
+    await service.openThread({ threadId: THREAD_ID });
+    return { requests, commits, marks };
+  };
+  const openRecovery = await openSyncCase({
+    candidate: {
+      threadId: THREAD_ID,
+      lastUserPromptCheckedAt: null,
+      activeTurn: null,
+      recoveryCandidate: { statusObservedAt: 30_000 }
+    }
+  });
+  assert.deepEqual(
+    openRecovery.requests,
+    [THREAD_ID],
+    'Open must issue exactly one newest-turn request for an eligible thread'
+  );
+  assert.deepEqual(
+    openRecovery.commits[0]?.recoveredTurn,
+    {
+      turnId: 'open-sync-turn',
+      startedAt: 29_000,
+      expectedStatusObservedAt: 30_000,
+      source: 'app_server_turn'
+    },
+    'Open must resolve an unknown thread through the shared recovery path'
+  );
+  const openIneligible = await openSyncCase({
+    candidate: {
+      threadId: THREAD_ID,
+      lastUserPromptCheckedAt: null,
+      activeTurn: null,
+      recoveryCandidate: null
+    }
+  });
+  assert.deepEqual(
+    openIneligible.requests,
+    [],
+    'Open must not probe a thread that is neither active nor recoverable'
+  );
+  assert.equal(openIneligible.marks.length, 1, 'Open evidence is recorded regardless');
+  const openMissingRow = await openSyncCase({ candidate: null });
+  assert.deepEqual(openMissingRow.requests, []);
+  const openDisconnected = await openSyncCase({
+    connected: false,
+    candidate: {
+      threadId: THREAD_ID,
+      lastUserPromptCheckedAt: null,
+      activeTurn: null,
+      recoveryCandidate: { statusObservedAt: 30_000 }
+    }
+  });
+  assert.deepEqual(
+    openDisconnected.requests,
+    [],
+    'a disconnected App Server cannot be probed and must not fail the Open'
+  );
+  assert.equal(openDisconnected.marks.length, 1);
+  const openThrows = await openSyncCase({
+    throws: true,
+    candidate: {
+      threadId: THREAD_ID,
+      lastUserPromptCheckedAt: null,
+      activeTurn: null,
+      recoveryCandidate: { statusObservedAt: 30_000 }
+    }
+  });
+  assert.equal(
+    openThrows.commits.some((patch) => (
+      patch.recoveredTurn !== undefined
+      || patch.reclaimedTurn !== undefined
+      || patch.terminalTurn !== undefined
+    )),
+    false,
+    'a failed probe must not write any turn transition'
+  );
+  assert.equal(
+    openThrows.marks.length,
+    1,
+    'a failed status sync must still leave the Open and its evidence intact'
+  );
+
   let promptPageSelectionCount = 0;
   let promptContentReads = 0;
   let promptBroadcasts = 0;

@@ -2219,6 +2219,90 @@ try {
     { status_source: 'codex_hook', active_turn_id: 'live-hook-turn' },
     'real Hook evidence must supersede recovered App Server turn evidence'
   );
+  const reclaimPatch = (overrides = {}) => ({
+    threadId: recoveryThreadId,
+    reclaimedTurn: {
+      turnId: 'live-hook-turn',
+      startedAt: 79_000,
+      expectedActiveTurnId: 'live-hook-turn',
+      expectedStatusObservedAt: 80_000,
+      expectedStatusSource: 'codex_hook',
+      source: 'app_server_turn',
+      ...overrides
+    }
+  });
+  db.prepare(
+    `UPDATE eyes_on_agents_thread
+     SET runtime_state = 'waiting_approval', active_flags_json = '["waitingOnApproval"]',
+       last_activity_at = 80_500
+     WHERE thread_id = ?`
+  ).run(recoveryThreadId);
+  for (const rejection of [
+    { patch: { expectedStatusObservedAt: 79_999 }, reason: 'a changed observation watermark' },
+    { patch: { turnId: 'other-turn', expectedActiveTurnId: 'other-turn' }, reason: 'a replacement active turn' }
+  ]) {
+    assert.deepEqual(
+      await repository.refreshThreadPage({ threads: [reclaimPatch(rejection.patch)] }),
+      { changed: false },
+      `${rejection.reason} must make a delayed reclaim a no-op`
+    );
+    assert.equal(recoveryRow().status_source, 'codex_hook');
+  }
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [reclaimPatch()] }),
+    { changed: true },
+    'App Server may reclaim an active row whose Hook authority is absent'
+  );
+  assert.deepEqual(
+    { ...recoveryRow() },
+    {
+      runtime_state: 'waiting_approval',
+      status_source: 'app_server_turn',
+      status_observed_at: 79_000,
+      active_turn_id: 'live-hook-turn',
+      is_unread: 1,
+      last_activity_at: 80_500,
+      last_completed_turn_id: null
+    },
+    'a reclaim changes only source and watermark; the observed wait and unread survive'
+  );
+  assert.equal(
+    db.prepare('SELECT active_flags_json FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(recoveryThreadId).active_flags_json,
+    '["waitingOnApproval"]',
+    'a reclaim must not downgrade an approval wait to generic working'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({ threads: [reclaimPatch()] }),
+    { changed: false },
+    'a reclaimed row is no longer codex_hook-sourced and cannot be reclaimed twice'
+  );
+  await repository.invalidateCodexHookStatuses({ observedAt: 81_000 });
+  assert.equal(
+    recoveryRow().runtime_state,
+    'waiting_approval',
+    'a Hook listener boundary must not clear evidence App Server has since confirmed'
+  );
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [{
+        threadId: recoveryThreadId,
+        terminalTurn: {
+          turnId: 'live-hook-turn',
+          outcome: 'completed',
+          completedAt: 82_000,
+          expectedActiveTurnId: 'live-hook-turn',
+          expectedStatusObservedAt: 79_000,
+          expectedStatusSource: 'app_server_turn',
+          source: 'app_server'
+        }
+      }]
+    }),
+    { changed: true },
+    'a reclaimed row stays terminally reconcilable under its own source'
+  );
+  assert.equal(recoveryRow().runtime_state, 'idle');
+
   db.prepare('DELETE FROM eyes_on_agents_thread WHERE thread_id = ?').run(recoveryThreadId);
 
   const readAllIdleId = resetColdPage.hot[3].threadId;
