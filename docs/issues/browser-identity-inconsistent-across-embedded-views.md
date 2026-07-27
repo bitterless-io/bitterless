@@ -59,32 +59,25 @@ client-hint behaviour (no `Sec-CH-UA` on top-level navigations, no `Google Chrom
 one would mean attaching a debugger to those views, which would take DevTools away from them. The
 identity is now incomplete there, but no longer self-contradictory.
 
-## Dependency upgrade
+## Runtime dependency boundary
 
-Electron **40.10.6 → 43.2.0** (Chromium 144 → 150). Electron 40 is past end-of-life (only the
-latest three majors are maintained), and Cloudflare supports "current + two previous" browser
-majors, which placed Chromium 144 outside the supported window and Chromium 150 inside it.
+The browser-identity fix derives its values from the bundled engine and does not authorize an
+Electron major upgrade. Bitterless remains pinned to Electron `40.10.6` (Chromium 144). The
+transient Electron `43.2.0` manifest change and its forced `node-abi@4.33.0` resolution are reverted.
 
-Two transitive blockers had to be cleared:
-
-1. `@electron/rebuild` bundles `node-abi@4.26`, which does not know Electron 43's ABI
-   (`Could not detect abi for version 43.2.0`). Added a `node-abi: ^4.33.0` resolution.
-2. `better-sqlite3-multiple-ciphers@12.6.2` does not compile against Electron 43's V8 —
-   `v8::External::New` gained a required `ExternalPointerTypeTag` third argument. Bumped to
-   `12.11.1`, which builds cleanly.
+`better-sqlite3-multiple-ciphers` advances independently from `12.6.2` to `12.11.1`. The
+[upstream v12.11.1 release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v12.11.1)
+publishes prebuilt binaries for Electron 29–42, including the required Electron 40 target.
 
 ## Verification
 
 - `yarn typecheck:node` — pass
 - `yarn build` — pass
-- Native modules load under Electron 43: `better-sqlite3-multiple-ciphers`, `node-pty`, `sharp`
-- `chromeIdentity()` under Electron 43 emits
-  `Chrome/150.0.0.0` and
-  `[{Not;A=Brand,8},{Chromium,150},{Google Chrome,150}]` — byte-identical to real Chrome
-  150.0.7871.182 measured on the same machine; `platformVersion` `15.4.1` likewise matches.
+- `chromeIdentity()` derives Chrome major, GREASE brand, platform, and full version from the actual
+  runtime, including the measured Chromium 144 identity shipped by Electron 40.
 - Cloudflare Turnstile obtained a token on a real-sitekey page under both Electron 40 and 43
   (837 chars, fresh profile, focused and unfocused).
 
-**Not** verified: a full application smoke test on Electron 43 (launching the UI and exercising
-maestro tabs, omni cells, SQLite-backed flows), and no Windows build was produced. The dependency
-upgrade lands on `release/2604` and should get a real run-through before shipping.
+The Electron 43 measurement remains historical evidence for the derived identity algorithm, not a
+release dependency. Native SQLite loading under Electron 40 is re-verified after installing
+`12.11.1`; the owner performs the final signed application package test.

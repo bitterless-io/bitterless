@@ -16,10 +16,11 @@ were platform-specific optional dependencies and were not the release blocker.
 
 ## Root cause
 
-The committed manifest and lockfile require Electron `43.2.0` and
-`better-sqlite3-multiple-ciphers@12.11.1`, but the local Yarn installation still contained
-Electron `40.10.6` and `better-sqlite3-multiple-ciphers@12.6.2`. `yarn check --integrity` therefore
-failed.
+The intended runtime pair is Electron `40.10.6` plus
+`better-sqlite3-multiple-ciphers@12.11.1`. The SQLite release publishes prebuilds for Electron
+29–42, including Electron 40. A combined dependency change had incorrectly moved the manifest and
+lockfile to Electron `43.2.0`, while the local Yarn installation still contained the intended
+Electron `40.10.6` and the stale SQLite `12.6.2`. `yarn check --integrity` therefore failed.
 
 `fast_publish:mac_arm` synchronized Git source and immediately patched the release version before
 building. It never synchronized `node_modules` with the newly pulled lockfile. Electron Builder's
@@ -31,6 +32,9 @@ configuration failure.
 
 ## Fix contract
 
+- Restore the exact Electron `40.10.6` manifest and lock entry, retain
+  `better-sqlite3-multiple-ciphers@12.11.1`, and remove the `node-abi@4.33.0` resolution introduced
+  only for Electron 43.
 - After Git synchronization and before version preparation, fast publish must run a frozen-lockfile
   Yarn install so the installed Electron and native modules match the checked-out release source.
 - A failed dependency install must stop before `patch.js`, preventing a release version bump when
@@ -44,6 +48,6 @@ configuration failure.
 ## Acceptance
 
 - `yarn check --integrity` passes after dependency repair.
-- Installed Electron is `43.2.0` and installed `better-sqlite3-multiple-ciphers` is `12.11.1`.
+- Installed Electron is `40.10.6` and installed `better-sqlite3-multiple-ciphers` is `12.11.1`.
 - The arm64 `better_sqlite3.node` binding exists.
 - The focused release-hook suite proves pull → frozen install → patch → build → publish ordering.
