@@ -40,12 +40,28 @@ test('direct package scripts have migration pre-hooks', () => {
   assert.equal(pkg.scripts['prebuild_dev:win'], 'yarn audit:sqlite-migrations')
 })
 
-test('fast mac ARM publish syncs, patches, builds with signing debug, then publishes', () => {
+test('fast mac ARM publish syncs source and locked dependencies before patch, build, and publish', () => {
   const pkg = JSON.parse(read('package.json'))
   assert.equal(
     pkg.scripts['fast_publish:mac_arm'],
-    'node scripts/git_pull.js && node scripts/patch.js && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm',
+    'node scripts/git_pull.js && yarn install --frozen-lockfile && node scripts/patch.js && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm',
   )
+})
+
+test('desktop runtime pins Electron 40 and SQLite 12.11 without the Electron 43 ABI override', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const lock = read('yarn.lock')
+
+  assert.equal(pkg.devDependencies.electron, '40.10.6')
+  assert.equal(pkg.dependencies['better-sqlite3-multiple-ciphers'], '12.11.1')
+  assert.equal(pkg.resolutions['node-abi'], undefined)
+  assert.match(lock, /^electron@40\.10\.6:\n  version "40\.10\.6"$/m)
+  assert.match(
+    lock,
+    /^better-sqlite3-multiple-ciphers@12\.11\.1:\n  version "12\.11\.1"$/m,
+  )
+  assert.doesNotMatch(lock, /^electron@43\.2\.0:/m)
+  assert.doesNotMatch(lock, /node-abi@\^4\.33\.0/)
 })
 
 test('signedBuild cannot invoke electron-builder before the audit', () => {

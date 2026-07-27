@@ -122,10 +122,14 @@ compilation, signing, notarization, or upload.
 `scripts/publish.js --build` is the authoritative all-platform release path and must fail closed if
 the audit exits non-zero.
 
-The macOS ARM fast-publish shortcut synchronizes source first, runs the existing patch preparation
-to increment `version`/`_version` and generate a fresh local `YYMMDDHHmmss` `version_code`, and only
-then starts the signed build. A patch failure stops the command before packaging. This prevents a
-new fast-published version from reusing an older release's build identifier.
+The desktop runtime remains pinned to Electron `40.10.6` with
+`better-sqlite3-multiple-ciphers@12.11.1`. The macOS ARM fast-publish shortcut synchronizes source
+first, installs the checked-out Yarn lockfile with `--frozen-lockfile`, then runs the existing patch
+preparation to increment `version`/`_version` and generate a fresh local `YYMMDDHHmmss`
+`version_code`. Only then may it start the signed build. An install or patch failure stops the
+command before packaging. This prevents a newly pulled Electron or SQLCipher dependency from being
+omitted due to stale `node_modules`, and prevents a new fast-published version from reusing an older
+release's build identifier.
 
 macOS DMG signing must work when the Developer ID certificate exists only as the configured P12,
 not as a persistent login-keychain identity. The publisher imports that P12 into a private
