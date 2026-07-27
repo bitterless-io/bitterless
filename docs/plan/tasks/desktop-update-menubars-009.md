@@ -1,7 +1,7 @@
 ---
 id: desktop-update-menubars-009
 scope: compact automatic-update action across Home, Maestro, and Omni window chrome
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [desktop-auto-update-state-replay-008]
 ---
 
@@ -96,7 +96,30 @@ new icon, toolbar, fixed width, or decorative element is introduced.
 - `node --test tests/omni/omniLayoutLifecycle.test.mjs`
 - `node scripts/maestro/check-update-ux.mjs`
 - `yarn check:renderer-i18n`
-- Focused strict renderer TypeScript, targeted lint, and committed diff checks pass.
+- Focused strict renderer TypeScript, targeted lint with the existing JavaScript return-type rule
+  excluded, and committed diff checks pass.
 - Independent review finds no open P1, P2, or P3 issue.
 - Do not launch Electron, build, package, sign, notarize, publish, upload, refresh CDN, or access the
   remote update feed; Ral retains real-device visual and update acceptance.
+
+## Delivery evidence — 2026-07-27
+
+- Commit `e80b756` adds exactly one ready-only update action to the top-level `omniWindow` Menu Bar,
+  after the flexible `Layout` region and before native Windows controls. It reuses Home's ready store
+  and subscribe-before-snapshot path without adding polling.
+- Home, Maestro, and Omni resolve their visible action from the same en/zh value, the intentional
+  lowercase literal `upate`. Maestro keeps that label while downloading and preserves disabled and
+  detailed-title state.
+- `omniCell` and the complete Omni Control source tree are guarded against update state,
+  subscription, and label ownership, so pane count and embedded content cannot duplicate the action.
+- Follow-up commit `931b81b` localizes Omni's target-version tooltip in English and Chinese while
+  preserving the compact visible label.
+- Desktop automatic-update tests passed 17/17, Omni lifecycle passed 8/8, and Maestro update UX,
+  renderer-i18n, customer-auth 14/14, focused strict renderer TypeScript, scoped lint, and committed
+  diff checks passed. The scoped lint's normal configuration retains one unchanged JavaScript-helper
+  return-type baseline; all task changes pass with that inapplicable rule excluded.
+- Independent review's only initial P3 was the English-only Omni tooltip. After `931b81b`, re-review
+  found no open P1, P2, or P3 issue; see
+  [`desktop-update-menubars-009-1`](../reviews/desktop-update-menubars-009-1.md).
+- Electron launch, build, packaging, signing, notarization, publication, upload, CDN refresh, and
+  remote feed access were intentionally not run. Ral owns real-device visual/update acceptance.
