@@ -16,6 +16,7 @@ import {
   IconLayoutSidebarRightFilled,
   IconTools
 } from '@tabler/icons-vue'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import type { TabInfo } from '@maestro-shared/coach.api'
 import { menuBarStore } from './menuBar.store'
 import { tabStore } from './tab.store'
@@ -312,9 +313,8 @@ function debuggerTitle(tab?: TabInfo): string {
           <IconTools :size="18" stroke="1.8" />
         </button>
 
-        <!-- Update button — at the address bar's trailing edge. Shows disabled "Updating" as soon
-             as the main process finds a newer build, then turns into the enabled "Update" button
-             once the silent download finishes. The label text sits above the shimmer band. -->
+        <!-- Update button — at the address bar's trailing edge. The compact label stays unchanged
+             while the disabled shimmer communicates downloading; the title preserves detail. -->
         <button
           v-if="updateStore.ready"
           class="maestro-menu-bar__update"
@@ -332,7 +332,7 @@ function debuggerTitle(tab?: TabInfo): string {
           type="button"
           @click="updateStore.install()"
         >
-          <span class="maestro-menu-bar__update-label">{{ updateStore.downloading ? 'Updating' : 'Update' }}</span>
+          <span class="maestro-menu-bar__update-label">{{ i18nHelper.menuBar.restartToUpdate }}</span>
         </button>
       </div>
 

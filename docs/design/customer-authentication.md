@@ -29,12 +29,12 @@ may use it, but the resulting session remains restricted and the password must b
 
 The application owns one window-level shell above routing. `MenuBar` is rendered once by `App.vue`
 for both public and authenticated routes, so window dragging, platform window controls, proxy status,
-and the restart-to-update action do not disappear while the customer is logged out. Route pages own
+and the compact update action do not disappear while the customer is logged out. Route pages own
 only the content region below that bar.
 
 ```text
 ┌──────────────────────── shared MenuBar (32px) ────────────────────────────┐
-│ Bitterless             [Restart to Update] [Proxy]      [window controls] │
+│ Bitterless                         [upate] [Proxy]      [window controls] │
 ├──────────────────────── routed content region ────────────────────────────┤
 │ /login                                /chat and authenticated routes       │
 │ Login content only                    HomeMenu + workspace content         │
@@ -49,7 +49,7 @@ shared menu bar's clickable update and window controls.
 
 ```text
 ┌──────────────────────── shared Royal Blue MenuBar ───────────────────────┐
-│ Bitterless                                  [Restart to Update] [controls]│
+│ Bitterless                                           [upate] [controls]│
 ├──────────────────── light Royal Blue login surface ─────────────────────┤
 │        ┌─ white account surface; no visible outline ────────────┐         │
 │        │ [Password login] [Email code]                          │         │
@@ -92,7 +92,7 @@ Settings exposes account identity inside the existing General page without addin
 | Send reset code | Send an email OTP with purpose `reset_password`; disable duplicate submission during the request and cooldown |
 | Reset password | Require two matching inputs of at least eight characters, reset through the dedicated unauthenticated endpoint, then return to password login |
 | First-password setup | Require two matching inputs of at least eight characters; keep the modal open on mutation error; after mutation success, any route failure changes the modal to a navigation-only retry |
-| Update available while logged out | Show the same `Restart to Update` action as the authenticated workspace; clicking it calls the existing update restart flow |
+| Update available while logged out | Show the same compact `upate` action as the authenticated workspace; clicking it calls the existing update restart flow |
 | Window controls while logged out | Keep the shared macOS drag region or Windows minimize/maximize/close controls interactive above the login content |
 | Logout | Clear local authentication and route to Login immediately; best-effort revoke the Core token and silently tear down authenticated secondary windows |
 

@@ -51,6 +51,31 @@ for (const [name, path] of rendererEntries) {
   assert(mountIndex > pluginIndex, `${name} must mount only after plugin install`)
 }
 
+const englishMessages = readProject('src/renderer/common/i18n/en.ts')
+const chineseMessages = readProject('src/renderer/common/i18n/zh.ts')
+for (const [language, source] of [
+  ['en', englishMessages],
+  ['zh', chineseMessages]
+]) {
+  assert.match(
+    source,
+    /menuBar:\s*\{[\s\S]*?restartToUpdate: 'upate'/,
+    `${language} must expose the exact compact update label`
+  )
+}
+
+for (const [surface, path] of [
+  ['Home', 'src/renderer/home/src/components/MenuBar/MenuBar.vue'],
+  ['Maestro', 'src/renderer/maestro/home/src/components/MenuBar/MenuBar.vue'],
+  ['Omni', 'src/renderer/omni/omniWindow/src/App.vue']
+]) {
+  const source = readProject(path)
+  assert(
+    source.includes('{{ i18nHelper.menuBar.restartToUpdate }}'),
+    `${surface} update action must use the shared compact label`
+  )
+}
+
 const rendererI18n = readProject('src/renderer/common/i18n/i18n.helper.ts')
 assert(!rendererI18n.includes('navigator.language'), 'renderer i18n must not infer the runtime language from the browser')
 assert(!rendererI18n.includes("localStorage.getItem('lang')"), 'renderer i18n must not read a renderer-local language')

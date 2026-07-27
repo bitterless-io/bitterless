@@ -13,7 +13,7 @@ window.
 
 ```text
 ┌────────────────────────────── Omni BaseWindow ──────────────────────────────┐
-│ Omni menubar                                                               │
+│ Omni Browser  [Layout]                              [upate when ready]      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ Cell A                                      │ Cell B                        │
 │ ┌──────── browser chrome (browser only) ──┐ │ ┌──── local mini app ──────┐ │
@@ -134,6 +134,7 @@ privileged operation view. Remote browser cells can never receive a Todo, EyesOn
 | Refresh | Browser chrome / mini-app header | Reload browser content or refresh the mini app's own data. |
 | Back/forward | Browser cell only | Navigate browser history; hidden/disabled for mini apps. |
 | Split | Layout panel | Preserve original content and create a default browser sibling. |
+| `upate` | Omni Menu Bar | When downloaded-ready state exists, quit and install through Main. |
 
 ## State Variants
 
@@ -145,6 +146,12 @@ privileged operation view. Remote browser cells can never receive a Todo, EyesOn
   or preload path; never fall back from a mini app to an unrelated remote URL.
 - **Constrained:** the panel keeps the mode selector and close action reachable; the target input
   may shrink but must not force the cell outside its split bounds.
+- **Update hidden:** no downloaded-ready snapshot or live event exists; the Omni Menu Bar reserves
+  no width for an update action.
+- **Update ready:** show the exact compact `upate` label at the Menu Bar's right edge. Renderer
+  recreation restores it from Main without requiring another broadcast or app restart. This action
+  belongs only to the top-level Omni window; cell chrome, Layout's per-pane controls, and embedded
+  mini-app renderers never duplicate it.
 
 ## Integration Flow
 
@@ -168,6 +175,7 @@ SettingDao.omni_layout
   rejection of unsupported mini apps.
 - Runtime tests cover browser/Todo/EyesOnAgents/Translator preload selection and dev versus packaged targets.
 - UI guards cover Arco mode/select controls, exactly three mini-app choices, i18n, business BEM/Less,
-  embedded sizing/window-action behavior, and the absence of Tailwind classes.
+  embedded sizing/window-action behavior, the compact Omni Menu Bar update action, and the absence
+  of Tailwind classes.
 - Build verification confirms all three mini-app renderer HTML files and preload bundles exist in
   `out/` and are referenced by generated-asset-safe paths.

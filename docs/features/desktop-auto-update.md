@@ -33,7 +33,7 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
 - Home registers its update subscriber before mounting the root application and starting the first
   poll. XPC subscribers consume the typed update value from `payload.params`.
 - Main retains the latest download-ready `UpdateInfo` in memory for the lifetime of the process and
-  exposes it as an optional snapshot. A recreated Home or Maestro renderer must subscribe to live
+  exposes it as an optional snapshot. A recreated Home, Maestro, or Omni renderer must subscribe to live
   events first, then request that snapshot without blocking renderer mount.
 - A valid live update event wins over an in-flight snapshot response. In Maestro this includes the
   downloading event for precedence without treating it as install-ready; a stale ready snapshot
@@ -43,6 +43,30 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
   field required by Home before storing or broadcasting ready state.
 - The Home update button continues to mean "download completed and ready to install"; detecting an
   outer manifest alone must not expose that button.
+
+## Menu-bar coverage and label
+
+The update action appears in the existing window chrome without adding a second toolbar:
+
+```text
+Home     │ Bitterless                         [upate] [Proxy] [window controls] │
+Maestro  │ tabs · address · tools                         [upate] [other tools] │
+Omni     │ Omni Browser [Layout]                       [upate] [window controls] │
+```
+
+- The visible label is the exact owner-provided lowercase literal `upate` in every language and
+  state. It never expands to `Restart to Update`, `Update`, or `Updating`.
+- Home and Omni hide the action until the package is downloaded and ready, then keep it enabled and
+  route clicks through the existing quit-and-install lifecycle.
+- Maestro may reveal the same label while downloading, but keeps it disabled until the downloaded
+  event arrives. Its title may continue to describe downloading versus install-ready state.
+- Omni places the content-width action only in the top-level `omniWindow` 32px Menu Bar that already
+  owns `Layout`, immediately before native Windows controls when present. `omniCell`, Omni Control's
+  per-pane Menu Bar, and embedded mini-app/subwindow renderers never show it. The action remains in
+  a `no-drag` region and has no fixed or minimum label width.
+- Omni registers the live ready subscription before requesting Main's optional snapshot and before
+  Vue mount. Valid live state wins over an in-flight stale snapshot; malformed values are logged and
+  never applied.
 
 ## Failure behavior
 
@@ -57,5 +81,5 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
 Automated coverage uses a controlled scheduler and deferred checks to prove immediate start,
 idempotent timer ownership, non-overlap, and release after success or failure. Source-contract
 coverage protects the two-gate decision, download-only state, subscribe-before-mount ordering, and
-race-safe ready-state replay in Home and Maestro. This task does not package, sign, notarize,
+race-safe ready-state replay in Home, Maestro, and Omni. This task does not package, sign, notarize,
 publish, or mutate the production update feed.

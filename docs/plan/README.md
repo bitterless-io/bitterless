@@ -82,6 +82,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [desktop-mac-dock-icon-size-006](tasks/desktop-mac-dock-icon-size-006.md) | preserve bundle-default macOS Dock icon size while running | done | desktop-mac-dock-icon-004 |
 | [desktop-auto-update-polling-007](tasks/desktop-auto-update-polling-007.md) | recoverable, idempotent desktop automatic-update polling | implemented; owner verification pending | — |
 | [desktop-auto-update-state-replay-008](tasks/desktop-auto-update-state-replay-008.md) | race-safe download-ready replay after renderer rebuild | implemented; owner verification pending | desktop-auto-update-polling-007 |
+| [desktop-update-menubars-009](tasks/desktop-update-menubars-009.md) | compact `upate` action in Home, Maestro, and Omni Menu Bars | in-progress | desktop-auto-update-state-replay-008 |
 | [release-fast-publish-version-code-002](tasks/release-fast-publish-version-code-002.md) | restore version preparation before macOS ARM fast-publish build | done | — |
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |

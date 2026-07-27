@@ -30,8 +30,11 @@ assert(updateStore.includes('if (snapshot === null) return') && updateStore.incl
 assert(updateStore.includes("typeof candidate.version !== 'string'") && updateStore.includes("typeof candidate.versionCode !== 'string'"), 'Maestro renderer should validate update payload fields')
 assert(updateStore.includes('Ignoring malformed update-ready snapshot') && updateStore.includes('Failed to replay update-ready snapshot'), 'Maestro renderer should log malformed or failed replay')
 assert(updateStore.includes('downloading = true') && updateStore.includes('downloading = false'), 'Maestro update UI should track download state')
-assert(menuBar.includes("updateStore.downloading ? 'Updating' : 'Update'"), 'Maestro menu should display updating/ready state')
+assert(menuBar.includes("import { i18nHelper } from '@renderer/common/i18n/i18n.helper'"), 'Maestro update label should use shared renderer i18n')
+assert(menuBar.includes('{{ i18nHelper.menuBar.restartToUpdate }}'), 'Maestro update label should use the shared compact literal')
+assert(!menuBar.includes("updateStore.downloading ? 'Updating' : 'Update'"), 'Maestro visible update label must not grow while downloading')
 assert(menuBar.includes(':disabled="updateStore.downloading"'), 'Maestro update action should be disabled while downloading')
+assert(menuBar.includes('`Downloading ${updateStore.info.version}`') && menuBar.includes('`Update to ${updateStore.info.version}`'), 'Maestro update title should retain download and target-version detail')
 assert(sharedApi.includes("'disabled'"), 'Maestro shared API should support disabled updater status')
 
 console.log('[check-update-ux] ok')

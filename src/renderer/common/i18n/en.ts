@@ -27,7 +27,7 @@ export const en = {
     keychainDeniedCancel: 'Cancel',
   },
   menuBar: {
-    restartToUpdate: 'Restart to Update',
+    restartToUpdate: 'upate',
     proxy: 'Proxy',
     startupDiagnostics: {
       title: 'Startup issues',
