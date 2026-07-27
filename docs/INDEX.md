@@ -130,6 +130,8 @@ design document.
   owner verification pending: the running tile now keeps the bundle-default size without a PNG override.
 - [Desktop automatic-update polling stalls](issues/desktop-auto-update-polling-stalls.md) - fixed;
   owner verification pending: metadata disagreement now releases the shared check so later polls retry.
+- [Desktop update-ready state lost after renderer rebuild](issues/desktop-auto-update-ready-state-replay.md) - active:
+  event-only readiness can hide an already downloaded update from a recreated Home or Maestro renderer.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:
   retain Node-only helper isolation while restoring strict SQLite-first GUI startup.
 - [Translator language-direction detection](issues/translator-language-direction-detection.md) - fixed:

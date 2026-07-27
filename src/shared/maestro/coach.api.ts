@@ -153,6 +153,7 @@ export interface CoachXpcContract {
   // 'coach/update-available' ({ version, versionCode }); readiness flows back on
   // 'coach/update-downloaded' ({ version, versionCode }).
   checkForUpdates(): Promise<UpdateCheckResult>
+  getReadyUpdate(): Promise<UpdateInfo | null>
   quitAndInstall(): Promise<void>
 }
 
