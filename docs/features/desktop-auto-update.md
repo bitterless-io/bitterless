@@ -36,8 +36,8 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
   exposes it as an optional snapshot. A recreated Home or Maestro renderer must subscribe to live
   events first, then request that snapshot without blocking renderer mount.
 - A valid live update event wins over an in-flight snapshot response. In Maestro this includes the
-  downloading event for precedence without treating it as ready; a stale ready snapshot must not
-  overwrite newer live downloading state. An absent snapshot is a normal optional lookup;
+  downloading event for precedence without treating it as install-ready; a stale ready snapshot
+  must not overwrite newer live downloading state. An absent snapshot is a normal optional lookup;
   malformed event or snapshot data is rejected and logged rather than applied.
 - Main normalizes `electron-updater` release notes (`string`, note array, or absent) to the string
   field required by Home before storing or broadcasting ready state.

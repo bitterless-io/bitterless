@@ -1,7 +1,7 @@
 ---
 id: desktop-auto-update-state-replay-008
 scope: replay download-ready automatic-update state after Home or Maestro renderer recreation
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [desktop-auto-update-polling-007]
 ---
 
@@ -45,8 +45,8 @@ timer, waiting for another broadcast, or restarting Bitterless.
   typed XPC contract without delaying renderer initialization.
 - A valid live update event received during the request wins; its state must not be overwritten by a
   stale snapshot response. In Maestro, valid `coach/update-available` suppresses the snapshot while
-  remaining downloading, and only `coach/update-downloaded` becomes ready. A snapshot may initialize
-  state only when no valid live update event has won.
+  remaining downloading, and only `coach/update-downloaded` becomes install-ready. A snapshot may
+  initialize state only when no valid live update event has won.
 - Validate event and snapshot shapes before changing a store. Log and ignore malformed data, and log
   snapshot request failures without hiding or blocking the renderer.
 - Normalize the updater's string, note-array, or absent release notes to a real string before Main
@@ -68,3 +68,20 @@ timer, waiting for another broadcast, or restarting Bitterless.
 - Independent review finds no open P1, P2, or P3 issue.
 - Do not launch Electron, package, sign, notarize, publish, upload, refresh CDN, or access the remote
   feed; Ral retains real-device acceptance.
+
+## Delivery evidence — 2026-07-27
+
+- Commit `9caeb75` stores a defensive Main ready snapshot before both ready broadcasts and exposes
+  defensive optional reads to Home and Maestro.
+- Home and Maestro subscribe synchronously before requesting replay. Valid live state suppresses an
+  in-flight stale snapshot, while malformed live state leaves valid replay available and malformed
+  non-null snapshots are still validated and logged.
+- Main normalizes string, array, and absent updater release notes before retaining or broadcasting
+  Home's four-field update value.
+- `yarn test:desktop-auto-update` passed 14/14. Maestro update UX, renderer-i18n, customer-auth 14/14,
+  Node preflight, focused strict Main/Home/Maestro TypeScript, targeted lint, and committed-diff
+  checks passed.
+- Independent review found no open P1, P2, or P3 issue; see
+  [`desktop-auto-update-state-replay-008-1`](../reviews/desktop-auto-update-state-replay-008-1.md).
+- Electron launch, packaging, signing, notarization, publication, upload, CDN refresh, and remote
+  feed access were intentionally not run. Ral owns real-device acceptance with a later release.

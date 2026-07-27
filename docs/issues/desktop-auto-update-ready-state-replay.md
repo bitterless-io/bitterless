@@ -1,6 +1,6 @@
 # Desktop Update-Ready State Is Lost After Renderer Rebuild
 
-Status: active
+Status: fixed; owner verification pending
 
 ## Symptom
 
@@ -29,5 +29,16 @@ the new renderer existed.
 - Missing state returns an explicit absent value; malformed data is not applied.
 - Keep the single polling timer, non-overlap, two version gates, download-ready button semantics,
   E2E guards, and install lifecycle unchanged.
+
+## Resolution
+
+Commit `9caeb75` retains a defensive ready snapshot in Main and exposes optional replay through the
+existing Home and Maestro XPC boundaries. Both renderers subscribe before requesting the snapshot,
+validate every non-null response, and preserve newer live state over an older response. Main also
+normalizes the updater's supported release-note shapes before Home receives them.
+
+Focused automatic-update, Maestro UX, renderer-i18n, customer-auth, strict changed-file TypeScript,
+lint, and committed-diff checks passed. Independent review found no P1, P2, or P3 issue. Real
+Electron and published-package acceptance remains with the owner.
 
 Delivery: [desktop-auto-update-state-replay-008](../plan/tasks/desktop-auto-update-state-replay-008.md)
