@@ -12,9 +12,9 @@ uses the shared model-provider service and the sterile Pi coding-agent runtime; 
 credentials or a second model preference.
 
 Translator has no provider selector. Its fixed target is
-`openai-codex / gpt-5.5 / low` (the requested “Codex 5.5 light”). When that target is unavailable,
-the composer shows the shared Codex login entry. A successful login updates Translator and Home
-Model Config through the same persisted XPC snapshot.
+`openai-codex / gpt-5.5 / low / fast` (the requested “Codex 5.5 light” with Codex Fast mode). When
+that target is unavailable, the composer shows the shared Codex login entry. A successful login
+updates Translator and Home Model Config through the same persisted XPC snapshot.
 
 ## Design Direction
 
@@ -120,6 +120,13 @@ an older result direction is never presented as a prediction for new text.
 - Pi runs without tools, skills, prompts, extensions, retries, or conversation persistence through
   the existing sterile Codex runtime.
 - Provider, model, and effort are Main constants; renderer input cannot override them.
+- Translator explicitly requests Fast service tier. The shared Codex runtime maps Fast to the
+  provider wire value `service_tier: "priority"` and leaves other runtime consumers on Standard
+  unless they opt in.
+- Fast is supported by `gpt-5.5` for ChatGPT-authenticated Codex sessions and consumes more credits
+  than Standard. A rejected Fast request remains a provider failure; the runtime does not silently
+  downgrade the translation to Standard. See
+  [Codex Fast mode](https://learn.chatgpt.com/docs/agent-configuration/speed#fast-mode).
 - The system prompt requires exactly one JSON object with `targetLanguage` and `translation`.
 - Main parses JSON and validates it with
   `z.object({ targetLanguage: z.enum(['en', 'zh-CN']), translation: ... }).strict()`. Fenced JSON,
@@ -160,7 +167,7 @@ Omni selects translator
      -> unavailable: shared Login action
      -> ready: 1s leading/trailing scheduler
   -> TranslatorHandler -> TranslatorService
-  -> CodexRuntimeService(openai-codex, gpt-5.5, low)
+  -> CodexRuntimeService(openai-codex, gpt-5.5, low, fast -> priority)
   -> strict Zod output(targetLanguage + translation) -> renderer
 ```
 

@@ -4,9 +4,11 @@ import type { ModelProviderInvalidationReason } from '@shared/modelProvider/mode
 export const CODEX_RUNTIME_PROVIDER = 'openai-codex' as const;
 export const CODEX_RUNTIME_MODELS = ['gpt-5.5', 'gpt-5.4'] as const;
 export const CODEX_RUNTIME_EFFORTS = ['low', 'medium', 'high'] as const;
+export const CODEX_RUNTIME_SERVICE_TIERS = ['fast'] as const;
 
 export type CodexRuntimeModel = (typeof CODEX_RUNTIME_MODELS)[number];
 export type CodexRuntimeEffort = (typeof CODEX_RUNTIME_EFFORTS)[number];
+export type CodexRuntimeServiceTier = (typeof CODEX_RUNTIME_SERVICE_TIERS)[number];
 export type CodexRuntimeErrorCode =
   | 'cancelled'
   | 'effort-mismatch'
@@ -20,6 +22,7 @@ export type CodexRuntimeErrorCode =
 export interface CodexRuntimeRunInput {
   model: CodexRuntimeModel;
   effort: CodexRuntimeEffort;
+  serviceTier?: CodexRuntimeServiceTier;
   systemPrompt: string;
   prompt: string;
   maxOutputBytes: number;
@@ -64,9 +67,16 @@ export interface CodexRuntimePiSessionEvent {
   };
 }
 
+export type CodexRuntimePiOnPayload = (payload: unknown, model: unknown) => unknown | Promise<unknown>;
+
+export interface CodexRuntimePiAgent {
+  onPayload?: CodexRuntimePiOnPayload;
+}
+
 export interface CodexRuntimePiSession {
   model?: CodexRuntimePiModel;
   thinkingLevel?: string;
+  agent?: CodexRuntimePiAgent;
   subscribe(listener: (event: CodexRuntimePiSessionEvent) => void): undefined | (() => void);
   prompt(message: string): Promise<unknown>;
   abort(): Promise<void>;
@@ -316,6 +326,37 @@ const assertTarget = (
   }
 };
 
+const CODEX_FAST_UNAVAILABLE_SENTINEL = 'bitterless-codex-fast-unavailable';
+
+const enableFastServiceTier = (session: CodexRuntimePiSession): (() => void) => {
+  try {
+    const agent = session.agent;
+    if (!agent) throw new CodexRuntimeError('runtime-unavailable');
+    const onPayload = agent.onPayload;
+    let applied = false;
+    const fastOnPayload: CodexRuntimePiOnPayload = async (payload, model) => {
+      const transformed = onPayload ? await onPayload.call(agent, payload, model) : payload;
+      const finalPayload = transformed === undefined ? payload : transformed;
+      if (!finalPayload || typeof finalPayload !== 'object' || Array.isArray(finalPayload)) {
+        throw new Error(CODEX_FAST_UNAVAILABLE_SENTINEL);
+      }
+      applied = true;
+      return {
+        ...(finalPayload as Record<string, unknown>),
+        service_tier: 'priority'
+      };
+    };
+    agent.onPayload = fastOnPayload;
+    if (agent.onPayload !== fastOnPayload) throw new CodexRuntimeError('runtime-unavailable');
+    return () => {
+      if (!applied) throw new CodexRuntimeError('runtime-unavailable');
+    };
+  } catch (error) {
+    if (error instanceof CodexRuntimeError) throw error;
+    throw new CodexRuntimeError('runtime-unavailable');
+  }
+};
+
 const createSterileResourceLoader = (
   pi: CodexRuntimePiModule,
   systemPrompt: string
@@ -424,6 +465,12 @@ export class CodexRuntimeService {
       throw new CodexRuntimeError('effort-mismatch');
     }
     if (
+      input.serviceTier !== undefined &&
+      !CODEX_RUNTIME_SERVICE_TIERS.includes(input.serviceTier)
+    ) {
+      throw new CodexRuntimeError('runtime-unavailable');
+    }
+    if (
       !input.systemPrompt ||
       Buffer.byteLength(input.systemPrompt, 'utf8') > 8 * 1024 ||
       !input.prompt ||
@@ -490,6 +537,7 @@ export class CodexRuntimeService {
     let outputLimit = false;
     let toolViolation = false;
     let abortRequested = false;
+    let assertFastServiceTierApplied = (): void => undefined;
 
     const abortSession = (): void => {
       if (abortRequested) return;
@@ -533,6 +581,9 @@ export class CodexRuntimeService {
       if (session.thinkingLevel !== undefined && session.thinkingLevel !== input.effort) {
         throw new CodexRuntimeError('effort-mismatch');
       }
+      if (input.serviceTier === 'fast') {
+        assertFastServiceTierApplied = enableFastServiceTier(session);
+      }
 
       unsubscribe = session.subscribe((event) => {
         if (event.type?.startsWith('tool_execution_')) {
@@ -570,11 +621,18 @@ export class CodexRuntimeService {
       });
 
       await waitForPrompt(session, input.prompt, input.signal, abortSession);
+      assertFastServiceTierApplied();
       if (input.signal.aborted) throw new CodexRuntimeError('cancelled');
       if (toolViolation) throw new CodexRuntimeError('tool-violation');
       if (outputLimit) throw new CodexRuntimeError('output-limit');
       if (providerError || ['error', 'length', 'aborted'].includes(stopReason)) {
         throwIfAuthRequired(providerErrorDetails.join('\n'));
+        if (
+          input.serviceTier === 'fast' &&
+          providerErrorDetails.some((detail) => detail.includes(CODEX_FAST_UNAVAILABLE_SENTINEL))
+        ) {
+          throw new CodexRuntimeError('runtime-unavailable');
+        }
         throw new CodexRuntimeError('provider-error');
       }
 

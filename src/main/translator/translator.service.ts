@@ -189,6 +189,7 @@ export class TranslatorService {
       const result = await this.dependencies.runtime.run({
         model: TRANSLATOR_MODEL,
         effort: TRANSLATOR_EFFORT,
+        serviceTier: 'fast',
         systemPrompt: TRANSLATOR_SYSTEM_PROMPT,
         prompt: requestPrompt(input.sourceText),
         maxOutputBytes: TRANSLATOR_MAX_OUTPUT_BYTES,
