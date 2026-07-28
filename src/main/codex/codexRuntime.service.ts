@@ -4,9 +4,11 @@ import type { ModelProviderInvalidationReason } from '@shared/modelProvider/mode
 export const CODEX_RUNTIME_PROVIDER = 'openai-codex' as const;
 export const CODEX_RUNTIME_MODELS = ['gpt-5.5', 'gpt-5.4'] as const;
 export const CODEX_RUNTIME_EFFORTS = ['low', 'medium', 'high'] as const;
+export const CODEX_RUNTIME_SERVICE_TIERS = ['fast'] as const;
 
 export type CodexRuntimeModel = (typeof CODEX_RUNTIME_MODELS)[number];
 export type CodexRuntimeEffort = (typeof CODEX_RUNTIME_EFFORTS)[number];
+export type CodexRuntimeServiceTier = (typeof CODEX_RUNTIME_SERVICE_TIERS)[number];
 export type CodexRuntimeErrorCode =
   | 'cancelled'
   | 'effort-mismatch'
@@ -20,6 +22,7 @@ export type CodexRuntimeErrorCode =
 export interface CodexRuntimeRunInput {
   model: CodexRuntimeModel;
   effort: CodexRuntimeEffort;
+  serviceTier?: CodexRuntimeServiceTier;
   systemPrompt: string;
   prompt: string;
   maxOutputBytes: number;
@@ -64,9 +67,20 @@ export interface CodexRuntimePiSessionEvent {
   };
 }
 
+export type CodexRuntimePiStreamFn = (
+  model: unknown,
+  context: unknown,
+  options?: Record<string, unknown>
+) => unknown | Promise<unknown>;
+
+export interface CodexRuntimePiAgent {
+  streamFn?: CodexRuntimePiStreamFn;
+}
+
 export interface CodexRuntimePiSession {
   model?: CodexRuntimePiModel;
   thinkingLevel?: string;
+  agent?: CodexRuntimePiAgent;
   subscribe(listener: (event: CodexRuntimePiSessionEvent) => void): undefined | (() => void);
   prompt(message: string): Promise<unknown>;
   abort(): Promise<void>;
@@ -316,6 +330,26 @@ const assertTarget = (
   }
 };
 
+const enableFastServiceTier = (session: CodexRuntimePiSession): void => {
+  try {
+    const agent = session.agent;
+    const streamFn = agent?.streamFn;
+    if (!agent || typeof streamFn !== 'function') {
+      throw new CodexRuntimeError('runtime-unavailable');
+    }
+    const fastStreamFn: CodexRuntimePiStreamFn = (model, context, options) =>
+      streamFn.call(agent, model, context, {
+        ...(options ?? {}),
+        serviceTier: 'priority'
+      });
+    agent.streamFn = fastStreamFn;
+    if (agent.streamFn !== fastStreamFn) throw new CodexRuntimeError('runtime-unavailable');
+  } catch (error) {
+    if (error instanceof CodexRuntimeError) throw error;
+    throw new CodexRuntimeError('runtime-unavailable');
+  }
+};
+
 const createSterileResourceLoader = (
   pi: CodexRuntimePiModule,
   systemPrompt: string
@@ -422,6 +456,12 @@ export class CodexRuntimeService {
     }
     if (!CODEX_RUNTIME_EFFORTS.includes(input.effort)) {
       throw new CodexRuntimeError('effort-mismatch');
+    }
+    if (
+      input.serviceTier !== undefined &&
+      !CODEX_RUNTIME_SERVICE_TIERS.includes(input.serviceTier)
+    ) {
+      throw new CodexRuntimeError('runtime-unavailable');
     }
     if (
       !input.systemPrompt ||
@@ -533,6 +573,7 @@ export class CodexRuntimeService {
       if (session.thinkingLevel !== undefined && session.thinkingLevel !== input.effort) {
         throw new CodexRuntimeError('effort-mismatch');
       }
+      if (input.serviceTier === 'fast') enableFastServiceTier(session);
 
       unsubscribe = session.subscribe((event) => {
         if (event.type?.startsWith('tool_execution_')) {
