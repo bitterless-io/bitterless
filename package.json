@@ -93,6 +93,7 @@
     "publish_dev:mac_arm": "node scripts/publish.js --env dev --platform mac_arm",
     "publish_dev:mac_intel": "node scripts/publish.js --env dev --platform mac_intel",
     "publish_dev:win": "node scripts/publish.js --env dev --platform win64",
+    "notarize:file": "node scripts/notarize.js --file",
     "notarize:mac_arm": "node scripts/notarize.js --dist dist/mac-arm64",
     "notarize:mac_x64": "node scripts/notarize.js --dist dist/mac",
     "publish:mac_arm": "node scripts/publish.js --env prod --platform mac_arm",

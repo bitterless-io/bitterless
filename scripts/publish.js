@@ -247,6 +247,11 @@ const readDistVersionInfo = () => {
   return JSON.parse(fs.readFileSync(versionInfoPath, 'utf-8'));
 };
 
+const artifactNameMatchesVersion = (name, version) => {
+  const escapedVersion = String(version).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`-${escapedVersion}(?:[.-]|$)`).test(name);
+};
+
 const findArtifacts = (platform, version) => {
   if (!fs.existsSync(distDir)) {
     throw new Error(`dist directory not found: ${distDir}. Run with --build or build first.`);
@@ -258,7 +263,7 @@ const findArtifacts = (platform, version) => {
     const name = path.basename(filePath);
     const ext = path.extname(name);
     return config.updaterFiles.includes(name) || (
-      config.artifactExtensions.includes(ext) && name.includes(`-${version}`)
+      config.artifactExtensions.includes(ext) && artifactNameMatchesVersion(name, version)
     );
   });
 
@@ -707,6 +712,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  artifactNameMatchesVersion,
   parseDeveloperIdApplicationIdentities,
   parseUserKeychainSearchList,
   selectDeveloperIdApplicationIdentity,

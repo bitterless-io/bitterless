@@ -22,22 +22,18 @@ const keychainSigningEnvPath = process.env.BITTERLESS_SIGNING_ENV || path.join(k
 const SUBMIT_RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
 const WAIT_RETRY_DELAYS_MS = [30_000, 60_000, 120_000];
 const NETWORK_FAILURE_PATTERNS = [
-  /\babortedUpload\b/i,
-  /\bdeadlineExceeded\b/i,
-  /\bHTTPClientError\b/i,
-  /\bSotoS3\b/i,
-  /\bNetwork\.NWError\b/i,
-  /\bNSURLError\b/i,
+  /\bHTTPClientError\.deadlineExceeded\b/i,
+  /\bNetwork\.NWError\b[^\n]*(?:timed out|connection (?:lost|reset)|-(?:1001|1003|1004|1005|1006|1009))\b/i,
+  /\bNSURLErrorDomain\b[^\n]*\bCode=-(?:1001|1003|1004|1005|1006|1009)\b/i,
   /\bECONN(?:ABORTED|RESET|REFUSED)\b/i,
   /\bE(?:AI_AGAIN|HOSTUNREACH|NETDOWN|NETUNREACH|PIPE|TIMEDOUT)\b/i,
   /\bconnection (?:was )?(?:closed|lost|reset|timed out)\b/i,
   /\bcould not connect\b/i,
   /\bnetwork connection was lost\b/i,
-  /\brequest timed out\b/i,
-  /\boperation timed out\b/i,
+  /\b(?:request|operation|upload|polling|wait(?:ing)?) (?:timed out|timeout)\b/i,
+  /\b(?:timeout|timed out) (?:while )?(?:uploading|waiting|polling|connecting)\b/i,
   /\bdeadline exceeded\b/i,
-  /\bTLS handshake\b/i,
-  /\bHTTP(?: response| status(?: code)?)?[^0-9]*(?:500|502|503|504)\b/i,
+  /\bHTTP(?: response| status(?: code)?)?[^0-9]*(?:429|500|502|503|504)\b/i,
 ];
 
 const timestamp = () => new Date().toISOString();
@@ -174,6 +170,7 @@ const runStreamingCommand = ({
 };
 
 const resultText = (result) => {
+  if (typeof result === 'string') return result;
   return [
     result.error?.code,
     result.error?.message,
@@ -388,7 +385,7 @@ const notarizeApplication = async (appPath) => {
     log('info', `creating a fresh application submission ZIP for exact target: ${exactAppPath}`);
     const zipResult = await runStreamingCommand({
       command: 'ditto',
-      args: ['-c', '-k', '--keepParent', exactAppPath, zipPath],
+      args: ['-c', '-k', '--keepParent', '--sequesterRsrc', exactAppPath, zipPath],
       label: `creating fresh submission ZIP: ${path.basename(zipPath)}`,
     });
     assertCommandSucceeded('create application submission ZIP', zipResult);
@@ -514,4 +511,6 @@ module.exports = {
   isTransientNetworkFailure,
   notarizeApplication,
   notarizeDmg,
+  parseNotarizationStatus,
+  parseSubmissionId,
 };
