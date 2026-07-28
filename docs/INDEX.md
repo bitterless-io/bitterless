@@ -154,7 +154,7 @@ design document.
   and list common Chinese interpretations for English abbreviations.
 - [Translator inline retry](issues/translator-inline-retry.md) - fixed: place a clickable
   `Try again` action directly beside retryable translation failures and resubmit the unchanged source.
-- [Translator semantic auto direction](issues/translator-llm-direction.md) - active: let one LLM
+- [Translator semantic auto direction](issues/translator-llm-direction.md) - fixed: let one LLM
   request infer direction and translate, then reveal the validated `Translate to …` target.
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:
   decorative borders replaced by Todo-style background-led Domain and thread-item hierarchy.

@@ -1,7 +1,7 @@
 ---
 id: translator-llm-direction-005
 scope: omni-translator
-status: in-progress
+status: done
 depends-on: [translator-inline-retry-003]
 ---
 
