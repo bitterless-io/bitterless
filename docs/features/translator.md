@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+Cross-project design:
+[`areas/agent-runtime/mini-apps/translator/design.md`](../../../../areas/agent-runtime/mini-apps/translator/design.md)
+
 ## Purpose
 
 Translator is a first-party Omni mini app for low-friction bilingual translation while typing. It
@@ -45,7 +48,7 @@ uses the existing monospace utility stack.
 ├──────────────── conditional error strip ──────────────────────────┤
 │ Translation failed.  [Try again]                                   │
 ├──────────────────────── translation rail ──────────────────────────┤
-│ Auto direction                               Ready / Translating   │
+│ Auto direction  [Translate to … after success] Ready / Translating │
 ├──────────────────────── input dock ─────────────────────────────────┤
 │ Source text…                                                        │
 │ [Login to Codex when required]                         123 / 12000 │
@@ -66,19 +69,22 @@ clears the error and previous translation, cancels active work, and returns to t
 
 ## Language Direction
 
-Before calling the model, Main classifies Unicode code points with explicit ranges. CJK Unified
-Ideographs and their extension/compatibility ranges count as Chinese, ASCII `A-Z` / `a-z` count as
-English, and every other non-whitespace code point counts as other. Whitespace does not influence
-the direction:
+Direction inference and translation happen in the same LLM request. Main does not decide direction
+from Unicode character counts, UTF-8 byte lengths, or tokenizer counts, and Renderer does not
+predict a target before the response arrives. The model judges the primary semantic
+natural-language content:
 
-| Input composition | Target |
+| Source meaning | Target |
 |---|---|
-| Chinese count is strictly greater than both English and other counts | English |
-| English count is strictly greater than both Chinese and other counts | Simplified Chinese |
-| other count is greatest, any counts tie, or no visible character is classified | Simplified Chinese |
+| Primarily Simplified or Traditional Chinese | English |
+| Primarily English | Simplified Chinese |
+| Primarily another language | Simplified Chinese |
+| Ambiguous or materially mixed without a clear primary language | Simplified Chinese |
 
-Main and Renderer use the same shared classifier so the displayed direction always matches the
-request sent to the model.
+Product names, abbreviations, code identifiers, URLs, email addresses, numbers, and punctuation do
+not dominate direction merely because they contain more characters or tokens. The strict model
+response returns `targetLanguage` as exactly `en` or `zh-CN` together with `translation`; Main
+validates both and returns the same target to Renderer.
 
 When the target is Simplified Chinese and the source is an English abbreviation or acronym, the
 translation string lists its common Chinese interpretations rather than echoing only the short
@@ -87,8 +93,13 @@ meaning comes first, and multiple meanings appear only when they are genuinely c
 must not invent an expansion. This list remains translation content inside the single validated
 `translation` field, not additional commentary.
 
-The chosen target and source text are serialized as data. Source text is never treated as an
-instruction.
+The request carries `direction: "auto"` and source text as serialized data. Source text is never
+treated as an instruction.
+
+The rail renders only `Auto direction` before the current source revision has a successful result.
+After success it adds the localized actual target, `Translate to English` or
+`Translate to Simplified Chinese`. Editing or clearing the source immediately hides that target so
+an older result direction is never presented as a prediction for new text.
 
 ## Realtime Request Contract
 
@@ -109,25 +120,27 @@ instruction.
 - Pi runs without tools, skills, prompts, extensions, retries, or conversation persistence through
   the existing sterile Codex runtime.
 - Provider, model, and effort are Main constants; renderer input cannot override them.
-- The system prompt requires exactly one JSON object with one `translation` string.
-- Main parses JSON and validates it with `z.object({ translation: ... }).strict()`. Fenced JSON,
-  extra keys, empty output, and oversized output fail as `invalid-output`.
+- The system prompt requires exactly one JSON object with `targetLanguage` and `translation`.
+- Main parses JSON and validates it with
+  `z.object({ targetLanguage: z.enum(['en', 'zh-CN']), translation: ... }).strict()`. Fenced JSON,
+  extra keys, invalid targets, empty output, and oversized output fail as `invalid-output`; Main
+  never falls back to a local direction guess.
 - A 60-second request deadline aborts Pi session creation or `session.prompt()` even if the Pi
   promise never settles. Streamed and final output collection stop at the 64 KiB UTF-8 ceiling.
-- Only the parsed string crosses back to the renderer.
+- Only the validated target and parsed translation string cross back to the renderer.
 
 ## State Variants
 
-| State | Result region | Composer |
-|---|---|---|
-| login required / invalidated | localized instruction | Codex Login visible; requests disabled |
-| authenticating | login guidance | login progress; requests disabled |
-| empty + ready | localized invitation to type or paste | focused and enabled |
-| translating | previous result remains visible but subdued | enabled |
-| complete | validated translation only | enabled |
-| retryable translation failure | localized error plus inline `Try again`, never raw provider detail | enabled; action force-retries current source |
-| non-retryable / auth failure | localized actionable guidance, never raw provider detail | no retry action; login or edit remains explicit |
-| constrained pane | result scrolls; metadata wraps | input dock stays at bottom |
+| State | Result region | Direction rail | Composer |
+|---|---|---|---|
+| login required / invalidated | localized instruction | `Auto direction` only | Codex Login visible; requests disabled |
+| authenticating | login guidance | `Auto direction` only | login progress; requests disabled |
+| empty + ready | localized invitation to type or paste | `Auto direction` only | focused and enabled |
+| translating new source revision | previous result remains visible but subdued | `Auto direction` only | enabled |
+| complete | validated translation only | actual `Translate to …` target visible | enabled |
+| retryable translation failure | localized error plus inline `Try again`, never raw provider detail | target visible only when this unchanged revision already has a successful result | enabled; action force-retries current source |
+| non-retryable / auth failure | localized actionable guidance, never raw provider detail | no unvalidated target | no retry action; login or edit remains explicit |
+| constrained pane | result scrolls; metadata wraps | metadata wraps | input dock stays at bottom |
 
 ## Error Recovery Interaction
 
@@ -148,7 +161,7 @@ Omni selects translator
      -> ready: 1s leading/trailing scheduler
   -> TranslatorHandler -> TranslatorService
   -> CodexRuntimeService(openai-codex, gpt-5.5, low)
-  -> strict Zod output -> translation string -> renderer
+  -> strict Zod output(targetLanguage + translation) -> renderer
 ```
 
 ## Entry Points

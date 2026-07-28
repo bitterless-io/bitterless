@@ -3,6 +3,7 @@ import {
   TRANSLATOR_MAX_SOURCE_LENGTH,
   TRANSLATOR_MAX_TRANSLATION_LENGTH,
   type TranslatorCancelInput,
+  type TranslatorTargetLanguage,
   type TranslatorTranslateInput
 } from './translator.contract';
 
@@ -37,6 +38,7 @@ export const translatorCancelInputSchema = z
 
 export const translatorOutputSchema = z
   .object({
+    targetLanguage: z.enum(['en', 'zh-CN']),
     translation: z
       .string()
       .min(1)
@@ -51,5 +53,10 @@ export const parseTranslatorTranslateInput = (value: unknown): TranslatorTransla
 export const parseTranslatorCancelInput = (value: unknown): TranslatorCancelInput =>
   translatorCancelInputSchema.parse(value) as TranslatorCancelInput;
 
-export const parseTranslatorOutput = (value: unknown): { translation: string } =>
-  translatorOutputSchema.parse(value) as { translation: string };
+export const parseTranslatorOutput = (
+  value: unknown
+): { targetLanguage: TranslatorTargetLanguage; translation: string } =>
+  translatorOutputSchema.parse(value) as {
+    targetLanguage: TranslatorTargetLanguage;
+    translation: string;
+  };

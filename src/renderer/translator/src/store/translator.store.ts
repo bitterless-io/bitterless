@@ -12,7 +12,6 @@ import {
   type TranslatorErrorCode,
   type TranslatorTargetLanguage
 } from '@shared/translator/translator.contract';
-import { resolveTranslatorTargetLanguage } from '@shared/translator/translatorLanguage.service';
 import {
   modelProviderEmitter,
   subscribeModelProviderSnapshots,
@@ -37,6 +36,7 @@ class TranslatorState {
   readonly maxSourceLength = TRANSLATOR_MAX_SOURCE_LENGTH;
   sourceText = '';
   translation = '';
+  targetLanguage: TranslatorTargetLanguage | null = null;
   providerSnapshot: ModelProviderSnapshot | null = null;
   providerLoading = true;
   providerAction = false;
@@ -69,10 +69,6 @@ class TranslatorState {
         )
       )
     );
-  }
-
-  get targetLanguage(): TranslatorTargetLanguage {
-    return resolveTranslatorTargetLanguage(this.sourceText);
   }
 
   get canRetryTranslation(): boolean {
@@ -115,6 +111,7 @@ class TranslatorState {
     this.sourceText = boundedValue;
     this.revision += 1;
     this.error = null;
+    this.targetLanguage = null;
 
     if (!boundedValue.trim()) {
       this.translation = '';
@@ -176,6 +173,7 @@ class TranslatorState {
       });
       if (this.activeRequestId !== requestId || this.revision !== sourceRevision) return;
       if (result.status === 'completed') {
+        this.targetLanguage = result.targetLanguage;
         this.translation = result.translation;
       } else if (result.status === 'error') {
         this.error = result.error.code;
@@ -205,6 +203,7 @@ class TranslatorState {
     this.providerLoading = false;
 
     if (wasReady && !this.ready) {
+      this.targetLanguage = null;
       void this.cancelActiveRequest();
     }
     if (!wasReady && this.ready && this.sourceText.trim()) {
