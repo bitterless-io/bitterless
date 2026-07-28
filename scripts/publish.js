@@ -9,6 +9,7 @@ const yaml = require('js-yaml');
 const OSS = require('ali-oss');
 const { appBuilderPath } = require('app-builder-bin');
 const { compareVersions } = require('compare-versions');
+const { notarizeDmg } = require('./notarize.js');
 const { auditDesktopPackage } = require('./package/desktopPackage.audit.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
@@ -406,15 +407,6 @@ const getMacAppPath = (platform) => {
   return path.join(appDir, appName);
 };
 
-const findSingleFileByExt = (ext) => {
-  const matches = listFiles(distDir).filter((filePath) => path.extname(filePath) === ext);
-  if (matches.length === 0) return null;
-  if (matches.length > 1) {
-    matches.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  }
-  return matches[0];
-};
-
 const getMacAppTeamIdentifier = (appPath) => {
   runOutput('codesign', ['--verify', '--deep', '--strict', appPath]);
   const output = runOutput('codesign', ['-dvvv', appPath]);
@@ -439,47 +431,6 @@ const signDmg = (dmgPath, teamIdentifier) => {
     ]);
   });
   run('codesign', ['--verify', '--verbose=4', dmgPath]);
-};
-
-const notarizeDmg = (dmgPath) => {
-  const env = loadSigningEnv();
-  const appleId = env.APPLE_ID;
-  const password = env.APPLE_APP_SPECIFIC_PASSWORD;
-  const teamId = env.APPLE_TEAM_ID;
-  if (!appleId || !password || !teamId) {
-    throw new Error('Missing APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID in signing env');
-  }
-  console.log(`[publish.js] Running: xcrun notarytool submit ${path.basename(dmgPath)} --wait`);
-  const result = spawnSync('xcrun', [
-    'notarytool',
-    'submit',
-    dmgPath,
-    '--apple-id',
-    appleId,
-    '--password',
-    password,
-    '--team-id',
-    teamId,
-    '--wait',
-    '--output-format',
-    'json',
-  ], {
-    cwd: rootDir,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (result.status !== 0) {
-    throw new Error(`DMG notarization failed: ${result.stderr || result.stdout}`);
-  }
-  const output = result.stdout?.trim();
-  if (output) {
-    const parsed = JSON.parse(output);
-    if (parsed.status !== 'Accepted') {
-      throw new Error(`DMG notarization status is ${parsed.status}`);
-    }
-  }
-  run('xcrun', ['stapler', 'staple', dmgPath]);
-  run('xcrun', ['stapler', 'validate', dmgPath]);
 };
 
 const regenerateBlockmap = (filePath) => {
@@ -514,18 +465,25 @@ const updateLatestMacYml = (dmgPath) => {
   fs.writeFileSync(latestPath, yaml.dump(latest, { lineWidth: 120 }), 'utf-8');
 };
 
-const finalizeMacDmg = (platform) => {
-  if (platform !== 'mac_arm' && platform !== 'mac_intel') return;
-  const dmgPath = findSingleFileByExt('.dmg');
-  if (!dmgPath) {
-    throw new Error('No DMG artifact found in dist');
+const findExactMacDmg = (platform) => {
+  const versionInfo = readDistVersionInfo();
+  const matches = findArtifacts(platform, versionInfo.version)
+    .filter((filePath) => path.extname(filePath) === '.dmg');
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one DMG artifact for version ${versionInfo.version}, found ${matches.length}`);
   }
+  return matches[0];
+};
+
+const finalizeMacDmg = async (platform) => {
+  if (platform !== 'mac_arm' && platform !== 'mac_intel') return;
+  const dmgPath = findExactMacDmg(platform);
   const appPath = getMacAppPath(platform);
   const teamIdentifier = getMacAppTeamIdentifier(appPath);
   console.log(`[publish.js] Signing DMG: ${path.basename(dmgPath)}`);
   signDmg(dmgPath, teamIdentifier);
   console.log(`[publish.js] Notarizing DMG: ${path.basename(dmgPath)}`);
-  notarizeDmg(dmgPath);
+  await notarizeDmg(dmgPath);
   console.log(`[publish.js] Regenerating DMG blockmap and latest-mac.yml`);
   regenerateBlockmap(dmgPath);
   updateLatestMacYml(dmgPath);
@@ -722,7 +680,7 @@ const main = async () => {
   auditPackagedApplication(options.platform);
 
   if (!options.dryRun) {
-    finalizeMacDmg(options.platform);
+    await finalizeMacDmg(options.platform);
   }
   const versionInfoPath = createVersionInfoForUpload(options);
   const versionInfo = readDistVersionInfo();
