@@ -93,7 +93,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [translator-language-direction-002](tasks/translator-language-direction-002.md) | explicit-range direction detection and English-abbreviation Chinese meanings | done | translator-miniapp-001 |
 | [translator-inline-retry-003](tasks/translator-inline-retry-003.md) | inline retry action for unchanged-source translation failures | done | translator-language-direction-002 |
 | [translator-llm-direction-005](tasks/translator-llm-direction-005.md) | single-pass semantic direction and result-gated target label | done | translator-inline-retry-003 |
-| [translator-fast-mode-006](tasks/translator-fast-mode-006.md) | Translator-only Codex Fast priority service tier | in-progress | translator-llm-direction-005 |
+| [translator-fast-mode-006](tasks/translator-fast-mode-006.md) | Translator-only Codex Fast priority service tier | done | translator-llm-direction-005 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [omni-layout-axis-collapse-002](tasks/omni-layout-axis-collapse-002.md) | root/inner-axis collapse, Splitpanes lifecycle, and native bounds consistency | implemented; owner verification pending | — |

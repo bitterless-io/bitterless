@@ -1,7 +1,7 @@
 ---
 id: translator-fast-mode-006
 scope: omni-translator
-status: in-progress
+status: done
 depends-on: [translator-llm-direction-005]
 ---
 
@@ -34,3 +34,13 @@ silently downgrading failed Fast requests to Standard.
 - Verify a Standard/unspecified runtime call remains unchanged and Fast cannot silently downgrade.
 - Run the focused Codex runtime and Translator tests.
 - Run Node type checking and `git diff --check`.
+
+# Outcome
+
+- Translator now opts every `gpt-5.5 / low` request into Fast while other shared-runtime consumers
+  remain Standard.
+- The runtime injects `service_tier: "priority"` at Pi's final provider-payload hook and rejects a
+  missing or skipped hook instead of accepting a silent Standard result.
+- The real installed Pi Agent/provider wire test and focused regression suite pass.
+- Review history: [blocked adapter review](../reviews/translator-fast-mode-006-1.md), then
+  [passing wire-boundary review](../reviews/translator-fast-mode-006-2.md).
