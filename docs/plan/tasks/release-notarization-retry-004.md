@@ -1,7 +1,7 @@
 ---
 id: release-notarization-retry-004
 scope: independently rerunnable macOS application and DMG notarization with live network retry logs
-status: implementation in progress
+status: implemented; owner verification pending
 depends-on: [release-fast-publish-dependency-sync-003]
 ---
 
@@ -62,3 +62,24 @@ transient application and DMG upload failures visible, bounded, and independentl
 - Per owner request, do not run tests, signing, notarization, packaging, upload, publication, or
   `yarn fast_publish:mac_arm`.
 - The owner performs the release-path verification with `yarn fast_publish:mac_arm`.
+
+## Completion — 2026-07-28
+
+- Electron Builder still signs the application, then a named `afterSign` hook creates a fresh
+  resource-preserving ZIP and runs the reusable notarization workflow before artifact generation.
+- Application and exact-file DMG commands share timestamped, credential-redacted submit/wait logs.
+  Four bounded attempts retry only concrete transient transport failures; wait retries retain the
+  same submission ID.
+- Accepted applications and DMGs are stapled and validated. Rejected submissions fetch Apple's
+  notarization log and fail without retrying.
+- Publication now awaits notarization and selects exactly one collision-safe current-version DMG
+  before regenerating blockmap and updater metadata.
+- `yarn notarize:mac_arm`, `yarn notarize:mac_x64`, and
+  `yarn notarize:file <exact-app-or-dmg-path>` provide independent retry entry points.
+- Local Xcode 26.4 help inspection confirmed the explicit `--s3-acceleration` and `--progress`
+  switches are supported and default-enabled. No upload or notarization was initiated.
+- Per owner request, no tests, build, signing, notarization, upload, publication, or fast-publish
+  command was run. The implementation and regression assertions were reviewed as source only.
+- Independent review passed after resolving its network-classification, ZIP metadata, and artifact
+  matching findings; see
+  [`release-notarization-retry-004-1`](../reviews/release-notarization-retry-004-1.md).

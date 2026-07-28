@@ -1,6 +1,6 @@
 # macOS notarization upload times out through S3 acceleration
 
-Status: active
+Status: implemented; owner verification pending
 
 ## Report
 
