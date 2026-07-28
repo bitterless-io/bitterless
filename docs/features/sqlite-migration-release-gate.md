@@ -136,6 +136,16 @@ not as a persistent login-keychain identity. The publisher imports that P12 into
 temporary keychain, passes the keychain explicitly to `codesign`, never logs passwords, and deletes
 the keychain in a `finally` path before notarization or upload can continue.
 
+macOS notarization uses an explicit reusable workflow instead of Electron Builder's built-in
+notarization call. After Electron Builder signs the application, its `afterSign` hook recreates a
+submission ZIP, submits it through Apple's default S3-accelerated route, waits on the returned
+submission ID, then staples and validates the application before ZIP/DMG packaging. DMG publication
+uses the same submit/wait helper and staples and validates the DMG before updater metadata or
+production upload. Both flows stream progress and bounded retry decisions to the terminal, retry
+only recognized network transport failures, and fail immediately for credentials, preflight,
+`Invalid`, or `Rejected` results. A wait retry always reuses its existing submission ID rather than
+uploading again.
+
 The audit is a pure Node process. It must not launch Electron, create an application window, touch a
 real user database, read transcripts, or mutate production storage. It requires Node.js 22.5 or
 newer so the disposable databases can use the built-in `node:sqlite` engine without another native
