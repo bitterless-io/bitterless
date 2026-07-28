@@ -257,6 +257,10 @@ export const en = {
   },
   eyesOnAgents: {
     title: 'EyesOnAgents',
+    completionNotification: {
+      title: 'Thread finished',
+      body: '《{title}》',
+    },
     connection: {
       appServer: 'App Server',
       connected: 'Connected',

@@ -139,6 +139,9 @@ design document.
 - [EyesOnAgents active Focus and read semantics](issues/eyes-on-agents-active-focus-read-semantics.md) - implemented; owner verification pending:
   a still-working thread must not leave Focus after Open or `Read all`; Focus is `active runtime OR
   unread`, and both acknowledgement paths clear unread only for confirmed terminal rows.
+- [EyesOnAgents completion alert](issues/eyes-on-agents-completion-alert.md) - fixed and runtime verified:
+  each newly accepted successful completion should play the supplied tone and send one localized
+  native notification without duplicate alerts from Hook, App Server, or polling races.
 - [EyesOnAgents App Server frame overflow](issues/eyes-on-agents-app-server-frame-overflow.md) - implemented; owner verification pending:
   opted-in latest-question recovery must not aggregate ten complete turns into a frame that kills
   the managed Codex App Server connection.

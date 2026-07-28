@@ -3,6 +3,7 @@ import { BaseDao } from './base.dao';
 import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
 import { sqliteManager } from '../sqliteHelper/sqlite.manager';
 import type {
+  EyesOnAgentsCompletionAlertIntent,
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsDomain,
   EyesOnAgentsHookLastUserPromptCandidate,
@@ -17,6 +18,7 @@ import type {
   EyesOnAgentsSnapshot,
   EyesOnAgentsStatusSource,
   EyesOnAgentsThread,
+  EyesOnAgentsThreadPagePersistenceResult,
   EyesOnAgentsThreadRefreshCandidate,
   EyesOnAgentsThreadRefreshPages,
   EyesOnAgentsThreadRefreshPatch,
@@ -423,14 +425,45 @@ const titleFromStoredThreadSnapshot = (threadId: string): string | null => {
 
 const runtimePersistenceResult = (
   threadId: string,
-  created: boolean
+  created: boolean,
+  completionAlert: EyesOnAgentsCompletionAlertIntent | null = null
 ): EyesOnAgentsRuntimePersistenceResult => {
   const row = sqliteManager.db.prepare(
     `SELECT title, is_archived FROM eyes_on_agents_thread WHERE thread_id = ?`
   ).get(threadId) as { title: string | null; is_archived: number };
   return {
     created,
-    titleMissing: row.is_archived === 0 && row.title === null
+    titleMissing: row.is_archived === 0 && row.title === null,
+    completionAlert
+  };
+};
+
+const claimCompletionAlertInTransaction = (params: {
+  threadId: string;
+  turnId: string;
+  completedAt: number;
+  claimedAt: number;
+}): EyesOnAgentsCompletionAlertIntent | null => {
+  const row = sqliteManager.db.prepare(
+    `SELECT title FROM eyes_on_agents_thread
+     WHERE thread_id = ?
+       AND is_archived = 0
+       AND runtime_state = 'idle'
+       AND is_unread = 1
+       AND last_completed_turn_id = ?`
+  ).get(params.threadId, params.turnId) as { title: string | null } | undefined;
+  if (!row) return null;
+  const claimed = sqliteManager.db.prepare(
+    `INSERT INTO eyes_on_agents_completion_alert_receipt (
+      thread_id, turn_id, completed_at, claimed_at
+    ) VALUES (?, ?, ?, ?)
+    ON CONFLICT(thread_id, turn_id) DO NOTHING`
+  ).run(params.threadId, params.turnId, params.completedAt, params.claimedAt);
+  if (Number(claimed.changes) !== 1) return null;
+  return {
+    threadId: params.threadId,
+    turnId: params.turnId,
+    title: normalizeEyesOnAgentsProviderThreadTitle({ name: row.title })
   };
 };
 
@@ -522,7 +555,13 @@ const applyRuntimeEventInTransaction = (
   }
 
   if (event.type === 'turn_completed') {
-    sqliteManager.db.prepare(
+    const completedTurnId = event.turnId ?? existing.active_turn_id;
+    const alertTurnId = event.turnId ?? (
+      completedTurnId !== null && !/^hook-\d+$/.test(completedTurnId)
+        ? completedTurnId
+        : null
+    );
+    const completed = sqliteManager.db.prepare(
       `UPDATE eyes_on_agents_thread SET
         cwd = COALESCE(?, cwd),
         runtime_state = ?,
@@ -539,7 +578,7 @@ const applyRuntimeEventInTransaction = (
     ).run(
       event.cwd ?? null,
       state,
-      event.turnId ?? existing.active_turn_id,
+      completedTurnId,
       event.observedAt,
       event.source,
       event.observedAt,
@@ -547,7 +586,17 @@ const applyRuntimeEventInTransaction = (
       now,
       event.threadId
     );
-    return runtimePersistenceResult(event.threadId, created);
+    const completionAlert = Number(completed.changes) === 1
+      && event.outcome === 'completed'
+      && alertTurnId !== null
+      ? claimCompletionAlertInTransaction({
+          threadId: event.threadId,
+          turnId: alertTurnId,
+          completedAt: event.observedAt,
+          claimedAt: now
+        })
+      : null;
+    return runtimePersistenceResult(event.threadId, created, completionAlert);
   }
 
   sqliteManager.db.prepare(
@@ -726,7 +775,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
 
   async refreshThreadPage(params: {
     threads: EyesOnAgentsThreadRefreshPatch[];
-  }): Promise<{ changed: boolean }> {
+  }): Promise<EyesOnAgentsThreadPagePersistenceResult> {
     if (!params || !Array.isArray(params.threads)) throw new Error('threads must be an array');
     if (params.threads.length > THREAD_REFRESH_PAGE_SIZE) {
       throw new Error(`threads must not exceed ${THREAD_REFRESH_PAGE_SIZE} entries`);
@@ -735,7 +784,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     if (new Set(threads.map((thread) => thread.threadId)).size !== threads.length) {
       throw new Error('thread refresh patches must have unique threadIds');
     }
-    const transaction = sqliteManager.db.transaction((): { changed: boolean } => {
+    const transaction = sqliteManager.db.transaction((): EyesOnAgentsThreadPagePersistenceResult => {
       const select = sqliteManager.db.prepare(
         `SELECT title, last_activity_at,
           last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
@@ -744,6 +793,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       );
       const now = Date.now();
       let changed = false;
+      const completionAlerts: EyesOnAgentsCompletionAlertIntent[] = [];
       for (const thread of threads) {
         const row = select.get(thread.threadId) as ThreadRefreshPersistenceRow | undefined;
         if (!row) continue;
@@ -870,7 +920,18 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             thread.terminalTurn.expectedActiveTurnId,
             thread.terminalTurn.expectedStatusObservedAt
           );
-          if (Number(result.changes) === 1) changed = true;
+          if (Number(result.changes) === 1) {
+            changed = true;
+            if (thread.terminalTurn.outcome === 'completed') {
+              const completionAlert = claimCompletionAlertInTransaction({
+                threadId: thread.threadId,
+                turnId: thread.terminalTurn.turnId,
+                completedAt: thread.terminalTurn.completedAt,
+                claimedAt: now
+              });
+              if (completionAlert) completionAlerts.push(completionAlert);
+            }
+          }
         }
 
         if (thread.recoveredTurn !== undefined) {
@@ -931,7 +992,9 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           if (Number(result.changes) === 1) changed = true;
         }
       }
-      return { changed };
+      return completionAlerts.length === 0
+        ? { changed }
+        : { changed, completionAlerts };
     });
     return transaction();
   }
@@ -1278,7 +1341,12 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ON CONFLICT(delivery_id) DO NOTHING`
         ).run(deliveryId, event.threadId, event.observedAt, Date.now());
         if (Number(result.changes) === 0) {
-          return { duplicate: true, created: false, titleMissing: false };
+          return {
+            duplicate: true,
+            created: false,
+            titleMissing: false,
+            completionAlert: null
+          };
         }
         const persistence = applyRuntimeEventInTransaction(
           event,

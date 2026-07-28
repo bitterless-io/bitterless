@@ -27,6 +27,7 @@ import { CodexDesktopBridgeService } from '../eyesOnAgents/codexDesktopBridge.se
 import { CodexAppServerSupervisor } from '../eyesOnAgents/codexAppServer.supervisor';
 import { EyesOnAgentsService } from '../eyesOnAgents/eyesOnAgents.service';
 import { LastUserPromptPreferenceService } from '../eyesOnAgents/lastUserPromptPreference.service';
+import { notifyHelper } from '../notificationcenter/notify.helper';
 
 const repository = createXpcMainEmitter<EyesOnAgentsRepositoryApi>('EyesOnAgentsRepositoryDao');
 const settings = createXpcMainEmitter<SettingDao>('SettingDao');
@@ -102,6 +103,7 @@ eyesOnAgentsService = new EyesOnAgentsService({
     }
   },
   openExternal: async (url) => await shell.openExternal(url),
+  notifyThreadCompleted: (intent) => notifyHelper.notifyThreadCompleted(intent),
   broadcastChanged: () => xpcMain.broadcast('eyes-on-agents/changed', {})
 });
 

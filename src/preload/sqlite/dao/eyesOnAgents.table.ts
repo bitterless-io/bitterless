@@ -81,6 +81,16 @@ export class EyesOnAgentsTable extends BaseTable {
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_hook_delivery_receipt_committed
       ON eyes_on_agents_hook_delivery_receipt (committed_at);
+
+    CREATE TABLE IF NOT EXISTS eyes_on_agents_completion_alert_receipt (
+      thread_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      completed_at INTEGER NOT NULL,
+      claimed_at INTEGER NOT NULL,
+      PRIMARY KEY (thread_id, turn_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_completion_alert_receipt_claimed
+      ON eyes_on_agents_completion_alert_receipt (claimed_at);
   `;
 }
 

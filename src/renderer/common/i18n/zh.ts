@@ -258,6 +258,10 @@ export const zh: typeof en = {
   },
   eyesOnAgents: {
     title: 'EyesOnAgents',
+    completionNotification: {
+      title: 'Thread 结束',
+      body: '《{title}》',
+    },
     connection: {
       appServer: 'App Server',
       connected: '已连接',

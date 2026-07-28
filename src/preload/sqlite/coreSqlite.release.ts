@@ -5,11 +5,13 @@ import { domainTable } from './dao/domain.table';
 import { envTable } from './dao/env.table';
 import {
   ensureEyesOnAgentsArchiveSchema,
+  ensureEyesOnAgentsCompletionAlertSchema,
   ensureEyesOnAgentsHookDeliverySchema,
   ensureEyesOnAgentsLastUserPromptSchema,
   ensureEyesOnAgentsLegacyImport,
   ensureEyesOnAgentsProjectMetadataSchema,
   ensureEyesOnAgentsSyncPersistenceSchema,
+  migrateEyesOnAgentsCompletionAlertSchema,
 } from './dao/eyesOnAgents.migration';
 import { eyesOnAgentsTable } from './dao/eyesOnAgents.table';
 import { messageTable } from './dao/message.table';
@@ -121,6 +123,7 @@ export const finalizeCoreSqliteSchema = (db: Database.Database): void => {
   ensureEyesOnAgentsSyncPersistenceSchema(db);
   ensureEyesOnAgentsHookDeliverySchema(db);
   ensureEyesOnAgentsLastUserPromptSchema(db);
+  ensureEyesOnAgentsCompletionAlertSchema(db);
 };
 
 export const coreSqliteMigrations: readonly SqliteMigration[] = [
@@ -183,5 +186,9 @@ export const coreSqliteMigrations: readonly SqliteMigration[] = [
   {
     versionCode: '260721112925',
     runner: ensureEyesOnAgentsLastUserPromptSchema,
+  },
+  {
+    versionCode: '260728105015',
+    runner: migrateEyesOnAgentsCompletionAlertSchema,
   },
 ];

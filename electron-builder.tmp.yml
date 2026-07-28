@@ -51,6 +51,8 @@ extraResources:
     to: app.asar.unpacked/icons/tray-mac@2x.png
   - from: build/tray-win.ico
     to: app.asar.unpacked/icons/tray-win.ico
+  - from: build/sounds
+    to: sounds
 win:
   executableName: ${name}
 nsis:

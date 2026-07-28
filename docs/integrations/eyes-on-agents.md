@@ -30,6 +30,8 @@ EyesOnAgents never reads or displays them.
 - Derive current Git Project metadata from `cwd` and filter `All` by Project without
   changing manual Domain assignment.
 - Show every running thread and every newly completed unread thread in a fixed Focus column.
+- Play the supplied completion tone and send one localized system notification when a newly
+  accepted successful turn enters the same idle/unread state as the Open red dot.
 - Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
 - Persist unread explicitly: every observed running state or terminal event sets unread; a
   successful Open from EyesOnAgents or explicit Focus `Read all` clears confirmed terminal
@@ -629,6 +631,27 @@ in one pass; the shared XPC/repository boundary rejects a patch carrying more th
 projection is shared, the ten-second poll gains the same reclaim: `Open` is the immediate trigger
 and the poll is the passive one, with no new interval and still at most one newest-turn request per
 selected task.
+
+## Completion sound and system notification
+
+A newly accepted successful completion produces an alert only when persistence changes the thread
+to `idle`, records a concrete `last_completed_turn_id`, and sets `is_unread = true` — the same state
+that renders the Open red dot. `failed` and `interrupted` remain terminal Focus states but do not
+currently render that dot, so they do not emit this success alert.
+
+The `(thread_id, turn_id)` completion-notification receipt is the durable dedupe fence. Immediate
+Hook delivery, managed App Server notification, and the content-free terminal poll may race, but
+only the first accepted SQLite transaction inserts the receipt and returns an alert intent. The
+upgrade migration seeds receipts for existing completed turns. Loading a snapshot, importing
+existing tasks, or reconnecting without a new completion never scans or replays historical alerts.
+
+Main emits the side effect after persistence and before the normal renderer update. The native
+notification title/body use the current application i18n messages and include only a bounded thread
+title or localized untitled fallback. Prompt, response, reasoning, tool, attachment, and path
+content remain excluded. The packaged notification is silent while a separate platform player
+plays `eyes-on-agents-thread-completed.wav`, preventing the OS default sound from doubling the
+supplied tone. A sound or notification failure is non-fatal and never changes Hook ACK or SQLite
+state.
 
 ## XPC surface
 

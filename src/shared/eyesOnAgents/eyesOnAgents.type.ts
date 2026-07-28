@@ -220,8 +220,19 @@ export interface EyesOnAgentsHookLastUserPromptCandidate {
   truncated: boolean;
 }
 
+export interface EyesOnAgentsCompletionAlertIntent {
+  threadId: string;
+  turnId: string;
+  title: string | null;
+}
+
 export interface EyesOnAgentsRepositoryMutationResult {
   changed: boolean;
+}
+
+export interface EyesOnAgentsThreadPagePersistenceResult
+  extends EyesOnAgentsRepositoryMutationResult {
+  completionAlerts?: EyesOnAgentsCompletionAlertIntent[];
 }
 
 export interface EyesOnAgentsThreadPagesRefreshResult {
@@ -267,6 +278,7 @@ export interface EyesOnAgentsRuntimeDeliveryResult {
 export interface EyesOnAgentsRuntimePersistenceResult {
   created: boolean;
   titleMissing: boolean;
+  completionAlert: EyesOnAgentsCompletionAlertIntent | null;
 }
 
 export type EyesOnAgentsRuntimeDeliveryPersistenceResult =
@@ -283,7 +295,7 @@ export interface EyesOnAgentsRepositoryApi {
   }): Promise<EyesOnAgentsThreadRefreshCandidate | null>;
   refreshThreadPage(params: {
     threads: EyesOnAgentsThreadRefreshPatch[];
-  }): Promise<EyesOnAgentsRepositoryMutationResult>;
+  }): Promise<EyesOnAgentsThreadPagePersistenceResult>;
   clearLastUserPrompts(): Promise<EyesOnAgentsRepositoryMutationResult>;
   invalidateAppServerStatuses(params: { observedAt: number }): Promise<void>;
   invalidateCodexHookStatuses(params: { observedAt: number }): Promise<void>;

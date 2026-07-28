@@ -303,6 +303,7 @@ until its state actually resolves.
 | working unread | title-side loader; no Open unread dot |
 | working opened | card stays in Focus with its loader; only a terminal observation can retire it |
 | working completes to idle unread | loader disappears; unread dot appears at Open's upper-right |
+| new idle/unread completion | the supplied tone plays once and one localized system notification names the thread |
 | latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
 | latest question pending | one muted localized pending line; no spinner or false claim that a request is running |
 | latest question unavailable/default-off | no question line and no additional card height |

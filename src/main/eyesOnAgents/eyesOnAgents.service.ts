@@ -3,6 +3,7 @@ import type {
   EyesOnAgentsActiveTurnSource,
   EyesOnAgentsApi,
   EyesOnAgentsBridgeStatus,
+  EyesOnAgentsCompletionAlertIntent,
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsHookLastUserPromptCandidate,
   EyesOnAgentsRepositoryApi,
@@ -69,6 +70,9 @@ interface EyesOnAgentsServiceDependencies {
     replayOutbox(): Promise<void>;
   };
   openExternal: (url: string) => Promise<void>;
+  notifyThreadCompleted?: (
+    intent: EyesOnAgentsCompletionAlertIntent
+  ) => void | Promise<void>;
   broadcastChanged?: () => void;
   now?: () => number;
 }
@@ -1780,6 +1784,9 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     const refreshed = await this.dependencies.repository.refreshThreadPage({
       threads: semanticPatches
     });
+    for (const intent of refreshed.completionAlerts ?? []) {
+      this.notifyThreadCompleted(intent);
+    }
     const repairedDiagnostic = semanticPatches.find((thread) => (
       thread.threadId === this.titleEnrichmentDiagnostic?.threadId &&
       thread.title !== undefined
@@ -1954,9 +1961,13 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         );
         if (projected.state !== 'resolved' || projected.value === null) return;
         if (!this.isAppServerActive(context)) return;
-        await this.dependencies.repository.refreshThreadPage({
+        const refreshed = await this.dependencies.repository.refreshThreadPage({
           threads: [projected.value]
         });
+        for (const intent of refreshed.completionAlerts ?? []) {
+          this.notifyThreadCompleted(intent);
+        }
+        if (!this.isAppServerActive(context)) return;
       });
     } catch {
       // A successful deep link and its Open evidence must survive any status-sync failure.
@@ -2222,6 +2233,9 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     }
     if (!event || !this.isAppServerActive(context)) return;
     const persistence = await this.dependencies.repository.applyRuntimeEvent({ event });
+    if (persistence?.completionAlert) {
+      this.notifyThreadCompleted(persistence.completionAlert);
+    }
     if (this.isAppServerActive(context)) {
       this.notify();
       if (persistence?.titleMissing === true) {
@@ -2362,7 +2376,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         return;
       }
       try {
-        return await this.performPersistCodexHookEvent(admission);
+        return await this.performPersistCodexHookEvent(admission, context);
       } catch (error) {
         this.rejectHookListenerLifetime(lifetime);
         if (this.isObservationActive(context)) {
@@ -2386,7 +2400,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   }
 
   private async performPersistCodexHookEvent(
-    admission: PendingCodexHookEvent
+    admission: PendingCodexHookEvent,
+    context: ObservationContext
   ): Promise<HookWriteResult> {
     const { event } = admission;
     const project = projectMetadataFromResolution(
@@ -2426,9 +2441,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         event: runtimeEvent,
         ...(hookLastUserPrompt === undefined ? {} : { hookLastUserPrompt })
       });
-      this.notify();
-      if (persistence?.titleMissing === true) {
-        this.scheduleMissingThreadTitleEnrichment(runtimeEvent.threadId);
+      if (persistence?.completionAlert) {
+        this.notifyThreadCompleted(persistence.completionAlert);
+      }
+      if (this.isObservationActive(context)) {
+        this.notify();
+        if (persistence?.titleMissing === true) {
+          this.scheduleMissingThreadTitleEnrichment(runtimeEvent.threadId);
+        }
       }
       return undefined;
     }
@@ -2438,9 +2458,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       replayAuthority: 'current_listener',
       ...(hookLastUserPrompt === undefined ? {} : { hookLastUserPrompt })
     });
-    this.notify();
-    if (!persistence.duplicate && persistence.titleMissing) {
-      this.scheduleMissingThreadTitleEnrichment(runtimeEvent.threadId);
+    if (persistence?.completionAlert) {
+      this.notifyThreadCompleted(persistence.completionAlert);
+    }
+    if (this.isObservationActive(context)) {
+      this.notify();
+      if (!persistence.duplicate && persistence.titleMissing) {
+        this.scheduleMissingThreadTitleEnrichment(runtimeEvent.threadId);
+      }
     }
     return { duplicate: persistence.duplicate };
   }
@@ -2474,5 +2499,18 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
 
   private notify(): void {
     this.dependencies.broadcastChanged?.();
+  }
+
+  private notifyThreadCompleted(intent: EyesOnAgentsCompletionAlertIntent): void {
+    try {
+      const operation = this.dependencies.notifyThreadCompleted?.(intent);
+      if (operation) {
+        void Promise.resolve(operation).catch((error: unknown) => {
+          console.error('[EyesOnAgentsService] Thread completion alert failed', error);
+        });
+      }
+    } catch (error) {
+      console.error('[EyesOnAgentsService] Thread completion alert failed', error);
+    }
   }
 }

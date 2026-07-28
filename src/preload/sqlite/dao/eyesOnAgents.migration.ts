@@ -98,6 +98,44 @@ export const ensureEyesOnAgentsHookDeliverySchema = (db: MigrationDatabase): voi
   `);
 };
 
+export const ensureEyesOnAgentsCompletionAlertSchema = (db: MigrationDatabase): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS eyes_on_agents_completion_alert_receipt (
+      thread_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      completed_at INTEGER NOT NULL,
+      claimed_at INTEGER NOT NULL,
+      PRIMARY KEY (thread_id, turn_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_completion_alert_receipt_claimed
+      ON eyes_on_agents_completion_alert_receipt (claimed_at);
+  `);
+};
+
+export const migrateEyesOnAgentsCompletionAlertSchema = (db: MigrationDatabase): void => {
+  ensureEyesOnAgentsCompletionAlertSchema(db);
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  const columns = db.prepare('PRAGMA table_info(eyes_on_agents_thread)').all() as TableColumnInfo[];
+  if (!columns.some((column) => column.name === 'last_completed_turn_id')) return;
+  const hasCompletedAt = columns.some((column) => column.name === 'last_completed_at');
+  const completedAt = hasCompletedAt
+    ? 'COALESCE(last_completed_at, 0)'
+    : '0';
+  const claimedAt = columns.some((column) => column.name === 'updated_at')
+    ? hasCompletedAt
+      ? 'COALESCE(last_completed_at, updated_at, 0)'
+      : 'COALESCE(updated_at, 0)'
+    : completedAt;
+  db.exec(`
+    INSERT OR IGNORE INTO eyes_on_agents_completion_alert_receipt (
+      thread_id, turn_id, completed_at, claimed_at
+    )
+    SELECT thread_id, last_completed_turn_id, ${completedAt}, ${claimedAt}
+    FROM eyes_on_agents_thread
+    WHERE last_completed_turn_id IS NOT NULL;
+  `);
+};
+
 export const ensureEyesOnAgentsLastUserPromptSchema = (db: MigrationDatabase): void => {
   if (!tableExists(db, 'eyes_on_agents_thread')) return;
   addColumnIfMissing(db, 'eyes_on_agents_thread', 'last_user_prompt_preview', 'TEXT');

@@ -27,6 +27,45 @@ test('EyesOnAgents is a standalone Mini App, not a Home route', () => {
   assert.doesNotMatch(routes, /coding-agents|codingAgentSessions/);
 });
 
+test('completed threads use one localized silent notification and bundled cross-platform tone', () => {
+  const notifier = read('src/main/notificationcenter/notify.helper.ts');
+  const handler = read('src/main/xpc/eyesOnAgents.handler.ts');
+  const appMain = read('src/main/app.main.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+  const builder = read('electron-builder.tmp.yml');
+  const sound = readFileSync(
+    join(root, 'build/sounds/eyes-on-agents-thread-completed.wav')
+  );
+
+  assert.match(english, /completionNotification:\s*\{\s*title: 'Thread finished',\s*body: '《\{title\}》'/);
+  assert.match(chinese, /completionNotification:\s*\{\s*title: 'Thread 结束',\s*body: '《\{title\}》'/);
+  assert.match(notifier, /i18nHelper\.getMessages\(\)\.eyesOnAgents/);
+  assert.match(notifier, /messages\.thread\.untitled/);
+  assert.match(notifier, /MAX_NOTIFICATION_THREAD_TITLE_LENGTH = 300/);
+  assert.match(notifier, /new Notification\(\{\s*title:[\s\S]*body:[\s\S]*silent: true/);
+  assert.doesNotMatch(notifier, /\.on\('click'|\.once\('click'/);
+  assert.doesNotMatch(notifier, /intent\.(?:prompt|response)|lastUserPrompt/);
+
+  assert.match(notifier, /app\.isPackaged/);
+  assert.match(notifier, /process\.resourcesPath, 'sounds'/);
+  assert.match(notifier, /app\.getAppPath\(\), 'build', 'sounds'/);
+  assert.match(notifier, /spawn\('\/usr\/bin\/afplay', \[soundPath\]/);
+  assert.match(notifier, /System\.Media\.SoundPlayer/);
+  assert.match(notifier, /spawn\('powershell\.exe'/);
+  assert.equal((notifier.match(/shell: false/g) ?? []).length, 2);
+  assert.doesNotMatch(notifier, /\bexec(?:File|Sync)?\(/);
+
+  assert.match(handler, /notifyThreadCompleted: \(intent\) => notifyHelper\.notifyThreadCompleted\(intent\)/);
+  assert.match(builder, /- from: build\/sounds\s+to: sounds/);
+  assert(sound.length > 44, 'Completion WAV must contain audio data');
+
+  assert.match(
+    appMain,
+    /import\.meta\.env\.VITE_ENV === 'dev'\s*\?\s*'io\.bitterless\.desktop_dev'\s*:\s*'io\.bitterless\.desktop'/
+  );
+});
+
 test('window contract enforces singleton-safe paths and minimum size', () => {
   const source = read('src/main/xpc/eyesOnAgentsWindow.handler.ts');
 
@@ -295,7 +334,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     mainThreadBatch[0],
-    /const refreshed = await this\.dependencies\.repository\.refreshThreadPage\(\{\s*threads: semanticPatches\s*\}\);[\s\S]*if \(!this\.isAppServerActive\(context\)\) \{\s*return \{ changed: refreshed\.changed, completed: false \};\s*\}\s*if \(refreshed\.changed \|\| clearedDiagnostic\) this\.notify\(\);\s*return \{ changed: refreshed\.changed, completed: true \}/,
+    /const refreshed = await this\.dependencies\.repository\.refreshThreadPage\(\{\s*threads: semanticPatches\s*\}\);\s*for \(const intent of refreshed\.completionAlerts \?\? \[\]\) \{\s*this\.notifyThreadCompleted\(intent\);\s*\}[\s\S]*if \(!this\.isAppServerActive\(context\)\) \{\s*return \{ changed: refreshed\.changed, completed: false \};\s*\}\s*if \(refreshed\.changed \|\| clearedDiagnostic\) this\.notify\(\);\s*return \{ changed: refreshed\.changed, completed: true \}/,
   );
   assert.doesNotMatch(
     mainThreadBatch[0],

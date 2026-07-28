@@ -432,7 +432,11 @@ const startGui = async (): Promise<void> => {
     },
     initializeForegroundRuntime: () => {
       installE2ENetworkGuard();
-      electronApp.setAppUserModelId('com.electron');
+      electronApp.setAppUserModelId(
+        import.meta.env.VITE_ENV === 'dev'
+          ? 'io.bitterless.desktop_dev'
+          : 'io.bitterless.desktop'
+      );
       if (process.platform === 'darwin') app.dock.setBadge('');
     },
     createHome: () => {

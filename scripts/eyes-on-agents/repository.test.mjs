@@ -24,6 +24,7 @@ const DELIVERY_E = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const DELIVERY_F = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 const DELIVERY_G = '12121212-1212-4212-8212-121212121212';
 const DELIVERY_H = '13131313-1313-4313-8313-131313131313';
+const DELIVERY_I = '14141414-1414-4414-8414-141414141414';
 const INVALID_VERSION_THREAD = '33333333-3333-0333-8333-333333333333';
 const INVALID_VARIANT_THREAD = '44444444-4444-4444-7444-444444444444';
 const EXTRA_HYPHEN_THREAD = '55555555-5555-4555-8555-55555555555-';
@@ -111,11 +112,13 @@ try {
   );
   const {
     ensureEyesOnAgentsArchiveSchema,
+    ensureEyesOnAgentsCompletionAlertSchema,
     ensureEyesOnAgentsHookDeliverySchema,
     ensureEyesOnAgentsLastUserPromptSchema,
     ensureEyesOnAgentsLegacyImport,
     ensureEyesOnAgentsProjectMetadataSchema,
-    ensureEyesOnAgentsSyncPersistenceSchema
+    ensureEyesOnAgentsSyncPersistenceSchema,
+    migrateEyesOnAgentsCompletionAlertSchema
   } = await loadTypeScriptModule(
     'migration',
     'src/preload/sqlite/dao/eyesOnAgents.migration.ts'
@@ -134,6 +137,8 @@ try {
   ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
   ensureEyesOnAgentsSyncPersistenceSchema(repairDb);
   ensureEyesOnAgentsHookDeliverySchema(repairDb);
+  ensureEyesOnAgentsCompletionAlertSchema(repairDb);
+  ensureEyesOnAgentsCompletionAlertSchema(repairDb);
   ensureEyesOnAgentsLastUserPromptSchema(repairDb);
   ensureEyesOnAgentsLastUserPromptSchema(repairDb);
   repairDb.prepare(
@@ -187,6 +192,8 @@ try {
   ensureEyesOnAgentsSyncPersistenceSchema(oldDb);
   ensureEyesOnAgentsHookDeliverySchema(oldDb);
   ensureEyesOnAgentsHookDeliverySchema(oldDb);
+  migrateEyesOnAgentsCompletionAlertSchema(oldDb);
+  migrateEyesOnAgentsCompletionAlertSchema(oldDb);
   ensureEyesOnAgentsLastUserPromptSchema(oldDb);
   ensureEyesOnAgentsLastUserPromptSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
@@ -244,6 +251,17 @@ try {
       .map((column) => column.name),
     ['delivery_id', 'thread_id', 'observed_at', 'committed_at'],
     'old databases must receive the idempotent hook delivery receipt table'
+  );
+  assert.deepEqual(
+    oldDb.prepare(
+      `SELECT thread_id, turn_id FROM eyes_on_agents_completion_alert_receipt
+       ORDER BY thread_id`
+    ).all().map((row) => ({ ...row })),
+    [
+      { thread_id: THREAD_A, turn_id: 'turn-a' },
+      { thread_id: THREAD_B, turn_id: 'turn-b' }
+    ],
+    'the versioned completion-alert migration must seed every current historical completion'
   );
   oldDb.close();
 
@@ -500,7 +518,11 @@ try {
   });
   snapshot = await repository.getSnapshot();
   const hookCreated = snapshot.threads.find((thread) => thread.threadId === THREAD_C);
-  assert.deepEqual(hookCreateResult, { created: true, titleMissing: false });
+  assert.deepEqual(hookCreateResult, {
+    created: true,
+    titleMissing: false,
+    completionAlert: null
+  });
   assert.equal(
     hookCreated.title,
     'Stored Hook title',
@@ -527,7 +549,7 @@ try {
   });
   assert.deepEqual(
     corruptSnapshotResult,
-    { created: true, titleMissing: true },
+    { created: true, titleMissing: true, completionAlert: null },
     'a corrupt optional raw snapshot must not roll back lifecycle persistence'
   );
   assert.deepEqual(
@@ -628,7 +650,7 @@ try {
     'a later thread/list running observation must keep unread attention'
   );
   await repository.markOpened({ threadId: THREAD_A, openedAt: 216 });
-  await repository.applyRuntimeEvent({
+  const syntheticCompletion = await repository.applyRuntimeEvent({
     event: {
       type: 'turn_completed',
       threadId: THREAD_A,
@@ -638,6 +660,11 @@ try {
       source: 'codex_hook'
     }
   });
+  assert.equal(
+    syntheticCompletion.completionAlert,
+    null,
+    'a synthetic Hook fallback identity must fail closed for completion alerts'
+  );
   snapshot = await repository.getSnapshot();
   const completedA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
   assert.equal(completedA.lastCompletedTurnId, 'hook-200');
@@ -654,7 +681,7 @@ try {
       source: 'app_server'
     }
   });
-  await repository.applyRuntimeEvent({
+  const completedTurnB = await repository.applyRuntimeEvent({
     event: {
       type: 'turn_completed',
       threadId: THREAD_A,
@@ -664,6 +691,69 @@ try {
       source: 'app_server'
     }
   });
+  assert.deepEqual(completedTurnB.completionAlert, {
+    threadId: THREAD_A,
+    turnId: 'turn-b',
+    title: 'Still running'
+  });
+  const duplicateTurnB = await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_completed',
+      threadId: THREAD_A,
+      turnId: 'turn-b',
+      outcome: 'completed',
+      observedAt: 240,
+      source: 'app_server'
+    }
+  });
+  assert.equal(
+    duplicateTurnB.completionAlert,
+    null,
+    'the durable thread/turn receipt must suppress repeated completion evidence'
+  );
+  const hookRaceTurnB = await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_I,
+    event: {
+      type: 'turn_completed',
+      threadId: THREAD_A,
+      turnId: 'turn-b',
+      outcome: 'completed',
+      observedAt: 240,
+      source: 'codex_hook'
+    }
+  });
+  assert.equal(hookRaceTurnB.duplicate, false);
+  assert.equal(
+    hookRaceTurnB.completionAlert,
+    null,
+    'a later Hook delivery for the App Server-claimed turn must not emit a second intent'
+  );
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) AS count FROM eyes_on_agents_completion_alert_receipt
+       WHERE thread_id = ? AND turn_id = ?`
+    ).get(THREAD_A, 'turn-b').count,
+    1
+  );
+  db.close();
+  db = new TestDatabase(dbPath);
+  globalThis.__eyesTestSqliteManager.db = db;
+  repository = new EyesOnAgentsRepositoryDao();
+  const restartedTurnB = await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_completed',
+      threadId: THREAD_A,
+      turnId: 'turn-b',
+      outcome: 'completed',
+      observedAt: 240,
+      source: 'app_server'
+    }
+  });
+  assert.equal(
+    restartedTurnB.completionAlert,
+    null,
+    'the completion receipt must remain effective after a repository and SQLite restart'
+  );
   snapshot = await repository.getSnapshot();
   const completedB = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
   assert.equal(completedB.isUnread, true, 'later unseen turn B must become unread');
@@ -978,7 +1068,12 @@ try {
         source: 'codex_hook'
       }
     }),
-    { duplicate: true, created: false, titleMissing: false },
+    {
+      duplicate: true,
+      created: false,
+      titleMissing: false,
+      completionAlert: null
+    },
     'a stale delivery receipt must still dedupe even if a retry carries newer content'
   );
   assert.deepEqual(
@@ -1292,7 +1387,8 @@ try {
   assert.deepEqual(firstDelivery, {
     duplicate: false,
     created: true,
-    titleMissing: true
+    titleMissing: true,
+    completionAlert: null
   });
   const receipt = db.prepare(
     `SELECT delivery_id, thread_id, observed_at, committed_at,
@@ -1356,7 +1452,8 @@ try {
   assert.deepEqual(replayedDelivery, {
     duplicate: true,
     created: false,
-    titleMissing: false
+    titleMissing: false,
+    completionAlert: null
   });
   const replayedThread = db.prepare(
     `SELECT runtime_state, last_completed_at, last_user_prompt_preview
@@ -1415,7 +1512,12 @@ try {
       deliveryId: DELIVERY_B,
       event: failedDeliveryEvent
     }),
-    { duplicate: false, created: true, titleMissing: true },
+    {
+      duplicate: false,
+      created: true,
+      titleMissing: true,
+      completionAlert: null
+    },
     'a rolled-back delivery ID must remain retryable'
   );
   assert.equal(
@@ -1469,7 +1571,12 @@ try {
   db.exec('DROP TRIGGER abort_eyes_hook_prompt_update;');
   assert.deepEqual(
     await repository.applyRuntimeEventDelivery(failedPromptDelivery),
-    { duplicate: false, created: true, titleMissing: true },
+    {
+      duplicate: false,
+      created: true,
+      titleMissing: true,
+      completionAlert: null
+    },
     'a prompt-rolled-back delivery must remain retryable'
   );
   assert.equal(
@@ -1813,6 +1920,20 @@ try {
       source: 'codex_hook'
     }
   });
+  const completedPoll = await repository.refreshThreadPage({
+    threads: [terminalPatch({
+      turnId: 'focus-turn-3',
+      outcome: 'completed',
+      completedAt: 40_000,
+      expectedStatusObservedAt: 40_600
+    })]
+  });
+  assert.equal(completedPoll.changed, true);
+  assert.deepEqual(
+    completedPoll.completionAlerts?.map(({ threadId, turnId }) => ({ threadId, turnId })),
+    [{ threadId: refreshTargetId, turnId: 'focus-turn-3' }],
+    'one successful terminal CAS must return one bounded completion intent'
+  );
   assert.deepEqual(
     await repository.refreshThreadPage({
       threads: [terminalPatch({
@@ -1822,7 +1943,8 @@ try {
         expectedStatusObservedAt: 40_600
       })]
     }),
-    { changed: true }
+    { changed: false },
+    'a repeated terminal patch must neither mutate nor return a second alert'
   );
   snapshot = await repository.getSnapshot();
   assert.equal(
@@ -2178,7 +2300,14 @@ try {
   );
   assert.deepEqual(
     await repository.refreshThreadPage({ threads: [recoveredTerminalPatch('app_server_turn')] }),
-    { changed: true },
+    {
+      changed: true,
+      completionAlerts: [{
+        threadId: recoveryThreadId,
+        turnId: 'missed-turn',
+        title: 'Inventory notLoaded'
+      }]
+    },
     'exact-identity terminal proof must end a recovered row'
   );
   assert.deepEqual(
@@ -2298,7 +2427,14 @@ try {
         }
       }]
     }),
-    { changed: true },
+    {
+      changed: true,
+      completionAlerts: [{
+        threadId: recoveryThreadId,
+        turnId: 'live-hook-turn',
+        title: 'Inventory notLoaded'
+      }]
+    },
     'a reclaimed row stays terminally reconcilable under its own source'
   );
   assert.equal(recoveryRow().runtime_state, 'idle');

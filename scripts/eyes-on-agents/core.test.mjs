@@ -290,11 +290,16 @@ try {
     upsertThreadSnapshots: async () => undefined,
     setThreadArchived: async () => undefined,
     markThreadsArchived: async () => undefined,
-    applyRuntimeEvent: async () => ({ created: false, titleMissing: false }),
+    applyRuntimeEvent: async () => ({
+      created: false,
+      titleMissing: false,
+      completionAlert: null
+    }),
     applyRuntimeEventDelivery: async () => ({
       duplicate: false,
       created: false,
-      titleMissing: false
+      titleMissing: false,
+      completionAlert: null
     }),
     enrichMissingThreadTitle: async () => ({ changed: false }),
     getThreadRefreshPages: async () => ({ hot: [], cold: [], pageCount: 0, coldPage: null }),
@@ -773,6 +778,12 @@ try {
   }));
   const terminalReads = [];
   const terminalCommits = [];
+  const terminalCompletionAlerts = [];
+  const terminalCompletionIntent = {
+    threadId: terminalThreadIds[1],
+    turnId: 'terminal-turn-1',
+    title: `Terminal ${terminalThreadIds[1]}`
+  };
   const terminalService = new EyesOnAgentsService({
     repository: {
       ...repository,
@@ -784,7 +795,7 @@ try {
       }),
       refreshThreadPage: async ({ threads }) => {
         terminalCommits.push(threads);
-        return { changed: true };
+        return { changed: true, completionAlerts: [terminalCompletionIntent] };
       }
     },
     settings,
@@ -831,9 +842,17 @@ try {
     desktopBridge: tieredDesktopBridge,
     bridgeListener,
     openExternal: async () => undefined,
+    notifyThreadCompleted: (intent) => {
+      terminalCompletionAlerts.push(intent);
+    },
     now: () => 13_500
   });
   assert.deepEqual(await terminalService.refreshThreadPages(), { changed: true });
+  assert.deepEqual(
+    terminalCompletionAlerts,
+    [terminalCompletionIntent],
+    'a committed polling completion intent must reach the Main notifier once'
+  );
   assert.equal(
     terminalReads.length,
     terminalCandidates.filter((candidate) => candidate.activeTurn !== null).length,
@@ -1664,6 +1683,7 @@ try {
     const snapshotBatches = [];
     const openedUrls = [];
     const titleEnrichments = [];
+    const completionAlerts = [];
     const recoveredCoverageGaps = [];
     let lifecycleNow = 1_000;
     let appServerConnected = false;
@@ -1696,7 +1716,8 @@ try {
     let promptClearCount = 0;
     const runtimePersistenceResult = options.runtimePersistenceResult ?? {
       created: false,
-      titleMissing: false
+      titleMissing: false,
+      completionAlert: null
     };
     let bridgeStatus = {
       state: 'needs_trust',
@@ -1949,6 +1970,11 @@ try {
       openExternal: async (url) => {
         openedUrls.push(url);
       },
+      notifyThreadCompleted: (intent) => {
+        completionAlerts.push(intent);
+        calls.push('completion-alert');
+        return options.notifyThreadCompleted?.(intent);
+      },
       broadcastChanged: () => calls.push('notify'),
       now: () => lifecycleNow
     });
@@ -1962,6 +1988,7 @@ try {
       runtimeEvents,
       recoveredCoverageGaps,
       titleEnrichments,
+      completionAlerts,
       openedUrls,
       service,
       advance: () => { lifecycleNow += 1_000; },
@@ -3696,6 +3723,139 @@ try {
     }
   };
 
+  const completionIntent = {
+    threadId: THREAD_ID,
+    turnId: 'turn-completion-alert',
+    title: 'Completion alert task'
+  };
+  const completionAlertHarness = createLifecycleHarness(false, {
+    runtimePersistenceResult: {
+      created: false,
+      titleMissing: false,
+      completionAlert: completionIntent
+    },
+    notifyThreadCompleted: () => {
+      throw new Error('injected completion notifier failure');
+    }
+  });
+  await completionAlertHarness.service.connectAppServer();
+  const originalConsoleError = console.error;
+  let completionAlertErrorCount = 0;
+  console.error = () => {
+    completionAlertErrorCount += 1;
+  };
+  try {
+    assert.deepEqual(
+      await completionAlertHarness.service.commitCodexHookDelivery({
+        schemaVersion: 1,
+        deliveryId: '23232323-2323-4323-8323-232323232323',
+        event: {
+          ...hookEvent,
+          eventId: '23232323-2323-4323-8323-232323232323',
+          payload: {
+            ...hookEvent.payload,
+            hookEventName: 'Stop',
+            turnId: completionIntent.turnId
+          }
+        }
+      }),
+      { duplicate: false },
+      'a notifier failure must not reject the committed Hook ACK'
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(completionAlertHarness.completionAlerts, [completionIntent]);
+  assert.equal(completionAlertErrorCount, 1);
+  assert.ok(
+    completionAlertHarness.calls.indexOf('delivery-finished:turn_completed') <
+      completionAlertHarness.calls.indexOf('completion-alert') &&
+      completionAlertHarness.calls.indexOf('completion-alert') <
+        completionAlertHarness.calls.lastIndexOf('notify'),
+    'the side effect must run after persistence and before the renderer broadcast'
+  );
+  await completionAlertHarness.service.disconnectAppServer();
+
+  const noCompletionAlertHarness = createLifecycleHarness(false);
+  await noCompletionAlertHarness.service.connectAppServer();
+  await noCompletionAlertHarness.service.commitCodexHookDelivery({
+    schemaVersion: 1,
+    deliveryId: '24242424-2424-4424-8424-242424242424',
+    event: {
+      ...hookEvent,
+      eventId: '24242424-2424-4424-8424-242424242424'
+    }
+  });
+  assert.deepEqual(
+    noCompletionAlertHarness.completionAlerts,
+    [],
+    'a committed write without an alert intent must not invoke the notifier'
+  );
+  await noCompletionAlertHarness.service.disconnectAppServer();
+
+  const teardownCompletionIntent = {
+    threadId: THREAD_ID,
+    turnId: 'turn-completion-during-shutdown',
+    title: 'Completion during shutdown'
+  };
+  const teardownCompletionHarness = createLifecycleHarness(false, {
+    runtimePersistenceResult: {
+      created: false,
+      titleMissing: false,
+      completionAlert: teardownCompletionIntent
+    }
+  });
+  await teardownCompletionHarness.service.connectAppServer();
+  let releaseTeardownCompletionWrite;
+  let markTeardownCompletionWriteStarted;
+  const teardownCompletionWriteStarted = new Promise((resolve) => {
+    markTeardownCompletionWriteStarted = resolve;
+  });
+  const teardownCompletionWriteGate = new Promise((resolve) => {
+    releaseTeardownCompletionWrite = resolve;
+  });
+  teardownCompletionHarness.duringRuntimeEvent(async (event) => {
+    if (event.turnId !== teardownCompletionIntent.turnId) return;
+    markTeardownCompletionWriteStarted();
+    await teardownCompletionWriteGate;
+  });
+  const notifyCountBeforeTeardownCompletion = teardownCompletionHarness.calls.filter(
+    (call) => call === 'notify'
+  ).length;
+  const teardownCompletionDelivery = teardownCompletionHarness.service
+    .commitCodexHookDelivery({
+      schemaVersion: 1,
+      deliveryId: '25252525-2525-4525-8525-252525252525',
+      event: {
+        ...hookEvent,
+        eventId: '25252525-2525-4525-8525-252525252525',
+        payload: {
+          ...hookEvent.payload,
+          hookEventName: 'Stop',
+          turnId: teardownCompletionIntent.turnId
+        }
+      }
+    });
+  await teardownCompletionWriteStarted;
+  const teardownDuringCompletion = teardownCompletionHarness.service.shutdown();
+  releaseTeardownCompletionWrite();
+  assert.deepEqual(
+    await teardownCompletionDelivery,
+    { duplicate: false },
+    'shutdown after the SQLite write starts must not reject its committed Hook ACK'
+  );
+  await teardownDuringCompletion;
+  assert.deepEqual(
+    teardownCompletionHarness.completionAlerts,
+    [teardownCompletionIntent],
+    'a claimed completion intent must dispatch exactly once even after its context aborts'
+  );
+  assert.equal(
+    teardownCompletionHarness.calls.filter((call) => call === 'notify').length,
+    notifyCountBeforeTeardownCompletion,
+    'an aborted observation context must suppress the stale renderer broadcast'
+  );
+
   let titleReadMode = 'success';
   let releaseOldTitleRead;
   let markOldTitleReadStarted;
@@ -3960,9 +4120,9 @@ try {
     (call) => call === 'notify'
   ).length;
   assert.equal(
-    (await shutdownRaceHarness.service.getSnapshot()).titleEnrichmentDiagnostic.reason,
-    'app_server_unavailable',
-    'shutdown must drain the title operation scheduled by the final Hook write'
+    (await shutdownRaceHarness.service.getSnapshot()).titleEnrichmentDiagnostic,
+    null,
+    'an aborted observation context must not schedule stale title enrichment'
   );
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(
