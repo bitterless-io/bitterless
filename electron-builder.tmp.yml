@@ -11,6 +11,7 @@ electronLanguages:
   - ko
   - fr
 afterPack: scripts/package/desktopPackage.audit.cjs
+afterSign: scripts/notarize.js
 files:
   - '!src/*'
   - '!scripts/*'
@@ -69,7 +70,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false
-  notarize: true
+  notarize: false
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
     - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
