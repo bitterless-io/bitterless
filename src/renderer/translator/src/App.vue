@@ -46,7 +46,7 @@
       <div name="translator__rail" class="translator__rail">
         <div class="translator__direction">
           <span>{{ i18nHelper.translator.autoDirection }}</span>
-          <strong>{{ directionLabel }}</strong>
+          <strong v-if="directionLabel">{{ directionLabel }}</strong>
         </div>
         <div class="translator__status" :class="statusClass" aria-live="polite">
           <span class="translator__status-dot" aria-hidden="true"></span>
@@ -110,11 +110,15 @@ const handleInput = (value: string): void => {
   translatorStore.setSourceText(value);
 };
 
-const directionLabel = computed(() =>
-  translatorStore.targetLanguage === 'zh-CN'
-    ? i18nHelper.translator.toChinese
-    : i18nHelper.translator.toEnglish
-);
+const directionLabel = computed(() => {
+  if (translatorStore.targetLanguage === 'zh-CN') {
+    return i18nHelper.translator.translateToChinese;
+  }
+  if (translatorStore.targetLanguage === 'en') {
+    return i18nHelper.translator.translateToEnglish;
+  }
+  return '';
+});
 
 const statusLabel = computed(() => {
   if (translatorStore.providerLoading) return i18nHelper.translator.checking;
