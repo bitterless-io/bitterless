@@ -84,6 +84,9 @@ design document.
 
 ## Issues
 
+- [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
+  implemented; owner verification pending: default sites now keep stock Electron identity while
+  Google/YouTube use a dedicated session with the verified honest Bitterless UA.
 - [Omni root-axis collapse size mismatch](issues/omni-root-axis-collapse-size-mismatch.md) -
   implemented; owner verification pending: immutable tree edits, lifecycle-event rejection, and one
   serialized Main commit keep `H[V,V]` renderer borders and native bounds on the same geometry.

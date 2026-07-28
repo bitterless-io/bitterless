@@ -1,6 +1,28 @@
 # Embedded views present a self-contradictory browser identity
 
-Status: fixed
+Status: implemented; owner verification pending — Omni corrected; Maestro unchanged
+
+## 2026-07-28 correction
+
+The previous fix removed hardcoded version drift but left every Omni browser cell presenting a
+plain-Chrome legacy UA through `chromeIdentity().userAgent`. New same-engine A/B evidence showed
+that this is still the wrong contract:
+
+- Cloudflare passed with stock Electron identity and rejected the tested UA overrides.
+- Google rejected the plain-Chrome UA in the local A/B; the stock `Electron/...` UA was
+  fingerprinted but did not complete a separate identifier submission.
+- Google completed password, 2FA, `CheckCookie`, YouTube `SetSID`, and an authenticated YouTube
+  home page when the UA kept the honest `Bitterless/<app version>` product token and removed only
+  `Electron/<version>`.
+- The same Google flow also completed while CDP remained attached with `Runtime.enable`; CDP was
+  not the cause of this rejection.
+
+Omni therefore needs provider-scoped identities instead of one global Chrome identity. Default
+browser cells retain untouched Electron identity in `persist:omni`. Google/YouTube cells use a
+dedicated `persist:omni-google` session and receive the honest Bitterless UA before the first
+request. Native Chromium UA-CH remains untouched in both profiles. A URL change that crosses the
+profile boundary recreates the affected remote content view before navigation rather than changing
+UA during an in-flight request.
 
 ## Report
 
@@ -35,7 +57,7 @@ in one place from the engine actually shipping in the build. Hand-written consta
 Chromium bump: the GREASE token is a function of the milestone, so `Not=A?Brand`/`24` was correct
 for Chrome 140 and silently wrong for 144 and 150.
 
-## Fix
+## Previous fix (superseded for Omni)
 
 `chromeIdentity()` is now the single source of identity, and every value is derived:
 
@@ -81,3 +103,15 @@ publishes prebuilt binaries for Electron 29–42, including the required Electro
 The Electron 43 measurement remains historical evidence for the derived identity algorithm, not a
 release dependency. Native SQLite loading under Electron 40 is re-verified after installing
 `12.11.1`; the owner performs the final signed application package test.
+
+## Current acceptance
+
+- No Omni default-profile view calls `setUserAgent()`, rewrites UA-CH/request headers, or attaches
+  CDP for identity spoofing.
+- Google/YouTube top-level URLs select `persist:omni-google` using hostname-boundary matching.
+- Google session and content view expose the same dynamically versioned
+  `Bitterless/<app version> Chrome/<actual Chromium version>` UA before the first request.
+- Moving a cell between default and Google profiles recreates only that cell's remote content
+  runtime before loading the new URL.
+- Existing Maestro capture identity behavior is outside this correction.
+- Owner verification is the complete interactive YouTube login inside an Omni browser cell.

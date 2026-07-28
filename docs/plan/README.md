@@ -97,6 +97,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [omni-layout-axis-collapse-002](tasks/omni-layout-axis-collapse-002.md) | root/inner-axis collapse, Splitpanes lifecycle, and native bounds consistency | implemented; owner verification pending | — |
+| [omni-browser-google-identity-003](tasks/omni-browser-google-identity-003.md) | provider-scoped Omni browser identity for default and Google/YouTube cells | implemented; owner verification pending | — |
 | [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | final three-family SQLite audit and production packaging proof | pending | todoist-sync-desktop-001 |
 | [window-state-persistence-001](tasks/window-state-persistence-001.md) | unified bounds, mode, and physical-display persistence for every visible top-level window | implemented; owner verification pending | — |
 

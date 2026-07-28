@@ -88,7 +88,8 @@ renderer loads or reopens, so the localized warning cannot be lost to renderer s
 
 | Content | Operation preload | Development renderer | Packaged renderer | Session |
 |---|---|---|---|---|
-| Browser | `out/preload/omniCellContent.js` | user URL | user URL | `persist:omni` |
+| Browser (default) | `out/preload/omniCellContent.js` | user URL | user URL | `persist:omni` |
+| Browser (Google / YouTube) | `out/preload/omniCellContent.js` | user URL | user URL | `persist:omni-google` |
 | Todo | `out/preload/todo.js` | `${ELECTRON_RENDERER_URL}/todo/index.html` | `out/renderer/todo/index.html` | default |
 | EyesOnAgents | `out/preload/eyesOnAgents.js` | `${ELECTRON_RENDERER_URL}/eyesOnAgents/index.html` | `out/renderer/eyesOnAgents/index.html` | default |
 | Translator | `out/preload/translator.js` | `${ELECTRON_RENDERER_URL}/translator/index.html` | `out/renderer/translator/index.html` | default |
@@ -99,8 +100,36 @@ server URL, while packaged renderers use `loadFile`.
 
 Changing `contentMode` or `miniAppId` recreates the affected operation view with the correct
 preload. It does not recreate the Omni BaseWindow or open a standalone Todo/EyesOnAgents/Translator window.
-Remote-browser notification interception, Chrome user agent, persistent browser session, and URL
-navigation hooks apply only to browser cells.
+Remote-browser notification interception, provider-scoped browser identity, persistent browser
+sessions, and URL navigation hooks apply only to browser cells.
+
+## Remote Browser Identity
+
+Omni browser cells use one of two explicit identity profiles, selected from the top-level target URL
+before its first request:
+
+| Profile | Top-level hostname | Session | User agent |
+|---|---|---|---|
+| Default | Every host outside the Google profile | `persist:omni` | Electron default; no override |
+| Google | `google.com`, `youtube.com`, `youtu.be`, or an exact subdomain | `persist:omni-google` | Actual Electron UA with only `Electron/<version>` removed and exactly one `Bitterless/<app version>` token inserted before `Chrome/<actual Chromium version>` |
+
+Hostname matching is boundary-aware: `notgoogle.com` and `notyoutube.com` remain default-profile
+sites. The Google profile does not add a `Google Chrome` UA-CH brand and does not rewrite
+`Sec-CH-UA`, request headers, `navigator.userAgentData`, `navigator.webdriver`, plugins, WebGL, or
+other page-visible values.
+
+Every Google-profile content view receives the same UA as its persistent session before
+`loadURL()`. Google and YouTube redirects remain inside that view and session, so successful
+account cookies are immediately visible to every Google-profile Omni cell. Default-profile cells
+never inherit this override.
+
+Entering a URL through the cell chrome or Control overlay may cross the profile boundary. Omni must
+then recreate that cell's remote content `WebContentsView` with the destination profile before
+loading the URL; it must not call `setUserAgent()` while a navigation is pending. The layout cell,
+browser chrome, persisted URL, and surrounding split tree remain logically unchanged.
+
+This provider split supersedes the former unconditional `chromeIdentity().userAgent` assignment.
+That plain-Chrome identity was rejected by Google and caused Cloudflare identity inconsistency.
 
 Mini-app operation views are privileged because their preload exposes first-party XPC. They must
 reject top-level navigation away from the expected local renderer target. New-window requests and

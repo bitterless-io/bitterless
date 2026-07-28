@@ -20,7 +20,7 @@
 │  menubarView (32px)          │  omniWindow 渲染器（标题栏 + 控制按钮）
 ├──────────────┬───────────────┤
 │ cell.menubar │ cell.menubar  │  omniCell 渲染器 × N（导航栏）
-│ cell.browser │ cell.browser  │  网页内容（sandbox，共享 persist:omni session）
+│ cell.browser │ cell.browser  │  网页内容（按站点选择持久化 session）
 └──────────────┴───────────────┘
   [controlView 叠加层，toggle 显示]  omniControl 渲染器（splitpanes 分屏控制）
 ```
@@ -44,3 +44,4 @@
 - **并发保护**：`_creating` 锁防止 `ipcMain.handle` 并发调用导致 `create()` 重入
 - **XPC 事件方向**：main 通过 `xpcMain.broadcast` 推送 URL 变更；renderer 通过 `xpcRenderer.send` 发起导航和布局保存
 - **无反馈循环**：`onResize` 只更新内存 sizes，仅 `onResizeEnd`（拖动结束）触发一次 XPC 同步；URL 变更由 `lastUrl` 去重拦截重复广播
+- **浏览器身份分流**：普通站点保持原生 Electron + `persist:omni`；Google/YouTube 在首个请求前切到 `persist:omni-google`，UA 只删除 `Electron/<version>` 并保留真实 `Bitterless/<version>` 应用标识

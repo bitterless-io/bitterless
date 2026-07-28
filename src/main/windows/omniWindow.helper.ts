@@ -4,7 +4,6 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { is } from '@electron-toolkit/utils';
 import { throttle } from 'es-toolkit';
-import { chromeIdentity } from '@maestro-main/capture/chromeIdentity';
 import {
   OMNI_LAYOUT_RECOVERY_STATE_EVENT,
   OMNI_LAYOUT_SNAPSHOT_EVENT,
@@ -68,17 +67,37 @@ class Semaphore {
 
 const MENUBAR_HEIGHT = 32;
 const OMNI_PARTITION = 'persist:omni';
-// Derived from the Chromium actually bundled in this Electron, NOT hardcoded. The previous constant
-// claimed Chrome/146 on a Chromium-144 engine (and a macOS UA on every platform), so the UA string,
-// navigator.userAgentData and the Sec-CH-UA headers all disagreed with each other — worse than not
-// spoofing at all. See areas/agent-runtime/anti-bot/cloudflare.html #3 in the overmind workspace.
-//
-// Residual gap, deliberately not fixed here: full client-hint parity (Sec-CH-UA +
-// navigator.userAgentData) needs a CDP Network.setUserAgentOverride, and omni cells intentionally
-// run without an attached debugger so DevTools stays available. What remains is stock-Electron
-// behaviour (no Sec-CH-UA on top-level navigations, no "Google Chrome" brand) — incomplete, but no
-// longer self-contradictory.
-const CHROME_USER_AGENT = chromeIdentity().userAgent;
+const OMNI_GOOGLE_PARTITION = 'persist:omni-google';
+const OMNI_BROWSER_PARTITIONS = [OMNI_PARTITION, OMNI_GOOGLE_PARTITION] as const;
+const GOOGLE_PROFILE_HOSTNAMES = ['google.com', 'youtube.com', 'youtu.be'] as const;
+
+type OmniBrowserProfile = 'default' | 'google';
+
+const resolveOmniBrowserProfile = (url: string): OmniBrowserProfile | null => {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  const isGoogleProfile = GOOGLE_PROFILE_HOSTNAMES.some(
+    (candidate) => hostname === candidate || hostname.endsWith(`.${candidate}`),
+  );
+  return isGoogleProfile ? 'google' : 'default';
+};
+
+const buildGoogleProfileUserAgent = (sourceUserAgent: string): string => {
+  const tokens = sourceUserAgent
+    .trim()
+    .split(/\s+/)
+    .filter((token) => !/^(?:Electron|Bitterless)\/\S+$/i.test(token));
+  const chromeTokenIndex = tokens.findIndex((token) => /^Chrome\/\S+$/i.test(token));
+  if (chromeTokenIndex === -1) {
+    throw new Error('[OmniWindowHelper] Google profile UA is missing its Chrome product token');
+  }
+  tokens.splice(chromeTokenIndex, 0, `Bitterless/${app.getVersion()}`);
+  return tokens.join(' ');
+};
 
 interface OmniMiniAppRuntime {
   preloadFile: string;
@@ -137,6 +156,7 @@ interface CellViewPair {
   content: WebContentsView;
   contentMode: OmniContentMode;
   miniAppId: OmniMiniAppId;
+  browserProfile: OmniBrowserProfile | null;
   lastUrl: string;
 }
 
@@ -253,10 +273,12 @@ export class OmniWindowHelper {
     this.baseWindow = null;
     this.windowStateController = null;
 
-    // Clear ServiceWorkers so a stuck SW from this session doesn't survive into the next open
-    session.fromPartition(OMNI_PARTITION)
-      .clearStorageData({ storages: ['serviceworkers'] })
-      .catch((err) => console.warn('[OmniWindowHelper] Failed to clear SW:', err));
+    // Clear ServiceWorkers so a stuck SW from either browser session doesn't survive into the next open
+    for (const partition of OMNI_BROWSER_PARTITIONS) {
+      session.fromPartition(partition)
+        .clearStorageData({ storages: ['serviceworkers'] })
+        .catch((err) => console.warn(`[OmniWindowHelper] Failed to clear SW for ${partition}:`, err));
+    }
   }
 
   private async loadWindowLayout(): Promise<WindowLayout | null> {
@@ -390,23 +412,25 @@ export class OmniWindowHelper {
     // Permission handler: deny notifications for specific domains (e.g. larksuite.com),
     // allow for all others so the executeJavaScript override can intercept them instead.
     const NOTIFICATION_BLOCKED_DOMAINS = ['larksuite.com'];
-    session.fromPartition(OMNI_PARTITION).setPermissionRequestHandler((webContents, permission, callback) => {
-      if (permission === 'notifications') {
-        try {
-          const hostname = new URL(webContents.getURL()).hostname;
-          const blocked = NOTIFICATION_BLOCKED_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
-          if (blocked) {
-            console.log(`[OmniWindowHelper] Notification permission denied for ${hostname}`);
+    for (const partition of OMNI_BROWSER_PARTITIONS) {
+      session.fromPartition(partition).setPermissionRequestHandler((webContents, permission, callback) => {
+        if (permission === 'notifications') {
+          try {
+            const hostname = new URL(webContents.getURL()).hostname;
+            const blocked = NOTIFICATION_BLOCKED_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+            if (blocked) {
+              console.log(`[OmniWindowHelper] Notification permission denied for ${hostname}`);
+              callback(false);
+              return;
+            }
+          } catch {
             callback(false);
             return;
           }
-        } catch {
-          callback(false);
-          return;
         }
-      }
-      callback(true);
-    });
+        callback(true);
+      });
+    }
 
     // Restore saved cell layout so cells appear immediately on window open
     await this.restoreSavedLayout(creationGeneration);
@@ -494,6 +518,15 @@ export class OmniWindowHelper {
       cell.contentMode !== 'browser' ||
       !this.isWebContentsAlive(cell.content.webContents)
     ) return;
+    const nextProfile = resolveOmniBrowserProfile(url);
+    if (!nextProfile) {
+      cell.content.webContents.loadURL(url).catch(() => {});
+      return;
+    }
+    if (cell.browserProfile !== nextProfile) {
+      this.replaceBrowserCellContentView(cell, url, nextProfile);
+      return;
+    }
     cell.content.webContents.loadURL(url).catch(() => {});
   }
 
@@ -544,16 +577,26 @@ export class OmniWindowHelper {
     this.controlView = null;
   }
 
-  private createBrowserCellContentView(): WebContentsView {
-    return new WebContentsView({
+  private createBrowserCellContentView(profile: OmniBrowserProfile): WebContentsView {
+    const browserSession = session.fromPartition(
+      profile === 'google' ? OMNI_GOOGLE_PARTITION : OMNI_PARTITION,
+    );
+    const userAgent = profile === 'google'
+      ? buildGoogleProfileUserAgent(browserSession.getUserAgent())
+      : null;
+    if (userAgent) browserSession.setUserAgent(userAgent);
+
+    const content = new WebContentsView({
       webPreferences: {
         preload: join(__dirname, '../preload/omniCellContent.js'),
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
-        session: session.fromPartition(OMNI_PARTITION),
+        session: browserSession,
       },
     });
+    if (userAgent) content.webContents.setUserAgent(userAgent);
+    return content;
   }
 
   private createMiniAppCellContentView(preloadPath: string): WebContentsView {
@@ -694,6 +737,9 @@ export class OmniWindowHelper {
 
     const { id, url, contentMode, miniAppId } = layoutCell;
     const displayUrl = getCellDisplayUrl(layoutCell);
+    const browserProfile = contentMode === 'browser'
+      ? resolveOmniBrowserProfile(url) ?? 'default'
+      : null;
     let miniAppRuntime: ResolvedOmniMiniAppRuntime | null = null;
 
     if (contentMode === 'miniapp') {
@@ -721,25 +767,12 @@ export class OmniWindowHelper {
     if (menubar) this.baseWindow.contentView.addChildView(menubar);
 
     const content = contentMode === 'browser'
-      ? this.createBrowserCellContentView()
+      ? this.createBrowserCellContentView(browserProfile!)
       : this.createMiniAppCellContentView(miniAppRuntime!.preloadPath);
     this.baseWindow.contentView.addChildView(content);
 
     if (contentMode === 'browser') {
-      content.webContents.setUserAgent(CHROME_USER_AGENT);
-      content.webContents.setWindowOpenHandler((details) => {
-        shell.openExternal(details.url);
-        return { action: 'deny' };
-      });
-
-      content.webContents.on('did-navigate', (_e, navUrl) => {
-        if (!this.isWebContentsAlive(content.webContents)) return;
-        this.notifyCellUrl(id, navUrl);
-      });
-      content.webContents.on('did-navigate-in-page', (_e, navUrl) => {
-        if (!this.isWebContentsAlive(content.webContents)) return;
-        this.notifyCellUrl(id, navUrl);
-      });
+      this.configureBrowserCellContentView(id, content);
     } else {
       // Mini-app cells have privileged first-party preloads. Never allow one to become a browser.
       const expectedRendererUrl = miniAppRuntime!.rendererTarget.url;
@@ -757,68 +790,20 @@ export class OmniWindowHelper {
     // Browser-only chrome may mount after the page has already navigated.
     if (menubar) {
       menubar.webContents.on('did-finish-load', () => {
+        const currentContent = this.cells.find((candidate) => candidate.id === id)?.content
+          ?? content;
         if (!this.isWebContentsAlive(menubar.webContents)) return;
-        if (!this.isWebContentsAlive(content.webContents)) return;
-        const currentUrl = content.webContents.getURL();
+        if (!this.isWebContentsAlive(currentContent.webContents)) return;
+        const currentUrl = currentContent.webContents.getURL();
         xpcMain.broadcast('omniCell/urlChanged', { cellId: id, url: currentUrl || url });
         this.notifyControlUrlChanged(id, currentUrl || url);
       });
     }
 
-    // Track active cell on content focus
-    content.webContents.on('focus' as any, () => {
-      if (!this.isWebContentsAlive(content.webContents)) return;
-      this.broadcastActiveCell(id);
-    });
     if (menubar) {
       menubar.webContents.on('focus' as any, () => {
         if (!this.isWebContentsAlive(menubar.webContents)) return;
         this.broadcastActiveCell(id);
-      });
-    }
-
-    if (contentMode === 'browser') {
-      // Block remote pages from setting app badge (e.g. Telegram Web)
-      // Also override Notification in the main world (executeJavaScript runs in main world,
-      // bypassing contextIsolation — preload-level assignment only affects the isolated world).
-      content.webContents.on('dom-ready', () => {
-        if (!this.isWebContentsAlive(content.webContents)) return;
-        content.webContents.executeJavaScript(`
-        if ('setAppBadge' in navigator) {
-          navigator.setAppBadge = () => Promise.resolve();
-        }
-        if ('clearAppBadge' in navigator) {
-          navigator.clearAppBadge = () => Promise.resolve();
-        }
-
-        // Layer 1: override window.Notification in main world
-        window.Notification = class InterceptedNotification {
-          static permission = 'granted';
-          static requestPermission() { return Promise.resolve('granted'); }
-          constructor(title, options) {
-            console.log('[OmniCell] Notification intercepted:', { title, body: options && options.body, tag: options && options.tag, time: new Date().toISOString() });
-          }
-          addEventListener() {} removeEventListener() {} dispatchEvent() { return false; } close() {}
-        };
-
-        // Layer 2: override ServiceWorker showNotification (handles SW-triggered notifications)
-        function patchSWRegistration(reg) {
-          reg.showNotification = function(title, options) {
-            console.log('[OmniCell] SW showNotification intercepted:', { title, body: options && options.body, tag: options && options.tag, time: new Date().toISOString() });
-            return Promise.resolve();
-          };
-        }
-        if (navigator.serviceWorker) {
-          navigator.serviceWorker.ready.then(patchSWRegistration).catch(function(){});
-          var _origRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
-          navigator.serviceWorker.register = function() {
-            return _origRegister.apply(null, arguments).then(function(reg) {
-              patchSWRegistration(reg);
-              return reg;
-            });
-          };
-        }
-        `).catch(() => {});
       });
     }
 
@@ -828,26 +813,11 @@ export class OmniWindowHelper {
       content,
       contentMode,
       miniAppId,
+      browserProfile,
       lastUrl: url || '',
     };
 
-    // Auto-cleanup crashed cell
-    content.webContents.on('render-process-gone', (_e, details) => {
-      if (!this.cells.includes(cell)) return;
-      if (contentMode === 'miniapp' && miniAppRuntime) {
-        this.reportMiniAppLoadFailure({
-          cellId: id,
-          miniAppId,
-          stage: 'renderer-process',
-          expectedTarget: miniAppRuntime.rendererTarget.url,
-          error: new Error(details.reason),
-        });
-      } else {
-        console.warn(`[OmniWindowHelper] Cell ${id} renderer crashed:`, details.reason);
-      }
-      this.cells = this.cells.filter((c) => c.id !== id);
-      this.removeCellViews(cell);
-    });
+    this.bindCellContentLifecycle(cell, content, miniAppRuntime);
 
     this.cells.push(cell);
 
@@ -890,6 +860,125 @@ export class OmniWindowHelper {
       this.baseWindow.contentView.removeChildView(this.controlView);
       this.baseWindow.contentView.addChildView(this.controlView);
     }
+  }
+
+  private configureBrowserCellContentView(id: string, content: WebContentsView): void {
+    content.webContents.setWindowOpenHandler((details) => {
+      shell.openExternal(details.url);
+      return { action: 'deny' };
+    });
+
+    content.webContents.on('did-navigate', (_e, navUrl) => {
+      const cell = this.cells.find((candidate) => candidate.id === id);
+      if (cell?.content !== content) return;
+      if (!this.isWebContentsAlive(content.webContents)) return;
+      this.notifyCellUrl(id, navUrl);
+    });
+    content.webContents.on('did-navigate-in-page', (_e, navUrl) => {
+      const cell = this.cells.find((candidate) => candidate.id === id);
+      if (cell?.content !== content) return;
+      if (!this.isWebContentsAlive(content.webContents)) return;
+      this.notifyCellUrl(id, navUrl);
+    });
+
+    // Block remote pages from setting app badge (e.g. Telegram Web)
+    // Also override Notification in the main world (executeJavaScript runs in main world,
+    // bypassing contextIsolation — preload-level assignment only affects the isolated world).
+    content.webContents.on('dom-ready', () => {
+      if (!this.isWebContentsAlive(content.webContents)) return;
+      content.webContents.executeJavaScript(`
+      if ('setAppBadge' in navigator) {
+        navigator.setAppBadge = () => Promise.resolve();
+      }
+      if ('clearAppBadge' in navigator) {
+        navigator.clearAppBadge = () => Promise.resolve();
+      }
+
+      // Layer 1: override window.Notification in main world
+      window.Notification = class InterceptedNotification {
+        static permission = 'granted';
+        static requestPermission() { return Promise.resolve('granted'); }
+        constructor(title, options) {
+          console.log('[OmniCell] Notification intercepted:', { title, body: options && options.body, tag: options && options.tag, time: new Date().toISOString() });
+        }
+        addEventListener() {} removeEventListener() {} dispatchEvent() { return false; } close() {}
+      };
+
+      // Layer 2: override ServiceWorker showNotification (handles SW-triggered notifications)
+      function patchSWRegistration(reg) {
+        reg.showNotification = function(title, options) {
+          console.log('[OmniCell] SW showNotification intercepted:', { title, body: options && options.body, tag: options && options.tag, time: new Date().toISOString() });
+          return Promise.resolve();
+        };
+      }
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker.ready.then(patchSWRegistration).catch(function(){});
+        var _origRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+        navigator.serviceWorker.register = function() {
+          return _origRegister.apply(null, arguments).then(function(reg) {
+            patchSWRegistration(reg);
+            return reg;
+          });
+        };
+      }
+      `).catch(() => {});
+    });
+  }
+
+  private bindCellContentLifecycle(
+    cell: CellViewPair,
+    content: WebContentsView,
+    miniAppRuntime: ResolvedOmniMiniAppRuntime | null,
+  ): void {
+    content.webContents.on('focus' as any, () => {
+      if (cell.content !== content) return;
+      if (!this.isWebContentsAlive(content.webContents)) return;
+      this.broadcastActiveCell(cell.id);
+    });
+
+    content.webContents.on('render-process-gone', (_e, details) => {
+      if (!this.cells.includes(cell) || cell.content !== content) return;
+      if (cell.contentMode === 'miniapp' && miniAppRuntime) {
+        this.reportMiniAppLoadFailure({
+          cellId: cell.id,
+          miniAppId: cell.miniAppId,
+          stage: 'renderer-process',
+          expectedTarget: miniAppRuntime.rendererTarget.url,
+          error: new Error(details.reason),
+        });
+      } else {
+        console.warn(`[OmniWindowHelper] Cell ${cell.id} renderer crashed:`, details.reason);
+      }
+      this.cells = this.cells.filter((candidate) => candidate !== cell);
+      this.removeCellViews(cell);
+    });
+  }
+
+  private replaceBrowserCellContentView(
+    cell: CellViewPair,
+    url: string,
+    profile: OmniBrowserProfile,
+  ): void {
+    if (!this.baseWindow || this.baseWindow.isDestroyed()) return;
+
+    const previousContent = cell.content;
+    const content = this.createBrowserCellContentView(profile);
+    this.configureBrowserCellContentView(cell.id, content);
+    cell.content = content;
+    cell.browserProfile = profile;
+    this.bindCellContentLifecycle(cell, content, null);
+
+    this.baseWindow.contentView.removeChildView(previousContent);
+    this.closeWebContentsView(previousContent);
+    this.baseWindow.contentView.addChildView(content);
+    this.applyLayoutInternal();
+
+    if (this.controlVisible && this.controlView) {
+      this.baseWindow.contentView.removeChildView(this.controlView);
+      this.baseWindow.contentView.addChildView(this.controlView);
+    }
+
+    content.webContents.loadURL(url).catch(() => {});
   }
 
   private removeCellViews(cell: CellViewPair): void {
