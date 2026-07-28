@@ -29,7 +29,8 @@ silently downgrading failed Fast requests to Standard.
 # Verification
 
 - Verify Translator passes an explicit Fast tier to the shared runtime.
-- Verify the runtime maps Fast to Pi's `serviceTier: "priority"` request option.
+- Verify the installed Pi Agent and Codex provider produce the final wire field
+  `service_tier: "priority"` for Fast.
 - Verify a Standard/unspecified runtime call remains unchanged and Fast cannot silently downgrade.
 - Run the focused Codex runtime and Translator tests.
 - Run Node type checking and `git diff --check`.

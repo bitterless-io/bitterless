@@ -67,14 +67,10 @@ export interface CodexRuntimePiSessionEvent {
   };
 }
 
-export type CodexRuntimePiStreamFn = (
-  model: unknown,
-  context: unknown,
-  options?: Record<string, unknown>
-) => unknown | Promise<unknown>;
+export type CodexRuntimePiOnPayload = (payload: unknown, model: unknown) => unknown | Promise<unknown>;
 
 export interface CodexRuntimePiAgent {
-  streamFn?: CodexRuntimePiStreamFn;
+  onPayload?: CodexRuntimePiOnPayload;
 }
 
 export interface CodexRuntimePiSession {
@@ -330,20 +326,31 @@ const assertTarget = (
   }
 };
 
-const enableFastServiceTier = (session: CodexRuntimePiSession): void => {
+const CODEX_FAST_UNAVAILABLE_SENTINEL = 'bitterless-codex-fast-unavailable';
+
+const enableFastServiceTier = (session: CodexRuntimePiSession): (() => void) => {
   try {
     const agent = session.agent;
-    const streamFn = agent?.streamFn;
-    if (!agent || typeof streamFn !== 'function') {
-      throw new CodexRuntimeError('runtime-unavailable');
-    }
-    const fastStreamFn: CodexRuntimePiStreamFn = (model, context, options) =>
-      streamFn.call(agent, model, context, {
-        ...(options ?? {}),
-        serviceTier: 'priority'
-      });
-    agent.streamFn = fastStreamFn;
-    if (agent.streamFn !== fastStreamFn) throw new CodexRuntimeError('runtime-unavailable');
+    if (!agent) throw new CodexRuntimeError('runtime-unavailable');
+    const onPayload = agent.onPayload;
+    let applied = false;
+    const fastOnPayload: CodexRuntimePiOnPayload = async (payload, model) => {
+      const transformed = onPayload ? await onPayload.call(agent, payload, model) : payload;
+      const finalPayload = transformed === undefined ? payload : transformed;
+      if (!finalPayload || typeof finalPayload !== 'object' || Array.isArray(finalPayload)) {
+        throw new Error(CODEX_FAST_UNAVAILABLE_SENTINEL);
+      }
+      applied = true;
+      return {
+        ...(finalPayload as Record<string, unknown>),
+        service_tier: 'priority'
+      };
+    };
+    agent.onPayload = fastOnPayload;
+    if (agent.onPayload !== fastOnPayload) throw new CodexRuntimeError('runtime-unavailable');
+    return () => {
+      if (!applied) throw new CodexRuntimeError('runtime-unavailable');
+    };
   } catch (error) {
     if (error instanceof CodexRuntimeError) throw error;
     throw new CodexRuntimeError('runtime-unavailable');
@@ -530,6 +537,7 @@ export class CodexRuntimeService {
     let outputLimit = false;
     let toolViolation = false;
     let abortRequested = false;
+    let assertFastServiceTierApplied = (): void => undefined;
 
     const abortSession = (): void => {
       if (abortRequested) return;
@@ -573,7 +581,9 @@ export class CodexRuntimeService {
       if (session.thinkingLevel !== undefined && session.thinkingLevel !== input.effort) {
         throw new CodexRuntimeError('effort-mismatch');
       }
-      if (input.serviceTier === 'fast') enableFastServiceTier(session);
+      if (input.serviceTier === 'fast') {
+        assertFastServiceTierApplied = enableFastServiceTier(session);
+      }
 
       unsubscribe = session.subscribe((event) => {
         if (event.type?.startsWith('tool_execution_')) {
@@ -611,11 +621,18 @@ export class CodexRuntimeService {
       });
 
       await waitForPrompt(session, input.prompt, input.signal, abortSession);
+      assertFastServiceTierApplied();
       if (input.signal.aborted) throw new CodexRuntimeError('cancelled');
       if (toolViolation) throw new CodexRuntimeError('tool-violation');
       if (outputLimit) throw new CodexRuntimeError('output-limit');
       if (providerError || ['error', 'length', 'aborted'].includes(stopReason)) {
         throwIfAuthRequired(providerErrorDetails.join('\n'));
+        if (
+          input.serviceTier === 'fast' &&
+          providerErrorDetails.some((detail) => detail.includes(CODEX_FAST_UNAVAILABLE_SENTINEL))
+        ) {
+          throw new CodexRuntimeError('runtime-unavailable');
+        }
         throw new CodexRuntimeError('provider-error');
       }
 

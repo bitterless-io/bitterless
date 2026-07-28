@@ -22,22 +22,25 @@ test('Fast is a per-request runtime option mapped to provider priority', () => {
   assert.match(runtimeSource, /serviceTier\?: CodexRuntimeServiceTier;/);
   assert.match(
     runtimeSource,
-    /const enableFastServiceTier = \(session: CodexRuntimePiSession\): void =>/
+    /const enableFastServiceTier = \(session: CodexRuntimePiSession\): \(\(\) => void\) =>/
   );
-  assert.match(runtimeSource, /serviceTier: 'priority'/);
+  assert.match(runtimeSource, /service_tier: 'priority'/);
   assert.match(
     runtimeSource,
-    /if \(input\.serviceTier === 'fast'\) enableFastServiceTier\(session\);/
+    /if \(input\.serviceTier === 'fast'\) \{\s*assertFastServiceTierApplied = enableFastServiceTier\(session\);\s*\}/
   );
 });
 
-test('Fast cannot silently continue without a writable Agent stream function', () => {
+test('Fast cannot silently continue without a writable Agent payload hook', () => {
   assert.match(
     runtimeSource,
-    /if \(!agent \|\| typeof streamFn !== 'function'\) \{\s*throw new CodexRuntimeError\('runtime-unavailable'\);/
+    /if \(!agent\) throw new CodexRuntimeError\('runtime-unavailable'\);/
   );
   assert.match(
     runtimeSource,
-    /agent\.streamFn = fastStreamFn;\s*if \(agent\.streamFn !== fastStreamFn\) throw new CodexRuntimeError\('runtime-unavailable'\);/
+    /agent\.onPayload = fastOnPayload;\s*if \(agent\.onPayload !== fastOnPayload\) throw new CodexRuntimeError\('runtime-unavailable'\);/
   );
+  assert.match(runtimeSource, /CODEX_FAST_UNAVAILABLE_SENTINEL/);
+  assert.match(runtimeSource, /if \(!applied\) throw new CodexRuntimeError\('runtime-unavailable'\);/);
+  assert.match(runtimeSource, /assertFastServiceTierApplied\(\);/);
 });

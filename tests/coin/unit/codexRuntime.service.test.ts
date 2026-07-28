@@ -78,39 +78,27 @@ test('creates a sterile in-memory Codex session with all tools disabled', async 
   assert.equal(loader.getSystemPrompt(), 'Return strict JSON.');
 });
 
-test('maps an explicit Fast tier to priority while preserving stream options', async () => {
+test('maps an explicit Fast tier into the final provider payload', async () => {
   let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
-  const streamModel = { provider: 'openai-codex', id: 'gpt-5.5' };
-  const streamContext = { messages: [] };
-  let capturedModel: unknown;
-  let capturedContext: unknown;
-  let capturedOptions: Record<string, unknown> | undefined;
+  let capturedPayload: unknown;
   const agent = {
-    streamFn: async (
-      model: unknown,
-      context: unknown,
-      options?: Record<string, unknown>,
-    ) => {
-      capturedModel = model;
-      capturedContext = context;
-      capturedOptions = options;
-      return { kind: 'stream' };
+    onPayload: async (payload: unknown) => {
+      return {
+        ...(payload as Record<string, unknown>),
+        extensionMarker: 'kept',
+      };
     },
   };
   const session: CodexRuntimePiSession = {
     agent,
-    model: streamModel,
+    model: { provider: 'openai-codex', id: 'gpt-5.5' },
     thinkingLevel: 'low',
     subscribe: (value) => {
       listener = value;
       return () => undefined;
     },
     prompt: async () => {
-      await agent.streamFn(streamModel, streamContext, {
-        maxTokens: 128,
-        headers: { 'x-test': 'kept' },
-        serviceTier: 'default',
-      });
+      capturedPayload = await agent.onPayload({ model: 'gpt-5.5', store: false }, session.model);
       listener({
         type: 'message_end',
         message: { role: 'assistant', content: '{"ok":true}', stopReason: 'stop' },
@@ -135,27 +123,22 @@ test('maps an explicit Fast tier to priority while preserving stream options', a
     signal: new AbortController().signal,
   });
 
-  assert.equal(capturedModel, streamModel);
-  assert.equal(capturedContext, streamContext);
-  assert.deepEqual(capturedOptions, {
-    maxTokens: 128,
-    headers: { 'x-test': 'kept' },
-    serviceTier: 'priority',
+  assert.deepEqual(capturedPayload, {
+    model: 'gpt-5.5',
+    store: false,
+    extensionMarker: 'kept',
+    service_tier: 'priority',
   });
 });
 
-test('leaves the existing stream function unchanged without a Fast selection', async () => {
+test('leaves the provider payload hook unchanged without a Fast selection', async () => {
   let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
-  let capturedOptions: Record<string, unknown> | undefined;
-  const originalStreamFn = async (
-    _model: unknown,
-    _context: unknown,
-    options?: Record<string, unknown>,
-  ) => {
-    capturedOptions = options;
-    return { kind: 'stream' };
+  let capturedPayload: unknown;
+  const originalOnPayload = async (payload: unknown) => {
+    capturedPayload = payload;
+    return payload;
   };
-  const agent = { streamFn: originalStreamFn };
+  const agent = { onPayload: originalOnPayload };
   const session: CodexRuntimePiSession = {
     agent,
     model: { provider: 'openai-codex', id: 'gpt-5.5' },
@@ -165,7 +148,7 @@ test('leaves the existing stream function unchanged without a Fast selection', a
       return () => undefined;
     },
     prompt: async () => {
-      await agent.streamFn({}, {}, { maxTokens: 128 });
+      await agent.onPayload({ model: 'gpt-5.5', store: false }, session.model);
       listener({
         type: 'message_end',
         message: { role: 'assistant', content: '{"ok":true}', stopReason: 'stop' },
@@ -189,11 +172,11 @@ test('leaves the existing stream function unchanged without a Fast selection', a
     signal: new AbortController().signal,
   });
 
-  assert.equal(agent.streamFn, originalStreamFn);
-  assert.deepEqual(capturedOptions, { maxTokens: 128 });
+  assert.equal(agent.onPayload, originalOnPayload);
+  assert.deepEqual(capturedPayload, { model: 'gpt-5.5', store: false });
 });
 
-test('fails closed when a Fast session does not expose the Agent stream function', async () => {
+test('fails closed when a Fast session does not expose its Agent', async () => {
   let prompted = false;
   let disposed = false;
   const session: CodexRuntimePiSession = {
@@ -228,6 +211,45 @@ test('fails closed when a Fast session does not expose the Agent stream function
   );
   assert.equal(prompted, false);
   assert.equal(disposed, true);
+});
+
+test('fails closed when the SDK skips the Fast provider payload hook', async () => {
+  let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
+  const session: CodexRuntimePiSession = {
+    agent: {},
+    model: { provider: 'openai-codex', id: 'gpt-5.5' },
+    thinkingLevel: 'low',
+    subscribe: (value) => {
+      listener = value;
+      return () => undefined;
+    },
+    prompt: async () => {
+      listener({
+        type: 'message_end',
+        message: { role: 'assistant', content: '{"standard":true}', stopReason: 'stop' },
+      });
+    },
+    abort: async () => undefined,
+    dispose: () => undefined,
+  };
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => createPi(session, () => undefined),
+  });
+
+  await assert.rejects(
+    runtime.run({
+      model: 'gpt-5.5',
+      effort: 'low',
+      serviceTier: 'fast',
+      systemPrompt: 'Return strict JSON.',
+      prompt: '{"evidence":[]}',
+      maxOutputBytes: 1024,
+      signal: new AbortController().signal,
+    }),
+    (error) => error instanceof CodexRuntimeError && error.code === 'runtime-unavailable',
+  );
 });
 
 test('aborts the active in-memory session without returning partial output', async () => {
