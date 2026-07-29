@@ -123,13 +123,15 @@ compilation, signing, notarization, or upload.
 the audit exits non-zero.
 
 The desktop runtime remains pinned to Electron `40.10.6` with
-`better-sqlite3-multiple-ciphers@12.11.1`. The macOS ARM fast-publish shortcut synchronizes source
-first, installs the checked-out Yarn lockfile with `--frozen-lockfile`, then runs the existing patch
-preparation to increment `version`/`_version` and generate a fresh local `YYMMDDHHmmss`
-`version_code`. Only then may it start the signed build. An install or patch failure stops the
-command before packaging. This prevents a newly pulled Electron or SQLCipher dependency from being
-omitted due to stale `node_modules`, and prevents a new fast-published version from reusing an older
-release's build identifier.
+`better-sqlite3-multiple-ciphers@12.11.1`. The macOS ARM fast-publish shortcut deliberately treats
+the current local working tree as the release source and performs no Git pull, fetch, reset, stash,
+or checkout. It first installs the local Yarn lockfile with `--frozen-lockfile`, then runs the
+existing patch preparation to increment `version`/`_version` and generate a fresh local
+`YYMMDDHHmmss` `version_code`. Only then may it start the signed build. An install or patch failure
+stops the command before packaging. This keeps installed Electron and SQLCipher dependencies aligned
+with the local lockfile, protects local release edits from an implicit Git mutation, and prevents a
+new fast-published version from reusing an older release's build identifier. Any desired source
+synchronization is a separate explicit operator action before fast publish.
 
 macOS DMG signing must work when the Developer ID certificate exists only as the configured P12,
 not as a persistent login-keychain identity. The publisher imports that P12 into a private
@@ -157,7 +159,8 @@ Production publication may start only after:
 
 1. migration audit passes;
 2. focused audit tests, Todo SQLCipher/asset smoke, and TypeScript checks pass;
-3. the new release version and release notes are committed and synchronized;
+3. the current local release inputs and release notes are reviewed; any desired Git synchronization
+   is completed explicitly before invoking fast publish;
 4. each supported platform is built from that same commit and `version_code`;
 5. publication compares the local and existing platform manifests with `compare-versions` and
    refuses a downgrade or a conflicting reuse of the same `version_code`;
