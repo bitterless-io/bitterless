@@ -1,7 +1,7 @@
 ---
 id: release-local-fast-publish-005
 scope: macOS ARM fast publish from the current local working tree
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [release-fast-publish-dependency-sync-003, release-notarization-retry-004]
 ---
 
@@ -53,3 +53,18 @@ pulling or otherwise mutating Git state.
 - Per owner request, do not run tests, install, patch, build, signing, notarization, upload,
   publication, or `yarn fast_publish:mac_arm`.
 - The owner performs the release-path verification with `yarn fast_publish:mac_arm`.
+
+## Completion — 2026-07-29
+
+- `fast_publish:mac_arm` now starts with `yarn install --frozen-lockfile` and performs no Git
+  operation.
+- Frozen install, version/version-code patching, signing-debug ARM build, and production publication
+  retain their strict `&&` fail-fast order.
+- `fast_publish:mac_intel`, `scripts/git_pull.js`, Electron `40.10.6`, SQLite `12.11.1`, and the
+  custom notarization workflow are unchanged.
+- The focused source contract asserts the exact local-only chain and explicitly rejects
+  `git_pull.js` from the ARM shortcut.
+- Per owner request, no tests, install, patch, build, signing, notarization, upload, publication, or
+  fast-publish command was run.
+- Independent source review passed with no P1, P2, or P3 finding; see
+  [`release-local-fast-publish-005-1`](../reviews/release-local-fast-publish-005-1.md).
