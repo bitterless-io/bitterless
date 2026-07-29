@@ -75,3 +75,9 @@ locked dependencies before it changes release metadata or starts the signed buil
 - Independent review passed without P1, P2, or P3 finding; see
   [`release-fast-publish-dependency-sync-003-1`](../reviews/release-fast-publish-dependency-sync-003-1.md).
 - Owner verification remains the final signed macOS ARM fast-publish run.
+
+## Superseded source-sync prefix — 2026-07-29
+
+[`release-local-fast-publish-005`](release-local-fast-publish-005.md) removes the initial
+`git_pull.js` step so fast publish uses the current local working tree. The frozen install, patch,
+signed build, and publication boundaries from this task remain required in the same fail-fast order.

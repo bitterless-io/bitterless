@@ -38,8 +38,11 @@ configuration failure.
 - Restore the exact Electron `40.10.6` manifest and lock entry, retain
   `better-sqlite3-multiple-ciphers@12.11.1`, and remove the `node-abi@4.33.0` resolution introduced
   only for Electron 43.
-- After Git synchronization and before version preparation, fast publish must run a frozen-lockfile
-  Yarn install so the installed Electron and native modules match the checked-out release source.
+- Before version preparation, fast publish must run a frozen-lockfile Yarn install so the installed
+  Electron and native modules match the current local lockfile.
+- Fast publish must not mutate or synchronize Git. The current local working tree is the intentional
+  release source; pulling, fetching, resetting, stashing, or checking out is an explicit operator
+  action outside the command.
 - A failed dependency install must stop before `patch.js`, preventing a release version bump when
   the build cannot safely start.
 - Keep `electron-builder.tmp.yml` as the builder source of truth; no ASAR override is needed for a
@@ -53,7 +56,8 @@ configuration failure.
 - `yarn check --integrity` passes after dependency repair.
 - Installed Electron is `40.10.6` and installed `better-sqlite3-multiple-ciphers` is `12.11.1`.
 - The arm64 `better_sqlite3.node` binding exists.
-- The focused release-hook suite proves pull → frozen install → patch → build → publish ordering.
+- The focused release-hook contract proves frozen install → patch → build → publish ordering and
+  rejects an implicit `git_pull.js` step.
 
 ## Resolution — 2026-07-27
 
@@ -70,3 +74,10 @@ dependency for Electron `40.10.6` arm64. Yarn integrity passed, the installed SQ
 closed an in-memory database under Electron ABI 143.
 
 The owner will run the final signed macOS ARM package through `yarn fast_publish:mac_arm`.
+
+## Local release-source update — 2026-07-29
+
+The earlier source-synchronization prefix is superseded. `fast_publish:mac_arm` now starts from the
+current local working tree and local `yarn.lock`, runs `yarn install --frozen-lockfile`, then patch,
+signed build, and publication. The dependency-freshness fix remains intact; only the implicit Git
+mutation is removed.

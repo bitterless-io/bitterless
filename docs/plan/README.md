@@ -90,6 +90,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [release-fast-publish-version-code-002](tasks/release-fast-publish-version-code-002.md) | restore version preparation before macOS ARM fast-publish build | done | — |
 | [release-fast-publish-dependency-sync-003](tasks/release-fast-publish-dependency-sync-003.md) | restore Electron 40 and install locked dependencies before macOS ARM version preparation | implemented; owner verification pending | release-fast-publish-version-code-002 |
 | [release-notarization-retry-004](tasks/release-notarization-retry-004.md) | logged network-only retries for independently rerunnable macOS App and DMG notarization | implemented; owner verification pending | release-fast-publish-dependency-sync-003 |
+| [release-local-fast-publish-005](tasks/release-local-fast-publish-005.md) | publish the current local macOS ARM source without an implicit Git pull | in-progress | release-fast-publish-dependency-sync-003, release-notarization-retry-004 |
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |
 | [translator-language-direction-002](tasks/translator-language-direction-002.md) | explicit-range direction detection and English-abbreviation Chinese meanings | done | translator-miniapp-001 |
