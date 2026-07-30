@@ -46,7 +46,8 @@
               v-if="
                 llmSettingStore.authState === 'authenticating' ||
                 llmSettingStore.action === 'login' ||
-                llmSettingStore.action === 'reconnect'
+                llmSettingStore.action === 'reconnect' ||
+                llmSettingStore.action === 'cancel'
               "
               size="mini"
               :loading="llmSettingStore.action === 'cancel'"
