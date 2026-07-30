@@ -88,6 +88,9 @@ design document.
 
 ## Issues
 
+- [GPT-5.5 removed by GPT-5.6 migration](issues/codex-gpt55-removed-by-gpt56-migration.md) -
+  in progress: keep GPT-5.5 in shared, Coin, and Maestro model catalogs while retaining GPT-5.6
+  additions and the fixed GPT-5.5 Translator target.
 - [Codex Model login cancellation regression](issues/codex-model-login-cancel-regression.md) -
   implemented; owner verification pending: Setting can cancel or reconnect Codex immediately,
   while credential, provider, and renderer generations ignore late superseded results.

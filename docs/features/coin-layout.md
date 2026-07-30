@@ -150,7 +150,7 @@ Resources is a dense settings page with one bordered list per category. Cards ar
 
 ```text
 ┌ AI analysis ───────────────────────────────────────────────────────────┐
-│ Codex   Connected as ...   gpt-5.6-sol / Extra   verified 14:20 [Disconnect]│
+│ Codex   Connected as ...   gpt-5.5 / high   verified 14:20 [Disconnect]│
 └────────────────────────────────────────────────────────────────────────┘
 ┌ Local data tool ──────────────────────────────────────────────────────┐
 │ GMGN CLI  1.5.2  /path/to/gmgn-cli              [Recheck] [Guide]     │
