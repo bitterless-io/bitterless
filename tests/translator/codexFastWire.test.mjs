@@ -173,7 +173,7 @@ const createRealPiModule = (model) => {
 test('real Pi Codex provider writes priority only for Fast runtime requests', async () => {
   const { CodexRuntimeService } = loadRuntime();
   const model = openaiCodexProvider().getModels().find(
-    (candidate) => candidate.id === 'gpt-5.6-luna'
+    (candidate) => candidate.id === 'gpt-5.5'
   );
   assert.ok(model, 'Installed Pi must expose the fixed Translator model');
   const bodies = [];
@@ -190,7 +190,7 @@ test('real Pi Codex provider writes priority only for Fast runtime requests', as
       loadPiModule: async () => createRealPiModule(model)
     });
     const baseInput = {
-      model: 'gpt-5.6-luna',
+      model: 'gpt-5.5',
       effort: 'low',
       systemPrompt: 'Return strict JSON.',
       prompt: '{"evidence":[]}',

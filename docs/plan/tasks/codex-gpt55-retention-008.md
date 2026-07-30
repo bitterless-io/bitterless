@@ -1,7 +1,7 @@
 ---
 id: codex-gpt55-retention-008
 scope: shared-codex-runtime
-status: ready
+status: in-progress
 depends-on: [model-provider-login-cancel-regression-007]
 ---
 

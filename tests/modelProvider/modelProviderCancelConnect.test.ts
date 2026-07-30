@@ -12,6 +12,7 @@ import {
 } from '../../src/main/modelProvider/modelProvider.service';
 import {
   MODEL_PROVIDER_CODEX_ID,
+  MODEL_PROVIDER_CODEX_MODEL,
   type ModelProviderActionResult,
   type ModelProviderSnapshot,
 } from '../../src/shared/modelProvider/modelProvider.contract';
@@ -64,6 +65,29 @@ const createService = (options: {
 
 const authState = (result: ModelProviderActionResult): string =>
   result.snapshot.providers[0].authState;
+
+test('keeps the shared Model Provider target fixed at GPT-5.5 low', async () => {
+  const service = createService({
+    credentials: {
+      getStatus: async () => status(true),
+      connect: async () => status(true),
+      cancelConnect: async () => undefined,
+      disconnect: async () => status(),
+      subscribeTransitions: () => () => undefined,
+    },
+  });
+
+  const snapshot = await service.getSnapshot();
+  assert.equal(MODEL_PROVIDER_CODEX_MODEL, 'gpt-5.5');
+  assert.deepEqual(snapshot.availableTargets, [
+    {
+      provider: MODEL_PROVIDER_CODEX_ID,
+      model: 'gpt-5.5',
+      effort: 'low',
+    },
+  ]);
+  assert.deepEqual(snapshot.providers[0].configuredModels, ['gpt-5.5']);
+});
 
 test('cancel bypasses the mutation queue after authenticating commits but before credential connect', async () => {
   let connectCount = 0;

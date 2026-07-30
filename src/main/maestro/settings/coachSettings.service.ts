@@ -16,7 +16,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   'openai-codex': 'gpt-5.6-luna'
 }
 
-const OPENAI_CODEX_MODELS = ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'] as const
+const OPENAI_CODEX_MODELS = ['gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'] as const
 
 export class CoachSettingsService {
   private readonly file: string

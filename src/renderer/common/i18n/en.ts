@@ -234,7 +234,7 @@ export const en = {
   },
   translator: {
     title: 'Translator',
-    model: 'Codex · GPT-5.6 Luna · low',
+    model: 'Codex · GPT-5.5 · low',
     autoDirection: 'Auto direction',
     checking: 'Checking Codex',
     translateToEnglish: 'Translate to English',

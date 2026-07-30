@@ -108,6 +108,19 @@ export const LLM_PRESETS: LlmTarget[] = [
     authLabel: 'Coding agent subscription'
   },
   {
+    provider: 'openai-codex',
+    providerLabel: 'Codex',
+    model: 'gpt-5.5',
+    label: 'GPT-5.5',
+    shortLabel: '5.5',
+    effort: 'low',
+    efforts: CODEX_EFFORTS.slice(),
+    contextLengthK: 256,
+    contextLengthLabel: '256K',
+    compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
+    authLabel: 'Coding agent subscription'
+  },
+  {
     provider: 'anthropic',
     providerLabel: 'Claude',
     model: 'claude-opus-4-8',

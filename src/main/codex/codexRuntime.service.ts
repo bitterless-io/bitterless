@@ -2,7 +2,12 @@ import { Buffer } from 'node:buffer';
 import type { ModelProviderInvalidationReason } from '@shared/modelProvider/modelProvider.contract';
 
 export const CODEX_RUNTIME_PROVIDER = 'openai-codex' as const;
-export const CODEX_RUNTIME_MODELS = ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'] as const;
+export const CODEX_RUNTIME_MODELS = [
+  'gpt-5.5',
+  'gpt-5.6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+] as const;
 export const CODEX_RUNTIME_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 export const CODEX_RUNTIME_SERVICE_TIERS = ['fast'] as const;
 
@@ -10,6 +15,7 @@ export type CodexRuntimeModel = (typeof CODEX_RUNTIME_MODELS)[number];
 export type CodexRuntimeEffort = (typeof CODEX_RUNTIME_EFFORTS)[number];
 export type CodexRuntimeServiceTier = (typeof CODEX_RUNTIME_SERVICE_TIERS)[number];
 export const CODEX_RUNTIME_MODEL_EFFORTS = {
+  'gpt-5.5': CODEX_RUNTIME_EFFORTS,
   'gpt-5.6-luna': CODEX_RUNTIME_EFFORTS,
   'gpt-5.6-sol': ['medium', 'high', 'xhigh'],
   'gpt-5.6-terra': CODEX_RUNTIME_EFFORTS,

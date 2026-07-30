@@ -13,17 +13,19 @@ export const COIN_LAUNCH_STAGES = [
 export const COIN_AI_DEFAULT_MODEL = 'gpt-5.6-sol' as const;
 export const COIN_AI_DEFAULT_EFFORT = 'xhigh' as const;
 export const COIN_AI_MODELS = [
+  'gpt-5.5',
   'gpt-5.6-luna',
   COIN_AI_DEFAULT_MODEL,
   'gpt-5.6-terra',
 ] as const;
-export const COIN_AI_LEGACY_RECEIPT_MODELS = ['gpt-5.5', 'gpt-5.4'] as const;
+export const COIN_AI_LEGACY_RECEIPT_MODELS = ['gpt-5.4'] as const;
 export const COIN_AI_RECEIPT_MODELS = [
   ...COIN_AI_MODELS,
   ...COIN_AI_LEGACY_RECEIPT_MODELS,
 ] as const;
 export const COIN_AI_EFFORTS = ['low', 'medium', 'high', COIN_AI_DEFAULT_EFFORT] as const;
 export const COIN_AI_MODEL_EFFORTS = {
+  'gpt-5.5': COIN_AI_EFFORTS,
   'gpt-5.6-luna': COIN_AI_EFFORTS,
   'gpt-5.6-sol': ['medium', 'high', COIN_AI_DEFAULT_EFFORT],
   'gpt-5.6-terra': COIN_AI_EFFORTS,

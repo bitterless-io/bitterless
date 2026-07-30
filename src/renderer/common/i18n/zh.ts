@@ -235,7 +235,7 @@ export const zh: typeof en = {
   },
   translator: {
     title: '翻译器',
-    model: 'Codex · GPT-5.6 Luna · low',
+    model: 'Codex · GPT-5.5 · low',
     autoDirection: '自动判断方向',
     checking: '正在检查 Codex',
     translateToEnglish: '翻译为英文',
