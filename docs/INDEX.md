@@ -10,6 +10,8 @@ design document.
   live updates for every first-party renderer, and correct locale before recreated windows mount.
 - [Maestro sub-application](features/maestro.md) - the Bitterless Mini App migrated from the
   Micromeet Cowork runtime.
+- [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
+  services with unchanged XPC and runtime behavior.
 - [Trench sub-application](features/coin.md) - full-width trench analysis tabs with background Codex
   analysis and local resource configuration.
 - [Coin layout](features/coin-layout.md) - full-width analysis console, Resources page, tab layouts,
@@ -67,6 +69,8 @@ design document.
   classification, Focus/unread semantics, Desktop status bridge, and persistence boundary.
 - [EyesOnAgents layout](integrations/eyes-on-agents-layout.md) - standalone Mini App window,
   wrapping observation board, compact title/action cards, and responsive interaction states.
+- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - two-line result metadata implemented; owner verification pending:
+  separator-insensitive title lookup with custom Domain and runtime context.
 
 ## Design system
 
@@ -162,6 +166,8 @@ design document.
 - [EyesOnAgents completion alert](issues/eyes-on-agents-completion-alert.md) - fixed and runtime verified:
   each newly accepted successful completion should play the supplied tone and send one localized
   native notification without duplicate alerts from Hook, App Server, or polling races.
+- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - two-line result metadata implemented; owner verification pending:
+  empty input reveals nothing; matched rows show title plus custom Domain/runtime context.
 - [EyesOnAgents App Server frame overflow](issues/eyes-on-agents-app-server-frame-overflow.md) - implemented; owner verification pending:
   opted-in latest-question recovery must not aggregate ten complete turns into a frame that kills
   the managed Codex App Server connection.

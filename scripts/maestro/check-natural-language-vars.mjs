@@ -53,7 +53,7 @@ const loadTsModule = (specifier, parentDir = root) => {
 }
 
 const { extractVariablesFromMessage } = loadTsModule('@maestro-main/agent/naturalLanguageVariables')
-const maestroWindowSource = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const agentPromptSource = readFileSync(join(root, 'main/maestro/agent/runtime/agentPrompt.ts'), 'utf8')
 
 const bookingRecipe = {
   inputs: [
@@ -189,7 +189,7 @@ if (failures.length) {
   process.exit(1)
 }
 
-if (!maestroWindowSource.includes("const seed = Object.keys(c.seed).length ? clipInline(JSON.stringify(c.seed), MAX_AGENT_SKILL_INLINE_CHARS) : 'none'")) {
+if (!/const seed = Object\.keys\(brief\.seed\)\.length[\s\S]*?clipInline\(JSON\.stringify\(brief\.seed\), MAX_AGENT_SKILL_INLINE_CHARS\)[\s\S]*?: 'none'/.test(agentPromptSource)) {
   console.error('[check-natural-language-vars] failed')
   console.error('- empty per-turn message_seed should be rendered as "none", and non-empty seeds should be clipped')
   process.exit(1)
@@ -198,14 +198,14 @@ if (!maestroWindowSource.includes("const seed = Object.keys(c.seed).length ? cli
 const skillIndexChecks = [
   ['MAX_AGENT_SKILL_BRIEFS = 40', 'per-turn skill catalog should cap the number of listed skills'],
   ['const selectedBriefs = selectAgentSkillBriefs(params.briefs, params.message)', 'per-turn skill catalog should rank/select briefs by the current message'],
-  ['function scoreAgentSkillBrief(brief: AgentSkillBrief, message: string): number', 'skill catalog ranking should be centralized'],
+  ['const scoreAgentSkillBrief = (', 'skill catalog ranking should be centralized'],
   ['MAX_AGENT_SKILL_INPUTS', 'skill catalog inputs should be capped'],
   ['MAX_AGENT_SKILL_DESCRIPTION_CHARS', 'skill catalog descriptions should be capped'],
   ['lower-relevance skills omitted from this turn', 'prompt should explain omitted lower-relevance skills'],
-  ['function clipInline(value: unknown, max: number): string', 'skill catalog inline fields should be clipped']
+  ['const clipInline = (value: unknown, max: number): string =>', 'skill catalog inline fields should be clipped']
 ]
 for (const [needle, message] of skillIndexChecks) {
-  if (!maestroWindowSource.includes(needle)) {
+  if (!agentPromptSource.includes(needle)) {
     console.error('[check-natural-language-vars] failed')
     console.error(`- ${message}`)
     process.exit(1)

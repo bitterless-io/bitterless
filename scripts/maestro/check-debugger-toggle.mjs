@@ -9,7 +9,8 @@ const assert = (condition, message) => {
 const api = read('shared/coach.api.ts')
 const handler = read('main/xpc/coach.handler.ts')
 const capture = read('main/capture/debuggerCapture.ts')
-const maestro = read('main/windows/maestroWindow.helper.ts')
+const controller = read('main/windows/main/maestroWindow.controller.ts')
+const browserView = read('main/windows/main/maestroBrowserView.service.ts')
 const menu = read('renderer/home/src/components/MenuBar/MenuBar.vue')
 const tabStore = read('renderer/home/src/components/MenuBar/tab.store.ts')
 
@@ -18,18 +19,31 @@ assert(api.includes('debuggerEnabled: boolean'), 'TabInfo should expose debugger
 assert(api.includes('debuggerAttached: boolean'), 'TabInfo should expose debuggerAttached')
 assert(handler.includes('async setTabDebugger(params: { id: string; enabled: boolean }): Promise<TabInfo[]>'), 'handler should implement setTabDebugger')
 assert(handler.includes('maestroWindowHelper.setTabDebugger(params)'), 'handler should delegate setTabDebugger')
+assert(
+  /async setTabDebugger\(params: \{ id: string; enabled: boolean \}\): Promise<TabInfo\[]> \{\s*return await this\.browserView\.setTabDebugger\(params\)\s*\}/.test(
+    controller
+  ),
+  'controller should preserve the setTabDebugger facade and delegate it to the browser view service'
+)
 
 assert(capture.includes('suspend(): void'), 'DebuggerCapture should support suspend')
 assert(capture.includes('async resume(): Promise<void>'), 'DebuggerCapture should support resume')
 assert(capture.includes('isAttached(): boolean'), 'DebuggerCapture should report live attach state')
 assert(capture.includes('if (this.suspended || !this.attached || this.recording || this.wc.isDestroyed()) return'), 'recording should no-op while suspended')
 
-assert(maestro.includes('debuggerEnabled: true'), 'new tabs should default debuggerEnabled true')
-assert(maestro.includes('async setTabDebugger(params: { id: string; enabled: boolean }): Promise<TabInfo[]>'), 'main helper should implement setTabDebugger')
-assert(maestro.includes('tab.capture.suspend()'), 'turning debugger off should suspend capture')
-assert(maestro.includes('await tab.capture.resume()'), 'turning debugger on should resume capture')
-assert(maestro.includes('debuggerAttached: Boolean(t.capture?.isAttached())'), 'tab broadcasts should include live attach state')
-assert(!/welladjust/i.test(maestro), 'debugger toggle should stay manual, with no WellAdjust-specific auto rule')
+assert(browserView.includes('debuggerEnabled: true'), 'new tabs should default debuggerEnabled true')
+assert(browserView.includes('async setTabDebugger(params: { id: string; enabled: boolean }): Promise<TabInfo[]>'), 'browser view service should implement setTabDebugger')
+assert(browserView.includes('tab.capture.suspend()'), 'turning debugger off should suspend capture')
+assert(browserView.includes('tab.attachReady = tab.capture.resume()') && browserView.includes('await tab.attachReady'), 'turning debugger on should resume capture and await attachment')
+const tabInfoMatch = browserView.match(
+  /private tabInfo\(tab: OperationTab\): TabInfo \{([\s\S]*?)\n  \}\n\n  private broadcastLoading/
+)
+assert(tabInfoMatch, 'browser view service should keep a bounded tabInfo broadcast mapper')
+assert(
+  (tabInfoMatch?.[1] || '').includes('debuggerAttached: Boolean(tab.capture?.isAttached())'),
+  'tabInfo broadcasts should include live debugger attachment state'
+)
+assert(!/welladjust/i.test(browserView), 'debugger toggle should stay manual, with no WellAdjust-specific auto rule')
 
 assert(tabStore.includes('async toggleActiveDebugger(): Promise<void>'), 'tab store should expose toggleActiveDebugger')
 assert(tabStore.includes('coach.setTabDebugger({ id: tab.id, enabled: !tab.debuggerEnabled })'), 'tab store should toggle active tab debugger')

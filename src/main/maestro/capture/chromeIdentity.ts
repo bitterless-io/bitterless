@@ -2,7 +2,7 @@
 // bundled in this Electron (process.versions.chrome) so the UA's Chrome major version
 // always matches the real engine — a hardcoded/stale version is itself a tell.
 //
-// Applied two ways (see DebuggerCapture.attach + maestroWindow.helper):
+// Applied two ways (see DebuggerCapture.attach + CaptureService):
 //   1. webContents.setUserAgent(userAgent)        — always-on UA header + navigator.userAgent
 //   2. CDP Network.setUserAgentOverride(metadata) — Sec-CH-UA* client-hint headers
 //                                                    + navigator.userAgentData (consistent)

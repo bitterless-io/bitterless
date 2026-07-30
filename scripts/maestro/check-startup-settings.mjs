@@ -61,7 +61,8 @@ const assert = (condition, message) => {
 const { CoachSettingsService, DEFAULT_START_URL, isDefaultStartUrl, normalizeUrl } = loadTsModule('@maestro-main/settings/coachSettings.service')
 const { LLM_PRESETS, normalizeLlmTarget } = loadTsModule('@maestro-main/llm/llmModels')
 const settingsSource = readFileSync(join(root, 'main/maestro/settings/coachSettings.service.ts'), 'utf8')
-const maestroWindowSource = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const controllerSource = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const browserViewSource = readFileSync(join(root, 'main/maestro/windows/main/maestroBrowserView.service.ts'), 'utf8')
 const tabStoreSource = readFileSync(join(root, 'renderer/maestro/home/src/components/MenuBar/tab.store.ts'), 'utf8')
 const startupDocs = readFileSync(join(workspaceRoot, 'docs/features/maestro.md'), 'utf8')
 const dir = mkdtempSync(join(tmpdir(), 'coach-startup-settings-'))
@@ -70,8 +71,16 @@ try {
   assert(settingsSource.includes('DEFAULT_COACH_START_URL'), 'main settings should use the shared startup sentinel')
   assert(tabStoreSource.includes('DEFAULT_COACH_START_URL'), 'renderer startup UI should use the shared startup sentinel')
   assert(!tabStoreSource.includes("settings.startUrl !== 'https://example.com'"), 'renderer should not hard-code the startup sentinel')
-  assert(maestroWindowSource.includes('if (!services.settings.hasCustomStartUrl()) return'), 'startup should not open a normal tab without a custom customer URL')
-  assert(!maestroWindowSource.includes('services.settings.hasCustomStartUrl() ? settings.startUrl : await services.demo.start()'), 'startup should not default to local demo')
+  assert(browserViewSource.includes('if (!this._state.hasCustomStartUrl()) return'), 'startup should not open a normal tab without a custom customer URL')
+  assert(!browserViewSource.includes('hasCustomStartUrl() ? settings.startUrl : await') && !browserViewSource.includes('demo.start()'), 'startup should not default to local demo')
+  const createMatch = controllerSource.match(/create\(\): BrowserWindow \{([\s\S]*?)\n  \}\n\n  async whenReady/)
+  assert(createMatch, 'controller should keep a bounded create readiness flow')
+  const createSource = createMatch?.[1] || ''
+  assert(
+    /loadURL\(AI_CRMS_URL\)[\s\S]*await this\.browserView\.openStartupTabIfNeeded\(\)/.test(createSource),
+    'controller readiness should invoke the extracted custom-startup-tab flow after pinned AI-CRMS load'
+  )
+  assert(!createSource.includes('demo.start()'), 'controller readiness should not add a local-demo startup fallback')
   assert(startupDocs.includes('Pinned AI-CRMS tab'), 'embedded feature contract should preserve the pinned default tab')
 
   const service = new CoachSettingsService(dir)

@@ -419,6 +419,15 @@ export const en = {
       searchTitles: 'Search thread titles',
       clearTitleSearch: 'Clear title search',
     },
+    search: {
+      title: 'Search tasks',
+      placeholder: 'Search thread titles',
+      results: 'Task search results',
+      empty: 'No task titles match this search',
+      startTyping: 'Type a title to search tasks',
+      domainContext: 'Domain: {domain}',
+      noDomain: 'No Domain',
+    },
     board: {
       focus: 'Focus',
       all: 'All',

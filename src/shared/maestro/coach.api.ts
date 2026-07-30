@@ -25,7 +25,7 @@ export interface CoachXpcContract {
   getWorkbenchVisible(): Promise<{ visible: boolean }>
   setWorkbenchVisible(params: { visible: boolean }): Promise<{ visible: boolean }>
   // App identity for Workbench ▸ About — picked from the bundled package.json (see
-  // maestroWindow.helper getPackageInfo; mirrors the host package helper).
+  // MaestroWindowController.getPackageInfo mirrors the host package helper.
   getPackageInfo(): Promise<PackageInfo>
   // Host-approved log file/dir/env for Workbench ▸ Log.
   getLogInfo(): Promise<LogInfo>

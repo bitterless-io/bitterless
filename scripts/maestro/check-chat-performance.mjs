@@ -6,7 +6,9 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const root = join(projectRoot, 'src')
 const messageStore = readFileSync(join(root, 'renderer/maestro/control/src/store/message.store.ts'), 'utf8')
 const controlApp = readFileSync(join(root, 'renderer/maestro/control/src/ControlApp.vue'), 'utf8')
-const maestroWindow = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const agentBroadcast = readFileSync(join(root, 'main/maestro/agent/runtime/agentBroadcast.ts'), 'utf8')
+const requestExec = readFileSync(join(root, 'main/maestro/drive/requestExec.service.ts'), 'utf8')
+const requestExecHelper = readFileSync(join(root, 'main/maestro/drive/requestExec.helper.ts'), 'utf8')
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message)
@@ -62,11 +64,13 @@ const persistSession = sliceBetween(messageStore, 'async persistSession(session:
 assert(persistSession.includes('this.updateSessionContextUsage(session)'), 'persist should keep context usage accurate at persistence boundaries')
 
 assert(controlApp.includes("xpcRenderer.subscribe('coach/agent-stream'"), 'renderer should subscribe to streamed agent deltas')
-assert(maestroWindow.includes("xpcMain.broadcast('coach/agent-stream'"), 'main should broadcast streamed agent deltas')
-assert(maestroWindow.includes('const REPLAY_RESPONSE_PREVIEW_LIMIT = 2_000'), 'API replay cards should have a bounded response preview limit')
-assert(maestroWindow.includes('responseText: replayResponsePreview(last.data)'), 'browser_exec replay cards should store only response previews')
-assert(maestroWindow.includes('responseText: lastApi ? replayResponsePreview(lastApi.result.data) : undefined'), 'skill-script replay cards should store only response previews')
-assert(maestroWindow.includes('function replayResponsePreview(value: unknown): string | undefined'), 'response preview formatting should be centralized')
+assert(agentBroadcast.includes("xpcMain.broadcast('coach/agent-stream'"), 'agent runtime should broadcast streamed agent deltas')
+assert(requestExecHelper.includes('const REPLAY_RESPONSE_PREVIEW_LIMIT = 2_000'), 'API replay cards should have a bounded response preview limit')
+assert(requestExec.includes('responseText: replayResponsePreview(last.data)'), 'browser_exec replay cards should store only response previews')
+assert(
+  /responseText:\s*lastApi\s*\?\s*replayResponsePreview\(lastApi\.result\.data\)/.test(requestExec),
+  'skill-script replay cards should store only response previews'
+)
+assert(requestExecHelper.includes('export const replayResponsePreview = (value: unknown): string | undefined =>'), 'response preview formatting should be centralized')
 
 console.log('[check-chat-performance] ok')
-

@@ -43,6 +43,15 @@ const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
     return activityTimestamp(right) - activityTimestamp(left);
   });
 
+const THREAD_SEARCH_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;
+
+const tokenizeThreadSearchText = (value: string): string[] =>
+  value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .split(THREAD_SEARCH_SEPARATOR_PATTERN)
+    .filter(Boolean);
+
 class EyesOnAgentsState {
   snapshot: EyesOnAgentsSnapshot | null = null;
   loading = true;
@@ -52,6 +61,9 @@ class EyesOnAgentsState {
   openingThreadIds = new Set<string>();
   allProjectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
   allTitleQuery = '';
+  threadSearchVisible = false;
+  threadSearchQuery = '';
+  threadSearchSelectedThreadId: string | null = null;
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private activationPromise: Promise<void> | null = null;
@@ -117,6 +129,21 @@ class EyesOnAgentsState {
     );
   }
 
+  get threadSearchResults(): EyesOnAgentsThread[] {
+    const queryTokens = tokenizeThreadSearchText(this.threadSearchQuery);
+    if (queryTokens.length === 0) return [];
+    return this.allThreads.filter((thread) => {
+      if (thread.title === null) return false;
+      const titleTokens = tokenizeThreadSearchText(thread.title);
+      return queryTokens.every((queryToken) =>
+        titleTokens.some((titleToken) => titleToken.includes(queryToken)));
+    });
+  }
+
+  get hasThreadSearchQueryTokens(): boolean {
+    return tokenizeThreadSearchText(this.threadSearchQuery).length > 0;
+  }
+
   get allProjectFilterValue(): string {
     if (this.allProjectFilter.type === 'all') return ALL_PROJECT_FILTER_VALUE;
     if (this.allProjectFilter.type === 'none') return NO_PROJECT_FILTER_VALUE;
@@ -156,6 +183,11 @@ class EyesOnAgentsState {
     return sortThreads(this.threads.filter((thread) => thread.domainId === domainId));
   }
 
+  customDomainTitle(domainId: number): string | null {
+    const title = this.customDomains.find((domain) => domain.id === domainId)?.title.trim();
+    return title || null;
+  }
+
   selectAllProjectFilter(value: string): void {
     const option = this.allProjectOptions.find((item) => item.value === value);
     if (!option) return;
@@ -178,6 +210,55 @@ class EyesOnAgentsState {
 
   clearAllTitleQuery(): void {
     this.allTitleQuery = '';
+  }
+
+  openThreadSearch(): void {
+    if (this.threadSearchVisible) return;
+    this.threadSearchVisible = true;
+    this.threadSearchSelectedThreadId = this.threadSearchResults[0]?.threadId ?? null;
+  }
+
+  closeThreadSearch(): void {
+    this.threadSearchVisible = false;
+    this.threadSearchQuery = '';
+    this.threadSearchSelectedThreadId = null;
+  }
+
+  setThreadSearchQuery(query: string): void {
+    if (this.threadSearchQuery === query) return;
+    this.threadSearchQuery = query;
+    this.threadSearchSelectedThreadId = this.threadSearchResults[0]?.threadId ?? null;
+  }
+
+  selectThreadSearchResult(threadId: string): void {
+    if (!this.threadSearchResults.some((thread) => thread.threadId === threadId)) return;
+    this.threadSearchSelectedThreadId = threadId;
+  }
+
+  moveThreadSearchSelection(delta: -1 | 1): void {
+    const results = this.threadSearchResults;
+    if (results.length === 0) {
+      this.threadSearchSelectedThreadId = null;
+      return;
+    }
+
+    const selectedIndex = results.findIndex(
+      (thread) => thread.threadId === this.threadSearchSelectedThreadId,
+    );
+    const currentIndex = selectedIndex < 0 ? 0 : selectedIndex;
+    const nextIndex = Math.min(results.length - 1, Math.max(0, currentIndex + delta));
+    this.threadSearchSelectedThreadId = results[nextIndex]?.threadId ?? null;
+  }
+
+  async openSelectedThreadSearchResult(): Promise<void> {
+    if (!this.threadSearchSelectedThreadId) return;
+    await this.openThreadSearchResult(this.threadSearchSelectedThreadId);
+  }
+
+  async openThreadSearchResult(threadId: string): Promise<void> {
+    if (!this.threadSearchResults.some((thread) => thread.threadId === threadId)) return;
+    this.threadSearchSelectedThreadId = threadId;
+    await this.openThread(threadId);
   }
 
   async loadSnapshot(quiet = false): Promise<void> {
@@ -392,6 +473,17 @@ class EyesOnAgentsState {
   private applySnapshot(snapshot: EyesOnAgentsSnapshot): void {
     this.snapshot = snapshot;
     this.loadError = null;
+    this.reconcileThreadSearchSelection();
+  }
+
+  private reconcileThreadSearchSelection(): void {
+    if (!this.threadSearchVisible) return;
+    const results = this.threadSearchResults;
+    if (
+      this.threadSearchSelectedThreadId
+      && results.some((thread) => thread.threadId === this.threadSearchSelectedThreadId)
+    ) return;
+    this.threadSearchSelectedThreadId = results[0]?.threadId ?? null;
   }
 
   private errorMessage(error: unknown): string {

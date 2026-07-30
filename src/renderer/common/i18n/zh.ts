@@ -420,6 +420,15 @@ export const zh: typeof en = {
       searchTitles: '搜索任务标题',
       clearTitleSearch: '清除标题搜索',
     },
+    search: {
+      title: '搜索任务',
+      placeholder: '搜索任务标题',
+      results: '任务搜索结果',
+      empty: '没有匹配此搜索的任务标题',
+      startTyping: '输入任务标题开始搜索',
+      domainContext: 'Domain：{domain}',
+      noDomain: '无 Domain',
+    },
     board: {
       focus: 'Focus',
       all: 'All',

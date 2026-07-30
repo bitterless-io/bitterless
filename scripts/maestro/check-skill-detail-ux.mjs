@@ -8,7 +8,8 @@ const skillsView = readFileSync(join(root, 'renderer/maestro/workbench/src/views
 const workbenchStore = readFileSync(join(root, 'renderer/maestro/workbench/src/workbench.store.ts'), 'utf8')
 const coachApi = readFileSync(join(root, 'shared/maestro/coach.api.ts'), 'utf8')
 const coachHandler = readFileSync(join(root, 'main/maestro/xpc/coach.handler.ts'), 'utf8')
-const maestroWindow = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const maestroWindow = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const skillService = readFileSync(join(root, 'main/maestro/skills/skill.service.ts'), 'utf8')
 const skillRegistry = readFileSync(join(root, 'main/maestro/skills/skillRegistry.service.ts'), 'utf8')
 
 const assert = (condition, message) => {
@@ -53,9 +54,24 @@ for (const method of ['openSkillDirectory', 'deleteSkill']) {
   assert(coachApi.includes(`${method}(`), `shared Coach API should expose ${method}`)
   assert(coachHandler.includes(`async ${method}`), `XPC handler should forward ${method}`)
   assert(maestroWindow.includes(`async ${method}`), `main helper should implement ${method}`)
+  assert(skillService.includes(`async ${method}`), `SkillService should own ${method}`)
 }
 
-assert(maestroWindow.includes('shell.openPath(dir)'), 'openSkillDirectory should open the selected skill directory')
+assert(skillService.includes('shell.openPath(dir)'), 'openSkillDirectory should open the selected skill directory')
+for (const [facade, owner] of [
+  ['return await this.skillService.exportSkillPackage(params)', 'async exportSkillPackage(params:'],
+  ['return await this.skillService.importSkillPackage()', 'async importSkillPackage():'],
+  ['return await this.skillService.replaySkill(params)', 'async replaySkill(params:']
+]) {
+  assert(maestroWindow.includes(facade), `controller should keep the bounded SkillService facade: ${facade}`)
+  assert(skillService.includes(owner), `SkillService should own ${owner}`)
+}
+assert(skillService.includes("record.event.kind !== 'error' && record.event.kind !== 'info'"), 'skill ingest should filter error/info capture noise')
+assert(skillService.includes("capture.source === 'edited' ? 'edited records' : 'events'"), 'skill ingest should preserve capture source reporting')
+assert(skillService.includes('this._state.lastAgentRun = {') && skillService.includes('this._state.lastTrainerRun = { skill: result.skill }'), 'SkillService should preserve agent and trainer turn result state')
+assert(skillService.includes("xpcMain.broadcast('coach/skills-changed'"), 'SkillService should broadcast successful skill changes')
+assert(skillService.includes("errors: ['Skill recipe not found.']") && skillService.includes("errors: ['Browser view is not ready.']"), 'SkillService should preserve missing recipe/browser replay errors')
+assert(skillService.includes("message: 'Export cancelled.'") && skillService.includes("message: 'Import cancelled.'"), 'SkillService should preserve import/export cancellation results')
 assert(skillRegistry.includes('deleteSkill(skillId: string): DeleteSkillResult'), 'registry should implement deleteSkill')
 assert(skillRegistry.includes("if (skill.source === 'builtin')"), 'registry should reject built-in skill deletion')
 assert(skillRegistry.includes('isInsideSkillRoot(targetDir)'), 'registry should refuse deletion outside the skill root')
@@ -63,4 +79,3 @@ assert(skillRegistry.includes('rmSync(targetDir, { recursive: true, force: true 
 assert(coachApi.includes('export interface DeleteSkillResult'), 'shared API should type delete results')
 
 console.log('[check-skill-detail-ux] ok')
-

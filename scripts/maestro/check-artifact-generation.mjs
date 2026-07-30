@@ -106,7 +106,8 @@ const loadTsModule = (specifier, parentDir = root) => {
 
 const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'))
 const service = readFileSync(join(root, 'main/maestro/files/artifactWriter.service.ts'), 'utf8')
-const maestro = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const maestro = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const workspaceFile = readFileSync(join(root, 'main/maestro/windows/main/workspaceFile.service.ts'), 'utf8')
 const prompt = readFileSync(join(root, 'main/maestro/agent/prompt/maestroSysPrompt.ts'), 'utf8')
 const catalog = readFileSync(join(root, 'main/maestro/agent/hostToolCatalog.ts'), 'utf8')
 const workspaceDocs = readFileSync(join(workspaceRoot, 'docs/features/maestro.md'), 'utf8')
@@ -131,8 +132,11 @@ assert(service.includes('absolute artifact filenames require a selected workspac
 
 assert(maestro.includes("name: 'create_artifact'"), 'Maestro should expose create_artifact')
 assert(maestro.includes('this.toolCreateArtifact(sessionKey'), 'create_artifact tool should call main implementation')
-assert(maestro.includes('userDataPath: maestroDataRoot()'), 'create_artifact should use the isolated Maestro data root')
-assert(maestro.includes('this.recordAgentArtifact(artifact)'), 'create_artifact should record reply artifacts')
+assert(workspaceFile.includes('userDataPath: maestroDataRoot()'), 'create_artifact should use the isolated Maestro data root')
+assert(
+  workspaceFile.includes('this._state.recordAgentArtifact(artifact)'),
+  'create_artifact should report reply artifacts through the workspace service state seam'
+)
 assert(prompt.includes('create_artifact to generate Excel/Word/PDF'), 'system prompt should mention artifact generation')
 assert(catalog.includes("name: 'create_artifact'") && catalog.includes('Generate Excel, Word, PDF'), 'host tool catalog should list create_artifact')
 assert(workspaceDocs.includes('workspace-scoped') && workspaceDocs.includes('file search/read/write; artifact'), 'embedded feature contract should preserve workspace file and artifact behavior')

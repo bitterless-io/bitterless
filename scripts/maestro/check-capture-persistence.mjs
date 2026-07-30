@@ -57,7 +57,15 @@ const assert = (condition, message) => {
 }
 
 const { buildPersistedRawCaptureRecords } = loadTsModule('@maestro-main/capture/captureRecordPersistence')
-const maestroWindowSource = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const controllerSource = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const captureServiceSource = readFileSync(join(root, 'main/maestro/capture/capture.service.ts'), 'utf8')
+
+const boundedSource = (source, start, end, message) => {
+  const startIndex = source.indexOf(start)
+  const endIndex = startIndex < 0 ? -1 : source.indexOf(end, startIndex + start.length)
+  assert(startIndex >= 0 && endIndex > startIndex, message)
+  return source.slice(startIndex, endIndex)
+}
 
 const persisted = buildPersistedRawCaptureRecords(
   [
@@ -109,22 +117,71 @@ assert(noStartedAt?.startedAt === undefined, 'invalid startedAt should be omitte
 const empty = buildPersistedRawCaptureRecords([], 1, 2)
 assert(empty === null, 'empty event list should not persist latest evidence')
 
-assert(
-  maestroWindowSource.includes('if (this.capturing) await this.discardActiveCaptureForRestart()'),
-  'startCapture should restart a live capture instead of reusing the old trace'
+const startBody = boundedSource(
+  captureServiceSource,
+  '  async startCapture(params?: { mode?: CaptureMode } & Partial<CaptureOptions>): Promise<CaptureState> {',
+  '  async stopCapture(): Promise<CaptureState> {',
+  'CaptureService should keep a bounded startCapture implementation'
 )
 assert(
-  maestroWindowSource.includes('private async discardActiveCaptureForRestart()'),
+  startBody.includes('if (this.capturing) await this.discardActiveCaptureForRestart()'),
+  'startCapture should restart a live capture instead of reusing the old trace'
+)
+const restartBody = boundedSource(
+  captureServiceSource,
+  '  private async discardActiveCaptureForRestart(): Promise<void> {',
+  '  private async persistRawCaptureRecordsIfNeeded(startedAt: number): Promise<void> {',
+  'CaptureService should keep a bounded capture restart cleanup implementation'
+)
+assert(
+  restartBody.includes('private async discardActiveCaptureForRestart()'),
   'capture restart cleanup helper should exist'
 )
 assert(
-  /discardActiveCaptureForRestart\(\)[\s\S]*this\.traceEvents = \[\]/.test(maestroWindowSource),
+  restartBody.includes('this.traceEvents = []'),
   'capture restart should clear in-memory trace events'
 )
 assert(
-  /startCapture\(params[\s\S]*await this\.clearCaptureRecordEdits\(\)[\s\S]*xpcMain\.broadcast\('coach\/capture-started'/.test(maestroWindowSource),
+  startBody.includes('await this.clearCaptureRecordEdits()') &&
+    startBody.includes("xpcMain.broadcast('coach/capture-started'"),
   'fresh capture start should clear persisted record edits before broadcasting capture-started'
 )
+assert(
+  /async startCapture\(params\?: \{ mode\?: CaptureMode \} & Partial<CaptureOptions>\): Promise<CaptureState> \{\s*return await this\.captureService\.startCapture\(params\)\s*\}/.test(
+    controllerSource
+  ),
+  'controller startCapture should be a bounded CaptureService facade'
+)
+const createBody = boundedSource(
+  controllerSource,
+  '  create(): BrowserWindow {',
+  '  async whenReady(): Promise<void> {',
+  'controller should keep a bounded create lifecycle'
+)
+assert(
+  !/\.on\(\s*['"]closed['"]\s*,\s*\(\)\s*=>\s*this\.resetWindowScopedViews\(\)\s*\)/.test(createBody),
+  'controller create must not clear capture state from an early closed callback'
+)
+const shutdownBody = boundedSource(
+  controllerSource,
+  '  async shutdown(): Promise<void> {',
+  '  async replayRecipe(',
+  'controller should keep a bounded shutdown lifecycle'
+)
+const captureShutdownIndex = shutdownBody.indexOf('await this.captureService.shutdown()')
+const viewResetIndex = shutdownBody.indexOf('this.resetWindowScopedViews()')
+assert(
+  captureShutdownIndex >= 0 && viewResetIndex > captureShutdownIndex,
+  'controller shutdown should flush CaptureService before resetting native views'
+)
+for (const forbidden of [
+  'private traceEvents:',
+  'private editedCaptureRecords:',
+  'private captureRecordLoadPromise:',
+  'discardActiveCaptureForRestart()'
+]) {
+  assert(!controllerSource.includes(forbidden), `controller should not duplicate capture persistence ownership: ${forbidden}`)
+}
 
 console.log('[check-capture-persistence] ok', JSON.stringify({
   records: persisted.records.length,

@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const root = join(projectRoot, 'src')
-const maestroWindow = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const maestroWindow = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const workspaceFile = readFileSync(join(root, 'main/maestro/windows/main/workspaceFile.service.ts'), 'utf8')
 const coachApi = readFileSync(join(root, 'shared/maestro/coach.api.ts'), 'utf8')
 const configApi = readFileSync(join(root, 'shared/maestro/config.api.ts'), 'utf8')
 const coachHandler = readFileSync(join(root, 'main/maestro/xpc/coach.handler.ts'), 'utf8')
@@ -25,6 +26,27 @@ const sliceBetween = (source, start, end) => {
   assert(to > from, `missing end marker after: ${start}`)
   return source.slice(from, to)
 }
+const normalizeSpace = (source) => source.replace(/\s+/g, ' ').trim()
+const assertExactFacade = (start, statement, name) => {
+  const from = maestroWindow.indexOf(start)
+  assert(from >= 0, `controller should keep a bounded ${name} facade`)
+  const bodyStart = from + start.length - 1
+  let depth = 0
+  let closeIndex = -1
+  for (let index = bodyStart; index < maestroWindow.length; index += 1) {
+    if (maestroWindow[index] === '{') depth += 1
+    if (maestroWindow[index] === '}') depth -= 1
+    if (depth === 0) {
+      closeIndex = index
+      break
+    }
+  }
+  assert(closeIndex > bodyStart, `controller should keep a balanced ${name} facade`)
+  assert(
+    normalizeSpace(maestroWindow.slice(bodyStart + 1, closeIndex)) === normalizeSpace(statement),
+    `controller ${name} facade should delegate exactly once`
+  )
+}
 
 assert(configApi.includes("export const WORKSPACE_CONFIG_DOMAIN = 'workspace'"), 'workspace default should persist in config domain workspace')
 assert(configApi.includes("export const WORKSPACE_DEFAULT_KEY = 'default'"), 'workspace default should persist under key default')
@@ -32,20 +54,57 @@ assert(configApi.includes("export const WORKSPACE_DEFAULT_KEY = 'default'"), 'wo
 for (const method of ['chooseWorkspaceDirectory', 'setWorkspaceDirectory', 'getWorkspaceDirectory']) {
   assert(coachApi.includes(`${method}(`), `shared XPC API should expose ${method}`)
   assert(coachHandler.includes(`async ${method}`), `XPC handler should forward ${method}`)
-  assert(maestroWindow.includes(`async ${method}`), `main helper should implement ${method}`)
+  assert(workspaceFile.includes(`async ${method}`), `workspace service should implement ${method}`)
+  assert(
+    maestroWindow.includes(`return await this.workspaceFile.${method}(params)`),
+    `controller should preserve the ${method} facade through WorkspaceFileService`
+  )
+}
+for (const [start, statement, name] of [
+  [
+    '  async getFileStatuses(params: { paths: string[] }): Promise<FileStatusResult[]> {',
+    'return await this.workspaceFile.getFileStatuses(params)',
+    'getFileStatuses'
+  ],
+  [
+    '  async openFile(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }> {',
+    'return await this.workspaceFile.openFile(params)',
+    'openFile'
+  ],
+  [
+    '  async showFileInFolder(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }> {',
+    'return await this.workspaceFile.showFileInFolder(params)',
+    'showFileInFolder'
+  ]
+]) {
+  assertExactFacade(start, statement, name)
 }
 assert(coachApi.includes('attachClipboardImage'), 'shared XPC API should expose clipboard image materialization')
 assert(coachHandler.includes('async attachClipboardImage'), 'XPC handler should forward clipboard image materialization')
 assert(maestroWindow.includes('async attachClipboardImage'), 'main helper should materialize clipboard screenshots')
 
-assert(maestroWindow.includes("properties: ['openDirectory', 'createDirectory']"), 'workspace picker should select directories')
-assert(maestroWindow.includes("configStore.upsert({ domain: WORKSPACE_CONFIG_DOMAIN, key: WORKSPACE_DEFAULT_KEY"), 'main should persist the app-wide default workspace')
-assert(maestroWindow.includes("configStore.remove({ domain: WORKSPACE_CONFIG_DOMAIN, key: WORKSPACE_DEFAULT_KEY"), 'main should remove stale/cleared default workspace')
-assert(maestroWindow.includes("xpcMain.broadcast('coach/workspace-changed'"), 'workspace changes should broadcast to renderers')
-assert(maestroWindow.includes("workspace-not-directory") && maestroWindow.includes("workspace-not-found"), 'missing or moved workspaces should be detected')
-assert(maestroWindow.includes('removeDefaultWorkspaceIfPathMatches'), 'missing selected workspaces should clear matching default config')
+assert(workspaceFile.includes("properties: ['openDirectory', 'createDirectory']"), 'workspace picker should select directories')
+assert(
+  /configStore[\s\S]*\.upsert\(\{[\s\S]*domain: WORKSPACE_CONFIG_DOMAIN,[\s\S]*key: WORKSPACE_DEFAULT_KEY/.test(
+    workspaceFile
+  ),
+  'workspace service should persist the app-wide default workspace'
+)
+assert(
+  /configStore[\s\S]*\.remove\(\{ domain: WORKSPACE_CONFIG_DOMAIN, key: WORKSPACE_DEFAULT_KEY \}\)/.test(
+    workspaceFile
+  ),
+  'workspace service should remove stale/cleared default workspace'
+)
+assert(workspaceFile.includes("xpcMain.broadcast('coach/workspace-changed'"), 'workspace changes should broadcast to renderers')
+assert(workspaceFile.includes("workspace-not-directory") && workspaceFile.includes("workspace-not-found"), 'missing or moved workspaces should be detected')
+assert(workspaceFile.includes('removeDefaultWorkspaceIfPathMatches'), 'missing selected workspaces should clear matching default config')
 
-const resolveWorkspacePath = sliceBetween(maestroWindow, 'private resolveWorkspacePath(sessionKey: string, pathArg: string): WorkspacePathResolution {', '\n  private recordAgentArtifact')
+const resolveWorkspacePath = sliceBetween(
+  workspaceFile,
+  'private resolveWorkspacePath(sessionKey: string, pathArg: string): WorkspacePathResolution {',
+  '\n  private resolveReadPath'
+)
 assert(resolveWorkspacePath.includes('isInsideRoot(root, target)'), 'workspace path resolution should reject paths outside root')
 assert(resolveWorkspacePath.includes('realpathSync(existing)'), 'workspace path resolution should check realpath of nearest existing ancestor')
 assert(resolveWorkspacePath.includes('isInsideRoot(realRoot, realExisting)'), 'workspace path resolution should reject symlink escapes')
@@ -54,11 +113,38 @@ for (const tool of ['read_file', 'list_workspace_files', 'search_files', 'write_
   assert(maestroWindow.includes(`name: '${tool}'`), `agent should expose ${tool}`)
   assert(maestroPrompt.includes(tool), `system prompt should mention ${tool}`)
 }
-for (const forbidden of ["name: 'delete_file'", "name: 'rename_file'", "name: 'move_file'", "rmSync(", 'unlinkSync(', 'renameSync(']) {
-  assert(!maestroWindow.includes(forbidden), `workspace agent tools must not expose or call destructive operation: ${forbidden}`)
+for (const delegation of [
+  'this.workspaceFile.toolReadFile(sessionKey, pathArg, options)',
+  'this.workspaceFile.toolListWorkspaceFiles(sessionKey, pathArg, maxEntriesArg)',
+  'this.workspaceFile.toolSearchWorkspaceFiles(',
+  'this.workspaceFile.toolWriteWorkspaceFile(sessionKey, pathArg, contentArg)',
+  'this.workspaceFile.toolCreateArtifact(sessionKey, artifactJson)',
+  'this.workspaceFile.toolWorkspaceContext(sessionKey, actionArg)'
+]) {
+  assert(maestroWindow.includes(delegation), `controller workspace tool facade should delegate through: ${delegation}`)
 }
-assert(maestroWindow.includes("if (resolved.path === resolved.root) return 'ERROR: write_file needs a file path under the workspace"), 'write_file should reject the workspace root')
-assert(maestroWindow.includes('this.recordAgentArtifact(artifact)'), 'write_file should record created/updated files as artifacts')
+const workspaceSourceFamily = `${maestroWindow}\n${workspaceFile}`
+for (const forbidden of ["name: 'delete_file'", "name: 'rename_file'", "name: 'move_file'", "rmSync(", 'unlinkSync(', 'renameSync(']) {
+  assert(!workspaceSourceFamily.includes(forbidden), `workspace agent tools must not expose or call destructive operation: ${forbidden}`)
+}
+assert(
+  workspaceFile.includes("return 'ERROR: write_file needs a file path under the workspace"),
+  'write_file should reject the workspace root'
+)
+assert(
+  workspaceFile.includes('this._state.recordAgentArtifact(artifact)'),
+  'workspace writes should report created/updated files through the narrow controller state seam'
+)
+assert(
+  maestroWindow.includes('recordAgentArtifact(file: AgentFileArtifact): void'),
+  'controller should preserve artifact accumulation for WorkspaceFileService'
+)
+assert(
+  maestroWindow.includes('this.workspaceFile.reset()') &&
+    workspaceFile.includes('reset(): void {') &&
+    workspaceFile.includes('this.workspaceRefs.clear()'),
+  'workspace service-owned session state should reset during Maestro shutdown'
+)
 assert(coachApi.includes("export interface AgentFileArtifact") && coachApi.includes("action: 'created' | 'updated'"), 'shared API should type created/updated file artifacts')
 
 assert(messageStore.includes("xpcRenderer.subscribe('coach/workspace-changed'"), 'renderer store should subscribe to workspace broadcasts')
@@ -85,4 +171,3 @@ assert(messageItem.includes('coach.showFileInFolder({ path })'), 'artifact menu 
 assert(messageItem.includes('missing</span>'), 'artifact rows should show missing files')
 
 console.log('[check-workspace-files] ok')
-

@@ -99,7 +99,7 @@ export type TraceEvent =
       value?: string
       step: UiActionStep
       // Base64 data-URL thumbnail of the clicked element (click actions only). Display-only:
-      // stripped before the trace is persisted / fed to ingest (see maestroWindow.helper.emit).
+      // stripped before the trace is persisted / fed to ingest (see CaptureService.emit).
       shot?: string
       ts: number
     }

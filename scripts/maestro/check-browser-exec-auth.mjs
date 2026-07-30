@@ -7,7 +7,9 @@ import ts from 'typescript'
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const root = join(projectRoot, 'src')
 const replayEngineSource = readFileSync(join(root, 'main/maestro/drive/replayEngine.ts'), 'utf8')
-const maestro = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const maestro = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const requestExec = readFileSync(join(root, 'main/maestro/drive/requestExec.service.ts'), 'utf8')
+const requestHelper = readFileSync(join(root, 'main/maestro/drive/requestExec.helper.ts'), 'utf8')
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message)
@@ -291,27 +293,35 @@ assert(
   'BrowserCommand.fetch should accept value-free auth hints'
 )
 assert(
-  maestro.includes('auth: normalizeBrowserExecAuth(rec.auth ?? rec.header_policy ?? rec.headerPolicy)'),
+  requestHelper.includes(
+    'record.auth ?? record.header_policy ?? record.headerPolicy'
+  ),
   'browser_exec should parse auth/header_policy/headerPolicy from fetch commands'
 )
 assert(
-  maestro.includes('const id = normalizeBrowserCommandId(rec.id)') && maestro.includes('id: cmd.id'),
+  requestHelper.includes('const id = normalizeBrowserCommandId(record.id)') &&
+    requestExec.includes('id: command.id'),
   'browser_exec should sanitize ids and echo them on main-executed fetch results'
 )
 assert(
-  maestro.includes('headers: sanitizeReplayHeaders(rec.headers)'),
+  requestHelper.includes('headers: sanitizeReplayHeaders(record.headers)'),
   'browser_exec should sanitize raw fetch headers before dispatch'
 )
 assert(
-  maestro.includes('mergeAuthHints(domainAuth, cmd.auth)'),
+  requestExec.includes('mergeAuthHints(domainAuth, command.auth)'),
   'browser_exec should merge domain auth profile with per-call auth hints'
 )
 assert(
-  maestro.includes('function normalizeBrowserExecAuth') &&
-    maestro.includes('candidate_keys') &&
+  requestHelper.includes('export const normalizeBrowserExecAuth') &&
+    requestHelper.includes('candidate_keys') &&
     maestro.includes('Direct Authorization/Cookie/token-like values in `headers` are ignored'),
   'browser_exec tool description and parser should expose value-free auth usage'
 )
+assert(
+  maestro.includes('return await this.requestExec.toolBrowserExec(commandsJson)') &&
+    !maestro.includes('private parseBrowserCommand(') &&
+    !maestro.includes('function normalizeBrowserExecAuth'),
+  'Maestro controller should delegate browser_exec without retaining its moved parser'
+)
 
 console.log('[check-browser-exec-auth] ok')
-

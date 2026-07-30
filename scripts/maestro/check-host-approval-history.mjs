@@ -59,15 +59,63 @@ const assert = (condition, message) => {
 const { HostApprovalHistory } = loadTsModule('@maestro-main/agent/runtime/hostApprovalHistory')
 const coachApi = readFileSync(join(root, 'shared/maestro/coach.api.ts'), 'utf8')
 const coachHandler = readFileSync(join(root, 'main/maestro/xpc/coach.handler.ts'), 'utf8')
-const maestroWindow = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const maestroWindow = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const maestroAgent = readFileSync(join(root, 'main/maestro/agent/maestroAgent.service.ts'), 'utf8')
+const requestExec = readFileSync(join(root, 'main/maestro/drive/requestExec.service.ts'), 'utf8')
 const workbenchStore = readFileSync(join(root, 'renderer/maestro/workbench/src/workbench.store.ts'), 'utf8')
 const toolsView = readFileSync(join(root, 'renderer/maestro/workbench/src/views/WorkbenchToolsView.vue'), 'utf8')
 
 assert(coachApi.includes('exportHostApprovalEvents(): Promise<HostApprovalExportResult>'), 'XPC contract should expose approval export')
 assert(coachHandler.includes('async exportHostApprovalEvents()'), 'XPC main handler should forward approval export')
-assert(maestroWindow.includes('async exportHostApprovalEvents()') && maestroWindow.includes('coach-host-approvals-'), 'main should write host approval export JSON')
+assert(maestroWindow.includes('return await this.agentService.exportHostApprovalEvents()'), 'controller should expose host approval export')
+assert(maestroAgent.includes('async exportHostApprovalEvents()') && maestroAgent.includes('coach-host-approvals-'), 'AgentService should write host approval export JSON')
 assert(workbenchStore.includes('async exportHostApprovalEvents()') && workbenchStore.includes('hostApprovalExporting'), 'Workbench store should expose export state/action')
 assert(toolsView.includes('IconDownload') && toolsView.includes('@click="exportApprovals"'), 'Workbench Tools should render an export button')
+
+const confirmStart = requestExec.indexOf('  private async confirmApiRequest(')
+const confirmEnd = requestExec.indexOf('  private async executeBrowserCommand(', confirmStart)
+assert(confirmStart >= 0 && confirmEnd > confirmStart, 'RequestExecService should keep a bounded API confirmation gate')
+const confirmBody = requestExec.slice(confirmStart, confirmEnd)
+const pushIndex = confirmBody.indexOf('this._state.pushHostApprovalEvent({')
+const dialogIndex = confirmBody.indexOf('dialog.showMessageBox')
+const resolveIndex = confirmBody.indexOf('this._state.resolveHostApprovalEvent(')
+assert(
+  pushIndex >= 0 && dialogIndex > pushIndex && resolveIndex > dialogIndex,
+  'API confirmation should persist pending approval before the dialog and resolve it after'
+)
+assert(
+  requestExec.includes('await this.confirmApiRequest({') &&
+    requestExec.includes("status: 'blocked'") &&
+    requestExec.includes('this._state.pushHostApprovalEvent({'),
+  'RequestExecService should gate confirmable writes and persist blocked unsafe requests'
+)
+assert(
+  maestroWindow.includes('async pushHostApprovalEvent(') &&
+    maestroWindow.includes('async resolveHostApprovalEvent(') &&
+    maestroWindow.includes('async confirmBrowserInterceptionRule('),
+  'Maestro controller should expose the approval callbacks required by RequestExecService'
+)
+const interceptionConfirmStart = maestroWindow.indexOf(
+  '  async confirmBrowserInterceptionRule('
+)
+const interceptionConfirmEnd = maestroWindow.indexOf(
+  '  private async applyBrowserInterceptionRules(',
+  interceptionConfirmStart
+)
+assert(
+  interceptionConfirmStart >= 0 && interceptionConfirmEnd > interceptionConfirmStart,
+  'Maestro controller should keep a bounded browser interception approval flow'
+)
+const interceptionConfirmBody = maestroWindow.slice(
+  interceptionConfirmStart,
+  interceptionConfirmEnd
+)
+assert(
+  /import\s*\{\s*clipText\s*\}\s*from '@maestro-main\/capture\/traceTimeline'/.test(
+    maestroWindow
+  ) && interceptionConfirmBody.includes('const detail = clipText('),
+  'browser interception approval should import and use the bounded detail formatter'
+)
 
 const history = new HostApprovalHistory(2)
 const first = history.push({

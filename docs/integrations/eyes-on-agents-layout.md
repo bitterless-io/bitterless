@@ -1,6 +1,6 @@
 # EyesOnAgents Layout
 
-Status: compact latest-question card, flexible Domain board, four-step observation guide, and Focus Read all implemented; owner verification pending
+Status: two-line global-search result metadata implemented; owner verification pending
 
 ## Product stance
 
@@ -82,6 +82,60 @@ The wrapping Domain board and its background-led hierarchy are the product signa
 cards contain no decorative signal rail, source badge, status row, or `New` badge. Only a genuinely
 working thread gets a compact loading indicator beside its title. The Open control gets an unread
 red dot only after the thread has returned to `idle`, so neither state consumes another card row.
+
+## Global task search
+
+`Cmd+F` on macOS and `Ctrl+F` on Windows open one keyboard-first search modal above the current
+EyesOnAgents surface. It is independent of the All column's Project and inline title filters:
+
+```text
+┌ EyesOnAgents ────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│        ┌ Search tasks ────────────────────────────────────────────┐         │
+│        │ [ Search thread titles_______________________________ ] │ fixed   │
+│        ├─────────────────────────────────────────────────────────┤         │
+│        │              Type a title to search tasks              │         │
+│        └─────────────────────────────────────────────────────────┘         │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+The complete modal is at least 200px high and at most `80vh`. The input region remains fixed while
+only the result list scrolls. An empty, cleared, or separator-only query shows no thread rows and
+instead prompts the user to type. A meaningful query is split into case-insensitive title tokens
+after normalizing whitespace plus common separators (`-`, `_`, `.`, `/`, `\`, `:`, `|`). Every
+query token must occur in a title token, but order does not matter, so `ops git` and `git ops` both
+match `ops-git`. Each result is a compact search row rather than a draggable Domain card.
+
+Matched results use a strict two-line rhythm:
+
+```text
+┌─────────────────────────────────────────────────────────┐
+│ dsh-service&viv-admin                                   │ title
+│ Operations                                       Idle   │ Domain / runtime
+└─────────────────────────────────────────────────────────┘
+```
+
+The first row contains only the thread title. The second row keeps the custom Domain title on the
+left and runtime state on the right. `uncategorized`, missing/stale Domain references, and blank
+resolved titles display `-`; All and Focus are projections and never appear as Domain labels. Long
+Domain titles remain one line, ellipsize, and retain a full-value tooltip.
+
+Opening or clearing the modal leaves selection empty. A meaningful query with matches selects its
+first result. Selection is stored by thread ID so an Open acknowledgement or polling refresh cannot
+silently move selection to a different thread when attention ordering changes. Background updates
+preserve a selected thread that remains in the result set and otherwise fall back to the first
+current match.
+
+| input | behavior |
+|---|---|
+| `Cmd+F` / `Ctrl+F` | suppress native page Find, open the modal, and focus the input |
+| repeated shortcut | keep the modal open and refocus the input |
+| `ArrowDown` | move to the next result, stopping at the last row |
+| `ArrowUp` | move to the previous result, stopping at the first row |
+| `Enter` | open the selected Codex task and keep the modal/query active |
+| click result | select and open the task and keep the modal/query active |
+| `Escape` | close the modal and clear its transient query/selection |
 
 ## Header behavior
 
@@ -311,6 +365,12 @@ until its state actually resolves.
 | All title search closed | Search icon remains in the All header; no title query affects the list |
 | All title search open | compact focused input plus explicit Clear control appears above Project filter |
 | All title search has no matches | title-search-specific empty text appears; Focus/custom Domains remain unchanged |
+| global search opened/cleared | modal input is focused; zero result rows and start-typing guidance |
+| global search has matches | first row is selected; keyboard selection remains visible and scrolls into view |
+| global result has custom Domain | second line shows Domain left and runtime state right |
+| global result is unclassified/stale | second-line Domain value is `-`; runtime state remains visible |
+| global search has no matches | localized empty result occupies the bounded result region; Enter is a no-op |
+| global search result opened | exact Codex task opens; modal, query, input, and selected thread remain available |
 | Add Domain closed/open | labelled menubar control; opening shows a focused anchored form and no board placeholder column |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
@@ -333,6 +393,8 @@ until its state actually resolves.
 - No column exceeds 600px; a longer thread list scrolls inside that column without stretching its
   row or the surrounding columns.
 - Dialogs and connection panels remain within the viewport and own their vertical scrolling.
+- Global search exposes a listbox/option relationship and an accessible selected state; keyboard
+  movement scrolls the selected option into view without moving the page.
 - Drag is an enhancement: each thread overflow menu also provides a Domain selector.
 - The only card-level animation is the working loader; it becomes static under reduced-motion.
 
@@ -345,6 +407,8 @@ EyesOnAgentsApp
   ├─ EyesOnAgentsMenuBar
   │    └─ AddDomainPopover (anchored form)
   ├─ ConnectionPanel
+  ├─ ThreadSearch (global modal)
+  │    └─ ThreadSearchResult × N
   └─ AgentBoard
        ├─ FocusColumn (derived)
        ├─ AllColumn (all non-archived threads)

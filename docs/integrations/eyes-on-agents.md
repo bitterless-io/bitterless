@@ -1,10 +1,10 @@
 # EyesOnAgents Integration
 
-Status: tolerant ingestion, title repair, and prompt-card disclosure implemented; owner verification pending
+Status: two-line global-search result metadata implemented; owner verification pending
 
 Date: 2026-07-17
 
-Verified: 2026-07-21 (through task 019; runtime owner verification pending)
+Verified: 2026-07-30 (through task 033 non-Electron checks; runtime owner verification pending)
 
 ## Decision
 
@@ -29,6 +29,8 @@ EyesOnAgents never reads or displays them.
   system `uncategorized` Domain as the storage fallback.
 - Derive current Git Project metadata from `cwd` and filter `All` by Project without
   changing manual Domain assignment.
+- Find any visible non-archived task through a renderer-memory `Cmd+F` / `Ctrl+F` title search
+  without changing the All column's Project or title filters.
 - Show every running thread and every newly completed unread thread in a fixed Focus column.
 - Play the supplied completion tone and send one localized system notification when a newly
   accepted successful turn enters the same idle/unread state as the Open red dot.
@@ -58,6 +60,8 @@ EyesOnAgents never reads or displays them.
 - Attaching to the private stdio child process owned by Codex Desktop.
 - Treating a second App Server process as proof of Codex Desktop's in-memory state.
 - Reimplementing the Codex conversation interface inside Bitterless.
+- Persisting a global-search query, sending it through XPC, or searching UUID, cwd, Project,
+  Domain, prompt, response, or raw App Server snapshots.
 
 ## Product boundary
 
@@ -438,6 +442,28 @@ only threads whose non-null `title` contains that query case-insensitively. It n
 snapshots or conversation content and never changes persisted thread or Domain state. Clearing or
 closing title search restores the currently selected Project result rather than resetting the Project
 filter. Focus and custom Domain projections never consume this query.
+
+The global task finder is a separate renderer-session projection over `allThreads`. An empty,
+cleared, or separator-only query returns no threads. Meaningful query and title text are normalized
+with Unicode NFKC and locale-aware lowercase, then split on whitespace, hyphen, underscore, period,
+forward slash, backslash, colon, and vertical bar. A title matches only when every query token is a
+substring of at least one title token; token order does not matter. It never composes with
+`allProjectFilter` or `allTitleQuery`, and it never matches thread ID, cwd, Project, Domain, prompt,
+response, or `payload_json`.
+
+Global-search visibility, query, and selected thread ID remain in renderer memory. Meaningful query
+changes select the first result; clearing the query selects nothing. Snapshot updates preserve the
+selected ID while it remains matched and otherwise fall back to the first result. Opening a result
+calls the established `openThread` path and intentionally preserves the modal, query, input focus,
+and selection for repeated lookup. Closing the modal clears its transient state. No search-specific
+XPC, SQLite, App Server request, or polling loop exists.
+
+Each global-search result resolves its current custom Domain from the same renderer snapshot using
+`thread.domainId`. The title occupies the first visual line; the second line shows custom Domain at
+left and normalized runtime state at right. The system `uncategorized` storage fallback, a missing
+or stale Domain reference, and a blank resolved Domain title all display `-`. All and Focus remain
+renderer projections and are never presented as stored Domain metadata. This lookup adds no
+separate persistence or synchronization path.
 
 ## Runtime state
 

@@ -56,21 +56,29 @@
       :visible="connectionsVisible"
       @close="connectionsVisible = false"
     />
+
+    <ThreadSearch ref="threadSearchRef" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { IconAlertTriangle, IconEye } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import AgentBoard from './components/AgentBoard/AgentBoard.vue';
 import ConnectionPanel from './components/ConnectionPanel/ConnectionPanel.vue';
 import EyesOnAgentsMenuBar from './components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue';
+import ThreadSearch from './components/ThreadSearch/ThreadSearch.vue';
 import { eyesOnAgentsStore } from './store/eyesOnAgents.store';
 import { globalStore } from './store/global.store';
 import { eyesOnAgentsEnv } from './contextBridge/eyesOnAgentsEnv.bridge';
 
+interface ThreadSearchInstance {
+  focusInput(): Promise<void>;
+}
+
 const connectionsVisible = ref(false);
+const threadSearchRef = ref<ThreadSearchInstance | null>(null);
 const isOmni = eyesOnAgentsEnv?.host === 'omni';
 
 const emptyActionLabel = computed(() => {
@@ -98,11 +106,31 @@ const handleWindowFocus = (): void => {
   void eyesOnAgentsStore.refreshOnWindowActivation().catch(() => undefined);
 };
 
+const focusThreadSearchInput = async (): Promise<void> => {
+  await nextTick();
+  await threadSearchRef.value?.focusInput();
+};
+
+const handleWindowKeydown = (event: KeyboardEvent): void => {
+  const isFindShortcut = !event.altKey
+    && (event.metaKey || event.ctrlKey)
+    && event.key.toLocaleLowerCase() === 'f';
+  if (!isFindShortcut) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  if (!eyesOnAgentsStore.threadSearchVisible) {
+    eyesOnAgentsStore.openThreadSearch();
+  }
+  void focusThreadSearchInput();
+};
+
 onMounted(async () => {
   globalStore.startCurrentTimeLoop();
   eyesOnAgentsStore.initialize();
   eyesOnAgentsStore.startRefreshPolling();
   window.addEventListener('focus', handleWindowFocus);
+  window.addEventListener('keydown', handleWindowKeydown);
   await eyesOnAgentsStore.loadSnapshot();
 });
 
@@ -110,6 +138,8 @@ onBeforeUnmount(() => {
   globalStore.stopCurrentTimeLoop();
   eyesOnAgentsStore.stopRefreshPolling();
   window.removeEventListener('focus', handleWindowFocus);
+  window.removeEventListener('keydown', handleWindowKeydown);
+  eyesOnAgentsStore.closeThreadSearch();
 });
 </script>
 

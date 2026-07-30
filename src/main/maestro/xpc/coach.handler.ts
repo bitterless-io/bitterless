@@ -1,5 +1,5 @@
 import { XpcMainHandler } from 'electron-xpc/main'
-import { maestroWindowHelper } from '@maestro-main/windows/maestroWindow.helper'
+import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller'
 import { updateService } from '@maestro-main/update/update.service'
 import type {
   AgentConversationContext,

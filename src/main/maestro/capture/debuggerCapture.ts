@@ -685,7 +685,7 @@ export class DebuggerCapture {
           const payload = JSON.parse(params.payload)
           const event = toActionTrace(payload)
           // Clicks get a thumbnail of the clicked element. Display-only — stripped before
-          // the trace is persisted / ingested (maestroWindow.helper.emit).
+          // the trace is persisted / ingested (CaptureService.emit).
           if (event.kind === 'action' && event.type === 'click' && payload.rect && this.shouldShoot()) {
             const shot = await this.captureElementShot(payload.rect)
             if (shot) event.shot = shot

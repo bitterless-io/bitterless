@@ -12,7 +12,8 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const root = join(projectRoot, 'src')
 const workspaceRoot = projectRoot
 const moduleCache = new Map()
-const maestroWindowSource = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
+const maestroWindowSource = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
+const maestroAgentSource = readFileSync(join(root, 'main/maestro/agent/maestroAgent.service.ts'), 'utf8')
 const chatPanelSource = readFileSync(join(root, 'renderer/maestro/control/src/ChatPanel.vue'), 'utf8')
 const runtimeRefsDoc = readFileSync(join(workspaceRoot, 'docs/features/maestro.md'), 'utf8')
 
@@ -121,11 +122,12 @@ const server = createServer((req, res) => {
 
 assert(chatPanelSource.includes('coach.attachClipboardImage({ sessionId: props.session.id })'), 'pasted screenshots should be handed to main for file materialization')
 assert(!chatPanelSource.includes('readAsDataURL'), 'renderer should not convert pasted screenshots into base64 data URLs')
-assert(maestroWindowSource.includes('const image = clipboard.readImage()'), 'main should read pasted screenshots from the system clipboard')
-assert(maestroWindowSource.includes('const png = image.toPNG()'), 'clipboard screenshots should be materialized from native image data to PNG bytes')
-assert(maestroWindowSource.includes("join(maestroDataRoot(), 'attachments', safeKey)"), 'clipboard screenshots should be written under the isolated Maestro data root')
-assert(maestroWindowSource.includes('writeFileSync(file, png)'), 'clipboard screenshots should be persisted as files')
-assert(maestroWindowSource.includes('await this.attachFiles({ sessionId: params?.sessionId, paths: [file] })'), 'clipboard screenshot files should re-enter the normal path attachment allowlist')
+assert(maestroWindowSource.includes('return await this.agentService.attachClipboardImage(params)'), 'controller should expose clipboard materialization')
+assert(maestroAgentSource.includes('const image = clipboard.readImage()'), 'AgentService should read pasted screenshots from the system clipboard')
+assert(maestroAgentSource.includes('const png = image.toPNG()'), 'clipboard screenshots should be materialized from native image data to PNG bytes')
+assert(maestroAgentSource.includes("join(maestroDataRoot(), 'attachments', safeKey)"), 'clipboard screenshots should be written under the isolated Maestro data root')
+assert(maestroAgentSource.includes('writeFileSync(file, png)'), 'clipboard screenshots should be persisted as files')
+assert(/await this\.attachFiles\(\{\s*sessionId: params\?\.sessionId,\s*paths: \[file\]/.test(maestroAgentSource), 'clipboard screenshot files should re-enter the normal path attachment allowlist')
 assert(runtimeRefsDoc.includes('Attach/drop/paste for supported text, image, PDF'), 'embedded feature contract should preserve media attachments')
 assert(runtimeRefsDoc.includes('No credential value is written into the Bitterless repository or log output.'), 'embedded feature contract should preserve credential boundaries')
 
