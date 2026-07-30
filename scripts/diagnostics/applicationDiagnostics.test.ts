@@ -72,7 +72,7 @@ test('resolves debug logs under active userData and release logs under OS log ro
 test('renderer log capture accepts only known first-party renderer entries', () => {
   assert.equal(
     resolveFirstPartyRendererProcess(
-      'http://127.0.0.1:5173/home/index.html',
+      'http://127.0.0.1:5173/home/index.html#/setting',
       'http://127.0.0.1:5173'
     ),
     'renderer:home'
@@ -85,7 +85,7 @@ test('renderer log capture accepts only known first-party renderer entries', () 
   );
   assert.equal(
     resolveFirstPartyRendererProcess(
-      'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer/translator/index.html'
+      'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer/translator/index.html#/translate'
     ),
     'renderer:translator'
   );
@@ -96,12 +96,15 @@ test('renderer log capture accepts only known first-party renderer entries', () 
     'renderer:maestroHome'
   );
   assert.equal(
-    isFirstPartyRendererUrl('https://remote.example/home/index.html', 'http://127.0.0.1:5173'),
+    isFirstPartyRendererUrl(
+      'https://remote.example/home/index.html#/setting',
+      'http://127.0.0.1:5173'
+    ),
     false
   );
   assert.equal(
     isFirstPartyRendererUrl(
-      'http://127.0.0.1:5173/home/index.html?token=secret',
+      'http://127.0.0.1:5173/home/index.html?token=secret#/setting',
       'http://127.0.0.1:5173'
     ),
     false

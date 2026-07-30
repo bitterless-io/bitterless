@@ -43,7 +43,7 @@ export const resolveFirstPartyRendererProcess = (
       ? rendererPath.slice(rendererPath.lastIndexOf(rendererRoot) + rendererRoot.length)
       : rendererPath;
   const entry = FIRST_PARTY_RENDERER_ENTRIES.find(({ path }) => entryPath === path);
-  if (!entry || url.search || url.hash || url.username || url.password) return null;
+  if (!entry || url.search || url.username || url.password) return null;
 
   if (url.protocol === 'file:') {
     return rendererPath.includes(`${rendererRoot}/`) ? entry.process : null;
