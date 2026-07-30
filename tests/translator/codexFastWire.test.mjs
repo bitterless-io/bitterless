@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { zstdDecompressSync } from 'node:zlib';
 import test from 'node:test';
 import * as piCodingAgent from '@earendil-works/pi-coding-agent';
-import { getModel } from '@earendil-works/pi-ai';
+import { streamSimple as streamOpenAiCodexSimple } from '@earendil-works/pi-ai/api/openai-codex-responses';
+import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import ts from 'typescript';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -56,6 +58,7 @@ const createSseResponse = () => {
     },
     {
       type: 'response.output_item.added',
+      output_index: 0,
       item: {
         type: 'message',
         id: 'msg_wire_test',
@@ -70,10 +73,12 @@ const createSseResponse = () => {
     },
     {
       type: 'response.output_text.delta',
+      output_index: 0,
       delta: '{"ok":true}'
     },
     {
       type: 'response.output_item.done',
+      output_index: 0,
       item: {
         type: 'message',
         id: 'msg_wire_test',
@@ -104,19 +109,54 @@ const createSseResponse = () => {
   });
 };
 
+const parseCodexBody = (init) => {
+  const headers = new Headers(init?.headers);
+  const raw = init?.body;
+  const bytes =
+    raw instanceof Uint8Array
+      ? raw
+      : raw instanceof ArrayBuffer
+        ? new Uint8Array(raw)
+        : typeof raw === 'string'
+          ? Buffer.from(raw)
+          : Buffer.from(String(raw));
+  const text =
+    headers.get('content-encoding') === 'zstd'
+      ? zstdDecompressSync(bytes).toString('utf8')
+      : Buffer.from(bytes).toString('utf8');
+  return JSON.parse(text);
+};
+
 const createRealPiModule = (model) => {
-  const registry = {
-    find: () => model,
+  const modelRuntime = {
+    getModel: () => model,
+    getModels: () => [model],
+    getAvailable: async () => [model],
+    getAvailableSnapshot: () => [model],
+    getProvider: () => ({ id: 'openai-codex', name: 'OpenAI Codex' }),
+    getError: () => undefined,
     hasConfiguredAuth: () => true,
-    getApiKeyAndHeaders: async () => ({
-      ok: true,
-      apiKey: testToken,
-      headers: {}
-    })
+    checkAuth: async () => ({ type: 'oauth', source: 'fixture' }),
+    isUsingOAuth: () => true,
+    getAuth: async () => ({ auth: { apiKey: testToken, headers: {} } }),
+    getCompatibilityRequestConfig: () => ({}),
+    getProviderAuthStatus: () => ({ configured: true, source: 'stored' }),
+    getRegisteredProviderConfig: () => undefined,
+    getRegisteredProviderIds: () => [],
+    registerProvider: () => undefined,
+    unregisterProvider: () => undefined,
+    reloadConfig: async () => undefined,
+    refresh: async () => undefined,
+    streamSimple: (activeModel, context, options) =>
+      streamOpenAiCodexSimple(activeModel, context, {
+        ...options,
+        apiKey: testToken,
+        transport: 'sse'
+      })
   };
   return {
-    AuthStorage: { create: () => ({}) },
-    ModelRegistry: { create: () => registry },
+    ModelRuntime: { create: async () => modelRuntime },
+    ModelRegistry: piCodingAgent.ModelRegistry,
     SessionManager: piCodingAgent.SessionManager,
     SettingsManager: {
       inMemory: (settings) =>
@@ -132,12 +172,14 @@ const createRealPiModule = (model) => {
 
 test('real Pi Codex provider writes priority only for Fast runtime requests', async () => {
   const { CodexRuntimeService } = loadRuntime();
-  const model = getModel('openai-codex', 'gpt-5.5');
+  const model = openaiCodexProvider().getModels().find(
+    (candidate) => candidate.id === 'gpt-5.5'
+  );
   assert.ok(model, 'Installed Pi must expose the fixed Translator model');
   const bodies = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body)));
+    bodies.push(parseCodexBody(init));
     return createSseResponse();
   };
 

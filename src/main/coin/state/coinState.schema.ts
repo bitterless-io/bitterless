@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import type {
+  CoinAiEffort,
+  CoinAiModel,
   CoinPersistentData,
   CoinStateSaveInput,
   CoinStateSnapshot,
 } from '@shared/coin/coinAnalysis.type';
 import {
+  COIN_AI_DEFAULT_EFFORT,
+  COIN_AI_DEFAULT_MODEL,
   COIN_AI_EFFORTS,
+  COIN_AI_MODEL_EFFORTS,
   COIN_AI_MODELS,
   COIN_HOLDER_EXCLUSION_CLASSES,
   createUnattestedCoinHolderUniverse,
@@ -492,13 +497,38 @@ const strategyDraft = z.object({
   heldMinutes: finite.nonnegative().nullable(),
 }).strict();
 
-const aiState = z.object({
+const isCoinAiModel = (value: unknown): value is CoinAiModel =>
+  COIN_AI_MODELS.some((model) => model === value);
+
+const isCoinAiEffort = (value: unknown): value is CoinAiEffort =>
+  COIN_AI_EFFORTS.some((effort) => effort === value);
+
+const normalizeCoinAiModel = (value: unknown): CoinAiModel =>
+  isCoinAiModel(value) ? value : COIN_AI_DEFAULT_MODEL;
+
+const normalizeCoinAiEffort = (value: unknown): CoinAiEffort =>
+  isCoinAiEffort(value) ? value : COIN_AI_DEFAULT_EFFORT;
+
+const normalizeCoinAiModelEffort = (model: CoinAiModel, effort: CoinAiEffort): CoinAiEffort =>
+  COIN_AI_MODEL_EFFORTS[model].some((item) => item === effort)
+    ? effort
+    : COIN_AI_DEFAULT_EFFORT;
+
+const aiState = z.preprocess((value) => {
+  if (!isSchemaRecord(value)) return value;
+  const model = normalizeCoinAiModel(value.model);
+  return {
+    ...value,
+    model,
+    effort: normalizeCoinAiModelEffort(model, normalizeCoinAiEffort(value.effort)),
+  };
+}, z.object({
   model: z.enum(COIN_AI_MODELS),
   effort: z.enum(COIN_AI_EFFORTS),
   receipts: z.array(coinAiAnalysisReceiptSchema).max(COIN_AI_MAX_RECEIPTS),
-}).strict().default({
-  model: 'gpt-5.5',
-  effort: 'high',
+}).strict()).default({
+  model: COIN_AI_DEFAULT_MODEL,
+  effort: COIN_AI_DEFAULT_EFFORT,
   receipts: [],
 });
 

@@ -14,7 +14,7 @@ const createPi = (
   AuthStorage: { create: () => ({}) },
   ModelRegistry: {
     create: () => ({
-      find: () => ({ provider: 'openai-codex', id: 'gpt-5.5' }),
+      find: () => ({ provider: 'openai-codex', id: 'gpt-5.6-luna' }),
       hasConfiguredAuth: () => true,
     }),
   },
@@ -27,11 +27,33 @@ const createPi = (
   },
 });
 
+test('rejects Sol with low effort before touching the SDK', async () => {
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => {
+      throw new Error('SDK should not load for an invalid fixed target');
+    },
+  });
+
+  await assert.rejects(
+    runtime.run({
+      model: 'gpt-5.6-sol',
+      effort: 'low',
+      systemPrompt: 'Return strict JSON.',
+      prompt: '{"evidence":[]}',
+      maxOutputBytes: 1024,
+      signal: new AbortController().signal,
+    }),
+    (error) => error instanceof CodexRuntimeError && error.code === 'effort-mismatch',
+  );
+});
+
 test('creates a sterile in-memory Codex session with all tools disabled', async () => {
   let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
   let options: Record<string, unknown> = {};
   const session: CodexRuntimePiSession = {
-    model: { provider: 'openai-codex', id: 'gpt-5.5' },
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
     thinkingLevel: 'high',
     subscribe: (value) => {
       listener = value;
@@ -53,7 +75,7 @@ test('creates a sterile in-memory Codex session with all tools disabled', async 
   });
 
   const result = await runtime.run({
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-luna',
     effort: 'high',
     systemPrompt: 'Return strict JSON.',
     prompt: '{"evidence":[]}',
@@ -91,14 +113,14 @@ test('maps an explicit Fast tier into the final provider payload', async () => {
   };
   const session: CodexRuntimePiSession = {
     agent,
-    model: { provider: 'openai-codex', id: 'gpt-5.5' },
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
     thinkingLevel: 'low',
     subscribe: (value) => {
       listener = value;
       return () => undefined;
     },
     prompt: async () => {
-      capturedPayload = await agent.onPayload({ model: 'gpt-5.5', store: false }, session.model);
+      capturedPayload = await agent.onPayload({ model: 'gpt-5.6-luna', store: false }, session.model);
       listener({
         type: 'message_end',
         message: { role: 'assistant', content: '{"ok":true}', stopReason: 'stop' },
@@ -114,7 +136,7 @@ test('maps an explicit Fast tier into the final provider payload', async () => {
   });
 
   await runtime.run({
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-luna',
     effort: 'low',
     serviceTier: 'fast',
     systemPrompt: 'Return strict JSON.',
@@ -124,7 +146,7 @@ test('maps an explicit Fast tier into the final provider payload', async () => {
   });
 
   assert.deepEqual(capturedPayload, {
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-luna',
     store: false,
     extensionMarker: 'kept',
     service_tier: 'priority',
@@ -141,14 +163,14 @@ test('leaves the provider payload hook unchanged without a Fast selection', asyn
   const agent = { onPayload: originalOnPayload };
   const session: CodexRuntimePiSession = {
     agent,
-    model: { provider: 'openai-codex', id: 'gpt-5.5' },
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
     thinkingLevel: 'low',
     subscribe: (value) => {
       listener = value;
       return () => undefined;
     },
     prompt: async () => {
-      await agent.onPayload({ model: 'gpt-5.5', store: false }, session.model);
+      await agent.onPayload({ model: 'gpt-5.6-luna', store: false }, session.model);
       listener({
         type: 'message_end',
         message: { role: 'assistant', content: '{"ok":true}', stopReason: 'stop' },
@@ -164,7 +186,7 @@ test('leaves the provider payload hook unchanged without a Fast selection', asyn
   });
 
   await runtime.run({
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-luna',
     effort: 'low',
     systemPrompt: 'Return strict JSON.',
     prompt: '{"evidence":[]}',
@@ -173,14 +195,14 @@ test('leaves the provider payload hook unchanged without a Fast selection', asyn
   });
 
   assert.equal(agent.onPayload, originalOnPayload);
-  assert.deepEqual(capturedPayload, { model: 'gpt-5.5', store: false });
+  assert.deepEqual(capturedPayload, { model: 'gpt-5.6-luna', store: false });
 });
 
 test('fails closed when a Fast session does not expose its Agent', async () => {
   let prompted = false;
   let disposed = false;
   const session: CodexRuntimePiSession = {
-    model: { provider: 'openai-codex', id: 'gpt-5.5' },
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
     thinkingLevel: 'low',
     subscribe: () => () => undefined,
     prompt: async () => {
@@ -199,7 +221,7 @@ test('fails closed when a Fast session does not expose its Agent', async () => {
 
   await assert.rejects(
     runtime.run({
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-luna',
       effort: 'low',
       serviceTier: 'fast',
       systemPrompt: 'Return strict JSON.',
@@ -217,7 +239,7 @@ test('fails closed when the SDK skips the Fast provider payload hook', async () 
   let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
   const session: CodexRuntimePiSession = {
     agent: {},
-    model: { provider: 'openai-codex', id: 'gpt-5.5' },
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
     thinkingLevel: 'low',
     subscribe: (value) => {
       listener = value;
@@ -240,7 +262,7 @@ test('fails closed when the SDK skips the Fast provider payload hook', async () 
 
   await assert.rejects(
     runtime.run({
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-luna',
       effort: 'low',
       serviceTier: 'fast',
       systemPrompt: 'Return strict JSON.',
@@ -257,7 +279,7 @@ test('aborts the active in-memory session without returning partial output', asy
   let markStarted = (): void => undefined;
   const started = new Promise<void>((resolve) => { markStarted = resolve; });
   const session: CodexRuntimePiSession = {
-    model: { provider: 'openai-codex', id: 'gpt-5.5' },
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
     thinkingLevel: 'medium',
     subscribe: () => () => undefined,
     prompt: async () => {
@@ -274,7 +296,7 @@ test('aborts the active in-memory session without returning partial output', asy
   });
   const controller = new AbortController();
   const pending = runtime.run({
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-luna',
     effort: 'medium',
     systemPrompt: 'Return strict JSON.',
     prompt: '{"evidence":[]}',

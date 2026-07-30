@@ -882,6 +882,7 @@ export const en = {
           low: 'Low',
           medium: 'Medium',
           high: 'High',
+          xhigh: 'Extra',
         },
         verified: 'Verified',
         connect: 'Connect in browser',

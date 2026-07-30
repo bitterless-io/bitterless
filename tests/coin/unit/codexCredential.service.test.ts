@@ -99,7 +99,7 @@ const createFakePi = (options: FakePiOptions = {}) => {
         modelPaths.push(modelsPath);
         return {
           find: (provider: string, model: string) =>
-            provider === 'openai-codex' && model === 'gpt-5.5' ? {} : undefined,
+            provider === 'openai-codex' && model === 'gpt-5.6-sol' ? {} : undefined,
           hasConfiguredAuth: () => connected,
         };
       },
@@ -186,17 +186,18 @@ test('shares one login mutex and notifies every concurrent device-code observer'
     method: 'browser',
     onDeviceCode: (notice) => notices.push(`second:${notice.userCode}:${notice.verificationHost}`),
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(pi.loginCount, 1);
-  assert.deepEqual(notices.sort(), [
-    'first:ABCD-EFGH:auth.openai.com',
-    'second:ABCD-EFGH:auth.openai.com',
-  ]);
-  assert.deepEqual(opened, ['https://auth.openai.com/codex/device']);
-  gate.resolve();
+  try {
+    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(pi.loginCount, 1);
+    assert.deepEqual(notices.sort(), [
+      'first:ABCD-EFGH:auth.openai.com',
+      'second:ABCD-EFGH:auth.openai.com',
+    ]);
+    assert.deepEqual(opened, ['https://auth.openai.com/codex/device']);
+  } finally {
+    gate.resolve();
+  }
   const [firstStatus, secondStatus] = await Promise.all([first, second]);
   assert.equal(firstStatus.connected, true);
   assert.equal(secondStatus.connected, true);

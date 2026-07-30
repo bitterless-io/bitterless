@@ -10,8 +10,8 @@ export interface CoinCodexStatus {
   provider: 'openai-codex';
   connected: boolean;
   loginInProgress: boolean;
-  model: 'gpt-5.5';
-  effort: 'high';
+  model: 'gpt-5.6-sol';
+  effort: 'xhigh';
   lastVerifiedAt: number;
   errorCode?: 'status-unavailable';
 }

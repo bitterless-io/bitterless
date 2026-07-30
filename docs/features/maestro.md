@@ -91,6 +91,8 @@ the legacy Cowork `cowork-main` entry is imported once when the unified Maestro 
 - Persistent session/history management, streamed replies, thinking/activity state, abort, context
   compaction, Markdown, skill/replay cards, and generated file artifacts.
 - AI-CRMS and OpenAI Codex provider/model/effort/compression selection with existing login flows.
+  GPT-5.5 remains selectable and a stored GPT-5.5 target is preserved alongside GPT-5.6 Luna, Sol,
+  and Terra; the new-install Codex default may remain GPT-5.6 Luna.
 - Attach/drop/paste for supported text, image, PDF, Excel/CSV/TSV, and Word inputs; workspace-scoped
   file search/read/write; artifact open/reveal state.
 - Voice recording and AI-CRMS transcription within the upstream five-minute limit.

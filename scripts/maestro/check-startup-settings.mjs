@@ -59,6 +59,7 @@ const assert = (condition, message) => {
 }
 
 const { CoachSettingsService, DEFAULT_START_URL, isDefaultStartUrl, normalizeUrl } = loadTsModule('@maestro-main/settings/coachSettings.service')
+const { LLM_PRESETS, normalizeLlmTarget } = loadTsModule('@maestro-main/llm/llmModels')
 const settingsSource = readFileSync(join(root, 'main/maestro/settings/coachSettings.service.ts'), 'utf8')
 const maestroWindowSource = readFileSync(join(root, 'main/maestro/windows/maestroWindow.helper.ts'), 'utf8')
 const tabStoreSource = readFileSync(join(root, 'renderer/maestro/home/src/components/MenuBar/tab.store.ts'), 'utf8')
@@ -75,6 +76,7 @@ try {
 
   const service = new CoachSettingsService(dir)
   assert(service.read().startUrl === DEFAULT_START_URL, 'fresh settings should read the default startUrl')
+  assert(service.read().llmModel === 'gpt-5.6-luna', 'fresh settings should keep the GPT-5.6 Luna default')
   assert(service.hasCustomStartUrl() === false, 'fresh settings should not be custom')
   assert(isDefaultStartUrl('') === true, 'blank startUrl should be treated as default')
   assert(isDefaultStartUrl(DEFAULT_START_URL) === true, 'default sentinel should be treated as no extra startup tab')
@@ -83,6 +85,19 @@ try {
   const saved = service.save({ startUrl: 'clinic.example.test' })
   assert(saved.startUrl === 'http://clinic.example.test', 'custom startup host should normalize to http URL')
   assert(service.hasCustomStartUrl() === true, 'custom startup URL should be detected')
+
+  const gpt55Preset = LLM_PRESETS.find((preset) => preset.provider === 'openai-codex' && preset.model === 'gpt-5.5')
+  assert(gpt55Preset?.effort === 'low', 'Maestro should expose the preserved GPT-5.5 preset')
+  const normalizedGpt55 = normalizeLlmTarget({
+    provider: 'openai-codex',
+    model: 'gpt-5.5',
+    effort: 'xhigh'
+  })
+  assert(normalizedGpt55.model === 'gpt-5.5', 'Maestro target normalization should preserve stored GPT-5.5')
+  assert(normalizedGpt55.effort === 'xhigh', 'Maestro should preserve a supported GPT-5.5 effort')
+  const storedGpt55 = service.save({ llmModel: 'gpt-5.5', llmEffort: 'high' })
+  assert(storedGpt55.llmModel === 'gpt-5.5', 'Maestro settings should preserve stored GPT-5.5')
+  assert(storedGpt55.llmEffort === 'high', 'Maestro settings should preserve a supported GPT-5.5 effort')
 
   const reset = service.save({ startUrl: '' })
   assert(reset.startUrl === DEFAULT_START_URL, 'blank saved startUrl should reset to default')

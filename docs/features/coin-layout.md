@@ -164,6 +164,9 @@ Resources is a dense settings page with one bordered list per category. Cards ar
 
 Behavior:
 
+- Select and dropdown overlays remain open while the user moves into their options. They close only
+  after selection, an outside click, or `Escape`; background persistence must not disable, remount,
+  or replace the active control.
 - Codex disconnected state has one **Connect Codex** action and optional Browser/Device method menu.
 - GMGN absent state shows a copyable Yarn command; Bitterless does not silently install a global
   package. Guide opens in a local help modal with an official-doc external link.

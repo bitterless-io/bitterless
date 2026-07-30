@@ -16,6 +16,10 @@ import {
   type CodexCredentialService,
   type CodexCredentialStatus,
 } from '@main/codex/codexCredential.service';
+import {
+  COIN_AI_DEFAULT_EFFORT,
+  COIN_AI_DEFAULT_MODEL,
+} from '@shared/coin/coinAnalysis.type';
 import type { AlchemyResourceService } from './alchemyResource.service';
 import type { GmgnCliService } from './gmgnCli.service';
 import type { ServiceEndpointService } from './serviceEndpoint.service';
@@ -32,8 +36,8 @@ const mapCodexStatus = (status: CodexCredentialStatus): CoinCodexStatus => ({
   provider: 'openai-codex',
   connected: status.connected,
   loginInProgress: status.loginInProgress,
-  model: 'gpt-5.5',
-  effort: 'high',
+  model: COIN_AI_DEFAULT_MODEL,
+  effort: COIN_AI_DEFAULT_EFFORT,
   lastVerifiedAt: status.lastVerifiedAt,
   ...(status.errorCode ? { errorCode: status.errorCode } : {}),
 });

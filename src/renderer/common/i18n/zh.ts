@@ -883,6 +883,7 @@ export const zh: typeof en = {
           low: '低',
           medium: '中',
           high: '高',
+          xhigh: 'Extra',
         },
         verified: '验证时间',
         connect: '在浏览器中连接',

@@ -1,11 +1,12 @@
 <template>
   <div name="coin__meme__discover" class="coin-workspace-view coin-workspace-view--nested">
     <div name="coin__meme__discoverToolbar" class="coin-workspace-toolbar coin-workspace-toolbar--secondary">
-      <label class="coin-control-group coin-control-group--wide">
+      <div class="coin-control-group coin-control-group--wide">
         <span>{{ i18nHelper.coin.analysis.labels.launchStages }}</span>
         <a-select
           v-model="workspace.data.drafts.meme.stages"
           size="small"
+          :aria-label="i18nHelper.coin.analysis.labels.launchStages"
           multiple
           :max-tag-count="1"
           :disabled="locked"
@@ -13,16 +14,16 @@
         >
           <a-option v-for="stage in stages" :key="stage" :value="stage">{{ stageLabel(stage) }}</a-option>
         </a-select>
-      </label>
-      <label class="coin-control-group">
+      </div>
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.analysis.labels.timeWindow }}</span>
-        <a-select v-model="workspace.data.drafts.meme.windowMinutes" size="small" :disabled="locked" @change="workspace.queuePersist()">
+        <a-select v-model="workspace.data.drafts.meme.windowMinutes" size="small" :aria-label="i18nHelper.coin.analysis.labels.timeWindow" :disabled="locked" @change="workspace.queuePersist()">
           <a-option :value="15">15m</a-option>
           <a-option :value="60">1h</a-option>
           <a-option :value="360">6h</a-option>
           <a-option :value="1440">24h</a-option>
         </a-select>
-      </label>
+      </div>
       <label class="coin-control-group coin-control-group--compact">
         <span>{{ i18nHelper.coin.analysis.labels.limit }}</span>
         <a-input-number

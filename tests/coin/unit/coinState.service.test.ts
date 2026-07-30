@@ -101,20 +101,29 @@ test('persists only main-validated AI receipts and rejects stale or cancelled ap
     if (appended.status !== 'saved') return;
     assert.equal(appended.snapshot.data.ai.receipts.length, 1);
 
-    const rendererData = structuredClone(appended.snapshot.data);
-    rendererData.ai.model = 'gpt-5.4';
-    rendererData.ai.receipts = [];
-    const rendererSave = await service.save({ expectedRevision: 2, data: rendererData });
-    assert.equal(rendererSave.status, 'saved');
-    if (rendererSave.status === 'saved') {
-      assert.equal(rendererSave.snapshot.data.ai.model, 'gpt-5.4');
-      assert.equal(rendererSave.snapshot.data.ai.receipts[0].runId, receipt.runId);
+    const gpt55Data = structuredClone(appended.snapshot.data);
+    gpt55Data.ai.model = 'gpt-5.5';
+    gpt55Data.ai.receipts = [];
+    const gpt55Save = await service.save({ expectedRevision: 2, data: gpt55Data });
+    assert.equal(gpt55Save.status, 'saved');
+    if (gpt55Save.status !== 'saved') return;
+    assert.equal(gpt55Save.snapshot.data.ai.model, 'gpt-5.5');
+    assert.equal(gpt55Save.snapshot.data.ai.receipts[0].runId, receipt.runId);
+
+    const legacyData = structuredClone(gpt55Save.snapshot.data);
+    (legacyData.ai as { model: string }).model = 'gpt-5.4';
+    legacyData.ai.receipts = [];
+    const legacySave = await service.save({ expectedRevision: 3, data: legacyData });
+    assert.equal(legacySave.status, 'saved');
+    if (legacySave.status === 'saved') {
+      assert.equal(legacySave.snapshot.data.ai.model, 'gpt-5.6-sol');
+      assert.equal(legacySave.snapshot.data.ai.receipts[0].runId, receipt.runId);
     }
 
     assert.equal((await service.appendAiReceipt(receipt, 1)).status, 'conflict');
     const controller = new AbortController();
     controller.abort();
-    assert.equal((await service.appendAiReceipt(receipt, 3, controller.signal)).status, 'cancelled');
+    assert.equal((await service.appendAiReceipt(receipt, 4, controller.signal)).status, 'cancelled');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

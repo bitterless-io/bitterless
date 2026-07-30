@@ -1,9 +1,9 @@
 <template>
   <section name="coin__history" class="coin-workspace-view">
     <div name="coin__history__toolbar" class="coin-workspace-toolbar">
-      <label class="coin-control-group">
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.workspace.type }}</span>
-        <a-select v-model="type" size="small">
+        <a-select v-model="type" size="small" :aria-label="i18nHelper.coin.workspace.type">
           <a-option value="all">{{ i18nHelper.coin.workspace.all }}</a-option>
           <a-option value="monitor">{{ i18nHelper.coin.tabs.monitor }}</a-option>
           <a-option value="screener">{{ i18nHelper.coin.tabs.screener }}</a-option>
@@ -11,25 +11,25 @@
           <a-option value="decision">{{ i18nHelper.coin.analysis.labels.decisions }}</a-option>
           <a-option value="source">{{ i18nHelper.coin.analysis.sections.sourceReceipts }}</a-option>
         </a-select>
-      </label>
-      <label class="coin-control-group">
+      </div>
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.workspace.chain }}</span>
-        <a-select v-model="chain" size="small">
+        <a-select v-model="chain" size="small" :aria-label="i18nHelper.coin.workspace.chain">
           <a-option value="all">{{ i18nHelper.coin.workspace.all }}</a-option>
           <a-option value="bsc">BSC</a-option>
           <a-option value="solana">Solana</a-option>
           <a-option value="robinhood">Robinhood</a-option>
         </a-select>
-      </label>
-      <label class="coin-control-group">
+      </div>
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.analysis.labels.dateRange }}</span>
-        <a-select v-model="range" size="small">
+        <a-select v-model="range" size="small" :aria-label="i18nHelper.coin.analysis.labels.dateRange">
           <a-option value="all">{{ i18nHelper.coin.workspace.all }}</a-option>
           <a-option value="24h">24h</a-option>
           <a-option value="7d">7d</a-option>
           <a-option value="30d">30d</a-option>
         </a-select>
-      </label>
+      </div>
       <label class="coin-control-group coin-control-group--fill">
         <span>{{ i18nHelper.coin.workspace.search }}</span>
         <a-input v-model="search" :placeholder="i18nHelper.coin.workspace.historySearch" size="small" allow-clear />

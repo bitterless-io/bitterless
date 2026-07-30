@@ -28,7 +28,7 @@ export interface BaseAgentPromptOptions {
 export interface BaseAgentOptions {
   /** pi-ai provider id. Default 'openai-codex'. Env: COACH_PI_PROVIDER. */
   providerId?: string
-  /** Model id for the provider (openai-codex default: gpt-5.5). Env: COACH_PI_MODEL. */
+  /** Model id for the provider (openai-codex default: gpt-5.6-luna). Env: COACH_PI_MODEL. */
   modelId?: string
   /** Thinking/effort level for the provider. */
   effort?: LlmEffort
@@ -56,7 +56,7 @@ export interface BaseAgentOptions {
 // browser login — AuthStorage.login — into the coach's userData auth store, NOT the `pi` CLI.
 const DEFAULT_PROVIDER = 'openai-codex'
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  'openai-codex': 'gpt-5.5',
+  'openai-codex': 'gpt-5.6-luna',
   anthropic: 'claude-opus-4-8'
 }
 const DEFAULT_SESSION_START_TIMEOUT_MS = 45_000
@@ -132,7 +132,7 @@ export class BaseAgent {
       process.env.COACH_PI_MODEL ||
       this.opts.modelId ||
       DEFAULT_MODEL_BY_PROVIDER[providerId] ||
-      'gpt-5.5'
+      'gpt-5.6-luna'
     )
   }
 

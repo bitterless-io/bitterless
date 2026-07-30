@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from '../../maestro/fixtures/bitterlessApp.fixture';
 
 const projectRoot = resolve(__dirname, '..', '..', '..');
@@ -12,6 +12,12 @@ const openButton = (page: Page) =>
 
 const coinTab = (page: Page, name: string) =>
   page.locator('.arco-tabs-tab').filter({ hasText: name });
+
+const selectedValue = async (select: Locator): Promise<string> =>
+  (await select.locator('.arco-select-view-value').innerText()).trim();
+
+const visibleSelectPopup = (page: Page): Locator =>
+  page.locator('.arco-select-dropdown:visible');
 
 const waitForCoinPage = async (app: ElectronApplication): Promise<Page> => {
   const existing = app.windows().find((page) => coinPagePattern.test(page.url()));
@@ -104,7 +110,9 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
 
   const card = hostPage.locator('[data-mini-app-id="coin"]');
   await expect(card).toBeVisible();
-  await expect(card).toContainText('Coin');
+  await expect(
+    card.locator('[name="miniApp__card__title"]').getByText('trench', { exact: true }),
+  ).toBeVisible();
   await openButton(hostPage).click();
 
   const coinPage = await waitForCoinPage(app);
@@ -204,6 +212,21 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   await coinTab(coinPage, 'Monitor').click();
   await expect(activeTabPanel.getByPlaceholder('BTCUSDT, ETHUSDT')).toBeEditable();
   await expect(activeTabPanel.getByRole('button', { name: 'Load', exact: true })).toBeEnabled();
+  const monitorSortSelect = activeTabPanel.locator('.coin-control-group .arco-select');
+  const currentMonitorSort = await selectedValue(monitorSortSelect);
+  await monitorSortSelect.click();
+  const monitorSortPopup = visibleSelectPopup(coinPage);
+  await expect(monitorSortPopup).toBeVisible();
+  const monitorSortOptions = monitorSortPopup.locator('.arco-select-option');
+  const monitorSortLabels = (await monitorSortOptions.allTextContents()).map((label) => label.trim());
+  const nextMonitorSortIndex = monitorSortLabels.findIndex(
+    (label) => label && label !== currentMonitorSort,
+  );
+  expect(nextMonitorSortIndex).toBeGreaterThanOrEqual(0);
+  const nextMonitorSort = monitorSortLabels[nextMonitorSortIndex];
+  await monitorSortOptions.nth(nextMonitorSortIndex).click();
+  await expect(monitorSortPopup).toHaveCount(0);
+  await expect(monitorSortSelect).toContainText(nextMonitorSort);
   await expect(coinPage.getByText('Shell ready')).toBeVisible();
 
   const forbiddenSurface = await coinPage.evaluate(() => ({
@@ -225,6 +248,54 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   for (const section of ['AI analysis', 'Local data tool', 'Services']) {
     await expect(coinPage.getByRole('heading', { name: section, exact: true })).toBeVisible();
   }
+  const aiPreferences = coinPage.locator('[name="coin__resources__codexPreferences"]');
+  const modelSelect = aiPreferences.locator('.arco-select').nth(0);
+  const effortSelect = aiPreferences.locator('.arco-select').nth(1);
+
+  const currentModel = await selectedValue(modelSelect);
+  await modelSelect.click();
+  const resourceSelectPopup = visibleSelectPopup(coinPage);
+  await expect(resourceSelectPopup).toBeVisible();
+  const modelOptions = resourceSelectPopup.locator('.arco-select-option');
+  const modelLabels = (await modelOptions.allTextContents()).map((label) => label.trim());
+  const nextModelIndex = modelLabels.findIndex((label) => label && label !== currentModel);
+  expect(nextModelIndex).toBeGreaterThanOrEqual(0);
+  const nextModel = modelLabels[nextModelIndex];
+  await modelOptions.nth(nextModelIndex).click();
+  await expect(modelSelect).toContainText(nextModel);
+
+  const currentEffort = await selectedValue(effortSelect);
+  await effortSelect.click();
+  await expect(resourceSelectPopup).toBeVisible();
+  await coinPage.waitForTimeout(325);
+  await expect(resourceSelectPopup).toBeVisible();
+
+  const coinStatePath = join(bitterless.userDataDir, 'coin', 'coin-state.json');
+  const readPersistedAi = (): { model?: string; effort?: string } | null => {
+    try {
+      const snapshot = JSON.parse(readFileSync(coinStatePath, 'utf8')) as {
+        data?: { ai?: { model?: string; effort?: string } };
+      };
+      return snapshot.data?.ai ?? null;
+    } catch {
+      return null;
+    }
+  };
+  await expect.poll(() => readPersistedAi()?.model ?? null).toBe(nextModel);
+  await expect(resourceSelectPopup).toBeVisible();
+  const persistedEffortBeforeSelection = readPersistedAi()?.effort ?? null;
+  expect(persistedEffortBeforeSelection).not.toBeNull();
+
+  const effortOptions = resourceSelectPopup.locator('.arco-select-option');
+  const effortLabels = (await effortOptions.allTextContents()).map((label) => label.trim());
+  const nextEffortIndex = effortLabels.findIndex((label) => label && label !== currentEffort);
+  expect(nextEffortIndex).toBeGreaterThanOrEqual(0);
+  const nextEffort = effortLabels[nextEffortIndex];
+  await effortOptions.nth(nextEffortIndex).click();
+  await expect(resourceSelectPopup).toHaveCount(0);
+  await expect(effortSelect).toContainText(nextEffort);
+  await expect.poll(() => readPersistedAi()?.effort === persistedEffortBeforeSelection).toBe(false);
+
   await expect(coinPage.getByText('yarn global add gmgn-cli', { exact: true })).toBeVisible();
   await expect(coinPage.getByText(/Alchemy/)).toHaveCount(0);
   await expect(coinPage.getByText('Monitor API', { exact: true })).toBeVisible();
@@ -360,7 +431,7 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
   };
   await setCoinWindowBounds(app, persistedBounds);
   await coinPage.waitForTimeout(350);
-  await coinPage.getByRole('button', { name: 'Close Coin' }).click();
+  await coinPage.getByRole('button', { name: 'Close trench', exact: true }).click();
   await expect.poll(async () => (await coinWindowSnapshot(app)).count).toBe(0);
 
   const windowStatePath = join(bitterless.userDataDir, 'coin', 'window-state.json');

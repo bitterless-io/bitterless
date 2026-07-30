@@ -10,8 +10,26 @@ export const COIN_LAUNCH_STAGES = [
   'rejected',
   'stale',
 ] as const;
-export const COIN_AI_MODELS = ['gpt-5.5', 'gpt-5.4'] as const;
-export const COIN_AI_EFFORTS = ['low', 'medium', 'high'] as const;
+export const COIN_AI_DEFAULT_MODEL = 'gpt-5.6-sol' as const;
+export const COIN_AI_DEFAULT_EFFORT = 'xhigh' as const;
+export const COIN_AI_MODELS = [
+  'gpt-5.5',
+  'gpt-5.6-luna',
+  COIN_AI_DEFAULT_MODEL,
+  'gpt-5.6-terra',
+] as const;
+export const COIN_AI_LEGACY_RECEIPT_MODELS = ['gpt-5.4'] as const;
+export const COIN_AI_RECEIPT_MODELS = [
+  ...COIN_AI_MODELS,
+  ...COIN_AI_LEGACY_RECEIPT_MODELS,
+] as const;
+export const COIN_AI_EFFORTS = ['low', 'medium', 'high', COIN_AI_DEFAULT_EFFORT] as const;
+export const COIN_AI_MODEL_EFFORTS = {
+  'gpt-5.5': COIN_AI_EFFORTS,
+  'gpt-5.6-luna': COIN_AI_EFFORTS,
+  'gpt-5.6-sol': ['medium', 'high', COIN_AI_DEFAULT_EFFORT],
+  'gpt-5.6-terra': COIN_AI_EFFORTS,
+} as const;
 export const COIN_HOLDER_EXCLUSION_CLASSES = [
   'burn_null_system',
   'exchange_custody',
@@ -30,6 +48,7 @@ export type CoinDataState = 'ready' | 'partial' | 'unavailable' | 'error' | 'can
 export type CoinReceiptState = 'ready' | 'partial' | 'unavailable' | 'error' | 'stale';
 export type CoinDecision = 'BUY' | 'HOLD' | 'SELL';
 export type CoinAiModel = (typeof COIN_AI_MODELS)[number];
+export type CoinAiReceiptModel = (typeof COIN_AI_RECEIPT_MODELS)[number];
 export type CoinAiEffort = (typeof COIN_AI_EFFORTS)[number];
 export type CoinAiTargetKind = 'monitor' | 'screener' | 'meme' | 'strategy';
 export type CoinHolderExclusionClass = (typeof COIN_HOLDER_EXCLUSION_CLASSES)[number];
@@ -55,7 +74,7 @@ export interface CoinAiAnalysisReceipt {
   runId: string;
   target: CoinAiAnalysisTarget;
   provider: 'openai-codex';
-  model: CoinAiModel;
+  model: CoinAiReceiptModel;
   effort: CoinAiEffort;
   contextHash: string;
   startedAt: number;
@@ -848,8 +867,8 @@ export const createDefaultCoinPersistentData = (): CoinPersistentData => ({
   sourceReceipts: [],
   history: [],
   ai: {
-    model: 'gpt-5.5',
-    effort: 'high',
+    model: COIN_AI_DEFAULT_MODEL,
+    effort: COIN_AI_DEFAULT_EFFORT,
     receipts: [],
   },
 });

@@ -110,7 +110,7 @@ test('rejects a stale validated run before persistence', async () => {
   const result = await service.analyze({
     runId: '11111111-1111-4111-8111-111111111111',
     target,
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-sol',
     effort: 'high',
   });
   assert.equal(result.status, 'error');
@@ -145,7 +145,7 @@ test('cancels by runId and never persists an aborted result', async () => {
     },
   });
   const runId = '22222222-2222-4222-8222-222222222222';
-  const pending = service.analyze({ runId, target, model: 'gpt-5.4', effort: 'medium' });
+  const pending = service.analyze({ runId, target, model: 'gpt-5.6-sol', effort: 'medium' });
   await runtimeStarted;
   assert.deepEqual(service.cancel({ runId }), { runId, cancelled: true });
   assert.deepEqual(await pending, { status: 'cancelled', runId });

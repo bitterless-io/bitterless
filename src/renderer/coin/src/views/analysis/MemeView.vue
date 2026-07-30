@@ -11,23 +11,25 @@
         <a-radio value="discover">{{ i18nHelper.coin.workspace.discover }}</a-radio>
         <a-radio value="analyze">{{ i18nHelper.coin.workspace.analyze }}</a-radio>
       </a-radio-group>
-      <label class="coin-control-group">
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.analysis.labels.sourceMode }}</span>
         <a-select
           v-model="workspace.data.drafts.meme.mode"
           size="small"
+          :aria-label="i18nHelper.coin.analysis.labels.sourceMode"
           :disabled="requestBusy || Boolean(workspace.discoverSnapshot?.running)"
           @change="onModeChange"
         >
           <a-option value="service">{{ i18nHelper.coin.analysis.modes.deployedService }}</a-option>
           <a-option value="local_cli_rpc">{{ i18nHelper.coin.analysis.modes.localReadOnly }}</a-option>
         </a-select>
-      </label>
-      <label class="coin-control-group">
+      </div>
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.workspace.chain }}</span>
         <a-select
           v-model="workspace.data.drafts.meme.chain"
           size="small"
+          :aria-label="i18nHelper.coin.workspace.chain"
           :disabled="requestBusy || Boolean(workspace.discoverSnapshot?.running)"
           @change="workspace.queuePersist()"
         >
@@ -35,7 +37,7 @@
           <a-option value="solana">Solana</a-option>
           <a-option value="robinhood">Robinhood</a-option>
         </a-select>
-      </label>
+      </div>
       <span class="coin-source-mode" :class="selectedModeConfigured ? 'coin-source-mode--ready' : 'coin-source-mode--unavailable'">
         <IconServerBolt v-if="workspace.data.drafts.meme.mode === 'service'" :size="15" />
         <IconTerminal2 v-else :size="15" />

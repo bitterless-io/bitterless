@@ -2,13 +2,24 @@ import { Buffer } from 'node:buffer';
 import type { ModelProviderInvalidationReason } from '@shared/modelProvider/modelProvider.contract';
 
 export const CODEX_RUNTIME_PROVIDER = 'openai-codex' as const;
-export const CODEX_RUNTIME_MODELS = ['gpt-5.5', 'gpt-5.4'] as const;
-export const CODEX_RUNTIME_EFFORTS = ['low', 'medium', 'high'] as const;
+export const CODEX_RUNTIME_MODELS = [
+  'gpt-5.5',
+  'gpt-5.6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+] as const;
+export const CODEX_RUNTIME_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 export const CODEX_RUNTIME_SERVICE_TIERS = ['fast'] as const;
 
 export type CodexRuntimeModel = (typeof CODEX_RUNTIME_MODELS)[number];
 export type CodexRuntimeEffort = (typeof CODEX_RUNTIME_EFFORTS)[number];
 export type CodexRuntimeServiceTier = (typeof CODEX_RUNTIME_SERVICE_TIERS)[number];
+export const CODEX_RUNTIME_MODEL_EFFORTS = {
+  'gpt-5.5': CODEX_RUNTIME_EFFORTS,
+  'gpt-5.6-luna': CODEX_RUNTIME_EFFORTS,
+  'gpt-5.6-sol': ['medium', 'high', 'xhigh'],
+  'gpt-5.6-terra': CODEX_RUNTIME_EFFORTS,
+} as const satisfies Record<CodexRuntimeModel, readonly CodexRuntimeEffort[]>;
 export type CodexRuntimeErrorCode =
   | 'cancelled'
   | 'effort-mismatch'
@@ -46,6 +57,20 @@ export interface CodexRuntimePiModel {
 export interface CodexRuntimePiModelRegistry {
   find(provider: string, model: string): CodexRuntimePiModel | undefined;
   hasConfiguredAuth(model: CodexRuntimePiModel): boolean;
+  refresh?(): Promise<void>;
+}
+
+export interface CodexRuntimePiModelRuntime {
+  getModel?(provider: string, model: string): CodexRuntimePiModel | undefined;
+  hasConfiguredAuth(provider: string): boolean;
+}
+
+export interface CodexRuntimePiLegacyModelRegistryFactory {
+  create(authStorage: unknown, modelsPath?: string): CodexRuntimePiModelRegistry;
+}
+
+export interface CodexRuntimePiModernModelRegistryFactory {
+  new (modelRuntime: CodexRuntimePiModelRuntime): CodexRuntimePiModelRegistry;
 }
 
 export interface CodexRuntimePiMessage {
@@ -97,9 +122,15 @@ export interface CodexRuntimePiResourceLoader {
 
 export interface CodexRuntimePiModule {
   AuthStorage: { create(path: string): unknown };
-  ModelRegistry: {
-    create(authStorage: unknown, modelsPath?: string): CodexRuntimePiModelRegistry;
+  ModelRuntime?: {
+    create(options?: {
+      authPath?: string;
+      modelsPath?: string | null;
+    }): Promise<CodexRuntimePiModelRuntime>;
   };
+  ModelRegistry:
+    | CodexRuntimePiLegacyModelRegistryFactory
+    | CodexRuntimePiModernModelRegistryFactory;
   SessionManager: { inMemory(): unknown };
   SettingsManager: { inMemory(settings: Record<string, unknown>): unknown };
   createExtensionRuntime(): unknown;
@@ -376,6 +407,48 @@ const createSterileResourceLoader = (
   reload: async () => undefined
 });
 
+interface CodexRuntimePiTargetContext {
+  authStorage?: unknown;
+  modelRuntime?: CodexRuntimePiModelRuntime;
+  modelRegistry: CodexRuntimePiModelRegistry;
+  model: CodexRuntimePiModel | undefined;
+}
+
+const createModernModelRegistry = (
+  pi: CodexRuntimePiModule,
+  modelRuntime: CodexRuntimePiModelRuntime
+): CodexRuntimePiModelRegistry =>
+  new (pi.ModelRegistry as CodexRuntimePiModernModelRegistryFactory)(modelRuntime);
+
+const createPiTargetContext = async (
+  pi: CodexRuntimePiModule,
+  authPath: string,
+  modelsPath: string,
+  modelId: CodexRuntimeModel
+): Promise<CodexRuntimePiTargetContext> => {
+  if (pi.ModelRuntime?.create) {
+    const modelRuntime = await pi.ModelRuntime.create({ authPath, modelsPath });
+    const modelRegistry = createModernModelRegistry(pi, modelRuntime);
+    await modelRegistry.refresh?.();
+    return {
+      modelRuntime,
+      modelRegistry,
+      model: modelRegistry.find(CODEX_RUNTIME_PROVIDER, modelId)
+    };
+  }
+
+  const authStorage = pi.AuthStorage.create(authPath);
+  const modelRegistry = (pi.ModelRegistry as CodexRuntimePiLegacyModelRegistryFactory).create(
+    authStorage,
+    modelsPath
+  );
+  return {
+    authStorage,
+    modelRegistry,
+    model: modelRegistry.find(CODEX_RUNTIME_PROVIDER, modelId)
+  };
+};
+
 const waitForSession = async (
   creation: Promise<{ session: CodexRuntimePiSession }>,
   signal: AbortSignal
@@ -464,6 +537,9 @@ export class CodexRuntimeService {
     if (!CODEX_RUNTIME_EFFORTS.includes(input.effort)) {
       throw new CodexRuntimeError('effort-mismatch');
     }
+    if (!CODEX_RUNTIME_MODEL_EFFORTS[input.model].some((effort) => effort === input.effort)) {
+      throw new CodexRuntimeError('effort-mismatch');
+    }
     if (
       input.serviceTier !== undefined &&
       !CODEX_RUNTIME_SERVICE_TIERS.includes(input.serviceTier)
@@ -488,16 +564,18 @@ export class CodexRuntimeService {
       throw new CodexRuntimeError('runtime-unavailable');
     }
 
-    let authStorage: unknown;
-    let modelRegistry: CodexRuntimePiModelRegistry;
-    let model: CodexRuntimePiModel | undefined;
+    let targetContext: CodexRuntimePiTargetContext;
     try {
-      authStorage = pi.AuthStorage.create(this.dependencies.authPath());
-      modelRegistry = pi.ModelRegistry.create(authStorage, this.dependencies.modelsPath());
-      model = modelRegistry.find(CODEX_RUNTIME_PROVIDER, input.model);
+      targetContext = await createPiTargetContext(
+        pi,
+        this.dependencies.authPath(),
+        this.dependencies.modelsPath(),
+        input.model
+      );
     } catch {
       throw new CodexRuntimeError('runtime-unavailable');
     }
+    const { model, modelRegistry } = targetContext;
     assertTarget(model, input.model);
     if (!model || !modelRegistry.hasConfiguredAuth(model)) {
       throw new CodexRuntimeError('not-configured');
@@ -511,8 +589,9 @@ export class CodexRuntimeService {
     try {
       creation = pi.createAgentSession({
         model,
-        authStorage,
-        modelRegistry,
+        ...(targetContext.modelRuntime
+          ? { modelRuntime: targetContext.modelRuntime }
+          : { authStorage: targetContext.authStorage, modelRegistry }),
         thinkingLevel: input.effort,
         noTools: 'all',
         tools: [],

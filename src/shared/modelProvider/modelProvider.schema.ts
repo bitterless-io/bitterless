@@ -28,26 +28,49 @@ export const modelProviderInvalidationReasonSchema = z.enum([
   'unauthorized'
 ]);
 
-export const modelProviderTargetSchema = z
-  .object({
-    provider: z.literal(MODEL_PROVIDER_CODEX_ID),
-    model: z.literal(MODEL_PROVIDER_CODEX_MODEL),
-    effort: z.literal(MODEL_PROVIDER_CODEX_EFFORT)
-  })
-  .strict();
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const fixedTargetValue = (value: unknown): unknown =>
+  isRecord(value)
+    ? {
+        ...value,
+        model: MODEL_PROVIDER_CODEX_MODEL,
+        effort: MODEL_PROVIDER_CODEX_EFFORT
+      }
+    : value;
+
+export const modelProviderTargetSchema = z.preprocess(
+  fixedTargetValue,
+  z
+    .object({
+      provider: z.literal(MODEL_PROVIDER_CODEX_ID),
+      model: z.literal(MODEL_PROVIDER_CODEX_MODEL),
+      effort: z.literal(MODEL_PROVIDER_CODEX_EFFORT)
+    })
+    .strict()
+);
 
 export const modelProviderRecordSchema = z
-  .object({
-    schemaVersion: z.literal(MODEL_PROVIDER_RECORD_SCHEMA_VERSION),
-    provider: z.literal(MODEL_PROVIDER_CODEX_ID),
-    configuredModels: z.tuple([z.literal(MODEL_PROVIDER_CODEX_MODEL)]),
-    defaultTarget: modelProviderTargetSchema,
-    authState: modelProviderAuthStateSchema,
-    invalidationReason: modelProviderInvalidationReasonSchema.nullable(),
-    lastObservedAt: z.number().int().nonnegative(),
-    lastSuccessfulRuntimeAt: z.number().int().nonnegative().nullable()
-  })
-  .strict()
+  .preprocess((value) => {
+    if (!isRecord(value)) return value;
+    return {
+      ...value,
+      configuredModels: [MODEL_PROVIDER_CODEX_MODEL],
+      defaultTarget: fixedTargetValue(value.defaultTarget)
+    };
+  }, z
+    .object({
+      schemaVersion: z.literal(MODEL_PROVIDER_RECORD_SCHEMA_VERSION),
+      provider: z.literal(MODEL_PROVIDER_CODEX_ID),
+      configuredModels: z.tuple([z.literal(MODEL_PROVIDER_CODEX_MODEL)]),
+      defaultTarget: modelProviderTargetSchema,
+      authState: modelProviderAuthStateSchema,
+      invalidationReason: modelProviderInvalidationReasonSchema.nullable(),
+      lastObservedAt: z.number().int().nonnegative(),
+      lastSuccessfulRuntimeAt: z.number().int().nonnegative().nullable()
+    })
+    .strict())
   .superRefine((record, context) => {
     if (record.authState === 'invalidated' && record.invalidationReason === null) {
       context.addIssue({

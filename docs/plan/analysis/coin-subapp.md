@@ -35,7 +35,7 @@ cleanup, source truthfulness, credential isolation, and machine portability are 
 | Maestro Pi runtime behavior | reuse normalized runtime concepts only; no Maestro agents/tools/chat |
 | filter monitor endpoints | typed host adapter |
 | coin-filter parse/screen endpoints | typed host adapter |
-| `areas/earn/meme/strategy` contracts | result/decision fixtures and source boundaries |
+| `areas/trench/earn/meme/strategy` contracts | result/decision fixtures and source boundaries |
 | official `gmgn-cli` | fixed serial read-only templates for explicit local analysis/discovery mode |
 | Electron `safeStorage` pattern | encrypted Alchemy/resource values in owner-only Coin state |
 
