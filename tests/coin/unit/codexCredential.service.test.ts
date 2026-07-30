@@ -7,6 +7,7 @@ import {
   CodexCredentialError,
   CodexCredentialService,
   type PiAuthModule,
+  type PiAuthStorage,
 } from '../../../src/main/codex/codexCredential.service';
 import {
   CodexFileCredentialStore,
@@ -29,7 +30,7 @@ const deferred = <T>() => {
 interface FakePiOptions {
   connected?: boolean;
   login?: (
-    callbacks: Parameters<ReturnType<PiAuthModule['AuthStorage']['create']>['login']>[1],
+    callbacks: Parameters<NonNullable<PiAuthStorage['login']>>[1],
     loginIndex: number,
   ) => Promise<void>;
 }
@@ -48,7 +49,7 @@ const createFakePi = (options: FakePiOptions = {}) => {
     return {
       login: async (
         _provider: string,
-        callbacks: Parameters<ReturnType<PiAuthModule['AuthStorage']['create']>['login']>[1],
+        callbacks: Parameters<NonNullable<PiAuthStorage['login']>>[1],
       ) => {
         loginCount += 1;
         if (options.login) await options.login(callbacks, loginCount);

@@ -60,7 +60,7 @@ interface CodexLoginAttempt {
   promise: Promise<CodexCredentialStatus>;
 }
 
-interface PiAuthStorage extends CodexCredentialStore {
+export interface PiAuthStorage extends CodexCredentialStore {
   login?(
     provider: string,
     callbacks: {
