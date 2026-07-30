@@ -1,7 +1,7 @@
 ---
 id: model-provider-login-cancel-regression-007
 scope: shared-model-provider
-status: in-progress
+status: implemented-owner-verification-pending
 depends-on: [translator-error-diagnostics-004]
 ---
 
@@ -59,4 +59,5 @@ ignored.
 
 # Review
 
-- Pending independent verification.
+- [model-provider-login-cancel-regression-007-1](../reviews/model-provider-login-cancel-regression-007-1.md) -
+  pass

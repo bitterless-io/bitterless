@@ -89,8 +89,8 @@ design document.
 ## Issues
 
 - [Codex Model login cancellation regression](issues/codex-model-login-cancel-regression.md) -
-  active: Setting cannot cancel an abandoned Codex OAuth attempt or start a replacement login, and
-  the current runtime lacks the generation guards needed to ignore a late cancelled result.
+  implemented; owner verification pending: Setting can cancel or reconnect Codex immediately,
+  while credential, provider, and renderer generations ignore late superseded results.
 - [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
   implemented; owner verification pending: default sites now keep stock Electron identity while
   Google/YouTube use a dedicated session with the verified honest Bitterless UA.

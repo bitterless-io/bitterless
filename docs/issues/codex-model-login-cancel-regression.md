@@ -1,6 +1,6 @@
 # Codex Model Login Cannot Be Cancelled
 
-Status: Active
+Status: Implemented; owner verification pending
 
 ## Symptom
 
@@ -58,3 +58,13 @@ login_required / invalidated       authenticating                    cancelled
 - Cross-renderer replacement and credential-cleanup failure remain non-ready and observable.
 - Existing model-provider cancellation tests, renderer i18n checks, touched type checks, and
   `git diff --check` pass.
+
+## Resolution
+
+Setting now exposes Cancel from the local login start, supports Reconnect, and fences credential,
+provider, and renderer attempts. OAuth credentials stay attempt-local until the current generation
+succeeds. Cleanup failure remains fail-closed and cannot reconcile to stale `ready`.
+
+Independent verification passed after the cross-renderer cleanup and UI findings were corrected.
+See
+[model-provider-login-cancel-regression-007-1](../plan/reviews/model-provider-login-cancel-regression-007-1.md).

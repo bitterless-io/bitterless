@@ -97,7 +97,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [translator-inline-retry-003](tasks/translator-inline-retry-003.md) | inline retry action for unchanged-source translation failures | done | translator-language-direction-002 |
 | [translator-llm-direction-005](tasks/translator-llm-direction-005.md) | single-pass semantic direction and result-gated target label | done | translator-inline-retry-003 |
 | [translator-fast-mode-006](tasks/translator-fast-mode-006.md) | Translator-only Codex Fast priority service tier | done | translator-llm-direction-005 |
-| [model-provider-login-cancel-regression-007](tasks/model-provider-login-cancel-regression-007.md) | cancellable and replaceable Setting Codex login with stale-result fencing | in-progress | translator-error-diagnostics-004 |
+| [model-provider-login-cancel-regression-007](tasks/model-provider-login-cancel-regression-007.md) | cancellable and replaceable Setting Codex login with stale-result fencing | implemented; owner verification pending | translator-error-diagnostics-004 |
 | [motto-miniapp-001](tasks/motto-miniapp-001.md) | local reminder cards and whole-array storage inside Omni | done | translator-miniapp-001 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
