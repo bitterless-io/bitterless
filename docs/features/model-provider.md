@@ -77,6 +77,16 @@ The shared Codex credential service also emits value-free `login-succeeded` and
 `logout-succeeded` transitions. Existing Main-process consumers that use the same credential
 singleton therefore update this registry without exposing credentials to a renderer.
 
+Every explicit Login is a fresh credential replacement. Main removes the previous persisted Codex
+credential, authenticates into an isolated in-memory store, and promotes only the current attempt
+after success. Pi `ModelRuntime` exclusively owns its browser callback listener; the Bitterless
+companion callback is reserved for the legacy storage API. Authentication-only runtime instances
+disable model-network catalog refresh so OAuth completion is not held behind unrelated discovery.
+The app-owned memory and locked-file credential stores implement Pi's current `CredentialStore`
+contract and keep its `auth.json`/`.lock` interoperability after Pi removed the public
+`AuthStorage` export. Cancel and replacement generations still fence every promotion and late
+completion.
+
 Main watches the shared Pi auth file for creation, deletion, and modification so external logout
 and ordinary credential changes are observed. File presence or modification alone never clears a
 persisted `invalidated` state; that requires an explicit successful-login transition or a real

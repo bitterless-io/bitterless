@@ -1,6 +1,6 @@
 # GPT-5.5 Removed by GPT-5.6 Migration
 
-Status: In progress
+Status: Implemented; owner verification pending
 
 Implementation: [codex-gpt55-retention-008](../plan/tasks/codex-gpt55-retention-008.md)
 

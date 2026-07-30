@@ -1,9 +1,14 @@
 import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { CodexBrowserCallbackCapture } from './codexCallbackCapture';
+import {
+  CodexFileCredentialStore,
+  CodexMemoryCredentialStore,
+  type CodexCredentialStore
+} from './codexCredential.store';
 
 const CODEX_PROVIDER = 'openai-codex';
-const CODEX_STATUS_MODEL = 'gpt-5.6-sol';
+const CODEX_STATUS_MODEL = 'gpt-5.5';
 const BROWSER_TIMEOUT_MS = 180_000;
 const DEVICE_TIMEOUT_MS = 16 * 60_000;
 
@@ -55,8 +60,8 @@ interface CodexLoginAttempt {
   promise: Promise<CodexCredentialStatus>;
 }
 
-interface PiAuthStorage {
-  login(
+interface PiAuthStorage extends CodexCredentialStore {
+  login?(
     provider: string,
     callbacks: {
       onSelect: () => Promise<string | undefined>;
@@ -73,12 +78,6 @@ interface PiAuthStorage {
     }
   ): Promise<unknown>;
   logout?(provider: string): void;
-  read(provider: string): Promise<unknown | undefined>;
-  modify(
-    provider: string,
-    update: (current: unknown | undefined) => Promise<unknown | undefined>
-  ): Promise<unknown | undefined>;
-  delete(provider: string): Promise<void>;
 }
 
 interface PiAuthModelRuntime {
@@ -109,15 +108,12 @@ interface PiAuthModelRuntime {
 }
 
 export interface PiAuthModule {
-  AuthStorage: {
-    create(path: string): PiAuthStorage;
-    inMemory(): PiAuthStorage;
-  };
   ModelRuntime?: {
     create(options?: {
       authPath?: string;
       modelsPath?: string | null;
       credentials?: PiAuthStorage;
+      allowModelNetwork?: boolean;
     }): Promise<PiAuthModelRuntime>;
   };
   ModelRegistry: {
@@ -137,6 +133,8 @@ export interface CodexCredentialServiceDependencies {
   loadPiAuthModule(): Promise<PiAuthModule>;
   openExternal(url: string): Promise<void>;
   createBrowserCallbackCapture(): Promise<CodexBrowserCallbackCapture>;
+  createPersistentCredentialStore?: (path: string) => PiAuthStorage;
+  createAttemptCredentialStore?: () => PiAuthStorage;
   now?: () => number;
   browserTimeoutMs?: number;
   deviceTimeoutMs?: number;
@@ -207,12 +205,19 @@ const createPiModelRuntime = async (
   credentials?: PiAuthStorage
 ): Promise<PiAuthModelRuntime | null> =>
   pi.ModelRuntime?.create
-    ? await pi.ModelRuntime.create({ authPath, modelsPath, credentials })
+    ? await pi.ModelRuntime.create({
+        authPath,
+        modelsPath,
+        credentials,
+        allowModelNetwork: false
+      })
     : null;
 
 export class CodexCredentialService {
   private readonly now: () => number;
   private readonly ensureDirectory: (path: string) => void;
+  private readonly createPersistentCredentialStore: (path: string) => PiAuthStorage;
+  private readonly createAttemptCredentialStore: () => PiAuthStorage;
   private readonly transitionListeners = new Set<CodexCredentialTransitionListener>();
   private loginAttemptId = 0;
   private activeLoginAttempt: CodexLoginAttempt | null = null;
@@ -221,6 +226,11 @@ export class CodexCredentialService {
   constructor(private readonly dependencies: CodexCredentialServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
     this.ensureDirectory = dependencies.ensurePrivateDirectory ?? ensurePrivateDirectory;
+    this.createPersistentCredentialStore =
+      dependencies.createPersistentCredentialStore ??
+      ((path) => new CodexFileCredentialStore(path));
+    this.createAttemptCredentialStore =
+      dependencies.createAttemptCredentialStore ?? (() => new CodexMemoryCredentialStore());
   }
 
   async getStatus(): Promise<CodexCredentialStatus> {
@@ -235,7 +245,7 @@ export class CodexCredentialService {
         const model = modelRuntime.getModel(CODEX_PROVIDER, CODEX_STATUS_MODEL);
         connected = Boolean(model && modelRuntime.hasConfiguredAuth(CODEX_PROVIDER));
       } else {
-        const auth = pi.AuthStorage.create(authPath);
+        const auth = this.createPersistentCredentialStore(authPath);
         const registry = pi.ModelRegistry.create(auth, modelsPath);
         const model = registry.find(CODEX_PROVIDER, CODEX_STATUS_MODEL);
         connected = Boolean(model && registry.hasConfiguredAuth(model));
@@ -343,7 +353,7 @@ export class CodexCredentialService {
       if (modelRuntime) {
         await modelRuntime.logout(CODEX_PROVIDER);
       } else {
-        const auth = pi.AuthStorage.create(this.dependencies.authPath());
+        const auth = this.createPersistentCredentialStore(this.dependencies.authPath());
         if (auth.logout) auth.logout(CODEX_PROVIDER);
         else await auth.delete(CODEX_PROVIDER);
       }
@@ -375,8 +385,21 @@ export class CodexCredentialService {
       const authPath = this.dependencies.authPath();
       const modelsPath = this.dependencies.modelsPath();
       this.ensureDirectory(dirname(authPath));
-      const attemptAuth = pi.AuthStorage.inMemory();
-      if (method === 'browser') {
+      const attemptAuth = this.createAttemptCredentialStore();
+      const persistentAuth = this.createPersistentCredentialStore(authPath);
+      await Promise.race([
+        persistentAuth.delete(CODEX_PROVIDER),
+        waitForAbort(attempt.controller.signal)
+      ]);
+      this.assertActiveAttempt(attempt);
+      const modelRuntime = pi.ModelRuntime?.create
+        ? await Promise.race([
+            createPiModelRuntime(pi, authPath, modelsPath, attemptAuth),
+            waitForAbort(attempt.controller.signal)
+          ])
+        : null;
+      this.assertActiveAttempt(attempt);
+      if (!modelRuntime && method === 'browser') {
         attempt.capture = await Promise.race([
           this.dependencies.createBrowserCallbackCapture(),
           waitForAbort(attempt.controller.signal)
@@ -398,19 +421,17 @@ export class CodexCredentialService {
         this.assertActiveAttempt(attempt);
         return value;
       };
-      const modelRuntime = pi.ModelRuntime?.create
-        ? await Promise.race([
-            createPiModelRuntime(pi, authPath, modelsPath, attemptAuth),
-            waitForAbort(attempt.controller.signal)
-          ])
-        : null;
-      this.assertActiveAttempt(attempt);
       const login = modelRuntime
         ? modelRuntime.login(CODEX_PROVIDER, 'oauth', {
             signal: attempt.controller.signal,
             prompt: async (prompt) => {
               if (prompt.type === 'select') return method;
-              if (prompt.type === 'manual_code') return await manualCodeInput();
+              if (prompt.type === 'manual_code') {
+                return await Promise.race([
+                  waitForAbort(prompt.signal ?? attempt.controller.signal),
+                  waitForAbort(attempt.controller.signal)
+                ]);
+              }
               return await waitForAbort(prompt.signal ?? attempt.controller.signal);
             },
             notify: (event) => {
@@ -437,7 +458,6 @@ export class CodexCredentialService {
           'Codex sign-in did not create a usable credential.'
         );
       }
-      const persistentAuth = pi.AuthStorage.create(authPath);
       attempt.promotedStore = persistentAuth;
       await Promise.race([
         persistentAuth.modify(CODEX_PROVIDER, async () => {

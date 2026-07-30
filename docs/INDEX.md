@@ -94,6 +94,9 @@ design document.
 - [Codex Model login cancellation regression](issues/codex-model-login-cancel-regression.md) -
   implemented; owner verification pending: Setting can cancel or reconnect Codex immediately,
   while credential, provider, and renderer generations ignore late superseded results.
+- [Codex browser login success stuck in Setting](issues/codex-model-login-browser-success-stuck.md) -
+  implementing: give modern Pi OAuth sole callback ownership, disable auth-only catalog refresh,
+  and make every Login replace the persisted credential from an isolated attempt.
 - [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
   implemented; owner verification pending: default sites now keep stock Electron identity while
   Google/YouTube use a dedicated session with the verified honest Bitterless UA.

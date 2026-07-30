@@ -1,7 +1,7 @@
 ---
 id: codex-gpt55-retention-008
 scope: shared-codex-runtime
-status: in-progress
+status: implemented-owner-verification-pending
 depends-on: [model-provider-login-cancel-regression-007]
 ---
 
@@ -61,3 +61,7 @@ Coin and Maestro.
 - Run `yarn typecheck:node`.
 - Run `yarn check:renderer-i18n`.
 - Run `git diff --check`.
+
+# Review
+
+- [codex-gpt55-retention-008-1](../reviews/codex-gpt55-retention-008-1.md) - pass
