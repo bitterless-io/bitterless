@@ -90,4 +90,3 @@ by the accepted contract into `main.log`.
   — pass.
 - `git diff --check fa224e0..5818a49` — pass.
 - No package or publish command was run.
-

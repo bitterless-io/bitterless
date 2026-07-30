@@ -1,7 +1,7 @@
 ---
 id: application-diagnostics-010
 scope: desktop-diagnostics
-status: in-progress
+status: implemented-owner-verification-pending
 depends-on: [model-provider-fresh-login-callback-009]
 ---
 
@@ -65,3 +65,14 @@ failure.
 - Run `yarn typecheck:node`.
 - Run the Renderer i18n check and focused lint for touched Settings files.
 - Run `git diff --check`.
+
+# Reviews
+
+- [Initial blocked review](../reviews/application-diagnostics-010-1.md)
+- [Hash-router blocked review](../reviews/application-diagnostics-010-2.md)
+- [Final passing review](../reviews/application-diagnostics-010-3.md)
+
+# Handoff
+
+Implementation and independent source review are complete. Owner runtime verification remains for
+the installed/debug application, Codex browser sign-in failure evidence, and packaged log creation.

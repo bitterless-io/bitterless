@@ -92,7 +92,8 @@ design document.
 ## Issues
 
 - [Packaged failures have no persistent application log](issues/application-file-logging-missing.md) -
-  in progress: add environment-isolated file logging and a Settings Log diagnostics ledger.
+  implemented; owner verification pending: environment-isolated UTC NDJSON logging, safe Codex
+  lifecycle evidence, and a Settings Log diagnostics ledger are available.
 - [GPT-5.5 removed by GPT-5.6 migration](issues/codex-gpt55-removed-by-gpt56-migration.md) -
   in progress: keep GPT-5.5 in shared, Coin, and Maestro model catalogs while retaining GPT-5.6
   additions and the fixed GPT-5.5 Translator target.

@@ -1,6 +1,6 @@
 # Packaged Failures Have No Persistent Application Log
 
-Status: In progress
+Status: Implemented; owner verification pending
 
 Implementation:
 [application-diagnostics-010](../plan/tasks/application-diagnostics-010.md)
