@@ -126,6 +126,7 @@ export type ApplicationDiagnosticsOpenDirectoryResult =
 
 export interface ApplicationDiagnosticsApi {
   getSnapshot(): Promise<ApplicationDiagnosticsSnapshot>;
+  revealLogFile(): Promise<ApplicationDiagnosticsOpenDirectoryResult>;
   openDirectory(params: {
     key: ApplicationDiagnosticDirectoryKey;
   }): Promise<ApplicationDiagnosticsOpenDirectoryResult>;

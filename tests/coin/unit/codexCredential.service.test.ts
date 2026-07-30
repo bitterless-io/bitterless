@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { channel } from 'node:diagnostics_channel';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -7,12 +8,12 @@ import {
   CodexCredentialError,
   CodexCredentialService,
   type PiAuthModule,
-  type PiAuthStorage,
+  type PiAuthStorage
 } from '../../../src/main/codex/codexCredential.service';
 import {
   CodexFileCredentialStore,
   CodexMemoryCredentialStore,
-  type CodexCredentialStore,
+  type CodexCredentialStore
 } from '../../../src/main/codex/codexCredential.store';
 import type { CodexBrowserCallbackCapture } from '../../../src/main/codex/codexCallbackCapture';
 import { codexAuthPath, codexModelsPath } from '../../../src/main/codex/codexPaths';
@@ -31,7 +32,7 @@ interface FakePiOptions {
   connected?: boolean;
   login?: (
     callbacks: Parameters<NonNullable<PiAuthStorage['login']>>[1],
-    loginIndex: number,
+    loginIndex: number
   ) => Promise<void>;
 }
 
@@ -49,7 +50,7 @@ const createFakePi = (options: FakePiOptions = {}) => {
     return {
       login: async (
         _provider: string,
-        callbacks: Parameters<NonNullable<PiAuthStorage['login']>>[1],
+        callbacks: Parameters<NonNullable<PiAuthStorage['login']>>[1]
       ) => {
         loginCount += 1;
         if (options.login) await options.login(callbacks, loginCount);
@@ -57,7 +58,7 @@ const createFakePi = (options: FakePiOptions = {}) => {
           type: 'oauth',
           refresh: `refresh-${loginCount}`,
           access: `access-${loginCount}`,
-          expires: loginCount,
+          expires: loginCount
         };
         if (persistent) {
           persistedCredential = credential;
@@ -75,7 +76,7 @@ const createFakePi = (options: FakePiOptions = {}) => {
       read: async () => credential,
       modify: async (
         _provider: string,
-        update: (current: unknown | undefined) => Promise<unknown | undefined>,
+        update: (current: unknown | undefined) => Promise<unknown | undefined>
       ) => {
         const next = await update(credential);
         if (next !== undefined) credential = next;
@@ -92,10 +93,7 @@ const createFakePi = (options: FakePiOptions = {}) => {
           connected = false;
         }
       },
-      list: async () =>
-        credential
-          ? [{ providerId: 'openai-codex', type: 'oauth' }]
-          : [],
+      list: async () => (credential ? [{ providerId: 'openai-codex', type: 'oauth' }] : [])
     };
   };
   const module = {
@@ -105,10 +103,10 @@ const createFakePi = (options: FakePiOptions = {}) => {
         return {
           find: (provider: string, model: string) =>
             provider === 'openai-codex' && model === 'gpt-5.5' ? {} : undefined,
-          hasConfiguredAuth: () => connected,
+          hasConfiguredAuth: () => connected
         };
-      },
-    },
+      }
+    }
   } as unknown as PiAuthModule;
   return {
     module,
@@ -127,7 +125,7 @@ const createFakePi = (options: FakePiOptions = {}) => {
     },
     get credentialAccess() {
       return (persistedCredential as { access?: string } | undefined)?.access;
-    },
+    }
   };
 };
 
@@ -137,13 +135,13 @@ const createCapture = (): CodexBrowserCallbackCapture => {
   return {
     waitForRedirect: async () => await redirect.promise,
     cancel: (error) => redirect.reject(error),
-    close: async () => undefined,
+    close: async () => undefined
   };
 };
 
 const createService = (
   pi: ReturnType<typeof createFakePi>,
-  overrides: Partial<ConstructorParameters<typeof CodexCredentialService>[0]> = {},
+  overrides: Partial<ConstructorParameters<typeof CodexCredentialService>[0]> = {}
 ) =>
   new CodexCredentialService({
     authPath: () => '/profile/cowork/pi/auth.json',
@@ -154,7 +152,7 @@ const createService = (
     createPersistentCredentialStore: pi.createPersistentCredentialStore,
     createAttemptCredentialStore: pi.createAttemptCredentialStore,
     ensurePrivateDirectory: () => undefined,
-    ...overrides,
+    ...overrides
   });
 
 test('keeps the compatibility auth and model paths under userData/cowork/pi', async () => {
@@ -175,20 +173,18 @@ test('app-owned credential stores preserve the Pi auth file contract', async () 
     type: 'oauth',
     refresh: 'refresh',
     access: 'access',
-    expires: 1,
+    expires: 1
   };
   try {
     const memory = new CodexMemoryCredentialStore();
     await memory.modify('openai-codex', async () => credential);
     assert.deepEqual(await memory.read('openai-codex'), credential);
-    assert.deepEqual(await memory.list(), [
-      { providerId: 'openai-codex', type: 'oauth' },
-    ]);
+    assert.deepEqual(await memory.list(), [{ providerId: 'openai-codex', type: 'oauth' }]);
 
     const file = new CodexFileCredentialStore(authPath);
     await file.modify('openai-codex', async () => await memory.read('openai-codex'));
     assert.deepEqual(JSON.parse(readFileSync(authPath, 'utf8')), {
-      'openai-codex': credential,
+      'openai-codex': credential
     });
     if (process.platform !== 'win32') {
       assert.equal(statSync(authPath).mode & 0o777, 0o600);
@@ -221,10 +217,10 @@ test('shares one login mutex and notifies every concurrent device-code observer'
       callbacks.onDeviceCode({
         userCode: 'ABCD-EFGH',
         verificationUri: 'https://auth.openai.com/codex/device',
-        expiresInSeconds: 900,
+        expiresInSeconds: 900
       });
       await gate.promise;
-    },
+    }
   });
   const notices: string[] = [];
   const opened: string[] = [];
@@ -232,16 +228,16 @@ test('shares one login mutex and notifies every concurrent device-code observer'
     now: () => 1_000,
     openExternal: async (url) => {
       opened.push(url);
-    },
+    }
   });
 
   const first = service.connect({
     method: 'device_code',
-    onDeviceCode: (notice) => notices.push(`first:${notice.userCode}:${notice.verificationHost}`),
+    onDeviceCode: (notice) => notices.push(`first:${notice.userCode}:${notice.verificationHost}`)
   });
   const second = service.connect({
     method: 'browser',
-    onDeviceCode: (notice) => notices.push(`second:${notice.userCode}:${notice.verificationHost}`),
+    onDeviceCode: (notice) => notices.push(`second:${notice.userCode}:${notice.verificationHost}`)
   });
   try {
     await Promise.resolve();
@@ -249,7 +245,7 @@ test('shares one login mutex and notifies every concurrent device-code observer'
     assert.equal(pi.loginCount, 1);
     assert.deepEqual(notices.sort(), [
       'first:ABCD-EFGH:auth.openai.com',
-      'second:ABCD-EFGH:auth.openai.com',
+      'second:ABCD-EFGH:auth.openai.com'
     ]);
     assert.deepEqual(opened, ['https://auth.openai.com/codex/device']);
   } finally {
@@ -267,41 +263,36 @@ test('completes browser login through the companion callback and closes it', asy
     login: async (callbacks) => {
       assert.equal(await callbacks.onSelect(), 'browser');
       callbacks.onAuth({
-        url: 'https://auth.openai.com/oauth/authorize?client_id=fixture',
+        url: 'https://auth.openai.com/oauth/authorize?client_id=fixture'
       });
       assert.equal(
         await callbacks.onManualCodeInput(),
-        'http://localhost:1455/auth/callback?code=fixture&state=test',
+        'http://localhost:1455/auth/callback?code=fixture&state=test'
       );
-    },
+    }
   });
   const service = createService(pi, {
     openExternal: async (url) => {
       opened.push(url);
     },
     createBrowserCallbackCapture: async () => ({
-      waitForRedirect: async () =>
-        'http://localhost:1455/auth/callback?code=fixture&state=test',
+      waitForRedirect: async () => 'http://localhost:1455/auth/callback?code=fixture&state=test',
       cancel: () => undefined,
       close: async () => {
         closeCount += 1;
-      },
-    }),
+      }
+    })
   });
 
   const status = await service.connect({ method: 'browser' });
   assert.equal(status.connected, true);
-  assert.deepEqual(opened, [
-    'https://auth.openai.com/oauth/authorize?client_id=fixture',
-  ]);
+  assert.deepEqual(opened, ['https://auth.openai.com/oauth/authorize?client_id=fixture']);
   assert.equal(closeCount, 1);
 });
 
 test('modern browser login owns its callback and replaces the old credential without model network', async () => {
   type FakeAuthStorage = CodexCredentialStore;
-  type FakeModelRuntime = Awaited<
-    ReturnType<NonNullable<PiAuthModule['ModelRuntime']>['create']>
-  >;
+  type FakeModelRuntime = Awaited<ReturnType<NonNullable<PiAuthModule['ModelRuntime']>['create']>>;
   type FakeModelRuntimeOptions = {
     authPath?: string;
     modelsPath?: string | null;
@@ -313,7 +304,7 @@ test('modern browser login owns its callback and replaces the old credential wit
     type: 'oauth',
     refresh: 'old-refresh',
     access: 'old-access',
-    expires: 1,
+    expires: 1
   };
   let captureCount = 0;
   const events: string[] = [];
@@ -333,10 +324,7 @@ test('modern browser login owns its callback and replaces the old credential wit
         credential = undefined;
         if (persistent) persistedCredential = undefined;
       },
-      list: async () =>
-        credential
-          ? [{ providerId: 'openai-codex', type: 'oauth' }]
-          : [],
+      list: async () => (credential ? [{ providerId: 'openai-codex', type: 'oauth' }] : [])
     };
   };
   const pi = {
@@ -351,34 +339,44 @@ test('modern browser login owns its callback and replaces the old credential wit
           login: async (
             _provider: string,
             _type: 'oauth',
-            interaction: Parameters<FakeModelRuntime['login']>[2],
+            interaction: Parameters<FakeModelRuntime['login']>[2]
           ) => {
             events.push('runtime-login');
             assert.equal(persistedCredential, undefined);
             assert.equal(await options.credentials?.read('openai-codex'), undefined);
             interaction.notify({
               type: 'auth_url',
-              url: 'https://auth.openai.com/oauth/authorize?client_id=modern',
+              url: 'https://auth.openai.com/oauth/authorize?client_id=modern'
+            });
+            const tokenRequest = {
+              method: 'POST',
+              origin: 'https://auth.openai.com',
+              path: '/oauth/token'
+            };
+            channel('undici:request:create').publish({ request: tokenRequest });
+            channel('undici:request:headers').publish({
+              request: tokenRequest,
+              response: { statusCode: 200 }
             });
             await options.credentials?.modify('openai-codex', async () => ({
               type: 'oauth',
               refresh: 'new-refresh',
               access: 'new-access',
-              expires: 2,
+              expires: 2
             }));
             return {};
           },
           logout: async () => {
             persistedCredential = undefined;
-          },
+          }
         };
-      },
+      }
     },
     ModelRegistry: {
       create: () => {
         throw new Error('legacy registry must not be used');
-      },
-    },
+      }
+    }
   } as unknown as PiAuthModule;
   const service = new CodexCredentialService({
     authPath: () => '/profile/cowork/pi/auth.json',
@@ -393,24 +391,42 @@ test('modern browser login owns its callback and replaces the old credential wit
     },
     createPersistentCredentialStore: () => createStorage(true),
     createAttemptCredentialStore: () => createStorage(false),
-    ensurePrivateDirectory: () => undefined,
+    ensurePrivateDirectory: () => undefined
   });
 
-  const status = await service.connect({ method: 'browser' });
+  const lifecycleLogs: string[] = [];
+  const originalConsoleInfo = console.info;
+  const status = await (async () => {
+    console.info = (...values: unknown[]) => {
+      lifecycleLogs.push(values.map((value) => String(value)).join(' '));
+    };
+    try {
+      return await service.connect({ method: 'browser' });
+    } finally {
+      console.info = originalConsoleInfo;
+    }
+  })();
 
   assert.equal(status.connected, true);
   assert.equal(captureCount, 0);
   assert.deepEqual(
     createOptions.map(({ allowModelNetwork }) => allowModelNetwork),
-    [false, false],
+    [false, false]
   );
   assert.ok(events.indexOf('persistent-delete') < events.indexOf('runtime-login'));
   assert.ok(events.indexOf('runtime-login') < events.indexOf('auth-url-opened'));
+  const lifecycleIndex = (stage: string): number =>
+    lifecycleLogs.findIndex((line) => line.includes(`stage=${stage}`));
+  assert.ok(lifecycleIndex('callback-listener-ready') >= 0);
+  assert.ok(lifecycleIndex('callback-listener-ready') < lifecycleIndex('callback-accepted'));
+  assert.ok(lifecycleIndex('callback-accepted') < lifecycleIndex('token-exchange-started'));
+  assert.ok(lifecycleIndex('token-exchange-started') < lifecycleIndex('token-exchange-response'));
+  assert.ok(lifecycleIndex('token-exchange-response') < lifecycleIndex('token-credential-stored'));
   assert.deepEqual(persistedCredential, {
     type: 'oauth',
     refresh: 'new-refresh',
     access: 'new-access',
-    expires: 2,
+    expires: 2
   });
 });
 
@@ -421,7 +437,7 @@ test('aborts browser login on timeout and closes callback capture', async () => 
   const pi = createFakePi({
     login: async (callbacks) => {
       await callbacks.onManualCodeInput();
-    },
+    }
   });
   const service = createService(pi, {
     browserTimeoutMs: 10,
@@ -430,13 +446,13 @@ test('aborts browser login on timeout and closes callback capture', async () => 
       cancel: (error) => redirect.reject(error),
       close: async () => {
         closeCount += 1;
-      },
-    }),
+      }
+    })
   });
 
   await assert.rejects(
     service.connect({ method: 'browser' }),
-    (error: unknown) => error instanceof CodexCredentialError && error.code === 'timeout',
+    (error: unknown) => error instanceof CodexCredentialError && error.code === 'timeout'
   );
   assert.equal(closeCount, 1);
   assert.equal((await service.getStatus()).loginInProgress, false);
@@ -450,7 +466,7 @@ test('cancel resolves before an uncooperative login and late completion cannot o
       if (loginIndex !== 1) return;
       firstLoginStarted.resolve();
       await firstLogin.promise;
-    },
+    }
   });
   const service = createService(pi);
 
@@ -459,7 +475,7 @@ test('cancel resolves before an uncooperative login and late completion cannot o
   await service.cancelConnect();
   await assert.rejects(
     first,
-    (error: unknown) => error instanceof CodexCredentialError && error.code === 'cancelled',
+    (error: unknown) => error instanceof CodexCredentialError && error.code === 'cancelled'
   );
 
   const retry = await service.connect({ method: 'device_code' });

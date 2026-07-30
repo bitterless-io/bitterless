@@ -6,6 +6,7 @@ import {
   CodexMemoryCredentialStore,
   type CodexCredentialStore
 } from './codexCredential.store';
+import { CodexTokenExchangeObserver } from './codexTokenExchangeObserver.service';
 import {
   sanitizeDiagnostic,
   sanitizeDiagnosticUrl,
@@ -206,9 +207,6 @@ const sanitizeProgress = (value: string): string =>
     .replace(/https?:\/\/\S+/gi, '[link]')
     .replace(/[A-Za-z0-9_-]{80,}/g, '[redacted]')
     .slice(0, 180);
-
-const reportsCallbackProgress = (value: string): boolean =>
-  /\b(callback|authorization (?:code|completed|received)|browser sign-in complete)\b/i.test(value);
 
 const waitForAbort = (signal: AbortSignal): Promise<never> =>
   new Promise((_resolve, reject) => {
@@ -421,6 +419,8 @@ export class CodexCredentialService {
         : (this.dependencies.browserTimeoutMs ?? BROWSER_TIMEOUT_MS);
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let callbackAccepted = false;
+    let tokenExchangeObserver: CodexTokenExchangeObserver | null = null;
 
     try {
       logCodexLifecycle(attempt.id, 'attempt-started', `method=${method}`);
@@ -455,6 +455,27 @@ export class CodexCredentialService {
         ]);
         this.assertActiveAttempt(attempt);
         logCodexLifecycle(attempt.id, 'callback-listener-ready', 'owner=legacy');
+      }
+      if (modelRuntime && method === 'browser') {
+        tokenExchangeObserver = new CodexTokenExchangeObserver({
+          onRequest: () => {
+            if (!this.isActiveAttempt(attempt)) return;
+            if (!callbackAccepted) {
+              callbackAccepted = true;
+              logCodexLifecycle(attempt.id, 'callback-accepted', 'owner=pi');
+            }
+            logCodexLifecycle(attempt.id, 'token-exchange-started');
+          },
+          onResponse: (statusCode) => {
+            if (!this.isActiveAttempt(attempt)) return;
+            logCodexLifecycle(attempt.id, 'token-exchange-response', `status=${statusCode}`);
+          },
+          onError: (error) => {
+            if (!this.isActiveAttempt(attempt)) return;
+            logCodexFailure(attempt.id, 'token-exchange-failed', error);
+          }
+        });
+        tokenExchangeObserver.start();
       }
       timer = setTimeout(() => {
         timedOut = true;
@@ -494,9 +515,6 @@ export class CodexCredentialService {
               }
               if (event.type === 'device_code') this.notifyDeviceCode(attempt, event);
               if (event.type === 'progress' && event.message) {
-                if (reportsCallbackProgress(event.message)) {
-                  logCodexLifecycle(attempt.id, 'callback-observed', 'owner=pi');
-                }
                 logCodexLifecycle(
                   attempt.id,
                   'login-progress',
@@ -505,9 +523,6 @@ export class CodexCredentialService {
                 this.notifyProgress(attempt, event.message);
               }
               if (event.type === 'info' && event.message) {
-                if (reportsCallbackProgress(event.message)) {
-                  logCodexLifecycle(attempt.id, 'callback-observed', 'owner=pi');
-                }
                 logCodexLifecycle(attempt.id, 'login-info', sanitizeDiagnostic(event.message, 120));
                 this.notifyProgress(attempt, event.message);
               }
@@ -571,6 +586,7 @@ export class CodexCredentialService {
       if (error instanceof CodexCredentialError) throw error;
       throw new CodexCredentialError('login-failed', 'Codex sign-in failed.', error);
     } finally {
+      tokenExchangeObserver?.stop();
       if (timer) clearTimeout(timer);
       attempt.controller.abort();
       if (attempt.capture) {

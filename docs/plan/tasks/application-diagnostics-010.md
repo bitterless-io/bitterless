@@ -46,17 +46,22 @@ failure.
 - Resolve the runtime profile and profile-specific userData before normal Main startup.
 - Initialize `electron-log` with one profile-tagged file, console migration, error capture, and a
   first-party-only Renderer console allowlist.
+- Keep Main as the single file writer; serialize sanitized UTC NDJSON fields `ts`, `level`,
+  `profile`, `proc`, `world`, `scope`, `msg`, and `args`, derive `scope` from the first `[tag]`,
+  classify Renderer entries into distinct `proc` values, and rotate at 5 MB.
 - Add a strict value-free diagnostics XPC contract with a keyed directory allowlist.
 - Reuse the existing startup diagnostics snapshot.
 - Add a compact Arco/BEM Settings Log page immediately above About.
+- Highlight the active log file with Main-owned `shell.showItemInFolder(logFile)` while retaining
+  keyed directory-open behavior for the directory list.
 - Log sanitized Codex browser-login lifecycle stages and failures without OAuth query values or
   credential content.
 
 # Verification
 
-- Add and run focused source/contract tests for profile naming, log initialization, the XPC
-  allowlist, Settings placement, environment redaction, and Codex log redaction.
+- Add and run focused source/contract tests for profile naming, UTC NDJSON, 5 MB rotation,
+  Renderer `proc` classification, the XPC allowlist, log-file reveal, Settings placement,
+  environment redaction, and Codex log redaction.
 - Run `yarn typecheck:node`.
 - Run the Renderer i18n check and focused lint for touched Settings files.
 - Run `git diff --check`.
-

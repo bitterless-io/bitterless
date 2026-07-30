@@ -12,10 +12,10 @@ const entry = resolve(projectRoot, 'scripts/diagnostics/applicationDiagnostics.t
 try {
   await build({
     entryPoints: [entry],
-    outfile: join(buildRoot, 'applicationDiagnostics.test.mjs'),
+    outfile: join(buildRoot, 'applicationDiagnostics.test.cjs'),
     bundle: true,
     platform: 'node',
-    format: 'esm',
+    format: 'cjs',
     target: 'node22',
     sourcemap: 'inline',
     tsconfig: resolve(projectRoot, 'tsconfig.node.json')
@@ -23,7 +23,7 @@ try {
 
   const result = spawnSync(
     process.execPath,
-    ['--test', join(buildRoot, 'applicationDiagnostics.test.mjs')],
+    ['--test', join(buildRoot, 'applicationDiagnostics.test.cjs')],
     {
       cwd: projectRoot,
       stdio: 'inherit'

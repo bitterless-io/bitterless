@@ -14,6 +14,7 @@ type LogSettingError = '' | 'load' | 'open' | 'directory-not-created';
 
 class LogSettingState {
   loading = false;
+  revealingLogFile = false;
   openingKey: ApplicationDiagnosticDirectoryKey | null = null;
   snapshot: ApplicationDiagnosticsSnapshot | null = null;
   error: LogSettingError = '';
@@ -55,6 +56,23 @@ class LogSettingState {
       console.error('[LogSettingState] Failed to open directory:', error);
     } finally {
       this.openingKey = null;
+    }
+  }
+
+  async revealLogFile(): Promise<void> {
+    if (this.revealingLogFile) return;
+    this.revealingLogFile = true;
+    this.error = '';
+    try {
+      const result = await diagnosticsEmitter.revealLogFile();
+      if (!result.ok) {
+        this.error = result.error === 'directory-not-created' ? 'directory-not-created' : 'open';
+      }
+    } catch (error) {
+      this.error = 'open';
+      console.error('[LogSettingState] Failed to reveal log file:', error);
+    } finally {
+      this.revealingLogFile = false;
     }
   }
 }

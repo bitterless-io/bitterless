@@ -5,9 +5,10 @@ export const DIAGNOSTIC_TEXT_LIMIT = 240;
 const REDACTIONS: Array<[RegExp, string]> = [
   [/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-***'],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer ***'],
+  [/\bBasic\s+[A-Za-z0-9+/=]{6,}/gi, 'Basic ***'],
   [/\beyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+){1,2}/g, '***'],
   [
-    /\b(access_token|refresh_token|id_token|token|code|client_secret|password)=([^&\s]+)/gi,
+    /["']?\b(access[_\s-]?token|refresh[_\s-]?token|id[_\s-]?token|token|authorization[_\s-]?code|oauth[_\s-]?code|code|client[_\s-]?secret|password|credential|api[_\s-]?key)["']?\s*[:=]\s*["']?([^&\s,'"}]+)["']?/gi,
     '$1=***'
   ],
   [
@@ -15,6 +16,10 @@ const REDACTIONS: Array<[RegExp, string]> = [
     '$1=***'
   ],
   [/\b(access\s+token|refresh\s+token|id\s+token)\s*[:=]\s*[A-Za-z0-9._~+/-]{4,}\b/gi, '$1=***'],
+  [
+    /\b[^\s:@/]+:[^\s@/]+@(?=(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|[A-Za-z0-9.-]+)(?::\d+)?\b)/g,
+    '***:***@'
+  ],
   [/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g, '***@***'],
   [/(?:\/Users|\/home)\/[^\s/\\]+/g, '~'],
   [/[A-Za-z]:\\Users\\[^\s\\]+/gi, '~'],
@@ -55,7 +60,7 @@ export const sanitizeDiagnosticUrl = (value: unknown): string => {
 };
 
 const redactEmbeddedUrls = (value: string): string =>
-  value.replace(/https?:\/\/[^\s'"<>]+/gi, (candidate) => {
+  value.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s'"<>]+/gi, (candidate) => {
     const sanitized = sanitizeDiagnosticUrl(candidate);
     return sanitized || '[redacted-url]';
   });
@@ -81,7 +86,12 @@ const causeField = (
   record: Record<string, unknown>,
   field: 'name' | 'code' | 'message'
 ): string => {
-  const value = record[field];
+  let value: unknown;
+  try {
+    value = record[field];
+  } catch {
+    return '';
+  }
   if (typeof value !== 'string' && typeof value !== 'number') return '';
   if (field === 'code' && typeof value === 'string' && /^[A-Z][A-Z0-9_-]{0,63}$/.test(value)) {
     return value;
@@ -99,18 +109,20 @@ export const sanitizeErrorCauseChain = (value: unknown, maxDepth: number = 4): s
     if (!current || typeof current !== 'object' || seen.has(current)) break;
     seen.add(current);
     const record = current as Record<string, unknown>;
-    const name = causeField(record, 'name') || (current instanceof Error ? current.name : '');
+    const name = causeField(record, 'name');
     const code = causeField(record, 'code');
-    const message =
-      causeField(record, 'message') ||
-      (current instanceof Error ? sanitizeDiagnostic(current.message, 120) : '');
+    const message = causeField(record, 'message');
     const fields = [
       name ? `name=${name}` : '',
       code ? `code=${code}` : '',
       message ? `message=${message}` : ''
     ].filter(Boolean);
     if (fields.length > 0) parts.push(fields.join(' '));
-    current = record.cause;
+    try {
+      current = record.cause;
+    } catch {
+      break;
+    }
   }
 
   const joined = parts.join(' <- ');

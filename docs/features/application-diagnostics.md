@@ -16,12 +16,12 @@ environment values, credentials, tokens, authorization URLs, or database content
 Main resolves the profile from the compile-time `VITE_MODE` and `VITE_ENV` pair before any
 application-owned path is read:
 
-| `VITE_MODE` | `VITE_ENV` | Profile | App/userData name |
-|---|---|---|---|
-| `release` | `prod` | production | `Bitterless` |
-| `debug` | `prod` | production debug | `Bitterless_DEBUG_PROD` |
-| `debug` | `dev` | test debug | `Bitterless_DEBUG_DEV` |
-| `release` | `dev` | test release | `Bitterless_DEV` |
+| `VITE_MODE` | `VITE_ENV` | Profile          | App/userData name       |
+| ----------- | ---------- | ---------------- | ----------------------- |
+| `release`   | `prod`     | production       | `Bitterless`            |
+| `debug`     | `prod`     | production debug | `Bitterless_DEBUG_PROD` |
+| `debug`     | `dev`      | test debug       | `Bitterless_DEBUG_DEV`  |
+| `release`   | `dev`      | test release     | `Bitterless_DEV`        |
 
 On macOS the corresponding user data root is
 `~/Library/Application Support/<App/userData name>`. Windows uses Electron's `appData` root.
@@ -37,20 +37,39 @@ uncaught / unhandled rejection ├─► one profile-tagged main.log
 first-party renderer console.* ┘
 ```
 
-The file format is:
+Main is the only file writer. First-party Renderer console messages are classified by their exact
+entry (`renderer:home`, `renderer:translator`, `renderer:omniControl`, and so on) and recorded with
+`world=page`; Main records use `proc=main` and `world=main`.
 
-```text
-[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{profile}] [{level}] [{processType}] {text}
+The file is UTC NDJSON, one JSON object per line:
+
+```json
+{
+  "ts": "2026-07-30T06:12:03.123Z",
+  "level": "info",
+  "profile": "production-debug",
+  "proc": "renderer:translator",
+  "world": "page",
+  "scope": "codex",
+  "msg": "token exchange started",
+  "args": []
+}
 ```
+
+Every record contains `ts`, `level`, `profile`, `proc`, `world`, `scope`, `msg`, and `args`.
+The first `[tag]` in a message becomes `scope`. Data passes through the global sanitizer before
+serialization, so URL query/hash values, OAuth/secret/proxy credentials, error cause chains, and
+raw objects cannot enter the file. `main.log` rotates at 5 MB through electron-log's file
+transport.
 
 Log locations:
 
-| Runtime | Log file |
-|---|---|
-| packaged production | Electron OS log root, e.g. `~/Library/Logs/Bitterless/main.log` |
-| packaged test release | Electron OS log root under `Bitterless_DEV` |
-| production debug | `<appData>/Bitterless_DEBUG_PROD/logs/main.log` |
-| test debug | `<appData>/Bitterless_DEBUG_DEV/logs/main.log` |
+| Runtime               | Log file                                                        |
+| --------------------- | --------------------------------------------------------------- |
+| packaged production   | Electron OS log root, e.g. `~/Library/Logs/Bitterless/main.log` |
+| packaged test release | Electron OS log root under `Bitterless_DEV`                     |
+| production debug      | `<appData>/Bitterless_DEBUG_PROD/logs/main.log`                 |
+| test debug            | `<appData>/Bitterless_DEBUG_DEV/logs/main.log`                  |
 
 Only first-party renderer URLs are captured. Omni remote pages and other third-party web contents
 are excluded. Existing `console.*` calls keep working. Codex login logs lifecycle stages and
@@ -106,6 +125,8 @@ presence only.
 
 The content is a compact diagnostic ledger: status dots carry existence/configuration state,
 paths use selectable monospace text, and every `Open` action targets a Main-defined directory key.
+The main log action calls Main-owned `shell.showItemInFolder(logFile)` so Finder or Explorer
+highlights the active file; directory rows continue to use keyed directory-open actions.
 Loading shows an Arco spinner; load/open failures show an actionable inline error and keep the
 last valid snapshot visible. The page scrolls inside the existing Settings content region.
 
@@ -117,4 +138,3 @@ last valid snapshot visible. The page scrolls inside the existing Settings conte
 - `src/main/xpc/diagnostics.handler.ts`
 - `src/shared/diagnostics/`
 - `src/renderer/home/src/views/setting/components/LogSetting/`
-

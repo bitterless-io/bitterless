@@ -26,20 +26,25 @@ or userData.
 ## Required behavior
 
 - Persist Main, uncaught, rejection, and first-party Renderer logs through `electron-log`.
+- Use Main as the single file writer and emit sanitized UTC NDJSON with `ts`, `level`, `profile`,
+  `proc`, `world`, `scope`, `msg`, and `args`; rotate `main.log` at 5 MB.
 - Give production, production-debug, test-debug, and test-release explicit runtime profiles and
   separate userData/log directories.
 - Record sanitized Codex login lifecycle stages and errors without secrets or OAuth query values.
 - Add Settings → Log immediately above About, based on Micromeet Cowork Workbench.
 - Show the live log path, startup status, application directories, and allowlisted environment
-  variable status; expose only keyed directory-open actions.
+  variable status; highlight the active log file through a dedicated Main action and expose only
+  keyed directory-open actions for the directory list.
 
 ## Acceptance
 
 - A packaged app writes `main.log` even when stdout/stderr point to `/dev/null`.
+- Each line is valid UTC NDJSON, first-party Renderer entries have distinct `proc` values, and the
+  file transport rotates at 5 MB.
 - `debug_prod` resolves to `Bitterless_DEBUG_PROD`; `debug_dev` resolves to
   `Bitterless_DEBUG_DEV`.
 - A failed Codex login leaves a stage-specific sanitized error in `main.log`.
 - Settings → Log displays the exact active log path and the actual current profile.
+- The main log button highlights `main.log`; directory rows still open only Main-allowlisted keys.
 - No token, credential, authorization query, raw proxy value, or arbitrary environment value
   crosses XPC or enters diagnostic logs.
-

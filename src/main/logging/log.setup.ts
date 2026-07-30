@@ -4,10 +4,14 @@ import { dirname } from 'node:path';
 import log from 'electron-log/main';
 import type { ApplicationRuntimeProfile } from '@shared/diagnostics/applicationDiagnostics.contract';
 import {
-  APPLICATION_LOG_FILE_FORMAT,
-  isFirstPartyRendererUrl,
+  APPLICATION_LOG_FILE_MAX_SIZE,
+  resolveFirstPartyRendererProcess,
   resolveApplicationLogFile
 } from '@main/logging/logPolicy.service';
+import {
+  formatApplicationLogMessage,
+  sanitizeApplicationLogMessage
+} from '@main/logging/logSanitizer.service';
 
 const SPY_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const SPY_NAMED_LEVELS: Record<
@@ -41,16 +45,18 @@ const normalizeConsoleMessage = (
 
 const spyFirstPartyRenderer = (contents: WebContents): void => {
   contents.on('console-message', (event, ...legacy) => {
-    if (!isFirstPartyRendererUrl(contents.getURL(), process.env.ELECTRON_RENDERER_URL)) {
-      return;
-    }
+    const proc = resolveFirstPartyRendererProcess(
+      contents.getURL(),
+      process.env.ELECTRON_RENDERER_URL
+    );
+    if (!proc) return;
     const { level, message } = normalizeConsoleMessage(event, legacy[0], legacy[1]);
     if (!message) return;
     log.processMessage({
       data: [message],
       date: new Date(),
       level,
-      variables: { processType: 'renderer' }
+      variables: { proc, world: 'page' }
     });
   });
 };
@@ -60,10 +66,14 @@ export const initializeApplicationLogging = (profile: ApplicationRuntimeProfile)
   initializedProfile = profile;
 
   log.variables.profile = profile.id;
-  log.transports.file.format = APPLICATION_LOG_FILE_FORMAT;
+  log.variables.proc = 'main';
+  log.variables.world = 'main';
+  log.transports.file.format = ({ message }) => formatApplicationLogMessage(message);
   log.transports.file.level = profile.viteMode === 'debug' ? 'debug' : 'info';
+  log.transports.file.maxSize = APPLICATION_LOG_FILE_MAX_SIZE;
   log.transports.file.resolvePathFn = (paths) => resolveApplicationLogFile(profile, paths);
 
+  log.hooks.push(sanitizeApplicationLogMessage);
   Object.assign(console, log.functions);
   log.errorHandler.startCatching();
   log.initialize({ preload: true, spyRendererConsole: false });

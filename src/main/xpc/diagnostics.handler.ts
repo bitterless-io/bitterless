@@ -12,6 +12,10 @@ export class DiagnosticsHandler extends XpcMainHandler implements ApplicationDia
     return await applicationDiagnosticsService.getSnapshot();
   }
 
+  async revealLogFile(): Promise<ApplicationDiagnosticsOpenDirectoryResult> {
+    return await applicationDiagnosticsService.revealLogFile();
+  }
+
   async openDirectory(params: {
     key: ApplicationDiagnosticDirectoryKey;
   }): Promise<ApplicationDiagnosticsOpenDirectoryResult> {

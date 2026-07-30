@@ -37,8 +37,8 @@
             <code class="log-setting__path">{{ logSettingStore.snapshot.log.file }}</code>
             <a-button
               size="mini"
-              :loading="logSettingStore.openingKey === 'logs'"
-              @click="logSettingStore.openDirectory('logs')"
+              :loading="logSettingStore.revealingLogFile"
+              @click="logSettingStore.revealLogFile()"
             >
               {{ i18nHelper.setting.log.open }}
             </a-button>

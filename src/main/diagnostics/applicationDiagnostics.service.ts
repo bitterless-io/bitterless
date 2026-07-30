@@ -114,6 +114,15 @@ class ApplicationDiagnosticsService {
     );
     return { ok: false, error: 'open-failed' };
   }
+
+  async revealLogFile(): Promise<ApplicationDiagnosticsOpenDirectoryResult> {
+    const log = getApplicationLogPaths();
+    if (!existsSync(log.file)) {
+      return { ok: false, error: 'directory-not-created' };
+    }
+    shell.showItemInFolder(log.file);
+    return { ok: true };
+  }
 }
 
 export const applicationDiagnosticsService = new ApplicationDiagnosticsService();
