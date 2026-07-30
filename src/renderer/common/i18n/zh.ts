@@ -137,6 +137,8 @@ export const zh: typeof en = {
       authenticating: '正在等待 Codex 登录…',
       unavailable: '此设备暂时无法使用 Codex。',
       login: '登录',
+      cancel: '取消',
+      reconnect: '重新登录',
       logout: '退出登录',
       loadFailed: '无法读取 Codex 状态。',
       loginFailed: 'Codex 登录未完成。',

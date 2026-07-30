@@ -19,8 +19,9 @@ export type LlmSettingError = 'load' | 'login' | 'logout';
 class LlmSettingState {
   snapshot: ModelProviderSnapshot | null = null;
   loading = true;
-  action: 'login' | 'logout' | null = null;
+  action: 'login' | 'cancel' | 'logout' | 'reconnect' | null = null;
   error: LlmSettingError | null = null;
+  private actionVersion = 0;
   private subscribed = false;
   private initializationPromise: Promise<void> | null = null;
 
@@ -35,6 +36,10 @@ class LlmSettingState {
     return this.provider?.authState ?? null;
   }
 
+  get loginActionInProgress(): boolean {
+    return this.action === 'login' || this.action === 'reconnect';
+  }
+
   initialize(): Promise<void> {
     if (this.initializationPromise) return this.initializationPromise;
     this.initializationPromise = this.loadSnapshot().finally(() => {
@@ -45,6 +50,7 @@ class LlmSettingState {
 
   async login(): Promise<void> {
     if (this.action || this.authState === 'authenticating') return;
+    const actionVersion = ++this.actionVersion;
     this.action = 'login';
     this.error = null;
     try {
@@ -52,30 +58,94 @@ class LlmSettingState {
         provider: MODEL_PROVIDER_CODEX_ID,
         method: 'browser'
       });
+      if (actionVersion !== this.actionVersion) return;
       this.applySnapshot(parseModelProviderSnapshot(result.snapshot));
-      if (!result.ok) this.error = 'login';
+      if (!result.ok && result.error.code !== 'cancelled') this.error = 'login';
     } catch (error) {
+      if (actionVersion !== this.actionVersion) return;
       console.error('[model config] Codex login failed:', error);
       this.error = 'login';
     } finally {
+      if (actionVersion !== this.actionVersion) return;
+      this.action = null;
+    }
+  }
+
+  async cancelLogin(): Promise<void> {
+    if (!this.loginActionInProgress && this.authState !== 'authenticating') {
+      return;
+    }
+    const actionVersion = ++this.actionVersion;
+    this.action = 'cancel';
+    this.error = null;
+    try {
+      const result = await modelProviderEmitter.cancelConnect({
+        provider: MODEL_PROVIDER_CODEX_ID
+      });
+      if (actionVersion !== this.actionVersion) return;
+      this.applySnapshot(parseModelProviderSnapshot(result.snapshot));
+      if (!result.ok && result.error.code !== 'cancelled') this.error = 'login';
+    } catch (error) {
+      if (actionVersion !== this.actionVersion) return;
+      console.error('[model config] Codex login cancellation failed:', error);
+      this.error = 'login';
+    } finally {
+      if (actionVersion !== this.actionVersion) return;
+      this.action = null;
+    }
+  }
+
+  async reconnect(): Promise<void> {
+    if (this.action) return;
+    const actionVersion = ++this.actionVersion;
+    this.action = 'reconnect';
+    this.error = null;
+    try {
+      const disconnectResult = await modelProviderEmitter.disconnect({
+        provider: MODEL_PROVIDER_CODEX_ID
+      });
+      if (actionVersion !== this.actionVersion) return;
+      this.applySnapshot(parseModelProviderSnapshot(disconnectResult.snapshot));
+      if (!disconnectResult.ok) {
+        this.error = 'login';
+        return;
+      }
+
+      const connectResult = await modelProviderEmitter.connect({
+        provider: MODEL_PROVIDER_CODEX_ID,
+        method: 'browser'
+      });
+      if (actionVersion !== this.actionVersion) return;
+      this.applySnapshot(parseModelProviderSnapshot(connectResult.snapshot));
+      if (!connectResult.ok && connectResult.error.code !== 'cancelled') this.error = 'login';
+    } catch (error) {
+      if (actionVersion !== this.actionVersion) return;
+      console.error('[model config] Codex reconnect failed:', error);
+      this.error = 'login';
+    } finally {
+      if (actionVersion !== this.actionVersion) return;
       this.action = null;
     }
   }
 
   async logout(): Promise<void> {
     if (this.action) return;
+    const actionVersion = ++this.actionVersion;
     this.action = 'logout';
     this.error = null;
     try {
       const result = await modelProviderEmitter.disconnect({
         provider: MODEL_PROVIDER_CODEX_ID
       });
+      if (actionVersion !== this.actionVersion) return;
       this.applySnapshot(parseModelProviderSnapshot(result.snapshot));
       if (!result.ok) this.error = 'logout';
     } catch (error) {
+      if (actionVersion !== this.actionVersion) return;
       console.error('[model config] Codex logout failed:', error);
       this.error = 'logout';
     } finally {
+      if (actionVersion !== this.actionVersion) return;
       this.action = null;
     }
   }

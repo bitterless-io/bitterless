@@ -9,6 +9,7 @@ const DEVICE_TIMEOUT_MS = 16 * 60_000;
 
 export type CodexLoginMethod = 'browser' | 'device_code';
 export type CodexCredentialErrorCode =
+  | 'cancelled'
   | 'login-failed'
   | 'login-in-progress'
   | 'logout-failed'
@@ -44,6 +45,16 @@ export interface CodexConnectObserver {
   onProgress?: (message: string) => void;
 }
 
+interface CodexLoginAttempt {
+  id: number;
+  cancelled: boolean;
+  controller: AbortController;
+  capture: CodexBrowserCallbackCapture | null;
+  observers: Set<CodexConnectObserver>;
+  promotedStore: PiAuthStorage | null;
+  promise: Promise<CodexCredentialStatus>;
+}
+
 interface PiAuthStorage {
   login(
     provider: string,
@@ -59,17 +70,58 @@ interface PiAuthStorage {
       onPrompt: () => Promise<string>;
       onProgress: (message: string) => void;
       signal: AbortSignal;
-    },
+    }
   ): Promise<unknown>;
-  logout(provider: string): void;
+  logout?(provider: string): void;
+  read(provider: string): Promise<unknown | undefined>;
+  modify(
+    provider: string,
+    update: (current: unknown | undefined) => Promise<unknown | undefined>
+  ): Promise<unknown | undefined>;
+  delete(provider: string): Promise<void>;
+}
+
+interface PiAuthModelRuntime {
+  getModel(provider: string, model: string): unknown | undefined;
+  hasConfiguredAuth(provider: string): boolean;
+  login(
+    provider: string,
+    type: 'oauth',
+    interaction: {
+      signal: AbortSignal;
+      prompt(prompt: {
+        type: 'text' | 'secret' | 'select' | 'manual_code';
+        signal?: AbortSignal;
+      }): Promise<string>;
+      notify(event: {
+        type: 'info' | 'auth_url' | 'device_code' | 'progress';
+        message?: string;
+        url?: string;
+        userCode?: string;
+        verificationUri?: string;
+        expiresInSeconds?: number;
+      }): void;
+    }
+  ): Promise<unknown>;
+  logout(provider: string): Promise<void>;
 }
 
 export interface PiAuthModule {
-  AuthStorage: { create(path: string): PiAuthStorage };
+  AuthStorage: {
+    create(path: string): PiAuthStorage;
+    inMemory(): PiAuthStorage;
+  };
+  ModelRuntime?: {
+    create(options?: {
+      authPath?: string;
+      modelsPath?: string | null;
+      credentials?: PiAuthStorage;
+    }): Promise<PiAuthModelRuntime>;
+  };
   ModelRegistry: {
     create(
       authStorage: PiAuthStorage,
-      modelsPath?: string,
+      modelsPath?: string
     ): {
       find(provider: string, model: string): unknown;
       hasConfiguredAuth(model: unknown): boolean;
@@ -92,7 +144,7 @@ export interface CodexCredentialServiceDependencies {
 export class CodexCredentialError extends Error {
   constructor(
     readonly code: CodexCredentialErrorCode,
-    message: string,
+    message: string
   ) {
     super(message);
     this.name = 'CodexCredentialError';
@@ -124,20 +176,44 @@ const sanitizeProgress = (value: string): string =>
     .replace(/[A-Za-z0-9_-]{80,}/g, '[redacted]')
     .slice(0, 180);
 
-const waitForAbort = (signal: AbortSignal): Promise<string> =>
+const waitForAbort = (signal: AbortSignal): Promise<never> =>
   new Promise((_resolve, reject) => {
+    if (signal.aborted) {
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : new CodexCredentialError('timeout', 'Codex sign-in timed out.')
+      );
+      return;
+    }
     signal.addEventListener(
       'abort',
-      () => reject(new CodexCredentialError('timeout', 'Codex sign-in timed out.')),
-      { once: true },
+      () =>
+        reject(
+          signal.reason instanceof Error
+            ? signal.reason
+            : new CodexCredentialError('timeout', 'Codex sign-in timed out.')
+        ),
+      { once: true }
     );
   });
+
+const createPiModelRuntime = async (
+  pi: PiAuthModule,
+  authPath: string,
+  modelsPath: string,
+  credentials?: PiAuthStorage
+): Promise<PiAuthModelRuntime | null> =>
+  pi.ModelRuntime?.create
+    ? await pi.ModelRuntime.create({ authPath, modelsPath, credentials })
+    : null;
 
 export class CodexCredentialService {
   private readonly now: () => number;
   private readonly ensureDirectory: (path: string) => void;
-  private readonly observers = new Set<CodexConnectObserver>();
   private readonly transitionListeners = new Set<CodexCredentialTransitionListener>();
+  private loginAttemptId = 0;
+  private activeLoginAttempt: CodexLoginAttempt | null = null;
   private loginPromise: Promise<CodexCredentialStatus> | null = null;
 
   constructor(private readonly dependencies: CodexCredentialServiceDependencies) {
@@ -149,22 +225,32 @@ export class CodexCredentialService {
     const lastVerifiedAt = this.now();
     try {
       const pi = await this.dependencies.loadPiAuthModule();
-      const auth = pi.AuthStorage.create(this.dependencies.authPath());
-      const registry = pi.ModelRegistry.create(auth, this.dependencies.modelsPath());
-      const model = registry.find(CODEX_PROVIDER, CODEX_STATUS_MODEL);
+      const authPath = this.dependencies.authPath();
+      const modelsPath = this.dependencies.modelsPath();
+      const modelRuntime = await createPiModelRuntime(pi, authPath, modelsPath);
+      let connected = false;
+      if (modelRuntime) {
+        const model = modelRuntime.getModel(CODEX_PROVIDER, CODEX_STATUS_MODEL);
+        connected = Boolean(model && modelRuntime.hasConfiguredAuth(CODEX_PROVIDER));
+      } else {
+        const auth = pi.AuthStorage.create(authPath);
+        const registry = pi.ModelRegistry.create(auth, modelsPath);
+        const model = registry.find(CODEX_PROVIDER, CODEX_STATUS_MODEL);
+        connected = Boolean(model && registry.hasConfiguredAuth(model));
+      }
       return {
         provider: CODEX_PROVIDER,
-        connected: Boolean(model && registry.hasConfiguredAuth(model)),
-        loginInProgress: this.loginPromise !== null,
-        lastVerifiedAt,
+        connected,
+        loginInProgress: this.activeLoginAttempt !== null,
+        lastVerifiedAt
       };
     } catch {
       return {
         provider: CODEX_PROVIDER,
         connected: false,
-        loginInProgress: this.loginPromise !== null,
+        loginInProgress: this.activeLoginAttempt !== null,
         lastVerifiedAt,
-        errorCode: 'status-unavailable',
+        errorCode: 'status-unavailable'
       };
     }
   }
@@ -174,36 +260,91 @@ export class CodexCredentialService {
     return () => this.transitionListeners.delete(listener);
   }
 
-  connect(params: { method: CodexLoginMethod } & CodexConnectObserver): Promise<CodexCredentialStatus> {
+  connect(
+    params: { method: CodexLoginMethod } & CodexConnectObserver
+  ): Promise<CodexCredentialStatus> {
     const method = parseLoginMethod(params?.method);
     const observer: CodexConnectObserver = {
       onDeviceCode: params?.onDeviceCode,
-      onProgress: params?.onProgress,
+      onProgress: params?.onProgress
     };
-    this.observers.add(observer);
-
-    if (!this.loginPromise) {
-      const login = this.performConnect(method);
+    let attempt = this.activeLoginAttempt;
+    if (!attempt) {
+      const controller = new AbortController();
+      attempt = {
+        id: ++this.loginAttemptId,
+        cancelled: false,
+        controller,
+        capture: null,
+        observers: new Set([observer]),
+        promotedStore: null,
+        promise: Promise.resolve({
+          provider: CODEX_PROVIDER,
+          connected: false,
+          loginInProgress: false,
+          lastVerifiedAt: this.now()
+        })
+      };
+      this.activeLoginAttempt = attempt;
+      const login = this.performConnect(method, attempt);
       const tracked = login.finally(() => {
         if (this.loginPromise === tracked) this.loginPromise = null;
+        if (this.activeLoginAttempt === attempt) this.activeLoginAttempt = null;
       });
+      attempt.promise = tracked;
       this.loginPromise = tracked;
+    } else {
+      attempt.observers.add(observer);
     }
 
-    const active = this.loginPromise;
-    return active.finally(() => this.observers.delete(observer));
+    return attempt.promise.finally(() => attempt.observers.delete(observer));
+  }
+
+  async cancelConnect(): Promise<void> {
+    const attempt = this.activeLoginAttempt;
+    if (!attempt) return;
+
+    const error = new CodexCredentialError('cancelled', 'Codex sign-in was cancelled.');
+    attempt.cancelled = true;
+    this.loginAttemptId += 1;
+    if (this.activeLoginAttempt === attempt) this.activeLoginAttempt = null;
+    if (this.loginPromise === attempt.promise) this.loginPromise = null;
+    attempt.observers.clear();
+    attempt.controller.abort(error);
+    attempt.capture?.cancel(error);
+    if (attempt.capture) {
+      const capture = attempt.capture;
+      attempt.capture = null;
+      await capture.close().catch(() => undefined);
+    }
+    if (attempt.promotedStore) {
+      const promotedStore = attempt.promotedStore;
+      attempt.promotedStore = null;
+      await promotedStore.delete(CODEX_PROVIDER).catch(() => undefined);
+    }
   }
 
   async disconnect(): Promise<CodexCredentialStatus> {
-    if (this.loginPromise) {
+    if (this.activeLoginAttempt) {
       throw new CodexCredentialError(
         'login-in-progress',
-        'Finish the active Codex sign-in before disconnecting.',
+        'Finish the active Codex sign-in before disconnecting.'
       );
     }
     try {
       const pi = await this.dependencies.loadPiAuthModule();
-      pi.AuthStorage.create(this.dependencies.authPath()).logout(CODEX_PROVIDER);
+      const modelRuntime = await createPiModelRuntime(
+        pi,
+        this.dependencies.authPath(),
+        this.dependencies.modelsPath()
+      );
+      if (modelRuntime) {
+        await modelRuntime.logout(CODEX_PROVIDER);
+      } else {
+        const auth = pi.AuthStorage.create(this.dependencies.authPath());
+        if (auth.logout) auth.logout(CODEX_PROVIDER);
+        else await auth.delete(CODEX_PROVIDER);
+      }
       const status = await this.getStatus();
       if (!status.connected && !status.errorCode) this.notifyTransition('logout-succeeded');
       return status;
@@ -212,67 +353,116 @@ export class CodexCredentialService {
     }
   }
 
-  private async performConnect(method: CodexLoginMethod): Promise<CodexCredentialStatus> {
+  private async performConnect(
+    method: CodexLoginMethod,
+    attempt: CodexLoginAttempt
+  ): Promise<CodexCredentialStatus> {
     const timeoutMs =
       method === 'device_code'
         ? (this.dependencies.deviceTimeoutMs ?? DEVICE_TIMEOUT_MS)
         : (this.dependencies.browserTimeoutMs ?? BROWSER_TIMEOUT_MS);
-    const controller = new AbortController();
-    let capture: CodexBrowserCallbackCapture | null = null;
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     try {
-      const pi = await this.dependencies.loadPiAuthModule();
+      const pi = await Promise.race([
+        this.dependencies.loadPiAuthModule(),
+        waitForAbort(attempt.controller.signal)
+      ]);
+      this.assertActiveAttempt(attempt);
       const authPath = this.dependencies.authPath();
+      const modelsPath = this.dependencies.modelsPath();
       this.ensureDirectory(dirname(authPath));
-      const auth = pi.AuthStorage.create(authPath);
+      const attemptAuth = pi.AuthStorage.inMemory();
       if (method === 'browser') {
-        capture = await this.dependencies.createBrowserCallbackCapture();
+        attempt.capture = await Promise.race([
+          this.dependencies.createBrowserCallbackCapture(),
+          waitForAbort(attempt.controller.signal)
+        ]);
+        this.assertActiveAttempt(attempt);
       }
       timer = setTimeout(() => {
         timedOut = true;
-        controller.abort();
-        capture?.cancel(new CodexCredentialError('timeout', 'Codex sign-in timed out.'));
+        const error = new CodexCredentialError('timeout', 'Codex sign-in timed out.');
+        attempt.controller.abort(error);
+        attempt.capture?.cancel(error);
       }, timeoutMs);
 
-      await auth.login(CODEX_PROVIDER, {
-        onSelect: async () => method,
-        onAuth: ({ url }) => {
-          const external = parseOpenAiExternalUrl(url);
-          void this.dependencies.openExternal(external.href).catch(() => undefined);
-        },
-        onManualCodeInput: async () =>
-          capture ? await capture.waitForRedirect() : await waitForAbort(controller.signal),
-        onDeviceCode: (info) => {
-          const external = parseOpenAiExternalUrl(info.verificationUri);
-          void this.dependencies.openExternal(external.href).catch(() => undefined);
-          const userCode = String(info.userCode || '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 32);
-          const expiresAt = Number.isFinite(info.expiresInSeconds)
-            ? this.now() + Number(info.expiresInSeconds) * 1000
-            : null;
-          for (const observer of this.observers) {
-            observer.onDeviceCode?.({
-              userCode,
-              verificationHost: external.host,
-              expiresAt,
-            });
-          }
-        },
-        onPrompt: async () => await waitForAbort(controller.signal),
-        onProgress: (message) => {
-          const safeMessage = sanitizeProgress(String(message || ''));
-          for (const observer of this.observers) observer.onProgress?.(safeMessage);
-        },
-        signal: controller.signal,
-      });
-      const status = await this.getStatus();
+      const manualCodeInput = async (): Promise<string> => {
+        this.assertActiveAttempt(attempt);
+        const value = attempt.capture
+          ? await attempt.capture.waitForRedirect()
+          : await waitForAbort(attempt.controller.signal);
+        this.assertActiveAttempt(attempt);
+        return value;
+      };
+      const modelRuntime = pi.ModelRuntime?.create
+        ? await Promise.race([
+            createPiModelRuntime(pi, authPath, modelsPath, attemptAuth),
+            waitForAbort(attempt.controller.signal)
+          ])
+        : null;
+      this.assertActiveAttempt(attempt);
+      const login = modelRuntime
+        ? modelRuntime.login(CODEX_PROVIDER, 'oauth', {
+            signal: attempt.controller.signal,
+            prompt: async (prompt) => {
+              if (prompt.type === 'select') return method;
+              if (prompt.type === 'manual_code') return await manualCodeInput();
+              return await waitForAbort(prompt.signal ?? attempt.controller.signal);
+            },
+            notify: (event) => {
+              if (!this.isActiveAttempt(attempt)) return;
+              if (event.type === 'auth_url' && event.url) this.openAuthUrl(event.url);
+              if (event.type === 'device_code') this.notifyDeviceCode(attempt, event);
+              if (event.type === 'progress' && event.message) {
+                this.notifyProgress(attempt, event.message);
+              }
+              if (event.type === 'info' && event.message) {
+                this.notifyProgress(attempt, event.message);
+              }
+            }
+          })
+        : this.loginWithLegacyStorage(attemptAuth, method, attempt, manualCodeInput);
+      void login.catch(() => undefined);
+      await Promise.race([login, waitForAbort(attempt.controller.signal)]);
+      this.assertActiveAttempt(attempt);
+      const credential = await attemptAuth.read(CODEX_PROVIDER);
+      this.assertActiveAttempt(attempt);
+      if (!credential) {
+        throw new CodexCredentialError(
+          'login-failed',
+          'Codex sign-in did not create a usable credential.'
+        );
+      }
+      const persistentAuth = pi.AuthStorage.create(authPath);
+      attempt.promotedStore = persistentAuth;
+      await Promise.race([
+        persistentAuth.modify(CODEX_PROVIDER, async () => {
+          this.assertActiveAttempt(attempt);
+          return credential;
+        }),
+        waitForAbort(attempt.controller.signal)
+      ]);
+      this.assertActiveAttempt(attempt);
+      const status = await Promise.race([
+        this.getStatus(),
+        waitForAbort(attempt.controller.signal)
+      ]);
+      this.assertActiveAttempt(attempt);
       if (!status.connected) {
-        throw new CodexCredentialError('login-failed', 'Codex sign-in did not create a usable credential.');
+        throw new CodexCredentialError(
+          'login-failed',
+          'Codex sign-in did not create a usable credential.'
+        );
       }
       this.notifyTransition('login-succeeded');
+      attempt.promotedStore = null;
       return status;
     } catch (error) {
+      if (attempt.cancelled || attempt.id !== this.loginAttemptId) {
+        throw new CodexCredentialError('cancelled', 'Codex sign-in was cancelled.');
+      }
       if (timedOut) {
         throw new CodexCredentialError('timeout', 'Codex sign-in timed out.');
       }
@@ -280,16 +470,97 @@ export class CodexCredentialService {
       throw new CodexCredentialError('login-failed', 'Codex sign-in failed.');
     } finally {
       if (timer) clearTimeout(timer);
-      controller.abort();
-      if (capture) await capture.close().catch(() => undefined);
+      attempt.controller.abort();
+      if (attempt.capture) {
+        const capture = attempt.capture;
+        attempt.capture = null;
+        await capture.close().catch(() => undefined);
+      }
+      if ((attempt.cancelled || attempt.id !== this.loginAttemptId) && attempt.promotedStore) {
+        const promotedStore = attempt.promotedStore;
+        attempt.promotedStore = null;
+        await promotedStore.delete(CODEX_PROVIDER).catch(() => undefined);
+      }
     }
+  }
+
+  private async loginWithLegacyStorage(
+    auth: PiAuthStorage,
+    method: CodexLoginMethod,
+    attempt: CodexLoginAttempt,
+    manualCodeInput: () => Promise<string>
+  ): Promise<unknown> {
+    if (!auth.login) {
+      throw new CodexCredentialError('login-failed', 'Codex sign-in is unavailable.');
+    }
+    return await auth.login(CODEX_PROVIDER, {
+      onSelect: async () => method,
+      onAuth: ({ url }) => {
+        if (this.isActiveAttempt(attempt)) this.openAuthUrl(url);
+      },
+      onManualCodeInput: manualCodeInput,
+      onDeviceCode: (info) => this.notifyDeviceCode(attempt, info),
+      onPrompt: async () => await waitForAbort(attempt.controller.signal),
+      onProgress: (message) => this.notifyProgress(attempt, message),
+      signal: attempt.controller.signal
+    });
+  }
+
+  private openAuthUrl(url: string): void {
+    const external = parseOpenAiExternalUrl(url);
+    void this.dependencies.openExternal(external.href).catch(() => undefined);
+  }
+
+  private notifyDeviceCode(
+    attempt: CodexLoginAttempt,
+    info: {
+      userCode?: string;
+      verificationUri?: string;
+      expiresInSeconds?: number;
+    }
+  ): void {
+    if (!this.isActiveAttempt(attempt) || !info.verificationUri) return;
+    const external = parseOpenAiExternalUrl(info.verificationUri);
+    void this.dependencies.openExternal(external.href).catch(() => undefined);
+    const userCode = String(info.userCode || '')
+      .replace(/[^A-Za-z0-9-]/g, '')
+      .slice(0, 32);
+    const expiresAt = Number.isFinite(info.expiresInSeconds)
+      ? this.now() + Number(info.expiresInSeconds) * 1000
+      : null;
+    for (const observer of attempt.observers) {
+      observer.onDeviceCode?.({
+        userCode,
+        verificationHost: external.host,
+        expiresAt
+      });
+    }
+  }
+
+  private notifyProgress(attempt: CodexLoginAttempt, message: string): void {
+    if (!this.isActiveAttempt(attempt)) return;
+    const safeMessage = sanitizeProgress(String(message || ''));
+    for (const observer of attempt.observers) observer.onProgress?.(safeMessage);
+  }
+
+  private isActiveAttempt(attempt: CodexLoginAttempt): boolean {
+    return (
+      !attempt.cancelled &&
+      attempt.id === this.loginAttemptId &&
+      this.activeLoginAttempt === attempt
+    );
+  }
+
+  private assertActiveAttempt(attempt: CodexLoginAttempt): void {
+    if (this.isActiveAttempt(attempt)) return;
+    throw new CodexCredentialError('cancelled', 'Codex sign-in was cancelled.');
   }
 
   private notifyTransition(kind: CodexCredentialTransitionKind): void {
     const transition: CodexCredentialTransition = {
       provider: CODEX_PROVIDER,
       kind,
-      observedAt: this.now(),
+      observedAt: this.now()
     };
     for (const listener of this.transitionListeners) {
       try {

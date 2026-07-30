@@ -17,6 +17,10 @@ export class ModelProviderHandler extends XpcMainHandler implements ModelProvide
     return await modelProviderService.connect(params);
   }
 
+  async cancelConnect(params: ModelProviderDisconnectInput): Promise<ModelProviderActionResult> {
+    return await modelProviderService.cancelConnect(params);
+  }
+
   async disconnect(params: ModelProviderDisconnectInput): Promise<ModelProviderActionResult> {
     return await modelProviderService.disconnect(params);
   }

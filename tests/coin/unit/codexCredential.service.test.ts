@@ -23,34 +23,76 @@ interface FakePiOptions {
   connected?: boolean;
   login?: (
     callbacks: Parameters<ReturnType<PiAuthModule['AuthStorage']['create']>['login']>[1],
+    loginIndex: number,
   ) => Promise<void>;
 }
 
 const createFakePi = (options: FakePiOptions = {}) => {
   let connected = options.connected ?? false;
+  let persistedCredential: unknown | undefined = connected
+    ? { type: 'oauth', refresh: 'persisted', access: 'persisted', expires: 1 }
+    : undefined;
   let loginCount = 0;
   let logoutCount = 0;
   const authPaths: string[] = [];
   const modelPaths: string[] = [];
+  const createAuthStorage = (persistent: boolean) => {
+    let credential = persistent ? persistedCredential : undefined;
+    return {
+      login: async (
+        _provider: string,
+        callbacks: Parameters<ReturnType<PiAuthModule['AuthStorage']['create']>['login']>[1],
+      ) => {
+        loginCount += 1;
+        if (options.login) await options.login(callbacks, loginCount);
+        credential = {
+          type: 'oauth',
+          refresh: `refresh-${loginCount}`,
+          access: `access-${loginCount}`,
+          expires: loginCount,
+        };
+        if (persistent) {
+          persistedCredential = credential;
+          connected = true;
+        }
+      },
+      logout: () => {
+        logoutCount += 1;
+        credential = undefined;
+        if (persistent) {
+          persistedCredential = undefined;
+          connected = false;
+        }
+      },
+      read: async () => credential,
+      modify: async (
+        _provider: string,
+        update: (current: unknown | undefined) => Promise<unknown | undefined>,
+      ) => {
+        const next = await update(credential);
+        if (next !== undefined) credential = next;
+        if (persistent) {
+          persistedCredential = credential;
+          connected = credential !== undefined;
+        }
+        return credential;
+      },
+      delete: async () => {
+        credential = undefined;
+        if (persistent) {
+          persistedCredential = undefined;
+          connected = false;
+        }
+      },
+    };
+  };
   const module = {
     AuthStorage: {
       create: (path: string) => {
         authPaths.push(path);
-        return {
-          login: async (
-            _provider: string,
-            callbacks: Parameters<ReturnType<PiAuthModule['AuthStorage']['create']>['login']>[1],
-          ) => {
-            loginCount += 1;
-            if (options.login) await options.login(callbacks);
-            connected = true;
-          },
-          logout: () => {
-            logoutCount += 1;
-            connected = false;
-          },
-        };
+        return createAuthStorage(true);
       },
+      inMemory: () => createAuthStorage(false),
     },
     ModelRegistry: {
       create: (_auth: unknown, modelsPath: string) => {
@@ -72,6 +114,9 @@ const createFakePi = (options: FakePiOptions = {}) => {
     },
     get logoutCount() {
       return logoutCount;
+    },
+    get credentialAccess() {
+      return (persistedCredential as { access?: string } | undefined)?.access;
     },
   };
 };
@@ -141,6 +186,8 @@ test('shares one login mutex and notifies every concurrent device-code observer'
     method: 'browser',
     onDeviceCode: (notice) => notices.push(`second:${notice.userCode}:${notice.verificationHost}`),
   });
+  await Promise.resolve();
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(pi.loginCount, 1);
@@ -218,6 +265,36 @@ test('aborts browser login on timeout and closes callback capture', async () => 
   );
   assert.equal(closeCount, 1);
   assert.equal((await service.getStatus()).loginInProgress, false);
+});
+
+test('cancel resolves before an uncooperative login and late completion cannot overwrite a retry', async () => {
+  const firstLogin = deferred<void>();
+  const firstLoginStarted = deferred<void>();
+  const pi = createFakePi({
+    login: async (_callbacks, loginIndex) => {
+      if (loginIndex !== 1) return;
+      firstLoginStarted.resolve();
+      await firstLogin.promise;
+    },
+  });
+  const service = createService(pi);
+
+  const first = service.connect({ method: 'device_code' });
+  await firstLoginStarted.promise;
+  await service.cancelConnect();
+  await assert.rejects(
+    first,
+    (error: unknown) => error instanceof CodexCredentialError && error.code === 'cancelled',
+  );
+
+  const retry = await service.connect({ method: 'device_code' });
+  assert.equal(retry.connected, true);
+  assert.equal(pi.credentialAccess, 'access-2');
+
+  firstLogin.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(pi.credentialAccess, 'access-2');
+  assert.equal((await service.getStatus()).connected, true);
 });
 
 test('logs out only the openai-codex credential', async () => {

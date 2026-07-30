@@ -62,6 +62,7 @@ export interface ModelProviderDisconnectInput {
 }
 
 export type ModelProviderActionErrorCode =
+  | 'cancelled'
   | 'invalid-input'
   | 'login-failed'
   | 'login-in-progress'
@@ -96,5 +97,6 @@ export interface ModelProviderDeviceCodeNotice {
 export interface ModelProviderApi {
   getSnapshot(): Promise<ModelProviderSnapshot>;
   connect(params: ModelProviderConnectInput): Promise<ModelProviderActionResult>;
+  cancelConnect(params: ModelProviderDisconnectInput): Promise<ModelProviderActionResult>;
   disconnect(params: ModelProviderDisconnectInput): Promise<ModelProviderActionResult>;
 }
