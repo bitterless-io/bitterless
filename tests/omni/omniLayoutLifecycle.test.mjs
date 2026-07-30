@@ -312,6 +312,61 @@ test('renderer remounts after structural changes and rejects lifecycle resize wr
   assert.doesNotMatch(settingDaoSource, /sanitizeValue/);
 });
 
+test('pane menu bar keeps the accepted compact filled split controls', () => {
+  const component = read(
+    'src/renderer/omni/omniControl/src/components/OmniPaneMenuBar.vue'
+  );
+  const style = read(
+    'src/renderer/omni/omniControl/src/components/OmniPaneMenuBar.less'
+  );
+  const iconNames = [
+    'IconLayoutSidebarLeftExpandFilled',
+    'IconLayoutNavbarExpandFilled',
+    'IconLayoutBottombarExpandFilled',
+    'IconLayoutSidebarRightExpandFilled'
+  ];
+
+  for (const iconName of iconNames) {
+    assert.match(component, new RegExp(`<${iconName}[\\s\\S]*?:size="20"`));
+  }
+  assert.match(component, /<IconSquareXFilled[\s\S]*?:size="20"/);
+  assert.doesNotMatch(
+    component,
+    /IconColumnInsertLeft|IconColumnInsertRight|IconRowInsertBottom|IconRowInsertTop|<IconX\b/
+  );
+  assert.equal(
+    (component.match(/class="omni-pane-menubar__split-icon"/g) ?? []).length,
+    4
+  );
+  assert.equal(component.includes('viewBox='), false);
+
+  const selector = component.indexOf('class="omni-pane-menubar__content-select"');
+  const url = component.indexOf('class="omni-pane-menubar__url"');
+  assert.ok(selector >= 0 && selector < url, 'content selector must render before the URL input');
+  assert.match(component, /const splitLeft = \(\) => emit\('split', 'h', 'before'\)/);
+  assert.match(component, /const splitRight = \(\) => emit\('split', 'h', 'after'\)/);
+  assert.match(component, /const splitUp = \(\) => emit\('split', 'v', 'before'\)/);
+  assert.match(component, /const splitDown = \(\) => emit\('split', 'v', 'after'\)/);
+  assert.match(component, /@click\.stop="closePane"/);
+
+  assert.match(
+    style,
+    /\.omni-pane-menubar__split-icon,\s*\.omni-pane-menubar__close-icon\s*\{[\s\S]*?flex: 0 0 20px;[\s\S]*?width: 20px;[\s\S]*?height: 20px;/
+  );
+  assert.match(
+    style,
+    /\.omni-pane-menubar__btn\s*\{[\s\S]*?width: 20px;[\s\S]*?min-width: 20px;[\s\S]*?height: 20px;[\s\S]*?padding: 0;/
+  );
+  assert.match(style, /background: oklch\(0\.98 0\.008 270\);/);
+  assert.equal((style.match(/background: oklch\(0\.87 0\.02 270\);/g) ?? []).length, 2);
+  assert.match(style, /background: oklch\(0\.85 0\.035 270\);/);
+  assert.match(
+    style,
+    /\.omni-pane-menubar__split-actions \.omni-pane-menubar__btn:hover/
+  );
+  assert.doesNotMatch(style, /^\.omni-pane-menubar__btn:hover/m);
+});
+
 test('only the Omni window Menu Bar owns the compact ready update action', () => {
   const appSource = read('src/renderer/omni/omniWindow/src/App.vue');
   const styleSource = read('src/renderer/omni/omniWindow/src/App.less');

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import {
-  IconColumnInsertLeft,
-  IconColumnInsertRight,
-  IconRowInsertBottom,
-  IconRowInsertTop,
-  IconX,
+  IconLayoutBottombarExpandFilled,
+  IconLayoutNavbarExpandFilled,
+  IconLayoutSidebarLeftExpandFilled,
+  IconLayoutSidebarRightExpandFilled,
+  IconSquareXFilled
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { OmniContentMode } from '../types/layout.types';
@@ -29,7 +29,7 @@ watch(
   () => props.displayUrl,
   () => {
     localUrl.value = props.displayUrl || '';
-  },
+  }
 );
 
 const splitLeft = () => emit('split', 'h', 'before');
@@ -76,7 +76,11 @@ const closePane = () => {
         :aria-label="i18nHelper.omni.splitLeft"
         @click="splitLeft"
       >
-        <IconColumnInsertLeft :size="14" aria-hidden="true" />
+        <IconLayoutSidebarLeftExpandFilled
+          class="omni-pane-menubar__split-icon"
+          :size="20"
+          aria-hidden="true"
+        />
       </a-button>
       <a-button
         class="omni-pane-menubar__btn"
@@ -86,7 +90,11 @@ const closePane = () => {
         :aria-label="i18nHelper.omni.splitUp"
         @click="splitUp"
       >
-        <IconRowInsertTop :size="14" aria-hidden="true" />
+        <IconLayoutNavbarExpandFilled
+          class="omni-pane-menubar__split-icon"
+          :size="20"
+          aria-hidden="true"
+        />
       </a-button>
       <a-button
         class="omni-pane-menubar__btn"
@@ -96,7 +104,11 @@ const closePane = () => {
         :aria-label="i18nHelper.omni.splitDown"
         @click="splitDown"
       >
-        <IconRowInsertBottom :size="14" aria-hidden="true" />
+        <IconLayoutBottombarExpandFilled
+          class="omni-pane-menubar__split-icon"
+          :size="20"
+          aria-hidden="true"
+        />
       </a-button>
       <a-button
         class="omni-pane-menubar__btn"
@@ -106,9 +118,23 @@ const closePane = () => {
         :aria-label="i18nHelper.omni.splitRight"
         @click="splitRight"
       >
-        <IconColumnInsertRight :size="14" aria-hidden="true" />
+        <IconLayoutSidebarRightExpandFilled
+          class="omni-pane-menubar__split-icon"
+          :size="20"
+          aria-hidden="true"
+        />
       </a-button>
     </div>
+    <a-select
+      class="omni-pane-menubar__content-select"
+      size="mini"
+      :model-value="contentMode"
+      :aria-label="i18nHelper.omni.contentType"
+      @change="onContentModeChange"
+    >
+      <a-option value="browser">{{ i18nHelper.omni.website }}</a-option>
+      <a-option value="miniapp">{{ i18nHelper.omni.miniApp }}</a-option>
+    </a-select>
     <div
       class="omni-pane-menubar__url"
       :class="{ 'omni-pane-menubar__url--readonly': contentMode === 'miniapp' }"
@@ -123,16 +149,6 @@ const closePane = () => {
         @focus="onInputFocus"
       />
     </div>
-    <a-select
-      class="omni-pane-menubar__content-select"
-      size="mini"
-      :model-value="contentMode"
-      :aria-label="i18nHelper.omni.contentType"
-      @change="onContentModeChange"
-    >
-      <a-option value="browser">{{ i18nHelper.omni.website }}</a-option>
-      <a-option value="miniapp">{{ i18nHelper.omni.miniApp }}</a-option>
-    </a-select>
     <a-button
       class="omni-pane-menubar__btn omni-pane-menubar__btn--close"
       type="text"
@@ -142,7 +158,7 @@ const closePane = () => {
       :aria-label="i18nHelper.omni.closePane"
       @click.stop="closePane"
     >
-      <IconX :size="14" aria-hidden="true" />
+      <IconSquareXFilled class="omni-pane-menubar__close-icon" :size="20" aria-hidden="true" />
     </a-button>
   </div>
 </template>
