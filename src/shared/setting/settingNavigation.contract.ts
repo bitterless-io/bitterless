@@ -1,6 +1,6 @@
 export const SETTING_OPEN_EVENT = 'setting/open' as const;
 
-export const SETTING_TABS = ['proxy', 'general', 'llm', 'systemPrompt', 'about'] as const;
+export const SETTING_TABS = ['proxy', 'general', 'llm', 'systemPrompt', 'log', 'about'] as const;
 
 export type SettingTab = (typeof SETTING_TABS)[number];
 

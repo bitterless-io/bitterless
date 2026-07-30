@@ -6,6 +6,11 @@ import {
   CodexMemoryCredentialStore,
   type CodexCredentialStore
 } from './codexCredential.store';
+import {
+  sanitizeDiagnostic,
+  sanitizeDiagnosticUrl,
+  sanitizeErrorCauseChain
+} from '@shared/diagnostics/diagnostic.service';
 
 const CODEX_PROVIDER = 'openai-codex';
 const CODEX_STATUS_MODEL = 'gpt-5.5';
@@ -102,7 +107,7 @@ interface PiAuthModelRuntime {
         verificationUri?: string;
         expiresInSeconds?: number;
       }): void;
-    },
+    }
   ): Promise<unknown>;
   logout(provider: string): Promise<void>;
 }
@@ -144,12 +149,38 @@ export interface CodexCredentialServiceDependencies {
 export class CodexCredentialError extends Error {
   constructor(
     readonly code: CodexCredentialErrorCode,
-    message: string
+    message: string,
+    cause?: unknown
   ) {
     super(message);
     this.name = 'CodexCredentialError';
+    if (cause !== undefined) this.cause = cause;
   }
 }
+
+const sanitizeCodexStage = (value: string): string =>
+  /^[a-z][a-z0-9-]{0,63}$/.test(value) ? value : sanitizeDiagnostic(value, 64);
+
+const logCodexLifecycle = (
+  attemptId: number | 'status',
+  stage: string,
+  details: string = ''
+): void => {
+  const safeStage = sanitizeCodexStage(stage);
+  const safeDetails = sanitizeDiagnostic(details, 180);
+  console.info(
+    `[codex-login] attempt=${attemptId} stage=${safeStage}${safeDetails ? ` ${safeDetails}` : ''}`
+  );
+};
+
+const logCodexFailure = (attemptId: number | 'status', stage: string, error: unknown): void => {
+  const cause = sanitizeErrorCauseChain(error);
+  console.error(
+    `[codex-login] attempt=${attemptId} stage=${sanitizeCodexStage(stage)}${
+      cause ? ` cause=${cause}` : ''
+    }`
+  );
+};
 
 const ensurePrivateDirectory = (path: string): void => {
   mkdirSync(path, { recursive: true, mode: 0o700 });
@@ -175,6 +206,9 @@ const sanitizeProgress = (value: string): string =>
     .replace(/https?:\/\/\S+/gi, '[link]')
     .replace(/[A-Za-z0-9_-]{80,}/g, '[redacted]')
     .slice(0, 180);
+
+const reportsCallbackProgress = (value: string): boolean =>
+  /\b(callback|authorization (?:code|completed|received)|browser sign-in complete)\b/i.test(value);
 
 const waitForAbort = (signal: AbortSignal): Promise<never> =>
   new Promise((_resolve, reject) => {
@@ -235,6 +269,7 @@ export class CodexCredentialService {
 
   async getStatus(): Promise<CodexCredentialStatus> {
     const lastVerifiedAt = this.now();
+    logCodexLifecycle('status', 'status-started');
     try {
       const pi = await this.dependencies.loadPiAuthModule();
       const authPath = this.dependencies.authPath();
@@ -250,13 +285,20 @@ export class CodexCredentialService {
         const model = registry.find(CODEX_PROVIDER, CODEX_STATUS_MODEL);
         connected = Boolean(model && registry.hasConfiguredAuth(model));
       }
-      return {
+      const status: CodexCredentialStatus = {
         provider: CODEX_PROVIDER,
         connected,
         loginInProgress: this.activeLoginAttempt !== null,
         lastVerifiedAt
       };
-    } catch {
+      logCodexLifecycle(
+        'status',
+        'status-resolved',
+        `connected=${status.connected} loginInProgress=${status.loginInProgress}`
+      );
+      return status;
+    } catch (error) {
+      logCodexFailure('status', 'status-failed', error);
       return {
         provider: CODEX_PROVIDER,
         connected: false,
@@ -298,6 +340,7 @@ export class CodexCredentialService {
         })
       };
       this.activeLoginAttempt = attempt;
+      logCodexLifecycle(attempt.id, 'attempt-created', `method=${method}`);
       const login = this.performConnect(method, attempt);
       const tracked = login.finally(() => {
         if (this.loginPromise === tracked) this.loginPromise = null;
@@ -307,6 +350,7 @@ export class CodexCredentialService {
       this.loginPromise = tracked;
     } else {
       attempt.observers.add(observer);
+      logCodexLifecycle(attempt.id, 'attempt-observer-attached');
     }
 
     return attempt.promise.finally(() => attempt.observers.delete(observer));
@@ -316,6 +360,7 @@ export class CodexCredentialService {
     const attempt = this.activeLoginAttempt;
     if (!attempt) return;
 
+    logCodexLifecycle(attempt.id, 'cancel-requested');
     const error = new CodexCredentialError('cancelled', 'Codex sign-in was cancelled.');
     attempt.cancelled = true;
     this.loginAttemptId += 1;
@@ -334,6 +379,7 @@ export class CodexCredentialService {
       attempt.promotedStore = null;
       await promotedStore.delete(CODEX_PROVIDER).catch(() => undefined);
     }
+    logCodexLifecycle(attempt.id, 'cancel-completed');
   }
 
   async disconnect(): Promise<CodexCredentialStatus> {
@@ -377,6 +423,7 @@ export class CodexCredentialService {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     try {
+      logCodexLifecycle(attempt.id, 'attempt-started', `method=${method}`);
       const pi = await Promise.race([
         this.dependencies.loadPiAuthModule(),
         waitForAbort(attempt.controller.signal)
@@ -391,6 +438,7 @@ export class CodexCredentialService {
         persistentAuth.delete(CODEX_PROVIDER),
         waitForAbort(attempt.controller.signal)
       ]);
+      logCodexLifecycle(attempt.id, 'persistent-credential-cleared');
       this.assertActiveAttempt(attempt);
       const modelRuntime = pi.ModelRuntime?.create
         ? await Promise.race([
@@ -399,16 +447,19 @@ export class CodexCredentialService {
           ])
         : null;
       this.assertActiveAttempt(attempt);
+      logCodexLifecycle(attempt.id, 'runtime-created', `owner=${modelRuntime ? 'pi' : 'legacy'}`);
       if (!modelRuntime && method === 'browser') {
         attempt.capture = await Promise.race([
           this.dependencies.createBrowserCallbackCapture(),
           waitForAbort(attempt.controller.signal)
         ]);
         this.assertActiveAttempt(attempt);
+        logCodexLifecycle(attempt.id, 'callback-listener-ready', 'owner=legacy');
       }
       timer = setTimeout(() => {
         timedOut = true;
         const error = new CodexCredentialError('timeout', 'Codex sign-in timed out.');
+        logCodexLifecycle(attempt.id, 'timeout-triggered');
         attempt.controller.abort(error);
         attempt.capture?.cancel(error);
       }, timeoutMs);
@@ -419,6 +470,7 @@ export class CodexCredentialService {
           ? await attempt.capture.waitForRedirect()
           : await waitForAbort(attempt.controller.signal);
         this.assertActiveAttempt(attempt);
+        logCodexLifecycle(attempt.id, 'callback-received', 'owner=legacy');
         return value;
       };
       const login = modelRuntime
@@ -436,21 +488,39 @@ export class CodexCredentialService {
             },
             notify: (event) => {
               if (!this.isActiveAttempt(attempt)) return;
-              if (event.type === 'auth_url' && event.url) this.openAuthUrl(event.url);
+              if (event.type === 'auth_url' && event.url) {
+                logCodexLifecycle(attempt.id, 'callback-listener-ready', 'owner=pi');
+                this.openAuthUrl(event.url, attempt.id);
+              }
               if (event.type === 'device_code') this.notifyDeviceCode(attempt, event);
               if (event.type === 'progress' && event.message) {
+                if (reportsCallbackProgress(event.message)) {
+                  logCodexLifecycle(attempt.id, 'callback-observed', 'owner=pi');
+                }
+                logCodexLifecycle(
+                  attempt.id,
+                  'login-progress',
+                  sanitizeDiagnostic(event.message, 120)
+                );
                 this.notifyProgress(attempt, event.message);
               }
               if (event.type === 'info' && event.message) {
+                if (reportsCallbackProgress(event.message)) {
+                  logCodexLifecycle(attempt.id, 'callback-observed', 'owner=pi');
+                }
+                logCodexLifecycle(attempt.id, 'login-info', sanitizeDiagnostic(event.message, 120));
                 this.notifyProgress(attempt, event.message);
               }
             }
           })
         : this.loginWithLegacyStorage(attemptAuth, method, attempt, manualCodeInput);
+      logCodexLifecycle(attempt.id, 'login-promise-started');
       void login.catch(() => undefined);
       await Promise.race([login, waitForAbort(attempt.controller.signal)]);
+      logCodexLifecycle(attempt.id, 'login-promise-resolved');
       this.assertActiveAttempt(attempt);
       const credential = await attemptAuth.read(CODEX_PROVIDER);
+      logCodexLifecycle(attempt.id, 'token-credential-stored', `stored=${Boolean(credential)}`);
       this.assertActiveAttempt(attempt);
       if (!credential) {
         throw new CodexCredentialError(
@@ -459,6 +529,7 @@ export class CodexCredentialService {
         );
       }
       attempt.promotedStore = persistentAuth;
+      logCodexLifecycle(attempt.id, 'promotion-started');
       await Promise.race([
         persistentAuth.modify(CODEX_PROVIDER, async () => {
           this.assertActiveAttempt(attempt);
@@ -467,11 +538,18 @@ export class CodexCredentialService {
         waitForAbort(attempt.controller.signal)
       ]);
       this.assertActiveAttempt(attempt);
+      logCodexLifecycle(attempt.id, 'promotion-completed');
+      logCodexLifecycle(attempt.id, 'status-verification-started');
       const status = await Promise.race([
         this.getStatus(),
         waitForAbort(attempt.controller.signal)
       ]);
       this.assertActiveAttempt(attempt);
+      logCodexLifecycle(
+        attempt.id,
+        'status-verification-resolved',
+        `connected=${status.connected} unavailable=${Boolean(status.errorCode)}`
+      );
       if (!status.connected) {
         throw new CodexCredentialError(
           'login-failed',
@@ -480,8 +558,10 @@ export class CodexCredentialService {
       }
       this.notifyTransition('login-succeeded');
       attempt.promotedStore = null;
+      logCodexLifecycle(attempt.id, 'attempt-succeeded');
       return status;
     } catch (error) {
+      logCodexFailure(attempt.id, 'attempt-failed', error);
       if (attempt.cancelled || attempt.id !== this.loginAttemptId) {
         throw new CodexCredentialError('cancelled', 'Codex sign-in was cancelled.');
       }
@@ -489,7 +569,7 @@ export class CodexCredentialService {
         throw new CodexCredentialError('timeout', 'Codex sign-in timed out.');
       }
       if (error instanceof CodexCredentialError) throw error;
-      throw new CodexCredentialError('login-failed', 'Codex sign-in failed.');
+      throw new CodexCredentialError('login-failed', 'Codex sign-in failed.', error);
     } finally {
       if (timer) clearTimeout(timer);
       attempt.controller.abort();
@@ -503,6 +583,7 @@ export class CodexCredentialService {
         attempt.promotedStore = null;
         await promotedStore.delete(CODEX_PROVIDER).catch(() => undefined);
       }
+      logCodexLifecycle(attempt.id, 'attempt-cleanup-completed');
     }
   }
 
@@ -518,7 +599,10 @@ export class CodexCredentialService {
     return await auth.login(CODEX_PROVIDER, {
       onSelect: async () => method,
       onAuth: ({ url }) => {
-        if (this.isActiveAttempt(attempt)) this.openAuthUrl(url);
+        if (this.isActiveAttempt(attempt)) {
+          logCodexLifecycle(attempt.id, 'authorization-url-received', 'owner=legacy');
+          this.openAuthUrl(url, attempt.id);
+        }
       },
       onManualCodeInput: manualCodeInput,
       onDeviceCode: (info) => this.notifyDeviceCode(attempt, info),
@@ -528,9 +612,17 @@ export class CodexCredentialService {
     });
   }
 
-  private openAuthUrl(url: string): void {
+  private openAuthUrl(url: string, attemptId: number): void {
     const external = parseOpenAiExternalUrl(url);
-    void this.dependencies.openExternal(external.href).catch(() => undefined);
+    logCodexLifecycle(
+      attemptId,
+      'authorization-url-opening',
+      `url=${sanitizeDiagnosticUrl(external.href)}`
+    );
+    void this.dependencies
+      .openExternal(external.href)
+      .then(() => logCodexLifecycle(attemptId, 'authorization-url-opened'))
+      .catch((error) => logCodexFailure(attemptId, 'authorization-url-open-failed', error));
   }
 
   private notifyDeviceCode(
@@ -543,7 +635,15 @@ export class CodexCredentialService {
   ): void {
     if (!this.isActiveAttempt(attempt) || !info.verificationUri) return;
     const external = parseOpenAiExternalUrl(info.verificationUri);
-    void this.dependencies.openExternal(external.href).catch(() => undefined);
+    logCodexLifecycle(
+      attempt.id,
+      'device-verification-url-opening',
+      `url=${sanitizeDiagnosticUrl(external.href)}`
+    );
+    void this.dependencies
+      .openExternal(external.href)
+      .then(() => logCodexLifecycle(attempt.id, 'device-verification-url-opened'))
+      .catch((error) => logCodexFailure(attempt.id, 'device-verification-url-open-failed', error));
     const userCode = String(info.userCode || '')
       .replace(/[^A-Za-z0-9-]/g, '')
       .slice(0, 32);

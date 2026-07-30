@@ -1,3 +1,4 @@
+import { runtimeProfile } from '@main/environment/runtimeProfile.bootstrap';
 import { app, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -45,6 +46,7 @@ import {
   createBoundedTodoXpcClient,
   withTodoXpcTimeout,
 } from '@shared/todoistSync/todoXpcCall.shared';
+import { initializeApplicationLogging } from '@main/logging/log.setup';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
@@ -204,9 +206,11 @@ const configureE2EUserData = (): void => {
   app.setPath('home', homePath);
   mkdirSync(userDataPath, { recursive: true });
   app.setPath('userData', userDataPath);
+  app.setPath('sessionData', userDataPath);
 };
 
 configureE2EUserData();
+initializeApplicationLogging(runtimeProfile);
 
 const hasSingleInstanceLock = isHelperMode || app.requestSingleInstanceLock();
 
