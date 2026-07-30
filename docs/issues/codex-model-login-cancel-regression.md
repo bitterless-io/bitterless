@@ -45,6 +45,9 @@ login_required / invalidated       authenticating                    cancelled
   snapshot, clear a newer action, or show a late error.
 - A successful result that races cancellation is removed before the provider publishes the
   cancelled state.
+- A replacement login from another renderer does not suppress cleanup of the cancelled attempt and
+  the cancelled attempt cannot overwrite the replacement's state. Cleanup failure stays fail-closed
+  instead of publishing a successful cancellation that can later reconcile back to stale `ready`.
 
 ## Acceptance
 
@@ -52,5 +55,6 @@ login_required / invalidated       authenticating                    cancelled
 - Cancel returns the control to Login without restarting Bitterless.
 - Login can be started again immediately after Cancel.
 - A late completion from the cancelled attempt is ignored at every state-changing boundary.
+- Cross-renderer replacement and credential-cleanup failure remain non-ready and observable.
 - Existing model-provider cancellation tests, renderer i18n checks, touched type checks, and
   `git diff --check` pass.

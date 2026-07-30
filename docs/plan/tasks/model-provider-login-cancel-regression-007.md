@@ -24,6 +24,7 @@ ignored.
 - `src/main/xpc/modelProvider.handler.ts`
 - `src/shared/modelProvider/modelProvider.contract.ts`
 - `src/renderer/home/src/views/setting/components/LLMSetting/LLMSetting.vue`
+- `src/renderer/home/src/views/setting/components/LLMSetting/LLMSetting.less`
 - `src/renderer/home/src/views/setting/components/LLMSetting/llmSetting.store.ts`
 - `src/renderer/common/i18n/en.ts`
 - `src/renderer/common/i18n/zh.ts`
@@ -38,6 +39,9 @@ ignored.
 - Let provider cancellation bypass the blocked mutation tail, invalidate the current connect
   generation, settle the active mutation, and persist the pre-login non-ready state. If a credential
   appears in the completion race, disconnect it before publishing the cancelled snapshot.
+- Clean the cancelled attempt before the queued replacement enters its credential phase, without
+  letting the cancelled attempt overwrite replacement state. Cleanup failure remains a non-ready,
+  observable error and is not repaired to stale `ready` by background reconciliation.
 - Add `cancelConnect()` to the shared XPC contract and Main handler.
 - In the Setting store, increment an action generation on login, cancel, and reconnect boundaries.
   Apply result, error, and `finally` cleanup only when the captured generation is still current.
@@ -49,7 +53,8 @@ ignored.
 - Run `yarn test:model-provider`.
 - Run the renderer i18n check and touched Node/Web type checks.
 - Confirm the cancellation tests cover pre-initialization cancel, active Pi cancel, immediate retry,
-  credential-completion tail race, and superseded renderer result handling.
+  credential-completion tail race, cross-renderer replacement, cleanup failure, and superseded
+  renderer result handling.
 - Run `git diff --check`.
 
 # Review
