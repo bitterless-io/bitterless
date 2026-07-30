@@ -99,7 +99,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [translator-fast-mode-006](tasks/translator-fast-mode-006.md) | Translator-only Codex Fast priority service tier | done | translator-llm-direction-005 |
 | [model-provider-login-cancel-regression-007](tasks/model-provider-login-cancel-regression-007.md) | cancellable and replaceable Setting Codex login with stale-result fencing | implemented; owner verification pending | translator-error-diagnostics-004 |
 | [codex-gpt55-retention-008](tasks/codex-gpt55-retention-008.md) | keep GPT-5.5 while adding GPT-5.6 runtime models | implemented; owner verification pending | model-provider-login-cancel-regression-007 |
-| [model-provider-fresh-login-callback-009](tasks/model-provider-fresh-login-callback-009.md) | fresh Codex login with one modern OAuth callback owner | in-progress | model-provider-login-cancel-regression-007, codex-gpt55-retention-008 |
+| [model-provider-fresh-login-callback-009](tasks/model-provider-fresh-login-callback-009.md) | fresh Codex login with one modern OAuth callback owner | implemented; owner verification pending | model-provider-login-cancel-regression-007, codex-gpt55-retention-008 |
 | [motto-miniapp-001](tasks/motto-miniapp-001.md) | local reminder cards and whole-array storage inside Omni | done | translator-miniapp-001 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |

@@ -1,7 +1,7 @@
 ---
 id: model-provider-fresh-login-callback-009
 scope: shared-model-provider
-status: in-progress
+status: implemented-owner-verification-pending
 depends-on: [model-provider-login-cancel-regression-007, codex-gpt55-retention-008]
 ---
 
@@ -44,3 +44,8 @@ replacement-login fencing.
 - Run `yarn test:model-provider`.
 - Run `yarn typecheck:node`.
 - Run `git diff --check`.
+
+# Review
+
+- [model-provider-fresh-login-callback-009-1](../reviews/model-provider-fresh-login-callback-009-1.md) -
+  pass

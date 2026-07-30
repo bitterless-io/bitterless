@@ -1,6 +1,6 @@
 # Codex Browser Login Succeeds but Setting Keeps Waiting
 
-Status: Implementing
+Status: Implemented; owner verification pending
 
 Implementation:
 [model-provider-fresh-login-callback-009](../plan/tasks/model-provider-fresh-login-callback-009.md)
