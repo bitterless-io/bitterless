@@ -39,7 +39,7 @@ export interface ModelProviderServiceDependencies {
   settings: ModelProviderSettingStore;
   credentials: Pick<
     CodexCredentialService,
-    'getStatus' | 'connect' | 'disconnect' | 'subscribeTransitions'
+    'getStatus' | 'connect' | 'cancelConnect' | 'disconnect' | 'subscribeTransitions'
   >;
   broadcastSnapshot(snapshot: ModelProviderSnapshot): void;
   broadcastDeviceCode(notice: ModelProviderDeviceCodeNotice | null): void;
@@ -67,7 +67,20 @@ export interface ModelProviderRuntimeObservation {
 
 const PERSISTENCE_RETRY_DELAY_MS = 50;
 const DIRTY_RETRY_DELAYS_MS = [250, 1_000, 5_000, 15_000, 60_000] as const;
-type CredentialStateLock = 'persistence-unavailable' | 'record-invalid';
+type CredentialStateLock =
+  | 'credential-cleanup-failed'
+  | 'persistence-unavailable'
+  | 'record-invalid';
+type ConnectPhase = 'initializing' | 'preparing' | 'credential' | 'settling';
+
+interface ModelProviderConnectAttempt {
+  generation: number;
+  cancelled: boolean;
+  phase: ConnectPhase;
+  previous: ModelProviderRecord | null;
+  settled: Promise<void>;
+  settle(): void;
+}
 
 const waitForPersistenceRetry = async (): Promise<void> =>
   await new Promise((resolve) => setTimeout(resolve, PERSISTENCE_RETRY_DELAY_MS));
@@ -115,6 +128,7 @@ const mapCredentialError = (
   const supported: ModelProviderActionErrorCode[] = [
     'login-failed',
     'login-in-progress',
+    'cancelled',
     'logout-failed',
     'status-unavailable',
     'timeout'
@@ -135,6 +149,8 @@ export class ModelProviderService {
   private lastSnapshotObservedAt = -1;
   private initializePromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
+  private connectGeneration = 0;
+  private activeConnectAttempt: ModelProviderConnectAttempt | null = null;
   private stopCredentialWatcher: (() => void) | null = null;
   private credentialOperation: 'connect' | 'disconnect' | null = null;
   private credentialStateLock: CredentialStateLock | null = null;
@@ -174,13 +190,180 @@ export class ModelProviderService {
       return { ok: false, snapshot: this.snapshot(), error: actionError('invalid-input') };
     }
 
-    await this.ensureInitialized();
+    if (this.activeConnectAttempt && !this.activeConnectAttempt.cancelled) {
+      await this.ensureInitialized();
+      return {
+        ok: false,
+        snapshot: this.snapshot(),
+        error: actionError('login-in-progress')
+      };
+    }
+
+    let settleAttempt!: () => void;
+    const attempt: ModelProviderConnectAttempt = {
+      generation: ++this.connectGeneration,
+      cancelled: false,
+      phase: 'initializing',
+      previous: null,
+      settled: new Promise<void>((resolve) => {
+        settleAttempt = resolve;
+      }),
+      settle: () => settleAttempt()
+    };
+    this.activeConnectAttempt = attempt;
+
+    try {
+      await this.ensureInitialized();
+      if (!this.isActiveConnectAttempt(attempt)) return this.cancelledConnectResult();
+
+      attempt.phase = 'preparing';
+      return await this.mutate(async () => {
+        const previous = this.requiredRecord();
+        attempt.previous = previous;
+        if (!this.isActiveConnectAttempt(attempt)) {
+          return await this.finishCancelledConnect(attempt, previous, false);
+        }
+        if (previous.authState === 'ready') {
+          return { ok: true, snapshot: this.snapshot() };
+        }
+
+        if (this.credentialStateLock === 'persistence-unavailable') {
+          return {
+            ok: false,
+            snapshot: this.snapshot(),
+            error: actionError('persistence-unavailable')
+          };
+        }
+
+        if (this.credentialStateLock !== 'record-invalid') {
+          try {
+            await this.commit(
+              createRecord('authenticating', this.now(), {
+                lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
+              })
+            );
+          } catch {
+            return {
+              ok: false,
+              snapshot: this.snapshot(),
+              error: actionError('persistence-unavailable')
+            };
+          }
+        }
+        if (!this.isActiveConnectAttempt(attempt)) {
+          return await this.finishCancelledConnect(attempt, previous, false);
+        }
+
+        const observer: CodexConnectObserver = {
+          onDeviceCode: (notice) => {
+            if (!this.isActiveConnectAttempt(attempt)) return;
+            this.dependencies.broadcastDeviceCode({
+              provider: input.provider,
+              userCode: notice.userCode,
+              verificationHost: notice.verificationHost,
+              expiresAt: notice.expiresAt
+            });
+          }
+        };
+
+        let credentialConnected = false;
+        try {
+          attempt.phase = 'credential';
+          this.credentialOperation = 'connect';
+          const status = await this.dependencies.credentials.connect({
+            method: input.method,
+            ...observer
+          });
+          credentialConnected = status.connected;
+          if (!this.isActiveConnectAttempt(attempt)) {
+            return await this.finishCancelledConnect(attempt, previous, credentialConnected);
+          }
+          if (!status.connected) {
+            throw new CodexCredentialError('login-failed', 'Codex sign-in did not complete.');
+          }
+          this.credentialStateLock = null;
+          attempt.phase = 'settling';
+          await this.commit(
+            createRecord('ready', this.now(), {
+              lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
+            })
+          );
+          if (!this.isActiveConnectAttempt(attempt)) {
+            return await this.finishCancelledConnect(attempt, previous, true);
+          }
+          return { ok: true, snapshot: this.snapshot() };
+        } catch (error) {
+          if (!this.isActiveConnectAttempt(attempt)) {
+            return await this.finishCancelledConnect(attempt, previous, credentialConnected);
+          }
+          if (credentialConnected && error instanceof ModelProviderServiceError) {
+            return {
+              ok: false,
+              snapshot: this.snapshot(),
+              error: actionError('persistence-unavailable')
+            };
+          }
+          const errorCode = mapCredentialError(error, 'login-failed');
+          if (this.credentialStateLock) {
+            if (this.credentialStateLock === 'credential-cleanup-failed') {
+              await this.restoreCleanupFailureUnavailable(previous);
+            }
+            return { ok: false, snapshot: this.snapshot(), error: actionError(errorCode) };
+          }
+          const next = this.cancelledRecord(previous);
+          try {
+            await this.commit(next);
+          } catch {
+            return {
+              ok: false,
+              snapshot: this.snapshot(),
+              error: actionError('persistence-unavailable')
+            };
+          }
+          return { ok: false, snapshot: this.snapshot(), error: actionError(errorCode) };
+        } finally {
+          this.credentialOperation = null;
+          this.dependencies.broadcastDeviceCode(null);
+        }
+      });
+    } finally {
+      attempt.settle();
+      if (this.activeConnectAttempt === attempt) this.activeConnectAttempt = null;
+    }
+  }
+
+  async cancelConnect(value: unknown): Promise<ModelProviderActionResult> {
+    try {
+      parseModelProviderDisconnectInput(value);
+    } catch {
+      if (!this.record) {
+        return {
+          ok: false,
+          snapshot: this.snapshot(),
+          error: actionError('invalid-input')
+        };
+      }
+      return { ok: false, snapshot: this.snapshot(), error: actionError('invalid-input') };
+    }
+
+    const attempt = this.activeConnectAttempt;
+    const cancelGeneration = ++this.connectGeneration;
+    if (attempt) attempt.cancelled = true;
+    await this.dependencies.credentials.cancelConnect().catch(() => undefined);
+
+    if (!attempt || attempt.phase === 'initializing') {
+      return { ok: true, snapshot: this.snapshot() };
+    }
+    await attempt.settled;
+    if (cancelGeneration !== this.connectGeneration) {
+      return { ok: true, snapshot: this.snapshot() };
+    }
+
     return await this.mutate(async () => {
-      const previous = this.requiredRecord();
-      if (previous.authState === 'ready') {
+      if (cancelGeneration !== this.connectGeneration) {
         return { ok: true, snapshot: this.snapshot() };
       }
-
+      const previous = attempt.previous ?? this.requiredRecord();
       if (this.credentialStateLock === 'persistence-unavailable') {
         return {
           ok: false,
@@ -188,82 +371,31 @@ export class ModelProviderService {
           error: actionError('persistence-unavailable')
         };
       }
-
-      if (this.credentialStateLock !== 'record-invalid') {
-        try {
-          await this.commit(
-            createRecord('authenticating', this.now(), {
-              lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
-            })
-          );
-        } catch {
-          return {
-            ok: false,
-            snapshot: this.snapshot(),
-            error: actionError('persistence-unavailable')
-          };
-        }
+      if (this.credentialStateLock === 'credential-cleanup-failed') {
+        return {
+          ok: false,
+          snapshot: this.snapshot(),
+          error: actionError('status-unavailable')
+        };
       }
 
-      const observer: CodexConnectObserver = {
-        onDeviceCode: (notice) => {
-          this.dependencies.broadcastDeviceCode({
-            provider: input.provider,
-            userCode: notice.userCode,
-            verificationHost: notice.verificationHost,
-            expiresAt: notice.expiresAt
-          });
-        }
-      };
-
-      let credentialConnected = false;
       try {
-        this.credentialOperation = 'connect';
-        const status = await this.dependencies.credentials.connect({
-          method: input.method,
-          ...observer
-        });
-        if (!status.connected) {
-          throw new CodexCredentialError('login-failed', 'Codex sign-in did not complete.');
+        const status = await this.dependencies.credentials.getStatus();
+        if (status.errorCode) {
+          return await this.failClosedCredentialCleanup(previous);
         }
-        credentialConnected = true;
+        if (status.connected) {
+          this.credentialOperation = 'disconnect';
+          const disconnected = await this.dependencies.credentials.disconnect();
+          if (disconnected.connected || disconnected.errorCode) {
+            return await this.failClosedCredentialCleanup(previous);
+          }
+        }
         this.credentialStateLock = null;
-        await this.commit(
-          createRecord('ready', this.now(), {
-            lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
-          })
-        );
+        await this.commit(this.cancelledRecord(previous));
         return { ok: true, snapshot: this.snapshot() };
-      } catch (error) {
-        if (credentialConnected && error instanceof ModelProviderServiceError) {
-          return {
-            ok: false,
-            snapshot: this.snapshot(),
-            error: actionError('persistence-unavailable')
-          };
-        }
-        const errorCode = mapCredentialError(error, 'login-failed');
-        if (this.credentialStateLock) {
-          return { ok: false, snapshot: this.snapshot(), error: actionError(errorCode) };
-        }
-        const next = previous.invalidationReason
-          ? createRecord('invalidated', this.now(), {
-              invalidationReason: previous.invalidationReason,
-              lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
-            })
-          : createRecord('login_required', this.now(), {
-              lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
-            });
-        try {
-          await this.commit(next);
-        } catch {
-          return {
-            ok: false,
-            snapshot: this.snapshot(),
-            error: actionError('persistence-unavailable')
-          };
-        }
-        return { ok: false, snapshot: this.snapshot(), error: actionError(errorCode) };
+      } catch {
+        return await this.failClosedCredentialCleanup(previous);
       } finally {
         this.credentialOperation = null;
         this.dependencies.broadcastDeviceCode(null);
@@ -509,6 +641,9 @@ export class ModelProviderService {
   ): Promise<ModelProviderSnapshot> {
     await this.ensureInitialized();
     return await this.mutate(async () => {
+      if (this.credentialStateLock === 'credential-cleanup-failed') {
+        return this.snapshot();
+      }
       const previous = this.requiredRecord();
       this.credentialStateLock = null;
       const next =
@@ -661,6 +796,98 @@ export class ModelProviderService {
       this.record = createRecord('unavailable', this.now());
     }
     return this.record;
+  }
+
+  private isActiveConnectAttempt(attempt: ModelProviderConnectAttempt): boolean {
+    return (
+      !attempt.cancelled &&
+      attempt.generation === this.connectGeneration &&
+      this.activeConnectAttempt === attempt
+    );
+  }
+
+  private cancelledConnectResult(): ModelProviderActionResult {
+    return {
+      ok: false,
+      snapshot: this.snapshot(),
+      error: actionError('cancelled')
+    };
+  }
+
+  private cancelledRecord(previous: ModelProviderRecord): ModelProviderRecord {
+    return previous.invalidationReason
+      ? createRecord('invalidated', this.now(), {
+          invalidationReason: previous.invalidationReason,
+          lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
+        })
+      : createRecord('login_required', this.now(), {
+          lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
+        });
+  }
+
+  private async removeCancelledCredential(
+    connected: boolean
+  ): Promise<void> {
+    if (!connected) return;
+    this.credentialOperation = 'disconnect';
+    const status = await this.dependencies.credentials.disconnect();
+    if (status.connected || status.errorCode) {
+      throw new CodexCredentialError(
+        'status-unavailable',
+        'Codex credential cleanup could not be verified.'
+      );
+    }
+  }
+
+  private async finishCancelledConnect(
+    attempt: ModelProviderConnectAttempt,
+    previous: ModelProviderRecord,
+    connected: boolean
+  ): Promise<ModelProviderActionResult> {
+    try {
+      await this.removeCancelledCredential(connected);
+    } catch {
+      return await this.failClosedCredentialCleanup(previous);
+    }
+    if (
+      this.credentialStateLock === 'credential-cleanup-failed' &&
+      this.activeConnectAttempt === attempt
+    ) {
+      await this.restoreCleanupFailureUnavailable(previous);
+      return this.cancelledConnectResult();
+    }
+    if (!this.credentialStateLock && this.activeConnectAttempt === attempt) {
+      try {
+        await this.commit(this.cancelledRecord(previous));
+      } catch {
+        // commit already installed and broadcast its fail-closed fallback.
+      }
+    }
+    return this.cancelledConnectResult();
+  }
+
+  private async failClosedCredentialCleanup(
+    previous: ModelProviderRecord
+  ): Promise<ModelProviderActionResult> {
+    this.credentialStateLock = 'credential-cleanup-failed';
+    await this.restoreCleanupFailureUnavailable(previous);
+    return {
+      ok: false,
+      snapshot: this.snapshot(),
+      error: actionError('status-unavailable')
+    };
+  }
+
+  private async restoreCleanupFailureUnavailable(previous: ModelProviderRecord): Promise<void> {
+    try {
+      await this.commit(
+        createRecord('unavailable', this.now(), {
+          lastSuccessfulRuntimeAt: previous.lastSuccessfulRuntimeAt
+        })
+      );
+    } catch {
+      // commit already installed and broadcast its fail-closed fallback.
+    }
   }
 
   private async mutate<T>(operation: () => Promise<T>): Promise<T> {

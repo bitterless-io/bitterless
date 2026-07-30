@@ -34,6 +34,7 @@
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
     "test:translator-language": "node --test tests/translator/translatorLanguage.service.test.mjs tests/translator/translatorPrompt.test.mjs",
+    "test:model-provider": "node tests/modelProvider/run-tests.mjs",
     "test:motto": "node --test tests/motto/*.test.mjs",
     "test:omni-layout": "node --test tests/omni/omniLayoutLifecycle.test.mjs",
     "check:todo-window-runtime": "node scripts/todo/check-todo-window-runtime.mjs",

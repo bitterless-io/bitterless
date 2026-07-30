@@ -43,27 +43,50 @@
               </div>
             </div>
             <a-button
-              v-if="canLogin"
+              v-if="
+                llmSettingStore.authState === 'authenticating' ||
+                llmSettingStore.action === 'login' ||
+                llmSettingStore.action === 'reconnect' ||
+                llmSettingStore.action === 'cancel'
+              "
+              size="mini"
+              :loading="llmSettingStore.action === 'cancel'"
+              @click="llmSettingStore.cancelLogin()"
+            >
+              <template #icon><IconX :size="14" /></template>
+              {{ i18nHelper.setting.llm.cancel }}
+            </a-button>
+            <a-button
+              v-else-if="canLogin"
               type="primary"
               size="mini"
-              :loading="
-                llmSettingStore.action === 'login' || llmSettingStore.authState === 'authenticating'
-              "
-              :disabled="llmSettingStore.authState === 'authenticating'"
               @click="llmSettingStore.login()"
             >
               <template #icon><IconLogin :size="14" /></template>
               {{ i18nHelper.setting.llm.login }}
             </a-button>
-            <a-button
+            <div
               v-else-if="llmSettingStore.authState === 'ready'"
-              size="mini"
-              :loading="llmSettingStore.action === 'logout'"
-              @click="llmSettingStore.logout()"
+              class="model-config__auth-actions"
             >
-              <template #icon><IconLogout :size="14" /></template>
-              {{ i18nHelper.setting.llm.logout }}
-            </a-button>
+              <a-button
+                name="modelConfig__detail__reconnect"
+                type="primary"
+                size="mini"
+                @click="llmSettingStore.reconnect()"
+              >
+                <template #icon><IconRefresh :size="14" /></template>
+                {{ i18nHelper.setting.llm.reconnect }}
+              </a-button>
+              <a-button
+                size="mini"
+                :loading="llmSettingStore.action === 'logout'"
+                @click="llmSettingStore.logout()"
+              >
+                <template #icon><IconLogout :size="14" /></template>
+                {{ i18nHelper.setting.llm.logout }}
+              </a-button>
+            </div>
           </div>
 
           <div v-if="errorMessage" class="model-config__error" role="alert">
@@ -106,7 +129,9 @@ import {
   IconCpu,
   IconGauge,
   IconLogin,
-  IconLogout
+  IconLogout,
+  IconRefresh,
+  IconX
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import {

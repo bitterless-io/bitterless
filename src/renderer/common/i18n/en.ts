@@ -136,6 +136,8 @@ export const en = {
       authenticating: 'Waiting for Codex sign-in…',
       unavailable: 'Codex is unavailable on this device.',
       login: 'Login',
+      cancel: 'Cancel',
+      reconnect: 'Reconnect',
       logout: 'Logout',
       loadFailed: 'Could not load Codex status.',
       loginFailed: 'Codex login did not complete.',
