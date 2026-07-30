@@ -49,21 +49,24 @@ const waitSynchronously = (durationMs: number): void => {
 
 export class CodexFileCredentialStore implements CodexCredentialStore {
   private readonly lockPath: string;
+  private operationTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly authPath: string) {
     this.lockPath = `${authPath}.lock`;
   }
 
   async read(provider: string): Promise<unknown | undefined> {
-    return this.withLock((credentials) => credentials[provider]);
+    return this.enqueue(() => this.withLock((credentials) => credentials[provider]));
   }
 
   async list(): Promise<readonly { providerId: string; type: string }[]> {
-    return this.withLock((credentials) =>
-      Object.entries(credentials).map(([providerId, credential]) => ({
-        providerId,
-        type: credentialType(credential)
-      }))
+    return this.enqueue(() =>
+      this.withLock((credentials) =>
+        Object.entries(credentials).map(([providerId, credential]) => ({
+          providerId,
+          type: credentialType(credential)
+        }))
+      )
     );
   }
 
@@ -71,20 +74,24 @@ export class CodexFileCredentialStore implements CodexCredentialStore {
     provider: string,
     update: (current: unknown | undefined) => Promise<unknown | undefined>
   ): Promise<unknown | undefined> {
-    return this.withLock(async (credentials) => {
-      const next = await update(credentials[provider]);
-      if (next === undefined) return credentials[provider];
-      credentials[provider] = next;
-      this.write(credentials);
-      return next;
-    });
+    return this.enqueue(() =>
+      this.withLock(async (credentials) => {
+        const next = await update(credentials[provider]);
+        if (next === undefined) return credentials[provider];
+        credentials[provider] = next;
+        this.write(credentials);
+        return next;
+      })
+    );
   }
 
   async delete(provider: string): Promise<void> {
-    await this.withLock((credentials) => {
-      delete credentials[provider];
-      this.write(credentials);
-    });
+    await this.enqueue(() =>
+      this.withLock((credentials) => {
+        delete credentials[provider];
+        this.write(credentials);
+      })
+    );
   }
 
   private ensureFile(): void {
@@ -144,6 +151,15 @@ export class CodexFileCredentialStore implements CodexCredentialStore {
     } finally {
       rmSync(this.lockPath, { recursive: true, force: true });
     }
+  }
+
+  private async enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const current = this.operationTail.catch(() => undefined).then(operation);
+    this.operationTail = current.then(
+      () => undefined,
+      () => undefined
+    );
+    return current;
   }
 }
 

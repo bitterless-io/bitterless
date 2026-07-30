@@ -194,6 +194,19 @@ test('app-owned credential stores preserve the Pi auth file contract', async () 
     }
     await file.delete('openai-codex');
     assert.deepEqual(JSON.parse(readFileSync(authPath, 'utf8')), {});
+
+    const promotionStarted = deferred<void>();
+    const releasePromotion = deferred<void>();
+    const promotion = file.modify('openai-codex', async () => {
+      promotionStarted.resolve();
+      await releasePromotion.promise;
+      return credential;
+    });
+    await promotionStarted.promise;
+    const cancellationCleanup = file.delete('openai-codex');
+    releasePromotion.resolve();
+    await Promise.all([promotion, cancellationCleanup]);
+    assert.deepEqual(JSON.parse(readFileSync(authPath, 'utf8')), {});
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
