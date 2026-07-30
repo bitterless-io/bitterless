@@ -4,10 +4,10 @@ Status: Accepted
 
 ## Purpose
 
-Omni layout cells can render either a remote browser page or one of three first-party Bitterless
-mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, and `translator`. They render directly in
-the cell operation `WebContentsView`; selecting one must not create or depend on its standalone
-window.
+Omni layout cells can render either a remote browser page or one of four first-party Bitterless
+mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, `translator`, and `motto`.
+They render directly in the cell operation `WebContentsView`; selecting one must not create or
+depend on its standalone window.
 
 ## Overall Structure
 
@@ -28,7 +28,7 @@ window.
 ```
 
 The Omni shell owns cell creation, bounds, persistence, and content-runtime selection. Todo,
-EyesOnAgents, and Translator continue to own their business state and XPC handlers.
+EyesOnAgents, Translator, and Motto continue to own their business state and persistence boundary.
 
 ## Per-Cell Layout Panel
 
@@ -45,7 +45,8 @@ Mini-app cell
 │ [split controls]  [ Browser | Mini App ]  [ Todo ▾ ]                [×] │
 │                                             ├ Todo                         │
 │                                             ├ EyesOnAgents                 │
-│                                             └ Translator                   │
+│                                             ├ Translator                   │
+│                                             └ Motto                        │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,7 +63,7 @@ Each leaf persists these values inside the existing `omni_layout` tree:
 |---|---|
 | `contentMode` | `'browser' | 'miniapp'` |
 | `url` | Last browser URL. Preserved while the cell displays a mini app. |
-| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator'`. Preserved while the cell displays a browser. |
+| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator' | 'motto'`. Preserved while the cell displays a browser. |
 
 Rules:
 
@@ -93,13 +94,15 @@ renderer loads or reopens, so the localized warning cannot be lost to renderer s
 | Todo | `out/preload/todo.js` | `${ELECTRON_RENDERER_URL}/todo/index.html` | `out/renderer/todo/index.html` | default |
 | EyesOnAgents | `out/preload/eyesOnAgents.js` | `${ELECTRON_RENDERER_URL}/eyesOnAgents/index.html` | `out/renderer/eyesOnAgents/index.html` | default |
 | Translator | `out/preload/translator.js` | `${ELECTRON_RENDERER_URL}/translator/index.html` | `out/renderer/translator/index.html` | default |
+| Motto | `out/preload/motto.js` | `${ELECTRON_RENDERER_URL}/motto/index.html` | `out/renderer/motto/index.html` | default |
 
 Generated preload and packaged renderer paths are anchored at `app.getAppPath()/out`; they never
 depend on a Rollup chunk's `__dirname`. Development first-party renderers use the Electron Vite dev
 server URL, while packaged renderers use `loadFile`.
 
 Changing `contentMode` or `miniAppId` recreates the affected operation view with the correct
-preload. It does not recreate the Omni BaseWindow or open a standalone Todo/EyesOnAgents/Translator window.
+preload. It does not recreate the Omni BaseWindow or open a standalone
+Todo/EyesOnAgents/Translator/Motto window.
 Remote-browser notification interception, provider-scoped browser identity, persistent browser
 sessions, and URL navigation hooks apply only to browser cells.
 
@@ -134,7 +137,8 @@ That plain-Chrome identity was rejected by Google and caused Cloudflare identity
 Mini-app operation views are privileged because their preload exposes first-party XPC. They must
 reject top-level navigation away from the expected local renderer target. New-window requests and
 external `http`/`https` links may be handed to the system browser, but must never load inside the
-privileged operation view. Remote browser cells can never receive a Todo, EyesOnAgents, or Translator preload.
+privileged operation view. Remote browser cells can never receive a Todo, EyesOnAgents,
+Translator, or Motto preload.
 
 ## Embedded Mini-App Behavior
 
@@ -146,11 +150,15 @@ privileged operation view. Remote browser cells can never receive a Todo, EyesOn
   standalone-window actions such as pin, minimize, maximize, close, and title-bar double-click,
   while keeping board, sync, connection, and bridge actions available.
 - Translator follows `docs/features/translator.md` and has no standalone window actions.
+- Motto follows `docs/features/motto.md`, persists one whole array in renderer localStorage, and has
+  no standalone window actions.
 - Mini-app cells do not render Omni's browser chrome above the app's own header. Embedded host
   styles remove standalone drag regions, macOS traffic-light padding, and fixed 800×600 renderer
   minimums so split panes can shrink without forcing overflow.
-- Multiple cells may show the same mini app. Each renderer reads the same authoritative local
-  services and remains synchronized through existing XPC broadcasts.
+- Multiple cells may show the same mini app. Service-backed apps read the same authoritative local
+  services and remain synchronized through existing XPC broadcasts. Motto instances share one
+  localStorage origin and observe another instance's persisted changes on their next load; live
+  cross-instance synchronization is out of scope.
 - Closing a cell destroys only that cell's chrome and operation views.
 
 ## Interaction Contract
@@ -158,7 +166,7 @@ privileged operation view. Remote browser cells can never receive a Todo, EyesOn
 | Input | Scope | Behavior |
 |---|---|---|
 | Browser/Mini App selector | Layout panel | Switch content runtime, apply, and persist immediately. |
-| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, or Translator; recreate operation view and persist. |
+| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, Translator, or Motto; recreate operation view and persist. |
 | URL Enter | Browser panel | Normalize/load the URL and persist navigation updates. |
 | Refresh | Browser chrome / mini-app header | Reload browser content or refresh the mini app's own data. |
 | Back/forward | Browser cell only | Navigate browser history; hidden/disabled for mini apps. |
@@ -202,9 +210,10 @@ SettingDao.omni_layout
 
 - Contract tests cover legacy migration, allowed variants, round-trip persistence fields, and
   rejection of unsupported mini apps.
-- Runtime tests cover browser/Todo/EyesOnAgents/Translator preload selection and dev versus packaged targets.
-- UI guards cover Arco mode/select controls, exactly three mini-app choices, i18n, business BEM/Less,
+- Runtime tests cover browser/Todo/EyesOnAgents/Translator/Motto preload selection and dev versus
+  packaged targets.
+- UI guards cover Arco mode/select controls, exactly four mini-app choices, i18n, business BEM/Less,
   embedded sizing/window-action behavior, the compact Omni Menu Bar update action, and the absence
   of Tailwind classes.
-- Build verification confirms all three mini-app renderer HTML files and preload bundles exist in
+- Build verification confirms all four mini-app renderer HTML files and preload bundles exist in
   `out/` and are referenced by generated-asset-safe paths.

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -12,6 +13,7 @@ const rendererEntries = [
   ['todo', 'src/renderer/todo/src/main.ts'],
   ['eyesOnAgents', 'src/renderer/eyesOnAgents/src/main.ts'],
   ['translator', 'src/renderer/translator/src/main.ts'],
+  ['motto', 'src/renderer/motto/src/main.ts'],
   ['connector', 'src/renderer/connector/src/main.ts'],
   ['omniWindow', 'src/renderer/omni/omniWindow/src/main.ts'],
   ['omniControl', 'src/renderer/omni/omniControl/src/main.ts'],
@@ -21,7 +23,7 @@ const rendererEntries = [
   ['maestroWorkbench', 'src/renderer/maestro/workbench/src/workbench.ts']
 ]
 
-assert.equal(rendererEntries.length, 11, 'renderer i18n inventory must own exactly eleven entries')
+assert.equal(rendererEntries.length, 12, 'renderer i18n inventory must own exactly twelve entries')
 assert.equal(new Set(rendererEntries.map(([name]) => name)).size, rendererEntries.length)
 
 for (const [name, path] of rendererEntries) {

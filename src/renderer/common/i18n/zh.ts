@@ -222,6 +222,10 @@ export const zh: typeof en = {
       name: '翻译器',
       subtitle: '使用 Codex 实时进行中英互译',
     },
+    motto: {
+      name: 'Motto',
+      subtitle: '随时查看对自己重要的提醒',
+    },
     omniBrowser: {
       name: '全能浏览器',
       subtitle: '多窗格网页浏览器',
@@ -254,6 +258,32 @@ export const zh: typeof en = {
       provider: '翻译失败。',
       unavailable: 'Codex 尚未就绪，请登录后重试。',
       generic: '翻译失败，请修改原文后重试。',
+    },
+  },
+  motto: {
+    title: 'Motto',
+    add: '新增',
+    edit: '编辑',
+    delete: '删除',
+    cardActions: 'Motto 操作',
+    listLabel: '重要事项提醒',
+    emptyTitle: '把重要的事放在眼前',
+    emptyBody: '新增一条标题和补充说明，提醒自己真正重要的事情。',
+    form: {
+      addTitle: '新增 Motto',
+      editTitle: '编辑 Motto',
+      title: '标题',
+      subtitle: '副标题',
+      titlePlaceholder: '什么事情最重要？',
+      subtitlePlaceholder: '写一句简短提醒…',
+      cancel: '取消',
+      add: '新增',
+      save: '保存',
+    },
+    errors: {
+      read: 'Motto 存储暂时不可用，已保存的提醒未被修改。',
+      invalid: '无法安全读取已保存的 Motto；新增一条即可替换异常数据。',
+      write: '无法保存本次修改，页面仍保留上一次成功保存的内容。',
     },
   },
   eyesOnAgents: {

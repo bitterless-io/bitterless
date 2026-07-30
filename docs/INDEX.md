@@ -29,11 +29,14 @@ design document.
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
-  or local Todo/EyesOnAgents/Translator operation views with development and packaged runtime mapping.
+  or local Todo/EyesOnAgents/Translator/Motto operation views with development and packaged runtime
+  mapping.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
 - [Translator mini app](features/translator.md) - fixed GPT-5.5 low-effort realtime bilingual
   translation inside Omni with strict Zod output.
+- [Motto mini app](features/motto.md) - local title/subtitle reminder cards inside Omni with
+  whole-array Web Storage persistence.
 - [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
   with a persisted General override and Mini Apps production landing.
 - [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
@@ -79,6 +82,7 @@ design document.
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
 - [Omni mini-app cells delivery analysis](plan/analysis/omni-miniapp-cells.md)
 - [Translator delivery analysis](plan/analysis/translator.md)
+- [Motto delivery analysis](plan/analysis/motto.md)
 - [SQLite migration release-gate analysis](plan/analysis/sqlite-migration-release-gate.md)
 - [Todoist-style Todo sync delivery analysis](plan/analysis/todoist-sync.md)
 

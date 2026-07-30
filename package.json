@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.48",
+  "_version": "0.0.54",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -34,6 +34,7 @@
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
     "test:translator-language": "node --test tests/translator/translatorLanguage.service.test.mjs tests/translator/translatorPrompt.test.mjs",
+    "test:motto": "node --test tests/motto/*.test.mjs",
     "test:omni-layout": "node --test tests/omni/omniLayoutLifecycle.test.mjs",
     "check:todo-window-runtime": "node scripts/todo/check-todo-window-runtime.mjs",
     "test:eyes-on-agents:core": "node scripts/eyes-on-agents/core.test.mjs",
@@ -233,7 +234,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG",
-  "version": "0.0.48",
-  "version_code": "260728105016"
+  "name": "Bitterless",
+  "version": "0.0.54",
+  "version_code": "260729212211"
 }

@@ -221,6 +221,10 @@ export const en = {
       name: 'Translator',
       subtitle: 'Realtime Chinese and English translation with Codex',
     },
+    motto: {
+      name: 'Motto',
+      subtitle: 'Keep important reminders close at hand',
+    },
     omniBrowser: {
       name: 'Omni Browser',
       subtitle: 'Multi-pane web browser',
@@ -253,6 +257,32 @@ export const en = {
       provider: 'Translation failed.',
       unavailable: 'Codex is not ready. Sign in and try again.',
       generic: 'Translation failed. Edit the source to try again.',
+    },
+  },
+  motto: {
+    title: 'Motto',
+    add: 'Add',
+    edit: 'Edit',
+    delete: 'Delete',
+    cardActions: 'Motto actions',
+    listLabel: 'Important reminders',
+    emptyTitle: 'Keep what matters in sight',
+    emptyBody: 'Add a title and supporting note for something you want to remember.',
+    form: {
+      addTitle: 'Add motto',
+      editTitle: 'Edit motto',
+      title: 'Title',
+      subtitle: 'Subtitle',
+      titlePlaceholder: 'What matters?',
+      subtitlePlaceholder: 'Add a short reminder…',
+      cancel: 'Cancel',
+      add: 'Add',
+      save: 'Save',
+    },
+    errors: {
+      read: 'Motto storage is unavailable. No saved reminders were changed.',
+      invalid: 'Saved mottos could not be read safely. Add a motto to replace them.',
+      write: 'Could not save this change. Your last saved mottos are still shown.',
     },
   },
   eyesOnAgents: {

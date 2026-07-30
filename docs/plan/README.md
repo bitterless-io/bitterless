@@ -97,6 +97,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [translator-inline-retry-003](tasks/translator-inline-retry-003.md) | inline retry action for unchanged-source translation failures | done | translator-language-direction-002 |
 | [translator-llm-direction-005](tasks/translator-llm-direction-005.md) | single-pass semantic direction and result-gated target label | done | translator-inline-retry-003 |
 | [translator-fast-mode-006](tasks/translator-fast-mode-006.md) | Translator-only Codex Fast priority service tier | done | translator-llm-direction-005 |
+| [motto-miniapp-001](tasks/motto-miniapp-001.md) | local reminder cards and whole-array storage inside Omni | done | translator-miniapp-001 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [omni-layout-axis-collapse-002](tasks/omni-layout-axis-collapse-002.md) | root/inner-axis collapse, Splitpanes lifecycle, and native bounds consistency | implemented; owner verification pending | — |
@@ -109,6 +110,7 @@ Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md
 [Coding-agent sessions](analysis/coding-agent-sessions.md),
 [EyesOnAgents](analysis/eyes-on-agents.md), and
 [Translator](analysis/translator.md),
+[Motto](analysis/motto.md),
 [Omni mini-app cells](analysis/omni-miniapp-cells.md), and
 [SQLite migration release gate](analysis/sqlite-migration-release-gate.md).
 

@@ -118,6 +118,7 @@ const OMNI_MINI_APP_RUNTIME: Record<OmniMiniAppId, OmniMiniAppRuntime> = {
   todo: { preloadFile: 'todo.js', rendererName: 'todo' },
   eyesOnAgents: { preloadFile: 'eyesOnAgents.js', rendererName: 'eyesOnAgents' },
   translator: { preloadFile: 'translator.js', rendererName: 'translator' },
+  motto: { preloadFile: 'motto.js', rendererName: 'motto' },
 };
 
 const getCellDisplayUrl = (cell: Pick<
