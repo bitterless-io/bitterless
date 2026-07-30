@@ -54,30 +54,32 @@
                 {{ codexDetail }}
               </span>
               <div name="coin__resources__codexPreferences" class="coin-resource-ai-preferences">
-                <label>
+                <div class="coin-resource-ai-preferences__field">
                   <span>{{ i18nHelper.coin.resourcePage.codex.model }}</span>
                   <a-select
                     v-model="workspace.data.ai.model"
                     size="mini"
-                    :disabled="workspace.aiLoading || workspace.stateSaving"
-                    @change="workspace.updateAiPreference()"
+                    :aria-label="i18nHelper.coin.resourcePage.codex.model"
+                    :disabled="workspace.aiLoading"
+                    @change="updateAiModelPreference()"
                   >
                     <a-option v-for="model in modelOptions" :key="model" :value="model">{{ model }}</a-option>
                   </a-select>
-                </label>
-                <label>
+                </div>
+                <div class="coin-resource-ai-preferences__field">
                   <span>{{ i18nHelper.coin.resourcePage.codex.effort }}</span>
                   <a-select
                     v-model="workspace.data.ai.effort"
                     size="mini"
-                    :disabled="workspace.aiLoading || workspace.stateSaving"
-                    @change="workspace.updateAiPreference()"
+                    :aria-label="i18nHelper.coin.resourcePage.codex.effort"
+                    :disabled="workspace.aiLoading"
+                    @change="updateAiEffortPreference()"
                   >
                     <a-option v-for="effort in effortOptions" :key="effort" :value="effort">
                       {{ i18nHelper.coin.resourcePage.codex.efforts[effort] }}
                     </a-option>
                   </a-select>
-                </label>
+                </div>
               </div>
               <span class="coin-resource-row__notice">
                 {{ i18nHelper.coin.resourcePage.codex.appWide }}
@@ -467,7 +469,11 @@ import {
   IconTerminal2,
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import { COIN_AI_EFFORTS, COIN_AI_MODELS } from '@shared/coin/coinAnalysis.type';
+import {
+  COIN_AI_DEFAULT_EFFORT,
+  COIN_AI_MODEL_EFFORTS,
+  COIN_AI_MODELS,
+} from '@shared/coin/coinAnalysis.type';
 import { COIN_SERVICE_IDS } from '@shared/coin/coinResource.type';
 import type {
   CoinServiceId,
@@ -477,7 +483,19 @@ import { coinWorkspaceStore as workspace } from '../analysis/coinWorkspace.store
 import { coinResourcesStore as store } from './coinResources.store';
 
 const modelOptions = COIN_AI_MODELS;
-const effortOptions = COIN_AI_EFFORTS;
+const effortOptions = computed(() => COIN_AI_MODEL_EFFORTS[workspace.data.ai.model]);
+const updateAiModelPreference = (): void => {
+  if (!effortOptions.value.some((effort) => effort === workspace.data.ai.effort)) {
+    workspace.data.ai.effort = COIN_AI_DEFAULT_EFFORT;
+  }
+  workspace.updateAiPreference();
+};
+const updateAiEffortPreference = (): void => {
+  if (!effortOptions.value.some((effort) => effort === workspace.data.ai.effort)) {
+    workspace.data.ai.effort = COIN_AI_DEFAULT_EFFORT;
+  }
+  workspace.updateAiPreference();
+};
 const status = computed(() => store.status);
 const serviceRows = computed<CoinServiceStatus[]>(() =>
   status.value?.services ??

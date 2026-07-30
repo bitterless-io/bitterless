@@ -7,14 +7,16 @@ export const DEFAULT_START_URL = DEFAULT_COACH_START_URL
 const DEFAULT_SETTINGS: CoachSettings = {
   startUrl: DEFAULT_START_URL,
   llmProvider: 'openai-codex',
-  llmModel: 'gpt-5.5',
+  llmModel: 'gpt-5.6-luna',
   llmEffort: 'low'
 }
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   'ai-crms': 'qwen3.7-plus',
-  'openai-codex': 'gpt-5.5'
+  'openai-codex': 'gpt-5.6-luna'
 }
+
+const OPENAI_CODEX_MODELS = ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'] as const
 
 export class CoachSettingsService {
   private readonly file: string
@@ -49,11 +51,12 @@ function normalizeSettings(value: Partial<CoachSettings>): CoachSettings {
   const provider = normalizeLlmProvider(value.llmProvider || DEFAULT_SETTINGS.llmProvider)
   const fallbackModel = DEFAULT_MODEL_BY_PROVIDER[provider] || DEFAULT_SETTINGS.llmModel
   const rawModel = (value.llmModel || fallbackModel).trim()
+  const llmModel = normalizeLlmModel(rawModel, fallbackModel)
   return {
     startUrl: normalizeStartUrl(value.startUrl),
     llmProvider: provider,
-    llmModel: normalizeLlmModel(rawModel, fallbackModel),
-    llmEffort: normalizeLlmEffort(value.llmEffort)
+    llmModel,
+    llmEffort: normalizeLlmEffort(value.llmEffort, llmModel)
   }
 }
 
@@ -68,8 +71,11 @@ export function isDefaultStartUrl(url?: string): boolean {
 }
 
 function normalizeLlmModel(model: string, fallbackModel: string): string {
+  const trimmed = model.trim()
+  if (OPENAI_CODEX_MODELS.some((item) => item === trimmed)) return trimmed
+  if (OPENAI_CODEX_MODELS.some((item) => item === fallbackModel)) return fallbackModel
   if (model.trim().toLowerCase().startsWith('claude-')) return fallbackModel
-  return model || fallbackModel
+  return trimmed || fallbackModel
 }
 
 function normalizeLlmProvider(provider: string): string {
@@ -81,9 +87,10 @@ function normalizeLlmProvider(provider: string): string {
   return DEFAULT_SETTINGS.llmProvider
 }
 
-function normalizeLlmEffort(effort?: string): CoachSettings['llmEffort'] {
-  if (effort === 'default' || effort === 'medium' || effort === 'high' || effort === 'xhigh' || effort === 'max') return effort
-  return 'low'
+function normalizeLlmEffort(effort: string | undefined, model: string): CoachSettings['llmEffort'] {
+  const normalized = effort === 'default' || effort === 'medium' || effort === 'high' || effort === 'xhigh' || effort === 'max' ? effort : 'low'
+  if (model === 'gpt-5.6-sol' && normalized === 'low') return 'medium'
+  return normalized
 }
 
 export function normalizeUrl(url: string): string {

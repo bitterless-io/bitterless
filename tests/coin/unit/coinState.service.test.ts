@@ -102,12 +102,12 @@ test('persists only main-validated AI receipts and rejects stale or cancelled ap
     assert.equal(appended.snapshot.data.ai.receipts.length, 1);
 
     const rendererData = structuredClone(appended.snapshot.data);
-    rendererData.ai.model = 'gpt-5.4';
+    (rendererData.ai as { model: string }).model = 'gpt-5.4';
     rendererData.ai.receipts = [];
     const rendererSave = await service.save({ expectedRevision: 2, data: rendererData });
     assert.equal(rendererSave.status, 'saved');
     if (rendererSave.status === 'saved') {
-      assert.equal(rendererSave.snapshot.data.ai.model, 'gpt-5.4');
+      assert.equal(rendererSave.snapshot.data.ai.model, 'gpt-5.6-sol');
       assert.equal(rendererSave.snapshot.data.ai.receipts[0].runId, receipt.runId);
     }
 

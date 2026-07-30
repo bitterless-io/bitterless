@@ -12,20 +12,20 @@
           @change="workspace.queuePersist()"
         />
       </label>
-      <label class="coin-control-group">
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.workspace.chain }}</span>
-        <a-select v-model="draft.chain" size="small" :disabled="workspace.strategyLoading || workspace.aiLoading" @change="workspace.queuePersist()">
+        <a-select v-model="draft.chain" size="small" :aria-label="i18nHelper.coin.workspace.chain" :disabled="workspace.strategyLoading || workspace.aiLoading" @change="workspace.queuePersist()">
           <a-option value="bsc">BSC</a-option>
           <a-option value="solana">Solana</a-option>
           <a-option value="robinhood">Robinhood</a-option>
         </a-select>
-      </label>
-      <label class="coin-control-group coin-control-group--wide">
+      </div>
+      <div class="coin-control-group coin-control-group--wide">
         <span>{{ i18nHelper.coin.analysis.labels.launchStage }}</span>
-        <a-select v-model="draft.launchStage" size="small" :disabled="workspace.strategyLoading || workspace.aiLoading" @change="workspace.queuePersist()">
+        <a-select v-model="draft.launchStage" size="small" :aria-label="i18nHelper.coin.analysis.labels.launchStage" :disabled="workspace.strategyLoading || workspace.aiLoading" @change="workspace.queuePersist()">
           <a-option v-for="stage in launchStages" :key="stage" :value="stage">{{ i18nHelper.coin.analysis.stages[stage] }}</a-option>
         </a-select>
-      </label>
+      </div>
       <a-button type="primary" size="small" :loading="workspace.strategyLoading" :disabled="workspace.strategyLoading || workspace.aiLoading" @click="workspace.evaluateStrategy()">
         <template #icon><IconScale :size="15" /></template>
         {{ i18nHelper.coin.workspace.evaluate }}

@@ -56,18 +56,65 @@ interface PiAuthStorage {
   logout: (provider: string) => void
 }
 
+interface PiModelRuntime {
+  getModel: (provider: string, model: string) => unknown | undefined
+  hasConfiguredAuth: (provider: string) => boolean
+  login: (
+    provider: string,
+    type: 'oauth',
+    interaction: {
+      signal?: AbortSignal
+      prompt: (prompt: { type: 'text' | 'secret' | 'select' | 'manual_code'; signal?: AbortSignal }) => Promise<string>
+      notify: (event: {
+        type: 'info' | 'auth_url' | 'device_code' | 'progress'
+        message?: string
+        url?: string
+        userCode?: string
+        verificationUri?: string
+      }) => void
+    }
+  ) => Promise<unknown>
+  logout: (provider: string) => Promise<void>
+}
+
+interface PiModelRegistry {
+  find: (provider: string, model: string) => unknown
+  hasConfiguredAuth: (model: unknown) => boolean
+  refresh?: () => Promise<void>
+}
+
+interface PiLegacyModelRegistryFactory {
+  create: (authStorage: PiAuthStorage, modelsPath?: string) => PiModelRegistry
+}
+
+interface PiModernModelRegistryFactory {
+  new (modelRuntime: PiModelRuntime): PiModelRegistry
+}
+
 interface PiAuthModule {
   AuthStorage: { create: (path: string) => PiAuthStorage }
-  ModelRegistry: {
-    create: (
-      authStorage: PiAuthStorage,
-      modelsPath?: string
-    ) => { find: (provider: string, model: string) => unknown; hasConfiguredAuth: (model: unknown) => boolean }
-  }
+  ModelRuntime?: { create: (options?: { authPath?: string; modelsPath?: string | null }) => Promise<PiModelRuntime> }
+  ModelRegistry: PiLegacyModelRegistryFactory | PiModernModelRegistryFactory
 }
 
 const loadPiAuthModule = async (): Promise<PiAuthModule> =>
   (await import('@earendil-works/pi-coding-agent')) as unknown as PiAuthModule
+
+const createPiModelRuntime = async (pi: PiAuthModule): Promise<PiModelRuntime | null> =>
+  pi.ModelRuntime?.create ? await pi.ModelRuntime.create({ authPath: maestroAuthPath(), modelsPath: maestroModelsPath() }) : null
+
+const createPiModelRegistry = async (pi: PiAuthModule): Promise<{ modelRuntime?: PiModelRuntime; modelRegistry: PiModelRegistry }> => {
+  const modelRuntime = await createPiModelRuntime(pi)
+  if (modelRuntime) {
+    const modelRegistry = new (pi.ModelRegistry as PiModernModelRegistryFactory)(modelRuntime)
+    await modelRegistry.refresh?.()
+    return { modelRuntime, modelRegistry }
+  }
+  const auth = pi.AuthStorage.create(maestroAuthPath())
+  return {
+    modelRegistry: (pi.ModelRegistry as PiLegacyModelRegistryFactory).create(auth, maestroModelsPath())
+  }
+}
 
 export interface MaestroLlmServiceState {
   applyLlmTarget(provider: string, model: string, effort: LlmEffort): void
@@ -160,7 +207,11 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     }
     try {
       const pi = await loadPiAuthModule()
-      const modelRegistry = pi.ModelRegistry.create(pi.AuthStorage.create(maestroAuthPath()), maestroModelsPath())
+      const { modelRuntime, modelRegistry } = await createPiModelRegistry(pi)
+      if (modelRuntime) {
+        const found = modelRuntime.getModel(provider, model)
+        return Boolean(found && modelRuntime.hasConfiguredAuth(provider))
+      }
       const found = modelRegistry.find(provider, model)
       return Boolean(found && modelRegistry.hasConfiguredAuth(found))
     } catch {
@@ -305,9 +356,8 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
         xpcMain.broadcast('coach/codex-device', null)
         return await this.getAndBroadcastLlmConfig()
       }
-      const pi = await loadPiAuthModule()
       mkdirSync(dirname(maestroAuthPath()), { recursive: true })
-      const auth = pi.AuthStorage.create(maestroAuthPath())
+      const pi = await loadPiAuthModule()
       let captureResolve: ((url: string) => void) | undefined
       const captured = new Promise<string>((resolve) => {
         captureResolve = resolve
@@ -322,23 +372,51 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
         timer = setTimeout(() => reject(new Error('sign-in timed out — authorization did not complete')), timeoutMs)
       })
       try {
-        await Promise.race([
-          auth.login(provider, {
-            onSelect: async () => method,
-            onAuth: ({ url }: { url: string }) => {
-              void shell.openExternal(url)
-            },
-            onManualCodeInput: () => captured,
-            onDeviceCode: (info: { userCode: string; verificationUri: string }) => {
-              void shell.openExternal(info.verificationUri)
-              this._state.emitTrace({ kind: 'info', msg: `codex device login: enter code ${info.userCode} at ${info.verificationUri}`, ts: Date.now() })
-              xpcMain.broadcast('coach/codex-device', { userCode: info.userCode, verificationUri: info.verificationUri })
-            },
-            onPrompt: () => new Promise<string>(() => {}),
-            onProgress: (m: string) => this._state.emitTrace({ kind: 'info', msg: `${providerLabel(provider)} login: ${m}`, ts: Date.now() })
-          }),
-          timeout
-        ])
+        const modelRuntime = await createPiModelRuntime(pi)
+        const manualCodeInput = async (): Promise<string> => await captured
+        if (modelRuntime) {
+          await Promise.race([
+            modelRuntime.login(provider, 'oauth', {
+              signal: AbortSignal.timeout(timeoutMs),
+              prompt: async (prompt) => {
+                if (prompt.type === 'select') return method
+                if (prompt.type === 'manual_code') return await manualCodeInput()
+                return await new Promise<string>(() => {})
+              },
+              notify: (event) => {
+                if (event.type === 'auth_url' && event.url) void shell.openExternal(event.url)
+                if (event.type === 'device_code' && event.verificationUri) {
+                  void shell.openExternal(event.verificationUri)
+                  this._state.emitTrace({ kind: 'info', msg: `${providerLabel(provider)} device login: enter code ${event.userCode || ''} at ${event.verificationUri}`, ts: Date.now() })
+                  xpcMain.broadcast('coach/codex-device', { userCode: event.userCode || '', verificationUri: event.verificationUri })
+                }
+                if ((event.type === 'progress' || event.type === 'info') && event.message) {
+                  this._state.emitTrace({ kind: 'info', msg: `${providerLabel(provider)} login: ${event.message}`, ts: Date.now() })
+                }
+              }
+            }),
+            timeout
+          ])
+        } else {
+          const auth = pi.AuthStorage.create(maestroAuthPath())
+          await Promise.race([
+            auth.login(provider, {
+              onSelect: async () => method,
+              onAuth: ({ url }: { url: string }) => {
+                void shell.openExternal(url)
+              },
+              onManualCodeInput: manualCodeInput,
+              onDeviceCode: (info: { userCode: string; verificationUri: string }) => {
+                void shell.openExternal(info.verificationUri)
+                this._state.emitTrace({ kind: 'info', msg: `${providerLabel(provider)} device login: enter code ${info.userCode} at ${info.verificationUri}`, ts: Date.now() })
+                xpcMain.broadcast('coach/codex-device', { userCode: info.userCode, verificationUri: info.verificationUri })
+              },
+              onPrompt: () => new Promise<string>(() => {}),
+              onProgress: (m: string) => this._state.emitTrace({ kind: 'info', msg: `${providerLabel(provider)} login: ${m}`, ts: Date.now() })
+            }),
+            timeout
+          ])
+        }
       } finally {
         if (timer) clearTimeout(timer)
         this.anthropicCaptureResolve = null
@@ -381,7 +459,12 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
         await codexCredentialService.disconnect()
       } else {
         const pi = await loadPiAuthModule()
-        pi.AuthStorage.create(maestroAuthPath()).logout(provider)
+        const modelRuntime = await createPiModelRuntime(pi)
+        if (modelRuntime) {
+          await modelRuntime.logout(provider)
+        } else {
+          pi.AuthStorage.create(maestroAuthPath()).logout(provider)
+        }
       }
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: providerLabel(provider) + ' logout failed: ' + (err as Error).message, ts: Date.now() })

@@ -24,13 +24,14 @@ const CODEX_EFFORTS: LlmEffortOption[] = [
   { id: 'low', label: 'low' },
   { id: 'medium', label: 'medium' },
   { id: 'high', label: 'high' },
-  { id: 'xhigh', label: 'extra high' }
+  { id: 'xhigh', label: 'Extra' }
 ]
+const CODEX_SOL_EFFORTS: LlmEffortOption[] = CODEX_EFFORTS.filter((item) => item.id !== 'low')
 const CLAUDE_EFFORTS: LlmEffortOption[] = [
   { id: 'low', label: 'low' },
   { id: 'medium', label: 'medium' },
   { id: 'high', label: 'high' },
-  { id: 'xhigh', label: 'extra high' }
+  { id: 'xhigh', label: 'Extra' }
 ]
 
 export const LLM_PROVIDERS: LlmProviderDefinition[] = [
@@ -70,26 +71,39 @@ export const LLM_PRESETS: LlmTarget[] = [
   {
     provider: 'openai-codex',
     providerLabel: 'Codex',
-    model: 'gpt-5.5',
-    label: 'GPT-5.5',
-    shortLabel: '5.5',
+    model: 'gpt-5.6-luna',
+    label: 'GPT-5.6 Luna',
+    shortLabel: '5.6 Luna',
     effort: 'low',
     efforts: CODEX_EFFORTS.slice(),
-    contextLengthK: 256,
-    contextLengthLabel: '256K',
+    contextLengthK: 372,
+    contextLengthLabel: '372K',
     compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
     authLabel: 'Coding agent subscription'
   },
   {
     provider: 'openai-codex',
     providerLabel: 'Codex',
-    model: 'gpt-5.4',
-    label: 'GPT-5.4',
-    shortLabel: '5.4',
+    model: 'gpt-5.6-sol',
+    label: 'GPT-5.6 Sol',
+    shortLabel: '5.6 Sol',
+    effort: 'medium',
+    efforts: CODEX_SOL_EFFORTS.slice(),
+    contextLengthK: 372,
+    contextLengthLabel: '372K',
+    compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
+    authLabel: 'Coding agent subscription'
+  },
+  {
+    provider: 'openai-codex',
+    providerLabel: 'Codex',
+    model: 'gpt-5.6-terra',
+    label: 'GPT-5.6 Terra',
+    shortLabel: '5.6 Terra',
     effort: 'low',
     efforts: CODEX_EFFORTS.slice(),
-    contextLengthK: 256,
-    contextLengthLabel: '256K',
+    contextLengthK: 372,
+    contextLengthLabel: '372K',
     compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
     authLabel: 'Coding agent subscription'
   },
@@ -123,7 +137,7 @@ export const LLM_PRESETS: LlmTarget[] = [
 
 export const DEFAULT_PRESET_MODEL: Record<string, string> = {
   'ai-crms': 'qwen3.7-plus',
-  'openai-codex': 'gpt-5.5',
+  'openai-codex': 'gpt-5.6-luna',
   anthropic: 'claude-opus-4-8'
 }
 

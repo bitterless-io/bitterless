@@ -33,6 +33,11 @@ const MAX_HISTORY = 2_000;
 const MAX_RECEIPTS = 2_000;
 const SAVE_DELAY_MS = 300;
 const MAX_PERSISTED_BYTES = 3_500_000;
+let initializePromise: Promise<void> | null = null;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveQueue: Promise<void> = Promise.resolve();
+let monitorUnsubscribe: (() => void) | null = null;
+let discoverUnsubscribe: (() => void) | null = null;
 
 const requestId = (prefix: string): string => `${prefix}-${crypto.randomUUID()}`;
 
@@ -110,11 +115,6 @@ class CoinWorkspaceState {
   aiRunId: string | null = null;
   aiTarget: CoinAiAnalysisTarget | null = null;
 
-  private initializePromise: Promise<void> | null = null;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
-  private saveQueue: Promise<void> = Promise.resolve();
-  private monitorUnsubscribe: (() => void) | null = null;
-  private discoverUnsubscribe: (() => void) | null = null;
   private persistAfterAi = false;
 
   get activeReceipts(): CoinSourceReceipt[] {
@@ -153,9 +153,9 @@ class CoinWorkspaceState {
   }
 
   initialize(): Promise<void> {
-    if (this.initializePromise) return this.initializePromise;
-    this.initializePromise = this.performInitialize();
-    return this.initializePromise;
+    if (initializePromise) return initializePromise;
+    initializePromise = this.performInitialize();
+    return initializePromise;
   }
 
   async refreshSources(): Promise<void> {
@@ -188,9 +188,9 @@ class CoinWorkspaceState {
       this.persistAfterAi = true;
       return;
     }
-    if (this.saveTimer) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
       void this.persist();
     }, SAVE_DELAY_MS);
   }
@@ -663,11 +663,11 @@ class CoinWorkspaceState {
   }
 
   private attachEvents(): void {
-    if (!this.monitorUnsubscribe) {
-      this.monitorUnsubscribe = window.coin.data.onMonitorEvent((event) => this.onMonitorEvent(event));
+    if (!monitorUnsubscribe) {
+      monitorUnsubscribe = window.coin.data.onMonitorEvent((event) => this.onMonitorEvent(event));
     }
-    if (!this.discoverUnsubscribe) {
-      this.discoverUnsubscribe = window.coin.data.onDiscoverEvent((snapshot) => {
+    if (!discoverUnsubscribe) {
+      discoverUnsubscribe = window.coin.data.onDiscoverEvent((snapshot) => {
         this.discoverSnapshot = snapshot;
         this.discoverError = snapshot.error?.message ?? '';
         this.appendReceipts(snapshot.receipts);
@@ -939,12 +939,12 @@ class CoinWorkspaceState {
   }
 
   private async flushStateBeforeAi(): Promise<boolean> {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
     }
     await this.persist();
-    await this.saveQueue;
+    await saveQueue;
     return !this.stateMalformed && !this.stateConflict && !this.stateError;
   }
 
@@ -953,7 +953,7 @@ class CoinWorkspaceState {
   }
 
   private async persist(): Promise<void> {
-    const operation = this.saveQueue.then(async () => {
+    const operation = saveQueue.then(async () => {
       this.stateSaving = true;
       const boundedData = this.boundedPersistentData();
       const result = await window.coin.state.save({
@@ -974,7 +974,7 @@ class CoinWorkspaceState {
         this.stateError = i18nHelper.coin.analysis.state.malformed;
       }
     });
-    this.saveQueue = operation.then(
+    saveQueue = operation.then(
       () => undefined,
       () => undefined,
     );

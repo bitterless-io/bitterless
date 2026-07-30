@@ -16,11 +16,26 @@ import { sanitizeRuntimeError } from './errorSanitizer'
 interface PiModelRegistry {
   find: (providerId: string, modelId: string) => unknown
   hasConfiguredAuth: (model: unknown) => boolean
+  refresh?: () => Promise<void>
+}
+
+interface PiModelRuntime {
+  getModel: (providerId: string, modelId: string) => unknown
+  hasConfiguredAuth: (providerId: string) => boolean
+}
+
+interface PiLegacyModelRegistryFactory {
+  create: (authStorage: unknown, modelsPath?: string) => PiModelRegistry
+}
+
+interface PiModernModelRegistryFactory {
+  new (modelRuntime: PiModelRuntime): PiModelRegistry
 }
 
 interface PiModule {
   AuthStorage: { create: (path: string) => unknown }
-  ModelRegistry: { create: (authStorage: unknown, modelsPath?: string) => PiModelRegistry }
+  ModelRuntime?: { create: (options?: { authPath?: string; modelsPath?: string | null }) => Promise<PiModelRuntime> }
+  ModelRegistry: PiLegacyModelRegistryFactory | PiModernModelRegistryFactory
   defineTool: (spec: Record<string, unknown>) => unknown
   createAgentSession: (options: Record<string, unknown>) => Promise<{ session: PiSession }>
   SessionManager: { inMemory: () => unknown }
@@ -29,10 +44,36 @@ interface PiModule {
 const loadPi = async (): Promise<PiModule> =>
   (await import('@earendil-works/pi-coding-agent')) as unknown as PiModule
 
+const createPiTargetContext = async (
+  pi: PiModule,
+  authPath: string,
+  modelsPath?: string
+): Promise<{
+  authStorage?: unknown
+  modelRuntime?: PiModelRuntime
+  modelRegistry: PiModelRegistry
+}> => {
+  if (pi.ModelRuntime?.create) {
+    const modelRuntime = await pi.ModelRuntime.create({ authPath, modelsPath })
+    const modelRegistry = new (pi.ModelRegistry as PiModernModelRegistryFactory)(modelRuntime)
+    await modelRegistry.refresh?.()
+    return { modelRuntime, modelRegistry }
+  }
+  const authStorage = pi.AuthStorage.create(authPath)
+  return {
+    authStorage,
+    modelRegistry: (pi.ModelRegistry as PiLegacyModelRegistryFactory).create(authStorage, modelsPath)
+  }
+}
+
 export class PiRuntimeAdapter implements AgentRuntimeAdapter {
   async checkTarget(params: { providerId: string; modelId: string; authPath: string; modelsPath?: string }): Promise<boolean> {
     const pi = await loadPi()
-    const modelRegistry = pi.ModelRegistry.create(pi.AuthStorage.create(params.authPath), params.modelsPath)
+    const { modelRuntime, modelRegistry } = await createPiTargetContext(pi, params.authPath, params.modelsPath)
+    if (modelRuntime) {
+      const model = modelRuntime.getModel(params.providerId, params.modelId)
+      return Boolean(model && modelRuntime.hasConfiguredAuth(params.providerId))
+    }
     const model = modelRegistry.find(params.providerId, params.modelId)
     return Boolean(model && modelRegistry.hasConfiguredAuth(model))
   }
@@ -40,10 +81,14 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
   async createSession(options: AgentRuntimeSessionOptions): Promise<AgentRuntimeSession> {
     const pi = await loadPi()
     const { Type } = (await import('typebox')) as { Type: TypeBoxFactory }
-    const authStorage = pi.AuthStorage.create(options.authPath)
-    const modelRegistry = pi.ModelRegistry.create(authStorage, options.modelsPath)
-    const model = modelRegistry.find(options.target.providerId, options.target.modelId)
-    if (!model || !modelRegistry.hasConfiguredAuth(model)) {
+    const { authStorage, modelRuntime, modelRegistry } = await createPiTargetContext(pi, options.authPath, options.modelsPath)
+    const model = modelRuntime
+      ? modelRuntime.getModel(options.target.providerId, options.target.modelId)
+      : modelRegistry.find(options.target.providerId, options.target.modelId)
+    const configured = modelRuntime
+      ? modelRuntime.hasConfiguredAuth(options.target.providerId)
+      : modelRegistry.hasConfiguredAuth(model)
+    if (!model || !configured) {
       const auth = describeAuthFile(options.authPath, options.target.providerId)
       throw new Error(
         `Not signed in to ${providerDisplayName(options.target.providerId)} for "${options.target.providerId}/${options.target.modelId}". ` +
@@ -96,8 +141,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     // with no custom tools at all, 'all' turns the session into a pure LLM call.
     const { session } = await pi.createAgentSession({
       model,
-      authStorage,
-      modelRegistry,
+      ...(modelRuntime ? { modelRuntime } : { authStorage, modelRegistry }),
       thinkingLevel: options.target.thinkingLevel,
       noTools: customTools.length > 0 ? 'builtin' : 'all',
       customTools,

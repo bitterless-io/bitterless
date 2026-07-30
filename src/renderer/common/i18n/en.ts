@@ -234,7 +234,7 @@ export const en = {
   },
   translator: {
     title: 'Translator',
-    model: 'Codex · GPT-5.5 · low',
+    model: 'Codex · GPT-5.6 Luna · low',
     autoDirection: 'Auto direction',
     checking: 'Checking Codex',
     translateToEnglish: 'Translate to English',
@@ -882,6 +882,7 @@ export const en = {
           low: 'Low',
           medium: 'Medium',
           high: 'High',
+          xhigh: 'Extra',
         },
         verified: 'Verified',
         connect: 'Connect in browser',

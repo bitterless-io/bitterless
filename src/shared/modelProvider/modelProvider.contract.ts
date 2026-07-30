@@ -1,6 +1,6 @@
 export const MODEL_PROVIDER_SETTING_KEY = 'model_provider' as const;
 export const MODEL_PROVIDER_CODEX_ID = 'openai-codex' as const;
-export const MODEL_PROVIDER_CODEX_MODEL = 'gpt-5.5' as const;
+export const MODEL_PROVIDER_CODEX_MODEL = 'gpt-5.6-luna' as const;
 export const MODEL_PROVIDER_CODEX_EFFORT = 'low' as const;
 export const MODEL_PROVIDER_RECORD_SCHEMA_VERSION = 1 as const;
 export const MODEL_PROVIDER_SNAPSHOT_SCHEMA = 'model-provider-snapshot-v1' as const;

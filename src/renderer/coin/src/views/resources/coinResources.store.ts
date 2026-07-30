@@ -11,6 +11,7 @@ import type {
 } from '@shared/coin/coinResource.type';
 
 const INSTALL_COMMAND = 'yarn global add gmgn-cli';
+let stopDeviceListener: (() => void) | null = null;
 
 class CoinResourcesState {
   status: CoinResourcesStatus | null = null;
@@ -31,15 +32,14 @@ class CoinResourcesState {
   serviceHttpUrl = '';
   serviceWsUrl = '';
   deviceNotice: CoinCodexDeviceCodeNotice | null = null;
-  private stopDeviceListener: (() => void) | null = null;
   private deviceListenerAttempted = false;
   private deviceListenerFailed = false;
 
   async initialize(): Promise<void> {
-    if (!this.deviceListenerAttempted) {
+    if (!this.deviceListenerAttempted && !stopDeviceListener) {
       this.deviceListenerAttempted = true;
       try {
-        this.stopDeviceListener = window.coin.codex.onDeviceCode((notice) => {
+        stopDeviceListener = window.coin.codex.onDeviceCode((notice) => {
           this.deviceNotice = notice;
         });
       } catch {

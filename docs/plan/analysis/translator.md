@@ -25,7 +25,7 @@
    successful-login/logout transitions into the same registry; auth-file observation alone cannot
    clear `invalidated`.
 5. `TranslatorHandler` calls the Translator service. The service checks the provider snapshot,
-   calls the shared sterile Codex runtime with fixed `gpt-5.5/low`, validates output, and reports a
+   calls the shared sterile Codex runtime with fixed `gpt-5.6-luna/low`, validates output, and reports a
    successful or auth-required runtime observation back to the provider service.
 6. Runtime auth invalidation persists before the translation reply returns, so both renderers show
    Login even when the on-disk OAuth record still exists.

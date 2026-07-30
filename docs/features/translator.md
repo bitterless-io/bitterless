@@ -12,9 +12,10 @@ uses the shared model-provider service and the sterile Pi coding-agent runtime; 
 credentials or a second model preference.
 
 Translator has no provider selector. Its fixed target is
-`openai-codex / gpt-5.5 / low / fast` (the requested “Codex 5.5 light” with Codex Fast mode). When
-that target is unavailable, the composer shows the shared Codex login entry. A successful login
-updates Translator and Home Model Config through the same persisted XPC snapshot.
+`openai-codex / gpt-5.6-luna / low / fast` (the Codex 5.6 family target that supports low effort
+with Codex Fast mode). When that target is unavailable, the composer shows the shared Codex login
+entry. A successful login updates Translator and Home Model Config through the same persisted XPC
+snapshot.
 
 ## Design Direction
 
@@ -38,7 +39,7 @@ uses the existing monospace utility stack.
 
 ```text
 ┌──────────────────────── Translator mini app ────────────────────────┐
-│ Translator                                      Codex · 5.5 · low  │
+│ Translator                                      Codex · 5.6 Luna · low  │
 ├──────────────────────── translation canvas ────────────────────────┤
 │                                                                    │
 │  Validated translated text only. Whitespace is preserved.          │
@@ -123,7 +124,7 @@ an older result direction is never presented as a prediction for new text.
 - Translator explicitly requests Fast service tier. The shared Codex runtime maps Fast to the
   provider wire value `service_tier: "priority"` and leaves other runtime consumers on Standard
   unless they opt in.
-- Fast is supported by `gpt-5.5` for ChatGPT-authenticated Codex sessions and consumes more credits
+- Fast is supported by `gpt-5.6-luna` for ChatGPT-authenticated Codex sessions and consumes more credits
   than Standard. A rejected Fast request remains a provider failure; the runtime does not silently
   downgrade the translation to Standard. See
   [Codex Fast mode](https://learn.chatgpt.com/docs/agent-configuration/speed#fast-mode).
@@ -167,7 +168,7 @@ Omni selects translator
      -> unavailable: shared Login action
      -> ready: 1s leading/trailing scheduler
   -> TranslatorHandler -> TranslatorService
-  -> CodexRuntimeService(openai-codex, gpt-5.5, low, fast -> priority)
+  -> CodexRuntimeService(openai-codex, gpt-5.6-luna, low, fast -> priority)
   -> strict Zod output(targetLanguage + translation) -> renderer
 ```
 

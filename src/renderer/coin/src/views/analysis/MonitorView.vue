@@ -13,11 +13,12 @@
           @press-enter="workspace.loadMonitor(false)"
         />
       </label>
-      <label class="coin-control-group">
+      <div class="coin-control-group">
         <span>{{ i18nHelper.coin.workspace.sort }}</span>
         <a-select
           v-model="workspace.data.drafts.monitor.sort"
           size="small"
+          :aria-label="i18nHelper.coin.workspace.sort"
           :disabled="busy"
           @change="workspace.queuePersist()"
         >
@@ -25,7 +26,7 @@
           <a-option value="low_multiple_desc">{{ i18nHelper.coin.analysis.sort.lowMultipleDesc }}</a-option>
           <a-option value="symbol_asc">{{ i18nHelper.coin.analysis.sort.symbol }}</a-option>
         </a-select>
-      </label>
+      </div>
       <a-button type="primary" size="small" :loading="workspace.monitorLoading" :disabled="busy" @click="workspace.loadMonitor(false)">
         <template #icon><IconPlayerPlay :size="15" /></template>
         {{ i18nHelper.coin.analysis.actions.load }}

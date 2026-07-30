@@ -773,7 +773,7 @@ class MaestroWindowHelper extends WindowHelper implements MaestroLlmServiceState
   private lastTrainerRun: { skill?: SkillSummary } = {}
   // Active LLM backend (applied to all pi instances; persisted in settings).
   private activeLlmProvider = 'openai-codex'
-  private activeLlmModel = 'gpt-5.5'
+  private activeLlmModel = 'gpt-5.6-luna'
   private activeLlmEffort: LlmEffort = 'low'
   private llmApplied = false
   private settings: CoachSettingsService | null = null

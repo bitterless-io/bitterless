@@ -12,7 +12,7 @@ The current registry contains exactly one provider and one Translator target:
 
 | Provider | Authentication | Model | Effort |
 |---|---|---|---|
-| `openai-codex` | Codex OAuth through the shared Pi credential service | `gpt-5.5` | `low` |
+| `openai-codex` | Codex OAuth through the shared Pi credential service | `gpt-5.6-luna` | `low` |
 
 API-key and Micromeet-session relay authentication are represented as future provider source types,
 but no such provider appears until a real runtime adapter, configured credential, and compatible
@@ -98,10 +98,10 @@ credential.
 
 ```text
 ┌──────────────────────── Model Config ───────────────────────────────┐
-│ ACTIVE MODEL   Provider Codex   Model GPT-5.5   Effort low         │
+│ ACTIVE MODEL   Provider Codex   Model GPT-5.6 Luna  Effort low     │
 ├───────────────┬─────────────────────────────────────────────────────┤
 │ PROVIDERS     │ ✓ Codex connected                       [Logout]   │
-│ • Codex       │ Model  GPT-5.5 (fixed)                              │
+│ • Codex       │ Model  GPT-5.6 Luna (fixed)                         │
 │               │ Effort low (fixed)                                 │
 └───────────────┴─────────────────────────────────────────────────────┘
 ```

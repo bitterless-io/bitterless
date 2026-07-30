@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.54",
+  "_version": "0.0.55",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -116,7 +116,7 @@
     "fast_publish_win:win": "node scripts/fast_publish_win.js"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@electron-toolkit/utils": "^4.0.0",
     "@sapphire/snowflake": "^3.5.5",
     "@seald-io/nedb": "^4.1.2",
@@ -142,7 +142,7 @@
   },
   "devDependencies": {
     "@arco-design/web-vue": "^2.57.0",
-    "@earendil-works/pi-ai": "^0.79.0",
+    "@earendil-works/pi-ai": "0.80.10",
     "@electron-toolkit/eslint-config-prettier": "3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
     "@electron-toolkit/preload": "^3.0.2",
@@ -235,7 +235,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless",
-  "version": "0.0.54",
-  "version_code": "260729212211"
+  "name": "Bitterless_DEBUG",
+  "version": "0.0.55",
+  "version_code": "260730120521"
 }

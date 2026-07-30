@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { CodexBrowserCallbackCapture } from './codexCallbackCapture';
 
 const CODEX_PROVIDER = 'openai-codex';
-const CODEX_STATUS_MODEL = 'gpt-5.5';
+const CODEX_STATUS_MODEL = 'gpt-5.6-sol';
 const BROWSER_TIMEOUT_MS = 180_000;
 const DEVICE_TIMEOUT_MS = 16 * 60_000;
 
@@ -91,6 +91,8 @@ interface PiAuthModelRuntime {
       signal: AbortSignal;
       prompt(prompt: {
         type: 'text' | 'secret' | 'select' | 'manual_code';
+        message?: string;
+        options?: readonly { id: string; label: string; description?: string }[];
         signal?: AbortSignal;
       }): Promise<string>;
       notify(event: {
@@ -101,7 +103,7 @@ interface PiAuthModelRuntime {
         verificationUri?: string;
         expiresInSeconds?: number;
       }): void;
-    }
+    },
   ): Promise<unknown>;
   logout(provider: string): Promise<void>;
 }

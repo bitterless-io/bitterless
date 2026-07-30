@@ -216,6 +216,12 @@ tool.
 cancellation, schema validation, and AI receipts. It never changes Maestro's provider/model/session
 state and never imports Maestro chat, agent, browser, or tool contracts.
 
+The selectable Codex models are limited to the GPT-5.6 family: Luna, Sol, and Terra. Older persisted
+preferences for GPT-5.5 or GPT-5.4 are normalized to `gpt-5.6-sol` on load/save; historical AI
+receipts may still display the model that actually generated them. Luna and Terra expose `low`,
+`medium`, `high`, and `xhigh`; Sol exposes `medium`, `high`, and `xhigh` only. `xhigh` is shown as
+`Extra`.
+
 Each explicit **Analyze with AI** action sends a size-bounded JSON snapshot containing the selected
 asset, observed facts, deterministic scores, source receipts, warnings, missing dimensions, strategy
 input, and evidence IDs. Codex runs with tools disabled and must return strict JSON:
@@ -240,8 +246,9 @@ position rule still control the final `BUY/HOLD/SELL` result.
 
 ### Codex
 
-Show account state, Connect/Disconnect, model, effort, last verification, and the application-wide
-disconnect consequence. Every action has loading and duplicate-submit protection.
+Show account state, Connect/Disconnect, GPT-5.6 model selection, model-specific effort selection,
+last verification, and the application-wide disconnect consequence. Every action has loading and
+duplicate-submit protection.
 
 ### GMGN CLI
 
@@ -283,6 +290,11 @@ Coin uses no hidden SQLite renderer. Main-process services write owner-only stat
 Codex tokens remain in the shared Pi auth file. GMGN uses its standard owner-only config file and is
 not copied into Coin state. Malformed state produces a visible recovery error; it is not silently
 treated as valid empty history.
+
+Renderer stores are `reactive` wrappers around class instances. Instance fields contain only
+renderable or serializable state; function-valued listeners, unsubscribe callbacks, timers, and
+other lifecycle handles remain module-scoped outside the reactive class instance. Class behavior
+uses prototype methods.
 
 ## IPC and security
 

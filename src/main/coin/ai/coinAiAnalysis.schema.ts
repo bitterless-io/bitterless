@@ -2,7 +2,9 @@ import { Buffer } from 'node:buffer';
 import { z } from 'zod';
 import {
   COIN_AI_EFFORTS,
+  COIN_AI_MODEL_EFFORTS,
   COIN_AI_MODELS,
+  COIN_AI_RECEIPT_MODELS,
   type CoinAiAnalysisReceipt,
   type CoinAiAnalysisResult,
   type CoinAiAnalyzeInput,
@@ -40,7 +42,7 @@ export const coinAiAnalysisReceiptSchema = z.object({
   runId: z.string().uuid(),
   target: coinAiTargetSchema,
   provider: z.literal('openai-codex'),
-  model: z.enum(COIN_AI_MODELS),
+  model: z.enum(COIN_AI_RECEIPT_MODELS),
   effort: z.enum(COIN_AI_EFFORTS),
   contextHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   startedAt: z.number().finite().nonnegative(),
@@ -72,7 +74,15 @@ export const coinAiAnalyzeInputSchema = z.object({
   target: coinAiTargetSchema,
   model: z.enum(COIN_AI_MODELS),
   effort: z.enum(COIN_AI_EFFORTS),
-}).strict();
+}).strict().superRefine((input, context) => {
+  if (!COIN_AI_MODEL_EFFORTS[input.model].some((effort) => effort === input.effort)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['effort'],
+      message: 'Selected model does not support this effort.',
+    });
+  }
+});
 
 export const coinAiCancelInputSchema = z.object({
   runId: z.string().uuid(),
