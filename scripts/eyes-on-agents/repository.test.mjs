@@ -2150,9 +2150,12 @@ try {
       status_source: 'discovery',
       status_observed_at: 60_000,
       active_turn_id: null,
+      active_flags_json: '[]',
       is_unread: 1,
       is_archived: 0,
       last_completed_turn_id: null,
+      last_completed_at: null,
+      last_activity_at: 60_000,
       ...columns
     });
     db.prepare(
@@ -2179,6 +2182,171 @@ try {
     recoverySelection.activeTurn,
     null,
     'a recovery candidate carries no active turn identity'
+  );
+
+  const settledPatch = (overrides = {}) => ({
+    threadId: recoveryThreadId,
+    settledTurn: {
+      turnId: 'settled-turn',
+      outcome: 'completed',
+      completedAt: 59_000,
+      expectedStatusObservedAt: 60_000,
+      source: 'app_server',
+      ...overrides
+    }
+  });
+  const settlementRow = () => db.prepare(
+    `SELECT runtime_state, active_flags_json, active_turn_id,
+      last_completed_turn_id, last_completed_at, is_unread,
+      status_source, status_observed_at, last_activity_at
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(recoveryThreadId);
+  for (const rejection of [
+    {
+      columns: {},
+      patch: { expectedStatusObservedAt: 59_999 },
+      reason: 'a concurrent observation watermark'
+    },
+    { columns: { is_unread: 0 }, patch: {}, reason: 'an acknowledged row' },
+    { columns: { is_archived: 1 }, patch: {}, reason: 'an archived row' },
+    { columns: { active_turn_id: 'replacement-turn' }, patch: {}, reason: 'an active turn' },
+    { columns: { runtime_state: 'idle' }, patch: {}, reason: 'an already terminal row' },
+    { columns: { status_source: 'codex_hook' }, patch: {}, reason: 'another authority' }
+  ]) {
+    resetRecoveryRow(rejection.columns);
+    assert.deepEqual(
+      await repository.refreshThreadPage({
+        threads: [settledPatch(rejection.patch)]
+      }),
+      { changed: false },
+      `${rejection.reason} must reject delayed terminal settlement`
+    );
+    if (rejection.columns.is_archived === 1) {
+      assert.equal(
+        settlementRow().is_unread,
+        1,
+        'an archived settlement rejection must preserve durable unread history'
+      );
+    }
+  }
+
+  resetRecoveryRow({
+    active_flags_json: '["waitingOnApproval"]'
+  });
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [settledPatch({
+        turnId: 'settled-interrupted',
+        outcome: 'interrupted'
+      })]
+    }),
+    { changed: true },
+    'an interrupted recovery candidate must settle without a success alert'
+  );
+  assert.deepEqual(
+    { ...settlementRow() },
+    {
+      runtime_state: 'ended',
+      active_flags_json: '[]',
+      active_turn_id: null,
+      last_completed_turn_id: 'settled-interrupted',
+      last_completed_at: 59_000,
+      is_unread: 1,
+      status_source: 'app_server',
+      status_observed_at: 60_000,
+      last_activity_at: 60_000
+    },
+    'interrupted settlement must clear active evidence, preserve unread, and never regress activity'
+  );
+
+  resetRecoveryRow({});
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [settledPatch({
+        turnId: 'settled-failed',
+        outcome: 'failed',
+        completedAt: 61_000
+      })]
+    }),
+    { changed: true }
+  );
+  assert.equal(
+    settlementRow().runtime_state,
+    'failed',
+    'failed terminal evidence must map an unknown candidate to failed'
+  );
+  assert.equal(
+    settlementRow().last_activity_at,
+    61_000,
+    'terminal settlement must advance activity when completion is newer'
+  );
+
+  resetRecoveryRow({});
+  const newCompletedSettlement = await repository.refreshThreadPage({
+    threads: [settledPatch({
+      turnId: 'settled-completed',
+      completedAt: 62_000
+    })]
+  });
+  assert.deepEqual(
+    newCompletedSettlement,
+    {
+      changed: true,
+      completionAlerts: [{
+        threadId: recoveryThreadId,
+        turnId: 'settled-completed',
+        title: 'Missed working'
+      }]
+    },
+    'a newly claimed successful settlement must return one completion alert'
+  );
+  assert.equal(settlementRow().runtime_state, 'idle');
+  assert.equal(settlementRow().is_unread, 1);
+  await repository.markOpened({ threadId: recoveryThreadId, openedAt: 63_000 });
+  assert.equal(
+    settlementRow().is_unread,
+    0,
+    'final Open acknowledgement must clear a newly settled terminal row'
+  );
+
+  db.prepare(
+    `INSERT OR IGNORE INTO eyes_on_agents_completion_alert_receipt (
+      thread_id, turn_id, completed_at, claimed_at
+    ) VALUES (?, ?, ?, ?)`
+  ).run(recoveryThreadId, 'settled-existing', 58_000, 58_000);
+  resetRecoveryRow({
+    active_flags_json: '["waitingOnApproval"]',
+    last_completed_turn_id: 'settled-existing',
+    last_completed_at: 58_000
+  });
+  assert.deepEqual(
+    await repository.refreshThreadPage({
+      threads: [settledPatch({
+        turnId: 'settled-existing',
+        completedAt: 59_000
+      })]
+    }),
+    { changed: true },
+    'an existing completion identity must not block runtime settlement or replay its alert'
+  );
+  assert.deepEqual(
+    {
+      runtime_state: settlementRow().runtime_state,
+      active_flags_json: settlementRow().active_flags_json,
+      last_completed_turn_id: settlementRow().last_completed_turn_id,
+      last_completed_at: settlementRow().last_completed_at,
+      is_unread: settlementRow().is_unread,
+      status_source: settlementRow().status_source
+    },
+    {
+      runtime_state: 'idle',
+      active_flags_json: '[]',
+      last_completed_turn_id: 'settled-existing',
+      last_completed_at: 59_000,
+      is_unread: 1,
+      status_source: 'app_server'
+    },
+    'status convergence and durable completion-alert dedupe must remain independent'
   );
 
   for (const rejection of [

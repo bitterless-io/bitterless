@@ -24,7 +24,7 @@ no-hardcoded-English guards. Re-review passed.
 
 # Evidence
 
-- The exact visible lowercase literal `upate` is shared by English and Chinese and consumed by Home,
+- The exact visible lowercase literal `upate` was shared by English and Chinese and consumed by Home,
   Maestro, and Omni. Maestro's label does not expand while downloading; disabled state and detailed
   title retain the state distinction.
 - Omni renders exactly one ready-only action in the top-level `omniWindow` 32px Menu Bar, after the
@@ -35,7 +35,7 @@ no-hardcoded-English guards. Re-review passed.
 - Negative source guards cover all `omniCell` and Omni Control files, including
   `OmniPaneMenuBar`, so no pane or Layout subrenderer can render or subscribe to the action.
 - Omni's detailed title uses shared `Update to {version}` / `更新到 {version}` messages while the
-  visible label remains `upate`.
+  visible label remained `upate`.
 
 # Verification
 
@@ -60,3 +60,6 @@ diagnostics; focused strict checks cover all changed renderer modules.
 Verification did not launch Electron, build, package, sign, notarize, publish, upload, refresh a CDN,
 or access or mutate the remote update feed. Real-device placement, renderer recreation, and install
 acceptance remain with Ral.
+
+This review records the label that existed at review time. Ral corrected its spelling to `update`
+on 2026-07-31; the current requirement is tracked in the task document.

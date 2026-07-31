@@ -364,6 +364,43 @@ const terminalTurnFromLatest = (
   };
 };
 
+const settledTurnFromLatest = (
+  value: unknown,
+  options: {
+    statusObservedAt: number;
+    polledAt: number;
+  }
+): NonNullable<EyesOnAgentsThreadRefreshPatch['settledTurn']> | undefined => {
+  if (!isEyesOnAgentsRecord(value)) return undefined;
+  const status = providerThreadField(value, 'status');
+  if (status !== 'completed' && status !== 'interrupted' && status !== 'failed') {
+    return undefined;
+  }
+  let turnId: string;
+  try {
+    turnId = parseEyesOnAgentsText(
+      providerThreadField(value, 'id'),
+      'Codex settled turn id',
+      200,
+      false
+    ) as string;
+  } catch {
+    return undefined;
+  }
+  const completedAt = parseProviderTurnTimestamp(
+    providerThreadField(value, 'completedAt'),
+    { notAfter: options.polledAt }
+  );
+  if (completedAt === null) return undefined;
+  return {
+    turnId,
+    outcome: status,
+    completedAt,
+    expectedStatusObservedAt: options.statusObservedAt,
+    source: 'app_server'
+  };
+};
+
 const recoveredTurnFromLatest = (
   value: unknown,
   options: {
@@ -439,6 +476,7 @@ const hasThreadRefreshPatch = (patch: EyesOnAgentsThreadRefreshPatch): boolean =
     patch.lastActivityAt !== undefined ||
     patch.lastUserPrompt !== undefined ||
     patch.terminalTurn !== undefined ||
+    patch.settledTurn !== undefined ||
     patch.recoveredTurn !== undefined ||
     patch.reclaimedTurn !== undefined;
 };
@@ -1914,11 +1952,19 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         }
       }
       if (latestTurn.state === 'resolved' && recoveryCandidate !== null) {
-        const recoveredTurn = recoveredTurnFromLatest(latestTurn.value, {
+        const settledTurn = settledTurnFromLatest(latestTurn.value, {
           statusObservedAt: recoveryCandidate.statusObservedAt,
           polledAt: observedAt
         });
-        if (recoveredTurn !== undefined) projection.patch.recoveredTurn = recoveredTurn;
+        if (settledTurn !== undefined) {
+          projection.patch.settledTurn = settledTurn;
+        } else {
+          const recoveredTurn = recoveredTurnFromLatest(latestTurn.value, {
+            statusObservedAt: recoveryCandidate.statusObservedAt,
+            polledAt: observedAt
+          });
+          if (recoveredTurn !== undefined) projection.patch.recoveredTurn = recoveredTurn;
+        }
       }
     }
     return {
@@ -1934,8 +1980,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     const threadId = parseEyesOnAgentsUuid(params?.threadId);
     const url = buildEyesOnAgentsDeepLink(threadId);
     await this.dependencies.openExternal(url);
-    await this.dependencies.repository.markOpened({ threadId, openedAt: this.now() });
     await this.syncOpenedThreadStatus(threadId);
+    await this.dependencies.repository.markOpened({ threadId, openedAt: this.now() });
     this.notify();
     return { url, snapshot: await this.getSnapshot() };
   }

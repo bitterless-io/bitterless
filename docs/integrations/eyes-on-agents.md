@@ -563,8 +563,9 @@ poll may inspect only the newest turn for a selected row through
 turn items or conversation content into Bitterless; Main projects only ID, status, start time, and
 completion time from the response. Exactly one of two candidate kinds may consume that single
 request per selected task: an already-active row with an exact turn identity, which may only be
-reconciled terminally, or a missed-working recovery candidate (see below), which may only be
-recovered. `inProgress` changes nothing for the first kind. A `completed`, `interrupted`, or
+reconciled terminally, or an unread `discovery + unknown` recovery candidate (see below), which may
+either recover `inProgress` or settle from valid terminal evidence. `inProgress` changes nothing
+for the first kind. A `completed`, `interrupted`, or
 `failed` result may reconcile the row only when its turn ID exactly matches the current active turn
 and it carries a non-null persisted completion time. The second-precision completion value is not
 ordered against the millisecond Hook observation and does not create a new status watermark;
@@ -587,10 +588,12 @@ working spinner, and unrepaired by both the ten-second poll and labelled `Refres
 The same content-free newest-turn request therefore also serves a **missed-working recovery
 candidate**: a non-archived, unread, `discovery + unknown` row with no active turn and a concrete
 `status_observed_at` watermark. A latest turn whose status is `inProgress`, whose ID is real, and
-whose persisted start time is no later than the poll may restore `working`. Everything else —
-terminal, empty, malformed, ID-less, start-time-less, or future-dated evidence — is a no-op. No
-elapsed-time guess, private transcript scan, response content, or `paused` state is introduced, and
-`thread/list.status` / `thread/read.status` remain outside the Desktop runtime authority boundary.
+whose persisted start time is no later than the poll may restore `working`. A latest
+`completed`, `interrupted`, or `failed` turn with a real ID and persisted completion time no later
+than the poll instead settles the candidate to `idle`, `ended`, or `failed`. Empty, malformed,
+ID-less, time-less, future-dated, or unsupported evidence is a no-op. No elapsed-time guess, private
+transcript scan, response content, or `paused` state is introduced, and `thread/list.status` /
+`thread/read.status` remain outside the Desktop runtime authority boundary.
 
 Recovered evidence is recorded under a distinct `app_server_turn` status source, never the
 process-local `app_server` source:
@@ -609,22 +612,30 @@ process-local `app_server` source:
 - Real Hook evidence supersedes recovered evidence through the normal watermark rule.
 - Snapshot projection renders a recovered active state only while the managed App Server reader is
   connected; otherwise it degrades to `unknown` exactly like process-local `app_server` evidence.
+- Terminal settlement compare-and-sets the same unread `discovery + unknown` shape and exact status
+  watermark, requires that no active turn has appeared, records the terminal identity/time under
+  `app_server`, clears active evidence, and keeps unread. A completed settlement uses the durable
+  completion-alert claim, so repeated polling cannot notify twice. An equal existing
+  `last_completed_turn_id` does not block runtime settlement because listener invalidation can
+  preserve the completion marker while losing its terminal runtime projection.
 
-A successful `Open` does not block recovery. Open records deep-link evidence and acknowledges unread
-only for a confirmed terminal row, so an opened-but-still-`unknown` task is exactly the case this
-repair exists for.
+A periodic or manual refresh may settle runtime state but never marks the task read. A successful
+`Open` runs the one-thread sync before its final acknowledgement, so a candidate settled terminally
+during that Open is cleared in the same click. If evidence stays active, unknown, unavailable, or
+loses the compare-and-set race, the existing positive terminal allowlist preserves unread.
 
 ### Open status sync and authority reclaim
 
-A successful `Open` runs one status sync for that thread alone, after `markOpened`, using the same
-newest-turn request and the same candidate classification as the tiered poll. It is an on-demand
-trigger of existing evidence, never a new authority, and it makes an explicit user action at least
-as strong as waiting for the next tick. The sync is best effort: a disconnected App Server, a
-rejected request, a malformed response, a teardown, or a lost race leaves the successful deep link
-and its recorded Open evidence intact and raises no action error. A thread that is neither an
-active candidate nor a recovery candidate issues no request. The sync runs inside the existing App
-Server operation fencing, so it cannot overlap a teardown, a foreground sync, or the background
-refresh, and it never requests the latest user question.
+A successful `Open` runs one status sync for that thread alone after the deep link succeeds and
+before the final `markOpened`, using the same newest-turn request and candidate classification as
+the tiered poll. It is an on-demand trigger of existing evidence, never a new authority, and it
+makes an explicit user action at least as strong as waiting for the next tick. The sync is best
+effort: a disconnected App Server, a rejected request, a malformed response, a teardown, or a lost
+race does not fail the successful deep link; final `markOpened` still records Open evidence and
+applies the current positive terminal allowlist. A thread that is neither an active candidate nor
+a recovery candidate issues no request. The sync runs inside the existing App Server operation
+fencing, so it cannot overlap a teardown, a foreground sync, or the background refresh, and it
+never requests the latest user question.
 
 The sync also covers the second way a row renders `unknown`. A row persisted as `codex_hook` with
 an active runtime state and a real active turn degrades to `unknown` whenever the Hook bridge is
@@ -652,11 +663,11 @@ turn is in progress. `inProgress` therefore stops being an unconditional no-op:
   candidate under its own expected source, it renders active only while the managed reader is
   connected, and real Hook evidence supersedes it through the normal watermark rule.
 
-Terminal reconciliation, missed working recovery, and reclaim are mutually exclusive for one thread
-in one pass; the shared XPC/repository boundary rejects a patch carrying more than one. Because the
-projection is shared, the ten-second poll gains the same reclaim: `Open` is the immediate trigger
-and the poll is the passive one, with no new interval and still at most one newest-turn request per
-selected task.
+Terminal reconciliation, active recovery, terminal settlement, and reclaim are mutually exclusive
+for one thread in one pass; the shared XPC/repository boundary rejects a patch carrying more than
+one. Because the projection is shared, the ten-second poll gains the same settlement and reclaim:
+`Open` is the immediate trigger and the poll is the passive one, with no new interval and still at
+most one newest-turn request per selected task.
 
 ## Completion sound and system notification
 

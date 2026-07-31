@@ -163,6 +163,12 @@ design document.
 - [EyesOnAgents active Focus and read semantics](issues/eyes-on-agents-active-focus-read-semantics.md) - implemented; owner verification pending:
   a still-working thread must not leave Focus after Open or `Read all`; Focus is `active runtime OR
   unread`, and both acknowledgement paths clear unread only for confirmed terminal rows.
+- [EyesOnAgents completed unknown task stays in Focus after Open](issues/eyes-on-agents-completed-unknown-stuck-focus.md) - implemented; owner verification pending:
+  valid newest-turn terminal evidence now settles a stale `unknown + unread` row, and Open performs
+  that sync before its final acknowledgement.
+- [EyesOnAgents working cards reorder during replies](issues/eyes-on-agents-working-order-churn.md) - implemented; owner verification pending:
+  active presentation now follows current-state entry time plus an immutable tie-breaker rather
+  than message-driven activity.
 - [EyesOnAgents completion alert](issues/eyes-on-agents-completion-alert.md) - fixed and runtime verified:
   each newly accepted successful completion should play the supplied tone and send one localized
   native notification without duplicate alerts from Hook, App Server, or polling races.

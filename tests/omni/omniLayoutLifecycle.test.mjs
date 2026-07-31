@@ -416,7 +416,7 @@ test('only the Omni window Menu Bar owns the compact ready update action', () =>
     );
     assert.doesNotMatch(
       source,
-      /restartToUpdate|\bupate\b/,
+      /restartToUpdate|['"`]update['"`]/,
       `${scope} must not render the update label`
     );
   }

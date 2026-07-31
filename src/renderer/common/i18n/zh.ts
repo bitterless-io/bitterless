@@ -28,7 +28,7 @@ export const zh: typeof en = {
     keychainDeniedCancel: '取消',
   },
   menuBar: {
-    restartToUpdate: 'upate',
+    restartToUpdate: 'update',
     updateToVersion: '更新到 {version}',
     proxy: '代理',
     startupDiagnostics: {

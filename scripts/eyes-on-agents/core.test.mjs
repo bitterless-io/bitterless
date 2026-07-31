@@ -108,6 +108,82 @@ try {
     }),
     /unsupported field/
   );
+  const refreshTurnTransitions = {
+    terminalTurn: {
+      turnId: 'active-turn',
+      outcome: 'completed',
+      completedAt: 2_000,
+      expectedActiveTurnId: 'active-turn',
+      expectedStatusObservedAt: 1_000,
+      expectedStatusSource: 'codex_hook',
+      source: 'app_server'
+    },
+    settledTurn: {
+      turnId: 'settled-turn',
+      outcome: 'completed',
+      completedAt: 2_000,
+      expectedStatusObservedAt: 1_000,
+      source: 'app_server'
+    },
+    recoveredTurn: {
+      turnId: 'recovered-turn',
+      startedAt: 1_500,
+      expectedStatusObservedAt: 1_000,
+      source: 'app_server_turn'
+    },
+    reclaimedTurn: {
+      turnId: 'active-turn',
+      startedAt: 1_500,
+      expectedActiveTurnId: 'active-turn',
+      expectedStatusObservedAt: 1_000,
+      expectedStatusSource: 'codex_hook',
+      source: 'app_server_turn'
+    }
+  };
+  assert.deepEqual(
+    contract.parseEyesOnAgentsThreadRefreshPatch({
+      threadId: THREAD_ID,
+      settledTurn: refreshTurnTransitions.settledTurn
+    }).settledTurn,
+    refreshTurnTransitions.settledTurn,
+    'the refresh parser must preserve one strict terminal-settlement transition'
+  );
+  assert.throws(
+    () => contract.parseEyesOnAgentsThreadRefreshPatch({
+      threadId: THREAD_ID,
+      settledTurn: {
+        ...refreshTurnTransitions.settledTurn,
+        turnId: ' '
+      }
+    }),
+    /settled turn id is required/
+  );
+  assert.throws(
+    () => contract.parseEyesOnAgentsThreadRefreshPatch({
+      threadId: THREAD_ID,
+      settledTurn: {
+        ...refreshTurnTransitions.settledTurn,
+        completedAt: 1.5
+      }
+    }),
+    /settled turn completedAt must be a non-negative integer/
+  );
+  const transitionNames = Object.keys(refreshTurnTransitions);
+  for (let left = 0; left < transitionNames.length; left += 1) {
+    for (let right = left + 1; right < transitionNames.length; right += 1) {
+      const leftName = transitionNames[left];
+      const rightName = transitionNames[right];
+      assert.throws(
+        () => contract.parseEyesOnAgentsThreadRefreshPatch({
+          threadId: THREAD_ID,
+          [leftName]: refreshTurnTransitions[leftName],
+          [rightName]: refreshTurnTransitions[rightName]
+        }),
+        /at most one turn transition/,
+        `${leftName} and ${rightName} must be mutually exclusive`
+      );
+    }
+  }
   assert.equal(
     contract.normalizeEyesOnAgentsThreadStatus({ type: 'notLoaded' }).runtimeState,
     'unknown'
@@ -357,10 +433,20 @@ try {
     recoverOutboxCoverageGap: async () => undefined,
     replayOutbox: async () => undefined
   };
+  let failedSyncQueries = 0;
   const failedService = new EyesOnAgentsService({
-    repository,
+    repository: {
+      ...repository,
+      getThreadRefreshCandidate: async () => {
+        failedSyncQueries += 1;
+        return null;
+      }
+    },
     settings,
-    appServer,
+    appServer: {
+      ...appServer,
+      isConnected: () => true
+    },
     desktopBridge,
     bridgeListener,
     openExternal: async () => {
@@ -370,6 +456,7 @@ try {
   });
   await assert.rejects(() => failedService.openThread({ threadId: THREAD_ID }), /no handler/);
   assert.equal(marked.length, 0, 'failed deep links must not mark a thread opened');
+  assert.equal(failedSyncQueries, 0, 'failed deep links must not start status synchronization');
 
   const openedUrls = [];
   const successfulService = new EyesOnAgentsService({
@@ -992,6 +1079,122 @@ try {
     'an already-active row must never take the recovery path'
   );
 
+  const settlementThreadIds = Array.from({ length: 8 }, (_, index) => (
+    refreshThreadId(index + 140)
+  ));
+  const settlementCandidates = settlementThreadIds.map((threadId, index) => ({
+    threadId,
+    lastUserPromptCheckedAt: null,
+    activeTurn: null,
+    recoveryCandidate: { statusObservedAt: 40_000 + index }
+  }));
+  const settlementCommits = [];
+  const settlementService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      getThreadRefreshPages: async () => ({
+        hot: settlementCandidates,
+        cold: [],
+        pageCount: 1,
+        coldPage: null
+      }),
+      refreshThreadPage: async ({ threads }) => {
+        settlementCommits.push(...threads);
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer: {
+      ...appServer,
+      getStatus: connectedAppServerStatus,
+      isConnected: () => true,
+      readThread: async (threadId) => ({
+        id: threadId,
+        name: `Settlement ${threadId}`,
+        updatedAt: 40
+      }),
+      readLatestThreadTurn: async (threadId) => {
+        const index = settlementThreadIds.indexOf(threadId);
+        if (index === 0) {
+          return { id: 'settled-completed', status: 'completed', completedAt: 39 };
+        }
+        if (index === 1) {
+          return { id: 'settled-interrupted', status: 'interrupted', completedAt: 39 };
+        }
+        if (index === 2) {
+          return { id: 'settled-failed', status: 'failed', completedAt: 39 };
+        }
+        if (index === 3) return { id: null, status: 'completed', completedAt: 39 };
+        if (index === 4) return { id: 'missing-completion', status: 'completed' };
+        if (index === 5) {
+          return { id: 'future-completion', status: 'completed', completedAt: 42 };
+        }
+        if (index === 6) {
+          return { id: 'fractional-completion', status: 'completed', completedAt: 39.5 };
+        }
+        return { id: 'still-running', status: 'inProgress', startedAt: 39 };
+      }
+    },
+    desktopBridge: tieredDesktopBridge,
+    bridgeListener,
+    openExternal: async () => undefined,
+    now: () => 41_000
+  });
+  assert.deepEqual(await settlementService.refreshThreadPages(), { changed: true });
+  const settlementPatches = new Map(
+    settlementCommits.map((patch) => [patch.threadId, patch])
+  );
+  assert.deepEqual(
+    settlementPatches.get(settlementThreadIds[0]).settledTurn,
+    {
+      turnId: 'settled-completed',
+      outcome: 'completed',
+      completedAt: 39_000,
+      expectedStatusObservedAt: 40_000,
+      source: 'app_server'
+    },
+    'a completed latest turn must settle the exact unknown recovery candidate'
+  );
+  assert.equal(
+    settlementPatches.get(settlementThreadIds[1]).settledTurn.outcome,
+    'interrupted'
+  );
+  assert.equal(
+    settlementPatches.get(settlementThreadIds[2]).settledTurn.outcome,
+    'failed'
+  );
+  for (const index of [3, 4, 5, 6]) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        settlementPatches.get(settlementThreadIds[index]) ?? {},
+        'settledTurn'
+      ),
+      false,
+      'id-less, time-less, future, and malformed terminal evidence must not settle'
+    );
+  }
+  assert.deepEqual(
+    settlementPatches.get(settlementThreadIds[7]).recoveredTurn,
+    {
+      turnId: 'still-running',
+      startedAt: 39_000,
+      expectedStatusObservedAt: 40_007,
+      source: 'app_server_turn'
+    },
+    'one recovery candidate must project exactly one active or terminal transition'
+  );
+  for (const patch of settlementCommits) {
+    assert.ok(
+      [
+        patch.terminalTurn,
+        patch.settledTurn,
+        patch.recoveredTurn,
+        patch.reclaimedTurn
+      ].filter(Boolean).length <= 1,
+      'the shared projection must keep all turn transitions mutually exclusive'
+    );
+  }
+
   const listeningDesktopBridge = {
     ...tieredDesktopBridge,
     getStatus: () => ({
@@ -1073,13 +1276,29 @@ try {
     const requests = [];
     const commits = [];
     const marks = [];
+    const calls = [];
     const service = new EyesOnAgentsService({
       repository: {
         ...repository,
-        markOpened: async (params) => marks.push(params),
-        getThreadRefreshCandidate: async () => options.candidate,
+        getSnapshot: async () => {
+          calls.push('snapshot');
+          return await repository.getSnapshot();
+        },
+        markOpened: async (params) => {
+          calls.push('mark-opened');
+          marks.push(params);
+          await options.markOpened?.(params);
+        },
+        getThreadRefreshCandidate: async () => {
+          calls.push('candidate');
+          return options.candidate;
+        },
         refreshThreadPage: async ({ threads }) => {
+          calls.push('refresh');
           commits.push(...threads);
+          if (options.refreshThreadPage) {
+            return await options.refreshThreadPage({ threads });
+          }
           return { changed: true };
         }
       },
@@ -1088,20 +1307,30 @@ try {
         ...appServer,
         getStatus: connectedAppServerStatus,
         isConnected: () => options.connected !== false,
-        readThread: async () => ({ id: THREAD_ID, name: 'Opened', updatedAt: 30 }),
+        readThread: async () => {
+          calls.push('read-thread');
+          return { id: THREAD_ID, name: 'Opened', updatedAt: 30 };
+        },
         readLatestThreadTurn: async (threadId) => {
+          calls.push('latest-turn');
           requests.push(threadId);
           if (options.throws) throw new Error('latest turn read failed');
+          if (options.latestTurn) return options.latestTurn;
           return { id: 'open-sync-turn', status: 'inProgress', startedAt: 29 };
         }
       },
       desktopBridge: tieredDesktopBridge,
       bridgeListener,
-      openExternal: async () => undefined,
+      openExternal: async () => {
+        calls.push('open-external');
+      },
+      broadcastChanged: () => {
+        calls.push('notify');
+      },
       now: () => 31_000
     });
-    await service.openThread({ threadId: THREAD_ID });
-    return { requests, commits, marks };
+    const result = await service.openThread({ threadId: THREAD_ID });
+    return { requests, commits, marks, calls, result };
   };
   const openRecovery = await openSyncCase({
     candidate: {
@@ -1125,6 +1354,59 @@ try {
       source: 'app_server_turn'
     },
     'Open must resolve an unknown thread through the shared recovery path'
+  );
+  assert.deepEqual(
+    openRecovery.calls,
+    [
+      'open-external',
+      'candidate',
+      'read-thread',
+      'latest-turn',
+      'refresh',
+      'mark-opened',
+      'notify',
+      'snapshot'
+    ],
+    'Open must deep-link, synchronize, mark opened, notify, and snapshot in that order'
+  );
+  const openSettlementState = { runtimeState: 'unknown', isUnread: true };
+  const openSettlement = await openSyncCase({
+    candidate: {
+      threadId: THREAD_ID,
+      lastUserPromptCheckedAt: null,
+      activeTurn: null,
+      recoveryCandidate: { statusObservedAt: 30_000 }
+    },
+    latestTurn: {
+      id: 'open-settled-turn',
+      status: 'completed',
+      completedAt: 30
+    },
+    refreshThreadPage: async ({ threads }) => {
+      assert.equal(threads[0].settledTurn?.outcome, 'completed');
+      openSettlementState.runtimeState = 'idle';
+      openSettlementState.isUnread = true;
+      return { changed: true };
+    },
+    markOpened: async () => {
+      if (openSettlementState.runtimeState === 'idle') {
+        openSettlementState.isUnread = false;
+      }
+    }
+  });
+  assert.equal(
+    openSettlement.commits[0]?.settledTurn?.turnId,
+    'open-settled-turn',
+    'Open must reuse terminal settlement for an unknown recovery candidate'
+  );
+  assert.deepEqual(
+    openSettlementState,
+    { runtimeState: 'idle', isUnread: false },
+    'one successful Open must acknowledge the terminal state accepted by its status sync'
+  );
+  assert.ok(
+    openSettlement.calls.indexOf('refresh') < openSettlement.calls.indexOf('mark-opened'),
+    'terminal settlement must commit before Open acknowledgement'
   );
   const openIneligible = await openSyncCase({
     candidate: {
@@ -1171,6 +1453,7 @@ try {
       patch.recoveredTurn !== undefined
       || patch.reclaimedTurn !== undefined
       || patch.terminalTurn !== undefined
+      || patch.settledTurn !== undefined
     )),
     false,
     'a failed probe must not write any turn transition'
@@ -1179,6 +1462,10 @@ try {
     openThrows.marks.length,
     1,
     'a failed status sync must still leave the Open and its evidence intact'
+  );
+  assert.ok(
+    openThrows.calls.indexOf('latest-turn') < openThrows.calls.indexOf('mark-opened'),
+    'even a failed best-effort sync must finish before final Open evidence is recorded'
   );
 
   let promptPageSelectionCount = 0;

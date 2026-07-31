@@ -150,17 +150,20 @@ content-free reconciliation request for one selected row: the newest turn throug
 only a matching `completed`, `interrupted`, or `failed` turn with the exact active turn ID and a
 persisted completion time may clear the active state; `inProgress`, missing-time, mismatched,
 malformed, or unavailable evidence is a no-op. The completion remains unread.
-The same request also repairs the opposite gap. A listener lifetime boundary leaves a still-running
-task as unread `discovery + unknown` with no active turn, and Codex never replays
-`UserPromptSubmit` for a turn that started earlier. For such a row a latest `inProgress` turn with a
-real ID and a persisted start time no later than the poll restores `working` under a distinct
-`app_server_turn` source, compare-and-set against the exact selected candidate. Terminal, ID-less,
-start-time-less, future-dated, malformed, or unavailable evidence never recovers working.
-A successful `Open` triggers that same single-thread sync on demand, best effort, so an explicit
-user action is at least as strong as waiting for the next poll tick. It also reclaims the other
-`unknown` shape: when a persisted-active Hook row's authority is currently absent and App Server
-confirms the same exact turn is `inProgress`, the row moves to `app_server_turn` while keeping its
-observed runtime state and flags. `inProgress` stays a no-op whenever authority is present.
+The same request also repairs the opposite gap. A listener lifetime boundary leaves a task as
+unread `discovery + unknown` with no active turn, and Codex never replays `UserPromptSubmit` for a
+turn that started earlier. For such a row a latest `inProgress` turn with a real ID and a persisted
+start time no later than the poll restores `working` under a distinct `app_server_turn` source,
+compare-and-set against the exact selected candidate. A latest `completed`, `interrupted`, or
+`failed` turn with a real ID and persisted completion time instead settles that exact candidate to
+`idle`, `ended`, or `failed` while keeping it unread. ID-less, time-less, future-dated, malformed,
+or unavailable evidence changes nothing.
+A successful `Open` triggers that same single-thread sync on demand, best effort, after the deep
+link succeeds and before final `markOpened`, so a newly settled terminal task is acknowledged in
+one click while active or unresolved tasks retain attention. It also reclaims the other `unknown`
+shape: when a persisted-active Hook row's authority is currently absent and App Server confirms the
+same exact turn is `inProgress`, the row moves to `app_server_turn` while keeping its observed
+runtime state and flags. `inProgress` stays a no-op whenever authority is present.
 EyesOnAgents deliberately does not infer a paused state from private transcript/rollout formats or
 elapsed time. A successful Open records deep-link evidence but acknowledges unread only for a
 confirmed terminal row, so an active or `unknown` thread stays in Focus while it is open; a later

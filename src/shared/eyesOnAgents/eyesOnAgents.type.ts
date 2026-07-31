@@ -164,6 +164,14 @@ export interface EyesOnAgentsThreadRefreshTerminalTurnPatch {
   source: 'app_server';
 }
 
+export interface EyesOnAgentsThreadRefreshSettledTurnPatch {
+  turnId: string;
+  outcome: 'completed' | 'failed' | 'interrupted';
+  completedAt: number;
+  expectedStatusObservedAt: number;
+  source: 'app_server';
+}
+
 export interface EyesOnAgentsThreadRefreshRecoveredTurnPatch {
   turnId: string;
   startedAt: number;
@@ -186,6 +194,7 @@ export interface EyesOnAgentsThreadRefreshPatch {
   lastActivityAt?: number;
   lastUserPrompt?: EyesOnAgentsThreadRefreshLastUserPromptPatch;
   terminalTurn?: EyesOnAgentsThreadRefreshTerminalTurnPatch;
+  settledTurn?: EyesOnAgentsThreadRefreshSettledTurnPatch;
   recoveredTurn?: EyesOnAgentsThreadRefreshRecoveredTurnPatch;
   reclaimedTurn?: EyesOnAgentsThreadRefreshReclaimedTurnPatch;
 }

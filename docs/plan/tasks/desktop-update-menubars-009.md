@@ -10,7 +10,7 @@ depends-on: [desktop-auto-update-state-replay-008]
 ## Objective
 
 Expose downloaded-ready update installation from the Omni Browser Menu Bar and keep every existing
-menu-bar update button at the exact compact visible label `upate` in all states and languages.
+menu-bar update button at the exact compact visible label `update` in all states and languages.
 
 ## Context
 
@@ -22,9 +22,9 @@ menu-bar update button at the exact compact visible label `upate` in all states 
 ## Layout
 
 ```text
-Home     │ Bitterless                         [upate] [Proxy] [window controls] │
-Maestro  │ tabs · address · tools                         [upate] [other tools] │
-Omni     │ Omni Browser [Layout]                       [upate] [window controls] │
+Home     │ Bitterless                         [update] [Proxy] [window controls] │
+Maestro  │ tabs · address · tools                         [update] [other tools] │
+Omni     │ Omni Browser [Layout]                       [update] [window controls] │
 ```
 
 The existing Royal Blue Home/Omni chrome and Maestro toolbar remain unchanged. The single visual
@@ -40,7 +40,7 @@ new icon, toolbar, fixed width, or decorative element is introduced.
   the action reads as window chrome rather than page content.
 - **Layout:** one content-width action at each owning Menu Bar's trailing edge; Omni's instance sits
   after the flexible title/Layout region and before native Windows controls.
-- **Signature:** the exact compact `upate` label is the only new visual identifier. Detailed state
+- **Signature:** the exact compact `update` label is the only new visual identifier. Detailed state
   remains in title and disabled behavior, avoiding an icon or expanding busy copy.
 - **Critique:** a new badge system or animated treatment would compete with established chrome and
   add width. Reusing the existing amber/shimmer treatments keeps this change specific and restrained.
@@ -68,7 +68,7 @@ new icon, toolbar, fixed width, or decorative element is introduced.
 
 ## Required behavior
 
-- Home, Maestro, and Omni display the exact lowercase visible label `upate`; the label does not
+- Home, Maestro, and Omni display the exact lowercase visible label `update`; the label does not
   change while Maestro downloads and both supported UI languages resolve to the same literal.
 - Existing detailed titles remain allowed so the compact text does not hide downloading or target
   version meaning from mouse and assistive-technology users.
@@ -108,7 +108,7 @@ new icon, toolbar, fixed width, or decorative element is introduced.
   after the flexible `Layout` region and before native Windows controls. It reuses Home's ready store
   and subscribe-before-snapshot path without adding polling.
 - Home, Maestro, and Omni resolve their visible action from the same en/zh value, the intentional
-  lowercase literal `upate`. Maestro keeps that label while downloading and preserves disabled and
+  lowercase literal `update`. Maestro keeps that label while downloading and preserves disabled and
   detailed-title state.
 - `omniCell` and the complete Omni Control source tree are guarded against update state,
   subscription, and label ownership, so pane count and embedded content cannot duplicate the action.
@@ -123,3 +123,8 @@ new icon, toolbar, fixed width, or decorative element is introduced.
   [`desktop-update-menubars-009-1`](../reviews/desktop-update-menubars-009-1.md).
 - Electron launch, build, packaging, signing, notarization, publication, upload, CDN refresh, and
   remote feed access were intentionally not run. Ral owns real-device visual/update acceptance.
+
+## Owner correction — 2026-07-31
+
+- Correct the shared compact Menu Bar label spelling to `update` in Home, Maestro, and
+  top-level Omni without changing its layout, styling, readiness behavior, or ownership boundary.

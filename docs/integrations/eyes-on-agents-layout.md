@@ -327,8 +327,13 @@ border, background, or spinner. Display-only whitespace folding does not rewrite
 tooltip and card accessibility label retain the full stored bounded preview and disclose
 truncation. Pending says **待同步/pending**, not **fetching**, because the App Server may be offline.
 
-Cards sort by attention first, then `last_activity_at` descending. Domain assignment is manual;
-thread order is intentionally not persisted in the first delivery.
+Cards sort by attention first. Active cards use persisted `status_observed_at` descending within
+the same attention rank, representing the time the task entered its current working/waiting state.
+Reply, title, question, and `last_activity_at` refreshes cannot move an active card. A missing or
+invalid active timestamp sorts as zero rather than falling back to message activity. Non-active
+cards keep `last_activity_at` (then completion time) descending. Every equal-rank/equal-time result
+uses immutable thread ID ascending, so SQLite input order cannot move a card. Domain assignment is
+manual; thread order is intentionally not separately persisted.
 
 ## Focus ordering
 
@@ -338,7 +343,14 @@ Focus uses this stable order:
 2. waiting for user input;
 3. working;
 4. newly completed unread;
-5. newest activity within the same group.
+5. newest current-state entry within the same active group;
+6. newest activity within the same non-active group;
+7. thread ID ascending as the stable final tie-breaker.
+
+Focus, All, custom Domains, and global search share this comparator. The hot/cold SQLite refresh
+pages continue to use activity order for fetch-budget allocation; they do not define presentation
+order. A genuine runtime transition may change `status_observed_at` and reposition a card, while a
+reply-only metadata update may not.
 
 Opening any card records deep-link evidence only after the deep link succeeds, and acknowledges
 unread only for a confirmed terminal card. An unread completed card leaves Focus. A working,

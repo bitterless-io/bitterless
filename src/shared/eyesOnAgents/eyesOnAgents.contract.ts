@@ -419,6 +419,7 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
       'lastActivityAt',
       'lastUserPrompt',
       'terminalTurn',
+      'settledTurn',
       'recoveredTurn',
       'reclaimedTurn'
     ],
@@ -545,6 +546,42 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
       source: value.terminalTurn.source
     };
   }
+  if (hasOwn(value, 'settledTurn')) {
+    if (!isEyesOnAgentsRecord(value.settledTurn)) {
+      throw new Error('settled turn patch must be an object');
+    }
+    assertOnlyKeys(
+      value.settledTurn,
+      ['turnId', 'outcome', 'completedAt', 'expectedStatusObservedAt', 'source'],
+      'settled turn patch'
+    );
+    if (value.settledTurn.source !== 'app_server') {
+      throw new Error('settled turn source must be app_server');
+    }
+    if (!['completed', 'failed', 'interrupted'].includes(String(value.settledTurn.outcome))) {
+      throw new Error('settled turn outcome is unsupported');
+    }
+    result.settledTurn = {
+      turnId: parseEyesOnAgentsText(
+        value.settledTurn.turnId,
+        'settled turn id',
+        200,
+        false
+      ) as string,
+      outcome: value.settledTurn.outcome as 'completed' | 'failed' | 'interrupted',
+      completedAt: parseEyesOnAgentsTimestamp(
+        value.settledTurn.completedAt,
+        'settled turn completedAt',
+        false
+      ) as number,
+      expectedStatusObservedAt: parseEyesOnAgentsTimestamp(
+        value.settledTurn.expectedStatusObservedAt,
+        'expected status observedAt',
+        false
+      ) as number,
+      source: value.settledTurn.source
+    };
+  }
   if (hasOwn(value, 'recoveredTurn')) {
     if (!isEyesOnAgentsRecord(value.recoveredTurn)) {
       throw new Error('recovered turn patch must be an object');
@@ -633,6 +670,7 @@ export const parseEyesOnAgentsThreadRefreshPatch = (
   }
   const turnTransitions = [
     result.terminalTurn,
+    result.settledTurn,
     result.recoveredTurn,
     result.reclaimedTurn
   ].filter((transition) => transition !== undefined).length;

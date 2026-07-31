@@ -29,18 +29,31 @@ const attentionRank = (thread: EyesOnAgentsThread): number => {
   return 4;
 };
 
-const activityTimestamp = (thread: EyesOnAgentsThread): number => {
-  const value = thread.lastActivityAt ?? thread.lastCompletedAt;
+const parsedTimestamp = (value: string | null): number => {
   if (!value) return 0;
   const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const presentationTimestamp = (
+  thread: EyesOnAgentsThread,
+  rank: number,
+): number => {
+  if (rank <= 2) return parsedTimestamp(thread.statusObservedAt);
+  return parsedTimestamp(thread.lastActivityAt ?? thread.lastCompletedAt);
 };
 
 const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
   [...threads].sort((left, right) => {
-    const attention = attentionRank(left) - attentionRank(right);
+    const leftRank = attentionRank(left);
+    const rightRank = attentionRank(right);
+    const attention = leftRank - rightRank;
     if (attention !== 0) return attention;
-    return activityTimestamp(right) - activityTimestamp(left);
+    const timestamp = presentationTimestamp(right, rightRank)
+      - presentationTimestamp(left, leftRank);
+    if (timestamp !== 0) return timestamp;
+    if (left.threadId === right.threadId) return 0;
+    return left.threadId < right.threadId ? -1 : 1;
   });
 
 const THREAD_SEARCH_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;

@@ -934,6 +934,53 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           }
         }
 
+        if (thread.settledTurn !== undefined) {
+          const runtimeState = thread.settledTurn.outcome === 'completed'
+            ? 'idle'
+            : thread.settledTurn.outcome === 'interrupted'
+              ? 'ended'
+              : 'failed';
+          const result = sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET
+              runtime_state = ?,
+              active_flags_json = '[]',
+              active_turn_id = NULL,
+              last_completed_turn_id = ?,
+              last_completed_at = ?,
+              is_unread = 1,
+              status_source = 'app_server',
+              last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
+              updated_at = ?
+             WHERE thread_id = ?
+               AND is_archived = 0
+               AND is_unread = 1
+               AND status_source = 'discovery'
+               AND runtime_state = 'unknown'
+               AND active_turn_id IS NULL
+               AND status_observed_at = ?`
+          ).run(
+            runtimeState,
+            thread.settledTurn.turnId,
+            thread.settledTurn.completedAt,
+            thread.settledTurn.completedAt,
+            now,
+            thread.threadId,
+            thread.settledTurn.expectedStatusObservedAt
+          );
+          if (Number(result.changes) === 1) {
+            changed = true;
+            if (thread.settledTurn.outcome === 'completed') {
+              const completionAlert = claimCompletionAlertInTransaction({
+                threadId: thread.threadId,
+                turnId: thread.settledTurn.turnId,
+                completedAt: thread.settledTurn.completedAt,
+                claimedAt: now
+              });
+              if (completionAlert) completionAlerts.push(completionAlert);
+            }
+          }
+        }
+
         if (thread.recoveredTurn !== undefined) {
           const result = sqliteManager.db.prepare(
             `UPDATE eyes_on_agents_thread SET

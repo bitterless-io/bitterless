@@ -13,9 +13,14 @@ Make an explicit `Open` at least as strong as waiting for the tiered poll: resol
 runtime status from existing content-free evidence, covering both a persisted `discovery + unknown`
 row and a persisted-active row whose Hook authority is currently absent.
 
+Follow-up
+[eyes-on-agents-completed-unknown-open-034](eyes-on-agents-completed-unknown-open-034.md)
+supersedes only the call order below: status sync now runs after successful deep-link launch and
+before final `markOpened`, so a terminal state discovered by that sync is acknowledged in one click.
+
 ## Required behavior
 
-- After a successful deep link and `markOpened`, run one status sync for that thread only. Reuse the
+- After a successful deep link, run one status sync for that thread only. Reuse the
   existing newest-turn request, the existing candidate classification, and the existing repository
   patch path; add no new protocol, interval, or authority.
 - The sync is best effort. A disconnected App Server, a request rejection, a malformed response, or

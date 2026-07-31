@@ -49,12 +49,12 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
 The update action appears in the existing window chrome without adding a second toolbar:
 
 ```text
-Home     │ Bitterless                         [upate] [Proxy] [window controls] │
-Maestro  │ tabs · address · tools                         [upate] [other tools] │
-Omni     │ Omni Browser [Layout]                       [upate] [window controls] │
+Home     │ Bitterless                         [update] [Proxy] [window controls] │
+Maestro  │ tabs · address · tools                         [update] [other tools] │
+Omni     │ Omni Browser [Layout]                       [update] [window controls] │
 ```
 
-- The visible label is the exact owner-provided lowercase literal `upate` in every language and
+- The visible label is the exact owner-provided lowercase literal `update` in every language and
   state. It never expands to `Restart to Update`, `Update`, or `Updating`.
 - Home and Omni hide the action until the package is downloaded and ready, then keep it enabled and
   route clicks through the existing quit-and-install lifecycle.

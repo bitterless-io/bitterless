@@ -40,6 +40,8 @@ const createThread = ({
   projectName = null,
   runtimeState = 'idle',
   isUnread = false,
+  lastCompletedAt = null,
+  statusObservedAt = null,
   lastActivityAt = null,
   lastUserPromptPreview = null,
 }) => ({
@@ -54,11 +56,11 @@ const createThread = ({
   activeFlags: [],
   activeTurnId: null,
   lastCompletedTurnId: null,
-  lastCompletedAt: null,
+  lastCompletedAt,
   lastOpenedTurnId: null,
   lastOpenedAt: null,
   statusSource: 'discovery',
-  statusObservedAt: null,
+  statusObservedAt,
   lastActivityAt,
   isUnread,
   isFocused: isUnread,
@@ -149,6 +151,13 @@ test('global title search store contract', async (context) => {
       openSnapshot = snapshot;
       openedThreadIds.length = 0;
     };
+    const threadIds = (threads) => threads.map((thread) => thread.threadId);
+    const projectionThreadIds = () => ({
+      focus: threadIds(store.focusThreads),
+      all: threadIds(store.filteredAllThreads),
+      domain: threadIds(store.threadsForDomain(1)),
+      search: threadIds(store.threadSearchResults),
+    });
 
     await context.test('open, clear, and separator-only queries keep results gated', () => {
       const thread = createThread({ threadId: 'ops', title: 'ops-git' });
@@ -243,6 +252,207 @@ test('global title search store contract', async (context) => {
       assert.deepEqual(store.threadSearchResults, []);
       assert.equal(store.threadSearchSelectedThreadId, null);
     });
+
+    await context.test(
+      'shared ordering keeps attention ranks and non-active activity semantics',
+      () => {
+        const threads = [
+          createThread({
+            threadId: 'ordinary-old',
+            title: 'Task ordinary old',
+            runtimeState: 'unknown',
+            lastActivityAt: '2026-07-30T01:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'unread-old',
+            title: 'Task unread old',
+            runtimeState: 'idle',
+            isUnread: true,
+            lastActivityAt: '2026-07-30T03:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'working',
+            title: 'Task working',
+            runtimeState: 'working',
+            statusObservedAt: '2026-07-30T06:00:00.000Z',
+            lastActivityAt: '2026-07-30T12:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'approval-old',
+            title: 'Task approval old',
+            runtimeState: 'waiting_approval',
+            statusObservedAt: '2026-07-30T01:00:00.000Z',
+            lastActivityAt: '2026-07-30T11:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'ordinary-completion',
+            title: 'Task ordinary completion',
+            runtimeState: 'failed',
+            lastCompletedAt: '2026-07-30T02:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'input',
+            title: 'Task input',
+            runtimeState: 'waiting_input',
+            statusObservedAt: '2026-07-30T05:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'unread-new',
+            title: 'Task unread new',
+            runtimeState: 'ended',
+            isUnread: true,
+            lastActivityAt: '2026-07-30T04:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'approval-new',
+            title: 'Task approval new',
+            runtimeState: 'waiting_approval',
+            statusObservedAt: '2026-07-30T02:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'ordinary-activity',
+            title: 'Task ordinary activity',
+            runtimeState: 'idle',
+            lastActivityAt: '2026-07-30T03:00:00.000Z',
+            lastCompletedAt: '2026-07-30T10:00:00.000Z',
+          }),
+        ];
+        resetStore(createSnapshot(threads));
+        store.openThreadSearch();
+        store.setThreadSearchQuery('task');
+
+        const activeAndUnread = [
+          'approval-new',
+          'approval-old',
+          'input',
+          'working',
+          'unread-new',
+          'unread-old',
+        ];
+        const all = [
+          ...activeAndUnread,
+          'ordinary-activity',
+          'ordinary-completion',
+          'ordinary-old',
+        ];
+        assert.deepEqual(projectionThreadIds(), {
+          focus: activeAndUnread,
+          all,
+          domain: all,
+          search: all,
+        });
+      },
+    );
+
+    await context.test(
+      'working order ignores reply activity and changes on a new state entry',
+      async () => {
+        const olderStart = createThread({
+          threadId: 'older-start',
+          title: 'Task older start',
+          runtimeState: 'working',
+          statusObservedAt: '2026-07-30T01:00:00.000Z',
+          lastActivityAt: '2026-07-30T10:00:00.000Z',
+        });
+        const newerStart = createThread({
+          threadId: 'newer-start',
+          title: 'Task newer start',
+          runtimeState: 'working',
+          statusObservedAt: '2026-07-30T02:00:00.000Z',
+          lastActivityAt: '2026-07-30T03:00:00.000Z',
+        });
+        resetStore(createSnapshot([olderStart, newerStart]));
+        store.openThreadSearch();
+        store.setThreadSearchQuery('task');
+
+        const initialOrder = ['newer-start', 'older-start'];
+        assert.deepEqual(projectionThreadIds(), {
+          focus: initialOrder,
+          all: initialOrder,
+          domain: initialOrder,
+          search: initialOrder,
+        });
+
+        currentSnapshot = createSnapshot([
+          {
+            ...olderStart,
+            lastActivityAt: '2026-07-30T11:00:00.000Z',
+          },
+          newerStart,
+        ]);
+        await store.loadSnapshot(true);
+        assert.deepEqual(projectionThreadIds(), {
+          focus: initialOrder,
+          all: initialOrder,
+          domain: initialOrder,
+          search: initialOrder,
+        });
+
+        currentSnapshot = createSnapshot([
+          {
+            ...olderStart,
+            statusObservedAt: '2026-07-30T03:00:00.000Z',
+            lastActivityAt: '2026-07-30T11:00:00.000Z',
+          },
+          newerStart,
+        ]);
+        await store.loadSnapshot(true);
+        const transitionedOrder = ['older-start', 'newer-start'];
+        assert.deepEqual(projectionThreadIds(), {
+          focus: transitionedOrder,
+          all: transitionedOrder,
+          domain: transitionedOrder,
+          search: transitionedOrder,
+        });
+      },
+    );
+
+    await context.test(
+      'invalid, missing, and equal active timestamps use thread ID',
+      () => {
+        const threads = [
+          createThread({
+            threadId: 'z-invalid',
+            title: 'Task invalid',
+            runtimeState: 'working',
+            statusObservedAt: 'not-a-timestamp',
+            lastActivityAt: '2030-07-30T12:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'b-equal',
+            title: 'Task equal B',
+            runtimeState: 'working',
+            statusObservedAt: '2026-07-30T01:00:00.000Z',
+            lastActivityAt: '2026-07-30T12:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'y-missing',
+            title: 'Task missing',
+            runtimeState: 'working',
+            statusObservedAt: null,
+            lastActivityAt: '2030-07-30T13:00:00.000Z',
+          }),
+          createThread({
+            threadId: 'a-equal',
+            title: 'Task equal A',
+            runtimeState: 'working',
+            statusObservedAt: '2026-07-30T01:00:00.000Z',
+            lastActivityAt: '2026-07-30T01:00:00.000Z',
+          }),
+        ];
+        resetStore(createSnapshot(threads));
+        store.openThreadSearch();
+        store.setThreadSearchQuery('task');
+
+        const expected = ['a-equal', 'b-equal', 'y-missing', 'z-invalid'];
+        assert.deepEqual(projectionThreadIds(), {
+          focus: expected,
+          all: expected,
+          domain: expected,
+          search: expected,
+        });
+      },
+    );
 
     await context.test('matching reads title only and rejects unmatched tokens', () => {
       const titleMatch = createThread({
