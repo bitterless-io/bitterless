@@ -7,9 +7,10 @@ depends-on: [model-provider-fresh-login-callback-009, application-diagnostics-01
 
 # Objective
 
-Make Codex browser login prove that Pi's loopback callback listener belongs to the current Main
-process before opening the authorization page, and persist enough sanitized lifecycle evidence to
-distinguish callback, exchange, credential, promotion, and verification failures.
+Make Codex browser login prove current-process IPv4/IPv6 loopback coverage before opening the
+authorization page, route a macOS IPv6 redirect into the same Pi login attempt, and persist enough
+sanitized lifecycle evidence to distinguish callback, exchange, credential, promotion, and
+verification failures.
 
 # Context
 
@@ -23,6 +24,7 @@ distinguish callback, exchange, credential, promotion, and verification failures
 # Path
 
 - `src/main/codex/codexCredential.service.ts`
+- `src/main/codex/codexCallbackCapture.ts`
 - `src/main/codex/codexLoopbackObserver.service.ts`
 - `src/main/logging/`
 - `docs/features/model-provider.md`
@@ -32,7 +34,10 @@ distinguish callback, exchange, credential, promotion, and verification failures
 
 Owner performs runtime testing.
 
-- Source review verifies that browser open is gated on current-process callback ownership.
+- Source review verifies that browser open is gated on Pi IPv4 ownership plus a listening macOS
+  IPv6 companion.
+- Source review verifies that either address family completes the same Pi login and cannot promote
+  a cancelled or replaced attempt.
 - Source review verifies missing, foreign, and unexpected listeners fail closed.
 - Source review verifies callback request/response diagnostics contain no query values or secrets.
 - Source review verifies all observer subscriptions and probe requests are cleaned up on success,

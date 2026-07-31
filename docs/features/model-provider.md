@@ -79,21 +79,24 @@ singleton therefore update this registry without exposing credentials to a rende
 
 Every explicit Login is a fresh credential replacement. Main removes the previous persisted Codex
 credential, authenticates into an isolated in-memory store, and promotes only the current attempt
-after success. Pi `ModelRuntime` exclusively owns its browser callback listener; the Bitterless
-companion callback is reserved for the legacy storage API. Authentication-only runtime instances
+after success. Pi `ModelRuntime` owns the browser flow and IPv4 callback listener. On macOS an
+attempt-local Bitterless companion covers `::1:1455` and can return the redirect only through the
+same Pi login's `manual_code` prompt; it never exchanges or stores credentials. The companion also
+remains the callback owner for the legacy storage API. Authentication-only runtime instances
 disable model-network catalog refresh so OAuth completion is not held behind unrelated discovery.
 The app-owned memory and locked-file credential stores implement Pi's current `CredentialStore`
 contract and keep its `auth.json`/`.lock` interoperability after Pi removed the public
 `AuthStorage` export. Cancel and replacement generations still fence every promotion and late
 completion.
 
-For browser login, an authorization URL is opened only after Main proves that Pi's
-`127.0.0.1:1455` callback listener is owned by the current process. The proof uses one private 404
-probe correlated through process-local Node HTTP diagnostics; a missing or foreign listener fails
-closed. During the active attempt, Main records value-free callback receipt/response stages plus
-the token-exchange and credential-promotion stages. Logs may include method, fixed callback path,
-`hasCode`, `hasState`, and HTTP status, but never query values, authorization codes, state values,
-tokens, credentials, or authorization URL query/hash.
+For browser login, an authorization URL is opened only after Main proves current-process coverage
+for the actual `localhost:1455` redirect. Pi's IPv4 listener is checked by a private 404 probe
+correlated through process-local Node HTTP diagnostics; macOS additionally requires the
+attempt-local IPv6 companion to be listening. A missing/foreign listener or unexpected probe
+response fails closed. During the active attempt, Main records value-free callback family,
+receipt/response stages, token exchange, and credential-promotion stages. Logs may include address
+family, method, fixed callback path, `hasCode`, `hasState`, and HTTP status, but never query values,
+authorization codes, state values, tokens, credentials, or authorization URL query/hash.
 
 Main watches the shared Pi auth file for creation, deletion, and modification so external logout
 and ordinary credential changes are observed. File presence or modification alone never clears a
