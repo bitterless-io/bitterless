@@ -1,6 +1,6 @@
 # Codex Browser Login Succeeds but Setting Keeps Waiting
 
-Status: Reopened; loopback ownership diagnostics in progress
+Status: Implemented; owner verification pending
 
 Implementation:
 [model-provider-fresh-login-callback-009](../plan/tasks/model-provider-fresh-login-callback-009.md)
@@ -36,17 +36,24 @@ page. The running development process had neither an application `main.log` nor 
 `[codex-login]` lifecycle line in its attached terminal, so the completed callback, token exchange,
 credential write, and status-verification boundaries could not be distinguished after the fact.
 
-The pinned Pi 0.80.10 callback implementation has another silent boundary: failure to bind
-`127.0.0.1:1455` resolves to an inert callback object instead of rejecting login. Bitterless
-currently logs `callback-listener-ready` and opens the browser without proving that the listener
-belongs to the current Main process. A concurrent or stale Bitterless/Codex process can therefore
+The pinned Pi 0.80.10 callback implementation has two loopback boundaries:
+
+- its redirect URI is `http://localhost:1455/auth/callback`, while its callback server binds only
+  `127.0.0.1`;
+- failure to bind that IPv4 address resolves to an inert callback object instead of rejecting login.
+
+On the affected macOS host, `localhost` resolves `::1` before `127.0.0.1`. The old Bitterless
+companion listener covered `::1` and returned that redirect through Pi's `manual_code` prompt, but
+the modern-flow ownership fix removed the companion entirely. The browser can therefore fail on
+IPv6 before reaching Pi's IPv4 server. A concurrent or stale Bitterless/Codex process can also
 serve a success page while the current login promise receives no authorization code.
 
 ## Required behavior
 
-- Modern `ModelRuntime` browser login exclusively owns the OAuth callback server. The legacy
-  companion callback is created only when the runtime is unavailable and the storage login API is
-  used.
+- Modern `ModelRuntime` owns the IPv4 OAuth callback server. On macOS, Bitterless owns an
+  attempt-local IPv6 companion on `::1:1455`; if it receives the redirect, it returns the complete
+  redirect only to Pi's same-attempt `manual_code` prompt. The companion never exchanges or stores
+  credentials itself.
 - Bitterless supplies Pi-compatible memory and locked-file credential stores instead of calling the
   removed `AuthStorage` export. The file format and `.lock` path remain compatible with Pi's
   default persistent runtime store.
@@ -55,10 +62,13 @@ serve a success page while the current login promise receives no authorization c
   URL opens, then promotes only the current attempt's new in-memory credential after success.
 - Cancel and replacement generations continue to abort or ignore late results. A cancelled attempt
   cannot promote a credential or overwrite a newer login.
-- Before opening the browser, Main probes the Pi callback listener and proves through process-local
-  HTTP diagnostics that `127.0.0.1:1455` is owned by the current Main process. No listener, a
-  foreign listener, or an unexpected probe response fails the attempt immediately instead of
-  waiting for the browser timeout.
+- Before opening the browser, Main proves current-attempt loopback coverage: Pi's IPv4 listener
+  belongs to the current Main process, and the macOS IPv6 companion is listening. A missing or
+  foreign IPv4 listener, an unavailable required IPv6 companion, or an unexpected probe response
+  fails the attempt immediately instead of waiting for the browser timeout.
+- Pi IPv4 completion cancels the pending companion prompt; companion IPv6 completion resolves that
+  prompt into the same Pi login. Cancel, timeout, replacement, and either success path close both
+  listener resources.
 - Main observes the current-process callback request and response without logging query values. It
   records only lifecycle stage, HTTP method/path, `hasCode`, `hasState`, and response status.
 - The persistent log distinguishes listener announced, listener verified, callback received,
@@ -68,7 +78,8 @@ serve a success page while the current login promise receives no authorization c
 
 ## Acceptance
 
-- A simulated modern callback-owned login resolves without creating a companion capture.
+- A simulated modern browser login resolves through either Pi IPv4 or the macOS IPv6 companion
+  while Pi remains the only exchange and credential owner.
 - The old persistent credential is deleted before the modern login/auth URL, and the attempt store
   starts empty.
 - Every authentication-only `ModelRuntime.create()` call sets `allowModelNetwork: false`.
@@ -76,5 +87,8 @@ serve a success page while the current login promise receives no authorization c
 - Existing login cancellation, retry, provider, i18n, type, and diff checks pass.
 - With a foreign process owning port 1455, Login fails before opening the browser and the log names
   the callback-listener ownership failure.
-- With the current Main process owning port 1455, the browser opens only after the ownership probe,
-  and the log shows callback receipt through final credential verification.
+- On macOS, both a redirect delivered to `127.0.0.1` and one delivered to `::1` complete the same
+  Pi login attempt.
+- With the current Main process owning the required loopback listeners, the browser opens only
+  after the ownership checks, and the log shows callback receipt through final credential
+  verification.
