@@ -1,7 +1,7 @@
 ---
 id: model-provider-loopback-diagnostics-011
 scope: shared-model-provider
-status: in-progress
+status: implemented-owner-verification-pending
 depends-on: [model-provider-fresh-login-callback-009, application-diagnostics-010]
 ---
 
@@ -26,6 +26,7 @@ verification failures.
 - `src/main/codex/codexCredential.service.ts`
 - `src/main/codex/codexCallbackCapture.ts`
 - `src/main/codex/codexLoopbackObserver.service.ts`
+- `tests/coin/unit/codexCredential.service.test.ts`
 - `src/main/logging/`
 - `docs/features/model-provider.md`
 - `docs/issues/codex-model-login-browser-success-stuck.md`
@@ -43,3 +44,14 @@ Owner performs runtime testing.
 - Source review verifies all observer subscriptions and probe requests are cleaned up on success,
   failure, cancellation, timeout, and replacement.
 - No automated or runtime tests are executed by the delivery agent per owner request.
+
+# Reviews
+
+- [Initial blocked review](../reviews/model-provider-loopback-diagnostics-011-1.md)
+- [Final passing review](../reviews/model-provider-loopback-diagnostics-011-2.md)
+
+# Handoff
+
+Implementation and independent static source review are complete. Owner runtime verification
+remains for both macOS loopback address families, the Translator login state refresh, and the
+persisted `[codex-login]` lifecycle evidence.
