@@ -471,12 +471,16 @@ export class CodexCredentialService {
       const needsCallbackCapture =
         method === 'browser' && (!modelRuntime || this.platform === 'darwin');
       if (needsCallbackCapture) {
+        const captureCreation = Promise.resolve().then(
+          async () => await this.dependencies.createBrowserCallbackCapture()
+        );
         try {
-          attempt.capture = await Promise.race([
-            this.dependencies.createBrowserCallbackCapture(),
+          const capture = await Promise.race([
+            captureCreation,
             waitForAbort(attempt.controller.signal)
           ]);
           this.assertActiveAttempt(attempt);
+          attempt.capture = capture;
           if (modelRuntime) {
             ipv6Companion = attempt.capture;
             logCodexLifecycle(
@@ -488,11 +492,28 @@ export class CodexCredentialService {
             logCodexLifecycle(attempt.id, 'callback-listener-ready', 'owner=legacy family=ipv6');
           }
         } catch (error) {
-          logCodexFailure(
-            attempt.id,
-            modelRuntime ? 'callback-companion-unavailable' : 'callback-listener-unavailable',
-            error
-          );
+          void captureCreation
+            .then(async (capture) => {
+              if (attempt.capture === capture) return;
+              const cancellation = new CodexCredentialError(
+                'cancelled',
+                'Codex sign-in was cancelled.'
+              );
+              try {
+                capture.cancel(cancellation);
+              } catch {
+                // A late capture must still close when its cancellation hook is unavailable.
+              }
+              await capture.close().catch(() => undefined);
+            })
+            .catch(() => undefined);
+          if (this.isActiveAttempt(attempt)) {
+            logCodexFailure(
+              attempt.id,
+              modelRuntime ? 'callback-companion-unavailable' : 'callback-listener-unavailable',
+              error
+            );
+          }
           throw error;
         }
       }

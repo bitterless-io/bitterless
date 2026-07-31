@@ -290,7 +290,7 @@ test('completes browser login through the companion callback and closes it', asy
   assert.equal(closeCount, 1);
 });
 
-test('modern browser login owns its callback and replaces the old credential without model network', async () => {
+test('modern browser login keeps Pi as credential owner across the IPv6 companion', async () => {
   type FakeAuthStorage = CodexCredentialStore;
   type FakeModelRuntime = Awaited<ReturnType<NonNullable<PiAuthModule['ModelRuntime']>['create']>>;
   type FakeModelRuntimeOptions = {
@@ -307,6 +307,10 @@ test('modern browser login owns its callback and replaces the old credential wit
     expires: 1
   };
   let captureCount = 0;
+  let captureCloseCount = 0;
+  let loopbackVerificationCount = 0;
+  const ipv6Redirect = deferred<string>();
+  ipv6Redirect.promise.catch(() => undefined);
   const events: string[] = [];
   const createOptions: FakeModelRuntimeOptions[] = [];
   const createStorage = (persistent: boolean): FakeAuthStorage => {
@@ -348,6 +352,13 @@ test('modern browser login owns its callback and replaces the old credential wit
               type: 'auth_url',
               url: 'https://auth.openai.com/oauth/authorize?client_id=modern'
             });
+            assert.equal(
+              await interaction.prompt({
+                type: 'manual_code',
+                signal: interaction.signal
+              }),
+              'http://localhost:1455/auth/callback?code=modern&state=fixture'
+            );
             const tokenRequest = {
               method: 'POST',
               origin: 'https://auth.openai.com',
@@ -384,11 +395,40 @@ test('modern browser login owns its callback and replaces the old credential wit
     loadPiAuthModule: async () => pi,
     openExternal: async () => {
       events.push('auth-url-opened');
+      ipv6Redirect.resolve(
+        'http://localhost:1455/auth/callback?code=modern&state=fixture'
+      );
     },
     createBrowserCallbackCapture: async () => {
       captureCount += 1;
-      throw new Error('modern runtime must own the browser callback');
+      return {
+        waitForRedirect: async () => await ipv6Redirect.promise,
+        cancel: (error) => ipv6Redirect.reject(error),
+        close: async () => {
+          captureCloseCount += 1;
+        }
+      };
     },
+    createLoopbackObserver: () => ({
+      start: () => {
+        events.push('loopback-started');
+      },
+      verifyOwnership: async ({ includeIpv6, signal }) => {
+        assert.equal(includeIpv6, true);
+        assert.equal(signal.aborted, false);
+        loopbackVerificationCount += 1;
+        events.push('loopback-verified');
+        return [
+          { route: 'localhost', family: 'ipv6', statusCode: 404 as const },
+          { route: 'ipv4', family: 'ipv4', statusCode: 404 as const },
+          { route: 'ipv6', family: 'ipv6', statusCode: 404 as const }
+        ];
+      },
+      stop: () => {
+        events.push('loopback-stopped');
+      }
+    }),
+    platform: 'darwin',
     createPersistentCredentialStore: () => createStorage(true),
     createAttemptCredentialStore: () => createStorage(false),
     ensurePrivateDirectory: () => undefined
@@ -408,18 +448,37 @@ test('modern browser login owns its callback and replaces the old credential wit
   })();
 
   assert.equal(status.connected, true);
-  assert.equal(captureCount, 0);
+  assert.equal(captureCount, 1);
+  assert.equal(captureCloseCount, 1);
+  assert.equal(loopbackVerificationCount, 1);
   assert.deepEqual(
     createOptions.map(({ allowModelNetwork }) => allowModelNetwork),
     [false, false]
   );
   assert.ok(events.indexOf('persistent-delete') < events.indexOf('runtime-login'));
+  assert.ok(events.indexOf('loopback-started') < events.indexOf('loopback-verified'));
+  assert.ok(events.indexOf('loopback-verified') < events.indexOf('auth-url-opened'));
   assert.ok(events.indexOf('runtime-login') < events.indexOf('auth-url-opened'));
   const lifecycleIndex = (stage: string): number =>
     lifecycleLogs.findIndex((line) => line.includes(`stage=${stage}`));
-  assert.ok(lifecycleIndex('callback-listener-ready') >= 0);
-  assert.ok(lifecycleIndex('callback-listener-ready') < lifecycleIndex('callback-accepted'));
-  assert.ok(lifecycleIndex('callback-accepted') < lifecycleIndex('token-exchange-started'));
+  assert.ok(lifecycleIndex('callback-companion-ready') >= 0);
+  assert.ok(
+    lifecycleIndex('callback-companion-ready') <
+      lifecycleIndex('callback-listener-announced')
+  );
+  assert.ok(
+    lifecycleIndex('callback-listener-announced') <
+      lifecycleIndex('callback-listener-verification-started')
+  );
+  assert.ok(
+    lifecycleIndex('callback-listener-verification-started') <
+      lifecycleIndex('callback-listener-verified')
+  );
+  assert.ok(
+    lifecycleIndex('callback-listener-verified') <
+      lifecycleIndex('authorization-url-opening')
+  );
+  assert.ok(lifecycleIndex('callback-forwarded-to-pi') < lifecycleIndex('token-exchange-started'));
   assert.ok(lifecycleIndex('token-exchange-started') < lifecycleIndex('token-exchange-response'));
   assert.ok(lifecycleIndex('token-exchange-response') < lifecycleIndex('token-credential-stored'));
   assert.deepEqual(persistedCredential, {
@@ -456,6 +515,45 @@ test('aborts browser login on timeout and closes callback capture', async () => 
   );
   assert.equal(closeCount, 1);
   assert.equal((await service.getStatus()).loginInProgress, false);
+});
+
+test('cancels and closes a callback capture that resolves after the attempt is cancelled', async () => {
+  const pi = createFakePi();
+  const captureRequested = deferred<void>();
+  const lateCapture = deferred<CodexBrowserCallbackCapture>();
+  const lateCaptureClosed = deferred<void>();
+  let cancelCount = 0;
+  let closeCount = 0;
+  const service = createService(pi, {
+    createBrowserCallbackCapture: async () => {
+      captureRequested.resolve();
+      return await lateCapture.promise;
+    }
+  });
+
+  const login = service.connect({ method: 'browser' });
+  const rejectedLogin = assert.rejects(
+    login,
+    (error: unknown) => error instanceof CodexCredentialError && error.code === 'cancelled'
+  );
+  await captureRequested.promise;
+  await service.cancelConnect();
+  await rejectedLogin;
+
+  lateCapture.resolve({
+    waitForRedirect: async () => await new Promise<string>(() => undefined),
+    cancel: () => {
+      cancelCount += 1;
+    },
+    close: async () => {
+      closeCount += 1;
+      lateCaptureClosed.resolve();
+    }
+  });
+  await lateCaptureClosed.promise;
+
+  assert.equal(cancelCount, 1);
+  assert.equal(closeCount, 1);
 });
 
 test('cancel resolves before an uncooperative login and late completion cannot overwrite a retry', async () => {
