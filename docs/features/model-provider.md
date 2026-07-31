@@ -87,6 +87,14 @@ contract and keep its `auth.json`/`.lock` interoperability after Pi removed the 
 `AuthStorage` export. Cancel and replacement generations still fence every promotion and late
 completion.
 
+For browser login, an authorization URL is opened only after Main proves that Pi's
+`127.0.0.1:1455` callback listener is owned by the current process. The proof uses one private 404
+probe correlated through process-local Node HTTP diagnostics; a missing or foreign listener fails
+closed. During the active attempt, Main records value-free callback receipt/response stages plus
+the token-exchange and credential-promotion stages. Logs may include method, fixed callback path,
+`hasCode`, `hasState`, and HTTP status, but never query values, authorization codes, state values,
+tokens, credentials, or authorization URL query/hash.
+
 Main watches the shared Pi auth file for creation, deletion, and modification so external logout
 and ordinary credential changes are observed. File presence or modification alone never clears a
 persisted `invalidated` state; that requires an explicit successful-login transition or a real

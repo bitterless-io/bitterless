@@ -1,9 +1,10 @@
 # Codex Browser Login Succeeds but Setting Keeps Waiting
 
-Status: Implemented; owner verification pending
+Status: Reopened; loopback ownership diagnostics in progress
 
 Implementation:
 [model-provider-fresh-login-callback-009](../plan/tasks/model-provider-fresh-login-callback-009.md)
+[model-provider-loopback-diagnostics-011](../plan/tasks/model-provider-loopback-diagnostics-011.md)
 
 ## Symptom
 
@@ -28,6 +29,19 @@ Two secondary behaviors lengthen or contaminate the attempt:
   persistent provider credential, so an explicit reconnect is not guaranteed to start from a clean
   app credential state.
 
+## 2026-07-31 recurrence
+
+Translator reproduced the same user-visible failure after the browser rendered the OAuth success
+page. The running development process had neither an application `main.log` nor any
+`[codex-login]` lifecycle line in its attached terminal, so the completed callback, token exchange,
+credential write, and status-verification boundaries could not be distinguished after the fact.
+
+The pinned Pi 0.80.10 callback implementation has another silent boundary: failure to bind
+`127.0.0.1:1455` resolves to an inert callback object instead of rejecting login. Bitterless
+currently logs `callback-listener-ready` and opens the browser without proving that the listener
+belongs to the current Main process. A concurrent or stale Bitterless/Codex process can therefore
+serve a success page while the current login promise receives no authorization code.
+
 ## Required behavior
 
 - Modern `ModelRuntime` browser login exclusively owns the OAuth callback server. The legacy
@@ -41,6 +55,16 @@ Two secondary behaviors lengthen or contaminate the attempt:
   URL opens, then promotes only the current attempt's new in-memory credential after success.
 - Cancel and replacement generations continue to abort or ignore late results. A cancelled attempt
   cannot promote a credential or overwrite a newer login.
+- Before opening the browser, Main probes the Pi callback listener and proves through process-local
+  HTTP diagnostics that `127.0.0.1:1455` is owned by the current Main process. No listener, a
+  foreign listener, or an unexpected probe response fails the attempt immediately instead of
+  waiting for the browser timeout.
+- Main observes the current-process callback request and response without logging query values. It
+  records only lifecycle stage, HTTP method/path, `hasCode`, `hasState`, and response status.
+- The persistent log distinguishes listener announced, listener verified, callback received,
+  callback response, token exchange, credential storage, promotion, verification, failure, and
+  cleanup. Authorization codes, state values, URLs with query/hash, tokens, and credentials never
+  enter logs.
 
 ## Acceptance
 
@@ -50,3 +74,7 @@ Two secondary behaviors lengthen or contaminate the attempt:
 - Every authentication-only `ModelRuntime.create()` call sets `allowModelNetwork: false`.
 - Legacy browser login still uses and closes the companion callback.
 - Existing login cancellation, retry, provider, i18n, type, and diff checks pass.
+- With a foreign process owning port 1455, Login fails before opening the browser and the log names
+  the callback-listener ownership failure.
+- With the current Main process owning port 1455, the browser opens only after the ownership probe,
+  and the log shows callback receipt through final credential verification.
