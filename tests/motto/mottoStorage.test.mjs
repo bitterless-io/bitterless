@@ -41,6 +41,15 @@ test('valid Motto storage loads the ordered collection and trims every field', (
   ]);
 });
 
+test('Motto storage loads and trims an optional empty subtitle', () => {
+  const storage = {
+    getItem: () => JSON.stringify([{ id: ' one ', title: ' Important ', subtitle: '   ' }]),
+    setItem: () => undefined
+  };
+
+  assert.deepEqual(loadMottoItems(storage), [{ id: 'one', title: 'Important', subtitle: '' }]);
+});
+
 test('malformed JSON fails closed without rewriting the persisted payload', () => {
   let writes = 0;
   const storage = {
@@ -68,9 +77,9 @@ test('duplicate IDs are rejected after trimming', () => {
 test('invalid Motto item fields and extra fields are rejected', async (t) => {
   const invalidValues = [
     {},
-    [{ id: 'a', title: 'Title', subtitle: '' }],
     [{ id: 'a', title: '   ', subtitle: 'Subtitle' }],
     [{ id: 1, title: 'Title', subtitle: 'Subtitle' }],
+    [{ id: 'a', title: 'Title', subtitle: null }],
     [{ id: 'a', title: 'Title', subtitle: 'Subtitle', extra: true }]
   ];
 
@@ -101,14 +110,14 @@ test('every persistence operation writes one complete validated array', () => {
     }
   };
   const input = [
-    { id: ' one ', title: ' First ', subtitle: ' Remember this ' },
+    { id: ' one ', title: ' First ', subtitle: '   ' },
     { id: 'two', title: 'Second', subtitle: 'Remember that' }
   ];
 
   const persisted = persistMottoItems(storage, input);
 
   assert.deepEqual(persisted, [
-    { id: 'one', title: 'First', subtitle: 'Remember this' },
+    { id: 'one', title: 'First', subtitle: '' },
     { id: 'two', title: 'Second', subtitle: 'Remember that' }
   ]);
   assert.deepEqual(writes, [
@@ -118,7 +127,7 @@ test('every persistence operation writes one complete validated array', () => {
     }
   ]);
   assert.deepEqual(input, [
-    { id: ' one ', title: ' First ', subtitle: ' Remember this ' },
+    { id: ' one ', title: ' First ', subtitle: '   ' },
     { id: 'two', title: 'Second', subtitle: 'Remember that' }
   ]);
 });

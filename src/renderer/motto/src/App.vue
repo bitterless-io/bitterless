@@ -2,16 +2,15 @@
   <div name="motto__app" class="motto">
     <header name="motto__header" class="motto__header">
       <h1 class="motto__title">{{ i18nHelper.motto.title }}</h1>
-      <a-button
+      <IconBtn
         name="motto__add"
         class="motto__add"
-        type="primary"
-        size="mini"
+        :title="i18nHelper.motto.add"
+        :aria-label="i18nHelper.motto.add"
         @click="mottoStore.openAddEditor()"
       >
-        <template #icon><IconPlus :size="15" aria-hidden="true" /></template>
-        {{ i18nHelper.motto.add }}
-      </a-button>
+        <IconPlus :size="18" aria-hidden="true" />
+      </IconBtn>
     </header>
 
     <a-alert
@@ -38,7 +37,7 @@
         >
           <div class="motto__card-content">
             <h2 class="motto__card-title">{{ item.title }}</h2>
-            <p class="motto__card-subtitle">{{ item.subtitle }}</p>
+            <p v-if="item.subtitle" class="motto__card-subtitle">{{ item.subtitle }}</p>
           </div>
 
           <a-dropdown trigger="click" position="br">
@@ -107,7 +106,7 @@
             @press-enter="mottoStore.submitEditor()"
           />
         </a-form-item>
-        <a-form-item field="draftSubtitle" :label="i18nHelper.motto.form.subtitle" required>
+        <a-form-item field="draftSubtitle" :label="i18nHelper.motto.form.subtitle">
           <a-input
             v-model="mottoStore.draftSubtitle"
             size="small"

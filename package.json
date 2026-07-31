@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.55",
+  "_version": "0.0.57",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -237,7 +237,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG",
-  "version": "0.0.55",
-  "version_code": "260730120521"
+  "name": "Bitterless",
+  "version": "0.0.57",
+  "version_code": "260731140324"
 }

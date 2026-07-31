@@ -55,14 +55,37 @@ test('Motto mutations persist the complete next array before reactive state comm
   assert.match(store, /submitEditor\(\)[\s\S]*?this\.persistNextItems\(nextItems\)/);
   assert.match(store, /deleteItem\(id: string\)[\s\S]*?this\.persistNextItems\(/);
   assert.match(store, /catch \(error\) \{[\s\S]*?this\.storageError = 'write-failed'/);
+  assert.match(
+    store,
+    /get canSubmitEditor\(\): boolean \{\s*return Boolean\(this\.draftTitle\.trim\(\)\);\s*\}/
+  );
+  assert.match(
+    store,
+    /const subtitle = this\.draftSubtitle\.trim\(\);\s*if \(!title \|\| !this\.editorMode\)/
+  );
+  assert.doesNotMatch(store, /if \(!title \|\| !subtitle/);
+  assert.match(store, /\{ id: this\.createUniqueId\(\), title, subtitle \}/);
+  assert.match(store, /item\.id === editingId \? \{ \.\.\.item, title, subtitle \} : item/);
 });
 
-test('Motto UI owns the required compact card and editor interactions', () => {
+test('Motto UI owns the required compact card and optional-subtitle editor interactions', () => {
   const app = read('src/renderer/motto/src/App.vue');
   const style = read('src/renderer/motto/src/App.less');
   const main = read('src/renderer/motto/src/main.ts');
+  const header = app.match(/<header[\s\S]*?<\/header>/)?.[0] ?? '';
+  const emptyState = app.match(/<section v-else name="motto__empty"[\s\S]*?<\/section>/)?.[0] ?? '';
 
   assert.match(app, /class="motto__header"/);
+  assert.match(
+    header,
+    /<IconBtn[\s\S]*?name="motto__add"[\s\S]*?:title="i18nHelper\.motto\.add"[\s\S]*?:aria-label="i18nHelper\.motto\.add"/
+  );
+  assert.match(header, /<IconPlus :size="18" aria-hidden="true" \/>/);
+  assert.doesNotMatch(header, /\{\{\s*i18nHelper\.motto\.add\s*\}\}/);
+  assert.match(
+    emptyState,
+    /<a-button[\s\S]*?\{\{\s*i18nHelper\.motto\.add\s*\}\}[\s\S]*?<\/a-button>/
+  );
   assert.match(app, /class="motto__list"/);
   assert.match(app, /class="motto__card"/);
   assert.match(app, /<a-dropdown trigger="click"/);
@@ -72,7 +95,8 @@ test('Motto UI owns the required compact card and editor interactions', () => {
   assert.match(app, /<a-modal/);
   assert.match(app, /<a-form/);
   assert.match(app, /field="draftTitle"[\s\S]*?required/);
-  assert.match(app, /field="draftSubtitle"[\s\S]*?required/);
+  assert.doesNotMatch(app, /<a-form-item field="draftSubtitle"[^>]*\brequired\b/);
+  assert.match(app, /<p v-if="item\.subtitle" class="motto__card-subtitle">/);
   assert.match(app, /:disabled="!mottoStore\.canSubmitEditor"/);
   assert.match(app, /@cancel="mottoStore\.cancelEditor\(\)"/);
   assert.match(app, /@open="focusTitleInput"/);
@@ -80,9 +104,28 @@ test('Motto UI owns the required compact card and editor interactions', () => {
   assert.doesNotMatch(app, /(?:class|:class)="[^"]*(?:\bflex\b|\bp-\d|\bgap-\d)/);
 
   assert.match(style, /\.motto__header[\s\S]*?flex:\s*0 0 auto/);
+  assert.match(
+    style,
+    /\.motto__add\s*\{[\s\S]*?width:\s*32px[\s\S]*?height:\s*32px[\s\S]*?display:\s*inline-flex[\s\S]*?align-items:\s*center[\s\S]*?justify-content:\s*center/
+  );
   assert.match(style, /\.motto__list[\s\S]*?flex-direction:\s*column/);
   assert.match(style, /\.motto__list[\s\S]*?overflow-y:\s*auto/);
-  assert.match(style, /\.motto__card::before/);
+  assert.match(style, /--motto-reminder-strong:\s*#b42318;/);
+  assert.match(style, /--motto-reminder-muted:\s*#a65f59;/);
+  assert.match(
+    style,
+    /\.motto__card::before\s*\{[^}]*background:\s*var\(--motto-reminder-strong\);/
+  );
+  assert.match(style, /\.motto__card-title\s*\{[^}]*color:\s*var\(--motto-reminder-strong\);/);
+  assert.match(style, /\.motto__card-subtitle\s*\{[^}]*color:\s*var\(--motto-reminder-muted\);/);
+  assert.equal(style.match(/var\(--motto-reminder-strong\)/g)?.length, 2);
+  assert.equal(style.match(/var\(--motto-reminder-muted\)/g)?.length, 1);
+  assert.match(style, /\.motto\s*\{[^}]*background:\s*var\(--motto-royal-soft\);/);
+  assert.match(
+    style,
+    /\.motto__header\s*\{[^}]*border-bottom:\s*1px solid var\(--motto-line\);[^}]*background:\s*#fff;/
+  );
+  assert.match(style, /\.motto__card-menu\s*\{[^}]*color:\s*#808ab1;/);
   assert.match(main, /await initializeRendererLanguage\(\)/);
   assert.ok(
     main.indexOf('await initializeRendererLanguage()') < main.indexOf("import('./App.vue')"),

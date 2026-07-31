@@ -59,6 +59,20 @@ The orange is a repository-owned literal, not a value injected by Arco or `theme
 
 This document is now the semantic source of truth for the accent.
 
+## Motto reminder red
+
+Motto reminder cards use a feature-local red hierarchy to mark personal importance without
+replacing the Royal Blue product theme.
+
+| Token | Hex | Usage |
+|---|---|---|
+| `motto-reminder-strong` | `#B42318` | card title and left rule |
+| `motto-reminder-muted` | `#A65F59` | optional card subtitle on white |
+
+The muted value keeps a softer hierarchy while retaining approximately 4.77:1 contrast on the
+white card surface. These colors do not apply to buttons, focus states, navigation, modal controls,
+or other product surfaces.
+
 ## Menu icon states
 
 Menu icons use the accent orange to identify the active navigation item.

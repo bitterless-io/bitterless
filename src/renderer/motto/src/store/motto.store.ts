@@ -25,7 +25,7 @@ class MottoState {
   }
 
   get canSubmitEditor(): boolean {
-    return Boolean(this.draftTitle.trim() && this.draftSubtitle.trim());
+    return Boolean(this.draftTitle.trim());
   }
 
   initialize(storage?: MottoStorage): void {
@@ -67,7 +67,7 @@ class MottoState {
   submitEditor(): boolean {
     const title = this.draftTitle.trim();
     const subtitle = this.draftSubtitle.trim();
-    if (!title || !subtitle || !this.editorMode) return false;
+    if (!title || !this.editorMode) return false;
 
     let nextItems: MottoItem[];
     if (this.editorMode === 'add') {

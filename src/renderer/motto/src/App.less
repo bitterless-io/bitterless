@@ -3,6 +3,8 @@
   --motto-royal: #4e5882;
   --motto-royal-soft: #f3f5fc;
   --motto-line: #c4cadf;
+  --motto-reminder-strong: #b42318;
+  --motto-reminder-muted: #a65f59;
   width: 100vw;
   height: 100vh;
   min-width: 0;
@@ -34,7 +36,13 @@
 }
 
 .motto__add {
-  flex: 0 0 auto;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .motto__storage-error {
@@ -75,7 +83,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   width: 4px;
-  background: var(--motto-royal);
+  background: var(--motto-reminder-strong);
 }
 
 .motto__card-content {
@@ -85,7 +93,7 @@
 
 .motto__card-title {
   margin: 0;
-  color: #323955;
+  color: var(--motto-reminder-strong);
   font-size: 15px;
   font-weight: 650;
   line-height: 1.4;
@@ -94,7 +102,7 @@
 
 .motto__card-subtitle {
   margin: 5px 0 0;
-  color: #606b7d;
+  color: var(--motto-reminder-muted);
   font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;

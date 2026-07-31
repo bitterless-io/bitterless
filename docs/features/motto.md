@@ -12,16 +12,29 @@ required.
 ## Design Principles
 
 - Match Translator's compact embedded-app shell and Bitterless Royal Blue system.
-- Spend visual emphasis on the reminder cards: calm white surfaces, a slim royal accent, and clear
-  title/subtitle hierarchy.
+- Spend visual emphasis on the reminder cards: calm white surfaces, one strong red rule paired with
+  the title, and a quieter muted-red subtitle.
 - Keep management actions available but visually secondary.
 - Use shared renderer i18n and Arco controls. Use Tabler icons and shallow `motto` BEM classes.
+
+### Card Palette
+
+| Token | Hex | Usage |
+|---|---|---|
+| page surface | `#F3F5FC` | quiet background around the list |
+| card surface | `#FFFFFF` | reminder card |
+| card border | `#E2E4EB` | neutral card outline |
+| reminder strong | `#B42318` | card title and left rule |
+| reminder muted | `#A65F59` | optional subtitle |
+
+The title and left rule always use the same strong red. The subtitle uses only the muted red; red
+does not spread to the header, Add action, menus, modal, or page background.
 
 ## Overall Structure
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ Motto                                              [＋ Add]  │
+│ Motto                                                  [＋]  │
 ├──────────────────────────────────────────────────────────────┤
 │ ┌──────────────────────────────────────────────────────────┐ │
 │ │ Important title                                     […] │ │
@@ -35,8 +48,10 @@ required.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The header remains fixed. The vertically stacked card region owns scrolling and keeps one column at
-every supported pane width.
+The header remains fixed. Its Add action is an icon-only plus button with no visible text; the icon
+is centered horizontally and vertically inside the button, while localized `title` and
+`aria-label` text preserve its accessible name. The vertically stacked card region owns scrolling
+and keeps one column at every supported pane width.
 
 ## Editor Modal
 
@@ -55,8 +70,9 @@ every supported pane width.
 
 - Add opens an empty form and focuses Title.
 - Edit opens the selected card's current title and subtitle.
-- Title and subtitle are both required after trimming.
-- Submit stays disabled until both fields are non-empty.
+- Title is required after trimming. Subtitle is optional for both Add and Edit and is stored as an
+  empty string when omitted.
+- Submit stays disabled until Title is non-empty.
 - Cancel, close, or `Esc` discards the draft.
 - Successful Add appends a card; successful Edit updates it in place.
 
@@ -70,8 +86,8 @@ confirmation dialog is added for this small local list.
 
 - Storage key: `bitterless.motto.items.v1`.
 - The stored value is one JSON array containing the complete ordered collection.
-- Each item has exactly `{ id, title, subtitle }`, where all fields are non-empty strings after
-  trimming and `id` is unique within the array.
+- Each item has exactly `{ id, title, subtitle }`. `id` and `title` are non-empty strings after
+  trimming, `subtitle` is a trimmed string that may be empty, and `id` is unique within the array.
 - Startup performs one whole-value read and validation. Add, edit, and delete each perform one
   whole-array write after producing the next collection.
 - A missing key loads the explicit empty collection.
@@ -96,7 +112,7 @@ confirmation dialog is added for this small local list.
 
 | Input | Scope | Behavior |
 |---|---|---|
-| click Add | header / empty state | open empty editor |
+| click plus / Add | header / empty state | open empty editor |
 | click ellipsis | card | open Edit/Delete menu |
 | click Edit | card menu | open prefilled editor |
 | click Delete | card menu | persist removal immediately |
@@ -109,7 +125,7 @@ confirmation dialog is added for this small local list.
 ```text
 Motto App
 ├─ fixed header
-│  └─ Add button
+│  └─ Add icon button
 ├─ storage alert (conditional)
 ├─ scrollable card list / empty state
 │  └─ motto card × N

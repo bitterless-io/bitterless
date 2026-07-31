@@ -40,10 +40,21 @@ const expectMottoItem = (value: unknown, index: number): MottoItem => {
     );
   }
 
-  const id = typeof item.id === 'string' ? item.id.trim() : '';
-  const title = typeof item.title === 'string' ? item.title.trim() : '';
-  const subtitle = typeof item.subtitle === 'string' ? item.subtitle.trim() : '';
-  if (!id || !title || !subtitle) {
+  if (
+    typeof item.id !== 'string' ||
+    typeof item.title !== 'string' ||
+    typeof item.subtitle !== 'string'
+  ) {
+    throw new MottoStorageError(
+      'invalid-payload',
+      `Motto item at index ${index} has an invalid field.`
+    );
+  }
+
+  const id = item.id.trim();
+  const title = item.title.trim();
+  const subtitle = item.subtitle.trim();
+  if (!id || !title) {
     throw new MottoStorageError(
       'invalid-payload',
       `Motto item at index ${index} has an invalid field.`

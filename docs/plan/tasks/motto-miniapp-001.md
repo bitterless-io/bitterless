@@ -8,7 +8,8 @@ depends-on: [translator-miniapp-001]
 # Objective
 
 Add Motto as an Omni mini app with a vertical reminder-card list, card Edit/Delete menu, Add/Edit
-modal, and validated whole-array localStorage persistence.
+modal with required Title and optional Subtitle, and validated whole-array localStorage
+persistence.
 
 # Context
 
@@ -41,10 +42,16 @@ modal, and validated whole-array localStorage persistence.
 
 # Verification
 
-- Test missing, valid, malformed, duplicate-ID, invalid-field, and write-failure storage behavior.
+- Test missing, valid, malformed, duplicate-ID, invalid-field, optional-empty-subtitle, and
+  write-failure storage behavior.
 - Inspect Add/Edit/Delete mutations for whole-array persistence before reactive state commit.
 - Inspect the fixed header, one-column scrolling card list, empty/error states, ellipsis dropdown,
-  required title/subtitle form, focusable controls, shared i18n, BEM/Less, and constrained layout.
+  required Title and optional Subtitle form, focusable controls, shared i18n, BEM/Less, and
+  constrained layout.
+- Inspect that the Header Add action has no visible text, retains a localized accessible name, and
+  centers its plus icon horizontally and vertically.
+- Inspect that every card title and left rule use `#B42318`, every rendered subtitle uses
+  `#A65F59`, and the red hierarchy does not spread to unrelated Motto controls or surfaces.
 - Inspect Omni parser allowlisting, Control selector, dedicated preload/renderer runtime mapping,
   navigation fence reuse, development target, and packaged target.
 - Run `yarn test:motto`, `yarn check:renderer-i18n`, scoped ESLint, Node/Web type checks, build, and
