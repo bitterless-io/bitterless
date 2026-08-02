@@ -3,8 +3,18 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import {
+  AuthHttpError,
+  AuthRequestTimeoutError,
+  SessionEligibilityError,
+  SessionPayloadError,
+  activateCustomerToken,
+  parseCustomerAuthResult,
+  parseCurrentCustomerSession,
+  runWithAuthRequestTimeout,
   scheduleBestEffort,
   settleBestEffort,
+  shouldApplyAuthInvalidation,
+  shouldInvalidateCustomerSession,
 } from '../../src/renderer/home/src/stores/auth/authSession.service.ts';
 import { TodoistSyncActivationService } from '../../src/renderer/home/src/stores/auth/todoistSyncActivation.service.ts';
 import {
@@ -16,6 +26,250 @@ const root = resolve(import.meta.dirname, '../..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const CURRENT_PROD_CORE_URL = 'https://prod-bitterless-hcqmtqwtox.cn-shanghai.fcapp.run';
+
+test('customer session payload requires the complete protected-route contract', () => {
+  const valid = {
+    id: 7,
+    email: 'customer@example.com',
+    nickname: null,
+    scope: 'customer',
+    status: 'active',
+    has_password: true,
+    must_set_password: false,
+  };
+  assert.deepEqual(parseCurrentCustomerSession(valid), valid);
+
+  for (const invalid of [
+    null,
+    { status: 'active' },
+    { ...valid, id: 0 },
+    { ...valid, email: '' },
+    { ...valid, scope: 'admin' },
+    { ...valid, status: 'unknown' },
+    { ...valid, has_password: 'yes' },
+    { ...valid, must_set_password: undefined },
+  ]) {
+    assert.throws(() => parseCurrentCustomerSession(invalid), SessionPayloadError);
+  }
+});
+
+test('password and OTP success payloads require a non-empty customer token contract', () => {
+  const valid = {
+    token: 'signed-token',
+    scope: 'customer',
+    email: ' customer@example.com ',
+  };
+  assert.deepEqual(parseCustomerAuthResult(valid), {
+    ...valid,
+    email: 'customer@example.com',
+  });
+
+  for (const invalid of [
+    null,
+    {},
+    { ...valid, token: undefined },
+    { ...valid, token: '' },
+    { ...valid, token: ' signed-token ' },
+    { ...valid, scope: 'admin' },
+    { ...valid, email: ' ' },
+  ]) {
+    assert.throws(() => parseCustomerAuthResult(invalid), SessionPayloadError);
+  }
+
+  const api = read('src/renderer/home/src/networking/auth.api.ts');
+  const tokenService = read('src/renderer/home/src/stores/auth/authToken.service.ts');
+  assert.equal((api.match(/parseCustomerAuthResult\(/g) ?? []).length, 2);
+  assert.match(tokenService, /typeof token !== 'string'/);
+});
+
+test('new tokens persist through transient validation and clear on authoritative rejection', async () => {
+  const transientError = new AuthHttpError(503, 'Core unavailable');
+  let persistedToken = null;
+  let invalidatedToken = null;
+  let revokedToken = null;
+
+  await assert.rejects(
+    activateCustomerToken({
+      token: 'transient-token',
+      persist: (token) => {
+        persistedToken = token;
+      },
+      validate: async () => {
+        throw transientError;
+      },
+      invalidate: (token) => {
+        invalidatedToken = token;
+      },
+      revoke: async (token) => {
+        revokedToken = token;
+      },
+    }),
+    transientError,
+  );
+  assert.equal(persistedToken, 'transient-token');
+  assert.equal(invalidatedToken, null);
+  assert.equal(revokedToken, null);
+
+  const rejectedError = new AuthHttpError(401, 'Invalid token');
+  await assert.rejects(
+    activateCustomerToken({
+      token: 'rejected-token',
+      persist: (token) => {
+        persistedToken = token;
+      },
+      validate: async () => {
+        throw rejectedError;
+      },
+      invalidate: (token) => {
+        invalidatedToken = token;
+      },
+      revoke: async (token) => {
+        revokedToken = token;
+      },
+    }),
+    rejectedError,
+  );
+  assert.equal(persistedToken, 'rejected-token');
+  assert.equal(invalidatedToken, 'rejected-token');
+  assert.equal(revokedToken, 'rejected-token');
+});
+
+test('auth requests time out with an abort signal and accept explicit cancellation', async () => {
+  let timedOutSignalAborted = false;
+  let responseHeadersResolved = false;
+  await assert.rejects(
+    runWithAuthRequestTimeout(
+      async (signal) => {
+        await Promise.resolve();
+        responseHeadersResolved = true;
+        return await new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            timedOutSignalAborted = signal.aborted;
+            reject(signal.reason);
+          }, { once: true });
+        });
+      },
+      5,
+    ),
+    AuthRequestTimeoutError,
+  );
+  assert.equal(responseHeadersResolved, true);
+  assert.equal(timedOutSignalAborted, true);
+
+  const controller = new AbortController();
+  const cancellation = new Error('cancelled by user');
+  const request = runWithAuthRequestTimeout(
+    async (signal) => await new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+    1_000,
+    controller.signal,
+  );
+  controller.abort(cancellation);
+  await assert.rejects(request, (error) => error === cancellation);
+});
+
+test('auth invalidation applies only to the exact current session identity', () => {
+  assert.equal(shouldApplyAuthInvalidation('session-b', 'session-b'), true);
+  assert.equal(shouldApplyAuthInvalidation('session-b', 'session-a'), false);
+  assert.equal(shouldApplyAuthInvalidation('session-b', undefined), false);
+  assert.equal(shouldApplyAuthInvalidation(null, 'session-a'), false);
+
+  const api = read('src/renderer/home/src/networking/auth.api.ts');
+  const handler = read('src/main/xpc/auth.handler.ts');
+  const subscriber = read('src/renderer/home/src/xpc/auth.subscriber.ts');
+  const login = read('src/renderer/home/src/views/login/Login.vue');
+  const router = read('src/renderer/home/src/router/index.ts');
+  const invalidation = handler.match(
+    /  async invalidateSession\([\s\S]*?\n  \}(?=\n\n  private async _ensureMainWindow)/,
+  );
+
+  assert.ok(invalidation, 'Missing Main invalidation relay');
+  assert.match(api, /getCustomerSessionIdForToken\(token\)/);
+  assert.match(api, /runWithAuthRequestTimeout/);
+  assert.doesNotMatch(
+    invalidation[0],
+    /_closeSecondaryWindows|lockForAuthInvalidation|sessionShouldBeActive\s*=\s*false/,
+  );
+  assert.ok(
+    subscriber.indexOf('shouldApplyAuthInvalidation') <
+      subscriber.indexOf('authStore.clearLocalSession()'),
+    'renderer must fence stale invalidation before clearing the current token',
+  );
+  assert.match(subscriber, /authEmitter\.deactivateSession\(\)/);
+  assert.match(login, /sessionRecoveryAbortController/);
+  assert.match(login, /authStore\.restoreSession\(controller\.signal\)/);
+  const cancel = login.match(
+    /const onCancelSessionRecovery = \(\): void => \{[\s\S]*?\n\};/,
+  );
+  const discard = login.match(
+    /const onDiscardPersistedSession = async \(\): Promise<void> => \{[\s\S]*?\n\};/,
+  );
+  assert.ok(cancel, 'Missing non-destructive recovery cancellation');
+  assert.ok(discard, 'Missing explicit saved-session discard');
+  assert.match(cancel[0], /sessionRecoveryAbortController\?\.abort\(\)/);
+  assert.doesNotMatch(cancel[0], /logout|clearLocalSession/);
+  assert.match(discard[0], /transitioning\.value/);
+  assert.match(discard[0], /await authStore\.logout\(\)/);
+  assert.match(router, /router\.beforeResolve/);
+  assert.match(router, /!authStore\.isAuthenticated\(\)/);
+  assert.ok(
+    api.indexOf('return await parseResponse<T>') > api.indexOf('runWithAuthRequestTimeout'),
+    'response parsing must remain inside the timeout operation',
+  );
+});
+
+test('saved customer sessions survive transient restore failures', () => {
+  assert.equal(
+    shouldInvalidateCustomerSession(new AuthHttpError(401, 'Invalid token')),
+    true,
+  );
+  assert.equal(
+    shouldInvalidateCustomerSession(new SessionEligibilityError('Account inactive')),
+    true,
+  );
+  assert.equal(
+    shouldInvalidateCustomerSession(new AuthHttpError(500, 'Core unavailable')),
+    false,
+  );
+  assert.equal(
+    shouldInvalidateCustomerSession(new AuthHttpError(403, 'Unexpected policy response')),
+    false,
+  );
+  assert.equal(
+    shouldInvalidateCustomerSession(new SessionPayloadError('Invalid customer payload')),
+    false,
+  );
+  assert.equal(shouldInvalidateCustomerSession(new TypeError('Failed to fetch')), false);
+
+  const api = read('src/renderer/home/src/networking/auth.api.ts');
+  const store = read('src/renderer/home/src/stores/auth/auth.store.ts');
+  const router = read('src/renderer/home/src/router/index.ts');
+  const login = read('src/renderer/home/src/views/login/Login.vue');
+  const activateToken = store.match(
+    / {2}private async activateToken\([\s\S]*?\n {2}\}(?=\n\n {2}async loginWithPassword)/
+  );
+  const fetchMe = store.match(
+    / {2}async fetchMe\([\s\S]*?\n {2}\}(?=\n\n {2}async restoreSession)/
+  );
+  const restoreGuard = router.match(
+    / {2}if \(!authStore\.current\) \{[\s\S]*?\n {2}\}/
+  );
+  const mountedRestore = login.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
+
+  assert.ok(activateToken, 'Missing token activation flow');
+  assert.ok(fetchMe, 'Missing saved-session validation flow');
+  assert.ok(restoreGuard, 'Missing Router restore guard');
+  assert.ok(mountedRestore, 'Missing Login restore flow');
+  assert.match(api, /throw new AuthHttpError\(res\.status, message\)/);
+  assert.match(activateToken[0], /activateCustomerToken\(\{/);
+  assert.match(fetchMe[0], /shouldInvalidateCustomerSession\(err\)/);
+  assert.doesNotMatch(restoreGuard[0], /clearLocalSession/);
+  assert.doesNotMatch(mountedRestore[0], /clearLocalSession/);
+  assert.match(login, /sessionRecoveryVisible/);
+  assert.match(login, /onRetrySession/);
+  assert.match(login, /onDiscardPersistedSession/);
+});
 
 test('login, authenticated layout, and initial Home view use the entry bundle', () => {
   const routes = read('src/renderer/home/src/router/defaultRoutes.ts');
@@ -106,10 +360,13 @@ test('password, OTP, restore, and Todo activation reuse one create-once installa
   assert.match(otpLogin[0], /await this\.activateToken\(result\.token\)/);
   assert.match(
     todoActivation[0],
-    /getTodoistSyncActivateParams\(current, getToken\(\), this\.deviceId\)/,
+    /getTodoistSyncActivateParams\(current, getCustomerToken\(\), this\.deviceId\)/,
   );
   assert.match(activation[0], /this\.activateTodoistSync\(current\)/);
-  assert.match(readiness[0], /getTodoistSyncActivateParams\(current, getToken\(\), this\.deviceId\)/);
+  assert.match(
+    readiness[0],
+    /getTodoistSyncActivateParams\(current, getCustomerToken\(\), this\.deviceId\)/,
+  );
   assert.match(restore[0], /this\.activateAuthenticatedSession\(current\)/);
 
   assert.doesNotMatch(
@@ -132,7 +389,7 @@ test('Core authentication commits without awaiting optional local runtimes', () 
   assert.match(activation[0], /scheduleBestEffort\(\(\) => authEmitter\.activateSession\(\)/);
   assert.doesNotMatch(activation[0], /clearLocalSession|await authEmitter/);
   assert.ok(
-    activateToken[0].indexOf('setToken(token)') <
+    activateToken[0].indexOf('persist: setCustomerToken') <
       activateToken[0].indexOf('this.activateAuthenticatedSession(current)'),
     'validated Core session must commit before optional runtime activation'
   );

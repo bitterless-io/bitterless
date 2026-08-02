@@ -77,7 +77,9 @@ onMounted(async () => {
       :title="updateTitle"
       @click.stop="handleRestartUpdate"
     >
-      {{ i18nHelper.menuBar.restartToUpdate }}
+      <span class="omni-menubar__update-label">
+        {{ i18nHelper.menuBar.restartToUpdate }}
+      </span>
     </button>
     <div v-if="isWindows" class="omni-menubar__win-controls">
       <button class="omni-menubar__win-btn" @click.stop="minimize()">

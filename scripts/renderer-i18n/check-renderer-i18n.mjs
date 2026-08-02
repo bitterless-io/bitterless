@@ -61,7 +61,7 @@ for (const [language, source, updateTitle] of [
 ]) {
   assert.match(
     source,
-    /menuBar:\s*\{[\s\S]*?restartToUpdate: 'upate'/,
+    /menuBar:\s*\{[\s\S]*?restartToUpdate: 'update'/,
     `${language} must expose the exact compact update label`
   )
   assert(

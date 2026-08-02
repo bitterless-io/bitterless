@@ -379,6 +379,7 @@ test('only the Omni window Menu Bar owns the compact ready update action', () =>
 
   assert.match(appSource, /v-if="updateStore\.updateAvailable"/);
   assert.match(appSource, /class="omni-menubar__update"/);
+  assert.match(appSource, /class="omni-menubar__update-label"/);
   assert.match(appSource, /\{\{ i18nHelper\.menuBar\.restartToUpdate \}\}/);
   assert.match(appSource, /i18nHelper\.menuBar\.updateToVersion\.replace\(/);
   assert.match(appSource, /:title="updateTitle"/);
@@ -402,7 +403,17 @@ test('only the Omni window Menu Bar owns the compact ready update action', () =>
   const updateStyle = styleSource.match(/\.omni-menubar__update\s*\{([\s\S]*?)\}/)?.[1];
   assert.ok(updateStyle, 'Omni update action must have Menu Bar styling');
   assert.doesNotMatch(updateStyle, /(?:min-|max-)?width\s*:/);
+  assert.match(updateStyle, /position:\s*relative/);
+  assert.match(updateStyle, /height:\s*28px/);
+  assert.match(updateStyle, /overflow:\s*hidden/);
+  assert.match(updateStyle, /background:\s*#165dff/);
+  assert.match(updateStyle, /color:\s*#ffffff/);
   assert.match(updateStyle, /-webkit-app-region:\s*no-drag/);
+  assert.match(styleSource, /\.omni-menubar__update:hover\s*\{[\s\S]*?background:\s*#0e4fd6/);
+  assert.match(styleSource, /\.omni-menubar__update::after\s*\{/);
+  assert.match(styleSource, /animation:\s*omniUpdateShimmer 2\.6s ease-in-out infinite/);
+  assert.match(styleSource, /@keyframes omniUpdateShimmer/);
+  assert.match(styleSource, /@media \(prefers-reduced-motion: reduce\)/);
 
   for (const [scope, source] of [
     ['omniCell', cellSources],
@@ -416,7 +427,7 @@ test('only the Omni window Menu Bar owns the compact ready update action', () =>
     );
     assert.doesNotMatch(
       source,
-      /restartToUpdate|\bupate\b/,
+      /restartToUpdate/,
       `${scope} must not render the update label`
     );
   }

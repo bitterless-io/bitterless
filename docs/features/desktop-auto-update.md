@@ -49,13 +49,13 @@ sticky lock, and the next scheduled or manual check must fetch the metadata agai
 The update action appears in the existing window chrome without adding a second toolbar:
 
 ```text
-Home     │ Bitterless                         [upate] [Proxy] [window controls] │
-Maestro  │ tabs · address · tools                         [upate] [other tools] │
-Omni     │ Omni Browser [Layout]                       [upate] [window controls] │
+Home     │ Bitterless                         [update] [Proxy] [window controls] │
+Maestro  │ tabs · address · tools                         [update] [other tools] │
+Omni     │ Omni Browser [Layout]                       [update] [window controls] │
 ```
 
-- The visible label is the exact owner-provided lowercase literal `upate` in every language and
-  state. It never expands to `Restart to Update`, `Update`, or `Updating`.
+- The visible label is the exact lowercase literal `update` in every language and state. It never
+  expands to `Restart to Update` or `Updating`.
 - Home and Omni hide the action until the package is downloaded and ready, then keep it enabled and
   route clicks through the existing quit-and-install lifecycle.
 - Maestro may reveal the same label while downloading, but keeps it disabled until the downloaded
@@ -63,7 +63,8 @@ Omni     │ Omni Browser [Layout]                       [upate] [window control
 - Omni places the content-width action only in the top-level `omniWindow` 32px Menu Bar that already
   owns `Layout`, immediately before native Windows controls when present. `omniCell`, Omni Control's
   per-pane Menu Bar, and embedded mini-app/subwindow renderers never show it. The action remains in
-  a `no-drag` region and has no fixed or minimum label width.
+  a `no-drag` region and has no fixed or minimum label width. Its blue background, white label, and
+  reduced-motion-aware shimmer match the established main-window update treatment.
 - Omni registers the live ready subscription before requesting Main's optional snapshot and before
   Vue mount. Valid live state wins over an in-flight stale snapshot; malformed values are logged and
   never applied.
@@ -81,5 +82,5 @@ Omni     │ Omni Browser [Layout]                       [upate] [window control
 Automated coverage uses a controlled scheduler and deferred checks to prove immediate start,
 idempotent timer ownership, non-overlap, and release after success or failure. Source-contract
 coverage protects the two-gate decision, download-only state, subscribe-before-mount ordering, and
-race-safe ready-state replay in Home, Maestro, and Omni. This task does not package, sign, notarize,
-publish, or mutate the production update feed.
+race-safe ready-state replay in Home, Maestro, and Omni. Packaging and publication remain separate
+release-pipeline responsibilities.

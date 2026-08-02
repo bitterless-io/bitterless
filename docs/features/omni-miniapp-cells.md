@@ -13,7 +13,7 @@ depend on its standalone window.
 
 ```text
 ┌────────────────────────────── Omni BaseWindow ──────────────────────────────┐
-│ Omni Browser  [Layout]                              [upate when ready]      │
+│ Omni Browser  [Layout]                              [update when ready]     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ Cell A                                      │ Cell B                        │
 │ ┌──────── browser chrome (browser only) ──┐ │ ┌──── local mini app ──────┐ │
@@ -171,7 +171,7 @@ Translator, or Motto preload.
 | Refresh | Browser chrome / mini-app header | Reload browser content or refresh the mini app's own data. |
 | Back/forward | Browser cell only | Navigate browser history; hidden/disabled for mini apps. |
 | Split | Layout panel | Preserve original content and create a default browser sibling. |
-| `upate` | Omni Menu Bar | When downloaded-ready state exists, quit and install through Main. |
+| `update` | Omni Menu Bar | When downloaded-ready state exists, quit and install through Main. |
 
 ## State Variants
 
@@ -185,10 +185,10 @@ Translator, or Motto preload.
   may shrink but must not force the cell outside its split bounds.
 - **Update hidden:** no downloaded-ready snapshot or live event exists; the Omni Menu Bar reserves
   no width for an update action.
-- **Update ready:** show the exact compact `upate` label at the Menu Bar's right edge. Renderer
-  recreation restores it from Main without requiring another broadcast or app restart. This action
-  belongs only to the top-level Omni window; cell chrome, Layout's per-pane controls, and embedded
-  mini-app renderers never duplicate it.
+- **Update ready:** show the exact compact `update` label with the main window's blue shimmer at the
+  Menu Bar's right edge. Renderer recreation restores it from Main without requiring another
+  broadcast or app restart. This action belongs only to the top-level Omni window; cell chrome,
+  Layout's per-pane controls, and embedded mini-app renderers never duplicate it.
 
 ## Integration Flow
 

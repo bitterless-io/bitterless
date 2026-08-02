@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.55",
+  "_version": "0.0.60",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -110,7 +110,7 @@
     "release_dev:win": "node scripts/publish.js --env dev --platform win64 --build",
     "patch": "node scripts/patch.js",
     "deliver": "node scripts/patch.js && git add . && git commit -m 'nm' && node scripts/git_push.js",
-    "fast_publish:mac_arm": "yarn install --frozen-lockfile && node scripts/patch.js && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm",
+    "fast_publish:mac_arm": "yarn install --frozen-lockfile && node scripts/patch.js && node scripts/publish.js --env prod --platform mac_arm --preflight-only && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm",
     "fast_publish:mac_intel": "node scripts/git_pull.js && yarn build:mac_intel && yarn publish:mac_intel",
     "fast_publish:win": "node scripts/fast_publish_win.js",
     "deliver:win": "node scripts/deliver_win.js",
@@ -237,7 +237,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG",
-  "version": "0.0.55",
-  "version_code": "260730120521"
+  "name": "Bitterless",
+  "version": "0.0.60",
+  "version_code": "260802114545"
 }

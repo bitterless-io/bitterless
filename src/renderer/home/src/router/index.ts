@@ -18,7 +18,6 @@ router.beforeEach(async (to) => {
     try {
       await authStore.restoreSession();
     } catch {
-      authStore.clearLocalSession();
       return { name: 'login', query: { redirect: to.fullPath } };
     }
   }
@@ -32,6 +31,18 @@ router.beforeEach(async (to) => {
     return { name: 'login', query: { redirect: to.fullPath } };
   }
 
+  return true;
+});
+
+router.beforeResolve((to) => {
+  if (to.meta.public) return true;
+  if (
+    !authStore.isAuthenticated() ||
+    customerNeedsPasswordSetup(authStore.current) ||
+    authStore.current?.status !== 'active'
+  ) {
+    return { name: 'login', query: { redirect: to.fullPath } };
+  }
   return true;
 });
 

@@ -27,8 +27,13 @@ const resetPasswordConfirmation = ref('');
 const resetCooldown = ref(0);
 const transitioning = ref(false);
 const passwordSetupComplete = ref(false);
+const sessionRecoveryVisible = ref(authStore.isAuthenticated());
+const sessionRecoveryFailed = ref(false);
+const sessionRecoveryCancelled = ref(false);
+const sessionRecoveryCancelling = ref(false);
 let cooldownTimer: number | undefined;
 let resetCooldownTimer: number | undefined;
+let sessionRecoveryAbortController: AbortController | null = null;
 
 const redirectAfterLogin = async (): Promise<void> => {
   const redirect = (route.query.redirect as string) || '/chat';
@@ -87,22 +92,76 @@ const startResetCooldown = (): void => {
   }, 1000);
 };
 
-onMounted(async () => {
-  if (!authStore.isAuthenticated()) return;
-  try {
-    await authStore.restoreSession();
-  } catch {
-    authStore.clearLocalSession();
+const restorePersistedSession = async (): Promise<void> => {
+  if (!authStore.isAuthenticated()) {
+    sessionRecoveryVisible.value = false;
+    sessionRecoveryFailed.value = false;
+    sessionRecoveryCancelled.value = false;
     return;
   }
+
+  sessionRecoveryVisible.value = true;
+  sessionRecoveryFailed.value = false;
+  sessionRecoveryCancelled.value = false;
+  sessionRecoveryAbortController?.abort();
+  const controller = new AbortController();
+  sessionRecoveryAbortController = controller;
   try {
+    await authStore.restoreSession(controller.signal);
+    if (sessionRecoveryAbortController !== controller) return;
     await continueAfterLogin();
+    if (!authStore.isAuthenticated()) {
+      sessionRecoveryVisible.value = false;
+    }
   } catch (err) {
-    console.error('[Login] Failed to continue restored session:', err);
+    if (sessionRecoveryAbortController !== controller) return;
+    if (!authStore.isAuthenticated()) {
+      sessionRecoveryVisible.value = false;
+      return;
+    }
+    sessionRecoveryFailed.value = true;
+    if (controller.signal.aborted) {
+      sessionRecoveryCancelled.value = true;
+      return;
+    }
+    console.warn('[Login] Saved session is temporarily unavailable:', err);
+  } finally {
+    if (sessionRecoveryAbortController === controller) {
+      sessionRecoveryAbortController = null;
+    }
+    sessionRecoveryCancelling.value = false;
   }
+};
+
+const onRetrySession = async (): Promise<void> => {
+  if (authStore.checking || transitioning.value) return;
+  await restorePersistedSession();
+};
+
+const onCancelSessionRecovery = (): void => {
+  if (!authStore.checking || transitioning.value || sessionRecoveryCancelling.value) return;
+  sessionRecoveryCancelling.value = true;
+  sessionRecoveryAbortController?.abort();
+};
+
+const onDiscardPersistedSession = async (): Promise<void> => {
+  if (authStore.checking || authStore.loggingOut || transitioning.value) return;
+  const controller = sessionRecoveryAbortController;
+  sessionRecoveryAbortController = null;
+  controller?.abort();
+  await authStore.logout();
+  sessionRecoveryVisible.value = false;
+  sessionRecoveryFailed.value = false;
+  sessionRecoveryCancelled.value = false;
+};
+
+onMounted(async () => {
+  await restorePersistedSession();
 });
 
 onBeforeUnmount(() => {
+  sessionRecoveryAbortController?.abort();
+  sessionRecoveryAbortController = null;
   window.clearInterval(cooldownTimer);
   window.clearInterval(resetCooldownTimer);
 });
@@ -215,6 +274,10 @@ const onSubmit = async (): Promise<void> => {
     }
     await continueAfterLogin();
   } catch {
+    if (authStore.isAuthenticated() && !authStore.current) {
+      sessionRecoveryVisible.value = true;
+      sessionRecoveryFailed.value = true;
+    }
     /* error already shown by store */
   }
 };
@@ -257,15 +320,76 @@ const onSetPassword = async (): Promise<void> => {
   <main name="login" class="login-view">
     <section name="login__panel" class="login-view__panel">
       <div name="login__copy" class="login-view__copy">
-        <h1>登录 Bitterless</h1>
+        <h1>{{ sessionRecoveryVisible ? '恢复登录状态' : '登录 Bitterless' }}</h1>
       </div>
 
-      <a-radio-group v-model="mode" type="button" size="large" class="login-view__modes">
+      <div
+        v-if="sessionRecoveryVisible"
+        name="login__session-recovery"
+        class="login-view__session-recovery"
+      >
+        <a-spin :loading="authStore.checking || transitioning" dot>
+          <p v-if="sessionRecoveryCancelled">
+            已取消验证。登录状态仍已保留，可重试或改用其他账号。
+          </p>
+          <p v-else-if="sessionRecoveryFailed">
+            暂时无法连接 Bitterless 服务。登录状态已保留，网络恢复后重试即可。
+          </p>
+          <p v-else>正在验证已保存的登录状态...</p>
+        </a-spin>
+        <div
+          v-if="!transitioning && (authStore.checking || sessionRecoveryFailed)"
+          name="login__session-recovery-actions"
+          class="login-view__session-recovery-actions"
+        >
+          <a-button
+            v-if="sessionRecoveryFailed && !authStore.checking"
+            type="primary"
+            size="large"
+            :loading="authStore.checking || transitioning"
+            @click="onRetrySession"
+          >
+            重试
+          </a-button>
+          <a-button
+            v-if="authStore.checking"
+            size="large"
+            :loading="sessionRecoveryCancelling"
+            :disabled="sessionRecoveryCancelling"
+            @click="onCancelSessionRecovery"
+          >
+            取消
+          </a-button>
+          <a-button
+            v-if="sessionRecoveryFailed && !authStore.checking"
+            size="large"
+            :loading="authStore.loggingOut"
+            :disabled="authStore.loggingOut || transitioning"
+            @click="onDiscardPersistedSession"
+          >
+            改用其他账号
+          </a-button>
+        </div>
+      </div>
+
+      <a-radio-group
+        v-if="!sessionRecoveryVisible"
+        v-model="mode"
+        type="button"
+        size="large"
+        class="login-view__modes"
+      >
         <a-radio value="password">密码登录</a-radio>
         <a-radio value="otp">邮箱验证码</a-radio>
       </a-radio-group>
 
-      <a-form layout="vertical" :model="{}" class="login-view__form" @submit.prevent>
+      <a-form
+        v-if="!sessionRecoveryVisible"
+        layout="vertical"
+        :model="{}"
+        class="login-view__form"
+        @submit.prevent
+      >
         <a-form-item label="邮箱">
           <a-input
             v-model="email"
@@ -326,7 +450,7 @@ const onSetPassword = async (): Promise<void> => {
         </a-button>
       </a-form>
 
-      <div class="login-view__footer">
+      <div v-if="!sessionRecoveryVisible" class="login-view__footer">
         <span>当前版本仅开放受邀客户账号。</span>
       </div>
     </section>

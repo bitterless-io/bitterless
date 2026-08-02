@@ -34,7 +34,7 @@ only the content region below that bar.
 
 ```text
 ┌──────────────────────── shared MenuBar (32px) ────────────────────────────┐
-│ Bitterless                         [upate] [Proxy]      [window controls] │
+│ Bitterless                         [update] [Proxy]     [window controls] │
 ├──────────────────────── routed content region ────────────────────────────┤
 │ /login                                /chat and authenticated routes       │
 │ Login content only                    HomeMenu + workspace content         │
@@ -49,7 +49,7 @@ shared menu bar's clickable update and window controls.
 
 ```text
 ┌──────────────────────── shared Royal Blue MenuBar ───────────────────────┐
-│ Bitterless                                           [upate] [controls]│
+│ Bitterless                                          [update] [controls]│
 ├──────────────────── light Royal Blue login surface ─────────────────────┤
 │        ┌─ white account surface; no visible outline ────────────┐         │
 │        │ [Password login] [Email code]                          │         │
@@ -69,6 +69,28 @@ Forgot password                    Invited first login
 │ [Reset password]             │    └──────────────────────────────┘
 └──────────────────────────────┘    cannot close by X/mask/Escape
 ```
+
+Persisted session recovery keeps credentials out of the transient failure path:
+
+```text
+┌──────────────────────────────┐
+│ Restore sign-in              │
+│                              │
+│ Saved session is being       │
+│ validated...                 │
+└──────────────────────────────┘
+               │ temporary network/Core failure
+               ▼
+┌──────────────────────────────┐
+│ Restore sign-in              │
+│ Sign-in is saved             │
+│ [Retry] [Use another account]│
+└──────────────────────────────┘
+```
+
+The recovery surface never renders authenticated workspace content before `/auth/me` succeeds.
+`Retry` reuses the same token. `Use another account` is the only recovery-state action that clears
+the saved token and starts best-effort logout cleanup.
 
 Settings exposes account identity inside the existing General page without adding another card:
 
@@ -92,7 +114,7 @@ Settings exposes account identity inside the existing General page without addin
 | Send reset code | Send an email OTP with purpose `reset_password`; disable duplicate submission during the request and cooldown |
 | Reset password | Require two matching inputs of at least eight characters, reset through the dedicated unauthenticated endpoint, then return to password login |
 | First-password setup | Require two matching inputs of at least eight characters; keep the modal open on mutation error; after mutation success, any route failure changes the modal to a navigation-only retry |
-| Update available while logged out | Show the same compact `upate` action as the authenticated workspace; clicking it calls the existing update restart flow |
+| Update available while logged out | Show the same compact `update` action as the authenticated workspace; clicking it calls the existing update restart flow |
 | Window controls while logged out | Keep the shared macOS drag region or Windows minimize/maximize/close controls interactive above the login content |
 | Logout | Clear local authentication and route to Login immediately; best-effort revoke the Core token and silently tear down authenticated secondary windows |
 
@@ -103,8 +125,16 @@ and login method never derive or replace `device_id`.
 
 All request buttons expose a loading state and block re-entry. Reset-password completion never logs
 the customer in automatically; the customer signs in with the new password. Restoring an inactive
-or otherwise invalid session clears only that still-current local token. Initial restore and a new
-login submission cannot overlap.
+or Core-rejected session clears only that still-current local token. A transport error, timeout, or
+non-authoritative Core failure preserves the token and opens a retryable recovery state without
+opening protected routes. A newly issued password/OTP token is persisted before `/auth/me`
+validation so the same recovery path remains available when that validation fails transiently.
+Initial restore and a new login submission cannot overlap.
+
+A successful `/auth/me` HTTP status is not sufficient by itself. The desktop validates the complete
+customer session payload (`id`, `email`, customer `scope`, supported `status`, `has_password`, and
+`must_set_password`) before assigning `current`. A malformed payload preserves the unverified token
+for retry but cannot open a protected route.
 
 Logout cleanup is deliberately detached after local session removal. A stalled network revoke or
 secondary-window teardown cannot keep the Login form disabled. Main serializes a new optional
@@ -153,6 +183,7 @@ remain lazy-loaded.
 - `src/renderer/home/src/App.less`
 - `src/renderer/home/src/components/MenuBar/MenuBar.vue`
 - `src/renderer/home/src/stores/auth/auth.store.ts`
+- `src/renderer/home/src/stores/auth/authSession.service.ts`
 - `src/renderer/home/src/networking/auth.api.ts`
 - `src/renderer/home/src/router/index.ts`
 - `src/renderer/home/src/views/setting/components/GeneralSetting/GeneralSetting.vue`

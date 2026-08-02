@@ -12,3 +12,5 @@
 - 🔍 Desktop packaging now rejects missing or wrong-architecture encrypted SQLite native binaries before signing or upload.
 - 👀 EyesOnAgents now preserves Codex Hook working state during metadata refresh and treats a successful Open as acknowledgement of the current Focus observation.
 - 🖼️ macOS now uses the current application artwork for both the signed bundle and the live Dock tile.
+- 🔐 Preserves valid sign-in across restarts and temporary network failures, with retry and cancel controls during session recovery.
+- 🔵 Corrected the update label and aligned Omni's update action with the blue shimmer treatment.

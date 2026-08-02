@@ -14,6 +14,9 @@ review_type: independent-code-ui-and-contract
 **PASS.** No P1, P2, or P3 finding remains. Commits `e80b756` and `931b81b` satisfy the compact
 cross-window update-action contract and the strict top-level Omni ownership boundary.
 
+> Follow-up on 2026-08-02 corrected the shared label to `update` and aligned Omni with the blue
+> shimmering main-window treatment. The original review remains evidence for ownership and routing.
+
 # Findings
 
 No open findings.
@@ -24,7 +27,7 @@ no-hardcoded-English guards. Re-review passed.
 
 # Evidence
 
-- The exact visible lowercase literal `upate` is shared by English and Chinese and consumed by Home,
+- The exact visible lowercase literal is shared by English and Chinese and consumed by Home,
   Maestro, and Omni. Maestro's label does not expand while downloading; disabled state and detailed
   title retain the state distinction.
 - Omni renders exactly one ready-only action in the top-level `omniWindow` 32px Menu Bar, after the
@@ -35,7 +38,7 @@ no-hardcoded-English guards. Re-review passed.
 - Negative source guards cover all `omniCell` and Omni Control files, including
   `OmniPaneMenuBar`, so no pane or Layout subrenderer can render or subscribe to the action.
 - Omni's detailed title uses shared `Update to {version}` / `更新到 {version}` messages while the
-  visible label remains `upate`.
+  visible label remains compact.
 
 # Verification
 

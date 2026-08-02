@@ -24,7 +24,6 @@ const todoistSyncSessionClient = createBoundedTodoXpcClient(
 );
 
 class AuthHandler extends XpcMainHandler {
-  private invalidating = false;
   private deactivationPromise: Promise<void> | null = null;
   private sessionActivationGeneration = 0;
   private sessionShouldBeActive = false;
@@ -65,31 +64,18 @@ class AuthHandler extends XpcMainHandler {
   }
 
   async invalidateSession(params: AuthInvalidationPayload = {}): Promise<void> {
-    this.sessionShouldBeActive = false;
-    this.sessionActivationGeneration += 1;
-    coinWindowHandler.lockForAuthInvalidation();
-    if (this.invalidating) return;
+    const eventPayload: AuthInvalidationPayload = {
+      reason: params.reason || '登录已失效，请重新登录',
+      sessionId: params.sessionId,
+      source: params.source || 'unknown',
+      status: params.status || 401,
+    };
 
-    this.invalidating = true;
-    try {
-      const eventPayload: AuthInvalidationPayload = {
-        reason: params.reason || '登录已失效，请重新登录',
-        source: params.source || 'unknown',
-        status: params.status || 401
-      };
-
-      console.warn('[AuthHandler] Session invalidated:', eventPayload);
-      await this._closeSecondaryWindows();
-      const mainWindow = await this._ensureMainWindow();
-
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindowHelper.show();
-      }
-
-      xpcMain.broadcast('auth/invalidated', eventPayload);
-    } finally {
-      this.invalidating = false;
-    }
+    console.warn('[AuthHandler] Session invalidation requested:', {
+      source: eventPayload.source,
+      status: eventPayload.status,
+    });
+    xpcMain.broadcast('auth/invalidated', eventPayload);
   }
 
   private async _ensureMainWindow(): Promise<BrowserWindow | null> {
