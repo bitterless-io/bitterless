@@ -38,3 +38,7 @@ ship a newer signed macOS ARM production release.
 - Release uses the latest `origin/release/2608` production source as its base, passes existing
   release preflight gates, produces a version newer than `260802151913`, and completes signed
   macOS ARM publication.
+
+# Reviews
+
+- [Independent passing review](../reviews/codex-production-login-recovery-012-1.md)
