@@ -105,8 +105,8 @@ design document.
   implemented; owner verification pending: Setting can cancel or reconnect Codex immediately,
   while credential, provider, and renderer generations ignore late superseded results.
 - [Codex browser login success stuck in Setting](issues/codex-model-login-browser-success-stuck.md) -
-  active production repair: `0.0.65` restores callback ownership, but macOS routes the authorization
-  URL to WebStorm; the next release explicitly targets Chrome or Safari.
+  implemented in production `0.0.65`: callback ownership is restored; the affected Mac must restore
+  `http`/`https` from WebStorm to the owner's preferred default browser.
 - [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
   implemented; owner verification pending: default sites now keep stock Electron identity while
   Google/YouTube use a dedicated session with the verified honest Bitterless UA.

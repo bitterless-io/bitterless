@@ -20,7 +20,6 @@ ship a newer signed macOS ARM production release.
 # Path
 
 - `src/main/codex/codexCredential.service.ts`
-- `src/main/codex/codexCredential.runtime.ts`
 - `src/main/codex/codexCallbackCapture.ts`
 - `src/main/codex/codexLoopbackObserver.service.ts`
 - `tests/coin/unit/codexCredential.service.test.ts`
@@ -54,5 +53,6 @@ ship a newer signed macOS ARM production release.
   directory refresh completed successfully.
 - The public production manifest reports `0.0.65` / `260803110507`.
 - Owner verification on `0.0.65` proved the callback listeners are ready and owned by the current
-  process, but the generated authorization URL was handed to WebStorm because it had registered as
-  the macOS `http`/`https` handler. A follow-up release must target a real browser explicitly.
+  process. The generated authorization URL was handed to WebStorm because it had registered as the
+  macOS `http`/`https` handler; restoring those URL schemes to the owner's preferred default browser
+  is a local system configuration step and does not require another Bitterless release.

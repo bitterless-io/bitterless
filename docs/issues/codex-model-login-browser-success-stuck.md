@@ -1,6 +1,6 @@
 # Codex Browser Login Succeeds but Setting Keeps Waiting
 
-Status: Active; production `0.0.65` reaches browser launch but macOS routes it to WebStorm
+Status: Implemented in production `0.0.65`; owner must restore the macOS default web browser
 
 Implementation:
 [model-provider-fresh-login-callback-009](../plan/tasks/model-provider-fresh-login-callback-009.md)
@@ -52,8 +52,10 @@ On the affected Mac, LaunchServices registered `com.jetbrains.webstorm` as the h
 `http` and `https` on 2026-07-31 at 15:59:49. Electron's `shell.openExternal()` therefore reports a
 successful handoff while sending the OpenAI authorization URL to WebStorm instead of a browser.
 
-Codex OAuth on macOS must explicitly target an installed real browser: Google Chrome first and
-Safari as the built-in fallback. Other platforms retain the existing system external-URL opener.
+The application already delegates OAuth URLs to the system default URL handler through Electron's
+`shell.openExternal()`. `http`/`https` URL-scheme ownership is independent from WebStorm's expected
+`html`/`yml`/`md` file associations. The affected Mac must restore both URL schemes to the owner's
+preferred default browser; Bitterless must not override that preference in application code.
 
 ## Required behavior
 
@@ -70,8 +72,8 @@ Safari as the built-in fallback. Other platforms retain the existing system exte
   cannot promote a credential or overwrite a newer login.
 - Before opening the browser, Main proves that the current process owns Pi's IPv4 listener and the
   required macOS IPv6 companion. Missing, foreign, or unexpected listeners fail immediately.
-- On macOS, browser OAuth targets Chrome explicitly when available and Safari otherwise, so an IDE
-  registered as the default URL handler cannot swallow the authorization page.
+- OAuth URLs are opened with the system default handler. Bitterless does not select a browser or
+  alter system URL-scheme associations.
 
 ## Acceptance
 
