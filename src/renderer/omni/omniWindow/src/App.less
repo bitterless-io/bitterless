@@ -35,24 +35,70 @@
 }
 
 .omni-menubar__update {
+  position: relative;
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  overflow: hidden;
   margin-right: 12px;
   padding: 4px 10px;
-  border: none;
+  border: 0;
   border-radius: 12px;
-  background-color: oklch(75.8% 0.169 70.8);
-  color: oklch(25.7% 0.09 281.288);
+  background: #165dff;
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
-  transition: background-color 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: background-color 0.15s ease;
   -webkit-app-region: no-drag;
 }
 
+.omni-menubar--mac .omni-menubar__update {
+  margin-right: 0;
+}
+
 .omni-menubar__update:hover {
-  background-color: oklch(70% 0.18 70.8);
+  background: #0e4fd6;
+}
+
+.omni-menubar__update-label {
+  position: relative;
+  z-index: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.omni-menubar__update::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  transform: translateX(-130%) skewX(-18deg);
+  animation: omniUpdateShimmer 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes omniUpdateShimmer {
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+  }
+
+  55%,
+  100% {
+    transform: translateX(280%) skewX(-18deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .omni-menubar__update::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 .omni-menubar__win-controls {

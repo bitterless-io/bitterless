@@ -20,6 +20,10 @@ const defaultPublicBaseUrl = 'https://assets.terncloud.com';
 const defaultOssPrefix = 'bitterless/distro';
 const defaultSigningEnvPath = path.join(keychainDir, 'signing.env');
 const defaultSigningCertificatePath = path.join(keychainDir, 'Certificates.p12');
+const OSS_REQUEST_TIMEOUT_MS = 120_000;
+const OSS_MULTIPART_THRESHOLD_BYTES = 16 * 1024 * 1024;
+const OSS_MULTIPART_PART_SIZE_BYTES = 8 * 1024 * 1024;
+const OSS_MULTIPART_PARALLEL = 4;
 
 const platformConfigs = {
   mac_arm: {
@@ -27,18 +31,21 @@ const platformConfigs = {
     appOutputDir: 'mac-arm64',
     artifactExtensions: ['.dmg', '.zip', '.blockmap'],
     updaterFiles: ['latest-mac.yml'],
+    requiredUpdaterArtifactExtensions: ['.zip', '.dmg'],
   },
   mac_intel: {
     buildArgs: ['--mac', '--x64'],
     appOutputDir: 'mac',
     artifactExtensions: ['.dmg', '.zip', '.blockmap'],
     updaterFiles: ['latest-mac.yml'],
+    requiredUpdaterArtifactExtensions: ['.zip', '.dmg'],
   },
   win64: {
     buildArgs: ['--win', '--x64'],
     appOutputDir: 'win-unpacked',
     artifactExtensions: ['.exe', '.blockmap'],
     updaterFiles: ['latest.yml'],
+    requiredUpdaterArtifactExtensions: ['.exe'],
   },
 };
 
@@ -52,6 +59,7 @@ Options:
                                Target platform. Default: current host platform
   --build                      Run release env preparation, build, and electron-builder first
   --bump                       Run scripts/patch.js before building
+  --preflight-only             Verify remote release order, then exit before build/sign/upload
   --dry-run                    Print planned uploads without writing to OSS
   --env-file <path>            OSS env file. Default: ${defaultPublishEnvPath}
   --prefix <prefix>            OSS object prefix. Default: ${defaultOssPrefix}
@@ -73,6 +81,7 @@ const parseArgs = () => {
     platform: detectHostPlatform(),
     build: false,
     bump: false,
+    preflightOnly: false,
     dryRun: false,
     envFile: defaultPublishEnvPath,
     prefix: defaultOssPrefix,
@@ -89,6 +98,8 @@ const parseArgs = () => {
       result.build = true;
     } else if (arg === '--bump') {
       result.bump = true;
+    } else if (arg === '--preflight-only') {
+      result.preflightOnly = true;
     } else if (arg === '--dry-run') {
       result.dryRun = true;
     } else if (arg === '--no-cdn-refresh') {
@@ -113,6 +124,9 @@ const parseArgs = () => {
   }
   if (!platformConfigs[result.platform]) {
     throw new Error('--platform must be mac_arm, mac_intel, or win64');
+  }
+  if (result.preflightOnly && result.dryRun) {
+    throw new Error('--preflight-only cannot be combined with --dry-run');
   }
   return result;
 };
@@ -247,9 +261,108 @@ const readDistVersionInfo = () => {
   return JSON.parse(fs.readFileSync(versionInfoPath, 'utf-8'));
 };
 
+const readPackageRelease = () => {
+  return JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+};
+
+const releaseVersionCode = (release) => {
+  return String(release.version_code ?? release.versionCode ?? '');
+};
+
+const assertLocalReleaseMatchesDist = (localPackage, distVersionInfo) => {
+  const packageVersion = String(localPackage.version ?? '');
+  const packageVersionCode = releaseVersionCode(localPackage);
+  const distVersion = String(distVersionInfo.version ?? '');
+  const distVersionCode = releaseVersionCode(distVersionInfo);
+  if (packageVersion !== distVersion || packageVersionCode !== distVersionCode) {
+    throw new Error(
+      `Stale dist release metadata: package ${packageVersion} (${packageVersionCode}), dist ${distVersion} (${distVersionCode}). Rebuild before publishing.`,
+    );
+  }
+};
+
 const artifactNameMatchesVersion = (name, version) => {
   const escapedVersion = String(version).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`-${escapedVersion}(?:[.-]|$)`).test(name);
+};
+
+const updaterArtifactName = (value) => {
+  if (typeof value !== 'string') return null;
+  const name = value.trim();
+  if (
+    name.length === 0 ||
+    name !== value ||
+    name === '.' ||
+    name === '..' ||
+    /[\\/?#]/.test(name) ||
+    /^[a-z][a-z\d+.-]*:/i.test(name) ||
+    path.basename(name) !== name
+  ) {
+    return null;
+  }
+  return name;
+};
+
+const validateUpdaterArtifacts = (platform, version, artifacts) => {
+  const config = platformConfigs[platform];
+  const artifactNames = new Set(artifacts.map((filePath) => path.basename(filePath)));
+
+  for (const updaterFile of config.updaterFiles) {
+    const updaterPath = artifacts.find((filePath) => path.basename(filePath) === updaterFile);
+    if (!updaterPath) {
+      throw new Error(`Missing updater metadata in dist: ${updaterFile}`);
+    }
+
+    let metadata;
+    try {
+      metadata = yaml.load(fs.readFileSync(updaterPath, 'utf-8'));
+    } catch (error) {
+      throw new Error(`Invalid updater metadata ${updaterFile}: ${error.message}`);
+    }
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      throw new Error(`Invalid updater metadata ${updaterFile}: expected an object`);
+    }
+    if (String(metadata.version ?? '') !== String(version)) {
+      throw new Error(
+        `Updater metadata version mismatch in ${updaterFile}: expected ${version}, received ${metadata.version ?? 'missing'}`,
+      );
+    }
+    if (!Array.isArray(metadata.files) || metadata.files.length === 0) {
+      throw new Error(`Updater metadata ${updaterFile} has no files`);
+    }
+
+    const rawReferences = [metadata.path, ...metadata.files.map((file) => file?.url)];
+    const references = rawReferences.map(updaterArtifactName);
+    if (references.some((reference) => !reference)) {
+      throw new Error(
+        `Updater metadata ${updaterFile} contains an invalid artifact reference; only plain filenames are allowed`,
+      );
+    }
+
+    for (const requiredExtension of config.requiredUpdaterArtifactExtensions) {
+      if (!references.some((name) => name.toLowerCase().endsWith(requiredExtension))) {
+        throw new Error(
+          `Updater metadata ${updaterFile} is missing a ${requiredExtension} artifact reference`,
+        );
+      }
+    }
+
+    for (const reference of new Set(references)) {
+      if (!artifactNames.has(reference)) {
+        throw new Error(`Updater metadata ${updaterFile} references missing artifact: ${reference}`);
+      }
+      if (config.requiredUpdaterArtifactExtensions.some((extension) => {
+        return reference.toLowerCase().endsWith(extension);
+      })) {
+        const blockmapName = `${reference}.blockmap`;
+        if (!artifactNames.has(blockmapName)) {
+          throw new Error(
+            `Updater artifact ${reference} is missing required blockmap: ${blockmapName}`,
+          );
+        }
+      }
+    }
+  }
 };
 
 const findArtifacts = (platform, version) => {
@@ -274,6 +387,7 @@ const findArtifacts = (platform, version) => {
     throw new Error(`Missing updater metadata in dist: ${missingUpdaterFiles.join(', ')}`);
   }
 
+  validateUpdaterArtifacts(platform, version, artifacts);
   return artifacts.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
 };
 
@@ -520,6 +634,27 @@ const contentTypeFor = (filePath) => {
   return 'application/octet-stream';
 };
 
+const verifyUploadedSize = async (client, objectKey, expectedSize) => {
+  const result = await client.head(objectKey, { timeout: OSS_REQUEST_TIMEOUT_MS });
+  const actualSize = Number(result?.res?.headers?.['content-length']);
+  if (!Number.isSafeInteger(actualSize) || actualSize !== expectedSize) {
+    throw new Error(
+      `Uploaded size mismatch for ${objectKey}: expected ${expectedSize}, received ${actualSize}`,
+    );
+  }
+};
+
+const createMultipartProgress = (fileName) => {
+  let lastReportedPercent = -10;
+  return async (progress) => {
+    const percent = Math.min(100, Math.floor(Number(progress) * 100));
+    const reportPercent = percent === 100 ? 100 : Math.floor(percent / 10) * 10;
+    if (reportPercent <= lastReportedPercent) return;
+    lastReportedPercent = reportPercent;
+    console.log(`[publish.js] Uploading ${fileName}: ${reportPercent}%`);
+  };
+};
+
 const uploadFile = async (client, objectKey, filePath, dryRun) => {
   const size = fs.statSync(filePath).size;
   if (dryRun) {
@@ -527,17 +662,122 @@ const uploadFile = async (client, objectKey, filePath, dryRun) => {
     return;
   }
 
-  await client.put(objectKey, filePath, {
-    headers: {
-      'Content-Type': contentTypeFor(filePath),
-    },
-  });
+  const headers = {
+    'Content-Type': contentTypeFor(filePath),
+  };
+  if (size >= OSS_MULTIPART_THRESHOLD_BYTES) {
+    let checkpoint;
+    const reportProgress = createMultipartProgress(path.basename(filePath));
+    const progress = async (fraction, nextCheckpoint) => {
+      if (nextCheckpoint?.uploadId) checkpoint = nextCheckpoint;
+      await reportProgress(fraction);
+    };
+    try {
+      await client.multipartUpload(objectKey, filePath, {
+        headers,
+        parallel: OSS_MULTIPART_PARALLEL,
+        partSize: OSS_MULTIPART_PART_SIZE_BYTES,
+        progress,
+        timeout: OSS_REQUEST_TIMEOUT_MS,
+      });
+      await reportProgress(1);
+    } catch (error) {
+      if (checkpoint?.uploadId) {
+        try {
+          await client.abortMultipartUpload(objectKey, checkpoint.uploadId, {
+            timeout: OSS_REQUEST_TIMEOUT_MS,
+          });
+          console.warn(`[publish.js] Aborted incomplete multipart upload: ${objectKey}`);
+        } catch (cleanupError) {
+          const cleanupReason = cleanupError?.code || cleanupError?.name || 'unknown error';
+          console.warn(
+            `[publish.js] Failed to abort incomplete multipart upload for ${objectKey}: ${cleanupReason}`,
+          );
+        }
+      }
+      throw error;
+    }
+  } else {
+    await client.put(objectKey, filePath, {
+      headers,
+      timeout: OSS_REQUEST_TIMEOUT_MS,
+    });
+  }
+  await verifyUploadedSize(client, objectKey, size);
   console.log(`[publish.js] Uploaded ${path.basename(filePath)} -> ${objectKey}`);
 };
 
-const assertNoRemoteDowngrade = async (client, objectPrefix) => {
-  const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
-  const localVersionCode = String(pkg.version_code);
+const uploadReleaseFiles = async (
+  client,
+  objectPrefix,
+  artifacts,
+  versionInfoPath,
+  dryRun,
+) => {
+  for (const artifact of artifacts) {
+    await uploadFile(client, `${objectPrefix}/${path.basename(artifact)}`, artifact, dryRun);
+  }
+  await uploadFile(client, `${objectPrefix}/version_info.json`, versionInfoPath, dryRun);
+};
+
+const publishRelease = async (options) => {
+  await uploadReleaseFiles(
+    options.client,
+    options.objectPrefix,
+    options.artifacts,
+    options.versionInfoPath,
+    options.dryRun,
+  );
+  await options.refresh();
+};
+
+const assertReleaseOrder = (localPackage, remoteInfo) => {
+  const localVersion = String(localPackage.version ?? '');
+  const remoteVersion = String(remoteInfo.version ?? '');
+  const localVersionCode = String(
+    localPackage.version_code ?? localPackage.versionCode ?? '',
+  );
+  const remoteVersionCode = String(remoteInfo.versionCode ?? '');
+
+  if (!/^\d+$/.test(localVersionCode)) {
+    throw new Error(`Local package has invalid version_code: ${localVersionCode}`);
+  }
+  if (!/^\d+$/.test(remoteVersionCode)) {
+    throw new Error(`Remote version_info.json has invalid versionCode: ${remoteVersionCode}`);
+  }
+
+  let versionOrder;
+  let versionCodeOrder;
+  try {
+    versionOrder = compareVersions(localVersion, remoteVersion);
+    versionCodeOrder = compareVersions(localVersionCode, remoteVersionCode);
+  } catch {
+    throw new Error(
+      `Invalid release version comparison: local ${localVersion}, remote ${remoteVersion}`,
+    );
+  }
+
+  if (versionOrder < 0) {
+    throw new Error(`Refusing semantic version downgrade: local ${localVersion}, remote ${remoteVersion}`);
+  }
+  if (versionOrder === 0 && versionCodeOrder !== 0) {
+    throw new Error(
+      `Refusing semantic version reuse: ${localVersion} has local version_code ${localVersionCode} and remote versionCode ${remoteVersionCode}`,
+    );
+  }
+  if (versionCodeOrder < 0) {
+    throw new Error(
+      `Refusing version_code downgrade: local ${localVersionCode}, remote ${remoteVersionCode}`,
+    );
+  }
+  if (versionOrder > 0 && versionCodeOrder === 0) {
+    throw new Error(
+      `Refusing version_code reuse: ${localVersionCode} belongs to remote version ${remoteVersion}`,
+    );
+  }
+};
+
+const assertNoRemoteDowngrade = async (client, objectPrefix, localRelease = readPackageRelease()) => {
   let remoteInfo;
   try {
     const result = await client.get(`${objectPrefix}/version_info.json`);
@@ -550,23 +790,9 @@ const assertNoRemoteDowngrade = async (client, objectPrefix) => {
     throw error;
   }
 
-  const remoteVersionCode = String(remoteInfo.versionCode);
-  if (!/^\d+$/.test(remoteVersionCode)) {
-    throw new Error(`Remote version_info.json has invalid versionCode: ${remoteVersionCode}`);
-  }
-  const order = compareVersions(localVersionCode, remoteVersionCode);
-  if (order < 0) {
-    throw new Error(
-      `Refusing version downgrade: local ${localVersionCode}, remote ${remoteVersionCode}`,
-    );
-  }
-  if (order === 0 && remoteInfo.version !== pkg.version) {
-    throw new Error(
-      `Remote version_code ${remoteVersionCode} belongs to version ${remoteInfo.version}, not ${pkg.version}`,
-    );
-  }
+  assertReleaseOrder(localRelease, remoteInfo);
   console.log(
-    `[publish.js] Version order verified: local ${localVersionCode}, remote ${remoteVersionCode}`,
+    `[publish.js] Version order verified: local ${localRelease.version} (${releaseVersionCode(localRelease)}), remote ${remoteInfo.version} (${remoteInfo.versionCode})`,
   );
 };
 
@@ -668,6 +894,7 @@ const main = async () => {
 
   const publishConfig = createPublishConfig(options);
   const objectPrefix = `${options.prefix}/${options.env}/${options.platform}`;
+  const packageRelease = readPackageRelease();
   const client = options.dryRun
     ? null
     : new OSS({
@@ -675,31 +902,43 @@ const main = async () => {
       accessKeyId: publishConfig.accessKeyId,
       accessKeySecret: publishConfig.accessKeySecret,
       bucket: publishConfig.bucket,
+      retryMax: 3,
+      timeout: OSS_REQUEST_TIMEOUT_MS,
     });
-  if (client) await assertNoRemoteDowngrade(client, objectPrefix);
+  if (client) await assertNoRemoteDowngrade(client, objectPrefix, packageRelease);
+  if (options.preflightOnly) {
+    console.log('[publish.js] Preflight complete; build, signing, and upload were skipped.');
+    return;
+  }
 
   if (options.build) {
     runBuild(options);
   }
 
+  const versionInfo = readDistVersionInfo();
+  assertLocalReleaseMatchesDist(packageRelease, versionInfo);
+  let artifacts = findArtifacts(options.platform, versionInfo.version);
   auditPackagedApplication(options.platform);
 
   if (!options.dryRun) {
     await finalizeMacDmg(options.platform);
   }
+  artifacts = findArtifacts(options.platform, versionInfo.version);
   const versionInfoPath = createVersionInfoForUpload(options);
-  const versionInfo = readDistVersionInfo();
-  const artifacts = findArtifacts(options.platform, versionInfo.version);
+  if (client) await assertNoRemoteDowngrade(client, objectPrefix, versionInfo);
 
   console.log(`[publish.js] Env file: ${options.envFile}`);
   console.log(`[publish.js] Target: oss://${publishConfig.bucket}/${objectPrefix}/`);
   console.log(`[publish.js] Public URL: ${options.publicBaseUrl}/${objectPrefix}`);
 
-  for (const artifact of artifacts) {
-    await uploadFile(client, `${objectPrefix}/${path.basename(artifact)}`, artifact, options.dryRun);
-  }
-  await uploadFile(client, `${objectPrefix}/version_info.json`, versionInfoPath, options.dryRun);
-  await refreshCdnDirectory(options, publishConfig, objectPrefix);
+  await publishRelease({
+    client,
+    objectPrefix,
+    artifacts,
+    versionInfoPath,
+    dryRun: options.dryRun,
+    refresh: async () => await refreshCdnDirectory(options, publishConfig, objectPrefix),
+  });
 
   console.log('[publish.js] Done.');
 };
@@ -712,9 +951,20 @@ if (require.main === module) {
 }
 
 module.exports = {
+  OSS_MULTIPART_PARALLEL,
+  OSS_MULTIPART_PART_SIZE_BYTES,
+  OSS_MULTIPART_THRESHOLD_BYTES,
+  OSS_REQUEST_TIMEOUT_MS,
+  assertLocalReleaseMatchesDist,
+  assertReleaseOrder,
   artifactNameMatchesVersion,
   parseDeveloperIdApplicationIdentities,
   parseUserKeychainSearchList,
   selectDeveloperIdApplicationIdentity,
+  publishRelease,
+  uploadFile,
+  uploadReleaseFiles,
+  validateUpdaterArtifacts,
+  verifyUploadedSize,
   withTemporaryUserKeychainSearchList,
 };

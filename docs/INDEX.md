@@ -122,6 +122,9 @@ design document.
 - [macOS notarization upload timeout](issues/macos-dmg-notarization-upload-timeout.md) -
   implemented; owner verification pending: retain Apple's accelerated route while adding visible,
   bounded network-only retry for application and DMG submissions.
+- [OSS release large-artifact timeout](issues/oss-release-large-artifact-timeout.md) - fixed:
+  production `0.0.60` proved multipart ZIP/DMG upload, remote-size verification, semantic release
+  ordering, manifest-last publication, and post-upload CDN refresh.
 - [Todo MCP empty-date rejection and missing Step CRUD](issues/todo-mcp-empty-date-and-step-crud-gap.md) - fixed:
   optional dates are validated before creation, and synchronized SubTodo operations now have a
   public, idempotent Step interface plus versioned agent guidance.
@@ -145,6 +148,9 @@ design document.
   fix implemented; Shanghai backend gate and owner verification pending: valid Core login is no
   longer blocked or misreported by optional local runtime activation, and General now exposes the
   current account and Logout.
+- [Customer session disappears after restart](issues/customer-auth-restart-session-loss.md) -
+  implemented; owner restart verification pending: transient `/auth/me` failures preserve the
+  saved token and offer retry without opening protected routes or requiring credentials again.
 - [EyesOnAgents existing-thread normalized ingestion](issues/eyes-on-agents-thread-normalization-drops-existing-sessions.md) - implemented; owner verification pending:
   valid Codex threads can be omitted from All and remain Untitled when an optional preview is
   multiline or longer than the display bound.

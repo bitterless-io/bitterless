@@ -1,7 +1,20 @@
 import { markRaw, reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { authEmitter } from '@/emitter/auth.emitter';
-import { scheduleBestEffort, settleBestEffort } from '@/stores/auth/authSession.service';
+import {
+  SessionEligibilityError,
+  SessionPayloadError,
+  activateCustomerToken,
+  scheduleBestEffort,
+  settleBestEffort,
+  shouldInvalidateCustomerSession,
+} from '@/stores/auth/authSession.service';
+import {
+  clearCustomerToken,
+  getCustomerSessionId,
+  getCustomerToken,
+  setCustomerToken,
+} from '@/stores/auth/authToken.service';
 import { todoistSyncSessionEmitter } from '@/stores/auth/todoistSyncSession.emitter';
 import { TodoistSyncActivationService } from '@/stores/auth/todoistSyncActivation.service';
 import type { TodoistSyncActivateParams } from '@shared/todoistSync/todoistSync.type';
@@ -17,18 +30,7 @@ import {
   type OtpPurpose
 } from '@/networking/auth.api';
 
-const TOKEN_KEY = 'bitterless-desktop-token';
 const DEVICE_ID_KEY = 'bitterless-desktop-device-id';
-
-const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
-
-const setToken = (token: string): void => {
-  localStorage.setItem(TOKEN_KEY, token);
-};
-
-const clearToken = (): void => {
-  localStorage.removeItem(TOKEN_KEY);
-};
 
 const createRandomHex32 = (): string => {
   if (crypto.randomUUID) {
@@ -67,9 +69,9 @@ const ensureSessionEligibleCustomer = (customer: CurrentCustomer): CurrentCustom
   const status = (customer as { status?: unknown }).status;
   if (status === 'active' || status === 'invited') return customer;
   if (status === 'inactive') {
-    throw new Error('账号已停用，请联系管理员');
+    throw new SessionEligibilityError('账号已停用，请联系管理员');
   }
-  throw new Error('账号状态无效，请重新登录');
+  throw new SessionPayloadError('账号状态响应无效，请稍后重试');
 };
 
 class AuthStore {
@@ -85,19 +87,26 @@ class AuthStore {
   ));
 
   isAuthenticated(): boolean {
-    return !!getToken();
+    return !!getCustomerToken();
   }
 
   get token(): string | null {
-    return getToken();
+    return getCustomerToken();
+  }
+
+  get sessionId(): string | null {
+    return getCustomerSessionId();
   }
 
   get deviceId(): string {
     return this.installationDeviceId;
   }
 
-  private async fetchValidatedCustomer(token: string): Promise<CurrentCustomer> {
-    return ensureSessionEligibleCustomer(await meApi(token));
+  private async fetchValidatedCustomer(
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<CurrentCustomer> {
+    return ensureSessionEligibleCustomer(await meApi(token, signal));
   }
 
   async ensureTodoistSyncReady(): Promise<void> {
@@ -107,7 +116,7 @@ class AuthStore {
     if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
       throw new Error('账号尚未完成首次密码设置');
     }
-    const params = getTodoistSyncActivateParams(current, getToken(), this.deviceId);
+    const params = getTodoistSyncActivateParams(current, getCustomerToken(), this.deviceId);
     await this.todoistSyncActivation.ensureReady(params);
   }
 
@@ -128,7 +137,7 @@ class AuthStore {
   private activateTodoistSync(current: CurrentCustomer): void {
     let params: TodoistSyncActivateParams;
     try {
-      params = getTodoistSyncActivateParams(current, getToken(), this.deviceId);
+      params = getTodoistSyncActivateParams(current, getCustomerToken(), this.deviceId);
     } catch (error) {
       console.error('[AuthStore] Failed to prepare Todo sync activation:', error);
       return;
@@ -155,17 +164,20 @@ class AuthStore {
   }
 
   private async activateToken(token: string): Promise<CurrentCustomer> {
-    let current: CurrentCustomer;
-    try {
-      current = await this.fetchValidatedCustomer(token);
-    } catch (err) {
-      this.clearLocalSession();
-      await logoutApi(token).catch(() => undefined);
-      throw err;
-    }
-
     this.todoistSyncActivation.invalidate();
-    setToken(token);
+    this.current = null;
+    const current = await activateCustomerToken({
+      token,
+      persist: setCustomerToken,
+      validate: async (currentToken) => await this.fetchValidatedCustomer(currentToken),
+      invalidate: (currentToken) => {
+        if (getCustomerToken() === currentToken) this.clearLocalSession();
+      },
+      revoke: async (currentToken) => await logoutApi(currentToken),
+    });
+    if (getCustomerToken() !== token) {
+      throw new SessionPayloadError('登录状态已变更，请重试');
+    }
     this.current = current;
 
     if (!customerNeedsPasswordSetup(current)) {
@@ -242,7 +254,7 @@ class AuthStore {
   }
 
   async changePassword(newPassword: string): Promise<void> {
-    const token = getToken();
+    const token = getCustomerToken();
     if (!token) throw new Error('Missing token');
 
     this.loading = true;
@@ -262,19 +274,22 @@ class AuthStore {
     }
   }
 
-  async fetchMe(): Promise<CurrentCustomer> {
-    const token = getToken();
+  async fetchMe(signal?: AbortSignal): Promise<CurrentCustomer> {
+    const token = getCustomerToken();
     if (!token) {
       throw new Error('Missing token');
     }
 
     this.checking = true;
     try {
-      const me = await this.fetchValidatedCustomer(token);
+      const me = await this.fetchValidatedCustomer(token, signal);
+      if (getCustomerToken() !== token) {
+        throw new SessionPayloadError('登录状态已变更，请重试');
+      }
       this.current = me;
       return me;
     } catch (err) {
-      if (getToken() === token) {
+      if (getCustomerToken() === token && shouldInvalidateCustomerSession(err)) {
         this.clearLocalSession();
       }
       throw err;
@@ -283,8 +298,8 @@ class AuthStore {
     }
   }
 
-  async restoreSession(): Promise<CurrentCustomer> {
-    const current = await this.fetchMe();
+  async restoreSession(signal?: AbortSignal): Promise<CurrentCustomer> {
+    const current = await this.fetchMe(signal);
     if (!customerNeedsPasswordSetup(current)) {
       this.activateAuthenticatedSession(current);
     }
@@ -293,14 +308,14 @@ class AuthStore {
 
   clearLocalSession(): void {
     this.todoistSyncActivation.invalidate();
-    clearToken();
+    clearCustomerToken();
     this.current = null;
   }
 
   async logout(): Promise<void> {
     if (this.loggingOut) return;
 
-    const token = getToken();
+    const token = getCustomerToken();
     this.loggingOut = true;
     this.clearLocalSession();
     try {

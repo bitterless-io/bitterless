@@ -148,6 +148,14 @@ only recognized network transport failures, and fail immediately for credentials
 `Invalid`, or `Rejected` results. A wait retry always reuses its existing submission ID rather than
 uploading again.
 
+Production OSS publication uses ordinary `put` only for small metadata. Large desktop artifacts use
+multipart upload with bounded part size, parallelism, an explicit per-request timeout, coarse
+credential-free progress, and a remote content-length check before the publisher advances. All
+artifacts must verify first; `version_info.json` remains the final uploaded object before CDN
+refresh. The preflight compares both semantic `version` and timestamp `version_code`: a semantic
+downgrade or same-version/different-build reuse is rejected, while an exact manifest match remains
+retryable after an interrupted publication.
+
 The audit is a pure Node process. It must not launch Electron, create an application window, touch a
 real user database, read transcripts, or mutate production storage. It requires Node.js 22.5 or
 newer so the disposable databases can use the built-in `node:sqlite` engine without another native
@@ -162,8 +170,8 @@ Production publication may start only after:
 3. the current local release inputs and release notes are reviewed; any desired Git synchronization
    is completed explicitly before invoking fast publish;
 4. each supported platform is built from that same commit and `version_code`;
-5. publication compares the local and existing platform manifests with `compare-versions` and
-   refuses a downgrade or a conflicting reuse of the same `version_code`;
+5. publication compares semantic version and `version_code` in the local and existing platform
+   manifests with `compare-versions`, refusing either downgrade or conflicting version reuse;
 6. signed/notarized artifacts and updater metadata are uploaded to the production platform prefix;
 7. public manifests and artifact URLs are fetched back and matched to the local release metadata.
 

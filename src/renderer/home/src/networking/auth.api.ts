@@ -1,28 +1,26 @@
 import { authEmitter } from '@/emitter/auth.emitter';
+import {
+  AuthHttpError,
+  parseCustomerAuthResult,
+  parseCurrentCustomerSession,
+  runWithAuthRequestTimeout,
+  type CustomerAuthResult,
+  type CurrentCustomerSession,
+} from '@/stores/auth/authSession.service';
+import { getCustomerSessionIdForToken } from '@/stores/auth/authToken.service';
 
 const TEST_CORE_URL = 'https://bl-test-api.terncloud.com';
 const PROD_CORE_URL = 'https://prod-bitterless-hcqmtqwtox.cn-shanghai.fcapp.run';
 const DEFAULT_PROD_CORE_URL = PROD_CORE_URL;
 const DEFAULT_DEV_CORE_URL = TEST_CORE_URL;
 const TOKEN_HEADER = '-x-bl-token';
+const AUTH_REQUEST_TIMEOUT_MS = 20_000;
 
-export interface AuthLoginResult {
-  token: string;
-  scope: 'customer';
-  email: string;
-}
+export type AuthLoginResult = CustomerAuthResult;
 
 export type OtpPurpose = 'login' | 'reset_password';
 
-export interface CurrentCustomer {
-  id: number;
-  email: string;
-  nickname?: string;
-  scope: 'customer';
-  status: 'invited' | 'active' | 'inactive';
-  has_password: boolean;
-  must_set_password: boolean;
-}
+export type CurrentCustomer = CurrentCustomerSession;
 
 const getBaseUrl = (): string => {
   const configured = import.meta.env.VITE_BITTERLESS_CORE_URL;
@@ -34,10 +32,11 @@ const getBaseUrl = (): string => {
 const reportAuthInvalidation = async (
   status: number,
   reason: string,
-  source: string
+  source: string,
+  sessionId: string,
 ): Promise<void> => {
   try {
-    await authEmitter.invalidateSession({ status, reason, source });
+    await authEmitter.invalidateSession({ status, reason, source, sessionId });
   } catch (err) {
     console.warn('[auth.api] Failed to report auth invalidation:', err);
   }
@@ -45,7 +44,7 @@ const reportAuthInvalidation = async (
 
 const parseResponse = async <T>(
   res: Response,
-  context: { path: string; token?: string }
+  context: { path: string; sessionId?: string | null },
 ): Promise<T> => {
   const text = await res.text();
   let data: any = {};
@@ -58,10 +57,10 @@ const parseResponse = async <T>(
     const message = Array.isArray(data?.message)
       ? data.message.join(', ')
       : data?.message || data?.error || `Request failed with ${res.status}`;
-    if (res.status === 401 && context.token && context.path !== '/auth/logout') {
-      await reportAuthInvalidation(res.status, message, context.path);
+    if (res.status === 401 && context.sessionId && context.path !== '/auth/logout') {
+      await reportAuthInvalidation(res.status, message, context.path, context.sessionId);
     }
-    throw new Error(message);
+    throw new AuthHttpError(res.status, message);
   }
   return data as T;
 };
@@ -70,28 +69,37 @@ const request = async <T>(
   path: string,
   options: RequestInit & { token?: string } = {}
 ): Promise<T> => {
-  const headers = new Headers(options.headers);
+  const { token, signal: externalSignal, ...requestOptions } = options;
+  const headers = new Headers(requestOptions.headers);
   headers.set('content-type', 'application/json');
-  if (options.token) {
-    headers.set(TOKEN_HEADER, options.token);
+  if (token) {
+    headers.set(TOKEN_HEADER, token);
   }
 
-  const res = await fetch(`${getBaseUrl()}${path}`, {
-    ...options,
-    headers
-  });
-  return parseResponse<T>(res, { path, token: options.token });
+  const sessionId = token ? getCustomerSessionIdForToken(token) : null;
+  return await runWithAuthRequestTimeout(
+    async (signal) => {
+      const res = await fetch(`${getBaseUrl()}${path}`, {
+        ...requestOptions,
+        headers,
+        signal,
+      });
+      return await parseResponse<T>(res, { path, sessionId });
+    },
+    AUTH_REQUEST_TIMEOUT_MS,
+    externalSignal,
+  );
 };
 
-export const loginApi = (data: {
+export const loginApi = async (data: {
   email: string;
   password: string;
   device_id: string;
 }): Promise<AuthLoginResult> =>
-  request<AuthLoginResult>('/auth/login', {
+  parseCustomerAuthResult(await request<unknown>('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ ...data, scope: 'customer' })
-  });
+    body: JSON.stringify({ ...data, scope: 'customer' }),
+  }));
 
 export const sendOtpApi = (data: { email: string; purpose: OtpPurpose }): Promise<{ ok: true }> =>
   request<{ ok: true }>('/auth/send-otp', {
@@ -99,15 +107,15 @@ export const sendOtpApi = (data: { email: string; purpose: OtpPurpose }): Promis
     body: JSON.stringify(data)
   });
 
-export const verifyOtpApi = (data: {
+export const verifyOtpApi = async (data: {
   email: string;
   code: string;
   device_id: string;
 }): Promise<AuthLoginResult> =>
-  request<AuthLoginResult>('/auth/verify-otp', {
+  parseCustomerAuthResult(await request<unknown>('/auth/verify-otp', {
     method: 'POST',
-    body: JSON.stringify({ ...data, purpose: 'login' })
-  });
+    body: JSON.stringify({ ...data, purpose: 'login' }),
+  }));
 
 export const resetPasswordApi = (data: {
   email: string;
@@ -120,11 +128,15 @@ export const resetPasswordApi = (data: {
     body: JSON.stringify(data)
   });
 
-export const meApi = (token: string): Promise<CurrentCustomer> =>
-  request<CurrentCustomer>('/auth/me', {
+export const meApi = async (
+  token: string,
+  signal?: AbortSignal,
+): Promise<CurrentCustomer> =>
+  parseCurrentCustomerSession(await request<unknown>('/auth/me', {
     method: 'GET',
-    token
-  });
+    token,
+    signal,
+  }));
 
 export const changePasswordApi = (
   token: string,

@@ -27,23 +27,24 @@ Maestro  │ tabs · address · tools                         [update] [other to
 Omni     │ Omni Browser [Layout]                       [update] [window controls] │
 ```
 
-The existing Royal Blue Home/Omni chrome and Maestro toolbar remain unchanged. The single visual
-decision is a short, content-width action using each Menu Bar's established update treatment; no
-new icon, toolbar, fixed width, or decorative element is introduced.
+The existing Royal Blue Home/Omni chrome and Maestro toolbar remain unchanged. Home defines the
+compact content-width geometry, Omni matches it exactly, and both use the same blue shimmer; no new
+icon, toolbar, or fixed width is introduced.
 
 ## Design fit
 
-- **Palette:** Royal Blue chrome `#4E5882`, chrome edge `#3D4666`, ready amber `#F29A00`, amber
-  hover `#E28600`, label ink `#1E1A4D`, and Maestro white `#FFFFFF`; these are the existing menu and
-  update colors, not a new theme.
-- **Type:** keep the existing utility typography—12px/500 in Home and Omni, 13px/500 in Maestro—so
-  the action reads as window chrome rather than page content.
+- **Palette:** Royal Blue chrome `#4E5882`, chrome edge `#3D4666`, action blue `#165DFF`, hover blue
+  `#0E4FD6`, and white `#FFFFFF`; Home and Omni share one update treatment.
+- **Type:** keep compact utility typography—12px/500 in Home and Omni, 13px/500 in Maestro—so the
+  action reads as window chrome rather than page content.
 - **Layout:** one content-width action at each owning Menu Bar's trailing edge; Omni's instance sits
-  after the flexible title/Layout region and before native Windows controls.
-- **Signature:** the exact compact `update` label is the only new visual identifier. Detailed state
-  remains in title and disabled behavior, avoiding an icon or expanding busy copy.
-- **Critique:** a new badge system or animated treatment would compete with established chrome and
-  add width. Reusing the existing amber/shimmer treatments keeps this change specific and restrained.
+  after the flexible title/Layout region and before native Windows controls. Home and Omni both use
+  4px × 10px padding and a 12px radius; neither declares a fixed width. Both leave exactly 12px to
+  the right edge on macOS or to native window controls on Windows.
+- **Signature:** the exact compact `update` label and restrained blue shimmer identify the ready
+  action. Detailed state remains in title and disabled behavior, avoiding an icon or expanding copy.
+- **Motion:** the 2.6-second shimmer stays behind the label and is disabled by the operating
+  system's reduced-motion preference.
 
 ## Path
 
@@ -82,6 +83,9 @@ new icon, toolbar, fixed width, or decorative element is introduced.
   as normal absence, logs malformed or failed replay, and lets valid live state win.
 - Omni shows the action only after download readiness and calls `UpdateHandler/quitAndInstall` when
   clicked. It must not start another poll, fetch update metadata, or own updater transport.
+- Home and Omni match in padding, font size, radius, blue background, white label, hover color,
+  shimmer timing, reduced-motion behavior, and effective right spacing without changing
+  update-state ownership.
 - Preserve Home/Maestro update state, the idempotent Main polling coordinator, updater gates,
   installation lifecycle, language bootstrap, and all unrelated primary-worktree changes.
 
@@ -99,8 +103,8 @@ new icon, toolbar, fixed width, or decorative element is introduced.
 - Focused strict renderer TypeScript, targeted lint with the existing JavaScript return-type rule
   excluded, and committed diff checks pass.
 - Independent review finds no open P1, P2, or P3 issue.
-- Do not launch Electron, build, package, sign, notarize, publish, upload, refresh CDN, or access the
-  remote update feed; Ral retains real-device visual and update acceptance.
+- Automated checks do not require launching Electron. Ral retains real-device visual and update
+  acceptance.
 
 ## Delivery evidence — 2026-07-27
 
@@ -128,3 +132,16 @@ new icon, toolbar, fixed width, or decorative element is introduced.
 
 - Correct the shared compact Menu Bar label spelling to `update` in Home, Maestro, and
   top-level Omni without changing its layout, styling, readiness behavior, or ownership boundary.
+
+## Follow-up — 2026-08-02
+
+- Corrected the shared visible label to `update` in English and Chinese.
+- Changed Omni's ready action from the legacy amber treatment to the existing blue shimmering
+  treatment used by the main workspace, including reduced-motion support.
+- Added source guards for the corrected label, blue palette, shimmer, and label stacking.
+- Update regressions, targeted ESLint, renderer i18n, and the full Electron build passed. The change
+  shipped in signed and notarized macOS ARM `0.0.60`; Ral retains visual acceptance.
+- Clarified the visual source of truth: Home keeps its compact 4px × 10px geometry and gains the blue
+  shimmer, while Omni drops the larger Maestro geometry and matches Home exactly.
+- Removed Omni's macOS double right spacing: macOS uses the Menu Bar's 12px right padding, while
+  Windows retains a 12px button margin before native controls.

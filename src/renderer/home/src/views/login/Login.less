@@ -44,6 +44,30 @@
   white-space: nowrap;
 }
 
+.login-view__session-recovery {
+  min-height: 148px;
+  display: grid;
+  align-items: center;
+  color: #4e5882;
+
+  .arco-spin {
+    width: 100%;
+  }
+
+  p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+}
+
+.login-view__session-recovery-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 20px;
+}
+
 .login-view__password-modal,
 .login-view__recovery-modal {
   > p {

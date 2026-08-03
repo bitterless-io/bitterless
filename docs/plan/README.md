@@ -40,6 +40,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [customer-account-recovery](tasks/customer-account-recovery.md) | customer recovery, lifecycle enforcement, and Royal Blue home surface | done | — |
 | [login-shared-window-shell](tasks/login-shared-window-shell.md) | shared MenuBar and update controls across login and authenticated routes | done | customer-account-recovery |
 | [customer-auth-login-account-001](tasks/customer-auth-login-account-001.md) | deterministic login transition, General account identity, and manual logout | implemented; owner verification pending | customer-account-recovery, login-shared-window-shell |
+| [customer-auth-session-recovery-002](tasks/customer-auth-session-recovery-002.md) | durable saved-session recovery across restart and transient Core failures | implemented; owner verification pending | customer-auth-login-account-001 |
 | [coin-subapp-shell-001](tasks/coin-subapp-shell-001.md) | Coin singleton window, scoped bridge, and full-width analysis shell | done | — |
 | [coin-resource-settings-002](tasks/coin-resource-settings-002.md) | Codex/GMGN/service configuration and secure local probes; Alchemy adapter deferred | implemented; owner verification pending | coin-subapp-shell-001 |
 | [coin-analysis-workspace-003](tasks/coin-analysis-workspace-003.md) | Coin analysis tabs, truthful source adapters, persistence, and decisions | implemented; owner verification pending | coin-resource-settings-002 |
@@ -98,6 +99,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [release-fast-publish-dependency-sync-003](tasks/release-fast-publish-dependency-sync-003.md) | restore Electron 40 and install locked dependencies before macOS ARM version preparation | implemented; owner verification pending | release-fast-publish-version-code-002 |
 | [release-notarization-retry-004](tasks/release-notarization-retry-004.md) | logged network-only retries for independently rerunnable macOS App and DMG notarization | implemented; owner verification pending | release-fast-publish-dependency-sync-003 |
 | [release-local-fast-publish-005](tasks/release-local-fast-publish-005.md) | publish the current local macOS ARM source without an implicit Git pull | implemented; owner verification pending | release-fast-publish-dependency-sync-003, release-notarization-retry-004 |
+| [release-oss-multipart-upload-006](tasks/release-oss-multipart-upload-006.md) | resilient large-artifact OSS upload and semantic release ordering | done | release-local-fast-publish-005 |
 | [chat-production-entry-flag-001](tasks/chat-production-entry-flag-001.md) | production-hidden Chat entry and persisted General override | done | — |
 | [translator-miniapp-001](tasks/translator-miniapp-001.md) | shared Codex registry plus fixed GPT-5.5 low Translator in Omni | done | chat-production-entry-flag-001 |
 | [translator-language-direction-002](tasks/translator-language-direction-002.md) | explicit-range direction detection and English-abbreviation Chinese meanings | done | translator-miniapp-001 |

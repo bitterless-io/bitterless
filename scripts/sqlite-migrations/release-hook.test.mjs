@@ -1,14 +1,26 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf-8')
 const require = createRequire(import.meta.url)
 const {
+  OSS_MULTIPART_PARALLEL,
+  OSS_MULTIPART_PART_SIZE_BYTES,
+  OSS_MULTIPART_THRESHOLD_BYTES,
+  OSS_REQUEST_TIMEOUT_MS,
+  assertLocalReleaseMatchesDist,
+  assertReleaseOrder,
   artifactNameMatchesVersion,
   parseUserKeychainSearchList,
+  publishRelease,
   selectDeveloperIdApplicationIdentity,
+  uploadFile,
+  uploadReleaseFiles,
+  validateUpdaterArtifacts,
   withTemporaryUserKeychainSearchList,
 } = require('../publish.js')
 const {
@@ -27,6 +39,18 @@ test('publish audits SQLite before build, signing, or upload', () => {
   assert(auditIndex >= 0)
   assert(buildIndex > auditIndex)
   assert(publishConfigIndex > auditIndex)
+})
+
+test('publish preflight exits before build, signing, or upload', () => {
+  const source = read('scripts/publish.js')
+  const mainSource = source.slice(source.indexOf('const main = async () =>'))
+  const remoteGuardIndex = mainSource.indexOf('await assertNoRemoteDowngrade')
+  const preflightIndex = mainSource.indexOf('if (options.preflightOnly)')
+  const buildIndex = mainSource.indexOf('runBuild(options)')
+
+  assert(remoteGuardIndex >= 0)
+  assert(preflightIndex > remoteGuardIndex)
+  assert(buildIndex > preflightIndex)
 })
 
 test('direct package scripts have migration pre-hooks', () => {
@@ -50,7 +74,7 @@ test('fast mac ARM publish uses local source and locked dependencies before patc
   const pkg = JSON.parse(read('package.json'))
   assert.equal(
     pkg.scripts['fast_publish:mac_arm'],
-    'yarn install --frozen-lockfile && node scripts/patch.js && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm',
+    'yarn install --frozen-lockfile && node scripts/patch.js && node scripts/publish.js --env prod --platform mac_arm --preflight-only && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm',
   )
   assert.doesNotMatch(pkg.scripts['fast_publish:mac_arm'], /git_pull\.js/)
 })
@@ -94,6 +118,285 @@ test('release version codes use the common comparison library', () => {
   const releaseSources = paths.map(read).join('\n')
   assert.doesNotMatch(releaseSources, /\.versionCode\s*[<>]/)
   assert.doesNotMatch(releaseSources, /versionCode\s*-\s*/)
+})
+
+test('release ordering rejects semantic downgrade and conflicting version reuse', () => {
+  const remote = { version: '0.0.58', versionCode: '260731183355' }
+
+  assert.doesNotThrow(() => {
+    assertReleaseOrder(
+      { version: '0.0.59', version_code: '260802120000' },
+      remote,
+    )
+  })
+  assert.doesNotThrow(() => {
+    assertReleaseOrder(
+      { version: remote.version, version_code: remote.versionCode },
+      remote,
+    )
+  })
+  assert.throws(
+    () => assertReleaseOrder({ version: '0.0.56', version_code: '260802120000' }, remote),
+    /semantic version downgrade/,
+  )
+  assert.throws(
+    () => assertReleaseOrder({ version: remote.version, version_code: '260802120000' }, remote),
+    /semantic version reuse/,
+  )
+  assert.throws(
+    () => assertReleaseOrder({ version: '0.0.59', version_code: '260730120000' }, remote),
+    /version_code downgrade/,
+  )
+})
+
+test('publisher requires package and dist to describe the exact same release', () => {
+  assert.doesNotThrow(() => {
+    assertLocalReleaseMatchesDist(
+      { version: '0.0.60', version_code: '260802114545' },
+      { version: '0.0.60', versionCode: '260802114545' },
+    )
+  })
+  assert.throws(
+    () => assertLocalReleaseMatchesDist(
+      { version: '0.0.60', version_code: '260802114545' },
+      { version: '0.0.59', versionCode: '260802111453' },
+    ),
+    /Stale dist release metadata/,
+  )
+})
+
+test('publisher validates updater references and required blockmaps', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bitterless-updater-test-'))
+  const updater = join(tempDir, 'latest-mac.yml')
+  const zip = join(tempDir, 'Bitterless-0.0.60-arm64-mac.zip')
+  const dmg = join(tempDir, 'Bitterless-0.0.60.dmg')
+  const zipBlockmap = `${zip}.blockmap`
+  const dmgBlockmap = `${dmg}.blockmap`
+  const artifacts = [updater, zip, dmg, zipBlockmap, dmgBlockmap]
+
+  try {
+    const writeUpdater = (zipReference) => writeFileSync(updater, [
+        'version: 0.0.60',
+        'files:',
+        `  - url: ${zipReference}`,
+        '  - url: Bitterless-0.0.60.dmg',
+        `path: ${zipReference}`,
+        '',
+      ].join('\n'))
+    writeUpdater('Bitterless-0.0.60-arm64-mac.zip')
+    for (const artifact of artifacts.slice(1)) writeFileSync(artifact, 'artifact')
+
+    assert.doesNotThrow(() => validateUpdaterArtifacts('mac_arm', '0.0.60', artifacts))
+    assert.throws(
+      () => validateUpdaterArtifacts('mac_arm', '0.0.60', artifacts.filter((item) => item !== zip)),
+      /references missing artifact/,
+    )
+    assert.throws(
+      () => validateUpdaterArtifacts(
+        'mac_arm',
+        '0.0.60',
+        artifacts.filter((item) => item !== dmgBlockmap),
+      ),
+      /missing required blockmap/,
+    )
+    assert.throws(
+      () => validateUpdaterArtifacts('mac_arm', '0.0.59', artifacts),
+      /version mismatch/,
+    )
+    for (const invalidReference of [
+      'subdir/Bitterless-0.0.60-arm64-mac.zip',
+      'https://other.example/Bitterless-0.0.60-arm64-mac.zip',
+    ]) {
+      writeUpdater(invalidReference)
+      assert.throws(
+        () => validateUpdaterArtifacts('mac_arm', '0.0.60', artifacts),
+        /only plain filenames are allowed/,
+      )
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('publisher uses multipart upload for large artifacts and verifies remote size', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bitterless-publish-test-'))
+  const smallFile = join(tempDir, 'latest.yml')
+  const largeFile = join(tempDir, 'Bitterless-test.dmg')
+  const calls = []
+  const uploadedSizes = new Map()
+  const client = {
+    async put(objectKey, filePath, options) {
+      calls.push({ method: 'put', objectKey, options })
+      uploadedSizes.set(objectKey, statSync(filePath).size)
+    },
+    async multipartUpload(objectKey, filePath, options) {
+      calls.push({ method: 'multipartUpload', objectKey, options })
+      uploadedSizes.set(objectKey, statSync(filePath).size)
+      await options.progress(0.5)
+    },
+    async head(objectKey, options) {
+      calls.push({ method: 'head', objectKey, options })
+      return {
+        res: {
+          headers: {
+            'content-length': String(uploadedSizes.get(objectKey)),
+          },
+        },
+      }
+    },
+  }
+
+  try {
+    writeFileSync(smallFile, 'metadata')
+    writeFileSync(largeFile, '')
+    truncateSync(largeFile, OSS_MULTIPART_THRESHOLD_BYTES)
+
+    await uploadFile(client, 'release/latest.yml', smallFile, false)
+    await uploadFile(client, 'release/Bitterless-test.dmg', largeFile, false)
+
+    const putCall = calls.find((call) => call.method === 'put')
+    const multipartCall = calls.find((call) => call.method === 'multipartUpload')
+    const headCalls = calls.filter((call) => call.method === 'head')
+    assert.equal(putCall.options.timeout, OSS_REQUEST_TIMEOUT_MS)
+    assert.equal(multipartCall.options.timeout, OSS_REQUEST_TIMEOUT_MS)
+    assert.equal(multipartCall.options.parallel, OSS_MULTIPART_PARALLEL)
+    assert.equal(multipartCall.options.partSize, OSS_MULTIPART_PART_SIZE_BYTES)
+    assert.equal(headCalls.length, 2)
+    assert.ok(headCalls.every((call) => call.options.timeout === OSS_REQUEST_TIMEOUT_MS))
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('publisher rejects an OSS object whose remote size does not match', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bitterless-publish-size-test-'))
+  const filePath = join(tempDir, 'version_info.json')
+  const client = {
+    async put() {},
+    async head() {
+      return { res: { headers: { 'content-length': '1' } } }
+    },
+  }
+
+  try {
+    writeFileSync(filePath, '{"version":"0.0.59"}')
+    await assert.rejects(
+      uploadFile(client, 'release/version_info.json', filePath, false),
+      /Uploaded size mismatch/,
+    )
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('publisher aborts an incomplete multipart upload and preserves the original failure', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bitterless-publish-abort-test-'))
+  const filePath = join(tempDir, 'Bitterless-test.dmg')
+  const calls = []
+  const uploadError = new Error('multipart upload failed')
+  const client = {
+    async multipartUpload(objectKey, _filePath, options) {
+      calls.push({ method: 'multipartUpload', objectKey })
+      await options.progress(0, { uploadId: 'upload-123' })
+      throw uploadError
+    },
+    async abortMultipartUpload(objectKey, uploadId, options) {
+      calls.push({ method: 'abortMultipartUpload', objectKey, uploadId, options })
+    },
+    async head() {
+      throw new Error('head must not run after multipart failure')
+    },
+  }
+
+  try {
+    writeFileSync(filePath, '')
+    truncateSync(filePath, OSS_MULTIPART_THRESHOLD_BYTES)
+    await assert.rejects(
+      uploadFile(client, 'release/Bitterless-test.dmg', filePath, false),
+      (error) => error === uploadError,
+    )
+    assert.deepEqual(calls, [
+      { method: 'multipartUpload', objectKey: 'release/Bitterless-test.dmg' },
+      {
+        method: 'abortMultipartUpload',
+        objectKey: 'release/Bitterless-test.dmg',
+        uploadId: 'upload-123',
+        options: { timeout: OSS_REQUEST_TIMEOUT_MS },
+      },
+    ])
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('publisher preserves the upload failure when multipart cleanup also fails', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bitterless-publish-abort-failure-test-'))
+  const filePath = join(tempDir, 'Bitterless-test.dmg')
+  const uploadError = new Error('multipart upload failed')
+  const client = {
+    async multipartUpload(_objectKey, _filePath, options) {
+      await options.progress(0, { uploadId: 'upload-456' })
+      throw uploadError
+    },
+    async abortMultipartUpload() {
+      throw Object.assign(new Error('cleanup failed'), { code: 'CleanupFailed' })
+    },
+  }
+
+  try {
+    writeFileSync(filePath, '')
+    truncateSync(filePath, OSS_MULTIPART_THRESHOLD_BYTES)
+    await assert.rejects(
+      uploadFile(client, 'release/Bitterless-test.dmg', filePath, false),
+      (error) => error === uploadError,
+    )
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('release uploads artifacts before the manifest and refreshes only afterward', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bitterless-publish-order-test-'))
+  const artifact = join(tempDir, 'Bitterless-test.zip.blockmap')
+  const manifest = join(tempDir, 'version_info.json')
+  const calls = []
+  const sizes = new Map()
+  const client = {
+    async put(objectKey, filePath) {
+      calls.push(`put:${objectKey}`)
+      sizes.set(objectKey, statSync(filePath).size)
+    },
+    async head(objectKey) {
+      calls.push(`head:${objectKey}`)
+      return { res: { headers: { 'content-length': String(sizes.get(objectKey)) } } }
+    },
+  }
+
+  try {
+    writeFileSync(artifact, 'artifact')
+    writeFileSync(manifest, '{"version":"0.0.60"}')
+    await publishRelease({
+      client,
+      objectPrefix: 'release',
+      artifacts: [artifact],
+      versionInfoPath: manifest,
+      dryRun: false,
+      refresh: async () => calls.push('refresh'),
+    })
+    assert.deepEqual(calls, [
+      'put:release/Bitterless-test.zip.blockmap',
+      'head:release/Bitterless-test.zip.blockmap',
+      'put:release/version_info.json',
+      'head:release/version_info.json',
+      'refresh',
+    ])
+
+    calls.length = 0
+    await uploadReleaseFiles(null, 'release', [artifact], manifest, true)
+    assert.deepEqual(calls, [])
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('DMG signing uses a private disposable keychain', () => {
