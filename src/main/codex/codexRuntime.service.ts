@@ -34,11 +34,23 @@ export interface CodexRuntimeRunInput {
   model: CodexRuntimeModel;
   effort: CodexRuntimeEffort;
   serviceTier?: CodexRuntimeServiceTier;
+  allowModelNetwork?: boolean;
   systemPrompt: string;
   prompt: string;
   maxOutputBytes: number;
   signal: AbortSignal;
+  onStage?: (stage: CodexRuntimeStage) => void;
 }
+
+export type CodexRuntimeStage =
+  | 'pi-load-started'
+  | 'pi-load-completed'
+  | 'target-context-started'
+  | 'target-context-completed'
+  | 'session-create-started'
+  | 'session-create-completed'
+  | 'prompt-started'
+  | 'prompt-completed';
 
 export interface CodexRuntimeRunResult {
   provider: typeof CODEX_RUNTIME_PROVIDER;
@@ -126,6 +138,7 @@ export interface CodexRuntimePiModule {
     create(options?: {
       authPath?: string;
       modelsPath?: string | null;
+      allowModelNetwork?: boolean;
     }): Promise<CodexRuntimePiModelRuntime>;
   };
   ModelRegistry:
@@ -424,12 +437,16 @@ const createPiTargetContext = async (
   pi: CodexRuntimePiModule,
   authPath: string,
   modelsPath: string,
-  modelId: CodexRuntimeModel
+  modelId: CodexRuntimeModel,
+  allowModelNetwork?: boolean
 ): Promise<CodexRuntimePiTargetContext> => {
   if (pi.ModelRuntime?.create) {
-    const modelRuntime = await pi.ModelRuntime.create({ authPath, modelsPath });
+    const modelRuntime = await pi.ModelRuntime.create({
+      authPath,
+      modelsPath,
+      allowModelNetwork
+    });
     const modelRegistry = createModernModelRegistry(pi, modelRuntime);
-    await modelRegistry.refresh?.();
     return {
       modelRuntime,
       modelRegistry,
@@ -449,19 +466,30 @@ const createPiTargetContext = async (
   };
 };
 
-const waitForSession = async (
-  creation: Promise<{ session: CodexRuntimePiSession }>,
-  signal: AbortSignal
-): Promise<CodexRuntimePiSession> => {
+const waitForAbortable = async <T>(operation: Promise<T>, signal: AbortSignal): Promise<T> => {
+  void operation.catch(() => undefined);
   if (signal.aborted) throw new CodexRuntimeError('cancelled');
+
   let removeAbort = (): void => undefined;
   const aborted = new Promise<never>((_resolve, reject) => {
     const onAbort = (): void => reject(new CodexRuntimeError('cancelled'));
     signal.addEventListener('abort', onAbort, { once: true });
     removeAbort = () => signal.removeEventListener('abort', onAbort);
+    if (signal.aborted) onAbort();
   });
   try {
-    return (await Promise.race([creation, aborted])).session;
+    return await Promise.race([operation, aborted]);
+  } finally {
+    removeAbort();
+  }
+};
+
+const waitForSession = async (
+  creation: Promise<{ session: CodexRuntimePiSession }>,
+  signal: AbortSignal
+): Promise<CodexRuntimePiSession> => {
+  try {
+    return (await waitForAbortable(creation, signal)).session;
   } catch (error) {
     if (signal.aborted) {
       void creation
@@ -472,8 +500,6 @@ const waitForSession = async (
         .catch(() => undefined);
     }
     throw error;
-  } finally {
-    removeAbort();
   }
 };
 
@@ -531,6 +557,14 @@ export class CodexRuntimeService {
   constructor(private readonly dependencies: CodexRuntimeDependencies) {}
 
   async run(input: CodexRuntimeRunInput): Promise<CodexRuntimeRunResult> {
+    const emitStage = (stage: CodexRuntimeStage): void => {
+      try {
+        input.onStage?.(stage);
+      } catch {
+        // Runtime progress observation must not affect the provider request.
+      }
+    };
+
     if (!CODEX_RUNTIME_MODELS.includes(input.model)) {
       throw new CodexRuntimeError('model-mismatch');
     }
@@ -559,20 +593,33 @@ export class CodexRuntimeService {
 
     let pi: CodexRuntimePiModule;
     try {
-      pi = await this.dependencies.loadPiModule();
-    } catch {
+      emitStage('pi-load-started');
+      pi = await waitForAbortable(
+        Promise.resolve().then(() => this.dependencies.loadPiModule()),
+        input.signal
+      );
+      emitStage('pi-load-completed');
+    } catch (error) {
+      if (input.signal.aborted) throw new CodexRuntimeError('cancelled');
       throw new CodexRuntimeError('runtime-unavailable');
     }
 
     let targetContext: CodexRuntimePiTargetContext;
     try {
-      targetContext = await createPiTargetContext(
-        pi,
-        this.dependencies.authPath(),
-        this.dependencies.modelsPath(),
-        input.model
+      emitStage('target-context-started');
+      targetContext = await waitForAbortable(
+        createPiTargetContext(
+          pi,
+          this.dependencies.authPath(),
+          this.dependencies.modelsPath(),
+          input.model,
+          input.allowModelNetwork
+        ),
+        input.signal
       );
-    } catch {
+      emitStage('target-context-completed');
+    } catch (error) {
+      if (input.signal.aborted) throw new CodexRuntimeError('cancelled');
       throw new CodexRuntimeError('runtime-unavailable');
     }
     const { model, modelRegistry } = targetContext;
@@ -587,6 +634,7 @@ export class CodexRuntimeService {
     });
     let creation: Promise<{ session: CodexRuntimePiSession }>;
     try {
+      emitStage('session-create-started');
       creation = pi.createAgentSession({
         model,
         ...(targetContext.modelRuntime
@@ -656,6 +704,7 @@ export class CodexRuntimeService {
 
     try {
       session = await waitForSession(creation, input.signal);
+      emitStage('session-create-completed');
       assertTarget(session.model ?? model, input.model);
       if (session.thinkingLevel !== undefined && session.thinkingLevel !== input.effort) {
         throw new CodexRuntimeError('effort-mismatch');
@@ -699,7 +748,9 @@ export class CodexRuntimeService {
         }
       });
 
+      emitStage('prompt-started');
       await waitForPrompt(session, input.prompt, input.signal, abortSession);
+      emitStage('prompt-completed');
       assertFastServiceTierApplied();
       if (input.signal.aborted) throw new CodexRuntimeError('cancelled');
       if (toolViolation) throw new CodexRuntimeError('tool-violation');

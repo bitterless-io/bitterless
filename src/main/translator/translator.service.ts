@@ -24,6 +24,7 @@ import {
 } from '@main/modelProvider/modelProvider.service';
 import type { CodexRuntimeService } from '@main/codex/codexRuntime.service';
 import { CodexRuntimeAuthRequiredError, CodexRuntimeError } from '@main/codex/codexRuntime.service';
+import type { TranslatorLogger } from '@main/logging/translatorLog.service';
 
 const TRANSLATOR_TIMEOUT_MS = 60_000;
 const TRANSLATOR_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -57,6 +58,8 @@ export interface TranslatorServiceDependencies {
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
   timeoutMs?: number;
+  now?: () => number;
+  logger: TranslatorLogger;
 }
 
 const publicError = (code: TranslatorErrorCode): TranslatorError => ({
@@ -110,6 +113,47 @@ class TranslatorServiceError extends Error {
   }
 }
 
+class TranslatorOperationCancelledError extends Error {
+  constructor() {
+    super('cancelled');
+    this.name = 'TranslatorOperationCancelledError';
+  }
+}
+
+const waitForAbortable = async <T>(
+  operationFactory: () => Promise<T>,
+  signal: AbortSignal
+): Promise<T> => {
+  const operation = Promise.resolve().then(operationFactory);
+  void operation.catch(() => undefined);
+  if (signal.aborted) throw new TranslatorOperationCancelledError();
+
+  let removeAbort = (): void => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    const onAbort = (): void => reject(new TranslatorOperationCancelledError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    removeAbort = () => signal.removeEventListener('abort', onAbort);
+    if (signal.aborted) onAbort();
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    removeAbort();
+  }
+};
+
+const errorCause = (error: unknown): string => {
+  if (error instanceof TranslatorServiceError) return `translator-${error.code}`;
+  if (error instanceof CodexRuntimeAuthRequiredError) return `codex-auth-${error.reason}`;
+  if (error instanceof CodexRuntimeError) return `codex-${error.code}`;
+  if (error instanceof ModelProviderServiceError) return `provider-${error.code}`;
+  if (error instanceof TranslatorOperationCancelledError) return 'operation-cancelled';
+  if (error instanceof TypeError) return 'type-error';
+  if (error instanceof RangeError) return 'range-error';
+  if (error instanceof Error) return 'unclassified-error';
+  return 'non-error-rejection';
+};
+
 const runtimeErrorCode = (error: CodexRuntimeError): TranslatorErrorCode => {
   const codes: Record<CodexRuntimeError['code'], TranslatorErrorCode> = {
     cancelled: 'provider-error',
@@ -128,12 +172,17 @@ export class TranslatorService {
   private readonly setTimer: typeof setTimeout;
   private readonly clearTimer: typeof clearTimeout;
   private readonly timeoutMs: number;
+  private readonly now: () => number;
+  private readonly logger: TranslatorLogger;
   private readonly active = new Map<string, ActiveTranslation>();
+  private attempt = 0;
 
   constructor(private readonly dependencies: TranslatorServiceDependencies) {
     this.setTimer = dependencies.setTimer ?? setTimeout;
     this.clearTimer = dependencies.clearTimer ?? clearTimeout;
     this.timeoutMs = dependencies.timeoutMs ?? TRANSLATOR_TIMEOUT_MS;
+    this.now = dependencies.now ?? Date.now;
+    this.logger = dependencies.logger;
   }
 
   async translate(value: unknown): Promise<TranslatorTranslateResult> {
@@ -156,14 +205,77 @@ export class TranslatorService {
       timedOut: false
     };
     this.active.set(input.clientId, current);
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const attempt = (this.attempt += 1);
+    const startedAt = this.now();
+    let activeStage = 'accepted';
+    let terminalRecorded = false;
+    const writeLog = (
+      level: 'info' | 'warn' | 'error',
+      stage: string,
+      options: { errorCode?: TranslatorErrorCode; cause?: string } = {}
+    ): void => {
+      try {
+        this.logger.write({
+          level,
+          attempt,
+          stage,
+          elapsedMs: this.now() - startedAt,
+          ...(stage === 'accepted'
+            ? { sourceCodePoints: Array.from(input.sourceText).length }
+            : {}),
+          ...options
+        });
+      } catch {
+        // Diagnostics are isolated from the translation result contract.
+      }
+    };
+    const recordStage = (stage: string): void => {
+      if (terminalRecorded) return;
+      activeStage = stage;
+      writeLog('info', stage);
+    };
+    const recordTerminal = (
+      stage: 'cancelled' | 'completed' | 'failed' | 'timeout',
+      options: { errorCode?: TranslatorErrorCode; cause?: string } = {}
+    ): void => {
+      if (terminalRecorded) return;
+      terminalRecorded = true;
+      writeLog(stage === 'completed' ? 'info' : stage === 'cancelled' ? 'warn' : 'error', stage, {
+        ...options,
+        ...(options.cause ? { cause: `${activeStage}-${options.cause}` } : {})
+      });
+    };
+    const awaitStage = async <T>(stage: string, operation: () => Promise<T>): Promise<T> => {
+      recordStage(`${stage}-started`);
+      const result = await waitForAbortable(operation, current.controller.signal);
+      recordStage(`${stage}-completed`);
+      return result;
+    };
+    const cancelled = (): TranslatorTranslateResult => {
+      recordTerminal('cancelled');
+      return this.cancelled(input);
+    };
+    const failed = (code: TranslatorErrorCode, cause: unknown): TranslatorTranslateResult => {
+      recordTerminal(code === 'timeout' ? 'timeout' : 'failed', {
+        errorCode: code,
+        cause: errorCause(cause)
+      });
+      return this.failed(input, code);
+    };
+    let timer: ReturnType<typeof setTimeout> | null = this.setTimer(() => {
+      current.timedOut = true;
+      current.controller.abort();
+    }, this.timeoutMs);
     let providerEpoch = -1;
+    writeLog('info', 'accepted');
 
     try {
-      const context = await this.dependencies.providers.getRuntimeContext();
+      const context = await awaitStage('provider-context', () =>
+        this.dependencies.providers.getRuntimeContext()
+      );
       const snapshot = context.snapshot;
       providerEpoch = context.epoch;
-      if (!this.isCurrent(input, current)) return this.cancelled(input);
+      if (!this.isCurrent(input, current)) return cancelled();
       const provider = snapshot.providers.find(({ provider }) => provider === TRANSLATOR_PROVIDER);
       if (!provider || provider.authState === 'unavailable') {
         throw new TranslatorServiceError('provider-unavailable');
@@ -182,21 +294,25 @@ export class TranslatorService {
       );
       if (!hasFixedTarget) throw new TranslatorServiceError('provider-unavailable');
 
-      timer = this.setTimer(() => {
-        current.timedOut = true;
-        current.controller.abort();
-      }, this.timeoutMs);
-      const result = await this.dependencies.runtime.run({
-        model: TRANSLATOR_MODEL,
-        effort: TRANSLATOR_EFFORT,
-        serviceTier: 'fast',
-        systemPrompt: TRANSLATOR_SYSTEM_PROMPT,
-        prompt: requestPrompt(input.sourceText),
-        maxOutputBytes: TRANSLATOR_MAX_OUTPUT_BYTES,
-        signal: current.controller.signal
-      });
+      recordStage('runtime-started');
+      const result = await waitForAbortable(
+        () =>
+          this.dependencies.runtime.run({
+            model: TRANSLATOR_MODEL,
+            effort: TRANSLATOR_EFFORT,
+            serviceTier: 'fast',
+            allowModelNetwork: false,
+            systemPrompt: TRANSLATOR_SYSTEM_PROMPT,
+            prompt: requestPrompt(input.sourceText),
+            maxOutputBytes: TRANSLATOR_MAX_OUTPUT_BYTES,
+            signal: current.controller.signal,
+            onStage: (stage) => recordStage(stage)
+          }),
+        current.controller.signal
+      );
+      recordStage('runtime-completed');
       if (current.timedOut) throw new TranslatorServiceError('timeout');
-      if (!this.isCurrent(input, current)) return this.cancelled(input);
+      if (!this.isCurrent(input, current)) return cancelled();
       if (
         result.provider !== TRANSLATOR_PROVIDER ||
         result.model !== TRANSLATOR_MODEL ||
@@ -205,42 +321,65 @@ export class TranslatorService {
         throw new TranslatorServiceError('target-mismatch');
       }
 
-      const observation = await this.dependencies.providers.noteRuntimeSuccess(providerEpoch);
-      if (!observation.applied) return this.cancelled(input);
-      if (!this.isCurrent(input, current)) return this.cancelled(input);
+      const observation = await awaitStage('provider-observation', () =>
+        this.dependencies.providers.noteRuntimeSuccess(providerEpoch)
+      );
+      if (!observation.applied) return cancelled();
+      if (!this.isCurrent(input, current)) return cancelled();
+      recordStage('output-validation-started');
       const output = parseRuntimeText(result.text);
-      return {
+      if (current.controller.signal.aborted) throw new TranslatorOperationCancelledError();
+      recordStage('output-validation-completed');
+      const completed: TranslatorTranslateResult = {
         status: 'completed',
         clientId: input.clientId,
         requestId: input.requestId,
         targetLanguage: output.targetLanguage,
         translation: output.translation
       };
-    } catch (error) {
+      recordTerminal('completed');
+      return completed;
+    } catch (initialError) {
+      let error = initialError;
       if (error instanceof CodexRuntimeAuthRequiredError) {
-        const observation = await this.noteAuthRequired(error.reason, providerEpoch);
-        if (!this.isCurrent(input, current)) return this.cancelled(input);
-        if (!observation) return this.failed(input, 'provider-unavailable');
-        if (!observation.applied) return this.cancelled(input);
-        return this.failed(input, 'login-required');
+        const authReason = error.reason;
+        try {
+          const observation = await awaitStage('provider-auth-observation', () =>
+            this.noteAuthRequired(authReason, providerEpoch)
+          );
+          if (!this.isCurrent(input, current)) return cancelled();
+          if (!observation) return failed('provider-unavailable', error);
+          if (!observation.applied) return cancelled();
+          return failed('login-required', error);
+        } catch (observationError) {
+          error = observationError;
+        }
       }
-      if (current.timedOut) return this.failed(input, 'timeout');
-      if (!this.isCurrent(input, current)) return this.cancelled(input);
-      if (error instanceof TranslatorServiceError) return this.failed(input, error.code);
+      if (current.timedOut) return failed('timeout', error);
+      if (!this.isCurrent(input, current)) return cancelled();
+      if (error instanceof TranslatorServiceError) return failed(error.code, error);
       if (error instanceof ModelProviderServiceError) {
-        return this.failed(input, 'provider-unavailable');
+        return failed('provider-unavailable', error);
       }
       if (error instanceof CodexRuntimeError) {
         if (error.code === 'not-configured') {
-          const observation = await this.noteAuthRequired('sign-in-required', providerEpoch);
-          if (!this.isCurrent(input, current)) return this.cancelled(input);
-          if (!observation) return this.failed(input, 'provider-unavailable');
-          if (!observation.applied) return this.cancelled(input);
-          return this.failed(input, 'login-required');
+          try {
+            const observation = await awaitStage('provider-auth-observation', () =>
+              this.noteAuthRequired('sign-in-required', providerEpoch)
+            );
+            if (!this.isCurrent(input, current)) return cancelled();
+            if (!observation) return failed('provider-unavailable', error);
+            if (!observation.applied) return cancelled();
+            return failed('login-required', error);
+          } catch (observationError) {
+            if (current.timedOut) return failed('timeout', observationError);
+            if (!this.isCurrent(input, current)) return cancelled();
+            return failed('provider-unavailable', observationError);
+          }
         }
-        return this.failed(input, runtimeErrorCode(error));
+        return failed(runtimeErrorCode(error), error);
       }
-      return this.failed(input, 'provider-error');
+      return failed('provider-error', error);
     } finally {
       if (timer) this.clearTimer(timer);
       if (this.active.get(input.clientId) === current) this.active.delete(input.clientId);

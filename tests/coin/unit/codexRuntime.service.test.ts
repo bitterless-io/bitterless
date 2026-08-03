@@ -308,3 +308,136 @@ test('aborts the active in-memory session without returning partial output', asy
   await assert.rejects(pending, (error) =>
     error instanceof CodexRuntimeError && error.code === 'cancelled');
 });
+
+test('aborts while the Pi module loader is still pending', async () => {
+  let resolvePi = (_pi: CodexRuntimePiModule): void => undefined;
+  const piPending = new Promise<CodexRuntimePiModule>((resolve) => { resolvePi = resolve; });
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: () => piPending,
+  });
+  const controller = new AbortController();
+  const pending = runtime.run({
+    model: 'gpt-5.5',
+    effort: 'low',
+    systemPrompt: 'Return strict JSON.',
+    prompt: '{"sourceText":"hi"}',
+    maxOutputBytes: 1024,
+    signal: controller.signal,
+  });
+
+  controller.abort();
+  await assert.rejects(pending, (error) =>
+    error instanceof CodexRuntimeError && error.code === 'cancelled');
+  resolvePi(createPi({
+    subscribe: () => () => undefined,
+    prompt: async () => undefined,
+    abort: async () => undefined,
+    dispose: () => undefined,
+  }, () => undefined));
+});
+
+test('aborts while modern fixed-target preparation is still pending', async () => {
+  let markStarted = (): void => undefined;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => ({
+      AuthStorage: { create: () => ({}) },
+      ModelRuntime: {
+        create: async () => {
+          markStarted();
+          return await new Promise<never>(() => undefined);
+        },
+      },
+      ModelRegistry: class {
+        constructor(_runtime: unknown) {}
+        find(): undefined { return undefined; }
+        hasConfiguredAuth(): boolean { return false; }
+      },
+      SessionManager: { inMemory: () => ({}) },
+      SettingsManager: { inMemory: (settings) => settings },
+      createExtensionRuntime: () => ({}),
+      createAgentSession: async () => { throw new Error('unreachable'); },
+    }),
+  });
+  const controller = new AbortController();
+  const pending = runtime.run({
+    model: 'gpt-5.5',
+    effort: 'low',
+    systemPrompt: 'Return strict JSON.',
+    prompt: '{"sourceText":"hi"}',
+    maxOutputBytes: 1024,
+    signal: controller.signal,
+  });
+
+  await started;
+  controller.abort();
+  await assert.rejects(pending, (error) =>
+    error instanceof CodexRuntimeError && error.code === 'cancelled');
+});
+
+test('fixed-target preparation disables model network and skips registry refresh', async () => {
+  let createOptions: Record<string, unknown> = {};
+  let refreshCalls = 0;
+  let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
+  const model = { provider: 'openai-codex', id: 'gpt-5.5' };
+  const session: CodexRuntimePiSession = {
+    model,
+    thinkingLevel: 'low',
+    subscribe: (value) => {
+      listener = value;
+      return () => undefined;
+    },
+    prompt: async () => {
+      listener({
+        type: 'message_end',
+        message: { role: 'assistant', content: '{"ok":true}', stopReason: 'stop' },
+      });
+    },
+    abort: async () => undefined,
+    dispose: () => undefined,
+  };
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => ({
+      AuthStorage: { create: () => ({}) },
+      ModelRuntime: {
+        create: async (options) => {
+          createOptions = options ?? {};
+          return {
+            getModel: () => model,
+            hasConfiguredAuth: () => true,
+          };
+        },
+      },
+      ModelRegistry: class {
+        constructor(_runtime: unknown) {}
+        find(): typeof model { return model; }
+        hasConfiguredAuth(): boolean { return true; }
+        async refresh(): Promise<void> { refreshCalls += 1; }
+      },
+      SessionManager: { inMemory: () => ({}) },
+      SettingsManager: { inMemory: (settings) => settings },
+      createExtensionRuntime: () => ({}),
+      createAgentSession: async () => ({ session }),
+    }),
+  });
+
+  const result = await runtime.run({
+    model: 'gpt-5.5',
+    effort: 'low',
+    allowModelNetwork: false,
+    systemPrompt: 'Return strict JSON.',
+    prompt: '{"sourceText":"hi"}',
+    maxOutputBytes: 1024,
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(result.text, '{"ok":true}');
+  assert.equal(createOptions.allowModelNetwork, false);
+  assert.equal(refreshCalls, 0);
+});
