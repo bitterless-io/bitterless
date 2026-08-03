@@ -370,6 +370,7 @@ test('pane menu bar keeps the accepted compact filled split controls', () => {
 test('only the Omni window Menu Bar owns the compact ready update action', () => {
   const appSource = read('src/renderer/omni/omniWindow/src/App.vue');
   const styleSource = read('src/renderer/omni/omniWindow/src/App.less');
+  const homeStyleSource = read('src/renderer/home/src/components/MenuBar/MenuBar.less');
   const cellSources = readSourceTree(
     new URL('../../src/renderer/omni/omniCell/', import.meta.url)
   );
@@ -401,19 +402,62 @@ test('only the Omni window Menu Bar owns the compact ready update action', () =>
   );
 
   const updateStyle = styleSource.match(/\.omni-menubar__update\s*\{([\s\S]*?)\}/)?.[1];
+  const homeUpdateStyle = homeStyleSource.match(/\.menu-bar__update\s*\{([\s\S]*?)\}/)?.[1];
+  const updateLabelStyle = styleSource.match(
+    /\.omni-menubar__update-label\s*\{([\s\S]*?)\}/
+  )?.[1];
+  const homeUpdateLabelStyle = homeStyleSource.match(
+    /\.menu-bar__update-text\s*\{([\s\S]*?)\}/
+  )?.[1];
+  const homeActionsStyle = homeStyleSource.match(
+    /\.menu-bar__actions\s*\{([\s\S]*?)\}/
+  )?.[1];
   assert.ok(updateStyle, 'Omni update action must have Menu Bar styling');
-  assert.doesNotMatch(updateStyle, /(?:min-|max-)?width\s*:/);
-  assert.match(updateStyle, /position:\s*relative/);
-  assert.match(updateStyle, /height:\s*28px/);
-  assert.match(updateStyle, /overflow:\s*hidden/);
-  assert.match(updateStyle, /background:\s*#165dff/);
-  assert.match(updateStyle, /color:\s*#ffffff/);
-  assert.match(updateStyle, /-webkit-app-region:\s*no-drag/);
+  assert.ok(homeUpdateStyle, 'Home update action must define the shared compact styling');
+  assert.ok(updateLabelStyle, 'Omni update label must have shared typography');
+  assert.ok(homeUpdateLabelStyle, 'Home update label must have shared typography');
+  assert.ok(homeActionsStyle, 'Home actions must define the trailing spacing reference');
+
+  for (const [scope, source] of [
+    ['Home', homeUpdateStyle],
+    ['Omni', updateStyle]
+  ]) {
+    assert.doesNotMatch(source, /(?:min-|max-)?(?:width|height)\s*:/);
+    assert.match(source, /position:\s*relative/);
+    assert.match(source, /overflow:\s*hidden/);
+    assert.match(source, /padding:\s*4px 10px/);
+    assert.match(source, /border-radius:\s*12px/);
+    assert.match(source, /background:\s*#165dff/);
+    assert.match(source, /-webkit-app-region:\s*no-drag/, `${scope} must remain clickable`);
+  }
+
+  for (const source of [homeUpdateLabelStyle, updateLabelStyle]) {
+    assert.match(source, /font-size:\s*12px/);
+    assert.match(source, /font-weight:\s*500/);
+    assert.match(source, /color:\s*#ffffff/);
+  }
+
+  assert.match(homeActionsStyle, /padding-right:\s*12px/);
+  assert.match(updateStyle, /margin-right:\s*12px/);
+  assert.match(styleSource, /\.omni-menubar--mac\s*\{[\s\S]*?padding:\s*0 12px 0 78px/);
+  assert.match(
+    styleSource,
+    /\.omni-menubar--mac \.omni-menubar__update\s*\{[\s\S]*?margin-right:\s*0/
+  );
+
   assert.match(styleSource, /\.omni-menubar__update:hover\s*\{[\s\S]*?background:\s*#0e4fd6/);
+  assert.match(homeStyleSource, /\.menu-bar__update:hover\s*\{[\s\S]*?background:\s*#0e4fd6/);
   assert.match(styleSource, /\.omni-menubar__update::after\s*\{/);
+  assert.match(homeStyleSource, /\.menu-bar__update::after\s*\{/);
   assert.match(styleSource, /animation:\s*omniUpdateShimmer 2\.6s ease-in-out infinite/);
+  assert.match(
+    homeStyleSource,
+    /animation:\s*menuBarUpdateShimmer 2\.6s ease-in-out infinite/
+  );
   assert.match(styleSource, /@keyframes omniUpdateShimmer/);
+  assert.match(homeStyleSource, /@keyframes menuBarUpdateShimmer/);
   assert.match(styleSource, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(homeStyleSource, /@media \(prefers-reduced-motion: reduce\)/);
 
   for (const [scope, source] of [
     ['omniCell', cellSources],

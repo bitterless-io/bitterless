@@ -185,10 +185,11 @@ Translator, or Motto preload.
   may shrink but must not force the cell outside its split bounds.
 - **Update hidden:** no downloaded-ready snapshot or live event exists; the Omni Menu Bar reserves
   no width for an update action.
-- **Update ready:** show the exact compact `update` label with the main window's blue shimmer at the
-  Menu Bar's right edge. Renderer recreation restores it from Main without requiring another
-  broadcast or app restart. This action belongs only to the top-level Omni window; cell chrome,
-  Layout's per-pane controls, and embedded mini-app renderers never duplicate it.
+- **Update ready:** show the exact compact `update` label with the main window's 4px × 10px padding,
+  12px label, 12px radius, blue shimmer, and 12px effective trailing separation at the Menu Bar's
+  right edge. Renderer recreation restores it from Main without requiring another broadcast or app
+  restart. This action belongs only to the top-level Omni window; cell chrome, Layout's per-pane
+  controls, and embedded mini-app renderers never duplicate it.
 
 ## Integration Flow
 

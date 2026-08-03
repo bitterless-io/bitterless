@@ -13,4 +13,4 @@
 - 👀 EyesOnAgents now preserves Codex Hook working state during metadata refresh and treats a successful Open as acknowledgement of the current Focus observation.
 - 🖼️ macOS now uses the current application artwork for both the signed bundle and the live Dock tile.
 - 🔐 Preserves valid sign-in across restarts and temporary network failures, with retry and cancel controls during session recovery.
-- 🔵 Corrected the update label and aligned Omni's update action with the blue shimmer treatment.
+- 🔵 Corrected the update label and aligned Home and Omni with one compact blue shimmer treatment.

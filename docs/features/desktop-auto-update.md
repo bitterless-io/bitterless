@@ -57,14 +57,16 @@ Omni     │ Omni Browser [Layout]                       [update] [window contro
 - The visible label is the exact lowercase literal `update` in every language and state. It never
   expands to `Restart to Update` or `Updating`.
 - Home and Omni hide the action until the package is downloaded and ready, then keep it enabled and
-  route clicks through the existing quit-and-install lifecycle.
+  route clicks through the existing quit-and-install lifecycle. Both use the Home Menu Bar's compact
+  4px × 10px padding, 12px label, 12px radius, blue background, shimmer treatment, and effective
+  12px trailing separation.
 - Maestro may reveal the same label while downloading, but keeps it disabled until the downloaded
   event arrives. Its title may continue to describe downloading versus install-ready state.
 - Omni places the content-width action only in the top-level `omniWindow` 32px Menu Bar that already
   owns `Layout`, immediately before native Windows controls when present. `omniCell`, Omni Control's
   per-pane Menu Bar, and embedded mini-app/subwindow renderers never show it. The action remains in
-  a `no-drag` region and has no fixed or minimum label width. Its blue background, white label, and
-  reduced-motion-aware shimmer match the established main-window update treatment.
+  a `no-drag` region and has no fixed or minimum label width. Its complete geometry, blue background,
+  white label, and reduced-motion-aware shimmer match the main-window update treatment.
 - Omni registers the live ready subscription before requesting Main's optional snapshot and before
   Vue mount. Valid live state wins over an in-flight stale snapshot; malformed values are logged and
   never applied.

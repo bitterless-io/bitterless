@@ -134,24 +134,64 @@
 }
 
 .menu-bar__update {
+  position: relative;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
   padding: 4px 10px;
-  background-color: oklch(75.8% 0.169 70.8);
+  background: #165dff;
   border-radius: 12px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: background-color 0.15s ease;
   -webkit-app-region: no-drag;
 }
 
 .menu-bar__update:hover {
-  background-color: oklch(70% 0.18 70.8);
+  background: #0e4fd6;
 }
 
 .menu-bar__update-text {
+  position: relative;
+  z-index: 1;
   font-size: 12px;
   font-weight: 500;
-  color: oklch(25.7% 0.09 281.288);
+  color: #ffffff;
+}
+
+.menu-bar__update::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  transform: translateX(-130%) skewX(-18deg);
+  animation: menuBarUpdateShimmer 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes menuBarUpdateShimmer {
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+  }
+
+  55%,
+  100% {
+    transform: translateX(280%) skewX(-18deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-bar__update::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 .menu-bar__status {
