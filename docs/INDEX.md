@@ -98,9 +98,9 @@ design document.
 
 ## Issues
 
-- [Translator latency and GPT-5.5 thinking](issues/translator-timeout-and-thinking-off.md) - in
-  progress: preserve the exact 60-second request deadline and explicitly send GPT-5.5 reasoning
-  effort `none` for Translator only.
+- [Translator latency and GPT-5.5 thinking](issues/translator-timeout-and-thinking-off.md) -
+  implemented; owner verification pending: preserve the exact 60-second request deadline and
+  explicitly send GPT-5.5 reasoning effort `none` for Translator only.
 - [Translator remains translating after successful Codex login](issues/translator-runtime-stall-and-missing-log.md) -
   implemented; owner verification pending: every translation preparation stage is deadline-bound
   and sanitized execution evidence persists outside the shared application log.

@@ -1,7 +1,7 @@
 ---
 id: translator-thinking-off-008
 scope: omni-translator Codex runtime controls
-status: in-progress
+status: done
 depends-on: [translator-runtime-diagnostics-007]
 ---
 

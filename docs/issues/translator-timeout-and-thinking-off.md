@@ -1,6 +1,6 @@
 # Translator Latency And GPT-5.5 Thinking
 
-Status: In progress
+Status: Implemented; owner verification pending
 
 Implementation:
 [translator-thinking-off-008](../plan/tasks/translator-thinking-off-008.md)
