@@ -54,3 +54,11 @@ The implementation matches the task and model-provider contracts:
 
 Commit `3d28ffd` satisfies the scoped production Codex login recovery contract and is ready for the
 release step. Signed packaging/publication remains the task orchestrator's post-review action.
+
+## macOS Explicit-browser Follow-up
+
+**PASS. No P1/P2/P3 finding.** On macOS, `codexCredential.runtime.ts` launches Chrome by bundle ID,
+then Safari, and uses Electron `shell.openExternal` only after both fail; non-macOS behavior remains
+the direct Electron launch. Each native launch is bounded to 10 seconds, uses `execFile` without a
+shell, and logs only fixed stage/browser fields—never the OAuth URL, query, or launch error. Per the
+owner's instruction, this follow-up was source-reviewed without running tests or builds.

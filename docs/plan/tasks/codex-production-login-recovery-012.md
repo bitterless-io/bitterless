@@ -20,6 +20,7 @@ ship a newer signed macOS ARM production release.
 # Path
 
 - `src/main/codex/codexCredential.service.ts`
+- `src/main/codex/codexCredential.runtime.ts`
 - `src/main/codex/codexCallbackCapture.ts`
 - `src/main/codex/codexLoopbackObserver.service.ts`
 - `tests/coin/unit/codexCredential.service.test.ts`
@@ -42,3 +43,16 @@ ship a newer signed macOS ARM production release.
 # Reviews
 
 - [Independent passing review](../reviews/codex-production-login-recovery-012-1.md)
+
+# Intermediate release evidence
+
+- Published signed and notarized macOS ARM production release `0.0.65`
+  (`version_code=260803110507`) from the latest `origin/release/2608` base.
+- Apple accepted both the application and DMG submissions; stapling and validation passed for
+  both artifacts.
+- Production ZIP, DMG, blockmaps, update metadata, and `version_info.json` were uploaded; the CDN
+  directory refresh completed successfully.
+- The public production manifest reports `0.0.65` / `260803110507`.
+- Owner verification on `0.0.65` proved the callback listeners are ready and owned by the current
+  process, but the generated authorization URL was handed to WebStorm because it had registered as
+  the macOS `http`/`https` handler. A follow-up release must target a real browser explicitly.

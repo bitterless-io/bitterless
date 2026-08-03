@@ -1,6 +1,6 @@
 # Codex Browser Login Succeeds but Setting Keeps Waiting
 
-Status: Active; production release omitted dual-stack loopback recovery
+Status: Active; production `0.0.65` reaches browser launch but macOS routes it to WebStorm
 
 Implementation:
 [model-provider-fresh-login-callback-009](../plan/tasks/model-provider-fresh-login-callback-009.md)
@@ -41,6 +41,20 @@ Pi 0.80.10 advertises `http://localhost:1455/auth/callback` but binds its server
 `127.0.0.1`. On the affected macOS host, `localhost` resolves `::1` before IPv4, so the browser can
 complete the remote authorization page without delivering the callback to Pi's listener.
 
+Production `0.0.65` (`version_code=260803110507`) restores the accepted dual-stack callback flow on
+the latest production release base. Owner verification shows that both listeners pass
+current-process ownership checks and that the OpenAI authorization URL reaches
+`authorization-url-opened`.
+
+## 2026-08-03 browser presentation failure
+
+On the affected Mac, LaunchServices registered `com.jetbrains.webstorm` as the handler for both
+`http` and `https` on 2026-07-31 at 15:59:49. Electron's `shell.openExternal()` therefore reports a
+successful handoff while sending the OpenAI authorization URL to WebStorm instead of a browser.
+
+Codex OAuth on macOS must explicitly target an installed real browser: Google Chrome first and
+Safari as the built-in fallback. Other platforms retain the existing system external-URL opener.
+
 ## Required behavior
 
 - Modern `ModelRuntime` owns the IPv4 OAuth callback server. On macOS, Bitterless owns an
@@ -56,6 +70,8 @@ complete the remote authorization page without delivering the callback to Pi's l
   cannot promote a credential or overwrite a newer login.
 - Before opening the browser, Main proves that the current process owns Pi's IPv4 listener and the
   required macOS IPv6 companion. Missing, foreign, or unexpected listeners fail immediately.
+- On macOS, browser OAuth targets Chrome explicitly when available and Safari otherwise, so an IDE
+  registered as the default URL handler cannot swallow the authorization page.
 
 ## Acceptance
 
