@@ -1,10 +1,11 @@
 # Codex Browser Login Succeeds but Setting Keeps Waiting
 
-Status: Implemented; owner verification pending
+Status: Implemented in production `0.0.65`; owner must restore the macOS default web browser
 
 Implementation:
 [model-provider-fresh-login-callback-009](../plan/tasks/model-provider-fresh-login-callback-009.md)
 [model-provider-loopback-diagnostics-011](../plan/tasks/model-provider-loopback-diagnostics-011.md)
+[codex-production-login-recovery-012](../plan/tasks/codex-production-login-recovery-012.md)
 
 ## Symptom
 
@@ -48,6 +49,34 @@ the modern-flow ownership fix removed the companion entirely. The browser can th
 IPv6 before reaching Pi's IPv4 server. A concurrent or stale Bitterless/Codex process can also
 serve a success page while the current login promise receives no authorization code.
 
+## 2026-08-03 production recurrence
+
+Packaged production `0.0.64` (`version_code=260802151913`) recorded two browser-login attempts in
+`~/Library/Logs/Bitterless/main.log`. Both created the Pi runtime and timed out after three minutes
+without callback, token-exchange, credential, promotion, or verification evidence. Inspection of
+the installed ASAR confirms that this release contains the old `callback-listener-ready owner=pi`
+flow and omits the accepted IPv4 ownership probe plus macOS IPv6 companion.
+
+Pi 0.80.10 advertises `http://localhost:1455/auth/callback` but binds its server only to
+`127.0.0.1`. On the affected macOS host, `localhost` resolves `::1` before IPv4, so the browser can
+complete the remote authorization page without delivering the callback to Pi's listener.
+
+Production `0.0.65` (`version_code=260803110507`) restores the accepted dual-stack callback flow on
+the latest production release base. Owner verification shows that both listeners pass
+current-process ownership checks and that the OpenAI authorization URL reaches
+`authorization-url-opened`.
+
+## 2026-08-03 browser presentation failure
+
+On the affected Mac, LaunchServices registered `com.jetbrains.webstorm` as the handler for both
+`http` and `https` on 2026-07-31 at 15:59:49. Electron's `shell.openExternal()` therefore reports a
+successful handoff while sending the OpenAI authorization URL to WebStorm instead of a browser.
+
+The application already delegates OAuth URLs to the system default URL handler through Electron's
+`shell.openExternal()`. `http`/`https` URL-scheme ownership is independent from WebStorm's expected
+`html`/`yml`/`md` file associations. The affected Mac must restore both URL schemes to the owner's
+preferred default browser; Bitterless must not override that preference in application code.
+
 ## Required behavior
 
 - Modern `ModelRuntime` owns the IPv4 OAuth callback server. On macOS, Bitterless owns an
@@ -75,6 +104,8 @@ serve a success page while the current login promise receives no authorization c
   callback response, token exchange, credential storage, promotion, verification, failure, and
   cleanup. Authorization codes, state values, URLs with query/hash, tokens, and credentials never
   enter logs.
+- OAuth URLs are opened with the system default handler. Bitterless does not select a browser or
+  alter system URL-scheme associations.
 
 ## Acceptance
 

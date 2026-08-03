@@ -1,3 +1,4 @@
+- 🔐 Restored Codex browser login on macOS by covering both IPv4 and IPv6 loopback callbacks.
 - 🔄 Consolidated Todo synchronization into one Refresh control with live progress, last-success time, and failure details.
 - 🧭 Reuses one installation device identity across password and email-code login to keep Snowflake assignment stable.
 - 🛡️ Recovers clean stale Todo device bindings with an immediate full bootstrap while keeping unsynchronized local work fail-closed.

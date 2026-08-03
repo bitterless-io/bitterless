@@ -18,6 +18,6 @@ export const codexCredentialService = new CodexCredentialService({
     await createCodexBrowserCallbackCapture({
       onUnavailable: (message) => {
         console.info('[codex auth] IPv6 callback capture unavailable:', message);
-      },
+      }
     }),
 });
