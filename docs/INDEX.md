@@ -99,8 +99,8 @@ design document.
 ## Issues
 
 - [Translator remains translating after successful Codex login](issues/translator-runtime-stall-and-missing-log.md) -
-  in progress: bound every translation preparation stage and persist sanitized execution evidence
-  outside the shared application log.
+  implemented; owner verification pending: every translation preparation stage is deadline-bound
+  and sanitized execution evidence persists outside the shared application log.
 - [Settings notification test](issues/settings-notification-test.md) - implemented; owner
   verification pending: a top-level Notification module immediately above Log exposes one
   XPC-backed `notification test` action.

@@ -1,7 +1,7 @@
 ---
 id: translator-runtime-diagnostics-007
 scope: omni-translator runtime and diagnostics
-status: in-progress
+status: done
 depends-on: [translator-fast-mode-006, application-diagnostics-010]
 ---
 

@@ -1,6 +1,6 @@
 # Translator Remains Translating After Successful Codex Login
 
-Status: In progress
+Status: Implemented; owner verification pending
 
 Implementation:
 [translator-runtime-diagnostics-007](../plan/tasks/translator-runtime-diagnostics-007.md)
