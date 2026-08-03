@@ -105,8 +105,8 @@ design document.
   implemented; owner verification pending: Setting can cancel or reconnect Codex immediately,
   while credential, provider, and renderer generations ignore late superseded results.
 - [Codex browser login success stuck in Setting](issues/codex-model-login-browser-success-stuck.md) -
-  implemented; owner verification pending: modern Pi OAuth owns the callback, auth-only catalog
-  refresh is disabled, and every Login replaces the persisted credential from an isolated attempt.
+  active production repair: release `0.0.64` omitted the accepted dual-stack loopback recovery, so
+  the next release restores current-process IPv4 ownership and the macOS IPv6 companion.
 - [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
   implemented; owner verification pending: default sites now keep stock Electron identity while
   Google/YouTube use a dedicated session with the verified honest Bitterless UA.

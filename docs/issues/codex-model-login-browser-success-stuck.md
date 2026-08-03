@@ -1,9 +1,10 @@
 # Codex Browser Login Succeeds but Setting Keeps Waiting
 
-Status: Implemented; owner verification pending
+Status: Active; production release omitted dual-stack loopback recovery
 
 Implementation:
 [model-provider-fresh-login-callback-009](../plan/tasks/model-provider-fresh-login-callback-009.md)
+[codex-production-login-recovery-012](../plan/tasks/codex-production-login-recovery-012.md)
 
 ## Symptom
 
@@ -28,11 +29,23 @@ Two secondary behaviors lengthen or contaminate the attempt:
   persistent provider credential, so an explicit reconnect is not guaranteed to start from a clean
   app credential state.
 
+## 2026-08-03 production recurrence
+
+Packaged production `0.0.64` (`version_code=260802151913`) recorded two browser-login attempts in
+`~/Library/Logs/Bitterless/main.log`. Both created the Pi runtime and timed out after three minutes
+without callback, token-exchange, credential, promotion, or verification evidence. Inspection of
+the installed ASAR confirms that this release contains the old `callback-listener-ready owner=pi`
+flow and omits the accepted IPv4 ownership probe plus macOS IPv6 companion.
+
+Pi 0.80.10 advertises `http://localhost:1455/auth/callback` but binds its server only to
+`127.0.0.1`. On the affected macOS host, `localhost` resolves `::1` before IPv4, so the browser can
+complete the remote authorization page without delivering the callback to Pi's listener.
+
 ## Required behavior
 
-- Modern `ModelRuntime` browser login exclusively owns the OAuth callback server. The legacy
-  companion callback is created only when the runtime is unavailable and the storage login API is
-  used.
+- Modern `ModelRuntime` owns the IPv4 OAuth callback server. On macOS, Bitterless owns an
+  attempt-local IPv6 companion on `::1:1455`; an IPv6 redirect is returned only through the same
+  Pi login's `manual_code` prompt. Pi remains the only token-exchange and credential owner.
 - Bitterless supplies Pi-compatible memory and locked-file credential stores instead of calling the
   removed `AuthStorage` export. The file format and `.lock` path remain compatible with Pi's
   default persistent runtime store.
@@ -41,10 +54,13 @@ Two secondary behaviors lengthen or contaminate the attempt:
   URL opens, then promotes only the current attempt's new in-memory credential after success.
 - Cancel and replacement generations continue to abort or ignore late results. A cancelled attempt
   cannot promote a credential or overwrite a newer login.
+- Before opening the browser, Main proves that the current process owns Pi's IPv4 listener and the
+  required macOS IPv6 companion. Missing, foreign, or unexpected listeners fail immediately.
 
 ## Acceptance
 
-- A simulated modern callback-owned login resolves without creating a companion capture.
+- A simulated modern browser login resolves through Pi IPv4 or the macOS IPv6 companion while Pi
+  remains the only exchange and credential owner.
 - The old persistent credential is deleted before the modern login/auth URL, and the attempt store
   starts empty.
 - Every authentication-only `ModelRuntime.create()` call sets `allowModelNetwork: false`.

@@ -108,6 +108,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [codex-gpt55-retention-008](tasks/codex-gpt55-retention-008.md) | keep GPT-5.5 while adding GPT-5.6 runtime models | implemented; owner verification pending | model-provider-login-cancel-regression-007 |
 | [model-provider-fresh-login-callback-009](tasks/model-provider-fresh-login-callback-009.md) | fresh Codex login with one modern OAuth callback owner | implemented; owner verification pending | model-provider-login-cancel-regression-007, codex-gpt55-retention-008 |
 | [application-diagnostics-010](tasks/application-diagnostics-010.md) | environment-isolated file logging, sanitized Codex lifecycle evidence, and Settings Log diagnostics | implemented; owner verification pending | model-provider-fresh-login-callback-009 |
+| [codex-production-login-recovery-012](tasks/codex-production-login-recovery-012.md) | restore dual-stack Codex browser login on the production release line | in-progress | model-provider-fresh-login-callback-009 |
 | [motto-miniapp-001](tasks/motto-miniapp-001.md) | local reminder cards and whole-array storage inside Omni | done | translator-miniapp-001 |
 | [miniapp-entry-visibility-001](tasks/miniapp-entry-visibility-001.md) | temporarily hidden Maestro and Coin Home entries | done | — |
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
