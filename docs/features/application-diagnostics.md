@@ -76,6 +76,13 @@ are excluded. Existing `console.*` calls keep working. Codex login logs lifecycl
 sanitized error names/messages, but never query strings, authorization codes, access tokens,
 refresh tokens, or credential values.
 
+Translator additionally owns a separate Main-written `translator/translator.log`. It uses the same
+profile isolation, UTC NDJSON formatting, sanitizer, and 5 MB rotation policy as `main.log`, but
+contains only translation execution lifecycle and sanitized translation failures. Shared Codex
+status and login/logout lifecycle never enters this dedicated file. For debug profiles the file is
+under `<userData>/logs/translator/translator.log`; packaged profiles place the `translator/`
+directory below Electron's profile log root.
+
 ## Diagnostics Contract
 
 Renderer calls a Main-owned XPC handler:

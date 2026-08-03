@@ -73,3 +73,14 @@ export const resolveApplicationLogFile = (
   profile.viteMode === 'debug'
     ? join(paths.userData, 'logs', 'main.log')
     : join(paths.libraryDefaultDir, 'main.log');
+
+export const resolveTranslatorLogFile = (
+  profile: ApplicationRuntimeProfile,
+  paths: {
+    userData: string;
+    libraryDefaultDir: string;
+  }
+): string =>
+  profile.viteMode === 'debug'
+    ? join(paths.userData, 'logs', 'translator', 'translator.log')
+    : join(paths.libraryDefaultDir, 'translator', 'translator.log');

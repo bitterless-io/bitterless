@@ -132,9 +132,39 @@ an older result direction is never presented as a prediction for new text.
   `z.object({ targetLanguage: z.enum(['en', 'zh-CN']), translation: ... }).strict()`. Fenced JSON,
   extra keys, invalid targets, empty output, and oversized output fail as `invalid-output`; Main
   never falls back to a local direction guess.
-- A 60-second request deadline aborts Pi session creation or `session.prompt()` even if the Pi
-  promise never settles. Streamed and final output collection stop at the 64 KiB UTF-8 ceiling.
+- One 60-second request deadline starts immediately after Main accepts a valid translation request
+  and covers provider-context lookup, Pi module loading, model-runtime preparation, session
+  creation, `session.prompt()`, provider-state observation, and output validation. Every awaited
+  boundary races the same abort signal, so an uncooperative promise cannot leave Renderer in
+  `Translating` beyond the deadline.
+- Translation creates Pi's model runtime with model-network refresh disabled and resolves the fixed
+  built-in target without a second registry refresh. Provider inference remains online; only
+  unrelated remote model-catalog discovery is skipped.
+- Streamed and final output collection stop at the 64 KiB UTF-8 ceiling.
 - Only the validated target and parsed translation string cross back to the renderer.
+
+## Translation Diagnostics
+
+Main writes translation execution to a dedicated, profile-isolated `translator/translator.log`
+directory rather than mixing it into `main.log`. The file is UTC NDJSON and rotates at 5 MB.
+
+Each accepted request receives a process-local numeric attempt number. The log records bounded
+lifecycle stages for provider context, Pi module load, fixed-target preparation, session creation,
+prompt execution, output validation, completion, cancellation, timeout, and failure. Records may
+contain the fixed provider/model/effort/tier, source code-point count, elapsed milliseconds, public
+error code, and a sanitized internal cause.
+
+The dedicated log never records source text, translated text, prompts, model output, client or
+request IDs, OAuth URLs/codes, tokens, credentials, headers, or raw provider objects. Shared Codex
+status checks, Login, callback, credential promotion, logout, and invalidation lifecycle are not
+written to the Translator log; they retain their existing application diagnostics.
+
+| Runtime | Translator log |
+|---|---|
+| packaged production | `~/Library/Logs/Bitterless/translator/translator.log` |
+| packaged test release | Electron OS log root under `Bitterless_DEV/translator/translator.log` |
+| production debug | `<appData>/Bitterless_DEBUG_PROD/logs/translator/translator.log` |
+| test debug | `<appData>/Bitterless_DEBUG_DEV/logs/translator/translator.log` |
 
 ## State Variants
 
