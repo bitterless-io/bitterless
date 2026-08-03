@@ -6,6 +6,12 @@ import {
   CodexMemoryCredentialStore,
   type CodexCredentialStore
 } from './codexCredential.store';
+import {
+  CodexLoopbackObserver,
+  CodexLoopbackProbeError,
+  type CodexLoopbackObserverCallbacks,
+  type CodexLoopbackOwnershipObserver
+} from './codexLoopbackObserver.service';
 import { CodexTokenExchangeObserver } from './codexTokenExchangeObserver.service';
 import {
   sanitizeDiagnostic,
@@ -141,6 +147,10 @@ export interface CodexCredentialServiceDependencies {
   createBrowserCallbackCapture(): Promise<CodexBrowserCallbackCapture>;
   createPersistentCredentialStore?: (path: string) => PiAuthStorage;
   createAttemptCredentialStore?: () => PiAuthStorage;
+  createLoopbackObserver?: (
+    callbacks: CodexLoopbackObserverCallbacks
+  ) => CodexLoopbackOwnershipObserver;
+  platform?: NodeJS.Platform;
   now?: () => number;
   browserTimeoutMs?: number;
   deviceTimeoutMs?: number;
@@ -250,6 +260,10 @@ export class CodexCredentialService {
   private readonly ensureDirectory: (path: string) => void;
   private readonly createPersistentCredentialStore: (path: string) => PiAuthStorage;
   private readonly createAttemptCredentialStore: () => PiAuthStorage;
+  private readonly createLoopbackObserver: (
+    callbacks: CodexLoopbackObserverCallbacks
+  ) => CodexLoopbackOwnershipObserver;
+  private readonly platform: NodeJS.Platform;
   private readonly transitionListeners = new Set<CodexCredentialTransitionListener>();
   private loginAttemptId = 0;
   private activeLoginAttempt: CodexLoginAttempt | null = null;
@@ -263,6 +277,9 @@ export class CodexCredentialService {
       ((path) => new CodexFileCredentialStore(path));
     this.createAttemptCredentialStore =
       dependencies.createAttemptCredentialStore ?? (() => new CodexMemoryCredentialStore());
+    this.createLoopbackObserver =
+      dependencies.createLoopbackObserver ?? ((callbacks) => new CodexLoopbackObserver(callbacks));
+    this.platform = dependencies.platform ?? process.platform;
   }
 
   async getStatus(): Promise<CodexCredentialStatus> {
@@ -419,7 +436,10 @@ export class CodexCredentialService {
         : (this.dependencies.browserTimeoutMs ?? BROWSER_TIMEOUT_MS);
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let callbackAccepted = false;
+    let browserAuthorization: Promise<void> | null = null;
+    let ipv6Companion: CodexBrowserCallbackCapture | null = null;
+    let loopbackObserver: CodexLoopbackOwnershipObserver | null = null;
+    let piIpv4CallbackAccepted = false;
     let tokenExchangeObserver: CodexTokenExchangeObserver | null = null;
 
     try {
@@ -448,21 +468,106 @@ export class CodexCredentialService {
         : null;
       this.assertActiveAttempt(attempt);
       logCodexLifecycle(attempt.id, 'runtime-created', `owner=${modelRuntime ? 'pi' : 'legacy'}`);
-      if (!modelRuntime && method === 'browser') {
-        attempt.capture = await Promise.race([
-          this.dependencies.createBrowserCallbackCapture(),
-          waitForAbort(attempt.controller.signal)
-        ]);
-        this.assertActiveAttempt(attempt);
-        logCodexLifecycle(attempt.id, 'callback-listener-ready', 'owner=legacy');
+      const needsCallbackCapture =
+        method === 'browser' && (!modelRuntime || this.platform === 'darwin');
+      if (needsCallbackCapture) {
+        const captureCreation = Promise.resolve().then(
+          async () => await this.dependencies.createBrowserCallbackCapture()
+        );
+        try {
+          const capture = await Promise.race([
+            captureCreation,
+            waitForAbort(attempt.controller.signal)
+          ]);
+          this.assertActiveAttempt(attempt);
+          attempt.capture = capture;
+          if (modelRuntime) {
+            ipv6Companion = attempt.capture;
+            logCodexLifecycle(
+              attempt.id,
+              'callback-companion-ready',
+              'owner=bitterless family=ipv6'
+            );
+          } else {
+            logCodexLifecycle(attempt.id, 'callback-listener-ready', 'owner=legacy family=ipv6');
+          }
+        } catch (error) {
+          void captureCreation
+            .then(async (capture) => {
+              if (attempt.capture === capture) return;
+              const cancellation = new CodexCredentialError(
+                'cancelled',
+                'Codex sign-in was cancelled.'
+              );
+              try {
+                capture.cancel(cancellation);
+              } catch {
+                // A late capture must still close when its cancellation hook is unavailable.
+              }
+              await capture.close().catch(() => undefined);
+            })
+            .catch(() => undefined);
+          if (this.isActiveAttempt(attempt)) {
+            logCodexFailure(
+              attempt.id,
+              modelRuntime ? 'callback-companion-unavailable' : 'callback-listener-unavailable',
+              error
+            );
+          }
+          throw error;
+        }
       }
       if (modelRuntime && method === 'browser') {
+        loopbackObserver = this.createLoopbackObserver({
+          onCallbackRequest: (diagnostic) => {
+            if (!this.isActiveAttempt(attempt)) return;
+            logCodexLifecycle(
+              attempt.id,
+              'callback-request-received',
+              `family=${diagnostic.family} method=${diagnostic.method} path=${diagnostic.path} hasCode=${diagnostic.hasCode} hasState=${diagnostic.hasState}`
+            );
+          },
+          onCallbackResponse: (diagnostic) => {
+            if (!this.isActiveAttempt(attempt)) return;
+            logCodexLifecycle(
+              attempt.id,
+              'callback-response-sent',
+              `family=${diagnostic.family} method=${diagnostic.method} path=${diagnostic.path} status=${diagnostic.statusCode}`
+            );
+            if (
+              diagnostic.family === 'ipv4' &&
+              diagnostic.statusCode === 200 &&
+              ipv6Companion
+            ) {
+              piIpv4CallbackAccepted = true;
+              logCodexLifecycle(
+                attempt.id,
+                'callback-companion-closing',
+                'reason=pi-ipv4-callback'
+              );
+              void ipv6Companion
+                .close()
+                .then(() =>
+                  logCodexLifecycle(
+                    attempt.id,
+                    'callback-companion-closed',
+                    'reason=pi-ipv4-callback'
+                  )
+                )
+                .catch((error) =>
+                  logCodexFailure(attempt.id, 'callback-companion-close-failed', error)
+                );
+            }
+          }
+        });
+        loopbackObserver.start();
         tokenExchangeObserver = new CodexTokenExchangeObserver({
           onRequest: () => {
             if (!this.isActiveAttempt(attempt)) return;
-            if (!callbackAccepted) {
-              callbackAccepted = true;
-              logCodexLifecycle(attempt.id, 'callback-accepted', 'owner=pi');
+            if (piIpv4CallbackAccepted && ipv6Companion) {
+              ipv6Companion.cancel(
+                new CodexCredentialError('cancelled', 'Pi accepted the IPv4 callback.')
+              );
             }
             logCodexLifecycle(attempt.id, 'token-exchange-started');
           },
@@ -485,13 +590,23 @@ export class CodexCredentialService {
         attempt.capture?.cancel(error);
       }, timeoutMs);
 
-      const manualCodeInput = async (): Promise<string> => {
+      const manualCodeInput = async (promptSignal?: AbortSignal): Promise<string> => {
         this.assertActiveAttempt(attempt);
-        const value = attempt.capture
-          ? await attempt.capture.waitForRedirect()
-          : await waitForAbort(attempt.controller.signal);
+        const redirect = attempt.capture?.waitForRedirect();
+        const waits: Promise<string>[] = [
+          redirect ?? waitForAbort(attempt.controller.signal),
+          waitForAbort(attempt.controller.signal)
+        ];
+        if (promptSignal && promptSignal !== attempt.controller.signal) {
+          waits.push(waitForAbort(promptSignal));
+        }
+        const value = await Promise.race(waits);
         this.assertActiveAttempt(attempt);
-        logCodexLifecycle(attempt.id, 'callback-received', 'owner=legacy');
+        logCodexLifecycle(
+          attempt.id,
+          modelRuntime ? 'callback-forwarded-to-pi' : 'callback-received',
+          `owner=${modelRuntime ? 'bitterless' : 'legacy'} family=ipv6`
+        );
         return value;
       };
       const login = modelRuntime
@@ -500,18 +615,85 @@ export class CodexCredentialService {
             prompt: async (prompt) => {
               if (prompt.type === 'select') return method;
               if (prompt.type === 'manual_code') {
-                return await Promise.race([
-                  waitForAbort(prompt.signal ?? attempt.controller.signal),
-                  waitForAbort(attempt.controller.signal)
-                ]);
+                return await manualCodeInput(prompt.signal);
               }
               return await waitForAbort(prompt.signal ?? attempt.controller.signal);
             },
             notify: (event) => {
               if (!this.isActiveAttempt(attempt)) return;
               if (event.type === 'auth_url' && event.url) {
-                logCodexLifecycle(attempt.id, 'callback-listener-ready', 'owner=pi');
-                this.openAuthUrl(event.url, attempt.id);
+                logCodexLifecycle(attempt.id, 'callback-listener-announced', 'owner=pi family=ipv4');
+                if (browserAuthorization) {
+                  const error = new CodexCredentialError(
+                    'login-failed',
+                    'Codex announced more than one browser authorization request.'
+                  );
+                  logCodexFailure(attempt.id, 'authorization-url-duplicate', error);
+                  attempt.controller.abort(error);
+                  attempt.capture?.cancel(error);
+                  return;
+                }
+                const authorization = (async (): Promise<void> => {
+                  logCodexLifecycle(
+                    attempt.id,
+                    'callback-listener-verification-started',
+                    `ipv6Required=${Boolean(ipv6Companion)}`
+                  );
+                  try {
+                    const evidence = await loopbackObserver!.verifyOwnership({
+                      includeIpv6: Boolean(ipv6Companion),
+                      signal: attempt.controller.signal
+                    });
+                    this.assertActiveAttempt(attempt);
+                    logCodexLifecycle(
+                      attempt.id,
+                      'callback-listener-verified',
+                      evidence
+                        .map(
+                          ({ route, family, statusCode }) =>
+                            `${route}=${family}:${statusCode}`
+                        )
+                        .join(' ')
+                    );
+                  } catch (error) {
+                    if (!this.isActiveAttempt(attempt)) {
+                      throw new CodexCredentialError(
+                        'cancelled',
+                        'Codex sign-in was cancelled.'
+                      );
+                    }
+                    if (error instanceof CodexLoopbackProbeError) {
+                      logCodexLifecycle(
+                        attempt.id,
+                        'callback-listener-verification-failed',
+                        `route=${error.route} reason=${error.reason}`
+                      );
+                    } else {
+                      logCodexFailure(
+                        attempt.id,
+                        'callback-listener-verification-failed',
+                        error
+                      );
+                    }
+                    throw new CodexCredentialError(
+                      'login-failed',
+                      'Codex callback listener ownership could not be verified.',
+                      error
+                    );
+                  }
+                  this.assertActiveAttempt(attempt);
+                  await this.openAuthUrl(event.url!, attempt.id);
+                })();
+                browserAuthorization = authorization;
+                void authorization.catch((error) => {
+                  if (!this.isActiveAttempt(attempt)) return;
+                  attempt.controller.abort(error);
+                  attempt.capture?.cancel(
+                    error instanceof Error
+                      ? error
+                      : new CodexCredentialError('login-failed', 'Codex sign-in failed.')
+                  );
+                });
               }
               if (event.type === 'device_code') this.notifyDeviceCode(attempt, event);
               if (event.type === 'progress' && event.message) {
@@ -534,6 +716,19 @@ export class CodexCredentialService {
       await Promise.race([login, waitForAbort(attempt.controller.signal)]);
       logCodexLifecycle(attempt.id, 'login-promise-resolved');
       this.assertActiveAttempt(attempt);
+      if (modelRuntime && method === 'browser') {
+        if (!browserAuthorization) {
+          throw new CodexCredentialError(
+            'login-failed',
+            'Codex did not announce a browser authorization request.'
+          );
+        }
+        await Promise.race([
+          browserAuthorization,
+          waitForAbort(attempt.controller.signal)
+        ]);
+        this.assertActiveAttempt(attempt);
+      }
       const credential = await attemptAuth.read(CODEX_PROVIDER);
       logCodexLifecycle(attempt.id, 'token-credential-stored', `stored=${Boolean(credential)}`);
       this.assertActiveAttempt(attempt);
@@ -586,14 +781,17 @@ export class CodexCredentialService {
       if (error instanceof CodexCredentialError) throw error;
       throw new CodexCredentialError('login-failed', 'Codex sign-in failed.', error);
     } finally {
+      loopbackObserver?.stop();
       tokenExchangeObserver?.stop();
       if (timer) clearTimeout(timer);
       attempt.controller.abort();
       if (attempt.capture) {
         const capture = attempt.capture;
         attempt.capture = null;
+        capture.cancel(new CodexCredentialError('cancelled', 'Codex sign-in attempt ended.'));
         await capture.close().catch(() => undefined);
       }
+      await browserAuthorization?.catch(() => undefined);
       if ((attempt.cancelled || attempt.id !== this.loginAttemptId) && attempt.promotedStore) {
         const promotedStore = attempt.promotedStore;
         attempt.promotedStore = null;
@@ -617,7 +815,7 @@ export class CodexCredentialService {
       onAuth: ({ url }) => {
         if (this.isActiveAttempt(attempt)) {
           logCodexLifecycle(attempt.id, 'authorization-url-received', 'owner=legacy');
-          this.openAuthUrl(url, attempt.id);
+          void this.openAuthUrl(url, attempt.id).catch(() => undefined);
         }
       },
       onManualCodeInput: manualCodeInput,
@@ -628,17 +826,20 @@ export class CodexCredentialService {
     });
   }
 
-  private openAuthUrl(url: string, attemptId: number): void {
-    const external = parseOpenAiExternalUrl(url);
-    logCodexLifecycle(
-      attemptId,
-      'authorization-url-opening',
-      `url=${sanitizeDiagnosticUrl(external.href)}`
-    );
-    void this.dependencies
-      .openExternal(external.href)
-      .then(() => logCodexLifecycle(attemptId, 'authorization-url-opened'))
-      .catch((error) => logCodexFailure(attemptId, 'authorization-url-open-failed', error));
+  private async openAuthUrl(url: string, attemptId: number): Promise<void> {
+    try {
+      const external = parseOpenAiExternalUrl(url);
+      logCodexLifecycle(
+        attemptId,
+        'authorization-url-opening',
+        `url=${sanitizeDiagnosticUrl(external.href)}`
+      );
+      await this.dependencies.openExternal(external.href);
+      logCodexLifecycle(attemptId, 'authorization-url-opened');
+    } catch (error) {
+      logCodexFailure(attemptId, 'authorization-url-open-failed', error);
+      throw error;
+    }
   }
 
   private notifyDeviceCode(
