@@ -152,6 +152,10 @@ export const en = {
       saveFailed: 'Save failed',
       hint: 'The system prompt will be sent to the AI at the beginning of each conversation to define its role and behavior.',
     },
+    notification: {
+      tabTitle: 'Notification',
+      test: 'notification test',
+    },
     log: {
       tabTitle: 'Log',
       refresh: 'Refresh',

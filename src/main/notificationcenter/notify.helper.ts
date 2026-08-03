@@ -35,6 +35,19 @@ class NotifyHelper {
     this.playThreadCompletionSound();
   }
 
+  notifyTest(): void {
+    try {
+      if (!Notification.isSupported()) return;
+      const notification = new Notification({
+        title: 'Notification test',
+        body: 'Bitterless notifications are working.'
+      });
+      notification.show();
+    } catch (err) {
+      console.warn('[NotificationCenter] Test notification failed:', err);
+    }
+  }
+
   private showThreadCompletedNotification(rawTitle: string | null): void {
     try {
       if (!Notification.isSupported()) return;

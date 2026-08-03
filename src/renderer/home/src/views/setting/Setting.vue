@@ -32,6 +32,13 @@
         </div>
         <div
           class="setting__nav-item"
+          :class="{ 'setting__nav-item--active': settingNavStore.activeTab === 'notification' }"
+          @click="onNavClick('notification')"
+        >
+          {{ i18nHelper.setting.notification.tabTitle }}
+        </div>
+        <div
+          class="setting__nav-item"
           :class="{ 'setting__nav-item--active': settingNavStore.activeTab === 'log' }"
           @click="onNavClick('log')"
         >
@@ -50,6 +57,7 @@
         <GeneralSetting v-if="settingNavStore.activeTab === 'general'" />
         <LLMSetting v-if="settingNavStore.activeTab === 'llm'" />
         <SystemPromptSetting v-if="settingNavStore.activeTab === 'systemPrompt'" />
+        <NotificationSetting v-if="settingNavStore.activeTab === 'notification'" />
         <LogSetting v-if="settingNavStore.activeTab === 'log'" />
         <About v-if="settingNavStore.activeTab === 'about'" />
       </div>
@@ -63,6 +71,7 @@ import SystemPromptSetting from './components/SystemPromptSetting/SystemPromptSe
 import ProxySetting from './components/ProxySetting/ProxySetting.vue';
 import GeneralSetting from './components/GeneralSetting/GeneralSetting.vue';
 import About from './components/About/About.vue';
+import NotificationSetting from './components/NotificationSetting/NotificationSetting.vue';
 import LogSetting from './components/LogSetting/LogSetting.vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { loadProxySetting } from './components/ProxySetting/proxySetting.store';

@@ -45,6 +45,8 @@ design document.
   upgrade audit required before signed production packaging.
 - [Startup diagnostics](features/startup-diagnostics.md) - SQLite-first but non-blocking GUI
   startup with main-owned failures surfaced from the Home menubar.
+- [Settings notification test](issues/settings-notification-test.md) - one direct native-notification
+  smoke test routed from the Settings renderer to Main through XPC.
 - [Application logging and diagnostics](features/application-diagnostics.md) - environment-isolated
   `electron-log`, sanitized Codex lifecycle evidence, and a Settings Log ledger for live paths,
   startup state, directories, and value-free environment status.
@@ -95,6 +97,9 @@ design document.
 
 ## Issues
 
+- [Settings notification test](issues/settings-notification-test.md) - implemented; owner
+  verification pending: a top-level Notification module immediately above Log exposes one
+  XPC-backed `notification test` action.
 - [Packaged failures have no persistent application log](issues/application-file-logging-missing.md) -
   implemented; owner verification pending: environment-isolated UTC NDJSON logging, safe Codex
   lifecycle evidence, and a Settings Log diagnostics ledger are available.

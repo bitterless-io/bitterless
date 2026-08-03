@@ -1,6 +1,14 @@
 export const SETTING_OPEN_EVENT = 'setting/open' as const;
 
-export const SETTING_TABS = ['proxy', 'general', 'llm', 'systemPrompt', 'log', 'about'] as const;
+export const SETTING_TABS = [
+  'proxy',
+  'general',
+  'llm',
+  'systemPrompt',
+  'notification',
+  'log',
+  'about'
+] as const;
 
 export type SettingTab = (typeof SETTING_TABS)[number];
 
@@ -13,6 +21,10 @@ export interface SettingNavigationApi {
   openSettings(params: SettingOpenNotice): Promise<void>;
   // Home consumes the navigation Main held while the window was still loading.
   consumePendingSetting(): Promise<SettingOpenNotice | null>;
+}
+
+export interface NotificationSettingsApi {
+  sendTestNotification(): Promise<void>;
 }
 
 export const parseSettingTab = (value: unknown): SettingTab | null =>

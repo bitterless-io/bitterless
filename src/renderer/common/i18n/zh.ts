@@ -153,6 +153,10 @@ export const zh: typeof en = {
       saveFailed: '保存失败',
       hint: '系统提示词将在每次对话开始时发送给 AI，用于设定 AI 的角色和行为规范。',
     },
+    notification: {
+      tabTitle: '通知',
+      test: 'notification test',
+    },
     log: {
       tabTitle: '日志',
       refresh: '刷新',
