@@ -11,10 +11,11 @@ Translator is a first-party Omni mini app for low-friction bilingual translation
 uses the shared model-provider service and the sterile Pi coding-agent runtime; it never owns
 credentials or a second model preference.
 
-Translator has no provider selector. Its fixed target is
-`openai-codex / gpt-5.5 / low / fast` (the requested “Codex 5.5 light” with Codex Fast mode). When
-that target is unavailable, the composer shows the shared Codex login entry. A successful login
-updates Translator and Home Model Config through the same persisted XPC snapshot.
+Translator has no provider selector. Its fixed provider target remains
+`openai-codex / gpt-5.5 / low / fast` for availability and shared model-provider selection, while
+the translation request explicitly disables model reasoning with `reasoning.effort: "none"`.
+When that target is unavailable, the composer shows the shared Codex login entry. A successful
+login updates Translator and Home Model Config through the same persisted XPC snapshot.
 
 ## Design Direction
 
@@ -127,16 +128,21 @@ an older result direction is never presented as a prediction for new text.
   than Standard. A rejected Fast request remains a provider failure; the runtime does not silently
   downgrade the translation to Standard. See
   [Codex Fast mode](https://learn.chatgpt.com/docs/agent-configuration/speed#fast-mode).
+- Translator creates its sterile Pi session with thinking disabled and explicitly overrides the
+  Codex request payload to `reasoning: { effort: "none" }`. Merely omitting `reasoning` is not an
+  acceptable substitute because GPT-5.5 defaults to reasoning. GPT-5.5 officially supports
+  `none`; this Translator-only override must not change Coin, Maestro, or other Codex consumers.
+  See [GPT-5.5 model](https://developers.openai.com/api/docs/models/gpt-5.5).
 - The system prompt requires exactly one JSON object with `targetLanguage` and `translation`.
 - Main parses JSON and validates it with
   `z.object({ targetLanguage: z.enum(['en', 'zh-CN']), translation: ... }).strict()`. Fenced JSON,
   extra keys, invalid targets, empty output, and oversized output fail as `invalid-output`; Main
   never falls back to a local direction guess.
-- One 60-second request deadline starts immediately after Main accepts a valid translation request
-  and covers provider-context lookup, Pi module loading, model-runtime preparation, session
-  creation, `session.prompt()`, provider-state observation, and output validation. Every awaited
-  boundary races the same abort signal, so an uncooperative promise cannot leave Renderer in
-  `Translating` beyond the deadline.
+- One exact 60-second (`60_000 ms`) request deadline starts immediately after Main accepts a valid
+  translation request and covers provider-context lookup, Pi module loading, model-runtime
+  preparation, session creation, `session.prompt()`, provider-state observation, and output
+  validation. Every awaited boundary races the same abort signal, so an uncooperative promise
+  cannot leave Renderer in `Translating` beyond the deadline.
 - Translation creates Pi's model runtime with model-network refresh disabled and resolves the fixed
   built-in target without a second registry refresh. Provider inference remains online; only
   unrelated remote model-catalog discovery is skipped.
@@ -197,7 +203,8 @@ Omni selects translator
      -> unavailable: shared Login action
      -> ready: 1s leading/trailing scheduler
   -> TranslatorHandler -> TranslatorService
-  -> CodexRuntimeService(openai-codex, gpt-5.5, low, fast -> priority)
+  -> CodexRuntimeService(openai-codex, gpt-5.5, low target, thinking off,
+                         reasoning none, fast -> priority)
   -> strict Zod output(targetLanguage + translation) -> renderer
 ```
 

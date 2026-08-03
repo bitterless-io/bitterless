@@ -300,6 +300,7 @@ export class TranslatorService {
           this.dependencies.runtime.run({
             model: TRANSLATOR_MODEL,
             effort: TRANSLATOR_EFFORT,
+            thinkingLevel: 'off',
             serviceTier: 'fast',
             allowModelNetwork: false,
             systemPrompt: TRANSLATOR_SYSTEM_PROMPT,

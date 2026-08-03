@@ -88,6 +88,7 @@ test('creates a sterile in-memory Codex session with all tools disabled', async 
   assert.deepEqual(options.tools, []);
   assert.deepEqual(options.customTools, []);
   assert.deepEqual(options.sessionManager, { kind: 'memory' });
+  assert.equal(options.thinkingLevel, 'high');
   const loader = options.resourceLoader as {
     getSkills(): unknown;
     getPrompts(): unknown;
@@ -151,6 +152,71 @@ test('maps an explicit Fast tier into the final provider payload', async () => {
     extensionMarker: 'kept',
     service_tier: 'priority',
   });
+});
+
+test('maps thinking off to Pi and explicit reasoning none while retaining Fast', async () => {
+  let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
+  let options: Record<string, unknown> = {};
+  let capturedPayload: unknown;
+  const upstreamCalls: string[] = [];
+  const agent = {
+    onPayload: async (payload: unknown, _model?: unknown) => {
+      upstreamCalls.push('upstream');
+      return {
+        ...(payload as Record<string, unknown>),
+        extensionMarker: 'kept',
+      };
+    },
+  };
+  const session: CodexRuntimePiSession = {
+    agent,
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
+    thinkingLevel: 'off',
+    subscribe: (value) => {
+      listener = value;
+      return () => undefined;
+    },
+    prompt: async () => {
+      capturedPayload = await agent.onPayload({
+        model: 'gpt-5.6-luna',
+        reasoning: { effort: 'low' },
+        store: false,
+      }, session.model);
+      listener({
+        type: 'message_end',
+        message: { role: 'assistant', content: '{"ok":true}', stopReason: 'stop' },
+      });
+    },
+    abort: async () => undefined,
+    dispose: () => undefined,
+  };
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => createPi(session, (value) => { options = value; }),
+  });
+
+  const result = await runtime.run({
+    model: 'gpt-5.6-luna',
+    effort: 'low',
+    thinkingLevel: 'off',
+    serviceTier: 'fast',
+    systemPrompt: 'Return strict JSON.',
+    prompt: '{"sourceText":"hi"}',
+    maxOutputBytes: 1024,
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(options.thinkingLevel, 'off');
+  assert.deepEqual(upstreamCalls, ['upstream']);
+  assert.deepEqual(capturedPayload, {
+    model: 'gpt-5.6-luna',
+    reasoning: { effort: 'none' },
+    store: false,
+    extensionMarker: 'kept',
+    service_tier: 'priority',
+  });
+  assert.equal(result.effort, 'low');
 });
 
 test('leaves the provider payload hook unchanged without a Fast selection', async () => {

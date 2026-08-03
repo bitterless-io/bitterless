@@ -14,6 +14,7 @@ export const CODEX_RUNTIME_SERVICE_TIERS = ['fast'] as const;
 export type CodexRuntimeModel = (typeof CODEX_RUNTIME_MODELS)[number];
 export type CodexRuntimeEffort = (typeof CODEX_RUNTIME_EFFORTS)[number];
 export type CodexRuntimeServiceTier = (typeof CODEX_RUNTIME_SERVICE_TIERS)[number];
+export type CodexRuntimeThinkingLevel = 'off' | CodexRuntimeEffort;
 export const CODEX_RUNTIME_MODEL_EFFORTS = {
   'gpt-5.5': CODEX_RUNTIME_EFFORTS,
   'gpt-5.6-luna': CODEX_RUNTIME_EFFORTS,
@@ -33,6 +34,7 @@ export type CodexRuntimeErrorCode =
 export interface CodexRuntimeRunInput {
   model: CodexRuntimeModel;
   effort: CodexRuntimeEffort;
+  thinkingLevel?: CodexRuntimeThinkingLevel;
   serviceTier?: CodexRuntimeServiceTier;
   allowModelNetwork?: boolean;
   systemPrompt: string;
@@ -371,6 +373,7 @@ const assertTarget = (
 };
 
 const CODEX_FAST_UNAVAILABLE_SENTINEL = 'bitterless-codex-fast-unavailable';
+const CODEX_REASONING_NONE_UNAVAILABLE_SENTINEL = 'bitterless-codex-reasoning-none-unavailable';
 
 const enableFastServiceTier = (session: CodexRuntimePiSession): (() => void) => {
   try {
@@ -392,6 +395,37 @@ const enableFastServiceTier = (session: CodexRuntimePiSession): (() => void) => 
     };
     agent.onPayload = fastOnPayload;
     if (agent.onPayload !== fastOnPayload) throw new CodexRuntimeError('runtime-unavailable');
+    return () => {
+      if (!applied) throw new CodexRuntimeError('runtime-unavailable');
+    };
+  } catch (error) {
+    if (error instanceof CodexRuntimeError) throw error;
+    throw new CodexRuntimeError('runtime-unavailable');
+  }
+};
+
+const enableReasoningNone = (session: CodexRuntimePiSession): (() => void) => {
+  try {
+    const agent = session.agent;
+    if (!agent) throw new CodexRuntimeError('runtime-unavailable');
+    const onPayload = agent.onPayload;
+    let applied = false;
+    const reasoningNoneOnPayload: CodexRuntimePiOnPayload = async (payload, model) => {
+      const transformed = onPayload ? await onPayload.call(agent, payload, model) : payload;
+      const finalPayload = transformed === undefined ? payload : transformed;
+      if (!finalPayload || typeof finalPayload !== 'object' || Array.isArray(finalPayload)) {
+        throw new Error(CODEX_REASONING_NONE_UNAVAILABLE_SENTINEL);
+      }
+      applied = true;
+      return {
+        ...(finalPayload as Record<string, unknown>),
+        reasoning: { effort: 'none' }
+      };
+    };
+    agent.onPayload = reasoningNoneOnPayload;
+    if (agent.onPayload !== reasoningNoneOnPayload) {
+      throw new CodexRuntimeError('runtime-unavailable');
+    }
     return () => {
       if (!applied) throw new CodexRuntimeError('runtime-unavailable');
     };
@@ -557,6 +591,7 @@ export class CodexRuntimeService {
   constructor(private readonly dependencies: CodexRuntimeDependencies) {}
 
   async run(input: CodexRuntimeRunInput): Promise<CodexRuntimeRunResult> {
+    const thinkingLevel = input.thinkingLevel ?? input.effort;
     const emitStage = (stage: CodexRuntimeStage): void => {
       try {
         input.onStage?.(stage);
@@ -572,6 +607,9 @@ export class CodexRuntimeService {
       throw new CodexRuntimeError('effort-mismatch');
     }
     if (!CODEX_RUNTIME_MODEL_EFFORTS[input.model].some((effort) => effort === input.effort)) {
+      throw new CodexRuntimeError('effort-mismatch');
+    }
+    if (thinkingLevel !== 'off' && !CODEX_RUNTIME_EFFORTS.includes(thinkingLevel)) {
       throw new CodexRuntimeError('effort-mismatch');
     }
     if (
@@ -640,7 +678,7 @@ export class CodexRuntimeService {
         ...(targetContext.modelRuntime
           ? { modelRuntime: targetContext.modelRuntime }
           : { authStorage: targetContext.authStorage, modelRegistry }),
-        thinkingLevel: input.effort,
+        thinkingLevel,
         noTools: 'all',
         tools: [],
         customTools: [],
@@ -665,6 +703,7 @@ export class CodexRuntimeService {
     let toolViolation = false;
     let abortRequested = false;
     let assertFastServiceTierApplied = (): void => undefined;
+    let assertReasoningNoneApplied = (): void => undefined;
 
     const abortSession = (): void => {
       if (abortRequested) return;
@@ -706,11 +745,14 @@ export class CodexRuntimeService {
       session = await waitForSession(creation, input.signal);
       emitStage('session-create-completed');
       assertTarget(session.model ?? model, input.model);
-      if (session.thinkingLevel !== undefined && session.thinkingLevel !== input.effort) {
+      if (session.thinkingLevel !== undefined && session.thinkingLevel !== thinkingLevel) {
         throw new CodexRuntimeError('effort-mismatch');
       }
       if (input.serviceTier === 'fast') {
         assertFastServiceTierApplied = enableFastServiceTier(session);
+      }
+      if (thinkingLevel === 'off') {
+        assertReasoningNoneApplied = enableReasoningNone(session);
       }
 
       unsubscribe = session.subscribe((event) => {
@@ -752,14 +794,18 @@ export class CodexRuntimeService {
       await waitForPrompt(session, input.prompt, input.signal, abortSession);
       emitStage('prompt-completed');
       assertFastServiceTierApplied();
+      assertReasoningNoneApplied();
       if (input.signal.aborted) throw new CodexRuntimeError('cancelled');
       if (toolViolation) throw new CodexRuntimeError('tool-violation');
       if (outputLimit) throw new CodexRuntimeError('output-limit');
       if (providerError || ['error', 'length', 'aborted'].includes(stopReason)) {
         throwIfAuthRequired(providerErrorDetails.join('\n'));
         if (
-          input.serviceTier === 'fast' &&
-          providerErrorDetails.some((detail) => detail.includes(CODEX_FAST_UNAVAILABLE_SENTINEL))
+          providerErrorDetails.some(
+            (detail) =>
+              detail.includes(CODEX_FAST_UNAVAILABLE_SENTINEL) ||
+              detail.includes(CODEX_REASONING_NONE_UNAVAILABLE_SENTINEL)
+          )
         ) {
           throw new CodexRuntimeError('runtime-unavailable');
         }

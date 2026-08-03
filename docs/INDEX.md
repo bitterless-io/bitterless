@@ -35,9 +35,9 @@ design document.
   mapping.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
-- [Translator mini app](features/translator.md) - fixed GPT-5.5 low-effort realtime bilingual
-  translation inside Omni with strict Zod output, one end-to-end deadline, and a dedicated
-  sanitized translation log.
+- [Translator mini app](features/translator.md) - fixed GPT-5.5 realtime bilingual translation
+  inside Omni with thinking disabled, one exact 60-second deadline, strict Zod output, and a
+  dedicated sanitized translation log.
 - [Motto mini app](features/motto.md) - local title/subtitle reminder cards inside Omni with
   whole-array Web Storage persistence.
 - [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
@@ -98,6 +98,9 @@ design document.
 
 ## Issues
 
+- [Translator latency and GPT-5.5 thinking](issues/translator-timeout-and-thinking-off.md) - in
+  progress: preserve the exact 60-second request deadline and explicitly send GPT-5.5 reasoning
+  effort `none` for Translator only.
 - [Translator remains translating after successful Codex login](issues/translator-runtime-stall-and-missing-log.md) -
   implemented; owner verification pending: every translation preparation stage is deadline-bound
   and sanitized execution evidence persists outside the shared application log.

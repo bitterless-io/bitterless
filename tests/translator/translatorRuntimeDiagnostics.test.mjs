@@ -6,11 +6,14 @@ const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), '
 
 const runtimeSource = read('src/main/codex/codexRuntime.service.ts');
 const serviceSource = read('src/main/translator/translator.service.ts');
+const contractSource = read('src/shared/translator/translator.contract.ts');
+const modelProviderContractSource = read('src/shared/modelProvider/modelProvider.contract.ts');
 const translatorRuntimeSource = read('src/main/translator/translator.runtime.ts');
 const logPolicySource = read('src/main/logging/logPolicy.service.ts');
 const translatorLogSource = read('src/main/logging/translatorLog.service.ts');
 
 test('one accepted-request deadline races provider, runtime, and observation work', () => {
+  assert.match(serviceSource, /const TRANSLATOR_TIMEOUT_MS = 60_000;/);
   const timerIndex = serviceSource.indexOf('this.setTimer(() =>');
   const providerIndex = serviceSource.indexOf("awaitStage('provider-context'");
   assert.ok(timerIndex > 0 && timerIndex < providerIndex);
@@ -23,6 +26,28 @@ test('one accepted-request deadline races provider, runtime, and observation wor
   assert.match(serviceSource, /awaitStage\('provider-auth-observation'/);
   assert.match(serviceSource, /output-validation-started/);
   assert.match(serviceSource, /output-validation-completed/);
+});
+
+test('Translator keeps its low provider target while disabling Pi and wire reasoning', () => {
+  assert.match(contractSource, /TRANSLATOR_MODEL = MODEL_PROVIDER_CODEX_MODEL/);
+  assert.match(contractSource, /TRANSLATOR_EFFORT = MODEL_PROVIDER_CODEX_EFFORT/);
+  assert.match(modelProviderContractSource, /MODEL_PROVIDER_CODEX_MODEL = 'gpt-5\.5'/);
+  assert.match(modelProviderContractSource, /MODEL_PROVIDER_CODEX_EFFORT = 'low'/);
+  assert.match(
+    serviceSource,
+    /model: TRANSLATOR_MODEL,[\s\S]*?effort: TRANSLATOR_EFFORT,[\s\S]*?thinkingLevel: 'off',[\s\S]*?serviceTier: 'fast'/
+  );
+  assert.match(runtimeSource, /thinkingLevel\?: CodexRuntimeThinkingLevel;/);
+  assert.match(runtimeSource, /const thinkingLevel = input\.thinkingLevel \?\? input\.effort;/);
+  assert.match(runtimeSource, /thinkingLevel,\s*noTools: 'all'/);
+  assert.match(runtimeSource, /if \(thinkingLevel === 'off'\)/);
+  assert.match(runtimeSource, /reasoning: \{ effort: 'none' \}/);
+  assert.match(runtimeSource, /service_tier: 'priority'/);
+  assert.match(
+    runtimeSource,
+    /const transformed = onPayload \? await onPayload\.call\(agent, payload, model\) : payload;[\s\S]*?reasoning: \{ effort: 'none' \}/
+  );
+  assert.match(runtimeSource, /effort: input\.effort,/);
 });
 
 test('Pi preparation and prompt stages race the same abort signal', () => {
