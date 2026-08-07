@@ -47,11 +47,27 @@ import {
   withTodoXpcTimeout,
 } from '@shared/todoistSync/todoXpcCall.shared';
 import { initializeApplicationLogging } from '@main/logging/log.setup';
+import {
+  installOnlyPreviewProtocol,
+  registerOnlyPreviewScheme,
+  uninstallOnlyPreviewProtocol,
+} from '@main/onlypreview/onlyPreviewProtocol.service';
+import {
+  OnlyPreviewOpenQueue,
+  resolveOnlyPreviewOpenTargets,
+} from '@main/onlypreview/onlyPreviewOpenRouter.service';
+import {
+  destroyOnlyPreviewForHostQuit,
+  openOnlyPreviewAbsoluteTarget,
+} from './xpc/onlyPreview.handler';
+import { onlyPreviewSettingsService } from './onlypreview/onlyPreviewSettings.service';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
+registerOnlyPreviewScheme();
+const onlyPreviewOpenQueue = new OnlyPreviewOpenQueue(openOnlyPreviewAbsoluteTarget);
 const CORE_SQLITE_STARTUP_TIMEOUT_MS = 60_000;
 const coreSqliteBoot = createBoundedTodoXpcClient(
   createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao'),
@@ -212,6 +228,22 @@ const configureE2EUserData = (): void => {
 configureE2EUserData();
 initializeApplicationLogging(runtimeProfile);
 
+if (!isHelperMode) {
+  for (const target of resolveOnlyPreviewOpenTargets(process.argv, {
+    packaged: app.isPackaged,
+    platform: process.platform,
+    workingDirectory: process.cwd(),
+  })) {
+    onlyPreviewOpenQueue.enqueue(target);
+  }
+}
+
+app.on('open-file', (event, target) => {
+  if (isHelperMode) return;
+  event.preventDefault();
+  onlyPreviewOpenQueue.enqueue(target);
+});
+
 const hasSingleInstanceLock = isHelperMode || app.requestSingleInstanceLock();
 
 const e2eMockOrigin = (): string => {
@@ -348,6 +380,12 @@ const cleanupResources = (): Promise<void> => {
     try { llamaWindowHelper.destroy(); } catch {}
     try { connectorWindowHelper.destroy(); } catch {}
     try { omniWindowHelper.destroy(); } catch {}
+    try { destroyOnlyPreviewForHostQuit(); } catch {
+      // Continue shutdown if Electron has already torn down OnlyPreview windows.
+    }
+    try { uninstallOnlyPreviewProtocol(); } catch {
+      // Continue shutdown if the protocol session is no longer available.
+    }
     try { trayHelper.destroy(); } catch {}
 
     try { console.log('[app] Cleanup complete'); } catch {}
@@ -467,6 +505,9 @@ const startGui = async (): Promise<void> => {
       void runDiagnosedStartupStage('window-layout', async () => {
         await mainWindowHelper.hydratePersistedLayout();
       });
+      void onlyPreviewSettingsService.hydrateFromStorage().catch((err: unknown) => {
+        console.warn('[app] OnlyPreview settings hydration failed:', err);
+      });
       void optionalIntegrationsLifecycle.start((canStartNextStage) =>
         startOptionalIntegrations(canStartNextStage)
       ).catch((err: unknown) => {
@@ -512,10 +553,23 @@ if (isLegacyCodingAgentHookHelperMode) {
 } else if (!hasSingleInstanceLock) {
   app.exit(0);
 } else {
-  app.on('second-instance', () => {
-    mainWindowHelper.show();
+  app.on('second-instance', (_event, commandLine, workingDirectory) => {
+    const targets = resolveOnlyPreviewOpenTargets(commandLine, {
+      packaged: app.isPackaged,
+      platform: process.platform,
+      workingDirectory,
+    });
+    if (targets.length) {
+      for (const target of targets) onlyPreviewOpenQueue.enqueue(target);
+    } else {
+      mainWindowHelper.show();
+    }
   });
-  void app.whenReady().then(startGui).catch((err: unknown) => {
+  void app.whenReady().then(async () => {
+    installOnlyPreviewProtocol();
+    await startGui();
+    onlyPreviewOpenQueue.markReady();
+  }).catch((err: unknown) => {
     console.error('[app] GUI startup failed:', err);
   });
 }

@@ -9,7 +9,13 @@ export const parseOmniContentMode = (value: unknown): OmniContentMode => {
   throw new Error(`Unsupported Omni content mode: ${String(value)}`);
 };
 
-export const OMNI_MINI_APP_IDS = ['todo', 'eyesOnAgents', 'translator', 'motto'] as const;
+export const OMNI_MINI_APP_IDS = [
+  'todo',
+  'eyesOnAgents',
+  'translator',
+  'motto',
+  'onlypreview',
+] as const;
 export type OmniMiniAppId = (typeof OMNI_MINI_APP_IDS)[number];
 
 export const DEFAULT_OMNI_MINI_APP_ID: OmniMiniAppId = 'todo';
@@ -39,7 +45,8 @@ export const OMNI_MINI_APP_DISPLAY_URLS: Record<OmniMiniAppId, string> = {
   todo: 'bl://miniapp/todo',
   eyesOnAgents: 'bl://miniapp/eyes-on-agents',
   translator: 'bl://miniapp/translator',
-  motto: 'bl://miniapp/motto'
+  motto: 'bl://miniapp/motto',
+  onlypreview: 'bl://miniapp/onlypreview',
 };
 
 export const isOmniMiniAppId = (value: unknown): value is OmniMiniAppId =>

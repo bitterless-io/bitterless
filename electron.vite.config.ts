@@ -1,11 +1,13 @@
-import { resolve } from 'path'
+import { dirname, resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 import { config as dotenvConfig } from 'dotenv'
 import monacoEditorPlugin from 'vite-plugin-monaco-editor-esm'
 import theme from './theme'
-import { readFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import JSON5 from 'json5'
+import { build as esbuild } from 'esbuild'
+import { createHash } from 'crypto'
 
 dotenvConfig({ path: resolve('.env.rig') })
 
@@ -45,6 +47,7 @@ const bundledRuntimeDependencies = [
   '@mozilla/readability',
   'docx',
   'exceljs',
+  'electron-xpc',
   'linkedom',
   'mammoth',
   'typebox',
@@ -99,6 +102,98 @@ const mottoDevCspPlugin = {
   }
 }
 
+const onlyPreviewDevCspPlugin = {
+  name: 'bitterless:onlypreview-dev-csp',
+  apply: 'serve' as const,
+  transformIndexHtml(html: string, context: { path: string }) {
+    if (!context.path.includes('/onlypreview/')) return html
+    return html
+      .replace(
+        "connect-src 'self' bitterless-preview:",
+        "connect-src 'self' bitterless-preview: ws://localhost:* wss://localhost:*"
+      )
+      .replace(
+        "connect-src 'none'",
+        "connect-src 'self' ws://localhost:* wss://localhost:*"
+      )
+  }
+}
+
+const onlyPreviewSandboxPreloadPlugin = {
+  name: 'bitterless:onlypreview-sandbox-preload',
+  apply: 'build' as const,
+  async closeBundle() {
+    await esbuild({
+      entryPoints: [resolve('src/preload/onlypreview/onlypreview.preload.ts')],
+      outfile: resolve('out/preload/onlypreview.js'),
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      target: 'node22',
+      external: ['electron'],
+      sourcemap: false,
+      logLevel: 'silent'
+    })
+  }
+}
+
+const secureOnlyPreviewHtml = (source: string): string => {
+  let html = source.replaceAll('./monacoeditorwork/', '../../monacoeditorwork/')
+  const inlineScript = html.match(/<script>([\s\S]*?MonacoEnvironment[\s\S]*?)<\/script>/)
+  const cspMeta = html.match(
+    /\s*<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"\s*\/?>/i
+  )
+  if (!cspMeta) throw new Error('OnlyPreview renderer is missing its Content-Security-Policy meta')
+  let csp = cspMeta[1]
+  if (inlineScript) {
+    const hash = createHash('sha256').update(inlineScript[1]).digest('base64')
+    csp = csp.replace("script-src 'self'", `script-src 'self' 'sha256-${hash}'`)
+  }
+  html = html.replace(cspMeta[0], '')
+  return html.replace(
+    /<head>/i,
+    `<head>\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`
+  )
+}
+
+const onlyPreviewHtmlSecurityPlugin = {
+  name: 'bitterless:onlypreview-html-security',
+  transformIndexHtml: {
+    order: 'post' as const,
+    handler(html: string, context: { path: string }) {
+      if (!context.path.includes('/onlypreview/')) return html
+      return secureOnlyPreviewHtml(html)
+    }
+  },
+  closeBundle() {
+    for (const mode of ['shell', 'preview', 'settings']) {
+      const htmlPath = resolve('out/renderer/onlypreview', mode, 'index.html')
+      const html = readFileSync(htmlPath, 'utf8')
+      const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? ''
+      if (!/^\s*<meta\s+http-equiv="Content-Security-Policy"/i.test(head)) {
+        throw new Error(`OnlyPreview ${mode} CSP is not the first element in <head>`)
+      }
+      if (html.includes('"./monacoeditorwork/')) {
+        throw new Error(`OnlyPreview ${mode} contains a nested broken Monaco worker path`)
+      }
+      const inlineScript = html.match(/<script>([\s\S]*?MonacoEnvironment[\s\S]*?)<\/script>/)
+      if (!inlineScript) throw new Error(`OnlyPreview ${mode} Monaco bootstrap is missing`)
+      const hash = createHash('sha256').update(inlineScript[1]).digest('base64')
+      if (!head.includes(`'sha256-${hash}'`)) {
+        throw new Error(`OnlyPreview ${mode} CSP does not authorize its exact Monaco bootstrap`)
+      }
+      const workerPaths = [...html.matchAll(/"(\.\.\/\.\.\/monacoeditorwork\/[^"]+)"/g)]
+        .map((match) => match[1])
+      if (!workerPaths.length) throw new Error(`OnlyPreview ${mode} Monaco worker paths are missing`)
+      for (const workerPath of new Set(workerPaths)) {
+        if (!existsSync(resolve(dirname(htmlPath), workerPath))) {
+          throw new Error(`OnlyPreview ${mode} Monaco worker is missing: ${workerPath}`)
+        }
+      }
+    }
+  }
+}
+
 const generateEnvDefines = () => {
   const envRigPath = resolve('env.rig.json5');
   const envRigContent = readFileSync(envRigPath, 'utf-8');
@@ -148,6 +243,7 @@ export default defineConfig({
     }
   },
   preload: {
+    plugins: [onlyPreviewSandboxPreloadPlugin],
     define: { ...maestroBuildDefine, ...bitterlessPreloadBuildDefine },
     build: {
       externalizeDeps: { exclude: bundledRuntimeDependencies },
@@ -161,6 +257,7 @@ export default defineConfig({
           eyesOnAgents: resolve('src/preload/eyesOnAgents/eyesOnAgents.preload.ts'),
           translator: resolve('src/preload/translator/translator.preload.ts'),
           motto: resolve('src/preload/motto/motto.preload.ts'),
+          onlypreview: resolve('src/preload/onlypreview/onlypreview.preload.ts'),
           omni: resolve('src/preload/omni/omni.preload.ts'),
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
           coin: resolve('src/preload/coin/coin.preload.ts'),
@@ -201,6 +298,9 @@ export default defineConfig({
           eyesOnAgents: resolve('src/renderer/eyesOnAgents/index.html'),
           translator: resolve('src/renderer/translator/index.html'),
           motto: resolve('src/renderer/motto/index.html'),
+          'onlypreview/shell': resolve('src/renderer/onlypreview/shell/index.html'),
+          'onlypreview/preview': resolve('src/renderer/onlypreview/preview/index.html'),
+          'onlypreview/settings': resolve('src/renderer/onlypreview/settings/index.html'),
           'omni/omniCell': resolve('src/renderer/omni/omniCell/index.html'),
           'omni/omniControl': resolve('src/renderer/omni/omniControl/index.html'),
           'omni/omniWindow': resolve('src/renderer/omni/omniWindow/index.html'),
@@ -241,8 +341,10 @@ export default defineConfig({
       coinDevCspPlugin,
       translatorDevCspPlugin,
       mottoDevCspPlugin,
+      onlyPreviewDevCspPlugin,
       maestroSqliteDevCspPlugin,
-      monacoEditorPlugin({ customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork') })
+      monacoEditorPlugin({ customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork') }),
+      onlyPreviewHtmlSecurityPlugin
     ],
     css: {
       preprocessorOptions: {

@@ -1,7 +1,7 @@
 ---
 id: onlypreview-mvp-001
 scope: OnlyPreview local-file preview sub-application and host integrations
-status: ready
+status: in-progress
 depends-on: []
 ---
 
@@ -23,12 +23,16 @@ Setting window, Home entry, Omni entry, and OS/package file-open integration.
 # Path
 
 - `electron.vite.config.ts`
+- `electron-builder.tmp.yml`
 - `electron-builder.yml`
+- `build/installer.tmp.nsh`
+- `build/installer.nsh`
 - `package.json`
 - `src/main/app.main.ts`
 - `src/main/logging/logPolicy.service.ts`
 - `src/main/onlypreview/**`
 - `src/main/windows/onlyPreviewWindow.helper.ts`
+- `src/main/windows/omniWindow.helper.ts`
 - `src/main/xpc/onlyPreview.handler.ts`
 - `src/main/xpc/xpc.helper.ts`
 - `src/main/xpc/auth.handler.ts`
@@ -59,8 +63,9 @@ Setting window, Home entry, Omni entry, and OS/package file-open integration.
 # Implementation Constraints
 
 1. Preserve the exact `onlypreview` stable ID and `OnlyPreview` user-facing name.
-2. Do not expose an arbitrary absolute-path read API. Use Main-issued workspace capabilities,
-   relative file refs, realpath containment, and non-recursive symlink handling.
+2. Do not expose an arbitrary absolute-path read API. Pre-register a Main-issued host capability
+   for every view, bind workspace/media capabilities to that host, use relative file refs, enforce
+   realpath containment, and never recurse into symlinks. Revoke each Omni cell host on teardown.
 3. Every renderer is sandboxed, context-isolated, Node-disabled, web-security-enabled, and fenced
    to its exact first-party local target.
 4. The standalone window must use a `BaseWindow` with separate Shell and Preview
@@ -70,11 +75,17 @@ Setting window, Home entry, Omni entry, and OS/package file-open integration.
    accepted contract becomes impossible with the installed stack.
 6. Text and code are selectable but never editable. User HTML is source, never executable.
 7. Use a tokenized internal streaming scheme for PDF/images/audio/video; never put absolute paths
-   in resource URLs.
+   in resource URLs. Implement manual full/206 streaming because Electron 40 file fetch loses Range
+   semantics, and render PDF with installed PDF.js canvas + selectable TextLayer rather than iframe.
 8. Add the separate OnlyPreview Setting window; do not depend on the incomplete Home Settings
    navigation bridge.
 9. Follow Bitterless Vue/BEM/XPC/file-naming rules, use Arco controls, and keep the theme light.
 10. Preserve unrelated code, the existing Electron/SQLite pins, and historical review documents.
+11. Every fallible privileged XPC call returns a discriminated result envelope; never depend on a
+    thrown handler error surviving `electron-xpc`.
+12. Keep common file associations, add macOS generic `public.data` Viewer/Alternate discovery, and
+    add/remove the bounded Windows generic `Open in Bitterless` context-menu verb. Edit the
+    `.tmp` generator sources and regenerate outputs; keep `mac.extendInfo` as one valid mapping.
 
 # Verification
 
@@ -91,4 +102,3 @@ Setting window, Home entry, Omni entry, and OS/package file-open integration.
 
 If packaged macOS/Windows builds are unavailable, report file-association and codec verification as
 an exact remaining owner handoff. Source/config inspection is not proof of installed OS behavior.
-

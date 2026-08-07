@@ -1,0 +1,270 @@
+import type { ReadStream } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
+import { Readable } from 'node:stream';
+import { randomBytes } from 'node:crypto';
+import { basename } from 'node:path';
+import { ONLY_PREVIEW_SCHEME } from '@shared/onlypreview/onlyPreview.types';
+import type { ResolvedOnlyPreviewFile } from './onlyPreviewWorkspace.registry';
+import { onlyPreviewHostRegistry, type OnlyPreviewHostRegistry } from './onlyPreviewHost.registry';
+import {
+  onlyPreviewWorkspaceRegistry,
+  type OnlyPreviewWorkspaceRegistry
+} from './onlyPreviewWorkspace.registry';
+
+const MAX_ASSET_TOKENS = 512;
+const ASSET_TOKEN_TTL_MS = 30 * 60 * 1000;
+
+interface AssetTokenRecord {
+  token: string;
+  hostToken: string;
+  workspaceId: string;
+  relativePath: string;
+  mimeType: string;
+  createdAt: number;
+  activeStreams: Set<ReadStream>;
+}
+
+export interface OnlyPreviewByteRange {
+  start: number;
+  end: number;
+}
+
+export type OnlyPreviewRangeParseResult =
+  | { kind: 'full' }
+  | { kind: 'range'; range: OnlyPreviewByteRange }
+  | { kind: 'invalid' };
+
+export const parseOnlyPreviewRange = (
+  value: string | null,
+  size: number
+): OnlyPreviewRangeParseResult => {
+  if (!value) return { kind: 'full' };
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(value.trim());
+  if (!match || (!match[1] && !match[2]) || size <= 0) return { kind: 'invalid' };
+
+  let start: number;
+  let end: number;
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return { kind: 'invalid' };
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] ? Number(match[2]) : size - 1;
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start ||
+      start >= size
+    ) {
+      return { kind: 'invalid' };
+    }
+    end = Math.min(end, size - 1);
+  }
+  return { kind: 'range', range: { start, end } };
+};
+
+export const createOnlyPreviewFileResponse = async (params: {
+  request: Request;
+  fileHandle: FileHandle;
+  fileSize: number;
+  mimeType: string;
+  onStream?: (stream: ReadStream) => void;
+}): Promise<Response> => {
+  const closeHandle = async (): Promise<void> => {
+    await params.fileHandle.close().catch(() => undefined);
+  };
+  if (params.request.method !== 'GET' && params.request.method !== 'HEAD') {
+    await closeHandle();
+    return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
+  }
+
+  const parsedRange = parseOnlyPreviewRange(params.request.headers.get('range'), params.fileSize);
+  const baseHeaders = {
+    'Accept-Ranges': 'bytes',
+    'Content-Type': params.mimeType,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff'
+  };
+  if (parsedRange.kind === 'invalid') {
+    await closeHandle();
+    return new Response(null, {
+      status: 416,
+      headers: {
+        ...baseHeaders,
+        'Content-Range': `bytes */${params.fileSize}`,
+        'Content-Length': '0'
+      }
+    });
+  }
+
+  const range =
+    parsedRange.kind === 'range'
+      ? parsedRange.range
+      : { start: 0, end: Math.max(0, params.fileSize - 1) };
+  const contentLength = params.fileSize === 0 ? 0 : range.end - range.start + 1;
+  const headers: Record<string, string> = {
+    ...baseHeaders,
+    'Content-Length': String(contentLength)
+  };
+  if (parsedRange.kind === 'range') {
+    headers['Content-Range'] = `bytes ${range.start}-${range.end}/${params.fileSize}`;
+  }
+  if (params.request.method === 'HEAD' || params.fileSize === 0) {
+    await closeHandle();
+    return new Response(null, {
+      status: parsedRange.kind === 'range' ? 206 : 200,
+      headers
+    });
+  }
+
+  const nodeStream = params.fileHandle.createReadStream({
+    start: range.start,
+    end: range.end,
+    signal: params.request.signal
+  });
+  params.onStream?.(nodeStream);
+  const body = Readable.toWeb(nodeStream) as unknown as BodyInit;
+  return new Response(body, {
+    status: parsedRange.kind === 'range' ? 206 : 200,
+    headers
+  });
+};
+
+export class OnlyPreviewAssetRegistry {
+  private readonly assets = new Map<string, AssetTokenRecord>();
+
+  constructor(
+    private readonly hosts: OnlyPreviewHostRegistry,
+    private readonly workspaces: OnlyPreviewWorkspaceRegistry
+  ) {
+    hosts.onRevoke((host) => this.revokeHost(host.hostToken));
+    workspaces.onRevoke((workspace) => this.revokeWorkspace(workspace.workspaceId));
+  }
+
+  issue(file: ResolvedOnlyPreviewFile, mimeType: string): string {
+    while (this.assets.size >= MAX_ASSET_TOKENS) {
+      const oldest = this.assets.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.revokeToken(oldest);
+    }
+    const token = randomBytes(32).toString('hex');
+    this.assets.set(token, {
+      token,
+      hostToken: file.host.hostToken,
+      workspaceId: file.workspace.workspaceId,
+      relativePath: file.relativePath,
+      mimeType,
+      createdAt: Date.now(),
+      activeStreams: new Set()
+    });
+    return `${ONLY_PREVIEW_SCHEME}://asset/${token}/${encodeURIComponent(basename(file.relativePath))}`;
+  }
+
+  async respond(request: Request): Promise<Response> {
+    const rawMatch = new RegExp(
+      `^${ONLY_PREVIEW_SCHEME}:\\/\\/asset\\/([a-f0-9]{64})\\/([^/?#]+)$`
+    ).exec(request.url);
+    if (!rawMatch) return new Response(null, { status: 404 });
+    let url: URL;
+    try {
+      url = new URL(request.url);
+    } catch {
+      return new Response(null, { status: 400 });
+    }
+    if (
+      url.protocol !== `${ONLY_PREVIEW_SCHEME}:` ||
+      url.hostname !== 'asset' ||
+      url.username !== '' ||
+      url.password !== '' ||
+      url.port !== '' ||
+      url.search !== '' ||
+      url.hash !== '' ||
+      url.pathname !== `/${rawMatch[1]}/${rawMatch[2]}`
+    ) {
+      return new Response(null, { status: 404 });
+    }
+    const token = rawMatch[1];
+    const asset = this.assets.get(token);
+    let displayName: string;
+    try {
+      displayName = decodeURIComponent(rawMatch[2]);
+    } catch {
+      return new Response(null, { status: 404 });
+    }
+    if (
+      !asset ||
+      rawMatch[2] !== encodeURIComponent(displayName) ||
+      displayName !== basename(asset.relativePath)
+    ) {
+      return new Response(null, { status: 404 });
+    }
+    if (Date.now() - asset.createdAt > ASSET_TOKEN_TTL_MS) {
+      this.revokeToken(token);
+      return new Response(null, { status: 404 });
+    }
+    if (!this.hosts.isLive(asset.hostToken)) {
+      this.revokeToken(token);
+      return new Response(null, { status: 404 });
+    }
+    let file: Awaited<ReturnType<OnlyPreviewWorkspaceRegistry['openFile']>> | null = null;
+    try {
+      file = await this.workspaces.openFile(asset.hostToken, {
+        workspaceId: asset.workspaceId,
+        relativePath: asset.relativePath
+      });
+      if (
+        this.assets.get(token) !== asset ||
+        !this.hosts.isLive(asset.hostToken) ||
+        Date.now() - asset.createdAt > ASSET_TOKEN_TTL_MS
+      ) {
+        await file.fileHandle.close().catch(() => undefined);
+        return new Response(null, { status: 404 });
+      }
+      return await createOnlyPreviewFileResponse({
+        request,
+        fileHandle: file.fileHandle,
+        fileSize: file.size,
+        mimeType: asset.mimeType,
+        onStream: (stream) => {
+          asset.activeStreams.add(stream);
+          stream.once('close', () => asset.activeStreams.delete(stream));
+        }
+      });
+    } catch {
+      await file?.fileHandle.close().catch(() => undefined);
+      return new Response(null, { status: 404 });
+    }
+  }
+
+  revokeHost(hostToken: string): void {
+    for (const [token, asset] of this.assets) {
+      if (asset.hostToken === hostToken) this.revokeToken(token);
+    }
+  }
+
+  revokeWorkspace(workspaceId: string): void {
+    for (const [token, asset] of this.assets) {
+      if (asset.workspaceId === workspaceId) this.revokeToken(token);
+    }
+  }
+
+  clear(): void {
+    for (const token of [...this.assets.keys()]) this.revokeToken(token);
+  }
+
+  private revokeToken(token: string): void {
+    const asset = this.assets.get(token);
+    if (!asset) return;
+    this.assets.delete(token);
+    for (const stream of asset.activeStreams) stream.destroy();
+    asset.activeStreams.clear();
+  }
+}
+
+export const onlyPreviewAssetRegistry = new OnlyPreviewAssetRegistry(
+  onlyPreviewHostRegistry,
+  onlyPreviewWorkspaceRegistry
+);

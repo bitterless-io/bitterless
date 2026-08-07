@@ -25,5 +25,7 @@ export type WindowStateKey =
   | 'eyes-on-agents'
   | 'maestro'
   | 'coin'
+  | 'onlypreview'
+  | 'onlypreview-settings'
   | 'plugin-content'
   | 'plugin-options';

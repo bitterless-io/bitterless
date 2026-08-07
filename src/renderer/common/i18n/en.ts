@@ -272,6 +272,10 @@ export const en = {
       name: 'Motto',
       subtitle: 'Keep important reminders close at hand',
     },
+    onlyPreview: {
+      name: 'OnlyPreview',
+      subtitle: 'Fast, private previews for local files and folders',
+    },
     omniBrowser: {
       name: 'Omni Browser',
       subtitle: 'Multi-pane web browser',

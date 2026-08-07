@@ -44,6 +44,8 @@ import { omniWindowEmitter } from '@/emitter/omniWindow.emitter';
 import { maestroWindowEmitter } from '@/emitter/maestroWindow.emitter';
 import { coinWindowEmitter } from '@/emitter/coinWindow.emitter';
 import { eyesOnAgentsWindowEmitter } from '@/emitter/eyesOnAgentsWindow.emitter';
+import { onlyPreviewEmitter } from '@/emitter/onlyPreview.emitter';
+import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
 import { authStore } from '@/stores/auth/auth.store';
 import { createMiniApps, type MiniApp } from './miniApps.constant';
 
@@ -70,6 +72,10 @@ const openEyesOnAgents = async () => {
   await eyesOnAgentsWindowEmitter.openEyesOnAgentsWindow();
 };
 
+const openOnlyPreview = async () => {
+  unwrapOnlyPreviewResult(await onlyPreviewEmitter.openOnlyPreviewWindow());
+};
+
 const openApp = async (app: MiniApp): Promise<void> => {
   if (openingAppIds.value.has(app.id)) return;
   openingAppIds.value.add(app.id);
@@ -90,6 +96,7 @@ const miniApps = computed(() =>
     openCoin,
     openEyesOnAgents,
     openOmniBrowser,
+    openOnlyPreview,
     i18nHelper,
   ),
 );

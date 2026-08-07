@@ -1,0 +1,79 @@
+.onlypreview-pdf {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #e9ebf1;
+}
+
+.onlypreview-pdf__pages {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  overflow: auto;
+  padding: 18px;
+}
+
+.onlypreview-pdf__page {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 5px 20px rgb(37 40 58 / 16%);
+}
+
+.onlypreview-pdf__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.onlypreview-pdf__text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  line-height: 1;
+  opacity: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+}
+
+.onlypreview-pdf__text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.onlypreview-pdf__text-layer span.markedContent {
+  top: 0;
+  height: 0;
+}
+
+.onlypreview-pdf__text-layer ::selection {
+  color: transparent;
+  background: rgb(78 88 130 / 32%);
+}
+
+.onlypreview-pdf__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  color: var(--onlypreview-muted, #6f7487);
+  background: rgb(246 247 250 / 90%);
+  font-size: 11px;
+}

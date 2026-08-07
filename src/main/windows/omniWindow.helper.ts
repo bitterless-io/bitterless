@@ -35,6 +35,11 @@ import {
   windowStateService,
   type WindowStateController,
 } from './windowState.service';
+import {
+  onlyPreviewHostRegistry,
+  type OnlyPreviewHostCapability,
+} from '@main/onlypreview/onlyPreviewHost.registry';
+import { onlyPreviewWindowHelper } from './onlyPreviewWindow.helper';
 
 const LAYOUT_KEY = 'omni_layout';
 const WINDOW_LAYOUT_KEY = 'window_layout';
@@ -119,6 +124,7 @@ const OMNI_MINI_APP_RUNTIME: Record<OmniMiniAppId, OmniMiniAppRuntime> = {
   eyesOnAgents: { preloadFile: 'eyesOnAgents.js', rendererName: 'eyesOnAgents' },
   translator: { preloadFile: 'translator.js', rendererName: 'translator' },
   motto: { preloadFile: 'motto.js', rendererName: 'motto' },
+  onlypreview: { preloadFile: 'onlypreview.js', rendererName: 'onlypreview/shell' },
 };
 
 const getCellDisplayUrl = (cell: Pick<
@@ -159,6 +165,7 @@ interface CellViewPair {
   miniAppId: OmniMiniAppId;
   browserProfile: OmniBrowserProfile | null;
   lastUrl: string;
+  onlyPreviewHostToken: string | null;
 }
 
 export class OmniWindowHelper {
@@ -221,12 +228,26 @@ export class OmniWindowHelper {
   private closeWebContentsView(view: WebContentsView | null): void {
     if (!view) return;
     try {
-      if (this.isWebContentsAlive(view.webContents)) {
+      if (!view.webContents.isDestroyed()) {
         view.webContents.close();
       }
     } catch {
       // already destroyed
     }
+  }
+
+  private detachWebContentsView(view: WebContentsView | null): void {
+    if (!view || !this.baseWindow || this.baseWindow.isDestroyed()) return;
+    try {
+      this.baseWindow.contentView.removeChildView(view);
+    } catch {
+      // The view may already be detached or disposed after a renderer failure.
+    }
+  }
+
+  private disposeWebContentsView(view: WebContentsView | null): void {
+    this.detachWebContentsView(view);
+    this.closeWebContentsView(view);
   }
 
   private cleanupAllViews(): void {
@@ -251,18 +272,11 @@ export class OmniWindowHelper {
     this.cells = [];
     this.miniAppLoadFailures.clear();
     for (const cell of cells) {
-      try {
-        if (this.baseWindow && !this.baseWindow.isDestroyed()) {
-          if (cell.menubar) this.baseWindow.contentView.removeChildView(cell.menubar);
-          this.baseWindow.contentView.removeChildView(cell.content);
-        }
-        this.closeWebContentsView(cell.menubar);
-        this.closeWebContentsView(cell.content);
-      } catch {
-        // view may already be destroyed
-      }
+      this.revokeOnlyPreviewCellHost(cell);
+      this.disposeWebContentsView(cell.menubar);
+      this.disposeWebContentsView(cell.content);
     }
-    this.closeWebContentsView(this.menubarView);
+    this.disposeWebContentsView(this.menubarView);
     this.menubarView = null;
     this.currentLayout = [];
     this.currentLayoutTree = null;
@@ -600,14 +614,25 @@ export class OmniWindowHelper {
     return content;
   }
 
-  private createMiniAppCellContentView(preloadPath: string): WebContentsView {
+  private createMiniAppCellContentView(
+    preloadPath: string,
+    onlyPreviewHost: OnlyPreviewHostCapability | null = null,
+  ): WebContentsView {
+    const onlyPreviewArguments = onlyPreviewHost
+      ? [
+          `--onlypreview-host-token=${onlyPreviewHost.hostToken}`,
+          `--onlypreview-host-id=${onlyPreviewHost.hostId}`,
+          '--onlypreview-mode=shell',
+        ]
+      : [];
     return new WebContentsView({
       webPreferences: {
         preload: preloadPath,
-        sandbox: false,
+        sandbox: Boolean(onlyPreviewHost),
         contextIsolation: true,
         nodeIntegration: false,
-        additionalArguments: ['--mode=omni'],
+        webSecurity: true,
+        additionalArguments: ['--mode=omni', ...onlyPreviewArguments],
       },
     });
   }
@@ -649,7 +674,11 @@ export class OmniWindowHelper {
     } else {
       this.miniAppLoadFailures.delete(params.cellId);
     }
-    xpcMain.broadcast(OMNI_MINI_APP_LOAD_STATE_EVENT, params);
+    try {
+      xpcMain.broadcast(OMNI_MINI_APP_LOAD_STATE_EVENT, params);
+    } catch (error) {
+      console.warn('[OmniWindowHelper] Failed to broadcast mini-app load state:', error);
+    }
   }
 
   private replayMiniAppLoadFailures(): void {
@@ -721,6 +750,8 @@ export class OmniWindowHelper {
         (candidate) => candidate.id === cellId && candidate.content === content,
       );
       if (!cell) return;
+      this.cells = this.cells.filter((candidate) => candidate !== cell);
+      this.removeCellViews(cell);
       this.reportMiniAppLoadFailure({
         cellId,
         miniAppId,
@@ -728,8 +759,6 @@ export class OmniWindowHelper {
         expectedTarget: target.url,
         error,
       });
-      this.cells = this.cells.filter((candidate) => candidate !== cell);
-      this.removeCellViews(cell);
     });
   }
 
@@ -742,6 +771,7 @@ export class OmniWindowHelper {
       ? resolveOmniBrowserProfile(url) ?? 'default'
       : null;
     let miniAppRuntime: ResolvedOmniMiniAppRuntime | null = null;
+    let onlyPreviewHost: OnlyPreviewHostCapability | null = null;
 
     if (contentMode === 'miniapp') {
       try {
@@ -758,6 +788,10 @@ export class OmniWindowHelper {
       }
     }
 
+    if (contentMode === 'miniapp' && miniAppId === 'onlypreview') {
+      onlyPreviewHost = onlyPreviewHostRegistry.issue('omni', 'content');
+    }
+
     const menubar = contentMode === 'browser'
       ? this.createWebContentsView('omniCell', [
         `--cellId=${id}`,
@@ -767,10 +801,38 @@ export class OmniWindowHelper {
       : null;
     if (menubar) this.baseWindow.contentView.addChildView(menubar);
 
-    const content = contentMode === 'browser'
-      ? this.createBrowserCellContentView(browserProfile!)
-      : this.createMiniAppCellContentView(miniAppRuntime!.preloadPath);
-    this.baseWindow.contentView.addChildView(content);
+    let content: WebContentsView;
+    try {
+      content = contentMode === 'browser'
+        ? this.createBrowserCellContentView(browserProfile!)
+        : this.createMiniAppCellContentView(miniAppRuntime!.preloadPath, onlyPreviewHost);
+    } catch (error) {
+      this.disposeWebContentsView(menubar);
+      if (onlyPreviewHost) onlyPreviewHostRegistry.revoke(onlyPreviewHost.hostToken);
+      this.reportMiniAppLoadFailure({
+        cellId: id,
+        miniAppId,
+        stage: 'target-validation',
+        expectedTarget: miniAppRuntime?.rendererTarget.url ?? url,
+        error,
+      });
+      return;
+    }
+    try {
+      this.baseWindow.contentView.addChildView(content);
+    } catch (error) {
+      this.disposeWebContentsView(menubar);
+      this.disposeWebContentsView(content);
+      if (onlyPreviewHost) onlyPreviewHostRegistry.revoke(onlyPreviewHost.hostToken);
+      this.reportMiniAppLoadFailure({
+        cellId: id,
+        miniAppId,
+        stage: 'target-validation',
+        expectedTarget: miniAppRuntime?.rendererTarget.url ?? url,
+        error,
+      });
+      return;
+    }
 
     if (contentMode === 'browser') {
       this.configureBrowserCellContentView(id, content);
@@ -781,11 +843,16 @@ export class OmniWindowHelper {
         if (/^https?:\/\//i.test(details.url)) shell.openExternal(details.url);
         return { action: 'deny' };
       });
-      content.webContents.on('will-navigate', (event, navigationUrl) => {
+      const fenceMiniAppNavigation = (event: Electron.Event, navigationUrl: string): void => {
         if (navigationUrl === expectedRendererUrl) return;
         event.preventDefault();
         if (/^https?:\/\//i.test(navigationUrl)) shell.openExternal(navigationUrl);
-      });
+      };
+      content.webContents.on('will-navigate', fenceMiniAppNavigation);
+      content.webContents.on('will-redirect', fenceMiniAppNavigation);
+      if (onlyPreviewHost) {
+        onlyPreviewWindowHelper.bindNativeShortcuts(content.webContents, onlyPreviewHost);
+      }
     }
 
     // Browser-only chrome may mount after the page has already navigated.
@@ -816,6 +883,7 @@ export class OmniWindowHelper {
       miniAppId,
       browserProfile,
       lastUrl: url || '',
+      onlyPreviewHostToken: onlyPreviewHost?.hostToken ?? null,
     };
 
     this.bindCellContentLifecycle(cell, content, miniAppRuntime);
@@ -939,6 +1007,8 @@ export class OmniWindowHelper {
 
     content.webContents.on('render-process-gone', (_e, details) => {
       if (!this.cells.includes(cell) || cell.content !== content) return;
+      this.cells = this.cells.filter((candidate) => candidate !== cell);
+      this.removeCellViews(cell);
       if (cell.contentMode === 'miniapp' && miniAppRuntime) {
         this.reportMiniAppLoadFailure({
           cellId: cell.id,
@@ -950,8 +1020,6 @@ export class OmniWindowHelper {
       } else {
         console.warn(`[OmniWindowHelper] Cell ${cell.id} renderer crashed:`, details.reason);
       }
-      this.cells = this.cells.filter((candidate) => candidate !== cell);
-      this.removeCellViews(cell);
     });
   }
 
@@ -969,8 +1037,7 @@ export class OmniWindowHelper {
     cell.browserProfile = profile;
     this.bindCellContentLifecycle(cell, content, null);
 
-    this.baseWindow.contentView.removeChildView(previousContent);
-    this.closeWebContentsView(previousContent);
+    this.disposeWebContentsView(previousContent);
     this.baseWindow.contentView.addChildView(content);
     this.applyLayoutInternal();
 
@@ -983,16 +1050,17 @@ export class OmniWindowHelper {
   }
 
   private removeCellViews(cell: CellViewPair): void {
-    try {
-      if (this.baseWindow && !this.baseWindow.isDestroyed()) {
-        if (cell.menubar) this.baseWindow.contentView.removeChildView(cell.menubar);
-        this.baseWindow.contentView.removeChildView(cell.content);
-      }
-      this.closeWebContentsView(cell.menubar);
-      this.closeWebContentsView(cell.content);
-    } catch {
-      // view may already be destroyed
-    }
+    this.revokeOnlyPreviewCellHost(cell);
+    this.disposeWebContentsView(cell.menubar);
+    this.disposeWebContentsView(cell.content);
+  }
+
+  private revokeOnlyPreviewCellHost(cell: CellViewPair): void {
+    const hostToken = cell.onlyPreviewHostToken;
+    if (!hostToken) return;
+    cell.onlyPreviewHostToken = null;
+    onlyPreviewWindowHelper.releaseNativeShortcutHost(hostToken);
+    onlyPreviewHostRegistry.revoke(hostToken);
   }
 
   private notifyCellUrl(cellId: string, url: string): void {

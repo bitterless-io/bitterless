@@ -17,6 +17,7 @@ files:
   - '!scripts/*'
   - '!tests/**'
   - '!output/**'
+  - '!out/playwright/**'
   - '!doc/*'
   - '!rig_dev/*'
   - '!rig_indies/*'
@@ -56,6 +57,79 @@ extraResources:
     to: sounds
 win:
   executableName: ${name}
+fileAssociations:
+  - ext:
+      - txt
+      - md
+      - json
+      - yaml
+      - yml
+      - csv
+      - log
+      - cfg
+      - conf
+      - ini
+      - properties
+      - c
+      - cc
+      - cpp
+      - cs
+      - h
+      - hpp
+      - go
+      - graphql
+      - htm
+      - html
+      - java
+      - js
+      - json5
+      - jsx
+      - less
+      - lua
+      - mdx
+      - mjs
+      - mts
+      - php
+      - py
+      - rb
+      - rs
+      - sass
+      - scss
+      - sh
+      - sql
+      - svelte
+      - swift
+      - toml
+      - ts
+      - tsx
+      - vue
+      - xml
+      - zsh
+      - pdf
+      - png
+      - jpg
+      - jpeg
+      - gif
+      - webp
+      - avif
+      - bmp
+      - ico
+      - svg
+      - mp3
+      - wav
+      - ogg
+      - m4a
+      - aac
+      - flac
+      - mp4
+      - webm
+      - ogv
+      - mov
+      - m4v
+    name: Bitterless Preview Document
+    description: Open with Bitterless OnlyPreview
+    role: Viewer
+    rank: Alternate
 nsis:
   artifactName: ${productName}VITE_ENV_PART-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -72,11 +146,17 @@ mac:
   gatekeeperAssess: false
   notarize: false
   extendInfo:
-    - NSCameraUsageDescription: Application requests access to the device's camera.
-    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-    - NSDesktopFolderUsageDescription: Application requests access to the user's Desktop folder.
+    NSCameraUsageDescription: Application requests access to the device's camera.
+    NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    NSDesktopFolderUsageDescription: Application requests access to the user's Desktop folder.
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: All Documents
+        CFBundleTypeRole: Viewer
+        LSHandlerRank: Alternate
+        LSItemContentTypes:
+          - public.data
 dmg:
   artifactName: ${productName}VITE_ENV_PART-${version}.${ext}
 npmRebuild: false

@@ -273,6 +273,10 @@ export const zh: typeof en = {
       name: 'Motto',
       subtitle: '随时查看对自己重要的提醒',
     },
+    onlyPreview: {
+      name: 'OnlyPreview',
+      subtitle: '快速、私密地预览本地文件与文件夹',
+    },
     omniBrowser: {
       name: '全能浏览器',
       subtitle: '多窗格网页浏览器',

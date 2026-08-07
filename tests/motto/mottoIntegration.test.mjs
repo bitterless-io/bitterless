@@ -11,8 +11,14 @@ import {
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 
-test('Motto is the fourth allowlisted Omni mini app', () => {
-  assert.deepEqual(OMNI_MINI_APP_IDS, ['todo', 'eyesOnAgents', 'translator', 'motto']);
+test('Motto remains the fourth allowlisted Omni mini app', () => {
+  assert.deepEqual(OMNI_MINI_APP_IDS, [
+    'todo',
+    'eyesOnAgents',
+    'translator',
+    'motto',
+    'onlypreview'
+  ]);
   assert.equal(parseOmniMiniAppId('motto'), 'motto');
   assert.equal(OMNI_MINI_APP_DISPLAY_URLS.motto, 'bl://miniapp/motto');
   assert.throws(() => parseOmniMiniAppId('unknown'));

@@ -20,23 +20,37 @@ const rendererEntries = [
   ['omniCell', 'src/renderer/omni/omniCell/src/main.ts'],
   ['maestroHome', 'src/renderer/maestro/home/src/main.ts'],
   ['maestroControl', 'src/renderer/maestro/control/src/control.ts'],
-  ['maestroWorkbench', 'src/renderer/maestro/workbench/src/workbench.ts']
+  ['maestroWorkbench', 'src/renderer/maestro/workbench/src/workbench.ts'],
+  ['onlyPreviewShell', 'src/renderer/onlypreview/shell/src/main.ts'],
+  ['onlyPreviewPreview', 'src/renderer/onlypreview/preview/src/main.ts'],
+  ['onlyPreviewSettings', 'src/renderer/onlypreview/settings/src/main.ts']
 ]
 
-assert.equal(rendererEntries.length, 12, 'renderer i18n inventory must own exactly twelve entries')
+assert.equal(rendererEntries.length, 15, 'renderer i18n inventory must own exactly fifteen entries')
 assert.equal(new Set(rendererEntries.map(([name]) => name)).size, rendererEntries.length)
 
 for (const [name, path] of rendererEntries) {
   const source = readProject(path)
-  const languageStartIndex = source.indexOf('initializeRendererLanguage()')
-  const initializeIndex = source.indexOf('await initializeRendererLanguage()')
+  const isOnlyPreview = name.startsWith('onlyPreview')
+  const initializer = isOnlyPreview
+    ? 'initializeOnlyPreviewI18n()'
+    : 'initializeRendererLanguage()'
+  const languageStartIndex = source.indexOf(initializer)
+  const initializeIndex = source.indexOf(`await ${initializer}`)
   const productImportIndex = source.indexOf("import('./")
   const createIndex = source.indexOf('createApp(')
   const pluginIndex = source.indexOf('.use(i18n)')
   const mountIndex = source.indexOf(".mount('#app')")
 
-  assert(source.includes("@renderer/common/i18n/rendererLanguage"), `${name} must import shared language initialization`)
-  assert(source.includes("@renderer/common/i18n/i18n.helper"), `${name} must import the shared Vue i18n plugin`)
+  if (isOnlyPreview) {
+    assert(
+      source.includes("common/onlyPreviewI18n"),
+      `${name} must import the OnlyPreview catalog backed by shared language initialization`
+    )
+  } else {
+    assert(source.includes("@renderer/common/i18n/rendererLanguage"), `${name} must import shared language initialization`)
+    assert(source.includes("@renderer/common/i18n/i18n.helper"), `${name} must import the shared Vue i18n plugin`)
+  }
   assert(languageStartIndex >= 0, `${name} must start shared language initialization`)
   if (name === 'home') {
     assert.equal(initializeIndex, -1, 'home language initialization must not gate Vue mount')
@@ -49,9 +63,27 @@ for (const [name, path] of rendererEntries) {
   }
   assert(productImportIndex > languageStartIndex, `${name} must start language initialization before evaluating product UI`)
   assert(createIndex > languageStartIndex, `${name} must start language initialization before createApp`)
-  assert(pluginIndex > createIndex && pluginIndex < mountIndex, `${name} must install Vue i18n before mount`)
-  assert(mountIndex > pluginIndex, `${name} must mount only after plugin install`)
+  if (isOnlyPreview) {
+    const catalogIndex = source.indexOf(".provide('onlyPreviewI18n'")
+    assert(catalogIndex > createIndex && catalogIndex < mountIndex, `${name} must provide its localized catalog before mount`)
+    assert(mountIndex > catalogIndex, `${name} must mount only after catalog installation`)
+  } else {
+    assert(pluginIndex > createIndex && pluginIndex < mountIndex, `${name} must install Vue i18n before mount`)
+    assert(mountIndex > pluginIndex, `${name} must mount only after plugin install`)
+  }
 }
+
+const onlyPreviewCatalog = readProject('src/renderer/onlypreview/common/onlyPreviewI18n.ts')
+assert(
+  onlyPreviewCatalog.includes('await initializeRendererLanguage()'),
+  'OnlyPreview must resolve language through the shared Main-owned language service'
+)
+assert(
+  onlyPreviewCatalog.includes("const zh: Localized<typeof en>"),
+  'OnlyPreview must keep its English and Chinese catalogs structurally aligned'
+)
+assert(!onlyPreviewCatalog.includes('navigator.language'), 'OnlyPreview must not infer language locally')
+assert(!onlyPreviewCatalog.includes('localStorage'), 'OnlyPreview must not persist a renderer-local language')
 
 const englishMessages = readProject('src/renderer/common/i18n/en.ts')
 const chineseMessages = readProject('src/renderer/common/i18n/zh.ts')

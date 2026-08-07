@@ -1,0 +1,285 @@
+.onlypreview-preview {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--onlypreview-surface, #fff);
+  color: var(--onlypreview-ink, #25283a);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+}
+
+.onlypreview-preview__header {
+  height: 43px;
+  flex: 0 0 43px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--onlypreview-divider, #d9ddea);
+  background: #fbfbfd;
+}
+
+.onlypreview-preview__identity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  overflow: hidden;
+}
+
+.onlypreview-preview__file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--onlypreview-ink, #25283a);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onlypreview-preview__file-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--onlypreview-muted, #6f7487);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onlypreview-preview__badges {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.onlypreview-preview__badge {
+  height: 21px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--onlypreview-divider, #d9ddea);
+  border-radius: 4px;
+  color: var(--onlypreview-muted, #6f7487);
+  background: #fff;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onlypreview-preview__badge--read-only {
+  border-color: #cfd3e3;
+  color: var(--onlypreview-royal, #4e5882);
+  background: var(--onlypreview-royal-soft, #eceef7);
+}
+
+.onlypreview-preview__body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: #fff;
+}
+
+.onlypreview-preview__state {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: var(--onlypreview-muted, #6f7487);
+  text-align: center;
+}
+
+.onlypreview-preview__state-mark {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 13px;
+  border: 1px solid var(--onlypreview-divider, #d9ddea);
+  border-radius: 8px;
+  color: var(--onlypreview-royal, #4e5882);
+  background: var(--onlypreview-canvas, #f6f7fa);
+  box-shadow: 6px 6px 0 #eceef4;
+}
+
+.onlypreview-preview__state--error .onlypreview-preview__state-mark {
+  border-color: #ebcccc;
+  color: var(--onlypreview-danger, #a13d3d);
+  background: #fff7f7;
+  box-shadow: 6px 6px 0 #f5e8e8;
+}
+
+.onlypreview-preview__state h1 {
+  margin: 0;
+  color: var(--onlypreview-ink, #25283a);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.onlypreview-preview__state p {
+  max-width: 440px;
+  margin: 7px 0 0;
+  line-height: 1.55;
+}
+
+.onlypreview-preview__state-note {
+  font-size: 11px;
+}
+
+.onlypreview-preview__metadata {
+  width: min(430px, 100%);
+  margin: 20px 0 0;
+  border-top: 1px solid var(--onlypreview-divider, #d9ddea);
+}
+
+.onlypreview-preview__metadata > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eceef3;
+  text-align: left;
+}
+
+.onlypreview-preview__metadata dt {
+  color: var(--onlypreview-muted, #6f7487);
+}
+
+.onlypreview-preview__metadata dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--onlypreview-ink, #25283a);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onlypreview-preview__media {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.onlypreview-preview__media--image {
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background-color: #f4f5f8;
+  background-image:
+    linear-gradient(45deg, #e5e7ee 25%, transparent 25%),
+    linear-gradient(-45deg, #e5e7ee 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e5e7ee 75%),
+    linear-gradient(-45deg, transparent 75%, #e5e7ee 75%);
+  background-position:
+    0 0,
+    0 7px,
+    7px -7px,
+    -7px 0;
+  background-size: 14px 14px;
+}
+
+.onlypreview-preview__media--image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: 0 8px 30px rgb(37 40 58 / 15%);
+}
+
+.onlypreview-preview__media--audio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 30px;
+  background: var(--onlypreview-canvas, #f6f7fa);
+}
+
+.onlypreview-preview__audio-disc {
+  width: 116px;
+  height: 116px;
+  display: grid;
+  place-items: center;
+  border: 26px solid #33384f;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--onlypreview-royal, #4e5882);
+  box-shadow: 0 12px 34px rgb(37 40 58 / 18%);
+}
+
+.onlypreview-preview__media--audio audio {
+  width: min(520px, 88%);
+}
+
+.onlypreview-preview__media--video {
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: #171923;
+}
+
+.onlypreview-preview__media--video video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+}
+
+.onlypreview-preview__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--onlypreview-muted, #6f7487);
+  background: rgb(255 255 255 / 90%);
+  font-size: 11px;
+}
+
+.onlypreview-preview__loading-line {
+  position: relative;
+  width: 30px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #d9ddea;
+}
+
+.onlypreview-preview__loading-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  animation: onlypreview-preview-loading 900ms ease-in-out infinite;
+  background: var(--onlypreview-royal, #4e5882);
+}
+
+@keyframes onlypreview-preview-loading {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onlypreview-preview__loading-line::after {
+    animation: none;
+    transform: translateX(0);
+  }
+}

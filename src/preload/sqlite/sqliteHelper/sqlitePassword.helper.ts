@@ -7,6 +7,7 @@ import {
 
 const STORAGE_KEY = 'sqk';
 const DEV_PASSWORD = '123456';
+const E2E_PASSWORD = 'bitterless-onlypreview-e2e';
 
 interface SqlitePasswordHandlerType {
   encryptPassword(params: { password: string }): Promise<string>;
@@ -26,6 +27,11 @@ class SqlitePasswordHelper {
 
   async getOrCreatePassword(): Promise<SqlitePasswordResult> {
     const viteMode = import.meta.env.VITE_MODE;
+
+    if (process.env.BITTERLESS_E2E === '1') {
+      console.log('[sqlitePassword] using isolated unpackaged E2E password');
+      return { password: E2E_PASSWORD, isReset: false };
+    }
 
     if (viteMode === 'debug') {
       console.log('[sqlitePassword] using hardcoded password for debug mode');

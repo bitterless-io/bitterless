@@ -98,7 +98,7 @@ renderer loads or reopens, so the localized warning cannot be lost to renderer s
 | EyesOnAgents | `out/preload/eyesOnAgents.js` | `${ELECTRON_RENDERER_URL}/eyesOnAgents/index.html` | `out/renderer/eyesOnAgents/index.html` | default |
 | Translator | `out/preload/translator.js` | `${ELECTRON_RENDERER_URL}/translator/index.html` | `out/renderer/translator/index.html` | default |
 | Motto | `out/preload/motto.js` | `${ELECTRON_RENDERER_URL}/motto/index.html` | `out/renderer/motto/index.html` | default |
-| OnlyPreview | `out/preload/onlypreview.js` | `${ELECTRON_RENDERER_URL}/onlypreview/shell/index.html` | `out/renderer/onlypreview/shell/index.html` | default |
+| OnlyPreview | `out/preload/onlypreview.js` + per-cell Main-issued host token | `${ELECTRON_RENDERER_URL}/onlypreview/shell/index.html` | `out/renderer/onlypreview/shell/index.html` | default |
 
 Generated preload and packaged renderer paths are anchored at `app.getAppPath()/out`; they never
 depend on a Rollup chunk's `__dirname`. Development first-party renderers use the Electron Vite dev
@@ -144,6 +144,11 @@ external `http`/`https` links may be handed to the system browser, but must neve
 privileged operation view. Remote browser cells can never receive a Todo, EyesOnAgents,
 Translator, Motto, or OnlyPreview preload.
 
+OnlyPreview additionally uses `sandbox: true`. Before creating its operation view, Omni registers
+one unguessable content-host capability and passes it through `additionalArguments`; the preload
+exposes it as immutable context. Replace, close, renderer failure, and full Omni destruction revoke
+that exact host and all of its workspace/media capabilities before closing the view.
+
 ## Embedded Mini-App Behavior
 
 - Todo and EyesOnAgents receive static preload context identifying `home`, `standalone`, or `omni`
@@ -166,7 +171,8 @@ Translator, Motto, or OnlyPreview preload.
   services and remain synchronized through existing XPC broadcasts. Motto instances share one
   localStorage origin and observe another instance's persisted changes on their next load; live
   cross-instance synchronization is out of scope.
-- Closing a cell destroys only that cell's chrome and operation views.
+- Closing a cell destroys only that cell's chrome and operation views; for OnlyPreview it first
+  revokes the cell's host capability.
 
 ## Interaction Contract
 

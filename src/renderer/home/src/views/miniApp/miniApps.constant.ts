@@ -3,6 +3,7 @@ import omniIcon from '@renderer/common/assets/icons/omni.png';
 import maestroIcon from '@renderer/common/assets/icons/maestro.png';
 import coinIcon from '@renderer/common/assets/icons/coin.png';
 import eyesOnAgentsIcon from '@renderer/common/assets/icons/eyes-on-agents.svg';
+import onlyPreviewIcon from '@renderer/common/assets/icons/onlypreview.svg';
 import type { en } from '@renderer/common/i18n/en';
 
 export interface MiniApp {
@@ -19,6 +20,7 @@ export const createMiniApps = (
   openCoin: () => void,
   openEyesOnAgents: () => void,
   openOmniBrowser: () => void,
+  openOnlyPreview: () => void,
   i18n: typeof en,
 ): MiniApp[] => [
   {
@@ -51,6 +53,13 @@ export const createMiniApps = (
     subtitle: i18n.miniApp.eyesOnAgents.subtitle,
     icon: eyesOnAgentsIcon,
     action: openEyesOnAgents,
+  },
+  {
+    id: 'onlypreview',
+    name: i18n.miniApp.onlyPreview.name,
+    subtitle: i18n.miniApp.onlyPreview.subtitle,
+    icon: onlyPreviewIcon,
+    action: openOnlyPreview,
   },
   {
     id: 'omni-browser',

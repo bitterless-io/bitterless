@@ -64,6 +64,7 @@
     "test:mcp:todo-smoke": "node scripts/mcp/todo-smoke.test.mjs",
     "test:e2e:maestro": "playwright test -c tests/maestro/playwright.config.ts",
     "test:e2e:maestro:baseline": "yarn build && yarn test:e2e:maestro",
+    "test:e2e:onlypreview": "playwright test -c tests/onlypreview/playwright.config.ts",
     "start": "electron-vite preview",
     "dev": "rig --env debug_dev && node scripts/before.js && electron-vite dev",
     "dev:prod": "rig --env debug_prod && node scripts/before.js && electron-vite dev",

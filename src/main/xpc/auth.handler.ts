@@ -15,6 +15,7 @@ import {
 } from './eyesOnAgents.handler';
 import { coinWindowHandler } from './coinWindow.handler';
 import { maestroWindowHandler } from './maestroWindow.handler';
+import { destroyOnlyPreviewForAuth } from './onlyPreview.handler';
 import type { TodoistSyncSessionApi } from '@shared/todoistSync/todoistSync.type';
 import { createBoundedTodoXpcClient } from '@shared/todoistSync/todoXpcCall.shared';
 
@@ -140,6 +141,12 @@ class AuthHandler extends XpcMainHandler {
       omniWindowHelper.destroy();
     } catch (err) {
       console.warn('[AuthHandler] Failed to destroy omni window:', err);
+    }
+
+    try {
+      destroyOnlyPreviewForAuth();
+    } catch (err) {
+      console.warn('[AuthHandler] Failed to destroy OnlyPreview windows:', err);
     }
 
     const preservedWindows = new Set<BrowserWindow | null>([
