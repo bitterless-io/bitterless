@@ -4,8 +4,9 @@ Status: Accepted
 
 ## Purpose
 
-Omni layout cells can render either a remote browser page or one of four first-party Bitterless
-mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, `translator`, and `motto`.
+Omni layout cells can render either a remote browser page or one of five first-party Bitterless
+mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, `translator`, `motto`, and
+`onlypreview`.
 They render directly in the cell operation `WebContentsView`; selecting one must not create or
 depend on its standalone window.
 
@@ -28,7 +29,8 @@ depend on its standalone window.
 ```
 
 The Omni shell owns cell creation, bounds, persistence, and content-runtime selection. Todo,
-EyesOnAgents, Translator, and Motto continue to own their business state and persistence boundary.
+EyesOnAgents, Translator, Motto, and OnlyPreview continue to own their business state and
+persistence boundary.
 
 ## Per-Cell Layout Panel
 
@@ -46,7 +48,8 @@ Mini-app cell
 │                                             ├ Todo                         │
 │                                             ├ EyesOnAgents                 │
 │                                             ├ Translator                   │
-│                                             └ Motto                        │
+│                                             ├ Motto                        │
+│                                             └ OnlyPreview                  │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,7 +66,7 @@ Each leaf persists these values inside the existing `omni_layout` tree:
 |---|---|
 | `contentMode` | `'browser' | 'miniapp'` |
 | `url` | Last browser URL. Preserved while the cell displays a mini app. |
-| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator' | 'motto'`. Preserved while the cell displays a browser. |
+| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator' | 'motto' | 'onlypreview'`. Preserved while the cell displays a browser. |
 
 Rules:
 
@@ -95,6 +98,7 @@ renderer loads or reopens, so the localized warning cannot be lost to renderer s
 | EyesOnAgents | `out/preload/eyesOnAgents.js` | `${ELECTRON_RENDERER_URL}/eyesOnAgents/index.html` | `out/renderer/eyesOnAgents/index.html` | default |
 | Translator | `out/preload/translator.js` | `${ELECTRON_RENDERER_URL}/translator/index.html` | `out/renderer/translator/index.html` | default |
 | Motto | `out/preload/motto.js` | `${ELECTRON_RENDERER_URL}/motto/index.html` | `out/renderer/motto/index.html` | default |
+| OnlyPreview | `out/preload/onlypreview.js` | `${ELECTRON_RENDERER_URL}/onlypreview/shell/index.html` | `out/renderer/onlypreview/shell/index.html` | default |
 
 Generated preload and packaged renderer paths are anchored at `app.getAppPath()/out`; they never
 depend on a Rollup chunk's `__dirname`. Development first-party renderers use the Electron Vite dev
@@ -102,7 +106,7 @@ server URL, while packaged renderers use `loadFile`.
 
 Changing `contentMode` or `miniAppId` recreates the affected operation view with the correct
 preload. It does not recreate the Omni BaseWindow or open a standalone
-Todo/EyesOnAgents/Translator/Motto window.
+Todo/EyesOnAgents/Translator/Motto/OnlyPreview window.
 Remote-browser notification interception, provider-scoped browser identity, persistent browser
 sessions, and URL navigation hooks apply only to browser cells.
 
@@ -138,7 +142,7 @@ Mini-app operation views are privileged because their preload exposes first-part
 reject top-level navigation away from the expected local renderer target. New-window requests and
 external `http`/`https` links may be handed to the system browser, but must never load inside the
 privileged operation view. Remote browser cells can never receive a Todo, EyesOnAgents,
-Translator, or Motto preload.
+Translator, Motto, or OnlyPreview preload.
 
 ## Embedded Mini-App Behavior
 
@@ -152,6 +156,9 @@ Translator, or Motto preload.
 - Translator follows `docs/features/translator.md` and has no standalone window actions.
 - Motto follows `docs/features/motto.md`, persists one whole array in renderer localStorage, and has
   no standalone window actions.
+- OnlyPreview follows `docs/features/onlypreview.md`, uses capability-scoped read-only file access,
+  renders its Preview surface inside the cell, and never creates or depends on its standalone
+  `BaseWindow` while embedded.
 - Mini-app cells do not render Omni's browser chrome above the app's own header. Embedded host
   styles remove standalone drag regions, macOS traffic-light padding, and fixed 800×600 renderer
   minimums so split panes can shrink without forcing overflow.
@@ -166,7 +173,7 @@ Translator, or Motto preload.
 | Input | Scope | Behavior |
 |---|---|---|
 | Browser/Mini App selector | Layout panel | Switch content runtime, apply, and persist immediately. |
-| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, Translator, or Motto; recreate operation view and persist. |
+| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, Translator, Motto, or OnlyPreview; recreate operation view and persist. |
 | URL Enter | Browser panel | Normalize/load the URL and persist navigation updates. |
 | Refresh | Browser chrome / mini-app header | Reload browser content or refresh the mini app's own data. |
 | Back/forward | Browser cell only | Navigate browser history; hidden/disabled for mini apps. |
@@ -211,10 +218,10 @@ SettingDao.omni_layout
 
 - Contract tests cover legacy migration, allowed variants, round-trip persistence fields, and
   rejection of unsupported mini apps.
-- Runtime tests cover browser/Todo/EyesOnAgents/Translator/Motto preload selection and dev versus
-  packaged targets.
-- UI guards cover Arco mode/select controls, exactly four mini-app choices, i18n, business BEM/Less,
+- Runtime tests cover browser/Todo/EyesOnAgents/Translator/Motto/OnlyPreview preload selection and
+  dev versus packaged targets.
+- UI guards cover Arco mode/select controls, exactly five mini-app choices, i18n, business BEM/Less,
   embedded sizing/window-action behavior, the compact Omni Menu Bar update action, and the absence
   of Tailwind classes.
-- Build verification confirms all four mini-app renderer HTML files and preload bundles exist in
+- Build verification confirms all five mini-app renderer HTML files and preload bundles exist in
   `out/` and are referenced by generated-asset-safe paths.

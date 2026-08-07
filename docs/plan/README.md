@@ -8,6 +8,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 
 | id | scope | status | depends-on |
 |---|---|---|---|
+| [onlypreview-mvp-001](tasks/onlypreview-mvp-001.md) | read-only indexed file preview, multi-view window, Omni, settings, and OS open integration | ready | — |
 | [cowork-subapp-001](tasks/cowork-subapp-001.md) | original Cowork runtime and host integration | done | — |
 | [cowork-subapp-003](tasks/cowork-subapp-003.md) | dev-local SQLCipher key without OS Keychain | done | cowork-subapp-001 |
 | [cowork-subapp-002](tasks/cowork-subapp-002.md) | parity checks and Bitterless-launched Electron E2E | done | cowork-subapp-001, cowork-subapp-003 |
@@ -126,10 +127,11 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [Coin sub-application](analysis/coin-subapp.md),
 [Coding-agent sessions](analysis/coding-agent-sessions.md),
-[EyesOnAgents](analysis/eyes-on-agents.md), and
+[EyesOnAgents](analysis/eyes-on-agents.md),
 [Translator](analysis/translator.md),
 [Motto](analysis/motto.md),
-[Omni mini-app cells](analysis/omni-miniapp-cells.md), and
+[Omni mini-app cells](analysis/omni-miniapp-cells.md),
+[OnlyPreview](analysis/onlypreview.md), and
 [SQLite migration release gate](analysis/sqlite-migration-release-gate.md).
 
 Todo synchronization: [Todoist-style HTTP sync](analysis/todoist-sync.md).

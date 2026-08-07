@@ -8,8 +8,8 @@ Every user-visible top-level window created by Bitterless Main remembers its nor
 size, window mode, and physical display. Reopening the same logical window restores it to the same
 display and work-area-relative position whenever that display is still connected.
 
-This contract replaces the independent Home, Todo, Omni, EyesOnAgents, Coin, and Maestro geometry
-implementations. It covers window chrome only; renderer business state and embedded
+This contract replaces the independent Home, Todo, Omni, EyesOnAgents, OnlyPreview, Coin, and
+Maestro geometry implementations. It covers window chrome only; renderer business state and embedded
 `WebContentsView` layout remain owned by their existing modules.
 
 ## Window identities
@@ -22,13 +22,16 @@ The Main-owned state file uses one stable key for every reachable user-visible t
 | `todo` | standalone Todo |
 | `omni` | Omni `BaseWindow` |
 | `eyes-on-agents` | standalone EyesOnAgents |
+| `onlypreview` | standalone OnlyPreview `BaseWindow` |
+| `onlypreview-settings` | OnlyPreview app-specific Setting window |
 | `maestro` | Maestro / legacy Cowork main window |
 | `coin` | Coin |
 | `plugin-content` | development Plugin Content window |
 | `plugin-options` | development Plugin Options window |
 
-The Core SQLite host, Maestro SQLite host, PDF rendering window, detached DevTools, and embedded
-Todo/Omni/Maestro views are hidden, ephemeral, or child surfaces and never receive a state key.
+The Core SQLite host, Maestro SQLite host, detached DevTools, standalone OnlyPreview child views,
+and embedded Todo/Omni/Maestro/OnlyPreview views are hidden, ephemeral, or child surfaces and never
+receive a state key.
 The dormant Connector and Llama helpers have no creation entry and remain outside the registry.
 Any future reachable top-level window must register a stable key; an internal window must opt out
 explicitly.
@@ -131,5 +134,5 @@ delay Home creation.
   connected display.
 - Home startup remains independent of Core SQLite readiness.
 - Existing Home, Todo, Omni, EyesOnAgents, Coin, and Maestro users retain their last usable legacy
-  geometry after upgrade.
+  geometry after upgrade; new OnlyPreview windows persist from their first close.
 - Hidden and ephemeral windows never create entries.

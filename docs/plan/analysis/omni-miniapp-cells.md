@@ -7,7 +7,7 @@
 | Shared cell contract | persisted/renderer leaf data | normalized browser or mini-app cell | existing `OmniPaneNode` tree |
 | Layout control | per-pane mode, URL, mini-app selection | flattened cells + persisted tree | Arco, layout store, XPC |
 | Omni main runtime | flattened cell config | cell chrome + operation `WebContentsView` | Electron, runtime target registry |
-| Mini-app runtime registry | app ID, app path, dev server URL | preload plus dev/file renderer target | Todo/EyesOnAgents build entries |
+| Mini-app runtime registry | app ID, app path, dev server URL | preload plus dev/file renderer target | Todo/EyesOnAgents/Translator/Motto/OnlyPreview build entries |
 | Embedded EyesOnAgents context | static host argument | standalone-action visibility | context bridge, renderer menu bar |
 | Persistence | complete normalized tree | restored cells after reopening Omni | `SettingDao.omni_layout` |
 
@@ -31,6 +31,9 @@
 8. Privileged mini-app operation views reject navigation outside their expected local renderer;
    external links leave through the system browser and remote browser cells never inherit a
    first-party preload.
+9. OnlyPreview loads its real Shell renderer and preload with `--mode=omni`; its renderer-local
+   Preview adapter preserves Omni's sole ownership of native cell bounds while using the same
+   capability/index/file services as the standalone application.
 
 ## Task Boundary
 
