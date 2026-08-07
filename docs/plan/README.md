@@ -47,6 +47,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [coin-ai-analysis-004](tasks/coin-ai-analysis-004.md) | background Codex structured analysis without chat UI | implemented; owner verification pending | coin-analysis-workspace-003 |
 | [coin-subapp-integration-005](tasks/coin-subapp-integration-005.md) | end-to-end lifecycle, resources, data, AI, and visual acceptance | owner verification pending | coin-ai-analysis-004 |
 | [coin-gmgn-only-local-mode-007](tasks/coin-gmgn-only-local-mode-007.md) | remove Alchemy from the active release and make local Meme analysis GMGN-only | implemented; owner verification pending | coin-analysis-workspace-003, coin-holder-universe-filter-006 |
+| [trench-single-page-workspace-008](tasks/trench-single-page-workspace-008.md) | flat single-page Trench research, bounded thesis review, and visible persistent X Chrome | implemented; owner verification pending | coin-ai-analysis-004, coin-gmgn-only-local-mode-007 |
 | [coding-agent-sessions-core-001](tasks/coding-agent-sessions-core-001.md) | storage, Codex/Claude discovery, normalization, and safe opening | done | — |
 | [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | done | coding-agent-sessions-core-001 |
 | [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | done | coding-agent-sessions-bridge-002 |
@@ -113,6 +114,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [model-provider-fresh-login-callback-009](tasks/model-provider-fresh-login-callback-009.md) | fresh Codex login with one modern OAuth callback owner | implemented; owner verification pending | model-provider-login-cancel-regression-007, codex-gpt55-retention-008 |
 | [application-diagnostics-010](tasks/application-diagnostics-010.md) | environment-isolated file logging, sanitized Codex lifecycle evidence, and Settings Log diagnostics | implemented; owner verification pending | model-provider-fresh-login-callback-009 |
 | [settings-notification-test-001](tasks/settings-notification-test-001.md) | one Settings native-notification smoke test through Renderer-to-Main XPC | implemented; owner verification pending | eyes-on-agents-completion-alert-030 |
+| [settings-notification-runtime-recovery-002](tasks/settings-notification-runtime-recovery-002.md) | retained native notification lifecycle and typed visible Settings result | implemented; owner verification pending | settings-notification-test-001 |
 | [model-provider-loopback-diagnostics-011](tasks/model-provider-loopback-diagnostics-011.md) | current-process Codex loopback ownership and sanitized callback evidence | implemented; owner verification pending | model-provider-fresh-login-callback-009, application-diagnostics-010 |
 | [codex-production-login-recovery-012](tasks/codex-production-login-recovery-012.md) | restore dual-stack Codex browser login on the production release line | in-progress | model-provider-fresh-login-callback-009 |
 | [motto-miniapp-001](tasks/motto-miniapp-001.md) | local reminder cards and whole-array storage inside Omni | done | translator-miniapp-001 |
@@ -120,6 +122,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [omni-miniapp-cells-001](tasks/omni-miniapp-cells-001.md) | persistent browser/Todo/EyesOnAgents Omni cells | pending | eyes-on-agents-focus-002 |
 | [omni-layout-axis-collapse-002](tasks/omni-layout-axis-collapse-002.md) | root/inner-axis collapse, Splitpanes lifecycle, and native bounds consistency | implemented; owner verification pending | — |
 | [omni-browser-google-identity-003](tasks/omni-browser-google-identity-003.md) | provider-scoped Omni browser identity for default and Google/YouTube cells | implemented; owner verification pending | — |
+| [omni-layout-escape-close-004](tasks/omni-layout-escape-close-004.md) | Escape dismissal and authoritative visibility sync for the top-level Omni Layout control | implemented; owner verification pending | omni-miniapp-cells-001, omni-layout-axis-collapse-002 |
 | [sqlite-migration-release-gate-001](tasks/sqlite-migration-release-gate-001.md) | final three-family SQLite audit and production packaging proof | pending | todoist-sync-desktop-001 |
 | [window-state-persistence-001](tasks/window-state-persistence-001.md) | unified bounds, mode, and physical-display persistence for every visible top-level window | implemented; owner verification pending | — |
 

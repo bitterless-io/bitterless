@@ -1,18 +1,21 @@
 # Trench Sub-application
 
-Status: Analysis workspace and background Codex analysis implemented; Trench Mini Apps entry restored; owner verification pending
+Status: Single-page Trench workspace and selectable visible/hidden X Chrome implemented; owner verification pending
 
 ## Purpose
 
 Trench is the user-visible name for the existing Coin runtime. It remains integrated as an
 authenticated desktop workspace for trench research and decisions. Its Home Mini Apps card launches
 the singleton Trench window while its runtime, window lifecycle, packaged resources, and persisted
-data stay intact. Trench is one full-width local analysis panel organized by business tabs. It has
-no chat region, message composer, remote browser, address bar, Workbench, or Maestro tools.
+data stay intact. The target interface is one full-width workspace: persistent CA commands, Scan and
+Focus queues, the active token evidence canvas, and a bounded decision assistant share one context.
+The previous Monitor/Screener/Meme/Strategy/History top tabs are superseded.
 
-Trench provides source-backed Monitor, Screener, Meme, History, deterministic Strategy, and bounded
-background Codex interpretation for stored structured results. The user never chats with Codex
-inside Trench.
+Trench provides source-backed discovery and CA analysis, deterministic strategy checks, bounded
+Codex review of the user's thesis, and a Playwright-managed Chrome session for low-frequency X
+research. The thesis composer is not a general chat client: it is bound to one token, one strategy
+revision, one evidence snapshot, and one decision record. Trench has no address bar, Workbench,
+Maestro tools, wallet signer, or order execution.
 
 ## Boundary
 
@@ -25,14 +28,16 @@ CoinWindowHandler --------------------------- auth / quit cleanup
        |
        +-- Coin BrowserWindow (one local renderer, minimum 800x600)
               |
-              +-- Monitor / Screener / Meme / Strategy / History
-              +-- Resources (Codex, GMGN CLI, service readiness)
+              +-- Command bar (CA, terminal, X Chrome, Codex target)
+              +-- Scan + Focus / active token / Decision
+              +-- Resources and History (secondary surfaces)
 
 Coin preload -- allowlisted, sender-checked IPC --> main Coin services
        +-- CoinDataService
        +-- CoinStateService
        +-- CoinResourceService
        +-- CoinStrategyService
+       +-- CoinXBrowserService
 
 CoinAiAnalysisService
        +-- narrow host CodexRuntimeService
@@ -43,7 +48,8 @@ Host-owned CodexCredentialService
 ```
 
 The renderer never receives Codex tokens, stored resource secrets, filesystem access, arbitrary IPC,
-Node.js access, Maestro's preload, browser automation, wallet signing, or trading credentials.
+Node.js access, Maestro's preload, Playwright/CDP objects, wallet signing, or trading credentials.
+It receives only bounded X-browser state and commands through the Coin bridge.
 
 ## User entry and lifecycle
 
@@ -52,7 +58,7 @@ Node.js access, Maestro's preload, browser automation, wallet signing, or tradin
 | Mini Apps renders | Render the Trench card and route Open through the narrow Home `openCoinWindow` contract. |
 | First Open | Create one Trench window, load persisted Coin runtime state, then show it. |
 | Repeated Open | Await any active boot, restore/focus the same window, and never create a duplicate. |
-| Window close | Abort active polling/data work, flush Coin state, and destroy the window. |
+| Window close | Abort active polling/data work, flush Coin state, close the Trench-owned browser context, and destroy the window. |
 | Auth invalidation/logout | Lock new opens, abort work, and destroy Coin before the secondary-window sweep. |
 | Auth activation | Unlock Coin opening; do not open it automatically. |
 | Host quit/update | Await Coin cleanup before destroying host resources. |
@@ -61,16 +67,19 @@ Default size is `1360x860`; minimum size is `800x600`. Geometry follows the shar
 [top-level window state contract](window-state-persistence.md); the legacy
 `userData/coin/window-state.json` value is imported once when the unified Coin key is absent.
 
-## Pages and tabs
+## Single-page workspace
 
-| Page | Job | Current readiness |
+The detailed visual and responsive contract is [`coin-layout.md`](coin-layout.md). These are
+concurrent regions, not mutually exclusive pages.
+
+| Region | Job | Current readiness |
 |---|---|---|
-| Monitor | Watch selected symbols, price/range, listing age, freshness, and connection state. | Implemented; requires configured HTTP and WebSocket bases. |
-| Screener | Parse structured/natural-language filters and rank futures/spot symbols. | Implemented; live/sample selection is explicit. |
-| Meme | Discover recently filled tokens or analyze one `chain + CA` with holder, cohort, and attention evidence. | Implemented in explicit service or local GMGN CLI mode. |
-| Strategy | Convert structured evidence, risk, and optional position into exactly `BUY`, `HOLD`, or `SELL`. | Deterministic v1 implemented; no execution. |
-| History | Reopen analyses, decisions, and source receipts. | Versioned owner-only JSON persistence implemented. |
-| Resources | Configure and verify Codex, GMGN CLI, and service endpoints. | Local machine configuration; secrets never enter project files. |
+| Command bar | Paste/validate `chain + CA`, start service or terminal analysis, open X Chrome in the selected display mode, and select Codex model/effort. | Implemented; owner verification pending. |
+| Scan | Recommend recently discovered tokens with `why now`, hard risk, freshness, and only necessary evidence. | GMGN Discover queue presentation implemented; richer ranking remains later scope. |
+| Focus | Hold manually selected CAs and surface immutable monitoring triggers such as drawdown/base/breakout. | Manual Focus implemented; trigger rules/events remain later scope. |
+| Active token | Render holder, wallet cohort, market, attention, risk, X, and source evidence for the selected CA. | Existing Meme evidence embedded in the single-page canvas. |
+| Decision | Compare a user's thesis and position context with the pinned strategy and evidence snapshot. | Bounded thesis audit and immutable AI receipt implemented. |
+| Secondary surfaces | Configure Resources and reopen History without losing workspace context. | Resources and History secondary navigation implemented. |
 
 Sources status is available from the header and Resources page. It shows configuration, support,
 read-only status, freshness, cooldown, and the latest failure reason.
@@ -118,7 +127,7 @@ labelled; it is never an automatic fallback.
 ```ts
 interface MemeAnalyzeInput {
   requestId: string;
-  mode: 'service' | 'local';
+  mode: 'service' | 'local_cli_rpc';
   chain: 'robinhood' | 'bsc' | 'solana';
   contractAddress: string;
   holderLimit: number;
@@ -195,9 +204,10 @@ interface CoinDecisionResult {
 `coin-ai-analysis-004` implements this optional interpretation path. Deterministic analysis and
 Strategy remain usable without Codex.
 
-Coin exposes one AI identity: **Codex** (`openai-codex`). There is no chat UI, free-form prompt,
+Coin exposes one AI identity: **Codex** (`openai-codex`). There is no general chat UI, unbound prompt,
 provider selector, AI-CRMS entry, Anthropic entry, browser tool, skill tool, wallet tool, or trading
-tool.
+tool. The Decision dock contains one bounded thesis field; it is a structured input to the
+current token review, not a conversational transcript or general prompt surface.
 
 ### Credential ownership
 
@@ -207,8 +217,8 @@ tool.
   current logins.
 - Maestro delegates Codex auth checks/login/logout to the same service. AI-CRMS remains
   Maestro-owned.
-- Resources is the only Coin page that starts connect/disconnect. Disconnect is application-wide
-  and the UI says so.
+- The command bar may start Connect/Reconnect. Disconnect remains in Resources, is
+  application-wide, and the UI says so.
 
 ### Analysis ownership
 
@@ -222,9 +232,11 @@ load/save, while historical AI receipts may still display the model that actuall
 GPT-5.5, Luna, and Terra expose `low`, `medium`, `high`, and `xhigh`; Sol exposes `medium`, `high`,
 and `xhigh` only. `xhigh` is shown as `Extra`.
 
-Each explicit **Analyze with AI** action sends a size-bounded JSON snapshot containing the selected
-asset, observed facts, deterministic scores, source receipts, warnings, missing dimensions, strategy
-input, and evidence IDs. Codex runs with tools disabled and must return strict JSON:
+Each explicit **Review thesis** action sends a size-bounded JSON snapshot containing the selected
+asset, the user's verbatim thesis and supplied position/risk context, observed facts, deterministic
+scores, source receipts, warnings, missing dimensions, the pinned strategy revision, and evidence
+IDs. User text is an untrusted hypothesis and cannot become evidence. Codex runs with tools disabled
+and must return strict JSON:
 
 ```ts
 interface CoinAiAnalysisResult {
@@ -239,8 +251,36 @@ interface CoinAiAnalysisResult {
 ```
 
 The host rejects invalid JSON/schema/evidence references and shows an actionable error. AI text is
-labelled interpretation and cannot manufacture a source fact. Deterministic risk gates and the
+labelled interpretation and cannot manufacture a source fact. The UI must present counter-evidence,
+unsupported claims, and missing inputs beside the recommendation. Deterministic risk gates and the
 position rule still control the final `BUY/HOLD/SELL` result.
+
+## X Research Browser
+
+`CoinXBrowserService` owns one Chrome context in Electron main. The menubar preference selects
+`visible` (`headless: false`) or `hidden` (`headless: true`) for Playwright
+`launchPersistentContext`, using system Chrome and one dedicated directory below
+`userData/coin/x-research-profile/`. The directory is machine-local, secret-bearing browser state;
+it is never persisted in Coin JSON, synchronized, logged, or included in evidence exports. Only the
+non-secret display preference is persisted in Coin state.
+
+The first visible launch opens X for manual login and two-factor completion. Later visible or hidden
+launches reuse that dedicated session. Changing the display preference while active restarts the
+same query. A hidden login requirement asks for visible mode and never silently changes mode. The
+service exposes only bounded states (`closed`, `launching`, `login_required`, `ready`, `error`) and
+operations (`getStatus`, `open`, `focus`, `close`) to the renderer. External CDP attachment controls
+its own visibility, so the menubar switch is disabled in that mode.
+
+The service must not point Playwright at the regular Chrome default user-data directory, copy its
+Cookie database, or require the user to close daily Chrome. Chrome 136 and Playwright do not support
+that default-profile automation path. Optional CDP attachment is loopback-only and may target only a
+Chrome process already launched for the Trench non-default profile. A configured CDP connection
+that fails returns an error; it never falls back to a different profile or source.
+
+When X collection is implemented, accessibility locators identify targets and read fresh bounding
+boxes. All mouse move, wheel, press, and release events are issued through `CDPSession` input calls.
+Login expiry or challenge pages pause for user action in the visible Chrome; the system does not
+bypass them.
 
 ## Resources page
 
@@ -283,9 +323,10 @@ Coin uses no hidden SQLite renderer. Main-process services write owner-only stat
 
 | File | State |
 |---|---|
-| `coin-state.json` | active page, source-safe drafts, watches, analyses, decisions, source receipts/history |
+| `coin-state.json` | active token, source-safe drafts, Scan/Focus state, analyses, decisions, AI receipts, and history; legacy active-page values are migration input only |
 | `resources.enc` | Reserved encrypted resource values; dormant Alchemy data remains forward-compatible |
 | `window-state.json` | validated geometry |
+| `x-research-profile/` | Chrome-owned session state shared by visible/hidden Trench modes; machine-local and excluded from app JSON/sync/logs |
 
 Codex tokens remain in the shared Pi auth file. GMGN uses its standard owner-only config file and is
 not copied into Coin state. Malformed state produces a visible recovery error; it is not silently
@@ -310,9 +351,10 @@ strategy.evaluate
 resources.getStatus / resources.detectGmgn
 resources.saveGmgnApiKey / resources.verifyGmgn / resources.openGuide
 codex.getStatus / codex.connect / codex.disconnect
+clipboard.readText
+xBrowser.getStatus / xBrowser.open / xBrowser.focus / xBrowser.close
+ai.analyze / ai.cancel
 window.minimize / window.toggleMaximize / window.close
-
-Future: ai.analyze / ai.cancel
 ```
 
 Main rejects calls not sent by the live Coin window. Secrets and full credential-bearing endpoints
@@ -338,27 +380,35 @@ in scope. Coin provides analysis and decisions only.
    explicit local GMGN mode is configured, and preferred when a Meme base is configured.
 5. Supply actual position and risk inputs for position-aware `HOLD` decisions.
 6. Connect Codex only when exercising optional structured AI interpretation.
+7. Select visible X mode once and complete X login/2FA in the Trench-managed profile; hidden mode can
+   reuse that session afterward.
 
-Alchemy, X API, and Helius are optional follow-up sources. Wallet signing and exchange credentials
-are not requested.
+Alchemy, X API, and Helius are optional follow-up sources. The regular Chrome profile, wallet
+signing, and exchange credentials are not requested.
 
-## Owner verification pending
+## Verification contract
 
-Focused unit fixtures and Electron assertions were authored, but no test, typecheck, lint, build,
-Electron, screenshot, git-diff, or other verification command was run for
-`coin-analysis-workspace-003`, following the owner's explicit instruction. The remaining contract
-below must be exercised by the owner/integration task before this feature is called verified.
+The single-page layout, thesis flow, clipboard command, and selectable X browser display mode remain
+owner-verification pending.
 
 - First/repeated Open, close/reopen, geometry, language, auth invalidation, and host-quit cleanup.
-- One full-width local Coin renderer; no chat/composer, hidden Coin SQLite, browser, or remote view.
-- All five analysis tabs plus Resources, Sources, loading/empty/unavailable/error states, and no
-  automatic sample fallback.
+- One flat Trench workspace with no core tabs, decorative cards, KPI strip, or body overflow.
+- Persistent Paste and analyze, one-shot Terminal, menubar visible/hidden X mode, shared Codex
+  status, model, and effort controls.
+- Scan, Focus, active token, and bounded Decision remain in one context; Resources/History restore
+  that context after closing.
+- X uses a dedicated persistent profile, requires one manual login, survives close/reopen, and never
+  mounts or copies the regular Chrome profile.
+- The menubar display preference survives restart; switching an active managed context reopens the
+  same query, while hidden login requirements remain explicit.
+- Loading/empty/unavailable/error states retain the previous snapshot and never automatically fall
+  back to another source or profile.
 - Resource credential masking, `safeStorage`, owner-only file modes, GMGN command allowlist, no
   shell execution, no private key, and install/probe error handling.
 - Monitor/Screener real local HTTP fixture tests and complete Meme result rendering.
 - Deterministic `BUY/HOLD/SELL` fixtures and position-dependent `HOLD` gate.
-- Codex shared login and strict AI JSON/schema/evidence validation are implemented with no
-  chat/provider/tool surface; runtime owner verification remains pending.
+- Codex shared login plus strict thesis/JSON/schema/evidence validation with no general
+  chat/provider/tool surface.
 - Sender-denial tests for every privileged IPC group.
 - `yarn typecheck:node`, focused renderer typecheck, `yarn build`, and Electron Playwright at
   `1360x860` and `800x600` with screenshot and overflow checks.

@@ -14,10 +14,6 @@
       <IconShieldCheck :size="14" stroke-width="1.8" aria-hidden="true" />
       {{ supportLabel }}
     </span>
-    <span class="coin-evidence-strip__item">
-      <IconChartBar :size="14" stroke-width="1.8" aria-hidden="true" />
-      {{ scoreLabel }}
-    </span>
     <span v-if="workspace.stateSaving" class="coin-evidence-strip__item">
       <a-spin :size="10" />{{ i18nHelper.coin.analysis.state.saving }}
     </span>
@@ -27,7 +23,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import dayjs from 'dayjs';
-import { IconChartBar, IconClock, IconDatabase, IconShieldCheck } from '@tabler/icons-vue';
+import { IconClock, IconDatabase, IconShieldCheck } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { coinWorkspaceStore as workspace } from '../views/analysis/coinWorkspace.store';
 
@@ -51,14 +47,5 @@ const supportLabel = computed(() => {
   if (states.has('unavailable')) return i18nHelper.coin.analysis.labels.unavailable;
   if (states.has('partial') || states.has('stale')) return i18nHelper.coin.analysis.labels.partial;
   return i18nHelper.coin.analysis.labels.ready;
-});
-const scoreLabel = computed(() => {
-  const score = workspace.activeScore;
-  const confidence = workspace.activeConfidence;
-  if (score === null && confidence === null) return i18nHelper.coin.evidence.confidence;
-  const parts = [];
-  if (score !== null) parts.push(`${i18nHelper.coin.analysis.columns.score} ${score.toFixed(1)}`);
-  if (confidence !== null) parts.push(`${i18nHelper.coin.analysis.metrics.confidence} ${Math.round(confidence * 100)}%`);
-  return parts.join(' · ');
 });
 </script>

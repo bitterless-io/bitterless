@@ -367,6 +367,33 @@ test('pane menu bar keeps the accepted compact filled split controls', () => {
   assert.doesNotMatch(style, /^\.omni-pane-menubar__btn:hover/m);
 });
 
+test('Escape closes the top-level Omni Layout control and synchronizes Menu Bar state', () => {
+  const mainSource = read('src/main/windows/omniWindow.helper.ts');
+  const windowSource = read('src/renderer/omni/omniWindow/src/App.vue');
+  const typesSource = read('src/shared/omni/omni.types.ts');
+
+  assert.match(
+    typesSource,
+    /OMNI_CONTROL_VISIBILITY_EVENT = 'omniWindow\/controlVisibility'/
+  );
+  assert.match(
+    mainSource,
+    /controlView\.webContents\.on\('before-input-event',[\s\S]*?input\.type !== 'keyDown'[\s\S]*?input\.key !== 'Escape'/
+  );
+  assert.match(
+    mainSource,
+    /event\.preventDefault\(\);[\s\S]*?this\.setControlVisible\(false\);/
+  );
+  assert.match(
+    mainSource,
+    /private setControlVisible\(visible: boolean\): void[\s\S]*?xpcMain\.broadcast\(OMNI_CONTROL_VISIBILITY_EVENT, \{ visible: this\.controlVisible \}\)/
+  );
+  assert.match(
+    windowSource,
+    /xpcRenderer\.subscribe\(OMNI_CONTROL_VISIBILITY_EVENT,[\s\S]*?controlVisible\.value = params\.visible;/
+  );
+});
+
 test('only the Omni window Menu Bar owns the compact ready update action', () => {
   const appSource = read('src/renderer/omni/omniWindow/src/App.vue');
   const styleSource = read('src/renderer/omni/omniWindow/src/App.less');

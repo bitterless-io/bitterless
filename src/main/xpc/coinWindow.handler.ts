@@ -8,6 +8,7 @@ import { coinResourceService } from '@main/coin/resources/coinResource.runtime';
 import { coinDataService, coinStateService } from '@main/coin/data/coinData.runtime';
 import { coinStrategyService } from '@main/coin/strategy/coinStrategy.service';
 import { coinAiAnalysisService } from '@main/coin/ai/coinAiAnalysis.runtime';
+import { coinXBrowserService } from '@main/coin/x/coinXBrowser.runtime';
 
 class CoinWindowHandler extends XpcMainHandler {
   private readonly lifecycle = new CoinWindowLifecycle<BrowserWindow>({
@@ -18,6 +19,7 @@ class CoinWindowHandler extends XpcMainHandler {
     destroy: async (window) => {
       coinAiAnalysisService.stopAll();
       coinDataService.stopAll();
+      await coinXBrowserService.close();
       await coinWindowManager.destroy(window);
     },
   });
@@ -47,6 +49,7 @@ export const coinWindowHandler = new CoinWindowHandler();
 coinWindowManager.setCloseCleanup(() => {
   coinAiAnalysisService.stopAll();
   coinDataService.stopAll();
+  void coinXBrowserService.close();
 });
 registerCoinIpc({
   getWindow: () => coinWindowManager.browserWindow,
@@ -56,5 +59,6 @@ registerCoinIpc({
   state: coinStateService,
   strategy: coinStrategyService,
   ai: coinAiAnalysisService,
+  xBrowser: coinXBrowserService,
 });
 export type { CoinWindowHandler };

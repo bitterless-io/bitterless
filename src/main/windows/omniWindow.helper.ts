@@ -1,4 +1,5 @@
 import { app, BaseWindow, WebContentsView, screen, session, shell } from 'electron';
+import type { Session } from 'electron';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
@@ -7,6 +8,7 @@ import { throttle } from 'es-toolkit';
 import {
   OMNI_LAYOUT_RECOVERY_STATE_EVENT,
   OMNI_LAYOUT_SNAPSHOT_EVENT,
+  OMNI_CONTROL_VISIBILITY_EVENT,
   OMNI_MINI_APP_DISPLAY_URLS,
   OMNI_MINI_APP_LOAD_STATE_EVENT,
   createDefaultOmniLayoutTree,
@@ -86,17 +88,52 @@ const resolveOmniBrowserProfile = (url: string): OmniBrowserProfile | null => {
   return isGoogleProfile ? 'google' : 'default';
 };
 
-const buildGoogleProfileUserAgent = (sourceUserAgent: string): string => {
-  const tokens = sourceUserAgent
-    .trim()
-    .split(/\s+/)
-    .filter((token) => !/^(?:Electron|Bitterless)\/\S+$/i.test(token));
-  const chromeTokenIndex = tokens.findIndex((token) => /^Chrome\/\S+$/i.test(token));
-  if (chromeTokenIndex === -1) {
-    throw new Error('[OmniWindowHelper] Google profile UA is missing its Chrome product token');
-  }
-  tokens.splice(chromeTokenIndex, 0, `Bitterless/${app.getVersion()}`);
-  return tokens.join(' ');
+// Sessions that already carry the client-hint shim. onBeforeSendHeaders allows ONE listener per
+// session, so re-registering would silently replace the previous one.
+const clientHintShimmedPartitions = new Set<string>();
+
+/**
+ * Give an omni browser session the UA client hints a Chrome would send.
+ *
+ * Electron sends **none at all** — a dumped main-frame navigation carries only Accept*,
+ * Sec-Fetch-*, Upgrade-Insecure-Requests and User-Agent — so these are CREATED, not extended.
+ * Measured 2026-07-29 against web.whatsapp.com with a raw control in the same run
+ * (areas/agent-runtime/anti-bot/solutions.md #4): its "works with Google Chrome 100+" card is
+ * decided server-side, and creating `Sec-CH-UA` with a `Google Chrome` brand is what turns it into
+ * the QR login page. An append-only version was a silent no-op and stayed blocked.
+ *
+ * Versions are the engine's real ones; the single unearned claim is the brand name. The UA string
+ * is left alone here (the google profile rewrites it separately, for a different reason).
+ *
+ * ⚠ This makes the headers disagree with JS `navigator.userAgentData` (still Chromium, no Google
+ * Chrome) — the cross-checkable contradiction that measured as FAILING Cloudflare Turnstile in
+ * solutions.md #2.2. Applied to both omni browser partitions by owner decision; if a Turnstile site
+ * regresses, this shim is the first thing to remove.
+ */
+const installChromeClientHintShim = (browserSession: Session, partition: string): void => {
+  if (clientHintShimmedPartitions.has(partition)) return;
+  clientHintShimmedPartitions.add(partition);
+  const major = (process.versions.chrome || '').split('.')[0];
+  if (!major) return;
+  const platform =
+    process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
+  const brands = `"Not(A:Brand";v="8", "Chromium";v="${major}", "Google Chrome";v="${major}"`;
+  browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = { ...details.requestHeaders };
+    const existing = Object.keys(headers).find((name) => name.toLowerCase() === 'sec-ch-ua');
+    // If a future Electron starts sending hints itself, extend them instead of fighting it.
+    if (existing) {
+      const value = String(headers[existing] ?? '');
+      if (value && !/"Google Chrome"/i.test(value)) {
+        headers[existing] = `${value}, "Google Chrome";v="${major}"`;
+      }
+    } else {
+      headers['Sec-CH-UA'] = brands;
+      headers['Sec-CH-UA-Mobile'] = '?0';
+      headers['Sec-CH-UA-Platform'] = `"${platform}"`;
+    }
+    callback({ requestHeaders: headers });
+  });
 };
 
 interface OmniMiniAppRuntime {
@@ -394,6 +431,11 @@ export class OmniWindowHelper {
       this.controlView.webContents.on('did-finish-load', () => {
         this.replayControlState();
       });
+      this.controlView.webContents.on('before-input-event', (event, input) => {
+        if (input.type !== 'keyDown' || input.key !== 'Escape') return;
+        event.preventDefault();
+        this.setControlVisible(false);
+      });
       console.log('[OmniWindowHelper] controlView singleton created');
     }
     // Set proper bounds even when hidden — prevents splitpanes layout thrashing in a 0×0 container
@@ -440,10 +482,15 @@ export class OmniWindowHelper {
     return createdWindow;
   }
 
-  toggleControl(): void {
+  private setControlVisible(visible: boolean): void {
     if (!this.baseWindow || this.baseWindow.isDestroyed() || !this.controlView) return;
 
-    this.controlVisible = !this.controlVisible;
+    if (this.controlVisible === visible) {
+      xpcMain.broadcast(OMNI_CONTROL_VISIBILITY_EVENT, { visible });
+      return;
+    }
+
+    this.controlVisible = visible;
     if (this.controlVisible) {
       this.baseWindow.contentView.addChildView(this.controlView);
       this.controlView.setVisible(true);
@@ -453,6 +500,11 @@ export class OmniWindowHelper {
       this.controlView.setVisible(false);
       this.baseWindow.contentView.removeChildView(this.controlView);
     }
+    xpcMain.broadcast(OMNI_CONTROL_VISIBILITY_EVENT, { visible: this.controlVisible });
+  }
+
+  toggleControl(): void {
+    this.setControlVisible(!this.controlVisible);
   }
 
   getLayoutConfig(): OmniLayoutConfig | null {
@@ -579,15 +631,15 @@ export class OmniWindowHelper {
   }
 
   private createBrowserCellContentView(profile: OmniBrowserProfile): WebContentsView {
-    const browserSession = session.fromPartition(
-      profile === 'google' ? OMNI_GOOGLE_PARTITION : OMNI_PARTITION,
-    );
-    const userAgent = profile === 'google'
-      ? buildGoogleProfileUserAgent(browserSession.getUserAgent())
-      : null;
-    if (userAgent) browserSession.setUserAgent(userAgent);
+    const partition = profile === 'google' ? OMNI_GOOGLE_PARTITION : OMNI_PARTITION;
+    const browserSession = session.fromPartition(partition);
+    // Must be installed before the cell's first request (see the shim's note).
+    installChromeClientHintShim(browserSession, partition);
 
-    const content = new WebContentsView({
+    // No setUserAgent in either profile (owner decision 2026-07-29): the UA string stays exactly
+    // what Electron sends, and identity is expressed only by the added UA-CH brand above. The
+    // google profile now differs from the default one solely in its cookie jar.
+    return new WebContentsView({
       webPreferences: {
         preload: join(__dirname, '../preload/omniCellContent.js'),
         sandbox: false,
@@ -596,8 +648,6 @@ export class OmniWindowHelper {
         session: browserSession,
       },
     });
-    if (userAgent) content.webContents.setUserAgent(userAgent);
-    return content;
   }
 
   private createMiniAppCellContentView(preloadPath: string): WebContentsView {

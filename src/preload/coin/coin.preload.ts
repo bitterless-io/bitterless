@@ -106,6 +106,24 @@ const ai = Object.freeze({
     await ipcRenderer.invoke(COIN_IPC_CHANNELS.aiCancel, params),
 });
 
+const clipboard = Object.freeze({
+  readText: async (): Promise<string> =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.clipboardReadText),
+});
+
+const xBrowser = Object.freeze({
+  getStatus: async () =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.xBrowserGetStatus),
+  setDisplayMode: async (params: Parameters<CoinBridge['xBrowser']['setDisplayMode']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.xBrowserSetDisplayMode, params),
+  open: async (params: Parameters<CoinBridge['xBrowser']['open']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.xBrowserOpen, params),
+  focus: async () =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.xBrowserFocus),
+  close: async () =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.xBrowserClose),
+});
+
 const language = Object.freeze({
   getCurrent: async (): Promise<ApplicationLanguageSnapshot> =>
     await ipcRenderer.invoke(COIN_IPC_CHANNELS.languageGetCurrent),
@@ -131,6 +149,7 @@ const windowControls = Object.freeze({
 
 const coinBridge: CoinBridge = Object.freeze({
   ai,
+  clipboard,
   platform: hostPlatform(),
   codex,
   data,
@@ -140,6 +159,7 @@ const coinBridge: CoinBridge = Object.freeze({
   state,
   strategy,
   window: windowControls,
+  xBrowser,
 });
 
 contextBridge.exposeInMainWorld('coin', coinBridge);

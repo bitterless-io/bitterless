@@ -9,11 +9,13 @@ import {
   type CoinAiTargetKind,
   type CoinDataEnvelope,
   type CoinDataSourceStatus,
+  type CoinDiscoverCandidate,
   type CoinDecisionResult,
   type CoinDiscoverSnapshot,
   type CoinHistoryEntry,
   type CoinHistoryType,
   type CoinMemeAnalysisResult,
+  type CoinMemeSourceMode,
   type CoinMonitorEvent,
   type CoinMonitorResult,
   type CoinPersistentData,
@@ -21,11 +23,12 @@ import {
   type CoinScreenerResult,
   type CoinSourceReceipt,
   type CoinStoredAnalysis,
-  type CoinStrategyDraft,
   type CoinStrategyInput,
   type CoinWatchItem,
+  type CoinXBrowserDisplayMode,
 } from '@shared/coin/coinAnalysis.type';
 import { coinShellStore } from '../../coinShell.store';
+import { coinXBrowserStore } from './coinXBrowser.store';
 
 const MAX_ANALYSES = 500;
 const MAX_DECISIONS = 500;
@@ -40,6 +43,22 @@ let monitorUnsubscribe: (() => void) | null = null;
 let discoverUnsubscribe: (() => void) | null = null;
 
 const requestId = (prefix: string): string => `${prefix}-${crypto.randomUUID()}`;
+const EVM_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+const normalizedContractAddress = (value: string): string =>
+  value.trim().replace(/^[`'"\s]+|[`'"\s]+$/g, '');
+
+const addressMatchesChain = (
+  value: string,
+  chain: CoinPersistentData['drafts']['meme']['chain'],
+): boolean => chain === 'solana' ? SOLANA_ADDRESS.test(value) : EVM_ADDRESS.test(value);
+
+const contractAddressMatches = (
+  chain: CoinWatchItem['chain'],
+  left: string,
+  right: string,
+): boolean => chain === 'solana' ? left === right : left.toLowerCase() === right.toLowerCase();
 
 export const parseMonitorSymbols = (value: string): string[] => {
   const symbols: string[] = [];
@@ -77,6 +96,8 @@ class CoinWorkspaceState {
   stateSaving = false;
   stateRecovering = false;
   stateError = '';
+  clipboardLoading = false;
+  commandError = '';
   sourceStatuses: CoinDataSourceStatus[] = [];
   sourceLoading = false;
   sourceError = '';
@@ -114,30 +135,25 @@ class CoinWorkspaceState {
   aiError = '';
   aiRunId: string | null = null;
   aiTarget: CoinAiAnalysisTarget | null = null;
+  decisionError = '';
 
   private persistAfterAi = false;
 
   get activeReceipts(): CoinSourceReceipt[] {
-    if (coinShellStore.activeTab === 'monitor') return this.monitorResult?.receipts ?? [];
-    if (coinShellStore.activeTab === 'screener') {
-      if (this.screenerResult) return this.screenerResult.receipts;
-      return this.screenerParseResult ? [this.screenerParseResult.receipt] : [];
-    }
-    if (coinShellStore.activeTab === 'meme') return this.memeAnalysis?.receipts ?? this.discoverSnapshot?.receipts ?? [];
-    if (coinShellStore.activeTab === 'strategy') return this.strategyReceipt ? [this.strategyReceipt] : [];
-    return [];
+    return this.memeAnalysis?.receipts ?? this.discoverSnapshot?.receipts ?? [];
   }
 
-  get activeScore(): number | null {
-    if (coinShellStore.activeTab === 'meme') return this.memeAnalysis?.deterministicScore.value ?? null;
-    if (coinShellStore.activeTab === 'strategy') return this.strategyResult?.score ?? null;
-    return null;
+  get focusItems(): CoinWatchItem[] {
+    return [...this.data.watchlist]
+      .filter((item) => item.kind === 'token')
+      .sort((left, right) => right.createdAt - left.createdAt);
   }
 
-  get activeConfidence(): number | null {
-    if (coinShellStore.activeTab === 'meme') return this.memeAnalysis?.confidence.value ?? null;
-    if (coinShellStore.activeTab === 'strategy') return this.strategyResult?.confidence ?? null;
-    return null;
+  get currentTokenFocused(): boolean {
+    return this.isFocused(
+      this.data.drafts.meme.chain,
+      this.data.drafts.meme.contractAddress,
+    );
   }
 
   get activeJobCount(): number {
@@ -175,11 +191,140 @@ class CoinWorkspaceState {
   setActivePage(page: CoinPersistentData['activePage']): void {
     this.data.activePage = page;
     if (page === 'resources') coinShellStore.openResources();
-    else {
-      coinShellStore.openTab(page);
-      void this.refreshSources();
-    }
+    else if (page === 'history') coinShellStore.openHistory();
+    else coinShellStore.closeSecondary();
     this.queuePersist();
+  }
+
+  closeSecondary(): void {
+    this.data.activePage = 'meme';
+    coinShellStore.closeSecondary();
+    this.queuePersist();
+  }
+
+  async setXBrowserDisplayMode(displayMode: CoinXBrowserDisplayMode): Promise<void> {
+    if (coinXBrowserStore.status.mode === 'cdp') return;
+    this.data.xBrowser.displayMode = displayMode;
+    this.queuePersist();
+    await coinXBrowserStore.setDisplayMode(displayMode);
+  }
+
+  async pasteAndAnalyze(): Promise<void> {
+    if (this.clipboardLoading || this.memeLoading) return;
+    this.clipboardLoading = true;
+    this.commandError = '';
+    try {
+      const value = normalizedContractAddress(await window.coin.clipboard.readText());
+      if (!value) {
+        this.commandError = i18nHelper.coin.trench.errors.clipboardEmpty;
+        return;
+      }
+      if (!addressMatchesChain(value, this.data.drafts.meme.chain)) {
+        this.commandError = i18nHelper.coin.trench.errors.addressChainMismatch;
+        return;
+      }
+      this.data.drafts.meme.contractAddress = value;
+      this.data.drafts.meme.view = 'analyze';
+      this.closeSecondary();
+      await this.analyzeMeme('service');
+    } catch (error) {
+      console.error('[Coin] Clipboard read failed:', error);
+      this.commandError = i18nHelper.coin.trench.errors.clipboardRead;
+    } finally {
+      this.clipboardLoading = false;
+    }
+  }
+
+  async analyzeFromCommand(mode: CoinMemeSourceMode): Promise<void> {
+    this.commandError = '';
+    const address = normalizedContractAddress(this.data.drafts.meme.contractAddress);
+    if (!address || !addressMatchesChain(address, this.data.drafts.meme.chain)) {
+      this.commandError = i18nHelper.coin.trench.errors.addressChainMismatch;
+      return;
+    }
+    this.data.drafts.meme.contractAddress = address;
+    this.data.drafts.meme.view = 'analyze';
+    this.closeSecondary();
+    await this.analyzeMeme(mode);
+  }
+
+  selectCandidate(candidate: CoinDiscoverCandidate): void {
+    this.selectToken(candidate.chain, candidate.contractAddress);
+  }
+
+  async analyzeCandidate(candidate: CoinDiscoverCandidate): Promise<void> {
+    this.selectCandidate(candidate);
+    await this.analyzeMeme('service');
+  }
+
+  selectFocus(item: CoinWatchItem): void {
+    if (item.kind !== 'token' || !item.chain) return;
+    this.selectToken(item.chain, item.asset);
+  }
+
+  addCandidateToFocus(candidate: CoinDiscoverCandidate): void {
+    this.addFocusToken(candidate.contractAddress, candidate.chain);
+  }
+
+  addCurrentToFocus(): void {
+    const address = normalizedContractAddress(this.data.drafts.meme.contractAddress);
+    if (!address || !addressMatchesChain(address, this.data.drafts.meme.chain)) {
+      this.commandError = i18nHelper.coin.trench.errors.addressChainMismatch;
+      return;
+    }
+    this.addFocusToken(address, this.data.drafts.meme.chain);
+  }
+
+  removeFocus(id: string): void {
+    this.data.watchlist = this.data.watchlist.filter((item) => item.id !== id);
+    this.queuePersist();
+  }
+
+  isFocused(
+    chain: CoinWatchItem['chain'],
+    address: string,
+  ): boolean {
+    if (!chain || !address) return false;
+    return this.data.watchlist.some((item) =>
+      item.kind === 'token' &&
+      item.chain === chain &&
+      contractAddressMatches(chain, item.asset, address));
+  }
+
+  isCurrentToken(chain: CoinWatchItem['chain'], address: string): boolean {
+    return Boolean(
+      chain &&
+      chain === this.data.drafts.meme.chain &&
+      contractAddressMatches(chain, address, this.data.drafts.meme.contractAddress),
+    );
+  }
+
+  tokensMatch(
+    leftChain: CoinWatchItem['chain'],
+    leftAddress: string,
+    rightChain: CoinWatchItem['chain'],
+    rightAddress: string,
+  ): boolean {
+    return Boolean(
+      leftChain &&
+      leftChain === rightChain &&
+      contractAddressMatches(leftChain, leftAddress, rightAddress),
+    );
+  }
+
+  async reviewCurrentThesis(): Promise<void> {
+    const result = this.memeAnalysis;
+    const thesis = this.data.drafts.decision.thesis.trim();
+    this.decisionError = '';
+    if (!result) {
+      this.decisionError = i18nHelper.coin.trench.errors.analysisRequired;
+      return;
+    }
+    if (!thesis) {
+      this.decisionError = i18nHelper.coin.trench.errors.thesisRequired;
+      return;
+    }
+    await this.analyzeWithAi('meme', result.id, thesis);
   }
 
   queuePersist(): void {
@@ -355,7 +500,7 @@ class CoinWorkspaceState {
     await window.coin.data.cancel({ requestId: this.screenerRequestId });
   }
 
-  async analyzeMeme(): Promise<void> {
+  async analyzeMeme(mode: CoinMemeSourceMode = this.data.drafts.meme.mode): Promise<void> {
     if (this.memeLoading) return;
     const contractAddress = this.data.drafts.meme.contractAddress.trim();
     if (!contractAddress) {
@@ -369,7 +514,7 @@ class CoinWorkspaceState {
     try {
       const envelope = await window.coin.data.analyzeMeme({
         requestId: id,
-        mode: this.data.drafts.meme.mode,
+        mode,
         chain: this.data.drafts.meme.chain,
         contractAddress,
         holderLimit: 100,
@@ -377,9 +522,8 @@ class CoinWorkspaceState {
       });
       this.consumeEnvelopeError(envelope, (message) => { this.memeError = message; });
       if (envelope.data) {
-        this.memeAnalysis = envelope.data;
+        this.replaceMemeAnalysis(envelope.data);
         this.recordAnalysis('meme', contractAddress, this.data.drafts.meme.chain, envelope.data, envelope.data.receipts);
-        this.addWatchToken(contractAddress, this.data.drafts.meme.chain);
         this.applyAnalysisToStrategy(envelope.data);
       } else {
         this.appendReceipts([envelope.receipt]);
@@ -399,13 +543,13 @@ class CoinWorkspaceState {
     await window.coin.data.cancel({ requestId: this.memeRequestId });
   }
 
-  async startDiscover(): Promise<void> {
+  async startDiscover(mode: CoinMemeSourceMode = this.data.drafts.meme.mode): Promise<void> {
     if (this.discoverStarting || this.discoverSnapshot?.running) return;
     this.discoverStarting = true;
     this.discoverError = '';
     try {
       const receipt = await window.coin.data.startDiscover({
-        mode: this.data.drafts.meme.mode,
+        mode,
         chain: this.data.drafts.meme.chain,
         stages: this.data.drafts.meme.stages,
         windowMinutes: this.data.drafts.meme.windowMinutes,
@@ -503,7 +647,11 @@ class CoinWorkspaceState {
     );
   }
 
-  async analyzeWithAi(kind: CoinAiTargetKind, resultId: string): Promise<void> {
+  async analyzeWithAi(
+    kind: CoinAiTargetKind,
+    resultId: string,
+    userThesis = '',
+  ): Promise<void> {
     if (this.aiLoading || !resultId) return;
     const runId = crypto.randomUUID();
     const target: CoinAiAnalysisTarget = { kind, resultId };
@@ -531,6 +679,7 @@ class CoinWorkspaceState {
         target,
         model: this.data.ai.model,
         effort: this.data.ai.effort,
+        userThesis,
       });
       if (this.aiRunId !== runId || response.runId !== runId) return;
       if (response.status === 'completed') {
@@ -603,21 +752,17 @@ class CoinWorkspaceState {
     if (entry.analysisId) {
       const analysis = this.data.analyses.find(({ id }) => id === entry.analysisId);
       if (!analysis) return;
-      if (analysis.type === 'monitor' && analysis.result.schema === 'coin-monitor-v1') this.monitorResult = clone(analysis.result);
-      if (analysis.type === 'screener' && analysis.result.schema === 'coin-screener-v1') this.screenerResult = clone(analysis.result);
       if (analysis.type === 'meme' && analysis.result.schema === 'coin-meme-analysis-v1') {
-        this.memeAnalysis = clone(analysis.result);
-        this.applyAnalysisToStrategy(analysis.result);
+        this.selectToken(analysis.result.asset.chain, analysis.result.asset.contractAddress);
       }
-      this.setActivePage(analysis.type);
       return;
     }
     if (entry.decisionId) {
       const decision = this.data.decisions.find(({ id }) => id === entry.decisionId);
       if (!decision) return;
+      this.selectToken(decision.chain, decision.asset);
       this.strategyResult = clone(decision.result);
       this.applyStrategyInputToDraft(decision.input);
-      this.setActivePage('strategy');
     }
   }
 
@@ -758,15 +903,63 @@ class CoinWorkspaceState {
     this.data.watchlist = [...this.data.watchlist, ...additions].slice(-500);
   }
 
-  private addWatchToken(asset: string, chain: CoinWatchItem['chain']): void {
-    if (this.data.watchlist.some((item) => item.kind === 'token' && item.asset.toLowerCase() === asset.toLowerCase() && item.chain === chain)) return;
-    this.data.watchlist = [...this.data.watchlist, {
+  private selectToken(
+    chain: NonNullable<CoinWatchItem['chain']>,
+    asset: string,
+  ): void {
+    this.data.drafts.meme.chain = chain;
+    this.data.drafts.meme.contractAddress = asset;
+    this.data.drafts.meme.view = 'analyze';
+    this.data.activePage = 'meme';
+    this.commandError = '';
+    const analysis = [...this.data.analyses]
+      .reverse()
+      .find((item) =>
+        item.type === 'meme' &&
+        item.chain === chain &&
+        contractAddressMatches(chain, item.asset, asset));
+    if (analysis?.result.schema === 'coin-meme-analysis-v1') {
+      this.replaceMemeAnalysis(clone(analysis.result));
+      this.applyAnalysisToStrategy(analysis.result);
+    } else {
+      this.replaceMemeAnalysis(null);
+    }
+    coinShellStore.closeSecondary();
+    this.queuePersist();
+  }
+
+  private replaceMemeAnalysis(result: CoinMemeAnalysisResult | null): void {
+    const current = this.memeAnalysis?.asset ?? null;
+    const targetChanged = Boolean(
+      current &&
+      (!result || !this.tokensMatch(
+        current.chain,
+        current.contractAddress,
+        result.asset.chain,
+        result.asset.contractAddress,
+      )),
+    );
+    if (targetChanged) {
+      this.data.drafts.decision.thesis = '';
+      this.decisionError = '';
+    }
+    this.memeAnalysis = result;
+  }
+
+  private addFocusToken(asset: string, chain: CoinWatchItem['chain']): void {
+    if (this.data.watchlist.some((item) =>
+      item.kind === 'token' &&
+      item.chain === chain &&
+      contractAddressMatches(chain, item.asset, asset))) return;
+    const watchItem: CoinWatchItem = {
       id: crypto.randomUUID(),
       kind: 'token',
       asset,
       chain,
       createdAt: Date.now(),
-    }].slice(-500);
+    };
+    this.data.watchlist = [...this.data.watchlist, watchItem].slice(-500);
+    this.queuePersist();
   }
 
   private applyAnalysisToStrategy(result: CoinMemeAnalysisResult): void {
@@ -935,7 +1128,8 @@ class CoinWorkspaceState {
 
   private setShellPage(page: CoinPersistentData['activePage']): void {
     if (page === 'resources') coinShellStore.openResources();
-    else coinShellStore.openTab(page);
+    else if (page === 'history') coinShellStore.openHistory();
+    else coinShellStore.closeSecondary();
   }
 
   private async flushStateBeforeAi(): Promise<boolean> {

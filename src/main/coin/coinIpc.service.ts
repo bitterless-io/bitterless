@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
+import { clipboard, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import {
   COIN_IPC_CHANNELS,
   type CoinShellStatus,
@@ -10,6 +10,7 @@ import type { CoinDataService } from './data/coinData.service';
 import type { CoinStateService } from './state/coinState.service';
 import type { CoinStrategyService } from './strategy/coinStrategy.service';
 import type { CoinAiAnalysisService } from './ai/coinAiAnalysis.service';
+import type { CoinXBrowserService } from './x/coinXBrowser.service';
 import { assertCoinIpcSender } from './coinSender.guard';
 
 export interface CoinIpcDependencies {
@@ -20,6 +21,7 @@ export interface CoinIpcDependencies {
   state: CoinStateService;
   strategy: CoinStrategyService;
   ai: CoinAiAnalysisService;
+  xBrowser: CoinXBrowserService;
 }
 
 const shellStatus = async (resources: CoinResourceService): Promise<CoinShellStatus> => {
@@ -163,6 +165,24 @@ export const registerCoinIpc = (dependencies: CoinIpcDependencies): void => {
   scopedHandle(COIN_IPC_CHANNELS.aiCancel, (_window, value) =>
     dependencies.ai.cancel(value));
 
+  scopedHandle(COIN_IPC_CHANNELS.clipboardReadText, () =>
+    clipboard.readText().trim().slice(0, 2_048));
+
+  scopedHandle(COIN_IPC_CHANNELS.xBrowserGetStatus, async () =>
+    await dependencies.xBrowser.getStatus());
+
+  scopedHandle(COIN_IPC_CHANNELS.xBrowserSetDisplayMode, async (_window, value) =>
+    await dependencies.xBrowser.setDisplayMode(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.xBrowserOpen, async (_window, value) =>
+    await dependencies.xBrowser.open(value));
+
+  scopedHandle(COIN_IPC_CHANNELS.xBrowserFocus, async () =>
+    await dependencies.xBrowser.focus());
+
+  scopedHandle(COIN_IPC_CHANNELS.xBrowserClose, async () =>
+    await dependencies.xBrowser.close());
+
   scopedHandle(COIN_IPC_CHANNELS.languageGetCurrent, () => dependencies.getLanguage());
 
   scopedHandle(COIN_IPC_CHANNELS.windowMinimize, (window) => {
@@ -175,9 +195,10 @@ export const registerCoinIpc = (dependencies: CoinIpcDependencies): void => {
     return windowSnapshot(window);
   });
 
-  scopedHandle(COIN_IPC_CHANNELS.windowClose, (window) => {
+  scopedHandle(COIN_IPC_CHANNELS.windowClose, async (window) => {
     dependencies.ai.stopAll();
     dependencies.data.stopAll();
+    await dependencies.xBrowser.close();
     window.close();
   });
 };

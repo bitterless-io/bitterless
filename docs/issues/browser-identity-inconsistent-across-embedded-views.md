@@ -2,6 +2,46 @@
 
 Status: implemented; owner verification pending — Omni corrected; Maestro unchanged
 
+## 2026-07-29 change — UA client hints are now created on both Omni browser profiles
+
+This **amends the 2026-07-28 acceptance bullet** that forbade rewriting UA-CH/request headers.
+
+New measurement (`areas/agent-runtime/anti-bot/solutions.md` #4, taken in a real Electron window
+against `web.whatsapp.com` with a raw control in the same run): **Electron sends no UA client hints
+at all** — a dumped main-frame navigation carries only `Accept*`, `Sec-Fetch-*`,
+`Upgrade-Insecure-Requests` and `User-Agent`. WhatsApp's "works with Google Chrome 100+" card is
+decided server-side; with no `Sec-CH-UA` to read it falls back to parsing the UA string, where any
+unknown product token fails. Creating `Sec-CH-UA` with a `Google Chrome` brand turns that card into
+the QR login page. Rewriting the UA string the way the Google profile does measured as still
+blocked, so the two mechanisms are not interchangeable.
+
+`omniWindow.helper.ts` therefore installs a session-scoped `onBeforeSendHeaders` shim on **both**
+`persist:omni` and `persist:omni-google` that **creates** `Sec-CH-UA`, `Sec-CH-UA-Mobile` and
+`Sec-CH-UA-Platform` (an append-only version is a silent no-op — there is nothing to append to).
+Versions come from `process.versions.chrome`; the one added claim is the brand name.
+
+**`buildGoogleProfileUserAgent` is removed in the same change.** The owner's position is that adding
+a brand to the hint list is *additive* — Chromium's own `Not(A:Brand` and `Chromium/<real version>`
+entries stay, no version is falsified — and that this is what Chromium-based third-party browsers
+already do, so a separate UA-string rewrite is no longer warranted. **No Omni cell calls
+`setUserAgent()` any more**, in either profile; `persist:omni-google` now differs from
+`persist:omni` only by cookie jar (kept so existing Google sessions are not stranded).
+
+**Two open verifications, both owner-only:**
+
+1. **Cloudflare.** The created headers disagree with JS `navigator.userAgentData` (still `Chromium`,
+   no `Google Chrome`) — the cross-checkable contradiction that measured as failing Turnstile
+   (`solutions.md` #2.2), now on the default profile too. If a Turnstile site regresses, removing
+   this shim is the first thing to try.
+2. **Google / YouTube sign-in.** The 2026-07-28 pass was measured *with* the `Bitterless/<version>`
+   token and native UA-CH; a pure Chrome UA hit `/signin/rejected`, and the raw `Electron/<v>` UA
+   was never carried through a full sign-in. The combination now shipping — raw Electron UA **plus**
+   a `Google Chrome` brand in the hints — has not been tested. The owner is re-running that login.
+   If it regresses, restore `buildGoogleProfileUserAgent` for the Google profile only.
+
+Amended acceptance bullet: *no Omni view calls `setUserAgent()` or attaches CDP for identity
+spoofing; request headers carry only the created UA client hints described above.*
+
 ## 2026-07-28 correction
 
 The previous fix removed hardcoded version drift but left every Omni browser cell presenting a

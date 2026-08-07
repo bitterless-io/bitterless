@@ -107,6 +107,19 @@ select {
   gap: 8px;
 }
 
+.coin-window-header__browser-mode {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--coin-text-muted);
+  -webkit-app-region: no-drag;
+}
+
+.coin-window-header__browser-mode--visible {
+  color: var(--coin-primary);
+}
+
 .coin-window-header__status-button {
   height: 28px;
   display: inline-flex;
@@ -1510,5 +1523,557 @@ select {
   .coin-risk-list article,
   .coin-unavailable-list > div {
     grid-template-columns: 130px minmax(0, 1fr);
+  }
+}
+
+.trench-workspace {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--coin-surface);
+}
+
+.trench-command-bar {
+  min-width: 0;
+  min-height: 48px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--coin-border);
+  background: var(--coin-surface);
+}
+
+.trench-command-bar__contract,
+.trench-command-bar__ai {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.trench-command-bar__contract {
+  flex: 1 1 680px;
+}
+
+.trench-command-bar__ai {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+
+.trench-command-bar__chain {
+  width: 112px;
+  flex: 0 0 112px;
+}
+
+.trench-command-bar__ca {
+  min-width: 180px;
+  flex: 1 1 320px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.trench-command-bar__model {
+  width: 142px;
+}
+
+.trench-command-bar__effort {
+  width: 96px;
+}
+
+.trench-command-bar .arco-btn,
+.trench-command-bar .arco-input-wrapper,
+.trench-command-bar .arco-select-view {
+  min-height: 30px;
+}
+
+.trench-command-bar__codex-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--coin-positive);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.trench-command-bar__icon--active,
+.trench-command-bar__x--ready {
+  color: var(--coin-primary) !important;
+}
+
+.trench-command-bar__x--warning {
+  color: var(--coin-warning) !important;
+}
+
+.trench-command-bar__x--error {
+  color: var(--coin-danger) !important;
+}
+
+.trench-command-bar__error {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--coin-danger);
+  font-size: 11px;
+}
+
+.trench-command-bar__error span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.trench-workspace__body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(250px, 280px) minmax(520px, 1fr) minmax(310px, 340px);
+  overflow: hidden;
+}
+
+.trench-signal-rail,
+.trench-decision-dock,
+.trench-token-canvas {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--coin-surface);
+}
+
+.trench-signal-rail {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--coin-border);
+}
+
+.trench-signal-section {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 50%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.trench-signal-section--focus {
+  border-top: 1px solid var(--coin-border);
+}
+
+.trench-signal-section__header {
+  min-height: 40px;
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 5px 10px;
+}
+
+.trench-signal-section__header > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.trench-signal-section__header h2,
+.trench-decision-dock__header h2 {
+  margin: 0;
+  color: var(--coin-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.trench-signal-section__header span,
+.trench-decision-dock__header span {
+  color: var(--coin-text-muted);
+  font-size: 10px;
+}
+
+.trench-signal-section__error {
+  padding: 0 10px 6px;
+  color: var(--coin-danger);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.trench-signal-list {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 0 4px 6px;
+}
+
+.trench-signal-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  margin: 1px 0;
+  border-radius: 4px;
+}
+
+.trench-signal-row:hover,
+.trench-signal-row--active {
+  background: color-mix(in srgb, var(--coin-primary) 7%, var(--coin-surface));
+}
+
+.trench-signal-row__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trench-signal-row__main:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--coin-primary);
+  outline-offset: -2px;
+}
+
+.trench-signal-row__identity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.trench-signal-row__identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--coin-text);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trench-signal-row__identity small {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--coin-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trench-signal-row__reason {
+  overflow: hidden;
+  color: var(--coin-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trench-signal-row__evidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--coin-text-muted);
+  font-size: 9px;
+}
+
+.trench-signal-row__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-right: 4px;
+  opacity: 0.7;
+}
+
+.trench-signal-row:hover .trench-signal-row__actions,
+.trench-signal-row:focus-within .trench-signal-row__actions {
+  opacity: 1;
+}
+
+.trench-signal-empty,
+.trench-decision-dock__empty {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  color: var(--coin-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.trench-token-canvas {
+  display: flex;
+}
+
+.coin-workspace-view--embedded .coin-analysis-section {
+  padding: 16px 14px;
+  border-bottom: 0;
+}
+
+.coin-workspace-view--embedded .coin-analysis-section + .coin-analysis-section {
+  padding-top: 20px;
+}
+
+.coin-workspace-view--embedded .coin-metric,
+.coin-workspace-view--embedded .coin-concept-fits article,
+.coin-workspace-view--embedded .coin-risk-list article,
+.coin-workspace-view--embedded .coin-unavailable-list > div {
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.coin-workspace-view--embedded .coin-result-state {
+  max-width: 560px;
+  margin: 24px auto;
+  border: 0;
+  background: transparent;
+}
+
+.coin-workspace-view--embedded .coin-data-table-scroll {
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+.trench-decision-dock {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--coin-border);
+}
+
+.trench-decision-dock__header {
+  min-height: 48px;
+  flex: 0 0 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+}
+
+.trench-decision-dock__asset {
+  max-width: 110px;
+  overflow: hidden;
+  color: var(--coin-primary) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trench-decision-dock__composer {
+  flex: 0 0 auto;
+  padding: 0 10px 10px;
+  border-bottom: 1px solid var(--coin-border);
+}
+
+.trench-decision-dock__composer textarea {
+  line-height: 1.5;
+  resize: none;
+}
+
+.trench-decision-dock__actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.trench-decision-dock__state {
+  min-width: 0;
+  flex: 1;
+  color: var(--coin-text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.trench-decision-dock__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 10px;
+  color: var(--coin-danger);
+  font-size: 10px;
+}
+
+.trench-decision-dock__result {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.trench-decision-dock .coin-ai-interpretation {
+  padding: 12px 10px;
+  background: transparent;
+}
+
+.trench-decision-dock .coin-ai-interpretation__columns {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.coin-ai-interpretation__submitted-thesis {
+  margin-top: 11px;
+  padding-left: 8px;
+  border-left: 2px solid var(--coin-primary);
+}
+
+.coin-ai-interpretation__submitted-thesis h4,
+.coin-ai-interpretation__submitted-thesis p {
+  margin: 0;
+}
+
+.coin-ai-interpretation__submitted-thesis h4 {
+  color: var(--coin-text-muted);
+  font-size: 10px;
+}
+
+.coin-ai-interpretation__submitted-thesis p {
+  margin-top: 3px;
+  color: var(--coin-text);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.trench-workspace__dock-controls,
+.trench-workspace__dock-scrim {
+  display: none;
+}
+
+.trench-secondary-view {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.trench-secondary-view__header {
+  min-height: 40px;
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--coin-border);
+  color: var(--coin-text);
+}
+
+.trench-secondary-view__header strong {
+  font-size: 12px;
+}
+
+.trench-secondary-view > .coin-resources-page,
+.trench-secondary-view > .coin-workspace-view {
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 1279px) {
+  .trench-command-bar {
+    align-content: center;
+  }
+
+  .trench-command-bar__contract,
+  .trench-command-bar__ai {
+    flex: 1 1 100%;
+  }
+
+  .trench-command-bar__ai {
+    justify-content: flex-start;
+  }
+
+  .trench-workspace__body {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .trench-decision-dock {
+    display: none;
+  }
+
+  .trench-workspace--decision-open .trench-decision-dock {
+    position: absolute;
+    z-index: 12;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 88%);
+    display: flex;
+  }
+
+  .trench-workspace__dock-controls {
+    position: absolute;
+    z-index: 14;
+    right: 10px;
+    bottom: 10px;
+    display: flex;
+    gap: 5px;
+  }
+
+  .trench-workspace__dock-button--active {
+    color: var(--coin-primary) !important;
+  }
+
+  .trench-workspace__dock-controls > :first-child {
+    display: none;
+  }
+
+  .trench-workspace__dock-scrim {
+    position: absolute;
+    z-index: 11;
+    inset: 0;
+    display: block;
+    background: rgb(30 34 55 / 8%);
+  }
+}
+
+@media (max-width: 959px) {
+  .trench-workspace__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trench-signal-rail {
+    display: none;
+  }
+
+  .trench-workspace--signal-open .trench-signal-rail {
+    position: absolute;
+    z-index: 12;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 88%);
+    display: flex;
+  }
+
+  .trench-workspace__dock-controls > :first-child {
+    display: inline-flex;
+  }
+
+  .trench-command-bar__contract {
+    flex-wrap: wrap;
+  }
+
+  .trench-command-bar__ca {
+    min-width: 300px;
   }
 }

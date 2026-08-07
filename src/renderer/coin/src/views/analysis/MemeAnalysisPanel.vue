@@ -1,6 +1,10 @@
 <template>
-  <div name="coin__meme__analysis" class="coin-workspace-view coin-workspace-view--nested">
-    <div name="coin__meme__analysisToolbar" class="coin-workspace-toolbar coin-workspace-toolbar--secondary">
+  <div
+    name="coin__meme__analysis"
+    class="coin-workspace-view coin-workspace-view--nested"
+    :class="{ 'coin-workspace-view--embedded': props.embedded }"
+  >
+    <div v-if="!props.embedded" name="coin__meme__analysisToolbar" class="coin-workspace-toolbar coin-workspace-toolbar--secondary">
       <label class="coin-control-group coin-control-group--fill">
         <span>{{ i18nHelper.coin.workspace.contractAddress }}</span>
         <a-input
@@ -76,7 +80,7 @@
           </div>
         </section>
 
-        <CoinAiInterpretation kind="meme" :result-id="result.id" />
+        <CoinAiInterpretation v-if="props.showAi" kind="meme" :result-id="result.id" />
 
         <section name="coin__meme__market" class="coin-analysis-section">
           <h3>{{ i18nHelper.coin.analysis.sections.marketIdentity }}</h3>
@@ -96,7 +100,7 @@
               <span>{{ item.label }}</span>
               <strong :class="{ 'coin-text-unavailable': item.metric.value === null }">{{ metricValue(item.metric, item.suffix) }}</strong>
               <small v-if="item.metric.value === null">{{ item.metric.reason }}</small>
-              <small v-else-if="'numerator' in item.metric && item.metric.numerator !== null">
+              <small v-else-if="'numerator' in item.metric && 'denominator' in item.metric && item.metric.numerator !== null">
                 {{ item.metric.numerator }} / {{ item.metric.denominator ?? unavailable }}
               </small>
             </div>
@@ -310,7 +314,14 @@ import CoinAiInterpretation from './CoinAiInterpretation.vue';
 import CoinResultState from './CoinResultState.vue';
 import { coinWorkspaceStore as workspace } from './coinWorkspace.store';
 
-defineProps<{ sourceConfigured: boolean }>();
+const props = withDefaults(defineProps<{
+  sourceConfigured: boolean;
+  embedded?: boolean;
+  showAi?: boolean;
+}>(), {
+  embedded: false,
+  showAi: true,
+});
 
 type DisplayMetric = CoinNullableMetric<string | number | boolean> | CoinRatioMetric;
 

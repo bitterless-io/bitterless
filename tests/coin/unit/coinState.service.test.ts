@@ -82,6 +82,7 @@ test('persists only main-validated AI receipts and rejects stale or cancelled ap
       provider: 'openai-codex' as const,
       model: 'gpt-5.5' as const,
       effort: 'high' as const,
+      userThesis: '',
       contextHash: `sha256:${'a'.repeat(64)}`,
       startedAt: 29_100,
       completedAt: 29_200,

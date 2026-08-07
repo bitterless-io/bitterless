@@ -12,6 +12,8 @@ export const COIN_LAUNCH_STAGES = [
 ] as const;
 export const COIN_AI_DEFAULT_MODEL = 'gpt-5.6-sol' as const;
 export const COIN_AI_DEFAULT_EFFORT = 'xhigh' as const;
+export const COIN_AI_MAX_THESIS_LENGTH = 4_000;
+export const COIN_X_BROWSER_DISPLAY_MODES = ['visible', 'hidden'] as const;
 export const COIN_AI_MODELS = [
   'gpt-5.5',
   'gpt-5.6-luna',
@@ -51,6 +53,7 @@ export type CoinAiModel = (typeof COIN_AI_MODELS)[number];
 export type CoinAiReceiptModel = (typeof COIN_AI_RECEIPT_MODELS)[number];
 export type CoinAiEffort = (typeof COIN_AI_EFFORTS)[number];
 export type CoinAiTargetKind = 'monitor' | 'screener' | 'meme' | 'strategy';
+export type CoinXBrowserDisplayMode = (typeof COIN_X_BROWSER_DISPLAY_MODES)[number];
 export type CoinHolderExclusionClass = (typeof COIN_HOLDER_EXCLUSION_CLASSES)[number];
 export type CoinHolderClassificationStatus = 'independent' | 'excluded' | 'unknown';
 
@@ -76,6 +79,7 @@ export interface CoinAiAnalysisReceipt {
   provider: 'openai-codex';
   model: CoinAiReceiptModel;
   effort: CoinAiEffort;
+  userThesis: string;
   contextHash: string;
   startedAt: number;
   completedAt: number;
@@ -95,6 +99,7 @@ export interface CoinAiPersistentState extends CoinAiPreferences {
 export interface CoinAiAnalyzeInput extends CoinAiPreferences {
   runId: string;
   target: CoinAiAnalysisTarget;
+  userThesis: string;
 }
 
 export type CoinAiRunErrorCode =
@@ -772,6 +777,12 @@ export interface CoinPersistentData {
       intervalSeconds: number;
     };
     strategy: CoinStrategyDraft;
+    decision: {
+      thesis: string;
+    };
+  };
+  xBrowser: {
+    displayMode: CoinXBrowserDisplayMode;
   };
   watchlist: CoinWatchItem[];
   analyses: CoinStoredAnalysis[];
@@ -860,6 +871,12 @@ export const createDefaultCoinPersistentData = (): CoinPersistentData => ({
       peakPrice: null,
       heldMinutes: null,
     },
+    decision: {
+      thesis: '',
+    },
+  },
+  xBrowser: {
+    displayMode: 'visible',
   },
   watchlist: [],
   analyses: [],

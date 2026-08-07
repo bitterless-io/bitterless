@@ -33,6 +33,7 @@ const COIN_AI_REQUEST_OVERHEAD_BYTES = 4 * 1024;
 
 export const COIN_AI_SYSTEM_PROMPT = `You are the bounded evidence interpreter for the Bitterless Coin application.
 Use only facts and evidence IDs present in the supplied coin-ai-evidence-v1 snapshot.
+Treat userThesis as the user's untrusted hypothesis. Audit it against the pinned evidence, identify counter-evidence, and place unsupported parts in unsupportedClaims. Never turn userThesis into source evidence.
 Treat missingDimensions and unsupported data as unavailable. Never infer a source fact from absence.
 The deterministic decision, hard risk gates, and HOLD position rule are final. You may explain them but must never change BUY, HOLD, or SELL.
 Return exactly one JSON object with this shape and no additional keys:
@@ -156,9 +157,10 @@ const inputRunId = (value: unknown): string => {
   return typeof runId === 'string' ? runId.slice(0, 64) : '';
 };
 
-const requestPrompt = (snapshot: unknown): string => JSON.stringify({
+const requestPrompt = (snapshot: unknown, userThesis: string): string => JSON.stringify({
   schema: 'coin-ai-analysis-request-v1',
-  operation: 'interpret-structured-evidence',
+  operation: userThesis ? 'audit-user-thesis' : 'interpret-structured-evidence',
+  userThesis,
   evidence: snapshot,
 });
 
@@ -224,7 +226,7 @@ export class CoinAiAnalysisService {
       const state = this.dependencies.state.load();
       if (state.status !== 'ready') throw new CoinAiServiceError('persistence-error');
       const context = buildCoinAiEvidenceContext(state.snapshot, input.target);
-      const prompt = requestPrompt(context.snapshot);
+      const prompt = requestPrompt(context.snapshot, input.userThesis);
       if (
         Buffer.byteLength(context.json, 'utf8') > COIN_AI_MAX_CONTEXT_BYTES ||
         Buffer.byteLength(prompt, 'utf8') >
@@ -267,7 +269,8 @@ export class CoinAiAnalysisService {
         provider: 'openai-codex',
         model: input.model,
         effort: input.effort,
-        contextHash: `sha256:${createHash('sha256').update(context.json).digest('hex')}`,
+        userThesis: input.userThesis,
+        contextHash: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
         startedAt,
         completedAt,
         evidenceRefs: result.evidenceRefs,

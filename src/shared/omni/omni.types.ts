@@ -24,6 +24,7 @@ export const OMNI_LAYOUT_MAX_URL_LENGTH = 8_192;
 export const OMNI_MINI_APP_LOAD_STATE_EVENT = 'omniControl/miniAppLoadState' as const;
 export const OMNI_LAYOUT_RECOVERY_STATE_EVENT = 'omniControl/layoutRecoveryState' as const;
 export const OMNI_LAYOUT_SNAPSHOT_EVENT = 'omniControl/layoutSnapshot' as const;
+export const OMNI_CONTROL_VISIBILITY_EVENT = 'omniWindow/controlVisibility' as const;
 
 export interface OmniMiniAppLoadState {
   cellId: string;

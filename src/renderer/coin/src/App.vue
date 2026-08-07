@@ -17,6 +17,7 @@ import CoinAnalysisPane from './components/CoinAnalysisPane.vue';
 import CoinStatusBar from './components/CoinStatusBar.vue';
 import CoinWindowHeader from './components/CoinWindowHeader.vue';
 import { coinWorkspaceStore } from './views/analysis/coinWorkspace.store';
+import { coinXBrowserStore } from './views/analysis/coinXBrowser.store';
 
 const platform = window.coin.platform;
 
@@ -24,6 +25,7 @@ onMounted(() => {
   void Promise.all([
     coinShellStore.initialize(),
     coinWorkspaceStore.initialize(),
+    coinXBrowserStore.initialize(),
   ]);
 });
 </script>

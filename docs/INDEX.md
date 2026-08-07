@@ -12,10 +12,10 @@ design document.
   Micromeet Cowork runtime.
 - [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
   services with unchanged XPC and runtime behavior.
-- [Trench sub-application](features/coin.md) - full-width trench analysis tabs with background Codex
-  analysis and local resource configuration.
-- [Coin layout](features/coin-layout.md) - full-width analysis console, Resources page, tab layouts,
-  states, and responsive constraints.
+- [Trench sub-application](features/coin.md) - single-page CA research, Scan/Focus signals, bounded
+  Codex decisions, selectable visible/hidden X Chrome, and local resource configuration.
+- [Trench workspace layout](features/coin-layout.md) - flat Arco/Royal Blue command, signal, token,
+  and decision regions with no core tabs or dashboard decoration.
 - [Todo MCP integration](features/todo-mcp.md) - production-first local Todo access with isolated
   development instances.
 - [Todoist-style Todo synchronization](features/todoist-sync.md) - independent encrypted
@@ -48,6 +48,9 @@ design document.
   startup with main-owned failures surfaced from the Home menubar.
 - [Settings notification test](issues/settings-notification-test.md) - one direct native-notification
   smoke test routed from the Settings renderer to Main through XPC.
+- [Settings notification test silently does nothing](issues/settings-notification-test-silent-noop.md) -
+  implemented; owner verification pending: retain the native object, observe its lifecycle, and
+  return typed visible feedback instead of treating every no-op as success.
 - [Application logging and diagnostics](features/application-diagnostics.md) - environment-isolated
   `electron-log`, sanitized Codex lifecycle evidence, and a Settings Log ledger for live paths,
   startup state, directories, and value-free environment status.
@@ -98,6 +101,9 @@ design document.
 
 ## Issues
 
+- [Settings notification test silently does nothing](issues/settings-notification-test-silent-noop.md) -
+  implemented; owner verification pending: signed `0.0.68` exposed the failure; the next build
+  retains the native instance and returns an observable lifecycle result.
 - [Translator latency and GPT-5.5 thinking](issues/translator-timeout-and-thinking-off.md) -
   implemented; owner verification pending: preserve the exact 60-second request deadline and
   explicitly send GPT-5.5 reasoning effort `none` for Translator only.
