@@ -1,7 +1,7 @@
 ---
 id: onlypreview-mvp-001
 scope: OnlyPreview local-file preview sub-application and host integrations
-status: in-progress
+status: done
 depends-on: []
 ---
 
