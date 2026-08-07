@@ -19,6 +19,7 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import { build } from 'esbuild';
+import { load as loadYaml } from 'js-yaml';
 import ts from 'typescript';
 
 const projectRoot = resolve(dirname(new URL(import.meta.url).pathname), '..', '..');
@@ -970,6 +971,30 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
   assert.match(builder, /rank:\s*Alternate/);
   assert.match(builder, /CFBundleTypeRole:\s*Viewer/);
   assert.match(builder, /public\.data/);
+  const classifier = source('src/main/onlypreview/onlyPreviewClassifier.service.ts');
+  const supportedExtensions = new Set();
+  for (const catalogName of [
+    'TEXT_EXTENSIONS',
+    'PDF_EXTENSIONS',
+    'IMAGE_EXTENSIONS',
+    'AUDIO_EXTENSIONS',
+    'VIDEO_EXTENSIONS'
+  ]) {
+    const catalog = classifier.match(
+      new RegExp(`const ${catalogName} = new Set\\(\\[([\\s\\S]*?)\\]\\);`)
+    )?.[1];
+    assert.ok(catalog, `${catalogName} must remain an explicit extension catalog`);
+    for (const match of catalog.matchAll(/'\.([^']+)'/g)) supportedExtensions.add(match[1]);
+  }
+  const builderConfig = loadYaml(builder);
+  const associatedExtensions = new Set(
+    builderConfig.fileAssociations.flatMap((association) => association.ext)
+  );
+  assert.deepEqual(
+    [...associatedExtensions].sort(),
+    [...supportedExtensions].sort(),
+    'explicit OS associations must match every extension supported by OnlyPreview'
+  );
   const installer = source('build/installer.tmp.nsh');
   assert.match(installer, /Software\\Classes\\\*\\shell\\OnlyPreview/);
   assert.match(installer, /Open in Bitterless/);
