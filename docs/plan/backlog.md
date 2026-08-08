@@ -6,3 +6,6 @@ Non-blocking review findings are recorded here after task verification.
   accepted. The Bitterless Mini App card is bilingual in the parity delivery.
 - Design an explicit, offline migration tool for a closed standalone Cowork profile if preserving
   existing standalone sessions/history becomes a product requirement.
+- Make the OnlyPreview native MenuBar hover check deterministic across synthetic pointer injection;
+  the product hover state is correct, but one review run missed the injected `mouseMove` before
+  succeeding on focused and full reruns.

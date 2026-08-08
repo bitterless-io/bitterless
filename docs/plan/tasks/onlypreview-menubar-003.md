@@ -1,7 +1,7 @@
 ---
 id: onlypreview-menubar-003
 scope: Align the standalone OnlyPreview MenuBar with the EyesOnAgents window pattern
-status: in-progress
+status: done
 depends-on: [onlypreview-standalone-only-002]
 ---
 
@@ -72,3 +72,13 @@ status rail, settings, and complete Omni exclusion.
 - visual inspection at the normal and 800×600 window sizes confirms the EyesOnAgents MenuBar
   hierarchy, macOS inset or Windows controls, hover/focus states, and exact native Preview offset
 - `git diff --check`
+
+# Review
+
+- Round 1: [onlypreview-menubar-003-1](../reviews/onlypreview-menubar-003-1.md) — blocked on the
+  normative API block omitting the three implemented capability-scoped window commands.
+- Round 2: [onlypreview-menubar-003-2](../reviews/onlypreview-menubar-003-2.md) — blocked on a
+  double-titlebar screenshot later proven to combine an old live Main window with renderer HMR.
+- Round 3: [onlypreview-menubar-003-3](../reviews/onlypreview-menubar-003-3.md) — accepted after a
+  full Main restart, native-window capture, exact zero-gap bounds, and Royal Blue pixel guards;
+  no P1/P2 finding remains.
