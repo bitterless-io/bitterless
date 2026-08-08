@@ -61,6 +61,7 @@ import {
   openOnlyPreviewAbsoluteTarget,
 } from './xpc/onlyPreview.handler';
 import { onlyPreviewSettingsService } from './onlypreview/onlyPreviewSettings.service';
+import { onlyPreviewRecentDirectoryService } from './onlypreview/onlyPreviewRecentDirectory.service';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
@@ -499,6 +500,7 @@ const startGui = async (): Promise<void> => {
     },
     handleCoreSqliteReady: () => {
       startupDiagnosticsService.clear('core-sqlite');
+      onlyPreviewRecentDirectoryService.markStorageReady();
       void runDiagnosedStartupStage('application-language', async () => {
         await applicationLanguageService.initialize();
       });
@@ -515,6 +517,7 @@ const startGui = async (): Promise<void> => {
       });
     },
     handleCoreSqliteFailure: (err) => {
+      onlyPreviewRecentDirectoryService.markStorageFailed();
       startupDiagnosticsService.report('core-sqlite', err);
       console.warn('[app] Core SQLite unavailable; continuing foreground startup:', err);
     },

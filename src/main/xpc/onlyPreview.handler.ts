@@ -1,5 +1,5 @@
 import { dialog, Menu, shell } from 'electron';
-import { XpcMainHandler, xpcMain } from 'electron-xpc/main';
+import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import {
   OnlyPreviewContractError,
   onlyPreviewFailure,
@@ -24,6 +24,10 @@ import { onlyPreviewSettingsService } from '@main/onlypreview/onlyPreviewSetting
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { i18nHelper } from '@main/i18n/i18n.helper';
+import {
+  onlyPreviewRecentDirectoryService,
+  type OnlyPreviewRecentDirectoryStorage
+} from '@main/onlypreview/onlyPreviewRecentDirectory.service';
 
 type ApiParams<T extends keyof OnlyPreviewApi> = Parameters<OnlyPreviewApi[T]>[0];
 
@@ -40,6 +44,8 @@ const broadcastWorkspace = (hostId: string): void => {
 };
 
 const selectionGenerationByHost = new Map<string, number>();
+const recentDirectoryStorage = createXpcMainEmitter<OnlyPreviewRecentDirectoryStorage>('SettingDao');
+onlyPreviewRecentDirectoryService.configureStorage(recentDirectoryStorage);
 
 onlyPreviewHostRegistry.onRevoke((host) => {
   selectionGenerationByHost.delete(host.hostToken);
@@ -64,16 +70,27 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
       });
       const target = result.canceled ? null : (result.filePaths[0] ?? null);
       if (!target) return null;
-      const workspace = await onlyPreviewWorkspaceRegistry.createForTarget(host.hostToken, target);
-      broadcastWorkspace(host.hostId);
-      return workspace;
+      const generation = onlyPreviewRecentDirectoryService.beginExplicitTarget(host.hostToken);
+      try {
+        const workspace = await onlyPreviewRecentDirectoryService.openExplicitTarget(
+          host.hostToken,
+          target,
+          generation
+        );
+        if (workspace) broadcastWorkspace(host.hostId);
+        return workspace;
+      } finally {
+        onlyPreviewRecentDirectoryService.finishExplicitTarget(generation);
+      }
     });
   }
 
   async restoreWorkspace(
     params: ApiParams<'restoreWorkspace'>
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>> {
-    return await runOperation(async () => onlyPreviewWorkspaceRegistry.restore(params?.hostToken));
+    return await runOperation(async () =>
+      await onlyPreviewRecentDirectoryService.restoreWorkspace(params?.hostToken)
+    );
   }
 
   async buildIndex(params: ApiParams<'buildIndex'>): ReturnType<OnlyPreviewApi['buildIndex']> {
@@ -274,16 +291,26 @@ onlyPreviewWindowHelper.setCommandHandler(({ hostToken, command }) => {
 });
 
 export const openOnlyPreviewAbsoluteTarget = async (target: string): Promise<void> => {
-  const host = await onlyPreviewWindowHelper.ensureStandalone();
-  await onlyPreviewWorkspaceRegistry.createForTarget(host.hostToken, target);
-  broadcastWorkspace(host.hostId);
-  onlyPreviewWindowHelper.show();
+  const generation = onlyPreviewRecentDirectoryService.beginExplicitTarget();
+  try {
+    const host = await onlyPreviewWindowHelper.ensureStandalone();
+    const workspace = await onlyPreviewRecentDirectoryService.openExplicitTarget(
+      host.hostToken,
+      target,
+      generation
+    );
+    if (workspace) broadcastWorkspace(host.hostId);
+    onlyPreviewWindowHelper.show();
+  } finally {
+    onlyPreviewRecentDirectoryService.finishExplicitTarget(generation);
+  }
 };
 
 export const destroyOnlyPreviewForAuth = (): void => {
   onlyPreviewWindowHelper.destroy();
   onlyPreviewAssetRegistry.clear();
   onlyPreviewHostRegistry.clear();
+  onlyPreviewRecentDirectoryService.clearTransientState();
 };
 
 export const destroyOnlyPreviewForHostQuit = (): void => {

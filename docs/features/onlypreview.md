@@ -31,6 +31,7 @@ implementation contract inside Bitterless and contains no private user data.
 | Standalone `BaseWindow`, child view bounds, Setting window, cleanup | OnlyPreview window handler/helper |
 | Per-view host capabilities and host/workspace/media ownership | Main OnlyPreview host registry |
 | Workspace capabilities, containment, index, descriptor, text reads | Main OnlyPreview file service |
+| Last canonical directory persistence and restore ordering | Main OnlyPreview recent-directory service + Core SQLite `setting` table |
 | Media/PDF byte streaming | Main token registry + manual Range-capable `bitterless-preview://` protocol |
 | Tree, search, keyboard commands, selection | OnlyPreview Shell renderer |
 | Code/PDF/image/audio/video/unsupported presentation | shared OnlyPreview Preview surface |
@@ -136,9 +137,9 @@ Required properties:
   symlink whose target escapes the root fails with a typed containment error.
 - Host capabilities and workspaces have bounded counts. Workspaces and media tokens are bound to
   their issuing live host and are revoked when that host is destroyed or the application quits.
-- `restoreWorkspace` returns only the latest workspace still owned by that same live host in the
-  current process session. Cross-restart directory restoration is specified separately from this
-  in-process capability operation.
+- `restoreWorkspace` first returns the latest workspace still owned by that same live host. When a
+  fresh host has no workspace, it may reconstruct one from the persisted last canonical directory
+  under the recent-directory contract below; the reconstruction always mints a new `workspaceId`.
 - Returned display paths are presentation metadata. They cannot be supplied back as read authority.
 
 The Main API surface is read-only:
@@ -175,6 +176,46 @@ The handler catches all fallible service work and converts it to this discrimina
 renderer never interprets XPC's `null` exception fallback as a valid optional result. Content-host
 methods reject settings hosts, settings-only methods reject unrelated hosts where applicable, and
 unknown/revoked tokens fail before any workspace lookup.
+
+## Recent Directory Persistence
+
+OnlyPreview remembers the last successfully opened directory in the existing Core SQLite `setting`
+table. Main owns this state; no new renderer storage or path-bearing API is added.
+
+| Field | Value |
+|---|---|
+| `key` | `onlypreview_workspace` |
+| `sub_key` | `last_directory` |
+| stored value | `{ version: 1, directoryPath: string }` |
+| cleared value | `null` |
+
+- Persist only the canonical workspace root returned after `createForTarget` succeeds. A folder
+  target stores that canonical directory; an OS-opened file stores its canonical parent directory.
+  Never persist the selected file, relative file selection, `workspaceId`, `hostId`, `hostToken`,
+  asset token, raw picker input, or an unvalidated path.
+- Storage access uses only the value-free-log `SettingDao.getStored`, `insertIfAbsent`, and
+  `compareAndSet` methods. Writes use insert-if-absent or compare-and-set against the exact observed
+  serialized value; a stale mutation generation cannot overwrite a newer explicit target. The
+  path/value must never be written to application logs.
+- Core SQLite startup is represented by one ready/failure latch. A history restore waits for the
+  latch. A successful ready signal permits the initial read and flushes the latest pending write;
+  a failure signal resolves restore to `null` and leaves explicit folder/file opening usable.
+  Successful opens before readiness update current Main memory and retain only the latest pending
+  canonical directory for a later ready flush.
+- Shell and Preview can request restore concurrently for the same content host. Main runs one
+  per-host single-flight restore, rechecks whether that host already owns a workspace before and
+  after the SQLite wait, and returns the same newly minted workspace to both callers. Host revoke,
+  standalone teardown, auth invalidation, and quit remove that host's restore promise, generation,
+  and transient remembered state.
+- A persisted value is only a candidate. Main parses version 1, revalidates the directory through
+  the normal `createForTarget` containment/stat path, and creates a fresh directory workspace with
+  no selected file. Missing, malformed, non-directory, or permission-denied candidates fail closed
+  to the empty state and are changed to `null` only with `compareAndSet` against the exact invalid
+  serialized value, so cleanup cannot erase a concurrent newer path.
+- An explicit OS target suppresses history restore before `ensureStandalone()` creates/focuses the
+  Shell and Preview views. Explicit opens and restore share one per-host mutation generation; a
+  late history read cannot replace an explicit target, and among serialized explicit requests the
+  latest explicit target remains visible and becomes the remembered directory.
 
 ## Index Contract
 
@@ -293,6 +334,8 @@ unrelated saved screen position.
 - Queue entries are consumed only after the GUI/XPC runtime is ready.
 - Opening another file focuses the singleton and replaces its workspace/selection. Multiple
   simultaneous requests are serialized; the latest completed request becomes visible.
+- The explicit-target generation is advanced before standalone creation, so newly mounted Shell
+  and Preview renderers cannot restore an older directory ahead of the queued file target.
 
 ### Packaged associations
 
@@ -307,6 +350,9 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 
 - Home adds one visible `onlypreview` card and an XPC launch emitter. It uses the existing
   per-card in-flight guard.
+- Opening OnlyPreview from Home with a fresh content host restores the last valid directory after
+  Core SQLite becomes ready. It restores no file selection; a missing/unavailable candidate keeps
+  the ordinary empty Open Folder state.
 - Auth invalidation and host quit explicitly destroy the standalone window, Setting window,
   views, workspaces, and tokens.
 - Omni's typed mini-app allowlist, persisted cell contract, runtime mapping, Control selection,
@@ -409,6 +455,10 @@ input. The same shortcut closes that view's open DevTools. Auto-repeat is ignore
 - **Explicit hidden file:** an explicitly opened file such as `.env` remains selected and
   previewable even while `showHiddenFiles` is false; the hidden policy applies to directory index
   discovery, not to the Main-authorized initial selection.
+- **Unavailable recent directory:** a missing, invalid, non-directory, or unreadable stored
+  candidate is CAS-cleared to `null` and returns the empty state without exposing its path.
+- **SQLite unavailable:** recent-directory restore returns `null`; explicit folder and OS file
+  targets still open normally, and no retry loop blocks the standalone window.
 
 Required/unknown variants and invalid inputs fail with an explicit typed contract error. Optional
 missing restoration returns `null`. Defaults/fallbacks are allowed only where this document names
@@ -423,6 +473,8 @@ them.
   windows.
 - File operations are read-only and capability-scoped. No broad filesystem API is exposed.
 - No file contents or absolute user paths are written to application logs.
+- The one persisted recent-directory absolute path remains private inside Core SQLite. It is never
+  broadcast, logged, or accepted back from a renderer, and carries no file selection or capability.
 - Media tokens are high entropy, bounded, revocable, and never persisted.
 - The Content Security Policy is the first element in each built `<head>`. Its exact SHA-256 allows
   only Monaco's generated inline bootstrap, whose worker URLs resolve from nested OnlyPreview
@@ -441,6 +493,9 @@ them.
   semantics.
 - Router tests cover macOS early `open-file`, packaged Windows initial/second-instance argv, helper
   exclusions, development explicit arguments, and serialized queue behavior.
+- Recent-directory tests cover schema parsing, ready/failure latching, pre-ready latest-write
+  flushing, CAS conflict/stale-generation handling, invalid-candidate CAS clear, per-host
+  Shell/Preview single flight, host cleanup, and an explicit OS target winning a late restore.
 - Source/integration tests cover three renderer entries, preload, sandboxed view preferences,
   explicit child-view cleanup, hidden titlebar/traffic-light/window-control wiring, debug-only
   detached DevTools shortcut wiring, exact 32px Preview offset, Home card, auth/quit cleanup, log
@@ -455,6 +510,10 @@ them.
   files; verifies the standalone multi-view bounds, independently toggled Shell/Preview detached
   DevTools without changing either view's bounds, Setting singleton, and no edit path. Omni
   contract/UI tests prove that `onlypreview` cannot be selected or restored as a cell mini app.
+- Recent-directory restart behavior is verified in Electron/Node unit tests with simulated storage
+  lifecycle and fresh host instances. The owner manually verifies a real application restart and
+  explicit OS-target override; automated acceptance for this path must not launch the full
+  Bitterless application because startup integrations may access the macOS Keychain.
 - `yarn build` must emit all three renderer HTML files and `out/preload/onlypreview.js`.
 - Packaged manual verification remains required for OS association registration and the actual
   Chromium codec matrix on macOS and Windows.

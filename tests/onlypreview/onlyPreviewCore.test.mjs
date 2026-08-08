@@ -733,6 +733,44 @@ test('argv routing accepts only absolute user targets and the open queue is read
   ]);
 });
 
+test('recent-directory wiring stays Main-owned, value-free, and renderer-contract neutral', () => {
+  const service = source('src/main/onlypreview/onlyPreviewRecentDirectory.service.ts');
+  const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const appMain = source('src/main/app.main.ts');
+  const types = source('src/shared/onlypreview/onlyPreview.types.ts');
+
+  assert.match(service, /Pick<[\s\S]*SettingDao[\s\S]*'getStored' \| 'insertIfAbsent' \| 'compareAndSet'/);
+  assert.match(service, /RECENT_DIRECTORY_KEY = 'onlypreview_workspace'/);
+  assert.match(service, /RECENT_DIRECTORY_SUB_KEY = 'last_directory'/);
+  assert.doesNotMatch(service, /storage\.get\(|\.upsert\(/);
+  assert.doesNotMatch(service, /console\.(?:log|info|warn|error)/);
+  assert.match(service, /private readonly restoreFlights = new Map/);
+  assert.match(service, /hosts\.onRevoke\(\(host\) => this\.revokeHost\(host\.hostToken\)\)/);
+  assert.match(service, /expectedSerializedValue: stored\.serializedValue[\s\S]*value: null/);
+  assert.match(service, /!workspace\.selectedRelativePath && workspace\.displayPath === candidate/);
+
+  const absoluteOpen = handler.slice(
+    handler.indexOf('export const openOnlyPreviewAbsoluteTarget'),
+    handler.indexOf('export const destroyOnlyPreviewForAuth')
+  );
+  assert.ok(
+    absoluteOpen.indexOf('beginExplicitTarget()') <
+      absoluteOpen.indexOf('ensureStandalone()'),
+    'OS targets must suppress restore before mounting standalone renderers'
+  );
+  assert.match(handler, /restoreWorkspace\(params\?\.hostToken\)/);
+  assert.match(handler, /createXpcMainEmitter<OnlyPreviewRecentDirectoryStorage>\('SettingDao'\)/);
+  assert.match(
+    appMain,
+    /handleCoreSqliteReady:[\s\S]*onlyPreviewRecentDirectoryService\.markStorageReady\(\)/
+  );
+  assert.match(
+    appMain,
+    /handleCoreSqliteFailure:[\s\S]*onlyPreviewRecentDirectoryService\.markStorageFailed\(\)/
+  );
+  assert.doesNotMatch(types, /recentDirectory|directoryPath|last_directory/i);
+});
+
 const classMethodNames = (relativePath, className) => {
   const text = source(relativePath);
   const file = ts.createSourceFile(
@@ -927,7 +965,10 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.doesNotMatch(shellStore, /chooseTarget|chooseFile/);
   assert.match(handler, /properties:\s*\['openDirectory'\]/);
   assert.match(windowHelper, /if \(key === 'o'\) return 'choose-folder'/);
-  assert.match(handler, /openOnlyPreviewAbsoluteTarget[\s\S]*createForTarget\(host\.hostToken, target\)/);
+  assert.match(
+    handler,
+    /openOnlyPreviewAbsoluteTarget[\s\S]*openExplicitTarget\([\s\S]*host\.hostToken,[\s\S]*target,[\s\S]*generation/
+  );
 
   assert.match(shellApp, /name="onlypreview__openFolder"/);
   assert.doesNotMatch(shellApp, /name="onlypreview__(?:openFile|refresh)"/);
