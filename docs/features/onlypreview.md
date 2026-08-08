@@ -362,6 +362,8 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 | `Cmd/Ctrl+Shift+O` | Shell or Preview | Open Folder |
 | `Cmd+,` or `Ctrl+Alt+S` | Shell or Preview | open Setting window |
 | `F5` or `Cmd/Ctrl+R` | Shell or Preview | rebuild index and refresh selected preview |
+| `F12` | Shell or Preview, debug profile | toggle detached DevTools for the view that received the shortcut |
+| `Cmd+Option+I` or `Ctrl+Shift+I` | Shell or Preview, debug profile | toggle detached DevTools for the view that received the shortcut |
 | `Cmd/Ctrl+F` | Monaco | find without invoking a Shell search |
 | `Esc` | search / Setting | clear search / close without save |
 | double click | non-action MenuBar surface | toggle maximize/restore |
@@ -369,7 +371,9 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 
 Window-wide shortcuts use `before-input-event` on OnlyPreview webContents so they remain available
 when Monaco has focus. Only matched commands prevent default; Monaco retains selection, copy, and
-find behavior.
+find behavior. DevTools shortcuts are Main-owned and manual: they never auto-open, always use a
+detached window, and independently target the Shell or Preview `webContents` that received the
+input. The same shortcut closes that view's open DevTools. Auto-repeat is ignored.
 
 ## State And Error Contract
 
@@ -406,6 +410,9 @@ them.
   only Monaco's generated inline bootstrap, whose worker URLs resolve from nested OnlyPreview
   entries to the built root `monacoeditorwork` directory.
 - The feature does not restore the removed historical broad filesystem window.
+- Only the `debug` runtime profile enables Shell/Preview DevTools. Release profiles do not register
+  or consume these shortcuts. The existing unpackaged-only `BITTERLESS_E2E=1` harness may enable
+  the same path for isolated runtime verification; packaged startup rejects that harness mode.
 
 ## Verification Contract
 
@@ -417,9 +424,9 @@ them.
 - Router tests cover macOS early `open-file`, packaged Windows initial/second-instance argv, helper
   exclusions, development explicit arguments, and serialized queue behavior.
 - Source/integration tests cover three renderer entries, preload, sandboxed view preferences,
-  explicit child-view cleanup, hidden titlebar/traffic-light/window-control wiring, exact 32px
-  Preview offset, Home card, auth/quit cleanup, log policy, i18n registration, and the absence of
-  OnlyPreview from Omni's allowlist/runtime/UI mapping.
+  explicit child-view cleanup, hidden titlebar/traffic-light/window-control wiring, debug-only
+  detached DevTools shortcut wiring, exact 32px Preview offset, Home card, auth/quit cleanup, log
+  policy, i18n registration, and the absence of OnlyPreview from Omni's allowlist/runtime/UI mapping.
 - Native chrome acceptance completely exits the current Electron Main and launches a fresh Main;
   renderer HMR cannot verify creation-time `BaseWindow` options. Electron E2E compares native
   window/content bounds for zero titlebar origin or height gap and requires the top-middle band of
@@ -427,7 +434,8 @@ them.
 - Renderer verification covers stale-result suppression, read-only Monaco options and disposal,
   tree/preview/settings states, BEM/name markers, and keyboard routing.
 - Electron E2E covers a fixture directory containing code, PDF, image, audio, video, and unknown
-  files; verifies the standalone multi-view bounds, Setting singleton, and no edit path. Omni
+  files; verifies the standalone multi-view bounds, independently toggled Shell/Preview detached
+  DevTools without changing either view's bounds, Setting singleton, and no edit path. Omni
   contract/UI tests prove that `onlypreview` cannot be selected or restored as a cell mini app.
 - `yarn build` must emit all three renderer HTML files and `out/preload/onlypreview.js`.
 - Packaged manual verification remains required for OS association registration and the actual
