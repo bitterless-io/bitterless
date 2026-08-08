@@ -50,6 +50,9 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
     token.
 11. Electron Vite produces one preload and three renderer entries; logging/i18n/package audits
     recognize every emitted path.
+12. The Shell renders the standalone 32px MenuBar and sends capability-scoped window-control
+    intents through the OnlyPreview XPC handler; Main alone minimizes, toggles maximize, or closes
+    the current `BaseWindow`, while Preview bounds begin immediately below that bar.
 
 No integration boundary may remain a stub or a source-only declaration.
 
@@ -58,7 +61,9 @@ No integration boundary may remain a stub or a source-only declaration.
 The original MVP was delivered atomically as `onlypreview-mvp-001`. Product correction
 `onlypreview-standalone-only-002` removes the incompatible Omni adapter and its second rendering
 mode while preserving the standalone capability model, renderer entries, settings, and OS-open
-path as one focused follow-up delivery.
+path as one focused follow-up delivery. `onlypreview-menubar-003` then aligns the Shell-owned
+window chrome with the EyesOnAgents standalone pattern without sharing its private renderer state
+or changing the multi-view process graph.
 
 ## Main Risks And Decisions
 
@@ -72,6 +77,7 @@ path as one focused follow-up delivery.
 | untrusted HTML/SVG executes | HTML is Monaco source; SVG only an image resource; local target navigation fenced |
 | Monaco intercepts shortcuts | window-local `before-input-event`, prevent only matched app commands |
 | Native window graph cannot fit one Omni cell | exclude OnlyPreview from Omni types, UI, runtime mapping, and persisted state |
+| Custom chrome controls the wrong process/window | Shell emits capability-scoped OnlyPreview intents; Main mutates only the active OnlyPreview `BaseWindow` |
 | extension-only association omits unknown files | common associations plus macOS `public.data` Viewer/Alternate and a bounded Windows generic context-menu verb, never default ownership |
 | Electron 40 file fetch/PDF embedding gaps | manual 206 file streaming and installed PDF.js `print` intent + disabled annotations canvas + selectable TextLayer, all runtime-probed |
 | existing unrelated test failures | record baseline and compare touched/focused gates; never relabel baseline failures |

@@ -13,7 +13,7 @@ design document.
 - [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
   services with unchanged XPC and runtime behavior.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
-  standalone-only multi-view read-only preview, settings, and OS file-open routing.
+  standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
 - [Trench sub-application](features/coin.md) - single-page CA research, Scan/Focus signals, bounded
   Codex decisions, selectable visible/hidden X Chrome, and local resource configuration.
 - [Trench workspace layout](features/coin-layout.md) - flat Arco/Royal Blue command, signal, token,
