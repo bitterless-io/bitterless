@@ -11,6 +11,7 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 |---|---|---|---|---|
 | Shared contracts | untrusted XPC/settings/index values | parsed types and discriminated result envelopes | none | pure contract tests |
 | Host/workspace capability registry | Main-created views + native-dialog/OS absolute path | host-bound opaque workspace + relative refs | Node fs/path, UUID | host isolation/revocation/containment tests |
+| Recent-directory service | canonical workspace root + Core SQLite lifecycle | latest directory candidate, per-host restore, fresh workspace capability | `SettingDao`, workspace/host registries | latch/CAS/single-flight/order tests |
 | Index service | authorized workspace, settings | bounded flat metadata index | workspace registry | fixture traversal/sort/limit tests |
 | File descriptor/text service | authorized relative file ref | typed descriptor/text or explicit error | workspace registry | signature/binary/encoding/size tests |
 | Asset protocol | authorized descriptor | tokenized manual full/206 streaming response | Electron protocol, Node fs streams, token registry | token/range/source guards + Electron smoke |
@@ -62,6 +63,17 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 15. The Setting `BrowserWindow` uses the active content host's `BaseWindow` as its parent and is
     centered/clamped from that current window whenever opened; persisted Setting size must not
     restore a stale independent screen position.
+16. A successful folder open or Main-owned OS file target gives the recent-directory service only
+    the canonical workspace root. The service stores version 1 under
+    `onlypreview_workspace/last_directory` with `getStored` plus `insertIfAbsent`/`compareAndSet`;
+    no file selection or capability identifier is persisted or logged.
+17. `app.main.ts` resolves the recent-directory service's Core SQLite ready/failure latch. Shell
+    and Preview `restoreWorkspace` calls share one per-host flight after that latch, reconstruct a
+    fresh directory workspace at most once, and clear all coordination state when the host is
+    revoked.
+18. The OS-open path advances the explicit-target generation and suppresses history restore before
+    `ensureStandalone()` mounts child renderers. The latest explicit request wins any late history
+    read and is the only target allowed to update the remembered directory.
 
 No integration boundary may remain a stub or a source-only declaration.
 
@@ -76,6 +88,8 @@ or changing the multi-view process graph. `onlypreview-devtools-004` restores pe
 inspection without changing release behavior or adding a renderer-to-Main API.
 `onlypreview-shell-ux-005` then removes redundant picker/status chrome, adds in-tree current-file
 location and a native file action menu, and anchors Settings to the active standalone window.
+`onlypreview-recent-directory-006` adds SQLite-backed last-directory restoration without
+persisting a selected file or weakening the process-local capability boundary.
 
 ## Main Risks And Decisions
 
@@ -93,6 +107,11 @@ location and a native file action menu, and anchors Settings to the active stand
 | BaseWindow child views bypass BrowserWindow DevTools shortcuts | bind debug-only standard shortcuts directly to each Shell/Preview `webContents`; always detach and toggle only the input owner |
 | A DOM context menu is clipped or covered by the sibling Preview view | Main owns a capability-scoped native `Menu` and attaches it to the active OnlyPreview `BaseWindow` |
 | Setting restores an unrelated historic screen position | retain only its stored size; parent, center, and work-area clamp it from the currently authorized standalone window on every open |
+| Shell and Preview race to restore one persisted directory | one per-host restore promise with workspace rechecks before and after the SQLite latch |
+| A late history read replaces an OS-opened file | suppress history before `ensureStandalone()`, fence mutations by generation, and let the latest explicit target win |
+| SQLite is late or unavailable | ready/failure latch; retain only the latest pre-ready write, return empty on failure, and never block explicit opens |
+| Invalid history or concurrent cleanup erases a newer path | revalidate through `createForTarget` and CAS-clear only the exact observed invalid serialized value |
+| Persisted path leaks authority or logs | persist only the canonical directory in Main-owned SQLite; use only no-value-log DAO methods and mint fresh capabilities on restore |
 | extension-only association omits unknown files | common associations plus macOS `public.data` Viewer/Alternate and a bounded Windows generic context-menu verb, never default ownership |
 | Electron 40 file fetch/PDF embedding gaps | manual 206 file streaming and installed PDF.js `print` intent + disabled annotations canvas + selectable TextLayer, all runtime-probed |
 | existing unrelated test failures | record baseline and compare touched/focused gates; never relabel baseline failures |
@@ -100,11 +119,13 @@ location and a native file action menu, and anchors Settings to the active stand
 ## Verification Layers
 
 1. Pure unit tests for contracts, classifier, capability containment, indexing, and open-argument
-   parsing.
+   parsing, plus recent-directory codec, latch, CAS, generation, and per-host single-flight state.
 2. Focused source/integration tests for host wiring and security preferences.
 3. Node and web typechecks, renderer i18n guard, targeted ESLint, `git diff --check`.
 4. Full Electron Vite build and output audit.
-5. Playwright/Electron fixture flow plus screenshots at normal and minimum window size.
+5. Playwright/Electron fixture flow plus screenshots at normal and minimum window size; restart a
+   fresh Main against the same isolated `userData` directory without an open argument and verify
+   directory-only restoration, then verify an explicit OS target overrides that history.
 6. Separate packaged macOS/Windows association and codec verification if signing/build hosts are
    available; otherwise this remains an explicit human handoff and does not get misreported as
    automated proof.
