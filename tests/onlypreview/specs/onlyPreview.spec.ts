@@ -764,6 +764,108 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   }
 });
 
+test('toggles detached Shell and Preview DevTools independently without changing view bounds', async ({
+  onlyPreview
+}) => {
+  const { app, sendInputs } = onlyPreview;
+  await waitForRenderer(
+    onlyPreview,
+    'shell',
+    `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
+    7
+  );
+
+  type DevToolsState = Record<
+    'shell' | 'preview',
+    {
+      bounds: { x: number; y: number; width: number; height: number };
+      open: boolean;
+      url: string;
+    }
+  >;
+  type InputModifiers = NonNullable<Electron.InputEvent['modifiers']>;
+  const readDevToolsState = async (): Promise<DevToolsState> =>
+    await app.evaluate(({ BaseWindow }) => {
+      const window = BaseWindow.getAllWindows().find(
+        (candidate) => candidate.getTitle() === 'OnlyPreview'
+      );
+      if (!window) throw new Error('OnlyPreview BaseWindow unavailable');
+      const state = Object.fromEntries(
+        (['shell', 'preview'] as const).map((mode) => {
+          const view = window.contentView.children.find((candidate) =>
+            new RegExp(`/onlypreview/${mode}/index\\.html(?:$|[?#])`).test(
+              candidate.webContents.getURL()
+            )
+          );
+          if (!view) throw new Error(`OnlyPreview ${mode} view unavailable`);
+          return [
+            mode,
+            {
+              bounds: view.getBounds(),
+              open: view.webContents.isDevToolsOpened(),
+              url: view.webContents.devToolsWebContents?.getURL() ?? ''
+            }
+          ];
+        })
+      );
+      return state as DevToolsState;
+    });
+  const sendShortcut = async (
+    mode: 'shell' | 'preview',
+    keyCode: string,
+    modifiers: InputModifiers = []
+  ): Promise<void> => {
+    await sendInputs(mode, [
+      { type: 'keyDown', keyCode, modifiers },
+      { type: 'keyUp', keyCode, modifiers }
+    ]);
+  };
+  const expectDevTools = async (shellOpen: boolean, previewOpen: boolean): Promise<void> => {
+    await expect
+      .poll(async () => {
+        const state = await readDevToolsState();
+        return {
+          shell: { open: state.shell.open, scheme: state.shell.url.split(':', 1)[0] },
+          preview: { open: state.preview.open, scheme: state.preview.url.split(':', 1)[0] }
+        };
+      })
+      .toEqual({
+        shell: { open: shellOpen, scheme: shellOpen ? 'devtools' : '' },
+        preview: { open: previewOpen, scheme: previewOpen ? 'devtools' : '' }
+      });
+  };
+
+  const initial = await readDevToolsState();
+  expect(initial.shell.open).toBe(false);
+  expect(initial.preview.open).toBe(false);
+
+  await sendShortcut('shell', 'F12');
+  await expectDevTools(true, false);
+  let current = await readDevToolsState();
+  expect(current.shell.bounds).toEqual(initial.shell.bounds);
+  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+
+  const inspectModifiers: InputModifiers =
+    process.platform === 'darwin' ? ['meta', 'alt'] : ['control', 'shift'];
+  await sendShortcut('preview', 'I', inspectModifiers);
+  await expectDevTools(true, true);
+  current = await readDevToolsState();
+  expect(current.shell.bounds).toEqual(initial.shell.bounds);
+  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+
+  await sendShortcut('shell', 'F12');
+  await expectDevTools(false, true);
+  current = await readDevToolsState();
+  expect(current.shell.bounds).toEqual(initial.shell.bounds);
+  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+
+  await sendShortcut('preview', 'I', inspectModifiers);
+  await expectDevTools(false, false);
+  current = await readDevToolsState();
+  expect(current.shell.bounds).toEqual(initial.shell.bounds);
+  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+});
+
 test('renders immutable text, selectable PDF, image pixels, and seekable audio/video', async ({
   onlyPreview
 }) => {

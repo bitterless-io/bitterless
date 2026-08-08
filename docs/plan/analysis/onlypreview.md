@@ -53,6 +53,9 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 12. The Shell renders the standalone 32px MenuBar and sends capability-scoped window-control
     intents through the OnlyPreview XPC handler; Main alone minimizes, toggles maximize, or closes
     the current `BaseWindow`, while Preview bounds begin immediately below that bar.
+13. In the debug runtime profile, Main intercepts standard DevTools shortcuts on each standalone
+    child `webContents` and toggles that exact Shell or Preview target in a detached window. Release
+    profiles keep the path disabled; no renderer API or capability is added.
 
 No integration boundary may remain a stub or a source-only declaration.
 
@@ -63,7 +66,8 @@ The original MVP was delivered atomically as `onlypreview-mvp-001`. Product corr
 mode while preserving the standalone capability model, renderer entries, settings, and OS-open
 path as one focused follow-up delivery. `onlypreview-menubar-003` then aligns the Shell-owned
 window chrome with the EyesOnAgents standalone pattern without sharing its private renderer state
-or changing the multi-view process graph.
+or changing the multi-view process graph. `onlypreview-devtools-004` restores per-view development
+inspection without changing release behavior or adding a renderer-to-Main API.
 
 ## Main Risks And Decisions
 
@@ -78,6 +82,7 @@ or changing the multi-view process graph.
 | Monaco intercepts shortcuts | window-local `before-input-event`, prevent only matched app commands |
 | Native window graph cannot fit one Omni cell | exclude OnlyPreview from Omni types, UI, runtime mapping, and persisted state |
 | Custom chrome controls the wrong process/window | Shell emits capability-scoped OnlyPreview intents; Main mutates only the active OnlyPreview `BaseWindow` |
+| BaseWindow child views bypass BrowserWindow DevTools shortcuts | bind debug-only standard shortcuts directly to each Shell/Preview `webContents`; always detach and toggle only the input owner |
 | extension-only association omits unknown files | common associations plus macOS `public.data` Viewer/Alternate and a bounded Windows generic context-menu verb, never default ownership |
 | Electron 40 file fetch/PDF embedding gaps | manual 206 file streaming and installed PDF.js `print` intent + disabled annotations canvas + selectable TextLayer, all runtime-probed |
 | existing unrelated test failures | record baseline and compare touched/focused gates; never relabel baseline failures |
