@@ -14,7 +14,6 @@ export const OMNI_MINI_APP_IDS = [
   'eyesOnAgents',
   'translator',
   'motto',
-  'onlypreview',
 ] as const;
 export type OmniMiniAppId = (typeof OMNI_MINI_APP_IDS)[number];
 
@@ -46,7 +45,6 @@ export const OMNI_MINI_APP_DISPLAY_URLS: Record<OmniMiniAppId, string> = {
   eyesOnAgents: 'bl://miniapp/eyes-on-agents',
   translator: 'bl://miniapp/translator',
   motto: 'bl://miniapp/motto',
-  onlypreview: 'bl://miniapp/onlypreview',
 };
 
 export const isOmniMiniAppId = (value: unknown): value is OmniMiniAppId =>

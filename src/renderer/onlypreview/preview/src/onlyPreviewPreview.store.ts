@@ -39,7 +39,7 @@ class OnlyPreviewPreviewStore {
   private generation = 0;
   private restoreGeneration = 0;
 
-  async initialize(restore = true): Promise<void> {
+  async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
     this.subscribe();
@@ -49,7 +49,7 @@ class OnlyPreviewPreviewStore {
       return;
     }
     await this.refreshSettings();
-    if (restore) await this.restoreSelection();
+    await this.restoreSelection();
   }
 
   async loadFile(fileRef: OnlyPreviewFileRef): Promise<void> {

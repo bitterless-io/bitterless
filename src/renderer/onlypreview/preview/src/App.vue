@@ -10,7 +10,7 @@ import PreviewSurface from './components/PreviewSurface/PreviewSurface.vue';
 import { onlyPreviewPreviewStore } from './onlyPreviewPreview.store';
 
 onMounted(() => {
-  void onlyPreviewPreviewStore.initialize(true);
+  void onlyPreviewPreviewStore.initialize();
 });
 </script>
 

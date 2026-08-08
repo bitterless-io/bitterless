@@ -2,7 +2,6 @@
   <div
     name="onlypreview__shell"
     class="onlypreview-shell"
-    :class="{ 'onlypreview-shell--omni': onlyPreviewShellStore.isOmni }"
     :style="{ '--onlypreview-project-width': `${onlyPreviewShellStore.projectWidth}px` }"
     @keydown.capture="handleShellKeydown"
   >
@@ -228,9 +227,7 @@
         ref="previewHostRef"
         name="onlypreview__previewHost"
         class="onlypreview-shell__preview-host"
-      >
-        <PreviewSurface v-if="onlyPreviewShellStore.isOmni" />
-      </section>
+      ></section>
     </main>
 
     <footer
@@ -277,7 +274,6 @@ import {
 } from '@tabler/icons-vue';
 import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
-import PreviewSurface from '../../preview/src/components/PreviewSurface/PreviewSurface.vue';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
 const previewHostRef = ref<HTMLElement | null>(null);
@@ -401,7 +397,7 @@ const handleShellKeydown = (event: KeyboardEvent): void => {
 
 onMounted(() => {
   void onlyPreviewShellStore.initialize();
-  if (!onlyPreviewShellStore.isOmni && previewHostRef.value) {
+  if (previewHostRef.value) {
     resizeObserver = new ResizeObserver(reportPreviewBounds);
     resizeObserver.observe(previewHostRef.value);
     reportPreviewBounds();

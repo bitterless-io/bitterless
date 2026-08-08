@@ -3,7 +3,7 @@ export const ONLY_PREVIEW_MAX_INDEX_ENTRIES = 20_000;
 export const ONLY_PREVIEW_MAX_INDEX_DEPTH = 32;
 export const ONLY_PREVIEW_MAX_TEXT_BYTES = 8 * 1024 * 1024;
 
-export type OnlyPreviewHostKind = 'standalone' | 'settings' | 'omni';
+export type OnlyPreviewHostKind = 'standalone' | 'settings';
 export type OnlyPreviewHostRole = 'content' | 'settings';
 export type OnlyPreviewTargetKind = 'file' | 'directory';
 export type OnlyPreviewNodeKind = 'file' | 'directory' | 'symlink';

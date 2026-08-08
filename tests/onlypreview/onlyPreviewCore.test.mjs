@@ -162,27 +162,29 @@ test('settings and preview bounds reject partial, extra, and unsafe values', () 
 
 test('host capabilities are unique, role-scoped, and revoked independently', () => {
   const hosts = new runtime.OnlyPreviewHostRegistry();
-  const standalone = hosts.issue('standalone', 'content');
-  const omniA = hosts.issue('omni', 'content');
-  const omniB = hosts.issue('omni', 'content');
+  const standaloneA = hosts.issue('standalone', 'content');
+  const standaloneB = hosts.issue('standalone', 'content');
   const settings = hosts.issue('settings', 'settings');
   assert.equal(
-    new Set([standalone.hostToken, omniA.hostToken, omniB.hostToken, settings.hostToken]).size,
-    4
+    new Set([standaloneA.hostToken, standaloneB.hostToken, settings.hostToken]).size,
+    3
   );
-  assert.equal(hosts.require(omniA.hostToken, ['content']).hostId, omniA.hostId);
+  assert.equal(hosts.require(standaloneA.hostToken, ['content']).hostId, standaloneA.hostId);
   assert.throws(
     () => hosts.require(settings.hostToken, ['content']),
     expectOnlyPreviewError('HOST_ROLE_DENIED')
   );
   assert.throws(
-    () => hosts.require(omniA.hostToken, ['settings']),
+    () => hosts.require(standaloneA.hostToken, ['settings']),
     expectOnlyPreviewError('HOST_ROLE_DENIED')
   );
-  assert.equal(hosts.revoke(omniA.hostToken), true);
-  assert.equal(hosts.isLive(omniA.hostToken), false);
-  assert.equal(hosts.isLive(omniB.hostToken), true);
-  assert.throws(() => hosts.require(omniA.hostToken), expectOnlyPreviewError('HOST_NOT_FOUND'));
+  assert.equal(hosts.revoke(standaloneA.hostToken), true);
+  assert.equal(hosts.isLive(standaloneA.hostToken), false);
+  assert.equal(hosts.isLive(standaloneB.hostToken), true);
+  assert.throws(
+    () => hosts.require(standaloneA.hostToken),
+    expectOnlyPreviewError('HOST_NOT_FOUND')
+  );
 });
 
 test('host A cannot resolve host B workspace and replacement revokes old workspace and asset', async () => {
@@ -190,8 +192,8 @@ test('host A cannot resolve host B workspace and replacement revokes old workspa
     const firstPath = write(join(root, 'first.txt'), 'first workspace');
     const secondPath = write(join(root, 'next', 'second.txt'), 'second workspace');
     const { hosts, workspaces, assets } = createRegistries();
-    const hostA = hosts.issue('omni', 'content');
-    const hostB = hosts.issue('omni', 'content');
+    const hostA = hosts.issue('standalone', 'content');
+    const hostB = hosts.issue('standalone', 'content');
     const workspaceB = await workspaces.createForTarget(hostB.hostToken, firstPath);
 
     await assert.rejects(
@@ -809,7 +811,7 @@ test('workspace updates have one authoritative event path and stale index result
   );
 });
 
-test('window sources enforce sandboxed isolated views, exact navigation fences, and host cleanup', () => {
+test('window sources enforce standalone isolation and generic Omni renderer cleanup', () => {
   const standalone = source('src/main/windows/onlyPreviewWindow.helper.ts');
   assert.match(standalone, /new BaseWindow\(/);
   assert.equal((standalone.match(/new WebContentsView\(/g) ?? []).length, 1);
@@ -831,13 +833,12 @@ test('window sources enforce sandboxed isolated views, exact navigation fences, 
   assert.doesNotMatch(standalone, /titleBarStyle:\s*'hiddenInset'/);
   assert.doesNotMatch(standalone, /trafficLightPosition/);
   assert.doesNotMatch(standalone, /frame:\s*false/);
+  assert.doesNotMatch(standalone, /`--mode=\$\{hostKind\}`/);
 
   const omni = source('src/main/windows/omniWindow.helper.ts');
-  assert.match(omni, /onlyPreviewHostRegistry\.issue\('omni',\s*'content'\)/);
-  assert.match(omni, /onlyPreviewHostToken/);
-  assert.match(omni, /revokeOnlyPreviewCellHost\(cell\)/);
+  assert.doesNotMatch(omni, /onlypreview/i);
   assert.match(omni, /render-process-gone/);
-  assert.match(omni, /sandbox:\s*Boolean\(onlyPreviewHost\)/);
+  assert.match(omni, /additionalArguments:\s*\['--mode=omni'\]/);
   assert.match(omni, /content\.webContents\.on\('will-redirect',\s*fenceMiniAppNavigation\)/);
   const firstContentCreationCatch = omni.slice(
     omni.indexOf('let content: WebContentsView;'),
@@ -899,12 +900,13 @@ test('window sources enforce sandboxed isolated views, exact navigation fences, 
 
   const removeCellViewsBody = omni.slice(
     omni.indexOf('private removeCellViews('),
-    omni.indexOf('private revokeOnlyPreviewCellHost(')
+    omni.indexOf('private notifyCellUrl(')
   );
   assert.match(
     removeCellViewsBody,
-    /this\.revokeOnlyPreviewCellHost\(cell\);[\s\S]*this\.disposeWebContentsView\(cell\.menubar\);[\s\S]*this\.disposeWebContentsView\(cell\.content\);/
+    /this\.disposeWebContentsView\(cell\.menubar\);[\s\S]*this\.disposeWebContentsView\(cell\.content\);/
   );
+  assert.doesNotMatch(removeCellViewsBody, /host|revoke/i);
 });
 
 test('Home, Omni, preload, i18n, logging, build, and installer sources include the complete integration gates', () => {
@@ -917,13 +919,36 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
 
   const omniTypes = source('src/shared/omni/omni.types.ts');
   const omniPane = source('src/renderer/omni/omniControl/src/components/OmniPane.vue');
-  assert.match(omniTypes, /onlypreview/);
-  assert.match(omniPane, /onlypreview/);
+  const omniRuntime = source('src/main/windows/omniWindow.helper.ts');
+  assert.doesNotMatch(omniTypes, /onlypreview/i);
+  assert.doesNotMatch(omniPane, /onlypreview/i);
+  assert.doesNotMatch(omniRuntime, /onlypreview/i);
+
+  const onlyPreviewTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
+  assert.match(onlyPreviewTypes, /OnlyPreviewHostKind = 'standalone' \| 'settings'/);
+  assert.doesNotMatch(onlyPreviewTypes, /OnlyPreviewHostKind[^;]*omni/i);
 
   const preload = source('src/preload/onlypreview/onlypreview.preload.ts');
+  const preloadTypes = source('src/preload/onlypreview/onlypreview.preload.type.ts');
   assert.match(preload, /contextBridge\.exposeInMainWorld/);
   assert.match(preload, /hostToken/);
   assert.doesNotMatch(preload, /ipcMain|ipcRenderer/);
+  assert.doesNotMatch(preload, /containerMode|--mode=/);
+  assert.doesNotMatch(preloadTypes, /containerMode|ContainerMode|omni/i);
+
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  assert.doesNotMatch(shellApp, /PreviewSurface|isOmni|--omni/);
+  assert.doesNotMatch(shellStore, /onlyPreviewPreviewStore|containerMode|isOmni/);
+  assert.match(shellApp, /new ResizeObserver\(reportPreviewBounds\)/);
+
+  const previewApp = source('src/renderer/onlypreview/preview/src/App.vue');
+  const previewStore = source(
+    'src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts'
+  );
+  assert.match(previewApp, /onlyPreviewPreviewStore\.initialize\(\)/);
+  assert.match(previewStore, /async initialize\(\): Promise<void>/);
+  assert.doesNotMatch(previewStore, /initialize\(restore/);
 
   for (const locale of ['en', 'zh']) {
     const i18n = source(`src/renderer/common/i18n/${locale}.ts`);

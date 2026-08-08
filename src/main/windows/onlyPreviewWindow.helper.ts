@@ -9,7 +9,7 @@ import {
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
-import type { OnlyPreviewBounds, OnlyPreviewHostKind } from '@shared/onlypreview/onlyPreview.types';
+import type { OnlyPreviewBounds } from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT
@@ -60,13 +60,11 @@ const rendererTarget = (mode: OnlyPreviewRendererMode): { filePath: string; url:
 
 const additionalArguments = (
   host: OnlyPreviewHostCapability,
-  mode: OnlyPreviewRendererMode,
-  hostKind: OnlyPreviewHostKind
+  mode: OnlyPreviewRendererMode
 ): string[] => [
   `--onlypreview-host-token=${host.hostToken}`,
   `--onlypreview-host-id=${host.hostId}`,
-  `--onlypreview-mode=${mode}`,
-  `--mode=${hostKind}`
+  `--onlypreview-mode=${mode}`
 ];
 
 const closeView = (view: WebContentsView | null): void => {
@@ -155,10 +153,6 @@ export class OnlyPreviewWindowHelper {
     });
   }
 
-  releaseNativeShortcutHost(hostToken: string): void {
-    this.lastShiftKeyDownByHost.delete(hostToken);
-  }
-
   getStandaloneHost(): OnlyPreviewHostCapability | null {
     const host = this.standaloneHost;
     return host && onlyPreviewHostRegistry.isLive(host.hostToken) ? host : null;
@@ -234,7 +228,7 @@ export class OnlyPreviewWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: additionalArguments(host, 'settings', 'settings')
+        additionalArguments: additionalArguments(host, 'settings')
       }
     });
     this.settingsWindow = window;
@@ -387,7 +381,7 @@ export class OnlyPreviewWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: additionalArguments(host, mode, 'standalone')
+        additionalArguments: additionalArguments(host, mode)
       }
     });
     configureNavigationFence(view.webContents, target.url);

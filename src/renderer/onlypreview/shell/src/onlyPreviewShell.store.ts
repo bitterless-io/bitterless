@@ -20,7 +20,6 @@ import {
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
-import { onlyPreviewPreviewStore } from '../../preview/src/onlyPreviewPreview.store';
 import type { OnlyPreviewTreeRow } from './onlyPreviewShell.type';
 
 const isHostEvent = (value: unknown): value is { hostId: string } =>
@@ -59,10 +58,6 @@ class OnlyPreviewShellStore {
   private restoreGeneration = 0;
   private workspaceGeneration = 0;
   private selectionGeneration = 0;
-
-  get isOmni(): boolean {
-    return onlyPreviewEnv.containerMode === 'omni';
-  }
 
   get visibleRows(): OnlyPreviewTreeRow[] {
     if (!this.index) return [];
@@ -131,7 +126,6 @@ class OnlyPreviewShellStore {
       return;
     }
 
-    if (this.isOmni) await onlyPreviewPreviewStore.initialize(false);
     await Promise.all([this.refreshSettings(), this.restoreWorkspace()]);
   }
 
@@ -146,10 +140,6 @@ class OnlyPreviewShellStore {
   async refresh(): Promise<void> {
     if (!this.workspace) return;
     await this.buildIndex();
-    if (this.isOmni) {
-      await onlyPreviewPreviewStore.refresh();
-      return;
-    }
     if (onlyPreviewEnv.hostId) {
       xpcRenderer.broadcast(ONLY_PREVIEW_REFRESH_EVENT, { hostId: onlyPreviewEnv.hostId });
     }
@@ -261,7 +251,7 @@ class OnlyPreviewShellStore {
   }
 
   async reportPreviewBounds(bounds: OnlyPreviewBounds): Promise<void> {
-    if (this.isOmni || !onlyPreviewEnv.hostToken) return;
+    if (!onlyPreviewEnv.hostToken) return;
     try {
       unwrapOnlyPreviewResult(
         await onlyPreviewClient.updatePreviewBounds({
@@ -315,8 +305,7 @@ class OnlyPreviewShellStore {
         await onlyPreviewClient.chooseTarget({ hostToken, kind })
       );
       if (!workspace) return;
-      // The workspace-change event is the single authoritative update path for both
-      // standalone surfaces and the combined Omni renderer.
+      // The workspace-change event is the single authoritative update path for both views.
     } catch (error) {
       this.errorMessage = errorMessage(error);
     } finally {
@@ -339,7 +328,6 @@ class OnlyPreviewShellStore {
         this.workspace = null;
         this.index = null;
         this.selectedRelativePath = '';
-        if (this.isOmni) onlyPreviewPreviewStore.clear();
         return;
       }
       await this.applyWorkspace(workspace);
@@ -361,16 +349,6 @@ class OnlyPreviewShellStore {
       workspace.workspaceId !== this.workspace?.workspaceId
     ) {
       return;
-    }
-    if (this.isOmni) {
-      if (this.selectedRelativePath) {
-        await onlyPreviewPreviewStore.loadFile({
-          workspaceId: workspace.workspaceId,
-          relativePath: this.selectedRelativePath
-        });
-      } else {
-        onlyPreviewPreviewStore.clear();
-      }
     }
   }
 
@@ -515,14 +493,6 @@ class OnlyPreviewShellStore {
     const generation = ++this.selectionGeneration;
     this.selectedRelativePath = relativePath;
     this.expandSelectedParents();
-    if (this.isOmni) {
-      workspace.selectedRelativePath = relativePath;
-      await onlyPreviewPreviewStore.loadFile({
-        workspaceId: workspace.workspaceId,
-        relativePath
-      });
-      return;
-    }
     try {
       unwrapOnlyPreviewResult(
         await onlyPreviewClient.selectStandaloneFile({

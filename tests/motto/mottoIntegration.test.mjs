@@ -11,17 +11,15 @@ import {
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 
-test('Motto remains the fourth allowlisted Omni mini app', () => {
-  assert.deepEqual(OMNI_MINI_APP_IDS, [
-    'todo',
-    'eyesOnAgents',
-    'translator',
-    'motto',
-    'onlypreview'
-  ]);
+test('Motto remains the fourth and final allowlisted Omni mini app', () => {
+  assert.deepEqual(OMNI_MINI_APP_IDS, ['todo', 'eyesOnAgents', 'translator', 'motto']);
   assert.equal(parseOmniMiniAppId('motto'), 'motto');
   assert.equal(OMNI_MINI_APP_DISPLAY_URLS.motto, 'bl://miniapp/motto');
   assert.throws(() => parseOmniMiniAppId('unknown'));
+  assert.throws(
+    () => parseOmniMiniAppId('onlypreview'),
+    /Unsupported Omni mini app: onlypreview/
+  );
 
   const parsed = parseOmniPaneTree({
     id: 'motto-pane',
@@ -31,6 +29,18 @@ test('Motto remains the fourth allowlisted Omni mini app', () => {
     miniAppId: 'motto'
   });
   assert.equal(parsed.miniAppId, 'motto');
+
+  assert.throws(
+    () =>
+      parseOmniPaneTree({
+        id: 'persisted-onlypreview-pane',
+        type: 'leaf',
+        url: 'https://www.bing.com',
+        contentMode: 'miniapp',
+        miniAppId: 'onlypreview'
+      }),
+    /Unsupported Omni mini app: onlypreview/
+  );
 });
 
 test('Motto has dedicated preload, renderer, dev, packaged, and Control mappings', () => {

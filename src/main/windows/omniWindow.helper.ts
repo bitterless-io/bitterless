@@ -35,11 +35,6 @@ import {
   windowStateService,
   type WindowStateController,
 } from './windowState.service';
-import {
-  onlyPreviewHostRegistry,
-  type OnlyPreviewHostCapability,
-} from '@main/onlypreview/onlyPreviewHost.registry';
-import { onlyPreviewWindowHelper } from './onlyPreviewWindow.helper';
 
 const LAYOUT_KEY = 'omni_layout';
 const WINDOW_LAYOUT_KEY = 'window_layout';
@@ -124,7 +119,6 @@ const OMNI_MINI_APP_RUNTIME: Record<OmniMiniAppId, OmniMiniAppRuntime> = {
   eyesOnAgents: { preloadFile: 'eyesOnAgents.js', rendererName: 'eyesOnAgents' },
   translator: { preloadFile: 'translator.js', rendererName: 'translator' },
   motto: { preloadFile: 'motto.js', rendererName: 'motto' },
-  onlypreview: { preloadFile: 'onlypreview.js', rendererName: 'onlypreview/shell' },
 };
 
 const getCellDisplayUrl = (cell: Pick<
@@ -165,7 +159,6 @@ interface CellViewPair {
   miniAppId: OmniMiniAppId;
   browserProfile: OmniBrowserProfile | null;
   lastUrl: string;
-  onlyPreviewHostToken: string | null;
 }
 
 export class OmniWindowHelper {
@@ -272,7 +265,6 @@ export class OmniWindowHelper {
     this.cells = [];
     this.miniAppLoadFailures.clear();
     for (const cell of cells) {
-      this.revokeOnlyPreviewCellHost(cell);
       this.disposeWebContentsView(cell.menubar);
       this.disposeWebContentsView(cell.content);
     }
@@ -614,25 +606,15 @@ export class OmniWindowHelper {
     return content;
   }
 
-  private createMiniAppCellContentView(
-    preloadPath: string,
-    onlyPreviewHost: OnlyPreviewHostCapability | null = null,
-  ): WebContentsView {
-    const onlyPreviewArguments = onlyPreviewHost
-      ? [
-          `--onlypreview-host-token=${onlyPreviewHost.hostToken}`,
-          `--onlypreview-host-id=${onlyPreviewHost.hostId}`,
-          '--onlypreview-mode=shell',
-        ]
-      : [];
+  private createMiniAppCellContentView(preloadPath: string): WebContentsView {
     return new WebContentsView({
       webPreferences: {
         preload: preloadPath,
-        sandbox: Boolean(onlyPreviewHost),
+        sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: ['--mode=omni', ...onlyPreviewArguments],
+        additionalArguments: ['--mode=omni'],
       },
     });
   }
@@ -771,7 +753,6 @@ export class OmniWindowHelper {
       ? resolveOmniBrowserProfile(url) ?? 'default'
       : null;
     let miniAppRuntime: ResolvedOmniMiniAppRuntime | null = null;
-    let onlyPreviewHost: OnlyPreviewHostCapability | null = null;
 
     if (contentMode === 'miniapp') {
       try {
@@ -788,10 +769,6 @@ export class OmniWindowHelper {
       }
     }
 
-    if (contentMode === 'miniapp' && miniAppId === 'onlypreview') {
-      onlyPreviewHost = onlyPreviewHostRegistry.issue('omni', 'content');
-    }
-
     const menubar = contentMode === 'browser'
       ? this.createWebContentsView('omniCell', [
         `--cellId=${id}`,
@@ -805,10 +782,9 @@ export class OmniWindowHelper {
     try {
       content = contentMode === 'browser'
         ? this.createBrowserCellContentView(browserProfile!)
-        : this.createMiniAppCellContentView(miniAppRuntime!.preloadPath, onlyPreviewHost);
+        : this.createMiniAppCellContentView(miniAppRuntime!.preloadPath);
     } catch (error) {
       this.disposeWebContentsView(menubar);
-      if (onlyPreviewHost) onlyPreviewHostRegistry.revoke(onlyPreviewHost.hostToken);
       this.reportMiniAppLoadFailure({
         cellId: id,
         miniAppId,
@@ -823,7 +799,6 @@ export class OmniWindowHelper {
     } catch (error) {
       this.disposeWebContentsView(menubar);
       this.disposeWebContentsView(content);
-      if (onlyPreviewHost) onlyPreviewHostRegistry.revoke(onlyPreviewHost.hostToken);
       this.reportMiniAppLoadFailure({
         cellId: id,
         miniAppId,
@@ -850,9 +825,6 @@ export class OmniWindowHelper {
       };
       content.webContents.on('will-navigate', fenceMiniAppNavigation);
       content.webContents.on('will-redirect', fenceMiniAppNavigation);
-      if (onlyPreviewHost) {
-        onlyPreviewWindowHelper.bindNativeShortcuts(content.webContents, onlyPreviewHost);
-      }
     }
 
     // Browser-only chrome may mount after the page has already navigated.
@@ -883,7 +855,6 @@ export class OmniWindowHelper {
       miniAppId,
       browserProfile,
       lastUrl: url || '',
-      onlyPreviewHostToken: onlyPreviewHost?.hostToken ?? null,
     };
 
     this.bindCellContentLifecycle(cell, content, miniAppRuntime);
@@ -1050,17 +1021,8 @@ export class OmniWindowHelper {
   }
 
   private removeCellViews(cell: CellViewPair): void {
-    this.revokeOnlyPreviewCellHost(cell);
     this.disposeWebContentsView(cell.menubar);
     this.disposeWebContentsView(cell.content);
-  }
-
-  private revokeOnlyPreviewCellHost(cell: CellViewPair): void {
-    const hostToken = cell.onlyPreviewHostToken;
-    if (!hostToken) return;
-    cell.onlyPreviewHostToken = null;
-    onlyPreviewWindowHelper.releaseNativeShortcutHost(hostToken);
-    onlyPreviewHostRegistry.revoke(hostToken);
   }
 
   private notifyCellUrl(cellId: string, url: string): void {
