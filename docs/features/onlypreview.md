@@ -247,6 +247,7 @@ rebuilds the index; no watcher is created in the MVP.
 | Kind | MVP inputs | Renderer |
 |---|---|---|
 | `text` | common source/config/prose/log types; extensionless or unknown sample that passes text detection | Monaco `vs`, `readOnly`, `domReadOnly`, selectable text, syntax map, find |
+| `text` / Markdown | `.md` and `.markdown` | centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.mdx` remains Monaco source |
 | `pdf` | `.pdf` with matching signature | installed PDF.js (`unpdf/pdfjs`) canvas pages plus selectable TextLayer over tokenized bytes |
 | `image` | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG | `<img>` contain; SVG never becomes a top-level executable document |
 | `audio` | MP3, WAV, OGG, M4A, AAC, FLAC where Chromium has codec support | `<audio controls>`, no autoplay |
@@ -258,11 +259,23 @@ rebuilds the index; no watcher is created in the MVP.
 - Text detection samples bytes and rejects NUL/control-heavy payloads. UTF-8 and BOM-marked UTF-16
   are supported; invalid required decoding returns an explicit error.
 - HTML is displayed as source. User HTML never executes.
+- Markdown is rendered only for `.md` and `.markdown`. `.mdx` remains source because JSX/import
+  semantics are outside the read-only Markdown contract. Markdown source above 1 MiB is rejected
+  with a localized render-limit state instead of falling back to raw source.
+- Markdown compilation uses direct current `marked` and DOMPurify dependencies. Raw HTML is escaped
+  as visible text before sanitization. Sanitized output allows only semantic text/list/table/code
+  tags and no attributes; scripts, styles, forms, frames, SVG/MathML, event handlers, `href`, `src`,
+  and remote/data/local resource loads cannot survive. Links remain readable but inert, and images
+  become alt-text placeholders rather than loading a resource.
 - A descriptor reports a mismatched signature or unsupported codec as a recoverable preview error.
 - Monaco editor and model are both disposed on file changes and component unmount.
 - Selection/copy/find remain enabled; mutation commands and ordinary keyboard input cannot modify
   the model. Electron E2E must prove a selected range can be copied and attempted input leaves the
   Monaco model byte-for-byte unchanged.
+- A non-empty text selection reports its Unicode grapheme count in the Shell-owned bottom status
+  rail. Monaco counts every non-empty editor selection; Markdown and PDF use a DOM selection only
+  when both endpoints remain inside the preview body. Whitespace and line breaks count. Empty,
+  outside, stale, loading, error, file-change, and unmount states report zero and hide the label.
 
 ## Tokenized Asset Protocol
 
@@ -373,7 +386,7 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 │       FileTree.vue   │                                                   │
 │   App.vue            │                                                   │
 ├──────────────────────┴───────────────────────────────────────────────────┤
-│ INDEX READY                                             UTF-8 · 18 KB   │
+│ INDEX READY                    SELECTED 24 CHARACTERS · UTF-8 · 18 KB   │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -392,6 +405,9 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 - Project headers and the status rail never display indexed file/item totals. The interface does
   not repeat a visible `READ ONLY` badge or status label; the actual editor and content authority
   remain read-only.
+- The status rail conditionally inserts `Selected {count} characters` / `已选择 {count} 个字符`
+  before the current file type and size. It stays hidden at zero and truncates as one right-aligned
+  metadata group rather than increasing the fixed 25px rail height.
 - The Project header has a Tabler crosshair action. It is disabled when no previewed file exists;
   otherwise it clears search, expands the selected file's ancestors, scrolls the corresponding tree
   row to the center, and focuses it without reloading the preview.
@@ -401,6 +417,10 @@ routing accepts any regular file and shows its fallback surface for an unsupport
   `#6F7487`, and canonical Bitterless Royal Blue `#4E5882` for focus/selection/Index Rail.
 - UI uses platform system fonts at compact 12-13px sizing. Code uses `JetBrains Mono`, then
   `SFMono-Regular`, `Consolas`, and generic monospace fallbacks.
+- Markdown uses the same system body family in a centered reading column no wider than 860px, with
+  restrained heading rhythm, Royal Blue blockquote/link accents, bordered tables, and monospace
+  code blocks. It is a document-reading surface inside the existing white Preview canvas, not a
+  second card/dashboard theme.
 - The Index Rail is the single signature motion. It respects `prefers-reduced-motion`.
 - Structural and repeated elements carry stable `name` attributes and `onlypreview`-rooted BEM
   classes with sibling Less files. No Tailwind utilities.
@@ -426,6 +446,7 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 | `F12` | Shell or Preview, debug profile | toggle detached DevTools for the view that received the shortcut |
 | `Cmd+Option+I` or `Ctrl+Shift+I` | Shell or Preview, debug profile | toggle detached DevTools for the view that received the shortcut |
 | `Cmd/Ctrl+F` | Monaco | find without invoking a Shell search |
+| drag/select text | Monaco, Markdown, or PDF | show the selected grapheme count in the bottom status rail; hide it when selection collapses or leaves preview content |
 | `Esc` | search / Setting | clear search / close without save |
 | double click | non-action MenuBar surface | toggle maximize/restore |
 | minimize / maximize / close | Windows MenuBar controls | control the current standalone `BaseWindow` through Main |
