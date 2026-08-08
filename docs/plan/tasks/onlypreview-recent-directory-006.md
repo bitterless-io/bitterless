@@ -1,7 +1,7 @@
 ---
 id: onlypreview-recent-directory-006
 scope: Persist and restore OnlyPreview's last canonical directory across application restarts
-status: ready-for-implementation
+status: implemented; owner verification pending
 depends-on: [onlypreview-shell-ux-005]
 ---
 
@@ -84,3 +84,22 @@ unavailable.
   and confirm it overrides stored history. Automated E2E must not launch the full application for
   this task because its startup integrations may access the macOS Keychain.
 - `git diff --check`
+
+# Delivery Evidence
+
+- Implemented on 2026-08-08. OnlyPreview now stores the latest successfully opened canonical
+  directory through the existing setting-table CAS API, restores it into one fresh workspace with
+  no file selection, and lets a later explicit folder or OS-file target override stored history.
+- `node --test tests/onlypreview/*.test.mjs` passed 43/43 tests. The focused harness covers SQLite
+  ready/failure behavior, pre-ready latest-write flushing, insert/CAS conflicts, stale-generation
+  fencing, per-host Shell/Preview single flight, a fresh service/storage/host restart lifecycle,
+  directory-only restoration, explicit-file override, host revocation, and log privacy.
+- `yarn typecheck:node`, `yarn check:renderer-i18n`, targeted error-level ESLint, `yarn build`, and
+  `git diff --check` passed. `yarn typecheck:web` remains the documented repository baseline and was
+  not used as acceptance evidence for this Main-process-only change.
+- Automated E2E was not run by explicit owner instruction: this task must not launch the full
+  Bitterless application or risk startup integration access to the macOS Keychain. Ral should
+  manually open a folder, restart Bitterless, enter OnlyPreview from Home, and confirm that the
+  folder returns without a selected file; then open an explicit OS file, confirm it overrides the
+  restored directory, and confirm its containing folder is restored without a selection after the
+  next restart.
