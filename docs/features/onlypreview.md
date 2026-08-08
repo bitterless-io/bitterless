@@ -151,6 +151,9 @@ interface OnlyPreviewApi {
   readText(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<OnlyPreviewTextContent>>;
   selectStandaloneFile(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   updatePreviewBounds(params: HostRequest & OnlyPreviewBounds): Promise<OnlyPreviewResult<void>>;
+  minimizeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
+  toggleMaximizeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
+  closeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
   openExternally(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   revealInFolder(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   getSettings(params: HostRequest): Promise<OnlyPreviewResult<OnlyPreviewSettings>>;
