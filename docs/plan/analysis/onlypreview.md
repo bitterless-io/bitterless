@@ -93,6 +93,9 @@ persisting a selected file or weakening the process-local capability boundary.
 `onlypreview-e2e-keychain-isolation-007` retains full-application E2E while routing every macOS
 launch through Chromium's mock Keychain and rejecting an incompletely isolated E2E Main process
 before GUI startup.
+`onlypreview-safe-markdown-selection-008` finishes the reader surface by rendering ordinary
+Markdown through an explicit parser/sanitizer boundary and reporting grapheme-aware selections
+from the Preview view to the Shell-owned bottom status rail.
 
 ## Main Risks And Decisions
 
@@ -116,6 +119,9 @@ before GUI startup.
 | Invalid history or concurrent cleanup erases a newer path | revalidate through `createForTarget` and CAS-clear only the exact observed invalid serialized value |
 | Persisted path leaks authority or logs | persist only the canonical directory in Main-owned SQLite; use only no-value-log DAO methods and mint fresh capabilities on restore |
 | Full-application E2E prompts for the owner's macOS Keychain | one shared launch-argument builder prepends `--use-mock-keychain`; E2E Main fails before GUI startup when the macOS switch is absent |
+| Untrusted Markdown executes HTML, navigation, or remote loads | current direct `marked` plus DOMPurify dependencies; raw HTML is escaped, output is allowlisted to semantic tags with zero attributes, and images/links receive no executable URL |
+| Preview and bottom rail live in sibling WebContentsViews | Preview broadcasts a host-scoped display-only selection count; Shell accepts only its matching host and resets on selection/workspace change |
+| UTF-16 length miscounts visible characters | count Unicode grapheme clusters with `Intl.Segmenter`, falling back to code points only when unavailable |
 | extension-only association omits unknown files | common associations plus macOS `public.data` Viewer/Alternate and a bounded Windows generic context-menu verb, never default ownership |
 | Electron 40 file fetch/PDF embedding gaps | manual 206 file streaming and installed PDF.js `print` intent + disabled annotations canvas + selectable TextLayer, all runtime-probed |
 | existing unrelated test failures | record baseline and compare touched/focused gates; never relabel baseline failures |

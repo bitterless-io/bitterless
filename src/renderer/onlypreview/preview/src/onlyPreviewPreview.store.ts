@@ -6,10 +6,12 @@ import {
   unwrapOnlyPreviewResult
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
-  ONLY_PREVIEW_REFRESH_EVENT,
-  ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT,
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
-  ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
+  type OnlyPreviewCharacterCountRevisionEvent,
   type OnlyPreviewDescriptor,
   type OnlyPreviewErrorCode,
   type OnlyPreviewFileRef,
@@ -19,11 +21,19 @@ import {
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
+import { OnlyPreviewCharacterCountSourceGate } from '../../common/onlyPreviewCharacterCountGate.service';
 
-const isHostEvent = (value: unknown): value is { hostId: string } =>
-  !!value &&
-  typeof value === 'object' &&
-  typeof (value as Record<string, unknown>).hostId === 'string';
+const isRevisionEvent = (value: unknown): value is OnlyPreviewCharacterCountRevisionEvent => {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  return (
+    Object.keys(event).length === 2 &&
+    typeof event.hostId === 'string' &&
+    typeof event.revision === 'string' &&
+    event.revision.length > 0 &&
+    event.revision.length <= 128
+  );
+};
 
 class OnlyPreviewPreviewStore {
   currentRef: OnlyPreviewFileRef | null = null;
@@ -35,9 +45,11 @@ class OnlyPreviewPreviewStore {
   errorMessage = '';
   presentationError = '';
   actionError = '';
+  selectionReportingRevision = '';
   private initialized = false;
   private generation = 0;
   private restoreGeneration = 0;
+  private readonly characterCountGate = new OnlyPreviewCharacterCountSourceGate();
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -48,11 +60,13 @@ class OnlyPreviewPreviewStore {
       this.errorMessage = onlyPreviewI18n.errors.HOST_NOT_FOUND;
       return;
     }
+    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, {
+      hostId: onlyPreviewEnv.hostId
+    });
     await this.refreshSettings();
-    await this.restoreSelection();
   }
 
-  async loadFile(fileRef: OnlyPreviewFileRef): Promise<void> {
+  private async loadFile(fileRef: OnlyPreviewFileRef, reportingRevision: string): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
     this.restoreGeneration += 1;
@@ -72,7 +86,9 @@ class OnlyPreviewPreviewStore {
           ...fileRef
         })
       );
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || !this.characterCountGate.isCurrent(reportingRevision)) {
+        return;
+      }
       this.descriptor = descriptor;
       if (descriptor.previewError) {
         this.presentationError =
@@ -81,16 +97,24 @@ class OnlyPreviewPreviewStore {
             : onlyPreviewI18n.preview.mediaFailed;
         return;
       }
-      if (descriptor.kind !== 'text') return;
+      if (descriptor.kind !== 'text') {
+        this.selectionReportingRevision = reportingRevision;
+        return;
+      }
       const textContent = unwrapOnlyPreviewResult(
         await onlyPreviewClient.readText({
           hostToken,
           ...fileRef
         })
       );
-      if (generation === this.generation) this.textContent = textContent;
+      if (generation === this.generation && this.characterCountGate.isCurrent(reportingRevision)) {
+        this.textContent = textContent;
+        this.selectionReportingRevision = reportingRevision;
+      }
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || !this.characterCountGate.isCurrent(reportingRevision)) {
+        return;
+      }
       const contractError = error instanceof OnlyPreviewContractError ? error : null;
       this.errorCode = contractError?.code || 'OPERATION_FAILED';
       this.errorMessage = contractError
@@ -101,12 +125,7 @@ class OnlyPreviewPreviewStore {
     }
   }
 
-  async refresh(): Promise<void> {
-    if (!this.currentRef) return;
-    await this.loadFile(this.currentRef);
-  }
-
-  clear(): void {
+  private clear(): void {
     this.restoreGeneration += 1;
     this.generation += 1;
     this.currentRef = null;
@@ -117,11 +136,30 @@ class OnlyPreviewPreviewStore {
     this.errorMessage = '';
     this.presentationError = '';
     this.actionError = '';
+    this.selectionReportingRevision = '';
   }
 
-  reportMediaError(kind: 'pdf' | 'media'): void {
+  reportMediaError(kind: 'pdf' | 'media', reportingRevision: string): void {
+    if (!this.characterCountGate.disarm(reportingRevision)) return;
+    this.broadcastCharacterCount(0);
     this.presentationError =
       kind === 'pdf' ? onlyPreviewI18n.preview.pdfFailed : onlyPreviewI18n.preview.mediaFailed;
+  }
+
+  reportCharacterCount(characterCount: number, reportingRevision: string): void {
+    const normalizedCount =
+      Number.isSafeInteger(characterCount) && characterCount >= 0 ? characterCount : 0;
+    if (!this.characterCountGate.canReport(reportingRevision, normalizedCount)) return;
+    this.broadcastCharacterCount(normalizedCount);
+  }
+
+  armCharacterCountReporting(reportingRevision: string): void {
+    const hostId = onlyPreviewEnv.hostId;
+    if (!hostId || !this.characterCountGate.arm(reportingRevision)) return;
+    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT, {
+      hostId,
+      revision: reportingRevision
+    });
   }
 
   async openExternally(): Promise<void> {
@@ -133,19 +171,9 @@ class OnlyPreviewPreviewStore {
   }
 
   private subscribe(): void {
-    xpcRenderer.subscribe(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, (payload) => {
-      if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        void this.restoreSelection();
-      }
-    });
-    xpcRenderer.subscribe(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, (payload) => {
-      if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        void this.restoreSelection();
-      }
-    });
-    xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, (payload) => {
-      if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        void this.refresh();
+    xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, (payload) => {
+      if (isRevisionEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        void this.restoreSelection(payload.params.revision);
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT, () => {
@@ -153,7 +181,10 @@ class OnlyPreviewPreviewStore {
     });
   }
 
-  private async restoreSelection(): Promise<void> {
+  private async restoreSelection(reportingRevision: string): Promise<void> {
+    if (!this.characterCountGate.beginTransition(reportingRevision)) return;
+    this.selectionReportingRevision = '';
+    this.broadcastCharacterCount(0);
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
     const generation = ++this.restoreGeneration;
@@ -161,23 +192,45 @@ class OnlyPreviewPreviewStore {
       const workspace = unwrapOnlyPreviewResult(
         await onlyPreviewClient.restoreWorkspace({ hostToken })
       );
-      if (generation !== this.restoreGeneration) return;
+      if (
+        generation !== this.restoreGeneration ||
+        !this.characterCountGate.isCurrent(reportingRevision)
+      ) {
+        return;
+      }
       if (!workspace?.selectedRelativePath) {
         this.clear();
         return;
       }
-      await this.loadFile({
-        workspaceId: workspace.workspaceId,
-        relativePath: workspace.selectedRelativePath
-      });
+      await this.loadFile(
+        {
+          workspaceId: workspace.workspaceId,
+          relativePath: workspace.selectedRelativePath
+        },
+        reportingRevision
+      );
     } catch (error) {
-      if (generation !== this.restoreGeneration) return;
+      if (
+        generation !== this.restoreGeneration ||
+        !this.characterCountGate.isCurrent(reportingRevision)
+      ) {
+        return;
+      }
       const contractError = error instanceof OnlyPreviewContractError ? error : null;
       this.errorCode = contractError?.code || 'OPERATION_FAILED';
       this.errorMessage = contractError
         ? getOnlyPreviewErrorMessage(contractError.code)
         : onlyPreviewI18n.errors.OPERATION_FAILED;
     }
+  }
+
+  private broadcastCharacterCount(characterCount: number): void {
+    const hostId = onlyPreviewEnv.hostId;
+    if (!hostId) return;
+    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, {
+      hostId,
+      characterCount
+    });
   }
 
   private async refreshSettings(): Promise<void> {

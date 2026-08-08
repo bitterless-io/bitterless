@@ -12,9 +12,13 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { AnnotationMode, getDocument, TextLayer } from 'unpdf/pdfjs';
 import { interpolateOnlyPreview } from '../../../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
+import { countOnlyPreviewDomSelection } from '../../onlyPreviewCharacterCount.service';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 
-const props = defineProps<{ assetUrl: string }>();
+const props = defineProps<{
+  assetUrl: string;
+  reportingRevision: string;
+}>();
 const pagesRef = ref<HTMLElement | null>(null);
 const loading = ref(false);
 let generation = 0;
@@ -25,6 +29,7 @@ let renderTasks: Array<{ cancel: () => void }> = [];
 let textLayers: TextLayer[] = [];
 
 const disposePdf = (): void => {
+  onlyPreviewPreviewStore.reportCharacterCount(0, props.reportingRevision);
   generation += 1;
   abortController?.abort();
   abortController = null;
@@ -37,6 +42,13 @@ const disposePdf = (): void => {
   pdfDocument = null;
   loadingTask = null;
   if (pagesRef.value) pagesRef.value.replaceChildren();
+};
+
+const reportSelection = (): void => {
+  onlyPreviewPreviewStore.reportCharacterCount(
+    countOnlyPreviewDomSelection(pagesRef.value, window.getSelection()),
+    props.reportingRevision
+  );
 };
 
 const renderPdf = async (): Promise<void> => {
@@ -108,19 +120,30 @@ const renderPdf = async (): Promise<void> => {
       textLayers.push(textLayer);
       await textLayer.render();
     }
+    if (runGeneration === generation) {
+      onlyPreviewPreviewStore.armCharacterCountReporting(props.reportingRevision);
+    }
   } catch {
-    if (runGeneration === generation) onlyPreviewPreviewStore.reportMediaError('pdf');
+    if (runGeneration === generation) {
+      onlyPreviewPreviewStore.reportMediaError('pdf', props.reportingRevision);
+    }
   } finally {
     if (runGeneration === generation) loading.value = false;
   }
 };
 
 watch(
-  () => props.assetUrl,
+  () => [props.assetUrl, props.reportingRevision],
   () => void renderPdf()
 );
-onMounted(() => void renderPdf());
-onBeforeUnmount(disposePdf);
+onMounted(() => {
+  document.addEventListener('selectionchange', reportSelection);
+  void renderPdf();
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('selectionchange', reportSelection);
+  disposePdf();
+});
 </script>
 
 <style lang="less">

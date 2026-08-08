@@ -1444,3 +1444,216 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(pdf, /new TextLayer/);
   assert.match(pdf, /canvas/);
 });
+
+test('Markdown rendering and selection counts stay renderer-only, inert, and host-scoped', () => {
+  const packageJson = JSON.parse(source('package.json'));
+  assert.equal(packageJson.dependencies.marked, '18.0.7');
+  assert.equal(packageJson.dependencies.dompurify, '3.4.12');
+
+  const classifier = source('src/main/onlypreview/onlyPreviewClassifier.service.ts');
+  assert.match(classifier, /TEXT_EXTENSIONS[\s\S]*'\.md'[\s\S]*'\.mdx'/);
+  assert.match(classifier, /'\.md':\s*'markdown'/);
+  assert.match(classifier, /'\.mdx':\s*'markdown'/);
+  assert.doesNotMatch(classifier, /'\.markdown'/);
+
+  const surface = source(
+    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
+  );
+  const markdownBranch = surface.indexOf('<MarkdownPreview');
+  const monacoBranch = surface.indexOf('<MonacoTextPreview');
+  assert.ok(markdownBranch >= 0 && markdownBranch < monacoBranch);
+  assert.match(surface, /descriptor\.extension === '\.md'/);
+  assert.doesNotMatch(surface, /descriptor\.extension === '\.mdx'/);
+  assert.doesNotMatch(surface, /descriptor\.extension === '\.markdown'/);
+
+  const markdownService = source(
+    'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
+  );
+  assert.match(markdownService, /from 'marked'/);
+  assert.match(markdownService, /from 'dompurify'/);
+  assert.match(markdownService, /ONLY_PREVIEW_MAX_MARKDOWN_BYTES/);
+  assert.match(markdownService, /class OnlyPreviewMarkdownRenderer extends Renderer/);
+  assert.match(markdownService, /html\(\{ text \}[\s\S]*escapeHtml\(text\)/);
+  assert.match(markdownService, /image\(\{ text \}[\s\S]*\[Image:/);
+  assert.match(markdownService, /purifier\.sanitize\(parsed/);
+  assert.match(markdownService, /ALLOWED_ATTR:\s*\[\]/);
+  assert.match(markdownService, /ALLOW_ARIA_ATTR:\s*false/);
+  assert.match(markdownService, /ALLOW_DATA_ATTR:\s*false/);
+  assert.match(markdownService, /ALLOWED_NAMESPACES:\s*\['http:\/\/www\.w3\.org\/1999\/xhtml'\]/);
+
+  const markdownComponent = source(
+    'src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.vue'
+  );
+  assert.match(markdownComponent, /v-html="renderResult\.html"/);
+  assert.match(markdownComponent, /countOnlyPreviewDomSelection\(documentRef\.value/);
+  assert.match(markdownComponent, /document\.addEventListener\('selectionchange'/);
+  assert.match(markdownComponent, /document\.removeEventListener\('selectionchange'/);
+  assert.match(markdownComponent, /reportCharacterCount\(0, props\.reportingRevision\)/);
+  assert.match(markdownComponent, /armCharacterCountReporting\(props\.reportingRevision\)/);
+
+  const markdownStyle = source(
+    'src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.less'
+  );
+  assert.match(markdownStyle, /width:\s*min\(860px, 100%\)/);
+  assert.match(markdownStyle, /overflow:\s*auto/);
+  assert.match(markdownStyle, /--onlypreview-royal/);
+  assert.match(markdownStyle, /border-collapse:\s*collapse/);
+  assert.doesNotMatch(markdownStyle, /animation|transition/);
+
+  const characterService = source(
+    'src/renderer/onlypreview/preview/src/onlyPreviewCharacterCount.service.ts'
+  );
+  assert.match(characterService, /new Intl\.Segmenter\(undefined, \{ granularity: 'grapheme' \}\)/);
+  assert.match(characterService, /Array\.from\(value\)\.length/);
+  assert.match(characterService, /root\.contains\(selection\.anchorNode\)/);
+  assert.match(characterService, /root\.contains\(selection\.focusNode\)/);
+
+  const monaco = source(
+    'src/renderer/onlypreview/preview/src/components/MonacoTextPreview/MonacoTextPreview.vue'
+  );
+  assert.match(monaco, /onDidChangeCursorSelection/);
+  assert.match(monaco, /getSelections\(\)/);
+  assert.match(monaco, /filter\(\(selection\) => !selection\.isEmpty\(\)\)/);
+  assert.match(monaco, /getValueInRange\(selection\)/);
+  assert.match(monaco, /selectionDisposable\?\.dispose\(\)/);
+  assert.match(monaco, /reportCharacterCount\(0, props\.reportingRevision\)/);
+  assert.match(monaco, /armCharacterCountReporting\(props\.reportingRevision\)/);
+
+  const pdf = source('src/renderer/onlypreview/preview/src/components/PdfPreview/PdfPreview.vue');
+  assert.match(pdf, /countOnlyPreviewDomSelection\(pagesRef\.value/);
+  assert.match(pdf, /document\.addEventListener\('selectionchange'/);
+  assert.match(pdf, /document\.removeEventListener\('selectionchange'/);
+  assert.match(pdf, /reportCharacterCount\(0, props\.reportingRevision\)/);
+  assert.match(pdf, /armCharacterCountReporting\(props\.reportingRevision\)/);
+
+  const characterCountGate = source(
+    'src/renderer/onlypreview/common/onlyPreviewCharacterCountGate.service.ts'
+  );
+  assert.match(characterCountGate, /class OnlyPreviewCharacterCountSourceGate/);
+  assert.match(characterCountGate, /revision === this\.currentRevision/);
+  assert.match(characterCountGate, /this\.armedRevision === revision/);
+  assert.match(characterCountGate, /class OnlyPreviewCharacterCountHostGate/);
+  assert.match(characterCountGate, /this\.readyRevision === this\.currentRevision/);
+  assert.match(characterCountGate, /canBufferCount\(characterCount: number\)/);
+  assert.match(characterCountGate, /isSuspended\(\): boolean/);
+  assert.match(characterCountGate, /revisionForSync\(\): string/);
+
+  const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
+  assert.match(
+    previewStore,
+    /xpcRenderer\.broadcast\(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, \{\s*hostId,\s*characterCount\s*\}\);/
+  );
+  assert.match(
+    previewStore,
+    /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, \{[\s\S]*?hostId: onlyPreviewEnv\.hostId[\s\S]*?\}/
+  );
+  assert.match(
+    previewStore,
+    /ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT[\s\S]*restoreSelection\(payload\.params\.revision\)/
+  );
+  assert.match(
+    previewStore,
+    /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT, \{[\s\S]*?hostId,[\s\S]*?revision: reportingRevision[\s\S]*?\}/
+  );
+  assert.match(previewStore, /characterCountGate\.canReport\(reportingRevision, normalizedCount\)/);
+  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/);
+  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_SELECTION_CHANGED_EVENT/);
+  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_REFRESH_EVENT/);
+  assert.doesNotMatch(previewStore, /selectedText|selectionText|text:\s*character/);
+
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  assert.match(shellStore, /keys\.length === 2/);
+  assert.match(shellStore, /Number\.isSafeInteger\(event\.characterCount\)/);
+  assert.match(
+    shellStore,
+    /isCharacterCountEvent\(payload\.params\)[\s\S]*payload\.params\.hostId === onlyPreviewEnv\.hostId/
+  );
+  assert.match(shellStore, /characterCountGate\.canAcceptCount\(payload\.params\.characterCount\)/);
+  assert.match(shellStore, /characterCountGate\.canBufferCount\(payload\.params\.characterCount\)/);
+  assert.match(shellStore, /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT/);
+  assert.match(shellStore, /characterCountGate\.acceptReady\(payload\.params\.revision\)/);
+  assert.match(shellStore, /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT/);
+  assert.match(
+    shellStore,
+    /syncCharacterCountTransition\(\)[\s\S]*!this\.characterCountGate\.isSuspended\(\)[\s\S]*beginCharacterCountTransition\(\)/
+  );
+  assert.match(shellStore, /const revision = crypto\.randomUUID\(\)/);
+  assert.match(
+    shellStore,
+    /ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT[\s\S]*beginCharacterCountTransition\(\)[\s\S]*restoreWorkspace\(\)/
+  );
+  assert.match(
+    shellStore,
+    /ONLY_PREVIEW_SELECTION_CHANGED_EVENT[\s\S]*beginCharacterCountTransition\(\)[\s\S]*syncSelection\(\)/
+  );
+  const selectFile = shellStore.slice(
+    shellStore.indexOf('private async selectFile('),
+    shellStore.indexOf('private expandSelectedParents()')
+  );
+  assert.match(
+    selectFile,
+    /private async selectFile[\s\S]*this\.restoreGeneration \+= 1;[\s\S]*rotateCharacterCountRevision\(\)[\s\S]*this\.selectedRelativePath = relativePath/
+  );
+  assert.match(
+    selectFile,
+    /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\);[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*const recoveryRevision = this\.beginCharacterCountTransition\(\);[\s\S]*resumeCharacterCountReporting\(recoveryRevision\)/
+  );
+  const pendingRevision = shellStore.slice(
+    shellStore.indexOf('private rotateCharacterCountRevision()'),
+    shellStore.indexOf('private resumeCharacterCountReporting(')
+  );
+  assert.match(pendingRevision, /characterCountGate\.beginTransition\(revision\)/);
+  assert.doesNotMatch(pendingRevision, /broadcast\(/);
+
+  const directRefresh = shellStore.slice(
+    shellStore.indexOf('async refresh()'),
+    shellStore.indexOf('async openSettings()')
+  );
+  assert.match(directRefresh, /beginCharacterCountTransition\(\)/);
+  assert.match(directRefresh, /await this\.buildIndex\(\)/);
+  assert.ok(
+    directRefresh.indexOf('beginCharacterCountTransition()') <
+      directRefresh.indexOf('await this.buildIndex()')
+  );
+  assert.match(directRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
+  assert.doesNotMatch(directRefresh, /broadcast\(ONLY_PREVIEW_REFRESH_EVENT/);
+
+  const nativeRefresh = shellStore.slice(
+    shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT'),
+    shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT')
+  );
+  assert.match(nativeRefresh, /beginCharacterCountTransition\(\)/);
+  assert.match(nativeRefresh, /this\.buildIndex\(\)/);
+  assert.ok(
+    nativeRefresh.indexOf('beginCharacterCountTransition()') <
+      nativeRefresh.indexOf('this.buildIndex()')
+  );
+  assert.match(nativeRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
+  assert.ok((shellStore.match(/this\.selectedCharacterCount = 0/g) || []).length >= 6);
+
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  assert.ok(
+    shellApp.indexOf('selectedCharacterStatus') < shellApp.indexOf('{{ selectedFileType }}'),
+    'selected count must appear before type and size'
+  );
+  assert.match(shellApp, /selectedCharacterCount > 0/);
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  assert.match(shellStyle, /\.onlypreview-shell__status-rail[\s\S]*height:\s*25px/);
+  assert.match(shellStyle, /flex:\s*0 0 25px/);
+
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  assert.match(i18n, /selectedCharacters:\s*'Selected \{count\} characters'/);
+  assert.match(i18n, /selectedCharacters:\s*'已选择 \{count\} 个字符'/);
+  assert.match(i18n, /markdownLimit:\s*'Markdown rendering is limited to 1 MB\.'/);
+
+  const sharedTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const api = sharedTypes.match(/export interface OnlyPreviewApi \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(api);
+  assert.doesNotMatch(api, /characterCount|reportingRevision|selectedText|selectionText/);
+  for (const mainBoundary of [
+    'src/main/xpc/onlyPreview.handler.ts',
+    'src/preload/onlypreview/onlypreview.preload.ts'
+  ]) {
+    assert.doesNotMatch(source(mainBoundary), /CHARACTER_COUNT_|characterCount/);
+  }
+});

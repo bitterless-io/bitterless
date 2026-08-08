@@ -43,12 +43,21 @@
         <FileActions v-if="onlyPreviewPreviewStore.currentRef" />
       </div>
 
+      <MarkdownPreview
+        v-else-if="isMarkdown && onlyPreviewPreviewStore.textContent"
+        :key="selectionPreviewKey"
+        :content="onlyPreviewPreviewStore.textContent"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
+      />
+
       <MonacoTextPreview
         v-else-if="
           onlyPreviewPreviewStore.descriptor?.kind === 'text' && onlyPreviewPreviewStore.textContent
         "
+        :key="selectionPreviewKey"
         :content="onlyPreviewPreviewStore.textContent"
         :language="onlyPreviewPreviewStore.descriptor.language"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
         :settings="onlyPreviewPreviewStore.settings"
       />
 
@@ -57,8 +66,9 @@
           onlyPreviewPreviewStore.descriptor?.kind === 'pdf' &&
           onlyPreviewPreviewStore.descriptor.assetUrl
         "
-        :key="previewKey"
+        :key="selectionPreviewKey"
         :asset-url="onlyPreviewPreviewStore.descriptor.assetUrl"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
       />
 
       <div
@@ -72,7 +82,12 @@
         <img
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           :alt="imageAlt"
-          @error="onlyPreviewPreviewStore.reportMediaError('media')"
+          @error="
+            onlyPreviewPreviewStore.reportMediaError(
+              'media',
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
         />
       </div>
 
@@ -91,7 +106,12 @@
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           controls
           preload="metadata"
-          @error="onlyPreviewPreviewStore.reportMediaError('media')"
+          @error="
+            onlyPreviewPreviewStore.reportMediaError(
+              'media',
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
         ></audio>
       </div>
 
@@ -107,7 +127,12 @@
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           controls
           preload="metadata"
-          @error="onlyPreviewPreviewStore.reportMediaError('media')"
+          @error="
+            onlyPreviewPreviewStore.reportMediaError(
+              'media',
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
         ></video>
       </div>
 
@@ -165,12 +190,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import {
-  IconAlertTriangle,
-  IconFileSearch,
-  IconFileUnknown,
-  IconMusic
-} from '@tabler/icons-vue';
+import { IconAlertTriangle, IconFileSearch, IconFileUnknown, IconMusic } from '@tabler/icons-vue';
 import {
   formatOnlyPreviewBytes,
   formatOnlyPreviewDate,
@@ -179,8 +199,15 @@ import {
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 import FileActions from '../FileActions/FileActions.vue';
+import MarkdownPreview from '../MarkdownPreview/MarkdownPreview.vue';
 import MonacoTextPreview from '../MonacoTextPreview/MonacoTextPreview.vue';
 import PdfPreview from '../PdfPreview/PdfPreview.vue';
+
+const isMarkdown = computed(() => {
+  const descriptor = onlyPreviewPreviewStore.descriptor;
+  if (descriptor?.kind !== 'text') return false;
+  return descriptor.extension === '.md';
+});
 
 const descriptorType = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;
@@ -194,6 +221,10 @@ const previewKey = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;
   return descriptor ? `${descriptor.workspaceId}:${descriptor.relativePath}` : '';
 });
+
+const selectionPreviewKey = computed(
+  () => `${previewKey.value}:${onlyPreviewPreviewStore.selectionReportingRevision}`
+);
 
 const imageAlt = computed(() =>
   interpolateOnlyPreview(onlyPreviewI18n.preview.imageAlt, {
