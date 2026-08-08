@@ -510,10 +510,10 @@ them.
   files; verifies the standalone multi-view bounds, independently toggled Shell/Preview detached
   DevTools without changing either view's bounds, Setting singleton, and no edit path. Omni
   contract/UI tests prove that `onlypreview` cannot be selected or restored as a cell mini app.
-- Electron E2E also closes the first Electron process and launches a fresh Main with the same
-  isolated `userData` directory and no file-open argument; the fresh process restores the prior
-  directory with no selected file. A separate startup with an explicit OS target proves that the
-  explicit target wins the stored directory.
+- Recent-directory restart behavior is verified in Electron/Node unit tests with simulated storage
+  lifecycle and fresh host instances. The owner manually verifies a real application restart and
+  explicit OS-target override; automated acceptance for this path must not launch the full
+  Bitterless application because startup integrations may access the macOS Keychain.
 - `yarn build` must emit all three renderer HTML files and `out/preload/onlypreview.js`.
 - Packaged manual verification remains required for OS association registration and the actual
   Chromium codec matrix on macOS and Windows.

@@ -76,7 +76,11 @@ unavailable.
 - `yarn check:renderer-i18n`
 - targeted error-level ESLint for touched TS/test sources
 - `yarn build`
-- `yarn test:e2e:onlypreview`, including a complete Electron restart using the same isolated
-  `userData` directory and no open argument to prove directory-only restore, plus an explicit OS
-  target that wins over stored history
+- Electron/Node unit tests must simulate a complete storage lifecycle and fresh host creation to
+  prove directory-only restoration plus explicit-target-over-history ordering without launching
+  the full Bitterless application.
+- Owner manual verification: restart Bitterless, open OnlyPreview without an explicit target, and
+  confirm the last directory (but no selected file) returns; then launch an explicit file target
+  and confirm it overrides stored history. Automated E2E must not launch the full application for
+  this task because its startup integrations may access the macOS Keychain.
 - `git diff --check`

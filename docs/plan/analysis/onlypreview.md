@@ -123,9 +123,10 @@ persisting a selected file or weakening the process-local capability boundary.
 2. Focused source/integration tests for host wiring and security preferences.
 3. Node and web typechecks, renderer i18n guard, targeted ESLint, `git diff --check`.
 4. Full Electron Vite build and output audit.
-5. Playwright/Electron fixture flow plus screenshots at normal and minimum window size; restart a
-   fresh Main against the same isolated `userData` directory without an open argument and verify
-   directory-only restoration, then verify an explicit OS target overrides that history.
+5. Electron/Node unit tests simulate storage ready/failure, fresh hosts, concurrent restore, and
+   explicit-target ordering without launching the full Bitterless application. The owner manually
+   verifies real restart restoration and explicit OS-target override because automated full-app
+   startup may access the macOS Keychain.
 6. Separate packaged macOS/Windows association and codec verification if signing/build hosts are
    available; otherwise this remains an explicit human handoff and does not get misreported as
    automated proof.
