@@ -1,7 +1,7 @@
 ---
 id: onlypreview-standalone-only-002
 scope: Remove OnlyPreview from Omni and make the sub-application standalone-only
-status: in-progress
+status: done
 depends-on: [onlypreview-mvp-001]
 ---
 
