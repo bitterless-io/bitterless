@@ -1,7 +1,7 @@
 ---
 id: onlypreview-e2e-keychain-isolation-007
 scope: Retain Bitterless full-application E2E without accessing the user's macOS Keychain
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [onlypreview-recent-directory-006]
 ---
 
@@ -63,4 +63,17 @@ that isolation switch.
 
 # Delivery Evidence
 
-- Pending implementation.
+- Implemented on 2026-08-08. Both full-application fixtures now build their Electron arguments
+  through one pure helper: macOS places `--use-mock-keychain` before the Bitterless application
+  path, while Windows retains the existing application path and following arguments unchanged.
+- Main now rejects an unpackaged macOS `BITTERLESS_E2E=1` process without the mock-Keychain switch
+  before `app.whenReady()`. Helper processes and the existing packaged-E2E rejection remain
+  unchanged.
+- `node --test tests/e2e/electronLaunchArgs.test.mjs` passed 2/2 tests, and
+  `node --test tests/onlypreview/*.test.mjs` passed 46/46 pure Node/source tests. The source guard
+  proves both `_electron.launch` integrations and the pre-ready Main ordering.
+- `yarn typecheck:node`, focused error-level ESLint, and `git diff --check` passed. Existing
+  unrelated `no-empty`, `no-empty-pattern`, and `no-unsafe-finally` fixture diagnostics were
+  excluded from the focused ESLint gate.
+- Electron, Playwright, the full Bitterless application, E2E package commands, and `yarn build`
+  were not run by explicit delivery instruction. Ral owns the retained E2E execution after review.

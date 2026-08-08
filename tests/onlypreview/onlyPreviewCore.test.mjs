@@ -733,6 +733,47 @@ test('argv routing accepts only absolute user targets and the open queue is read
   ]);
 });
 
+test('full-app E2E launchers require shared mock-Keychain isolation before Main readiness', () => {
+  const launchArgs = source('tests/e2e/electronLaunchArgs.ts');
+  const maestroFixture = source('tests/maestro/fixtures/bitterlessApp.fixture.ts');
+  const onlyPreviewFixture = source('tests/onlypreview/fixtures/onlyPreviewApp.fixture.ts');
+  const appMain = source('src/main/app.main.ts');
+
+  assert.doesNotMatch(launchArgs, /from ['"](?:electron|@playwright)/);
+  assert.match(
+    launchArgs,
+    /platform === 'darwin' \? \['--use-mock-keychain'\] : \[\][\s\S]*applicationPath[\s\S]*\.\.\.applicationArguments/
+  );
+
+  for (const fixture of [maestroFixture, onlyPreviewFixture]) {
+    assert.match(
+      fixture,
+      /import \{ buildBitterlessE2ELaunchArgs \} from '\.\.\/\.\.\/e2e\/electronLaunchArgs'/
+    );
+    const launchStart = fixture.indexOf('app = await electron.launch({');
+    assert.ok(launchStart >= 0);
+    const launchBody = fixture.slice(launchStart, fixture.indexOf('})', launchStart) + 2);
+    assert.match(launchBody, /args: buildBitterlessE2ELaunchArgs\(\{/);
+    assert.match(launchBody, /platform: process\.platform/);
+    assert.match(launchBody, /applicationPath: projectRoot/);
+    assert.doesNotMatch(launchBody, /args:\s*\[projectRoot/);
+  }
+
+  const guardStart = appMain.indexOf('const assertE2EKeychainIsolation');
+  const guardCall = appMain.indexOf('assertE2EKeychainIsolation();');
+  const configureE2ECall = appMain.indexOf('configureE2EUserData();');
+  const firstWhenReady = appMain.indexOf('app.whenReady()');
+  assert.ok(guardStart >= 0 && guardCall > guardStart);
+  assert.ok(guardCall < configureE2ECall && guardCall < firstWhenReady);
+  const guardBody = appMain.slice(guardStart, guardCall);
+  assert.match(
+    guardBody,
+    /isHelperMode \|\| !isE2E \|\| app\.isPackaged \|\| process\.platform !== 'darwin'/
+  );
+  assert.match(guardBody, /app\.commandLine\.hasSwitch\('use-mock-keychain'\)/);
+  assert.match(guardBody, /throw new Error\('BITTERLESS_E2E on macOS requires --use-mock-keychain'\)/);
+});
+
 test('recent-directory wiring stays Main-owned, value-free, and renderer-contract neutral', () => {
   const service = source('src/main/onlypreview/onlyPreviewRecentDirectory.service.ts');
   const handler = source('src/main/xpc/onlyPreview.handler.ts');

@@ -67,6 +67,15 @@ const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
+
+const assertE2EKeychainIsolation = (): void => {
+  if (isHelperMode || !isE2E || app.isPackaged || process.platform !== 'darwin') return;
+  if (!app.commandLine.hasSwitch('use-mock-keychain')) {
+    throw new Error('BITTERLESS_E2E on macOS requires --use-mock-keychain');
+  }
+};
+
+assertE2EKeychainIsolation();
 registerOnlyPreviewScheme();
 const onlyPreviewOpenQueue = new OnlyPreviewOpenQueue(openOnlyPreviewAbsoluteTarget);
 const CORE_SQLITE_STARTUP_TIMEOUT_MS = 60_000;
