@@ -1,7 +1,7 @@
 ---
 id: onlypreview-shell-ux-005
 scope: Simplify folder-first chrome and add current-file navigation and window-correct native actions
-status: implemented; independent verification pending
+status: done
 depends-on: [onlypreview-devtools-004]
 ---
 
@@ -82,7 +82,8 @@ cross the Shell view boundary, and open Settings relative to the active OnlyPrev
 
 # Review
 
-Pending independent verification.
+- [Round 1 — blocked by Settings work-area size clamping](../reviews/onlypreview-shell-ux-005-1.md)
+- [Round 2 — pass](../reviews/onlypreview-shell-ux-005-2.md)
 
 # Delivery Evidence — 2026-08-08
 
