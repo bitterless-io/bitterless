@@ -12,6 +12,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [onlypreview-standalone-only-002](tasks/onlypreview-standalone-only-002.md) | remove OnlyPreview from Omni and retain only its independent window graph | done | onlypreview-mvp-001 |
 | [onlypreview-menubar-003](tasks/onlypreview-menubar-003.md) | align standalone OnlyPreview window chrome with the EyesOnAgents MenuBar pattern | done | onlypreview-standalone-only-002 |
 | [onlypreview-devtools-004](tasks/onlypreview-devtools-004.md) | independently toggle detached DevTools for the standalone Shell and Preview views | done | onlypreview-menubar-003 |
+| [onlypreview-shell-ux-005](tasks/onlypreview-shell-ux-005.md) | simplify folder-first chrome, locate the previewed file, add native file actions, and anchor Settings to the active window | planned | onlypreview-devtools-004 |
 | [cowork-subapp-001](tasks/cowork-subapp-001.md) | original Cowork runtime and host integration | done | — |
 | [cowork-subapp-003](tasks/cowork-subapp-003.md) | dev-local SQLCipher key without OS Keychain | done | cowork-subapp-001 |
 | [cowork-subapp-002](tasks/cowork-subapp-002.md) | parity checks and Bitterless-launched Electron E2E | done | cowork-subapp-001, cowork-subapp-003 |
