@@ -17,10 +17,6 @@
         <span class="onlypreview-preview__badge">
           {{ descriptorType }}
         </span>
-        <span class="onlypreview-preview__badge onlypreview-preview__badge--read-only">
-          <IconLock :size="11" aria-hidden="true" />
-          {{ onlyPreviewI18n.preview.readOnly }}
-        </span>
       </div>
     </header>
 
@@ -173,7 +169,6 @@ import {
   IconAlertTriangle,
   IconFileSearch,
   IconFileUnknown,
-  IconLock,
   IconMusic
 } from '@tabler/icons-vue';
 import {

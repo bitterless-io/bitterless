@@ -30,17 +30,6 @@
 
       <div name="onlypreview__menuActions" class="onlypreview-shell__menu-actions">
         <a-button
-          name="onlypreview__openFile"
-          class="onlypreview-shell__command"
-          type="text"
-          size="mini"
-          :disabled="onlyPreviewShellStore.targetLoading"
-          @click="onlyPreviewShellStore.chooseFile()"
-        >
-          <template #icon><IconFilePlus :size="15" aria-hidden="true" /></template>
-          {{ onlyPreviewI18n.topbar.openFile }}
-        </a-button>
-        <a-button
           name="onlypreview__openFolder"
           class="onlypreview-shell__command"
           type="text"
@@ -50,18 +39,6 @@
         >
           <template #icon><IconFolderPlus :size="15" aria-hidden="true" /></template>
           {{ onlyPreviewI18n.topbar.openFolder }}
-        </a-button>
-        <a-button
-          name="onlypreview__refresh"
-          class="onlypreview-shell__icon-command"
-          type="text"
-          size="mini"
-          :title="onlyPreviewI18n.topbar.refresh"
-          :aria-label="onlyPreviewI18n.topbar.refresh"
-          :disabled="!onlyPreviewShellStore.workspace"
-          @click="onlyPreviewShellStore.refresh()"
-        >
-          <template #icon><IconRefresh :size="16" aria-hidden="true" /></template>
         </a-button>
         <a-button
           name="onlypreview__settings"
@@ -117,9 +94,18 @@
       <aside name="onlypreview__project" class="onlypreview-shell__project">
         <div name="onlypreview__projectHeader" class="onlypreview-shell__project-header">
           <span>{{ onlyPreviewI18n.project.label }}</span>
-          <span v-if="onlyPreviewShellStore.index" class="onlypreview-shell__project-count">
-            {{ onlyPreviewShellStore.index.entries.length }}
-          </span>
+          <a-button
+            name="onlypreview__locateCurrentFile"
+            class="onlypreview-shell__project-action"
+            type="text"
+            size="mini"
+            :title="onlyPreviewI18n.project.locateCurrentFile"
+            :aria-label="onlyPreviewI18n.project.locateCurrentFile"
+            :disabled="!onlyPreviewShellStore.selectedEntry"
+            @click="locateCurrentFile"
+          >
+            <template #icon><IconCrosshair :size="15" aria-hidden="true" /></template>
+          </a-button>
         </div>
 
         <label name="onlypreview__search" class="onlypreview-shell__search">
@@ -202,6 +188,7 @@
             @focus="onlyPreviewShellStore.setFocusedPath(row.entry.relativePath)"
             @click="onlyPreviewShellStore.handleTreeClick(row.entry, $event.detail)"
             @dblclick.prevent="onlyPreviewShellStore.handleTreeDoubleClick(row.entry)"
+            @contextmenu.prevent.stop="onlyPreviewShellStore.showFileContextMenu(row.entry)"
           >
             <IconChevronRight
               v-if="row.entry.nodeKind === 'directory'"
@@ -298,8 +285,6 @@
         {{ onlyPreviewShellStore.selectedEntry.previewHint.toUpperCase() }}
         <span aria-hidden="true">·</span>
         {{ formatOnlyPreviewBytes(onlyPreviewShellStore.selectedEntry.size) }}
-        <span aria-hidden="true">·</span>
-        {{ onlyPreviewI18n.preview.readOnly.toUpperCase() }}
       </span>
     </footer>
   </div>
@@ -310,8 +295,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   IconAlertTriangle,
   IconChevronRight,
+  IconCrosshair,
   IconFile,
-  IconFilePlus,
   IconFiles,
   IconFolder,
   IconFolderOpen,
@@ -319,7 +304,6 @@ import {
   IconLink,
   IconMaximize,
   IconMinus,
-  IconRefresh,
   IconSearch,
   IconSettings,
   IconX
@@ -351,15 +335,9 @@ const indexStatus = computed(() => {
   if (!onlyPreviewShellStore.workspace) return onlyPreviewI18n.project.readyToOpen.toUpperCase();
   if (!onlyPreviewShellStore.index) return onlyPreviewI18n.project.indexFailed.toUpperCase();
   if (onlyPreviewShellStore.index.truncated) {
-    return `${onlyPreviewI18n.project.indexPartial.toUpperCase()} · ${interpolateOnlyPreview(
-      onlyPreviewI18n.project.itemCount,
-      { count: onlyPreviewShellStore.index.entries.length }
-    ).toUpperCase()}`;
+    return onlyPreviewI18n.project.indexPartial.toUpperCase();
   }
-  return `${onlyPreviewI18n.project.indexReady.toUpperCase()} · ${interpolateOnlyPreview(
-    onlyPreviewI18n.project.itemCount,
-    { count: onlyPreviewShellStore.index.entries.length }
-  ).toUpperCase()}`;
+  return onlyPreviewI18n.project.indexReady.toUpperCase();
 });
 
 const reportPreviewBounds = (): void => {
@@ -403,19 +381,24 @@ const handleSearchInput = (event: Event): void => {
   onlyPreviewShellStore.setSearchQuery((event.target as HTMLInputElement).value);
 };
 
-const focusTreePath = async (relativePath: string): Promise<void> => {
+const focusTreePath = async (relativePath: string, center = false): Promise<void> => {
   if (!relativePath) return;
   await nextTick();
   const items = treeRef.value?.querySelectorAll<HTMLElement>('[role="treeitem"]') || [];
   for (const item of items) {
     if (item.dataset.relativePath !== relativePath) continue;
-    item.focus();
+    if (center) item.scrollIntoView({ block: 'center', inline: 'nearest' });
+    item.focus(center ? { preventScroll: true } : undefined);
     return;
   }
 };
 
 const focusProjectTree = (): void => {
   void focusTreePath(onlyPreviewShellStore.focusTree());
+};
+
+const locateCurrentFile = (): void => {
+  void focusTreePath(onlyPreviewShellStore.locateSelectedFile(), true);
 };
 
 const handleTreeKeydown = (event: KeyboardEvent): void => {

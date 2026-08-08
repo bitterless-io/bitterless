@@ -404,15 +404,37 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   expect(new Set(menuBar.actionHeights)).toEqual(new Set([27]));
   expect(menuBar.identity).toContain('OnlyPreview');
   expect(menuBar.actionNames).toEqual([
-    'onlypreview__openFile',
     'onlypreview__openFolder',
-    'onlypreview__refresh',
     'onlypreview__settings',
     ...(menuBar.platform === 'win32'
       ? ['onlypreview__minimize', 'onlypreview__maximize', 'onlypreview__close']
       : [])
   ]);
   expect(menuBar.paddingLeft).toBe(menuBar.platform === 'darwin' ? '78px' : '10px');
+  const folderFirstChrome = await evaluateRenderer<{
+    openFile: boolean;
+    refresh: boolean;
+    projectCount: boolean;
+    statusText: string;
+    locateDisabled: boolean;
+  }>(
+    'shell',
+    `({
+      openFile: Boolean(document.querySelector('[name="onlypreview__openFile"]')),
+      refresh: Boolean(document.querySelector('[name="onlypreview__refresh"]')),
+      projectCount: Boolean(document.querySelector('.onlypreview-shell__project-count')),
+      statusText: document.querySelector('[name="onlypreview__statusRail"]')?.textContent?.trim() || '',
+      locateDisabled: document.querySelector('[name="onlypreview__locateCurrentFile"]')?.hasAttribute('disabled') || false,
+    })`
+  );
+  expect(folderFirstChrome).toMatchObject({
+    openFile: false,
+    refresh: false,
+    projectCount: false,
+    locateDisabled: true
+  });
+  expect(folderFirstChrome.statusText).toBe('INDEX READY');
+  expect(folderFirstChrome.statusText).not.toMatch(/\d|READ ONLY/i);
 
   const isMaximized = async (): Promise<boolean> =>
     await app.evaluate(({ BaseWindow }) => {
@@ -521,6 +543,84 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     true
   );
   await expect.poll(async () => await selectionBroadcastCount(app)).toBe(1);
+
+  await clickTreeFile(onlyPreview, 'inside.txt');
+  await waitForRenderer(
+    onlyPreview,
+    'shell',
+    `document.querySelector('[name="onlypreview__treeRow"][aria-selected="true"]')?.getAttribute('data-relative-path')`,
+    'nested/inside.txt'
+  );
+  const preparedLocator = await evaluateRenderer<boolean>(
+    'shell',
+    `(() => {
+      const nested = document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested"]');
+      const search = document.querySelector('[name="onlypreview__search"] input');
+      const locate = document.querySelector('[name="onlypreview__locateCurrentFile"]');
+      if (!(nested instanceof HTMLButtonElement) || !(search instanceof HTMLInputElement) || !(locate instanceof HTMLButtonElement)) return false;
+      nested.click();
+      search.value = 'pixel';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      const original = HTMLElement.prototype.scrollIntoView;
+      window.__onlyPreviewOriginalScrollIntoView = original;
+      HTMLElement.prototype.scrollIntoView = function(options) {
+        window.__onlyPreviewScrollProbe = {
+          relativePath: this.getAttribute('data-relative-path'),
+          block: typeof options === 'object' && options ? options.block : null,
+        };
+      };
+      locate.click();
+      return true;
+    })()`
+  );
+  expect(preparedLocator).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        await evaluateRenderer(
+          'shell',
+          `({
+            search: document.querySelector('[name="onlypreview__search"] input')?.value || '',
+            activePath: document.activeElement?.getAttribute('data-relative-path') || '',
+            parentExpanded: document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested"]')?.getAttribute('aria-expanded'),
+            scroll: window.__onlyPreviewScrollProbe || null,
+          })`
+        )
+    )
+    .toEqual({
+      search: '',
+      activePath: 'nested/inside.txt',
+      parentExpanded: 'true',
+      scroll: { relativePath: 'nested/inside.txt', block: 'center' }
+    });
+  await evaluateRenderer(
+    'shell',
+    `(() => {
+      if (window.__onlyPreviewOriginalScrollIntoView) {
+        HTMLElement.prototype.scrollIntoView = window.__onlyPreviewOriginalScrollIntoView;
+      }
+      delete window.__onlyPreviewOriginalScrollIntoView;
+      delete window.__onlyPreviewScrollProbe;
+    })()`
+  );
+  await clickTreeFile(onlyPreview, 'copy.txt');
+  await waitForRenderer(
+    onlyPreview,
+    'shell',
+    `document.querySelector('[name="onlypreview__treeRow"][aria-selected="true"]')?.getAttribute('data-relative-path')`,
+    'copy.txt'
+  );
+  const visibleReadOnlyLabels = await Promise.all([
+    evaluateRenderer<boolean>(
+      'shell',
+      `/READ ONLY/i.test(document.querySelector('[name="onlypreview__shell"]')?.textContent || '')`
+    ),
+    evaluateRenderer<boolean>(
+      'preview',
+      `Boolean(document.querySelector('.onlypreview-preview__badge--read-only'))`
+    )
+  ]);
+  expect(visibleReadOnlyLabels).toEqual([false, false]);
 
   expect(graph.contentSize[0]).toBeLessThanOrEqual(1180);
   expect(graph.contentSize[1]).toBeLessThanOrEqual(760);
@@ -762,6 +862,164 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
       )
       .toBe(0);
   }
+});
+
+test('opens a Main-owned native file menu and revalidates each file action', async ({
+  onlyPreview
+}) => {
+  const { app, evaluateRenderer } = onlyPreview;
+  await waitForRenderer(
+    onlyPreview,
+    'shell',
+    `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
+    7
+  );
+
+  await app.evaluate(({ BaseWindow, Menu, shell }) => {
+    type StoredMenuItem = {
+      id?: string;
+      label?: string;
+      type?: string;
+      click?: () => void;
+    };
+    type NativeMenuProbe = {
+      items: StoredMenuItem[];
+      ownerMatches: boolean;
+      popupCount: number;
+      openedPaths: string[];
+      revealedPaths: string[];
+    };
+    const state = globalThis as typeof globalThis & {
+      __onlyPreviewNativeMenuProbe?: NativeMenuProbe;
+    };
+    state.__onlyPreviewNativeMenuProbe = {
+      items: [],
+      ownerMatches: false,
+      popupCount: 0,
+      openedPaths: [],
+      revealedPaths: []
+    };
+    const originalBuildFromTemplate = Menu.buildFromTemplate.bind(Menu);
+    Menu.buildFromTemplate = (template) => {
+      const menu = originalBuildFromTemplate(template);
+      if (template.some((item) => item.id === 'onlypreview-preview')) {
+        state.__onlyPreviewNativeMenuProbe!.items = template as unknown as StoredMenuItem[];
+        menu.popup = (options): void => {
+          const owner = BaseWindow.getAllWindows().find(
+            (window) => window.getTitle() === 'OnlyPreview'
+          );
+          state.__onlyPreviewNativeMenuProbe!.ownerMatches = options?.window === owner;
+          state.__onlyPreviewNativeMenuProbe!.popupCount += 1;
+        };
+      }
+      return menu;
+    };
+    shell.openPath = async (path): Promise<string> => {
+      state.__onlyPreviewNativeMenuProbe!.openedPaths.push(path);
+      return '';
+    };
+    shell.showItemInFolder = (path): void => {
+      state.__onlyPreviewNativeMenuProbe!.revealedPaths.push(path);
+    };
+  });
+
+  const dispatched = await evaluateRenderer<boolean>(
+    'shell',
+    `(() => {
+      const row = document.querySelector('[name="onlypreview__treeRow"][data-relative-path="copy.txt"]');
+      if (!(row instanceof HTMLButtonElement)) return false;
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }));
+      return true;
+    })()`
+  );
+  expect(dispatched).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        await app.evaluate(() => {
+          const probe = (
+            globalThis as typeof globalThis & {
+              __onlyPreviewNativeMenuProbe?: {
+                items: Array<{ id?: string; label?: string; type?: string }>;
+                ownerMatches: boolean;
+                popupCount: number;
+              };
+            }
+          ).__onlyPreviewNativeMenuProbe;
+          return {
+            ids: probe?.items.filter((item) => item.type !== 'separator').map((item) => item.id),
+            labels: probe?.items
+              .filter((item) => item.type !== 'separator')
+              .map((item) => item.label),
+            ownerMatches: probe?.ownerMatches,
+            popupCount: probe?.popupCount
+          };
+        })
+    )
+    .toEqual({
+      ids: [
+        'onlypreview-preview',
+        'onlypreview-open-externally',
+        'onlypreview-reveal-in-folder'
+      ],
+      labels: ['Preview', 'Open in system app', 'Reveal in folder'],
+      ownerMatches: true,
+      popupCount: 1
+    });
+  expect(
+    await evaluateRenderer<boolean>(
+      'shell',
+      `Boolean(document.querySelector('[role="menu"], .arco-dropdown, .arco-trigger-popup'))`
+    )
+  ).toBe(false);
+
+  await app.evaluate(() => {
+    const probe = (
+      globalThis as typeof globalThis & {
+        __onlyPreviewNativeMenuProbe?: {
+          items: Array<{ id?: string; click?: () => void }>;
+        };
+      }
+    ).__onlyPreviewNativeMenuProbe;
+    probe?.items.find((item) => item.id === 'onlypreview-preview')?.click?.();
+  });
+  await waitForRenderer(
+    onlyPreview,
+    'shell',
+    `document.querySelector('[name="onlypreview__treeRow"][aria-selected="true"]')?.getAttribute('data-relative-path')`,
+    'copy.txt'
+  );
+
+  await app.evaluate(() => {
+    const probe = (
+      globalThis as typeof globalThis & {
+        __onlyPreviewNativeMenuProbe?: {
+          items: Array<{ id?: string; click?: () => void }>;
+        };
+      }
+    ).__onlyPreviewNativeMenuProbe;
+    probe?.items.find((item) => item.id === 'onlypreview-open-externally')?.click?.();
+    probe?.items.find((item) => item.id === 'onlypreview-reveal-in-folder')?.click?.();
+  });
+  await expect
+    .poll(
+      async () =>
+        await app.evaluate(() => {
+          const probe = (
+            globalThis as typeof globalThis & {
+              __onlyPreviewNativeMenuProbe?: {
+                openedPaths: string[];
+                revealedPaths: string[];
+              };
+            }
+          ).__onlyPreviewNativeMenuProbe;
+          return {
+            opened: probe?.openedPaths.map((path) => path.endsWith('copy.txt')),
+            revealed: probe?.revealedPaths.map((path) => path.endsWith('copy.txt'))
+          };
+        })
+    )
+    .toEqual({ opened: [true], revealed: [true] });
 });
 
 test('toggles detached Shell and Preview DevTools independently without changing view bounds', async ({
@@ -1134,21 +1392,55 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     () => (window as unknown as { onlyPreviewEnv: { hostToken: string } }).onlyPreviewEnv.hostToken
   );
   expect(firstSettingsToken).not.toBe(shellToken);
-  const settingsWindow = await app.evaluate(({ BrowserWindow }) => {
+  const settingsWindow = await app.evaluate(({ BaseWindow, BrowserWindow, screen }) => {
     const windows = BrowserWindow.getAllWindows().filter((window) =>
       /\/onlypreview\/settings\/index\.html(?:$|[?#])/.test(window.webContents.getURL())
     );
     const window = windows[0];
+    const parent = BaseWindow.getAllWindows().find(
+      (candidate) => candidate.getTitle() === 'OnlyPreview'
+    );
+    const parentBounds = parent?.getBounds();
     return {
       count: windows.length,
       minimumSize: window?.getMinimumSize(),
       bounds: window?.getBounds(),
+      parentBounds,
+      parentMatches: window?.getParentWindow() === parent,
+      workArea: parentBounds ? screen.getDisplayMatching(parentBounds).workArea : null,
       preferences: window?.webContents.getLastWebPreferences()
     };
   });
   expect(settingsWindow.count).toBe(1);
   expect(settingsWindow.minimumSize).toEqual([800, 600]);
   expect(settingsWindow.bounds).toMatchObject({ width: 800, height: 600 });
+  expect(settingsWindow.parentMatches).toBe(true);
+  if (!settingsWindow.bounds || !settingsWindow.parentBounds || !settingsWindow.workArea) {
+    throw new Error('OnlyPreview Settings placement data unavailable');
+  }
+  const expectedSettingsX = Math.min(
+    settingsWindow.workArea.x +
+      Math.max(0, settingsWindow.workArea.width - settingsWindow.bounds.width),
+    Math.max(
+      settingsWindow.workArea.x,
+      Math.round(
+        settingsWindow.parentBounds.x +
+          (settingsWindow.parentBounds.width - settingsWindow.bounds.width) / 2
+      )
+    )
+  );
+  const expectedSettingsY = Math.min(
+    settingsWindow.workArea.y +
+      Math.max(0, settingsWindow.workArea.height - settingsWindow.bounds.height),
+    Math.max(
+      settingsWindow.workArea.y,
+      Math.round(
+        settingsWindow.parentBounds.y +
+          (settingsWindow.parentBounds.height - settingsWindow.bounds.height) / 2
+      )
+    )
+  );
+  expect(settingsWindow.bounds).toMatchObject({ x: expectedSettingsX, y: expectedSettingsY });
   expect(settingsWindow.preferences).toMatchObject({
     sandbox: true,
     contextIsolation: true,
@@ -1190,6 +1482,24 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     expect(button!.top).toBeGreaterThanOrEqual(0);
     expect(button!.bottom).toBeLessThanOrEqual(settingsLayout.viewport.height + 1);
   }
+  await app.evaluate(({ BrowserWindow }) => {
+    const settingsWindow = BrowserWindow.getAllWindows().find((window) =>
+      /\/onlypreview\/settings\/index\.html(?:$|[?#])/.test(window.webContents.getURL())
+    );
+    if (!settingsWindow) throw new Error('OnlyPreview settings window unavailable');
+    settingsWindow.setSize(900, 650);
+  });
+  await expect
+    .poll(
+      async () =>
+        await app.evaluate(({ BrowserWindow }) => {
+          const settingsWindow = BrowserWindow.getAllWindows().find((window) =>
+            /\/onlypreview\/settings\/index\.html(?:$|[?#])/.test(window.webContents.getURL())
+          );
+          return settingsWindow?.getSize();
+        })
+    )
+    .toEqual([900, 650]);
 
   const fontSizeInput = firstSettingsPage
     .locator(
@@ -1253,11 +1563,71 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
   );
   await expect.poll(async () => await selectionBroadcastCount(app)).toBe(1);
 
+  await app.evaluate(({ BaseWindow, screen }) => {
+    const parent = BaseWindow.getAllWindows().find(
+      (window) => window.getTitle() === 'OnlyPreview'
+    );
+    if (!parent) throw new Error('OnlyPreview BaseWindow unavailable');
+    const bounds = parent.getBounds();
+    const workArea = screen.getDisplayMatching(bounds).workArea;
+    parent.setBounds({
+      x: workArea.x + workArea.width - Math.round(bounds.width / 3),
+      y: workArea.y + workArea.height - Math.round(bounds.height / 3),
+      width: bounds.width,
+      height: bounds.height
+    });
+  });
   const secondSettingsPage = await openSettings();
   const secondSettingsToken = await secondSettingsPage.evaluate(
     () => (window as unknown as { onlyPreviewEnv: { hostToken: string } }).onlyPreviewEnv.hostToken
   );
   expect(secondSettingsToken).not.toBe(firstSettingsToken);
+  await expect
+    .poll(
+      async () =>
+        await app.evaluate(({ BaseWindow, BrowserWindow, screen }) => {
+          const parent = BaseWindow.getAllWindows().find(
+            (window) => window.getTitle() === 'OnlyPreview'
+          );
+          const settings = BrowserWindow.getAllWindows().find((window) =>
+            /\/onlypreview\/settings\/index\.html(?:$|[?#])/.test(window.webContents.getURL())
+          );
+          if (!parent || !settings) return null;
+          const parentBounds = parent.getBounds();
+          const bounds = settings.getBounds();
+          const workArea = screen.getDisplayMatching(parentBounds).workArea;
+          const expectedX = Math.min(
+            workArea.x + Math.max(0, workArea.width - bounds.width),
+            Math.max(
+              workArea.x,
+              Math.round(parentBounds.x + (parentBounds.width - bounds.width) / 2)
+            )
+          );
+          const expectedY = Math.min(
+            workArea.y + Math.max(0, workArea.height - bounds.height),
+            Math.max(
+              workArea.y,
+              Math.round(parentBounds.y + (parentBounds.height - bounds.height) / 2)
+            )
+          );
+          return {
+            size: settings.getSize(),
+            parentMatches: settings.getParentWindow() === parent,
+            centeredAndClamped: bounds.x === expectedX && bounds.y === expectedY,
+            insideWorkArea:
+              bounds.x >= workArea.x &&
+              bounds.y >= workArea.y &&
+              bounds.x + bounds.width <= workArea.x + workArea.width &&
+              bounds.y + bounds.height <= workArea.y + workArea.height
+          };
+        })
+    )
+    .toEqual({
+      size: [900, 650],
+      parentMatches: true,
+      centeredAndClamped: true,
+      insideWorkArea: true
+    });
   const persistedFontSizeInput = secondSettingsPage
     .locator(
       '[name="onlypreview__fontSize"] input, input[name="onlypreview__fontSize"], #onlypreview-font-size input, input#onlypreview-font-size'

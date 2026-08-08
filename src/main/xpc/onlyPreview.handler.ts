@@ -1,4 +1,4 @@
-import { dialog, shell } from 'electron';
+import { dialog, Menu, shell } from 'electron';
 import { XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import {
   OnlyPreviewContractError,
@@ -11,8 +11,9 @@ import {
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewApi,
+  type OnlyPreviewFileRef,
+  type OnlyPreviewHostRequest,
   type OnlyPreviewResult,
-  type OnlyPreviewTargetKind,
   type OnlyPreviewWorkspace
 } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
@@ -22,6 +23,7 @@ import { onlyPreviewClassifierService } from '@main/onlypreview/onlyPreviewClass
 import { onlyPreviewSettingsService } from '@main/onlypreview/onlyPreviewSettings.service';
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
+import { i18nHelper } from '@main/i18n/i18n.helper';
 
 type ApiParams<T extends keyof OnlyPreviewApi> = Parameters<OnlyPreviewApi[T]>[0];
 
@@ -31,11 +33,6 @@ const runOperation = async <T>(operation: () => Promise<T>): Promise<OnlyPreview
   } catch (error) {
     return onlyPreviewFailure(error);
   }
-};
-
-const parseTargetKind = (value: unknown): OnlyPreviewTargetKind => {
-  if (value === 'file' || value === 'directory') return value;
-  throw new OnlyPreviewContractError('INVALID_INPUT', 'OnlyPreview target kind is invalid.');
 };
 
 const broadcastWorkspace = (hostId: string): void => {
@@ -55,15 +52,15 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     });
   }
 
-  async chooseTarget(
-    params: ApiParams<'chooseTarget'>
+  async chooseFolder(
+    params: ApiParams<'chooseFolder'>
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>> {
     return await runOperation(async () => {
       const host = onlyPreviewHostRegistry.require(params?.hostToken, ['content']);
-      const kind = parseTargetKind(params?.kind);
-      const result = await dialog.showOpenDialog({
-        title: kind === 'file' ? 'Open File in OnlyPreview' : 'Open Folder in OnlyPreview',
-        properties: kind === 'file' ? ['openFile'] : ['openDirectory']
+      const window = onlyPreviewWindowHelper.getStandaloneWindow(host.hostToken);
+      const result = await dialog.showOpenDialog(window, {
+        title: 'Open Folder in OnlyPreview',
+        properties: ['openDirectory']
       });
       const target = result.canceled ? null : (result.filePaths[0] ?? null);
       if (!target) return null;
@@ -171,6 +168,39 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     });
   }
 
+  async showFileContextMenu(
+    params: ApiParams<'showFileContextMenu'>
+  ): ReturnType<OnlyPreviewApi['showFileContextMenu']> {
+    return await runOperation(async () => {
+      const window = onlyPreviewWindowHelper.getStandaloneWindow(params?.hostToken);
+      const file = await onlyPreviewWorkspaceRegistry.resolveFile(params?.hostToken, params);
+      const request: OnlyPreviewHostRequest & OnlyPreviewFileRef = {
+        hostToken: file.host.hostToken,
+        workspaceId: file.workspace.workspaceId,
+        relativePath: file.relativePath
+      };
+      const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
+      Menu.buildFromTemplate([
+        {
+          id: 'onlypreview-preview',
+          label: labels.preview,
+          click: () => void this.selectStandaloneFile(request)
+        },
+        { type: 'separator' },
+        {
+          id: 'onlypreview-open-externally',
+          label: labels.openExternally,
+          click: () => void this.openExternally(request)
+        },
+        {
+          id: 'onlypreview-reveal-in-folder',
+          label: labels.revealInFolder,
+          click: () => void this.revealInFolder(request)
+        }
+      ]).popup({ window });
+    });
+  }
+
   async openExternally(
     params: ApiParams<'openExternally'>
   ): ReturnType<OnlyPreviewApi['openExternally']> {
@@ -240,10 +270,7 @@ onlyPreviewWindowHelper.setCommandHandler(({ hostToken, command }) => {
     void onlyPreviewHandler.openSettings({ hostToken });
     return;
   }
-  void onlyPreviewHandler.chooseTarget({
-    hostToken,
-    kind: command === 'choose-directory' ? 'directory' : 'file'
-  });
+  void onlyPreviewHandler.chooseFolder({ hostToken });
 });
 
 export const openOnlyPreviewAbsoluteTarget = async (target: string): Promise<void> => {

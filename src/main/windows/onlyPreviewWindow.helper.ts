@@ -2,6 +2,7 @@ import {
   app,
   BaseWindow,
   BrowserWindow,
+  screen,
   WebContentsView,
   shell,
   type Input,
@@ -35,8 +36,7 @@ const STATUS_HEIGHT = 25;
 
 type OnlyPreviewRendererMode = 'shell' | 'preview' | 'settings';
 type OnlyPreviewNativeCommand =
-  | 'choose-file'
-  | 'choose-directory'
+  | 'choose-folder'
   | 'open-settings'
   | 'refresh'
   | 'focus-project'
@@ -143,6 +143,24 @@ const clampPreviewBounds = (
   };
 };
 
+const settingsBoundsForParent = (
+  parentBounds: Rectangle,
+  width: number,
+  height: number
+): Rectangle => {
+  const workArea = screen.getDisplayMatching(parentBounds).workArea;
+  const maxX = workArea.x + Math.max(0, workArea.width - width);
+  const maxY = workArea.y + Math.max(0, workArea.height - height);
+  const centeredX = Math.round(parentBounds.x + (parentBounds.width - width) / 2);
+  const centeredY = Math.round(parentBounds.y + (parentBounds.height - height) / 2);
+  return {
+    x: Math.min(maxX, Math.max(workArea.x, centeredX)),
+    y: Math.min(maxY, Math.max(workArea.y, centeredY)),
+    width,
+    height
+  };
+};
+
 export class OnlyPreviewWindowHelper {
   baseWindow: BaseWindow | null = null;
   shellView: WebContentsView | null = null;
@@ -188,6 +206,10 @@ export class OnlyPreviewWindowHelper {
   getStandaloneHost(): OnlyPreviewHostCapability | null {
     const host = this.standaloneHost;
     return host && onlyPreviewHostRegistry.isLive(host.hostToken) ? host : null;
+  }
+
+  getStandaloneWindow(hostToken: string): BaseWindow {
+    return this.requireStandaloneWindow(hostToken);
   }
 
   async ensureStandalone(): Promise<OnlyPreviewHostCapability> {
@@ -250,9 +272,12 @@ export class OnlyPreviewWindowHelper {
   }
 
   async openSettings(sourceHostToken: string): Promise<void> {
-    onlyPreviewHostRegistry.require(sourceHostToken, ['content']);
+    const parentWindow = this.requireStandaloneWindow(sourceHostToken);
     const current = this.settingsWindow;
     if (current && !current.isDestroyed()) {
+      current.setBounds(
+        settingsBoundsForParent(parentWindow.getBounds(), ...current.getSize())
+      );
       current.show();
       current.focus();
       return;
@@ -261,16 +286,18 @@ export class OnlyPreviewWindowHelper {
     const host = onlyPreviewHostRegistry.issue('settings', 'settings');
     this.settingsHost = host;
     const restored = windowStateService.resolve('onlypreview-settings');
+    const width = restored?.bounds.width ?? MIN_WIDTH;
+    const height = restored?.bounds.height ?? MIN_HEIGHT;
+    const bounds = settingsBoundsForParent(parentWindow.getBounds(), width, height);
     const target = rendererTarget('settings');
     const window = new BrowserWindow({
       title: 'OnlyPreview Settings',
-      width: restored?.bounds.width ?? MIN_WIDTH,
-      height: restored?.bounds.height ?? MIN_HEIGHT,
+      ...bounds,
+      parent: parentWindow,
       minWidth: MIN_WIDTH,
       minHeight: MIN_HEIGHT,
       show: false,
       backgroundColor: '#f5f3ee',
-      ...(restored ? { x: restored.bounds.x, y: restored.bounds.y } : {}),
       webPreferences: {
         preload: join(__dirname, '../preload/onlypreview.js'),
         sandbox: true,
@@ -284,7 +311,10 @@ export class OnlyPreviewWindowHelper {
     this.settingsWindowState = windowStateService.register('onlypreview-settings', window);
     configureNavigationFence(window.webContents, target.url);
     window.once('ready-to-show', () => {
-      if (this.settingsWindow === window) this.settingsWindowState?.show();
+      if (this.settingsWindow !== window) return;
+      window.setBounds(settingsBoundsForParent(parentWindow.getBounds(), ...window.getSize()));
+      window.show();
+      window.focus();
     });
     window.webContents.once('render-process-gone', () => {
       if (this.settingsWindow === window) this.destroySettings();
@@ -503,7 +533,7 @@ export class OnlyPreviewWindowHelper {
     }
     if (input.type === 'keyDown' && key === 'f5') return 'refresh';
     if (input.type !== 'keyDown' || !isCommandModifier(input)) return null;
-    if (key === 'o') return input.shift ? 'choose-directory' : 'choose-file';
+    if (key === 'o') return 'choose-folder';
     if (key === 'r') return 'refresh';
     if (key === ',' || (process.platform !== 'darwin' && key === 's' && input.alt)) {
       return 'open-settings';

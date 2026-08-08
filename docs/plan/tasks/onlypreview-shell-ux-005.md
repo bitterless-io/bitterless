@@ -1,7 +1,7 @@
 ---
 id: onlypreview-shell-ux-005
 scope: Simplify folder-first chrome and add current-file navigation and window-correct native actions
-status: planned
+status: implemented; independent verification pending
 depends-on: [onlypreview-devtools-004]
 ---
 
@@ -80,4 +80,26 @@ cross the Shell view boundary, and open Settings relative to the active OnlyPrev
 
 # Review
 
-Pending implementation and independent verification.
+Pending independent verification.
+
+# Delivery Evidence — 2026-08-08
+
+- The exact renderer API is folder-first, while the Main-owned OS association route continues to
+  accept one absolute file and derive its containing workspace. Visible Open File, Refresh,
+  indexed-item totals, and read-only labels are removed without weakening refresh shortcuts or
+  Monaco's read-only enforcement.
+- The Project header's quiet 27px Tabler crosshair clears search, expands the current file's
+  ancestors, centers its row, and focuses it without a second scroll. File-row right click requests
+  a localized Main-owned native menu whose Preview, system-open, and reveal callbacks each
+  re-resolve the host-bound relative file reference.
+- Settings is parented to the active standalone `BaseWindow`, restores only persisted size, and is
+  re-centered and work-area clamped from the current parent whenever opened.
+- All 31 OnlyPreview Node tests, Node typecheck, renderer-i18n check, targeted error-level ESLint,
+  Electron Vite build, the 5-test Electron E2E suite, and `git diff --check` pass. E2E covers the
+  folder-only/count-free chrome, current-file locator, native-menu ownership and all actions,
+  persisted Settings size plus current-parent placement, and existing media/PDF/DevTools behavior.
+- Normal and 800×600 native captures were visually inspected: the established Royal Blue/light
+  hierarchy and Index Rail remain intact, the crosshair stays quiet and legible, and no action,
+  file row, preview, or status content is clipped. Full `yarn typecheck:web` remains blocked by the
+  repository's unrelated existing connector, poker-test, Home, and shared typing failures; it
+  reports no OnlyPreview diagnostic.

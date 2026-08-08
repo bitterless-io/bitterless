@@ -25,6 +25,11 @@ export const en = {
     keychainDeniedMessage: 'To protect your data security, this application requires access to the system Keychain for encryption. Please allow access in the system dialog.',
     keychainDeniedOk: 'Deny',
     keychainDeniedCancel: 'Cancel',
+    onlyPreviewFileMenu: {
+      preview: 'Preview',
+      openExternally: 'Open in system app',
+      revealInFolder: 'Reveal in folder',
+    },
   },
   menuBar: {
     restartToUpdate: 'update',

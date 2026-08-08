@@ -5,7 +5,6 @@ export const ONLY_PREVIEW_MAX_TEXT_BYTES = 8 * 1024 * 1024;
 
 export type OnlyPreviewHostKind = 'standalone' | 'settings';
 export type OnlyPreviewHostRole = 'content' | 'settings';
-export type OnlyPreviewTargetKind = 'file' | 'directory';
 export type OnlyPreviewNodeKind = 'file' | 'directory' | 'symlink';
 export type OnlyPreviewKind = 'text' | 'pdf' | 'image' | 'audio' | 'video' | 'unsupported';
 export type OnlyPreviewTextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
@@ -128,8 +127,8 @@ export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged'
 
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
-  chooseTarget(
-    params: OnlyPreviewHostRequest & { kind: OnlyPreviewTargetKind }
+  chooseFolder(
+    params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
   restoreWorkspace(
     params: OnlyPreviewHostRequest
@@ -152,6 +151,9 @@ export interface OnlyPreviewApi {
   minimizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   toggleMaximizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   closeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  showFileContextMenu(
+    params: OnlyPreviewHostRequest & OnlyPreviewFileRef
+  ): Promise<OnlyPreviewResult<void>>;
   openExternally(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;
