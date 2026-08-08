@@ -46,7 +46,8 @@ Bitterless Home / Mini Apps
 ## Scope-wide constraints
 
 - Mini Apps open as independent singleton windows; they are not hidden routes inside the home
-  renderer. A documented Omni adapter may render the same sub-application directly inside a cell.
+  renderer. A documented Omni adapter may render a compatible sub-application directly inside a
+  cell. OnlyPreview explicitly has no Omni adapter because it owns a multi-view native window graph.
 - All windows have a minimum usable size of `800x600`.
 - Home launch and non-privileged cross-process boundaries use `electron-xpc`. Filesystem access
   through XPC must use Main-issued capabilities because generic XPC does not preserve sender

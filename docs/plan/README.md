@@ -8,7 +8,8 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 
 | id | scope | status | depends-on |
 |---|---|---|---|
-| [onlypreview-mvp-001](tasks/onlypreview-mvp-001.md) | read-only indexed file preview, multi-view window, Omni, settings, and OS open integration | ready | — |
+| [onlypreview-mvp-001](tasks/onlypreview-mvp-001.md) | initial read-only indexed preview MVP; Omni embedding superseded by standalone-only follow-up | done | — |
+| [onlypreview-standalone-only-002](tasks/onlypreview-standalone-only-002.md) | remove OnlyPreview from Omni and retain only its independent window graph | in-progress | onlypreview-mvp-001 |
 | [cowork-subapp-001](tasks/cowork-subapp-001.md) | original Cowork runtime and host integration | done | — |
 | [cowork-subapp-003](tasks/cowork-subapp-003.md) | dev-local SQLCipher key without OS Keychain | done | cowork-subapp-001 |
 | [cowork-subapp-002](tasks/cowork-subapp-002.md) | parity checks and Bitterless-launched Electron E2E | done | cowork-subapp-001, cowork-subapp-003 |

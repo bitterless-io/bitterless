@@ -13,7 +13,7 @@ design document.
 - [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
   services with unchanged XPC and runtime behavior.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
-  standalone multi-view read-only preview, Omni embedding, settings, and OS file-open routing.
+  standalone-only multi-view read-only preview, settings, and OS file-open routing.
 - [Trench sub-application](features/coin.md) - full-width trench analysis tabs with background Codex
   analysis and local resource configuration.
 - [Coin layout](features/coin-layout.md) - full-width analysis console, Resources page, tab layouts,
@@ -33,8 +33,8 @@ design document.
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
-  or local Todo/EyesOnAgents/Translator/Motto/OnlyPreview operation views with development and
-  packaged runtime mapping.
+  or local Todo/EyesOnAgents/Translator/Motto operation views with development and packaged
+  runtime mapping.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
 - [Translator mini app](features/translator.md) - fixed GPT-5.5 realtime bilingual translation

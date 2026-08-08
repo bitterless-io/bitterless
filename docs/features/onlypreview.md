@@ -14,8 +14,8 @@ read-only rendering, its app-specific preferences, and the standalone window gra
 edits, writes, creates, renames, moves, or deletes user files. Unsupported local files still open
 to an explicit metadata surface with an action to use the system application.
 
-The public identity is `OnlyPreview`; stable code IDs, Omni IDs, renderer directories, setting
-keys, and window-state keys use `onlypreview`.
+The public identity is `OnlyPreview`; stable code IDs, renderer directories, setting keys, and
+window-state keys use `onlypreview`.
 
 The product-level rationale and visual direction live in
 `areas/only-preview/feature-design.md` in the private overmind parent. This document is the
@@ -35,7 +35,6 @@ implementation contract inside Bitterless and contains no private user data.
 | Code/PDF/image/audio/video/unsupported presentation | shared OnlyPreview Preview surface |
 | Monaco model/editor lifecycle | Preview surface |
 | Preferences | Main handler backed by `SettingDao` |
-| Omni cell creation and bounds | existing `OmniWindowHelper` |
 | Window geometry | existing `windowStateService` |
 
 ## Window And View Composition
@@ -72,31 +71,27 @@ implementation contract inside Bitterless and contains no private user data.
 - The standalone and Setting windows are singletons. Reopening focuses the existing instance.
 - Both top-level windows use `windowStateService`, `minWidth: 800`, and `minHeight: 600`.
 
-### Omni
+### Standalone-only boundary
 
-Omni loads the OnlyPreview Shell as a normal first-party mini-app operation `WebContentsView` with
-`--mode=omni`. The Shell renders the same Preview surface inside its own right-hand DOM region.
-It does not add native child views across the cell boundary because Omni remains the sole owner of
-cell bounds. It must hide standalone-only native window controls.
-
-Standalone multi-view composition is the primary implementation. The embedded DOM fallback is an
-explicit host adapter, not a different file/index contract.
+OnlyPreview is not an Omni mini app. Its usable surface owns a native `BaseWindow` graph containing
+separate Shell and Preview `WebContentsView`s plus its app-specific Setting window. Omni must not
+list `onlypreview`, accept it in persisted cell state, map it to a runtime target, or load an
+OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 
 ## Renderer Entries
 
 | Entry | Preload | Host mode | Responsibility |
 |---|---|---|---|
-| `onlypreview/shell` | `onlypreview.js` | `standalone` or `omni` | command bar, tree, search, status, embedded preview fallback |
+| `onlypreview/shell` | `onlypreview.js` | `shell` | command bar, tree, search, status, native Preview bounds host |
 | `onlypreview/preview` | `onlypreview.js` | `preview` | standalone preview surface only |
 | `onlypreview/settings` | `onlypreview.js` | `settings` | app-specific settings form |
 
 The preload imports `electron-xpc/preload` and exposes only immutable mode/platform context plus the
 Main-issued host capability through `contextBridge`. Main creates and pre-registers one unguessable
 `hostToken` before each OnlyPreview view is created, then passes it through
-`additionalArguments`. Standalone Shell and Preview share one content host; the Setting window has
-its own settings-only host; each Omni cell has its own content host. Every entry initializes
-renderer language before Vue mount. All three entries are first-party local targets and must be
-registered in the application log policy and i18n checker.
+`additionalArguments`. Shell and Preview share one content host; the Setting window has its own
+settings-only host. Every entry initializes renderer language before Vue mount. All three entries
+are first-party local targets and must be registered in the application log policy and i18n checker.
 Because every OnlyPreview renderer is sandboxed, the production build rebundles this preload as one
 self-contained file: it may require Electron, but it must not require a local generated chunk.
 
@@ -299,20 +294,16 @@ the common associations and the existing per-machine NSIS installer adds a gener
 `*\\shell\\OnlyPreview` `Open in Bitterless` verb; uninstall removes exactly that verb. Runtime
 routing accepts any regular file and shows its fallback surface for an unsupported type.
 
-## Home And Omni Integration
+## Home Integration And Omni Exclusion
 
 - Home adds one visible `onlypreview` card and an XPC launch emitter. It uses the existing
   per-card in-flight guard.
 - Auth invalidation and host quit explicitly destroy the standalone window, Setting window,
   views, workspaces, and tokens.
-- Omni extends its typed mini-app allowlist, display URL map, runtime mapping, Control selection
-  list, icon, i18n, contract tests, and documentation with `onlypreview`.
-- Omni creates and registers a distinct OnlyPreview content `hostToken` per cell, loads
-  `onlypreview/shell` with the OnlyPreview preload, `--mode=omni`, and that token, and uses
-  `sandbox: true` for this mini app. Replace, close, renderer failure, and Omni destruction all
-  revoke the cell host before closing its view. It fences top-level navigation and new-window
-  requests exactly like every other privileged local mini app.
-- The Omni instance does not open or depend on the standalone window.
+- Omni's typed mini-app allowlist, persisted cell contract, runtime mapping, Control selection,
+  renderer preload map, and cell lifecycle must exclude `onlypreview`.
+- A persisted Omni leaf with `miniAppId: 'onlypreview'` is unsupported input and follows Omni's
+  existing fail-closed layout recovery instead of opening or silently substituting another app.
 
 ## Layout And Visual Contract
 
@@ -410,11 +401,12 @@ them.
   exclusions, development explicit arguments, and serialized queue behavior.
 - Source/integration tests cover three renderer entries, preload, sandboxed view preferences,
   explicit child-view cleanup, Home card, auth/quit cleanup, log policy, i18n registration, and
-  Omni allowlist/runtime/UI mapping.
+  the absence of OnlyPreview from Omni's allowlist/runtime/UI mapping.
 - Renderer verification covers stale-result suppression, read-only Monaco options and disposal,
-  tree/preview/settings states, BEM/name markers, keyboard routing, and embedded-host adaptation.
+  tree/preview/settings states, BEM/name markers, and keyboard routing.
 - Electron E2E covers a fixture directory containing code, PDF, image, audio, video, and unknown
-  files; verifies the standalone multi-view bounds, Setting singleton, Omni entry, and no edit path.
+  files; verifies the standalone multi-view bounds, Setting singleton, and no edit path. Omni
+  contract/UI tests prove that `onlypreview` cannot be selected or restored as a cell mini app.
 - `yarn build` must emit all three renderer HTML files and `out/preload/onlypreview.js`.
 - Packaged manual verification remains required for OS association registration and the actual
   Chromium codec matrix on macOS and Windows.

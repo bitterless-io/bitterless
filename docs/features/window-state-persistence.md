@@ -30,7 +30,7 @@ The Main-owned state file uses one stable key for every reachable user-visible t
 | `plugin-options` | development Plugin Options window |
 
 The Core SQLite host, Maestro SQLite host, detached DevTools, standalone OnlyPreview child views,
-and embedded Todo/Omni/Maestro/OnlyPreview views are hidden, ephemeral, or child surfaces and never
+and embedded Todo/Omni/Maestro views are hidden, ephemeral, or child surfaces and never
 receive a state key.
 The dormant Connector and Llama helpers have no creation entry and remain outside the registry.
 Any future reachable top-level window must register a stable key; an internal window must opt out
