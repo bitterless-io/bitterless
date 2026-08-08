@@ -26,6 +26,11 @@ export const zh: typeof en = {
     keychainDeniedMessage: '为保障数据安全，应用需要访问系统钥匙串进行加密存储，请在系统弹窗中允许访问。',
     keychainDeniedOk: '拒绝',
     keychainDeniedCancel: '取消',
+    onlyPreviewFileMenu: {
+      preview: '预览',
+      openExternally: '用系统应用打开',
+      revealInFolder: '在文件夹中显示',
+    },
   },
   menuBar: {
     restartToUpdate: 'update',

@@ -4,10 +4,11 @@ Status: Accepted
 
 ## Purpose And Boundary
 
-OnlyPreview is Bitterless's read-only local-file workbench. A user opens a file or directory,
-navigates a bounded project index on the left, and previews the selected file on the right without
-leaving Bitterless. The first delivery is optimized for source code, text, PDF, image, audio, and
-video files used in development and ordinary desktop work.
+OnlyPreview is Bitterless's read-only local-file workbench. Its visible picker opens one directory,
+the user navigates a bounded project index on the left, and the selected file is previewed on the
+right without leaving Bitterless. Main-owned operating-system file-open routes may still target an
+individual file and derive its containing workspace. The first delivery is optimized for source
+code, text, PDF, image, audio, and video files used in development and ordinary desktop work.
 
 OnlyPreview owns local file discovery, a metadata-only directory index, preview classification,
 read-only rendering, its app-specific preferences, and the standalone window graph. It never
@@ -136,7 +137,8 @@ Required properties:
 - Host capabilities and workspaces have bounded counts. Workspaces and media tokens are bound to
   their issuing live host and are revoked when that host is destroyed or the application quits.
 - `restoreWorkspace` returns only the latest workspace still owned by that same live host in the
-  current process session. It never persists or reconstructs an absolute path across app restart.
+  current process session. Cross-restart directory restoration is specified separately from this
+  in-process capability operation.
 - Returned display paths are presentation metadata. They cannot be supplied back as read authority.
 
 The Main API surface is read-only:
@@ -144,7 +146,7 @@ The Main API surface is read-only:
 ```ts
 interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
-  chooseTarget(params: HostRequest & { kind: 'file' | 'directory' }): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
+  chooseFolder(params: HostRequest): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
   restoreWorkspace(params: HostRequest): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
   buildIndex(params: HostRequest & { workspaceId: string }): Promise<OnlyPreviewResult<OnlyPreviewIndex>>;
   describeFile(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<OnlyPreviewDescriptor>>;
@@ -154,6 +156,7 @@ interface OnlyPreviewApi {
   minimizeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
   toggleMaximizeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
   closeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
+  showFileContextMenu(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   openExternally(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   revealInFolder(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   getSettings(params: HostRequest): Promise<OnlyPreviewResult<OnlyPreviewSettings>>;
@@ -272,7 +275,10 @@ rebuild their current index; editor settings update live previews.
 
 The Setting window has Preview, Project, and Appearance sections plus Cancel/Save. Appearance
 shows Light as the only MVP theme. `Esc` closes without writing. The window is app-specific and
-does not depend on Home Settings navigation.
+does not depend on Home Settings navigation. Every open request is authorized by the active
+standalone content host; the Setting `BrowserWindow` is parented to that `BaseWindow`, centered
+within its current bounds, and clamped to the matching display work area instead of restoring an
+unrelated saved screen position.
 
 ## File Open Lifecycle
 
@@ -312,16 +318,16 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 
 ```text
 ┌──────────────────────────────── OnlyPreview ─────────────────────────────┐
-│ ▣ OnlyPreview  root/path  Open File · Open Folder  Refresh · Settings   │
+│ ▣ OnlyPreview  root/path                         Open Folder · Settings │
 ├──────────────────────┬───────────────────────────────────────────────────┤
-│ PROJECT              │ selected/file.ts                 TypeScript · RO │
+│ PROJECT           ⊕  │ selected/file.ts                    TypeScript   │
 │ Search files…        ├───────────────────────────────────────────────────┤
 │ ▾ src                │                                                   │
 │   ▾ components       │ read-only preview surface                         │
 │       FileTree.vue   │                                                   │
 │   App.vue            │                                                   │
 ├──────────────────────┴───────────────────────────────────────────────────┤
-│ INDEX READY · 1284 FILES                     UTF-8 · READ ONLY · 18 KB   │
+│ INDEX READY                                             UTF-8 · 18 KB   │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -332,9 +338,17 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 - The non-interactive MenuBar surface is the drag region. Every action is `no-drag`; double-clicking
   the remaining drag surface toggles maximize. macOS keeps native traffic lights at `{ x: 12, y: 8 }`
   and a 78px left gutter. Windows renders MenuBar minimize, maximize/restore, and close controls.
-- `Open File` and `Open Folder` remain labelled compact actions. Refresh and Settings remain
-  icon-only with localized tooltips/accessibility labels. Hover, active, and keyboard-focus states
-  use the same translucent-light treatment as EyesOnAgents; disabled actions remain legible.
+- `Open Folder` is the only visible picker action. Settings remains icon-only with a localized
+  tooltip/accessibility label. There is no visible Open File or Refresh action. Native refresh
+  shortcuts remain available for changed content without adding chrome. Hover, active, and
+  keyboard-focus states use the same translucent-light treatment as EyesOnAgents; disabled actions
+  remain legible.
+- Project headers and the status rail never display indexed file/item totals. The interface does
+  not repeat a visible `READ ONLY` badge or status label; the actual editor and content authority
+  remain read-only.
+- The Project header has a Tabler crosshair action. It is disabled when no previewed file exists;
+  otherwise it clears search, expands the selected file's ancestors, scrolls the corresponding tree
+  row to the center, and focuses it without reloading the preview.
 - The MenuBar stays in the Shell renderer process. Capability-scoped typed XPC methods request
   minimize, maximize/restore, or close from Main; the Preview renderer never owns window chrome.
 - Light-only canvas `#F6F7FA`, white preview surface, divider `#D9DDEA`, text `#25283A`, muted
@@ -358,8 +372,9 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 | `Space` | selected file in tree | preview selected file |
 | single click | tree | preview only when setting is enabled; directories toggle |
 | double click | tree | preview file or toggle directory |
-| `Cmd/Ctrl+O` | Shell or Preview | Open File |
-| `Cmd/Ctrl+Shift+O` | Shell or Preview | Open Folder |
+| crosshair | Project header | reveal and focus the currently previewed file in the tree |
+| right click | file row | open a Main-owned native file action menu at the pointer |
+| `Cmd/Ctrl+O` | Shell or Preview | Open Folder |
 | `Cmd+,` or `Ctrl+Alt+S` | Shell or Preview | open Setting window |
 | `F5` or `Cmd/Ctrl+R` | Shell or Preview | rebuild index and refresh selected preview |
 | `F12` | Shell or Preview, debug profile | toggle detached DevTools for the view that received the shortcut |
@@ -377,15 +392,18 @@ input. The same shortcut closes that view's open DevTools. Auto-repeat is ignore
 
 ## State And Error Contract
 
-- **Empty:** Open File/Open Folder actions and shortcuts are visible.
+- **Empty:** the Open Folder action and shortcut are available; no Open File action is shown.
 - **Indexing:** retain the last valid index and animate the Index Rail.
 - **Index partial:** show the returned prefix and the fixed limit explanation.
 - **Loading preview:** retain stable bounds and show a quiet progress state.
 - **Missing/permission denied:** distinguish `PATH_NOT_FOUND` from `PATH_PERMISSION_DENIED`; the
   latter uses the user-facing message “Bitterless does not have permission to read this file or
-  folder.” and offers index refresh where useful.
+  folder.” without referring to a removed visible Refresh action.
 - **Too large:** show file metadata and the 8 MiB text limit; do not show partial text.
 - **Unsupported:** show metadata plus Open externally and Reveal in folder.
+- **Native file menu:** only file rows expose Preview, Open in system app, and Reveal in folder.
+  Main revalidates the host-bound file reference when a command runs and opens the menu with the
+  active OnlyPreview `BaseWindow` as owner, so it can extend beyond the Shell child view.
 - **Media/PDF error:** preserve the title and explain that Chromium codec/content support failed.
 - **Stale async result:** ignore any result whose request generation is no longer current.
 - **Explicit hidden file:** an explicitly opened file such as `.env` remains selected and

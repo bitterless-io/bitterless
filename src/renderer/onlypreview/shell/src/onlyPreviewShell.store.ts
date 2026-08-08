@@ -130,12 +130,22 @@ class OnlyPreviewShellStore {
     await Promise.all([this.refreshSettings(), this.restoreWorkspace()]);
   }
 
-  async chooseFile(): Promise<void> {
-    await this.chooseTarget('file');
-  }
-
   async chooseFolder(): Promise<void> {
-    await this.chooseTarget('directory');
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken || this.targetLoading) return;
+    this.targetLoading = true;
+    this.errorMessage = '';
+    try {
+      const workspace = unwrapOnlyPreviewResult(
+        await onlyPreviewClient.chooseFolder({ hostToken })
+      );
+      if (!workspace) return;
+      // The workspace-change event is the single authoritative update path for both views.
+    } catch (error) {
+      this.errorMessage = errorMessage(error);
+    } finally {
+      this.targetLoading = false;
+    }
   }
 
   async refresh(): Promise<void> {
@@ -192,6 +202,31 @@ class OnlyPreviewShellStore {
     const relativePath = this.treeFocusRelativePath;
     this.focusedRelativePath = relativePath;
     return relativePath;
+  }
+
+  locateSelectedFile(): string {
+    if (!this.selectedEntry) return '';
+    this.searchQuery = '';
+    this.expandSelectedParents();
+    this.focusedRelativePath = this.selectedEntry.relativePath;
+    return this.focusedRelativePath;
+  }
+
+  async showFileContextMenu(entry: OnlyPreviewIndexEntry): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    const workspace = this.workspace;
+    if (!hostToken || !workspace || entry.nodeKind !== 'file') return;
+    try {
+      unwrapOnlyPreviewResult(
+        await onlyPreviewClient.showFileContextMenu({
+          hostToken,
+          workspaceId: workspace.workspaceId,
+          relativePath: entry.relativePath
+        })
+      );
+    } catch (error) {
+      this.errorMessage = errorMessage(error);
+    }
   }
 
   moveTreeFocus(
@@ -319,24 +354,6 @@ class OnlyPreviewShellStore {
       unwrapOnlyPreviewResult(await command());
     } catch (error) {
       this.errorMessage = errorMessage(error);
-    }
-  }
-
-  private async chooseTarget(kind: 'file' | 'directory'): Promise<void> {
-    const hostToken = onlyPreviewEnv.hostToken;
-    if (!hostToken || this.targetLoading) return;
-    this.targetLoading = true;
-    this.errorMessage = '';
-    try {
-      const workspace = unwrapOnlyPreviewResult(
-        await onlyPreviewClient.chooseTarget({ hostToken, kind })
-      );
-      if (!workspace) return;
-      // The workspace-change event is the single authoritative update path for both views.
-    } catch (error) {
-      this.errorMessage = errorMessage(error);
-    } finally {
-      this.targetLoading = false;
     }
   }
 

@@ -207,12 +207,24 @@ input {
   text-transform: uppercase;
 }
 
-.onlypreview-shell__project-count {
-  min-width: 20px;
-  padding: 1px 5px;
-  border-radius: 9px;
-  background: #e9ebf2;
-  text-align: center;
+.onlypreview-shell__project-action.arco-btn {
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 0;
+  color: var(--onlypreview-muted);
+  background: transparent;
+}
+
+.onlypreview-shell__project-action.arco-btn:hover:not(:disabled),
+.onlypreview-shell__project-action.arco-btn:focus-visible {
+  color: var(--onlypreview-royal);
+  background: var(--onlypreview-royal-soft);
+}
+
+.onlypreview-shell__project-action.arco-btn:focus-visible {
+  outline: 2px solid var(--onlypreview-focus);
+  outline-offset: -2px;
 }
 
 .onlypreview-shell__search {

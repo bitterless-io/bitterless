@@ -160,6 +160,43 @@ test('settings and preview bounds reject partial, extra, and unsafe values', () 
   assert.throws(() => runtime.parseOnlyPreviewBounds({ x: 0, y: 0, width: Infinity, height: 1 }));
 });
 
+test('Settings bounds constrain oversized persisted dimensions to the current parent display', () => {
+  assert.deepEqual(
+    runtime.resolveOnlyPreviewSettingsBounds({
+      parentBounds: { x: 1920, y: 34, width: 1000, height: 700 },
+      workArea: { x: 1920, y: 0, width: 1024, height: 768 },
+      width: 1600,
+      height: 1000,
+      minWidth: 800,
+      minHeight: 600
+    }),
+    { x: 1920, y: 0, width: 1024, height: 768 }
+  );
+  assert.deepEqual(
+    runtime.resolveOnlyPreviewSettingsBounds({
+      parentBounds: { x: 40, y: 30, width: 620, height: 440 },
+      workArea: { x: 0, y: 0, width: 640, height: 480 },
+      width: 1600,
+      height: 1000,
+      minWidth: 800,
+      minHeight: 600
+    }),
+    // Full containment is impossible below the app minimum, so use the minimum at the origin.
+    { x: 0, y: 0, width: 800, height: 600 }
+  );
+  assert.deepEqual(
+    runtime.resolveOnlyPreviewSettingsBounds({
+      parentBounds: { x: 100, y: 80, width: 1000, height: 700 },
+      workArea: { x: 0, y: 0, width: 1440, height: 900 },
+      width: 800,
+      height: 600,
+      minWidth: 800,
+      minHeight: 600
+    }),
+    { x: 200, y: 130, width: 800, height: 600 }
+  );
+});
+
 test('host capabilities are unique, role-scoped, and revoked independently', () => {
   const hosts = new runtime.OnlyPreviewHostRegistry();
   const standaloneA = hosts.issue('standalone', 'content');
@@ -717,7 +754,7 @@ const classMethodNames = (relativePath, className) => {
 test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no internal lifecycle/path channel', () => {
   assert.deepEqual(classMethodNames('src/main/xpc/onlyPreview.handler.ts', 'OnlyPreviewHandler'), [
     'openOnlyPreviewWindow',
-    'chooseTarget',
+    'chooseFolder',
     'restoreWorkspace',
     'buildIndex',
     'describeFile',
@@ -727,6 +764,7 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     'minimizeWindow',
     'toggleMaximizeWindow',
     'closeWindow',
+    'showFileContextMenu',
     'openExternally',
     'revealInFolder',
     'getSettings',
@@ -762,12 +800,8 @@ test('OnlyPreview window commands stay host-capability scoped and Shell-owned', 
   assert.match(shellApp, /name="onlypreview__menuBar"/);
   assert.match(shellApp, /name="onlypreview__identity"/);
   assert.match(shellApp, /name="onlypreview__menuActions"/);
-  assert.match(shellApp, /name="onlypreview__openFile"[\s\S]*topbar\.openFile/);
   assert.match(shellApp, /name="onlypreview__openFolder"[\s\S]*topbar\.openFolder/);
-  assert.match(
-    shellApp,
-    /name="onlypreview__refresh"[\s\S]*:title="onlyPreviewI18n\.topbar\.refresh"/
-  );
+  assert.doesNotMatch(shellApp, /name="onlypreview__(?:openFile|refresh)"/);
   assert.match(
     shellApp,
     /name="onlypreview__settings"[\s\S]*:title="onlyPreviewI18n\.topbar\.settings"/
@@ -829,12 +863,12 @@ test('workspace updates have one authoritative event path and stale index result
   );
 
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
-  const chooseTargetBody = shellStore.slice(
-    shellStore.indexOf('private async chooseTarget(kind:'),
-    shellStore.indexOf('private async restoreWorkspace()')
+  const chooseFolderBody = shellStore.slice(
+    shellStore.indexOf('async chooseFolder()'),
+    shellStore.indexOf('async refresh()')
   );
-  assert.match(chooseTargetBody, /onlyPreviewClient\.chooseTarget/);
-  assert.doesNotMatch(chooseTargetBody, /applyWorkspace\(|this\.workspace\s*=/);
+  assert.match(chooseFolderBody, /onlyPreviewClient\.chooseFolder/);
+  assert.doesNotMatch(chooseFolderBody, /applyWorkspace\(|this\.workspace\s*=/);
 
   const buildIndexBody = shellStore.slice(
     shellStore.indexOf('private async buildIndex()'),
@@ -861,6 +895,119 @@ test('workspace updates have one authoritative event path and stale index result
     selectFileBody,
     /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\)/
   );
+});
+
+test('OnlyPreview folder-first chrome, current-file locator, and native file menu stay capability scoped', () => {
+  const types = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  const previewSurface = source(
+    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
+  );
+  const previewStyle = source(
+    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.less'
+  );
+  const onlyPreviewI18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  const nativeEnglish = source('src/renderer/common/i18n/en.ts');
+  const nativeChinese = source('src/renderer/common/i18n/zh.ts');
+
+  assert.match(
+    types,
+    /chooseFolder\(\s*params: OnlyPreviewHostRequest\s*\): Promise<OnlyPreviewResult<OnlyPreviewWorkspace \| null>>/
+  );
+  assert.match(
+    types,
+    /showFileContextMenu\(\s*params: OnlyPreviewHostRequest & OnlyPreviewFileRef\s*\): Promise<OnlyPreviewResult<void>>/
+  );
+  assert.doesNotMatch(types, /OnlyPreviewTargetKind|chooseTarget/);
+  assert.doesNotMatch(handler, /parseTargetKind|chooseTarget/);
+  assert.doesNotMatch(shellStore, /chooseTarget|chooseFile/);
+  assert.match(handler, /properties:\s*\['openDirectory'\]/);
+  assert.match(windowHelper, /if \(key === 'o'\) return 'choose-folder'/);
+  assert.match(handler, /openOnlyPreviewAbsoluteTarget[\s\S]*createForTarget\(host\.hostToken, target\)/);
+
+  assert.match(shellApp, /name="onlypreview__openFolder"/);
+  assert.doesNotMatch(shellApp, /name="onlypreview__(?:openFile|refresh)"/);
+  assert.doesNotMatch(shellApp, /index\.entries\.length|project-count|preview\.readOnly/);
+  assert.doesNotMatch(onlyPreviewI18n, /itemCount|openFile:\s*|refresh:\s*/);
+  assert.doesNotMatch(previewSurface, /IconLock|badge--read-only|preview\.readOnly/);
+  assert.doesNotMatch(previewStyle, /badge--read-only/);
+
+  assert.match(shellApp, /IconCrosshair/);
+  assert.match(shellApp, /name="onlypreview__locateCurrentFile"/);
+  assert.match(shellApp, /:disabled="!onlyPreviewShellStore\.selectedEntry"/);
+  assert.match(
+    shellStore,
+    /locateSelectedFile\(\): string \{[\s\S]*this\.searchQuery = ''[\s\S]*this\.expandSelectedParents\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
+  );
+  assert.match(shellApp, /scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\)/);
+  assert.match(shellApp, /item\.focus\(center \? \{ preventScroll: true \} : undefined\)/);
+  assert.match(shellStyle, /\.onlypreview-shell__project-action\.arco-btn \{[\s\S]*height:\s*27px/);
+  assert.match(shellStyle, /\.onlypreview-shell__project-action\.arco-btn:focus-visible/);
+
+  assert.match(shellApp, /@contextmenu\.prevent\.stop="onlyPreviewShellStore\.showFileContextMenu\(row\.entry\)"/);
+  assert.match(
+    shellStore,
+    /showFileContextMenu\(entry: OnlyPreviewIndexEntry\)[\s\S]*entry\.nodeKind !== 'file'[\s\S]*onlyPreviewClient\.showFileContextMenu/
+  );
+  assert.doesNotMatch(shellStore, /clipboard|absolutePath/);
+  const menuBody = handler.slice(
+    handler.indexOf('async showFileContextMenu('),
+    handler.indexOf('async openExternally(')
+  );
+  assert.match(
+    menuBody,
+    /getStandaloneWindow\(params\?\.hostToken\)[\s\S]*await onlyPreviewWorkspaceRegistry\.resolveFile/
+  );
+  assert.match(menuBody, /i18nHelper\.getMessages\(\)\.app\.onlyPreviewFileMenu/);
+  for (const id of [
+    'onlypreview-preview',
+    'onlypreview-open-externally',
+    'onlypreview-reveal-in-folder'
+  ]) {
+    assert.match(menuBody, new RegExp(`id: '${id}'`));
+  }
+  assert.match(menuBody, /click: \(\) => void this\.selectStandaloneFile\(request\)/);
+  assert.match(menuBody, /click: \(\) => void this\.openExternally\(request\)/);
+  assert.match(menuBody, /click: \(\) => void this\.revealInFolder\(request\)/);
+  assert.match(menuBody, /Menu\.buildFromTemplate\([\s\S]*\.popup\(\{ window \}\)/);
+  assert.doesNotMatch(menuBody, /realPath/);
+  for (const catalog of [nativeEnglish, nativeChinese]) {
+    assert.match(catalog, /onlyPreviewFileMenu:[\s\S]*preview:[\s\S]*openExternally:[\s\S]*revealInFolder:/);
+  }
+});
+
+test('OnlyPreview Settings restores size but derives parented work-area bounds on every open', () => {
+  const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  const boundsService = source(
+    'src/main/onlypreview/onlyPreviewWindowBounds.service.ts'
+  );
+  const positioning = windowHelper.slice(
+    windowHelper.indexOf('const settingsBoundsForParent'),
+    windowHelper.indexOf('export class OnlyPreviewWindowHelper')
+  );
+  const openSettings = windowHelper.slice(
+    windowHelper.indexOf('async openSettings('),
+    windowHelper.indexOf('closeSettings(')
+  );
+
+  assert.match(positioning, /screen\.getDisplayMatching\(parentBounds\)\.workArea/);
+  assert.match(positioning, /resolveOnlyPreviewSettingsBounds\(\{/);
+  assert.match(positioning, /minWidth: MIN_WIDTH[\s\S]*minHeight: MIN_HEIGHT/);
+  assert.match(boundsService, /Math\.min\(Math\.round\(request\.width\), Math\.max\(workArea\.width, minWidth\)\)/);
+  assert.match(boundsService, /Math\.min\(Math\.round\(request\.height\), Math\.max\(workArea\.height, minHeight\)\)/);
+  assert.match(boundsService, /Math\.min\(maxX, Math\.max\(workArea\.x, centeredX\)\)/);
+  assert.match(boundsService, /Math\.min\(maxY, Math\.max\(workArea\.y, centeredY\)\)/);
+  assert.match(openSettings, /const parentWindow = this\.requireStandaloneWindow\(sourceHostToken\)/);
+  assert.match(openSettings, /restored\?\.bounds\.width[\s\S]*restored\?\.bounds\.height/);
+  assert.doesNotMatch(openSettings, /restored\.bounds\.(?:x|y)/);
+  assert.match(openSettings, /parent: parentWindow/);
+  assert.match(openSettings, /settingsBoundsForParent\(parentWindow\.getBounds\(\)/);
+  assert.match(openSettings, /window\.show\(\);[\s\S]*window\.focus\(\)/);
+  assert.doesNotMatch(openSettings, /settingsWindowState\?\.show\(\)/);
 });
 
 test('window sources enforce standalone isolation and generic Omni renderer cleanup', () => {

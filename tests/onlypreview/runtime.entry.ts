@@ -6,3 +6,4 @@ export * from '../../src/main/onlypreview/onlyPreviewAsset.registry';
 export * from '../../src/main/onlypreview/onlyPreviewClassifier.service';
 export * from '../../src/main/onlypreview/onlyPreviewIndex.service';
 export * from '../../src/main/onlypreview/onlyPreviewOpenRouter.service';
+export * from '../../src/main/onlypreview/onlyPreviewWindowBounds.service';
