@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { buildBitterlessE2ELaunchArgs } from '../../e2e/electronLaunchArgs';
 import { createOnlyPreviewFixtures, type OnlyPreviewFixtureSet } from './createOnlyPreviewFixtures';
 
 const projectRoot = resolve(__dirname, '..', '..', '..');
@@ -168,7 +169,11 @@ export const test = base.extend<OnlyPreviewFixtures>({
     try {
       app = await electron.launch({
         executablePath,
-        args: [projectRoot, `--onlypreview-open=${fixtures.root}`],
+        args: buildBitterlessE2ELaunchArgs({
+          platform: process.platform,
+          applicationPath: projectRoot,
+          applicationArguments: [`--onlypreview-open=${fixtures.root}`]
+        }),
         env: isolatedEnv({ homeDir, userDataDir, mockOrigin: mock.origin }),
         timeout: 60_000
       });

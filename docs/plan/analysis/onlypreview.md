@@ -90,6 +90,9 @@ inspection without changing release behavior or adding a renderer-to-Main API.
 location and a native file action menu, and anchors Settings to the active standalone window.
 `onlypreview-recent-directory-006` adds SQLite-backed last-directory restoration without
 persisting a selected file or weakening the process-local capability boundary.
+`onlypreview-e2e-keychain-isolation-007` retains full-application E2E while routing every macOS
+launch through Chromium's mock Keychain and rejecting an incompletely isolated E2E Main process
+before GUI startup.
 
 ## Main Risks And Decisions
 
@@ -112,6 +115,7 @@ persisting a selected file or weakening the process-local capability boundary.
 | SQLite is late or unavailable | ready/failure latch; retain only the latest pre-ready write, return empty on failure, and never block explicit opens |
 | Invalid history or concurrent cleanup erases a newer path | revalidate through `createForTarget` and CAS-clear only the exact observed invalid serialized value |
 | Persisted path leaks authority or logs | persist only the canonical directory in Main-owned SQLite; use only no-value-log DAO methods and mint fresh capabilities on restore |
+| Full-application E2E prompts for the owner's macOS Keychain | one shared launch-argument builder prepends `--use-mock-keychain`; E2E Main fails before GUI startup when the macOS switch is absent |
 | extension-only association omits unknown files | common associations plus macOS `public.data` Viewer/Alternate and a bounded Windows generic context-menu verb, never default ownership |
 | Electron 40 file fetch/PDF embedding gaps | manual 206 file streaming and installed PDF.js `print` intent + disabled annotations canvas + selectable TextLayer, all runtime-probed |
 | existing unrelated test failures | record baseline and compare touched/focused gates; never relabel baseline failures |
@@ -124,9 +128,10 @@ persisting a selected file or weakening the process-local capability boundary.
 3. Node and web typechecks, renderer i18n guard, targeted ESLint, `git diff --check`.
 4. Full Electron Vite build and output audit.
 5. Electron/Node unit tests simulate storage ready/failure, fresh hosts, concurrent restore, and
-   explicit-target ordering without launching the full Bitterless application. The owner manually
-   verifies real restart restoration and explicit OS-target override because automated full-app
-   startup may access the macOS Keychain.
+   explicit-target ordering. Retained full-application E2E launches through one shared argument
+   builder; macOS prepends `--use-mock-keychain`, and Main rejects E2E mode without that switch
+   before GUI startup. The owner decides when to execute the suite and performs final manual restart
+   and explicit OS-target verification.
 6. Separate packaged macOS/Windows association and codec verification if signing/build hosts are
    available; otherwise this remains an explicit human handoff and does not get misreported as
    automated proof.

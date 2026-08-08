@@ -483,6 +483,9 @@ them.
 - Only the `debug` runtime profile enables Shell/Preview DevTools. Release profiles do not register
   or consume these shortcuts. The existing unpackaged-only `BITTERLESS_E2E=1` harness may enable
   the same path for isolated runtime verification; packaged startup rejects that harness mode.
+- Every macOS full-application E2E launch must place Chromium's `--use-mock-keychain` switch before
+  the application path. An unpackaged `BITTERLESS_E2E=1` Main process fails before GUI startup when
+  that switch is absent, so automated verification cannot read or prompt for the user's Keychain.
 
 ## Verification Contract
 
@@ -511,9 +514,10 @@ them.
   DevTools without changing either view's bounds, Setting singleton, and no edit path. Omni
   contract/UI tests prove that `onlypreview` cannot be selected or restored as a cell mini app.
 - Recent-directory restart behavior is verified in Electron/Node unit tests with simulated storage
-  lifecycle and fresh host instances. The owner manually verifies a real application restart and
-  explicit OS-target override; automated acceptance for this path must not launch the full
-  Bitterless application because startup integrations may access the macOS Keychain.
+  lifecycle and fresh host instances. Full-application Electron E2E may verify restart and explicit
+  OS-target override only through the shared isolated launch-argument builder; on macOS that builder
+  supplies `--use-mock-keychain`, and Main rejects an E2E launch that omits it. Owner manual
+  verification remains the final acceptance of behavior in a normal application profile.
 - `yarn build` must emit all three renderer HTML files and `out/preload/onlypreview.js`.
 - Packaged manual verification remains required for OS association registration and the actual
   Chromium codec matrix on macOS and Windows.

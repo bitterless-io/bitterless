@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { AddressInfo } from 'node:net'
+import { buildBitterlessE2ELaunchArgs } from '../../e2e/electronLaunchArgs'
 
 export type RendererName =
   | 'home'
@@ -264,7 +265,10 @@ export const test = base.extend<MaestroFixtures>({
     try {
       app = await electron.launch({
         executablePath: electronExecutablePath(),
-        args: [projectRoot],
+        args: buildBitterlessE2ELaunchArgs({
+          platform: process.platform,
+          applicationPath: projectRoot
+        }),
         env: launchEnv,
         timeout: 60_000
       })
