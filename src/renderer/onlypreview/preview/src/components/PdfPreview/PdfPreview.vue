@@ -15,7 +15,10 @@ import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { countOnlyPreviewDomSelection } from '../../onlyPreviewCharacterCount.service';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 
-const props = defineProps<{ assetUrl: string }>();
+const props = defineProps<{
+  assetUrl: string;
+  reportingRevision: string;
+}>();
 const pagesRef = ref<HTMLElement | null>(null);
 const loading = ref(false);
 let generation = 0;
@@ -26,7 +29,7 @@ let renderTasks: Array<{ cancel: () => void }> = [];
 let textLayers: TextLayer[] = [];
 
 const disposePdf = (): void => {
-  onlyPreviewPreviewStore.reportCharacterCount(0);
+  onlyPreviewPreviewStore.reportCharacterCount(0, props.reportingRevision);
   generation += 1;
   abortController?.abort();
   abortController = null;
@@ -43,7 +46,8 @@ const disposePdf = (): void => {
 
 const reportSelection = (): void => {
   onlyPreviewPreviewStore.reportCharacterCount(
-    countOnlyPreviewDomSelection(pagesRef.value, window.getSelection())
+    countOnlyPreviewDomSelection(pagesRef.value, window.getSelection()),
+    props.reportingRevision
   );
 };
 
@@ -116,15 +120,20 @@ const renderPdf = async (): Promise<void> => {
       textLayers.push(textLayer);
       await textLayer.render();
     }
+    if (runGeneration === generation) {
+      onlyPreviewPreviewStore.armCharacterCountReporting(props.reportingRevision);
+    }
   } catch {
-    if (runGeneration === generation) onlyPreviewPreviewStore.reportMediaError('pdf');
+    if (runGeneration === generation) {
+      onlyPreviewPreviewStore.reportMediaError('pdf', props.reportingRevision);
+    }
   } finally {
     if (runGeneration === generation) loading.value = false;
   }
 };
 
 watch(
-  () => props.assetUrl,
+  () => [props.assetUrl, props.reportingRevision],
   () => void renderPdf()
 );
 onMounted(() => {

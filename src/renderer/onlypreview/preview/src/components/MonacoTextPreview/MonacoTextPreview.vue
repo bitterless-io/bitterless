@@ -16,6 +16,7 @@ import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 const props = defineProps<{
   content: OnlyPreviewTextContent;
   language: string;
+  reportingRevision: string;
   settings: OnlyPreviewSettings;
 }>();
 
@@ -27,7 +28,7 @@ let selectionDisposable: monaco.IDisposable | null = null;
 const disposeEditor = (): void => {
   selectionDisposable?.dispose();
   selectionDisposable = null;
-  onlyPreviewPreviewStore.reportCharacterCount(0);
+  onlyPreviewPreviewStore.reportCharacterCount(0, props.reportingRevision);
   editor?.dispose();
   model?.dispose();
   editor = null;
@@ -73,12 +74,22 @@ const createEditor = (): void => {
     const selectedTexts = (currentEditor.getSelections() || [])
       .filter((selection) => !selection.isEmpty())
       .map((selection) => currentModel.getValueInRange(selection));
-    onlyPreviewPreviewStore.reportCharacterCount(countOnlyPreviewSelectionTexts(selectedTexts));
+    onlyPreviewPreviewStore.reportCharacterCount(
+      countOnlyPreviewSelectionTexts(selectedTexts),
+      props.reportingRevision
+    );
   });
+  onlyPreviewPreviewStore.armCharacterCountReporting(props.reportingRevision);
 };
 
 watch(
-  () => [props.content.workspaceId, props.content.relativePath, props.content.text, props.language],
+  () => [
+    props.content.workspaceId,
+    props.content.relativePath,
+    props.content.text,
+    props.language,
+    props.reportingRevision
+  ],
   createEditor
 );
 

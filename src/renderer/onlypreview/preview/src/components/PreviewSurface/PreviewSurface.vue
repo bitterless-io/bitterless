@@ -45,16 +45,19 @@
 
       <MarkdownPreview
         v-else-if="isMarkdown && onlyPreviewPreviewStore.textContent"
-        :key="previewKey"
+        :key="selectionPreviewKey"
         :content="onlyPreviewPreviewStore.textContent"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
       />
 
       <MonacoTextPreview
         v-else-if="
           onlyPreviewPreviewStore.descriptor?.kind === 'text' && onlyPreviewPreviewStore.textContent
         "
+        :key="selectionPreviewKey"
         :content="onlyPreviewPreviewStore.textContent"
         :language="onlyPreviewPreviewStore.descriptor.language"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
         :settings="onlyPreviewPreviewStore.settings"
       />
 
@@ -63,8 +66,9 @@
           onlyPreviewPreviewStore.descriptor?.kind === 'pdf' &&
           onlyPreviewPreviewStore.descriptor.assetUrl
         "
-        :key="previewKey"
+        :key="selectionPreviewKey"
         :asset-url="onlyPreviewPreviewStore.descriptor.assetUrl"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
       />
 
       <div
@@ -78,7 +82,12 @@
         <img
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           :alt="imageAlt"
-          @error="onlyPreviewPreviewStore.reportMediaError('media')"
+          @error="
+            onlyPreviewPreviewStore.reportMediaError(
+              'media',
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
         />
       </div>
 
@@ -97,7 +106,12 @@
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           controls
           preload="metadata"
-          @error="onlyPreviewPreviewStore.reportMediaError('media')"
+          @error="
+            onlyPreviewPreviewStore.reportMediaError(
+              'media',
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
         ></audio>
       </div>
 
@@ -113,7 +127,12 @@
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           controls
           preload="metadata"
-          @error="onlyPreviewPreviewStore.reportMediaError('media')"
+          @error="
+            onlyPreviewPreviewStore.reportMediaError(
+              'media',
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
         ></video>
       </div>
 
@@ -202,6 +221,10 @@ const previewKey = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;
   return descriptor ? `${descriptor.workspaceId}:${descriptor.relativePath}` : '';
 });
+
+const selectionPreviewKey = computed(
+  () => `${previewKey.value}:${onlyPreviewPreviewStore.selectionReportingRevision}`
+);
 
 const imageAlt = computed(() =>
   interpolateOnlyPreview(onlyPreviewI18n.preview.imageAlt, {

@@ -40,6 +40,7 @@ selected in Monaco, Markdown, or PDF.
 - `package.json`
 - `yarn.lock`
 - `src/shared/onlypreview/onlyPreview.types.ts`
+- `src/renderer/onlypreview/common/onlyPreviewCharacterCountGate.service.ts`
 - `src/renderer/onlypreview/common/onlyPreviewI18n.ts`
 - `src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts`
 - `src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue`
@@ -77,13 +78,16 @@ selected in Monaco, Markdown, or PDF.
    Segmenter is unavailable. Include whitespace and line breaks. Monaco sums all non-empty
    selections; Markdown/PDF accept a DOM selection only when both endpoints are inside the Preview
    body.
-6. Send only `{ hostId, characterCount }` through a new renderer broadcast. Add no Main handler,
-   preload function, file capability, selected text, path, or content payload. Shell accepts only
-   its current host, resets on workspace/file changes, and conditionally displays the localized
-   count before type/size in the fixed 25px status rail.
-7. Dispose selection listeners and report zero on collapsed/outside selection, file change,
-   loading/error, renderer/component unmount, and stale content. Do not change read-only behavior,
-   file contents, existing layout geometry, or native Preview bounds.
+6. Keep the selected-count broadcast payload exactly `{ hostId, characterCount }`. Renderer-only
+   lifecycle broadcasts may carry only `{ hostId, revision }` or `{ hostId }`, where `revision` is
+   opaque and contains no path, selected text, file content, or capability. Add no Main handler or
+   preload function. Shell accepts only its current host and revision, then conditionally displays
+   the localized count before type/size in the fixed 25px status rail.
+7. Fence selection reports across workspace/file transitions, async restore, rapid consecutive
+   changes, and either renderer reloading. Dispose selection listeners and report zero on
+   collapsed/outside selection, file change, loading/error, renderer/component unmount, and stale
+   content. Do not change read-only behavior, file contents, existing layout geometry, or native
+   Preview bounds.
 8. Preserve all retained E2E files and the mock-Keychain launch boundary. Do not run Electron,
    Playwright, E2E, or the full Bitterless application in this delivery.
 
@@ -95,7 +99,10 @@ selected in Monaco, Markdown, or PDF.
 - Pure Node tests for grapheme counting: ASCII, Chinese, emoji/ZWJ, combining marks, whitespace,
   line breaks, empty text, and multiple selections
 - Source/integration guards for `.md` routing, `.markdown`/`.mdx` Monaco fallback, DOM/Monaco
-  listener disposal/reset, host-scoped renderer broadcast, status-rail placement, and i18n
+  listener disposal/reset, exact host-scoped renderer payloads, revision readiness/resync,
+  status-rail placement, and i18n
+- Pure Node state probes for deferred restore, old-zero then old-nonzero delivery, rapid A→B→C
+  transitions, stale readiness, and Shell/Preview renderer reload resynchronization
 - Focused typecheck/ESLint and `git diff --check`; no Electron/Playwright/E2E/full-app launch
 - Ral manually opens normal and hostile Markdown, then selects text in Markdown, code, and PDF to
   verify rendering, selection count, and bottom-rail behavior.
@@ -113,9 +120,16 @@ selected in Monaco, Markdown, or PDF.
   remain inside their preview surface. Counts use `Intl.Segmenter` graphemes with a code-point
   fallback, and Preview broadcasts only `{ hostId, characterCount }`; Shell validates the exact
   current-host payload, resets it across content changes, and renders it in the unchanged 25px rail.
-- `node --test tests/onlypreview/*.test.mjs` passed 53/53 pure Node/source tests, including hostile
+- Round 1 closed the async restore race with a Shell-issued opaque revision. Preview disarms before
+  restoring, rejects reports from old components, announces readiness only after the replacement
+  surface is installed, and requests revision resynchronization after reload. Shell gates or
+  buffers only the current ready revision, so old zero/non-zero delivery and rapid A→B→C
+  transitions cannot repopulate the rail. Lifecycle payloads remain renderer-only and carry no
+  path, text, content, or capability; the selected-count payload is unchanged.
+- `node --test tests/onlypreview/*.test.mjs` passed 55/55 pure Node/source tests, including hostile
   Markdown, the 1 MiB boundary, semantic/zero-attribute output, Unicode/ZWJ/combining-mark counts,
-  multi-selection sums, DOM endpoint containment, listener disposal, and host-scoped wiring.
+  multi-selection sums, DOM endpoint containment, listener disposal, deferred stale reports, rapid
+  revisions, renderer resynchronization, and host-scoped wiring.
 - `yarn typecheck:node`, `yarn check:renderer-i18n`, focused error-level ESLint, and
   `git diff --check` passed. Full `yarn typecheck:web` remains blocked only by the repository's
   existing connector, poker-test, Home, and shared typing baseline; it reported no OnlyPreview

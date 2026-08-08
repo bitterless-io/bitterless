@@ -1488,7 +1488,8 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.match(markdownComponent, /countOnlyPreviewDomSelection\(documentRef\.value/);
   assert.match(markdownComponent, /document\.addEventListener\('selectionchange'/);
   assert.match(markdownComponent, /document\.removeEventListener\('selectionchange'/);
-  assert.match(markdownComponent, /reportCharacterCount\(0\)/);
+  assert.match(markdownComponent, /reportCharacterCount\(0, props\.reportingRevision\)/);
+  assert.match(markdownComponent, /armCharacterCountReporting\(props\.reportingRevision\)/);
 
   const markdownStyle = source(
     'src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.less'
@@ -1515,19 +1516,47 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.match(monaco, /filter\(\(selection\) => !selection\.isEmpty\(\)\)/);
   assert.match(monaco, /getValueInRange\(selection\)/);
   assert.match(monaco, /selectionDisposable\?\.dispose\(\)/);
-  assert.match(monaco, /reportCharacterCount\(0\)/);
+  assert.match(monaco, /reportCharacterCount\(0, props\.reportingRevision\)/);
+  assert.match(monaco, /armCharacterCountReporting\(props\.reportingRevision\)/);
 
   const pdf = source('src/renderer/onlypreview/preview/src/components/PdfPreview/PdfPreview.vue');
   assert.match(pdf, /countOnlyPreviewDomSelection\(pagesRef\.value/);
   assert.match(pdf, /document\.addEventListener\('selectionchange'/);
   assert.match(pdf, /document\.removeEventListener\('selectionchange'/);
-  assert.match(pdf, /reportCharacterCount\(0\)/);
+  assert.match(pdf, /reportCharacterCount\(0, props\.reportingRevision\)/);
+  assert.match(pdf, /armCharacterCountReporting\(props\.reportingRevision\)/);
+
+  const characterCountGate = source(
+    'src/renderer/onlypreview/common/onlyPreviewCharacterCountGate.service.ts'
+  );
+  assert.match(characterCountGate, /class OnlyPreviewCharacterCountSourceGate/);
+  assert.match(characterCountGate, /revision === this\.currentRevision/);
+  assert.match(characterCountGate, /this\.armedRevision === revision/);
+  assert.match(characterCountGate, /class OnlyPreviewCharacterCountHostGate/);
+  assert.match(characterCountGate, /this\.readyRevision === this\.currentRevision/);
+  assert.match(characterCountGate, /canBufferCount\(characterCount: number\)/);
+  assert.match(characterCountGate, /isSuspended\(\): boolean/);
+  assert.match(characterCountGate, /revisionForSync\(\): string/);
 
   const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
   assert.match(
     previewStore,
-    /xpcRenderer\.broadcast\(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, \{[\s\S]*?hostId,[\s\S]*?characterCount:[\s\S]*?\}\);/
+    /xpcRenderer\.broadcast\(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, \{\s*hostId,\s*characterCount\s*\}\);/
   );
+  assert.match(
+    previewStore,
+    /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, \{[\s\S]*?hostId: onlyPreviewEnv\.hostId[\s\S]*?\}/
+  );
+  assert.match(
+    previewStore,
+    /ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT[\s\S]*restoreSelection\(payload\.params\.revision\)/
+  );
+  assert.match(
+    previewStore,
+    /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT, \{[\s\S]*?hostId,[\s\S]*?revision: reportingRevision[\s\S]*?\}/
+  );
+  assert.match(previewStore, /characterCountGate\.canReport\(reportingRevision, normalizedCount\)/);
+  assert.doesNotMatch(previewStore, /ONLY_PREVIEW_(?:WORKSPACE|SELECTION|REFRESH)_CHANGED_EVENT/);
   assert.doesNotMatch(previewStore, /selectedText|selectionText|text:\s*character/);
 
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
@@ -1537,9 +1566,27 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore,
     /isCharacterCountEvent\(payload\.params\)[\s\S]*payload\.params\.hostId === onlyPreviewEnv\.hostId/
   );
+  assert.match(shellStore, /characterCountGate\.canAcceptCount\(payload\.params\.characterCount\)/);
+  assert.match(shellStore, /characterCountGate\.canBufferCount\(payload\.params\.characterCount\)/);
+  assert.match(shellStore, /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT/);
+  assert.match(shellStore, /characterCountGate\.acceptReady\(payload\.params\.revision\)/);
+  assert.match(shellStore, /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT/);
   assert.match(
     shellStore,
-    /this\.selectedCharacterCount = this\.selectedRelativePath[\s\S]*payload\.params\.characterCount[\s\S]*: 0/
+    /syncCharacterCountTransition\(\)[\s\S]*!this\.characterCountGate\.isSuspended\(\)[\s\S]*beginCharacterCountTransition\(\)/
+  );
+  assert.match(shellStore, /const revision = crypto\.randomUUID\(\)/);
+  assert.match(
+    shellStore,
+    /ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT[\s\S]*beginCharacterCountTransition\(\)[\s\S]*restoreWorkspace\(\)/
+  );
+  assert.match(
+    shellStore,
+    /ONLY_PREVIEW_SELECTION_CHANGED_EVENT[\s\S]*beginCharacterCountTransition\(\)[\s\S]*syncSelection\(\)/
+  );
+  assert.match(
+    shellStore,
+    /private async selectFile[\s\S]*suspendCharacterCountReporting\(\)[\s\S]*this\.selectedRelativePath = relativePath/
   );
   assert.ok((shellStore.match(/this\.selectedCharacterCount = 0/g) || []).length >= 6);
 
@@ -1561,11 +1608,11 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   const sharedTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
   const api = sharedTypes.match(/export interface OnlyPreviewApi \{([\s\S]*?)\n\}/)?.[1];
   assert.ok(api);
-  assert.doesNotMatch(api, /characterCount|selectedText|selectionText/);
+  assert.doesNotMatch(api, /characterCount|reportingRevision|selectedText|selectionText/);
   for (const mainBoundary of [
     'src/main/xpc/onlyPreview.handler.ts',
     'src/preload/onlypreview/onlypreview.preload.ts'
   ]) {
-    assert.doesNotMatch(source(mainBoundary), /CHARACTER_COUNT_CHANGED|characterCount/);
+    assert.doesNotMatch(source(mainBoundary), /CHARACTER_COUNT_|characterCount/);
   }
 });

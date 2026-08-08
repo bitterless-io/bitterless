@@ -277,6 +277,12 @@ rebuilds the index; no watcher is created in the MVP.
   rail. Monaco counts every non-empty editor selection; Markdown and PDF use a DOM selection only
   when both endpoints remain inside the preview body. Whitespace and line breaks count. Empty,
   outside, stale, loading, error, file-change, and unmount states report zero and hide the label.
+- The selected-count payload remains exactly `{ hostId, characterCount }`. Shell owns an opaque
+  per-content revision and sends it only through renderer-local transition/readiness messages;
+  Preview fences component reports against that revision before Shell accepts a non-zero count.
+  A host-only sync request resynchronizes the current revision after either renderer reloads. These
+  lifecycle messages contain no path, selected text, file content, or capability and never cross
+  Main or preload.
 
 ## Tokenized Asset Protocol
 

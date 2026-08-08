@@ -23,7 +23,10 @@ import { countOnlyPreviewDomSelection } from '../../onlyPreviewCharacterCount.se
 import { renderOnlyPreviewMarkdown } from '../../onlyPreviewMarkdown.service';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 
-const props = defineProps<{ content: OnlyPreviewTextContent }>();
+const props = defineProps<{
+  content: OnlyPreviewTextContent;
+  reportingRevision: string;
+}>();
 const documentRef = ref<HTMLElement | null>(null);
 
 const renderResult = computed(() =>
@@ -38,20 +41,31 @@ const markdownError = computed(() =>
 
 const reportSelection = (): void => {
   onlyPreviewPreviewStore.reportCharacterCount(
-    countOnlyPreviewDomSelection(documentRef.value, window.getSelection())
+    countOnlyPreviewDomSelection(documentRef.value, window.getSelection()),
+    props.reportingRevision
   );
 };
 
 watch(
-  () => [props.content.workspaceId, props.content.relativePath, props.content.text],
-  () => onlyPreviewPreviewStore.reportCharacterCount(0),
+  () => [
+    props.content.workspaceId,
+    props.content.relativePath,
+    props.content.text,
+    props.reportingRevision
+  ],
+  () => onlyPreviewPreviewStore.reportCharacterCount(0, props.reportingRevision),
   { immediate: true }
 );
 
-onMounted(() => document.addEventListener('selectionchange', reportSelection));
+onMounted(() => {
+  document.addEventListener('selectionchange', reportSelection);
+  if (renderResult.value.ok) {
+    onlyPreviewPreviewStore.armCharacterCountReporting(props.reportingRevision);
+  }
+});
 onBeforeUnmount(() => {
   document.removeEventListener('selectionchange', reportSelection);
-  onlyPreviewPreviewStore.reportCharacterCount(0);
+  onlyPreviewPreviewStore.reportCharacterCount(0, props.reportingRevision);
 });
 </script>
 

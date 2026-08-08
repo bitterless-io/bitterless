@@ -123,6 +123,10 @@ export interface OnlyPreviewCharacterCountEvent extends OnlyPreviewHostEvent {
   characterCount: number;
 }
 
+export interface OnlyPreviewCharacterCountRevisionEvent extends OnlyPreviewHostEvent {
+  revision: string;
+}
+
 export const ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT = 'onlypreview/workspaceChanged' as const;
 export const ONLY_PREVIEW_SELECTION_CHANGED_EVENT = 'onlypreview/selectionChanged' as const;
 export const ONLY_PREVIEW_REFRESH_EVENT = 'onlypreview/refresh' as const;
@@ -131,6 +135,11 @@ export const ONLY_PREVIEW_FOCUS_SEARCH_EVENT = 'onlypreview/focusSearch' as cons
 export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT =
   'onlypreview/characterCountChanged' as const;
+export const ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT = 'onlypreview/characterCountReady' as const;
+export const ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT =
+  'onlypreview/characterCountTransition' as const;
+export const ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT =
+  'onlypreview/characterCountSyncRequest' as const;
 
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;

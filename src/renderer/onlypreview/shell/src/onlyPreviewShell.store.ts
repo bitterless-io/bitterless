@@ -6,6 +6,9 @@ import {
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
@@ -14,6 +17,7 @@ import {
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewBounds,
   type OnlyPreviewCharacterCountEvent,
+  type OnlyPreviewCharacterCountRevisionEvent,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
   type OnlyPreviewResult,
@@ -23,6 +27,7 @@ import {
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
+import { OnlyPreviewCharacterCountHostGate } from '../../common/onlyPreviewCharacterCountGate.service';
 import type { OnlyPreviewTreeRow } from './onlyPreviewShell.type';
 
 const isHostEvent = (value: unknown): value is { hostId: string } =>
@@ -42,6 +47,26 @@ const isCharacterCountEvent = (value: unknown): value is OnlyPreviewCharacterCou
     Number.isSafeInteger(event.characterCount) &&
     (event.characterCount as number) >= 0
   );
+};
+
+const isCharacterCountRevisionEvent = (
+  value: unknown
+): value is OnlyPreviewCharacterCountRevisionEvent => {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  return (
+    Object.keys(event).length === 2 &&
+    typeof event.hostId === 'string' &&
+    typeof event.revision === 'string' &&
+    event.revision.length > 0 &&
+    event.revision.length <= 128
+  );
+};
+
+const isExactHostEvent = (value: unknown): value is { hostId: string } => {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  return Object.keys(event).length === 1 && typeof event.hostId === 'string';
 };
 
 const errorMessage = (error: unknown): string => {
@@ -76,6 +101,8 @@ class OnlyPreviewShellStore {
   private restoreGeneration = 0;
   private workspaceGeneration = 0;
   private selectionGeneration = 0;
+  private readonly characterCountGate = new OnlyPreviewCharacterCountHostGate();
+  private pendingCharacterCount = 0;
 
   get visibleRows(): OnlyPreviewTreeRow[] {
     if (!this.index) return [];
@@ -144,7 +171,12 @@ class OnlyPreviewShellStore {
       return;
     }
 
-    await Promise.all([this.refreshSettings(), this.restoreWorkspace()]);
+    const reportingRevision = this.beginCharacterCountTransition();
+    try {
+      await Promise.all([this.refreshSettings(), this.restoreWorkspace()]);
+    } finally {
+      this.resumeCharacterCountReporting(reportingRevision);
+    }
   }
 
   async chooseFolder(): Promise<void> {
@@ -169,7 +201,9 @@ class OnlyPreviewShellStore {
     if (!this.workspace) return;
     await this.buildIndex();
     if (onlyPreviewEnv.hostId) {
+      const reportingRevision = this.beginCharacterCountTransition();
       xpcRenderer.broadcast(ONLY_PREVIEW_REFRESH_EVENT, { hostId: onlyPreviewEnv.hostId });
+      this.resumeCharacterCountReporting(reportingRevision);
     }
   }
 
@@ -338,14 +372,18 @@ class OnlyPreviewShellStore {
   private subscribe(): void {
     xpcRenderer.subscribe(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        this.selectedCharacterCount = 0;
-        void this.restoreWorkspace();
+        const reportingRevision = this.beginCharacterCountTransition();
+        void this.restoreWorkspace().finally(() => {
+          this.resumeCharacterCountReporting(reportingRevision);
+        });
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        this.selectedCharacterCount = 0;
-        void this.syncSelection();
+        const reportingRevision = this.beginCharacterCountTransition();
+        void this.syncSelection().finally(() => {
+          this.resumeCharacterCountReporting(reportingRevision);
+        });
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, (payload) => {
@@ -353,7 +391,30 @@ class OnlyPreviewShellStore {
         isCharacterCountEvent(payload.params) &&
         payload.params.hostId === onlyPreviewEnv.hostId
       ) {
-        this.selectedCharacterCount = this.selectedRelativePath ? payload.params.characterCount : 0;
+        if (payload.params.characterCount === 0) {
+          this.selectedCharacterCount = 0;
+          this.pendingCharacterCount = 0;
+        } else if (
+          this.selectedRelativePath &&
+          this.characterCountGate.canAcceptCount(payload.params.characterCount)
+        ) {
+          this.selectedCharacterCount = payload.params.characterCount;
+        } else if (this.characterCountGate.canBufferCount(payload.params.characterCount)) {
+          this.pendingCharacterCount = payload.params.characterCount;
+        }
+      }
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT, (payload) => {
+      if (
+        isCharacterCountRevisionEvent(payload.params) &&
+        payload.params.hostId === onlyPreviewEnv.hostId
+      ) {
+        this.characterCountGate.acceptReady(payload.params.revision);
+      }
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, (payload) => {
+      if (isExactHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        this.syncCharacterCountTransition();
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, (payload) => {
@@ -566,7 +627,8 @@ class OnlyPreviewShellStore {
     const workspace = this.workspace;
     if (!hostToken || !workspace) return;
     const generation = ++this.selectionGeneration;
-    this.selectedCharacterCount = 0;
+    const reportingRevision = this.characterCountGate.revisionForSync();
+    this.suspendCharacterCountReporting();
     this.selectedRelativePath = relativePath;
     this.expandSelectedParents();
     try {
@@ -580,6 +642,7 @@ class OnlyPreviewShellStore {
     } catch (error) {
       if (generation !== this.selectionGeneration) return;
       await this.syncSelection();
+      this.resumeCharacterCountReporting(reportingRevision);
       this.errorMessage = errorMessage(error);
     }
   }
@@ -590,6 +653,49 @@ class OnlyPreviewShellStore {
       this.expandedPaths.add(current);
       current = parentPath(current);
     }
+  }
+
+  private beginCharacterCountTransition(): string {
+    const hostId = onlyPreviewEnv.hostId;
+    if (!hostId) return '';
+    const revision = crypto.randomUUID();
+    if (!this.characterCountGate.beginTransition(revision)) return '';
+    this.selectedCharacterCount = 0;
+    this.pendingCharacterCount = 0;
+    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, {
+      hostId,
+      revision
+    });
+    return revision;
+  }
+
+  private suspendCharacterCountReporting(): void {
+    this.characterCountGate.suspend();
+    this.selectedCharacterCount = 0;
+    this.pendingCharacterCount = 0;
+  }
+
+  private resumeCharacterCountReporting(reportingRevision: string): void {
+    if (!this.characterCountGate.resume(reportingRevision)) return;
+    if (this.selectedRelativePath && this.pendingCharacterCount > 0) {
+      this.selectedCharacterCount = this.pendingCharacterCount;
+    }
+    this.pendingCharacterCount = 0;
+  }
+
+  private syncCharacterCountTransition(): void {
+    if (!this.characterCountGate.isSuspended()) {
+      const reportingRevision = this.beginCharacterCountTransition();
+      this.resumeCharacterCountReporting(reportingRevision);
+      return;
+    }
+    const hostId = onlyPreviewEnv.hostId;
+    const revision = this.characterCountGate.revisionForSync();
+    if (!hostId || !revision) return;
+    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, {
+      hostId,
+      revision
+    });
   }
 }
 

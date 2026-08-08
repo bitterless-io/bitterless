@@ -17,6 +17,10 @@ await build({
       projectRoot,
       'src/renderer/onlypreview/preview/src/onlyPreviewCharacterCount.service.ts'
     ),
+    characterCountGate: join(
+      projectRoot,
+      'src/renderer/onlypreview/common/onlyPreviewCharacterCountGate.service.ts'
+    ),
     markdown: join(
       projectRoot,
       'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
@@ -33,6 +37,9 @@ await build({
 });
 
 const characterCount = await import(pathToFileURL(join(buildRoot, 'characterCount.mjs')).href);
+const characterCountGate = await import(
+  pathToFileURL(join(buildRoot, 'characterCountGate.mjs')).href
+);
 const markdown = await import(pathToFileURL(join(buildRoot, 'markdown.mjs')).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
@@ -205,4 +212,65 @@ test('DOM selection counts only when both endpoints remain inside the preview bo
 
   selection.collapse(insideText, 2);
   assert.equal(characterCount.countOnlyPreviewDomSelection(preview, selection), 0);
+});
+
+test('character-count gates reject deferred old reports until the current source is ready', () => {
+  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
+  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
+
+  assert.equal(sourceGate.beginTransition('revision-a'), true);
+  assert.equal(hostGate.beginTransition('revision-a'), true);
+  assert.equal(sourceGate.arm('revision-a'), true);
+  assert.equal(hostGate.acceptReady('revision-a'), true);
+  assert.equal(hostGate.resume('revision-a'), true);
+  assert.equal(sourceGate.canReport('revision-a', 7), true);
+  assert.equal(hostGate.canAcceptCount(7), true);
+
+  assert.equal(hostGate.beginTransition('revision-b'), true);
+  assert.equal(hostGate.canAcceptCount(0), true, 'old zero may clear but never arms');
+  assert.equal(hostGate.canAcceptCount(7), false, 'old nonzero is blocked during restore');
+  assert.equal(sourceGate.beginTransition('revision-b'), true);
+  assert.equal(sourceGate.canReport('revision-a', 7), false);
+  assert.equal(sourceGate.canReport('revision-a', 0), false);
+
+  assert.equal(sourceGate.arm('revision-b'), true);
+  assert.equal(hostGate.acceptReady('revision-b'), true);
+  assert.equal(hostGate.canAcceptCount(9), false, 'ready waits for Shell restore completion');
+  assert.equal(hostGate.canBufferCount(9), true, 'first current selection can wait for Shell');
+  assert.equal(hostGate.resume('revision-b'), true);
+  assert.equal(sourceGate.canReport('revision-b', 9), true);
+  assert.equal(hostGate.canAcceptCount(9), true);
+});
+
+test('opaque revisions reject rapid stale readiness and resynchronize either renderer', () => {
+  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
+  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
+
+  assert.equal(hostGate.beginTransition('revision-b'), true);
+  assert.equal(sourceGate.beginTransition('revision-b'), true);
+  assert.equal(hostGate.beginTransition('revision-c'), true);
+  assert.equal(sourceGate.beginTransition('revision-c'), true);
+  assert.equal(sourceGate.arm('revision-b'), false);
+  assert.equal(hostGate.acceptReady('revision-b'), false);
+  assert.equal(hostGate.resume('revision-b'), false);
+  assert.equal(sourceGate.arm('revision-c'), true);
+  assert.equal(hostGate.acceptReady('revision-c'), true);
+  assert.equal(hostGate.resume('revision-c'), true);
+  assert.equal(hostGate.canAcceptCount(12), true);
+
+  const reloadedSource = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
+  assert.equal(hostGate.isSuspended(), false);
+  assert.equal(hostGate.beginTransition('revision-d'), true, 'a live host rotates on Preview reload');
+  assert.equal(hostGate.resume('revision-d'), true);
+  assert.equal(reloadedSource.beginTransition(hostGate.revisionForSync()), true);
+  assert.equal(reloadedSource.arm('revision-d'), true);
+  assert.equal(hostGate.acceptReady('revision-d'), true);
+
+  const reloadedHost = new characterCountGate.OnlyPreviewCharacterCountHostGate();
+  assert.equal(reloadedHost.beginTransition('revision-e'), true);
+  assert.equal(reloadedSource.beginTransition('revision-e'), true);
+  assert.equal(reloadedSource.arm('revision-e'), true);
+  assert.equal(reloadedHost.acceptReady('revision-e'), true);
+  assert.equal(reloadedHost.resume('revision-e'), true);
+  assert.equal(reloadedHost.canAcceptCount(4), true);
 });
