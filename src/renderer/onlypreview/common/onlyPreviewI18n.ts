@@ -34,6 +34,7 @@ const en = {
     indexReady: 'Index ready',
     indexFailed: 'Index unavailable',
     readyToOpen: 'Ready to open',
+    selectedCharacters: 'Selected {count} characters',
     truncated: 'Showing the first {limit} items. Narrow the folder or use search.',
     symlink: 'Symbolic link'
   },
@@ -57,6 +58,7 @@ const en = {
     modified: 'Modified',
     encoding: 'Encoding',
     textLimit: 'Text preview is limited to 8 MB. Open this file in a system app to inspect it.',
+    markdownLimit: 'Markdown rendering is limited to 1 MB.',
     editorReadOnly: 'OnlyPreview does not edit files.'
   },
   settings: {
@@ -135,6 +137,7 @@ const zh: Localized<typeof en> = {
     indexReady: '索引已就绪',
     indexFailed: '索引不可用',
     readyToOpen: '等待打开',
+    selectedCharacters: '已选择 {count} 个字符',
     truncated: '当前显示前 {limit} 项。请缩小文件夹范围或使用搜索。',
     symlink: '符号链接'
   },
@@ -157,6 +160,7 @@ const zh: Localized<typeof en> = {
     modified: '修改时间',
     encoding: '编码',
     textLimit: '文本预览上限为 8 MB。请使用系统应用查看。',
+    markdownLimit: 'Markdown 渲染上限为 1 MB。',
     editorReadOnly: 'OnlyPreview 不会编辑文件。'
   },
   settings: {

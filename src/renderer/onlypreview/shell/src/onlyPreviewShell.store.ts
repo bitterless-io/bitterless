@@ -5,6 +5,7 @@ import {
   unwrapOnlyPreviewResult
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
+  ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
@@ -12,6 +13,7 @@ import {
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewBounds,
+  type OnlyPreviewCharacterCountEvent,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
   type OnlyPreviewResult,
@@ -27,6 +29,20 @@ const isHostEvent = (value: unknown): value is { hostId: string } =>
   !!value &&
   typeof value === 'object' &&
   typeof (value as Record<string, unknown>).hostId === 'string';
+
+const isCharacterCountEvent = (value: unknown): value is OnlyPreviewCharacterCountEvent => {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  const keys = Object.keys(event);
+  return (
+    keys.length === 2 &&
+    keys.includes('hostId') &&
+    keys.includes('characterCount') &&
+    typeof event.hostId === 'string' &&
+    Number.isSafeInteger(event.characterCount) &&
+    (event.characterCount as number) >= 0
+  );
+};
 
 const errorMessage = (error: unknown): string => {
   if (error instanceof OnlyPreviewContractError) {
@@ -46,6 +62,7 @@ class OnlyPreviewShellStore {
   settings: OnlyPreviewSettings | null = null;
   searchQuery = '';
   selectedRelativePath = '';
+  selectedCharacterCount = 0;
   focusedRelativePath = '';
   expandedPaths = new Set<string>();
   projectWidth = 264;
@@ -321,12 +338,22 @@ class OnlyPreviewShellStore {
   private subscribe(): void {
     xpcRenderer.subscribe(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        this.selectedCharacterCount = 0;
         void this.restoreWorkspace();
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        this.selectedCharacterCount = 0;
         void this.syncSelection();
+      }
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, (payload) => {
+      if (
+        isCharacterCountEvent(payload.params) &&
+        payload.params.hostId === onlyPreviewEnv.hostId
+      ) {
+        this.selectedCharacterCount = this.selectedRelativePath ? payload.params.characterCount : 0;
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, (payload) => {
@@ -360,6 +387,7 @@ class OnlyPreviewShellStore {
   private async restoreWorkspace(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
+    this.selectedCharacterCount = 0;
     const generation = ++this.restoreGeneration;
     try {
       const workspace = unwrapOnlyPreviewResult(
@@ -372,6 +400,7 @@ class OnlyPreviewShellStore {
         this.workspace = null;
         this.index = null;
         this.selectedRelativePath = '';
+        this.selectedCharacterCount = 0;
         return;
       }
       await this.applyWorkspace(workspace);
@@ -384,6 +413,7 @@ class OnlyPreviewShellStore {
     const generation = ++this.workspaceGeneration;
     this.selectionGeneration += 1;
     this.workspace = workspace;
+    this.selectedCharacterCount = 0;
     this.selectedRelativePath = workspace.selectedRelativePath || '';
     this.focusedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
@@ -399,6 +429,7 @@ class OnlyPreviewShellStore {
   private async syncSelection(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
+    this.selectedCharacterCount = 0;
     const generation = ++this.restoreGeneration;
     try {
       const workspace = unwrapOnlyPreviewResult(
@@ -535,6 +566,7 @@ class OnlyPreviewShellStore {
     const workspace = this.workspace;
     if (!hostToken || !workspace) return;
     const generation = ++this.selectionGeneration;
+    this.selectedCharacterCount = 0;
     this.selectedRelativePath = relativePath;
     this.expandSelectedParents();
     try {

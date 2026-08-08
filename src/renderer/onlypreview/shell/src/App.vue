@@ -282,7 +282,11 @@
         {{ indexStatus }}
       </span>
       <span v-if="onlyPreviewShellStore.selectedEntry" class="onlypreview-shell__file-state">
-        {{ onlyPreviewShellStore.selectedEntry.previewHint.toUpperCase() }}
+        <template v-if="onlyPreviewShellStore.selectedCharacterCount > 0">
+          <span class="onlypreview-shell__selection-state">{{ selectedCharacterStatus }}</span>
+          <span aria-hidden="true">·</span>
+        </template>
+        {{ selectedFileType }}
         <span aria-hidden="true">·</span>
         {{ formatOnlyPreviewBytes(onlyPreviewShellStore.selectedEntry.size) }}
       </span>
@@ -338,6 +342,18 @@ const indexStatus = computed(() => {
     return onlyPreviewI18n.project.indexPartial.toUpperCase();
   }
   return onlyPreviewI18n.project.indexReady.toUpperCase();
+});
+
+const selectedCharacterStatus = computed(() =>
+  interpolateOnlyPreview(onlyPreviewI18n.project.selectedCharacters, {
+    count: onlyPreviewShellStore.selectedCharacterCount
+  }).toUpperCase()
+);
+
+const selectedFileType = computed(() => {
+  const entry = onlyPreviewShellStore.selectedEntry;
+  if (!entry) return '';
+  return /\.md$/i.test(entry.relativePath) ? 'MARKDOWN' : entry.previewHint.toUpperCase();
 });
 
 const reportPreviewBounds = (): void => {

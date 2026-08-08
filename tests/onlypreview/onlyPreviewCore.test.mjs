@@ -1444,3 +1444,128 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(pdf, /new TextLayer/);
   assert.match(pdf, /canvas/);
 });
+
+test('Markdown rendering and selection counts stay renderer-only, inert, and host-scoped', () => {
+  const packageJson = JSON.parse(source('package.json'));
+  assert.equal(packageJson.dependencies.marked, '18.0.7');
+  assert.equal(packageJson.dependencies.dompurify, '3.4.12');
+
+  const classifier = source('src/main/onlypreview/onlyPreviewClassifier.service.ts');
+  assert.match(classifier, /TEXT_EXTENSIONS[\s\S]*'\.md'[\s\S]*'\.mdx'/);
+  assert.match(classifier, /'\.md':\s*'markdown'/);
+  assert.match(classifier, /'\.mdx':\s*'markdown'/);
+  assert.doesNotMatch(classifier, /'\.markdown'/);
+
+  const surface = source(
+    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
+  );
+  const markdownBranch = surface.indexOf('<MarkdownPreview');
+  const monacoBranch = surface.indexOf('<MonacoTextPreview');
+  assert.ok(markdownBranch >= 0 && markdownBranch < monacoBranch);
+  assert.match(surface, /descriptor\.extension === '\.md'/);
+  assert.doesNotMatch(surface, /descriptor\.extension === '\.mdx'/);
+  assert.doesNotMatch(surface, /descriptor\.extension === '\.markdown'/);
+
+  const markdownService = source(
+    'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
+  );
+  assert.match(markdownService, /from 'marked'/);
+  assert.match(markdownService, /from 'dompurify'/);
+  assert.match(markdownService, /ONLY_PREVIEW_MAX_MARKDOWN_BYTES/);
+  assert.match(markdownService, /class OnlyPreviewMarkdownRenderer extends Renderer/);
+  assert.match(markdownService, /html\(\{ text \}[\s\S]*escapeHtml\(text\)/);
+  assert.match(markdownService, /image\(\{ text \}[\s\S]*\[Image:/);
+  assert.match(markdownService, /purifier\.sanitize\(parsed/);
+  assert.match(markdownService, /ALLOWED_ATTR:\s*\[\]/);
+  assert.match(markdownService, /ALLOW_ARIA_ATTR:\s*false/);
+  assert.match(markdownService, /ALLOW_DATA_ATTR:\s*false/);
+  assert.match(markdownService, /ALLOWED_NAMESPACES:\s*\['http:\/\/www\.w3\.org\/1999\/xhtml'\]/);
+
+  const markdownComponent = source(
+    'src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.vue'
+  );
+  assert.match(markdownComponent, /v-html="renderResult\.html"/);
+  assert.match(markdownComponent, /countOnlyPreviewDomSelection\(documentRef\.value/);
+  assert.match(markdownComponent, /document\.addEventListener\('selectionchange'/);
+  assert.match(markdownComponent, /document\.removeEventListener\('selectionchange'/);
+  assert.match(markdownComponent, /reportCharacterCount\(0\)/);
+
+  const markdownStyle = source(
+    'src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.less'
+  );
+  assert.match(markdownStyle, /width:\s*min\(860px, 100%\)/);
+  assert.match(markdownStyle, /overflow:\s*auto/);
+  assert.match(markdownStyle, /--onlypreview-royal/);
+  assert.match(markdownStyle, /border-collapse:\s*collapse/);
+  assert.doesNotMatch(markdownStyle, /animation|transition/);
+
+  const characterService = source(
+    'src/renderer/onlypreview/preview/src/onlyPreviewCharacterCount.service.ts'
+  );
+  assert.match(characterService, /new Intl\.Segmenter\(undefined, \{ granularity: 'grapheme' \}\)/);
+  assert.match(characterService, /Array\.from\(value\)\.length/);
+  assert.match(characterService, /root\.contains\(selection\.anchorNode\)/);
+  assert.match(characterService, /root\.contains\(selection\.focusNode\)/);
+
+  const monaco = source(
+    'src/renderer/onlypreview/preview/src/components/MonacoTextPreview/MonacoTextPreview.vue'
+  );
+  assert.match(monaco, /onDidChangeCursorSelection/);
+  assert.match(monaco, /getSelections\(\)/);
+  assert.match(monaco, /filter\(\(selection\) => !selection\.isEmpty\(\)\)/);
+  assert.match(monaco, /getValueInRange\(selection\)/);
+  assert.match(monaco, /selectionDisposable\?\.dispose\(\)/);
+  assert.match(monaco, /reportCharacterCount\(0\)/);
+
+  const pdf = source('src/renderer/onlypreview/preview/src/components/PdfPreview/PdfPreview.vue');
+  assert.match(pdf, /countOnlyPreviewDomSelection\(pagesRef\.value/);
+  assert.match(pdf, /document\.addEventListener\('selectionchange'/);
+  assert.match(pdf, /document\.removeEventListener\('selectionchange'/);
+  assert.match(pdf, /reportCharacterCount\(0\)/);
+
+  const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
+  assert.match(
+    previewStore,
+    /xpcRenderer\.broadcast\(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, \{[\s\S]*?hostId,[\s\S]*?characterCount:[\s\S]*?\}\);/
+  );
+  assert.doesNotMatch(previewStore, /selectedText|selectionText|text:\s*character/);
+
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  assert.match(shellStore, /keys\.length === 2/);
+  assert.match(shellStore, /Number\.isSafeInteger\(event\.characterCount\)/);
+  assert.match(
+    shellStore,
+    /isCharacterCountEvent\(payload\.params\)[\s\S]*payload\.params\.hostId === onlyPreviewEnv\.hostId/
+  );
+  assert.match(
+    shellStore,
+    /this\.selectedCharacterCount = this\.selectedRelativePath[\s\S]*payload\.params\.characterCount[\s\S]*: 0/
+  );
+  assert.ok((shellStore.match(/this\.selectedCharacterCount = 0/g) || []).length >= 6);
+
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  assert.ok(
+    shellApp.indexOf('selectedCharacterStatus') < shellApp.indexOf('{{ selectedFileType }}'),
+    'selected count must appear before type and size'
+  );
+  assert.match(shellApp, /selectedCharacterCount > 0/);
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  assert.match(shellStyle, /\.onlypreview-shell__status-rail[\s\S]*height:\s*25px/);
+  assert.match(shellStyle, /flex:\s*0 0 25px/);
+
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  assert.match(i18n, /selectedCharacters:\s*'Selected \{count\} characters'/);
+  assert.match(i18n, /selectedCharacters:\s*'已选择 \{count\} 个字符'/);
+  assert.match(i18n, /markdownLimit:\s*'Markdown rendering is limited to 1 MB\.'/);
+
+  const sharedTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const api = sharedTypes.match(/export interface OnlyPreviewApi \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(api);
+  assert.doesNotMatch(api, /characterCount|selectedText|selectionText/);
+  for (const mainBoundary of [
+    'src/main/xpc/onlyPreview.handler.ts',
+    'src/preload/onlypreview/onlypreview.preload.ts'
+  ]) {
+    assert.doesNotMatch(source(mainBoundary), /CHARACTER_COUNT_CHANGED|characterCount/);
+  }
+});

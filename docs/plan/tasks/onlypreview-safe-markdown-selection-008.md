@@ -1,7 +1,7 @@
 ---
 id: onlypreview-safe-markdown-selection-008
 scope: Safely render Markdown and show selected-text character counts in OnlyPreview's bottom rail
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [onlypreview-e2e-keychain-isolation-007]
 ---
 
@@ -40,7 +40,6 @@ selected in Monaco, Markdown, or PDF.
 - `package.json`
 - `yarn.lock`
 - `src/shared/onlypreview/onlyPreview.types.ts`
-- `src/main/onlypreview/onlyPreviewClassifier.service.ts`
 - `src/renderer/onlypreview/common/onlyPreviewI18n.ts`
 - `src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts`
 - `src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue`
@@ -64,8 +63,8 @@ selected in Monaco, Markdown, or PDF.
 1. Add direct `marked@18.0.7` and `dompurify@3.4.12` dependencies. Do not use `markstream-vue`, a
    transitive parser dependency, a home-grown sanitizer, raw unsanitized `v-html`, remote rendering,
    Mermaid, KaTeX, or executable Markdown extensions.
-2. Render only `.md` and `.markdown`; keep `.mdx` in read-only Monaco source. Add `.markdown` to
-   Main's text/language classifier without adding a new public preview kind or Main API.
+2. Render only `.md`; keep `.markdown` and `.mdx` in read-only Monaco source. Do not expand the
+   existing file-association/classifier contract or add a new public preview kind or Main API.
 3. Compile at most 1 MiB of Markdown. Escape raw HTML as visible text, convert images to inert
    alt-text placeholders, and sanitize through a semantic-tag allowlist with no attributes. No
    `href`, `src`, style, event handler, form, script, frame, SVG/MathML, remote/data/local resource,
@@ -95,7 +94,7 @@ selected in Monaco, Markdown, or PDF.
   headings/lists/tables/code
 - Pure Node tests for grapheme counting: ASCII, Chinese, emoji/ZWJ, combining marks, whitespace,
   line breaks, empty text, and multiple selections
-- Source/integration guards for `.md`/`.markdown` routing, `.mdx` Monaco fallback, DOM/Monaco
+- Source/integration guards for `.md` routing, `.markdown`/`.mdx` Monaco fallback, DOM/Monaco
   listener disposal/reset, host-scoped renderer broadcast, status-rail placement, and i18n
 - Focused typecheck/ESLint and `git diff --check`; no Electron/Playwright/E2E/full-app launch
 - Ral manually opens normal and hostile Markdown, then selects text in Markdown, code, and PDF to
@@ -103,4 +102,24 @@ selected in Monaco, Markdown, or PDF.
 
 # Delivery Evidence
 
-- Pending implementation.
+- Implemented on 2026-08-08. `.md` files now use a centered, selectable 860px reading surface;
+  `.markdown` and `.mdx` remain read-only Monaco source. Direct pinned `marked@18.0.7` and
+  `dompurify@3.4.12` dependencies were installed with lifecycle scripts disabled.
+- Markdown rendering is capped at 1 MiB, escapes raw HTML as visible text, replaces images with
+  inert alt-text placeholders, and passes every result through a semantic-tag/zero-attribute
+  DOMPurify allowlist. No active link, resource, form, frame, SVG/MathML, style, or event-handler
+  path remains.
+- Monaco sums all non-empty selections; Markdown and PDF count only selections whose two endpoints
+  remain inside their preview surface. Counts use `Intl.Segmenter` graphemes with a code-point
+  fallback, and Preview broadcasts only `{ hostId, characterCount }`; Shell validates the exact
+  current-host payload, resets it across content changes, and renders it in the unchanged 25px rail.
+- `node --test tests/onlypreview/*.test.mjs` passed 53/53 pure Node/source tests, including hostile
+  Markdown, the 1 MiB boundary, semantic/zero-attribute output, Unicode/ZWJ/combining-mark counts,
+  multi-selection sums, DOM endpoint containment, listener disposal, and host-scoped wiring.
+- `yarn typecheck:node`, `yarn check:renderer-i18n`, focused error-level ESLint, and
+  `git diff --check` passed. Full `yarn typecheck:web` remains blocked only by the repository's
+  existing connector, poker-test, Home, and shared typing baseline; it reported no OnlyPreview
+  diagnostic.
+- Electron, Playwright, E2E, the full Bitterless application, and `yarn build` were not run by
+  explicit delivery instruction. Ral should manually open a normal and a hostile `.md`, then select
+  text in Markdown, Monaco, and PDF to verify safe rendering and the localized bottom-rail count.

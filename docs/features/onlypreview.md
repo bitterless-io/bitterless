@@ -247,7 +247,7 @@ rebuilds the index; no watcher is created in the MVP.
 | Kind | MVP inputs | Renderer |
 |---|---|---|
 | `text` | common source/config/prose/log types; extensionless or unknown sample that passes text detection | Monaco `vs`, `readOnly`, `domReadOnly`, selectable text, syntax map, find |
-| `text` / Markdown | `.md` and `.markdown` | centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.mdx` remains Monaco source |
+| `text` / Markdown | `.md` | centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.markdown` and `.mdx` remain Monaco source |
 | `pdf` | `.pdf` with matching signature | installed PDF.js (`unpdf/pdfjs`) canvas pages plus selectable TextLayer over tokenized bytes |
 | `image` | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG | `<img>` contain; SVG never becomes a top-level executable document |
 | `audio` | MP3, WAV, OGG, M4A, AAC, FLAC where Chromium has codec support | `<audio controls>`, no autoplay |
@@ -259,9 +259,10 @@ rebuilds the index; no watcher is created in the MVP.
 - Text detection samples bytes and rejects NUL/control-heavy payloads. UTF-8 and BOM-marked UTF-16
   are supported; invalid required decoding returns an explicit error.
 - HTML is displayed as source. User HTML never executes.
-- Markdown is rendered only for `.md` and `.markdown`. `.mdx` remains source because JSX/import
-  semantics are outside the read-only Markdown contract. Markdown source above 1 MiB is rejected
-  with a localized render-limit state instead of falling back to raw source.
+- Markdown is rendered only for `.md`. `.markdown` and `.mdx` remain source; expanding file
+  associations or interpreting JSX/import semantics is outside this focused contract. Markdown
+  source above 1 MiB is rejected with a localized render-limit state instead of falling back to
+  raw source.
 - Markdown compilation uses direct current `marked` and DOMPurify dependencies. Raw HTML is escaped
   as visible text before sanitization. Sanitized output allows only semantic text/list/table/code
   tags and no attributes; scripts, styles, forms, frames, SVG/MathML, event handlers, `href`, `src`,

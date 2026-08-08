@@ -12,6 +12,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { AnnotationMode, getDocument, TextLayer } from 'unpdf/pdfjs';
 import { interpolateOnlyPreview } from '../../../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
+import { countOnlyPreviewDomSelection } from '../../onlyPreviewCharacterCount.service';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 
 const props = defineProps<{ assetUrl: string }>();
@@ -25,6 +26,7 @@ let renderTasks: Array<{ cancel: () => void }> = [];
 let textLayers: TextLayer[] = [];
 
 const disposePdf = (): void => {
+  onlyPreviewPreviewStore.reportCharacterCount(0);
   generation += 1;
   abortController?.abort();
   abortController = null;
@@ -37,6 +39,12 @@ const disposePdf = (): void => {
   pdfDocument = null;
   loadingTask = null;
   if (pagesRef.value) pagesRef.value.replaceChildren();
+};
+
+const reportSelection = (): void => {
+  onlyPreviewPreviewStore.reportCharacterCount(
+    countOnlyPreviewDomSelection(pagesRef.value, window.getSelection())
+  );
 };
 
 const renderPdf = async (): Promise<void> => {
@@ -119,8 +127,14 @@ watch(
   () => props.assetUrl,
   () => void renderPdf()
 );
-onMounted(() => void renderPdf());
-onBeforeUnmount(disposePdf);
+onMounted(() => {
+  document.addEventListener('selectionchange', reportSelection);
+  void renderPdf();
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('selectionchange', reportSelection);
+  disposePdf();
+});
 </script>
 
 <style lang="less">

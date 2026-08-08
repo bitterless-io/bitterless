@@ -6,6 +6,7 @@ import {
   unwrapOnlyPreviewResult
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
+  ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
@@ -53,6 +54,7 @@ class OnlyPreviewPreviewStore {
   }
 
   async loadFile(fileRef: OnlyPreviewFileRef): Promise<void> {
+    this.reportCharacterCount(0);
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
     this.restoreGeneration += 1;
@@ -107,6 +109,7 @@ class OnlyPreviewPreviewStore {
   }
 
   clear(): void {
+    this.reportCharacterCount(0);
     this.restoreGeneration += 1;
     this.generation += 1;
     this.currentRef = null;
@@ -120,8 +123,19 @@ class OnlyPreviewPreviewStore {
   }
 
   reportMediaError(kind: 'pdf' | 'media'): void {
+    this.reportCharacterCount(0);
     this.presentationError =
       kind === 'pdf' ? onlyPreviewI18n.preview.pdfFailed : onlyPreviewI18n.preview.mediaFailed;
+  }
+
+  reportCharacterCount(characterCount: number): void {
+    const hostId = onlyPreviewEnv.hostId;
+    if (!hostId) return;
+    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, {
+      hostId,
+      characterCount:
+        Number.isSafeInteger(characterCount) && characterCount >= 0 ? characterCount : 0
+    });
   }
 
   async openExternally(): Promise<void> {
