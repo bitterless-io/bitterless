@@ -164,6 +164,48 @@ test('storage readiness gates restore while failure resolves the empty state', a
   });
 });
 
+test('explicit open resolves while a ready storage read remains deferred', async () => {
+  await withTempDirectory('onlypreview-recent-deferred-', async (root) => {
+    const storage = new MemorySettingStorage();
+    const originalGetStored = storage.getStored.bind(storage);
+    let signalReadStarted;
+    const readStarted = new Promise((resolveStarted) => {
+      signalReadStarted = resolveStarted;
+    });
+    let releaseRead;
+    const readGate = new Promise((resolveRead) => {
+      releaseRead = resolveRead;
+    });
+    storage.getStored = async () => {
+      signalReadStarted?.();
+      signalReadStarted = null;
+      await readGate;
+      return await originalGetStored();
+    };
+    const { hosts, workspaces, service } = createService(storage);
+    const host = hosts.issue('standalone', 'content');
+    service.markStorageReady();
+    const generation = service.beginExplicitTarget(host.hostToken);
+    let openSettled = false;
+    const opening = service.openExplicitTarget(host.hostToken, root, generation).then((workspace) => {
+      openSettled = true;
+      return workspace;
+    });
+
+    await readStarted;
+    await settle();
+    const settledBeforeStorage = openSettled;
+    releaseRead();
+    const workspace = await opening;
+    service.finishExplicitTarget(generation);
+
+    assert.equal(settledBeforeStorage, true);
+    assert.equal(workspace?.displayPath, realpathSync(root));
+    assert.equal(workspaces.restore(host.hostToken)?.workspaceId, workspace?.workspaceId);
+    await settle();
+  });
+});
+
 test('pre-ready explicit opens retain and flush only the latest canonical directory', async () => {
   await withTempDirectory('onlypreview-recent-latest-', async (root) => {
     const first = join(root, 'first');
@@ -188,6 +230,49 @@ test('pre-ready explicit opens retain and flush only the latest canonical direct
     assert.deepEqual(storage.value(), { version: 1, directoryPath: realpathSync(second) });
     assert.equal(storage.insertCount, 1);
     assert.ok(storage.compareAndSetCalls.length >= 1);
+  });
+});
+
+test('ordinary host revoke preserves pending history while teardown fences and clears it', async () => {
+  await withTempDirectory('onlypreview-recent-clear-', async (root) => {
+    const preservedStorage = new MemorySettingStorage();
+    const preservedRuntime = createService(preservedStorage);
+    const preservedHost = preservedRuntime.hosts.issue('standalone', 'content');
+    const preservedGeneration = preservedRuntime.service.beginExplicitTarget(
+      preservedHost.hostToken
+    );
+    await preservedRuntime.service.openExplicitTarget(
+      preservedHost.hostToken,
+      root,
+      preservedGeneration
+    );
+    preservedRuntime.service.finishExplicitTarget(preservedGeneration);
+    preservedRuntime.hosts.revoke(preservedHost.hostToken);
+    preservedRuntime.service.markStorageReady();
+    await settle();
+    assert.deepEqual(preservedStorage.value(), {
+      version: 1,
+      directoryPath: realpathSync(root)
+    });
+
+    const clearedStorage = new MemorySettingStorage();
+    const clearedRuntime = createService(clearedStorage);
+    const clearedHost = clearedRuntime.hosts.issue('standalone', 'content');
+    const clearedGeneration = clearedRuntime.service.beginExplicitTarget(clearedHost.hostToken);
+    await clearedRuntime.service.openExplicitTarget(
+      clearedHost.hostToken,
+      root,
+      clearedGeneration
+    );
+    clearedRuntime.service.finishExplicitTarget(clearedGeneration);
+    clearedRuntime.hosts.revoke(clearedHost.hostToken);
+    clearedRuntime.service.clearTransientState();
+    clearedRuntime.service.markStorageReady();
+    await settle();
+    assert.equal(clearedStorage.value(), undefined);
+    assert.equal(clearedStorage.getCount, 0);
+    assert.equal(clearedStorage.insertCount, 0);
+    assert.equal(clearedStorage.compareAndSetCalls.length, 0);
   });
 });
 
@@ -280,6 +365,7 @@ test('a complete storage lifecycle restores a fresh directory capability and for
       firstGeneration
     );
     firstRuntime.service.finishExplicitTarget(firstGeneration);
+    await settle();
     firstRuntime.workspaces.select(firstHost.hostToken, {
       workspaceId: firstWorkspace.workspaceId,
       relativePath: 'not-persisted.txt'
@@ -307,6 +393,7 @@ test('a complete storage lifecycle restores a fresh directory capability and for
     );
     restoredRuntime.service.finishExplicitTarget(explicitGeneration);
     assert.equal(explicitWorkspace?.selectedRelativePath, 'winner.txt');
+    await settle();
     restoredRuntime.hosts.clear();
     restoredRuntime.service.clearTransientState();
 
@@ -330,6 +417,7 @@ test('invalid history CAS-clears only the exact observed value and preserves a c
   service.markStorageReady();
 
   assert.equal(await service.restoreWorkspace(host.hostToken), null);
+  await settle();
   assert.equal(storage.compareAndSetCalls.length, 1);
   assert.equal(storage.compareAndSetCalls[0].expectedSerializedValue, oldSerialized);
   assert.equal(storage.compareAndSetCalls[0].value, null);

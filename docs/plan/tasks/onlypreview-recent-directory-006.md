@@ -90,10 +90,14 @@ unavailable.
 - Implemented on 2026-08-08. OnlyPreview now stores the latest successfully opened canonical
   directory through the existing setting-table CAS API, restores it into one fresh workspace with
   no file selection, and lets a later explicit folder or OS-file target override stored history.
-- `node --test tests/onlypreview/*.test.mjs` passed 43/43 tests. The focused harness covers SQLite
+- Round 1 closure decouples successful explicit opens from optional persistence: canonical state is
+  retained synchronously, the handled write chain runs in the background, and auth/quit teardown
+  clears and generation-fences pending state while an ordinary window revoke preserves it.
+- `node --test tests/onlypreview/*.test.mjs` passed 45/45 tests. The focused harness covers SQLite
   ready/failure behavior, pre-ready latest-write flushing, insert/CAS conflicts, stale-generation
   fencing, per-host Shell/Preview single flight, a fresh service/storage/host restart lifecycle,
-  directory-only restoration, explicit-file override, host revocation, and log privacy.
+  directory-only restoration, explicit-file override, a deferred storage read that cannot block a
+  successful open, revoke/teardown pending-state behavior, host revocation, and log privacy.
 - `yarn typecheck:node`, `yarn check:renderer-i18n`, targeted error-level ESLint, `yarn build`, and
   `git diff --check` passed. `yarn typecheck:web` remains the documented repository baseline and was
   not used as acceptance evidence for this Main-process-only change.

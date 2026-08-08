@@ -82,7 +82,7 @@ export class OnlyPreviewRecentDirectoryService {
     this.storageState = 'ready';
     this.resolveStorageLatch?.(true);
     this.resolveStorageLatch = null;
-    void this.scheduleStorageFlush();
+    this.scheduleStorageFlush();
   }
 
   markStorageFailed(): void {
@@ -125,7 +125,7 @@ export class OnlyPreviewRecentDirectoryService {
         this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
         return null;
       }
-      await this.rememberDirectory(workspace.displayPath, generation);
+      this.rememberDirectory(workspace.displayPath, generation);
       return workspace;
     });
   }
@@ -153,7 +153,9 @@ export class OnlyPreviewRecentDirectoryService {
   }
 
   clearTransientState(): void {
+    this.mutationGeneration += 1;
     this.activeExplicitGeneration = null;
+    this.pendingDirectory = null;
     this.hostGeneration.clear();
     this.hostMutationChain.clear();
     this.restoreFlights.clear();
@@ -177,7 +179,7 @@ export class OnlyPreviewRecentDirectoryService {
       : null;
     if (!stored.exists) return null;
     if (!candidate) {
-      await this.clearObservedValue(stored);
+      void this.clearObservedValue(stored);
       return null;
     }
 
@@ -191,7 +193,7 @@ export class OnlyPreviewRecentDirectoryService {
         workspace = await this.workspaces.createForTarget(hostToken, candidate);
       } catch {
         if (this.canRestore(hostToken, generation, hostGeneration)) {
-          await this.clearObservedValue(stored);
+          void this.clearObservedValue(stored);
         }
         return null;
       }
@@ -200,7 +202,7 @@ export class OnlyPreviewRecentDirectoryService {
         !workspace.selectedRelativePath && workspace.displayPath === candidate;
       if (!isCanonicalDirectory) {
         this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
-        await this.clearObservedValue(stored);
+        void this.clearObservedValue(stored);
         return null;
       }
       if (!this.canRestore(hostToken, generation, hostGeneration)) {
@@ -234,17 +236,18 @@ export class OnlyPreviewRecentDirectoryService {
     }
   }
 
-  private async rememberDirectory(directoryPath: string, generation: number): Promise<void> {
+  private rememberDirectory(directoryPath: string, generation: number): void {
     if (generation !== this.mutationGeneration || !isAbsolute(directoryPath)) return;
     this.pendingDirectory = { generation, directoryPath };
-    if (this.storageState === 'ready') await this.scheduleStorageFlush();
+    if (this.storageState === 'ready') this.scheduleStorageFlush();
   }
 
-  private async scheduleStorageFlush(): Promise<void> {
-    this.storageWriteChain = this.storageWriteChain.then(async () => {
-      await this.flushPendingDirectory();
-    }).catch(() => undefined);
-    await this.storageWriteChain;
+  private scheduleStorageFlush(): void {
+    this.storageWriteChain = this.storageWriteChain
+      .then(async () => {
+        await this.flushPendingDirectory();
+      })
+      .catch(() => undefined);
   }
 
   private async flushPendingDirectory(): Promise<void> {
