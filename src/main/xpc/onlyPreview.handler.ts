@@ -149,6 +149,28 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     });
   }
 
+  async minimizeWindow(
+    params: ApiParams<'minimizeWindow'>
+  ): ReturnType<OnlyPreviewApi['minimizeWindow']> {
+    return await runOperation(async () => {
+      onlyPreviewWindowHelper.minimizeWindow(params?.hostToken);
+    });
+  }
+
+  async toggleMaximizeWindow(
+    params: ApiParams<'toggleMaximizeWindow'>
+  ): ReturnType<OnlyPreviewApi['toggleMaximizeWindow']> {
+    return await runOperation(async () => {
+      onlyPreviewWindowHelper.toggleMaximizeWindow(params?.hostToken);
+    });
+  }
+
+  async closeWindow(params: ApiParams<'closeWindow'>): ReturnType<OnlyPreviewApi['closeWindow']> {
+    return await runOperation(async () => {
+      onlyPreviewWindowHelper.closeWindow(params?.hostToken);
+    });
+  }
+
   async openExternally(
     params: ApiParams<'openExternally'>
   ): ReturnType<OnlyPreviewApi['openExternally']> {

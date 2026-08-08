@@ -29,7 +29,7 @@ const MIN_HEIGHT = 600;
 const MIN_SIDEBAR_WIDTH = 180;
 const RESIZE_HANDLE_WIDTH = 5;
 const DEFAULT_SIDEBAR_WIDTH = 264;
-const TOOLBAR_HEIGHT = 44;
+const MENU_BAR_HEIGHT = 32;
 const STATUS_HEIGHT = 25;
 
 type OnlyPreviewRendererMode = 'shell' | 'preview' | 'settings';
@@ -100,8 +100,8 @@ const clampPreviewBounds = (
 ): Rectangle => {
   const x = Math.min(Math.max(value.x, MIN_SIDEBAR_WIDTH + RESIZE_HANDLE_WIDTH), contentWidth);
   const y = Math.min(
-    Math.max(value.y, TOOLBAR_HEIGHT),
-    Math.max(TOOLBAR_HEIGHT, contentHeight - STATUS_HEIGHT)
+    Math.max(value.y, MENU_BAR_HEIGHT),
+    Math.max(MENU_BAR_HEIGHT, contentHeight - STATUS_HEIGHT)
   );
   return {
     x,
@@ -187,6 +187,23 @@ export class OnlyPreviewWindowHelper {
       window.show();
     }
     window.focus();
+  }
+
+  minimizeWindow(hostToken: string): void {
+    this.requireStandaloneWindow(hostToken).minimize();
+  }
+
+  toggleMaximizeWindow(hostToken: string): void {
+    const window = this.requireStandaloneWindow(hostToken);
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+  }
+
+  closeWindow(hostToken: string): void {
+    this.requireStandaloneWindow(hostToken).close();
   }
 
   updatePreviewBounds(hostToken: string, value: OnlyPreviewBounds): void {
@@ -321,6 +338,15 @@ export class OnlyPreviewWindowHelper {
     return host;
   }
 
+  private requireStandaloneWindow(hostToken: string): BaseWindow {
+    const host = this.requireStandaloneHost(hostToken);
+    const window = this.baseWindow;
+    if (!window || window.isDestroyed()) {
+      throw new Error(`OnlyPreview host ${host.hostId} has no active standalone window.`);
+    }
+    return window;
+  }
+
   private async createStandaloneWindow(host: OnlyPreviewHostCapability): Promise<void> {
     const restored = windowStateService.resolve('onlypreview');
     const window = new BaseWindow({
@@ -330,7 +356,10 @@ export class OnlyPreviewWindowHelper {
       minWidth: MIN_WIDTH,
       minHeight: MIN_HEIGHT,
       show: false,
-      backgroundColor: '#f5f3ee',
+      backgroundColor: '#f6f7fa',
+      autoHideMenuBar: true,
+      titleBarStyle: 'hidden',
+      ...(process.platform === 'darwin' && { trafficLightPosition: { x: 12, y: 8 } }),
       ...(restored ? { x: restored.bounds.x, y: restored.bounds.y } : {})
     });
     this.baseWindow = window;
@@ -402,9 +431,9 @@ export class OnlyPreviewWindowHelper {
     this.shellView.setBounds({ x: 0, y: 0, width, height });
     this.previewView.setBounds({
       x: Math.min(DEFAULT_SIDEBAR_WIDTH + RESIZE_HANDLE_WIDTH, width),
-      y: Math.min(TOOLBAR_HEIGHT, height),
+      y: Math.min(MENU_BAR_HEIGHT, height),
       width: Math.max(0, width - DEFAULT_SIDEBAR_WIDTH - RESIZE_HANDLE_WIDTH),
-      height: Math.max(0, height - TOOLBAR_HEIGHT - STATUS_HEIGHT)
+      height: Math.max(0, height - MENU_BAR_HEIGHT - STATUS_HEIGHT)
     });
   }
 

@@ -5,61 +5,111 @@
     :style="{ '--onlypreview-project-width': `${onlyPreviewShellStore.projectWidth}px` }"
     @keydown.capture="handleShellKeydown"
   >
-    <header name="onlypreview__topbar" class="onlypreview-shell__topbar">
-      <div name="onlypreview__openActions" class="onlypreview-shell__open-actions">
+    <header
+      name="onlypreview__menuBar"
+      class="onlypreview-shell__menu-bar"
+      :class="{
+        'onlypreview-shell__menu-bar--mac': isMac,
+        'onlypreview-shell__menu-bar--windows': isWindows
+      }"
+      @dblclick="handleMenuBarDoubleClick"
+    >
+      <div name="onlypreview__identity" class="onlypreview-shell__identity">
+        <IconFiles class="onlypreview-shell__identity-icon" :size="15" aria-hidden="true" />
+        <span class="onlypreview-shell__product">{{ onlyPreviewI18n.productName }}</span>
+        <span class="onlypreview-shell__location-divider" aria-hidden="true">/</span>
+        <span
+          class="onlypreview-shell__path"
+          :title="
+            onlyPreviewShellStore.workspace?.displayPath || onlyPreviewI18n.topbar.noWorkspace
+          "
+        >
+          {{ onlyPreviewShellStore.workspace?.displayPath || onlyPreviewI18n.topbar.noWorkspace }}
+        </span>
+      </div>
+
+      <div name="onlypreview__menuActions" class="onlypreview-shell__menu-actions">
         <a-button
           name="onlypreview__openFile"
-          class="onlypreview-shell__command onlypreview-shell__command--primary"
-          type="primary"
+          class="onlypreview-shell__command"
+          type="text"
           size="mini"
           :disabled="onlyPreviewShellStore.targetLoading"
           @click="onlyPreviewShellStore.chooseFile()"
         >
-          <IconFilePlus :size="15" aria-hidden="true" />
+          <template #icon><IconFilePlus :size="15" aria-hidden="true" /></template>
           {{ onlyPreviewI18n.topbar.openFile }}
         </a-button>
         <a-button
           name="onlypreview__openFolder"
           class="onlypreview-shell__command"
+          type="text"
           size="mini"
           :disabled="onlyPreviewShellStore.targetLoading"
           @click="onlyPreviewShellStore.chooseFolder()"
         >
-          <IconFolderPlus :size="15" aria-hidden="true" />
+          <template #icon><IconFolderPlus :size="15" aria-hidden="true" /></template>
           {{ onlyPreviewI18n.topbar.openFolder }}
         </a-button>
-      </div>
-
-      <div name="onlypreview__location" class="onlypreview-shell__location">
-        <span class="onlypreview-shell__product">{{ onlyPreviewI18n.productName }}</span>
-        <span class="onlypreview-shell__location-divider" aria-hidden="true">/</span>
-        <span class="onlypreview-shell__path">
-          {{ onlyPreviewShellStore.workspace?.displayPath || onlyPreviewI18n.topbar.noWorkspace }}
-        </span>
-      </div>
-
-      <div name="onlypreview__utilityActions" class="onlypreview-shell__utility-actions">
         <a-button
           name="onlypreview__refresh"
           class="onlypreview-shell__icon-command"
+          type="text"
           size="mini"
           :title="onlyPreviewI18n.topbar.refresh"
           :aria-label="onlyPreviewI18n.topbar.refresh"
           :disabled="!onlyPreviewShellStore.workspace"
           @click="onlyPreviewShellStore.refresh()"
         >
-          <IconRefresh :size="16" aria-hidden="true" />
+          <template #icon><IconRefresh :size="16" aria-hidden="true" /></template>
         </a-button>
         <a-button
           name="onlypreview__settings"
           class="onlypreview-shell__icon-command"
+          type="text"
           size="mini"
           :title="onlyPreviewI18n.topbar.settings"
           :aria-label="onlyPreviewI18n.topbar.settings"
           @click="onlyPreviewShellStore.openSettings()"
         >
-          <IconSettings :size="16" aria-hidden="true" />
+          <template #icon><IconSettings :size="16" aria-hidden="true" /></template>
         </a-button>
+
+        <template v-if="isWindows">
+          <a-button
+            name="onlypreview__minimize"
+            class="onlypreview-shell__icon-command"
+            type="text"
+            size="mini"
+            :title="onlyPreviewI18n.topbar.minimize"
+            :aria-label="onlyPreviewI18n.topbar.minimize"
+            @click="onlyPreviewShellStore.minimizeWindow()"
+          >
+            <template #icon><IconMinus :size="16" aria-hidden="true" /></template>
+          </a-button>
+          <a-button
+            name="onlypreview__maximize"
+            class="onlypreview-shell__icon-command"
+            type="text"
+            size="mini"
+            :title="onlyPreviewI18n.topbar.maximize"
+            :aria-label="onlyPreviewI18n.topbar.maximize"
+            @click="onlyPreviewShellStore.toggleMaximizeWindow()"
+          >
+            <template #icon><IconMaximize :size="16" aria-hidden="true" /></template>
+          </a-button>
+          <a-button
+            name="onlypreview__close"
+            class="onlypreview-shell__icon-command onlypreview-shell__icon-command--close"
+            type="text"
+            size="mini"
+            :title="onlyPreviewI18n.topbar.close"
+            :aria-label="onlyPreviewI18n.topbar.close"
+            @click="onlyPreviewShellStore.closeWindow()"
+          >
+            <template #icon><IconX :size="16" aria-hidden="true" /></template>
+          </a-button>
+        </template>
       </div>
     </header>
 
@@ -267,12 +317,15 @@ import {
   IconFolderOpen,
   IconFolderPlus,
   IconLink,
+  IconMaximize,
+  IconMinus,
   IconRefresh,
   IconSearch,
   IconSettings,
   IconX
 } from '@tabler/icons-vue';
 import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onlyPreviewFormat';
+import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
@@ -282,6 +335,8 @@ const treeRef = ref<HTMLElement | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let resizeFrame = 0;
 let lastShiftAt = 0;
+const isMac = onlyPreviewEnv.platform === 'darwin';
+const isWindows = onlyPreviewEnv.platform === 'win32';
 
 const truncatedMessage = computed(() =>
   interpolateOnlyPreview(onlyPreviewI18n.project.truncated, {
@@ -320,6 +375,11 @@ const reportPreviewBounds = (): void => {
       height: bounds.height
     });
   });
+};
+
+const handleMenuBarDoubleClick = (event: MouseEvent): void => {
+  if ((event.target as HTMLElement).closest('.onlypreview-shell__menu-actions')) return;
+  void onlyPreviewShellStore.toggleMaximizeWindow();
 };
 
 const startProjectResize = (event: PointerEvent): void => {

@@ -45,7 +45,7 @@ implementation contract inside Bitterless and contains no private user data.
 ┌──────────────────────────── BaseWindow ───────────────────────────────┐
 │ Shell WebContentsView                                                │
 │ ┌──────────────────────────────────────────────────────────────────┐ │
-│ │ top command bar                                                  │ │
+│ │ 32px Royal Blue MenuBar + platform window controls              │ │
 │ ├──────────────────────┬───────────────────────────────────────────┤ │
 │ │ index search + tree  │ preview host placeholder                  │ │
 │ │                      │                                           │ │
@@ -82,7 +82,7 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 
 | Entry | Preload | Host mode | Responsibility |
 |---|---|---|---|
-| `onlypreview/shell` | `onlypreview.js` | `shell` | command bar, tree, search, status, native Preview bounds host |
+| `onlypreview/shell` | `onlypreview.js` | `shell` | MenuBar, tree, search, status, native Preview bounds host |
 | `onlypreview/preview` | `onlypreview.js` | `preview` | standalone preview surface only |
 | `onlypreview/settings` | `onlypreview.js` | `settings` | app-specific settings form |
 
@@ -151,6 +151,9 @@ interface OnlyPreviewApi {
   readText(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<OnlyPreviewTextContent>>;
   selectStandaloneFile(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   updatePreviewBounds(params: HostRequest & OnlyPreviewBounds): Promise<OnlyPreviewResult<void>>;
+  minimizeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
+  toggleMaximizeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
+  closeWindow(params: HostRequest): Promise<OnlyPreviewResult<void>>;
   openExternally(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   revealInFolder(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
   getSettings(params: HostRequest): Promise<OnlyPreviewResult<OnlyPreviewSettings>>;
@@ -309,7 +312,7 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 
 ```text
 ┌──────────────────────────────── OnlyPreview ─────────────────────────────┐
-│ Open File · Open Folder   root/path                 Refresh · Settings   │
+│ ▣ OnlyPreview  root/path  Open File · Open Folder  Refresh · Settings   │
 ├──────────────────────┬───────────────────────────────────────────────────┤
 │ PROJECT              │ selected/file.ts                 TypeScript · RO │
 │ Search files…        ├───────────────────────────────────────────────────┤
@@ -322,6 +325,18 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+- The 32px Shell-owned MenuBar follows the established EyesOnAgents standalone-window pattern:
+  Royal Blue background, light identity/action content, one dark bottom divider, compact 27px
+  controls, and no decorative shadow. It reuses the visual and process contract, not
+  EyesOnAgents-private components, stores, connection state, Domain actions, or always-on-top state.
+- The non-interactive MenuBar surface is the drag region. Every action is `no-drag`; double-clicking
+  the remaining drag surface toggles maximize. macOS keeps native traffic lights at `{ x: 12, y: 8 }`
+  and a 78px left gutter. Windows renders MenuBar minimize, maximize/restore, and close controls.
+- `Open File` and `Open Folder` remain labelled compact actions. Refresh and Settings remain
+  icon-only with localized tooltips/accessibility labels. Hover, active, and keyboard-focus states
+  use the same translucent-light treatment as EyesOnAgents; disabled actions remain legible.
+- The MenuBar stays in the Shell renderer process. Capability-scoped typed XPC methods request
+  minimize, maximize/restore, or close from Main; the Preview renderer never owns window chrome.
 - Light-only canvas `#F6F7FA`, white preview surface, divider `#D9DDEA`, text `#25283A`, muted
   `#6F7487`, and canonical Bitterless Royal Blue `#4E5882` for focus/selection/Index Rail.
 - UI uses platform system fonts at compact 12-13px sizing. Code uses `JetBrains Mono`, then
@@ -331,7 +346,7 @@ routing accepts any regular file and shows its fallback surface for an unsupport
   classes with sibling Less files. No Tailwind utilities.
 - Each column owns its scroll; root/grid children use `min-width: 0` and `min-height: 0`.
 - The divider remains operable at 800×600. Main clamps reported and resized preview bounds to the
-  actual 44px top bar, minimum 180px project column plus 5px divider, and 25px status rail, so a
+  actual 32px MenuBar, minimum 180px project column plus 5px divider, and 25px status rail, so a
   compromised renderer cannot cover Shell controls.
 
 ## Interaction Contract
@@ -349,6 +364,8 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 | `F5` or `Cmd/Ctrl+R` | Shell or Preview | rebuild index and refresh selected preview |
 | `Cmd/Ctrl+F` | Monaco | find without invoking a Shell search |
 | `Esc` | search / Setting | clear search / close without save |
+| double click | non-action MenuBar surface | toggle maximize/restore |
+| minimize / maximize / close | Windows MenuBar controls | control the current standalone `BaseWindow` through Main |
 
 Window-wide shortcuts use `before-input-event` on OnlyPreview webContents so they remain available
 when Monaco has focus. Only matched commands prevent default; Monaco retains selection, copy, and
@@ -400,8 +417,13 @@ them.
 - Router tests cover macOS early `open-file`, packaged Windows initial/second-instance argv, helper
   exclusions, development explicit arguments, and serialized queue behavior.
 - Source/integration tests cover three renderer entries, preload, sandboxed view preferences,
-  explicit child-view cleanup, Home card, auth/quit cleanup, log policy, i18n registration, and
-  the absence of OnlyPreview from Omni's allowlist/runtime/UI mapping.
+  explicit child-view cleanup, hidden titlebar/traffic-light/window-control wiring, exact 32px
+  Preview offset, Home card, auth/quit cleanup, log policy, i18n registration, and the absence of
+  OnlyPreview from Omni's allowlist/runtime/UI mapping.
+- Native chrome acceptance completely exits the current Electron Main and launches a fresh Main;
+  renderer HMR cannot verify creation-time `BaseWindow` options. Electron E2E compares native
+  window/content bounds for zero titlebar origin or height gap and requires the top-middle band of
+  each native capture to contain a majority of OnlyPreview Royal Blue `#4E5882` pixels.
 - Renderer verification covers stale-result suppression, read-only Monaco options and disposal,
   tree/preview/settings states, BEM/name markers, and keyboard routing.
 - Electron E2E covers a fixture directory containing code, PDF, image, audio, video, and unknown

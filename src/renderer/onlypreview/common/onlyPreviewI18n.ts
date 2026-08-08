@@ -15,6 +15,9 @@ const en = {
     openFolder: 'Open folder',
     refresh: 'Refresh index and preview',
     settings: 'OnlyPreview settings',
+    minimize: 'Minimize OnlyPreview',
+    maximize: 'Maximize or restore OnlyPreview',
+    close: 'Close OnlyPreview',
     noWorkspace: 'No project open'
   },
   project: {
@@ -115,6 +118,9 @@ const zh: Localized<typeof en> = {
     openFolder: '打开文件夹',
     refresh: '刷新索引和预览',
     settings: 'OnlyPreview 设置',
+    minimize: '最小化 OnlyPreview',
+    maximize: '最大化或还原 OnlyPreview',
+    close: '关闭 OnlyPreview',
     noWorkspace: '未打开项目'
   },
   project: {
