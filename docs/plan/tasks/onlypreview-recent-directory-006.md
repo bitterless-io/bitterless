@@ -107,3 +107,8 @@ unavailable.
   folder returns without a selected file; then open an explicit OS file, confirm it overrides the
   restored directory, and confirm its containing folder is restored without a selection after the
   next restart.
+
+# Review
+
+- [Round 1 — blocked by optional persistence coupling and teardown state](../reviews/onlypreview-recent-directory-006-1.md)
+- [Round 2 — static source review pass; owner verification pending](../reviews/onlypreview-recent-directory-006-2.md)
