@@ -1577,6 +1577,30 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
       height: bounds.height
     });
   });
+  await app.evaluate(({ BaseWindow, screen }) => {
+    const state = globalThis as typeof globalThis & {
+      __onlyPreviewOriginalDisplayMatching?: typeof screen.getDisplayMatching;
+    };
+    const parent = BaseWindow.getAllWindows().find(
+      (window) => window.getTitle() === 'OnlyPreview'
+    );
+    if (!parent) throw new Error('OnlyPreview BaseWindow unavailable');
+    state.__onlyPreviewOriginalDisplayMatching = screen.getDisplayMatching.bind(screen);
+    screen.getDisplayMatching = (bounds) => {
+      const display = state.__onlyPreviewOriginalDisplayMatching!(bounds);
+      const workArea = {
+        x: display.workArea.x,
+        y: display.workArea.y,
+        width: 800,
+        height: 600
+      };
+      return {
+        ...display,
+        workArea,
+        workAreaSize: { width: workArea.width, height: workArea.height }
+      };
+    };
+  });
   const secondSettingsPage = await openSettings();
   const secondSettingsToken = await secondSettingsPage.evaluate(
     () => (window as unknown as { onlyPreviewEnv: { hostToken: string } }).onlyPreviewEnv.hostToken
@@ -1623,11 +1647,20 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
         })
     )
     .toEqual({
-      size: [900, 650],
+      size: [800, 600],
       parentMatches: true,
       centeredAndClamped: true,
       insideWorkArea: true
     });
+  await app.evaluate(({ screen }) => {
+    const state = globalThis as typeof globalThis & {
+      __onlyPreviewOriginalDisplayMatching?: typeof screen.getDisplayMatching;
+    };
+    if (state.__onlyPreviewOriginalDisplayMatching) {
+      screen.getDisplayMatching = state.__onlyPreviewOriginalDisplayMatching;
+      delete state.__onlyPreviewOriginalDisplayMatching;
+    }
+  });
   const persistedFontSizeInput = secondSettingsPage
     .locator(
       '[name="onlypreview__fontSize"] input, input[name="onlypreview__fontSize"], #onlypreview-font-size input, input#onlypreview-font-size'

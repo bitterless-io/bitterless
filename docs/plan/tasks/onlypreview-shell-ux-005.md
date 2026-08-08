@@ -22,6 +22,7 @@ cross the Shell view boundary, and open Settings relative to the active OnlyPrev
 # Path
 
 - `src/shared/onlypreview/onlyPreview.types.ts`
+- `src/main/onlypreview/onlyPreviewWindowBounds.service.ts`
 - `src/main/xpc/onlyPreview.handler.ts`
 - `src/main/windows/onlyPreviewWindow.helper.ts`
 - `src/renderer/common/i18n/en.ts`
@@ -33,6 +34,7 @@ cross the Shell view boundary, and open Settings relative to the active OnlyPrev
 - `src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue`
 - `src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.less`
 - `tests/onlypreview/onlyPreviewCore.test.mjs`
+- `tests/onlypreview/runtime.entry.ts`
 - `tests/onlypreview/specs/onlyPreview.spec.ts`
 - `docs/features/onlypreview.md`
 - `docs/plan/README.md`
@@ -93,11 +95,14 @@ Pending independent verification.
   a localized Main-owned native menu whose Preview, system-open, and reveal callbacks each
   re-resolve the host-bound relative file reference.
 - Settings is parented to the active standalone `BaseWindow`, restores only persisted size, and is
-  re-centered and work-area clamped from the current parent whenever opened.
-- All 31 OnlyPreview Node tests, Node typecheck, renderer-i18n check, targeted error-level ESLint,
+  re-centered with width, height, x, and y constrained to the current parent's display work area
+  whenever opened. If a display work area is smaller than the app's 800×600 minimum, Settings keeps
+  that minimum at the work-area origin because full containment is impossible.
+- All 32 OnlyPreview Node tests, Node typecheck, renderer-i18n check, targeted error-level ESLint,
   Electron Vite build, the 5-test Electron E2E suite, and `git diff --check` pass. E2E covers the
   folder-only/count-free chrome, current-file locator, native-menu ownership and all actions,
-  persisted Settings size plus current-parent placement, and existing media/PDF/DevTools behavior.
+  persisted oversized Settings dimensions being reduced to a simulated current 800×600 work area,
+  current-parent placement, and existing media/PDF/DevTools behavior.
 - Normal and 800×600 native captures were visually inspected: the established Royal Blue/light
   hierarchy and Index Rail remain intact, the crosshair stays quiet and legible, and no action,
   file row, preview, or status content is clipped. Full `yarn typecheck:web` remains blocked by the

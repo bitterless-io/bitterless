@@ -22,6 +22,7 @@ import {
   onlyPreviewHostRegistry,
   type OnlyPreviewHostCapability
 } from '@main/onlypreview/onlyPreviewHost.registry';
+import { resolveOnlyPreviewSettingsBounds } from '@main/onlypreview/onlyPreviewWindowBounds.service';
 import { windowStateService, type WindowStateController } from './windowState.service';
 
 const DEFAULT_WIDTH = 1180;
@@ -149,16 +150,14 @@ const settingsBoundsForParent = (
   height: number
 ): Rectangle => {
   const workArea = screen.getDisplayMatching(parentBounds).workArea;
-  const maxX = workArea.x + Math.max(0, workArea.width - width);
-  const maxY = workArea.y + Math.max(0, workArea.height - height);
-  const centeredX = Math.round(parentBounds.x + (parentBounds.width - width) / 2);
-  const centeredY = Math.round(parentBounds.y + (parentBounds.height - height) / 2);
-  return {
-    x: Math.min(maxX, Math.max(workArea.x, centeredX)),
-    y: Math.min(maxY, Math.max(workArea.y, centeredY)),
+  return resolveOnlyPreviewSettingsBounds({
+    parentBounds,
+    workArea,
     width,
-    height
-  };
+    height,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT
+  });
 };
 
 export class OnlyPreviewWindowHelper {

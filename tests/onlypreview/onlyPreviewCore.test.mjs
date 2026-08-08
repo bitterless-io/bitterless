@@ -160,6 +160,43 @@ test('settings and preview bounds reject partial, extra, and unsafe values', () 
   assert.throws(() => runtime.parseOnlyPreviewBounds({ x: 0, y: 0, width: Infinity, height: 1 }));
 });
 
+test('Settings bounds constrain oversized persisted dimensions to the current parent display', () => {
+  assert.deepEqual(
+    runtime.resolveOnlyPreviewSettingsBounds({
+      parentBounds: { x: 1920, y: 34, width: 1000, height: 700 },
+      workArea: { x: 1920, y: 0, width: 1024, height: 768 },
+      width: 1600,
+      height: 1000,
+      minWidth: 800,
+      minHeight: 600
+    }),
+    { x: 1920, y: 0, width: 1024, height: 768 }
+  );
+  assert.deepEqual(
+    runtime.resolveOnlyPreviewSettingsBounds({
+      parentBounds: { x: 40, y: 30, width: 620, height: 440 },
+      workArea: { x: 0, y: 0, width: 640, height: 480 },
+      width: 1600,
+      height: 1000,
+      minWidth: 800,
+      minHeight: 600
+    }),
+    // Full containment is impossible below the app minimum, so use the minimum at the origin.
+    { x: 0, y: 0, width: 800, height: 600 }
+  );
+  assert.deepEqual(
+    runtime.resolveOnlyPreviewSettingsBounds({
+      parentBounds: { x: 100, y: 80, width: 1000, height: 700 },
+      workArea: { x: 0, y: 0, width: 1440, height: 900 },
+      width: 800,
+      height: 600,
+      minWidth: 800,
+      minHeight: 600
+    }),
+    { x: 200, y: 130, width: 800, height: 600 }
+  );
+});
+
 test('host capabilities are unique, role-scoped, and revoked independently', () => {
   const hosts = new runtime.OnlyPreviewHostRegistry();
   const standaloneA = hosts.issue('standalone', 'content');
@@ -945,6 +982,9 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
 
 test('OnlyPreview Settings restores size but derives parented work-area bounds on every open', () => {
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  const boundsService = source(
+    'src/main/onlypreview/onlyPreviewWindowBounds.service.ts'
+  );
   const positioning = windowHelper.slice(
     windowHelper.indexOf('const settingsBoundsForParent'),
     windowHelper.indexOf('export class OnlyPreviewWindowHelper')
@@ -955,10 +995,12 @@ test('OnlyPreview Settings restores size but derives parented work-area bounds o
   );
 
   assert.match(positioning, /screen\.getDisplayMatching\(parentBounds\)\.workArea/);
-  assert.match(positioning, /parentBounds\.x \+ \(parentBounds\.width - width\) \/ 2/);
-  assert.match(positioning, /parentBounds\.y \+ \(parentBounds\.height - height\) \/ 2/);
-  assert.match(positioning, /Math\.min\(maxX, Math\.max\(workArea\.x, centeredX\)\)/);
-  assert.match(positioning, /Math\.min\(maxY, Math\.max\(workArea\.y, centeredY\)\)/);
+  assert.match(positioning, /resolveOnlyPreviewSettingsBounds\(\{/);
+  assert.match(positioning, /minWidth: MIN_WIDTH[\s\S]*minHeight: MIN_HEIGHT/);
+  assert.match(boundsService, /Math\.min\(Math\.round\(request\.width\), Math\.max\(workArea\.width, minWidth\)\)/);
+  assert.match(boundsService, /Math\.min\(Math\.round\(request\.height\), Math\.max\(workArea\.height, minHeight\)\)/);
+  assert.match(boundsService, /Math\.min\(maxX, Math\.max\(workArea\.x, centeredX\)\)/);
+  assert.match(boundsService, /Math\.min\(maxY, Math\.max\(workArea\.y, centeredY\)\)/);
   assert.match(openSettings, /const parentWindow = this\.requireStandaloneWindow\(sourceHostToken\)/);
   assert.match(openSettings, /restored\?\.bounds\.width[\s\S]*restored\?\.bounds\.height/);
   assert.doesNotMatch(openSettings, /restored\.bounds\.(?:x|y)/);
