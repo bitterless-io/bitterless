@@ -26,12 +26,16 @@ settings, packaging associations, or read-only capability security.
 # Path
 
 - `src/shared/omni/omni.types.ts`
+- `src/shared/onlypreview/onlyPreview.types.ts`
 - `src/main/windows/omniWindow.helper.ts`
+- `src/main/windows/onlyPreviewWindow.helper.ts`
 - `src/renderer/omni/omniControl/src/components/OmniPane.vue`
 - `src/preload/onlypreview/**`
 - `src/renderer/onlypreview/shell/**`
+- `src/renderer/onlypreview/preview/src/App.vue`
+- `src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts`
 - `tests/onlypreview/**`
-- focused existing Omni/Motto integration tests
+- `tests/motto/mottoIntegration.test.mjs`
 - `docs/INDEX.md`
 - `docs/features/README.md`
 - `docs/features/onlypreview.md`
