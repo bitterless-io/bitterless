@@ -2,19 +2,34 @@ import { reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { CoinShellStatus } from '@shared/coin/coinBridge.type';
-import type { CoinMemeMode, CoinTab, CoinWindowAction } from './coinShell.type';
+import type {
+  CoinMemeMode,
+  CoinSecondaryView,
+  CoinTab,
+  CoinWindowAction,
+} from './coinShell.type';
 import { coinResourcesStore } from './views/resources/coinResources.store';
 
 class CoinShellStore {
-  activeTab: CoinTab = 'monitor';
+  activeTab: CoinTab = 'meme';
   memeMode: CoinMemeMode = 'discover';
-  resourcesActive = false;
+  secondaryView: CoinSecondaryView | null = null;
+  signalDockOpen = false;
+  decisionDockOpen = false;
   sourcesVisible = false;
   status: CoinShellStatus | null = null;
   statusLoading = false;
   statusError = '';
   pendingWindowAction: CoinWindowAction | null = null;
   private initializationErrorLogged = false;
+
+  get resourcesActive(): boolean {
+    return this.secondaryView === 'resources';
+  }
+
+  get historyActive(): boolean {
+    return this.secondaryView === 'history';
+  }
 
   async initialize(): Promise<void> {
     const results = await Promise.allSettled([
@@ -41,12 +56,36 @@ class CoinShellStore {
 
   openTab(tab: CoinTab): void {
     this.activeTab = tab;
-    this.resourcesActive = false;
+    this.secondaryView = null;
   }
 
   openResources(): void {
     this.sourcesVisible = false;
-    this.resourcesActive = true;
+    this.secondaryView = 'resources';
+  }
+
+  openHistory(): void {
+    this.sourcesVisible = false;
+    this.secondaryView = 'history';
+  }
+
+  closeSecondary(): void {
+    this.secondaryView = null;
+  }
+
+  toggleSignalDock(): void {
+    this.signalDockOpen = !this.signalDockOpen;
+    if (this.signalDockOpen) this.decisionDockOpen = false;
+  }
+
+  toggleDecisionDock(): void {
+    this.decisionDockOpen = !this.decisionDockOpen;
+    if (this.decisionDockOpen) this.signalDockOpen = false;
+  }
+
+  closeDocks(): void {
+    this.signalDockOpen = false;
+    this.decisionDockOpen = false;
   }
 
   async refreshStatus(): Promise<void> {

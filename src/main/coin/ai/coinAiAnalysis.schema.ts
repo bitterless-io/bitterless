@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { z } from 'zod';
 import {
   COIN_AI_EFFORTS,
+  COIN_AI_MAX_THESIS_LENGTH,
   COIN_AI_MODEL_EFFORTS,
   COIN_AI_MODELS,
   COIN_AI_RECEIPT_MODELS,
@@ -44,6 +45,7 @@ export const coinAiAnalysisReceiptSchema = z.object({
   provider: z.literal('openai-codex'),
   model: z.enum(COIN_AI_RECEIPT_MODELS),
   effort: z.enum(COIN_AI_EFFORTS),
+  userThesis: z.string().trim().max(COIN_AI_MAX_THESIS_LENGTH).default(''),
   contextHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   startedAt: z.number().finite().nonnegative(),
   completedAt: z.number().finite().nonnegative(),
@@ -74,6 +76,7 @@ export const coinAiAnalyzeInputSchema = z.object({
   target: coinAiTargetSchema,
   model: z.enum(COIN_AI_MODELS),
   effort: z.enum(COIN_AI_EFFORTS),
+  userThesis: z.string().trim().max(COIN_AI_MAX_THESIS_LENGTH).default(''),
 }).strict().superRefine((input, context) => {
   if (!COIN_AI_MODEL_EFFORTS[input.model].some((effort) => effort === input.effort)) {
     context.addIssue({

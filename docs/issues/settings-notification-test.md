@@ -53,6 +53,5 @@ Delivery: [settings-notification-test-001](../plan/tasks/settings-notification-t
 
 ## Handoff
 
-Implementation and independent source review are complete. Owner runtime verification remains:
-open Settings → Notification in the running app, click `notification test`, and confirm the
-operating system displays the Bitterless test notification.
+The first runtime verification on signed `0.0.68` produced no visible result and reopened delivery
+through [Settings notification test silently does nothing](settings-notification-test-silent-noop.md).

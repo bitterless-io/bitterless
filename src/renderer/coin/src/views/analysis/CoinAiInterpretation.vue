@@ -38,6 +38,10 @@
     </div>
 
     <template v-if="receipt">
+      <div v-if="receipt.userThesis" class="coin-ai-interpretation__submitted-thesis">
+        <h4>{{ i18nHelper.coin.analysis.ai.submittedThesis }}</h4>
+        <p>{{ receipt.userThesis }}</p>
+      </div>
       <p class="coin-ai-interpretation__summary">{{ receipt.result.summary }}</p>
 
       <div class="coin-ai-interpretation__columns">

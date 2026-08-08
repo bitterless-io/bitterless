@@ -4,6 +4,7 @@ import { xpcRenderer, createXpcRendererEmitter } from 'electron-xpc/renderer';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { updateStore } from '@renderer/home/src/store/update.store';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
+import { OMNI_CONTROL_VISIBILITY_EVENT } from '@shared/omni/omni.types';
 import type { OmniWindowHandler } from '@main/xpc/omniWindow.handler';
 
 const omniWindowEmitter = createXpcRendererEmitter<OmniWindowHandler>('OmniWindowHandler');
@@ -23,6 +24,12 @@ const updateTitle = computed(() => {
     '{version}',
     updateStore.updateInfo.version
   );
+});
+
+xpcRenderer.subscribe(OMNI_CONTROL_VISIBILITY_EVENT, (payload) => {
+  const params = payload.params as { visible?: unknown };
+  if (typeof params.visible !== 'boolean') return;
+  controlVisible.value = params.visible;
 });
 
 const toggleControl = () => {

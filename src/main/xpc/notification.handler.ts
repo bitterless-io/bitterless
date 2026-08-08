@@ -3,8 +3,8 @@ import { notifyHelper } from '@main/notificationcenter/notify.helper';
 import type { NotificationSettingsApi } from '@shared/setting/settingNavigation.contract';
 
 export class NotificationHandler extends XpcMainHandler implements NotificationSettingsApi {
-  async sendTestNotification(): Promise<void> {
-    notifyHelper.notifyTest();
+  async sendTestNotification(): ReturnType<NotificationSettingsApi['sendTestNotification']> {
+    return await notifyHelper.notifyTest();
   }
 }
 

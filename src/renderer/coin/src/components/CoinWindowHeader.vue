@@ -10,16 +10,35 @@
     </div>
 
     <div name="coin__windowHeader__context" class="coin-window-header__context" aria-live="polite">
-      {{ i18nHelper.coin.noActiveJobs }}
+      {{ activeContext }}
     </div>
 
     <div name="coin__windowHeader__actions" class="coin-window-header__actions">
+      <a-tooltip :content="xBrowserModeTooltip" position="bottom">
+        <div
+          name="coin__windowHeader__xBrowserMode"
+          class="coin-window-header__browser-mode"
+          :class="{ 'coin-window-header__browser-mode--visible': xBrowserVisible }"
+        >
+          <IconEye v-if="xBrowserVisible" :size="15" stroke-width="1.8" aria-hidden="true" />
+          <IconEyeOff v-else :size="15" stroke-width="1.8" aria-hidden="true" />
+          <a-switch
+            :model-value="xBrowserVisible"
+            size="small"
+            :aria-label="xBrowserModeTooltip"
+            :disabled="xBrowser.loading || xBrowser.status.mode === 'cdp'"
+            @change="handleXBrowserModeChange"
+          />
+        </div>
+      </a-tooltip>
+
       <a-tooltip :content="i18nHelper.coin.window.sourceStatus" position="bottom">
         <button
           name="coin__windowHeader__sources"
           class="coin-window-header__status-button"
           :class="{ 'coin-window-header__status-button--active': store.sourcesVisible }"
           type="button"
+          :aria-label="i18nHelper.coin.window.sourceStatus"
           :aria-pressed="store.sourcesVisible"
           :disabled="sourceLoading"
           @click="store.openSources()"
@@ -27,24 +46,7 @@
           <a-spin v-if="sourceLoading" :size="12" />
           <IconDatabase v-else-if="sourceReadyCount" :size="16" stroke-width="1.8" aria-hidden="true" />
           <IconDatabaseOff v-else :size="16" stroke-width="1.8" aria-hidden="true" />
-          <span>{{ sourceStatusLabel }}</span>
           <span class="coin-window-header__status-dot" :class="sourceDotClass" aria-hidden="true"></span>
-        </button>
-      </a-tooltip>
-
-      <a-tooltip :content="i18nHelper.coin.window.aiStatus" position="bottom">
-        <button
-          name="coin__windowHeader__ai"
-          class="coin-window-header__status-button"
-          :class="{ 'coin-window-header__status-button--active': store.resourcesActive }"
-          type="button"
-          :aria-pressed="store.resourcesActive"
-          @click="store.openResources()"
-        >
-          <a-spin v-if="resources.statusLoading || resources.codexLoading || workspace.aiLoading" :size="12" />
-          <IconBrandOpenai v-else :size="16" stroke-width="1.8" aria-hidden="true" />
-          <span>{{ aiStatusLabel }}</span>
-          <span class="coin-window-header__status-dot" :class="aiDotClass" aria-hidden="true"></span>
         </button>
       </a-tooltip>
 
@@ -96,10 +98,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import {
-  IconBrandOpenai,
   IconCoins,
   IconDatabase,
   IconDatabaseOff,
+  IconEye,
+  IconEyeOff,
   IconMinus,
   IconSquare,
   IconX,
@@ -107,6 +110,7 @@ import {
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { coinShellStore as store } from '../coinShell.store';
 import { coinWorkspaceStore as workspace } from '../views/analysis/coinWorkspace.store';
+import { coinXBrowserStore as xBrowser } from '../views/analysis/coinXBrowser.store';
 import { coinResourcesStore as resources } from '../views/resources/coinResources.store';
 
 defineProps<{
@@ -116,23 +120,28 @@ defineProps<{
 const sourceTotal = computed(() => workspace.sourceStatuses.filter((source) => source.configured).length);
 const sourceReadyCount = computed(() => workspace.sourceStatuses.filter((source) => source.configured && ['ready', 'partial', 'stale'].includes(source.state)).length);
 const sourceLoading = computed(() => workspace.sourceLoading || store.statusLoading || resources.statusLoading);
-const sourceStatusLabel = computed(() =>
-  i18nHelper.coin.sourceStatusSummary
-    .replace('{ready}', String(sourceReadyCount.value))
-    .replace('{total}', String(sourceTotal.value)),
-);
+const xBrowserVisible = computed(() => workspace.data.xBrowser.displayMode === 'visible');
+const xBrowserModeTooltip = computed(() => {
+  if (xBrowser.status.mode === 'cdp') return i18nHelper.coin.trench.xBrowser.displayMode.external;
+  return xBrowserVisible.value
+    ? i18nHelper.coin.trench.xBrowser.displayMode.visible
+    : i18nHelper.coin.trench.xBrowser.displayMode.hidden;
+});
 const sourceDotClass = computed(() => ({
   'coin-window-header__status-dot--ready': sourceTotal.value > 0 && sourceReadyCount.value === sourceTotal.value,
   'coin-window-header__status-dot--danger': Boolean(workspace.sourceError || resources.statusError),
 }));
-const aiStatusLabel = computed(() => {
-  if (workspace.aiLoading) return i18nHelper.coin.aiStatusRunning;
-  if (resources.status?.codex.errorCode) return i18nHelper.coin.aiStatusError;
-  if (resources.status?.codex.connected) return i18nHelper.coin.aiStatusConnected;
-  return i18nHelper.coin.aiStatusSignIn;
+const activeContext = computed(() => {
+  const result = workspace.memeAnalysis;
+  if (result) {
+    const label = result.asset.symbol.value || result.asset.name.value || result.asset.contractAddress;
+    return `${result.asset.chain.toUpperCase()} · ${label}`;
+  }
+  const address = workspace.data.drafts.meme.contractAddress.trim();
+  return address ? `${workspace.data.drafts.meme.chain.toUpperCase()} · ${address}` : '';
 });
-const aiDotClass = computed(() => ({
-  'coin-window-header__status-dot--ready': Boolean(resources.status?.codex.connected || workspace.aiLoading),
-  'coin-window-header__status-dot--danger': Boolean(resources.status?.codex.errorCode),
-}));
+
+const handleXBrowserModeChange = (value: boolean | string | number): void => {
+  void workspace.setXBrowserDisplayMode(value === true ? 'visible' : 'hidden');
+};
 </script>

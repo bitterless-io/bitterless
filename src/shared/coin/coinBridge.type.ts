@@ -40,6 +40,7 @@ import type {
   CoinStateSaveInput,
   CoinStateSaveResult,
   CoinStrategyInput,
+  CoinXBrowserDisplayMode,
 } from './coinAnalysis.type';
 
 export const COIN_IPC_CHANNELS = {
@@ -72,6 +73,12 @@ export const COIN_IPC_CHANNELS = {
   strategyEvaluate: 'coin:strategy:evaluate',
   aiAnalyze: 'coin:ai:analyze',
   aiCancel: 'coin:ai:cancel',
+  clipboardReadText: 'coin:clipboard:read-text',
+  xBrowserGetStatus: 'coin:x-browser:get-status',
+  xBrowserSetDisplayMode: 'coin:x-browser:set-display-mode',
+  xBrowserOpen: 'coin:x-browser:open',
+  xBrowserFocus: 'coin:x-browser:focus',
+  xBrowserClose: 'coin:x-browser:close',
   languageGetCurrent: 'coin:language:get-current',
   languageChanged: 'coin:language:changed',
   windowMinimize: 'coin:window:minimize',
@@ -89,6 +96,40 @@ export interface CoinShellStatus {
 
 export interface CoinWindowSnapshot {
   maximized: boolean;
+}
+
+export type CoinXBrowserState =
+  | 'closed'
+  | 'launching'
+  | 'login_required'
+  | 'ready'
+  | 'error';
+
+export type CoinXBrowserErrorCode =
+  | 'chrome-unavailable'
+  | 'profile-busy'
+  | 'cdp-invalid'
+  | 'cdp-unavailable'
+  | 'display-mode-unavailable'
+  | 'launch-failed'
+  | 'navigation-failed';
+
+export interface CoinXBrowserStatus {
+  schema: 'coin-x-browser-v1';
+  state: CoinXBrowserState;
+  mode: 'managed_profile' | 'cdp';
+  displayMode: CoinXBrowserDisplayMode | 'external';
+  errorCode: CoinXBrowserErrorCode | null;
+  openedAt: number | null;
+}
+
+export interface CoinXBrowserOpenInput {
+  query: string;
+  displayMode: CoinXBrowserDisplayMode;
+}
+
+export interface CoinXBrowserSetDisplayModeInput {
+  displayMode: CoinXBrowserDisplayMode;
 }
 
 export interface CoinBridge {
@@ -143,6 +184,16 @@ export interface CoinBridge {
   readonly ai: {
     analyze(params: CoinAiAnalyzeInput): Promise<CoinAiAnalyzeResult>;
     cancel(params: CoinAiCancelInput): Promise<CoinAiCancelReceipt>;
+  };
+  readonly clipboard: {
+    readText(): Promise<string>;
+  };
+  readonly xBrowser: {
+    getStatus(): Promise<CoinXBrowserStatus>;
+    setDisplayMode(params: CoinXBrowserSetDisplayModeInput): Promise<CoinXBrowserStatus>;
+    open(params: CoinXBrowserOpenInput): Promise<CoinXBrowserStatus>;
+    focus(): Promise<CoinXBrowserStatus>;
+    close(): Promise<CoinXBrowserStatus>;
   };
   readonly window: {
     minimize(): Promise<void>;

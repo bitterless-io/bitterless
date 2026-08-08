@@ -10,9 +10,11 @@ import {
   COIN_AI_DEFAULT_EFFORT,
   COIN_AI_DEFAULT_MODEL,
   COIN_AI_EFFORTS,
+  COIN_AI_MAX_THESIS_LENGTH,
   COIN_AI_MODEL_EFFORTS,
   COIN_AI_MODELS,
   COIN_HOLDER_EXCLUSION_CLASSES,
+  COIN_X_BROWSER_DISPLAY_MODES,
   createUnattestedCoinHolderUniverse,
 } from '@shared/coin/coinAnalysis.type';
 import {
@@ -555,7 +557,13 @@ export const coinPersistentDataSchema = z.object({
       intervalSeconds: z.number().int().min(15).max(1800),
     }).strict(),
     strategy: strategyDraft,
+    decision: z.object({
+      thesis: z.string().max(COIN_AI_MAX_THESIS_LENGTH),
+    }).strict().default({ thesis: '' }),
   }).strict(),
+  xBrowser: z.object({
+    displayMode: z.enum(COIN_X_BROWSER_DISPLAY_MODES),
+  }).strict().default({ displayMode: 'visible' }),
   watchlist: z.array(z.object({
     id: boundedString(160).min(1),
     kind: z.enum(['symbol', 'token']),

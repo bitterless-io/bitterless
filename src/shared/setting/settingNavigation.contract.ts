@@ -23,9 +23,50 @@ export interface SettingNavigationApi {
   consumePendingSetting(): Promise<SettingOpenNotice | null>;
 }
 
-export interface NotificationSettingsApi {
-  sendTestNotification(): Promise<void>;
+export type NotificationTestError = 'unsupported' | 'show-failed' | 'show-timeout';
+
+export type NotificationTestResult = { ok: true } | { ok: false; error: NotificationTestError };
+
+export class NotificationSettingsContractError extends Error {
+  readonly code = 'INVALID_NOTIFICATION_TEST_RESULT';
+
+  constructor() {
+    super('Invalid notification test result.');
+    this.name = 'NotificationSettingsContractError';
+  }
 }
+
+export interface NotificationSettingsApi {
+  sendTestNotification(): Promise<NotificationTestResult>;
+}
+
+const hasExactKeys = (value: Record<string, unknown>, keys: string[]): boolean => {
+  const actualKeys = Object.keys(value).sort();
+  const expectedKeys = [...keys].sort();
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index])
+  );
+};
+
+export const parseNotificationTestResult = (value: unknown): NotificationTestResult => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new NotificationSettingsContractError();
+  }
+
+  const record = value as Record<string, unknown>;
+  if (record.ok === true && hasExactKeys(record, ['ok'])) return { ok: true };
+  if (
+    record.ok === false &&
+    hasExactKeys(record, ['ok', 'error']) &&
+    (record.error === 'unsupported' ||
+      record.error === 'show-failed' ||
+      record.error === 'show-timeout')
+  ) {
+    return { ok: false, error: record.error };
+  }
+  throw new NotificationSettingsContractError();
+};
 
 export const parseSettingTab = (value: unknown): SettingTab | null =>
   typeof value === 'string' && (SETTING_TABS as readonly string[]).includes(value)
