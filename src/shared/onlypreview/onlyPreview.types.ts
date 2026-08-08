@@ -149,6 +149,9 @@ export interface OnlyPreviewApi {
   updatePreviewBounds(
     params: OnlyPreviewHostRequest & OnlyPreviewBounds
   ): Promise<OnlyPreviewResult<void>>;
+  minimizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  toggleMaximizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  closeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   openExternally(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;

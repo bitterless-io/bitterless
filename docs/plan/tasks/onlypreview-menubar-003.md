@@ -30,7 +30,7 @@ status rail, settings, and complete Omni exclusion.
 - `src/renderer/onlypreview/shell/src/App.vue`
 - `src/renderer/onlypreview/shell/src/App.less`
 - `src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts`
-- `src/renderer/onlypreview/shell/src/onlyPreviewI18n.ts`
+- `src/renderer/onlypreview/common/onlyPreviewI18n.ts`
 - `tests/onlypreview/onlyPreviewCore.test.mjs`
 - `tests/onlypreview/specs/onlyPreview.spec.ts`
 - `docs/INDEX.md`

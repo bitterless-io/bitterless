@@ -232,7 +232,7 @@ const expectMediaMetadataAndSeek = async (
 test('owns two secure views, exact native geometry, shortcuts, and a composite 800x600 capture', async ({
   onlyPreview
 }) => {
-  const { app, evaluateRenderer, sendInputs } = onlyPreview;
+  const { app, evaluateRenderer, sendInput, sendInputs } = onlyPreview;
   await waitForRenderer(
     onlyPreview,
     'shell',
@@ -247,9 +247,13 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     const window = windows[0];
     return {
       count: windows.length,
+      platform: process.platform,
       minimumSize: window?.getMinimumSize(),
       bounds: window?.getBounds(),
       contentSize: window?.getContentSize(),
+      menuBarVisible: window?.isMenuBarVisible(),
+      windowButtonPosition:
+        process.platform === 'darwin' ? window?.getWindowButtonPosition() : null,
       controls: window
         ? {
             minimizable: window.isMinimizable(),
@@ -269,6 +273,11 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   expect(graph.minimumSize).toEqual([800, 600]);
   expect(graph.bounds).toMatchObject({ width: 1180, height: 760 });
   expect(graph.controls).toEqual({ minimizable: true, maximizable: true, closable: true });
+  if (graph.platform === 'darwin') {
+    expect(graph.windowButtonPosition).toEqual({ x: 12, y: 8 });
+  } else if (graph.platform === 'win32') {
+    expect(graph.menuBarVisible).toBe(false);
+  }
   expect(graph.children).toHaveLength(2);
   expect(graph.children.map(({ url }) => url)).toEqual(
     expect.arrayContaining([
@@ -298,6 +307,124 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     { require: 'undefined', process: 'undefined' },
     { require: 'undefined', process: 'undefined' }
   ]);
+
+  const menuBar = await evaluateRenderer<{
+    platform: string;
+    height: number;
+    backgroundColor: string;
+    borderBottomColor: string;
+    paddingLeft: string;
+    actionNames: Array<string | null>;
+    actionHeights: number[];
+    identity: string;
+  }>(
+    'shell',
+    `(() => {
+      const element = document.querySelector('[name="onlypreview__menuBar"]');
+      if (!(element instanceof HTMLElement)) throw new Error('OnlyPreview MenuBar unavailable');
+      const style = getComputedStyle(element);
+      const actions = Array.from(element.querySelectorAll('.onlypreview-shell__menu-actions button'));
+      return {
+        platform: window.onlyPreviewEnv.platform,
+        height: Math.round(element.getBoundingClientRect().height),
+        backgroundColor: style.backgroundColor,
+        borderBottomColor: style.borderBottomColor,
+        paddingLeft: style.paddingLeft,
+        actionNames: actions.map((action) => action.getAttribute('name')),
+        actionHeights: actions.map((action) => Math.round(action.getBoundingClientRect().height)),
+        identity: element.querySelector('[name="onlypreview__identity"]')?.textContent?.trim() || '',
+      };
+    })()`
+  );
+  expect(menuBar.height).toBe(32);
+  expect(menuBar.backgroundColor).toBe('rgb(78, 88, 130)');
+  expect(menuBar.borderBottomColor).toBe('rgb(61, 70, 102)');
+  expect(new Set(menuBar.actionHeights)).toEqual(new Set([27]));
+  expect(menuBar.identity).toContain('OnlyPreview');
+  expect(menuBar.actionNames).toEqual([
+    'onlypreview__openFile',
+    'onlypreview__openFolder',
+    'onlypreview__refresh',
+    'onlypreview__settings',
+    ...(menuBar.platform === 'win32'
+      ? ['onlypreview__minimize', 'onlypreview__maximize', 'onlypreview__close']
+      : [])
+  ]);
+  expect(menuBar.paddingLeft).toBe(menuBar.platform === 'darwin' ? '78px' : '10px');
+
+  const isMaximized = async (): Promise<boolean> =>
+    await app.evaluate(({ BaseWindow }) => {
+      const window = BaseWindow.getAllWindows().find(
+        (candidate) => candidate.getTitle() === 'OnlyPreview'
+      );
+      return Boolean(window && !window.isDestroyed() && window.isMaximized());
+    });
+  expect(await isMaximized()).toBe(false);
+  const actionDoubleClickIgnored = await evaluateRenderer<boolean>(
+    'shell',
+    `(() => {
+      const actions = document.querySelector('[name="onlypreview__menuActions"]');
+      if (!(actions instanceof HTMLElement)) return false;
+      actions.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      return true;
+    })()`
+  );
+  expect(actionDoubleClickIgnored).toBe(true);
+  expect(await isMaximized()).toBe(false);
+  const toggleFromIdentity = async (): Promise<void> => {
+    const dispatched = await evaluateRenderer<boolean>(
+      'shell',
+      `(() => {
+        const identity = document.querySelector('[name="onlypreview__identity"]');
+        if (!(identity instanceof HTMLElement)) return false;
+        identity.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        return true;
+      })()`
+    );
+    expect(dispatched).toBe(true);
+  };
+  await toggleFromIdentity();
+  await expect.poll(isMaximized).toBe(true);
+  await toggleFromIdentity();
+  await expect.poll(isMaximized).toBe(false);
+
+  if (menuBar.platform === 'win32') {
+    const clickWindowControl = async (name: 'minimize' | 'maximize'): Promise<void> => {
+      const clicked = await evaluateRenderer<boolean>(
+        'shell',
+        `(() => {
+          const control = document.querySelector('[name="onlypreview__${name}"]');
+          if (!(control instanceof HTMLButtonElement)) return false;
+          control.click();
+          return true;
+        })()`
+      );
+      expect(clicked).toBe(true);
+    };
+    await clickWindowControl('minimize');
+    await expect
+      .poll(
+        async () =>
+          await app.evaluate(({ BaseWindow }) => {
+            const window = BaseWindow.getAllWindows().find(
+              (candidate) => candidate.getTitle() === 'OnlyPreview'
+            );
+            return Boolean(window && !window.isDestroyed() && window.isMinimized());
+          })
+      )
+      .toBe(true);
+    await app.evaluate(({ BaseWindow }) => {
+      const window = BaseWindow.getAllWindows().find(
+        (candidate) => candidate.getTitle() === 'OnlyPreview'
+      );
+      window?.restore();
+      window?.focus();
+    });
+    await clickWindowControl('maximize');
+    await expect.poll(isMaximized).toBe(true);
+    await clickWindowControl('maximize');
+    await expect.poll(isMaximized).toBe(false);
+  }
 
   await dispatchTreeDoubleClick(onlyPreview, 'nested');
   await waitForRenderer(
@@ -334,14 +461,34 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   await expect.poll(async () => await selectionBroadcastCount(app)).toBe(1);
 
   expect(graph.contentSize[0]).toBeLessThanOrEqual(1180);
-  expect(graph.contentSize[1]).toBeLessThan(760);
-  expect(760 - graph.contentSize[1]).toBeGreaterThanOrEqual(20);
+  expect(graph.contentSize[1]).toBeLessThanOrEqual(760);
+  expect(760 - graph.contentSize[1]).toBeLessThanOrEqual(16);
+  const settingsCenter = await evaluateRenderer<{ x: number; y: number }>(
+    'shell',
+    `(() => {
+      const settings = document.querySelector('[name="onlypreview__settings"]');
+      if (!(settings instanceof HTMLButtonElement)) throw new Error('Settings action unavailable');
+      const bounds = settings.getBoundingClientRect();
+      return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) };
+    })()`
+  );
+  await sendInput('shell', { type: 'mouseMove', ...settingsCenter });
+  await expect
+    .poll(
+      async () =>
+        await evaluateRenderer<string>(
+          'shell',
+          `getComputedStyle(document.querySelector('[name="onlypreview__settings"]')).backgroundColor`
+        )
+    )
+    .toBe('rgba(255, 255, 255, 0.15)');
   const normalCapture = await captureNativeOnlyPreview(app, 'onlypreview-normal.png', {
     width: 1180,
     height: 760
   });
   expect(normalCapture.width).toBeGreaterThanOrEqual(1180);
   expect(normalCapture.height).toBeGreaterThanOrEqual(760);
+  await sendInput('shell', { type: 'mouseMove', x: 12, y: 80 });
 
   await app.evaluate(({ BaseWindow }) => {
     const window = BaseWindow.getAllWindows().find(
@@ -392,7 +539,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   );
   expect(preview?.bounds).toEqual(domBounds);
   expect(preview?.bounds.x).toBeGreaterThanOrEqual(185);
-  expect(preview?.bounds.y).toBeGreaterThanOrEqual(44);
+  expect(preview?.bounds.y).toBe(32);
   expect((preview?.bounds.y ?? 0) + (preview?.bounds.height ?? 0)).toBeLessThanOrEqual(
     compact.contentSize[1] - 25
   );
@@ -510,6 +657,29 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   });
   expect(compactCapture.width).toBeGreaterThanOrEqual(800);
   expect(compactCapture.height).toBeGreaterThanOrEqual(600);
+
+  if (process.platform === 'win32') {
+    const clickedClose = await evaluateRenderer<boolean>(
+      'shell',
+      `(() => {
+        const close = document.querySelector('[name="onlypreview__close"]');
+        if (!(close instanceof HTMLButtonElement)) return false;
+        close.click();
+        return true;
+      })()`
+    );
+    expect(clickedClose).toBe(true);
+    await expect
+      .poll(
+        async () =>
+          await app.evaluate(
+            ({ BaseWindow }) =>
+              BaseWindow.getAllWindows().filter((window) => window.getTitle() === 'OnlyPreview')
+                .length
+          )
+      )
+      .toBe(0);
+  }
 });
 
 test('renders immutable text, selectable PDF, image pixels, and seekable audio/video', async ({

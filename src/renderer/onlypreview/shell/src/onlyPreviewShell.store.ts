@@ -14,6 +14,7 @@ import {
   type OnlyPreviewBounds,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
+  type OnlyPreviewResult,
   type OnlyPreviewSettings,
   type OnlyPreviewWorkspace
 } from '@shared/onlypreview/onlyPreview.types';
@@ -155,6 +156,24 @@ class OnlyPreviewShellStore {
     }
   }
 
+  async minimizeWindow(): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken) return;
+    await this.runWindowCommand(() => onlyPreviewClient.minimizeWindow({ hostToken }));
+  }
+
+  async toggleMaximizeWindow(): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken) return;
+    await this.runWindowCommand(() => onlyPreviewClient.toggleMaximizeWindow({ hostToken }));
+  }
+
+  async closeWindow(): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken) return;
+    await this.runWindowCommand(() => onlyPreviewClient.closeWindow({ hostToken }));
+  }
+
   setSearchQuery(value: string): void {
     this.searchQuery = value;
     this.focusedRelativePath = this.treeFocusRelativePath;
@@ -293,6 +312,14 @@ class OnlyPreviewShellStore {
         this.focusSearchRevision += 1;
       }
     });
+  }
+
+  private async runWindowCommand(command: () => Promise<OnlyPreviewResult<void>>): Promise<void> {
+    try {
+      unwrapOnlyPreviewResult(await command());
+    } catch (error) {
+      this.errorMessage = errorMessage(error);
+    }
   }
 
   private async chooseTarget(kind: 'file' | 'directory'): Promise<void> {

@@ -165,10 +165,7 @@ test('host capabilities are unique, role-scoped, and revoked independently', () 
   const standaloneA = hosts.issue('standalone', 'content');
   const standaloneB = hosts.issue('standalone', 'content');
   const settings = hosts.issue('settings', 'settings');
-  assert.equal(
-    new Set([standaloneA.hostToken, standaloneB.hostToken, settings.hostToken]).size,
-    3
-  );
+  assert.equal(new Set([standaloneA.hostToken, standaloneB.hostToken, settings.hostToken]).size, 3);
   assert.equal(hosts.require(standaloneA.hostToken, ['content']).hostId, standaloneA.hostId);
   assert.throws(
     () => hosts.require(settings.hostToken, ['content']),
@@ -727,6 +724,9 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     'readText',
     'selectStandaloneFile',
     'updatePreviewBounds',
+    'minimizeWindow',
+    'toggleMaximizeWindow',
+    'closeWindow',
     'openExternally',
     'revealInFolder',
     'getSettings',
@@ -740,6 +740,58 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     handler.indexOf('export const onlyPreviewHandler')
   );
   assert.doesNotMatch(classBody, /absoluteTarget|destroyOnlyPreview|auth|hostQuit|helperPath/i);
+});
+
+test('OnlyPreview window commands stay host-capability scoped and Shell-owned', () => {
+  const types = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+
+  for (const method of ['minimizeWindow', 'toggleMaximizeWindow', 'closeWindow']) {
+    assert.match(
+      types,
+      new RegExp(`${method}\\(params: OnlyPreviewHostRequest\\): Promise<OnlyPreviewResult<void>>`)
+    );
+    assert.match(handler, new RegExp(`params: ApiParams<'${method}'>`));
+    assert.match(shellStore, new RegExp(`onlyPreviewClient\\.${method}\\(\\{ hostToken \\}\\)`));
+  }
+
+  assert.match(shellApp, /name="onlypreview__menuBar"/);
+  assert.match(shellApp, /name="onlypreview__identity"/);
+  assert.match(shellApp, /name="onlypreview__menuActions"/);
+  assert.match(shellApp, /name="onlypreview__openFile"[\s\S]*topbar\.openFile/);
+  assert.match(shellApp, /name="onlypreview__openFolder"[\s\S]*topbar\.openFolder/);
+  assert.match(
+    shellApp,
+    /name="onlypreview__refresh"[\s\S]*:title="onlyPreviewI18n\.topbar\.refresh"/
+  );
+  assert.match(
+    shellApp,
+    /name="onlypreview__settings"[\s\S]*:title="onlyPreviewI18n\.topbar\.settings"/
+  );
+  for (const control of ['minimize', 'maximize', 'close']) {
+    assert.match(shellApp, new RegExp(`name="onlypreview__${control}"`));
+    assert.match(i18n, new RegExp(`${control}: '.*OnlyPreview`));
+  }
+  assert.match(shellApp, /const isMac = onlyPreviewEnv\.platform === 'darwin'/);
+  assert.match(shellApp, /const isWindows = onlyPreviewEnv\.platform === 'win32'/);
+  assert.match(shellApp, /@dblclick="handleMenuBarDoubleClick"/);
+  assert.match(
+    shellApp,
+    /closest\('\.onlypreview-shell__menu-actions'\)[\s\S]*toggleMaximizeWindow\(\)/
+  );
+  assert.doesNotMatch(shellApp, /eyesOnAgents|EyesOnAgents/);
+  assert.doesNotMatch(shellStore, /eyesOnAgents|EyesOnAgents/);
+  assert.match(shellStyle, /\.onlypreview-shell__menu-bar \{[\s\S]*height:\s*32px/);
+  assert.match(shellStyle, /background:\s*var\(--onlypreview-royal\)/);
+  assert.match(shellStyle, /border-bottom:\s*1px solid #3d4666/);
+  assert.match(shellStyle, /\.onlypreview-shell__menu-bar--mac \{[\s\S]*padding-left:\s*78px/);
+  assert.match(shellStyle, /\.onlypreview-shell__menu-actions[\s\S]*-webkit-app-region:\s*no-drag/);
+  assert.match(shellStyle, /\.onlypreview-shell__menu-actions \.arco-btn \{[\s\S]*height:\s*27px/);
+  assert.match(shellStyle, /\.arco-btn:focus-visible[\s\S]*outline:\s*2px solid/);
 });
 
 test('workspace updates have one authoritative event path and stale index results are discarded', () => {
@@ -824,16 +876,37 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   assert.match(standalone, /webContents\.on\('will-redirect',\s*fenceNavigation\)/);
   assert.match(standalone, /MIN_SIDEBAR_WIDTH\s*=\s*180/);
   assert.match(standalone, /RESIZE_HANDLE_WIDTH\s*=\s*5/);
-  assert.match(standalone, /TOOLBAR_HEIGHT\s*=\s*44/);
+  assert.match(standalone, /MENU_BAR_HEIGHT\s*=\s*32/);
   assert.match(standalone, /STATUS_HEIGHT\s*=\s*25/);
   assert.match(standalone, /clampPreviewBounds\(previewView\.getBounds\(\),\s*width,\s*height\)/);
   assert.match(standalone, /onlyPreviewHostRegistry\.revoke\(host\.hostToken\)/);
   assert.match(standalone, /minWidth:\s*MIN_WIDTH/);
   assert.match(standalone, /minHeight:\s*MIN_HEIGHT/);
+  assert.match(standalone, /autoHideMenuBar:\s*true/);
+  assert.match(standalone, /titleBarStyle:\s*'hidden'/);
+  assert.match(
+    standalone,
+    /process\.platform === 'darwin'[\s\S]*trafficLightPosition:\s*\{\s*x:\s*12,\s*y:\s*8\s*\}/
+  );
   assert.doesNotMatch(standalone, /titleBarStyle:\s*'hiddenInset'/);
-  assert.doesNotMatch(standalone, /trafficLightPosition/);
   assert.doesNotMatch(standalone, /frame:\s*false/);
   assert.doesNotMatch(standalone, /`--mode=\$\{hostKind\}`/);
+  assert.match(
+    standalone,
+    /minimizeWindow\(hostToken: string\): void \{[\s\S]*this\.requireStandaloneWindow\(hostToken\)\.minimize\(\)/
+  );
+  assert.match(
+    standalone,
+    /toggleMaximizeWindow\(hostToken: string\): void \{[\s\S]*this\.requireStandaloneWindow\(hostToken\)[\s\S]*isMaximized\(\)[\s\S]*unmaximize\(\)[\s\S]*maximize\(\)/
+  );
+  assert.match(
+    standalone,
+    /closeWindow\(hostToken: string\): void \{[\s\S]*this\.requireStandaloneWindow\(hostToken\)\.close\(\)/
+  );
+  assert.match(
+    standalone,
+    /private requireStandaloneWindow\(hostToken: string\): BaseWindow \{[\s\S]*this\.requireStandaloneHost\(hostToken\)/
+  );
 
   const omni = source('src/main/windows/omniWindow.helper.ts');
   assert.doesNotMatch(omni, /onlypreview/i);
@@ -943,9 +1016,7 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
   assert.match(shellApp, /new ResizeObserver\(reportPreviewBounds\)/);
 
   const previewApp = source('src/renderer/onlypreview/preview/src/App.vue');
-  const previewStore = source(
-    'src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts'
-  );
+  const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
   assert.match(previewApp, /onlyPreviewPreviewStore\.initialize\(\)/);
   assert.match(previewStore, /async initialize\(\): Promise<void>/);
   assert.doesNotMatch(previewStore, /initialize\(restore/);
