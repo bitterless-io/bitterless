@@ -260,7 +260,11 @@ test('opaque revisions reject rapid stale readiness and resynchronize either ren
 
   const reloadedSource = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
   assert.equal(hostGate.isSuspended(), false);
-  assert.equal(hostGate.beginTransition('revision-d'), true, 'a live host rotates on Preview reload');
+  assert.equal(
+    hostGate.beginTransition('revision-d'),
+    true,
+    'a live host rotates on Preview reload'
+  );
   assert.equal(hostGate.resume('revision-d'), true);
   assert.equal(reloadedSource.beginTransition(hostGate.revisionForSync()), true);
   assert.equal(reloadedSource.arm('revision-d'), true);
@@ -273,4 +277,64 @@ test('opaque revisions reject rapid stale readiness and resynchronize either ren
   assert.equal(reloadedHost.acceptReady('revision-e'), true);
   assert.equal(reloadedHost.resume('revision-e'), true);
   assert.equal(reloadedHost.canAcceptCount(4), true);
+});
+
+test('a local pending revision invalidates an older selection restore before Main responds', () => {
+  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
+  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
+
+  assert.equal(hostGate.beginTransition('event-b'), true);
+  assert.equal(sourceGate.beginTransition('event-b'), true);
+  assert.equal(sourceGate.arm('event-b'), true);
+  assert.equal(hostGate.acceptReady('event-b'), true);
+
+  assert.equal(
+    hostGate.beginTransition('pending-c'),
+    true,
+    'local C click rotates without broadcast'
+  );
+  assert.equal(hostGate.resume('event-b'), false, 'B finally cannot re-arm after the C click');
+  assert.equal(hostGate.acceptReady('event-b'), false);
+  assert.equal(hostGate.canAcceptCount(8), false);
+  assert.equal(sourceGate.canReport('event-b', 8), true, 'Preview remains B until Main confirms C');
+
+  assert.equal(hostGate.beginTransition('event-c'), true);
+  assert.equal(sourceGate.beginTransition('event-c'), true);
+  assert.equal(sourceGate.arm('event-c'), true);
+  assert.equal(hostGate.acceptReady('event-c'), true);
+  assert.equal(hostGate.resume('event-c'), true);
+  assert.equal(hostGate.canAcceptCount(11), true);
+
+  assert.equal(hostGate.beginTransition('pending-d'), true);
+  assert.equal(hostGate.resume('event-c'), false);
+  assert.equal(
+    hostGate.beginTransition('recovery-c'),
+    true,
+    'failed D gets a fresh recovery fence'
+  );
+  assert.equal(sourceGate.beginTransition('recovery-c'), true);
+  assert.equal(sourceGate.arm('recovery-c'), true);
+  assert.equal(hostGate.acceptReady('recovery-c'), true);
+  assert.equal(hostGate.resume('recovery-c'), true);
+});
+
+test('a native refresh transition reloads Preview before accepting its next count', () => {
+  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
+  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
+
+  assert.equal(hostGate.beginTransition('before-refresh'), true);
+  assert.equal(sourceGate.beginTransition('before-refresh'), true);
+  assert.equal(sourceGate.arm('before-refresh'), true);
+  assert.equal(hostGate.acceptReady('before-refresh'), true);
+  assert.equal(hostGate.resume('before-refresh'), true);
+
+  assert.equal(hostGate.beginTransition('native-refresh'), true);
+  assert.equal(hostGate.canAcceptCount(6), false);
+  assert.equal(sourceGate.beginTransition('native-refresh'), true);
+  assert.equal(sourceGate.canReport('before-refresh', 6), false);
+  assert.equal(sourceGate.arm('native-refresh'), true);
+  assert.equal(hostGate.acceptReady('native-refresh'), true);
+  assert.equal(hostGate.canBufferCount(7), true);
+  assert.equal(hostGate.resume('native-refresh'), true);
+  assert.equal(hostGate.canAcceptCount(7), true);
 });

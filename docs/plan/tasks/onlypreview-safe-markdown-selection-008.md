@@ -102,7 +102,8 @@ selected in Monaco, Markdown, or PDF.
   listener disposal/reset, exact host-scoped renderer payloads, revision readiness/resync,
   status-rail placement, and i18n
 - Pure Node state probes for deferred restore, old-zero then old-nonzero delivery, rapid A→B→C
-  transitions, stale readiness, and Shell/Preview renderer reload resynchronization
+  transitions, a pending local click before Main confirmation, native refresh, stale readiness, and
+  Shell/Preview renderer reload resynchronization
 - Focused typecheck/ESLint and `git diff --check`; no Electron/Playwright/E2E/full-app launch
 - Ral manually opens normal and hostile Markdown, then selects text in Markdown, code, and PDF to
   verify rendering, selection count, and bottom-rail behavior.
@@ -126,10 +127,15 @@ selected in Monaco, Markdown, or PDF.
   buffers only the current ready revision, so old zero/non-zero delivery and rapid A→B→C
   transitions cannot repopulate the rail. Lifecycle payloads remain renderer-only and carry no
   path, text, content, or capability; the selected-count payload is unchanged.
-- `node --test tests/onlypreview/*.test.mjs` passed 55/55 pure Node/source tests, including hostile
+- Round 2 routes Main's native refresh through a Shell transition so Preview reloads while the
+  project index rebuilds, without a renderer refresh echo. A local file click now rotates a pending
+  unannounced revision immediately; an older selection restore cannot resume it, and a failed click
+  synchronizes the actual selection before broadcasting a fresh recovery revision.
+- `node --test tests/onlypreview/*.test.mjs` passed 57/57 pure Node/source tests, including hostile
   Markdown, the 1 MiB boundary, semantic/zero-attribute output, Unicode/ZWJ/combining-mark counts,
   multi-selection sums, DOM endpoint containment, listener disposal, deferred stale reports, rapid
-  revisions, renderer resynchronization, and host-scoped wiring.
+  revisions, pending local selection, native refresh, renderer resynchronization, and host-scoped
+  wiring.
 - `yarn typecheck:node`, `yarn check:renderer-i18n`, focused error-level ESLint, and
   `git diff --check` passed. Full `yarn typecheck:web` remains blocked only by the repository's
   existing connector, poker-test, Home, and shared typing baseline; it reported no OnlyPreview

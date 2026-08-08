@@ -283,6 +283,9 @@ rebuilds the index; no watcher is created in the MVP.
   A host-only sync request resynchronizes the current revision after either renderer reloads. These
   lifecycle messages contain no path, selected text, file content, or capability and never cross
   Main or preload.
+- A local file click rotates an unannounced pending revision before Main confirms the selection, so
+  an older restore cannot re-arm the previous count. Main's native refresh event is converted by
+  Shell into the same revision transition, which reloads Preview and rebuilds the index once.
 
 ## Tokenized Asset Protocol
 

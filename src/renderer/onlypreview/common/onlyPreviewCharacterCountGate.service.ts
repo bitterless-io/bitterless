@@ -44,10 +44,6 @@ export class OnlyPreviewCharacterCountHostGate {
     return true;
   }
 
-  suspend(): void {
-    this.suspended = true;
-  }
-
   resume(revision: string): boolean {
     if (!revision || revision !== this.currentRevision) return false;
     this.suspended = false;

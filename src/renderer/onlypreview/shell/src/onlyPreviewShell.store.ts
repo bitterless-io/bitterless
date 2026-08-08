@@ -199,10 +199,10 @@ class OnlyPreviewShellStore {
 
   async refresh(): Promise<void> {
     if (!this.workspace) return;
-    await this.buildIndex();
-    if (onlyPreviewEnv.hostId) {
-      const reportingRevision = this.beginCharacterCountTransition();
-      xpcRenderer.broadcast(ONLY_PREVIEW_REFRESH_EVENT, { hostId: onlyPreviewEnv.hostId });
+    const reportingRevision = this.beginCharacterCountTransition();
+    try {
+      await this.buildIndex();
+    } finally {
       this.resumeCharacterCountReporting(reportingRevision);
     }
   }
@@ -419,7 +419,10 @@ class OnlyPreviewShellStore {
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        void this.buildIndex();
+        const reportingRevision = this.beginCharacterCountTransition();
+        void this.buildIndex().finally(() => {
+          this.resumeCharacterCountReporting(reportingRevision);
+        });
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT, () => {
@@ -627,8 +630,8 @@ class OnlyPreviewShellStore {
     const workspace = this.workspace;
     if (!hostToken || !workspace) return;
     const generation = ++this.selectionGeneration;
-    const reportingRevision = this.characterCountGate.revisionForSync();
-    this.suspendCharacterCountReporting();
+    this.restoreGeneration += 1;
+    this.rotateCharacterCountRevision();
     this.selectedRelativePath = relativePath;
     this.expandSelectedParents();
     try {
@@ -642,7 +645,9 @@ class OnlyPreviewShellStore {
     } catch (error) {
       if (generation !== this.selectionGeneration) return;
       await this.syncSelection();
-      this.resumeCharacterCountReporting(reportingRevision);
+      if (generation !== this.selectionGeneration) return;
+      const recoveryRevision = this.beginCharacterCountTransition();
+      this.resumeCharacterCountReporting(recoveryRevision);
       this.errorMessage = errorMessage(error);
     }
   }
@@ -658,10 +663,8 @@ class OnlyPreviewShellStore {
   private beginCharacterCountTransition(): string {
     const hostId = onlyPreviewEnv.hostId;
     if (!hostId) return '';
-    const revision = crypto.randomUUID();
-    if (!this.characterCountGate.beginTransition(revision)) return '';
-    this.selectedCharacterCount = 0;
-    this.pendingCharacterCount = 0;
+    const revision = this.rotateCharacterCountRevision();
+    if (!revision) return '';
     xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, {
       hostId,
       revision
@@ -669,10 +672,12 @@ class OnlyPreviewShellStore {
     return revision;
   }
 
-  private suspendCharacterCountReporting(): void {
-    this.characterCountGate.suspend();
+  private rotateCharacterCountRevision(): string {
+    const revision = crypto.randomUUID();
+    if (!this.characterCountGate.beginTransition(revision)) return '';
     this.selectedCharacterCount = 0;
     this.pendingCharacterCount = 0;
+    return revision;
   }
 
   private resumeCharacterCountReporting(reportingRevision: string): void {

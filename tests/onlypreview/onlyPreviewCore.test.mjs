@@ -1556,7 +1556,9 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT, \{[\s\S]*?hostId,[\s\S]*?revision: reportingRevision[\s\S]*?\}/
   );
   assert.match(previewStore, /characterCountGate\.canReport\(reportingRevision, normalizedCount\)/);
-  assert.doesNotMatch(previewStore, /ONLY_PREVIEW_(?:WORKSPACE|SELECTION|REFRESH)_CHANGED_EVENT/);
+  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/);
+  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_SELECTION_CHANGED_EVENT/);
+  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_REFRESH_EVENT/);
   assert.doesNotMatch(previewStore, /selectedText|selectionText|text:\s*character/);
 
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
@@ -1584,10 +1586,49 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore,
     /ONLY_PREVIEW_SELECTION_CHANGED_EVENT[\s\S]*beginCharacterCountTransition\(\)[\s\S]*syncSelection\(\)/
   );
-  assert.match(
-    shellStore,
-    /private async selectFile[\s\S]*suspendCharacterCountReporting\(\)[\s\S]*this\.selectedRelativePath = relativePath/
+  const selectFile = shellStore.slice(
+    shellStore.indexOf('private async selectFile('),
+    shellStore.indexOf('private expandSelectedParents()')
   );
+  assert.match(
+    selectFile,
+    /private async selectFile[\s\S]*this\.restoreGeneration \+= 1;[\s\S]*rotateCharacterCountRevision\(\)[\s\S]*this\.selectedRelativePath = relativePath/
+  );
+  assert.match(
+    selectFile,
+    /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\);[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*const recoveryRevision = this\.beginCharacterCountTransition\(\);[\s\S]*resumeCharacterCountReporting\(recoveryRevision\)/
+  );
+  const pendingRevision = shellStore.slice(
+    shellStore.indexOf('private rotateCharacterCountRevision()'),
+    shellStore.indexOf('private resumeCharacterCountReporting(')
+  );
+  assert.match(pendingRevision, /characterCountGate\.beginTransition\(revision\)/);
+  assert.doesNotMatch(pendingRevision, /broadcast\(/);
+
+  const directRefresh = shellStore.slice(
+    shellStore.indexOf('async refresh()'),
+    shellStore.indexOf('async openSettings()')
+  );
+  assert.match(directRefresh, /beginCharacterCountTransition\(\)/);
+  assert.match(directRefresh, /await this\.buildIndex\(\)/);
+  assert.ok(
+    directRefresh.indexOf('beginCharacterCountTransition()') <
+      directRefresh.indexOf('await this.buildIndex()')
+  );
+  assert.match(directRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
+  assert.doesNotMatch(directRefresh, /broadcast\(ONLY_PREVIEW_REFRESH_EVENT/);
+
+  const nativeRefresh = shellStore.slice(
+    shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT'),
+    shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT')
+  );
+  assert.match(nativeRefresh, /beginCharacterCountTransition\(\)/);
+  assert.match(nativeRefresh, /this\.buildIndex\(\)/);
+  assert.ok(
+    nativeRefresh.indexOf('beginCharacterCountTransition()') <
+      nativeRefresh.indexOf('this.buildIndex()')
+  );
+  assert.match(nativeRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
   assert.ok((shellStore.match(/this\.selectedCharacterCount = 0/g) || []).length >= 6);
 
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
