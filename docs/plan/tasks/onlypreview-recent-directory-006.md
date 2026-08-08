@@ -81,8 +81,8 @@ unavailable.
   the full Bitterless application.
 - Owner manual verification: restart Bitterless, open OnlyPreview without an explicit target, and
   confirm the last directory (but no selected file) returns; then launch an explicit file target
-  and confirm it overrides stored history. Automated E2E must not launch the full application for
-  this task because its startup integrations may access the macOS Keychain.
+  and confirm it overrides stored history. Follow-up `onlypreview-e2e-keychain-isolation-007`
+  retains this full-application E2E coverage behind mandatory mock-Keychain isolation.
 - `git diff --check`
 
 # Delivery Evidence
@@ -101,12 +101,12 @@ unavailable.
 - `yarn typecheck:node`, `yarn check:renderer-i18n`, targeted error-level ESLint, `yarn build`, and
   `git diff --check` passed. `yarn typecheck:web` remains the documented repository baseline and was
   not used as acceptance evidence for this Main-process-only change.
-- Automated E2E was not run by explicit owner instruction: this task must not launch the full
-  Bitterless application or risk startup integration access to the macOS Keychain. Ral should
-  manually open a folder, restart Bitterless, enter OnlyPreview from Home, and confirm that the
-  folder returns without a selected file; then open an explicit OS file, confirm it overrides the
-  restored directory, and confirm its containing folder is restored without a selection after the
-  next restart.
+- Automated E2E was not run during this delivery by explicit owner instruction. Follow-up
+  `onlypreview-e2e-keychain-isolation-007` makes future full-application runs use Chromium's mock
+  Keychain. Ral should still manually open a folder, restart Bitterless, enter OnlyPreview from
+  Home, and confirm that the folder returns without a selected file; then open an explicit OS file,
+  confirm it overrides the restored directory, and confirm its containing folder is restored
+  without a selection after the next restart.
 
 # Review
 
