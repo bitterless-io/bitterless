@@ -2,9 +2,18 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
+import sharp from 'sharp';
 import { expect, test, type OnlyPreviewE2ESession } from '../fixtures/onlyPreviewApp.fixture';
 
 const screenshotRoot = resolve('out/playwright/onlypreview/screenshots');
+const ONLY_PREVIEW_ROYAL_BLUE = [0x4e, 0x58, 0x82] as const;
+const NATIVE_MENU_BAR_RGB_TOLERANCE = 12;
+const NATIVE_MENU_BAR_REQUIRED_MATCH_RATIO = 0.75;
+
+const matchesOnlyPreviewRoyalBlue = (red: number, green: number, blue: number): boolean =>
+  Math.abs(red - ONLY_PREVIEW_ROYAL_BLUE[0]) <= NATIVE_MENU_BAR_RGB_TOLERANCE &&
+  Math.abs(green - ONLY_PREVIEW_ROYAL_BLUE[1]) <= NATIVE_MENU_BAR_RGB_TOLERANCE &&
+  Math.abs(blue - ONLY_PREVIEW_ROYAL_BLUE[2]) <= NATIVE_MENU_BAR_RGB_TOLERANCE;
 
 const execFileAsync = async (file: string, args: string[]): Promise<void> => {
   await new Promise<void>((resolveExec, rejectExec) => {
@@ -177,6 +186,45 @@ const captureNativeOnlyPreview = async (
   return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
 };
 
+const sampleNativeMenuBar = async (
+  fileName: string,
+  expectedWindowSize: { width: number; height: number }
+): Promise<{ matchedPixels: number; totalPixels: number; matchRatio: number }> => {
+  const screenshotPath = join(screenshotRoot, fileName);
+  const image = sharp(screenshotPath);
+  const metadata = await image.metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new Error(`Native OnlyPreview screenshot has no dimensions: ${screenshotPath}`);
+  }
+
+  const scaleY = metadata.height / expectedWindowSize.height;
+  const left = Math.round(metadata.width * 0.55);
+  const right = Math.round(metadata.width * 0.65);
+  const top = Math.max(0, Math.round(6 * scaleY));
+  const bottom = Math.min(metadata.height, Math.round(26 * scaleY));
+  const { data, info } = await image
+    .extract({ left, top, width: right - left, height: bottom - top })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  if (info.channels < 3) {
+    throw new Error(`Native OnlyPreview screenshot has unsupported channels: ${info.channels}`);
+  }
+
+  let matchedPixels = 0;
+  let totalPixels = 0;
+  for (let offset = 0; offset < data.length; offset += info.channels) {
+    totalPixels += 1;
+    if (matchesOnlyPreviewRoyalBlue(data[offset], data[offset + 1], data[offset + 2])) {
+      matchedPixels += 1;
+    }
+  }
+  return {
+    matchedPixels,
+    totalPixels,
+    matchRatio: totalPixels ? matchedPixels / totalPixels : 0
+  };
+};
+
 const expectMediaMetadataAndSeek = async (
   session: OnlyPreviewE2ESession,
   tagName: 'audio' | 'video'
@@ -250,6 +298,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
       platform: process.platform,
       minimumSize: window?.getMinimumSize(),
       bounds: window?.getBounds(),
+      contentBounds: window?.getContentBounds(),
       contentSize: window?.getContentSize(),
       menuBarVisible: window?.isMenuBarVisible(),
       windowButtonPosition:
@@ -272,6 +321,19 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   expect(graph.count).toBe(1);
   expect(graph.minimumSize).toEqual([800, 600]);
   expect(graph.bounds).toMatchObject({ width: 1180, height: 760 });
+  if (!graph.bounds || !graph.contentBounds) {
+    throw new Error('Fresh OnlyPreview window bounds are unavailable');
+  }
+  const freshMainNativeTitlebarGap = {
+    originX: graph.contentBounds.x - graph.bounds.x,
+    originY: graph.contentBounds.y - graph.bounds.y,
+    width: graph.bounds.width - graph.contentBounds.width,
+    height: graph.bounds.height - graph.contentBounds.height
+  };
+  expect(
+    freshMainNativeTitlebarGap,
+    'A fresh Main must not reserve native titlebar space outside the Shell MenuBar'
+  ).toEqual({ originX: 0, originY: 0, width: 0, height: 0 });
   expect(graph.controls).toEqual({ minimizable: true, maximizable: true, closable: true });
   if (graph.platform === 'darwin') {
     expect(graph.windowButtonPosition).toEqual({ x: 12, y: 8 });
@@ -488,6 +550,18 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   });
   expect(normalCapture.width).toBeGreaterThanOrEqual(1180);
   expect(normalCapture.height).toBeGreaterThanOrEqual(760);
+  expect(
+    matchesOnlyPreviewRoyalBlue(0x32, 0x32, 0x32),
+    'A deep gray native titlebar must not satisfy the OnlyPreview Royal Blue pixel matcher'
+  ).toBe(false);
+  const normalMenuBarSample = await sampleNativeMenuBar('onlypreview-normal.png', {
+    width: 1180,
+    height: 760
+  });
+  expect(
+    normalMenuBarSample.matchRatio,
+    `Fresh native MenuBar sample matched ${normalMenuBarSample.matchedPixels}/${normalMenuBarSample.totalPixels} Royal Blue pixels`
+  ).toBeGreaterThanOrEqual(NATIVE_MENU_BAR_REQUIRED_MATCH_RATIO);
   await sendInput('shell', { type: 'mouseMove', x: 12, y: 80 });
 
   await app.evaluate(({ BaseWindow }) => {
@@ -657,6 +731,14 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   });
   expect(compactCapture.width).toBeGreaterThanOrEqual(800);
   expect(compactCapture.height).toBeGreaterThanOrEqual(600);
+  const compactMenuBarSample = await sampleNativeMenuBar('onlypreview-800x600.png', {
+    width: 800,
+    height: 600
+  });
+  expect(
+    compactMenuBarSample.matchRatio,
+    `Compact native MenuBar sample matched ${compactMenuBarSample.matchedPixels}/${compactMenuBarSample.totalPixels} Royal Blue pixels`
+  ).toBeGreaterThanOrEqual(NATIVE_MENU_BAR_REQUIRED_MATCH_RATIO);
 
   if (process.platform === 'win32') {
     const clickedClose = await evaluateRenderer<boolean>(

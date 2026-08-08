@@ -65,7 +65,10 @@ status rail, settings, and complete Omni exclusion.
 - `yarn check:renderer-i18n`
 - targeted error-level ESLint for touched TS/Vue/test sources
 - `yarn build`
-- `yarn test:e2e:onlypreview`
+- completely exit the current Electron Main and launch a fresh Main before native chrome
+  acceptance; renderer HMR does not verify window creation-time options
+- `yarn test:e2e:onlypreview`, including explicit proof that native window/content bounds have no
+  titlebar gap and that the top-middle native PNG band is majority Royal Blue `#4E5882`
 - visual inspection at the normal and 800×600 window sizes confirms the EyesOnAgents MenuBar
   hierarchy, macOS inset or Windows controls, hover/focus states, and exact native Preview offset
 - `git diff --check`

@@ -420,6 +420,10 @@ them.
   explicit child-view cleanup, hidden titlebar/traffic-light/window-control wiring, exact 32px
   Preview offset, Home card, auth/quit cleanup, log policy, i18n registration, and the absence of
   OnlyPreview from Omni's allowlist/runtime/UI mapping.
+- Native chrome acceptance completely exits the current Electron Main and launches a fresh Main;
+  renderer HMR cannot verify creation-time `BaseWindow` options. Electron E2E compares native
+  window/content bounds for zero titlebar origin or height gap and requires the top-middle band of
+  each native capture to contain a majority of OnlyPreview Royal Blue `#4E5882` pixels.
 - Renderer verification covers stale-result suppression, read-only Monaco options and disposal,
   tree/preview/settings states, BEM/name markers, and keyboard routing.
 - Electron E2E covers a fixture directory containing code, PDF, image, audio, video, and unknown
