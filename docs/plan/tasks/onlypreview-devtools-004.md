@@ -1,7 +1,7 @@
 ---
 id: onlypreview-devtools-004
 scope: Restore independently targetable DevTools for standalone OnlyPreview child views
-status: implemented; independent verification pending
+status: done
 depends-on: [onlypreview-menubar-003]
 ---
 
@@ -55,7 +55,8 @@ multi-view geometry, sandboxing, capability model, custom MenuBar, and Settings 
 
 # Review
 
-Pending independent verification.
+- [onlypreview-devtools-004-1](../reviews/onlypreview-devtools-004-1.md) — accepted with no P1,
+  P2, or P3 finding after source, Node, build, and Electron runtime verification.
 
 # Delivery Evidence — 2026-08-08
 
