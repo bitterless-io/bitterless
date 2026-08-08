@@ -908,6 +908,58 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
     /private requireStandaloneWindow\(hostToken: string\): BaseWindow \{[\s\S]*this\.requireStandaloneHost\(hostToken\)/
   );
 
+  const devToolsGuard = standalone.slice(
+    standalone.indexOf('const isOnlyPreviewDevToolsEnabled'),
+    standalone.indexOf('const isOnlyPreviewDevToolsShortcut')
+  );
+  assert.match(devToolsGuard, /import\.meta\.env\.VITE_MODE === 'debug'/);
+  assert.match(
+    devToolsGuard,
+    /process\.env\.BITTERLESS_E2E === '1' && !app\.isPackaged/
+  );
+  const devToolsShortcut = standalone.slice(
+    standalone.indexOf('const isOnlyPreviewDevToolsShortcut'),
+    standalone.indexOf('const bindOnlyPreviewDevToolsShortcut')
+  );
+  assert.match(
+    devToolsShortcut,
+    /input\.type !== 'keyDown' \|\| input\.isAutoRepeat[\s\S]*key === 'f12'/
+  );
+  assert.match(
+    devToolsShortcut,
+    /if \(key === 'f12'\) return !input\.shift && !input\.control && !input\.alt && !input\.meta/
+  );
+  assert.match(devToolsShortcut, /if \(key !== 'i'\) return false/);
+  assert.match(
+    devToolsShortcut,
+    /process\.platform === 'darwin'[\s\S]*input\.meta && input\.alt && !input\.control && !input\.shift/
+  );
+  assert.match(
+    devToolsShortcut,
+    /process\.platform === 'win32'[\s\S]*input\.control && input\.shift && !input\.meta && !input\.alt/
+  );
+  const bindDevToolsShortcut = standalone.slice(
+    standalone.indexOf('const bindOnlyPreviewDevToolsShortcut'),
+    standalone.indexOf('const clampPreviewBounds')
+  );
+  assert.match(
+    bindDevToolsShortcut,
+    /if \(!isOnlyPreviewDevToolsEnabled\(\)\) return;[\s\S]*webContents\.on\('before-input-event'/
+  );
+  assert.match(
+    bindDevToolsShortcut,
+    /event\.preventDefault\(\);[\s\S]*webContents\.isDevToolsOpened\(\)[\s\S]*webContents\.closeDevTools\(\)[\s\S]*webContents\.openDevTools\(\{ mode: 'detach' \}\)/
+  );
+  const createViewBody = standalone.slice(
+    standalone.indexOf('private createView('),
+    standalone.indexOf('private async loadView(')
+  );
+  assert.match(
+    createViewBody,
+    /this\.bindNativeShortcuts\(view\.webContents, host\);[\s\S]*bindOnlyPreviewDevToolsShortcut\(view\.webContents\)/
+  );
+  assert.equal((standalone.match(/openDevTools\(/g) ?? []).length, 1);
+
   const omni = source('src/main/windows/omniWindow.helper.ts');
   assert.doesNotMatch(omni, /onlypreview/i);
   assert.match(omni, /render-process-gone/);

@@ -1,4 +1,5 @@
 import {
+  app,
   BaseWindow,
   BrowserWindow,
   WebContentsView,
@@ -92,6 +93,37 @@ const configureNavigationFence = (webContents: Electron.WebContents, expectedUrl
 
 const isCommandModifier = (input: Input): boolean =>
   process.platform === 'darwin' ? input.meta : input.control;
+
+const isOnlyPreviewDevToolsEnabled = (): boolean =>
+  import.meta.env.VITE_MODE === 'debug' ||
+  (process.env.BITTERLESS_E2E === '1' && !app.isPackaged);
+
+const isOnlyPreviewDevToolsShortcut = (input: Input): boolean => {
+  if (input.type !== 'keyDown' || input.isAutoRepeat) return false;
+  const key = input.key.toLowerCase();
+  if (key === 'f12') return !input.shift && !input.control && !input.alt && !input.meta;
+  if (key !== 'i') return false;
+  if (process.platform === 'darwin') {
+    return input.meta && input.alt && !input.control && !input.shift;
+  }
+  if (process.platform === 'win32') {
+    return input.control && input.shift && !input.meta && !input.alt;
+  }
+  return false;
+};
+
+const bindOnlyPreviewDevToolsShortcut = (webContents: Electron.WebContents): void => {
+  if (!isOnlyPreviewDevToolsEnabled()) return;
+  webContents.on('before-input-event', (event, input) => {
+    if (!isOnlyPreviewDevToolsShortcut(input)) return;
+    event.preventDefault();
+    if (webContents.isDevToolsOpened()) {
+      webContents.closeDevTools();
+      return;
+    }
+    webContents.openDevTools({ mode: 'detach' });
+  });
+};
 
 const clampPreviewBounds = (
   value: OnlyPreviewBounds,
@@ -415,6 +447,7 @@ export class OnlyPreviewWindowHelper {
     });
     configureNavigationFence(view.webContents, target.url);
     this.bindNativeShortcuts(view.webContents, host);
+    bindOnlyPreviewDevToolsShortcut(view.webContents);
     return view;
   }
 

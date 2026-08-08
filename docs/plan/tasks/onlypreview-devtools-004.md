@@ -1,7 +1,7 @@
 ---
 id: onlypreview-devtools-004
 scope: Restore independently targetable DevTools for standalone OnlyPreview child views
-status: in-progress
+status: implemented; independent verification pending
 depends-on: [onlypreview-menubar-003]
 ---
 
@@ -56,3 +56,13 @@ multi-view geometry, sandboxing, capability model, custom MenuBar, and Settings 
 # Review
 
 Pending independent verification.
+
+# Delivery Evidence — 2026-08-08
+
+- Main registers the exact non-repeating `F12`, macOS `Cmd+Option+I`, and Windows
+  `Ctrl+Shift+I` shortcuts only for debug or the unpackaged E2E harness, and toggles detached
+  DevTools on the input-owning Shell or Preview `webContents`.
+- The focused source contract, 29 OnlyPreview Node tests, Node typecheck, targeted error-level
+  ESLint, Electron Vite build, and `git diff --check` pass.
+- The 4-test Electron E2E suite proves that Shell and Preview DevTools independently open and
+  close with `devtools://` targets while both native child-view bounds remain unchanged.
