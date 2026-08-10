@@ -43,13 +43,13 @@ export const requireTodoAgentSkillPath = (skillPath: string): string => {
 
 const createInstanceSafetyInstruction = (serverName: string): string => {
   if (serverName === 'bitterless') {
-    return '当前 server `bitterless` 是生产实例，会读写你真实、个人、多设备同步的 Todo 数据。';
+    return 'The current `bitterless` server is the production instance. It reads and writes your real, personal, multi-device-synchronized Todo data.';
   }
 
   return [
-    `当前 server \`${serverName}\` 是测试实例，仅用于开发验证。`,
-    '不要把它注册成 `bitterless`，也不要在其中保存真实个人 Todo。',
-    '便携技能对生产 MCP 的依赖始终是 `bitterless`；真实个人 Todo 必须连接生产 Bitterless。'
+    `The current \`${serverName}\` server is a test instance for development verification only.`,
+    'Do not register it as `bitterless`, and do not store real personal Todos in it.',
+    "The portable skill's production MCP dependency remains `bitterless`; real personal Todo work must connect to the production Bitterless instance."
   ].join(' ');
 };
 
@@ -60,22 +60,22 @@ export const createTodoAgentSetupInstruction = ({
   skillVersionCode,
 }: TodoAgentSetupInstructionOptions): string =>
   [
-    '请完成两步配置：MCP 提供 Todo 工具，`bitterless-todo` 技能提供个人 Todo 语义、触发判断、分组选择、去重与安全规则。',
+    'Please set up Bitterless Todo for me by completing both steps below. MCP exposes the Todo tools, and the `bitterless-todo` skill teaches the agent personal Todo semantics, when to create a durable follow-up, Domain selection, duplicate avoidance, and safety rules.',
     '',
-    '1. 把下面的当前实例 MCP 配置添加到 agent 应用：',
+    '1. Add this current-instance MCP configuration to your agent application:',
     '',
     configJson,
     '',
-    '2. 安装完整的 `bitterless-todo` 技能目录（不要只复制 SKILL.md）：',
+    '2. Install the entire `bitterless-todo` skill directory (do not copy only SKILL.md):',
     '',
     skillPath,
     '',
     `bitterless-todo version_code: ${skillVersionCode}`,
     '',
-    'Codex 目标目录：`~/.codex/skills/bitterless-todo/`',
-    'Claude Code 目标目录：`~/.claude/skills/bitterless-todo/`（或项目内 `.claude/skills/bitterless-todo/`）',
-    '更新时把该目录内容增量复制到目标同名目录并覆盖同名文件，不要删除其它技能。',
+    'Codex destination: `~/.codex/skills/bitterless-todo/`',
+    'Claude Code destination: `~/.claude/skills/bitterless-todo/` (or `.claude/skills/bitterless-todo/` inside the project)',
+    'When updating, copy the directory contents additively into the destination folder and overwrite same-named files. Do not delete other skills.',
     '',
-    '安装或更新技能后启动新的 agent session，并在使用 MCP 时保持当前 Bitterless 应用正在运行。',
+    'After installing or updating the skill, start a new agent session. Keep the current Bitterless application running while the agent uses MCP.',
     createInstanceSafetyInstruction(serverName)
   ].join('\n');

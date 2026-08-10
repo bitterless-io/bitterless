@@ -57,7 +57,27 @@ const resolveAliasImport = (specifier) => {
 }
 
 const hostAliasAllowlist = new Map([
-  ['main/update/update.service.ts', new Set(['@main/updateHelper/update.service'])]
+  ['main/security/sqliteKey.service.ts', new Set(['@main/security/safeStorage.runtime'])],
+  ['main/update/update.service.ts', new Set(['@main/updateHelper/update.service'])],
+  ['main/windows/window.helper.ts', new Set([
+    '@main/windows/windowState.service',
+    '@shared/window/window.types'
+  ])],
+  ['renderer/control/src/control.ts', new Set([
+    '@renderer/common/i18n/i18n.helper',
+    '@renderer/common/i18n/rendererLanguage'
+  ])],
+  ['renderer/home/src/components/MenuBar/MenuBar.vue', new Set([
+    '@renderer/common/i18n/i18n.helper'
+  ])],
+  ['renderer/home/src/main.ts', new Set([
+    '@renderer/common/i18n/i18n.helper',
+    '@renderer/common/i18n/rendererLanguage'
+  ])],
+  ['renderer/workbench/src/workbench.ts', new Set([
+    '@renderer/common/i18n/i18n.helper',
+    '@renderer/common/i18n/rendererLanguage'
+  ])]
 ])
 
 export const assertMaestroAliasBoundary = () => {

@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/main/env.d.ts",
+    "../../src/preload/env.d.ts",
+    "../../src/main/coin/coinWindow.lifecycle.ts",
+    "../../src/main/coin/coinWindow.manager.ts",
+    "../../src/main/coin/coinWindowState.ts",
+    "../../src/main/security/**/*.ts",
+    "../../src/main/mcp/trenchAgentOnboarding.service.ts",
+    "../../src/main/xpc/mcp.handler.ts",
+    "../../src/main/xpc/coinWindow.handler.ts",
+    "../../src/main/xpc/sqlitePassword.handler.ts",
+    "../../src/main/xpc/trench.handler.ts",
+    "../../src/preload/trench/**/*.ts",
+    "../../src/shared/mcp/**/*.ts",
+    "../../src/shared/trench/**/*.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noCheck": false,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true
+  }
+}

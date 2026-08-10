@@ -45,8 +45,8 @@ class UpdateService {
     this.disabledForE2E = process.env.BITTERLESS_E2E === '1';
     this.currentVersionCode = this.disabledForE2E ? '0' : this.getCurrentVersionCode();
     this.platform = this.disabledForE2E ? null : this.detectPlatform();
-    this.viteEnv = import.meta.env.VITE_ENV || 'dev';
-    this.viteMode = import.meta.env.VITE_MODE || 'debug';
+    this.viteEnv = import.meta.env.VITE_ENV;
+    this.viteMode = import.meta.env.VITE_MODE;
 
     if (!this.disabledForE2E) this.setupAutoUpdater();
 

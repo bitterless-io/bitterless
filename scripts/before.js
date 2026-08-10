@@ -1,26 +1,19 @@
 const fs = require('fs');
 const path = require('path');
+const {
+  assertSelectedRuntimeProfile,
+  loadCanonicalRigEnvironment
+} = require('./environment/runtimeProfile.config.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
-const envRigPath = path.join(rootDir, '.env.rig');
 const pkgPath = path.join(rootDir, 'package.json');
 const builderTmpPath = path.join(rootDir, 'electron-builder.tmp.yml');
 const builderOutPath = path.join(rootDir, 'electron-builder.yml');
 
-const parseEnvRig = () => {
-  if (!fs.existsSync(envRigPath)) return {};
-  const content = fs.readFileSync(envRigPath, 'utf-8');
-  const result = {};
-  for (const line of content.split('\n')) {
-    const match = line.match(/^\s*([\w]+)\s*=\s*(.*?)\s*$/);
-    if (match) result[match[1]] = match[2];
-  }
-  return result;
-};
-
-const envVars = parseEnvRig();
-const viteEnv = envVars.VITE_ENV || '';
-const viteMode = envVars.VITE_MODE || '';
+const selectedProfile = loadCanonicalRigEnvironment(rootDir);
+assertSelectedRuntimeProfile(rootDir, selectedProfile.viteMode);
+const viteEnv = selectedProfile.viteEnv;
+const viteMode = selectedProfile.viteMode;
 
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 const baseName = pkg._name;
@@ -46,9 +39,9 @@ const isDebug = viteMode === 'debug';
 const isDev = viteEnv === 'dev';
 
 if (isDev) {
-  pkg.name = isDebug ? `${baseName}_DEV_DEBUG` : `${baseName}_DEV`;
+  pkg.name = isDebug ? `${baseName}_DEBUG_DEV` : `${baseName}_DEV`;
 } else {
-  pkg.name = isDebug ? `${baseName}_DEBUG` : baseName;
+  pkg.name = isDebug ? `${baseName}_DEBUG_PROD` : baseName;
 }
 
 if (pkg._version) {

@@ -146,6 +146,9 @@ export const registerCoinIpc = (dependencies: CoinIpcDependencies): void => {
   scopedHandle(COIN_IPC_CHANNELS.dataAnalyzeMeme, async (_window, value) =>
     await dependencies.data.analyzeMeme(value));
 
+  scopedHandle(COIN_IPC_CHANNELS.dataAutoAnalyzeMeme, async (_window, value) =>
+    await dependencies.data.autoAnalyzeMeme(value));
+
   scopedHandle(COIN_IPC_CHANNELS.dataStartDiscover, async (window, value) =>
     await dependencies.data.startDiscover(value, (snapshot) =>
       sendToLiveCoin(window, COIN_IPC_CHANNELS.dataDiscoverEvent, snapshot)));

@@ -14,6 +14,12 @@ import type {
   WindowLayout,
   WindowStateKey,
 } from '@shared/window/window.types';
+import {
+  applyE2EWindowPlacement,
+  resolveE2EWindowPlacement,
+  showWindowWithE2EPlacement,
+  type E2EWindowPlacement,
+} from './e2eWindowPlacement.service';
 
 const WINDOW_STATE_FILE = 'window-state.json';
 const DEFAULT_MIN_WIDTH = 800;
@@ -32,6 +38,39 @@ export interface WindowRestoreOptions {
 export interface WindowRegistrationOptions extends WindowRestoreOptions {
   deferInitialSave?: boolean;
 }
+
+const resolveE2EPlacementForWindow = (
+  window: BaseWindow,
+  options: WindowRestoreOptions = {},
+): E2EWindowPlacement | null => {
+  const isE2E = process.env.BITTERLESS_E2E === '1';
+  const targetDisplayLabel = process.env.BITTERLESS_E2E_DISPLAY_LABEL;
+  return resolveE2EWindowPlacement({
+    isE2E,
+    targetDisplayLabel,
+    displays: isE2E && targetDisplayLabel ? screen.getAllDisplays() : [],
+    windowBounds: window.getNormalBounds(),
+    minWidth: options.minWidth,
+    minHeight: options.minHeight,
+  });
+};
+
+const installE2EBrowserWindowPlacement = (): void => {
+  if (
+    process.env.BITTERLESS_E2E !== '1' ||
+    !process.env.BITTERLESS_E2E_DISPLAY_LABEL
+  ) {
+    return;
+  }
+  app.on('browser-window-created', (_event, window) => {
+    const applyPlacement = (): void => {
+      const placement = resolveE2EPlacementForWindow(window);
+      if (placement) applyE2EWindowPlacement(window, placement);
+    };
+    applyPlacement();
+    window.once('ready-to-show', applyPlacement);
+  });
+};
 
 export interface ResolvedWindowState {
   bounds: WindowBounds;
@@ -344,6 +383,7 @@ export class WindowStateController {
   private disposed = false;
   private applyingRestore = false;
   private restored: ResolvedWindowState | null;
+  private readonly e2ePlacement: E2EWindowPlacement | null;
   private restoreApplied = false;
   private localChange = false;
   private persistenceEnabled: boolean;
@@ -355,7 +395,8 @@ export class WindowStateController {
     readonly window: BaseWindow,
     private readonly options: WindowRegistrationOptions,
   ) {
-    this.restored = this.service.resolve(key, options);
+    this.e2ePlacement = resolveE2EPlacementForWindow(window, options);
+    this.restored = this.e2ePlacement ?? this.service.resolve(key, options);
     this.persistenceEnabled = !options.deferInitialSave || this.service.has(key);
     this.lastObserved = captureWindowState(window);
     window.on('move', this.schedule);
@@ -369,7 +410,7 @@ export class WindowStateController {
   }
 
   importLegacy(value: unknown): boolean {
-    if (this.localChange || this.service.has(this.key)) return false;
+    if (this.e2ePlacement || this.localChange || this.service.has(this.key)) return false;
     const imported = this.service.importLegacy(this.key, value, this.options);
     if (!imported || this.window.isDestroyed()) return false;
     this.persistenceEnabled = true;
@@ -386,13 +427,18 @@ export class WindowStateController {
     if (this.window.isDestroyed()) return;
     if (this.window.isMinimized()) this.window.restore();
     if (!this.restoreApplied) {
-      this.applyBounds();
-      if (this.restored?.fullScreen) {
-        this.window.show();
-        this.window.setFullScreen(true);
+      if (this.e2ePlacement) {
+        showWindowWithE2EPlacement(this.window, this.e2ePlacement);
+        this.lastObserved = captureWindowState(this.window);
       } else {
-        if (this.restored?.maximized) this.window.maximize();
-        this.window.show();
+        this.applyBounds();
+        if (this.restored?.fullScreen) {
+          this.window.show();
+          this.window.setFullScreen(true);
+        } else {
+          if (this.restored?.maximized) this.window.maximize();
+          this.window.show();
+        }
       }
       this.restoreApplied = true;
       return;
@@ -568,4 +614,5 @@ class WindowStateService {
   };
 }
 
+installE2EBrowserWindowPlacement();
 export const windowStateService = new WindowStateService();

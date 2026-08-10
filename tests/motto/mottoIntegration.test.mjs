@@ -11,8 +11,14 @@ import {
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 
-test('Motto remains the fourth and final allowlisted Omni mini app', () => {
-  assert.deepEqual(OMNI_MINI_APP_IDS, ['todo', 'eyesOnAgents', 'translator', 'motto']);
+test('Motto remains the fourth allowlisted Omni mini app before Trench', () => {
+  assert.deepEqual(OMNI_MINI_APP_IDS, [
+    'todo',
+    'eyesOnAgents',
+    'translator',
+    'motto',
+    'trench'
+  ]);
   assert.equal(parseOmniMiniAppId('motto'), 'motto');
   assert.equal(OMNI_MINI_APP_DISPLAY_URLS.motto, 'bl://miniapp/motto');
   assert.throws(() => parseOmniMiniAppId('unknown'));
@@ -46,12 +52,16 @@ test('Motto remains the fourth and final allowlisted Omni mini app', () => {
 test('Motto has dedicated preload, renderer, dev, packaged, and Control mappings', () => {
   const vite = read('electron.vite.config.ts');
   const main = read('src/main/windows/omniWindow.helper.ts');
+  const runtime = read('src/main/windows/omniMiniAppRuntime.service.ts');
   const control = read('src/renderer/omni/omniControl/src/components/OmniPane.vue');
 
   assert.match(vite, /motto:\s*resolve\('src\/preload\/motto\/motto\.preload\.ts'\)/);
   assert.match(vite, /motto:\s*resolve\('src\/renderer\/motto\/index\.html'\)/);
   assert.match(vite, /mottoDevCspPlugin/);
-  assert.match(main, /motto:\s*\{\s*preloadFile:\s*'motto\.js',\s*rendererName:\s*'motto'\s*\}/);
+  assert.match(
+    runtime,
+    /motto:\s*\{\s*preloadFile:\s*'motto\.js',\s*rendererName:\s*'motto',\s*sandbox:\s*false\s*\}/
+  );
   assert.match(main, /`\$\{rendererBaseUrl\}\/\$\{rendererName\}\/index\.html`/);
   assert.match(main, /join\(app\.getAppPath\(\), 'out', 'renderer', rendererName, 'index\.html'\)/);
   assert.match(main, /will-navigate/);

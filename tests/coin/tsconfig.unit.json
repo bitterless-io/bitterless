@@ -35,10 +35,12 @@
     "../../src/main/coin/resources/serviceEndpoint.store.ts",
     "../../src/main/coin/state/**/*.ts",
     "../../src/main/coin/strategy/**/*.ts",
+    "../../src/main/trench/trenchRepository.service.ts",
     "../../src/shared/coin/coinAnalysis.type.ts",
     "../../src/shared/coin/coinBridge.type.ts",
     "../../src/shared/coin/coinResource.type.ts",
     "../../src/shared/i18n/applicationLanguage.ts",
+    "../../src/shared/trench/**/*.ts",
     "./unit/**/*.ts"
   ]
 }

@@ -74,33 +74,25 @@ for (const match of mcpTemplate.matchAll(/(?<!:)class="([^"]*)"/g)) {
     assert(mcpGuideBemClass.test(token), `MCP guide should use only shallow business BEM classes: ${token}`)
   }
 }
-assert((mcpGuide.match(/<IconBtn\b/g) || []).length === 4, 'all four MCP and skill copy actions should use shared IconBtn')
-assert((mcpGuide.match(/<IconCopy\b/g) || []).length === 4, 'all four MCP and skill copy actions should use Tabler IconCopy')
-for (const value of ['commandPath', 'configJson', 'skillPath', 'instruction']) {
-  if (value === 'skillPath') {
-    assert(mcpGuide.includes(':disabled="skillState.status !== \'ready\'"'), 'MCP skillPath copy action should require a current integration contract')
-  } else if (value === 'instruction') {
-    assert(mcpGuide.includes(':disabled="skillState.status !== \'ready\' || !instruction"'), 'MCP instruction copy action should require a current integration contract')
-  } else {
-    assert(mcpGuide.includes(`:disabled="!${value}"`), `MCP ${value} copy action should be disabled while empty`)
-  }
-}
+assert((mcpGuide.match(/<IconBtn\b/g) || []).length === 1, 'Complete setup should be the only MCP guide copy action')
+assert((mcpGuide.match(/<IconCopy\b/g) || []).length === 1, 'Complete setup should use the Tabler IconCopy')
+assert(mcpGuide.includes(':disabled="skillState.status !== \'ready\' || !instruction"'), 'Complete setup copy should require a current integration contract')
 for (const tag of mcpGuide.match(/<IconBtn\b[\s\S]*?>/g) || []) {
   assert(tag.includes(':title=') && tag.includes(':aria-label='), 'MCP copy IconBtn should have an accessible title and label')
 }
 assert(mcpGuideLess.includes('width: calc(100vw - 32px) !important'), 'MCP modal should stay within the Todo viewport')
 assert(mcpGuideLess.includes('max-height: calc(100vh - 106px)'), 'MCP modal body should scroll within the viewport')
-assert(mcpGuide.includes('mcpStepConnect') && mcpGuide.includes('mcpStepSkill'), 'MCP guide should present MCP and skill as two labeled steps')
 assert(mcpGuide.includes('<a-alert') && mcpGuide.includes('type="warning"') && mcpGuide.includes('show-icon'), 'non-production MCP safety should use a prominent Arco warning')
 assert(mcpGuide.includes("v-if=\"info && info.serverName !== 'bitterless'\""), 'MCP safety warning should render only for non-production server names')
 assert(mcpGuide.includes("mcpTestInstanceTitle.replace('{serverName}', info.serverName)"), 'MCP safety warning should visibly identify the current test server name')
 assert(mcpGuide.includes('mcpTestInstanceWarning'), 'MCP safety warning should visibly direct real personal Todo work to production')
 assert(rendererEn.includes("mcpTestInstanceTitle: 'Test-only MCP: {serverName}'") && rendererEn.includes('Do not store real personal todos in this instance') && rendererEn.includes('production bitterless server'), 'English MCP warning should identify the test server and direct real personal Todo work to production')
 assert(rendererZh.includes("mcpTestInstanceTitle: '仅限测试的 MCP：{serverName}'") && rendererZh.includes('不要在当前实例保存真实个人待办') && rendererZh.includes('生产 server bitterless'), 'Chinese MCP warning should identify the test server and direct real personal Todo work to production')
+assert(rendererEn.includes("mcpTitle: 'Copy the skill to your agent'") && rendererZh.includes("mcpTitle: '把技能复制给你的 Agent'"), 'MCP guide title should directly tell the user to copy the skill to their agent')
 assert(mcpGuide.includes('mcpCompleteSetup') && mcpGuide.includes('@click="copyCompleteSetup"'), 'MCP guide should copy complete MCP and skill setup instructions')
-assert(mcpGuide.includes('copyText(skillPath)'), 'MCP guide should expose a copy action for the bundled skill directory')
+assert(!/mcpSummary|mcpDetailedInstructions|mcpStepConnect|mcpStepSkill|copyText\(|mcpLoading/.test(mcpGuide), 'MCP guide should omit the summary, detailed steps, individual copy handlers, and unused loading text')
+assert(!/\.mcp-guide__(?:summary|details-title|step|step-head|step-index|step-title|step-hint|code|destination)\b/.test(mcpGuideLess), 'MCP guide Less should omit styles used only by removed detailed content')
 assert(mcpGuide.includes("skillState.status === 'restart-required'") && mcpGuide.includes('mcpRestartRequiredDescription'), 'a stale main-process response should surface a restart-required contract error')
-assert(!/info\?\.[a-zA-Z]+ \|\| i18nHelper\.todo\.mcpLoading/.test(mcpGuide), 'Loading should render only while integration info is genuinely pending')
 assert(!mcpGuide.includes('class="flex') && !mcpGuideLess.includes('@apply'), 'MCP guide should remain business BEM and Less without Tailwind utilities')
 
 assert(chatPanel.includes('function onComposerKeydown(event: KeyboardEvent): void'), 'composer keydown handler should exist')

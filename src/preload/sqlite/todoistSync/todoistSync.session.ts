@@ -13,6 +13,7 @@ import {
   assertTodoistSyncDatabaseIsolation,
   resolveTodoistSyncDatabasePaths,
   TodoistSyncDatabase,
+  type TodoistSyncDatabaseDirectoryName,
 } from './todoistSync.database';
 import {
   getOrCreateTodoistSyncRuntimePassword,
@@ -56,7 +57,9 @@ export interface TodoistSyncSessionRuntimeContext {
 export interface TodoistSyncSessionServiceOptions {
   clock?: TodoistSyncClockService;
   userDataPath?: string;
+  runtimePassword?: string;
   passwordProtection?: TodoistSyncPasswordProtection;
+  databaseDirectoryName?: TodoistSyncDatabaseDirectoryName;
   onDataUpdated?: (event: TodoDataUpdatedEvent) => void;
   onClockCheckRequested?: (payload: TodoistSyncClockCheckRequested) => void;
   onStatusUpdated?: () => void;
@@ -86,7 +89,9 @@ export class TodoistSyncSessionService {
   private latestClockRequestGeneration = 0;
   private clock: TodoistSyncClockService | null = null;
   private readonly userDataPath: string | null;
+  private readonly runtimePassword: string | null;
   private readonly passwordProtection: TodoistSyncPasswordProtection | null;
+  private readonly databaseDirectoryName: TodoistSyncDatabaseDirectoryName;
   private readonly onDataUpdated: (event: TodoDataUpdatedEvent) => void;
   private readonly onClockCheckRequested: (payload: TodoistSyncClockCheckRequested) => void;
   private readonly onStatusUpdated: () => void;
@@ -96,9 +101,16 @@ export class TodoistSyncSessionService {
   ) => Promise<TodoistSyncSessionRuntime>;
 
   constructor(options: TodoistSyncSessionServiceOptions = {}) {
+    if (options.runtimePassword != null && options.passwordProtection != null) {
+      throw new Error('[todoist sync] runtime password and OS password protection are mutually exclusive');
+    }
     this.clock = options.clock ?? null;
     this.userDataPath = options.userDataPath ?? null;
+    this.runtimePassword = options.runtimePassword == null
+      ? null
+      : this.assertRuntimePassword(options.runtimePassword);
     this.passwordProtection = options.passwordProtection ?? null;
+    this.databaseDirectoryName = options.databaseDirectoryName ?? 'todoist-sync-v1';
     this.onDataUpdated = options.onDataUpdated ?? (() => undefined);
     this.onClockCheckRequested = options.onClockCheckRequested ?? (() => undefined);
     this.onStatusUpdated = options.onStatusUpdated ?? (() => undefined);
@@ -247,11 +259,14 @@ export class TodoistSyncSessionService {
     context: TodoistSyncSessionRuntimeContext,
   ): Promise<TodoistSyncSessionRuntime> {
     const userDataPath = this.requireUserDataPath();
-    const passwordProtection = this.requirePasswordProtection();
-    const paths = resolveTodoistSyncDatabasePaths(userDataPath, params.customerId);
+    const paths = resolveTodoistSyncDatabasePaths(
+      userDataPath,
+      params.customerId,
+      this.databaseDirectoryName,
+    );
     assertTodoistSyncDatabaseIsolation(paths, userDataPath);
-    const password = await getOrCreateTodoistSyncRuntimePassword(paths, {
-      protection: passwordProtection,
+    const password = this.runtimePassword ?? await getOrCreateTodoistSyncRuntimePassword(paths, {
+      protection: this.requirePasswordProtection(),
     });
     const database = new TodoistSyncDatabase(paths.databasePath, password);
     try {
@@ -312,6 +327,13 @@ export class TodoistSyncSessionService {
       throw new Error('[todoist sync] OS password protection capability is unavailable');
     }
     return this.passwordProtection;
+  }
+
+  private assertRuntimePassword(value: string): string {
+    if (!/^[0-9a-f]{64}$/.test(value)) {
+      throw new Error('[todoist sync] injected runtime password must be exactly 64 hexadecimal characters');
+    }
+    return value;
   }
 }
 

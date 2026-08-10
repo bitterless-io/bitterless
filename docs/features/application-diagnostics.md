@@ -27,6 +27,14 @@ On macOS the corresponding user data root is
 `~/Library/Application Support/<App/userData name>`. Windows uses Electron's `appData` root.
 E2E may replace the resolved userData path only through its existing explicit isolated override.
 
+Packaging is part of the profile contract. Every unpackaged GUI launch must compile and run with
+`VITE_MODE=debug`; every packaged application must compile with `VITE_MODE=release`. `VITE_ENV`
+continues to choose the test or production backend and does not grant release behavior to an
+unpackaged process. Main validates this boundary in its first runtime-profile bootstrap, before any
+application-owned path, logging, SQLite, Keychain, or window operation. Supported CLI/build scripts
+select and canonicalize the profile explicitly, and E2E child environments also carry
+`VITE_MODE=debug`; stale release output fails closed instead of opening as a local/E2E app.
+
 ## Persistent Logging
 
 Main initializes `electron-log` before normal startup:

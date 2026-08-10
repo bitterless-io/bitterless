@@ -124,12 +124,15 @@ const modal = readProjectFile(
   'src/renderer/todo/src/components/McpGuideModal/McpGuideModal.vue',
 );
 const completeIndex = modal.indexOf('name="mcp-guide__complete-setup"');
-const detailsIndex = modal.indexOf('mcpDetailedInstructions');
-const connectIndex = modal.indexOf('name="mcp-guide__mcp-step"');
-const skillIndex = modal.indexOf('name="mcp-guide__skill-step"');
-assert.ok(completeIndex >= 0 && completeIndex < detailsIndex);
-assert.ok(detailsIndex < connectIndex && connectIndex < skillIndex);
+assert.ok(completeIndex >= 0);
 assert.match(modal, /@click="copyCompleteSetup"/);
+assert.equal((modal.match(/<IconBtn\b/g) ?? []).length, 1);
+assert.equal((modal.match(/@click=/g) ?? []).length, 1);
+assert.doesNotMatch(
+  modal,
+  /mcpSummary|mcpDetailedInstructions|mcp-guide__mcp-step|mcp-guide__skill-step|copyText/,
+);
+assert.match(modal, /skillState\.status === 'restart-required'/);
 assert.equal((modal.match(/acknowledgeCurrentVersion\(/g) ?? []).length, 1);
 const completeCopyStart = modal.indexOf('const copyCompleteSetup');
 const clipboardWrite = modal.indexOf('navigator.clipboard.writeText(instruction.value)', completeCopyStart);
@@ -141,7 +144,6 @@ const clipboardFailure = modal.slice(
 );
 assert.match(clipboardFailure, /mcpCopyFailed/);
 assert.match(clipboardFailure, /return;/);
-assert.equal((modal.match(/@click="copyText\(/g) ?? []).length, 3);
 
 const menuBar = readProjectFile('src/renderer/todo/src/components/MenuBar/MenuBar.vue');
 assert.match(menuBar, /<a-badge[\s\S]*?dot[\s\S]*?:count="todoAgentSkillStore\.attention \? 1 : 0"/);

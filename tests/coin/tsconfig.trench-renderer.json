@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.web.json",
+  "include": [
+    "../../src/env.d.ts",
+    "../../src/renderer/coin/src/App.vue",
+    "../../src/renderer/coin/src/main.ts",
+    "../../src/renderer/coin/src/env.d.ts",
+    "../../src/renderer/coin/src/contextBridge/**/*",
+    "../../src/renderer/coin/src/components/TrenchHeader/**/*",
+    "../../src/renderer/coin/src/components/TrenchAgentGuideModal/**/*",
+    "../../src/renderer/coin/src/components/TrenchModuleBar/**/*",
+    "../../src/renderer/coin/src/components/TrenchRecordWorkspace/**/*",
+    "../../src/renderer/coin/src/components/TrenchRecordList/**/*",
+    "../../src/renderer/coin/src/components/TrenchRecordDetail/**/*",
+    "../../src/renderer/coin/src/components/TrenchAnalysisDetail/**/*",
+    "../../src/renderer/coin/src/components/TrenchDocumentAction/**/*",
+    "../../src/renderer/coin/src/components/TrenchIndexWalletDetail/**/*",
+    "../../src/renderer/coin/src/components/TrenchNegativeWalletDetail/**/*",
+    "../../src/renderer/coin/src/components/TrenchStructuredValue/**/*",
+    "../../src/renderer/coin/src/views/vault/**/*",
+    "../../src/renderer/common/i18n/**/*.ts",
+    "../../src/shared/i18n/**/*.ts",
+    "../../src/shared/mcp/mcpBridge.type.ts",
+    "../../src/shared/trench/**/*.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true
+  }
+}

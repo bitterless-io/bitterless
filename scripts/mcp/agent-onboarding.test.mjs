@@ -125,31 +125,36 @@ try {
   assert.ok(productionInstruction.includes(canonicalSkillPath));
   assert.match(productionInstruction, /~\/\.codex\/skills\/bitterless-todo/);
   assert.match(productionInstruction, /~\/\.claude\/skills\/bitterless-todo/);
-  assert.match(productionInstruction, /启动新的 agent session/);
-  assert.match(productionInstruction, /增量复制/);
   assert.match(
     productionInstruction,
     new RegExp(`bitterless-todo version_code: ${TODO_AGENT_SKILL_VERSION_CODE}`)
   );
-  assert.match(productionInstruction, /保持当前 Bitterless 应用正在运行/);
-  assert.match(productionInstruction, /真实、个人、多设备同步的 Todo 数据/);
-  assert.doesNotMatch(productionInstruction, /测试实例，仅用于开发验证/);
+  assert.match(productionInstruction, /start a new agent session/i);
+  assert.match(productionInstruction, /copy the directory contents additively/i);
+  assert.match(productionInstruction, /Keep the current Bitterless application running/);
+  assert.match(productionInstruction, /real, personal, multi-device-synchronized Todo data/);
+  assert.doesNotMatch(productionInstruction, /test instance for development verification only/);
+  assert.doesNotMatch(productionInstruction, /[\u3400-\u9fff]/u);
 
   const debugConfig = createMcpConfigJson(
-    '/Applications/Bitterless_DEBUG/bitterless-mcp',
-    'bitterless-debug'
+    '/Applications/Bitterless_DEBUG_PROD/bitterless-mcp',
+    'bitterless-debug-prod'
   );
   const debugInstruction = createTodoAgentSetupInstruction({
     configJson: debugConfig,
-    serverName: 'bitterless-debug',
+    serverName: 'bitterless-debug-prod',
     skillPath: canonicalSkillPath,
     skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE
   });
   assert.ok(debugInstruction.includes(debugConfig));
-  assert.match(debugInstruction, /`bitterless-debug` 是测试实例，仅用于开发验证/);
-  assert.match(debugInstruction, /不要把它注册成 `bitterless`/);
-  assert.match(debugInstruction, /便携技能对生产 MCP 的依赖始终是 `bitterless`/);
-  assert.doesNotMatch(debugInstruction, /当前 server `bitterless` 是生产实例/);
+  assert.match(
+    debugInstruction,
+    /The current `bitterless-debug-prod` server is a test instance for development verification only/
+  );
+  assert.match(debugInstruction, /Do not register it as `bitterless`/);
+  assert.match(debugInstruction, /portable skill's production MCP dependency remains `bitterless`/);
+  assert.doesNotMatch(debugInstruction, /current `bitterless` server is the production instance/);
+  assert.doesNotMatch(debugInstruction, /[\u3400-\u9fff]/u);
 
   const expectedSkillFiles = [
     'SKILL.md',
@@ -197,10 +202,32 @@ try {
   );
   assert.match(mcpGuide, /skillState\.status === 'restart-required'/);
   assert.match(mcpGuide, /mcpRestartRequiredDescription/);
-  assert.match(mcpGuide, /:disabled="skillState\.status !== 'ready'"/);
-  assert.match(mcpGuide, /skillState\.value\.status === 'pending' \? i18nHelper\.todo\.mcpLoading/);
-  assert.match(mcpGuide, /infoPending\.value\s+\? i18nHelper\.todo\.mcpLoading/);
-  assert.doesNotMatch(mcpGuide, /info\?\.[a-zA-Z]+ \|\| i18nHelper\.todo\.mcpLoading/);
+  assert.match(mcpGuide, /:disabled="skillState\.status !== 'ready' \|\| !instruction"/);
+  assert.equal((mcpGuide.match(/<IconBtn\b/g) ?? []).length, 1);
+  assert.equal((mcpGuide.match(/<IconCopy\b/g) ?? []).length, 1);
+  assert.equal((mcpGuide.match(/@click=/g) ?? []).length, 1);
+  assert.match(mcpGuide, /@click="copyCompleteSetup"/);
+  assert.doesNotMatch(
+    mcpGuide,
+    /mcpSummary|mcpDetailedInstructions|mcpStepConnect|mcpStepSkill/
+  );
+  assert.doesNotMatch(
+    mcpGuide,
+    /copyText|commandPathText|configJsonText|skillPathText|mcp-guide__mcp-step|mcp-guide__skill-step/
+  );
+
+  const rendererEn = readFileSync(
+    join(projectRoot, 'src', 'renderer', 'common', 'i18n', 'en.ts'),
+    'utf8'
+  );
+  const rendererZh = readFileSync(
+    join(projectRoot, 'src', 'renderer', 'common', 'i18n', 'zh.ts'),
+    'utf8'
+  );
+  assert.match(rendererEn, /mcpTitle: 'Copy the skill to your agent'/);
+  assert.match(rendererZh, /mcpTitle: '把技能复制给你的 Agent'/);
+  assert.doesNotMatch(rendererEn, /mcpSummary:|mcpDetailedInstructions:/);
+  assert.doesNotMatch(rendererZh, /mcpSummary:|mcpDetailedInstructions:/);
 
   const menuBar = readFileSync(
     join(projectRoot, 'src', 'renderer', 'todo', 'src', 'components', 'MenuBar', 'MenuBar.vue'),

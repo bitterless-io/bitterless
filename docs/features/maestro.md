@@ -172,10 +172,11 @@ unavailable in packaged builds.
   authenticated encryption envelope shared by the embedded runtime and bundled CLI. They must not
   be decryptable from a public constant plus the account email.
 - SQLite boot failure rejects `openMaestroWindow()` with an explicit error and leaves Bitterless usable.
-- Maestro uses Electron `safeStorage`/the operating-system keychain only when `VITE_ENV=prod`.
-  Development profiles keep their own random 32-byte SQLCipher key in the isolated Maestro data
-  root with owner-only permissions; E2E keeps its process-ephemeral random key. A development run
-  must never prompt for or access the macOS Keychain.
+- Maestro uses Electron `safeStorage`/the operating-system keychain only in a packaged
+  `VITE_MODE=release` runtime. Every unpackaged `VITE_MODE=debug` profile, including
+  `VITE_ENV=prod`, keeps its own random 32-byte SQLCipher key in the isolated Maestro data root with
+  owner-only permissions; E2E keeps its process-ephemeral random key. A command-line development or
+  E2E run must never prompt for or access the macOS Keychain.
 - Renderer load, capture attach, agent, or CLI failures remain visible through the existing Maestro
   error surfaces and must not wedge the host process.
 - Source `.env` files, generated binaries, build outputs, signing material, and standalone update

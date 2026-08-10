@@ -147,6 +147,7 @@ test('delivers a secure singleton Coin shell at both supported sizes', async ({ 
     codexKeys: ['connect', 'disconnect', 'getStatus', 'onDeviceCode'],
     dataKeys: [
       'analyzeMeme',
+      'autoAnalyzeMeme',
       'cancel',
       'getSources',
       'monitor',

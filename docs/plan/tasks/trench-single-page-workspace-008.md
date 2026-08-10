@@ -1,11 +1,14 @@
 ---
 id: trench-single-page-workspace-008
 scope: Single-page Trench workspace, bounded thesis review, and visible/hidden X Chrome
-status: implemented-owner-verification-pending
+status: superseded-by-trench-record-browser-011
 depends-on: [coin-ai-analysis-004, coin-gmgn-only-local-mode-007]
 ---
 
 # Trench Single-page Workspace
+
+> Historical contract. The analysis workspace is superseded by the read-only BL Trench Record Vault
+> in `trench-record-browser-011`; it is not retained as an alternate mode.
 
 ## Objective
 

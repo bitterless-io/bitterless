@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   CoinCancelReceipt,
+  CoinChain,
   CoinDataEnvelope,
   CoinDataError,
   CoinDataSourceStatus,
@@ -9,6 +10,8 @@ import type {
   CoinDiscoverSnapshot,
   CoinDiscoverStartReceipt,
   CoinDiscoverStopReceipt,
+  CoinMemeAnalyzeInput,
+  CoinMemeAutoAnalysisResult,
   CoinMemeAnalysisResult,
   CoinMonitorEvent,
   CoinMonitorResult,
@@ -18,6 +21,10 @@ import type {
   CoinSourceId,
   CoinSourceReceipt,
 } from '@shared/coin/coinAnalysis.type';
+import {
+  coinCandidateChains,
+  gmgnTokenInfoIdentityOutcome,
+} from '@shared/coin/coinAddress';
 import type { GmgnCliService, GmgnReadInput, GmgnReadResult } from '../resources/gmgnCli.service';
 import { GmgnReadError } from '../resources/gmgnCli.service';
 import type { ServiceEndpointService } from '../resources/serviceEndpoint.service';
@@ -32,6 +39,7 @@ import {
 import {
   parseCancelInput,
   parseDiscoverInput,
+  parseMemeAutoAnalyzeInput,
   parseMemeAnalyzeInput,
   parseMonitorInput,
   parseScreenerInput,
@@ -314,6 +322,91 @@ export class CoinDataService {
     return await this.analyzeMemeLocal(input);
   }
 
+  async autoAnalyzeMeme(value: unknown): Promise<CoinDataEnvelope<CoinMemeAutoAnalysisResult>> {
+    const input = parseMemeAutoAnalyzeInput(value);
+    const probedChains = coinCandidateChains(input.contractAddress);
+    const readiness = await this.localReadiness();
+    if (readiness) return this.unavailableEnvelope('gmgn-cli', readiness);
+
+    return await this.withRequest(input.requestId, 'gmgn-cli', async (signal) => {
+      const probes: Array<{
+        chain: CoinChain;
+        result: GmgnReadResult;
+        receipt: CoinSourceReceipt;
+      }> = [];
+
+      for (const chain of probedChains) {
+        const result = await this.dependencies.gmgn.read({
+          operation: 'token-info',
+          chain,
+          address: input.contractAddress,
+        }, signal);
+        const receipt = this.recordGmgnRead(result);
+        probes.push({ chain, result, receipt });
+      }
+
+      const outcomes = probes.map((probe) => ({
+        ...probe,
+        identity: gmgnTokenInfoIdentityOutcome(
+          probe.result.data,
+          probe.chain,
+          input.contractAddress,
+        ),
+      }));
+      if (outcomes.some(({ identity }) => identity === 'provider-error')) {
+        throw new GmgnReadError('invalid-response');
+      }
+      const proven = outcomes.filter(({ identity }) => identity === 'match');
+      const matches: CoinMemeAutoAnalysisResult['matches'] = [];
+
+      for (const probe of proven) {
+        const analysisInput: CoinMemeAnalyzeInput = {
+          requestId: input.requestId,
+          mode: 'local_cli_rpc',
+          chain: probe.chain,
+          contractAddress: input.contractAddress,
+          holderLimit: input.holderLimit,
+          traderLimit: input.traderLimit,
+        };
+        const completed = await this.collectLocalMemeAnalysis(
+          analysisInput,
+          signal,
+          { result: probe.result, receipt: probe.receipt },
+        );
+        matches.push({ chain: probe.chain, analysis: completed.data });
+      }
+
+      const receipts = [...new Map([
+        ...probes.map(({ receipt }) => receipt),
+        ...matches.flatMap(({ analysis }) => analysis.receipts),
+      ].map((receipt) => [receipt.id, receipt])).values()];
+      const partial = matches.some(({ analysis }) =>
+        analysis.receipts.some(({ status }) => status !== 'ready'));
+      const aggregate = this.recordReceipt(createSourceReceipt({
+        source: 'gmgn-cli',
+        mode: 'local_cli',
+        status: partial ? 'partial' : 'ready',
+        observedAt: Math.max(...receipts.map((receipt) => receipt.observedAt ?? 0)) || null,
+        receivedAt: this.now(),
+        reason: partial ? 'Automatic analysis completed with unavailable or failed source dimensions.' : null,
+        evidenceIds: receipts.flatMap((receipt) => receipt.evidenceIds),
+      }));
+      return {
+        data: {
+          schema: 'coin-meme-auto-analysis-v1',
+          contractAddress: input.contractAddress,
+          probedChains,
+          matches,
+          activeChain: matches[0]?.chain ?? null,
+          generatedAt: this.now(),
+          receipts,
+        },
+        receipt: aggregate,
+        status: partial ? 'partial' : 'ready',
+      };
+    });
+  }
+
   async startDiscover(
     value: unknown,
     listener: (snapshot: CoinDiscoverSnapshot) => void,
@@ -436,63 +529,93 @@ export class CoinDataService {
   ): Promise<CoinDataEnvelope<CoinMemeAnalysisResult>> {
     const readiness = await this.localReadiness();
     if (readiness) return this.unavailableEnvelope('gmgn-cli', readiness);
-    return await this.withRequest(input.requestId, 'gmgn-cli', async (signal) => {
-      const reads: LocalMemeReadSet = { receipts: [] };
-      const failures: CoinDataError[] = [];
-      const read = async (request: GmgnReadInput): Promise<GmgnReadResult | undefined> => {
-        try {
-          const result = await this.dependencies.gmgn.read(request, signal);
-          const evidenceId = `gmgn:${result.operation}:${result.observedAt}`;
-          reads.receipts.push(this.recordReceipt(createSourceReceipt({
-            source: 'gmgn-cli',
-            mode: 'local_cli',
-            status: 'ready',
-            observedAt: result.observedAt,
-            receivedAt: this.now(),
-            evidenceIds: [evidenceId],
-          })));
-          return result;
-        } catch (error) {
-          if (error instanceof GmgnReadError && error.code === 'cancelled') throw error;
-          const failure = publicError(error);
-          failures.push(failure);
-          reads.receipts.push(this.recordReceipt(createSourceReceipt({
-            source: 'gmgn-cli',
-            mode: 'local_cli',
-            status: failure.code === 'key-missing' || failure.code === 'cli-missing' ? 'unavailable' : 'error',
-            observedAt: null,
-            receivedAt: this.now(),
-            reason: failure.message,
-            evidenceIds: [`gmgn:${request.operation}:error:${this.now()}`],
-          })));
-          return undefined;
-        }
-      };
-      reads.info = await read({ operation: 'token-info', chain: input.chain, address: input.contractAddress });
-      reads.security = await read({ operation: 'token-security', chain: input.chain, address: input.contractAddress });
-      reads.holders = await read({ operation: 'token-holders', chain: input.chain, address: input.contractAddress, limit: input.holderLimit });
-      reads.traders = await read({ operation: 'token-traders', chain: input.chain, address: input.contractAddress, limit: input.traderLimit });
-      reads.hotSearches = await read({ operation: 'hot-searches', chain: input.chain, interval: '1h', limit: 20 });
-      reads.trending = await read({ operation: 'trending', chain: input.chain, interval: '1h', limit: 20 });
-      if (!reads.info && !reads.holders && !reads.security && !reads.traders && !reads.hotSearches && !reads.trending) {
-        throw new GmgnReadError((failures[0]?.code as GmgnReadError['code']) || 'process-failed');
-      }
+    return await this.withRequest(input.requestId, 'gmgn-cli', async (signal) =>
+      await this.collectLocalMemeAnalysis(input, signal));
+  }
 
-      const aggregate = this.recordReceipt(createSourceReceipt({
-        source: 'gmgn-cli',
-        mode: 'local_cli',
-        status: failures.length > 0 ? 'partial' : 'ready',
-        observedAt: Math.max(...reads.receipts.map((receipt) => receipt.observedAt ?? 0)) || null,
-        receivedAt: this.now(),
-        reason: failures.length > 0 ? 'Local analysis completed with unavailable or failed source dimensions.' : null,
-        evidenceIds: reads.receipts.flatMap((receipt) => receipt.evidenceIds),
-      }));
-      return {
-        data: buildLocalMemeAnalysis(input, reads, this.now()),
-        receipt: aggregate,
-        status: failures.length > 0 ? 'partial' : 'ready',
+  private recordGmgnRead(result: GmgnReadResult): CoinSourceReceipt {
+    return this.recordReceipt(createSourceReceipt({
+      source: 'gmgn-cli',
+      mode: 'local_cli',
+      status: 'ready',
+      observedAt: result.observedAt,
+      receivedAt: this.now(),
+      evidenceIds: [`gmgn:${result.operation}:${result.observedAt}`],
+    }));
+  }
+
+  private async collectLocalMemeAnalysis(
+    input: CoinMemeAnalyzeInput,
+    signal: AbortSignal,
+    seededInfo?: { result: GmgnReadResult; receipt: CoinSourceReceipt },
+  ): Promise<RequestSuccess<CoinMemeAnalysisResult>> {
+    const reads: LocalMemeReadSet = {
+      receipts: seededInfo ? [seededInfo.receipt] : [],
+      ...(seededInfo ? { info: seededInfo.result } : {}),
+    };
+    const failures: CoinDataError[] = [];
+    const read = async (request: GmgnReadInput): Promise<GmgnReadResult | undefined> => {
+      try {
+        const result = await this.dependencies.gmgn.read(request, signal);
+        reads.receipts.push(this.recordGmgnRead(result));
+        return result;
+      } catch (error) {
+        if (error instanceof GmgnReadError && error.code === 'cancelled') throw error;
+        const failure = publicError(error);
+        failures.push(failure);
+        reads.receipts.push(this.recordReceipt(createSourceReceipt({
+          source: 'gmgn-cli',
+          mode: 'local_cli',
+          status: failure.code === 'key-missing' || failure.code === 'cli-missing' ? 'unavailable' : 'error',
+          observedAt: null,
+          receivedAt: this.now(),
+          reason: failure.message,
+          evidenceIds: [`gmgn:${request.operation}:error:${this.now()}`],
+        })));
+        return undefined;
+      }
+    };
+    if (!seededInfo) {
+      reads.info = await read({ operation: 'token-info', chain: input.chain, address: input.contractAddress });
+    }
+    reads.security = await read({ operation: 'token-security', chain: input.chain, address: input.contractAddress });
+    reads.holders = await read({ operation: 'token-holders', chain: input.chain, address: input.contractAddress, limit: input.holderLimit });
+    reads.traders = await read({ operation: 'token-traders', chain: input.chain, address: input.contractAddress, limit: input.traderLimit });
+    reads.hotSearches = await read({ operation: 'hot-searches', chain: input.chain, interval: '1h', limit: 20 });
+    reads.trending = await read({ operation: 'trending', chain: input.chain, interval: '1h', limit: 20 });
+    if (!reads.info && !reads.holders && !reads.security && !reads.traders && !reads.hotSearches && !reads.trending) {
+      throw new GmgnReadError((failures[0]?.code as GmgnReadError['code']) || 'process-failed');
+    }
+
+    let data = buildLocalMemeAnalysis(input, reads, this.now());
+    if (seededInfo) {
+      data = {
+        ...data,
+        asset: {
+          ...data.asset,
+          chainIdentityVerified: {
+            value: true,
+            reason: null,
+            evidenceRefs: seededInfo.receipt.evidenceIds,
+          },
+        },
+        unavailable: data.unavailable.filter(({ field }) => field !== 'asset.chainIdentityVerified'),
       };
-    });
+    }
+    const aggregate = this.recordReceipt(createSourceReceipt({
+      source: 'gmgn-cli',
+      mode: 'local_cli',
+      status: failures.length > 0 ? 'partial' : 'ready',
+      observedAt: Math.max(...reads.receipts.map((receipt) => receipt.observedAt ?? 0)) || null,
+      receivedAt: this.now(),
+      reason: failures.length > 0 ? 'Local analysis completed with unavailable or failed source dimensions.' : null,
+      evidenceIds: reads.receipts.flatMap((receipt) => receipt.evidenceIds),
+    }));
+    return {
+      data,
+      receipt: aggregate,
+      status: failures.length > 0 ? 'partial' : 'ready',
+    };
   }
 
   private async withRequest<T>(

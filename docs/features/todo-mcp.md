@@ -15,13 +15,13 @@ project issue tracker or scratch space for steps the agent can complete itself.
 ## Instance routing
 
 ```text
-Codex `bitterless`                         optional `bitterless-debug`
+Codex `bitterless`                    optional `bitterless-debug-prod`
         │                                             │
         ▼                                             ▼
 production shim (pinned endpoint)          DEBUG shim (pinned endpoint)
         │                                             │
         ▼                                             ▼
-.../Bitterless/mcp/bridge.sock             .../Bitterless_DEBUG/mcp/bridge.sock
+.../Bitterless/mcp/bridge.sock             .../Bitterless_DEBUG_PROD/mcp/bridge.sock
         │                                             │
         ▼                                             ▼
 production GUI + production Todo DB        DEBUG GUI + DEBUG Todo DB
@@ -34,9 +34,9 @@ The bridge address is derived from the GUI's `userData` directory. Unix uses
 | Application identity | MCP host key | Purpose |
 |---|---|---|
 | `Bitterless` | `bitterless` | Production and all real Todo work |
-| `Bitterless_DEBUG` | `bitterless-debug` | `debug_prod` testing only |
+| `Bitterless_DEBUG_PROD` | `bitterless-debug-prod` | `debug_prod` testing only |
 | `Bitterless_DEV` | `bitterless-dev` | Local development testing only |
-| `Bitterless_DEV_DEBUG` | `bitterless-dev-debug` | `debug_dev` testing only |
+| `Bitterless_DEBUG_DEV` | `bitterless-debug-dev` | `debug_dev` testing only |
 
 The `bitterless-todo` skill depends only on `bitterless`. An agent may use another host key only
 when Ral explicitly asks to test that local instance.
@@ -89,8 +89,8 @@ Codex may load both servers, but the names must remain distinct:
 [mcp_servers.bitterless]
 command = "/Users/ral/Library/Application Support/Bitterless/bin/bitterless-mcp"
 
-[mcp_servers.bitterless-debug]
-command = "/Users/ral/Library/Application Support/Bitterless_DEBUG/bin/bitterless-mcp"
+[mcp_servers.bitterless-debug-prod]
+command = "/Users/ral/Library/Application Support/Bitterless_DEBUG_PROD/bin/bitterless-mcp"
 ```
 
 ## Portable agent skill
@@ -201,20 +201,18 @@ Tool descriptions, the portable skill, and its tool reference must expose the sa
 
 ## Agent onboarding contract
 
-The in-app integration guide must present MCP registration and skill installation as two required,
-distinct steps:
+The in-app integration guide has one job: let the user copy a complete English setup payload to an
+agent. The payload still contains both required parts—MCP registration and portable skill
+installation—but the modal does not expose them as separate detailed actions:
 
 ```text
-┌──────────── Agent Todo access ──────────────┐
-│ Complete setup instructions            copy │  ← primary, first
+┌────────────── Bitterless Todo ──────────────┐
+│ Copy the skill to your agent                │
 ├──────────────────────────────────────────────┤
-│ Detailed instructions                       │
-│ 1. Connect MCP                              │
-│    Helper path                         copy │
-│    MCP config                          copy │
-│ 2. Install bitterless-todo skill            │
-│    Bundled skill folder                copy │
-│    Codex / Claude installation hint         │
+│ [test-instance warning when applicable]     │
+│ Complete setup instructions            copy │
+│ Copy these instructions to your agent.      │
+│ They include the skill and MCP setup.        │
 └──────────────────────────────────────────────┘
 ```
 
@@ -223,10 +221,13 @@ agent that Bitterless is the user's durable personal, multi-device-synchronized 
 a conversational follow-up is worth persisting, how to avoid duplicates, or why internal agent
 steps and project issues must not be written. The `bitterless-todo` skill owns that judgment policy.
 
-The guide exposes a real bundled skill directory and a complete copyable setup instruction that
-contains both the current instance's MCP JSON and the skill path. Development integrations remain
-explicit test targets: a `bitterless-debug` guide must identify that server as test-only, while the
-portable skill keeps its production `bitterless` dependency for real personal Todo work.
+The guide exposes only the Complete setup instructions action; it has no summary paragraph,
+Detailed instructions section, or individual helper-path, MCP-config, and skill-path copy actions.
+The action copies one English instruction containing the current instance's MCP JSON, the real
+bundled skill directory, installation destinations, skill revision, session/runtime guidance, and
+instance safety. Development integrations remain explicit test targets: a `bitterless-debug-prod` guide
+must identify that server as test-only, while the portable skill keeps its production `bitterless`
+dependency for real personal Todo work.
 
 The modal distinguishes request progress from an incompatible/stale main process. `Loading...` is
 allowed only while integration info is genuinely pending. Once an integration response exists,
@@ -257,12 +258,11 @@ the 12-digit strings; JavaScript numeric comparison is forbidden.
 
 The stored value deliberately means "the setup instructions for this revision were copied and
 acknowledged", not proof that an external Codex or Claude process completed installation. Opening
-or closing the modal, copying an individual helper/config/path field, or a failed clipboard write
-does not update SQLite. Only a successful copy of the top-level Complete setup instructions records
-the exact revision returned by the current main process. A missing or mismatched main-process
-revision is a restart-required contract error, preventing a new renderer from acknowledging an old
-bundled skill. Successful acknowledgement is broadcast to other Todo renderers without forcing a
-full Todo data refresh.
+or closing the modal or a failed clipboard write does not update SQLite. Only a successful copy of
+Complete setup instructions records the exact revision returned by the current main process. A
+missing or mismatched main-process revision is a restart-required contract error, preventing a new
+renderer from acknowledging an old bundled skill. Successful acknowledgement is broadcast to other
+Todo renderers without forcing a full Todo data refresh.
 
 ## Compatibility and safety
 

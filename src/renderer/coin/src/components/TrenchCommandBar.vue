@@ -1,20 +1,6 @@
 <template>
   <header name="trench__commandBar" class="trench-command-bar">
     <div name="trench__commandBar__contract" class="trench-command-bar__contract">
-      <a-select
-        v-model="workspace.data.drafts.meme.chain"
-        name="trench__commandBar__chain"
-        class="trench-command-bar__chain"
-        size="small"
-        :aria-label="i18nHelper.coin.workspace.chain"
-        :disabled="workspace.memeLoading"
-        @change="handleChainChange"
-      >
-        <a-option v-for="chain in chains" :key="chain" :value="chain">
-          {{ chainLabel(chain) }}
-        </a-option>
-      </a-select>
-
       <a-input
         v-model="workspace.data.drafts.meme.contractAddress"
         name="trench__commandBar__ca"
@@ -25,8 +11,18 @@
         :disabled="workspace.memeLoading"
         allow-clear
         @change="workspace.queuePersist()"
-        @press-enter="workspace.analyzeFromCommand('service')"
+        @press-enter="workspace.analyzeFromCommand()"
       />
+
+      <span
+        v-if="lookupStatus"
+        name="trench__commandBar__detection"
+        class="trench-command-bar__detection"
+        :class="{ 'trench-command-bar__detection--found': workspace.memeDetectedChains.length > 0 }"
+        role="status"
+      >
+        {{ lookupStatus }}
+      </span>
 
       <a-button
         name="trench__commandBar__pasteAnalyze"
@@ -47,7 +43,7 @@
           :aria-label="i18nHelper.coin.trench.terminalAnalyze"
           :loading="workspace.memeLoading"
           :disabled="workspace.memeLoading"
-          @click="workspace.analyzeFromCommand('local_cli_rpc')"
+          @click="workspace.analyzeFromCommand()"
         >
           <template #icon><IconTerminal2 :size="15" /></template>
         </a-button>
@@ -195,14 +191,11 @@ import {
   COIN_AI_DEFAULT_EFFORT,
   COIN_AI_MODEL_EFFORTS,
   COIN_AI_MODELS,
-  COIN_CHAINS,
-  type CoinChain,
 } from '@shared/coin/coinAnalysis.type';
 import { coinWorkspaceStore as workspace } from '../views/analysis/coinWorkspace.store';
 import { coinXBrowserStore as xBrowser } from '../views/analysis/coinXBrowser.store';
 import { coinResourcesStore as resources } from '../views/resources/coinResources.store';
 
-const chains = COIN_CHAINS;
 const modelOptions = COIN_AI_MODELS;
 const effortOptions = computed(() => COIN_AI_MODEL_EFFORTS[workspace.data.ai.model]);
 const hasContract = computed(() => Boolean(workspace.data.drafts.meme.contractAddress.trim()));
@@ -231,14 +224,17 @@ const commandIssue = computed(() => workspace.commandError || (
       ? i18nHelper.coin.trench.xBrowser.hiddenLoginRequired
       : ''
 ));
-
-const chainLabel = (chain: CoinChain): string =>
-  i18nHelper.coin.trench.chains[chain];
-
-const handleChainChange = (): void => {
-  workspace.commandError = '';
-  workspace.queuePersist();
-};
+const lookupStatus = computed(() => {
+  const chains = workspace.memeDetectingChains.length > 0
+    ? workspace.memeDetectingChains
+    : workspace.memeDetectedChains;
+  if (chains.length === 0) return '';
+  const labels = chains.map((chain) => i18nHelper.coin.trench.chains[chain]).join(' + ');
+  const template = workspace.memeDetectingChains.length > 0
+    ? i18nHelper.coin.trench.detectingChains
+    : i18nHelper.coin.trench.detectedChains;
+  return template.replace('{chains}', labels);
+});
 
 const updateModel = (): void => {
   if (!effortOptions.value.some((effort) => effort === workspace.data.ai.effort)) {

@@ -42,7 +42,8 @@ default  #4E5882
 
 `#C2410C` is the Bitterless accent orange. It is separate from the Royal Blue product theme and
 must not replace the primary color on buttons, links, form focus, or other standard Arco actions.
-Its current roles are selected menu icons and the legacy assistant avatar/loading identity.
+Its current roles are selected menu icons, the Omni active-cell frame, and the legacy assistant
+avatar/loading identity.
 
 ### Provenance
 

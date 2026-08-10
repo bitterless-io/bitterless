@@ -17,6 +17,11 @@ const DEFAULT_DEV_CORE_URL = 'https://bl-test-api.terncloud.com';
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const resolveBaseUrl = (): string => {
+  if (process.env.BITTERLESS_E2E === '1') {
+    const mockOrigin = process.env.BITTERLESS_E2E_MOCK_ORIGIN?.trim();
+    if (!mockOrigin) throw new Error('[todoist sync] E2E mock origin is required');
+    return mockOrigin.replace(/\/+$/, '');
+  }
   const configured = import.meta.env.VITE_BITTERLESS_CORE_URL;
   const fallback = import.meta.env.VITE_ENV === 'prod' ? DEFAULT_PROD_CORE_URL : DEFAULT_DEV_CORE_URL;
   return (configured || fallback).replace(/\/+$/, '');

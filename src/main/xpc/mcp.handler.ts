@@ -16,9 +16,37 @@ import {
   requireTodoAgentSkillPath,
   resolveTodoAgentSkillPath,
 } from '../mcp/mcpAgentOnboarding.service';
+import {
+  createTrenchMcpIntegrationInfo,
+  requireTrenchAgentSkillPath,
+  resolveTrenchAgentSkillPath,
+} from '../mcp/trenchAgentOnboarding.service';
 import { TODO_AGENT_SKILL_VERSION_CODE } from '@shared/mcp/todoAgentSkillVersion.shared';
+import { TRENCH_AGENT_SKILL_VERSION_CODE } from '@shared/trench/trenchAgentSkillVersion.shared';
 
 class McpHandler extends XpcMainHandler {
+  async getTrenchIntegrationInfo(): Promise<McpIntegrationInfo> {
+    const commandPath = await this.ensureShim();
+    const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));
+    const serverName = getMcpServerName(app.getName());
+    const skillPath = requireTrenchAgentSkillPath(
+      resolveTrenchAgentSkillPath({
+        appPath: app.getAppPath(),
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+      }),
+    );
+
+    return createTrenchMcpIntegrationInfo({
+      serverName,
+      commandPath,
+      skillPath,
+      skillVersionCode: TRENCH_AGENT_SKILL_VERSION_CODE,
+      bridgePath: endpoint.path,
+      transport: endpoint.transport,
+    });
+  }
+
   async getIntegrationInfo(): Promise<McpIntegrationInfo> {
     const commandPath = await this.ensureShim();
     const endpoint = getMcpBridgeEndpoint(app.getPath('userData'));

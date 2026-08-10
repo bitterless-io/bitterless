@@ -1,229 +1,193 @@
-# Trench Workspace Layout
+# BL Trench Record Vault Layout
 
-Status: Workspace MVP implemented; owner verification pending
+Status: Accepted for implementation
 
-## Design intent
+## Visual direction
 
-Trench is a repeated-use research desk for one operator. The active token, incoming scan signals,
-focus observations, and decision review must remain visible in one workspace. The old
-Monitor/Screener/Meme/Strategy/History top-tab layout is superseded and may be removed.
+Trench is a dense research evidence vault, not a trading dashboard or a JSON file previewer. It
+keeps the existing Royal Blue system, flat white/utility surfaces, restrained borders, compact
+Arco controls, and monospace identities. It adds no gradients, score cards, KPI strip, decorative
+chart, or new palette.
 
-The visual contract is intentionally restrained:
+The main visual signature is a continuous document canvas: a quiet module bar, a bounded record
+index on the left, and one legible evidence document on the right.
 
-- Use Arco controls and the Bitterless Royal Blue tokens from [`../design/colors.md`](../design/colors.md).
-- Use `#4E5882` for primary actions, `#1E2237` for text, white content surfaces, and `#F3F5FC` for
-  utility backgrounds. Add no gradient, glow, decorative accent, or new palette.
-- Keep the workspace flat. Use whitespace and selected-row backgrounds first; add one structural
-  separator only where adjacent regions would otherwise be ambiguous.
-- Do not wrap each region or row in a card. Do not nest cards, float page sections, or decorate the
-  page with shadows.
-- Do not add dashboard KPIs, candidate/watch totals, hit-rate summaries, decorative scores, or
-  large-number statistics. Price, liquidity, wallet indices, freshness, and risk remain where they
-  provide evidence for a token or action.
-- Font sizes are fixed by role and letter spacing is `0`. Full contract addresses use monospace.
-
-## Desktop structure
+## Desktop and wide Omni layout
 
 ```text
-┌────────────────────────────── Trench window ───────────────────────────────┐
-│ Trench · active CA / chain                              source · AI · _ □ ×│
+┌────────────────────────────── BL Trench ───────────────────────────────────┐
+│ Trench · local record vault                  synced locally · agent · refresh│
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ Chain │ CA input                         │ Paste+Analyze │ Terminal │ X      │
-│ active run / error                Codex / Sign in │ model │ effort │ tools │
-├───────────────────┬──────────────────────────────────┬──────────────────────┤
-│ SCAN              │ ACTIVE TOKEN                     │ DECISION             │
-│ candidate rows    │ identity / phase / freshness     │ pinned strategy      │
-│ why now / risk    │ hard risks / evidence summary    │ user thesis          │
-│                   │ wallet / market / holders / X    │ AI review / counter  │
-│ FOCUS             │                                  │ evidence / invalid.  │
-│ quiet / triggered │ current snapshot remains visible│ decision revision    │
-└───────────────────┴──────────────────────────────────┴──────────────────────┤
-│ selected sources · latest refresh · active job                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+│ [ CA Records ] [ Index Wallets ] [ Negative Wallets ]                     │
+├───────────────────────────┬─────────────────────────────────────────────────┤
+│ Search records…           │ CA / wallet identity          generated time   │
+│                           │ source / matched chains / schema  [Copy exact]  │
+│ selected record           ├─────────────────────────────────────────────────┤
+│ chain · symbol · time     │ BSC · TOKEN IDENTITY                            │
+│                           │ Analysis result                                  │
+│ next record               │ Top profit wallets                              │
+│ chain · symbol · time     │ Index exposure · Negative exposure              │
+│                           │ ROBINHOOD · TOKEN IDENTITY                       │
+│ empty/error/loading row   │ structured evidence sections                    │
+└───────────────────────────┴─────────────────────────────────────────────────┘
 ```
 
-Default window size is `1360x860`; minimum size is `800x600`. The command bar and status bar are
-fixed. The center token canvas is the primary scroll owner; Scan, Focus, and Decision use their own
-bounded scroll areas when expanded.
+- Header: 40px standalone, 34px embedded. Omni removes drag and native window controls.
+- Header Agent action: an icon-only Robot button opens the current instance's Trench skill/MCP
+  setup guide; at narrow widths the subtitle/status text yields before either required action clips.
+- Module bar: one semantic navigation row, keyboard roving focus, active underline/background.
+- Left pane: 288px default, 240–360px bounded; its own vertical scroll.
+- Right pane: flexible, `min-width: 0`; metadata stays compact and one continuous structured
+  evidence document owns scrolling.
+- Search matches CA/wallet address, symbol/name, chain, explanation, and source CA.
+- Long addresses truncate only in list rows; detail identities preserve the full value and exact
+  document actions copy the canonical source bytes without showing raw JSON as the primary view.
 
-## Command bar
+## Module-specific detail
 
-The command bar is the persistent start point for every investigation.
+### CA Records
 
-| Control | Contract |
-|---|---|
-| Chain | Arco Select. Required because identical address forms can exist on different chains. |
-| CA | Editable input. Keeps the normalized address after paste; long values do not resize the bar. |
-| Paste and analyze | Reads the clipboard on click, validates `chain + CA`, and immediately starts the default service analysis. No clipboard history is retained. |
-| Terminal | Icon action with tooltip. Runs one explicit read-only `local_cli_rpc` analysis for the current input; it is not a fallback toggle. |
-| X Chrome | Opens the current CA in X Latest using the menubar-selected display mode; without a CA it opens X home. |
-| Active run | Shows the local stage and cancel action beside the command that started it. It is not a KPI strip. |
-| Codex | Shows shared account state and an inline Sign in/Reconnect action. |
-| Model / effort | Select the target for the next AI run. Unsupported combinations are omitted; no silent replacement or downgrade. |
-| Tools | Icon menu for Resources, history, strategy management, synchronization, and logs. These are secondary surfaces, not core workflow tabs. |
+The left pane lists one row per active CA file, newest first. The right pane first shows envelope
+identity and provenance, then one section per chain in canonical order. Each chain section renders
+token identity, structured result fields, Top Profit Wallets, Index Wallet Exposure, and Negative
+Wallet Exposure as named components. Multi-chain EVM records show both chain sections without
+splitting the history row.
 
-At widths below 1280px, CA commands and AI session controls occupy two stable rows. Controls wrap
-before their text or icons shrink.
+Known domain fields use labels, tables, and semantic status text. Flexible `result` and `evidence`
+objects use a generic structured value view: object keys become rows, arrays become indexed lists,
+nested containers are expandable on demand, long strings are initially shortened, and large
+containers reveal bounded chunks. It never substitutes `JSON.stringify(...)` as the visible
+preview. Empty arrays/objects display a truthful empty value.
 
-## Scan and Focus rail
+### Index Wallets
 
-Scan and Focus share the left rail but keep separate scroll and ordering rules.
+The left pane is a unique `{chain,address}` dictionary with source count and best observed rank.
+The right pane pages bounded source-CA rank/profit/win-rate/hash summaries and any exposure
+measurements already present in those CA records. Opening a source CA reveals the same structured CA
+detail used by CA Records; Index detail never duplicates unbounded evidence. There is no positive-tag
+edit action.
 
-### Scan
+### Negative Wallets
 
-Each row contains only information needed to decide whether to inspect it:
+The left pane shows chain, address, and the first line of the human explanation. The right pane keeps
+the human explanation and tag provenance visually separate from the independently generated
+holdings snapshot. Holdings render as asset rows followed by structured result/evidence fields.
+Missing holdings is a truthful empty state, not zero holdings.
 
-- symbol/name, chain, short CA, and freshness;
-- one concise `why now` reason;
-- necessary price/liquidity/volume evidence;
-- hard-risk state and known evidence gaps;
-- actions: open analysis, add to Focus, or ignore.
+## Exact-document actions
 
-Clicking a row changes the active token in the center. It must not start AI or add the token to Focus
-without an explicit action. No candidate total, scanned total, global score card, or chart thumbnail
-appears above the list.
+Every persisted document retains a compact `Copy exact JSON` action near its structured section:
+one action for a CA analysis, and separate actions for a Negative tag and holdings snapshot. The
+action writes the repository-returned `document` string directly and reports success/failure inline.
+The raw document is not rendered as the normal preview. Repository/MCP tests, not a second visual
+representation, prove that the copied bytes produce the displayed content hash.
 
-### Focus
+## Responsive behavior
 
-Focus contains manually selected contracts and immutable trigger events. Quiet items show current
-phase, next check, and last analysis. Triggered items move above quiet items and show the trigger
-reason, time, and bounded before/after evidence. A trigger invites investigation; it never means
-buy and never places an order.
+| Available content size | Contract                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| width >= 760px         | list and detail remain side by side                                                                         |
+| width 480–759px        | left pane narrows to 220px; metadata and evidence tables wrap or scroll only inside their section           |
+| width < 480px          | list and detail become mutually exclusive views; selecting a row opens detail with an explicit Back control |
+| height < 360px         | compact header/module rows; content keeps independent vertical scroll and actions remain reachable          |
 
-The first trigger shape is `drawdown -> base -> breakout`, but its windows and thresholds belong to
-the monitor strategy, not the renderer. The UI consumes versioned rule and trigger records.
+`html`, `body`, `#app`, and the embedded Trench root use `min-width: 0; min-height: 0`. Only the native
+standalone `BrowserWindow` retains the platform 800×600 minimum. No layout state relies on hover.
 
-## Active token canvas
+## Interaction and state variants
 
-The center is one flat analysis document:
+| State                  | Presentation                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| Loading                | stable list/detail skeletons; old valid data may remain visibly marked as refreshing            |
+| Empty module           | concise explanation that an agent writes records through Bitterless MCP                         |
+| No search match        | query-preserving no-results row                                                                 |
+| Selected               | one high-contrast list marker and matching detail identity                                      |
+| Invalid stored file    | quarantined/error row with safe filename key and validation message; never partial JSON         |
+| Repository unavailable | persistent error banner and Retry; no sample fallback                                           |
+| MCP update             | live refresh preserves selection when identity remains; otherwise selects the first current row |
+| Exact-document copy    | copies the exact canonical selected document and reports success/failure inline                 |
+| Agent guide loading    | modal opens with a bounded loading state while Main resolves current-instance setup              |
+| Agent guide invalid    | explicit restart-required error and Retry; no guessed helper or skill path                      |
+
+## Agent setup guide
+
+The setup surface reuses the project's proven Arco modal proportions and Royal Blue controls. Its
+numbered rail encodes a real installation sequence rather than decoration.
 
 ```text
-Token identity / full CA / source state / as-of
-Hard risks and missing evidence
-Market and liquidity
-Filtered holder universe and concentration
-Positive-wallet and negative-wallet indices
-Narrative and attention evidence
-X evidence and contradictions
-Source receipts / snapshot revision
+┌────────────── Agent Trench access ──────────────┐
+│ LOCAL MCP                                      ×│
+├─────────────────────────────────────────────────┤
+│ [test-instance warning when applicable]         │
+│ Complete setup instructions                [⧉] │
+│ Copies MCP + skill + restart instructions.      │
+│                                                 │
+│ ① CONNECT MCP                                  │
+│    Helper path                            [⧉] │
+│    ┌─────────────────────────────────────────┐  │
+│    │ current profile helper                  │  │
+│    └─────────────────────────────────────────┘  │
+│    MCP config                             [⧉] │
+│                                                 │
+│ ② INSTALL BITTERLESS-TRENCH                    │
+│    Bundled skill folder                    [⧉] │
+│    Codex / Claude Code destinations             │
+│                                                 │
+│ ③ RESTART AND VERIFY                           │
+│    New session · 12 trench.* tools · invocation │
+└─────────────────────────────────────────────────┘
 ```
 
-Sections use headings and whitespace, not individual cards. Missing values render `Unavailable`
-with source/reason and never as zero. Refresh keeps the previous snapshot visible and marks only the
-affected section as refreshing.
+- The modal uses one native Arco close action; Escape and overlay close work normally.
+- The body owns vertical scrolling and remains usable in standalone 800×600 and Omni 398×568 /
+  800×282 cells. Code blocks wrap/scroll internally without widening the document body.
+- Every icon-only copy action has a localized tooltip/accessible label and reports success/failure.
+- The guide is local instructional UI only: opening/copying it does not mutate Trench records,
+  acknowledge installation, call a provider, or access Keychain/safeStorage.
 
-## Decision dock
-
-The right dock is a bounded strategy review, not a generic chat client.
-
-- It is always bound to the active token and pinned strategy revision.
-- The user can enter a thesis, position context, risk budget, horizon, and question.
-- AI receives the user text as an untrusted hypothesis and must compare it with the current evidence
-  and strategy; it may not treat the thesis as a fact.
-- The result shows recommendation, supporting evidence, counter-evidence, strategy conflicts,
-  invalidation conditions, missing inputs, model, effort, and evidence revision.
-- Every request creates a revision. New output never overwrites an earlier decision record.
-- No trade, wallet-signing, or order action appears in v1.
-
-An empty dock shows the thesis composer and current strategy name. It does not display tutorial copy,
-example cards, or decorative statistics.
-
-## X Chrome Display Mode
-
-The custom window menubar contains one compact Arco switch with eye/eye-off state. `visible` launches
-system Chrome with `channel: "chrome"` and `headless: false`; `hidden` uses the same channel and
-profile with `headless: true`. Visible is the default and the preference persists with Coin workspace
-state. The dedicated user-data directory remains under the Trench application-data boundary.
+## Component boundary
 
 ```text
-closed -> launching -> login_required -> ready
-                   \-> error
+TrenchApp
+├─ TrenchHeader                  host-aware standalone/Omni chrome
+│  └─ TrenchAgentGuide trigger   current-instance skill/MCP setup
+├─ TrenchAgentGuideModal
+│  └─ trenchAgentGuide.store     load/copy/error state
+├─ TrenchModuleBar               CA / Index / Negative
+└─ TrenchRecordWorkspace
+   ├─ TrenchRecordList           module-specific search + rows
+   └─ TrenchRecordDetail
+      ├─ TrenchRecordMeta
+      ├─ TrenchAnalysisDetail    per-chain result/wallet/exposure sections
+      ├─ TrenchIndexDetail       paged source evidence
+      ├─ TrenchNegativeDetail    explanation/tag/holdings sections
+      ├─ TrenchStructuredValue   bounded flexible JSON-value renderer
+      └─ TrenchDocumentAction    copy exact canonical document
+
+trenchVault.store.ts
+├─ module/search/selection state
+├─ XPC list/get orchestration
+├─ data-changed refresh fencing
+└─ no analysis, provider, clipboard, AI, or browser method
 ```
 
-On first use, the visible browser opens X and the user completes login/2FA. The profile persists for
-later visible or hidden launches. Trench persists only the display preference; it does not read
-passwords, export cookies, or place browser status/profile contents in workspace synchronization,
-logs, or evidence bundles.
+## Accessibility and automation
 
-Changing the switch while a Trench-managed browser is active closes that context and reopens the
-same query in the selected mode. Hidden mode never falls back to visible. If login or a challenge is
-required while hidden, Trench reports that visible mode is required for human action. For optional
-external CDP attachment, Chrome visibility belongs to the external process and the switch is
-disabled.
+- Module controls use buttons/tabs with visible focus, selected state, and localized accessible names.
+- List rows are keyboard selectable and expose full identity through accessible text/title.
+- Tables, disclosures, lists, and status text use native semantics; color is not the only
+  schema/error signal. Structured disclosures are keyboard operable and expose their labels.
+- Stable automation names include `trench__module__ca`, `trench__module__index-wallets`,
+  `trench__module__negative-wallets`, `trench__records__search`, `trench__records__row`,
+  `trench__detail__analysis`, `trench__detail__chain`, `trench__detail__top-wallets`,
+  `trench__detail__holdings`, `trench__detail__copy-analysis`, and `trench__detail__back`.
+- Guide automation names include `trench__header__agent-guide`, `trench__agent-guide`,
+  `trench__agent-guide__copy-complete`, `trench__agent-guide__helper`,
+  `trench__agent-guide__config`, and `trench__agent-guide__skill`.
 
-Playwright must not point at or copy the user's regular Chrome default profile. Current Chrome and
-Playwright explicitly do not support that automation path safely. An optional loopback CDP endpoint
-may connect only to a Chrome instance already launched by Trench with its dedicated non-default data
-directory; failure is explicit and never falls back to another profile.
+## Visual acceptance
 
-The later X extraction path must use accessibility locators to identify visible targets and fresh
-bounding boxes. Every automated mouse movement, wheel, press, and release must be emitted through a
-page CDP session. Challenge pages and expired sessions pause for human action; Trench does not
-bypass them. This workspace iteration owns visible launch and persistent login state only.
-
-## Shared Codex session
-
-Trench reuses the host-owned `CodexCredentialService` already used by existing model-provider and
-Coin facades. It must not create another token, cookie, login state, or callback listener.
-
-Authentication is application-global. Model and effort are Trench workspace preferences and are
-frozen into each run receipt. Changing a selector while a run is active affects only the next run.
-
-## Secondary surfaces
-
-Resources, history, wallet cohorts, strategy management, data synchronization, and logs open in an
-Arco Drawer or secondary view. Closing them restores the same active token, list positions, draft,
-and running task. Secondary surfaces do not restore the old core-workflow tabs.
-
-## State variants
-
-| State | Visual contract |
-|---|---|
-| Initial | Persistent command bar plus empty Scan/Focus and thesis composer; no fabricated result. |
-| Loading/queued | Previous token and lists remain; the affected action shows stage and cancel. |
-| Source unavailable | Show selected data path and exact missing prerequisite with Resources action. Never silently fall back. |
-| Stale/insufficient | Keep old value with `asOf`, TTL, missing fields, and affected conclusion. |
-| Schema failure | Show stable error code and phase; raw model output remains in protected logs. |
-| Codex required/invalidated | Inline Sign in/Reconnect; deterministic evidence stays usable. |
-| X login required | In visible mode focus Chrome; in hidden mode ask the user to switch to visible. Keep local analysis usable. |
-| Profile busy | Explain that the Trench profile is already open and offer Focus/Retry; never create a second context on it. |
-| Offline/sync conflict | Preserve both revisions and provide compare/retry; never silently overwrite human labels or strategy. |
-
-## Responsive contract
-
-| Content width | Signal rail | Token canvas | Decision dock | Command bar |
-|---|---|---|---|---|
-| `>=1280px` | expanded, about 280px | `minmax(520px, 1fr)` | expanded, about 340px | one row when content fits |
-| `960-1279px` | expanded, about 240px | primary remaining width | right dock trigger | two rows |
-| `800-959px` | left dock trigger | full remaining width | right dock trigger | two rows; utility actions become icons |
-
-At 800-959px only one side dock may be open. Dock triggers show a semantic pending state dot when
-needed, not a total count. No body-level horizontal scrollbar is permitted.
-
-## Component target
-
-```text
-CoinApp
-├─ CoinWindowHeader
-├─ TrenchWorkspace
-│  ├─ TrenchCommandBar
-│  ├─ TrenchSignalRail
-│  │  ├─ ScanQueue
-│  │  └─ FocusQueue
-│  ├─ MemeAnalysisPanel (embedded token canvas)
-│  ├─ TrenchDecisionDock
-│  └─ CoinResourcesView / secondary surfaces
-└─ CoinStatusBar
-```
-
-Renderer state uses `reactive(new XxxState())`. Reactive class instances contain data only;
-behavior remains on class prototypes, and timers/subscriptions/browser handles remain outside the
-reactive object.
-
-## Entry points
-
-- Window lifecycle: `src/main/coin/` and `src/main/xpc/coinWindow.handler.ts`
-- Privileged bridge: `src/shared/coin/`, `src/preload/coin/`, and `src/main/coin/coinIpc.service.ts`
-- Renderer: `src/renderer/coin/`
-- Theme reference: `docs/design/colors.md`
-- Product contract: `docs/features/coin.md`
+Capture standalone 1360×860 and 800×600, plus Omni cells at 800×568, 398×568, and 800×282. Every
+capture must show a usable module choice, record selection or truthful empty state, and bounded
+detail. Verify no legacy analysis control, overlap, clipped required action, body scrollbar, or
+horizontal cell overflow.

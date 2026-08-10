@@ -12,7 +12,7 @@ export const en = {
     passwordMinimum: 'At least 8 characters',
     confirmPasswordPlaceholder: 'Enter the password again',
     setPasswordAndContinue: 'Set password and continue',
-    continueToWorkspace: 'Continue to workspace',
+    continueToWorkspace: 'Continue to workspace'
   },
   app: {
     quit: 'Quit',
@@ -22,14 +22,15 @@ export const en = {
     quitConfirmOk: 'Quit',
     quitConfirmCancel: 'Cancel',
     keychainDeniedTitle: 'Keychain Access Required',
-    keychainDeniedMessage: 'To protect your data security, this application requires access to the system Keychain for encryption. Please allow access in the system dialog.',
+    keychainDeniedMessage:
+      'To protect your data security, this application requires access to the system Keychain for encryption. Please allow access in the system dialog.',
     keychainDeniedOk: 'Deny',
     keychainDeniedCancel: 'Cancel',
     onlyPreviewFileMenu: {
       preview: 'Preview',
       openExternally: 'Open in system app',
-      revealInFolder: 'Reveal in folder',
-    },
+      revealInFolder: 'Reveal in folder'
+    }
   },
   menuBar: {
     restartToUpdate: 'update',
@@ -45,9 +46,9 @@ export const en = {
         'mcp-shim': 'Todo MCP helper',
         tray: 'System tray',
         'mcp-bridge': 'Todo MCP bridge',
-        'eyes-on-agents': 'EyesOnAgents',
-      },
-    },
+        'eyes-on-agents': 'EyesOnAgents'
+      }
+    }
   },
   omni: {
     title: 'Omni Browser',
@@ -63,7 +64,7 @@ export const en = {
     splitDown: 'Split below',
     closePane: 'Close pane',
     layoutRecoveryError: 'The saved layout could not be restored. A default browser pane is shown.',
-    miniAppLoadFailed: 'Could not load {name}. Choose another app or retry this selection.',
+    miniAppLoadFailed: 'Could not load {name}. Choose another app or retry this selection.'
   },
   chat: {
     inputPlaceHolder: 'Enter to send, Shift+Enter for new line',
@@ -75,7 +76,8 @@ export const en = {
     noMessages: 'No messages yet',
     untitled: 'New Chat',
     deleteConfirmTitle: 'Delete Session',
-    deleteConfirmContent: 'Are you sure you want to delete this session? This action cannot be undone.',
+    deleteConfirmContent:
+      'Are you sure you want to delete this session? This action cannot be undone.',
     noSessions: 'No sessions',
     search: 'Search',
     searchPlaceholder: 'Search messages...',
@@ -83,7 +85,7 @@ export const en = {
     seeMore: 'See more',
     newResponse: 'New full response',
     searchShortcutTipMac: 'Search (⌘F)',
-    searchShortcutTipWin: 'Search (Alt+F)',
+    searchShortcutTipWin: 'Search (Alt+F)'
   },
   setting: {
     title: 'Settings',
@@ -92,26 +94,27 @@ export const en = {
       language: {
         label: 'Display Language',
         zh: '简体中文',
-        en: 'English',
+        en: 'English'
       },
       searchEngine: {
         label: 'Search Engine',
         baidu: 'Baidu',
-        duckduckgo: 'DuckDuckGo',
+        duckduckgo: 'DuckDuckGo'
       },
       experimental: {
         label: 'Experimental features',
         showChatMenu: 'Show Chat in the main menu',
         showChatMenuDescription: 'Keep the existing Chat workspace available from the main menu.',
-        showChatMenuSaveFailed: 'Could not update the Chat menu setting. The previous setting was restored.',
+        showChatMenuSaveFailed:
+          'Could not update the Chat menu setting. The previous setting was restored.'
       },
       account: {
         label: 'Account',
-        logout: 'Log out',
+        logout: 'Log out'
       },
       save: 'Save',
       saveSuccess: 'Saved successfully',
-      saveFailed: 'Save failed',
+      saveFailed: 'Save failed'
     },
     proxy: {
       tabTitle: 'Proxy',
@@ -124,7 +127,7 @@ export const en = {
       saveSuccess: 'Saved successfully',
       saveFailed: 'Save failed',
       ipRequired: 'IP is required when proxy is enabled',
-      portRequired: 'Port is required when proxy is enabled',
+      portRequired: 'Port is required when proxy is enabled'
     },
     llm: {
       tabTitle: 'Model Config',
@@ -146,7 +149,7 @@ export const en = {
       logout: 'Logout',
       loadFailed: 'Could not load Codex status.',
       loginFailed: 'Codex login did not complete.',
-      logoutFailed: 'Could not log out of Codex.',
+      logoutFailed: 'Could not log out of Codex.'
     },
     systemPrompt: {
       tabTitle: 'System Prompt',
@@ -155,16 +158,19 @@ export const en = {
       save: 'Save',
       saveSuccess: 'Saved successfully',
       saveFailed: 'Save failed',
-      hint: 'The system prompt will be sent to the AI at the beginning of each conversation to define its role and behavior.',
+      hint: 'The system prompt will be sent to the AI at the beginning of each conversation to define its role and behavior.'
     },
     notification: {
       tabTitle: 'Notification',
       test: 'notification test',
       testSuccess: 'The operating system accepted the test notification.',
       testUnsupported: 'System notifications are not supported on this device.',
-      testShowFailed: 'The operating system rejected the test notification. Check the application log and notification permissions.',
-      testShowTimeout: 'The operating system did not confirm the test notification. Check notification permissions and try again.',
-      testRequestFailed: 'Could not run the notification test. Check the application log and try again.',
+      testShowFailed:
+        'The operating system rejected the test notification. Check the application log and notification permissions.',
+      testShowTimeout:
+        'The operating system did not confirm the test notification. Check notification permissions and try again.',
+      testRequestFailed:
+        'Could not run the notification test. Check the application log and try again.'
     },
     log: {
       tabTitle: 'Log',
@@ -204,8 +210,8 @@ export const en = {
         eyesOnAgents: 'Eyes on agents',
         mcp: 'MCP',
         bin: 'Executables',
-        artifacts: 'Artifacts',
-      },
+        artifacts: 'Artifacts'
+      }
     },
     about: {
       tabTitle: 'About',
@@ -213,21 +219,22 @@ export const en = {
       version: 'Version',
       versionCode: 'Version Code',
       website: 'Website',
-      openWebsite: 'Visit Website',
-    },
+      openWebsite: 'Visit Website'
+    }
   },
   connector: {
     wechat: {
       startLogin: 'Start Login',
       ownerVerifyTitle: 'Authenticate Owner',
-      ownerVerifyHint: 'Send the verify code to this WeChat account to set as owner. Re-authenticate after name change.',
+      ownerVerifyHint:
+        'Send the verify code to this WeChat account to set as owner. Re-authenticate after name change.',
       ownerVerified: 'Owner',
-      ownerNotSet: 'Owner not set',
+      ownerNotSet: 'Owner not set'
     },
     name: {
       wechat: 'WeChat',
       dingtalk: 'DingTalk',
-      feishu: 'Feishu',
+      feishu: 'Feishu'
     },
     configStatus: 'Config Status',
     connectionStatus: 'Connection Status',
@@ -243,7 +250,7 @@ export const en = {
     saveOnly: 'Save Only',
     saveAndConnect: 'Save and Connect',
     disconnect: 'Disconnect',
-    connecting: 'Connecting...',
+    connecting: 'Connecting...'
   },
   pluginTest: {
     title: 'Plugin Test',
@@ -253,43 +260,47 @@ export const en = {
     optionUrlPlaceholder: 'http://localhost:5174',
     backgroundPath: 'Background.js Path',
     backgroundPathPlaceholder: '/path/to/out/background/background.js',
-    openWindow: 'Open',
+    openWindow: 'Open'
   },
   miniApp: {
     open: 'Open',
     openFailed: 'Could not open {name}',
     todo: {
       name: 'Todo',
-      subtitle: 'Task management and organization',
+      subtitle: 'Task management and organization'
     },
     maestro: {
       name: 'Maestro',
-      subtitle: 'Browser automation, agents, capture, and Workbench',
+      subtitle: 'Browser automation, agents, capture, and Workbench'
     },
     coin: {
       name: 'trench',
-      subtitle: 'trenchs for trenchers',
+      subtitle: 'trenchs for trenchers'
     },
     eyesOnAgents: {
       name: 'EyesOnAgents',
-      subtitle: 'Observe active Codex tasks and organize them by Domain',
+      subtitle: 'Observe active Codex tasks and organize them by Domain'
     },
     translator: {
       name: 'Translator',
-      subtitle: 'Realtime Chinese and English translation with Codex',
+      subtitle: 'Realtime Chinese and English translation with Codex'
     },
     motto: {
       name: 'Motto',
-      subtitle: 'Keep important reminders close at hand',
+      subtitle: 'Keep important reminders close at hand'
+    },
+    trench: {
+      name: 'Trench',
+      subtitle: 'Browse local CA and wallet evidence'
     },
     onlyPreview: {
       name: 'OnlyPreview',
-      subtitle: 'Fast, private previews for local files and folders',
+      subtitle: 'Fast, private previews for local files and folders'
     },
     omniBrowser: {
       name: 'Omni Browser',
-      subtitle: 'Multi-pane web browser',
-    },
+      subtitle: 'Multi-pane web browser'
+    }
   },
   translator: {
     title: 'Translator',
@@ -317,8 +328,8 @@ export const en = {
       invalidOutput: 'Codex returned an invalid translation.',
       provider: 'Translation failed.',
       unavailable: 'Codex is not ready. Sign in and try again.',
-      generic: 'Translation failed. Edit the source to try again.',
-    },
+      generic: 'Translation failed. Edit the source to try again.'
+    }
   },
   motto: {
     title: 'Motto',
@@ -338,19 +349,19 @@ export const en = {
       subtitlePlaceholder: 'Add a short reminder…',
       cancel: 'Cancel',
       add: 'Add',
-      save: 'Save',
+      save: 'Save'
     },
     errors: {
       read: 'Motto storage is unavailable. No saved reminders were changed.',
       invalid: 'Saved mottos could not be read safely. Add a motto to replace them.',
-      write: 'Could not save this change. Your last saved mottos are still shown.',
-    },
+      write: 'Could not save this change. Your last saved mottos are still shown.'
+    }
   },
   eyesOnAgents: {
     title: 'EyesOnAgents',
     completionNotification: {
       title: 'Thread finished',
-      body: '《{title}》',
+      body: '《{title}》'
     },
     connection: {
       appServer: 'App Server',
@@ -361,22 +372,28 @@ export const en = {
       error: 'Connection error',
       title: 'Codex connections',
       managedTitle: 'Managed App Server',
-      managedDescription: 'Connect controls only Bitterless thread inventory and this local Codex App Server process.',
-      desktopNote: "This never attaches to Codex Desktop's private App Server. Global Codex observation is installed and controlled separately below.",
+      managedDescription:
+        'Connect controls only Bitterless thread inventory and this local Codex App Server process.',
+      desktopNote:
+        "This never attaches to Codex Desktop's private App Server. Global Codex observation is installed and controlled separately below.",
       lastSync: 'Last sync',
       neverSynced: 'Not synced yet',
       titleEnrichment: 'Title update',
-      titleEnrichmentDeferred: 'Deferred for task {thread}: App Server unavailable. A later Refresh can retry.',
-      titleEnrichmentReadRejected: 'Could not refresh the title for task {thread}. A later Refresh can retry.',
-      titleEnrichmentUnusable: 'No usable title was returned for task {thread}. A later Refresh can retry.',
+      titleEnrichmentDeferred:
+        'Deferred for task {thread}: App Server unavailable. A later Refresh can retry.',
+      titleEnrichmentReadRejected:
+        'Could not refresh the title for task {thread}. A later Refresh can retry.',
+      titleEnrichmentUnusable:
+        'No usable title was returned for task {thread}. A later Refresh can retry.',
       connect: 'Connect',
       disconnect: 'Disconnect',
-      retry: 'Retry',
+      retry: 'Retry'
     },
     bridge: {
       eyebrow: 'Codex observation',
       title: 'Global Codex observation',
-      description: 'Lifecycle observation is metadata-only by default; optional question storage is controlled separately below.',
+      description:
+        'Lifecycle observation is metadata-only by default; optional question storage is controlled separately below.',
       notInstalled: 'Not installed',
       needsTrust: 'Needs review',
       needsReview: 'Needs review',
@@ -394,29 +411,36 @@ export const en = {
       lastEvent: 'Last event',
       never: 'Never',
       promptRetentionLabel: 'Store latest user question',
-      promptRetentionDescription: 'Independent and off by default. Keeps one preview of up to 8192 bytes per thread in local SQLite only; turning it off clears saved previews. Replies and history are not stored.',
+      promptRetentionDescription:
+        'Independent and off by default. Keeps one preview of up to 8192 bytes per thread in local SQLite only; turning it off clears saved previews. Replies and history are not stored.',
       untrustedReview: 'Codex has not trusted the Bitterless hooks yet.',
       modifiedReview: 'Codex sees the Bitterless hooks as changed and requires review again.',
-      disabledReview: 'One or more exact Bitterless hooks are disabled and can be safely re-enabled before review.',
+      disabledReview:
+        'One or more exact Bitterless hooks are disabled and can be safely re-enabled before review.',
       manualReview: 'Bitterless could not confirm hook trust. Review the hooks manually in Codex.',
       hookGuideTitle: 'Codex observation setup',
       hookGuideOpenTitle: 'Install or repair',
-      hookGuideOpenDescription: 'Select Enable observation only when absent, or Repair only when the status reports drift.',
+      hookGuideOpenDescription:
+        'Select Enable observation only when absent, or Repair only when the status reports drift.',
       hookGuideReviewTitle: 'Review only when requested',
-      hookGuideReviewDescription: 'When the status requests review, select Review in Codex or Re-enable and review. In Settings → Hooks, inspect every Bitterless definition and select Trust only for hooks Codex flags.',
+      hookGuideReviewDescription:
+        'When the status requests review, select Review in Codex or Re-enable and review. In Settings → Hooks, inspect every Bitterless definition and select Trust only for hooks Codex flags.',
       hookGuideCli: 'CLI: enter /hooks',
       hookGuideConfirmTitle: 'Verify status',
-      hookGuideConfirmDescription: 'Select Check again while review or status is pending, or Check status after installation.',
+      hookGuideConfirmDescription:
+        'Select Check again while review or status is pending, or Check status after installation.',
       hookGuideContentTitle: 'Optional content: Store latest user question',
-      hookGuideContentDescription: 'This permission is independent and off by default; Hook trust does not grant it. Enabling stores one bounded local preview per thread; turning it off clears all saved previews. Replies, reasoning, tools, attachments, earlier questions, and history are never stored.',
-      hookGuideTrustBoundary: 'Bitterless may re-enable only exact disabled hooks. Only Codex grants trust; Bitterless cannot bypass review.',
+      hookGuideContentDescription:
+        'This permission is independent and off by default; Hook trust does not grant it. Enabling stores one bounded local preview per thread; turning it off clears all saved previews. Replies, reasoning, tools, attachments, earlier questions, and history are never stored.',
+      hookGuideTrustBoundary:
+        'Bitterless may re-enable only exact disabled hooks. Only Codex grants trust; Bitterless cannot bypass review.',
       enable: 'Enable observation',
       repair: 'Repair',
       reviewInCodex: 'Review in Codex',
       reEnableAndReview: 'Re-enable and review',
       checkStatus: 'Check status',
       checkAgain: 'Check again',
-      disable: 'Disable',
+      disable: 'Disable'
     },
     actions: {
       sync: 'Sync',
@@ -435,7 +459,7 @@ export const en = {
       create: 'Create',
       readAll: 'Read all',
       searchTitles: 'Search thread titles',
-      clearTitleSearch: 'Clear title search',
+      clearTitleSearch: 'Clear title search'
     },
     search: {
       title: 'Search tasks',
@@ -444,7 +468,7 @@ export const en = {
       empty: 'No task titles match this search',
       startTyping: 'Type a title to search tasks',
       domainContext: 'Domain: {domain}',
-      noDomain: 'No Domain',
+      noDomain: 'No Domain'
     },
     board: {
       focus: 'Focus',
@@ -462,14 +486,15 @@ export const en = {
       loading: 'Loading observation board',
       addDomain: 'Add Domain',
       domainPlaceholder: 'Domain name',
-      titleSearchPlaceholder: 'Search titles',
+      titleSearchPlaceholder: 'Search titles'
     },
     domain: {
       options: 'Domain options',
       deleteTitle: 'Delete Domain',
-      deleteBody: 'Threads in this Domain will remain available in All. Codex tasks will not be deleted.',
+      deleteBody:
+        'Threads in this Domain will remain available in All. Codex tasks will not be deleted.',
       duplicate: 'A Domain with this name already exists.',
-      required: 'Enter a Domain name.',
+      required: 'Enter a Domain name.'
     },
     thread: {
       untitled: 'Untitled Codex task',
@@ -492,13 +517,13 @@ export const en = {
       justNow: 'now',
       minutesAgo: '{count}m',
       hoursAgo: '{count}h',
-      daysAgo: '{count}d',
+      daysAgo: '{count}d'
     },
     errors: {
       load: 'The observation board could not be loaded.',
       action: 'The action could not be completed.',
-      open: 'Codex could not open this task.',
-    },
+      open: 'Codex could not open this task.'
+    }
   },
   coin: {
     productName: 'trench',
@@ -519,14 +544,14 @@ export const en = {
       aiStatus: 'Open AI resource status',
       minimize: 'Minimize',
       maximize: 'Maximize or restore',
-      close: 'Close trench',
+      close: 'Close trench'
     },
     tabs: {
       monitor: 'Monitor',
       screener: 'Screener',
       meme: 'Meme',
       strategy: 'Strategy',
-      history: 'History',
+      history: 'History'
     },
     trench: {
       signals: 'Signals',
@@ -540,13 +565,16 @@ export const en = {
       caPlaceholder: 'Paste contract address',
       pasteAnalyze: 'Paste and analyze',
       terminalAnalyze: 'Analyze with local terminal',
+      detectingChains: 'Searching {chains}',
+      detectedChains: 'Found {chains}',
       addFocus: 'Add to Focus',
       focused: 'In Focus',
       removeFocus: 'Remove from Focus',
       scanEmpty: 'No scan candidates',
       focusEmpty: 'No focused contracts',
       notAnalyzed: 'Not analyzed',
-      thesisPlaceholder: 'Describe your view, position, risk, horizon, and what would change your mind.',
+      thesisPlaceholder:
+        'Describe your view, position, risk, horizon, and what would change your mind.',
       analysisFirst: 'Analyze a contract before requesting a review.',
       reviewThesis: 'Review thesis',
       noReview: 'No Codex review for this evidence snapshot.',
@@ -556,23 +584,24 @@ export const en = {
       chains: {
         robinhood: 'Robinhood',
         bsc: 'BSC',
-        solana: 'Solana',
+        solana: 'Solana'
       },
       xBrowser: {
         openVisible: 'Open X in visible Chrome',
         openHidden: 'Open X with Chrome hidden',
-        hiddenLoginRequired: 'X requires human sign-in. Switch Chrome to visible mode in the menubar.',
+        hiddenLoginRequired:
+          'X requires human sign-in. Switch Chrome to visible mode in the menubar.',
         displayMode: {
           visible: 'X Chrome is visible',
           hidden: 'X Chrome runs hidden',
-          external: 'Chrome visibility is controlled by the external CDP session',
+          external: 'Chrome visibility is controlled by the external CDP session'
         },
         states: {
           closed: 'X',
           launching: 'Opening X',
           login_required: 'Sign in to X',
           ready: 'X ready',
-          error: 'X unavailable',
+          error: 'X unavailable'
         },
         errors: {
           'chrome-unavailable': 'System Chrome is unavailable.',
@@ -581,30 +610,35 @@ export const en = {
           'cdp-unavailable': 'The configured X Chrome CDP session is unavailable.',
           'display-mode-unavailable': 'Chrome display mode cannot be changed for this session.',
           'launch-failed': 'The X Chrome session could not be started.',
-          'navigation-failed': 'X could not be opened in the Chrome session.',
-        },
+          'navigation-failed': 'X could not be opened in the Chrome session.'
+        }
       },
       errors: {
         clipboardEmpty: 'The clipboard does not contain a contract address.',
         clipboardRead: 'The clipboard could not be read.',
+        addressInvalid:
+          'Enter or paste exactly one supported BSC, Solana, or Robinhood Chain address.',
+        addressMultiple: 'More than one contract address was found. Keep exactly one and retry.',
+        addressNotFound: 'No token identity matched this address on the supported chains.',
         addressChainMismatch: 'The contract address does not match the selected chain.',
         analysisRequired: 'Analyze the current contract before asking Codex to review it.',
-        thesisRequired: 'Describe your view before requesting a review.',
-      },
+        thesisRequired: 'Describe your view before requesting a review.'
+      }
     },
     evidence: {
       label: 'Evidence status',
       source: 'No source connected',
       freshness: 'No observation',
       support: 'Integration pending',
-      confidence: 'No confidence score',
+      confidence: 'No confidence score'
     },
     workspace: {
       unavailableTitle: 'Live analysis is unavailable',
       unavailableBody: 'No supported read-only source is connected. No result has been generated.',
       openSources: 'View sources',
       monitorTitle: 'Symbol monitor',
-      monitorDescription: 'Selected symbols, price range, listing age, and freshness will appear here.',
+      monitorDescription:
+        'Selected symbols, price range, listing age, and freshness will appear here.',
       monitorInput: 'Symbols',
       monitorPlaceholder: 'BTCUSDT, ETHUSDT',
       sort: 'Sort',
@@ -623,17 +657,19 @@ export const en = {
       chain: 'Chain',
       contractAddress: 'Contract address',
       strategyTitle: 'Strategy decision',
-      strategyDescription: 'Evaluate structured evidence into BUY, HOLD, or SELL without placing orders.',
+      strategyDescription:
+        'Evaluate structured evidence into BUY, HOLD, or SELL without placing orders.',
       asset: 'Asset or contract',
       riskBudget: 'Risk budget',
       evaluate: 'Evaluate',
       historyTitle: 'Analysis history',
-      historyDescription: 'Reopen stored analyses and decisions without issuing another data request.',
+      historyDescription:
+        'Reopen stored analyses and decisions without issuing another data request.',
       historySearch: 'Search symbol or contract',
       noHistory: 'No stored analyses',
       type: 'Type',
       search: 'Search',
-      all: 'All',
+      all: 'All'
     },
     analysis: {
       actions: {
@@ -644,7 +680,7 @@ export const en = {
         inspect: 'Inspect candidate',
         open: 'Open result',
         recover: 'Recover state',
-        reload: 'Reload state',
+        reload: 'Reload state'
       },
       ai: {
         title: 'AI interpretation',
@@ -658,7 +694,8 @@ export const en = {
         evidence: 'Evidence links',
         unsupportedClaims: 'Unsupported claims',
         noneReported: 'None reported',
-        deterministicFinal: 'The deterministic risk gates and final BUY, HOLD, or SELL decision remain authoritative.',
+        deterministicFinal:
+          'The deterministic risk gates and final BUY, HOLD, or SELL decision remain authoritative.'
       },
       aiErrors: {
         busy: 'Another trench AI analysis is already running.',
@@ -676,21 +713,23 @@ export const en = {
         'target-not-found': 'The selected structured result is no longer available.',
         timeout: 'The AI analysis exceeded its time limit.',
         'tool-violation': 'The analysis attempted to use a tool and was rejected.',
-        'unsupported-evidence': 'The AI result referenced evidence outside the submitted snapshot.',
+        'unsupported-evidence': 'The AI result referenced evidence outside the submitted snapshot.'
       },
       sort: {
         lowMultipleAsc: 'Low multiple ↑',
         lowMultipleDesc: 'Low multiple ↓',
-        symbol: 'Symbol A–Z',
+        symbol: 'Symbol A–Z'
       },
       modes: {
         live: 'Live public',
         sample: 'Sample',
-        sampleWarning: 'Sample mode is explicit test data. It is never used as a fallback for a failed live request.',
+        sampleWarning:
+          'Sample mode is explicit test data. It is never used as a fallback for a failed live request.',
         deployedService: 'Deployed service',
         localReadOnly: 'Local GMGN CLI · read-only',
         serviceDescription: 'Requests use the configured deployed Meme analysis service only.',
-        localDescription: 'Requests use fixed GMGN read commands only. No trading command is available.',
+        localDescription:
+          'Requests use fixed GMGN read commands only. No trading command is available.'
       },
       labels: {
         unavailable: 'Unavailable',
@@ -729,7 +768,7 @@ export const en = {
         decisions: 'Decisions',
         reasons: 'Reasons',
         invalidation: 'Invalidation',
-        noExecution: 'Research decision only. No order or signed transaction is created.',
+        noExecution: 'Research decision only. No order or signed transaction is created.'
       },
       columns: {
         symbol: 'Symbol',
@@ -776,7 +815,7 @@ export const en = {
         asset: 'Asset',
         summary: 'Summary',
         created: 'Created at',
-        receipts: 'Receipts',
+        receipts: 'Receipts'
       },
       sections: {
         marketIdentity: 'Market and chain identity',
@@ -791,7 +830,7 @@ export const en = {
         marketExecution: 'Market and execution inputs',
         structuredSignals: 'Structured signal inputs',
         forecastRisk: 'Forecast and hard risk inputs',
-        position: 'Position inputs',
+        position: 'Position inputs'
       },
       metrics: {
         launchStage: 'Launch stage',
@@ -815,7 +854,7 @@ export const en = {
         netExpectedValue: 'Net expected value',
         expectedLoss: 'Expected loss',
         positionReturn: 'Position return',
-        drawdown: 'Drawdown from peak',
+        drawdown: 'Drawdown from peak'
       },
       holderUniverse: {
         filtered: 'Filtered universe attested',
@@ -836,8 +875,8 @@ export const en = {
           contract_program: 'Contract / program',
           bridge_router: 'Bridge / router',
           treasury_vesting: 'Treasury / vesting',
-          other_non_independent: 'Other non-independent',
-        },
+          other_non_independent: 'Other non-independent'
+        }
       },
       fields: {
         tokenAge: 'Token age (minutes)',
@@ -868,7 +907,7 @@ export const en = {
         remainingAmount: 'Remaining token amount',
         investedAmount: 'Invested amount',
         peakPrice: 'Peak price',
-        heldMinutes: 'Held minutes',
+        heldMinutes: 'Held minutes'
       },
       states: {
         configureSource: 'Configure the read-only source in Resources, then retry.',
@@ -885,18 +924,24 @@ export const en = {
         noFilters: 'No structured filters returned',
         noMatches: 'No symbols matched',
         noMatchesDetail: 'The completed result is retained with its source receipt and counts.',
-        memeServiceUnavailable: 'The deployed Meme service is not configured. This mode will not fall back to local data.',
-        localSourcesUnavailable: 'Local mode requires the read-only GMGN CLI and a configured personal API key. This mode will not call the deployed service.',
-        selectedModeUnavailable: 'The selected data path is not ready. Modes never fall back silently.',
+        memeServiceUnavailable:
+          'The deployed Meme service is not configured. This mode will not fall back to local data.',
+        localSourcesUnavailable:
+          'Local mode requires the read-only GMGN CLI and a configured personal API key. This mode will not call the deployed service.',
+        selectedModeUnavailable:
+          'The selected data path is not ready. Modes never fall back silently.',
         discoverUnavailable: 'Discovery is unavailable for the selected data path',
         discoverEmpty: 'Discovery polling is stopped',
-        discoverEmptyDetail: 'Start an opt-in polling session to collect source-labelled candidates.',
+        discoverEmptyDetail:
+          'Start an opt-in polling session to collect source-labelled candidates.',
         startingDiscover: 'Starting discovery polling',
         noCandidates: 'No candidates in the latest poll',
-        noCandidatesDetail: 'The session remains explicit and will update on its next bounded poll.',
+        noCandidatesDetail:
+          'The session remains explicit and will update on its next bounded poll.',
         analysisUnavailable: 'Analysis is unavailable for the selected data path',
         memeEmpty: 'No token analysis yet',
-        memeEmptyDetail: 'Enter a contract or account address and run an on-demand read-only analysis.',
+        memeEmptyDetail:
+          'Enter a contract or account address and run an on-demand read-only analysis.',
         loadingMeme: 'Collecting token evidence',
         keyWalletsUnavailable: 'Key-wallet evidence is unavailable',
         conceptsUnavailable: 'Concept evidence is unavailable',
@@ -904,11 +949,13 @@ export const en = {
         noUnavailableFields: 'No unavailable fields were reported',
         noPosition: 'HOLD is not eligible without a complete existing position.',
         strategyEmpty: 'No deterministic decision yet',
-        strategyEmptyDetail: 'Complete the structured inputs to produce exactly BUY, HOLD, or SELL.',
-        historyEmptyDetail: 'Completed analyses and decisions are stored locally with their receipt links.',
+        strategyEmptyDetail:
+          'Complete the structured inputs to produce exactly BUY, HOLD, or SELL.',
+        historyEmptyDetail:
+          'Completed analyses and decisions are stored locally with their receipt links.',
         noReceipts: 'No source receipts match these filters',
         sourcesUnavailable: 'Source status is unavailable',
-        sourcesUnavailableDetail: 'The renderer did not receive a bounded source-status response.',
+        sourcesUnavailableDetail: 'The renderer did not receive a bounded source-status response.'
       },
       errors: {
         sources: 'Could not load data-source status.',
@@ -923,14 +970,16 @@ export const en = {
         meme: 'Meme analysis request failed.',
         discover: 'Discovery polling could not start.',
         strategy: 'Strategy evaluation failed',
-        ai: 'AI analysis could not be completed.',
+        ai: 'AI analysis could not be completed.'
       },
       state: {
-        malformed: 'The versioned trench state file is malformed. Existing data has not been replaced; recover it explicitly to archive the corrupt file and start clean.',
-        conflict: 'trench state changed outside this renderer. The latest revision was retained; review before saving again.',
+        malformed:
+          'The versioned trench state file is malformed. Existing data has not been replaced; recover it explicitly to archive the corrupt file and start clean.',
+        conflict:
+          'trench state changed outside this renderer. The latest revision was retained; review before saving again.',
         recovered: 'trench state recovered. The malformed file was archived locally.',
         reloaded: 'trench state reloaded from the latest owner-only file.',
-        saving: 'Saving state',
+        saving: 'Saving state'
       },
       connections: {
         connecting: 'Connecting',
@@ -938,11 +987,11 @@ export const en = {
         retrying: 'Retrying',
         closed: 'Closed',
         unavailable: 'Unavailable',
-        error: 'Error',
+        error: 'Error'
       },
       placeholders: {
         optionalSymbols: 'Optional: BTCUSDT, ETHUSDT',
-        solanaAddress: 'Solana account address',
+        solanaAddress: 'Solana account address'
       },
       stages: {
         discovered: 'Discovered',
@@ -953,7 +1002,7 @@ export const en = {
         dex_live: 'DEX live',
         cooled: 'Cooled',
         rejected: 'Rejected',
-        stale: 'Stale',
+        stale: 'Stale'
       },
       sourceNames: {
         'monitor-http': 'Monitor HTTP',
@@ -965,22 +1014,22 @@ export const en = {
         'alchemy-bsc': 'Alchemy · BSC',
         'alchemy-solana': 'Alchemy · Solana',
         'owner-cohorts': 'Owner cohort registry',
-        'strategy-v1': 'Deterministic strategy v1',
+        'strategy-v1': 'Deterministic strategy v1'
       },
       support: {
         'read-only': 'Read-only',
         sample: 'Sample',
         partial: 'Partial',
         unsupported: 'Unsupported',
-        unavailable: 'Unavailable',
+        unavailable: 'Unavailable'
       },
       receiptStates: {
         ready: 'Ready',
         partial: 'Partial',
         unavailable: 'Unavailable',
         error: 'Error',
-        stale: 'Stale',
-      },
+        stale: 'Stale'
+      }
     },
     resourcePage: {
       title: 'Resources',
@@ -1003,7 +1052,7 @@ export const en = {
       sections: {
         ai: 'AI analysis',
         localData: 'Local data tool',
-        services: 'Services',
+        services: 'Services'
       },
       codex: {
         name: 'Codex',
@@ -1015,7 +1064,7 @@ export const en = {
           low: 'Low',
           medium: 'Medium',
           high: 'High',
-          xhigh: 'Extra',
+          xhigh: 'Extra'
         },
         verified: 'Verified',
         connect: 'Connect in browser',
@@ -1023,7 +1072,7 @@ export const en = {
         moreMethods: 'More sign-in methods',
         disconnect: 'Disconnect',
         appWide: 'Disconnecting signs Codex out across Bitterless, including Maestro.',
-        disconnectConfirm: 'Disconnect Codex across Bitterless?',
+        disconnectConfirm: 'Disconnect Codex across Bitterless?'
       },
       gmgn: {
         cliName: 'GMGN CLI',
@@ -1044,14 +1093,15 @@ export const en = {
         noProbe: 'Not verified',
         verify: 'Verify read-only access',
         stop: 'Stop probe',
-        privateKeyExcluded: 'Bitterless saves only GMGN_API_KEY. Trading and wallet private keys are not used.',
+        privateKeyExcluded:
+          'Bitterless saves only GMGN_API_KEY. Trading and wallet private keys are not used.'
       },
       lastTest: 'Last test',
       noTest: 'Not tested',
       services: {
         monitor: 'Monitor API',
         screener: 'Screener API',
-        meme: 'Meme API',
+        meme: 'Meme API'
       },
       serviceDetail: 'Configure a production service endpoint.',
       serviceConfigured: 'Ready from {source}',
@@ -1063,13 +1113,13 @@ export const en = {
       device: {
         title: 'Complete Codex device sign-in',
         body: 'The OpenAI sign-in page is open. Enter this code at {host}.',
-        code: 'Device code',
+        code: 'Device code'
       },
       keyModal: {
         title: 'Configure GMGN API key',
         label: 'GMGN_API_KEY',
         placeholder: 'Paste the personal API key',
-        storage: 'Saved only to ~/.config/gmgn/.env with owner-only permissions.',
+        storage: 'Saved only to ~/.config/gmgn/.env with owner-only permissions.'
       },
       guideModal: {
         title: 'Install GMGN CLI',
@@ -1078,13 +1128,13 @@ export const en = {
         key: 'Create a personal API key, configure it here, then run the read-only probe.',
         repository: 'Official repository',
         cliDocs: 'CLI reference',
-        apiKeyPage: 'Personal API key page',
+        apiKeyPage: 'Personal API key page'
       },
       serviceModal: {
         title: 'Configure {service}',
         httpPlaceholder: 'https://service.example.com',
         wsPlaceholder: 'wss://service.example.com',
-        validation: 'URLs cannot contain credentials, query parameters, or fragments.',
+        validation: 'URLs cannot contain credentials, query parameters, or fragments.'
       },
       feedback: {
         statusFailed: 'Resource status could not be loaded',
@@ -1116,8 +1166,8 @@ export const en = {
         serviceRequired: 'Enter every required service endpoint',
         serviceInvalid: 'Use valid HTTPS/WSS service URLs without credentials or query parameters',
         serviceSaved: 'Service endpoints saved',
-        serviceSaveFailed: 'Service endpoints could not be saved',
-      },
+        serviceSaveFailed: 'Service endpoints could not be saved'
+      }
     },
     sourceDrawer: {
       title: 'Source status',
@@ -1142,12 +1192,171 @@ export const en = {
       codex: 'Codex AI',
       integrationRequired: 'Not connected',
       capabilityGate: 'Capability gate not run',
-      signInRequired: 'Sign in required',
+      signInRequired: 'Sign in required'
     },
     errors: {
       shellStatus: 'Shell status could not be loaded',
-      windowAction: 'Window action failed',
+      windowAction: 'Window action failed'
+    }
+  },
+  trench: {
+    header: {
+      subtitle: 'local record vault',
+      loading: 'opening local records',
+      refreshing: 'refreshing local records',
+      local: 'synced locally',
+      unavailable: 'local records unavailable'
     },
+    agentGuide: {
+      trigger: 'Agent setup guide',
+      eyebrow: 'Local MCP',
+      title: 'Agent Trench access',
+      loading: 'Loading setup for this Bitterless instance…',
+      summary: 'Connect this running Bitterless instance, install the complete Trench skill, then restart the agent and verify the tools.',
+      loadFailedTitle: 'Setup could not be loaded',
+      loadFailedDescription: 'Keep Bitterless running and retry. No setup values were guessed.',
+      restartRequiredTitle: 'Restart Bitterless to continue',
+      restartRequiredDescription: 'The running Main process returned an incomplete setup contract. Restart Bitterless, reopen Trench, and retry.',
+      versionMismatchDescription: 'The renderer and running Main process have different bitterless-trench versions. Restart Bitterless, reopen Trench, and retry.',
+      retryAfterRestart: 'Retry after restart',
+      testInstanceTitle: '{serverName} · test instance',
+      testInstanceWarning: 'Use this DEBUG instance only for synthetic verification. Keep its exact server name; never register it as production bitterless or store real Trench records here.',
+      complete: 'Complete setup instructions',
+      completeHint: 'Copies MCP, skill installation, restart, and verification instructions.',
+      connectTitle: 'Connect MCP',
+      connectHint: 'Register the current {serverName} helper exactly as shown.',
+      helper: 'Helper path',
+      config: 'MCP config',
+      installTitle: 'Install bitterless-trench',
+      installHint: 'Copy the complete bundled directory, not only SKILL.md.',
+      skill: 'Bundled skill folder',
+      version: 'Version',
+      restartTitle: 'Restart and verify',
+      restartHint: 'The new session must see the current MCP server and complete skill.',
+      verifyFreshSession: 'Keep Bitterless running and start a fresh Codex or Claude Code session.',
+      verifyTools: 'Confirm tools/list exposes all 12 trench.* tools.',
+      verifyInvocation: 'Invoke $bitterless-trench in Codex or /bitterless-trench in Claude Code.',
+      copy: {
+        complete: 'Copy complete setup instructions',
+        helper: 'Copy helper path',
+        config: 'Copy MCP config',
+        skill: 'Copy bundled skill folder'
+      }
+    },
+    modules: {
+      label: 'Trench record modules',
+      ca: 'CA Records',
+      index: 'Index Wallets',
+      negative: 'Negative Wallets'
+    },
+    search: {
+      label: 'Search current records',
+      placeholder: 'Search records…'
+    },
+    actions: {
+      refresh: 'Refresh',
+      retry: 'Retry',
+      loadMore: 'Load more records',
+      loadMoreSources: 'Load more sources',
+      back: 'Back to records',
+      backToSources: 'Back to sources',
+      copyJson: 'Copy exact JSON',
+      copyDocument: 'Copy {document}',
+      copied: 'Copied',
+      copyFailed: 'Copy failed',
+      openSource: 'Open source CA'
+    },
+    states: {
+      refreshing: 'Refreshing without clearing current records…',
+      loading: 'Loading…',
+      loadingDocument: 'Loading the stored document…',
+      selectRecord: 'Select a record to inspect its evidence.',
+      emptyTitle: 'No records yet',
+      emptyDescription: 'An external agent writes records through Bitterless MCP.',
+      noMatchTitle: 'No matching records',
+      noMatchDescription: 'Change or clear the current search.',
+      invalidRecord: 'Invalid stored record',
+      missingTitle: 'Record no longer available',
+      detailError: 'Document could not be read',
+      repositoryError: 'The local Trench repository is unavailable.'
+    },
+    meta: {
+      sourceCa: 'Source CA',
+      lastSeen: 'Last seen',
+      updated: 'Updated'
+    },
+    documents: {
+      analysis: 'Exact analysis record',
+      tag: 'Exact tag record',
+      holdings: 'Exact holdings record'
+    },
+    structured: {
+      true: 'Yes',
+      false: 'No',
+      null: 'Unknown / null',
+      none: 'None recorded',
+      fields: '{count} field | {count} fields',
+      items: '{count} item | {count} items',
+      emptyObject: 'No fields recorded',
+      emptyList: 'No items recorded',
+      showFullText: 'Show full text',
+      showLess: 'Show less',
+      showMore: 'Show {count} more'
+    },
+    analysis: {
+      provenance: 'Evidence provenance',
+      sourceKind: 'Source',
+      agent: 'Agent',
+      skill: 'Skill',
+      providers: 'Providers',
+      result: 'Analysis result',
+      topProfitWallets: 'Top profit wallets',
+      indexExposure: 'Index wallet exposure',
+      negativeExposure: 'Negative wallet exposure',
+      evidence: 'Supporting evidence',
+      tokenMissing: 'Token identity not recorded',
+      symbolMissing: 'Symbol not recorded',
+      nameMissing: 'Name not recorded',
+      noTopWallets: 'No top-profit wallets recorded.',
+      notRecorded: 'This evidence section was not recorded.',
+      noExposureRows: 'The section was recorded with no wallet entries.',
+      reference: {
+        active: 'Current reference',
+        'no-longer-current': 'Historical reference'
+      }
+    },
+    index: {
+      sourceCount: '{count} source CA | {count} source CAs',
+      bestRank: 'best rank #{rank}',
+      profit: 'Profit USD',
+      winRate: 'Win rate',
+      exposure: 'Recorded exposure',
+      evidence: 'Profit evidence',
+      exposureEvidence: 'Exposure evidence',
+      available: 'Available in source record',
+      notAvailable: 'Not recorded',
+      balance: 'Balance',
+      share: 'Share',
+      value: 'Value USD',
+      unknown: 'Unknown',
+      holding: 'Holding',
+      notHolding: 'Not holding'
+    },
+    negative: {
+      tag: 'Human tag',
+      holdings: 'Holdings analysis',
+      assets: 'Assets',
+      explanation: 'Human explanation',
+      created: 'Created',
+      nativeAsset: 'Native asset',
+      symbolMissing: 'Symbol not recorded',
+      portfolioShare: 'Portfolio share',
+      noAssets: 'The holdings analysis completed with no listed assets.',
+      holdingsReady: 'holdings recorded',
+      holdingsMissing: 'Missing holdings',
+      holdingsMissingDescription: 'No separate holdings analysis has been written for this wallet.',
+      holdingsInvalid: 'Holdings record unavailable'
+    }
   },
   todo: {
     title: 'Todo',
@@ -1216,36 +1425,29 @@ export const en = {
     copyNoSteps: 'No steps.',
     copyNoNote: 'No note.',
     mcpEyebrow: 'Local MCP',
-    mcpTitle: 'Agent todo access',
-    mcpSummary: 'MCP exposes the Todo tools. The portable skill teaches agents when and how to use them for personal, multi-device follow-up.',
+    mcpTitle: 'Copy the skill to your agent',
     mcpTestInstanceTitle: 'Test-only MCP: {serverName}',
-    mcpTestInstanceWarning: 'Do not store real personal todos in this instance. Use the production bitterless server for real personal, multi-device-synchronized Todo work.',
-    mcpStepConnect: 'Connect MCP',
-    mcpStepConnectHint: 'Register this running Bitterless instance as a local MCP server.',
-    mcpCommandPath: 'Helper path',
-    mcpConfig: 'MCP config',
-    mcpStepSkill: 'Install bitterless-todo skill',
-    mcpStepSkillHint: 'Install the whole folder so the agent receives personal Todo judgment and safety rules.',
-    mcpSkillPath: 'Bundled skill folder',
-    mcpSkillDestination: 'Codex: ~/.codex/skills/bitterless-todo · Claude Code: ~/.claude/skills/bitterless-todo',
+    mcpTestInstanceWarning:
+      'Do not store real personal todos in this instance. Use the production bitterless server for real personal, multi-device-synchronized Todo work.',
     mcpCompleteSetup: 'Complete setup instructions',
-    mcpCompleteSetupHint: 'Includes the current MCP config, skill path, install destinations, restart guidance, and instance safety.',
-    mcpDetailedInstructions: 'Detailed instructions',
-    mcpCopy: 'Copy',
-    mcpCopyCompleteSetup: 'Copy complete setup',
+    mcpCompleteSetupHint:
+      'Copy these instructions to your agent. They include the skill and MCP setup.',
+    mcpCopyCompleteSetup: 'Copy complete setup instructions',
     mcpCopied: 'Copied',
     mcpCopyFailed: 'Copy failed',
-    mcpLoading: 'Loading...',
     mcpSkillVersionChecking: 'Checking bitterless-todo skill instructions',
     mcpSkillInstallRequired: 'Install bitterless-todo skill',
     mcpSkillUpdateRequired: 'Update bitterless-todo skill',
     mcpSkillVersionInvalid: 'Bitterless-todo skill instructions need attention',
-    mcpSkillAcknowledgementFailed: 'Instructions were copied, but Bitterless could not record the acknowledgement. The update dot remains.',
+    mcpSkillAcknowledgementFailed:
+      'Instructions were copied, but Bitterless could not record the acknowledgement. The update dot remains.',
     mcpRestartRequiredTitle: 'Restart Bitterless',
-    mcpRestartRequiredDescription: 'This integration response came from an older main process or bundled skill revision. Restart Bitterless, then reopen this guide.',
+    mcpRestartRequiredDescription:
+      'This integration response came from an older main process or bundled skill revision. Restart Bitterless, then reopen this guide.',
     mcpLoadFailed: 'Failed to load MCP info',
     syncClockWrongTitle: 'System clock needs attention',
-    syncClockWrongDescription: 'Todo sync is paused because a trusted time service confirmed that this device clock differs by more than three minutes. Local changes remain safe.',
+    syncClockWrongDescription:
+      'Todo sync is paused because a trusted time service confirmed that this device clock differs by more than three minutes. Local changes remain safe.',
     syncClockLocal: 'Local',
     syncClockTrusted: 'Trusted',
     syncClockOffset: 'Offset',
@@ -1261,10 +1463,11 @@ export const en = {
     syncLastSuccessful: 'Last successful sync',
     syncNeverSynchronized: 'Never synchronized',
     syncErrorReason: 'Error reason',
-    syncErrorDeviceIdentityMismatch: 'The saved device identity does not match this Todo database. Sync stopped to protect local tasks.',
+    syncErrorDeviceIdentityMismatch:
+      'The saved device identity does not match this Todo database. Sync stopped to protect local tasks.',
     syncPermanentFailures: 'Permanent failures',
     syncRetry: 'Retry',
-    syncDiscard: 'Discard',
+    syncDiscard: 'Discard'
   },
   common: {
     confirm: 'Confirm',
@@ -1276,7 +1479,7 @@ export const en = {
       edit: 'Edit',
       addVariable: 'Add Variable',
       fieldPlaceholder: 'Field name',
-      valuePlaceholder: 'Value',
-    },
-  },
+      valuePlaceholder: 'Value'
+    }
+  }
 };

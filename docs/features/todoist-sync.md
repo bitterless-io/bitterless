@@ -99,7 +99,11 @@ new userData/db/todoist-sync-v1/customer-<customerId>.db
 ```
 
 - The new database is encrypted through `better-sqlite3-multiple-ciphers`.
-- Its random key is protected by Electron `safeStorage` beside the database.
+- Packaged `VITE_MODE=release` runtime creates a random key protected by Electron `safeStorage`
+  beside the database. Unpackaged debug and E2E inject an isolated 64-hex runtime password instead;
+  neither mode calls `safeStorage` or opens an operating-system credential prompt. Debug uses the separate
+  `db/todoist-sync-v1-debug/` namespace so an older safeStorage-backed development database is not
+  reopened under the injected key.
 - The database path must never equal or share the file name of `main.db`.
 - Each customer has a separate database and key. Logout closes it; account switch opens another.
 - Existing legacy Todo rows are irrelevant. This is an intentional new database and clean remote
@@ -109,10 +113,10 @@ new userData/db/todoist-sync-v1/customer-<customerId>.db
   preserving every v1 row. The upgrader also accepts development v1-ledger databases that already
   contain those two objects. The release migration audit covers fresh creation, both v1 upgrade
   shapes, current-v2 reopen/idempotence, failed migration rollback, and integrity checks.
-- Real Electron runtime creates a random database password and protects it with `safeStorage`.
-  Automated/local tests inject a fixed test password through the database factory and must fail if
-  any Keychain, Credential Manager, or `safeStorage` API is touched; this keeps tests deterministic
-  and non-interactive while exercising the same encrypted schema and repository.
+- Packaged release Electron runtime creates a random database password and protects it with `safeStorage`.
+  Debug and automated/local tests inject a fixed test password through the database factory and
+  must fail if any Keychain, Credential Manager, or `safeStorage` API is touched; this keeps them
+  deterministic and non-interactive while exercising the same encrypted schema and repository.
 - Synchronized IDs are fixed-width 20-character decimal Snowflake strings. The backend assigns a
   stable node `0..1023` per customer/device. A cached node permits later offline creation.
 - `device_id` is one installation-level persistent identity. The renderer creates and stores it
@@ -521,9 +525,9 @@ keeps the database fail-closed and unchanged.
   PowerSync connector/schema/session symbols, and PowerSync-specific tests.
 - Bundle the existing SQLite cipher native module for macOS and Windows through the normal Electron
   path. Development and packaged builds must resolve the same new database implementation.
-- Runtime and the release audit consume one ordered Todo v1-to-v2 manifest. Native/runtime smoke
-  uses the injected fixed test password and must not touch `safeStorage`; only the real application
-  password provider may call `safeStorage`.
+- Runtime and the release audit consume one ordered Todo v1-to-v2 manifest. Debug/native/runtime
+  smoke uses the injected fixed test password and must not touch `safeStorage`; only the release
+  application password provider may call `safeStorage`.
 
 ## Verification
 

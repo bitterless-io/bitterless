@@ -54,7 +54,7 @@ Examples:
   yarn mcp:todo:smoke
   yarn mcp:todo:smoke --profile debug --read-only
   yarn mcp:todo:smoke --domain Bitterless --keep
-  yarn mcp:todo:smoke --helper "$HOME/Library/Application Support/Bitterless_DEBUG/bin/bitterless-mcp"
+  yarn mcp:todo:smoke --helper "$HOME/Library/Application Support/Bitterless_DEBUG_PROD/bin/bitterless-mcp"
   yarn mcp:todo:smoke --read-only
 `;
 
@@ -81,7 +81,7 @@ const isRecord = (value) => {
 };
 
 const getProfileHelper = (profile) => {
-  const appName = profile === 'debug' ? 'Bitterless_DEBUG' : 'Bitterless';
+  const appName = profile === 'debug' ? 'Bitterless_DEBUG_PROD' : 'Bitterless';
   if (process.platform === 'darwin') {
     return join(homedir(), 'Library', 'Application Support', appName, 'bin', 'bitterless-mcp');
   }

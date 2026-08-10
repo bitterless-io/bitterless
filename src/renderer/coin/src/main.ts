@@ -4,7 +4,7 @@ import '@arco-design/web-vue/dist/arco.less';
 import '@arco-design/web-vue/es/style/theme/global.less';
 import '@renderer/common/assets/style/theme.less';
 import { applyRendererLanguage, i18n } from '@renderer/common/i18n/i18n.helper';
-import { initializeCoinLanguage } from './coinLanguage';
+import { initializeRendererLanguage } from '@renderer/common/i18n/rendererLanguage';
 
 const LANGUAGE_BOOTSTRAP_TIMEOUT_MS = 5_000;
 
@@ -17,20 +17,20 @@ const initializeLanguageBeforeMount = async (): Promise<void> => {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
     await Promise.race([
-      initializeCoinLanguage(),
+      initializeRendererLanguage(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
-          const error = new Error('Coin language initialization timed out.');
-          error.name = 'CoinLanguageTimeoutError';
+          const error = new Error('Trench language initialization timed out.');
+          error.name = 'TrenchLanguageTimeoutError';
           reject(error);
         }, LANGUAGE_BOOTSTRAP_TIMEOUT_MS);
       }),
     ]);
   } catch (error) {
-    document.documentElement.dataset.coinBootstrap = 'degraded';
+    document.documentElement.dataset.trenchBootstrap = 'degraded';
     applyRendererLanguage('en');
     console.error(
-      `[Coin] Language initialization failed (${safeErrorName(error)}); using the default language.`,
+      `[Trench] Language initialization failed (${safeErrorName(error)}); using the default language.`,
     );
   } finally {
     if (timer) clearTimeout(timer);
@@ -41,16 +41,16 @@ const bootstrap = async (): Promise<void> => {
   await initializeLanguageBeforeMount();
   const { default: App } = await import('./App.vue');
   createApp(App).use(ArcoVue).use(i18n).mount('#app');
-  if (!document.documentElement.dataset.coinBootstrap) {
-    document.documentElement.dataset.coinBootstrap = 'ready';
+  if (!document.documentElement.dataset.trenchBootstrap) {
+    document.documentElement.dataset.trenchBootstrap = 'ready';
   }
 };
 
 void bootstrap().catch((error) => {
-  document.documentElement.dataset.coinBootstrap = 'failed';
-  console.error(`[Coin] App bootstrap failed (${safeErrorName(error)}).`);
+  document.documentElement.dataset.trenchBootstrap = 'failed';
+  console.error(`[Trench] App bootstrap failed (${safeErrorName(error)}).`);
   const root = document.querySelector<HTMLElement>('#app');
   if (!root) return;
   root.setAttribute('role', 'alert');
-  root.textContent = 'Coin could not start. Close and reopen Coin to retry.';
+  root.textContent = 'Trench could not start. Close and reopen Trench to retry.';
 });

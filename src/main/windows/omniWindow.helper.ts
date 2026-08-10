@@ -37,6 +37,7 @@ import {
   windowStateService,
   type WindowStateController,
 } from './windowState.service';
+import { OMNI_MINI_APP_RUNTIME } from './omniMiniAppRuntime.service';
 
 const LAYOUT_KEY = 'omni_layout';
 const WINDOW_LAYOUT_KEY = 'window_layout';
@@ -74,6 +75,20 @@ const OMNI_BROWSER_PARTITIONS = [OMNI_PARTITION, OMNI_GOOGLE_PARTITION] as const
 const GOOGLE_PROFILE_HOSTNAMES = ['google.com', 'youtube.com', 'youtu.be'] as const;
 
 type OmniBrowserProfile = 'default' | 'google';
+type OmniCellActiveFrameRegion =
+  | 'browser-menubar'
+  | 'browser-content'
+  | 'miniapp-content';
+
+const OMNI_ACTIVE_FRAME_ELEMENT_ID = 'bitterless-omni-active-cell-frame';
+
+const createOmniCellActiveFrameArguments = (
+  cellId: string,
+  region: OmniCellActiveFrameRegion,
+): string[] => [
+  `--omni-cell-id=${encodeURIComponent(cellId)}`,
+  `--omni-cell-frame-region=${region}`,
+];
 
 const resolveOmniBrowserProfile = (url: string): OmniBrowserProfile | null => {
   let hostname: string;
@@ -136,11 +151,6 @@ const installChromeClientHintShim = (browserSession: Session, partition: string)
   });
 };
 
-interface OmniMiniAppRuntime {
-  preloadFile: string;
-  rendererName: string;
-}
-
 interface OmniMiniAppRendererTarget {
   filePath: string | null;
   url: string;
@@ -149,14 +159,8 @@ interface OmniMiniAppRendererTarget {
 interface ResolvedOmniMiniAppRuntime {
   preloadPath: string;
   rendererTarget: OmniMiniAppRendererTarget;
+  sandbox: boolean;
 }
-
-const OMNI_MINI_APP_RUNTIME: Record<OmniMiniAppId, OmniMiniAppRuntime> = {
-  todo: { preloadFile: 'todo.js', rendererName: 'todo' },
-  eyesOnAgents: { preloadFile: 'eyesOnAgents.js', rendererName: 'eyesOnAgents' },
-  translator: { preloadFile: 'translator.js', rendererName: 'translator' },
-  motto: { preloadFile: 'motto.js', rendererName: 'motto' },
-};
 
 const getCellDisplayUrl = (cell: Pick<
   OmniCellLayout,
@@ -203,6 +207,7 @@ export class OmniWindowHelper {
   private menubarView: WebContentsView | null = null;
   private controlView: WebContentsView | null = null;
   private controlVisible = false;
+  private activeCellId: string | null = null;
   private cells: CellViewPair[] = [];
   private miniAppLoadFailures = new Map<string, OmniMiniAppId>();
   private recoveredFromInvalidLayout = false;
@@ -297,6 +302,7 @@ export class OmniWindowHelper {
       }
     }
     this.controlVisible = false;
+    this.broadcastActiveCell(null);
 
     const cells = this.cells;
     this.cells = [];
@@ -453,7 +459,8 @@ export class OmniWindowHelper {
       height: Math.max(cvHeight - MENUBAR_HEIGHT, 0),
     });
 
-    const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
+    const shouldOpenDevTools =
+      process.env.BITTERLESS_E2E !== '1' && import.meta.env.VITE_MODE === 'debug';
     if (shouldOpenDevTools) {
       menubarView.webContents.openDevTools({ mode: 'detach' });
     }
@@ -559,6 +566,9 @@ export class OmniWindowHelper {
     for (const cell of toRemove) {
       this.removeCellViews(cell);
     }
+    if (this.activeCellId && !nextCellsById.has(this.activeCellId)) {
+      this.broadcastActiveCell(null);
+    }
 
     // Add new cells
     for (const layoutCell of normalizedCells) {
@@ -624,6 +634,7 @@ export class OmniWindowHelper {
       this.cells = this.cells.filter((c) => c.id !== cellId);
       this.miniAppLoadFailures.delete(cellId);
       this.removeCellViews(cell);
+      if (this.activeCellId === cellId) this.broadcastActiveCell(null);
     }
   }
 
@@ -636,7 +647,10 @@ export class OmniWindowHelper {
     this.controlView = null;
   }
 
-  private createBrowserCellContentView(profile: OmniBrowserProfile): WebContentsView {
+  private createBrowserCellContentView(
+    profile: OmniBrowserProfile,
+    cellId: string,
+  ): WebContentsView {
     const partition = profile === 'google' ? OMNI_GOOGLE_PARTITION : OMNI_PARTITION;
     const browserSession = session.fromPartition(partition);
     // Must be installed before the cell's first request (see the shim's note).
@@ -652,19 +666,28 @@ export class OmniWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         session: browserSession,
+        additionalArguments: createOmniCellActiveFrameArguments(cellId, 'browser-content'),
       },
     });
   }
 
-  private createMiniAppCellContentView(preloadPath: string): WebContentsView {
+  private createMiniAppCellContentView(
+    runtime: ResolvedOmniMiniAppRuntime,
+    cellId: string,
+  ): WebContentsView {
     return new WebContentsView({
       webPreferences: {
-        preload: preloadPath,
-        sandbox: false,
+        preload: runtime.preloadPath,
+        sandbox: runtime.sandbox,
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: ['--mode=omni'],
+        webviewTag: false,
+        allowRunningInsecureContent: false,
+        additionalArguments: [
+          '--mode=omni',
+          ...createOmniCellActiveFrameArguments(cellId, 'miniapp-content'),
+        ],
       },
     });
   }
@@ -697,7 +720,7 @@ export class OmniWindowHelper {
       throw new Error(`expected renderer does not exist: ${rendererTarget.filePath}`);
     }
 
-    return { preloadPath, rendererTarget };
+    return { preloadPath, rendererTarget, sandbox: runtime.sandbox };
   }
 
   private broadcastMiniAppLoadState(params: OmniMiniAppLoadState): void {
@@ -734,6 +757,7 @@ export class OmniWindowHelper {
     this.broadcastLayoutRecoveryState();
     const config = this.getLayoutConfig();
     if (config) xpcMain.broadcast(OMNI_LAYOUT_SNAPSHOT_EVENT, config);
+    this.broadcastActiveCell(this.activeCellId);
   }
 
   private setLayoutRecoveryState(recoveredFromInvalidLayout: boolean): void {
@@ -748,6 +772,7 @@ export class OmniWindowHelper {
     expectedTarget: string;
     error: unknown;
   }): void {
+    this.clearActiveCellIfMatching(params.cellId);
     const detail = params.error instanceof Error ? params.error.message : 'unknown error';
     console.error(
       `[OmniWindowHelper] Mini app ${params.miniAppId} ${params.stage} failed; expected ${params.expectedTarget}: ${detail}`,
@@ -768,9 +793,28 @@ export class OmniWindowHelper {
     },
   ): void {
     const { cellId, miniAppId, target } = params;
-    const loadPromise = target.filePath
-      ? content.webContents.loadFile(target.filePath)
-      : content.webContents.loadURL(target.url);
+    let loadPromise: Promise<void>;
+    try {
+      loadPromise = target.filePath
+        ? content.webContents.loadFile(target.filePath)
+        : content.webContents.loadURL(target.url);
+    } catch (error) {
+      const cell = this.cells.find(
+        (candidate) => candidate.id === cellId && candidate.content === content,
+      );
+      if (cell) {
+        this.cells = this.cells.filter((candidate) => candidate !== cell);
+        this.removeCellViews(cell);
+      }
+      this.reportMiniAppLoadFailure({
+        cellId,
+        miniAppId,
+        stage: 'renderer-load',
+        expectedTarget: target.url,
+        error,
+      });
+      return;
+    }
     loadPromise.then(() => {
       const cell = this.cells.find(
         (candidate) => candidate.id === cellId && candidate.content === content,
@@ -819,20 +863,32 @@ export class OmniWindowHelper {
       }
     }
 
-    const menubar = contentMode === 'browser'
-      ? this.createWebContentsView('omniCell', [
-        `--cellId=${id}`,
-        `--initialUrl=${displayUrl}`,
-        `--contentMode=${contentMode}`,
-      ])
-      : null;
-    if (menubar) this.baseWindow.contentView.addChildView(menubar);
+    let menubar: WebContentsView | null = null;
+    try {
+      menubar = contentMode === 'browser'
+        ? this.createWebContentsView('omniCell', [
+          `--cellId=${id}`,
+          `--initialUrl=${displayUrl}`,
+          `--contentMode=${contentMode}`,
+          ...createOmniCellActiveFrameArguments(id, 'browser-menubar'),
+        ])
+        : null;
+      if (menubar) {
+        this.bindCellActiveFrameLifecycle(id, menubar);
+        this.baseWindow.contentView.addChildView(menubar);
+      }
+    } catch (error) {
+      this.disposeWebContentsView(menubar);
+      this.clearActiveCellIfMatching(id);
+      console.error(`[OmniWindowHelper] Cell ${id} browser chrome creation failed:`, error);
+      return;
+    }
 
     let content: WebContentsView;
     try {
       content = contentMode === 'browser'
-        ? this.createBrowserCellContentView(browserProfile!)
-        : this.createMiniAppCellContentView(miniAppRuntime!.preloadPath);
+        ? this.createBrowserCellContentView(browserProfile!, id)
+        : this.createMiniAppCellContentView(miniAppRuntime!, id);
     } catch (error) {
       this.disposeWebContentsView(menubar);
       this.reportMiniAppLoadFailure({
@@ -858,6 +914,7 @@ export class OmniWindowHelper {
       });
       return;
     }
+    this.bindCellActiveFrameLifecycle(id, content);
 
     if (contentMode === 'browser') {
       this.configureBrowserCellContentView(id, content);
@@ -910,6 +967,7 @@ export class OmniWindowHelper {
     this.bindCellContentLifecycle(cell, content, miniAppRuntime);
 
     this.cells.push(cell);
+    this.applyActiveCellFrameState();
 
     if (contentMode === 'miniapp' && miniAppRuntime) {
       this.loadMiniAppCellContent(content, {
@@ -941,7 +999,11 @@ export class OmniWindowHelper {
         content.webContents.once('did-fail-load', () => { clearTimeout(timeoutId); releaseOnce(); });
         content.webContents.once('did-fail-provisional-load', () => { clearTimeout(timeoutId); releaseOnce(); });
         content.webContents.once('render-process-gone', () => { clearTimeout(timeoutId); releaseOnce(); });
-        content.webContents.loadURL(url).catch(() => {});
+        content.webContents.loadURL(url).catch(() => {
+          const currentCell = this.cells.find((candidate) => candidate.id === id);
+          if (currentCell?.content !== content) return;
+          this.clearActiveCellIfMatching(id);
+        });
       });
     }
 
@@ -1039,6 +1101,7 @@ export class OmniWindowHelper {
           error: new Error(details.reason),
         });
       } else {
+        this.clearActiveCellIfMatching(cell.id);
         console.warn(`[OmniWindowHelper] Cell ${cell.id} renderer crashed:`, details.reason);
       }
     });
@@ -1052,14 +1115,22 @@ export class OmniWindowHelper {
     if (!this.baseWindow || this.baseWindow.isDestroyed()) return;
 
     const previousContent = cell.content;
-    const content = this.createBrowserCellContentView(profile);
-    this.configureBrowserCellContentView(cell.id, content);
+    let content: WebContentsView | null = null;
+    try {
+      content = this.createBrowserCellContentView(profile, cell.id);
+      this.bindCellActiveFrameLifecycle(cell.id, content);
+      this.configureBrowserCellContentView(cell.id, content);
+      this.bindCellContentLifecycle(cell, content, null);
+      this.baseWindow.contentView.addChildView(content);
+    } catch (error) {
+      this.disposeWebContentsView(content);
+      this.clearActiveCellIfMatching(cell.id);
+      console.error(`[OmniWindowHelper] Cell ${cell.id} browser replacement failed:`, error);
+      return;
+    }
     cell.content = content;
     cell.browserProfile = profile;
-    this.bindCellContentLifecycle(cell, content, null);
-
     this.disposeWebContentsView(previousContent);
-    this.baseWindow.contentView.addChildView(content);
     this.applyLayoutInternal();
 
     if (this.controlVisible && this.controlView) {
@@ -1067,7 +1138,19 @@ export class OmniWindowHelper {
       this.baseWindow.contentView.addChildView(this.controlView);
     }
 
-    content.webContents.loadURL(url).catch(() => {});
+    let loadPromise: Promise<void>;
+    try {
+      loadPromise = content.webContents.loadURL(url);
+    } catch (error) {
+      this.clearActiveCellIfMatching(cell.id);
+      console.error(`[OmniWindowHelper] Cell ${cell.id} browser replacement load failed:`, error);
+      return;
+    }
+    loadPromise.catch((error) => {
+      if (cell.content !== content) return;
+      this.clearActiveCellIfMatching(cell.id);
+      console.error(`[OmniWindowHelper] Cell ${cell.id} browser replacement load failed:`, error);
+    });
   }
 
   private removeCellViews(cell: CellViewPair): void {
@@ -1091,8 +1174,47 @@ export class OmniWindowHelper {
     }
   }
 
-  private broadcastActiveCell(activeCellId: string): void {
+  private broadcastActiveCell(activeCellId: string | null): void {
+    this.activeCellId = activeCellId;
+    this.applyActiveCellFrameState();
     xpcMain.broadcast('omniCell/activeChanged', { activeCellId });
+  }
+
+  private clearActiveCellIfMatching(cellId: string): void {
+    if (this.activeCellId !== cellId) return;
+    this.broadcastActiveCell(null);
+  }
+
+  private applyActiveCellFrameState(): void {
+    for (const cell of this.cells) {
+      const active = cell.id === this.activeCellId;
+      this.setCellViewActiveFrame(cell.menubar, active);
+      this.setCellViewActiveFrame(cell.content, active);
+    }
+  }
+
+  private bindCellActiveFrameLifecycle(cellId: string, view: WebContentsView): void {
+    const replayActiveFrame = () => {
+      if (!this.isWebContentsAlive(view.webContents)) return;
+      this.setCellViewActiveFrame(view, this.activeCellId === cellId);
+    };
+    view.webContents.on('dom-ready', replayActiveFrame);
+    view.webContents.on('did-finish-load', replayActiveFrame);
+  }
+
+  private setCellViewActiveFrame(view: WebContentsView | null, active: boolean): void {
+    if (!view || !this.isWebContentsAlive(view.webContents)) return;
+    const activeValue = active ? 'true' : 'false';
+    const displayValue = active ? 'block' : 'none';
+    view.webContents.executeJavaScript(`
+      (() => {
+        const frame = document.getElementById('${OMNI_ACTIVE_FRAME_ELEMENT_ID}');
+        if (!frame || frame.dataset.omniActiveCellFrame !== 'true') return false;
+        frame.dataset.active = '${activeValue}';
+        frame.style.setProperty('display', '${displayValue}', 'important');
+        return true;
+      })()
+    `).catch(() => {});
   }
 
   private notifyControlUrlChanged(cellId: string, url: string): void {

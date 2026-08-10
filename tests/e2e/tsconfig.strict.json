@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/main/env.d.ts",
+    "../../src/main/windows/e2eWindowPlacement.service.ts",
+    "../../src/main/windows/windowState.service.ts",
+    "../../src/shared/window/window.types.ts",
+    "./e2eDisplayTarget.ts",
+    "./e2eRuntimeMode.ts",
+    "./electronLaunchArgs.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "noCheck": false,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true
+  }
+}

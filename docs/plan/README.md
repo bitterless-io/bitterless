@@ -42,6 +42,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [todo-mcp-domain-catalog-skill-version-007](tasks/todo-mcp-domain-catalog-skill-version-007.md) | active/archived MCP Domain catalog, description updates, and versioned skill attention | done | todo-agent-skill-onboarding-002, todo-mcp-domain-create |
 | [todo-mcp-step-crud-009](tasks/todo-mcp-step-crud-009.md) | safe optional-date create recovery and synchronized Step CRUD | done | todo-mcp-domain-catalog-skill-version-007, todoist-sync-desktop-001 |
 | [todo-mcp-important-intent-013](tasks/todo-mcp-important-intent-013.md) | star/important intent for Todo create, edit, and Focus placement | done | todo-mcp-step-crud-009 |
+| [todo-agent-onboarding-copy-014](tasks/todo-agent-onboarding-copy-014.md) | one-action Agent Todo onboarding with an English skill-and-MCP payload | done | todo-mcp-domain-catalog-skill-version-007 |
 | [todo-note-editor-height-010](tasks/todo-note-editor-height-010.md) | 480px default Todo Note editing canvas | done | todoist-sync-desktop-001 |
 | [todo-renderer-refresh-stability-011](tasks/todo-renderer-refresh-stability-011.md) | atomic board refresh and origin-aware cross-renderer invalidation | implemented; owner verification pending | todo-sync-refresh-identity-004 |
 | [todo-sqlite-process-ownership-012](tasks/todo-sqlite-process-ownership-012.md) | move synchronized Todo SQLCipher ownership out of Main into Core SQLite preload | implemented; owner verification pending | todoist-sync-desktop-001, todo-renderer-refresh-stability-011 |
@@ -63,7 +64,14 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [coin-ai-analysis-004](tasks/coin-ai-analysis-004.md) | background Codex structured analysis without chat UI | implemented; owner verification pending | coin-analysis-workspace-003 |
 | [coin-subapp-integration-005](tasks/coin-subapp-integration-005.md) | end-to-end lifecycle, resources, data, AI, and visual acceptance | owner verification pending | coin-ai-analysis-004 |
 | [coin-gmgn-only-local-mode-007](tasks/coin-gmgn-only-local-mode-007.md) | remove Alchemy from the active release and make local Meme analysis GMGN-only | implemented; owner verification pending | coin-analysis-workspace-003, coin-holder-universe-filter-006 |
-| [trench-single-page-workspace-008](tasks/trench-single-page-workspace-008.md) | flat single-page Trench research, bounded thesis review, and visible persistent X Chrome | implemented; owner verification pending | coin-ai-analysis-004, coin-gmgn-only-local-mode-007 |
+| [trench-single-page-workspace-008](tasks/trench-single-page-workspace-008.md) | historical flat in-app analysis workspace | superseded | coin-ai-analysis-004, coin-gmgn-only-local-mode-007 |
+| [trench-auto-chain-analysis-009](tasks/trench-auto-chain-analysis-009.md) | historical automatic in-app CA analysis | superseded | trench-single-page-workspace-008, coin-gmgn-only-local-mode-007 |
+| [trench-record-store-mcp-010](tasks/trench-record-store-mcp-010.md) | one-CA/one-JSON repository, derived wallet evidence, and production `trench.*` MCP | done | — |
+| [trench-record-browser-011](tasks/trench-record-browser-011.md) | read-only CA/Index/Negative Trench record browser and dedicated preload | done | trench-record-store-mcp-010 |
+| [trench-omni-embedding-012](tasks/trench-omni-embedding-012.md) | real Trench operation view inside Omni cells | done | trench-record-browser-011 |
+| [trench-agent-skill-integration-013](tasks/trench-agent-skill-integration-013.md) | portable `bitterless-trench` skill and MCP→disk→standalone/Omni acceptance | done | trench-record-store-mcp-010, trench-record-browser-011, trench-omni-embedding-012 |
+| [trench-structured-record-detail-014](tasks/trench-structured-record-detail-014.md) | structured CA/Index/Negative evidence details with exact-document copy | done | trench-record-browser-011, trench-omni-embedding-012 |
+| [trench-agent-skill-guide-015](tasks/trench-agent-skill-guide-015.md) | current-instance MCP and `bitterless-trench` installation guide | done | trench-agent-skill-integration-013, trench-omni-embedding-012 |
 | [coding-agent-sessions-core-001](tasks/coding-agent-sessions-core-001.md) | storage, Codex/Claude discovery, normalization, and safe opening | done | — |
 | [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | done | coding-agent-sessions-core-001 |
 | [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | done | coding-agent-sessions-bridge-002 |
@@ -112,6 +120,7 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [desktop-auto-update-polling-007](tasks/desktop-auto-update-polling-007.md) | recoverable, idempotent desktop automatic-update polling | implemented; owner verification pending | — |
 | [desktop-auto-update-state-replay-008](tasks/desktop-auto-update-state-replay-008.md) | race-safe download-ready replay after renderer rebuild | implemented; owner verification pending | desktop-auto-update-polling-007 |
 | [desktop-update-menubars-009](tasks/desktop-update-menubars-009.md) | compact `update` action in Home, Maestro, and Omni Menu Bars | implemented; owner verification pending | desktop-auto-update-state-replay-008 |
+| [desktop-command-line-debug-mode-010](tasks/desktop-command-line-debug-mode-010.md) | deterministic debug CLI/E2E launches and release-only packaged artifacts | done | — |
 | [release-fast-publish-version-code-002](tasks/release-fast-publish-version-code-002.md) | restore version preparation before macOS ARM fast-publish build | done | — |
 | [release-fast-publish-dependency-sync-003](tasks/release-fast-publish-dependency-sync-003.md) | restore Electron 40 and install locked dependencies before macOS ARM version preparation | implemented; owner verification pending | release-fast-publish-version-code-002 |
 | [release-notarization-retry-004](tasks/release-notarization-retry-004.md) | logged network-only retries for independently rerunnable macOS App and DMG notarization | implemented; owner verification pending | release-fast-publish-dependency-sync-003 |
@@ -143,7 +152,8 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [window-state-persistence-001](tasks/window-state-persistence-001.md) | unified bounds, mode, and physical-display persistence for every visible top-level window | implemented; owner verification pending | — |
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
-[Coin sub-application](analysis/coin-subapp.md),
+[BL Trench record vault](analysis/trench-record-vault.md),
+[historical Coin sub-application](analysis/coin-subapp.md),
 [Coding-agent sessions](analysis/coding-agent-sessions.md),
 [EyesOnAgents](analysis/eyes-on-agents.md),
 [Translator](analysis/translator.md),

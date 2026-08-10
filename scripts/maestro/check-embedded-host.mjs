@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { createRequire } from 'node:module'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -46,20 +47,32 @@ assert(handler.includes('destroyForHostQuit()') && appMain.includes('await maest
 assert(appMain.includes("if (app.isPackaged)") && appMain.includes('BITTERLESS_E2E is unavailable in packaged builds'), 'test-only network/auth controls must be impossible in packaged builds')
 assert(appMain.includes("session.fromPartition(MAESTRO_PARTITION).protocol.handle"), 'E2E network isolation must cover the Maestro partition before opening the app')
 assert(appMain.includes('return Response.error()'), 'unknown E2E HTTP(S) requests must fail closed')
-assert(readProject('src/main/updateHelper/update.service.ts').includes('this.disabledForE2E ? 0 : this.getCurrentVersionCode()'), 'E2E updater disablement must not read package metadata or start transport')
+assert(readProject('src/main/updateHelper/update.service.ts').includes("this.disabledForE2E ? '0' : this.getCurrentVersionCode()"), 'E2E updater disablement must not read package metadata or start transport')
 assert(handler.includes("createXpcMainEmitter<SessionApi>('MaestroSessionDao')"), 'Maestro session storage must use an isolated channel')
 assert(dataRoot.includes("join(app.getPath('userData'), 'cowork')"), 'Maestro files must live below Bitterless userData/cowork')
 assert(dataRoot.includes("persist:bitterless-cowork"), 'Maestro web state must use an isolated persistent partition')
 assert(sqliteKey.includes("process.env.BITTERLESS_E2E === '1'") && sqliteKey.includes('randomBytes(32)'), 'E2E SQLCipher key must be process-random')
 assert(sqliteKey.includes('if (app.isPackaged)') && sqliteKey.includes('E2E key mode is unavailable in packaged builds'), 'E2E SQLCipher key mode must be unavailable in packages')
-assert(sqliteKey.includes("viteEnv === 'prod'") && sqliteKey.includes("viteEnv === 'dev'"), 'SQLite key storage must branch explicitly on VITE_ENV prod/dev')
+assert(sqliteKey.includes("viteMode === 'release'") && sqliteKey.includes("viteMode === 'debug'"), 'SQLite key storage must branch explicitly on VITE_MODE release/debug')
 assert(sqliteKey.includes("PRODUCTION_SQLITE_KEY_FILE = 'sqlite-key.bin'") && sqliteKey.includes("DEVELOPMENT_SQLITE_KEY_FILE = 'sqlite-key.dev.hex'"), 'development and production SQLite keys must use distinct files')
 assert(sqliteKey.includes("flag: 'wx'") && sqliteKey.includes('mode: 0o600'), 'SQLite key creation must be owner-only and must not overwrite an existing key')
 assert(sqliteKey.includes("'production SQLCipher key file'") && sqliteKey.includes('isAlreadyExistsError'), 'production keys must be format-validated and creation races must converge')
 assert(!sqliteKey.includes('micromeet9527'), 'embedded Maestro must not retain the upstream fixed E2E key')
 assert(sqlitePreload.includes("location.pathname.endsWith('/maestro/sqlite/index.html')"), 'SQLite preload must not consume its bootstrap token in the initial about:blank document')
-assert(controlViewSource.includes("process.env.BITTERLESS_E2E !== '1' && (is.dev || process.env.COACH_DEVTOOLS === '1')"), 'E2E mode must not open detached Maestro Control DevTools')
-assert(windowHelper.includes("win.show()\n      if (process.platform === 'darwin') {\n        app.focus({ steal: true })\n        win.moveTop()\n      }\n      win.focus()"), 'repeat Open must show Maestro, activate and raise it on macOS, then focus Maestro')
+assert(
+  controlViewSource.includes("import.meta.env.VITE_MODE !== 'debug'") &&
+    controlViewSource.includes("process.env.BITTERLESS_E2E === '1'") &&
+    controlViewSource.includes('if (shouldOpenControlDevTools())'),
+  'release and E2E modes must not open detached Maestro Control DevTools'
+)
+assert(
+  windowHelper.includes('this.windowStateController.show()') &&
+    windowHelper.includes("if (process.platform === 'darwin') {") &&
+    windowHelper.includes('app.focus({ steal: true })') &&
+    windowHelper.includes('win.moveTop()') &&
+    windowHelper.includes('win.focus()'),
+  'repeat Open must show Maestro, activate and raise it on macOS, then focus Maestro'
+)
 assert(workbenchStore.includes('captureConfig.whitelist.map((rule) => ({ ...rule }))') && workbenchStore.includes('captureConfig.blacklist.map((rule) => ({ ...rule }))'), 'Workbench must send structured-cloneable capture rules over XPC')
 assert(vite.includes("'app.main': resolve('src/main/app.main.ts')") && !vite.includes("resolve('src/main/maestro/app.main.ts')"), 'build must keep one Electron main entry')
 for (const entry of ['maestroHome', 'maestroControl', 'maestroWorkbench', 'maestroSqlite']) {
@@ -69,10 +82,9 @@ assert(vite.includes("maestroCoach: resolve('src/preload/maestro/coach.preload.t
 assert(vite.includes('bytecode: false'), 'main bytecode must stay disabled for the embedded dynamic runtime')
 assert(card.includes(':data-mini-app-id="app.id"'), 'Mini Apps cards need stable E2E identities')
 assert(!activeApps.includes("id: 'maestro'") && !activeApps.includes('action: openMaestro'), 'Mini Apps must keep the Maestro card and Home launch action dormant')
-assert(!activeApps.includes("id: 'coin'") && !activeApps.includes('action: openCoin'), 'Mini Apps must keep the Coin card and Home launch action dormant')
+assert(activeApps.includes("id: 'coin'") && activeApps.includes('action: openCoin'), 'Mini Apps must keep the Trench card and Home launch action active')
 assert(apps.includes("id: 'maestro'") && apps.includes('action: openMaestro'), 'Mini Apps source must retain the dormant Maestro card for restoration')
-assert(apps.includes("id: 'coin'") && apps.includes('action: openCoin'), 'Mini Apps source must retain the dormant Coin card for restoration')
-assert(activeApps.includes('openMaestro: () => void') && activeApps.includes('openCoin: () => void'), 'Mini Apps factory must retain the dormant launch callbacks')
+assert(activeApps.includes('openMaestro: () => void') && activeApps.includes('openCoin: () => void'), 'Mini Apps factory must retain the Maestro and Trench launch callbacks')
 assert(card.includes('await maestroWindowEmitter.openMaestroWindow()') && card.includes('await coinWindowEmitter.openCoinWindow()'), 'Home must retain Maestro and Coin host action wiring')
 for (const [id, action] of [['todo', 'openTodo'], ['eyes-on-agents', 'openEyesOnAgents'], ['omni-browser', 'openOmniBrowser']]) {
   assert(activeApps.includes(`id: '${id}'`) && activeApps.includes(`action: ${action}`), `Mini Apps must keep ${id} visible`)
@@ -117,11 +129,11 @@ const createSafeStorageSpy = ({ available = true, forbidden = false } = {}) => {
   }
 }
 
-const loadSqliteKeyHarness = ({ viteEnv, dataRoot, e2e = false, packaged = false, safeStorage, fsOverrides = {} }) => {
+const loadSqliteKeyHarness = ({ viteMode, dataRoot, e2e = false, packaged = false, safeStorage, fsOverrides = {} }) => {
   const restoreE2e = setE2eEnvironment(e2e)
   try {
-    const envLiteral = viteEnv === undefined ? 'undefined' : JSON.stringify(viteEnv)
-    const executableSource = sqliteKey.replaceAll('import.meta.env.VITE_ENV', envLiteral)
+    const modeLiteral = viteMode === undefined ? 'undefined' : JSON.stringify(viteMode)
+    const executableSource = sqliteKey.replaceAll('import.meta.env.VITE_MODE', modeLiteral)
     const output = ts.transpileModule(executableSource, {
       compilerOptions: {
         esModuleInterop: true,
@@ -137,6 +149,7 @@ const loadSqliteKeyHarness = ({ viteEnv, dataRoot, e2e = false, packaged = false
     )
     const localRequire = (specifier) => {
       if (specifier === 'electron') return { app: { isPackaged: packaged }, safeStorage }
+      if (specifier === '@main/security/safeStorage.runtime') return { mainSafeStorage: safeStorage }
       if (specifier === 'electron-xpc/main') return { XpcMainHandler: class {} }
       if (specifier === './sqliteBootstrap.service') return { isSqliteBootstrapTokenValid: () => true }
       if (specifier === '@maestro-main/data/maestroDataRoot') return { maestroDataRoot: () => dataRoot }
@@ -191,7 +204,7 @@ const runSqliteKeyBranchChecks = async () => {
   try {
     const devRoot = join(tempRoot, 'dev', 'cowork')
     const devSpy = createSafeStorageSpy({ forbidden: true })
-    const dev = loadSqliteKeyHarness({ viteEnv: 'dev', dataRoot: devRoot, safeStorage: devSpy.api })
+    const dev = loadSqliteKeyHarness({ viteMode: 'debug', dataRoot: devRoot, safeStorage: devSpy.api })
     const firstDevKey = await dev.getKey()
     const secondDevKey = await dev.getKey()
     const devConfig = join(devRoot, 'config')
@@ -203,13 +216,32 @@ const runSqliteKeyBranchChecks = async () => {
     assertOwnerOnlyModes(devConfig, devKeyFile)
     assertSafeStorageUntouched(devSpy, 'development')
 
+    const debugProdRoot = join(tempRoot, 'debug-prod', 'cowork')
+    const debugProdSpy = createSafeStorageSpy({ forbidden: true })
+    const debugProd = loadSqliteKeyHarness({
+      viteMode: 'debug',
+      dataRoot: debugProdRoot,
+      safeStorage: debugProdSpy.api
+    })
+    const debugProdKey = await debugProd.getKey()
+    assert(/^[0-9a-f]{64}$/.test(debugProdKey), 'debug_prod must use a development key')
+    assert(
+      existsSync(join(debugProdRoot, 'config', 'sqlite-key.dev.hex')),
+      'debug_prod must persist only the development key file'
+    )
+    assert(
+      !existsSync(join(debugProdRoot, 'config', 'sqlite-key.bin')),
+      'debug_prod must not create a safeStorage key file'
+    )
+    assertSafeStorageUntouched(debugProdSpy, 'debug_prod')
+
     const convergedDevRoot = join(tempRoot, 'converged-dev', 'cowork')
     const convergedDevKeyFile = join(convergedDevRoot, 'config', 'sqlite-key.dev.hex')
     const winningDevKey = 'b'.repeat(64)
     let convergedDevWrites = 0
     const convergedDevSpy = createSafeStorageSpy({ forbidden: true })
     const convergedDev = loadSqliteKeyHarness({
-      viteEnv: 'dev',
+      viteMode: 'debug',
       dataRoot: convergedDevRoot,
       safeStorage: convergedDevSpy.api,
       fsOverrides: {
@@ -233,7 +265,7 @@ const runSqliteKeyBranchChecks = async () => {
     const deniedDevKeyFile = join(deniedDevRoot, 'config', 'sqlite-key.dev.hex')
     const deniedDevSpy = createSafeStorageSpy({ forbidden: true })
     const deniedDev = loadSqliteKeyHarness({
-      viteEnv: 'dev',
+      viteMode: 'debug',
       dataRoot: deniedDevRoot,
       safeStorage: deniedDevSpy.api,
       fsOverrides: {
@@ -255,7 +287,7 @@ const runSqliteKeyBranchChecks = async () => {
     writeFileSync(invalidDevKeyFile, 'not-a-sqlcipher-key', 'utf8')
     writeFileSync(invalidDevDb, 'existing-development-db', 'utf8')
     const invalidDevSpy = createSafeStorageSpy({ forbidden: true })
-    const invalidDev = loadSqliteKeyHarness({ viteEnv: 'dev', dataRoot: invalidDevRoot, safeStorage: invalidDevSpy.api })
+    const invalidDev = loadSqliteKeyHarness({ viteMode: 'debug', dataRoot: invalidDevRoot, safeStorage: invalidDevSpy.api })
     await expectFailure(() => invalidDev.getKey(), 'development SQLCipher key file is invalid')
     assert(readFileSync(invalidDevKeyFile, 'utf8') === 'not-a-sqlcipher-key', 'invalid development key must not be overwritten')
     assert(readFileSync(invalidDevDb, 'utf8') === 'existing-development-db', 'development DB must not be modified')
@@ -268,7 +300,7 @@ const runSqliteKeyBranchChecks = async () => {
     writeFileSync(missingDevDb, 'development-db-with-production-key-only', 'utf8')
     writeFileSync(join(missingDevConfig, 'sqlite-key.bin'), 'protected:unused-production-key', 'utf8')
     const missingDevSpy = createSafeStorageSpy({ forbidden: true })
-    const missingDev = loadSqliteKeyHarness({ viteEnv: 'dev', dataRoot: missingDevRoot, safeStorage: missingDevSpy.api })
+    const missingDev = loadSqliteKeyHarness({ viteMode: 'debug', dataRoot: missingDevRoot, safeStorage: missingDevSpy.api })
     await expectFailure(() => missingDev.getKey(), 'development key file is missing')
     assert(!existsSync(join(missingDevConfig, 'sqlite-key.dev.hex')), 'missing development key must not be regenerated over an existing DB')
     assert(readFileSync(missingDevDb, 'utf8') === 'development-db-with-production-key-only', 'missing-key development DB must not be modified')
@@ -276,7 +308,7 @@ const runSqliteKeyBranchChecks = async () => {
 
     const prodRoot = join(tempRoot, 'prod', 'cowork')
     const prodSpy = createSafeStorageSpy()
-    const prod = loadSqliteKeyHarness({ viteEnv: 'prod', dataRoot: prodRoot, safeStorage: prodSpy.api })
+    const prod = loadSqliteKeyHarness({ viteMode: 'release', dataRoot: prodRoot, packaged: true, safeStorage: prodSpy.api })
     const firstProdKey = await prod.getKey()
     const secondProdKey = await prod.getKey()
     const prodConfig = join(prodRoot, 'config')
@@ -295,7 +327,8 @@ const runSqliteKeyBranchChecks = async () => {
     let convergedProdWrites = 0
     const convergedProdSpy = createSafeStorageSpy()
     const convergedProd = loadSqliteKeyHarness({
-      viteEnv: 'prod',
+      viteMode: 'release',
+      packaged: true,
       dataRoot: convergedProdRoot,
       safeStorage: convergedProdSpy.api,
       fsOverrides: {
@@ -319,7 +352,8 @@ const runSqliteKeyBranchChecks = async () => {
     const deniedProdKeyFile = join(deniedProdRoot, 'config', 'sqlite-key.bin')
     const deniedProdSpy = createSafeStorageSpy()
     const deniedProd = loadSqliteKeyHarness({
-      viteEnv: 'prod',
+      viteMode: 'release',
+      packaged: true,
       dataRoot: deniedProdRoot,
       safeStorage: deniedProdSpy.api,
       fsOverrides: {
@@ -343,7 +377,7 @@ const runSqliteKeyBranchChecks = async () => {
     const malformedProdKeyBytes = readFileSync(malformedProdKeyFile)
     const malformedProdDbBytes = readFileSync(malformedProdDb)
     const malformedProdSpy = createSafeStorageSpy()
-    const malformedProd = loadSqliteKeyHarness({ viteEnv: 'prod', dataRoot: malformedProdRoot, safeStorage: malformedProdSpy.api })
+    const malformedProd = loadSqliteKeyHarness({ viteMode: 'release', dataRoot: malformedProdRoot, packaged: true, safeStorage: malformedProdSpy.api })
     await expectFailure(() => malformedProd.getKey(), 'production SQLCipher key file is invalid')
     assert(readFileSync(malformedProdKeyFile).equals(malformedProdKeyBytes), 'malformed production key bytes must remain unchanged')
     assert(readFileSync(malformedProdDb).equals(malformedProdDbBytes), 'production DB bytes must remain unchanged after malformed-key rejection')
@@ -356,7 +390,8 @@ const runSqliteKeyBranchChecks = async () => {
     const malformedProdKeyOnlyBytes = readFileSync(malformedProdKeyOnlyFile)
     const malformedProdKeyOnlySpy = createSafeStorageSpy()
     const malformedProdKeyOnly = loadSqliteKeyHarness({
-      viteEnv: 'prod',
+      viteMode: 'release',
+      packaged: true,
       dataRoot: malformedProdKeyOnlyRoot,
       safeStorage: malformedProdKeyOnlySpy.api
     })
@@ -366,7 +401,7 @@ const runSqliteKeyBranchChecks = async () => {
 
     const unavailableProdRoot = join(tempRoot, 'unavailable-prod', 'cowork')
     const unavailableProdSpy = createSafeStorageSpy({ available: false })
-    const unavailableProd = loadSqliteKeyHarness({ viteEnv: 'prod', dataRoot: unavailableProdRoot, safeStorage: unavailableProdSpy.api })
+    const unavailableProd = loadSqliteKeyHarness({ viteMode: 'release', dataRoot: unavailableProdRoot, packaged: true, safeStorage: unavailableProdSpy.api })
     await expectFailure(() => unavailableProd.getKey(), 'safeStorage is not available')
     assert(unavailableProdSpy.calls.isEncryptionAvailable === 1, 'production must probe safeStorage availability')
     assert(unavailableProdSpy.calls.encryptString === 0 && unavailableProdSpy.calls.decryptString === 0, 'unavailable safeStorage must fail before encryption')
@@ -380,7 +415,7 @@ const runSqliteKeyBranchChecks = async () => {
     writeFileSync(missingProdDb, 'production-db-with-development-key-only', 'utf8')
     writeFileSync(join(missingProdConfig, 'sqlite-key.dev.hex'), existingDevKey, 'utf8')
     const missingProdSpy = createSafeStorageSpy()
-    const missingProd = loadSqliteKeyHarness({ viteEnv: 'prod', dataRoot: missingProdRoot, safeStorage: missingProdSpy.api })
+    const missingProd = loadSqliteKeyHarness({ viteMode: 'release', dataRoot: missingProdRoot, packaged: true, safeStorage: missingProdSpy.api })
     await expectFailure(() => missingProd.getKey(), 'encrypted key file is missing')
     assert(!existsSync(join(missingProdConfig, 'sqlite-key.bin')), 'missing production key must not be regenerated over an existing DB')
     assert(readFileSync(missingProdDb, 'utf8') === 'production-db-with-development-key-only', 'missing-key production DB must not be modified')
@@ -389,7 +424,7 @@ const runSqliteKeyBranchChecks = async () => {
 
     const e2eRoot = join(tempRoot, 'e2e', 'cowork')
     const e2eSpy = createSafeStorageSpy({ forbidden: true })
-    const e2e = loadSqliteKeyHarness({ viteEnv: 'dev', dataRoot: e2eRoot, e2e: true, safeStorage: e2eSpy.api })
+    const e2e = loadSqliteKeyHarness({ viteMode: 'debug', dataRoot: e2eRoot, e2e: true, safeStorage: e2eSpy.api })
     const firstE2eKey = await e2e.getKey()
     const secondE2eKey = await e2e.getKey()
     assert(/^[0-9a-f]{64}$/.test(firstE2eKey), 'E2E key must contain 32 random bytes as hexadecimal')
@@ -399,7 +434,7 @@ const runSqliteKeyBranchChecks = async () => {
 
     const packagedE2eSpy = createSafeStorageSpy({ forbidden: true })
     const packagedE2e = loadSqliteKeyHarness({
-      viteEnv: 'prod',
+      viteMode: 'release',
       dataRoot: join(tempRoot, 'packaged-e2e', 'cowork'),
       e2e: true,
       packaged: true,
@@ -410,8 +445,8 @@ const runSqliteKeyBranchChecks = async () => {
 
     const unknownRoot = join(tempRoot, 'unknown', 'cowork')
     const unknownSpy = createSafeStorageSpy({ forbidden: true })
-    const unknown = loadSqliteKeyHarness({ viteEnv: 'staging', dataRoot: unknownRoot, safeStorage: unknownSpy.api })
-    await expectFailure(() => unknown.getKey(), 'unsupported VITE_ENV')
+    const unknown = loadSqliteKeyHarness({ viteMode: 'staging', dataRoot: unknownRoot, safeStorage: unknownSpy.api })
+    await expectFailure(() => unknown.getKey(), 'unsupported VITE_MODE')
     assert(!existsSync(unknownRoot), 'unknown environment must not select or create a key store')
     assertSafeStorageUntouched(unknownSpy, 'unknown environment')
   } finally {

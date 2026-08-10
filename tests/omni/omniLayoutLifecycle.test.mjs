@@ -367,6 +367,120 @@ test('pane menu bar keeps the accepted compact filled split controls', () => {
   assert.doesNotMatch(style, /^\.omni-pane-menubar__btn:hover/m);
 });
 
+test('active real Omni cells use a segmented pointer-transparent preload frame', () => {
+  const mainSource = read('src/main/windows/omniWindow.helper.ts');
+  const sdkSource = read('src/preload/omni/omniCellActiveFrame.sdk.ts');
+  const browserChromePreload = read('src/preload/omni/omni.preload.ts');
+  const browserContentPreload = read('src/preload/omni/omniCellContent.preload.ts');
+  const miniAppPreloads = [
+    'src/preload/todo/todo.preload.ts',
+    'src/preload/eyesOnAgents/eyesOnAgents.preload.ts',
+    'src/preload/translator/translator.preload.ts',
+    'src/preload/motto/motto.preload.ts',
+    'src/preload/trench/trench.preload.ts'
+  ].map(read);
+  const cellApp = read('src/renderer/omni/omniCell/src/App.vue');
+  const cellStyle = read('src/renderer/omni/omniCell/src/App.less');
+  const controlStore = read('src/renderer/omni/omniControl/src/store/layout.store.ts');
+  const controlPane = read('src/renderer/omni/omniControl/src/components/OmniPane.vue');
+  const controlPaneStyle = read(
+    'src/renderer/omni/omniControl/src/components/OmniPane.less'
+  );
+
+  assert.match(browserChromePreload, /import '\.\/omniCellActiveFrame\.sdk';/);
+  assert.match(browserContentPreload, /import '\.\/omniCellActiveFrame\.sdk';/);
+  for (const preloadSource of miniAppPreloads) {
+    assert.match(preloadSource, /import '\.\.\/omni\/omniCellActiveFrame\.sdk';/);
+  }
+
+  assert.doesNotMatch(sdkSource, /^import /m);
+  assert.doesNotMatch(
+    sdkSource,
+    /electron-xpc|ipcMain|ipcRenderer|contextBridge|from ['"]electron['"]/
+  );
+  assert.doesNotMatch(
+    browserContentPreload,
+    /electron-xpc|ipcMain|ipcRenderer|contextBridge|from ['"]electron['"]/
+  );
+  assert.match(sdkSource, /const CELL_ID_ARGUMENT_PREFIX = '--omni-cell-id='/);
+  assert.match(
+    sdkSource,
+    /const FRAME_REGION_ARGUMENT_PREFIX = '--omni-cell-frame-region='/
+  );
+  assert.match(sdkSource, /const ACTIVE_BORDER = '2px solid #C2410C'/);
+  assert.match(sdkSource, /setImportantStyle\(frame, 'position', 'fixed'\)/);
+  assert.match(sdkSource, /setImportantStyle\(frame, 'inset', '0'\)/);
+  assert.match(sdkSource, /setImportantStyle\(frame, 'z-index', '2147483647'\)/);
+  assert.match(sdkSource, /setImportantStyle\(frame, 'box-sizing', 'border-box'\)/);
+  assert.match(sdkSource, /setImportantStyle\(frame, 'pointer-events', 'none'\)/);
+  assert.match(sdkSource, /setImportantStyle\(frame, 'display', 'none'\)/);
+  assert.doesNotMatch(
+    sdkSource,
+    /setImportantStyle\(frame, '(?:margin|padding|width|height)'/
+  );
+  assert.match(
+    sdkSource,
+    /region === 'browser-menubar'[\s\S]*?'border-top', ACTIVE_BORDER[\s\S]*?'border-left', ACTIVE_BORDER[\s\S]*?'border-right', ACTIVE_BORDER[\s\S]*?'border-bottom', '0'/
+  );
+  assert.match(
+    sdkSource,
+    /region === 'browser-content'[\s\S]*?'border-top', '0'[\s\S]*?'border-left', ACTIVE_BORDER[\s\S]*?'border-right', ACTIVE_BORDER[\s\S]*?'border-bottom', ACTIVE_BORDER/
+  );
+  assert.match(sdkSource, /setImportantStyle\(frame, 'border', ACTIVE_BORDER\)/);
+
+  assert.match(mainSource, /private activeCellId: string \| null = null;/);
+  assert.match(mainSource, /encodeURIComponent\(cellId\)/);
+  assert.match(mainSource, /createOmniCellActiveFrameArguments\(id, 'browser-menubar'\)/);
+  assert.match(mainSource, /createOmniCellActiveFrameArguments\(cellId, 'browser-content'\)/);
+  assert.match(mainSource, /createOmniCellActiveFrameArguments\(cellId, 'miniapp-content'\)/);
+  assert.match(
+    mainSource,
+    /private broadcastActiveCell\(activeCellId: string \| null\): void \{[\s\S]*?this\.activeCellId = activeCellId;[\s\S]*?this\.applyActiveCellFrameState\(\);[\s\S]*?xpcMain\.broadcast\('omniCell\/activeChanged'/
+  );
+  assert.match(
+    mainSource,
+    /private replayControlState\(\): void \{[\s\S]*?this\.broadcastActiveCell\(this\.activeCellId\);/
+  );
+  assert.match(
+    mainSource,
+    /private cleanupAllViews\(\): void \{[\s\S]*?this\.broadcastActiveCell\(null\);/
+  );
+  assert.match(
+    mainSource,
+    /private applyActiveCellFrameState\(\): void \{[\s\S]*?this\.setCellViewActiveFrame\(cell\.menubar, active\);[\s\S]*?this\.setCellViewActiveFrame\(cell\.content, active\);/
+  );
+  assert.match(
+    mainSource,
+    /private bindCellActiveFrameLifecycle[\s\S]*?const replayActiveFrame[\s\S]*?this\.setCellViewActiveFrame\(view, this\.activeCellId === cellId\);[\s\S]*?webContents\.on\('dom-ready', replayActiveFrame\);[\s\S]*?webContents\.on\('did-finish-load', replayActiveFrame\);/
+  );
+  assert.match(
+    mainSource,
+    /executeJavaScript\(`[\s\S]*?document\.getElementById\('[^']+'\)[\s\S]*?dataset\.omniActiveCellFrame[\s\S]*?style\.setProperty\('display'/
+  );
+
+  assert.doesNotMatch(cellApp, /state\.active|omniCell\/activeChanged|omni-cell-menubar--active/);
+  assert.doesNotMatch(cellStyle, /omni-cell-menubar--active/);
+  assert.doesNotMatch(controlStore, /activeCellId|omniCell\/activeChanged/);
+  assert.doesNotMatch(controlPane, /omni-pane--active/);
+  assert.doesNotMatch(controlPaneStyle, /\.omni-pane--active/);
+  assert.match(
+    mainSource,
+    /private reportMiniAppLoadFailure[\s\S]*?this\.clearActiveCellIfMatching\(params\.cellId\);/
+  );
+  assert.match(
+    mainSource,
+    /webContents\.on\('render-process-gone'[\s\S]*?this\.clearActiveCellIfMatching\(cell\.id\);/
+  );
+  assert.match(
+    mainSource,
+    /content\.webContents\.loadURL\(url\)\.catch\(\(\) => \{[\s\S]*?const currentCell = this\.cells\.find\(\(candidate\) => candidate\.id === id\);[\s\S]*?if \(currentCell\?\.content !== content\) return;[\s\S]*?this\.clearActiveCellIfMatching\(id\);/
+  );
+  assert.match(
+    mainSource,
+    /private replaceBrowserCellContentView[\s\S]*?catch \(error\) \{[\s\S]*?this\.clearActiveCellIfMatching\(cell\.id\);[\s\S]*?browser replacement failed[\s\S]*?loadPromise = content\.webContents\.loadURL\(url\);[\s\S]*?catch \(error\) \{[\s\S]*?this\.clearActiveCellIfMatching\(cell\.id\);[\s\S]*?loadPromise\.catch\([\s\S]*?this\.clearActiveCellIfMatching\(cell\.id\);/
+  );
+});
+
 test('Escape closes the top-level Omni Layout control and synchronizes Menu Bar state', () => {
   const mainSource = read('src/main/windows/omniWindow.helper.ts');
   const windowSource = read('src/renderer/omni/omniWindow/src/App.vue');

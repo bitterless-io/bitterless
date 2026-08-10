@@ -79,8 +79,9 @@ macOS ARM64, macOS x64, and Windows x64.
 - Account switches and logout close the current handle before another customer path can open. A
   stale session generation can never complete readiness for the newly active account.
 - Automated/local database tests inject one fixed test password and never call `safeStorage` or the
-  operating-system keychain. That password is test-only; an actual development/packaged app
-  session still uses the runtime-protected random password.
+  operating-system keychain. That password is test-only. An unpackaged development app uses its
+  isolated debug password; only a packaged release session uses the runtime-protected random
+  password.
 
 ## Historical upgrade matrix
 

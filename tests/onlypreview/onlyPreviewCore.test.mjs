@@ -1566,7 +1566,7 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
   }
   assert.match(vite, /onlypreviewSearchUtility:\s*resolve\(/);
   const sandboxPluginStart = vite.indexOf('const onlyPreviewSandboxPreloadPlugin');
-  const nextPluginStart = vite.indexOf('const secureOnlyPreviewHtml', sandboxPluginStart);
+  const nextPluginStart = vite.indexOf('const trenchSandboxPreloadPlugin', sandboxPluginStart);
   assert.ok(sandboxPluginStart >= 0 && nextPluginStart > sandboxPluginStart);
   const sandboxPlugin = vite.slice(sandboxPluginStart, nextPluginStart);
   assert.match(

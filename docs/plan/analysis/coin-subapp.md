@@ -1,6 +1,9 @@
 # Coin Sub-application Analysis
 
-Status: shell/resources/analysis/background AI implemented; owner verification and integration pending
+Status: historical; superseded by `trench-record-vault.md`
+
+> This document records the former Coin analysis application. The current product contract removes
+> analysis from Trench and is defined by `trench-record-vault.md`.
 
 ## Goal decomposition
 

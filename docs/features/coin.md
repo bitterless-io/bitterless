@@ -1,414 +1,297 @@
-# Trench Sub-application
+# BL Trench Record Vault
 
-Status: Single-page Trench workspace and selectable visible/hidden X Chrome implemented; owner verification pending
+Status: Accepted for implementation; supersedes the in-app analysis workspace
 
 ## Purpose
 
-Trench is the user-visible name for the existing Coin runtime. It remains integrated as an
-authenticated desktop workspace for trench research and decisions. Its Home Mini Apps card launches
-the singleton Trench window while its runtime, window lifecycle, packaged resources, and persisted
-data stay intact. The target interface is one full-width workspace: persistent CA commands, Scan and
-Focus queues, the active token evidence canvas, and a bounded decision assistant share one context.
-The previous Monitor/Screener/Meme/Strategy/History top tabs are superseded.
+BL Trench is a local evidence vault. It renders analysis produced by an external agent and written
+to Bitterless through the production `bitterless` MCP server. Trench itself does not discover a
+chain, query GMGN, run Codex, inspect X, score a token, or accept an analysis prompt.
 
-Trench provides source-backed discovery and CA analysis, deterministic strategy checks, bounded
-Codex review of the user's thesis, and a Playwright-managed Chrome session for low-frequency X
-research. The thesis composer is not a general chat client: it is bound to one token, one strategy
-revision, one evidence snapshot, and one decision record. Trench has no address bar, Workbench,
-Maestro tools, wallet signer, or order execution.
+The existing internal `coin` runtime name may remain for compatibility, but the user-visible
+product is Trench and its active renderer/preload path is read-only.
 
-## Boundary
+## Information architecture
 
-```text
-Home / Mini Apps
-       |
-       | openCoinWindow (small XPC launch contract)
-       v
-CoinWindowHandler --------------------------- auth / quit cleanup
-       |
-       +-- Coin BrowserWindow (one local renderer, minimum 800x600)
-              |
-              +-- Command bar (CA, terminal, X Chrome, Codex target)
-              +-- Scan + Focus / active token / Decision
-              +-- Resources and History (secondary surfaces)
+| Module           | Left pane                                           | Right pane                                                                      | Writer                                                                 |
+| ---------------- | --------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| CA Records       | searchable current CA records, newest first         | structured chain/token/result/wallet/exposure evidence plus exact-document copy | `trench.analysis.put`                                                  |
+| Index Wallets    | derived positive-wallet dictionary                  | source CAs, ranks, profit evidence, and recorded CA exposure                    | derived from current CA JSON                                           |
+| Negative Wallets | manually supplied negative wallets and explanations | structured tag provenance plus the wallet's separate holdings analysis          | `trench.negative_wallet.put` and `trench.negative_wallet_holdings.put` |
 
-Coin preload -- allowlisted, sender-checked IPC --> main Coin services
-       +-- CoinDataService
-       +-- CoinStateService
-       +-- CoinResourceService
-       +-- CoinStrategyService
-       +-- CoinXBrowserService
+There is no Analyze, Paste and analyze, Terminal, Scan, Focus, Decision, Codex, model, effort,
+resource, or X-browser control. Search, selection, JSON copy, refresh, and opening the same vault in
+Omni are record operations, not analysis capabilities.
 
-CoinAiAnalysisService
-       +-- narrow host CodexRuntimeService
+## Identity and JSON contracts
 
-Host-owned CodexCredentialService
-       +-- Coin background analysis consumes
-       +-- Maestro delegates Codex auth to the same service
-```
-
-The renderer never receives Codex tokens, stored resource secrets, filesystem access, arbitrary IPC,
-Node.js access, Maestro's preload, Playwright/CDP objects, wallet signing, or trading credentials.
-It receives only bounded X-browser state and commands through the Coin bridge.
-
-## User entry and lifecycle
-
-| Event | Required behavior |
-|---|---|
-| Mini Apps renders | Render the Trench card and route Open through the narrow Home `openCoinWindow` contract. |
-| First Open | Create one Trench window, load persisted Coin runtime state, then show it. |
-| Repeated Open | Await any active boot, restore/focus the same window, and never create a duplicate. |
-| Window close | Abort active polling/data work, flush Coin state, close the Trench-owned browser context, and destroy the window. |
-| Auth invalidation/logout | Lock new opens, abort work, and destroy Coin before the secondary-window sweep. |
-| Auth activation | Unlock Coin opening; do not open it automatically. |
-| Host quit/update | Await Coin cleanup before destroying host resources. |
-
-Default size is `1360x860`; minimum size is `800x600`. Geometry follows the shared
-[top-level window state contract](window-state-persistence.md); the legacy
-`userData/coin/window-state.json` value is imported once when the unified Coin key is absent.
-
-## Single-page workspace
-
-The detailed visual and responsive contract is [`coin-layout.md`](coin-layout.md). These are
-concurrent regions, not mutually exclusive pages.
-
-| Region | Job | Current readiness |
-|---|---|---|
-| Command bar | Paste/validate `chain + CA`, start service or terminal analysis, open X Chrome in the selected display mode, and select Codex model/effort. | Implemented; owner verification pending. |
-| Scan | Recommend recently discovered tokens with `why now`, hard risk, freshness, and only necessary evidence. | GMGN Discover queue presentation implemented; richer ranking remains later scope. |
-| Focus | Hold manually selected CAs and surface immutable monitoring triggers such as drawdown/base/breakout. | Manual Focus implemented; trigger rules/events remain later scope. |
-| Active token | Render holder, wallet cohort, market, attention, risk, X, and source evidence for the selected CA. | Existing Meme evidence embedded in the single-page canvas. |
-| Decision | Compare a user's thesis and position context with the pinned strategy and evidence snapshot. | Bounded thesis audit and immutable AI receipt implemented. |
-| Secondary surfaces | Configure Resources and reopen History without losing workspace context. | Resources and History secondary navigation implemented. |
-
-Sources status is available from the header and Resources page. It shows configuration, support,
-read-only status, freshness, cooldown, and the latest failure reason.
-
-## Data contracts
-
-### Source configuration
-
-Non-secret service bases may be supplied by build/runtime configuration or a validated user
-override. Secret-bearing GMGN configuration is owned by `CoinResourceService`.
-
-| Value | Purpose |
-|---|---|
-| `VITE_COIN_MONITOR_API_BASE` | Binance symbol state and refresh API base |
-| `VITE_COIN_MONITOR_WS_BASE` | monitor WebSocket base |
-| `VITE_COIN_SCREEN_API_BASE` | coin-filter parse/screen API base |
-| `VITE_COIN_MEME_API_BASE` | deployed meme discover/analyze API base |
-
-Missing configuration is a supported **unavailable** state. Coin must not silently substitute
-fixtures, sample candidates, stale responses, zeros, or invented analysis.
-
-### Monitor and Screener
-
-Monitor reads the existing filter endpoints:
-
-```text
-GET  /binance/futures/symbol-feature-states?symbols=...
-POST /binance/futures/symbol-feature-states/refresh
-```
-
-Rows include symbol, venue, current/low/high price, low multiple, listing time, observed time,
-freshness, and explicit missing/error state. Screener uses:
-
-```text
-POST /api/coin-filter/parse
-POST /api/coin-filter/screen
-```
-
-It renders parsed conditions, integration mode, scanned/matched/rejected counts, ranked matches,
-source receipts, and warnings. `sample` is allowed only when explicitly selected and visibly
-labelled; it is never an automatic fallback.
-
-### Meme analysis
+One canonical contract address owns one active JSON file. EVM addresses are compared and stored in
+lowercase; Solana addresses preserve case after a real Base58 decode proves a 32-byte public key.
+If the same EVM address exists on BSC and Robinhood Chain, both chain results live inside that one
+file. A Solana-shaped CA may contain only `solana`; an EVM-shaped CA may contain unique `bsc` and/or
+`robinhood` results.
 
 ```ts
-interface MemeAnalyzeInput {
-  requestId: string;
-  mode: 'service' | 'local_cli_rpc';
-  chain: 'robinhood' | 'bsc' | 'solana';
+type TrenchChain = 'bsc' | 'solana' | 'robinhood';
+
+interface TrenchCaAnalysisV1 {
+  schema: 'bl-trench-ca-analysis-v1';
+  analysisId: string; // caller-generated idempotency key
   contractAddress: string;
-  holderLimit: number;
-  traderLimit: number;
+  generatedAt: string; // ISO-8601, caller-owned evidence time
+  source: {
+    kind: 'agent' | 'legacy-coin-state';
+    agent?: string;
+    skill?: string;
+    providers: string[];
+  };
+  chains: TrenchChainAnalysisV1[];
+}
+
+interface TrenchChainAnalysisV1 {
+  chain: TrenchChain;
+  token?: { name?: string; symbol?: string };
+  topProfitWallets: Array<{
+    address: string;
+    rank: number;
+    profitUsd?: number;
+    winRate?: number; // inclusive 0..1
+    evidence?: Record<string, unknown>;
+  }>;
+  indexWalletExposure?: TrenchWalletExposureV1[];
+  negativeWalletExposure?: TrenchWalletExposureV1[];
+  result: Record<string, unknown>;
+}
+
+interface TrenchWalletExposureV1 {
+  address: string; // chain is the containing chain result
+  holding: boolean | null; // null means the source proved neither yes nor no
+  balance?: string; // decimal string; never an unsafe JavaScript integer
+  sharePercent?: number; // 0..100
+  valueUsd?: number; // >= 0
+  evidence?: Record<string, unknown>;
+}
+
+interface TrenchNegativeWalletV1 {
+  schema: 'bl-trench-negative-wallet-v1';
+  tagId: string; // caller requestId
+  chain: TrenchChain;
+  address: string;
+  explanation: string;
+  source: 'human-via-agent';
+  createdAt: string; // assigned by Bitterless Main
+  updatedAt: string; // assigned by Bitterless Main
+}
+
+interface TrenchNegativeWalletHoldingsV1 {
+  schema: 'bl-trench-negative-wallet-holdings-v1';
+  analysisId: string;
+  chain: TrenchChain;
+  address: string;
+  generatedAt: string;
+  holdings: Array<{
+    contractAddress?: string; // omitted only for the chain's native asset
+    symbol?: string;
+    balance?: string;
+    valueUsd?: number; // >= 0
+    portfolioPercent?: number; // 0..100
+    evidence?: Record<string, unknown>;
+  }>;
+  result: Record<string, unknown>;
 }
 ```
 
-The response must render at least:
+Within one CA chain result, wallet/exposure addresses must match that chain's address shape and are
+unique after canonicalization. `topProfitWallets` contains contiguous, unique ranks `1..N`, where
+`N <= 100`. Exposure identities are unique. When `holding` is `false` or `null`, balance/share/value
+fields must be absent; `true` may carry any subset of valid measurements.
 
-- total holders and filtered Top 10/Top 100 concentration over independently attributable wallets;
-- GMGN fresh-wallet, bot/degen, and entrapment-trader rates when supplied;
-- Top 100 curated-library, Robinhood, BSC, and PVP hit counts plus holding share;
-- EOA-only holder count/share and the same cohort breakdown after excluding contracts, pools, and
-  black-hole addresses;
-- the excluded-address audit: original source rank, address, exclusion class, reason, and evidence;
-- ranked key wallets with label, cohort, holding share, realized/unrealized evidence, and reason;
-- current popular concepts/narratives and attention-potential evidence;
-- source names, observation times, unsupported fields, warnings, and confidence.
+Exposure references are validated atomically at CA put time. A Negative exposure must point to a
+currently live Negative Wallet. An Index exposure must exist in the prospective Index projection:
+current active CA files excluding the replaced CA, plus the incoming CA. A later CA/tag replacement
+or archive never rewrites historical CA JSON; read detail computes whether each reference is still
+`active` or `no-longer-current`. An exposure never independently creates an Index Wallet.
 
-Every percentage has a numerator/denominator or source receipt. Missing evidence is `null` with a
-reason, never `0`.
+For `source.kind: agent`, `agent` and `skill` are required; for `legacy-coin-state` they are absent.
+Provider names are bounded provenance labels, never credentials. Balance strings are non-negative
+decimal fixed-point values. Holdings assets are unique by canonical contract address plus one
+optional native-asset sentinel, and token contract addresses must match the wallet chain.
 
-Holder concentration and wallet-cohort analysis MUST use the filtered holder universe, not the raw
-provider ranking. Before re-ranking, exclude chain burn/null/system addresses, labelled exchange or
-custody wallets, liquidity pools, contracts/programs, bridges/routers, and explicitly labelled
-project treasury or vesting accounts. Excluded balances remain visible in the audit and risk output;
-they are not silently discarded.
+Before serialization, providers sort lexically, chain blocks use `bsc`, `solana`, `robinhood`, top
+wallets sort by rank, exposures by canonical address, and holdings by native/contract identity.
+Duplicate set members are rejected rather than silently removed. Address compatibility makes the
+effective top-profit maximum 100 for a Solana CA or 200 for an EVM CA with both BSC and Robinhood
+results. `profitUsd` may be negative; `winRate` must be within `0..1`.
 
-In local mode, GMGN `addr_type=0` is explicit regular-wallet evidence and `addr_type=2` is explicit
-exchange/pool evidence. `exchange`, `tags`, and `maker_token_tags` refine the exclusion class and
-take precedence over treating a row as eligible.
+`analysisId` makes an exact retry idempotent. The same ID with different canonical content is an
+idempotency conflict. A different ID replaces current JSON only when `generatedAt` is strictly
+newer; an equal/older value is stale unless `replaceNewer: true` is explicit. A caller time more
+than five minutes ahead of Main's clock is invalid. The left pane is a history of analyzed CAs, not
+an unbounded revision log.
 
-Raw rank 1 has a mandatory classification gate. If it is an excluded class, remove it and backfill
-from subsequent source rows. If it is independently attributable, retain it. Rank alone is never a
-reason to delete a real whale. If rank 1 remains unknown, filtered Top 10/Top 100 and holder-derived
-scores are unavailable rather than calculated from a misleading universe.
+## Canonical document and bounds
 
-After exclusions, eligible wallets are re-ranked from 1. A concentration depth is complete only
-when the source window contains enough classified eligible wallets to fill it, or the complete
-holder population is known to be smaller. GMGN local mode exposes at most 100 holder rows without a
-holder cursor; when exclusions prevent backfilling a complete Top 100, return `null + reason` and
-show the eligible/source-row coverage. A deployed Meme service may satisfy the contract by paging or
-over-fetching before returning its filtered Top 100.
+After validation, the repository recursively sorts object keys, pretty-prints with two spaces and
+LF line endings, adds one trailing newline, and writes those UTF-8 bytes. `contentHash` is SHA-256 of
+those exact bytes, encoded as `sha256:<64 lowercase hex>`. `get` returns both the parsed record and
+`document: string`. Trench renders the parsed record through domain components and copies the
+returned `document` directly through an exact-document action. Raw JSON is not the primary preview,
+and “exact stored JSON” does not mean preserving caller whitespace lost by MCP.
 
-### Attention analysis
+Limits are explicit: one canonical document at most 2 MiB, JSON depth at most 32, one string at most
+64 KiB, flexible evidence/result arrays at most 1,000 items, at most two CA chain results, and at
+most 100 top-profit wallets per chain. Numbers must be finite and every flexible value must be plain
+JSON. Credentials cannot be recognized perfectly inside arbitrary strings; excluding secrets is a
+caller/skill policy, while the repository mechanically enforces only shape and bounds.
 
-Attention potential is an evidence group, not an intuition-only score. It may include narrative fit,
-mention velocity, unique-author growth, holder/address growth, liquidity/volume/imbalance velocity,
-cohort accumulation, distribution change, creator history, pool state, and concentration/risk
-penalties. The current UI distinguishes observed facts, inferred/derived evidence, and unavailable
-dimensions. AI interpretation is reserved for `coin-ai-analysis-004`.
+## Local storage
 
-### Strategy decision
-
-```ts
-type CoinDecision = 'BUY' | 'HOLD' | 'SELL';
-
-interface CoinDecisionResult {
-  schema: 'coin-decision-v1';
-  decision: CoinDecision;
-  score: number;
-  confidence: number;
-  reasons: Array<{ code: string; text: string; evidenceRefs: string[] }>;
-  invalidation: string[];
-  generatedAt: number;
-}
-```
-
-`HOLD` is valid only when position inputs are present. Without a position, the result is `BUY` or
-`SELL`. A result never places an order and never claims certainty beyond its evidence.
-
-## Background Codex analysis
-
-`coin-ai-analysis-004` implements this optional interpretation path. Deterministic analysis and
-Strategy remain usable without Codex.
-
-Coin exposes one AI identity: **Codex** (`openai-codex`). There is no general chat UI, unbound prompt,
-provider selector, AI-CRMS entry, Anthropic entry, browser tool, skill tool, wallet tool, or trading
-tool. The Decision dock contains one bounded thesis field; it is a structured input to the
-current token review, not a conversational transcript or general prompt surface.
-
-### Credential ownership
-
-- `CodexCredentialService` is a main-process singleton for status, one login mutex, browser/device
-  authorization, timeout cleanup, refresh, and logout.
-- Existing credentials remain at `userData/cowork/pi/auth.json`; changing that path would orphan
-  current logins.
-- Maestro delegates Codex auth checks/login/logout to the same service. AI-CRMS remains
-  Maestro-owned.
-- The command bar may start Connect/Reconnect. Disconnect remains in Resources, is
-  application-wide, and the UI says so.
-
-### Analysis ownership
-
-`CoinAiAnalysisService` owns model/effort preference, one bounded analysis run at a time,
-cancellation, schema validation, and AI receipts. It never changes Maestro's provider/model/session
-state and never imports Maestro chat, agent, browser, or tool contracts.
-
-The selectable Codex models are GPT-5.5 plus the GPT-5.6 family: Luna, Sol, and Terra. A persisted
-GPT-5.5 preference remains GPT-5.5; older GPT-5.4 preferences normalize to `gpt-5.6-sol` on
-load/save, while historical AI receipts may still display the model that actually generated them.
-GPT-5.5, Luna, and Terra expose `low`, `medium`, `high`, and `xhigh`; Sol exposes `medium`, `high`,
-and `xhigh` only. `xhigh` is shown as `Extra`.
-
-Each explicit **Review thesis** action sends a size-bounded JSON snapshot containing the selected
-asset, the user's verbatim thesis and supplied position/risk context, observed facts, deterministic
-scores, source receipts, warnings, missing dimensions, the pinned strategy revision, and evidence
-IDs. User text is an untrusted hypothesis and cannot become evidence. Codex runs with tools disabled
-and must return strict JSON:
-
-```ts
-interface CoinAiAnalysisResult {
-  schema: 'coin-ai-analysis-v1';
-  summary: string;
-  attentionThesis: string[];
-  risks: string[];
-  evidenceRefs: string[];
-  unsupportedClaims: string[];
-  confidence: number;
-}
-```
-
-The host rejects invalid JSON/schema/evidence references and shows an actionable error. AI text is
-labelled interpretation and cannot manufacture a source fact. The UI must present counter-evidence,
-unsupported claims, and missing inputs beside the recommendation. Deterministic risk gates and the
-position rule still control the final `BUY/HOLD/SELL` result.
-
-## X Research Browser
-
-`CoinXBrowserService` owns one Chrome context in Electron main. The menubar preference selects
-`visible` (`headless: false`) or `hidden` (`headless: true`) for Playwright
-`launchPersistentContext`, using system Chrome and one dedicated directory below
-`userData/coin/x-research-profile/`. The directory is machine-local, secret-bearing browser state;
-it is never persisted in Coin JSON, synchronized, logged, or included in evidence exports. Only the
-non-secret display preference is persisted in Coin state.
-
-The first visible launch opens X for manual login and two-factor completion. Later visible or hidden
-launches reuse that dedicated session. Changing the display preference while active restarts the
-same query. A hidden login requirement asks for visible mode and never silently changes mode. The
-service exposes only bounded states (`closed`, `launching`, `login_required`, `ready`, `error`) and
-operations (`getStatus`, `open`, `focus`, `close`) to the renderer. External CDP attachment controls
-its own visibility, so the menubar switch is disabled in that mode.
-
-The service must not point Playwright at the regular Chrome default user-data directory, copy its
-Cookie database, or require the user to close daily Chrome. Chrome 136 and Playwright do not support
-that default-profile automation path. Optional CDP attachment is loopback-only and may target only a
-Chrome process already launched for the Trench non-default profile. A configured CDP connection
-that fails returns an error; it never falls back to a different profile or source.
-
-When X collection is implemented, accessibility locators identify targets and read fresh bounding
-boxes. All mouse move, wheel, press, and release events are issued through `CDPSession` input calls.
-Login expiry or challenge pages pause for user action in the visible Chrome; the system does not
-bypass them.
-
-## Resources page
-
-### Codex
-
-Show account state, Connect/Disconnect, GPT-5.5 plus GPT-5.6 model selection, model-specific effort
-selection, last verification, and the application-wide disconnect consequence. Every action has
-loading and duplicate-submit protection.
-
-### GMGN CLI
-
-- Detect `gmgn-cli`, resolved executable path, and version without using a shell.
-- When absent, show a copyable `yarn global add gmgn-cli` command and the installation guide.
-- Open the personal API key page in the system browser; never scrape or embed GMGN web pages.
-- Accept `GMGN_API_KEY` through a local credential modal and write only
-  `~/.config/gmgn/.env` with mode `0600`. Never request or write `GMGN_PRIVATE_KEY`.
-- Verify with an allowlisted read-only command such as `market trending`; run via `execFile`/spawn
-  with `shell: false`, timeout, output cap, sanitized error, and no renderer-provided command.
-- A configured deployed Meme service is preferred in explicit `service` mode. Explicit `local`
-  mode runs only fixed read-only templates for trending, hot searches, trenches, token info,
-  security, holders, and traders. Commands are serial, cancellable, cooldown-limited, bounded by
-  timeout/output caps, and always use `shell: false`.
-- Local Discover starts at most one trenches command per polling interval and enforces a 60-second
-  minimum. It never fans out one process per candidate.
-
-### Services and deferred sources
-
-Service base overrides are validated `https` URLs in production. Alchemy is deferred from the
-current release: it is not a local-mode prerequisite, is not shown in Resources or Sources, and has
-no renderer IPC capability. The existing main-process adapter and encrypted-store implementation
-remain dormant for a future tracked task.
-
-Detailed human steps live in [`coin-data-sources.md`](../guides/coin-data-sources.md) and
-[`gmgn-cli.md`](../guides/gmgn-cli.md).
-
-## State and persistence
-
-Coin uses no hidden SQLite renderer. Main-process services write owner-only state below
-`userData/coin/`:
-
-| File | State |
-|---|---|
-| `coin-state.json` | active token, source-safe drafts, Scan/Focus state, analyses, decisions, AI receipts, and history; legacy active-page values are migration input only |
-| `resources.enc` | Reserved encrypted resource values; dormant Alchemy data remains forward-compatible |
-| `window-state.json` | validated geometry |
-| `x-research-profile/` | Chrome-owned session state shared by visible/hidden Trench modes; machine-local and excluded from app JSON/sync/logs |
-
-Codex tokens remain in the shared Pi auth file. GMGN uses its standard owner-only config file and is
-not copied into Coin state. Malformed state produces a visible recovery error; it is not silently
-treated as valid empty history.
-
-Renderer stores are `reactive` wrappers around class instances. Instance fields contain only
-renderable or serializable state; function-valued listeners, unsubscribe callbacks, timers, and
-other lifecycle handles remain module-scoped outside the reactive class instance. Class behavior
-uses prototype methods.
-
-## IPC and security
-
-Home uses the narrow `electron-xpc` launch emitter. The local Coin renderer uses a dedicated
-`contextBridge` and sender-checked `ipcMain.handle` surface because generic XPC does not retain sender
-identity for privileged resources.
+Bitterless Main owns the repository below its environment-specific `userData` directory:
 
 ```text
-state.load / state.save / state.recover
-data.getSources / data.monitor / data.refreshMonitor / data.parseScreener / data.screen
-data.analyzeMeme / data.startDiscover / data.stopDiscover / data.cancel
-strategy.evaluate
-resources.getStatus / resources.detectGmgn
-resources.saveGmgnApiKey / resources.verifyGmgn / resources.openGuide
-codex.getStatus / codex.connect / codex.disconnect
-clipboard.readText
-xBrowser.getStatus / xBrowser.open / xBrowser.focus / xBrowser.close
-ai.analyze / ai.cancel
-window.minimize / window.toggleMaximize / window.close
+userData/trench/
+├─ analyses/<sha256-of-canonical-address>.json
+├─ negative-wallets/<chain>/<sha256-of-canonical-address>/
+│  ├─ tag.json
+│  └─ holdings.json
+└─ archive/...
 ```
 
-Main rejects calls not sent by the live Coin window. Secrets and full credential-bearing endpoints
-are never returned. Resource operations accept typed values, not arbitrary commands or paths.
+On POSIX, directories are enforced as `0700` and files as `0600`. On Windows, the repository stays
+under the current user's `userData`, inherits its per-user ACL, and never broadens that ACL; POSIX
+mode bits are not claimed there. Every file mutation writes a uniquely created temporary file,
+fsyncs/closes it, atomically renames it, then rereads and validates the persisted bytes. Per-identity
+writes are serialized. Negative archive atomically renames the whole wallet directory, so tag and
+holdings cannot split during a crash.
 
-No wallet private key, seed phrase, signing request, swap, leverage order, or automated trading is
-in scope. Coin provides analysis and decisions only.
+The supported writer boundary is the single Bitterless Main process: renderer and MCP callers never
+provide filesystem paths, the helper never writes Trench files, and Main serializes repository
+mutations. The repository rejects traversal, pre-existing symlink/reparse-point components,
+non-regular record files, and resolved paths outside `userData/trench`. It does not claim to sandbox
+another process already running as the same OS user that concurrently renames repository parents;
+that principal can already directly alter the user's `userData` and other owner-readable files.
+Covering that stronger threat requires a separately shipped and dual-platform-verified native
+handle-relative filesystem adapter; it is outside v1 rather than being approximated with a racy
+path recheck.
 
-## Loading and error states
+Archive is a terminal MCP operation guarded by expected ID and content hash. Archived bytes remain
+on disk for forensic/manual recovery, but v1 exposes no MCP restore. The old
+`userData/coin/coin-state.json` is never deleted or rewritten; a future bounded migrator may copy
+valid legacy analysis with `source.kind: 'legacy-coin-state'`.
 
-- Every request-triggering button has a visible loading state and ignores duplicate submissions.
-- Current results stay visible during refresh and receive a refreshing marker.
-- Empty, unavailable, error, and stale are distinct states with different recovery actions.
-- Source receipt timestamps remain visible; stale data is labelled.
-- Polling/data requests expose Stop/Cancel and cannot survive window close or auth invalidation.
+## Index Wallet derivation
 
-## Human preparation
+Index Wallets are not a second hand-editable source of truth. `trench.index_wallet.list` scans the
+current CA files and folds every chain result's `topProfitWallets` into a dictionary keyed by
+`{chain,address}`. Each item retains every source CA, rank, profit evidence, and analysis time.
+Replacing or archiving a CA immediately removes stale provenance.
 
-1. Install GMGN CLI, create a personal API key, and complete the read-only probe.
-2. Curate and version high-profit/control wallet cohorts and labels.
-3. Run the seven-day Robinhood capability/sample-density probe before enabling its score.
-4. Deploy/configure Monitor and Screener service bases. A deployed Meme service is optional when
-   explicit local GMGN mode is configured, and preferred when a Meme base is configured.
-5. Supply actual position and risk inputs for position-aware `HOLD` decisions.
-6. Connect Codex only when exercising optional structured AI interpretation.
-7. Select visible X mode once and complete X login/2FA in the Trench-managed profile; hidden mode can
-   reuse that session afterward.
+Before analyzing a new CA, the external skill reads the Index and Negative dictionaries, checks
+their exposure in the target token, and records the resulting positive/negative exposure inside the
+new CA JSON. Trench only previews those fields.
 
-Alchemy, X API, and Helius are optional follow-up sources. The regular Chrome profile, wallet
-signing, and exchange credentials are not requested.
+## Negative Wallet lifecycle
 
-## Verification contract
+A negative wallet is created only after a human explicitly supplies its address and explanation to
+an agent. The agent sends `requestId`, chain, address, and explanation. Bitterless writes
+`tagId = requestId`, canonical identity, `source: human-via-agent`, and Main-owned timestamps. The
+same request/content is idempotent; the same request ID with different content conflicts; a new
+request ID explicitly corrects the record while preserving `createdAt`.
 
-The single-page layout, thesis flow, clipboard command, and selectable X browser display mode remain
-owner-verification pending.
+`explanation` is trimmed as a whole, allows intentional line breaks, rejects NUL/control payloads,
+and is limited to 2,000 Unicode code points. The list uses its first non-empty line; detail preserves
+the complete explanation.
 
-- First/repeated Open, close/reopen, geometry, language, auth invalidation, and host-quit cleanup.
-- One flat Trench workspace with no core tabs, decorative cards, KPI strip, or body overflow.
-- Persistent Paste and analyze, one-shot Terminal, menubar visible/hidden X mode, shared Codex
-  status, model, and effort controls.
-- Scan, Focus, active token, and bounded Decision remain in one context; Resources/History restore
-  that context after closing.
-- X uses a dedicated persistent profile, requires one manual login, survives close/reopen, and never
-  mounts or copies the regular Chrome profile.
-- The menubar display preference survives restart; switching an active managed context reopens the
-  same query, while hidden login requirements remain explicit.
-- Loading/empty/unavailable/error states retain the previous snapshot and never automatically fall
-  back to another source or profile.
-- Resource credential masking, `safeStorage`, owner-only file modes, GMGN command allowlist, no
-  shell execution, no private key, and install/probe error handling.
-- Monitor/Screener real local HTTP fixture tests and complete Meme result rendering.
-- Deterministic `BUY/HOLD/SELL` fixtures and position-dependent `HOLD` gate.
-- Codex shared login plus strict thesis/JSON/schema/evidence validation with no general
-  chat/provider/tool surface.
-- Sender-denial tests for every privileged IPC group.
-- `yarn typecheck:node`, focused renderer typecheck, `yarn build`, and Electron Playwright at
-  `1360x860` and `800x600` with screenshot and overflow checks.
+Holdings analysis is a separate external operation and `holdings.json`. Its ID/time conflict rules
+match CA analysis and it never changes `tag.json`. Holdings require a live tag. Archiving a negative
+wallet requires a separate explicit human request and moves the whole directory.
+
+## Read APIs and refresh
+
+List calls accept `{query?: string, cursor?: string, limit?: number}` with a trimmed 200-code-point
+query, default limit 50, and maximum 100. Cursors are opaque and bound to the normalized query,
+module, and revision. CA sorts by `generatedAt DESC, canonicalAddress ASC`; Negative
+sorts by `updatedAt DESC, chain ASC, address ASC`; Index sorts by last evidence time descending,
+then chain/address. Responses contain metadata only, `nextCursor`, repository `revision`, and a
+bounded `issues` array for invalid stored entries. A cursor also binds the originating revision;
+mutation between pages returns `CURSOR_STALE` instead of silently skipping/duplicating entries.
+Detail `get` fetches one selected document. Index list returns summaries only. Index get pages one
+selected wallet's source-CA summaries: CA/analysis ID/hash, rank/profit/win-rate,
+`evidenceAvailable`, and exposure measurements without flexible evidence. Full evidence remains in
+the source CA document and is read through `trench.analysis.get`. An Index detail response stops
+before 1 MiB even when its item limit is not reached and supplies `nextCursor`.
+
+Committed mutations broadcast this content-free event:
+
+```ts
+interface TrenchDataChangedV1 {
+  schema: 'bl-trench-data-changed-v1';
+  revision: number;
+  entity: 'analysis' | 'negative-wallet' | 'negative-wallet-holdings';
+  identity: string;
+  operation: 'put' | 'archive';
+}
+```
+
+The renderer subscribes before its first fetch and rejects responses older than the latest observed
+revision/request generation. Trench read methods return discriminated
+`{ok:true,value}|{ok:false,error:{code,message}}` results because `electron-xpc` converts thrown Main
+errors to `null`. Missing and failed reads remain distinct.
+
+Pure XPC has no sender context, so `TrenchHandler` is intentionally an app-wide trusted, read-only
+API available to first-party local renderers that load `electron-xpc`; remote Omni browser cells do
+not. All mutation remains behind MCP/Main validation.
+
+## Active runtime boundary
+
+Trench uses a dedicated preload exposing only static host context and `electron-xpc`. The active
+standalone window lifecycle no longer imports/registers legacy Coin data, AI, strategy, resource,
+clipboard, or X-browser services. Historical source may remain unreachable, but neither standalone
+nor Omni Trench loads the legacy Coin preload or active analysis import graph.
+
+## Omni hosting
+
+Trench is a first-party Omni mini app with ID `trench`, URL `bl://miniapp/trench`, the dedicated
+preload, and the local Trench renderer. It renders inside the operation `WebContentsView`; selecting
+it does not open the standalone window. Its runtime explicitly opts into sandbox, context isolation,
+web security, no Node integration, and navigation/new-window fences.
+
+Standalone chrome is hidden in Omni. Embedded roots have no 800×600 CSS minimum, drag region,
+traffic-light padding, or native window controls. Multiple Trench cells may read the same repository
+and receive the same broadcast because no process-global analysis job remains active.
+
+## Lifecycle and CRUD closure
+
+| Entity            | Create                              | Read/search       | Update                                     | Terminal state                             |
+| ----------------- | ----------------------------------- | ----------------- | ------------------------------------------ | ------------------------------------------ |
+| CA analysis       | MCP `put`                           | UI + MCP list/get | newer/CAS-safe `put` replaces current JSON | explicit CAS archive; bytes retained       |
+| Index wallet      | derived from CA JSON                | UI + MCP list     | automatic rebuild                          | disappears when no active CA references it |
+| Negative wallet   | explicit human-authorized MCP `put` | UI + MCP list/get | explicit correction                        | explicit whole-directory CAS archive       |
+| Negative holdings | MCP `put`                           | UI + MCP get      | newer snapshot replaces current JSON       | archived with its negative tag             |
+
+The renderer intentionally has no mutation controls. Empty, loading, selected, stale-refresh,
+invalid-file, repository-unavailable, and read-error states are visible; no sample data is fabricated.
+
+## Acceptance
+
+- Standalone Trench shows exactly CA Records, Index Wallets, and Negative Wallets, with no analysis
+  trigger or legacy analysis/resource/X preload method.
+- One MCP CA write creates exactly one active address-keyed JSON; a BSC+Robinhood address contains
+  two independently renderable chain blocks in that file.
+- An already-open row live-refreshes into structured domain sections without clearing valid old
+  evidence; `Copy exact JSON` returns the exact `document` whose UTF-8 bytes produced `contentHash`.
+- Index Wallets are the deterministic union of at most 100 wallets per active CA chain block and
+  lose stale provenance after replacement/archive.
+- A human-explained Negative Wallet and its holdings appear together while remaining separate JSON
+  documents in one atomically archivable directory.
+- Omni offers Trench as a real local cell. Standalone and Omni show the same records, and 800×568,
+  398×568, and 800×282 cells have no body-level horizontal overflow.
+- Foreign paths, malformed/incompatible addresses, duplicate chains/wallets/ranks, gaps in ranks,
+  stale/future writes, ID/hash conflicts, oversized/deep JSON, remote navigation, and partial writes
+  fail closed.
+
+## Superseded behavior
+
+`coin-analysis-workspace-003`, `coin-ai-analysis-004`, `trench-single-page-workspace-008`, and
+`trench-auto-chain-analysis-009` describe historical analysis surfaces. Their user-visible actions
+are not retained as an alternate Trench mode.

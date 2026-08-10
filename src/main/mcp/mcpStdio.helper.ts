@@ -3,10 +3,11 @@ import readline from 'readline';
 import type {
   LocalRpcFailure,
   LocalRpcRequest,
-  McpBridgeEndpoint,
+  McpBridgeEndpoint
 } from '@shared/mcp/mcpBridge.shared';
 import { MCP_LOCAL_RPC_MAX_BYTES } from '@shared/mcp/mcpBridge.shared';
 import { ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH } from '@shared/onlypreview/onlyPreview.types';
+import { TRENCH_MCP_TOOLS } from '@shared/trench/trenchMcp.schema';
 
 type JsonRpcId = string | number | null;
 
@@ -37,25 +38,28 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
 const tools: McpTool[] = [
   {
     name: 'domain.list',
-    description: 'List active, non-deleted human-managed Bitterless todo domains with descriptions and the virtual Focus/star policy, including explicit priority intent, unstar intent, live-session blockers, and preserve-on-omission guidance. This is the default catalog; agents must choose an existing active domain before creating todos.',
+    description:
+      'List active, non-deleted human-managed Bitterless todo domains with descriptions and the virtual Focus/star policy, including explicit priority intent, unstar intent, live-session blockers, and preserve-on-omission guidance. This is the default catalog; agents must choose an existing active domain before creating todos.',
     inputSchema: {
       type: 'object',
       properties: {},
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'domain.archived.list',
-    description: 'List archived, non-deleted Bitterless todo domains with descriptions for read-only historical context. Archived domains are never valid targets for todo creation or movement.',
+    description:
+      'List archived, non-deleted Bitterless todo domains with descriptions for read-only historical context. Archived domains are never valid targets for todo creation or movement.',
     inputSchema: {
       type: 'object',
       properties: {},
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'domain.description.update',
-    description: 'Update the description of one active, non-deleted Bitterless todo domain after explicit user authorization. The description is trimmed; use an empty string to clear it.',
+    description:
+      'Update the description of one active, non-deleted Bitterless todo domain after explicit user authorization. The description is trimmed; use an empty string to clear it.',
     inputSchema: {
       type: 'object',
       required: ['id', 'description'],
@@ -64,60 +68,65 @@ const tools: McpTool[] = [
         description: {
           type: 'string',
           maxLength: 500,
-          description: 'Trimmed domain purpose and placement guidance. Use an empty string to clear it.',
-        },
+          description:
+            'Trimmed domain purpose and placement guidance. Use an empty string to clear it.'
+        }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'domain.create',
-    description: 'Create an active human-managed Bitterless todo domain only when Ral explicitly requests or authorizes it. Never create a domain implicitly while creating a todo.',
+    description:
+      'Create an active human-managed Bitterless todo domain only when Ral explicitly requests or authorizes it. Never create a domain implicitly while creating a todo.',
     inputSchema: {
       type: 'object',
       required: ['title'],
       properties: {
         title: { type: 'string', minLength: 1, maxLength: 200 },
-        description: { type: 'string', maxLength: 500 },
+        description: { type: 'string', maxLength: 500 }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'event.list',
-    description: 'Poll Bitterless todo events after a cursor. Use at session start/resume to learn whether human-blocking todos were completed or changed.',
+    description:
+      'Poll Bitterless todo events after a cursor. Use at session start/resume to learn whether human-blocking todos were completed or changed.',
     inputSchema: {
       type: 'object',
       properties: {
         afterEventId: { type: 'integer', minimum: 0, default: 0 },
-        limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+        limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'event.wait',
-    description: 'Long-poll Bitterless todo events after a cursor while actively waiting for human action. This is polling, not push notification.',
+    description:
+      'Long-poll Bitterless todo events after a cursor while actively waiting for human action. This is polling, not push notification.',
     inputSchema: {
       type: 'object',
       properties: {
         afterEventId: { type: 'integer', minimum: 0, default: 0 },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
-        timeoutMs: { type: 'integer', minimum: 1000, maximum: 30000, default: 25000 },
+        timeoutMs: { type: 'integer', minimum: 1000, maximum: 30000, default: 25000 }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.list',
-    description: 'List incomplete Bitterless todos from unarchived domains. Completed todos are intentionally omitted to keep MCP reads small.',
+    description:
+      'List incomplete Bitterless todos from unarchived domains. Completed todos are intentionally omitted to keep MCP reads small.',
     inputSchema: {
       type: 'object',
       properties: {
-        domainId: TODO_ID_SCHEMA,
+        domainId: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.get',
@@ -126,14 +135,15 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: TODO_ID_SCHEMA,
+        id: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.status',
-    description: 'Get active/completed/deleted/missing status for known todo IDs without listing completed history. Use this when an agent is tracking todos it created.',
+    description:
+      'Get active/completed/deleted/missing status for known todo IDs without listing completed history. Use this when an agent is tracking todos it created.',
     inputSchema: {
       type: 'object',
       required: ['ids'],
@@ -142,15 +152,16 @@ const tools: McpTool[] = [
           type: 'array',
           minItems: 1,
           maxItems: 100,
-          items: TODO_ID_SCHEMA,
-        },
+          items: TODO_ID_SCHEMA
+        }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.create',
-    description: 'Create a Bitterless todo. Prefer omitting dueAt and remindAt when unspecified; null is accepted for compatibility and treated as omitted, but an empty string is never valid. Clear user intent such as star/星标, important/重点, priority/优先, or add/place in Focus means important=true. An immediate human action blocking the current agent session also means important=true. A due date, reminder, or ordinary backlog item alone must not imply a star; otherwise leave important false or unset.',
+    description:
+      'Create a Bitterless todo. Prefer omitting dueAt and remindAt when unspecified; null is accepted for compatibility and treated as omitted, but an empty string is never valid. Clear user intent such as star/星标, important/重点, priority/优先, or add/place in Focus means important=true. An immediate human action blocking the current agent session also means important=true. A due date, reminder, or ordinary backlog item alone must not imply a star; otherwise leave important false or unset.',
     inputSchema: {
       type: 'object',
       required: ['domainId', 'title'],
@@ -161,30 +172,34 @@ const tools: McpTool[] = [
           type: ['integer', 'null'],
           minimum: 0,
           maximum: Number.MAX_SAFE_INTEGER,
-          description: 'Optional Unix-millisecond timestamp. Prefer omitting when unspecified; null is accepted for compatibility and treated as omitted. Never send an empty string.',
+          description:
+            'Optional Unix-millisecond timestamp. Prefer omitting when unspecified; null is accepted for compatibility and treated as omitted. Never send an empty string.'
         },
         remindAt: {
           type: ['integer', 'null'],
           minimum: 0,
           maximum: Number.MAX_SAFE_INTEGER,
-          description: 'Optional Unix-millisecond timestamp. Prefer omitting when unspecified; null is accepted for compatibility and treated as omitted. Never send an empty string.',
+          description:
+            'Optional Unix-millisecond timestamp. Prefer omitting when unspecified; null is accepted for compatibility and treated as omitted. Never send an empty string.'
         },
         important: {
           type: 'boolean',
-          description: 'Todo star/Focus flag. Use true for explicit star/important/priority/Focus-placement intent or an immediate human action blocking the current session. A due date, reminder, or ordinary backlog item alone does not imply true; otherwise use false or omit.',
+          description:
+            'Todo star/Focus flag. Use true for explicit star/important/priority/Focus-placement intent or an immediate human action blocking the current session. A due date, reminder, or ordinary backlog item alone does not imply true; otherwise use false or omit.'
         },
         note: {
           type: 'string',
           maxLength: 10000,
-          description: 'Use an empty string to clear the note.',
-        },
+          description: 'Use an empty string to clear the note.'
+        }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.update',
-    description: 'Update a Bitterless todo. Omit unchanged dueAt and remindAt fields, never send an empty string, and use null only to clear an existing timestamp. Clear star/星标, important/重点, priority/优先, or add/place in Focus intent means important=true; unstar/取消星标, no longer important/不再重点, or remove from Focus means important=false. An immediate human action blocking the current agent session still means important=true. A due date, reminder, ordinary backlog item, or unrelated edit alone must not change the star; omit important to preserve its current state.',
+    description:
+      'Update a Bitterless todo. Omit unchanged dueAt and remindAt fields, never send an empty string, and use null only to clear an existing timestamp. Clear star/星标, important/重点, priority/优先, or add/place in Focus intent means important=true; unstar/取消星标, no longer important/不再重点, or remove from Focus means important=false. An immediate human action blocking the current agent session still means important=true. A due date, reminder, ordinary backlog item, or unrelated edit alone must not change the star; omit important to preserve its current state.',
     inputSchema: {
       type: 'object',
       required: ['id'],
@@ -195,26 +210,29 @@ const tools: McpTool[] = [
           type: ['integer', 'null'],
           minimum: 0,
           maximum: Number.MAX_SAFE_INTEGER,
-          description: 'Unix-millisecond timestamp, or null to clear it. Omit when unchanged; never send an empty string.',
+          description:
+            'Unix-millisecond timestamp, or null to clear it. Omit when unchanged; never send an empty string.'
         },
         remindAt: {
           type: ['integer', 'null'],
           minimum: 0,
           maximum: Number.MAX_SAFE_INTEGER,
-          description: 'Unix-millisecond timestamp, or null to clear it. Omit when unchanged; never send an empty string.',
+          description:
+            'Unix-millisecond timestamp, or null to clear it. Omit when unchanged; never send an empty string.'
         },
         important: {
           type: 'boolean',
-          description: 'Todo star/Focus flag. true stars/adds to Focus; false unstars/removes from Focus. Follow explicit user priority intent, keep immediate human blockers true, and omit this field to preserve the current state during unrelated edits.',
+          description:
+            'Todo star/Focus flag. true stars/adds to Focus; false unstars/removes from Focus. Follow explicit user priority intent, keep immediate human blockers true, and omit this field to preserve the current state during unrelated edits.'
         },
         note: {
           type: 'string',
           maxLength: 10000,
-          description: 'Use an empty string to clear the note.',
-        },
+          description: 'Use an empty string to clear the note.'
+        }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.complete',
@@ -223,10 +241,10 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: TODO_ID_SCHEMA,
+        id: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.uncomplete',
@@ -235,10 +253,10 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: TODO_ID_SCHEMA,
+        id: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.delete',
@@ -247,10 +265,10 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: TODO_ID_SCHEMA,
+        id: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'todo.move',
@@ -260,22 +278,23 @@ const tools: McpTool[] = [
       required: ['id', 'domainId'],
       properties: {
         id: TODO_ID_SCHEMA,
-        domainId: TODO_ID_SCHEMA,
+        domainId: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'step.list',
-    description: 'List every live Step for one Bitterless todo in stable order, together with the validated parent todo. Use this before targeting an unknown Step for update or deletion.',
+    description:
+      'List every live Step for one Bitterless todo in stable order, together with the validated parent todo. Use this before targeting an unknown Step for update or deletion.',
     inputSchema: {
       type: 'object',
       required: ['todoId'],
       properties: {
-        todoId: TODO_ID_SCHEMA,
+        todoId: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'step.create',
@@ -285,10 +304,10 @@ const tools: McpTool[] = [
       required: ['todoId', 'title'],
       properties: {
         todoId: TODO_ID_SCHEMA,
-        title: { type: 'string', minLength: 1, maxLength: 200 },
+        title: { type: 'string', minLength: 1, maxLength: 200 }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'step.update',
@@ -298,10 +317,10 @@ const tools: McpTool[] = [
       required: ['id', 'title'],
       properties: {
         id: TODO_ID_SCHEMA,
-        title: { type: 'string', minLength: 1, maxLength: 200 },
+        title: { type: 'string', minLength: 1, maxLength: 200 }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'step.complete',
@@ -310,10 +329,10 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: TODO_ID_SCHEMA,
+        id: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'step.uncomplete',
@@ -322,10 +341,10 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: TODO_ID_SCHEMA,
+        id: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'step.delete',
@@ -334,10 +353,10 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: {
-        id: TODO_ID_SCHEMA,
+        id: TODO_ID_SCHEMA
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
   {
     name: 'preview.open',
@@ -347,15 +366,12 @@ const tools: McpTool[] = [
       type: 'object',
       required: ['path'],
       properties: {
-        path: {
-          type: 'string',
-          minLength: 1,
-          maxLength: ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH,
-        },
+        path: { type: 'string', minLength: 1, maxLength: ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH }
       },
-      additionalProperties: false,
-    },
+      additionalProperties: false
+    }
   },
+  ...TRENCH_MCP_TOOLS
 ];
 
 const writeMessage = (message: object): void => {
@@ -369,19 +385,24 @@ const writeError = (id: JsonRpcId, code: number, message: string, data?: unknown
     error: {
       code,
       message,
-      ...(data === undefined ? {} : { data }),
-    },
+      ...(data === undefined ? {} : { data })
+    }
   });
 };
 
-const callBridge = (endpoint: McpBridgeEndpoint, method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> => {
+const callBridge = (
+  endpoint: McpBridgeEndpoint,
+  method: string,
+  params: unknown,
+  timeoutMs = REQUEST_TIMEOUT_MS
+): Promise<unknown> => {
   return new Promise((resolve, reject) => {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const request: LocalRpcRequest = {
       jsonrpc: '2.0',
       id,
       method,
-      params,
+      params
     };
 
     const socket = net.createConnection(endpoint.path);
@@ -431,9 +452,10 @@ const callBridge = (endpoint: McpBridgeEndpoint, method: string, params: unknown
         }
         cleanup();
         if (hasError) {
-          const message = isRecord(response.error) && typeof response.error.message === 'string'
-            ? response.error.message
-            : 'Bitterless MCP bridge returned an invalid error response';
+          const message =
+            isRecord(response.error) && typeof response.error.message === 'string'
+              ? response.error.message
+              : 'Bitterless MCP bridge returned an invalid error response';
           reject(new Error(message));
           return;
         }
@@ -446,9 +468,11 @@ const callBridge = (endpoint: McpBridgeEndpoint, method: string, params: unknown
 
     socket.on('error', (err: Error) => {
       cleanup();
-      reject(new Error(
-        `Bitterless is not running or the MCP bridge is unavailable: ${endpoint.path}. ${err.message}`.trim(),
-      ));
+      reject(
+        new Error(
+          `Bitterless is not running or the MCP bridge is unavailable: ${endpoint.path}. ${err.message}`.trim()
+        )
+      );
     });
   });
 };
@@ -463,16 +487,14 @@ const createToolText = (toolName: string): string => {
 const getBridgeTimeoutMs = (toolName: string, args: unknown): number => {
   if (toolName !== 'event.wait') return REQUEST_TIMEOUT_MS;
   const timeoutValue = isRecord(args) ? args.timeoutMs : undefined;
-  const timeoutMs = typeof timeoutValue === 'number' && Number.isFinite(timeoutValue)
-    ? Math.max(1000, Math.min(30000, Math.floor(timeoutValue)))
-    : 25000;
+  const timeoutMs =
+    typeof timeoutValue === 'number' && Number.isFinite(timeoutValue)
+      ? Math.max(1000, Math.min(30000, Math.floor(timeoutValue)))
+      : 25000;
   return timeoutMs + 5000;
 };
 
-const handleRequest = async (
-  request: McpRequest,
-  endpoint: McpBridgeEndpoint,
-): Promise<void> => {
+const handleRequest = async (request: McpRequest, endpoint: McpBridgeEndpoint): Promise<void> => {
   const id = request.id ?? null;
 
   if (request.method.startsWith('notifications/')) {
@@ -485,17 +507,16 @@ const handleRequest = async (
       jsonrpc: '2.0',
       id,
       result: {
-        protocolVersion: typeof params.protocolVersion === 'string'
-          ? params.protocolVersion
-          : '2025-06-18',
+        protocolVersion:
+          typeof params.protocolVersion === 'string' ? params.protocolVersion : '2025-06-18',
         capabilities: {
-          tools: {},
+          tools: {}
         },
         serverInfo: {
-          name: 'bitterless-todo',
-          version: '0.1.0',
-        },
-      },
+          name: 'bitterless',
+          version: '0.2.0'
+        }
+      }
     });
     return;
   }
@@ -510,8 +531,8 @@ const handleRequest = async (
       jsonrpc: '2.0',
       id,
       result: {
-        tools,
-      },
+        tools
+      }
     });
     return;
   }
@@ -525,7 +546,7 @@ const handleRequest = async (
     }
 
     try {
-      const args = params.arguments ?? {};
+      const args = params.arguments === undefined ? {} : params.arguments;
       const result = await callBridge(endpoint, toolName, args, getBridgeTimeoutMs(toolName, args));
       writeMessage({
         jsonrpc: '2.0',
@@ -534,11 +555,11 @@ const handleRequest = async (
           content: [
             {
               type: 'text',
-              text: createToolText(toolName),
-            },
+              text: createToolText(toolName)
+            }
           ],
-          structuredContent: result,
-        },
+          structuredContent: result
+        }
       });
     } catch (err) {
       writeError(id, -32000, getErrorMessage(err, 'Bitterless MCP tool failed'));
@@ -549,13 +570,11 @@ const handleRequest = async (
   writeError(id, -32601, `Method not found: ${request.method}`);
 };
 
-export const startBitterlessMcpStdioServer = (
-  endpoint: McpBridgeEndpoint,
-): Promise<void> => {
+export const startBitterlessMcpStdioServer = (endpoint: McpBridgeEndpoint): Promise<void> => {
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
-      crlfDelay: Infinity,
+      crlfDelay: Infinity
     });
     let inputClosed = false;
     let pendingRequests = 0;
@@ -570,20 +589,22 @@ export const startBitterlessMcpStdioServer = (
 
     const runRequest = (request: McpRequest): void => {
       pendingRequests += 1;
-      handleRequest(request, endpoint).catch((err: unknown) => {
-        const failure: LocalRpcFailure = {
-          jsonrpc: '2.0',
-          id: request.id ?? null,
-          error: {
-            code: -32000,
-            message: getErrorMessage(err, 'Bitterless MCP request failed'),
-          },
-        };
-        writeMessage(failure);
-      }).finally(() => {
-        pendingRequests -= 1;
-        finishWhenIdle();
-      });
+      handleRequest(request, endpoint)
+        .catch((err: unknown) => {
+          const failure: LocalRpcFailure = {
+            jsonrpc: '2.0',
+            id: request.id ?? null,
+            error: {
+              code: -32000,
+              message: getErrorMessage(err, 'Bitterless MCP request failed')
+            }
+          };
+          writeMessage(failure);
+        })
+        .finally(() => {
+          pendingRequests -= 1;
+          finishWhenIdle();
+        });
     };
 
     process.stderr.write(`[bitterless-mcp] stdio server started (${endpoint.path})\n`);

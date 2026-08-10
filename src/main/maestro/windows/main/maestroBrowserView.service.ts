@@ -26,6 +26,12 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import { createBoundsApplier } from './viewBounds'
 
+export const shouldOpenOperationDevTools = (): boolean => {
+  if (import.meta.env.VITE_MODE !== 'debug') return false
+  if (process.env.BITTERLESS_E2E === '1') return false
+  return process.env.COACH_DEVTOOLS === '1'
+}
+
 export const AI_CRMS_URL = 'http://crms.micromeet.ai/'
 export const AI_CRMS_LOGIN_URL = 'http://crms.micromeet.ai/?mrgn=ID#/login'
 const AI_CRMS_TITLE = 'AI-CRMS'
@@ -245,7 +251,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   openOperationDevTools(): void {
-    if (process.env.COACH_DEVTOOLS !== '1') return
+    if (!shouldOpenOperationDevTools()) return
     const wc = this._state.operationView?.webContents
     if (!wc || wc.isDestroyed() || wc.isDevToolsOpened()) return
     try {

@@ -14,10 +14,14 @@ design document.
   services with unchanged XPC and runtime behavior.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
-- [Trench sub-application](features/coin.md) - single-page CA research, Scan/Focus signals, bounded
-  Codex decisions, selectable visible/hidden X Chrome, and local resource configuration.
-- [Trench workspace layout](features/coin-layout.md) - flat Arco/Royal Blue command, signal, token,
-  and decision regions with no core tabs or dashboard decoration.
+- [BL Trench record vault](features/coin.md) - read-only CA records, derived Index Wallets, human
+  negative-wallet evidence, one-CA/one-JSON storage, and standalone/Omni hosting.
+- [BL Trench record layout](features/coin-layout.md) - Royal Blue list/detail evidence browsing and
+  responsive embedded states without analysis controls.
+- [Trench raw JSON detail is hard to read](issues/trench-raw-json-detail-hard-to-read.md) - fixed:
+  domain components render readable evidence while exact canonical document copy remains available.
+- [BL Trench MCP and skill](features/trench-mcp.md) - production MCP writes, atomic local storage,
+  portable external-analysis workflow, and owner acceptance.
 - [Todo MCP integration](features/todo-mcp.md) - production-first local Todo access with isolated
   development instances.
 - [Todoist-style Todo synchronization](features/todoist-sync.md) - independent encrypted
@@ -33,7 +37,7 @@ design document.
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
-  or local Todo/EyesOnAgents/Translator/Motto operation views with development and packaged
+  or local Todo/EyesOnAgents/Translator/Motto/Trench operation views with development and packaged
   runtime mapping.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
@@ -56,6 +60,9 @@ design document.
 - [Application logging and diagnostics](features/application-diagnostics.md) - environment-isolated
   `electron-log`, sanitized Codex lifecycle evidence, and a Settings Log ledger for live paths,
   startup state, directories, and value-free environment status.
+- [Command-line launch can reuse release mode](issues/command-line-launch-mode-mismatch.md) - fixed:
+  every unpackaged CLI/E2E GUI is explicitly debug, every package is release, and Main rejects
+  mismatches before paths, Keychain, SQLite, logging, or windows.
 - [Top-level window state persistence](features/window-state-persistence.md) - normal bounds,
   window mode, physical-display affinity, off-screen recovery, and legacy geometry import for every
   user-visible Main-owned window.
@@ -93,7 +100,8 @@ design document.
 
 - [Delivery plan](plan/README.md)
 - [Delivery backlog](plan/backlog.md)
-- [Coin delivery analysis](plan/analysis/coin-subapp.md)
+- [BL Trench record-vault delivery analysis](plan/analysis/trench-record-vault.md)
+- [Historical Coin delivery analysis](plan/analysis/coin-subapp.md)
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
 - [Omni mini-app cells delivery analysis](plan/analysis/omni-miniapp-cells.md)
 - [OnlyPreview MVP delivery analysis](plan/analysis/onlypreview.md)
@@ -104,6 +112,9 @@ design document.
 
 ## Issues
 
+- [E2E target-display routing](issues/e2e-target-display-routing.md) - fixed: isolated Playwright
+  Electron windows route to an exact configured physical-display label before first show, without
+  changing production placement or claiming a macOS Mission Control Space.
 - [Settings notification test silently does nothing](issues/settings-notification-test-silent-noop.md) -
   implemented; owner verification pending: signed `0.0.68` exposed the failure; the next build
   retains the native instance and returns an observable lifecycle result.

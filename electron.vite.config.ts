@@ -1,41 +1,68 @@
-import { dirname, resolve } from 'path'
-import { defineConfig } from 'electron-vite'
-import vue from '@vitejs/plugin-vue'
-import { config as dotenvConfig } from 'dotenv'
-import monacoEditorPlugin from 'vite-plugin-monaco-editor-esm'
-import theme from './theme'
-import { existsSync, readFileSync } from 'fs'
-import JSON5 from 'json5'
-import { build as esbuild } from 'esbuild'
-import { createHash } from 'crypto'
+import { dirname, resolve } from 'path';
+import { defineConfig } from 'electron-vite';
+import vue from '@vitejs/plugin-vue';
+import { config as dotenvConfig } from 'dotenv';
+import { createRequire } from 'module';
+import monacoEditorPlugin from 'vite-plugin-monaco-editor-esm';
+import theme from './theme';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
+import JSON5 from 'json5';
+import { build as esbuild } from 'esbuild';
+import { createHash } from 'crypto';
 
-dotenvConfig({ path: resolve('.env.rig') })
+const nodeRequire = createRequire(import.meta.url);
+const { loadCanonicalRigEnvironment } = nodeRequire(
+  './scripts/environment/runtimeProfile.config.cjs'
+) as {
+  loadCanonicalRigEnvironment(projectRoot: string): {
+    environment: Record<string, string>;
+    profileName: string;
+    viteEnv: 'dev' | 'prod';
+    viteMode: 'debug' | 'release';
+  };
+};
+const canonicalRigEnvironment = loadCanonicalRigEnvironment(resolve('.'));
+const dotenvResult = dotenvConfig({ path: resolve('.env.rig'), override: true });
+if (dotenvResult.error) throw dotenvResult.error;
+if (
+  process.env.VITE_MODE !== canonicalRigEnvironment.viteMode ||
+  process.env.VITE_ENV !== canonicalRigEnvironment.viteEnv
+) {
+  throw new Error('The selected Rig profile was not applied to the Electron build process');
+}
 
 const packageMetadata = JSON.parse(readFileSync(resolve('package.json'), 'utf-8')) as {
-  version_code?: unknown
-}
+  version_code?: unknown;
+};
 if (
   typeof packageMetadata.version_code !== 'string' ||
   !/^\d{12}$/.test(packageMetadata.version_code)
 ) {
-  throw new Error('package.json version_code must be a 12-digit string')
+  throw new Error('package.json version_code must be a 12-digit string');
 }
 
 const bitterlessPreloadBuildDefine = {
   __BITTERLESS_VERSION_CODE__: JSON.stringify(packageMetadata.version_code),
-  'import.meta.env.VITE_BITTERLESS_CORE_URL': JSON.stringify(
-    process.env.VITE_BITTERLESS_CORE_URL || ''
-  ),
-  'import.meta.env.VITE_ENV': JSON.stringify(process.env.VITE_ENV || 'dev')
-}
+  'import.meta.env.VITE_BITTERLESS_CORE_URL': JSON.stringify(process.env.VITE_BITTERLESS_CORE_URL),
+  'import.meta.env.VITE_ENV': JSON.stringify(canonicalRigEnvironment.viteEnv),
+  'import.meta.env.VITE_MODE': JSON.stringify(canonicalRigEnvironment.viteMode)
+};
 
 const maestroBuildDefine = {
   __COACH_BUILD_REGION__: JSON.stringify(process.env.VITE_COACH_REGION || 'SG'),
-  __COACH_AI_CRMS_RELAY_BASE_URL__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL || ''),
-  __COACH_AI_CRMS_RELAY_BASE_URL_SG__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_SG || ''),
-  __COACH_AI_CRMS_RELAY_BASE_URL_HK__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_HK || ''),
-  __COACH_AI_CRMS_RELAY_BASE_URL_ID__: JSON.stringify(process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_ID || '')
-}
+  __COACH_AI_CRMS_RELAY_BASE_URL__: JSON.stringify(
+    process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL || ''
+  ),
+  __COACH_AI_CRMS_RELAY_BASE_URL_SG__: JSON.stringify(
+    process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_SG || ''
+  ),
+  __COACH_AI_CRMS_RELAY_BASE_URL_HK__: JSON.stringify(
+    process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_HK || ''
+  ),
+  __COACH_AI_CRMS_RELAY_BASE_URL_ID__: JSON.stringify(
+    process.env.VITE_COACH_AI_CRMS_RELAY_BASE_URL_ID || ''
+  )
+};
 
 const bundledRuntimeDependencies = [
   '@langchain/anthropic',
@@ -52,72 +79,69 @@ const bundledRuntimeDependencies = [
   'mammoth',
   'typebox',
   'unpdf'
-]
+];
 
 const maestroSqliteDevCspPlugin = {
   name: 'bitterless:maestro-sqlite-dev-csp',
   apply: 'serve' as const,
   transformIndexHtml(html: string, context: { path: string }) {
-    if (!context.path.includes('/maestro/sqlite/')) return html
+    if (!context.path.includes('/maestro/sqlite/')) return html;
     return html.replace(
       /(<meta http-equiv="Content-Security-Policy" content=")default-src 'none'("\s*\/>)/,
       "$1default-src 'none'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* wss://localhost:*$2"
-    )
+    );
   }
-}
+};
 
 const coinDevCspPlugin = {
   name: 'bitterless:coin-dev-csp',
   apply: 'serve' as const,
   transformIndexHtml(html: string, context: { path: string }) {
-    if (!context.path.includes('/coin/')) return html
+    if (!context.path.includes('/coin/')) return html;
     return html.replace(
       "connect-src 'none'",
       "connect-src 'self' ws://localhost:* wss://localhost:*"
-    )
+    );
   }
-}
+};
 
 const translatorDevCspPlugin = {
   name: 'bitterless:translator-dev-csp',
   apply: 'serve' as const,
   transformIndexHtml(html: string, context: { path: string }) {
-    if (!context.path.includes('/translator/')) return html
+    if (!context.path.includes('/translator/')) return html;
     return html.replace(
       "connect-src 'none'",
       "connect-src 'self' ws://localhost:* wss://localhost:*"
-    )
+    );
   }
-}
+};
 
 const mottoDevCspPlugin = {
   name: 'bitterless:motto-dev-csp',
   apply: 'serve' as const,
   transformIndexHtml(html: string, context: { path: string }) {
-    if (!context.path.includes('/motto/')) return html
+    if (!context.path.includes('/motto/')) return html;
     return html.replace(
       "connect-src 'none'",
       "connect-src 'self' ws://localhost:* wss://localhost:*"
-    )
+    );
   }
-}
+};
 
 const onlyPreviewDevCspPlugin = {
   name: 'bitterless:onlypreview-dev-csp',
   apply: 'serve' as const,
   transformIndexHtml(html: string, context: { path: string }) {
-    if (!context.path.includes('/onlypreview/')) return html
+    if (!context.path.includes('/onlypreview/')) return html;
     return html
       .replace(
         "connect-src 'self' bitterless-preview:",
         "connect-src 'self' bitterless-preview: ws://localhost:* wss://localhost:*"
       )
-      .replace(
-        "connect-src 'none'",
-        "connect-src 'self' ws://localhost:* wss://localhost:*"
-      )
+      .replace("connect-src 'none'", "connect-src 'self' ws://localhost:* wss://localhost:*");
   }
-}
+};
 
 const onlyPreviewSandboxPreloadPlugin = {
   name: 'bitterless:onlypreview-sandbox-preload',
@@ -137,66 +161,159 @@ const onlyPreviewSandboxPreloadPlugin = {
       define: bitterlessPreloadBuildDefine,
       sourcemap: false,
       logLevel: 'silent'
-    })
+    });
   }
-}
+};
 
-const secureOnlyPreviewHtml = (source: string): string => {
-  let html = source.replaceAll('./monacoeditorwork/', '../../monacoeditorwork/')
-  const inlineScript = html.match(/<script>([\s\S]*?MonacoEnvironment[\s\S]*?)<\/script>/)
+const trenchSandboxPreloadPlugin = {
+  name: 'bitterless:trench-sandbox-preload',
+  apply: 'build' as const,
+  async closeBundle() {
+    await esbuild({
+      entryPoints: [resolve('src/preload/trench/trench.preload.ts')],
+      outfile: resolve('out/preload/trench.js'),
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      target: 'node22',
+      external: ['electron'],
+      sourcemap: false,
+      logLevel: 'silent'
+    });
+  }
+};
+
+const secureRendererHtml = (source: string, rendererName: string): string => {
+  let html = source;
+  const charsetMeta = html.match(/\s*<meta\s+charset=(?:"[^"]+"|'[^']+'|[^\s>]+)\s*\/?>/i);
+  if (!charsetMeta) throw new Error(`${rendererName} renderer is missing its charset meta`);
   const cspMeta = html.match(
     /\s*<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"\s*\/?>/i
-  )
-  if (!cspMeta) throw new Error('OnlyPreview renderer is missing its Content-Security-Policy meta')
-  let csp = cspMeta[1]
-  if (inlineScript) {
-    const hash = createHash('sha256').update(inlineScript[1]).digest('base64')
-    csp = csp.replace("script-src 'self'", `script-src 'self' 'sha256-${hash}'`)
+  );
+  if (!cspMeta) {
+    throw new Error(`${rendererName} renderer is missing its Content-Security-Policy meta`);
   }
-  html = html.replace(cspMeta[0], '')
+  let csp = cspMeta[1];
+  const inlineScripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
+    .map((match) => match[1])
+    .filter((script) => script.trim().length > 0);
+  const hashes = [
+    ...new Set(
+      inlineScripts.map(
+        (script) => `'sha256-${createHash('sha256').update(script).digest('base64')}'`
+      )
+    )
+  ];
+  if (hashes.length) {
+    if (!csp.includes("script-src 'self'")) {
+      throw new Error(`${rendererName} renderer CSP is missing script-src 'self'`);
+    }
+    csp = csp.replace("script-src 'self'", `script-src 'self' ${hashes.join(' ')}`);
+  }
+  html = html.replace(cspMeta[0], '').replace(charsetMeta[0], '');
   return html.replace(
     /<head>/i,
-    `<head>\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`
-  )
-}
+    `<head>\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />\n    ${charsetMeta[0].trim()}`
+  );
+};
+
+const secureOnlyPreviewHtml = (source: string): string =>
+  secureRendererHtml(
+    source.replaceAll('./monacoeditorwork/', '../../monacoeditorwork/'),
+    'OnlyPreview'
+  );
+
+const secureCoinHtml = (source: string): string =>
+  secureRendererHtml(source.replaceAll('./monacoeditorwork/', '../monacoeditorwork/'), 'Trench');
 
 const onlyPreviewHtmlSecurityPlugin = {
   name: 'bitterless:onlypreview-html-security',
   transformIndexHtml: {
     order: 'post' as const,
     handler(html: string, context: { path: string }) {
-      if (!context.path.includes('/onlypreview/')) return html
-      return secureOnlyPreviewHtml(html)
+      if (!context.path.includes('/onlypreview/')) return html;
+      return secureOnlyPreviewHtml(html);
     }
   },
   closeBundle() {
     for (const mode of ['shell', 'previewHeader', 'preview', 'settings', 'guide']) {
-      const htmlPath = resolve('out/renderer/onlypreview', mode, 'index.html')
-      const html = readFileSync(htmlPath, 'utf8')
-      const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? ''
-      if (!/^\s*<meta\s+http-equiv="Content-Security-Policy"/i.test(head)) {
-        throw new Error(`OnlyPreview ${mode} CSP is not the first element in <head>`)
+      const htmlPath = resolve('out/renderer/onlypreview', mode, 'index.html');
+      const html = readFileSync(htmlPath, 'utf8');
+      const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
+      if (
+        !/^\s*<meta\s+http-equiv="Content-Security-Policy"[^>]*>\s*<meta\s+charset=/i.test(head)
+      ) {
+        throw new Error(`OnlyPreview ${mode} CSP/charset are not the first two elements in <head>`);
+      }
+      if (html.toLowerCase().indexOf('<meta charset=') >= 1024) {
+        throw new Error(`OnlyPreview ${mode} charset declaration is outside the first 1024 bytes`);
       }
       if (html.includes('"./monacoeditorwork/')) {
-        throw new Error(`OnlyPreview ${mode} contains a nested broken Monaco worker path`)
+        throw new Error(`OnlyPreview ${mode} contains a nested broken Monaco worker path`);
       }
-      const inlineScript = html.match(/<script>([\s\S]*?MonacoEnvironment[\s\S]*?)<\/script>/)
-      if (!inlineScript) throw new Error(`OnlyPreview ${mode} Monaco bootstrap is missing`)
-      const hash = createHash('sha256').update(inlineScript[1]).digest('base64')
+      const inlineScript = html.match(/<script>([\s\S]*?MonacoEnvironment[\s\S]*?)<\/script>/);
+      if (!inlineScript) throw new Error(`OnlyPreview ${mode} Monaco bootstrap is missing`);
+      const hash = createHash('sha256').update(inlineScript[1]).digest('base64');
       if (!head.includes(`'sha256-${hash}'`)) {
-        throw new Error(`OnlyPreview ${mode} CSP does not authorize its exact Monaco bootstrap`)
+        throw new Error(`OnlyPreview ${mode} CSP does not authorize its exact Monaco bootstrap`);
       }
-      const workerPaths = [...html.matchAll(/"(\.\.\/\.\.\/monacoeditorwork\/[^"]+)"/g)]
-        .map((match) => match[1])
-      if (!workerPaths.length) throw new Error(`OnlyPreview ${mode} Monaco worker paths are missing`)
+      const workerPaths = [...html.matchAll(/"(\.\.\/\.\.\/monacoeditorwork\/[^"]+)"/g)].map(
+        (match) => match[1]
+      );
+      if (!workerPaths.length)
+        throw new Error(`OnlyPreview ${mode} Monaco worker paths are missing`);
       for (const workerPath of new Set(workerPaths)) {
         if (!existsSync(resolve(dirname(htmlPath), workerPath))) {
-          throw new Error(`OnlyPreview ${mode} Monaco worker is missing: ${workerPath}`)
+          throw new Error(`OnlyPreview ${mode} Monaco worker is missing: ${workerPath}`);
         }
       }
     }
   }
-}
+};
+
+const coinHtmlSecurityPlugin = {
+  name: 'bitterless:coin-html-security',
+  apply: 'build' as const,
+  transformIndexHtml: {
+    order: 'post' as const,
+    handler(html: string, context: { path: string }) {
+      if (!context.path.includes('/coin/')) return html;
+      return secureCoinHtml(html);
+    }
+  },
+  closeBundle() {
+    const htmlPath = resolve('out/renderer/coin/index.html');
+    const html = readFileSync(htmlPath, 'utf8');
+    const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
+    if (!/^\s*<meta\s+http-equiv="Content-Security-Policy"[^>]*>\s*<meta\s+charset=/i.test(head)) {
+      throw new Error('Trench CSP/charset are not the first two elements in <head>');
+    }
+    if (html.toLowerCase().indexOf('<meta charset=') >= 1024) {
+      throw new Error('Trench charset declaration is outside the first 1024 bytes');
+    }
+    if (html.includes('"./monacoeditorwork/')) {
+      throw new Error('Trench contains a nested broken Monaco worker path');
+    }
+    const inlineScripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
+      .map((match) => match[1])
+      .filter((script) => script.trim().length > 0);
+    for (const script of inlineScripts) {
+      const hash = createHash('sha256').update(script).digest('base64');
+      if (!head.includes(`'sha256-${hash}'`)) {
+        throw new Error('Trench CSP does not authorize an exact inline script');
+      }
+    }
+    const workerPaths = [...html.matchAll(/"(\.\.\/monacoeditorwork\/[^"]+)"/g)].map(
+      (match) => match[1]
+    );
+    if (!workerPaths.length) throw new Error('Trench Monaco worker paths are missing');
+    for (const workerPath of new Set(workerPaths)) {
+      if (!existsSync(resolve(dirname(htmlPath), workerPath))) {
+        throw new Error(`Trench Monaco worker is missing: ${workerPath}`);
+      }
+    }
+  }
+};
 
 const generateEnvDefines = () => {
   const envRigPath = resolve('env.rig.json5');
@@ -211,10 +328,32 @@ const generateEnvDefines = () => {
   }
 
   return defines;
-}
+};
+
+const runtimeProfileBuildMarkerPlugin = {
+  name: 'bitterless:runtime-profile-build-marker',
+  apply: 'build' as const,
+  closeBundle() {
+    writeFileSync(
+      resolve('out/.bitterless-runtime-profile.json'),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          profileName: canonicalRigEnvironment.profileName,
+          viteEnv: canonicalRigEnvironment.viteEnv,
+          viteMode: canonicalRigEnvironment.viteMode
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    );
+  }
+};
 
 export default defineConfig({
   main: {
+    plugins: [runtimeProfileBuildMarkerPlugin],
     define: { ...generateEnvDefines(), ...maestroBuildDefine },
     build: {
       externalizeDeps: { exclude: bundledRuntimeDependencies },
@@ -248,7 +387,7 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [onlyPreviewSandboxPreloadPlugin],
+    plugins: [onlyPreviewSandboxPreloadPlugin, trenchSandboxPreloadPlugin],
     define: { ...maestroBuildDefine, ...bitterlessPreloadBuildDefine },
     build: {
       externalizeDeps: { exclude: bundledRuntimeDependencies },
@@ -266,7 +405,7 @@ export default defineConfig({
           onlypreviewContent: resolve('src/preload/onlypreview/onlypreviewContent.preload.ts'),
           omni: resolve('src/preload/omni/omni.preload.ts'),
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
-          coin: resolve('src/preload/coin/coin.preload.ts'),
+          trench: resolve('src/preload/trench/trench.preload.ts'),
           maestroCoach: resolve('src/preload/maestro/coach.preload.ts'),
           maestroSqlite: resolve('src/preload/maestro/sqlite.preload.ts')
         },
@@ -292,7 +431,7 @@ export default defineConfig({
     }
   },
   renderer: {
-    define: maestroBuildDefine,
+    define: { ...generateEnvDefines(), ...maestroBuildDefine },
     build: {
       rollupOptions: {
         input: {
@@ -351,16 +490,19 @@ export default defineConfig({
       mottoDevCspPlugin,
       onlyPreviewDevCspPlugin,
       maestroSqliteDevCspPlugin,
-      monacoEditorPlugin({ customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork') }),
-      onlyPreviewHtmlSecurityPlugin
+      monacoEditorPlugin({
+        customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork')
+      }),
+      onlyPreviewHtmlSecurityPlugin,
+      coinHtmlSecurityPlugin
     ],
     css: {
       preprocessorOptions: {
         less: {
           modifyVars: theme,
-          javascriptEnabled: true,
-        },
-      },
+          javascriptEnabled: true
+        }
+      }
     },
     esbuild: {
       tsconfigRaw: {
@@ -370,4 +512,4 @@ export default defineConfig({
       }
     }
   }
-})
+});

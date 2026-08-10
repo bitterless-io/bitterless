@@ -69,6 +69,8 @@ const data = Object.freeze({
     await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataScreen, params),
   analyzeMeme: async (params: Parameters<CoinBridge['data']['analyzeMeme']>[0]) =>
     await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataAnalyzeMeme, params),
+  autoAnalyzeMeme: async (params: Parameters<CoinBridge['data']['autoAnalyzeMeme']>[0]) =>
+    await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataAutoAnalyzeMeme, params),
   startDiscover: async (params: Parameters<CoinBridge['data']['startDiscover']>[0]) =>
     await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataStartDiscover, params),
   stopDiscover: async () => await ipcRenderer.invoke(COIN_IPC_CHANNELS.dataStopDiscover),

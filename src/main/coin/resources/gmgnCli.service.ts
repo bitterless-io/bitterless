@@ -317,6 +317,7 @@ export const buildGmgnReadArgs = (input: GmgnReadInput): string[] => {
       '--raw',
     ];
   }
+  if (!('address' in input)) throw new GmgnReadError('invalid-input');
   const action = input.operation.replace('token-', '');
   return [
     'token',

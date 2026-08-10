@@ -1,0 +1,10 @@
+interface:
+  display_name: "Bitterless Trench"
+  short_description: "Research and persist Trench records through Bitterless MCP"
+  default_prompt: "Use $bitterless-trench to research a CA or negative wallet and persist verified evidence through the production Bitterless MCP server."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "bitterless"
+      description: "Production Bitterless local MCP server"
+      transport: "stdio"

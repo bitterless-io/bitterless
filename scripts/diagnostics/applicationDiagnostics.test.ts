@@ -5,7 +5,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import electronLog from 'electron-log/node';
-import { resolveRuntimeProfile } from '../../src/main/environment/runtimeProfile.service';
+import {
+  assertRuntimeLaunchMode,
+  isNodeOnlyHelperRuntime,
+  resolveRuntimeProfile
+} from '../../src/main/environment/runtimeProfile.service';
+import {
+  assertSafeStorageOperationAllowed,
+  resolveSafeStorageIsolationMode
+} from '../../src/main/security/safeStoragePolicy.service';
 import {
   APPLICATION_LOG_FILE_MAX_SIZE,
   isFirstPartyRendererUrl,
@@ -48,6 +56,108 @@ test('resolves the exact four runtime profile names', () => {
     'Bitterless_DEV'
   );
   assert.throws(() => resolveRuntimeProfile({ viteMode: 'production', viteEnv: 'prod' }));
+});
+
+test('rejects GUI packaging/mode mismatches before the caller can mutate paths', () => {
+  const assertBeforeMutation = (
+    input: Parameters<typeof assertRuntimeLaunchMode>[0],
+    expected: RegExp
+  ): void => {
+    let pathMutated = false;
+    assert.throws(() => {
+      assertRuntimeLaunchMode(input);
+      pathMutated = true;
+    }, expected);
+    assert.equal(pathMutated, false);
+  };
+
+  assert.doesNotThrow(() =>
+    assertRuntimeLaunchMode({
+      compiledViteMode: 'debug',
+      helperMode: false,
+      packaged: false,
+      processViteMode: 'debug'
+    })
+  );
+  assert.doesNotThrow(() =>
+    assertRuntimeLaunchMode({
+      compiledViteMode: 'release',
+      helperMode: false,
+      packaged: true,
+      processViteMode: undefined
+    })
+  );
+  assertBeforeMutation(
+    {
+      compiledViteMode: 'release',
+      helperMode: false,
+      packaged: false,
+      processViteMode: 'debug'
+    },
+    /unpackaged Bitterless requires compiled VITE_MODE=debug/
+  );
+  assertBeforeMutation(
+    {
+      compiledViteMode: 'debug',
+      helperMode: false,
+      packaged: false,
+      processViteMode: undefined
+    },
+    /child-process VITE_MODE=debug/
+  );
+  assertBeforeMutation(
+    {
+      compiledViteMode: 'debug',
+      helperMode: false,
+      packaged: true,
+      processViteMode: 'debug'
+    },
+    /packaged Bitterless requires compiled VITE_MODE=release/
+  );
+  assert.equal(isNodeOnlyHelperRuntime(['electron', '--mcp-helper']), true);
+  assert.equal(isNodeOnlyHelperRuntime(['electron', '--coding-agent-hook-helper']), true);
+  assert.equal(isNodeOnlyHelperRuntime(['electron', '.']), false);
+  assert.doesNotThrow(() =>
+    assertRuntimeLaunchMode({
+      compiledViteMode: 'release',
+      helperMode: true,
+      packaged: false,
+      processViteMode: undefined
+    })
+  );
+});
+
+test('safeStorage is available only to packaged release runtime', () => {
+  assert.doesNotThrow(() =>
+    assertSafeStorageOperationAllowed({
+      caller: 'core-sqlite',
+      mode: resolveSafeStorageIsolationMode({ e2e: false, viteMode: 'release' }),
+      operation: 'availability',
+      packaged: true
+    })
+  );
+  assert.throws(
+    () =>
+      assertSafeStorageOperationAllowed({
+        caller: 'core-sqlite',
+        mode: resolveSafeStorageIsolationMode({ e2e: false, viteMode: 'release' }),
+        operation: 'availability',
+        packaged: false
+      }),
+    /mode=release-unpackaged/
+  );
+  for (const packaged of [false, true]) {
+    assert.throws(
+      () =>
+        assertSafeStorageOperationAllowed({
+          caller: 'maestro-sqlite',
+          mode: resolveSafeStorageIsolationMode({ e2e: false, viteMode: 'debug' }),
+          operation: 'encrypt',
+          packaged
+        }),
+      /mode=debug/
+    );
+  }
 });
 
 test('resolves debug logs under active userData and release logs under OS log root', () => {

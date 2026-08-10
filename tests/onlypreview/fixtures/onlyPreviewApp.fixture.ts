@@ -12,6 +12,16 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { buildBitterlessE2ELaunchArgs } from '../../e2e/electronLaunchArgs';
+import {
+  assertElectronTargetDisplayAvailable,
+  assertVisibleWindowsOnTargetDisplay,
+  resolveE2ETargetDisplayLabel
+} from '../../e2e/e2eDisplayTarget';
+import {
+  assertDebugE2EBuild,
+  assertElectronDebugRuntime,
+  withDebugE2ERuntimeEnvironment
+} from '../../e2e/e2eRuntimeMode';
 import { createOnlyPreviewFixtures, type OnlyPreviewFixtureSet } from './createOnlyPreviewFixtures';
 
 const projectRoot = resolve(__dirname, '..', '..', '..');
@@ -91,6 +101,7 @@ const isolatedEnv = (params: {
   homeDir: string;
   userDataDir: string;
   mockOrigin: string;
+  targetDisplayLabel?: string;
 }): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {};
   const allowedKeys = new Set([
@@ -112,7 +123,7 @@ const isolatedEnv = (params: {
   for (const [key, value] of Object.entries(process.env)) {
     if (value != null && (allowedKeys.has(key) || key.startsWith('LC_'))) env[key] = value;
   }
-  return {
+  return withDebugE2ERuntimeEnvironment({
     ...env,
     NODE_ENV: 'production',
     HOME: params.homeDir,
@@ -127,8 +138,11 @@ const isolatedEnv = (params: {
     BITTERLESS_E2E_HOME_DIR: params.homeDir,
     BITTERLESS_E2E_USER_DATA_DIR: params.userDataDir,
     BITTERLESS_E2E_MOCK_ORIGIN: params.mockOrigin,
+    ...(params.targetDisplayLabel
+      ? { BITTERLESS_E2E_DISPLAY_LABEL: params.targetDisplayLabel }
+      : {}),
     ELECTRON_DISABLE_SECURITY_WARNINGS: 'true'
-  };
+  });
 };
 
 export type OnlyPreviewRendererMode = 'shell' | 'previewHeader' | 'preview';
@@ -138,6 +152,7 @@ export interface OnlyPreviewE2ESession {
   fixtures: OnlyPreviewFixtureSet;
   tempRoot: string;
   output: string[];
+  assertDisplayRouting(): Promise<void>;
   evaluateRenderer<T>(mode: OnlyPreviewRendererMode, expression: string): Promise<T>;
   sendInput(mode: OnlyPreviewRendererMode, input: Electron.InputEvent): Promise<void>;
   sendInputs(mode: OnlyPreviewRendererMode, inputs: Electron.InputEvent[]): Promise<void>;
@@ -154,6 +169,7 @@ export const test = base.extend<OnlyPreviewFixtures>({
     const executablePath = electronExecutablePath();
     if (!existsSync(executablePath)) throw new Error(`Electron is missing: ${executablePath}`);
     if (!existsSync(mainEntry)) throw new Error(`Build is missing: ${mainEntry}. Run yarn build.`);
+    assertDebugE2EBuild(projectRoot);
     const tempBase = process.platform === 'win32' ? tmpdir() : '/tmp';
     const tempRoot = mkdtempSync(join(tempBase, 'bl-onlypreview-'));
     const homeDir = join(tempRoot, 'home');
@@ -164,6 +180,7 @@ export const test = base.extend<OnlyPreviewFixtures>({
     mkdirSync(join(homeDir, 'AppData/Local'), { recursive: true });
     const fixtures = createOnlyPreviewFixtures(join(tempRoot, 'fixtures'));
     const mock = await startMockServer();
+    const targetDisplayLabel = resolveE2ETargetDisplayLabel(projectRoot);
     const output: string[] = [];
     let app: ElectronApplication | null = null;
     try {
@@ -177,10 +194,13 @@ export const test = base.extend<OnlyPreviewFixtures>({
         env: isolatedEnv({
           homeDir,
           userDataDir,
-          mockOrigin: mock.origin
+          mockOrigin: mock.origin,
+          targetDisplayLabel
         }),
         timeout: 60_000
       });
+      await assertElectronDebugRuntime(app);
+      await assertElectronTargetDisplayAvailable(app, targetDisplayLabel);
       for (const stream of [app.process().stdout, app.process().stderr]) {
         stream?.on('data', (chunk) => output.push(String(chunk)));
       }
@@ -216,6 +236,8 @@ export const test = base.extend<OnlyPreviewFixtures>({
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(`OnlyPreview did not open.\n${output.slice(-40).join('')}\n${detail}`);
       }
+      await assertVisibleWindowsOnTargetDisplay(app, targetDisplayLabel);
+
       const evaluateRenderer = async <T>(
         mode: OnlyPreviewRendererMode,
         expression: string
@@ -267,10 +289,13 @@ export const test = base.extend<OnlyPreviewFixtures>({
         fixtures,
         tempRoot,
         output,
+        assertDisplayRouting: async () =>
+          await assertVisibleWindowsOnTargetDisplay(app!, targetDisplayLabel),
         evaluateRenderer,
         sendInput,
         sendInputs
       });
+      await assertVisibleWindowsOnTargetDisplay(app, targetDisplayLabel);
     } finally {
       const errors: unknown[] = [];
       if (app) {

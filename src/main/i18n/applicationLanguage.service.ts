@@ -9,7 +9,6 @@ import {
 } from '@shared/i18n/applicationLanguage';
 import { trayHelper } from '../tray/tray.helper';
 import { i18nHelper } from './i18n.helper';
-import { coinWindowManager } from '../coin/coinWindow.manager';
 
 const durableLanguage = createXpcMainEmitter<DurableLanguageApi>('LanguageHandler');
 
@@ -26,7 +25,6 @@ class ApplicationLanguageService {
       },
       broadcast: (snapshot) => {
         xpcMain.broadcast(APPLICATION_LANGUAGE_CHANGED_EVENT, snapshot);
-        coinWindowManager.sendLanguageSnapshot(snapshot);
       },
     },
   );

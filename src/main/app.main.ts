@@ -216,11 +216,11 @@ const createCoreSqliteTargetRegistrationWaiter = (): CoreSqliteTargetRegistratio
 };
 
 const configureE2EUserData = (): void => {
-  if (isHelperMode) return;
   if (!isE2E) return;
   if (app.isPackaged) {
     throw new Error('BITTERLESS_E2E is unavailable in packaged builds');
   }
+  if (isHelperMode) return;
   const userDataPath = process.env.BITTERLESS_E2E_USER_DATA_DIR?.trim();
   if (!userDataPath) {
     throw new Error('BITTERLESS_E2E_USER_DATA_DIR is required when BITTERLESS_E2E=1');
@@ -293,6 +293,17 @@ const installE2ENetworkGuard = (): void => {
 
   const defaultHandler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
+    if (
+      url.protocol === 'http:' &&
+      url.origin === mockOrigin &&
+      !url.username &&
+      !url.password &&
+      url.pathname === '/todo/sync' &&
+      !url.search &&
+      ['POST', 'OPTIONS'].includes(request.method)
+    ) {
+      return await mockResponse('/todo/sync', request);
+    }
     if (
       url.protocol === 'https:' &&
       authOrigins.has(url.origin) &&

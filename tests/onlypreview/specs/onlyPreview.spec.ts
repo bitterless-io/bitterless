@@ -1158,6 +1158,7 @@ test('toggles detached Shell, Header, and Content DevTools independently without
 
   await sendShortcut('preview', 'I', inspectModifiers);
   await expectDevTools(true, true, true);
+  await onlyPreview.assertDisplayRouting();
   current = await readDevToolsState();
   expectViewBoundsUnchanged(current, initial);
 

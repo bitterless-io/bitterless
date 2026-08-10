@@ -10,7 +10,7 @@ import {
   renameSync,
   rmSync,
   unlinkSync,
-  writeFileSync,
+  writeFileSync
 } from 'fs';
 import type { Stats } from 'fs';
 import net, { Server, Socket } from 'net';
@@ -18,7 +18,7 @@ import type {
   LocalRpcFailure,
   LocalRpcRequest,
   LocalRpcResponse,
-  McpBridgeEndpoint,
+  McpBridgeEndpoint
 } from '@shared/mcp/mcpBridge.shared';
 import { MCP_LOCAL_RPC_MAX_BYTES, getMcpBridgeEndpoint } from '@shared/mcp/mcpBridge.shared';
 import type {
@@ -30,11 +30,13 @@ import type {
   McpTodoStatusByIdsResult,
   McpTodoStatusItem,
   TodoEntityId,
-  TodoMcpDaoApi,
+  TodoMcpDaoApi
 } from '@shared/mcp/todoMcpDao.type';
 import { ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH } from '@shared/onlypreview/onlyPreview.types';
 import { assertTodoistSyncEntityId } from '@shared/todoistSync/todoistSync.contract';
 import { todoSqliteClient } from './todoSqlite.client';
+import type { TrenchRepository } from '@main/trench/trenchRepository.service';
+import { trenchRepository } from '@main/trench/trench.runtime';
 
 type RpcParams = Record<string, unknown>;
 type DomainRow = McpDomainRow;
@@ -45,15 +47,12 @@ type TodoRow = McpTodoRow;
 type TodoStatusByIdsResult = McpTodoStatusByIdsResult;
 type TodoStatusItem = McpTodoStatusItem;
 type TodoUpdateCallParams = Parameters<TodoMcpDaoApi['update']>[0];
-type PreviewOpener = (path: string) => Promise<void>;
-type UnixSocketIdentity = Pick<
-  Stats,
-  'birthtimeMs' | 'ctimeMs' | 'dev' | 'ino' | 'mode' | 'size'
->;
+type UnixSocketIdentity = Pick<Stats, 'birthtimeMs' | 'ctimeMs' | 'dev' | 'ino' | 'mode' | 'size'>;
 type UnixStartLockIdentity = Pick<
   Stats,
   'birthtimeMs' | 'ctimeMs' | 'dev' | 'ino' | 'mode' | 'mtimeMs' | 'size'
 >;
+type PreviewOpener = (path: string) => Promise<void>;
 
 interface UnixStartLockOwner {
   token: string;
@@ -71,8 +70,10 @@ interface UnixStartLockSnapshot {
 
 const todoDataClient = todoSqliteClient;
 
-const MCP_FOCUS_DESCRIPTION = 'Focus 是未完成且被打星标/important 的 todo 视图，不是 Domain。明确的“星标/重点/important/优先/放进 Focus”意图使用 important=true；取消星标或移出 Focus 使用 important=false。';
-const MCP_STAR_RULE = 'Interpret explicit priority intent instead of requiring one exact keyword. Set important=true for a clear star/important/priority/Focus-placement request or when an immediate human action blocks the current agent session. Set important=false for clear unstar/remove-from-Focus intent. A due date, reminder, ordinary backlog item, or unrelated edit alone does not imply a star. On todo.update, omit important to preserve the current state.';
+const MCP_FOCUS_DESCRIPTION =
+  'Focus 是未完成且被打星标/important 的 todo 视图，不是 Domain。明确的“星标/重点/important/优先/放进 Focus”意图使用 important=true；取消星标或移出 Focus 使用 important=false。';
+const MCP_STAR_RULE =
+  'Interpret explicit priority intent instead of requiring one exact keyword. Set important=true for a clear star/important/priority/Focus-placement request or when an immediate human action blocks the current agent session. Set important=false for clear unstar/remove-from-Focus intent. A due date, reminder, ordinary backlog item, or unrelated edit alone does not imply a star. On todo.update, omit important to preserve the current state.';
 const MCP_MAX_ACTIVE_DOMAINS = 17;
 const MCP_START_LOCK_WAIT_MS = 3000;
 const MCP_MALFORMED_LOCK_RECOVERY_AGE_MS = 500;
@@ -106,7 +107,7 @@ const getOptionalInteger = (
   key: string,
   defaultValue: number,
   min: number,
-  max = Number.MAX_SAFE_INTEGER,
+  max = Number.MAX_SAFE_INTEGER
 ): number => {
   const value = params[key];
   if (value === undefined) return defaultValue;
@@ -158,22 +159,24 @@ const getUnixStartLockIdentity = (path: string): UnixStartLockIdentity => {
     ino: stats.ino,
     mode: stats.mode,
     mtimeMs: stats.mtimeMs,
-    size: stats.size,
+    size: stats.size
   };
 };
 
 const isSameUnixStartLockIdentity = (
   left: UnixStartLockIdentity | null,
-  right: UnixStartLockIdentity | null,
+  right: UnixStartLockIdentity | null
 ): boolean => {
   if (left === null || right === null) return left === right;
-  return left.birthtimeMs === right.birthtimeMs &&
+  return (
+    left.birthtimeMs === right.birthtimeMs &&
     left.ctimeMs === right.ctimeMs &&
     left.dev === right.dev &&
     left.ino === right.ino &&
     left.mode === right.mode &&
     left.mtimeMs === right.mtimeMs &&
-    left.size === right.size;
+    left.size === right.size
+  );
 };
 
 const parseUnixStartLockOwner = (raw: string): UnixStartLockOwner | null => {
@@ -213,7 +216,7 @@ const readUnixStartLockSnapshot = (lockPath: string): UnixStartLockSnapshot | nu
       isDirectory,
       owner: ownerRaw === null ? null : parseUnixStartLockOwner(ownerRaw),
       ownerIdentity,
-      ownerRaw,
+      ownerRaw
     };
   } catch {
     return null;
@@ -227,14 +230,14 @@ const getUnixStartLockAge = (snapshot: UnixStartLockSnapshot): number => {
     snapshot.identity.mtimeMs,
     snapshot.ownerIdentity?.birthtimeMs ?? 0,
     snapshot.ownerIdentity?.ctimeMs ?? 0,
-    snapshot.ownerIdentity?.mtimeMs ?? 0,
+    snapshot.ownerIdentity?.mtimeMs ?? 0
   ];
   return Math.max(0, Date.now() - Math.max(...times));
 };
 
 const removeUnixStartLockIfUnchanged = (
   lockPath: string,
-  snapshot: UnixStartLockSnapshot,
+  snapshot: UnixStartLockSnapshot
 ): boolean => {
   const current = readUnixStartLockSnapshot(lockPath);
   if (
@@ -268,14 +271,14 @@ const acquireUnixStartLock = async (socketPath: string): Promise<() => void> => 
   const owner: UnixStartLockOwner = {
     token: `${process.pid}-${randomUUID()}`,
     pid: process.pid,
-    createdAt: Date.now(),
+    createdAt: Date.now()
   };
   const candidatePath = `${lockPath}.candidate-${owner.token}`;
   const deadline = Date.now() + MCP_START_LOCK_WAIT_MS;
   writeFileSync(candidatePath, JSON.stringify(owner), {
     encoding: 'utf8',
     flag: 'wx',
-    mode: 0o600,
+    mode: 0o600
   });
 
   try {
@@ -294,7 +297,8 @@ const acquireUnixStartLock = async (socketPath: string): Promise<() => void> => 
         const snapshot = readUnixStartLockSnapshot(lockPath);
         if (!snapshot) continue;
         const ownerIsDead = snapshot.owner && !isProcessAlive(snapshot.owner.pid);
-        const malformedIsStale = snapshot.owner === null &&
+        const malformedIsStale =
+          snapshot.owner === null &&
           getUnixStartLockAge(snapshot) >= MCP_MALFORMED_LOCK_RECOVERY_AGE_MS;
         if (
           (ownerIsDead || malformedIsStale) &&
@@ -366,7 +370,7 @@ const requireTodoRow = (
   value: unknown,
   source: string,
   expectedId?: TodoEntityId,
-  expectedDomainId?: TodoEntityId,
+  expectedDomainId?: TodoEntityId
 ): TodoRow => {
   if (
     !isRecord(value) ||
@@ -404,7 +408,7 @@ const requireTodoRow = (
 const requireTodoRows = (
   value: unknown,
   source: string,
-  expectedDomainId?: TodoEntityId,
+  expectedDomainId?: TodoEntityId
 ): TodoRow[] => {
   return requireArray<unknown>(value, source).map((row, index) => {
     return requireTodoRow(row, `${source}[${index}]`, undefined, expectedDomainId);
@@ -416,7 +420,7 @@ const requireStepRow = (
   source: string,
   expectedId?: TodoEntityId,
   expectedTodoId?: TodoEntityId,
-  expectedCustomerId?: string,
+  expectedCustomerId?: string
 ): StepRow => {
   if (
     !isRecord(value) ||
@@ -448,7 +452,7 @@ const requireStepRows = (
   value: unknown,
   source: string,
   expectedTodoId: TodoEntityId,
-  expectedCustomerId: string,
+  expectedCustomerId: string
 ): StepRow[] => {
   const rows = requireArray<unknown>(value, source).map((row, index) => {
     return requireStepRow(
@@ -456,7 +460,7 @@ const requireStepRows = (
       `${source}[${index}]`,
       undefined,
       expectedTodoId,
-      expectedCustomerId,
+      expectedCustomerId
     );
   });
   if (new Set(rows.map((row) => row.id)).size !== rows.length) {
@@ -473,13 +477,11 @@ const MCP_TODO_EVENT_TYPES = [
   'todo.deleted',
   'todo.moved',
   'todo.starred',
-  'todo.unstarred',
+  'todo.unstarred'
 ] as const;
 
 const isTodoEventType = (value: unknown): value is TodoEventItem['type'] => {
-  return typeof value === 'string' && MCP_TODO_EVENT_TYPES.includes(
-    value as TodoEventItem['type'],
-  );
+  return typeof value === 'string' && MCP_TODO_EVENT_TYPES.includes(value as TodoEventItem['type']);
 };
 
 const isTodoEventActor = (value: unknown): value is TodoEventItem['actor'] => {
@@ -491,8 +493,10 @@ const requireEventItem = (value: unknown, source: string): TodoEventItem => {
     !isRecord(value) ||
     !isIntegerAtLeast(value.id, 1) ||
     !isTodoEventType(value.type) ||
-    (value.todo_id !== null && (typeof value.todo_id !== 'string' || !/^\d{20}$/.test(value.todo_id))) ||
-    (value.domain_id !== null && (typeof value.domain_id !== 'string' || !/^\d{20}$/.test(value.domain_id))) ||
+    (value.todo_id !== null &&
+      (typeof value.todo_id !== 'string' || !/^\d{20}$/.test(value.todo_id))) ||
+    (value.domain_id !== null &&
+      (typeof value.domain_id !== 'string' || !/^\d{20}$/.test(value.domain_id))) ||
     !isTodoEventActor(value.actor) ||
     !isRecord(value.payload) ||
     !isIntegerAtLeast(value.created_at)
@@ -506,7 +510,7 @@ const requireEventListResult = (
   value: unknown,
   source: string,
   afterEventId: number,
-  limit: number,
+  limit: number
 ): TodoEventListResult => {
   if (
     !isRecord(value) ||
@@ -522,10 +526,9 @@ const requireEventListResult = (
   if (
     events.length > limit ||
     (events.length < limit && value.hasMore) ||
-    events.some((event, index) => (
-      event.id <= afterEventId ||
-      (index > 0 && event.id <= events[index - 1].id)
-    ))
+    events.some(
+      (event, index) => event.id <= afterEventId || (index > 0 && event.id <= events[index - 1].id)
+    )
   ) {
     return throwInvalidDaoResult(value, source, 'event list result');
   }
@@ -538,22 +541,20 @@ const requireEventListResult = (
   return {
     events,
     latestEventId: value.latestEventId,
-    hasMore: value.hasMore,
+    hasMore: value.hasMore
   };
 };
 
 const TODO_LOOKUP_STATES = ['active', 'completed', 'deleted', 'missing'] as const;
 
 const isTodoLookupState = (value: unknown): value is TodoStatusItem['state'] => {
-  return typeof value === 'string' && TODO_LOOKUP_STATES.includes(
-    value as TodoStatusItem['state'],
-  );
+  return typeof value === 'string' && TODO_LOOKUP_STATES.includes(value as TodoStatusItem['state']);
 };
 
 const requireStatusItem = (
   value: unknown,
   source: string,
-  expectedId: TodoEntityId,
+  expectedId: TodoEntityId
 ): TodoStatusItem => {
   if (
     !isRecord(value) ||
@@ -563,7 +564,8 @@ const requireStatusItem = (
     typeof value.completed !== 'boolean' ||
     typeof value.deleted !== 'boolean' ||
     (value.title !== null && typeof value.title !== 'string') ||
-    (value.domain_id !== null && (typeof value.domain_id !== 'string' || !/^\d{20}$/.test(value.domain_id))) ||
+    (value.domain_id !== null &&
+      (typeof value.domain_id !== 'string' || !/^\d{20}$/.test(value.domain_id))) ||
     !isNullableIntegerAtLeast(value.updated_at) ||
     !isNullableIntegerAtLeast(value.completed_at) ||
     !isNullableIntegerAtLeast(value.deleted_at) ||
@@ -571,23 +573,25 @@ const requireStatusItem = (
   ) {
     return throwInvalidDaoResult(value, source, 'todo status item');
   }
-  const flagsMatch = (
+  const flagsMatch =
     (value.state === 'active' && value.exists && !value.completed && !value.deleted) ||
     (value.state === 'completed' && value.exists && value.completed && !value.deleted) ||
     (value.state === 'deleted' && !value.exists && !value.completed && value.deleted) ||
-    (value.state === 'missing' && !value.exists && !value.completed && !value.deleted)
-  );
-  const domainMatches = value.state === 'active' || value.state === 'completed'
-    ? typeof value.domain_id === 'string' && /^\d{20}$/.test(value.domain_id)
-    : value.domain_id === null;
-  const titleMatches = value.state === 'active' || value.state === 'completed'
-    ? typeof value.title === 'string'
-    : value.state === 'missing'
-      ? value.title === null
-      : true;
-  const deletedMetadataMatches = value.state === 'deleted'
-    ? value.deleted_at !== null && value.deleted_event_id !== null
-    : value.deleted_at === null && value.deleted_event_id === null;
+    (value.state === 'missing' && !value.exists && !value.completed && !value.deleted);
+  const domainMatches =
+    value.state === 'active' || value.state === 'completed'
+      ? typeof value.domain_id === 'string' && /^\d{20}$/.test(value.domain_id)
+      : value.domain_id === null;
+  const titleMatches =
+    value.state === 'active' || value.state === 'completed'
+      ? typeof value.title === 'string'
+      : value.state === 'missing'
+        ? value.title === null
+        : true;
+  const deletedMetadataMatches =
+    value.state === 'deleted'
+      ? value.deleted_at !== null && value.deleted_event_id !== null
+      : value.deleted_at === null && value.deleted_event_id === null;
   if (!flagsMatch || !domainMatches || !titleMatches || !deletedMetadataMatches) {
     return throwInvalidDaoResult(value, source, 'todo status item');
   }
@@ -597,7 +601,7 @@ const requireStatusItem = (
 const requireStatusResult = (
   value: unknown,
   source: string,
-  expectedIds: TodoEntityId[],
+  expectedIds: TodoEntityId[]
 ): TodoStatusByIdsResult => {
   if (!isRecord(value)) {
     return throwInvalidDaoResult(value, source, 'todo status result');
@@ -637,19 +641,21 @@ const getUnixSocketIdentity = (socketPath: string): UnixSocketIdentity => {
     dev: stats.dev,
     ino: stats.ino,
     mode: stats.mode,
-    size: stats.size,
+    size: stats.size
   };
 };
 
 const isSameUnixSocket = (socketPath: string, identity: UnixSocketIdentity): boolean => {
   try {
     const current = getUnixSocketIdentity(socketPath);
-    return current.dev === identity.dev &&
+    return (
+      current.dev === identity.dev &&
       current.ino === identity.ino &&
       current.mode === identity.mode &&
       current.size === identity.size &&
       current.ctimeMs === identity.ctimeMs &&
-      current.birthtimeMs === identity.birthtimeMs;
+      current.birthtimeMs === identity.birthtimeMs
+    );
   } catch {
     return false;
   }
@@ -677,7 +683,10 @@ const probeUnixSocket = (socketPath: string): Promise<'live' | 'stale'> => {
       finish('live', error);
     });
     socket.setTimeout(500, () => {
-      finish('live', new Error(`Timed out while probing existing MCP bridge socket: ${socketPath}`));
+      finish(
+        'live',
+        new Error(`Timed out while probing existing MCP bridge socket: ${socketPath}`)
+      );
     });
   });
 };
@@ -685,15 +694,11 @@ const probeUnixSocket = (socketPath: string): Promise<'live' | 'stale'> => {
 const getOptionalTimestamp = (
   params: RpcParams,
   camelKey: string,
-  snakeKey: string,
+  snakeKey: string
 ): number | null | undefined => {
   const hasCamelValue = Object.hasOwn(params, camelKey);
   const hasSnakeValue = Object.hasOwn(params, snakeKey);
-  if (
-    hasCamelValue &&
-    hasSnakeValue &&
-    params[camelKey] !== params[snakeKey]
-  ) {
+  if (hasCamelValue && hasSnakeValue && params[camelKey] !== params[snakeKey]) {
     throw new Error(`${camelKey} and ${snakeKey} must match when both are provided`);
   }
   const value = hasCamelValue ? params[camelKey] : params[snakeKey];
@@ -721,7 +726,7 @@ const assertTodoListActiveStatus = (status: unknown): void => {
 const assertTodoMatchesUpdate = (
   todo: TodoRow,
   updateParams: TodoUpdateCallParams,
-  source: string,
+  source: string
 ): void => {
   const fields = ['title', 'due_at', 'remind_at', 'important', 'note'] as const;
   for (const field of fields) {
@@ -740,7 +745,12 @@ export class McpBridgeServer {
   private endpoint: McpBridgeEndpoint | null = null;
   private unixSocketIdentity: UnixSocketIdentity | null = null;
   private domainCreateQueue: Promise<void> = Promise.resolve();
+  private readonly trenchData: TrenchRepository;
   private previewOpener: PreviewOpener | null = null;
+
+  constructor(trenchData: TrenchRepository = trenchRepository) {
+    this.trenchData = trenchData;
+  }
 
   configurePreviewOpener(opener: PreviewOpener): void {
     this.previewOpener = opener;
@@ -763,16 +773,20 @@ export class McpBridgeServer {
           const existing = lstatSync(endpoint.path);
           if (!existing.isSocket()) {
             throw new Error(
-              `Refusing to replace non-socket path at MCP bridge endpoint: ${endpoint.path}`,
+              `Refusing to replace non-socket path at MCP bridge endpoint: ${endpoint.path}`
             );
           }
           const existingIdentity = getUnixSocketIdentity(endpoint.path);
           const state = await probeUnixSocket(endpoint.path);
           if (state === 'live') {
-            throw new Error(`MCP bridge endpoint is already owned by a running process: ${endpoint.path}`);
+            throw new Error(
+              `MCP bridge endpoint is already owned by a running process: ${endpoint.path}`
+            );
           }
           if (!isSameUnixSocket(endpoint.path, existingIdentity)) {
-            throw new Error(`MCP bridge endpoint changed while probing stale socket: ${endpoint.path}`);
+            throw new Error(
+              `MCP bridge endpoint changed while probing stale socket: ${endpoint.path}`
+            );
           }
           unlinkSync(endpoint.path);
         }
@@ -788,9 +802,8 @@ export class McpBridgeServer {
 
       this.server = server;
       this.endpoint = endpoint;
-      this.unixSocketIdentity = endpoint.transport === 'unix'
-        ? getUnixSocketIdentity(endpoint.path)
-        : null;
+      this.unixSocketIdentity =
+        endpoint.transport === 'unix' ? getUnixSocketIdentity(endpoint.path) : null;
     } catch (err) {
       if (server.listening) {
         await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -839,12 +852,18 @@ export class McpBridgeServer {
     if (preservedReplacementPath && endpoint?.transport === 'unix') {
       try {
         if (existsSync(endpoint.path)) {
-          console.warn('[mcpBridge] socket path was claimed while restoring its replacement:', endpoint.path);
+          console.warn(
+            '[mcpBridge] socket path was claimed while restoring its replacement:',
+            endpoint.path
+          );
         } else {
           renameSync(preservedReplacementPath, endpoint.path);
         }
       } catch (err) {
-        console.warn('[mcpBridge] failed to restore replacement socket while closing prior owner:', err);
+        console.warn(
+          '[mcpBridge] failed to restore replacement socket while closing prior owner:',
+          err
+        );
       }
     }
 
@@ -879,8 +898,8 @@ export class McpBridgeServer {
           id: null,
           error: {
             code: -32000,
-            message: 'MCP bridge message is too large',
-          },
+            message: 'MCP bridge message is too large'
+          }
         });
         socket.destroy();
         return;
@@ -902,9 +921,9 @@ export class McpBridgeServer {
     let request: LocalRpcRequest | null = null;
     try {
       request = JSON.parse(line) as LocalRpcRequest;
-      const validId = typeof request.id === 'string' || (
-        typeof request.id === 'number' && Number.isFinite(request.id)
-      );
+      const validId =
+        typeof request.id === 'string' ||
+        (typeof request.id === 'number' && Number.isFinite(request.id));
       if (request.jsonrpc !== '2.0' || !validId || typeof request.method !== 'string') {
         throw new Error('Invalid JSON-RPC request');
       }
@@ -912,7 +931,7 @@ export class McpBridgeServer {
       writeResponse(socket, {
         jsonrpc: '2.0',
         id: request.id,
-        result,
+        result
       });
     } catch (err) {
       const failure: LocalRpcFailure = {
@@ -920,17 +939,15 @@ export class McpBridgeServer {
         id: request?.id ?? null,
         error: {
           code: -32000,
-          message: err instanceof Error && err.message
-            ? err.message
-            : 'Unknown MCP bridge error',
-        },
+          message: err instanceof Error && err.message ? err.message : 'Unknown MCP bridge error'
+        }
       };
       writeResponse(socket, failure);
     }
   }
 
   private async dispatch(method: string, rawParams: unknown): Promise<unknown> {
-    if (method === 'preview.open' && !isRecord(rawParams)) {
+    if ((method === 'preview.open' || method.startsWith('trench.')) && !isRecord(rawParams)) {
       throw new Error(`${method} params must be an object`);
     }
     const params = isRecord(rawParams) ? rawParams : {};
@@ -979,6 +996,30 @@ export class McpBridgeServer {
         return this.deleteStep(params);
       case 'preview.open':
         return this.openPreview(params);
+      case 'trench.analysis.put':
+        return this.putTrenchAnalysis(params);
+      case 'trench.analysis.list':
+        return this.listTrenchAnalyses(params);
+      case 'trench.analysis.get':
+        return this.getTrenchAnalysis(params);
+      case 'trench.analysis.archive':
+        return this.archiveTrenchAnalysis(params);
+      case 'trench.index_wallet.list':
+        return this.listTrenchIndexWallets(params);
+      case 'trench.index_wallet.get':
+        return this.getTrenchIndexWallet(params);
+      case 'trench.negative_wallet.put':
+        return this.putTrenchNegativeWallet(params);
+      case 'trench.negative_wallet.list':
+        return this.listTrenchNegativeWallets(params);
+      case 'trench.negative_wallet.get':
+        return this.getTrenchNegativeWallet(params);
+      case 'trench.negative_wallet_holdings.put':
+        return this.putTrenchNegativeWalletHoldings(params);
+      case 'trench.negative_wallet_holdings.get':
+        return this.getTrenchNegativeWalletHoldings(params);
+      case 'trench.negative_wallet.archive':
+        return this.archiveTrenchNegativeWallet(params);
       default:
         throw new Error(`Unknown method: ${method}`);
     }
@@ -1001,6 +1042,103 @@ export class McpBridgeServer {
     return { opened: true };
   }
 
+  private putTrenchAnalysis(params: RpcParams): Promise<unknown> {
+    assertOnlyKeys(params, ['record', 'replaceNewer'], 'trench.analysis.put');
+    return this.trenchData.putAnalysis({
+      record: params.record,
+      ...(params.replaceNewer === undefined ? {} : { replaceNewer: params.replaceNewer as boolean })
+    });
+  }
+
+  private listTrenchAnalyses(params: RpcParams): unknown {
+    assertOnlyKeys(params, ['query', 'cursor', 'limit'], 'trench.analysis.list');
+    return this.trenchData.listAnalyses(params);
+  }
+
+  private getTrenchAnalysis(params: RpcParams): unknown {
+    assertOnlyKeys(params, ['contractAddress'], 'trench.analysis.get');
+    return this.trenchData.getAnalysis(params.contractAddress);
+  }
+
+  private archiveTrenchAnalysis(params: RpcParams): Promise<unknown> {
+    assertOnlyKeys(
+      params,
+      ['contractAddress', 'expectedAnalysisId', 'expectedContentHash'],
+      'trench.analysis.archive'
+    );
+    return this.trenchData.archiveAnalysis({
+      contractAddress: params.contractAddress,
+      expectedAnalysisId: params.expectedAnalysisId,
+      expectedContentHash: params.expectedContentHash
+    });
+  }
+
+  private listTrenchIndexWallets(params: RpcParams): unknown {
+    assertOnlyKeys(params, ['query', 'cursor', 'limit'], 'trench.index_wallet.list');
+    return this.trenchData.listIndexWallets(params);
+  }
+
+  private getTrenchIndexWallet(params: RpcParams): unknown {
+    assertOnlyKeys(params, ['chain', 'address', 'cursor', 'limit'], 'trench.index_wallet.get');
+    return this.trenchData.getIndexWallet({
+      chain: params.chain,
+      address: params.address,
+      cursor: params.cursor,
+      limit: params.limit
+    });
+  }
+
+  private putTrenchNegativeWallet(params: RpcParams): Promise<unknown> {
+    assertOnlyKeys(
+      params,
+      ['requestId', 'chain', 'address', 'explanation'],
+      'trench.negative_wallet.put'
+    );
+    return this.trenchData.putNegativeWallet({
+      requestId: params.requestId,
+      chain: params.chain,
+      address: params.address,
+      explanation: params.explanation
+    });
+  }
+
+  private listTrenchNegativeWallets(params: RpcParams): unknown {
+    assertOnlyKeys(params, ['query', 'cursor', 'limit'], 'trench.negative_wallet.list');
+    return this.trenchData.listNegativeWallets(params);
+  }
+
+  private getTrenchNegativeWallet(params: RpcParams): unknown {
+    assertOnlyKeys(params, ['chain', 'address'], 'trench.negative_wallet.get');
+    return this.trenchData.getNegativeWallet(params.chain, params.address);
+  }
+
+  private putTrenchNegativeWalletHoldings(params: RpcParams): Promise<unknown> {
+    assertOnlyKeys(params, ['record', 'replaceNewer'], 'trench.negative_wallet_holdings.put');
+    return this.trenchData.putNegativeWalletHoldings({
+      record: params.record,
+      ...(params.replaceNewer === undefined ? {} : { replaceNewer: params.replaceNewer as boolean })
+    });
+  }
+
+  private getTrenchNegativeWalletHoldings(params: RpcParams): unknown {
+    assertOnlyKeys(params, ['chain', 'address'], 'trench.negative_wallet_holdings.get');
+    return this.trenchData.getNegativeWalletHoldings(params.chain, params.address);
+  }
+
+  private archiveTrenchNegativeWallet(params: RpcParams): Promise<unknown> {
+    assertOnlyKeys(
+      params,
+      ['chain', 'address', 'expectedTagId', 'expectedContentHash'],
+      'trench.negative_wallet.archive'
+    );
+    return this.trenchData.archiveNegativeWallet({
+      chain: params.chain,
+      address: params.address,
+      expectedTagId: params.expectedTagId,
+      expectedContentHash: params.expectedContentHash
+    });
+  }
+
   private async listDomains(): Promise<{
     domains: DomainRow[];
     focus: {
@@ -1019,7 +1157,7 @@ export class McpBridgeServer {
   }> {
     const domains = requireDomainRows(
       await todoDataClient.getDomains(),
-      'TodoistSyncRepository.getDomains',
+      'TodoistSyncRepository.getDomains'
     ).filter(isActiveDomain);
     return {
       domains,
@@ -1030,19 +1168,23 @@ export class McpBridgeServer {
         rule: MCP_STAR_RULE,
         starPolicy: {
           field: 'important',
-          starWhen: 'Set important=true when the user clearly asks to star/星标, mark important/重点 or priority/优先, add/place in Focus, or when the agent cannot continue current work until Ral performs an immediate human action.',
-          unstarWhen: 'Set important=false when the user clearly asks to unstar/取消星标, mark no longer important/不再重点, or remove the Todo from Focus.',
-          doNotStarWhen: 'A due date, reminder, ordinary backlog item, deferrable follow-up, or unrelated edit alone does not imply important=true.',
-          preserveWhenOmitted: 'On todo.update, omit important when star intent is absent so the current star/Focus state is preserved.',
-        },
-      },
+          starWhen:
+            'Set important=true when the user clearly asks to star/星标, mark important/重点 or priority/优先, add/place in Focus, or when the agent cannot continue current work until Ral performs an immediate human action.',
+          unstarWhen:
+            'Set important=false when the user clearly asks to unstar/取消星标, mark no longer important/不再重点, or remove the Todo from Focus.',
+          doNotStarWhen:
+            'A due date, reminder, ordinary backlog item, deferrable follow-up, or unrelated edit alone does not imply important=true.',
+          preserveWhenOmitted:
+            'On todo.update, omit important when star intent is absent so the current star/Focus state is preserved.'
+        }
+      }
     };
   }
 
   private async listArchivedDomains(): Promise<{ domains: DomainRow[] }> {
     const domains = requireDomainRows(
       await todoDataClient.getDomains(),
-      'TodoistSyncRepository.getDomains',
+      'TodoistSyncRepository.getDomains'
     ).filter(isArchivedDomain);
     return { domains };
   }
@@ -1060,7 +1202,7 @@ export class McpBridgeServer {
     const dataClient = todoDataClient;
     const domains = requireDomainRows(
       await dataClient.getDomains(),
-      'TodoistSyncRepository.getDomains',
+      'TodoistSyncRepository.getDomains'
     );
     const matches = domains.filter((domain) => domain.id === id && isActiveDomain(domain));
     if (matches.length !== 1) {
@@ -1074,14 +1216,12 @@ export class McpBridgeServer {
     }
     const domain = requireDomainRow(
       reread,
-      'TodoistSyncRepository.getDomainById after description update',
+      'TodoistSyncRepository.getDomainById after description update'
     );
-    if (
-      domain.id !== id ||
-      domain.description !== description ||
-      !isActiveDomain(domain)
-    ) {
-      throw new Error('TodoistSyncRepository.updateDomainDescription did not persist the requested active domain description');
+    if (domain.id !== id || domain.description !== description || !isActiveDomain(domain)) {
+      throw new Error(
+        'TodoistSyncRepository.updateDomainDescription did not persist the requested active domain description'
+      );
     }
     return { domain };
   }
@@ -1090,7 +1230,7 @@ export class McpBridgeServer {
     const request = this.domainCreateQueue.then(() => this.createDomainSerial(params));
     this.domainCreateQueue = request.then(
       () => undefined,
-      () => undefined,
+      () => undefined
     );
     return request;
   }
@@ -1120,7 +1260,7 @@ export class McpBridgeServer {
 
     const activeDomains = requireDomainRows(
       await todoDataClient.getDomains(),
-      'TodoistSyncRepository.getDomains',
+      'TodoistSyncRepository.getDomains'
     ).filter(isActiveDomain);
     if (activeDomains.length >= MCP_MAX_ACTIVE_DOMAINS) {
       throw new Error(`Cannot create domain: the active domain limit is ${MCP_MAX_ACTIVE_DOMAINS}`);
@@ -1128,14 +1268,12 @@ export class McpBridgeServer {
 
     const domain = requireDomainRow(
       await todoDataClient.createDomain({ title, description }),
-      'TodoistSyncRepository.createDomain',
+      'TodoistSyncRepository.createDomain'
     );
-    if (
-      domain.title !== title ||
-      domain.description !== description ||
-      !isActiveDomain(domain)
-    ) {
-      throw new Error('TodoistSyncRepository.createDomain returned a domain that does not match the request');
+    if (domain.title !== title || domain.description !== description || !isActiveDomain(domain)) {
+      throw new Error(
+        'TodoistSyncRepository.createDomain returned a domain that does not match the request'
+      );
     }
     return { domain };
   }
@@ -1148,11 +1286,10 @@ export class McpBridgeServer {
     assertTodoListActiveStatus(params.status);
     const domains = requireDomainRows(
       await todoDataClient.getDomains(),
-      'TodoistSyncRepository.getDomains',
+      'TodoistSyncRepository.getDomains'
     ).filter(isActiveDomain);
-    const requestedDomainId = params.domainId === undefined
-      ? undefined
-      : getRequiredId(params, 'domainId');
+    const requestedDomainId =
+      params.domainId === undefined ? undefined : getRequiredId(params, 'domainId');
     const targetDomains = requestedDomainId
       ? domains.filter((domain) => domain.id === requestedDomainId)
       : domains;
@@ -1166,7 +1303,7 @@ export class McpBridgeServer {
       const domainTodos = requireTodoRows(
         await todoDataClient.getTodosByDomain({ domainId: domain.id, status: 0 }),
         'TodoistSyncRepository.getTodosByDomain',
-        domain.id,
+        domain.id
       );
       if (domainTodos.some((todo) => todo.status !== 0 || todo.is_deleted !== 0)) {
         throw new Error('TodoistSyncRepository.getTodosByDomain returned a non-active todo');
@@ -1187,11 +1324,13 @@ export class McpBridgeServer {
       await todoDataClient.listAfter({ afterEventId, limit }),
       'TodoistSyncRepository.listAfter',
       afterEventId,
-      limit,
+      limit
     );
   }
 
-  private async waitEvents(params: RpcParams): Promise<TodoEventListResult & { timedOut: boolean }> {
+  private async waitEvents(
+    params: RpcParams
+  ): Promise<TodoEventListResult & { timedOut: boolean }> {
     const timeoutMs = getOptionalInteger(params, 'timeoutMs', 25000, 1000, 30000);
     const startedAt = Date.now();
     let result = await this.listEvents(params);
@@ -1202,7 +1341,7 @@ export class McpBridgeServer {
     }
     return {
       ...result,
-      timedOut: result.events.length === 0,
+      timedOut: result.events.length === 0
     };
   }
 
@@ -1218,7 +1357,7 @@ export class McpBridgeServer {
     return requireStatusResult(
       await todoDataClient.getStatusByIds({ ids }),
       'TodoistSyncRepository.getStatusByIds',
-      ids,
+      ids
     );
   }
 
@@ -1243,11 +1382,11 @@ export class McpBridgeServer {
         domainId,
         title,
         source: 'ai',
-        actor: 'ai',
+        actor: 'ai'
       }),
       'TodoistSyncRepository.createTodo',
       undefined,
-      domainId,
+      domainId
     );
     if (
       todo.title !== title ||
@@ -1255,7 +1394,9 @@ export class McpBridgeServer {
       todo.status !== 0 ||
       todo.is_deleted !== 0
     ) {
-      throw new Error('TodoistSyncRepository.createTodo returned a todo that does not match the request');
+      throw new Error(
+        'TodoistSyncRepository.createTodo returned a todo that does not match the request'
+      );
     }
     const updateParams: TodoUpdateCallParams = { ...requestedUpdate, id: todo.id };
     updateParams.actor = 'ai';
@@ -1264,7 +1405,7 @@ export class McpBridgeServer {
         await todoDataClient.updateTodo(updateParams),
         'TodoistSyncRepository.updateTodo after create',
         todo.id,
-        domainId,
+        domainId
       );
       assertTodoMatchesUpdate(todo, updateParams, 'TodoistSyncRepository.updateTodo after create');
     }
@@ -1276,11 +1417,7 @@ export class McpBridgeServer {
     updateParams.actor = 'ai';
     const value = await todoDataClient.updateTodo(updateParams);
     if (value === undefined) throw new Error(`Todo not found: ${updateParams.id}`);
-    const todo = requireTodoRow(
-      value,
-      'TodoistSyncRepository.updateTodo',
-      updateParams.id,
-    );
+    const todo = requireTodoRow(value, 'TodoistSyncRepository.updateTodo', updateParams.id);
     assertTodoMatchesUpdate(todo, updateParams, 'TodoistSyncRepository.updateTodo');
     return { todo };
   }
@@ -1289,11 +1426,7 @@ export class McpBridgeServer {
     const id = getRequiredId(params, 'id');
     const value = await todoDataClient.completeTodo({ id, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
-    const todo = requireTodoRow(
-      value,
-      'TodoistSyncRepository.completeTodo',
-      id,
-    );
+    const todo = requireTodoRow(value, 'TodoistSyncRepository.completeTodo', id);
     return { todo };
   }
 
@@ -1301,11 +1434,7 @@ export class McpBridgeServer {
     const id = getRequiredId(params, 'id');
     const value = await todoDataClient.uncompleteTodo({ id, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
-    const todo = requireTodoRow(
-      value,
-      'TodoistSyncRepository.uncompleteTodo',
-      id,
-    );
+    const todo = requireTodoRow(value, 'TodoistSyncRepository.uncompleteTodo', id);
     if (todo.status !== 0) {
       throw new Error('TodoistSyncRepository.uncompleteTodo returned a todo that is not active');
     }
@@ -1319,25 +1448,24 @@ export class McpBridgeServer {
       if (deleted === null || deleted === undefined) {
         throwInvalidDaoResult(deleted, 'TodoistSyncRepository.deleteTodo', 'delete confirmation');
       }
-      throw new Error(deleted === false
-        ? `Todo not found or not deleted: ${id}`
-        : 'TodoistSyncRepository.deleteTodo did not confirm deletion');
+      throw new Error(
+        deleted === false
+          ? `Todo not found or not deleted: ${id}`
+          : 'TodoistSyncRepository.deleteTodo did not confirm deletion'
+      );
     }
     return { deleted: true, id };
   }
 
-  private async moveTodo(params: RpcParams): Promise<{ moved: true; id: TodoEntityId; domainId: TodoEntityId }> {
+  private async moveTodo(
+    params: RpcParams
+  ): Promise<{ moved: true; id: TodoEntityId; domainId: TodoEntityId }> {
     const id = getRequiredId(params, 'id');
     const domainId = getRequiredId(params, 'domainId');
     await this.requireActiveDomain(domainId);
     const value = await todoDataClient.moveToDomain({ id, domainId, actor: 'ai' });
     if (value === undefined) throw new Error(`Todo not found: ${id}`);
-    const todo = requireTodoRow(
-      value,
-      'TodoistSyncRepository.moveToDomain',
-      id,
-      domainId,
-    );
+    const todo = requireTodoRow(value, 'TodoistSyncRepository.moveToDomain', id, domainId);
     if (todo.domain_id !== domainId) {
       throw new Error('TodoistSyncRepository.moveToDomain returned a todo in the wrong domain');
     }
@@ -1351,7 +1479,7 @@ export class McpBridgeServer {
       await todoDataClient.getSubTodosByTodoId({ todoId }),
       'TodoistSyncRepository.getSubTodosByTodoId',
       todoId,
-      todo.customer_id,
+      todo.customer_id
     );
     return { todo, steps };
   }
@@ -1359,21 +1487,26 @@ export class McpBridgeServer {
   private async createStep(params: RpcParams): Promise<{ step: StepRow }> {
     const todoId = getRequiredId(params, 'todoId');
     const title = this.getRequiredStepTitle(params);
-    const todo = await this.requireTodo(todoId, 'TodoistSyncRepository.getTodoById for step.create');
+    const todo = await this.requireTodo(
+      todoId,
+      'TodoistSyncRepository.getTodoById for step.create'
+    );
     const created = requireStepRow(
       await todoDataClient.createSubTodo({ todoId, title }),
       'TodoistSyncRepository.createSubTodo',
       undefined,
       todoId,
-      todo.customer_id,
+      todo.customer_id
     );
     if (created.title !== title || created.status !== 0) {
-      throw new Error('TodoistSyncRepository.createSubTodo returned a Step that does not match the request');
+      throw new Error(
+        'TodoistSyncRepository.createSubTodo returned a Step that does not match the request'
+      );
     }
     const step = await this.requireStep(
       created.id,
       'TodoistSyncRepository.getSubTodoById after create',
-      todo,
+      todo
     );
     if (step.title !== title || step.status !== 0) {
       throw new Error('TodoistSyncRepository.createSubTodo did not persist the requested Step');
@@ -1386,48 +1519,49 @@ export class McpBridgeServer {
     const title = this.getRequiredStepTitle(params);
     const { step: existing, todo } = await this.requireStepWithParent(
       id,
-      'TodoistSyncRepository.getSubTodoById before update',
+      'TodoistSyncRepository.getSubTodoById before update'
     );
     await todoDataClient.updateSubTodoTitle({ id, title });
     const step = await this.requireStep(
       id,
       'TodoistSyncRepository.getSubTodoById after update',
-      todo,
+      todo
     );
     if (step.todo_id !== existing.todo_id || step.title !== title) {
-      throw new Error('TodoistSyncRepository.updateSubTodoTitle did not persist the requested Step title');
+      throw new Error(
+        'TodoistSyncRepository.updateSubTodoTitle did not persist the requested Step title'
+      );
     }
     return { step };
   }
 
-  private async setStepCompleted(
-    params: RpcParams,
-    status: 0 | 1,
-  ): Promise<{ step: StepRow }> {
+  private async setStepCompleted(params: RpcParams, status: 0 | 1): Promise<{ step: StepRow }> {
     const id = getRequiredId(params, 'id');
     const { todo } = await this.requireStepWithParent(
       id,
-      `TodoistSyncRepository.getSubTodoById before step.${status === 1 ? 'complete' : 'uncomplete'}`,
+      `TodoistSyncRepository.getSubTodoById before step.${status === 1 ? 'complete' : 'uncomplete'}`
     );
     await todoDataClient.setSubTodoStatus({ id, status });
     const step = await this.requireStep(
       id,
       `TodoistSyncRepository.getSubTodoById after step.${status === 1 ? 'complete' : 'uncomplete'}`,
-      todo,
+      todo
     );
     if (step.status !== status) {
-      throw new Error(`TodoistSyncRepository.setSubTodoStatus did not persist Step status ${status}`);
+      throw new Error(
+        `TodoistSyncRepository.setSubTodoStatus did not persist Step status ${status}`
+      );
     }
     return { step };
   }
 
   private async deleteStep(
-    params: RpcParams,
+    params: RpcParams
   ): Promise<{ deleted: true; id: TodoEntityId; todoId: TodoEntityId }> {
     const id = getRequiredId(params, 'id');
     const { step } = await this.requireStepWithParent(
       id,
-      'TodoistSyncRepository.getSubTodoById before delete',
+      'TodoistSyncRepository.getSubTodoById before delete'
     );
     await todoDataClient.deleteSubTodo({ id });
     const remaining = await todoDataClient.getSubTodoById({ id });
@@ -1437,7 +1571,7 @@ export class McpBridgeServer {
         'TodoistSyncRepository.getSubTodoById after delete',
         id,
         step.todo_id,
-        step.customer_id,
+        step.customer_id
       );
       throw new Error('TodoistSyncRepository.deleteSubTodo did not delete the requested Step');
     }
@@ -1450,30 +1584,20 @@ export class McpBridgeServer {
     return requireTodoRow(value, source, id);
   }
 
-  private async requireStep(
-    id: TodoEntityId,
-    source: string,
-    todo?: TodoRow,
-  ): Promise<StepRow> {
+  private async requireStep(id: TodoEntityId, source: string, todo?: TodoRow): Promise<StepRow> {
     const value = await todoDataClient.getSubTodoById({ id });
     if (value === undefined) throw new Error(`Step not found: ${id}`);
-    return requireStepRow(
-      value,
-      source,
-      id,
-      todo?.id,
-      todo?.customer_id,
-    );
+    return requireStepRow(value, source, id, todo?.id, todo?.customer_id);
   }
 
   private async requireStepWithParent(
     id: TodoEntityId,
-    source: string,
+    source: string
   ): Promise<{ step: StepRow; todo: TodoRow }> {
     const step = await this.requireStep(id, source);
     const todo = await this.requireTodo(
       step.todo_id,
-      'TodoistSyncRepository.getTodoById for Step parent',
+      'TodoistSyncRepository.getTodoById for Step parent'
     );
     if (step.customer_id !== todo.customer_id) {
       throw new Error(`${source} returned a Step whose customer does not match its parent Todo`);
@@ -1492,17 +1616,14 @@ export class McpBridgeServer {
   private async requireActiveDomain(domainId: TodoEntityId): Promise<DomainRow> {
     const domains = requireDomainRows(
       await todoDataClient.getDomains(),
-      'TodoistSyncRepository.getDomains',
+      'TodoistSyncRepository.getDomains'
     );
     const matches = domains.filter((domain) => domain.id === domainId && isActiveDomain(domain));
     if (matches.length !== 1) throw new Error(`Active domain not found: ${domainId}`);
     return matches[0];
   }
 
-  private toTodoUpdateParams(
-    params: RpcParams,
-    requireChange = true,
-  ): TodoUpdateCallParams {
+  private toTodoUpdateParams(params: RpcParams, requireChange = true): TodoUpdateCallParams {
     const id = getRequiredId(params, 'id');
     const updateParams: TodoUpdateCallParams = { id };
 
@@ -1546,7 +1667,6 @@ export class McpBridgeServer {
 
     return updateParams;
   }
-
 }
 
 export const mcpBridgeServer = new McpBridgeServer();

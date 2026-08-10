@@ -1,32 +1,29 @@
 <template>
-  <div name="coin__app" class="coin-app">
-    <CoinWindowHeader :platform="platform" />
-
-    <div name="coin__workspace" class="coin-app__workspace">
-      <CoinAnalysisPane />
-    </div>
-
-    <CoinStatusBar />
+  <div
+    name="trench__app"
+    class="trench-app"
+    :class="{ 'trench-app--embedded': host.host === 'omni' }"
+    :data-host="host.host"
+    :data-mobile-detail="trenchVaultStore.mobileDetailOpen"
+  >
+    <TrenchHeader />
+    <TrenchModuleBar />
+    <TrenchRecordWorkspace />
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import { coinShellStore } from './coinShell.store';
-import CoinAnalysisPane from './components/CoinAnalysisPane.vue';
-import CoinStatusBar from './components/CoinStatusBar.vue';
-import CoinWindowHeader from './components/CoinWindowHeader.vue';
-import { coinWorkspaceStore } from './views/analysis/coinWorkspace.store';
-import { coinXBrowserStore } from './views/analysis/coinXBrowser.store';
+import TrenchHeader from './components/TrenchHeader/TrenchHeader.vue';
+import TrenchModuleBar from './components/TrenchModuleBar/TrenchModuleBar.vue';
+import TrenchRecordWorkspace from './components/TrenchRecordWorkspace/TrenchRecordWorkspace.vue';
+import { trenchHost } from './contextBridge/trenchHost.bridge';
+import { trenchVaultStore } from './views/vault/trenchVault.runtime';
 
-const platform = window.coin.platform;
+const host = trenchHost;
 
 onMounted(() => {
-  void Promise.all([
-    coinShellStore.initialize(),
-    coinWorkspaceStore.initialize(),
-    coinXBrowserStore.initialize(),
-  ]);
+  void trenchVaultStore.initialize();
 });
 </script>
 

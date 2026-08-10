@@ -1,6 +1,7 @@
 import { contextBridge } from 'electron';
 import 'electron-xpc/preload';
 import '../../shared/pathHelper/preload/pathPreload.helper';
+import './omniCellActiveFrame.sdk';
 import type { OmniContentMode } from '@shared/omni/omni.types';
 
 export interface OmniCellEnvApi {

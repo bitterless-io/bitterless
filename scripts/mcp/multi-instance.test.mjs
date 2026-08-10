@@ -316,16 +316,16 @@ try {
   assert.equal(postCleanupStartupCalled, false);
 
   assert.equal(getMcpServerName('Bitterless'), 'bitterless');
-  assert.equal(getMcpServerName('Bitterless_DEBUG'), 'bitterless-debug');
+  assert.equal(getMcpServerName('Bitterless_DEBUG_PROD'), 'bitterless-debug-prod');
   assert.equal(getMcpServerName('Bitterless_DEV'), 'bitterless-dev');
-  assert.equal(getMcpServerName('Bitterless_DEV_DEBUG'), 'bitterless-dev-debug');
+  assert.equal(getMcpServerName('Bitterless_DEBUG_DEV'), 'bitterless-debug-dev');
   assert.throws(() => getMcpServerName('  '), /app name is required/);
 
   assert.deepEqual(JSON.parse(createMcpConfigJson('/tmp/prod helper')), {
     mcpServers: { bitterless: { command: '/tmp/prod helper' } }
   });
-  assert.deepEqual(JSON.parse(createMcpConfigJson('/tmp/debug helper', 'bitterless-debug')), {
-    mcpServers: { 'bitterless-debug': { command: '/tmp/debug helper' } }
+  assert.deepEqual(JSON.parse(createMcpConfigJson('/tmp/debug helper', 'bitterless-debug-prod')), {
+    mcpServers: { 'bitterless-debug-prod': { command: '/tmp/debug helper' } }
   });
   assert.throws(() => createMcpConfigJson('/tmp/helper', '__proto__'), /Invalid MCP server name/);
 
@@ -834,14 +834,17 @@ try {
       guiStartupSource.indexOf('dependencies.createHome()')
   );
   assert.match(guiStartupSource, /void coreSqliteResult/);
-  assert.doesNotMatch(appMainSource, /withStartupTimeout|SQLITE_STARTUP_TIMEOUT_MS/);
+  assert.doesNotMatch(appMainSource, /withStartupTimeout|\bSQLITE_STARTUP_TIMEOUT_MS\b/);
   assert.doesNotMatch(appMainSource, /app\.exit\(1\)/);
   assert.match(appMainSource, /startupDiagnosticsService\.report\('core-sqlite', err\)/);
   assert.doesNotMatch(appMainSource, /did-finish-load|waitForWindowLoad/);
   assert.doesNotMatch(appMainSource, /degraded Home|isSqliteDocumentAvailable/);
   assert.match(appMainSource, /isShutdownStarted = true/);
   assert.match(appMainSource, /void optionalIntegrationsLifecycle\.start/);
-  assert.match(appMainSource, /app\.whenReady\(\)\.then\(startGui\)\.catch/);
+  assert.match(
+    appMainSource,
+    /app\.whenReady\(\)\.then\(async \(\) => \{[\s\S]*await startGui\(\);[\s\S]*\}\)\.catch/
+  );
 
   console.log(
     '[mcp-multi-instance-test] routing, Node-only helper isolation, lifecycle overlap, config, shim quoting, pinned helpers, socket ownership, stale recovery, and startup ordering passed'

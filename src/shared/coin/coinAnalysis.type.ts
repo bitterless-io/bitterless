@@ -340,6 +340,13 @@ export interface CoinMemeAnalyzeInput {
   traderLimit: number;
 }
 
+export interface CoinMemeAutoAnalyzeInput {
+  requestId: string;
+  contractAddress: string;
+  holderLimit: number;
+  traderLimit: number;
+}
+
 export interface CoinMemeAsset {
   chain: CoinChain;
   contractAddress: string;
@@ -532,6 +539,21 @@ export interface CoinMemeAnalysisResult {
   confidence: CoinNullableMetric<number>;
   unavailable: CoinUnavailableField[];
   warnings: string[];
+  receipts: CoinSourceReceipt[];
+}
+
+export interface CoinMemeAutoAnalysisMatch {
+  chain: CoinChain;
+  analysis: CoinMemeAnalysisResult;
+}
+
+export interface CoinMemeAutoAnalysisResult {
+  schema: 'coin-meme-auto-analysis-v1';
+  contractAddress: string;
+  probedChains: CoinChain[];
+  matches: CoinMemeAutoAnalysisMatch[];
+  activeChain: CoinChain | null;
+  generatedAt: number;
   receipts: CoinSourceReceipt[];
 }
 

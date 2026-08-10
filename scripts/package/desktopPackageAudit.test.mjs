@@ -36,6 +36,13 @@ const ONLY_PREVIEW_AGENT_SKILL_FILES = [
   'references/mcp-setup.md',
   'references/tools.md',
 ];
+const TRENCH_AGENT_SKILL_FILES = [
+  'SKILL.md',
+  'agents/openai.yaml',
+  'references/mcp-setup.md',
+  'references/schemas.md',
+  'references/tools.md',
+];
 
 const readProjectFile = (filePath) => {
   return readFileSync(path.join(projectRoot, filePath), 'utf-8');
@@ -80,6 +87,7 @@ const createSyntheticApplication = async ({
   betterSqlite3Arch,
   includeMacIcon = true,
   includeOnlyPreviewAgentSkill = true,
+  includeTrenchAgentSkill = true,
 } = {}) => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'bitterless-desktop-package-'));
   temporaryRoots.push(fixtureRoot);
@@ -88,6 +96,12 @@ const createSyntheticApplication = async ({
   writeFixtureFiles(archiveSource, {
     'package.json': '{"name":"synthetic-app"}\n',
     'out/main/app.main.js': 'module.exports = {};\n',
+    'out/.bitterless-runtime-profile.json': JSON.stringify({
+      schemaVersion: 1,
+      profileName: 'release_prod',
+      viteEnv: 'prod',
+      viteMode: 'release',
+    }),
     ...archiveFiles,
   });
 
@@ -114,6 +128,14 @@ const createSyntheticApplication = async ({
         ]),
       )
     : {};
+  const trenchSkillFiles = includeTrenchAgentSkill
+    ? Object.fromEntries(
+        TRENCH_AGENT_SKILL_FILES.map((relativePath) => [
+          `${resourcesPrefix}/agent-skills/bitterless-trench/${relativePath}`,
+          `${relativePath}\n`,
+        ]),
+      )
+    : {};
   mkdirSync(resourcesPath, { recursive: true });
   await createPackage(archiveSource, path.join(resourcesPath, 'app.asar'));
   writeFixtureFiles(applicationPath, {
@@ -127,6 +149,7 @@ const createSyntheticApplication = async ({
         }
       : {}),
     ...previewSkillFiles,
+    ...trenchSkillFiles,
     ...appFiles,
   });
 
@@ -163,9 +186,35 @@ test('synthetic app.asar passes the desktop package audit', async () => {
   assert(result.appBytes >= result.asarBytes);
   assert.equal(result.targetPlatform, 'darwin');
   assert.equal(result.targetArch, 'arm64');
+  assert.equal(result.packagedRuntimeProfile.profileName, 'release_prod');
   assert(result.applicationIconPaths.bundleIcnsPath.endsWith('icon.icns'));
   assert.equal(result.onlyPreviewAgentSkill.files.length, 4);
+  assert.equal(result.trenchAgentSkill.files.length, 5);
   await afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 });
+});
+
+test('packaged runtime profile gate rejects debug and missing markers', async () => {
+  const debug = await createSyntheticApplication({
+    archiveFiles: {
+      'out/.bitterless-runtime-profile.json': JSON.stringify({
+        schemaVersion: 1,
+        profileName: 'debug_dev',
+        viteEnv: 'dev',
+        viteMode: 'debug',
+      }),
+    },
+  });
+  assert.throws(() => auditDesktopPackage(debug.applicationPath), /runtime profile gate failed/);
+
+  const missing = await createSyntheticApplication();
+  const missingSource = path.join(path.dirname(missing.asarPath), 'missing-marker-source');
+  mkdirSync(missingSource, { recursive: true });
+  writeFixtureFiles(missingSource, {
+    'package.json': '{"name":"synthetic-app"}\n',
+    'out/main/app.main.js': 'module.exports = {};\n',
+  });
+  await createPackage(missingSource, missing.asarPath);
+  assert.throws(() => auditDesktopPackage(missing.applicationPath), /runtime profile gate failed/);
 });
 
 test('packaged Preview skill gate rejects missing files and symlinks', async () => {
@@ -210,6 +259,41 @@ test('packaged Preview skill gate rejects missing files and symlinks', async () 
   assert.throws(
     () => auditDesktopPackage(directorySymlink.applicationPath),
     /Preview skill directory must be a real directory/,
+  );
+});
+
+test('packaged Trench skill gate rejects missing files and symlinks', async () => {
+  const missing = await createSyntheticApplication();
+  unlinkSync(path.join(missing.resourcesPath, 'agent-skills/bitterless-trench/references/schemas.md'));
+  assert.throws(
+    () => auditDesktopPackage(missing.applicationPath),
+    /Trench agent skill gate failed/,
+  );
+
+  const fileSymlink = await createSyntheticApplication();
+  const toolsPath = path.join(
+    fileSymlink.resourcesPath,
+    'agent-skills/bitterless-trench/references/tools.md',
+  );
+  unlinkSync(toolsPath);
+  symlinkSync('schemas.md', toolsPath);
+  assert.throws(
+    () => auditDesktopPackage(fileSymlink.applicationPath),
+    /Trench skill file must be a non-empty real file/,
+  );
+
+  const directorySymlink = await createSyntheticApplication();
+  const skillPath = path.join(
+    directorySymlink.resourcesPath,
+    'agent-skills/bitterless-trench',
+  );
+  const referencesPath = path.join(skillPath, 'references');
+  const movedReferencesPath = `${referencesPath}-real`;
+  renameSync(referencesPath, movedReferencesPath);
+  symlinkSync(movedReferencesPath, referencesPath, 'dir');
+  assert.throws(
+    () => auditDesktopPackage(directorySymlink.applicationPath),
+    /Trench skill directory must be a real directory/,
   );
 });
 
@@ -486,6 +570,14 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
         && resource.to === 'agent-skills/bitterless-preview',
     ),
     'Electron Builder must copy the complete Bitterless Preview skill directory',
+  );
+  assert(
+    config.extraResources?.some(
+      (resource) =>
+        resource.from === 'skills/bitterless-trench'
+        && resource.to === 'agent-skills/bitterless-trench',
+    ),
+    'Electron Builder must copy the complete Bitterless Trench skill directory',
   );
 });
 

@@ -13,7 +13,7 @@ export const zh: typeof en = {
     passwordMinimum: '至少 8 位',
     confirmPasswordPlaceholder: '再次输入密码',
     setPasswordAndContinue: '设置密码并继续',
-    continueToWorkspace: '继续进入工作区',
+    continueToWorkspace: '继续进入工作区'
   },
   app: {
     quit: '退出',
@@ -23,14 +23,15 @@ export const zh: typeof en = {
     quitConfirmOk: '退出',
     quitConfirmCancel: '取消',
     keychainDeniedTitle: '需要钥匙串访问权限',
-    keychainDeniedMessage: '为保障数据安全，应用需要访问系统钥匙串进行加密存储，请在系统弹窗中允许访问。',
+    keychainDeniedMessage:
+      '为保障数据安全，应用需要访问系统钥匙串进行加密存储，请在系统弹窗中允许访问。',
     keychainDeniedOk: '拒绝',
     keychainDeniedCancel: '取消',
     onlyPreviewFileMenu: {
       preview: '预览',
       openExternally: '用系统应用打开',
-      revealInFolder: '在文件夹中显示',
-    },
+      revealInFolder: '在文件夹中显示'
+    }
   },
   menuBar: {
     restartToUpdate: 'update',
@@ -46,9 +47,9 @@ export const zh: typeof en = {
         'mcp-shim': 'Todo MCP 助手',
         tray: '系统托盘',
         'mcp-bridge': 'Todo MCP 桥接',
-        'eyes-on-agents': 'EyesOnAgents',
-      },
-    },
+        'eyes-on-agents': 'EyesOnAgents'
+      }
+    }
   },
   omni: {
     title: '全能浏览器',
@@ -64,7 +65,7 @@ export const zh: typeof en = {
     splitDown: '向下分屏',
     closePane: '关闭窗格',
     layoutRecoveryError: '无法恢复已保存的布局，当前已显示默认浏览器窗格。',
-    miniAppLoadFailed: '无法加载{name}。请选择其他应用，或重试当前选择。',
+    miniAppLoadFailed: '无法加载{name}。请选择其他应用，或重试当前选择。'
   },
   chat: {
     inputPlaceHolder: '输入消息，Enter 发送，Shift+Enter 换行',
@@ -84,7 +85,7 @@ export const zh: typeof en = {
     seeMore: '查看更多',
     newResponse: '新的完整回复',
     searchShortcutTipMac: '搜索 (⌘F)',
-    searchShortcutTipWin: '搜索 (Alt+F)',
+    searchShortcutTipWin: '搜索 (Alt+F)'
   },
   setting: {
     title: '设置',
@@ -93,26 +94,26 @@ export const zh: typeof en = {
       language: {
         label: '显示语言',
         zh: '简体中文',
-        en: 'English',
+        en: 'English'
       },
       searchEngine: {
         label: '搜索引擎',
         baidu: '百度',
-        duckduckgo: 'DuckDuckGo',
+        duckduckgo: 'DuckDuckGo'
       },
       experimental: {
         label: '实验功能',
         showChatMenu: '在主菜单中显示 Chat',
         showChatMenuDescription: '保留从主菜单进入现有 Chat 工作区的入口。',
-        showChatMenuSaveFailed: '无法更新 Chat 菜单设置，已恢复之前的设置。',
+        showChatMenuSaveFailed: '无法更新 Chat 菜单设置，已恢复之前的设置。'
       },
       account: {
         label: '账号',
-        logout: '退出登录',
+        logout: '退出登录'
       },
       save: '保存',
       saveSuccess: '保存成功',
-      saveFailed: '保存失败',
+      saveFailed: '保存失败'
     },
     proxy: {
       tabTitle: '代理',
@@ -125,7 +126,7 @@ export const zh: typeof en = {
       saveSuccess: '保存成功',
       saveFailed: '保存失败',
       ipRequired: '启用代理时 IP 不能为空',
-      portRequired: '启用代理时端口不能为空',
+      portRequired: '启用代理时端口不能为空'
     },
     llm: {
       tabTitle: '模型配置',
@@ -147,7 +148,7 @@ export const zh: typeof en = {
       logout: '退出登录',
       loadFailed: '无法读取 Codex 状态。',
       loginFailed: 'Codex 登录未完成。',
-      logoutFailed: '无法退出 Codex。',
+      logoutFailed: '无法退出 Codex。'
     },
     systemPrompt: {
       tabTitle: '系统提示词',
@@ -156,7 +157,7 @@ export const zh: typeof en = {
       save: '保存',
       saveSuccess: '保存成功',
       saveFailed: '保存失败',
-      hint: '系统提示词将在每次对话开始时发送给 AI，用于设定 AI 的角色和行为规范。',
+      hint: '系统提示词将在每次对话开始时发送给 AI，用于设定 AI 的角色和行为规范。'
     },
     notification: {
       tabTitle: '通知',
@@ -165,7 +166,7 @@ export const zh: typeof en = {
       testUnsupported: '此设备不支持系统通知。',
       testShowFailed: '操作系统拒绝了测试通知，请检查应用日志和通知权限。',
       testShowTimeout: '操作系统未确认测试通知，请检查通知权限后重试。',
-      testRequestFailed: '无法运行通知测试，请检查应用日志后重试。',
+      testRequestFailed: '无法运行通知测试，请检查应用日志后重试。'
     },
     log: {
       tabTitle: '日志',
@@ -205,8 +206,8 @@ export const zh: typeof en = {
         eyesOnAgents: 'Eyes on agents',
         mcp: 'MCP',
         bin: '可执行文件',
-        artifacts: '生成文件',
-      },
+        artifacts: '生成文件'
+      }
     },
     about: {
       tabTitle: '关于',
@@ -214,8 +215,8 @@ export const zh: typeof en = {
       version: '版本',
       versionCode: '版本号',
       website: '官网',
-      openWebsite: '访问官网',
-    },
+      openWebsite: '访问官网'
+    }
   },
   connector: {
     wechat: {
@@ -223,12 +224,12 @@ export const zh: typeof en = {
       ownerVerifyTitle: '认证主人 / Owner',
       ownerVerifyHint: '向该微信账号发送验证码即可认证为主人，改名后建议重新认证。',
       ownerVerified: '主人',
-      ownerNotSet: '未设置主人',
+      ownerNotSet: '未设置主人'
     },
     name: {
       wechat: '微信',
       dingtalk: '钉钉',
-      feishu: '飞书',
+      feishu: '飞书'
     },
     configStatus: '配置状态',
     connectionStatus: '连接状态',
@@ -244,7 +245,7 @@ export const zh: typeof en = {
     saveOnly: '仅保存',
     saveAndConnect: '保存并连接',
     disconnect: '断开连接',
-    connecting: '连接中...',
+    connecting: '连接中...'
   },
   pluginTest: {
     title: '插件测试',
@@ -254,43 +255,47 @@ export const zh: typeof en = {
     optionUrlPlaceholder: 'http://localhost:5174',
     backgroundPath: 'Background.js 路径',
     backgroundPathPlaceholder: '/path/to/out/background/background.js',
-    openWindow: '打开',
+    openWindow: '打开'
   },
   miniApp: {
     open: '打开',
     openFailed: '无法打开{name}',
     todo: {
       name: '待办',
-      subtitle: '任务管理与组织',
+      subtitle: '任务管理与组织'
     },
     maestro: {
       name: 'Maestro',
-      subtitle: '浏览器自动化、智能体、操作录制与工作台',
+      subtitle: '浏览器自动化、智能体、操作录制与工作台'
     },
     coin: {
       name: 'trench',
-      subtitle: 'trenchs for trenchers',
+      subtitle: 'trenchs for trenchers'
     },
     eyesOnAgents: {
       name: 'EyesOnAgents',
-      subtitle: '观测运行中的 Codex 任务，并按 Domain 整理',
+      subtitle: '观测运行中的 Codex 任务，并按 Domain 整理'
     },
     translator: {
       name: '翻译器',
-      subtitle: '使用 Codex 实时进行中英互译',
+      subtitle: '使用 Codex 实时进行中英互译'
     },
     motto: {
       name: 'Motto',
-      subtitle: '随时查看对自己重要的提醒',
+      subtitle: '随时查看对自己重要的提醒'
+    },
+    trench: {
+      name: 'Trench',
+      subtitle: '浏览本地 CA 与钱包证据'
     },
     onlyPreview: {
       name: 'OnlyPreview',
-      subtitle: '快速、私密地预览本地文件与文件夹',
+      subtitle: '快速、私密地预览本地文件与文件夹'
     },
     omniBrowser: {
       name: '全能浏览器',
-      subtitle: '多窗格网页浏览器',
-    },
+      subtitle: '多窗格网页浏览器'
+    }
   },
   translator: {
     title: '翻译器',
@@ -318,8 +323,8 @@ export const zh: typeof en = {
       invalidOutput: 'Codex 返回了无效翻译。',
       provider: '翻译失败。',
       unavailable: 'Codex 尚未就绪，请登录后重试。',
-      generic: '翻译失败，请修改原文后重试。',
-    },
+      generic: '翻译失败，请修改原文后重试。'
+    }
   },
   motto: {
     title: 'Motto',
@@ -339,19 +344,19 @@ export const zh: typeof en = {
       subtitlePlaceholder: '写一句简短提醒…',
       cancel: '取消',
       add: '新增',
-      save: '保存',
+      save: '保存'
     },
     errors: {
       read: 'Motto 存储暂时不可用，已保存的提醒未被修改。',
       invalid: '无法安全读取已保存的 Motto；新增一条即可替换异常数据。',
-      write: '无法保存本次修改，页面仍保留上一次成功保存的内容。',
-    },
+      write: '无法保存本次修改，页面仍保留上一次成功保存的内容。'
+    }
   },
   eyesOnAgents: {
     title: 'EyesOnAgents',
     completionNotification: {
       title: 'Thread 结束',
-      body: '《{title}》',
+      body: '《{title}》'
     },
     connection: {
       appServer: 'App Server',
@@ -362,17 +367,20 @@ export const zh: typeof en = {
       error: '连接异常',
       title: 'Codex 连接',
       managedTitle: '托管 App Server',
-      managedDescription: '“连接”只控制 Bitterless 的任务清单同步与这个本机 Codex App Server 进程。',
-      desktopNote: '它不会附加到 Codex Desktop 的私有 App Server；全局 Codex 观测在下方独立安装和控制。',
+      managedDescription:
+        '“连接”只控制 Bitterless 的任务清单同步与这个本机 Codex App Server 进程。',
+      desktopNote:
+        '它不会附加到 Codex Desktop 的私有 App Server；全局 Codex 观测在下方独立安装和控制。',
       lastSync: '最近同步',
       neverSynced: '尚未同步',
       titleEnrichment: '标题更新',
-      titleEnrichmentDeferred: '任务 {thread} 的标题更新已推迟：App Server 不可用。稍后可通过刷新重试。',
+      titleEnrichmentDeferred:
+        '任务 {thread} 的标题更新已推迟：App Server 不可用。稍后可通过刷新重试。',
       titleEnrichmentReadRejected: '无法刷新任务 {thread} 的标题，稍后可通过刷新重试。',
       titleEnrichmentUnusable: '任务 {thread} 未返回可用标题，稍后可通过刷新重试。',
       connect: '连接',
       disconnect: '断开',
-      retry: '重试',
+      retry: '重试'
     },
     bridge: {
       eyebrow: 'Codex 观测',
@@ -395,29 +403,34 @@ export const zh: typeof en = {
       lastEvent: '最近事件',
       never: '从未',
       promptRetentionLabel: '保存最后一个用户问题',
-      promptRetentionDescription: '此权限独立且默认关闭。仅在本机 SQLite 中为每个任务保留一个不超过 8192 字节的预览；关闭会清空已保存的预览。不保存回答或历史记录。',
+      promptRetentionDescription:
+        '此权限独立且默认关闭。仅在本机 SQLite 中为每个任务保留一个不超过 8192 字节的预览；关闭会清空已保存的预览。不保存回答或历史记录。',
       untrustedReview: 'Codex 尚未信任 Bitterless hooks。',
       modifiedReview: 'Codex 检测到 Bitterless hooks 已变化，需要重新审核。',
-      disabledReview: '一个或多个 Bitterless hooks 已禁用，审核前可安全地仅重新启用这些精确匹配项。',
+      disabledReview:
+        '一个或多个 Bitterless hooks 已禁用，审核前可安全地仅重新启用这些精确匹配项。',
       manualReview: 'Bitterless 无法确认 hooks 的信任状态，请在 Codex 中手动审核。',
       hookGuideTitle: 'Codex 观测设置',
       hookGuideOpenTitle: '安装或修复',
       hookGuideOpenDescription: '仅在未安装时选择“启用观测”，仅在状态提示定义漂移时选择“修复”。',
       hookGuideReviewTitle: '仅在状态要求时审核',
-      hookGuideReviewDescription: '状态要求审核时，选择“在 Codex 中审核”或“重新启用并审核”。在设置 → Hooks 中检查每个 Bitterless 定义，仅信任 Codex 标记的项目。',
+      hookGuideReviewDescription:
+        '状态要求审核时，选择“在 Codex 中审核”或“重新启用并审核”。在设置 → Hooks 中检查每个 Bitterless 定义，仅信任 Codex 标记的项目。',
       hookGuideCli: 'CLI：输入 /hooks',
       hookGuideConfirmTitle: '验证状态',
       hookGuideConfirmDescription: '审核或状态待确认时选择“再次检查”，安装完成后选择“检查状态”。',
       hookGuideContentTitle: '可选内容：保存最后一个用户问题',
-      hookGuideContentDescription: '此权限独立且默认关闭；信任 Hook 不会授予此内容权限。开启后每个任务仅保存一条有界的本地预览；关闭会清空所有已保存预览。回答、推理、工具、附件、更早的问题和历史记录均不会保存。',
-      hookGuideTrustBoundary: 'Bitterless 只能重新启用精确匹配且已禁用的 hooks。只有 Codex 能授予信任；Bitterless 无法绕过审核。',
+      hookGuideContentDescription:
+        '此权限独立且默认关闭；信任 Hook 不会授予此内容权限。开启后每个任务仅保存一条有界的本地预览；关闭会清空所有已保存预览。回答、推理、工具、附件、更早的问题和历史记录均不会保存。',
+      hookGuideTrustBoundary:
+        'Bitterless 只能重新启用精确匹配且已禁用的 hooks。只有 Codex 能授予信任；Bitterless 无法绕过审核。',
       enable: '启用观测',
       repair: '修复',
       reviewInCodex: '在 Codex 中审核',
       reEnableAndReview: '重新启用并审核',
       checkStatus: '检查状态',
       checkAgain: '再次检查',
-      disable: '禁用',
+      disable: '禁用'
     },
     actions: {
       sync: '同步',
@@ -436,7 +449,7 @@ export const zh: typeof en = {
       create: '创建',
       readAll: '全部已读',
       searchTitles: '搜索任务标题',
-      clearTitleSearch: '清除标题搜索',
+      clearTitleSearch: '清除标题搜索'
     },
     search: {
       title: '搜索任务',
@@ -445,7 +458,7 @@ export const zh: typeof en = {
       empty: '没有匹配此搜索的任务标题',
       startTyping: '输入任务标题开始搜索',
       domainContext: 'Domain：{domain}',
-      noDomain: '无 Domain',
+      noDomain: '无 Domain'
     },
     board: {
       focus: 'Focus',
@@ -463,14 +476,14 @@ export const zh: typeof en = {
       loading: '正在加载观测面板',
       addDomain: '添加 Domain',
       domainPlaceholder: 'Domain 名称',
-      titleSearchPlaceholder: '搜索标题',
+      titleSearchPlaceholder: '搜索标题'
     },
     domain: {
       options: 'Domain 操作',
       deleteTitle: '删除 Domain',
       deleteBody: '该 Domain 内的任务仍可在「All」中找到，不会删除 Codex 任务。',
       duplicate: '已经存在同名 Domain。',
-      required: '请输入 Domain 名称。',
+      required: '请输入 Domain 名称。'
     },
     thread: {
       untitled: '未命名 Codex 任务',
@@ -493,13 +506,13 @@ export const zh: typeof en = {
       justNow: '刚刚',
       minutesAgo: '{count} 分钟',
       hoursAgo: '{count} 小时',
-      daysAgo: '{count} 天',
+      daysAgo: '{count} 天'
     },
     errors: {
       load: '无法加载观测面板。',
       action: '无法完成该操作。',
-      open: 'Codex 无法打开这个任务。',
-    },
+      open: 'Codex 无法打开这个任务。'
+    }
   },
   coin: {
     productName: 'trench',
@@ -520,14 +533,14 @@ export const zh: typeof en = {
       aiStatus: '打开 AI 资源状态',
       minimize: '最小化',
       maximize: '最大化或还原',
-      close: '关闭 trench',
+      close: '关闭 trench'
     },
     tabs: {
       monitor: '监控',
       screener: '筛选',
       meme: 'Meme',
       strategy: '策略',
-      history: '历史',
+      history: '历史'
     },
     trench: {
       signals: '信号',
@@ -541,6 +554,8 @@ export const zh: typeof en = {
       caPlaceholder: '粘贴合约地址',
       pasteAnalyze: '粘贴并分析',
       terminalAnalyze: '使用本地终端分析',
+      detectingChains: '正在搜索 {chains}',
+      detectedChains: '已找到 {chains}',
       addFocus: '加入重点观测',
       focused: '已重点观测',
       removeFocus: '移出重点观测',
@@ -557,7 +572,7 @@ export const zh: typeof en = {
       chains: {
         robinhood: 'Robinhood',
         bsc: 'BSC',
-        solana: 'Solana',
+        solana: 'Solana'
       },
       xBrowser: {
         openVisible: '使用显示的 Chrome 打开 X',
@@ -566,14 +581,14 @@ export const zh: typeof en = {
         displayMode: {
           visible: 'X Chrome 显示运行',
           hidden: 'X Chrome 隐式运行',
-          external: 'Chrome 是否显示由外部 CDP 会话控制',
+          external: 'Chrome 是否显示由外部 CDP 会话控制'
         },
         states: {
           closed: 'X',
           launching: '正在打开 X',
           login_required: '请登录 X',
           ready: 'X 已就绪',
-          error: 'X 不可用',
+          error: 'X 不可用'
         },
         errors: {
           'chrome-unavailable': '系统 Chrome 不可用。',
@@ -582,23 +597,26 @@ export const zh: typeof en = {
           'cdp-unavailable': '配置的 X Chrome CDP 会话不可用。',
           'display-mode-unavailable': '当前会话无法切换 Chrome 显示模式。',
           'launch-failed': '无法启动 X Chrome 会话。',
-          'navigation-failed': '无法在 Chrome 会话中打开 X。',
-        },
+          'navigation-failed': '无法在 Chrome 会话中打开 X。'
+        }
       },
       errors: {
         clipboardEmpty: '剪贴板中没有合约地址。',
         clipboardRead: '无法读取剪贴板。',
+        addressInvalid: '请输入或粘贴且仅粘贴一个受支持的 BSC、Solana 或 Robinhood Chain 地址。',
+        addressMultiple: '检测到多个合约地址，请只保留一个后重试。',
+        addressNotFound: '在支持的链上未找到与该地址匹配的代币身份。',
         addressChainMismatch: '合约地址与当前选择的链不匹配。',
         analysisRequired: '请先分析当前 CA，再让 Codex 复核。',
-        thesisRequired: '请先描述你的看法。',
-      },
+        thesisRequired: '请先描述你的看法。'
+      }
     },
     evidence: {
       label: '证据状态',
       source: '未连接数据源',
       freshness: '暂无观测时间',
       support: '等待集成',
-      confidence: '暂无置信度',
+      confidence: '暂无置信度'
     },
     workspace: {
       unavailableTitle: '实时分析不可用',
@@ -634,7 +652,7 @@ export const zh: typeof en = {
       noHistory: '暂无已保存分析',
       type: '类型',
       search: '搜索',
-      all: '全部',
+      all: '全部'
     },
     analysis: {
       actions: {
@@ -645,7 +663,7 @@ export const zh: typeof en = {
         inspect: '查看候选项',
         open: '打开结果',
         recover: '恢复状态',
-        reload: '重新加载状态',
+        reload: '重新加载状态'
       },
       ai: {
         title: 'AI 解读',
@@ -659,7 +677,7 @@ export const zh: typeof en = {
         evidence: '证据链接',
         unsupportedClaims: '无证据支持的主张',
         noneReported: '未报告',
-        deterministicFinal: '确定性风险门槛以及最终 BUY、HOLD 或 SELL 决策始终具有最终效力。',
+        deterministicFinal: '确定性风险门槛以及最终 BUY、HOLD 或 SELL 决策始终具有最终效力。'
       },
       aiErrors: {
         busy: '另一个 trench AI 分析正在运行。',
@@ -677,12 +695,12 @@ export const zh: typeof en = {
         'target-not-found': '所选结构化结果已不存在。',
         timeout: 'AI 分析超过时间上限。',
         'tool-violation': '分析尝试使用工具，结果已被拒绝。',
-        'unsupported-evidence': 'AI 结果引用了提交快照之外的证据。',
+        'unsupported-evidence': 'AI 结果引用了提交快照之外的证据。'
       },
       sort: {
         lowMultipleAsc: '低点倍数 ↑',
         lowMultipleDesc: '低点倍数 ↓',
-        symbol: '币种 A–Z',
+        symbol: '币种 A–Z'
       },
       modes: {
         live: '实时公开数据',
@@ -691,7 +709,7 @@ export const zh: typeof en = {
         deployedService: '已部署服务',
         localReadOnly: '本地 GMGN CLI · 只读',
         serviceDescription: '请求仅使用已配置的 Meme 分析服务。',
-        localDescription: '请求仅使用固定的 GMGN 只读命令，不提供任何交易命令。',
+        localDescription: '请求仅使用固定的 GMGN 只读命令，不提供任何交易命令。'
       },
       labels: {
         unavailable: '不可用',
@@ -730,7 +748,7 @@ export const zh: typeof en = {
         decisions: '决策',
         reasons: '理由',
         invalidation: '失效条件',
-        noExecution: '仅供研究决策，不会创建订单或签名交易。',
+        noExecution: '仅供研究决策，不会创建订单或签名交易。'
       },
       columns: {
         symbol: '币种',
@@ -777,7 +795,7 @@ export const zh: typeof en = {
         asset: '资产',
         summary: '摘要',
         created: '创建时间',
-        receipts: '来源回执',
+        receipts: '来源回执'
       },
       sections: {
         marketIdentity: '市场与链身份',
@@ -792,7 +810,7 @@ export const zh: typeof en = {
         marketExecution: '市场与执行输入',
         structuredSignals: '结构化信号输入',
         forecastRisk: '预测与硬风险输入',
-        position: '持仓输入',
+        position: '持仓输入'
       },
       metrics: {
         launchStage: '发行阶段',
@@ -816,7 +834,7 @@ export const zh: typeof en = {
         netExpectedValue: '净期望值',
         expectedLoss: '预期损失',
         positionReturn: '持仓收益率',
-        drawdown: '距峰值回撤',
+        drawdown: '距峰值回撤'
       },
       holderUniverse: {
         filtered: '已证明使用过滤持有人集合',
@@ -837,8 +855,8 @@ export const zh: typeof en = {
           contract_program: '合约 / 程序',
           bridge_router: '跨链桥 / 路由',
           treasury_vesting: '金库 / 解锁',
-          other_non_independent: '其他非独立地址',
-        },
+          other_non_independent: '其他非独立地址'
+        }
       },
       fields: {
         tokenAge: '代币年龄（分钟）',
@@ -869,7 +887,7 @@ export const zh: typeof en = {
         remainingAmount: '剩余代币数量',
         investedAmount: '已投入金额',
         peakPrice: '峰值价格',
-        heldMinutes: '持有分钟数',
+        heldMinutes: '持有分钟数'
       },
       states: {
         configureSource: '请先在资源页配置只读数据源，再重试。',
@@ -887,7 +905,8 @@ export const zh: typeof en = {
         noMatches: '没有匹配的币种',
         noMatchesDetail: '完成的结果仍会与来源回执及计数一起保存。',
         memeServiceUnavailable: '已部署的 Meme 服务未配置，本模式不会切换到本地数据。',
-        localSourcesUnavailable: '本地模式需要只读 GMGN CLI 与已配置的个人 API Key，本模式不会调用已部署服务。',
+        localSourcesUnavailable:
+          '本地模式需要只读 GMGN CLI 与已配置的个人 API Key，本模式不会调用已部署服务。',
         selectedModeUnavailable: '所选数据路径尚未就绪，各模式绝不会静默回退。',
         discoverUnavailable: '所选数据路径无法执行发现',
         discoverEmpty: '发现轮询已停止',
@@ -909,7 +928,7 @@ export const zh: typeof en = {
         historyEmptyDetail: '已完成的分析与决策会在本地保存，并关联来源回执。',
         noReceipts: '没有符合筛选条件的来源回执',
         sourcesUnavailable: '数据源状态不可用',
-        sourcesUnavailableDetail: '渲染进程未收到有界的数据源状态响应。',
+        sourcesUnavailableDetail: '渲染进程未收到有界的数据源状态响应。'
       },
       errors: {
         sources: '无法加载数据源状态。',
@@ -924,14 +943,15 @@ export const zh: typeof en = {
         meme: 'Meme 分析请求失败。',
         discover: '无法启动发现轮询。',
         strategy: '策略评估失败',
-        ai: '无法完成 AI 分析。',
+        ai: '无法完成 AI 分析。'
       },
       state: {
-        malformed: '版本化 trench 状态文件已损坏。现有数据尚未被替换；请明确执行恢复，以归档损坏文件并创建干净状态。',
+        malformed:
+          '版本化 trench 状态文件已损坏。现有数据尚未被替换；请明确执行恢复，以归档损坏文件并创建干净状态。',
         conflict: 'trench 状态已被当前渲染进程之外的操作修改。已保留最新版本，请检查后再保存。',
         recovered: 'trench 状态已恢复，损坏文件已在本地归档。',
         reloaded: '已从最新的主人专用文件重新加载 trench 状态。',
-        saving: '正在保存状态',
+        saving: '正在保存状态'
       },
       connections: {
         connecting: '连接中',
@@ -939,11 +959,11 @@ export const zh: typeof en = {
         retrying: '重试中',
         closed: '已关闭',
         unavailable: '不可用',
-        error: '错误',
+        error: '错误'
       },
       placeholders: {
         optionalSymbols: '可选：BTCUSDT, ETHUSDT',
-        solanaAddress: 'Solana 账户地址',
+        solanaAddress: 'Solana 账户地址'
       },
       stages: {
         discovered: '已发现',
@@ -954,7 +974,7 @@ export const zh: typeof en = {
         dex_live: 'DEX 已上线',
         cooled: '已降温',
         rejected: '已拒绝',
-        stale: '已过期',
+        stale: '已过期'
       },
       sourceNames: {
         'monitor-http': '监控 HTTP',
@@ -966,22 +986,22 @@ export const zh: typeof en = {
         'alchemy-bsc': 'Alchemy · BSC',
         'alchemy-solana': 'Alchemy · Solana',
         'owner-cohorts': '主人钱包群体库',
-        'strategy-v1': '确定性策略 v1',
+        'strategy-v1': '确定性策略 v1'
       },
       support: {
         'read-only': '只读',
         sample: '样例',
         partial: '部分支持',
         unsupported: '不支持',
-        unavailable: '不可用',
+        unavailable: '不可用'
       },
       receiptStates: {
         ready: '就绪',
         partial: '部分可用',
         unavailable: '不可用',
         error: '错误',
-        stale: '已过期',
-      },
+        stale: '已过期'
+      }
     },
     resourcePage: {
       title: '资源',
@@ -1004,7 +1024,7 @@ export const zh: typeof en = {
       sections: {
         ai: 'AI 分析',
         localData: '本地数据工具',
-        services: '服务',
+        services: '服务'
       },
       codex: {
         name: 'Codex',
@@ -1016,7 +1036,7 @@ export const zh: typeof en = {
           low: '低',
           medium: '中',
           high: '高',
-          xhigh: 'Extra',
+          xhigh: 'Extra'
         },
         verified: '验证时间',
         connect: '在浏览器中连接',
@@ -1024,7 +1044,7 @@ export const zh: typeof en = {
         moreMethods: '更多登录方式',
         disconnect: '断开连接',
         appWide: '断开后 Bitterless 全局退出 Codex，包括 Maestro。',
-        disconnectConfirm: '确定要在 Bitterless 中全局断开 Codex 吗？',
+        disconnectConfirm: '确定要在 Bitterless 中全局断开 Codex 吗？'
       },
       gmgn: {
         cliName: 'GMGN CLI',
@@ -1045,14 +1065,14 @@ export const zh: typeof en = {
         noProbe: '尚未验证',
         verify: '验证只读访问',
         stop: '停止验证',
-        privateKeyExcluded: 'Bitterless 只保存 GMGN_API_KEY，不使用交易或钱包私钥。',
+        privateKeyExcluded: 'Bitterless 只保存 GMGN_API_KEY，不使用交易或钱包私钥。'
       },
       lastTest: '最近测试',
       noTest: '尚未测试',
       services: {
         monitor: '监控 API',
         screener: '筛选 API',
-        meme: 'Meme API',
+        meme: 'Meme API'
       },
       serviceDetail: '配置生产服务接口。',
       serviceConfigured: '来源：{source}',
@@ -1064,13 +1084,13 @@ export const zh: typeof en = {
       device: {
         title: '完成 Codex 设备登录',
         body: 'OpenAI 登录页已打开，请在 {host} 输入此代码。',
-        code: '设备码',
+        code: '设备码'
       },
       keyModal: {
         title: '配置 GMGN API 密钥',
         label: 'GMGN_API_KEY',
         placeholder: '粘贴个人 API 密钥',
-        storage: '仅保存到 ~/.config/gmgn/.env，并设置为仅所有者可访问。',
+        storage: '仅保存到 ~/.config/gmgn/.env，并设置为仅所有者可访问。'
       },
       guideModal: {
         title: '安装 GMGN CLI',
@@ -1079,13 +1099,13 @@ export const zh: typeof en = {
         key: '创建个人 API 密钥，在此配置后运行只读验证。',
         repository: '官方仓库',
         cliDocs: 'CLI 参考',
-        apiKeyPage: '个人 API 密钥页面',
+        apiKeyPage: '个人 API 密钥页面'
       },
       serviceModal: {
         title: '配置 {service}',
         httpPlaceholder: 'https://service.example.com',
         wsPlaceholder: 'wss://service.example.com',
-        validation: '地址不能包含凭证、查询参数或片段。',
+        validation: '地址不能包含凭证、查询参数或片段。'
       },
       feedback: {
         statusFailed: '无法加载资源状态',
@@ -1117,8 +1137,8 @@ export const zh: typeof en = {
         serviceRequired: '请输入所有必需的服务接口',
         serviceInvalid: '请使用不含凭证和查询参数的有效 HTTPS/WSS 服务地址',
         serviceSaved: '服务接口已保存',
-        serviceSaveFailed: '无法保存服务接口',
-      },
+        serviceSaveFailed: '无法保存服务接口'
+      }
     },
     sourceDrawer: {
       title: '数据源状态',
@@ -1143,12 +1163,171 @@ export const zh: typeof en = {
       codex: 'Codex AI',
       integrationRequired: '未连接',
       capabilityGate: '尚未运行能力验证',
-      signInRequired: '需要登录',
+      signInRequired: '需要登录'
     },
     errors: {
       shellStatus: '无法加载框架状态',
-      windowAction: '窗口操作失败',
+      windowAction: '窗口操作失败'
+    }
+  },
+  trench: {
+    header: {
+      subtitle: '本地记录库',
+      loading: '正在打开本地记录',
+      refreshing: '正在刷新本地记录',
+      local: '已在本地同步',
+      unavailable: '本地记录不可用'
     },
+    agentGuide: {
+      trigger: 'Agent 设置指南',
+      eyebrow: '本地 MCP',
+      title: 'Agent Trench 接入',
+      loading: '正在读取当前 Bitterless 实例的设置…',
+      summary: '连接当前运行的 Bitterless，安装完整 Trench 技能，然后重启 Agent 并验证工具。',
+      loadFailedTitle: '无法读取设置',
+      loadFailedDescription: '请保持 Bitterless 运行并重试；页面不会猜测任何设置值。',
+      restartRequiredTitle: '重启 Bitterless 后继续',
+      restartRequiredDescription: '当前 Main 进程返回的设置契约不完整。请重启 Bitterless、重新打开 Trench 后重试。',
+      versionMismatchDescription: 'Renderer 与当前 Main 进程的 bitterless-trench 版本不一致。请重启 Bitterless、重新打开 Trench 后重试。',
+      retryAfterRestart: '重启后重试',
+      testInstanceTitle: '{serverName} · 测试实例',
+      testInstanceWarning: '此 DEBUG 实例仅用于合成验证。请保留其准确名称；不得将它注册为生产 bitterless，也不得在此保存真实 Trench 记录。',
+      complete: '完整设置说明',
+      completeHint: '复制 MCP、技能安装、重启与验证的完整说明。',
+      connectTitle: '连接 MCP',
+      connectHint: '请按原样注册当前 {serverName} helper。',
+      helper: 'Helper 路径',
+      config: 'MCP 配置',
+      installTitle: '安装 bitterless-trench',
+      installHint: '复制完整的内置目录，不要只复制 SKILL.md。',
+      skill: '内置技能目录',
+      version: '版本',
+      restartTitle: '重启并验证',
+      restartHint: '新会话必须能看到当前 MCP server 与完整技能。',
+      verifyFreshSession: '保持 Bitterless 运行，并启动新的 Codex 或 Claude Code 会话。',
+      verifyTools: '确认 tools/list 展示全部 12 个 trench.* 工具。',
+      verifyInvocation: '在 Codex 中调用 $bitterless-trench，或在 Claude Code 中调用 /bitterless-trench。',
+      copy: {
+        complete: '复制完整设置说明',
+        helper: '复制 helper 路径',
+        config: '复制 MCP 配置',
+        skill: '复制内置技能目录'
+      }
+    },
+    modules: {
+      label: 'Trench 记录模块',
+      ca: 'CA 记录',
+      index: '正向钱包',
+      negative: '负向钱包'
+    },
+    search: {
+      label: '搜索当前记录',
+      placeholder: '搜索记录…'
+    },
+    actions: {
+      refresh: '刷新',
+      retry: '重试',
+      loadMore: '加载更多记录',
+      loadMoreSources: '加载更多来源',
+      back: '返回记录',
+      backToSources: '返回来源',
+      copyJson: '复制原始 JSON',
+      copyDocument: '复制{document}',
+      copied: '已复制',
+      copyFailed: '复制失败',
+      openSource: '打开来源 CA'
+    },
+    states: {
+      refreshing: '正在刷新，当前记录会继续保留…',
+      loading: '正在加载…',
+      loadingDocument: '正在读取存储文档…',
+      selectRecord: '选择一条记录查看证据。',
+      emptyTitle: '暂无记录',
+      emptyDescription: '外部 Agent 会通过 Bitterless MCP 写入记录。',
+      noMatchTitle: '没有匹配的记录',
+      noMatchDescription: '请修改或清除当前搜索条件。',
+      invalidRecord: '无效的存储记录',
+      missingTitle: '记录已不存在',
+      detailError: '无法读取文档',
+      repositoryError: '本地 Trench 记录库不可用。'
+    },
+    meta: {
+      sourceCa: '来源 CA',
+      lastSeen: '最近出现',
+      updated: '更新时间'
+    },
+    documents: {
+      analysis: '精确分析记录',
+      tag: '精确标签记录',
+      holdings: '精确持仓记录'
+    },
+    structured: {
+      true: '是',
+      false: '否',
+      null: '未知 / null',
+      none: '未记录',
+      fields: '{count} 个字段',
+      items: '{count} 项',
+      emptyObject: '未记录字段',
+      emptyList: '未记录条目',
+      showFullText: '展开全文',
+      showLess: '收起',
+      showMore: '再显示 {count} 项'
+    },
+    analysis: {
+      provenance: '证据来源',
+      sourceKind: '来源类型',
+      agent: 'Agent',
+      skill: 'Skill',
+      providers: '数据提供方',
+      result: '分析结果',
+      topProfitWallets: 'Top Profit 钱包',
+      indexExposure: '正向钱包持仓',
+      negativeExposure: '负向钱包持仓',
+      evidence: '支持证据',
+      tokenMissing: '未记录 Token 身份',
+      symbolMissing: '未记录符号',
+      nameMissing: '未记录名称',
+      noTopWallets: '未记录 Top Profit 钱包。',
+      notRecorded: '未记录此证据区块。',
+      noExposureRows: '已记录此区块，但没有钱包条目。',
+      reference: {
+        active: '当前引用',
+        'no-longer-current': '历史引用'
+      }
+    },
+    index: {
+      sourceCount: '{count} 个来源 CA',
+      bestRank: '最佳排名 #{rank}',
+      profit: '美元利润',
+      winRate: '胜率',
+      exposure: '记录持仓',
+      evidence: '利润证据',
+      exposureEvidence: '持仓证据',
+      available: '可在来源记录查看',
+      notAvailable: '未记录',
+      balance: '余额',
+      share: '占比',
+      value: '美元价值',
+      unknown: '未知',
+      holding: '持有',
+      notHolding: '未持有'
+    },
+    negative: {
+      tag: '人工标签',
+      holdings: '持仓分析',
+      assets: '资产',
+      explanation: '人工说明',
+      created: '创建时间',
+      nativeAsset: '原生资产',
+      symbolMissing: '未记录符号',
+      portfolioShare: '组合占比',
+      noAssets: '持仓分析已完成，但没有列出资产。',
+      holdingsReady: '已记录持仓',
+      holdingsMissing: '缺少持仓分析',
+      holdingsMissingDescription: '尚未为此钱包写入独立的持仓分析。',
+      holdingsInvalid: '持仓记录不可用'
+    }
   },
   todo: {
     title: '待办',
@@ -1217,36 +1396,28 @@ export const zh: typeof en = {
     copyNoSteps: '暂无步骤。',
     copyNoNote: '暂无备注。',
     mcpEyebrow: '本机 MCP',
-    mcpTitle: 'Agent 访问待办',
-    mcpSummary: 'MCP 提供待办工具；便携技能教 Agent 何时以及如何将其用于个人、多设备同步的后续事项。',
+    mcpTitle: '把技能复制给你的 Agent',
     mcpTestInstanceTitle: '仅限测试的 MCP：{serverName}',
-    mcpTestInstanceWarning: '不要在当前实例保存真实个人待办。真实、个人、多设备同步的 Todo 必须使用生产 server bitterless。',
-    mcpStepConnect: '连接 MCP',
-    mcpStepConnectHint: '把当前正在运行的 Bitterless 实例注册为本机 MCP server。',
-    mcpCommandPath: 'Helper 路径',
-    mcpConfig: 'MCP 配置',
-    mcpStepSkill: '安装 bitterless-todo 技能',
-    mcpStepSkillHint: '安装完整目录，让 Agent 获得个人待办判断、去重与安全规则。',
-    mcpSkillPath: '内置技能目录',
-    mcpSkillDestination: 'Codex：~/.codex/skills/bitterless-todo · Claude Code：~/.claude/skills/bitterless-todo',
-    mcpCompleteSetup: '完整安装说明',
-    mcpCompleteSetupHint: '包含当前 MCP 配置、技能路径、安装目标、重启说明和实例安全提示。',
-    mcpDetailedInstructions: '详细安装说明',
-    mcpCopy: '复制',
-    mcpCopyCompleteSetup: '复制完整安装说明',
+    mcpTestInstanceWarning:
+      '不要在当前实例保存真实个人待办。真实、个人、多设备同步的 Todo 必须使用生产 server bitterless。',
+    mcpCompleteSetup: '完整设置说明',
+    mcpCompleteSetupHint: '把这份说明复制给你的 Agent，其中包含技能和 MCP 设置。',
+    mcpCopyCompleteSetup: '复制完整设置说明',
     mcpCopied: '已复制',
     mcpCopyFailed: '复制失败',
-    mcpLoading: '加载中...',
     mcpSkillVersionChecking: '正在检查 bitterless-todo 技能说明',
     mcpSkillInstallRequired: '需要安装 bitterless-todo 技能',
     mcpSkillUpdateRequired: '需要更新 bitterless-todo 技能',
     mcpSkillVersionInvalid: 'bitterless-todo 技能说明状态需要处理',
-    mcpSkillAcknowledgementFailed: '说明已复制，但 Bitterless 未能记录确认状态；更新红点会继续保留。',
+    mcpSkillAcknowledgementFailed:
+      '说明已复制，但 Bitterless 未能记录确认状态；更新红点会继续保留。',
     mcpRestartRequiredTitle: '请重启 Bitterless',
-    mcpRestartRequiredDescription: '当前集成信息来自旧主进程或旧的内置技能版本。请重启 Bitterless，然后重新打开此引导。',
+    mcpRestartRequiredDescription:
+      '当前集成信息来自旧主进程或旧的内置技能版本。请重启 Bitterless，然后重新打开此引导。',
     mcpLoadFailed: 'MCP 信息加载失败',
     syncClockWrongTitle: '系统时间需要调整',
-    syncClockWrongDescription: '可信校时服务已确认本机时间偏差超过 3 分钟，Todo 同步已暂停；本地修改仍会安全保留。',
+    syncClockWrongDescription:
+      '可信校时服务已确认本机时间偏差超过 3 分钟，Todo 同步已暂停；本地修改仍会安全保留。',
     syncClockLocal: '本机时间',
     syncClockTrusted: '标准时间',
     syncClockOffset: '偏差',
@@ -1262,10 +1433,11 @@ export const zh: typeof en = {
     syncLastSuccessful: '上次成功同步',
     syncNeverSynchronized: '从未同步',
     syncErrorReason: '错误原因',
-    syncErrorDeviceIdentityMismatch: '已保存的设备身份与当前 Todo 数据库不一致。同步已停止，以保护本地任务。',
+    syncErrorDeviceIdentityMismatch:
+      '已保存的设备身份与当前 Todo 数据库不一致。同步已停止，以保护本地任务。',
     syncPermanentFailures: '永久失败',
     syncRetry: '重试',
-    syncDiscard: '丢弃',
+    syncDiscard: '丢弃'
   },
   common: {
     confirm: '确定',
@@ -1277,7 +1449,7 @@ export const zh: typeof en = {
       edit: '编辑',
       addVariable: '添加环境变量',
       fieldPlaceholder: '字段名',
-      valuePlaceholder: '值',
-    },
-  },
+      valuePlaceholder: '值'
+    }
+  }
 };

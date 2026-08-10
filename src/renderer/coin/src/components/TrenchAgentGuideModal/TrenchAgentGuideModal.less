@@ -1,0 +1,318 @@
+.trench-agent-guide-modal {
+  width: calc(100vw - 32px) !important;
+  max-width: 560px;
+  max-height: calc(100vh - 16px);
+  overflow: hidden;
+  border-radius: 10px;
+
+  .arco-modal-header {
+    height: auto;
+    min-height: 68px;
+    align-items: center;
+    padding: 14px 18px 12px 22px;
+    border-bottom-color: var(--trench-border);
+    background: var(--trench-surface);
+  }
+
+  .arco-modal-title {
+    min-width: 0;
+    padding-right: 14px;
+  }
+
+  .arco-modal-close-btn {
+    flex: 0 0 auto;
+    margin-left: 0;
+  }
+
+  .arco-modal-body {
+    max-height: calc(100vh - 84px);
+    padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.trench-agent-guide__eyebrow {
+  margin-bottom: 3px;
+  color: var(--trench-primary);
+  font-family: var(--trench-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.trench-agent-guide__heading {
+  margin: 0;
+  color: var(--trench-text);
+  font-family: var(--trench-display);
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.trench-agent-guide {
+  min-width: 0;
+  padding: 18px 22px 22px;
+  background: var(--trench-utility);
+}
+
+.trench-agent-guide__summary {
+  margin: 0 0 14px;
+  color: var(--trench-text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.trench-agent-guide__state {
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--trench-text-muted);
+  text-align: center;
+}
+
+.trench-agent-guide__state .arco-alert {
+  width: 100%;
+  text-align: left;
+}
+
+.trench-agent-guide__instance-warning {
+  margin-bottom: 14px;
+}
+
+.trench-agent-guide__instance-warning .arco-alert {
+  border: 1px solid #e4b56a;
+  background: #fff8e9;
+}
+
+.trench-agent-guide__field {
+  min-width: 0;
+  margin-top: 11px;
+}
+
+.trench-agent-guide__field--primary {
+  margin-top: 0;
+  padding: 13px 14px;
+  border: 1px solid #aeb6d6;
+  border-radius: 8px;
+  background: #f9faff;
+}
+
+.trench-agent-guide__field-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--trench-primary-pressed);
+  font-size: 12px;
+}
+
+.trench-agent-guide__field-head > div:first-child {
+  min-width: 0;
+}
+
+.trench-agent-guide__field-head p {
+  margin: 3px 0 0;
+  color: var(--trench-text-muted);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.trench-agent-guide__step {
+  position: relative;
+  display: block;
+  margin-top: 13px;
+  padding: 14px 14px 15px;
+  border: 1px solid #d2d7e8;
+  border-radius: 9px;
+  background: var(--trench-surface);
+}
+
+.trench-agent-guide__step::before {
+  position: absolute;
+  top: 38px;
+  bottom: -14px;
+  left: 25px;
+  width: 1px;
+  background: #c4cadf;
+  content: '';
+}
+
+.trench-agent-guide__step:last-child::before {
+  display: none;
+}
+
+.trench-agent-guide__step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.trench-agent-guide__step-index {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--trench-primary);
+  color: #ffffff;
+  font-family: var(--trench-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trench-agent-guide__step-head h3 {
+  margin: 1px 0 2px;
+  color: var(--trench-text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.trench-agent-guide__step-head p {
+  margin: 0;
+  color: var(--trench-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.trench-agent-guide__step > .trench-agent-guide__field,
+.trench-agent-guide__verify-list {
+  margin-left: 32px;
+}
+
+.trench-agent-guide__code {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 7px 0 0;
+  padding: 10px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: #101321;
+  color: #e2e4eb;
+  font-family: var(--trench-mono);
+  font-size: 10px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.trench-agent-guide__destinations {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 0;
+  color: var(--trench-text-muted);
+  font-size: 10px;
+}
+
+.trench-agent-guide__destinations div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.trench-agent-guide__destinations dt,
+.trench-agent-guide__destinations dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.trench-agent-guide__destinations dd {
+  color: var(--trench-text);
+  font-family: var(--trench-mono);
+}
+
+.trench-agent-guide__verify-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  margin-bottom: 0;
+  padding-left: 17px;
+  color: var(--trench-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.trench-agent-guide__copy {
+  min-width: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trench-agent-guide__copy-button.icon-btn.arco-btn {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  color: var(--trench-primary);
+}
+
+.trench-agent-guide__copy-button.icon-btn.arco-btn:hover {
+  color: var(--trench-primary-pressed);
+  background: var(--trench-border);
+}
+
+.trench-agent-guide__copy-button--primary.icon-btn.arco-btn,
+.trench-agent-guide__copy-button--primary.icon-btn.arco-btn:hover {
+  color: #ffffff;
+  background: var(--trench-primary);
+}
+
+.trench-agent-guide__copy-status {
+  color: var(--trench-text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .trench-agent-guide-modal {
+    width: calc(100vw - 20px) !important;
+
+    .arco-modal-header {
+      padding-left: 17px;
+    }
+  }
+
+  .trench-agent-guide {
+    padding: 15px 16px 18px;
+  }
+
+  .trench-agent-guide__step > .trench-agent-guide__field,
+  .trench-agent-guide__verify-list {
+    margin-left: 0;
+  }
+
+  .trench-agent-guide__step::before {
+    display: none;
+  }
+}
+
+@media (max-height: 359px) {
+  .trench-agent-guide-modal {
+    max-height: calc(100vh - 8px);
+
+    .arco-modal-header {
+      min-height: 54px;
+      padding-top: 8px;
+      padding-bottom: 7px;
+    }
+
+    .arco-modal-body {
+      max-height: calc(100vh - 62px);
+    }
+  }
+
+  .trench-agent-guide {
+    padding-top: 12px;
+  }
+}

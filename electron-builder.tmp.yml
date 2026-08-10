@@ -49,6 +49,8 @@ extraResources:
     to: agent-skills/bitterless-todo
   - from: skills/bitterless-preview
     to: agent-skills/bitterless-preview
+  - from: skills/bitterless-trench
+    to: agent-skills/bitterless-trench
   - from: build/maestro-tools
     to: maestro-tools
   - from: build/tray-mac@2x.png

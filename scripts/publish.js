@@ -233,11 +233,14 @@ const runPrivate = (command, args, label) => {
 };
 
 const runBuild = (options) => {
-  run('rig', ['--env', `release_${options.env}`]);
-  run('node', ['scripts/before.js']);
-  run('yarn', ['build']);
-  run('node', ['scripts/prepare-maestro-cli.cjs', options.platform]);
-  run('node', ['scripts/signedBuild.js', ...platformConfigs[options.platform].buildArgs]);
+  const buildTarget = {
+    mac_arm: 'mac_arm',
+    mac_intel: 'mac_intel',
+    win64: 'win',
+  }[options.platform];
+  if (!buildTarget) throw new Error(`Unsupported release build platform: ${options.platform}`);
+  const scriptPrefix = options.env === 'dev' ? 'build_dev' : 'build';
+  run('yarn', [`${scriptPrefix}:${buildTarget}`]);
 };
 
 const auditPackagedApplication = (platform) => {

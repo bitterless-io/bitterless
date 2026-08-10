@@ -46,6 +46,7 @@ import {
   createTodoistSyncSessionGetter,
   TodoistSyncSessionService,
 } from './todoistSync/todoistSync.session';
+import { createTodoistSyncCredentialOptions } from './todoistSync/todoistSyncRuntimePassword.service';
 import { createBoundedTodoXpcClient } from '@shared/todoistSync/todoXpcCall.shared';
 
 const sqlitePathCapability = createBoundedTodoXpcClient(pathHelper, 'PathMainHelper');
@@ -108,10 +109,28 @@ const isSqliteRendererDocument = (() => {
 const bootPromise = isSqliteRendererDocument ? bootSqlite() : Promise.resolve();
 const targetId = isSqliteRendererDocument ? randomUUID() : null;
 
-const sqlitePasswordCapability = createBoundedTodoXpcClient(
-  createXpcPreloadEmitter<TodoistSyncPasswordCapabilityApi>('SqlitePasswordHandler'),
-  'SqlitePasswordHandler',
-);
+const todoistSyncCredentialOptions = createTodoistSyncCredentialOptions({
+  e2e: process.env.BITTERLESS_E2E === '1',
+  viteMode: import.meta.env.VITE_MODE,
+}, () => {
+  const sqlitePasswordCapability = createBoundedTodoXpcClient(
+    createXpcPreloadEmitter<TodoistSyncPasswordCapabilityApi>('SqlitePasswordHandler'),
+    'SqlitePasswordHandler',
+  );
+  return {
+    encryptString: async (value) => {
+      const encrypted = await sqlitePasswordCapability.encryptPassword({
+        password: value,
+        caller: 'todoist-sync',
+      });
+      return Buffer.from(encrypted, 'base64');
+    },
+    decryptString: async (value) => await sqlitePasswordCapability.decryptPassword({
+      encrypted: value.toString('base64'),
+      caller: 'todoist-sync',
+    }),
+  };
+});
 const todoSystemCapability = createBoundedTodoXpcClient(
   createXpcPreloadEmitter<TodoSystemApi>('TodoSystemHandler'),
   'TodoSystemHandler',
@@ -123,17 +142,12 @@ const createTodoistSyncSession = async (): Promise<TodoistSyncSessionService> =>
     throw new Error(`[todoist sync] Core SQLite boot failed: ${bootResult.error}`);
   }
   const userDataPath = await sqlitePathCapability.getUserDataPath();
+  if (todoistSyncCredentialOptions.runtimePassword) {
+    console.log('[todoist sync] using injected isolated runtime password');
+  }
   return new TodoistSyncSessionService({
     userDataPath,
-    passwordProtection: {
-      encryptString: async (value) => {
-        const encrypted = await sqlitePasswordCapability.encryptPassword({ password: value });
-        return Buffer.from(encrypted, 'base64');
-      },
-      decryptString: async (value) => await sqlitePasswordCapability.decryptPassword({
-        encrypted: value.toString('base64'),
-      }),
-    },
+    ...todoistSyncCredentialOptions,
     onDataUpdated: (event) => xpcRenderer.broadcast('todo/data_updated', event),
     onClockCheckRequested: (event) => {
       xpcRenderer.broadcast('todoist-sync/clock-check-requested', event);

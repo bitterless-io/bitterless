@@ -10,8 +10,14 @@ const DEV_PASSWORD = '123456';
 const E2E_PASSWORD = 'bitterless-onlypreview-e2e';
 
 interface SqlitePasswordHandlerType {
-  encryptPassword(params: { password: string }): Promise<string>;
-  decryptPassword(params: { encrypted: string }): Promise<string>;
+  encryptPassword(params: {
+    password: string;
+    caller?: 'core-sqlite' | 'todoist-sync';
+  }): Promise<string>;
+  decryptPassword(params: {
+    encrypted: string;
+    caller?: 'core-sqlite' | 'todoist-sync';
+  }): Promise<string>;
 }
 
 export interface SqlitePasswordResult {
@@ -46,7 +52,10 @@ class SqlitePasswordHelper {
     if (encryptedPassword) {
       console.log('[sqlitePassword] found existing encrypted password, decrypting...');
       try {
-        const password = await this.passwordEmitter.decryptPassword({ encrypted: encryptedPassword });
+        const password = await this.passwordEmitter.decryptPassword({
+          encrypted: encryptedPassword,
+          caller: 'core-sqlite',
+        });
         console.log('[sqlitePassword] password decrypted successfully');
         return { password, isReset: false };
       } catch (err: any) {
@@ -61,7 +70,10 @@ class SqlitePasswordHelper {
     const newPassword = uuidv4();
     
     try {
-      const encrypted = await this.passwordEmitter.encryptPassword({ password: newPassword });
+      const encrypted = await this.passwordEmitter.encryptPassword({
+        password: newPassword,
+        caller: 'core-sqlite',
+      });
       localStorage.setItem(STORAGE_KEY, encrypted);
       console.log('[sqlitePassword] new password generated, encrypted, and stored');
       return { password: newPassword, isReset };

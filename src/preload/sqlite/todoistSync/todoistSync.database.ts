@@ -10,6 +10,10 @@ export interface TodoistSyncDatabasePaths {
   keyPath: string;
 }
 
+export type TodoistSyncDatabaseDirectoryName =
+  | 'todoist-sync-v1'
+  | 'todoist-sync-v1-debug';
+
 export interface TodoistSyncExecuteResult {
   rows?: { _array: unknown[] };
   changes?: number;
@@ -40,9 +44,10 @@ const normalizeCustomerId = (customerId: string | number): string => {
 export const resolveTodoistSyncDatabasePaths = (
   userDataPath: string,
   customerId: string | number,
+  directoryName: TodoistSyncDatabaseDirectoryName = 'todoist-sync-v1',
 ): TodoistSyncDatabasePaths => {
   const normalizedCustomerId = normalizeCustomerId(customerId);
-  const directory = join(userDataPath, 'db', 'todoist-sync-v1');
+  const directory = join(userDataPath, 'db', directoryName);
   return {
     directory,
     databasePath: join(directory, `customer-${normalizedCustomerId}.db`),

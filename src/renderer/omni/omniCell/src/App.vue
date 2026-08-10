@@ -10,7 +10,6 @@ const isMiniApp = omniCellEnv.contentMode === 'miniapp';
 const state = reactive({
   url: initialUrl,
   inputUrl: initialUrl,
-  active: false,
 });
 
 // Listen for URL updates from main process
@@ -20,11 +19,6 @@ xpcRenderer.subscribe('omniCell/urlChanged', (payload) => {
     state.url = data.url;
     state.inputUrl = data.url;
   }
-});
-
-xpcRenderer.subscribe('omniCell/activeChanged', (payload) => {
-  const data = payload.params as { activeCellId: string };
-  state.active = data.activeCellId === cellId;
 });
 
 const goBack = () => {
@@ -66,13 +60,7 @@ const onInputFocus = (e: FocusEvent) => {
 </script>
 
 <template>
-  <div
-    class="omni-cell-menubar"
-    :class="{
-      'omni-cell-menubar--active': state.active,
-      'omni-cell-menubar--miniapp': isMiniApp,
-    }"
-  >
+  <div class="omni-cell-menubar" :class="{ 'omni-cell-menubar--miniapp': isMiniApp }">
     <button class="omni-cell-menubar__nav-btn" title="后退" :disabled="isMiniApp" @click="goBack">
       ←
     </button>

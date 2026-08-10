@@ -9,3 +9,6 @@ Non-blocking review findings are recorded here after task verification.
 - Make the OnlyPreview native MenuBar hover check deterministic across synthetic pointer injection;
   the product hover state is correct, but one review run missed the injected `mouseMove` before
   succeeding on focused and full reruns.
+- Split `tests/coin/specs/trench-omni.spec.ts` before adding another Omni scenario. Task015 Verify
+  measured 921 lines, above the `code-review` TS-1 800-line limit; move the reusable Agent Guide and
+  viewport helpers into a focused fixture/support module without weakening the real Electron flow.

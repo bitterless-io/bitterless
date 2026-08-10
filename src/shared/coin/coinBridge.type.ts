@@ -26,6 +26,8 @@ import type {
   CoinDiscoverSnapshot,
   CoinDiscoverStartReceipt,
   CoinDiscoverStopReceipt,
+  CoinMemeAutoAnalysisResult,
+  CoinMemeAutoAnalyzeInput,
   CoinMemeAnalysisResult,
   CoinMemeAnalyzeInput,
   CoinMonitorEvent,
@@ -66,6 +68,7 @@ export const COIN_IPC_CHANNELS = {
   dataParseScreener: 'coin:data:parse-screener',
   dataScreen: 'coin:data:screen',
   dataAnalyzeMeme: 'coin:data:analyze-meme',
+  dataAutoAnalyzeMeme: 'coin:data:auto-analyze-meme',
   dataStartDiscover: 'coin:data:start-discover',
   dataStopDiscover: 'coin:data:stop-discover',
   dataDiscoverEvent: 'coin:data:discover-event',
@@ -172,6 +175,9 @@ export interface CoinBridge {
     analyzeMeme(
       params: CoinMemeAnalyzeInput,
     ): Promise<CoinDataEnvelope<CoinMemeAnalysisResult>>;
+    autoAnalyzeMeme(
+      params: CoinMemeAutoAnalyzeInput,
+    ): Promise<CoinDataEnvelope<CoinMemeAutoAnalysisResult>>;
     startDiscover(params: CoinDiscoverInput): Promise<CoinDiscoverStartReceipt>;
     stopDiscover(): Promise<CoinDiscoverStopReceipt>;
     cancel(params: CoinCancelInput): Promise<CoinCancelReceipt>;

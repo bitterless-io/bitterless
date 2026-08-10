@@ -9,6 +9,12 @@ import type { TraceEvent } from '@maestro-shared/trace.types'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
 import { createBoundsApplier } from './viewBounds'
 
+export const shouldOpenControlDevTools = (): boolean => {
+  if (import.meta.env.VITE_MODE !== 'debug') return false
+  if (process.env.BITTERLESS_E2E === '1') return false
+  return is.dev || process.env.COACH_DEVTOOLS === '1'
+}
+
 export interface MaestroControlViewServiceState {
   browserWindow: BrowserWindow | null
   emitTrace(event: TraceEvent): void
@@ -38,7 +44,7 @@ export class MaestroControlViewService extends CommonService<MaestroControlViewS
         ? view.webContents.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/maestro/control/index.html`)
         : view.webContents.loadFile(join(__dirname, '../renderer/maestro/control/index.html'))
 
-    if (process.env.BITTERLESS_E2E !== '1' && (is.dev || process.env.COACH_DEVTOOLS === '1')) {
+    if (shouldOpenControlDevTools()) {
       view.webContents.once('did-finish-load', () => {
         if (!view.webContents.isDestroyed() && !view.webContents.isDevToolsOpened()) {
           view.webContents.openDevTools({ mode: 'detach', activate: false })

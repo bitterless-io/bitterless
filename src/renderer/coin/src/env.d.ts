@@ -1,8 +1,8 @@
-import type { CoinBridge } from '@shared/coin/coinBridge.type';
+import type { TrenchHostContext } from '@shared/trench/trenchXpc.type';
 
 declare global {
   interface Window {
-    readonly coin: CoinBridge;
+    readonly trenchHost: TrenchHostContext;
   }
 }
 

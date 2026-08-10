@@ -126,7 +126,7 @@ try {
   );
   assert.equal(explicitDebug.status, 1);
   assert.match(explicitDebug.stdout, /target: debug/);
-  assert.match(explicitDebug.stdout, /helper: .*Bitterless_DEBUG[\\/]bin[\\/]bitterless-mcp(?:\.cmd)?/);
+  assert.match(explicitDebug.stdout, /helper: .*Bitterless_DEBUG_PROD[\\/]bin[\\/]bitterless-mcp(?:\.cmd)?/);
 
   const legacyEnvHelper = runCli(['--read-only'], 10000, {
     BITTERLESS_MCP_HELPER: join(tempDirectory, 'missing-custom-helper')

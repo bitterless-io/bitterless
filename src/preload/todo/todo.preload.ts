@@ -3,6 +3,7 @@ import { contextBridge } from 'electron';
 import { randomUUID } from 'crypto';
 import 'electron-xpc/preload';
 import '../../shared/pathHelper/preload/pathPreload.helper';
+import '../omni/omniCellActiveFrame.sdk';
 
 export interface TodoEnvApi {
   isStandalone: boolean;

@@ -7,6 +7,7 @@ import {
   type CoinAiAnalysisTarget,
   type CoinAiRunErrorCode,
   type CoinAiTargetKind,
+  type CoinChain,
   type CoinDataEnvelope,
   type CoinDataSourceStatus,
   type CoinDiscoverCandidate,
@@ -27,6 +28,12 @@ import {
   type CoinWatchItem,
   type CoinXBrowserDisplayMode,
 } from '@shared/coin/coinAnalysis.type';
+import {
+  coinAddressesEqual,
+  coinCandidateChains,
+  extractCoinAddressCandidates,
+  extractSingleCoinAddress,
+} from '@shared/coin/coinAddress';
 import { coinShellStore } from '../../coinShell.store';
 import { coinXBrowserStore } from './coinXBrowser.store';
 
@@ -43,8 +50,6 @@ let monitorUnsubscribe: (() => void) | null = null;
 let discoverUnsubscribe: (() => void) | null = null;
 
 const requestId = (prefix: string): string => `${prefix}-${crypto.randomUUID()}`;
-const EVM_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
-const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 const normalizedContractAddress = (value: string): string =>
   value.trim().replace(/^[`'"\s]+|[`'"\s]+$/g, '');
@@ -52,13 +57,13 @@ const normalizedContractAddress = (value: string): string =>
 const addressMatchesChain = (
   value: string,
   chain: CoinPersistentData['drafts']['meme']['chain'],
-): boolean => chain === 'solana' ? SOLANA_ADDRESS.test(value) : EVM_ADDRESS.test(value);
+): boolean => coinCandidateChains(value).includes(chain);
 
 const contractAddressMatches = (
   chain: CoinWatchItem['chain'],
   left: string,
   right: string,
-): boolean => chain === 'solana' ? left === right : left.toLowerCase() === right.toLowerCase();
+): boolean => Boolean(chain && coinAddressesEqual(chain, left, right));
 
 export const parseMonitorSymbols = (value: string): string[] => {
   const symbols: string[] = [];
@@ -77,7 +82,7 @@ export const parseMonitorSymbols = (value: string): string[] => {
 const parseSymbolList = (value: string): string[] =>
   [...new Set(value.split(/[,\s]+/).map((item) => item.trim().toUpperCase()).filter((item) => /^[A-Z0-9]{2,24}$/.test(item)))].slice(0, 100);
 
-const clone = <T>(value: T): T => structuredClone(value);
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const finite = (value: number | null, label: string, options: { positive?: boolean; max?: number } = {}): number => {
   if (value === null || !Number.isFinite(value) || (options.positive ? value <= 0 : value < 0) || (options.max !== undefined && value > options.max)) {
@@ -120,6 +125,8 @@ class CoinWorkspaceState {
   memeLoading = false;
   memeError = '';
   memeRequestId: string | null = null;
+  memeDetectedChains: CoinChain[] = [];
+  memeDetectingChains: CoinChain[] = [];
   discoverStarting = false;
   discoverStopping = false;
   discoverSnapshot: CoinDiscoverSnapshot | null = null;
@@ -214,19 +221,24 @@ class CoinWorkspaceState {
     this.clipboardLoading = true;
     this.commandError = '';
     try {
-      const value = normalizedContractAddress(await window.coin.clipboard.readText());
-      if (!value) {
+      const clipboardText = await window.coin.clipboard.readText();
+      if (!clipboardText.trim()) {
         this.commandError = i18nHelper.coin.trench.errors.clipboardEmpty;
         return;
       }
-      if (!addressMatchesChain(value, this.data.drafts.meme.chain)) {
-        this.commandError = i18nHelper.coin.trench.errors.addressChainMismatch;
+      const candidates = extractCoinAddressCandidates(clipboardText);
+      if (candidates.length === 0) {
+        this.commandError = i18nHelper.coin.trench.errors.addressInvalid;
         return;
       }
-      this.data.drafts.meme.contractAddress = value;
+      if (candidates.length > 1) {
+        this.commandError = i18nHelper.coin.trench.errors.addressMultiple;
+        return;
+      }
+      this.data.drafts.meme.contractAddress = candidates[0];
       this.data.drafts.meme.view = 'analyze';
       this.closeSecondary();
-      await this.analyzeMeme('service');
+      await this.autoAnalyzeMeme();
     } catch (error) {
       console.error('[Coin] Clipboard read failed:', error);
       this.commandError = i18nHelper.coin.trench.errors.clipboardRead;
@@ -235,17 +247,20 @@ class CoinWorkspaceState {
     }
   }
 
-  async analyzeFromCommand(mode: CoinMemeSourceMode): Promise<void> {
+  async analyzeFromCommand(): Promise<void> {
     this.commandError = '';
-    const address = normalizedContractAddress(this.data.drafts.meme.contractAddress);
-    if (!address || !addressMatchesChain(address, this.data.drafts.meme.chain)) {
-      this.commandError = i18nHelper.coin.trench.errors.addressChainMismatch;
+    const candidates = extractCoinAddressCandidates(this.data.drafts.meme.contractAddress);
+    const address = extractSingleCoinAddress(this.data.drafts.meme.contractAddress);
+    if (!address) {
+      this.commandError = candidates.length > 1
+        ? i18nHelper.coin.trench.errors.addressMultiple
+        : i18nHelper.coin.trench.errors.addressInvalid;
       return;
     }
     this.data.drafts.meme.contractAddress = address;
     this.data.drafts.meme.view = 'analyze';
     this.closeSecondary();
-    await this.analyzeMeme(mode);
+    await this.autoAnalyzeMeme();
   }
 
   selectCandidate(candidate: CoinDiscoverCandidate): void {
@@ -498,6 +513,69 @@ class CoinWorkspaceState {
   async cancelScreener(): Promise<void> {
     if (!this.screenerRequestId) return;
     await window.coin.data.cancel({ requestId: this.screenerRequestId });
+  }
+
+  async autoAnalyzeMeme(): Promise<void> {
+    if (this.memeLoading) return;
+    const contractAddress = extractSingleCoinAddress(this.data.drafts.meme.contractAddress);
+    if (!contractAddress) {
+      this.commandError = i18nHelper.coin.trench.errors.addressInvalid;
+      return;
+    }
+    const id = requestId('meme-auto');
+    this.memeRequestId = id;
+    this.memeLoading = true;
+    this.memeError = '';
+    this.commandError = '';
+    this.memeDetectedChains = [];
+    this.memeDetectingChains = coinCandidateChains(contractAddress);
+    try {
+      const envelope = await window.coin.data.autoAnalyzeMeme({
+        requestId: id,
+        contractAddress,
+        holderLimit: 100,
+        traderLimit: 100,
+      });
+      const failure = envelope.error?.message ?? '';
+      this.commandError = failure;
+      this.memeError = failure;
+      if (envelope.data) {
+        this.appendReceipts([...envelope.data.receipts, envelope.receipt]);
+        if (envelope.data.matches.length === 0) {
+          this.commandError = i18nHelper.coin.trench.errors.addressNotFound;
+          this.memeError = this.commandError;
+        } else {
+          this.memeDetectedChains = envelope.data.matches.map(({ chain }) => chain);
+          const active = envelope.data.matches.find(({ chain }) =>
+            chain === envelope.data?.activeChain) ?? envelope.data.matches[0];
+          this.data.drafts.meme.mode = 'local_cli_rpc';
+          this.data.drafts.meme.chain = active.chain;
+          this.data.drafts.meme.contractAddress = envelope.data.contractAddress;
+          for (const match of [...envelope.data.matches].reverse()) {
+            this.recordAnalysis(
+              'meme',
+              envelope.data.contractAddress,
+              match.chain,
+              match.analysis,
+              match.analysis.receipts,
+            );
+          }
+          this.replaceMemeAnalysis(active.analysis);
+          this.applyAnalysisToStrategy(active.analysis);
+        }
+      } else {
+        this.appendReceipts([envelope.receipt]);
+      }
+      await this.refreshSources();
+    } catch (error) {
+      console.error('[Coin] Automatic meme analysis failed:', error);
+      this.commandError = i18nHelper.coin.analysis.errors.meme;
+      this.memeError = this.commandError;
+    } finally {
+      this.memeLoading = false;
+      this.memeRequestId = null;
+      this.memeDetectingChains = [];
+    }
   }
 
   async analyzeMeme(mode: CoinMemeSourceMode = this.data.drafts.meme.mode): Promise<void> {
@@ -912,6 +990,7 @@ class CoinWorkspaceState {
     this.data.drafts.meme.view = 'analyze';
     this.data.activePage = 'meme';
     this.commandError = '';
+    this.memeDetectedChains = [chain];
     const analysis = [...this.data.analyses]
       .reverse()
       .find((item) =>
@@ -1106,6 +1185,7 @@ class CoinWorkspaceState {
     this.screenerParseResult = null;
     this.screenerResult = null;
     this.memeAnalysis = null;
+    this.memeDetectedChains = [];
     this.discoverSnapshot = null;
     this.strategyResult = null;
     this.strategyReceipt = null;
@@ -1115,7 +1195,10 @@ class CoinWorkspaceState {
     const meme = latest('meme');
     if (monitor?.result.schema === 'coin-monitor-v1') this.monitorResult = clone(monitor.result);
     if (screener?.result.schema === 'coin-screener-v1') this.screenerResult = clone(screener.result);
-    if (meme?.result.schema === 'coin-meme-analysis-v1') this.memeAnalysis = clone(meme.result);
+    if (meme?.result.schema === 'coin-meme-analysis-v1') {
+      this.memeAnalysis = clone(meme.result);
+      this.memeDetectedChains = [meme.result.asset.chain];
+    }
     const decision = this.data.decisions.at(-1);
     if (decision) {
       this.strategyResult = clone(decision.result);

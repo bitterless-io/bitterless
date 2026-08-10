@@ -9,11 +9,48 @@ export interface ResolveRuntimeProfileInput {
   viteMode: string;
 }
 
+export interface AssertRuntimeLaunchModeInput {
+  compiledViteMode: string;
+  helperMode: boolean;
+  packaged: boolean;
+  processViteMode: string | undefined;
+}
+
+const NODE_ONLY_HELPER_ARGUMENTS = new Set([
+  '--mcp-helper',
+  '--coding-agent-hook-helper'
+]);
+
 const isViteEnvironment = (value: string): value is ApplicationViteEnvironment =>
   value === 'dev' || value === 'prod';
 
 const isViteMode = (value: string): value is ApplicationViteMode =>
   value === 'debug' || value === 'release';
+
+export const isNodeOnlyHelperRuntime = (argv: readonly string[]): boolean =>
+  argv.some((argument) => NODE_ONLY_HELPER_ARGUMENTS.has(argument));
+
+export const assertRuntimeLaunchMode = (input: AssertRuntimeLaunchModeInput): void => {
+  if (input.helperMode) return;
+  if (input.packaged) {
+    if (input.compiledViteMode !== 'release') {
+      throw new Error(
+        `[runtime-profile] packaged Bitterless requires compiled VITE_MODE=release; received ${input.compiledViteMode || 'missing'}`
+      );
+    }
+    return;
+  }
+  if (input.compiledViteMode !== 'debug') {
+    throw new Error(
+      `[runtime-profile] unpackaged Bitterless requires compiled VITE_MODE=debug; received ${input.compiledViteMode || 'missing'}`
+    );
+  }
+  if (input.processViteMode !== 'debug') {
+    throw new Error(
+      `[runtime-profile] unpackaged Bitterless requires child-process VITE_MODE=debug; received ${input.processViteMode || 'missing'}`
+    );
+  }
+};
 
 export const resolveRuntimeProfile = (
   input: ResolveRuntimeProfileInput

@@ -4,8 +4,9 @@ Status: Accepted
 
 ## Purpose
 
-Omni layout cells can render either a remote browser page or one of four first-party Bitterless
-mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, `translator`, and `motto`.
+Omni layout cells can render either a remote browser page or one of five first-party Bitterless
+mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, `translator`, `motto`, and
+`trench`.
 They render directly in the cell operation `WebContentsView`; selecting one must not create or
 depend on its standalone window.
 
@@ -19,20 +20,21 @@ single-cell runtime.
 ┌────────────────────────────── Omni BaseWindow ──────────────────────────────┐
 │ Omni Browser  [Layout]                              [update when ready]     │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ Cell A                                      │ Cell B                        │
-│ ┌──────── browser chrome (browser only) ──┐ │ ┌──── local mini app ──────┐ │
-│ │ back · forward · refresh · URL          │ │ │ own embedded app header  │ │
-│ ├─────────────────────────────────────────┤ │ ├──────────────────────────┤ │
-│ │ operation WebContentsView               │ │ │ operation WebContentsView│ │
-│ │ remote webpage                          │ │ │ first-party renderer     │ │
-│ └─────────────────────────────────────────┘ │ └──────────────────────────┘ │
+│ ╔════ Cell A · active orange frame ══════╗ │ Cell B                        │
+│ ║ browser chrome (browser only)          ║ │ ┌──── local mini app ──────┐ │
+│ ║ back · forward · refresh · URL         ║ │ │ own embedded app header  │ │
+│ ╟────────────────────────────────────────╢ │ ├──────────────────────────┤ │
+│ ║ operation WebContentsView              ║ │ │ operation WebContentsView│ │
+│ ║ remote webpage                         ║ │ │ first-party renderer     │ │
+│ ╚════════════════════════════════════════╝ │ └──────────────────────────┘ │
 ├──────────────── layout mode overlay (when open) ────────────────────────────┤
 │ Per-cell configuration panels: split · Browser/Mini App · target · close   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The Omni shell owns cell creation, bounds, persistence, and content-runtime selection. Todo,
-EyesOnAgents, Translator, and Motto continue to own their business state and persistence boundary.
+EyesOnAgents, Translator, Motto, and Trench continue to own their business state and persistence
+boundary.
 
 ## Per-Cell Layout Panel
 
@@ -50,7 +52,8 @@ Mini-app cell
 │                                             ├ Todo                         │
 │                                             ├ EyesOnAgents                 │
 │                                             ├ Translator                   │
-│                                             └ Motto                        │
+│                                             ├ Motto                        │
+│                                             └ Trench                       │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -58,6 +61,31 @@ Mini-app cell
 - Use Tabler icons for split, navigation, refresh, and close actions.
 - Use business BEM classes in sibling Less files. Do not add Tailwind or atomic utility classes.
 - All labels, tooltips, empty/error text, and accessible names come from shared renderer i18n.
+
+## Active Cell Frame
+
+The active effect belongs to the real cell views, not the Layout-control preview. Every browser
+chrome, browser operation view, and mini-app operation view loads the common Omni active-frame
+preload SDK. Main retains the last focused cell and updates the SDK-owned DOM frame in each view.
+
+```text
+Browser cell                              Mini-app cell
+╔════ menubar: top + left + right ════╗   ╔════ content: all four sides ════╗
+║ navigation + URL                    ║   ║                                  ║
+╟──── content: left + right + bottom ─╢   ║ first-party renderer             ║
+║ remote webpage                      ║   ║                                  ║
+╚═════════════════════════════════════╝   ╚══════════════════════════════════╝
+```
+
+- The active frame is exactly `2px solid #C2410C` and is drawn as a fixed, pointer-transparent DOM
+  overlay inside each native `WebContentsView`.
+- Browser menubar and content segments form one continuous outer frame without a doubled seam.
+- The frame uses no padding, margin, or content resize, so native bounds, splitters, page layout,
+  scrolling, selection, and clicks remain unchanged.
+- The common preload SDK injects only the visual frame. Remote Website pages receive no new XPC,
+  IPC, filesystem, or privileged bridge API.
+- Main reapplies the current active state after a view navigates or reloads. Closing Omni clears the
+  retained active ID and all surviving frame state.
 
 ## Persisted Content Contract
 
@@ -67,7 +95,7 @@ Each leaf persists these values inside the existing `omni_layout` tree:
 |---|---|
 | `contentMode` | `'browser' | 'miniapp'` |
 | `url` | Last browser URL. Preserved while the cell displays a mini app. |
-| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator' | 'motto'`. Preserved while the cell displays a browser. |
+| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator' | 'motto' | 'trench'`. Preserved while the cell displays a browser. |
 
 Rules:
 
@@ -100,6 +128,7 @@ renderer loads or reopens, so the localized warning cannot be lost to renderer s
 | EyesOnAgents | `out/preload/eyesOnAgents.js` | `${ELECTRON_RENDERER_URL}/eyesOnAgents/index.html` | `out/renderer/eyesOnAgents/index.html` | default |
 | Translator | `out/preload/translator.js` | `${ELECTRON_RENDERER_URL}/translator/index.html` | `out/renderer/translator/index.html` | default |
 | Motto | `out/preload/motto.js` | `${ELECTRON_RENDERER_URL}/motto/index.html` | `out/renderer/motto/index.html` | default |
+| Trench | `out/preload/trench.js` | `${ELECTRON_RENDERER_URL}/coin/index.html` | `out/renderer/coin/index.html` | default |
 
 Generated preload and packaged renderer paths are anchored at `app.getAppPath()/out`; they never
 depend on a Rollup chunk's `__dirname`. Development first-party renderers use the Electron Vite dev
@@ -107,7 +136,7 @@ server URL, while packaged renderers use `loadFile`.
 
 Changing `contentMode` or `miniAppId` recreates the affected operation view with the correct
 preload. It does not recreate the Omni BaseWindow or open a standalone
-Todo/EyesOnAgents/Translator/Motto window.
+Todo/EyesOnAgents/Translator/Motto/Trench window.
 Remote-browser notification interception, provider-scoped browser identity, persistent browser
 sessions, and URL navigation hooks apply only to browser cells.
 
@@ -143,7 +172,7 @@ Mini-app operation views are privileged because their preload exposes first-part
 reject top-level navigation away from the expected local renderer target. New-window requests and
 external `http`/`https` links may be handed to the system browser, but must never load inside the
 privileged operation view. Remote browser cells can never receive a Todo, EyesOnAgents,
-Translator, or Motto preload.
+Translator, Motto, or Trench preload.
 
 ## Embedded Mini-App Behavior
 
@@ -157,11 +186,15 @@ Translator, or Motto preload.
 - Translator follows `docs/features/translator.md` and has no standalone window actions.
 - Motto follows `docs/features/motto.md`, persists one whole array in renderer localStorage, and has
   no standalone window actions.
+- Trench follows `docs/features/coin.md`, uses a dedicated read-only preload, and previews the same
+  Main-owned repository as standalone Trench. It has no in-cell analysis capability or standalone
+  window actions.
 - Mini-app cells do not render Omni's browser chrome above the app's own header. Embedded host
   styles remove standalone drag regions, macOS traffic-light padding, and fixed 800×600 renderer
   minimums so split panes can shrink without forcing overflow.
 - Multiple cells may show the same mini app. Service-backed apps read the same authoritative local
-  services and remain synchronized through existing XPC broadcasts. Motto instances share one
+  services and remain synchronized through existing XPC broadcasts. Trench instances refresh from
+  the same `trench/data-changed` event. Motto instances share one
   localStorage origin and observe another instance's persisted changes on their next load; live
   cross-instance synchronization is out of scope.
 - Closing a cell destroys only that cell's chrome and operation views.
@@ -171,11 +204,12 @@ Translator, or Motto preload.
 | Input | Scope | Behavior |
 |---|---|---|
 | Browser/Mini App selector | Layout panel | Switch content runtime, apply, and persist immediately. |
-| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, Translator, or Motto; recreate operation view and persist. |
+| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, Translator, Motto, or Trench; recreate operation view and persist. |
 | URL Enter | Browser panel | Normalize/load the URL and persist navigation updates. |
 | Refresh | Browser chrome / mini-app header | Reload browser content or refresh the mini app's own data. |
 | Back/forward | Browser cell only | Navigate browser history; hidden/disabled for mini apps. |
 | Split | Layout panel | Preserve original content and create a default browser sibling. |
+| Cell focus | Browser or mini-app cell | Remember the active cell and show its 2px accent-orange frame in the real cell views. |
 | `Escape` | Open Layout control | Close only the top-level Layout control and clear the Menu Bar active state. |
 | `update` | Omni Menu Bar | When downloaded-ready state exists, quit and install through Main. |
 
@@ -191,6 +225,9 @@ Translator, or Motto preload.
   may shrink but must not force the cell outside its split bounds.
 - **Layout open:** Main owns the Control view visibility. Pressing `Escape` from any focused field
   closes the Layout control without changing the persisted layout or closing Omni content.
+- **Active cell:** The last focused surviving cell has one continuous, non-layout-affecting 2px
+  accent-orange frame across its real native views. If no retained ID matches a cell, all frames
+  are hidden.
 - **Update hidden:** no downloaded-ready snapshot or live event exists; the Omni Menu Bar reserves
   no width for an update action.
 - **Update ready:** show the exact compact `update` label with the main window's 4px × 10px padding,
@@ -219,10 +256,10 @@ SettingDao.omni_layout
 
 - Contract tests cover legacy migration, allowed variants, round-trip persistence fields, and
   rejection of unsupported mini apps.
-- Runtime tests cover browser/Todo/EyesOnAgents/Translator/Motto preload selection and
+- Runtime tests cover browser/Todo/EyesOnAgents/Translator/Motto/Trench preload selection and
   dev versus packaged targets.
-- UI guards cover Arco mode/select controls, exactly four mini-app choices, i18n, business BEM/Less,
+- UI guards cover Arco mode/select controls, exactly five mini-app choices, i18n, business BEM/Less,
   embedded sizing/window-action behavior, the compact Omni Menu Bar update action, and the absence
   of Tailwind classes.
-- Build verification confirms all four mini-app renderer HTML files and preload bundles exist in
+- Build verification confirms all five mini-app renderer HTML files and preload bundles exist in
   `out/` and are referenced by generated-asset-safe paths.

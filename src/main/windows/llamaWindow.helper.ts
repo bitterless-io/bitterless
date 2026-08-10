@@ -33,7 +33,8 @@ class LlamaWindowHelper {
 
     this.browserWindow = new BrowserWindow(options);
 
-    const shouldOpenDevTools = import.meta.env.VITE_ENV === 'dev' || import.meta.env.VITE_MODE === 'debug';
+    const shouldOpenDevTools =
+      process.env.BITTERLESS_E2E !== '1' && import.meta.env.VITE_MODE === 'debug';
     if (shouldOpenDevTools) {
       this.browserWindow.webContents.openDevTools({ mode: 'detach' });
     }

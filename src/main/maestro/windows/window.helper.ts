@@ -136,7 +136,9 @@ export abstract class WindowHelper {
   }
 }
 
-function shouldOpenDevTools(): boolean {
+export const shouldOpenDevTools = (): boolean => {
+  if (import.meta.env.VITE_MODE !== 'debug') return false
+  if (process.env.BITTERLESS_E2E === '1') return false
   if (process.env.COACH_DEMO_SMOKE_OUT) return false
   if (process.env.COACH_OPEN_DEVTOOLS === '0') return false
   return is.dev || process.env.COACH_OPEN_DEVTOOLS === '1'

@@ -13,6 +13,7 @@ import './mainWindow.handler';
 import './auth.handler';
 import './mcp.handler';
 import './coinWindow.handler';
+import './trench.handler';
 import './maestroWindow.handler';
 import './applicationLanguage.handler';
 import './todoSystem.handler';

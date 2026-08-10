@@ -2,8 +2,6 @@ import { app, BrowserWindow } from 'electron';
 import { is } from '@electron-toolkit/utils';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
-import { COIN_IPC_CHANNELS } from '@shared/coin/coinBridge.type';
-import type { ApplicationLanguageSnapshot } from '@shared/i18n/applicationLanguage';
 import {
   COIN_WINDOW_DEFAULT_HEIGHT,
   COIN_WINDOW_DEFAULT_WIDTH,
@@ -25,7 +23,6 @@ const normalizedRendererUrl = (value: string): string => {
 class CoinWindowManager {
   private currentWindow: BrowserWindow | null = null;
   private windowStateController: WindowStateController | null = null;
-  private closeCleanup: (() => void) | null = null;
 
   get browserWindow(): BrowserWindow | null {
     return this.currentWindow;
@@ -33,10 +30,6 @@ class CoinWindowManager {
 
   isDestroyed(window: BrowserWindow): boolean {
     return window.isDestroyed();
-  }
-
-  setCloseCleanup(cleanup: () => void): void {
-    this.closeCleanup = cleanup;
   }
 
   async create(signal: AbortSignal): Promise<BrowserWindow> {
@@ -65,13 +58,14 @@ class CoinWindowManager {
       minWidth: COIN_WINDOW_MIN_WIDTH,
       minHeight: COIN_WINDOW_MIN_HEIGHT,
       show: false,
-      title: 'Coin',
-      titleBarStyle: 'hidden',
+      title: 'BL Trench',
+      titleBarStyle: isMac ? 'hidden' : 'default',
       ...(isMac ? { trafficLightPosition: { x: 12, y: 11 } } : {}),
       autoHideMenuBar: true,
       backgroundColor: '#F3F5FC',
       webPreferences: {
-        preload: join(__dirname, '../preload/coin.js'),
+        preload: join(__dirname, '../preload/trench.js'),
+        additionalArguments: ['--mode=standalone'],
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -99,11 +93,7 @@ class CoinWindowManager {
       }
     });
 
-    window.on('close', () => {
-      this.closeCleanup?.();
-    });
     window.on('closed', () => {
-      this.closeCleanup?.();
       signal.removeEventListener('abort', abortStartup);
       if (this.currentWindow === window) {
         this.currentWindow = null;
@@ -150,12 +140,6 @@ class CoinWindowManager {
       this.currentWindow = null;
       this.windowStateController = null;
     }
-  }
-
-  sendLanguageSnapshot(snapshot: ApplicationLanguageSnapshot): void {
-    const window = this.currentWindow;
-    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
-    window.webContents.send(COIN_IPC_CHANNELS.languageChanged, snapshot);
   }
 
   private getRendererUrl(): string {

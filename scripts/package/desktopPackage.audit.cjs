@@ -26,6 +26,14 @@ const ONLY_PREVIEW_AGENT_SKILL_FILES = Object.freeze([
   path.join('references', 'mcp-setup.md'),
   path.join('references', 'tools.md'),
 ]);
+const TRENCH_AGENT_SKILL_FILES = Object.freeze([
+  'SKILL.md',
+  path.join('agents', 'openai.yaml'),
+  path.join('references', 'mcp-setup.md'),
+  path.join('references', 'schemas.md'),
+  path.join('references', 'tools.md'),
+]);
+const RUNTIME_PROFILE_MARKER_ENTRY = '/out/.bitterless-runtime-profile.json';
 const ELECTRON_BUILTINS = new Set(['electron', 'original-fs']);
 const NODE_BUILTINS = new Set(builtinModules.map((moduleName) => moduleName.replace(/^node:/, '')));
 
@@ -110,6 +118,32 @@ const readRealFile = (filePath, label) => {
   return fs.readFileSync(filePath);
 };
 
+const inspectPackagedRuntimeProfile = (asarPath, archiveEntries) => {
+  if (!archiveEntries.includes(RUNTIME_PROFILE_MARKER_ENTRY)) {
+    throw new Error(`app.asar is missing ${RUNTIME_PROFILE_MARKER_ENTRY}`);
+  }
+  let marker;
+  try {
+    marker = JSON.parse(
+      extractFile(asarPath, RUNTIME_PROFILE_MARKER_ENTRY.slice(1)).toString('utf8'),
+    );
+  } catch (error) {
+    throw new Error(`packaged runtime profile marker is invalid: ${error.message}`);
+  }
+  const keys = Object.keys(marker ?? {}).sort();
+  if (
+    keys.join(',') !== 'profileName,schemaVersion,viteEnv,viteMode'
+    || marker.schemaVersion !== 1
+    || !['release_dev', 'release_prod'].includes(marker.profileName)
+    || marker.viteMode !== 'release'
+    || !['dev', 'prod'].includes(marker.viteEnv)
+    || !marker.profileName.endsWith(`_${marker.viteEnv}`)
+  ) {
+    throw new Error('packaged runtime profile marker must be an exact release_dev/release_prod profile');
+  }
+  return marker;
+};
+
 const inspectIcnsFile = (filePath) => {
   const content = readRealFile(filePath, 'bundle ICNS');
   if (
@@ -159,6 +193,26 @@ const inspectOnlyPreviewAgentSkill = (resourcesPath) => {
   const files = ONLY_PREVIEW_AGENT_SKILL_FILES.map((relativePath) => {
     const filePath = path.join(skillPath, relativePath);
     readRealFile(filePath, 'Preview skill file');
+    return filePath;
+  });
+  return { skillPath, files };
+};
+
+const inspectTrenchAgentSkill = (resourcesPath) => {
+  const skillPath = path.join(resourcesPath, 'agent-skills', 'bitterless-trench');
+  for (const directoryPath of [
+    skillPath,
+    path.join(skillPath, 'agents'),
+    path.join(skillPath, 'references'),
+  ]) {
+    const stats = fs.lstatSync(directoryPath);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error(`Trench skill directory must be a real directory: ${directoryPath}`);
+    }
+  }
+  const files = TRENCH_AGENT_SKILL_FILES.map((relativePath) => {
+    const filePath = path.join(skillPath, relativePath);
+    readRealFile(filePath, 'Trench skill file');
     return filePath;
   });
   return { skillPath, files };
@@ -501,6 +555,15 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     return packageIsPresent(archiveEntries, packageName);
   });
   const failures = [];
+  let packagedRuntimeProfile = null;
+  try {
+    packagedRuntimeProfile = inspectPackagedRuntimeProfile(asarPath, archiveEntries);
+    console.log(
+      `[desktop-package-audit] runtime profile ${packagedRuntimeProfile.profileName} verified`,
+    );
+  } catch (error) {
+    failures.push(`runtime profile gate failed: ${error.message}`);
+  }
   let applicationTarget;
   let betterSqlite3BinaryPath;
   try {
@@ -527,6 +590,13 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     console.log('[desktop-package-audit] Bitterless Preview agent skill verified');
   } catch (error) {
     failures.push(`Preview agent skill gate failed: ${error.message}`);
+  }
+  let trenchAgentSkill = null;
+  try {
+    trenchAgentSkill = inspectTrenchAgentSkill(resourcesPath);
+    console.log('[desktop-package-audit] Bitterless Trench agent skill verified');
+  } catch (error) {
+    failures.push(`Trench agent skill gate failed: ${error.message}`);
   }
   let externalPackageReferences;
   try {
@@ -572,7 +642,9 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     targetArch: applicationTarget.arch,
     betterSqlite3BinaryPath,
     applicationIconPaths,
+    packagedRuntimeProfile,
     onlyPreviewAgentSkill,
+    trenchAgentSkill,
     externalPackageRoots: [...externalPackageReferences.keys()].sort(),
   };
 };
@@ -621,5 +693,7 @@ module.exports.getPathSize = getPathSize;
 module.exports.inspectApplicationIcons = inspectApplicationIcons;
 module.exports.inspectBinary = inspectBinary;
 module.exports.inspectOnlyPreviewAgentSkill = inspectOnlyPreviewAgentSkill;
+module.exports.inspectPackagedRuntimeProfile = inspectPackagedRuntimeProfile;
+module.exports.inspectTrenchAgentSkill = inspectTrenchAgentSkill;
 module.exports.packageIsPresent = packageIsPresent;
 module.exports.resolveApplicationPath = resolveApplicationPath;

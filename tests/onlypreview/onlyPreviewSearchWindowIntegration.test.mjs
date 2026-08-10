@@ -530,7 +530,7 @@ test('window and preload source keep search authority utility-owned and Main sea
     /input:\s*\{[\s\S]*onlypreview:\s*resolve\('src\/preload\/onlypreview\/onlypreview\.preload\.ts'\)[\s\S]*onlypreviewContent:\s*resolve\('src\/preload\/onlypreview\/onlypreviewContent\.preload\.ts'\)/
   );
   const sandboxPluginStart = vite.indexOf('const onlyPreviewSandboxPreloadPlugin');
-  const nextPluginStart = vite.indexOf('const secureOnlyPreviewHtml', sandboxPluginStart);
+  const nextPluginStart = vite.indexOf('const trenchSandboxPreloadPlugin', sandboxPluginStart);
   assert.ok(sandboxPluginStart >= 0 && nextPluginStart > sandboxPluginStart);
   const sandboxPlugin = vite.slice(sandboxPluginStart, nextPluginStart);
   assert.match(
@@ -539,7 +539,7 @@ test('window and preload source keep search authority utility-owned and Main sea
   );
   assert.match(sandboxPlugin, /onlypreview:\s*resolve\(/);
   assert.doesNotMatch(sandboxPlugin, /apply:\s*'build'/);
-  assert.match(vite, /plugins: \[onlyPreviewSandboxPreloadPlugin\]/);
+  assert.match(vite, /plugins: \[onlyPreviewSandboxPreloadPlugin, trenchSandboxPreloadPlugin\]/);
   assert.doesNotMatch(vite, /onlyPreviewPreloadPlugin/);
   assert.match(vite, /'onlypreview\/previewHeader'/);
 });

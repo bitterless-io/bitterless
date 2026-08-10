@@ -31,3 +31,6 @@ asar_unpacked
 build/installer.nsh
 build/maestro-tools/
 packages/micromeet-cli/release/
+
+# Playwright CLI session dumps (page snapshots / screenshots / console logs)
+.playwright-cli/

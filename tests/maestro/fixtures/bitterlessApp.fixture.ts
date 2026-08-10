@@ -8,13 +8,28 @@ import {
 import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { buildBitterlessE2ELaunchArgs } from '../../e2e/electronLaunchArgs'
+import {
+  assertElectronTargetDisplayAvailable,
+  assertVisibleWindowsOnTargetDisplay,
+  resolveE2ETargetDisplayLabel
+} from '../../e2e/e2eDisplayTarget'
+import {
+  assertDebugE2EBuild,
+  assertElectronDebugRuntime,
+  withDebugE2ERuntimeEnvironment
+} from '../../e2e/e2eRuntimeMode'
+import {
+  installGmgnCliFixture,
+  type GmgnCliFixtureCall
+} from '../../coin/fixtures/gmgnCli.fixture'
 
 export type RendererName =
   | 'home'
   | 'todo'
+  | 'coin'
   | 'maestroHome'
   | 'maestroControl'
   | 'maestroWorkbench'
@@ -26,9 +41,11 @@ export interface BitterlessE2ESession {
   userDataDir: string
   mockOrigin: string
   rendererErrors: string[]
+  mainOutput: string[]
   mockRequests: string[]
   unexpectedMockRequests: string[]
   deniedNetworkRequests: () => string[]
+  gmgnCliCalls: () => GmgnCliFixtureCall[]
   waitForRenderer: (name: RendererName) => Promise<Page>
   rendererCount: (name: RendererName) => number
   operationCount: () => number
@@ -43,6 +60,7 @@ interface MockServer {
 }
 
 interface MaestroFixtures {
+  coinGmgnFixture: boolean
   bitterless: BitterlessE2ESession
 }
 
@@ -65,6 +83,7 @@ const assertLaunchPrerequisites = (): void => {
   if (!existsSync(mainEntry)) {
     throw new Error(`Built Electron main entry is missing: ${mainEntry}. Run yarn build first.`)
   }
+  assertDebugE2EBuild(projectRoot)
 }
 
 const startMockServer = async (): Promise<MockServer> => {
@@ -77,7 +96,7 @@ const startMockServer = async (): Promise<MockServer> => {
     requests.push(key)
     response.setHeader('access-control-allow-origin', '*')
     response.setHeader('access-control-allow-headers', '*')
-    response.setHeader('access-control-allow-methods', 'GET, OPTIONS')
+    response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS')
 
     if (url.pathname === '/auth/me' && method === 'OPTIONS') {
       response.statusCode = 204
@@ -95,6 +114,29 @@ const startMockServer = async (): Promise<MockServer> => {
           status: 'active',
           has_password: true,
           must_set_password: false
+        })
+      )
+      return
+    }
+    if (url.pathname === '/todo/sync' && method === 'OPTIONS') {
+      response.statusCode = 204
+      response.end()
+      return
+    }
+    if (url.pathname === '/todo/sync' && method === 'POST') {
+      response.setHeader('content-type', 'application/json; charset=utf-8')
+      response.end(
+        JSON.stringify({
+          sync_token: 'bitterless-e2e-sync-token',
+          full_sync: false,
+          sync_phase: 'incremental',
+          has_more: false,
+          server_time_ms: Date.now(),
+          snowflake_node_id: 17,
+          sync_status: {},
+          todo_domains: [],
+          todos: [],
+          sub_todos: []
         })
       )
       return
@@ -137,6 +179,7 @@ const closeMockServer = async (server: Server): Promise<void> => {
 const rendererPaths: Record<RendererName, string> = {
   home: 'home',
   todo: 'todo',
+  coin: 'coin',
   maestroHome: 'maestro/home',
   maestroControl: 'maestro/control',
   maestroWorkbench: 'maestro/workbench',
@@ -194,6 +237,8 @@ const isolatedLaunchEnv = (paths: {
   homeDir: string
   userDataDir: string
   mockOrigin: string
+  gmgnBinDir?: string
+  targetDisplayLabel?: string
 }): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {}
   const allowedKeys = new Set([
@@ -215,8 +260,11 @@ const isolatedLaunchEnv = (paths: {
   for (const [key, value] of Object.entries(process.env)) {
     if (value != null && (allowedKeys.has(key) || key.startsWith('LC_'))) env[key] = value
   }
-  return {
+  return withDebugE2ERuntimeEnvironment({
     ...env,
+    PATH: paths.gmgnBinDir
+      ? `${paths.gmgnBinDir}${delimiter}${env.PATH || ''}`
+      : env.PATH,
     NODE_ENV: 'production',
     HOME: paths.homeDir,
     USERPROFILE: paths.homeDir,
@@ -230,16 +278,20 @@ const isolatedLaunchEnv = (paths: {
     BITTERLESS_E2E_HOME_DIR: paths.homeDir,
     BITTERLESS_E2E_USER_DATA_DIR: paths.userDataDir,
     BITTERLESS_E2E_MOCK_ORIGIN: paths.mockOrigin,
+    ...(paths.targetDisplayLabel
+      ? { BITTERLESS_E2E_DISPLAY_LABEL: paths.targetDisplayLabel }
+      : {}),
     COACH_OPEN_DEVTOOLS: '0',
     COACH_WORKBENCH_DEVTOOLS: '0',
     COACH_DEVTOOLS: '0',
     COACH_DEMO_SMOKE_OUT: '1',
     ELECTRON_DISABLE_SECURITY_WARNINGS: 'true'
-  }
+  })
 }
 
 export const test = base.extend<MaestroFixtures>({
-  bitterless: async ({}, use) => {
+  coinGmgnFixture: [false, { option: true }],
+  bitterless: async ({ coinGmgnFixture }, use) => {
     assertLaunchPrerequisites()
     // Keep Unix-domain socket paths below the macOS limit for every E2E bridge.
     const tempBase = process.platform === 'win32' ? tmpdir() : '/tmp'
@@ -251,14 +303,25 @@ export const test = base.extend<MaestroFixtures>({
     mkdirSync(join(homeDir, 'AppData', 'Roaming'), { recursive: true })
     mkdirSync(join(homeDir, 'AppData', 'Local'), { recursive: true })
 
+    const gmgnFixture = coinGmgnFixture
+      ? installGmgnCliFixture(tempRoot, homeDir)
+      : null
+
     const mock = await startMockServer()
+    const targetDisplayLabel = resolveE2ETargetDisplayLabel(projectRoot)
     const rendererErrors: string[] = []
     const mainOutput: string[] = []
     let app: ElectronApplication | null = null
     const sentinelKey = 'BITTERLESS_E2E_PARENT_SECRET'
     const previousSentinel = process.env[sentinelKey]
     process.env[sentinelKey] = 'must-not-reach-electron'
-    const launchEnv = isolatedLaunchEnv({ homeDir, userDataDir, mockOrigin: mock.origin })
+    const launchEnv = isolatedLaunchEnv({
+      homeDir,
+      userDataDir,
+      mockOrigin: mock.origin,
+      gmgnBinDir: gmgnFixture?.binDir,
+      targetDisplayLabel
+    })
     if (previousSentinel == null) delete process.env[sentinelKey]
     else process.env[sentinelKey] = previousSentinel
 
@@ -272,6 +335,8 @@ export const test = base.extend<MaestroFixtures>({
         env: launchEnv,
         timeout: 60_000
       })
+      await assertElectronDebugRuntime(app)
+      await assertElectronTargetDisplayAvailable(app, targetDisplayLabel)
       for (const stream of [app.process().stdout, app.process().stderr]) {
         stream?.on('data', (chunk) => mainOutput.push(String(chunk)))
       }
@@ -296,6 +361,7 @@ export const test = base.extend<MaestroFixtures>({
         return page
       }
       const hostPage = await waitForRenderer('home')
+      await assertVisibleWindowsOnTargetDisplay(app, targetDisplayLabel)
       const deniedLog = join(userDataDir, 'e2e-network-denied.log')
 
       await use({
@@ -304,12 +370,14 @@ export const test = base.extend<MaestroFixtures>({
         userDataDir,
         mockOrigin: mock.origin,
         rendererErrors,
+        mainOutput,
         mockRequests: mock.requests,
         unexpectedMockRequests: mock.unexpected,
         deniedNetworkRequests: () =>
           existsSync(deniedLog)
             ? readFileSync(deniedLog, 'utf8').split('\n').filter(Boolean)
             : [],
+        gmgnCliCalls: () => gmgnFixture?.calls() ?? [],
         waitForRenderer,
         rendererCount: (name) => app!.windows().filter((page) => pageMatches(page, name)).length,
         operationCount: () =>
@@ -321,6 +389,7 @@ export const test = base.extend<MaestroFixtures>({
             'mocked AI-CRMS operation view'
           )
       })
+      await assertVisibleWindowsOnTargetDisplay(app, targetDisplayLabel)
     } finally {
       const cleanupErrors: unknown[] = []
       if (app) {

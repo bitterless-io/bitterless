@@ -2,11 +2,17 @@ import { z } from 'zod';
 import type {
   CoinCancelInput,
   CoinDiscoverInput,
+  CoinMemeAutoAnalyzeInput,
   CoinMemeAnalyzeInput,
   CoinMonitorInput,
   CoinScreenerInput,
   CoinScreenerParseInput,
 } from '@shared/coin/coinAnalysis.type';
+import {
+  coinCandidateChains,
+  extractCoinAddressCandidates,
+  extractSingleCoinAddress,
+} from '@shared/coin/coinAddress';
 
 const requestId = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9:_-]+$/);
 const chain = z.enum(['robinhood', 'bsc', 'solana']);
@@ -80,6 +86,25 @@ const memeAnalyzeSchema = z.object({
   }
 });
 
+const memeAutoAnalyzeSchema = z.object({
+  requestId,
+  contractAddress: z.string().trim().min(1).max(2_048),
+  holderLimit: z.number().int().min(10).max(100),
+  traderLimit: z.number().int().min(10).max(100),
+}).strict().superRefine((input, context) => {
+  const candidates = extractCoinAddressCandidates(input.contractAddress);
+  if (candidates.length !== 1 || coinCandidateChains(candidates[0]).length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['contractAddress'],
+      message: 'Input must contain exactly one supported contract address.',
+    });
+  }
+}).transform((input) => ({
+  ...input,
+  contractAddress: extractSingleCoinAddress(input.contractAddress) || '',
+}));
+
 const discoverSchema = z.object({
   mode: sourceMode,
   chain,
@@ -110,6 +135,9 @@ export const parseScreenerInput = (value: unknown): CoinScreenerInput =>
 
 export const parseMemeAnalyzeInput = (value: unknown): CoinMemeAnalyzeInput =>
   memeAnalyzeSchema.parse(value) as CoinMemeAnalyzeInput;
+
+export const parseMemeAutoAnalyzeInput = (value: unknown): CoinMemeAutoAnalyzeInput =>
+  memeAutoAnalyzeSchema.parse(value) as CoinMemeAutoAnalyzeInput;
 
 export const parseDiscoverInput = (value: unknown): CoinDiscoverInput =>
   discoverSchema.parse(value) as CoinDiscoverInput;

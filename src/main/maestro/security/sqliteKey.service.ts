@@ -1,18 +1,19 @@
 import { randomBytes } from 'crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
-import { app, safeStorage } from 'electron'
+import { app } from 'electron'
 import { XpcMainHandler } from 'electron-xpc/main'
 import { isSqliteBootstrapTokenValid } from './sqliteBootstrap.service'
 import type { SqliteKeyApi, SqliteKeyRequest } from '@maestro-shared/sqliteKey.api'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import { mainSafeStorage } from '@main/security/safeStorage.runtime'
 
 const PRODUCTION_SQLITE_KEY_FILE = 'sqlite-key.bin'
 const DEVELOPMENT_SQLITE_KEY_FILE = 'sqlite-key.dev.hex'
 const E2E_SQLITE_KEY = process.env.BITTERLESS_E2E === '1' ? randomBytes(32).toString('hex') : ''
 
 const assertSafeStorageAvailable = (): void => {
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!mainSafeStorage.isEncryptionAvailable('maestro-sqlite')) {
     throw new Error('[coach sqlite] Electron safeStorage is not available; refusing to open customer data with an unprotected DB key')
   }
 }
@@ -36,7 +37,7 @@ const isAlreadyExistsError = (err: unknown): boolean => (err as NodeJS.ErrnoExce
 const readEncryptedKey = (keyPath: string): string => {
   assertSafeStorageAvailable()
   return assertSqliteKeyFormat(
-    safeStorage.decryptString(readFileSync(keyPath)),
+    mainSafeStorage.decryptString(readFileSync(keyPath), 'maestro-sqlite'),
     'production SQLCipher key file'
   )
 }
@@ -44,7 +45,7 @@ const readEncryptedKey = (keyPath: string): string => {
 const writeEncryptedKey = (keyPath: string, key: string): boolean => {
   assertSafeStorageAvailable()
   ensurePrivateDirectory(dirname(keyPath))
-  const encryptedKey = safeStorage.encryptString(key)
+  const encryptedKey = mainSafeStorage.encryptString(key, 'maestro-sqlite')
   try {
     writeFileSync(keyPath, encryptedKey, { flag: 'wx', mode: 0o600 })
   } catch (err) {
@@ -109,10 +110,10 @@ const getOrCreateSqliteKey = (): string => {
 
   const configDirectory = join(maestroDataRoot(), 'config')
   const dbPath = join(configDirectory, 'config.db')
-  const viteEnv: string = import.meta.env.VITE_ENV
-  if (viteEnv === 'prod') return getOrCreateProductionSqliteKey(configDirectory, dbPath)
-  if (viteEnv === 'dev') return getOrCreateDevelopmentSqliteKey(configDirectory, dbPath)
-  throw new Error(`[coach sqlite] unsupported VITE_ENV "${viteEnv}"; refusing to select a SQLCipher key store`)
+  const viteMode: string = import.meta.env.VITE_MODE
+  if (viteMode === 'release') return getOrCreateProductionSqliteKey(configDirectory, dbPath)
+  if (viteMode === 'debug') return getOrCreateDevelopmentSqliteKey(configDirectory, dbPath)
+  throw new Error(`[coach sqlite] unsupported VITE_MODE "${viteMode}"; refusing to select a SQLCipher key store`)
 }
 
 export class SqliteKeyService extends XpcMainHandler implements SqliteKeyApi {
