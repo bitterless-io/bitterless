@@ -17,7 +17,6 @@
       <div name="onlypreview__identity" class="onlypreview-shell__identity">
         <IconFiles class="onlypreview-shell__identity-icon" :size="15" aria-hidden="true" />
         <span class="onlypreview-shell__product">{{ onlyPreviewI18n.productName }}</span>
-        <span class="onlypreview-shell__location-divider" aria-hidden="true">/</span>
         <span
           class="onlypreview-shell__path"
           :title="
@@ -39,6 +38,17 @@
         >
           <template #icon><IconFolderPlus :size="15" aria-hidden="true" /></template>
           {{ onlyPreviewI18n.topbar.openFolder }}
+        </a-button>
+        <a-button
+          name="onlypreview__agentSkillGuide"
+          class="onlypreview-shell__icon-command"
+          type="text"
+          size="mini"
+          :title="onlyPreviewI18n.topbar.agentSkillGuide"
+          :aria-label="onlyPreviewI18n.topbar.agentSkillGuide"
+          @click="onlyPreviewShellStore.openAgentSkillGuide()"
+        >
+          <template #icon><IconRobot :size="16" aria-hidden="true" /></template>
         </a-button>
         <a-button
           name="onlypreview__settings"
@@ -93,7 +103,21 @@
     <main name="onlypreview__workspace" class="onlypreview-shell__workspace">
       <aside name="onlypreview__project" class="onlypreview-shell__project">
         <div name="onlypreview__projectHeader" class="onlypreview-shell__project-header">
-          <span>{{ onlyPreviewI18n.project.label }}</span>
+          <span
+            name="onlypreview__projectTitle"
+            class="onlypreview-shell__project-title"
+            :title="
+              onlyPreviewProjectSearchStore.active
+                ? onlyPreviewI18n.project.projectSearchTitle
+                : onlyPreviewShellStore.workspace?.displayPath || onlyPreviewI18n.project.label
+            "
+          >
+            {{
+              onlyPreviewProjectSearchStore.active
+                ? onlyPreviewI18n.project.projectSearchTitle
+                : onlyPreviewShellStore.workspace?.rootName || onlyPreviewI18n.project.label
+            }}
+          </span>
           <a-button
             name="onlypreview__locateCurrentFile"
             class="onlypreview-shell__project-action"
@@ -112,24 +136,78 @@
           <IconSearch :size="14" aria-hidden="true" />
           <input
             ref="searchInputRef"
-            :value="onlyPreviewShellStore.searchQuery"
+            :value="
+              onlyPreviewProjectSearchStore.active
+                ? onlyPreviewProjectSearchStore.query
+                : onlyPreviewShellStore.searchQuery
+            "
             type="search"
             autocomplete="off"
-            :aria-label="onlyPreviewI18n.project.searchLabel"
-            :placeholder="onlyPreviewI18n.project.searchPlaceholder"
+            :aria-label="
+              onlyPreviewProjectSearchStore.active
+                ? onlyPreviewI18n.project.projectSearchLabel
+                : onlyPreviewI18n.project.searchLabel
+            "
+            :placeholder="
+              onlyPreviewProjectSearchStore.active
+                ? onlyPreviewI18n.project.projectSearchPlaceholder
+                : onlyPreviewI18n.project.searchPlaceholder
+            "
             @input="handleSearchInput"
-            @keydown.esc.prevent="onlyPreviewShellStore.clearSearch()"
+            @compositionstart="handleSearchCompositionStart"
+            @compositionend="handleSearchCompositionEnd"
+            @keydown.esc.prevent="handleSearchEscape"
           />
           <button
-            v-if="onlyPreviewShellStore.searchQuery"
+            v-if="
+              onlyPreviewProjectSearchStore.active
+                ? onlyPreviewProjectSearchStore.query
+                : onlyPreviewShellStore.searchQuery
+            "
             class="onlypreview-shell__search-clear"
             type="button"
             :aria-label="onlyPreviewI18n.project.clearSearch"
-            @click="onlyPreviewShellStore.clearSearch()"
+            @click="clearActiveSearch"
           >
             <IconX :size="13" aria-hidden="true" />
           </button>
         </label>
+
+        <div
+          v-if="onlyPreviewProjectSearchStore.active && onlyPreviewShellStore.workspace"
+          name="onlypreview__projectSearchScope"
+          class="onlypreview-shell__project-search-scope"
+        >
+          <label
+            name="onlypreview__projectSearchScopeControl"
+            class="onlypreview-shell__scope-control"
+          >
+            <span class="onlypreview-shell__scope-label">
+              {{ onlyPreviewI18n.project.projectSearchScope }}
+            </span>
+            <select
+              name="onlypreview__projectSearchScopeSelect"
+              class="onlypreview-shell__scope-select"
+              :value="onlyPreviewProjectSearchStore.scopeKind"
+              :aria-label="onlyPreviewI18n.project.projectSearchScopeLabel"
+              @change="handleProjectSearchScopeChange"
+            >
+              <option value="directory">
+                {{ onlyPreviewI18n.project.projectSearchInDirectory }}
+              </option>
+              <option value="project">
+                {{ onlyPreviewI18n.project.projectSearchInProject }}
+              </option>
+            </select>
+          </label>
+          <span
+            name="onlypreview__projectSearchScopeTarget"
+            class="onlypreview-shell__scope-target"
+            :title="projectSearchScopeTarget"
+          >
+            {{ projectSearchScopeTarget }}
+          </span>
+        </div>
 
         <div
           v-if="onlyPreviewShellStore.errorMessage"
@@ -141,8 +219,12 @@
           <span>{{ onlyPreviewShellStore.errorMessage }}</span>
         </div>
 
+        <ProjectSearchResults
+          v-if="onlyPreviewProjectSearchStore.active && onlyPreviewShellStore.workspace"
+        />
+
         <div
-          v-if="!onlyPreviewShellStore.workspace"
+          v-else-if="!onlyPreviewShellStore.workspace"
           name="onlypreview__projectEmpty"
           class="onlypreview-shell__project-empty"
         >
@@ -232,14 +314,6 @@
               : onlyPreviewI18n.project.emptyProject
           }}
         </div>
-
-        <p
-          v-if="onlyPreviewShellStore.index?.truncated"
-          name="onlypreview__truncated"
-          class="onlypreview-shell__truncated"
-        >
-          {{ truncatedMessage }}
-        </p>
       </aside>
 
       <div
@@ -308,6 +382,7 @@ import {
   IconLink,
   IconMaximize,
   IconMinus,
+  IconRobot,
   IconSearch,
   IconSettings,
   IconX
@@ -315,6 +390,8 @@ import {
 import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onlyPreviewFormat';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
+import ProjectSearchResults from './components/ProjectSearchResults/ProjectSearchResults.vue';
+import { onlyPreviewProjectSearchStore } from './onlyPreviewProjectSearch.store';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
 const previewHostRef = ref<HTMLElement | null>(null);
@@ -326,15 +403,23 @@ let lastShiftAt = 0;
 const isMac = onlyPreviewEnv.platform === 'darwin';
 const isWindows = onlyPreviewEnv.platform === 'win32';
 
-const truncatedMessage = computed(() =>
-  interpolateOnlyPreview(onlyPreviewI18n.project.truncated, {
-    limit: onlyPreviewShellStore.index?.limit || 0
-  })
+const treeFocusRelativePath = computed(() => onlyPreviewShellStore.treeFocusRelativePath);
+const projectSearchScopeTarget = computed(
+  () =>
+    (onlyPreviewProjectSearchStore.scopeKind === 'directory'
+      ? onlyPreviewProjectSearchStore.directoryLabel
+      : onlyPreviewShellStore.workspace?.rootName) ||
+    onlyPreviewShellStore.workspace?.rootName ||
+    onlyPreviewI18n.project.label
 );
 
-const treeFocusRelativePath = computed(() => onlyPreviewShellStore.treeFocusRelativePath);
-
 const indexStatus = computed(() => {
+  if (onlyPreviewShellStore.projectSearchMemory?.runtimeTwoGiBLimitExceeded) {
+    return onlyPreviewI18n.project.indexMemoryWarning.toUpperCase();
+  }
+  if (onlyPreviewShellStore.projectSearchMemory?.runtimeOneGiBWarning) {
+    return onlyPreviewI18n.project.indexMemoryAdvisory.toUpperCase();
+  }
   if (onlyPreviewShellStore.indexLoading) return onlyPreviewI18n.project.indexing.toUpperCase();
   if (!onlyPreviewShellStore.workspace) return onlyPreviewI18n.project.readyToOpen.toUpperCase();
   if (!onlyPreviewShellStore.index) return onlyPreviewI18n.project.indexFailed.toUpperCase();
@@ -394,7 +479,43 @@ const startProjectResize = (event: PointerEvent): void => {
 };
 
 const handleSearchInput = (event: Event): void => {
-  onlyPreviewShellStore.setSearchQuery((event.target as HTMLInputElement).value);
+  const value = (event.target as HTMLInputElement).value;
+  if (onlyPreviewProjectSearchStore.active) {
+    onlyPreviewProjectSearchStore.setQuery(value);
+    return;
+  }
+  onlyPreviewShellStore.setSearchQuery(value);
+};
+
+const handleSearchCompositionStart = (): void => {
+  onlyPreviewProjectSearchStore.beginComposition();
+};
+
+const handleSearchCompositionEnd = (event: CompositionEvent): void => {
+  onlyPreviewProjectSearchStore.endComposition((event.target as HTMLInputElement).value);
+};
+
+const handleSearchEscape = (): void => {
+  if (onlyPreviewProjectSearchStore.active) {
+    onlyPreviewProjectSearchStore.exit();
+    return;
+  }
+  onlyPreviewShellStore.clearSearch();
+};
+
+const clearActiveSearch = (): void => {
+  if (onlyPreviewProjectSearchStore.active) {
+    onlyPreviewProjectSearchStore.clear();
+    return;
+  }
+  onlyPreviewShellStore.clearSearch();
+};
+
+const handleProjectSearchScopeChange = (event: Event): void => {
+  const scopeKind = (event.target as HTMLSelectElement).value;
+  if (scopeKind === 'directory' || scopeKind === 'project') {
+    onlyPreviewProjectSearchStore.setScopeKind(scopeKind);
+  }
 };
 
 const focusTreePath = async (relativePath: string, center = false): Promise<void> => {
@@ -410,6 +531,7 @@ const focusTreePath = async (relativePath: string, center = false): Promise<void
 };
 
 const focusProjectTree = (): void => {
+  onlyPreviewProjectSearchStore.exit();
   void focusTreePath(onlyPreviewShellStore.focusTree());
 };
 
@@ -447,7 +569,8 @@ const handleShellKeydown = (event: KeyboardEvent): void => {
   const now = performance.now();
   if (now - lastShiftAt < 450) {
     event.preventDefault();
-    searchInputRef.value?.focus();
+    onlyPreviewProjectSearchStore.exit();
+    void nextTick(() => searchInputRef.value?.focus());
     lastShiftAt = 0;
     return;
   }
@@ -467,10 +590,11 @@ watch(() => onlyPreviewShellStore.focusProjectRevision, focusProjectTree);
 
 watch(
   () => onlyPreviewShellStore.focusSearchRevision,
-  () => searchInputRef.value?.focus()
+  () => void nextTick(() => searchInputRef.value?.focus())
 );
 
 onBeforeUnmount(() => {
+  onlyPreviewProjectSearchStore.shutdown();
   resizeObserver?.disconnect();
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
 });

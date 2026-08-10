@@ -24,7 +24,8 @@ await build({
     markdown: join(
       projectRoot,
       'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
-    )
+    ),
+    html: join(projectRoot, 'src/renderer/onlypreview/preview/src/onlyPreviewHtml.service.ts')
   },
   outdir: buildRoot,
   outExtension: { '.js': '.mjs' },
@@ -41,6 +42,7 @@ const characterCountGate = await import(
   pathToFileURL(join(buildRoot, 'characterCountGate.mjs')).href
 );
 const markdown = await import(pathToFileURL(join(buildRoot, 'markdown.mjs')).href);
+const html = await import(pathToFileURL(join(buildRoot, 'html.mjs')).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
@@ -49,6 +51,14 @@ const render = (source, sourceSize = Buffer.byteLength(source)) => {
   return {
     dom,
     result: markdown.renderOnlyPreviewMarkdown(source, sourceSize, dom.window)
+  };
+};
+
+const renderHtml = (source, sourceSize = Buffer.byteLength(source)) => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>');
+  return {
+    dom,
+    result: html.renderOnlyPreviewHtml(source, sourceSize, dom.window)
   };
 };
 
@@ -165,6 +175,153 @@ test('Markdown refuses content above the 1 MiB source boundary', () => {
 
   const encodedTooLarge = render('界'.repeat(349_526), 1).result;
   assert.deepEqual(encodedTooLarge, { ok: false, reason: 'too-large' });
+});
+
+test('HTML keeps bounded document, list, table, and code semantics with zero attributes', () => {
+  const source = `<!doctype html>
+<html lang="en">
+  <head><title>Ignored browser title</title></head>
+  <body class="document-shell">
+    <main id="content">
+      <article aria-label="Report">
+        <h1 data-title="report">Quarterly report</h1>
+        <p>Paragraph with <strong>strong</strong>, <em>emphasis</em>, and
+          <a href="https://example.com" target="_blank">documentation</a>.</p>
+        <blockquote cite="https://example.com/source">A quoted line</blockquote>
+        <ul><li>first</li><li>second</li></ul>
+        <dl><dt>Status</dt><dd>Ready</dd></dl>
+        <table class="results">
+          <caption>Results</caption>
+          <thead><tr><th scope="col">Name</th><th scope="col">Value</th></tr></thead>
+          <tbody><tr><td>Alpha</td><td>1</td></tr></tbody>
+        </table>
+        <pre data-language="ts"><code>const answer = 42;</code></pre>
+      </article>
+    </main>
+  </body>
+</html>`;
+  const { dom, result } = renderHtml(source);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+
+  dom.window.document.body.innerHTML = result.html;
+  const document = dom.window.document;
+  for (const selector of [
+    'main',
+    'article',
+    'h1',
+    'p',
+    'strong',
+    'em',
+    'a',
+    'blockquote',
+    'ul',
+    'li',
+    'dl',
+    'dt',
+    'dd',
+    'table',
+    'caption',
+    'thead',
+    'tbody',
+    'tr',
+    'th',
+    'td',
+    'pre',
+    'code'
+  ]) {
+    assert.ok(document.querySelector(selector), `${selector} should remain semantic`);
+  }
+  assert.equal(document.querySelector('a')?.textContent, 'documentation');
+  for (const element of document.body.querySelectorAll('*')) {
+    assert.equal(element.namespaceURI, 'http://www.w3.org/1999/xhtml');
+    assert.equal(element.attributes.length, 0, `${element.tagName} must have zero attributes`);
+  }
+});
+
+test('HTML discards active and resource content while retaining inert link labels', () => {
+  const source = `<script src="https://example.com/x.js">script-secret</script>
+<style>style-secret { background: url(file:///tmp/private.png) }</style>
+<template><p>template-secret</p></template>
+<noscript><p>noscript-secret</p></noscript>
+<form action="https://example.com/collect"><p>form-secret</p><input value="input-secret"></form>
+<iframe src="data:text/html,frame-secret"><p>frame-secret</p></iframe>
+<frameset><frame src="file:///tmp/frame-secret"></frameset>
+<object data="https://example.com/object"><p>object-secret</p></object>
+<embed src="https://example.com/embed">
+<svg onload="alert(1)"><text>svg-secret</text><foreignObject>foreign-secret</foreignObject></svg>
+<math><mi>math-secret</mi></math>
+<audio src="https://example.com/audio.mp3">audio-secret</audio>
+<video poster="https://example.com/poster.png"><source src="https://example.com/video.mp4">video-secret</video>
+<picture><source srcset="https://example.com/image.webp"><img src="data:image/svg+xml,owned" alt="image-secret"></picture>
+<link rel="stylesheet" href="https://example.com/site.css">
+<meta http-equiv="refresh" content="0;url=file:///tmp/private">
+<base href="https://example.com/">
+<a href="javascript:alert(1)" target="_blank" onclick="alert(1)">safe link label</a>
+<div style="background:url(https://example.com/pixel.png)" onclick="alert(1)">
+  <p data-tracking="owned">safe prose</p>
+</div>
+<script>malformed-secret`;
+  const { dom, result } = renderHtml(source);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+
+  dom.window.document.body.innerHTML = result.html;
+  const document = dom.window.document;
+  assert.equal(
+    document.querySelectorAll(
+      'script, style, template, noscript, form, input, iframe, frame, frameset, object, embed, svg, math, audio, video, picture, source, track, img, link, meta, base'
+    ).length,
+    0
+  );
+  assert.equal(document.querySelector('a')?.textContent, 'safe link label');
+  assert.equal(document.querySelector('a')?.attributes.length, 0);
+  assert.equal(document.querySelector('p')?.textContent, 'safe prose');
+  for (const element of document.body.querySelectorAll('*')) {
+    assert.equal(element.attributes.length, 0, `${element.tagName} must have zero attributes`);
+  }
+
+  const text = document.body.textContent || '';
+  assert.match(text, /safe link label/);
+  assert.match(text, /safe prose/);
+  for (const discarded of [
+    'script-secret',
+    'style-secret',
+    'template-secret',
+    'noscript-secret',
+    'form-secret',
+    'input-secret',
+    'frame-secret',
+    'object-secret',
+    'svg-secret',
+    'foreign-secret',
+    'math-secret',
+    'audio-secret',
+    'video-secret',
+    'image-secret',
+    'malformed-secret',
+    'https://',
+    'data:',
+    'file:///'
+  ]) {
+    assert.doesNotMatch(text, new RegExp(discarded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
+test('HTML refuses invalid or above-limit declared and UTF-8 source sizes', () => {
+  assert.equal(renderHtml('<p>small</p>', 1024 * 1024).result.ok, true);
+  assert.deepEqual(renderHtml('<p>small</p>', 1024 * 1024 + 1).result, {
+    ok: false,
+    reason: 'too-large'
+  });
+  assert.deepEqual(renderHtml(`<p>${'界'.repeat(349_526)}</p>`, 1).result, {
+    ok: false,
+    reason: 'too-large'
+  });
+  assert.deepEqual(renderHtml('<p>small</p>', -1).result, {
+    ok: false,
+    reason: 'render-failed'
+  });
 });
 
 test('character count uses grapheme clusters and sums every non-empty selection', () => {

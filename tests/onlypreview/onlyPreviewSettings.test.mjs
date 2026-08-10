@@ -64,7 +64,7 @@ const defaultSettings = {
   theme: 'light',
   editorFontSize: 13,
   wordWrap: false,
-  showHiddenFiles: false,
+  showHiddenFiles: true,
   openFilesWithSingleClick: true
 };
 

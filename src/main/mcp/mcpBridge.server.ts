@@ -1,5 +1,5 @@
 import { app } from 'electron';
-import { dirname } from 'path';
+import { dirname, isAbsolute } from 'path';
 import { randomUUID } from 'crypto';
 import {
   existsSync,
@@ -32,6 +32,7 @@ import type {
   TodoEntityId,
   TodoMcpDaoApi,
 } from '@shared/mcp/todoMcpDao.type';
+import { ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH } from '@shared/onlypreview/onlyPreview.types';
 import { assertTodoistSyncEntityId } from '@shared/todoistSync/todoistSync.contract';
 import { todoSqliteClient } from './todoSqlite.client';
 
@@ -44,6 +45,7 @@ type TodoRow = McpTodoRow;
 type TodoStatusByIdsResult = McpTodoStatusByIdsResult;
 type TodoStatusItem = McpTodoStatusItem;
 type TodoUpdateCallParams = Parameters<TodoMcpDaoApi['update']>[0];
+type PreviewOpener = (path: string) => Promise<void>;
 type UnixSocketIdentity = Pick<
   Stats,
   'birthtimeMs' | 'ctimeMs' | 'dev' | 'ino' | 'mode' | 'size'
@@ -77,6 +79,13 @@ const MCP_MALFORMED_LOCK_RECOVERY_AGE_MS = 500;
 
 const isRecord = (value: unknown): value is RpcParams => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const assertOnlyKeys = (params: RpcParams, allowed: readonly string[], method: string): void => {
+  const allowedKeys = new Set(allowed);
+  for (const key of Object.keys(params)) {
+    if (!allowedKeys.has(key)) throw new Error(`${method} contains unknown argument: ${key}`);
+  }
 };
 
 const isIntegerAtLeast = (value: unknown, minimum = 0): value is number => {
@@ -731,6 +740,11 @@ export class McpBridgeServer {
   private endpoint: McpBridgeEndpoint | null = null;
   private unixSocketIdentity: UnixSocketIdentity | null = null;
   private domainCreateQueue: Promise<void> = Promise.resolve();
+  private previewOpener: PreviewOpener | null = null;
+
+  configurePreviewOpener(opener: PreviewOpener): void {
+    this.previewOpener = opener;
+  }
 
   getEndpoint(): McpBridgeEndpoint {
     return getMcpBridgeEndpoint(app.getPath('userData'));
@@ -916,6 +930,9 @@ export class McpBridgeServer {
   }
 
   private async dispatch(method: string, rawParams: unknown): Promise<unknown> {
+    if (method === 'preview.open' && !isRecord(rawParams)) {
+      throw new Error(`${method} params must be an object`);
+    }
     const params = isRecord(rawParams) ? rawParams : {};
     switch (method) {
       case 'domain.list':
@@ -960,9 +977,28 @@ export class McpBridgeServer {
         return this.setStepCompleted(params, 0);
       case 'step.delete':
         return this.deleteStep(params);
+      case 'preview.open':
+        return this.openPreview(params);
       default:
         throw new Error(`Unknown method: ${method}`);
     }
+  }
+
+  private async openPreview(params: RpcParams): Promise<{ opened: true }> {
+    assertOnlyKeys(params, ['path'], 'preview.open');
+    const target = params.path;
+    if (typeof target !== 'string') throw new Error('path must be a string');
+    if (
+      target.trim().length === 0 ||
+      target.length > ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH ||
+      /[\r\n\0]/.test(target) ||
+      !isAbsolute(target)
+    ) {
+      throw new Error('path must be one non-empty absolute local path');
+    }
+    if (!this.previewOpener) throw new Error('Bitterless Preview opener is unavailable');
+    await this.previewOpener(target);
+    return { opened: true };
   }
 
   private async listDomains(): Promise<{

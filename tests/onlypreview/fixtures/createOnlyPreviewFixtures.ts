@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const TINY_VP9_WEBM_BASE64 =
   'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAPkEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHYTbuMU6uEElTDZ1OsggElTbuMU6uEHFO7a1OsggPO7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirXsYMPQkBNgI1MYXZmNjIuMTIuMTAwV0GNTGF2ZjYyLjEyLjEwMESJiECPQAAAAAAAFlSua8iuAQAAAAAAAD/XgQFzxYjPusGh7msO05yBACK1nIN1bmSIgQCGhVZfVlA5g4EBI+ODhAJiWgDgkLCBELqBEJqBAlWwhFW5gQESVMNnQIBzc6BjwIBnyJpFo4dFTkNPREVSRIeNTGF2ZjYyLjEyLjEwMHNz2mPAi2PFiM+6waHuaw7TZ8ilRaOHRU5DT0RFUkSHmExhdmM2Mi4yOC4xMDAgbGlidnB4LXZwOWfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDEuMDAwMDAwMDAwAB9DtnVCHeeBAKOggQAAgIJJg0IAAPAA9gA4JBwYjAAAMGAAABC///qN4ACjk4EAKACGAECSnABUAAADIAAAQkCjk4EAUACGAECSnABS4AADIAAAQkCjk4EAeACGAECSnABUAAADIAAAQkCjk4EAoACGAECSnABRgAADIAAAQkCjk4EAyACGAECSnABUAAADIAAAQkCjk4EA8ACGAECSnABS4AADIAAAQkCjk4EBGACGAECSnABUAAADIAAAQkCjk4EBQACGAECSnABPIAADIAAAQkCjk4EBaACGAECSnABUAAADIAAAQkCjk4EBkACGAMCSnABPIAADIAAAQkCjk4EBuACGAECSnABUAAADIAAAQkCjk4EB4ACGAECSnABRgAADIAAAQkCjk4ECCACGAECSnABUAAADIAAAQkCjk4ECMACGAECSnABS4AADIAAAQkCjk4ECWACGAECSnABUAAADIAAAQkCjk4ECgACGAECSnABPIAADIAAAQkCjk4ECqACGAECSnABUAAADIAAAQkCjk4EC0ACGAECSnABS4AADIAAAQkCjk4EC+ACGAECSnABUAAADIAAAQkCjk4EDIACGAMCSnABPIAADIAAAQkCjk4EDSACGAECSnABUAAADIAAAQkCjk4EDcACGAECSnABS4AADIAAAQkCjk4EDmACGAECSnABUAAADIAAAQkCjk4EDwACGAECSnABPIAADIAAAQkAcU7trkbuPs4EAt4r3gQHxggGr8IED';
@@ -69,6 +69,11 @@ export interface OnlyPreviewFixtureSet {
   nestedTextPath: string;
 }
 
+export interface OnlyPreviewSearchFixtureSet {
+  selectedWatchPath: string;
+  nonSelectedWatchPath: string;
+}
+
 export const createOnlyPreviewFixtures = (root: string): OnlyPreviewFixtureSet => {
   mkdirSync(root, { recursive: true });
   const text = 'OnlyPreview immutable Monaco fixture\nsecond selectable line\n';
@@ -86,4 +91,40 @@ export const createOnlyPreviewFixtures = (root: string): OnlyPreviewFixtureSet =
   mkdirSync(join(root, 'nested'), { recursive: true });
   writeFileSync(nestedTextPath, 'nested keyboard fixture\n', 'utf8');
   return { root, text, textPath, pdfPath, imagePath, audioPath, videoPath, nestedTextPath };
+};
+
+export const createOnlyPreviewSearchFixtures = (root: string): OnlyPreviewSearchFixtureSet => {
+  const writeText = (relativePath: string, content: string): string => {
+    const path = join(root, relativePath);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content, 'utf8');
+    return path;
+  };
+
+  mkdirSync(join(root, '.bitterless'), { recursive: true });
+  writeFileSync(
+    join(root, '.bitterless', 'preview-config.yml'),
+    ['version: 1', 'exclude:', '  - generated/**', "  - '!generated/keep/**'", ''].join('\n'),
+    'utf8'
+  );
+
+  writeText('nested/SearchNeedle-title.txt', 'filename-only fixture\n');
+  writeText('nested/content.txt', '0123456789abcdefSearchNeedleabcdefghijklmnopqrstuvwx\n');
+  writeText('nested/directory-scope.txt', 'scope-token in the selected directory\n');
+  writeText('project-scope.txt', 'scope-token at the project root\n');
+  writeText('nested/SearchNeedle-folder/neutral.txt', 'neutral directory child\n');
+  writeText('nested/cjk.txt', '前缀文本中文关键字后缀文本\n');
+  writeText('.root-hidden-match.txt', 'root hidden file title fixture\n');
+  writeText('.hidden/inside-hidden.txt', 'exclusion-proof explicit-hidden-directory\n');
+  writeText('allowed.txt', 'exclusion-proof visible-file\n');
+  writeText('generated/drop/config-excluded.txt', 'exclusion-proof config-excluded\n');
+  writeText('generated/keep/config-reincluded.txt', 'exclusion-proof config-reincluded\n');
+  writeText('node_modules/pkg/hard-excluded.txt', 'exclusion-proof node-modules\n');
+  writeText('dist/hard-excluded.txt', 'exclusion-proof dist\n');
+  writeText('output/hard-excluded.txt', 'exclusion-proof output\n');
+
+  return {
+    selectedWatchPath: join(root, 'copy.txt'),
+    nonSelectedWatchPath: join(root, 'nested', 'inside.txt')
+  };
 };

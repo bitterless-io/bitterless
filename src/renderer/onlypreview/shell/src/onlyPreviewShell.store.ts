@@ -9,6 +9,7 @@ import {
   ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT,
+  ONLY_PREVIEW_PREVIEW_CONTROL_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
@@ -20,15 +21,31 @@ import {
   type OnlyPreviewCharacterCountRevisionEvent,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
+  type OnlyPreviewPreviewControlEvent,
   type OnlyPreviewResult,
   type OnlyPreviewSettings,
   type OnlyPreviewWorkspace
 } from '@shared/onlypreview/onlyPreview.types';
+import {
+  ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT,
+  type OnlyPreviewSearchMemory,
+  type OnlyPreviewSearchSnapshot
+} from '@shared/onlypreview/onlyPreviewSearch.type';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { OnlyPreviewCharacterCountHostGate } from '../../common/onlyPreviewCharacterCountGate.service';
+import {
+  onlyPreviewProjectSearchStore,
+  type OnlyPreviewProjectSearchContext
+} from './onlyPreviewProjectSearch.store';
 import type { OnlyPreviewTreeRow } from './onlyPreviewShell.type';
+import { onlyPreviewSearchClient } from './onlyPreviewSearch.client';
+import {
+  getOnlyPreviewSearchMediaType,
+  isOnlyPreviewSearchSnapshotEvent
+} from './onlyPreviewSearchSnapshot.service';
+import { getOnlyPreviewParentPath, onlyPreviewTreeFilter } from './onlyPreviewTree.service';
 
 const isHostEvent = (value: unknown): value is { hostId: string } =>
   !!value &&
@@ -49,13 +66,10 @@ const isCharacterCountEvent = (value: unknown): value is OnlyPreviewCharacterCou
   );
 };
 
-const isCharacterCountRevisionEvent = (
-  value: unknown
-): value is OnlyPreviewCharacterCountRevisionEvent => {
+const isRevisionEvent = (value: unknown): value is OnlyPreviewCharacterCountRevisionEvent => {
   if (!value || typeof value !== 'object') return false;
   const event = value as Record<string, unknown>;
   return (
-    Object.keys(event).length === 2 &&
     typeof event.hostId === 'string' &&
     typeof event.revision === 'string' &&
     event.revision.length > 0 &&
@@ -63,10 +77,24 @@ const isCharacterCountRevisionEvent = (
   );
 };
 
+const isCharacterCountRevisionEvent = (
+  value: unknown
+): value is OnlyPreviewCharacterCountRevisionEvent =>
+  isRevisionEvent(value) && Reflect.ownKeys(value).length === 2;
+
 const isExactHostEvent = (value: unknown): value is { hostId: string } => {
   if (!value || typeof value !== 'object') return false;
   const event = value as Record<string, unknown>;
   return Object.keys(event).length === 1 && typeof event.hostId === 'string';
+};
+
+const isPreviewControlEvent = (value: unknown): value is OnlyPreviewPreviewControlEvent => {
+  if (!isRevisionEvent(value)) return false;
+  const event = value as unknown as Record<string, unknown>;
+  return (
+    Reflect.ownKeys(event).length === 3 &&
+    (event.action === 'render' || event.action === 'reload' || event.action === 'clear')
+  );
 };
 
 const errorMessage = (error: unknown): string => {
@@ -76,16 +104,12 @@ const errorMessage = (error: unknown): string => {
   return onlyPreviewI18n.errors.OPERATION_FAILED;
 };
 
-const parentPath = (relativePath: string): string => {
-  const separator = relativePath.lastIndexOf('/');
-  return separator < 0 ? '' : relativePath.slice(0, separator);
-};
-
 class OnlyPreviewShellStore {
   workspace: OnlyPreviewWorkspace | null = null;
   index: OnlyPreviewIndex | null = null;
   settings: OnlyPreviewSettings | null = null;
   searchQuery = '';
+  projectSearchMemory: OnlyPreviewSearchMemory | null = null;
   selectedRelativePath = '';
   selectedCharacterCount = 0;
   focusedRelativePath = '';
@@ -97,60 +121,22 @@ class OnlyPreviewShellStore {
   focusProjectRevision = 0;
   focusSearchRevision = 0;
   private initialized = false;
-  private generation = 0;
   private restoreGeneration = 0;
   private workspaceGeneration = 0;
   private selectionGeneration = 0;
+  private searchWorkspaceGeneration = 0;
+  private searchSnapshotRevision = 0;
   private readonly characterCountGate = new OnlyPreviewCharacterCountHostGate();
   private pendingCharacterCount = 0;
 
   get visibleRows(): OnlyPreviewTreeRow[] {
-    if (!this.index) return [];
-    const entriesByParent = new Map<string, OnlyPreviewIndexEntry[]>();
-    for (const entry of this.index.entries) {
-      const siblings = entriesByParent.get(entry.parentRelativePath) || [];
-      siblings.push(entry);
-      entriesByParent.set(entry.parentRelativePath, siblings);
-    }
-
-    const query = this.searchQuery.trim().toLocaleLowerCase();
-    const included = new Set<string>();
-    if (query) {
-      for (const entry of this.index.entries) {
-        if (!entry.relativePath.toLocaleLowerCase().includes(query)) continue;
-        let current = entry.relativePath;
-        while (current) {
-          included.add(current);
-          current = parentPath(current);
-        }
-      }
-    }
-
-    const rows: OnlyPreviewTreeRow[] = [];
-    const visit = (parent: string, depth: number): void => {
-      const children = entriesByParent.get(parent) || [];
-      for (const entry of children) {
-        if (query && !included.has(entry.relativePath)) continue;
-        const hasChildren =
-          entry.nodeKind === 'directory' &&
-          (entriesByParent.get(entry.relativePath)?.length || 0) > 0;
-        const expanded = query ? true : this.expandedPaths.has(entry.relativePath);
-        rows.push({ entry, depth, expanded, hasChildren });
-        if (entry.nodeKind === 'directory' && expanded) {
-          visit(entry.relativePath, depth + 1);
-        }
-      }
-    };
-    visit('', 0);
-    return rows;
+    return onlyPreviewTreeFilter.rows(this.index, this.searchQuery, this.expandedPaths);
   }
-
   get selectedEntry(): OnlyPreviewIndexEntry | null {
     return (
       this.index?.entries.find((entry) => entry.relativePath === this.selectedRelativePath) || null
     );
   }
-
   get treeFocusRelativePath(): string {
     const rows = this.visibleRows;
     if (rows.some((row) => row.entry.relativePath === this.focusedRelativePath)) {
@@ -161,7 +147,6 @@ class OnlyPreviewShellStore {
     }
     return rows[0]?.entry.relativePath || '';
   }
-
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
@@ -178,7 +163,6 @@ class OnlyPreviewShellStore {
       this.resumeCharacterCountReporting(reportingRevision);
     }
   }
-
   async chooseFolder(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken || this.targetLoading) return;
@@ -196,17 +180,15 @@ class OnlyPreviewShellStore {
       this.targetLoading = false;
     }
   }
-
   async refresh(): Promise<void> {
     if (!this.workspace) return;
     const reportingRevision = this.beginCharacterCountTransition();
     try {
-      await this.buildIndex();
+      await this.refreshIndex();
     } finally {
       this.resumeCharacterCountReporting(reportingRevision);
     }
   }
-
   async openSettings(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
@@ -216,70 +198,95 @@ class OnlyPreviewShellStore {
       this.errorMessage = errorMessage(error);
     }
   }
-
+  async openAgentSkillGuide(): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken) return;
+    try {
+      unwrapOnlyPreviewResult(await onlyPreviewClient.openAgentSkillGuide({ hostToken }));
+    } catch (error) {
+      this.errorMessage = errorMessage(error);
+    }
+  }
   async minimizeWindow(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
     await this.runWindowCommand(() => onlyPreviewClient.minimizeWindow({ hostToken }));
   }
-
   async toggleMaximizeWindow(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
     await this.runWindowCommand(() => onlyPreviewClient.toggleMaximizeWindow({ hostToken }));
   }
-
   async closeWindow(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
     await this.runWindowCommand(() => onlyPreviewClient.closeWindow({ hostToken }));
   }
-
   setSearchQuery(value: string): void {
+    if (!this.searchQuery.trim() && value.trim()) {
+      onlyPreviewTreeFilter.begin(this.index, this.expandedPaths);
+    } else if (!value.trim()) onlyPreviewTreeFilter.end(this.expandedPaths);
     this.searchQuery = value;
     this.focusedRelativePath = this.treeFocusRelativePath;
   }
-
   clearSearch(): void {
-    this.searchQuery = '';
-    this.focusedRelativePath = this.treeFocusRelativePath;
+    this.setSearchQuery('');
   }
-
+  getProjectSearchContext(): OnlyPreviewProjectSearchContext | null {
+    const workspace = this.workspace;
+    if (!workspace) return null;
+    const focusedEntry = this.index?.entries.find(
+      (entry) => entry.relativePath === this.focusedRelativePath
+    );
+    return {
+      workspaceId: workspace.workspaceId,
+      generation: this.searchWorkspaceGeneration,
+      ready: Boolean(this.index && !this.indexLoading),
+      rootName: workspace.rootName,
+      focusedRelativePath: focusedEntry?.relativePath || '',
+      focusedNodeKind: focusedEntry?.nodeKind || null,
+      selectedRelativePath: this.selectedRelativePath
+    };
+  }
+  selectProjectSearchPath(relativePath: string): void {
+    void this.selectFile(relativePath);
+  }
   setFocusedPath(relativePath: string): void {
     this.focusedRelativePath = relativePath;
   }
-
   focusTree(): string {
     const relativePath = this.treeFocusRelativePath;
     this.focusedRelativePath = relativePath;
     return relativePath;
   }
-
   locateSelectedFile(): string {
     if (!this.selectedEntry) return '';
-    this.searchQuery = '';
+    onlyPreviewProjectSearchStore.exit();
+    this.clearSearch();
     this.expandSelectedParents();
     this.focusedRelativePath = this.selectedEntry.relativePath;
     return this.focusedRelativePath;
   }
-
-  async showFileContextMenu(entry: OnlyPreviewIndexEntry): Promise<void> {
+  showFileContextMenu(entry: OnlyPreviewIndexEntry): Promise<void>;
+  showFileContextMenu(relativePath: string): Promise<void>;
+  async showFileContextMenu(entry: OnlyPreviewIndexEntry | string): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     const workspace = this.workspace;
-    if (!hostToken || !workspace || entry.nodeKind !== 'file') return;
+    if (typeof entry !== 'string' && entry.nodeKind !== 'file') return;
+    const relativePath = typeof entry === 'string' ? entry : entry.relativePath;
+    if (!hostToken || !workspace || !relativePath) return;
     try {
       unwrapOnlyPreviewResult(
         await onlyPreviewClient.showFileContextMenu({
           hostToken,
           workspaceId: workspace.workspaceId,
-          relativePath: entry.relativePath
+          relativePath
         })
       );
     } catch (error) {
       this.errorMessage = errorMessage(error);
     }
   }
-
   moveTreeFocus(
     key: 'ArrowDown' | 'ArrowUp' | 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End'
   ): string {
@@ -370,6 +377,7 @@ class OnlyPreviewShellStore {
   }
 
   private subscribe(): void {
+    onlyPreviewProjectSearchStore.subscribeToBatches();
     xpcRenderer.subscribe(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
         const reportingRevision = this.beginCharacterCountTransition();
@@ -412,6 +420,14 @@ class OnlyPreviewShellStore {
         this.characterCountGate.acceptReady(payload.params.revision);
       }
     });
+    xpcRenderer.subscribe(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT, (payload) => {
+      if (!isPreviewControlEvent(payload.params) || payload.params.hostId !== onlyPreviewEnv.hostId)
+        return;
+      this.characterCountGate.beginTransition(payload.params.revision);
+      this.characterCountGate.resume(payload.params.revision);
+      this.selectedCharacterCount = 0;
+      this.pendingCharacterCount = 0;
+    });
     xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, (payload) => {
       if (isExactHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
         this.syncCharacterCountTransition();
@@ -420,9 +436,17 @@ class OnlyPreviewShellStore {
     xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
         const reportingRevision = this.beginCharacterCountTransition();
-        void this.buildIndex().finally(() => {
+        void this.refreshIndex().finally(() => {
           this.resumeCharacterCountReporting(reportingRevision);
         });
+      }
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT, (payload) => {
+      if (
+        isOnlyPreviewSearchSnapshotEvent(payload.params) &&
+        payload.params.hostId === onlyPreviewEnv.hostId
+      ) {
+        void this.applySearchSnapshot(payload.params.snapshot);
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT, () => {
@@ -435,6 +459,7 @@ class OnlyPreviewShellStore {
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_SEARCH_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        onlyPreviewProjectSearchStore.enter();
         this.focusSearchRevision += 1;
       }
     });
@@ -461,8 +486,12 @@ class OnlyPreviewShellStore {
       if (!workspace) {
         this.workspaceGeneration += 1;
         this.selectionGeneration += 1;
+        this.searchWorkspaceGeneration += 1;
+        onlyPreviewProjectSearchStore.resetForWorkspace();
         this.workspace = null;
         this.index = null;
+        this.projectSearchMemory = null;
+        this.indexLoading = false;
         this.selectedRelativePath = '';
         this.selectedCharacterCount = 0;
         return;
@@ -476,12 +505,16 @@ class OnlyPreviewShellStore {
   private async applyWorkspace(workspace: OnlyPreviewWorkspace): Promise<void> {
     const generation = ++this.workspaceGeneration;
     this.selectionGeneration += 1;
+    this.searchWorkspaceGeneration += 1;
+    onlyPreviewProjectSearchStore.resetForWorkspace();
     this.workspace = workspace;
+    this.index = null;
+    this.projectSearchMemory = null;
     this.selectedCharacterCount = 0;
     this.selectedRelativePath = workspace.selectedRelativePath || '';
     this.focusedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
-    await this.buildIndex();
+    await this.initializeIndex();
     if (
       generation !== this.workspaceGeneration ||
       workspace.workspaceId !== this.workspace?.workspaceId
@@ -513,51 +546,111 @@ class OnlyPreviewShellStore {
     }
   }
 
-  private async buildIndex(): Promise<void> {
+  private async initializeIndex(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     const workspace = this.workspace;
     if (!hostToken || !workspace) return;
     const workspaceId = workspace.workspaceId;
-    const selectedRelativePath = workspace.selectedRelativePath || '';
-    const generation = ++this.generation;
+    const generation = this.searchWorkspaceGeneration;
+    onlyPreviewProjectSearchStore.suspendForIndex();
     this.indexLoading = true;
     this.errorMessage = '';
     try {
-      const nextIndex = unwrapOnlyPreviewResult(
-        await onlyPreviewClient.buildIndex({
+      const snapshot = unwrapOnlyPreviewResult(
+        await onlyPreviewSearchClient.initialize({
           hostToken,
-          workspaceId
+          workspaceId,
+          generation
         })
       );
-      if (generation !== this.generation || workspaceId !== this.workspace?.workspaceId) {
-        return;
-      }
-      await this.includeExplicitSelection({
-        hostToken,
-        index: nextIndex,
-        selectedRelativePath,
-        workspaceId
-      });
+      await this.applySearchSnapshot(snapshot);
+    } catch (error) {
       if (
-        generation !== this.generation ||
-        workspaceId !== this.workspace?.workspaceId ||
-        selectedRelativePath !== (this.workspace?.selectedRelativePath || '')
+        generation === this.searchWorkspaceGeneration &&
+        workspaceId === this.workspace?.workspaceId
       ) {
-        return;
+        this.errorMessage = errorMessage(error);
+        this.indexLoading = false;
+        onlyPreviewProjectSearchStore.stopWaitingForIndex();
       }
-      this.index = nextIndex;
-      this.expandSelectedParents();
-      if (!this.expandedPaths.size) {
-        for (const entry of nextIndex.entries) {
-          if (entry.parentRelativePath === '' && entry.nodeKind === 'directory') {
-            this.expandedPaths.add(entry.relativePath);
-          }
+    }
+  }
+
+  private async refreshIndex(): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    const workspace = this.workspace;
+    if (!hostToken || !workspace) return;
+    const workspaceId = workspace.workspaceId;
+    const generation = this.searchWorkspaceGeneration;
+    onlyPreviewProjectSearchStore.suspendForIndex();
+    this.indexLoading = true;
+    this.errorMessage = '';
+    try {
+      const snapshot = unwrapOnlyPreviewResult(
+        await onlyPreviewSearchClient.refresh({ hostToken, workspaceId, generation })
+      );
+      await this.applySearchSnapshot(snapshot);
+    } catch (error) {
+      if (
+        generation === this.searchWorkspaceGeneration &&
+        workspaceId === this.workspace?.workspaceId
+      ) {
+        this.errorMessage = errorMessage(error);
+        this.indexLoading = false;
+        onlyPreviewProjectSearchStore.stopWaitingForIndex();
+      }
+    }
+  }
+
+  private async applySearchSnapshot(snapshot: OnlyPreviewSearchSnapshot): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    const workspace = this.workspace;
+    if (
+      !hostToken ||
+      !workspace ||
+      snapshot.workspaceId !== workspace.workspaceId ||
+      snapshot.generation !== this.searchWorkspaceGeneration ||
+      snapshot.index.workspaceId !== workspace.workspaceId
+    ) {
+      return;
+    }
+    const revision = ++this.searchSnapshotRevision;
+    if (snapshot.state !== 'ready' || this.index !== null) {
+      onlyPreviewProjectSearchStore.suspendForIndex();
+      this.indexLoading = true;
+    }
+    const selectedRelativePath = workspace.selectedRelativePath || '';
+    const nextIndex: OnlyPreviewIndex = {
+      ...snapshot.index,
+      entries: [...snapshot.index.entries]
+    };
+    await this.includeExplicitSelection({
+      hostToken,
+      index: nextIndex,
+      selectedRelativePath,
+      workspaceId: workspace.workspaceId
+    });
+    if (
+      snapshot.generation !== this.searchWorkspaceGeneration ||
+      snapshot.workspaceId !== this.workspace?.workspaceId ||
+      revision !== this.searchSnapshotRevision ||
+      selectedRelativePath !== (this.workspace?.selectedRelativePath || '')
+    ) {
+      return;
+    }
+    this.index = nextIndex;
+    this.projectSearchMemory = snapshot.memory;
+    this.indexLoading = snapshot.state !== 'ready';
+    if (snapshot.state === 'ready') {
+      onlyPreviewProjectSearchStore.resumeForReadyIndex();
+    }
+    this.expandSelectedParents();
+    if (!this.expandedPaths.size) {
+      for (const entry of nextIndex.entries) {
+        if (entry.parentRelativePath === '' && entry.nodeKind === 'directory') {
+          this.expandedPaths.add(entry.relativePath);
         }
       }
-    } catch (error) {
-      if (generation === this.generation) this.errorMessage = errorMessage(error);
-    } finally {
-      if (generation === this.generation) this.indexLoading = false;
     }
   }
 
@@ -583,12 +676,14 @@ class OnlyPreviewShellStore {
       );
       index.entries.push({
         relativePath: selectedRelativePath,
-        parentRelativePath: parentPath(selectedRelativePath),
+        parentRelativePath: getOnlyPreviewParentPath(selectedRelativePath),
         name: descriptor.name,
         nodeKind: 'file',
         size: descriptor.size,
         modifiedAt: descriptor.modifiedAt,
-        previewHint: descriptor.kind
+        previewHint: descriptor.kind,
+        mediaType: getOnlyPreviewSearchMediaType(descriptor.kind),
+        isText: descriptor.kind === 'text'
       });
     } catch {
       // The Preview surface reports the typed selection error; the index remains usable.
@@ -598,17 +693,8 @@ class OnlyPreviewShellStore {
   private async refreshSettings(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
-    const previousShowHidden = this.settings?.showHiddenFiles;
     try {
-      const settings = unwrapOnlyPreviewResult(await onlyPreviewClient.getSettings({ hostToken }));
-      this.settings = settings;
-      if (
-        previousShowHidden !== undefined &&
-        previousShowHidden !== settings.showHiddenFiles &&
-        this.workspace
-      ) {
-        await this.buildIndex();
-      }
+      this.settings = unwrapOnlyPreviewResult(await onlyPreviewClient.getSettings({ hostToken }));
     } catch (error) {
       this.errorMessage = errorMessage(error);
     }
@@ -653,10 +739,10 @@ class OnlyPreviewShellStore {
   }
 
   private expandSelectedParents(): void {
-    let current = parentPath(this.selectedRelativePath);
+    let current = getOnlyPreviewParentPath(this.selectedRelativePath);
     while (current) {
       this.expandedPaths.add(current);
-      current = parentPath(current);
+      current = getOnlyPreviewParentPath(current);
     }
   }
 
@@ -705,3 +791,8 @@ class OnlyPreviewShellStore {
 }
 
 export const onlyPreviewShellStore = reactive<OnlyPreviewShellStore>(new OnlyPreviewShellStore());
+
+onlyPreviewProjectSearchStore.configure(
+  () => onlyPreviewShellStore.getProjectSearchContext(),
+  (relativePath) => onlyPreviewShellStore.selectProjectSearchPath(relativePath)
+);

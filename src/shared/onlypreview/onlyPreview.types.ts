@@ -3,9 +3,11 @@ export const ONLY_PREVIEW_MAX_INDEX_ENTRIES = 20_000;
 export const ONLY_PREVIEW_MAX_INDEX_DEPTH = 32;
 export const ONLY_PREVIEW_MAX_TEXT_BYTES = 8 * 1024 * 1024;
 export const ONLY_PREVIEW_MAX_MARKDOWN_BYTES = 1024 * 1024;
+export const ONLY_PREVIEW_MAX_HTML_BYTES = 1024 * 1024;
+export const ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH = 16_384;
 
-export type OnlyPreviewHostKind = 'standalone' | 'settings';
-export type OnlyPreviewHostRole = 'content' | 'settings';
+export type OnlyPreviewHostKind = 'standalone' | 'settings' | 'guide';
+export type OnlyPreviewHostRole = 'content' | 'settings' | 'guide';
 export type OnlyPreviewNodeKind = 'file' | 'directory' | 'symlink';
 export type OnlyPreviewKind = 'text' | 'pdf' | 'image' | 'audio' | 'video' | 'unsupported';
 export type OnlyPreviewTextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
@@ -63,6 +65,8 @@ export interface OnlyPreviewIndexEntry {
   size: number;
   modifiedAt: number;
   previewHint: OnlyPreviewKind;
+  mediaType: 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'unknown';
+  isText: boolean;
 }
 
 export interface OnlyPreviewIndex {
@@ -115,6 +119,12 @@ export interface OnlyPreviewSettings {
   openFilesWithSingleClick: boolean;
 }
 
+export interface OnlyPreviewAgentSkillGuideInfo {
+  serverName: string;
+  skillVersionCode: string;
+  instruction: string;
+}
+
 export interface OnlyPreviewHostEvent {
   hostId: string;
 }
@@ -125,6 +135,22 @@ export interface OnlyPreviewCharacterCountEvent extends OnlyPreviewHostEvent {
 
 export interface OnlyPreviewCharacterCountRevisionEvent extends OnlyPreviewHostEvent {
   revision: string;
+}
+
+export interface OnlyPreviewHeaderMetadata {
+  fileName: string;
+  relativePath: string;
+  kind: OnlyPreviewKind;
+  extension: string;
+  language: string;
+}
+
+export interface OnlyPreviewHeaderMetadataEvent extends OnlyPreviewHostEvent {
+  metadata: OnlyPreviewHeaderMetadata | null;
+}
+
+export interface OnlyPreviewPreviewControlEvent extends OnlyPreviewCharacterCountRevisionEvent {
+  action: 'render' | 'reload' | 'clear';
 }
 
 export const ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT = 'onlypreview/workspaceChanged' as const;
@@ -140,6 +166,9 @@ export const ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT =
   'onlypreview/characterCountTransition' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT =
   'onlypreview/characterCountSyncRequest' as const;
+export const ONLY_PREVIEW_HEADER_METADATA_EVENT = 'onlypreview/headerMetadata' as const;
+export const ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT = 'onlypreview/headerSyncRequest' as const;
+export const ONLY_PREVIEW_PREVIEW_CONTROL_EVENT = 'onlypreview/previewControl' as const;
 
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
@@ -149,9 +178,6 @@ export interface OnlyPreviewApi {
   restoreWorkspace(
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
-  buildIndex(
-    params: OnlyPreviewHostRequest & { workspaceId: string }
-  ): Promise<OnlyPreviewResult<OnlyPreviewIndex>>;
   describeFile(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<OnlyPreviewDescriptor>>;
@@ -182,4 +208,8 @@ export interface OnlyPreviewApi {
   ): Promise<OnlyPreviewResult<OnlyPreviewSettings>>;
   openSettings(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   closeSettings(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  openAgentSkillGuide(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  getAgentSkillGuideInfo(
+    params: OnlyPreviewHostRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewAgentSkillGuideInfo>>;
 }

@@ -78,6 +78,7 @@ const assertE2EKeychainIsolation = (): void => {
 assertE2EKeychainIsolation();
 registerOnlyPreviewScheme();
 const onlyPreviewOpenQueue = new OnlyPreviewOpenQueue(openOnlyPreviewAbsoluteTarget);
+mcpBridgeServer.configurePreviewOpener(openOnlyPreviewAbsoluteTarget);
 const CORE_SQLITE_STARTUP_TIMEOUT_MS = 60_000;
 const coreSqliteBoot = createBoundedTodoXpcClient(
   createXpcMainEmitter<CoreSqliteBootApi>('CoreSqliteBootDao'),

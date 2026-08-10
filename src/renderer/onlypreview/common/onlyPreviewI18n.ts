@@ -12,6 +12,7 @@ const en = {
   bootstrapFailed: 'OnlyPreview could not start. Close and reopen it to retry.',
   topbar: {
     openFolder: 'Open folder',
+    agentSkillGuide: 'Copy the skill to your agent',
     settings: 'OnlyPreview settings',
     minimize: 'Minimize OnlyPreview',
     maximize: 'Maximize or restore OnlyPreview',
@@ -20,9 +21,20 @@ const en = {
   },
   project: {
     label: 'Project',
-    searchPlaceholder: 'Search files…',
-    searchLabel: 'Search project index',
+    searchPlaceholder: 'Filter files and folders…',
+    searchLabel: 'Filter project files and folders',
     clearSearch: 'Clear search',
+    projectSearchTitle: 'Project Search',
+    projectSearchPlaceholder: 'Search filenames and text…',
+    projectSearchLabel: 'Search project filenames and text',
+    projectSearchResultsLabel: 'Project Search results',
+    projectSearchScope: 'Scope',
+    projectSearchScopeLabel: 'Project Search scope',
+    projectSearchInDirectory: 'In Directory',
+    projectSearchInProject: 'In Project',
+    projectSearchPending: 'Searching…',
+    projectSearchNoResults: 'No matching files.',
+    projectSearchFailed: 'Project Search is unavailable.',
     locateCurrentFile: 'Locate current preview in project',
     treeLabel: 'Project files',
     emptyTitle: 'Open a folder to inspect',
@@ -33,9 +45,10 @@ const en = {
     indexPartial: 'Index partial',
     indexReady: 'Index ready',
     indexFailed: 'Index unavailable',
+    indexMemoryAdvisory: 'Index memory elevated',
+    indexMemoryWarning: 'Index memory high',
     readyToOpen: 'Ready to open',
     selectedCharacters: 'Selected {count} characters',
-    truncated: 'Showing the first {limit} items. Narrow the folder or use search.',
     symlink: 'Symbolic link'
   },
   preview: {
@@ -59,6 +72,7 @@ const en = {
     encoding: 'Encoding',
     textLimit: 'Text preview is limited to 8 MB. Open this file in a system app to inspect it.',
     markdownLimit: 'Markdown rendering is limited to 1 MB.',
+    htmlLimit: 'HTML rendering is limited to 1 MB.',
     editorReadOnly: 'OnlyPreview does not edit files.'
   },
   settings: {
@@ -71,8 +85,6 @@ const en = {
     fontSizeHint: 'Use a value from 11 to 24 pixels.',
     wordWrap: 'Wrap long lines',
     wordWrapHint: 'Keep long text visible without horizontal scrolling.',
-    hiddenFiles: 'Show hidden files',
-    hiddenFilesHint: 'Include dotfiles when a directory is indexed.',
     singleClick: 'Preview files with one click',
     singleClickHint: 'Turn this off when you prefer double-click selection.',
     theme: 'Theme',
@@ -83,6 +95,23 @@ const en = {
     saving: 'Saving…',
     loadFailed: 'Settings could not be loaded. Close and reopen this window to retry.',
     saveFailed: 'Settings could not be saved. Your previous settings are unchanged.'
+  },
+  guide: {
+    eyebrow: 'LOCAL MCP',
+    title: 'Copy the skill to your agent',
+    completeSetup: 'Complete setup instructions',
+    completeSetupHint:
+      'Copy these instructions to your agent. They include the skill and MCP setup.',
+    copy: 'Copy complete setup instructions',
+    pending: 'Loading setup instructions…',
+    copied: 'Setup instructions copied.',
+    copyFailed: 'Could not copy the setup instructions. Try again.',
+    restartRequiredTitle: 'Restart Bitterless',
+    restartRequired:
+      'The setup contract is unavailable or out of date. Restart Bitterless and reopen this Guide.',
+    testInstanceTitle: 'Test instance: {serverName}',
+    testInstanceWarning:
+      'This MCP configuration is for development verification only. Do not register it as the production bitterless server.'
   },
   errors: {
     INVALID_INPUT: 'The request was invalid.',
@@ -115,6 +144,7 @@ const zh: Localized<typeof en> = {
   bootstrapFailed: 'OnlyPreview 无法启动。请关闭后重新打开。',
   topbar: {
     openFolder: '打开文件夹',
+    agentSkillGuide: '将技能复制给你的 Agent',
     settings: 'OnlyPreview 设置',
     minimize: '最小化 OnlyPreview',
     maximize: '最大化或还原 OnlyPreview',
@@ -123,9 +153,20 @@ const zh: Localized<typeof en> = {
   },
   project: {
     label: '项目',
-    searchPlaceholder: '搜索文件…',
-    searchLabel: '搜索项目索引',
+    searchPlaceholder: '筛选文件和文件夹…',
+    searchLabel: '筛选项目文件和文件夹',
     clearSearch: '清除搜索',
+    projectSearchTitle: '项目搜索',
+    projectSearchPlaceholder: '搜索文件名和文本…',
+    projectSearchLabel: '搜索项目文件名和文本',
+    projectSearchResultsLabel: '项目搜索结果',
+    projectSearchScope: '范围',
+    projectSearchScopeLabel: '项目搜索范围',
+    projectSearchInDirectory: '当前目录',
+    projectSearchInProject: '整个项目',
+    projectSearchPending: '正在搜索…',
+    projectSearchNoResults: '没有匹配的文件。',
+    projectSearchFailed: '项目搜索不可用。',
     locateCurrentFile: '在项目中定位当前预览文件',
     treeLabel: '项目文件',
     emptyTitle: '打开需要查看的文件夹',
@@ -136,9 +177,10 @@ const zh: Localized<typeof en> = {
     indexPartial: '索引不完整',
     indexReady: '索引已就绪',
     indexFailed: '索引不可用',
+    indexMemoryAdvisory: '索引内存偏高',
+    indexMemoryWarning: '索引内存过高',
     readyToOpen: '等待打开',
     selectedCharacters: '已选择 {count} 个字符',
-    truncated: '当前显示前 {limit} 项。请缩小文件夹范围或使用搜索。',
     symlink: '符号链接'
   },
   preview: {
@@ -161,6 +203,7 @@ const zh: Localized<typeof en> = {
     encoding: '编码',
     textLimit: '文本预览上限为 8 MB。请使用系统应用查看。',
     markdownLimit: 'Markdown 渲染上限为 1 MB。',
+    htmlLimit: 'HTML 渲染上限为 1 MB。',
     editorReadOnly: 'OnlyPreview 不会编辑文件。'
   },
   settings: {
@@ -173,8 +216,6 @@ const zh: Localized<typeof en> = {
     fontSizeHint: '可设置为 11 至 24 像素。',
     wordWrap: '自动换行',
     wordWrapHint: '无需水平滚动即可阅读长行。',
-    hiddenFiles: '显示隐藏文件',
-    hiddenFilesHint: '建立目录索引时包含点文件。',
     singleClick: '单击预览文件',
     singleClickHint: '关闭后，需要双击才会预览。',
     theme: '主题',
@@ -185,6 +226,20 @@ const zh: Localized<typeof en> = {
     saving: '正在保存…',
     loadFailed: '无法加载设置。请关闭后重新打开此窗口。',
     saveFailed: '无法保存设置。原有设置保持不变。'
+  },
+  guide: {
+    eyebrow: 'LOCAL MCP',
+    title: '将技能复制给你的 Agent',
+    completeSetup: '完整设置说明',
+    completeSetupHint: '将这些说明复制给你的 Agent，其中包含技能与 MCP 设置。',
+    copy: '复制完整设置说明',
+    pending: '正在加载设置说明…',
+    copied: '设置说明已复制。',
+    copyFailed: '无法复制设置说明，请重试。',
+    restartRequiredTitle: '重启 Bitterless',
+    restartRequired: '设置契约不可用或已过期。请重启 Bitterless 后重新打开此窗口。',
+    testInstanceTitle: '测试实例：{serverName}',
+    testInstanceWarning: '此 MCP 配置仅用于开发验证。不要将它注册为生产 bitterless 服务。'
   },
   errors: {
     INVALID_INPUT: '请求参数无效。',

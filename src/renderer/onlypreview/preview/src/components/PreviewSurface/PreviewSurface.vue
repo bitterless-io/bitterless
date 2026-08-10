@@ -1,25 +1,5 @@
 <template>
   <article name="onlypreview__previewSurface" class="onlypreview-preview">
-    <header
-      v-if="onlyPreviewPreviewStore.descriptor"
-      name="onlypreview__previewHeader"
-      class="onlypreview-preview__header"
-    >
-      <div class="onlypreview-preview__identity">
-        <span class="onlypreview-preview__file-name">
-          {{ onlyPreviewPreviewStore.descriptor.name }}
-        </span>
-        <span class="onlypreview-preview__file-path">
-          {{ onlyPreviewPreviewStore.descriptor.displayPath }}
-        </span>
-      </div>
-      <div class="onlypreview-preview__badges">
-        <span class="onlypreview-preview__badge">
-          {{ descriptorType }}
-        </span>
-      </div>
-    </header>
-
     <section name="onlypreview__previewBody" class="onlypreview-preview__body">
       <div
         v-if="onlyPreviewPreviewStore.errorMessage || onlyPreviewPreviewStore.presentationError"
@@ -45,6 +25,13 @@
 
       <MarkdownPreview
         v-else-if="isMarkdown && onlyPreviewPreviewStore.textContent"
+        :key="selectionPreviewKey"
+        :content="onlyPreviewPreviewStore.textContent"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
+      />
+
+      <HtmlPreview
+        v-else-if="isHtml && onlyPreviewPreviewStore.textContent"
         :key="selectionPreviewKey"
         :content="onlyPreviewPreviewStore.textContent"
         :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
@@ -199,6 +186,7 @@ import {
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 import FileActions from '../FileActions/FileActions.vue';
+import HtmlPreview from '../HtmlPreview/HtmlPreview.vue';
 import MarkdownPreview from '../MarkdownPreview/MarkdownPreview.vue';
 import MonacoTextPreview from '../MonacoTextPreview/MonacoTextPreview.vue';
 import PdfPreview from '../PdfPreview/PdfPreview.vue';
@@ -207,6 +195,12 @@ const isMarkdown = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;
   if (descriptor?.kind !== 'text') return false;
   return descriptor.extension === '.md';
+});
+
+const isHtml = computed(() => {
+  const descriptor = onlyPreviewPreviewStore.descriptor;
+  if (descriptor?.kind !== 'text') return false;
+  return descriptor.extension === '.html' || descriptor.extension === '.htm';
 });
 
 const descriptorType = computed(() => {

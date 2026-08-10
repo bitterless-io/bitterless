@@ -1,6 +1,7 @@
 :root {
   --onlypreview-canvas: #f6f7fa;
   --onlypreview-surface: #ffffff;
+  --onlypreview-project-surface: #f9fafc;
   --onlypreview-divider: #d9ddea;
   --onlypreview-ink: #25283a;
   --onlypreview-muted: #6f7487;
@@ -33,7 +34,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -95,11 +97,6 @@ input {
   font-size: 13px;
   font-weight: 650;
   letter-spacing: 0.01em;
-}
-
-.onlypreview-shell__location-divider {
-  flex: 0 0 auto;
-  color: rgb(246 247 252 / 50%);
 }
 
 .onlypreview-shell__path {
@@ -190,7 +187,7 @@ input {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #f9fafc;
+  background: var(--onlypreview-project-surface);
 }
 
 .onlypreview-shell__project-header {
@@ -205,6 +202,16 @@ input {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.onlypreview-shell__project-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 .onlypreview-shell__project-action.arco-btn {
@@ -268,6 +275,64 @@ input {
   cursor: pointer;
 }
 
+.onlypreview-shell__project-search-scope {
+  height: 25px;
+  flex: 0 0 25px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: -2px 8px 7px;
+  overflow: hidden;
+}
+
+.onlypreview-shell__scope-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.onlypreview-shell__scope-label {
+  color: var(--onlypreview-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.onlypreview-shell__scope-select {
+  height: 23px;
+  max-width: 105px;
+  padding: 0 4px;
+  border: 1px solid #cfd3e2;
+  border-radius: 4px;
+  outline: 0;
+  background: var(--onlypreview-royal-soft);
+  color: #394263;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.onlypreview-shell__scope-select:hover {
+  border-color: var(--onlypreview-focus);
+}
+
+.onlypreview-shell__scope-select:focus-visible {
+  outline: 2px solid var(--onlypreview-focus);
+  outline-offset: 1px;
+}
+
+.onlypreview-shell__scope-target {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--onlypreview-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .onlypreview-shell__tree {
   min-height: 0;
   flex: 1;
@@ -276,14 +341,30 @@ input {
   outline: 0;
 }
 
+.onlypreview-shell__tree::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.onlypreview-shell__tree::-webkit-scrollbar-track,
+.onlypreview-shell__tree::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.onlypreview-shell__tree::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--onlypreview-divider);
+}
+
 .onlypreview-shell__tree-row {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   height: 27px;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 0 7px 0 calc(5px + var(--onlypreview-tree-depth) * 14px);
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -336,9 +417,7 @@ input {
 }
 
 .onlypreview-shell__tree-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -401,38 +480,14 @@ input {
   font-size: 11px;
 }
 
-.onlypreview-shell__truncated {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 8px 10px;
-  border-top: 1px solid var(--onlypreview-divider);
-  color: var(--onlypreview-muted);
-  background: #f1f2f7;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
 .onlypreview-shell__resize-handle {
   position: relative;
   z-index: 2;
   width: 5px;
   min-height: 0;
-  border-right: 1px solid var(--onlypreview-divider);
-  border-left: 1px solid var(--onlypreview-divider);
-  background: #eef0f5;
+  background: var(--onlypreview-project-surface);
   cursor: col-resize;
   touch-action: none;
-}
-
-.onlypreview-shell__resize-handle::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 1px;
-  width: 1px;
-  height: 28px;
-  transform: translateY(-50%);
-  background: #b8bdcd;
 }
 
 .onlypreview-shell__preview-host {

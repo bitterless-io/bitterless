@@ -1,0 +1,132 @@
+:root {
+  --onlypreview-canvas: #f6f7fa;
+  --onlypreview-surface: #ffffff;
+  --onlypreview-divider: #d9ddea;
+  --onlypreview-ink: #25283a;
+  --onlypreview-muted: #6f7487;
+  --onlypreview-royal: #4e5882;
+  --onlypreview-royal-soft: #eceef7;
+  --onlypreview-danger: #a13d3d;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--onlypreview-canvas);
+  color: var(--onlypreview-ink);
+}
+
+body {
+  margin: 0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.onlypreview-guide {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--onlypreview-canvas);
+  color: var(--onlypreview-ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+}
+
+.onlypreview-guide__content {
+  width: min(660px, calc(100% - 56px));
+  margin: 0 auto;
+  padding: 72px 0 48px;
+}
+
+.onlypreview-guide__eyebrow {
+  margin: 0 0 8px;
+  color: var(--onlypreview-royal);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+}
+
+.onlypreview-guide h1 {
+  margin: 0 0 28px;
+  color: var(--onlypreview-ink);
+  font-size: 25px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+.onlypreview-guide__warning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 11px 13px;
+  border: 1px solid #e5cf9f;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #745a21;
+  line-height: 1.45;
+}
+
+.onlypreview-guide__copy-card {
+  padding: 18px;
+  border: 1px solid var(--onlypreview-divider);
+  border-left: 3px solid var(--onlypreview-royal);
+  border-radius: 7px;
+  background: var(--onlypreview-surface);
+  box-shadow: 0 4px 14px rgb(37 40 58 / 5%);
+}
+
+.onlypreview-guide__copy-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.onlypreview-guide__copy-card h2 {
+  margin: 0;
+  color: var(--onlypreview-ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.onlypreview-guide__copy-card p {
+  margin: 5px 0 0;
+  color: var(--onlypreview-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.onlypreview-guide__copy-button.arco-btn-primary {
+  flex: 0 0 auto;
+  border-color: var(--onlypreview-royal);
+  background: var(--onlypreview-royal);
+}
+
+.onlypreview-guide__copy-button:focus-visible {
+  outline: 2px solid #737ea8;
+  outline-offset: 2px;
+}
+
+.onlypreview-guide__status {
+  margin-top: 14px;
+  color: var(--onlypreview-royal);
+}
+
+.onlypreview-guide__status--error {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--onlypreview-danger);
+}

@@ -23,6 +23,9 @@ import {
   type OnlyPreviewHostCapability
 } from '@main/onlypreview/onlyPreviewHost.registry';
 import { resolveOnlyPreviewSettingsBounds } from '@main/onlypreview/onlyPreviewWindowBounds.service';
+import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPreviewSearchBootstrap.registry';
+import { onlyPreviewSearchUtilityLifecycleService } from '@main/onlypreview/onlyPreviewSearchUtilityLifecycle.service';
+import '@main/xpc/onlyPreviewSearchRuntime.handler';
 import { windowStateService, type WindowStateController } from './windowState.service';
 
 const DEFAULT_WIDTH = 1180;
@@ -34,8 +37,9 @@ const RESIZE_HANDLE_WIDTH = 5;
 const DEFAULT_SIDEBAR_WIDTH = 264;
 const MENU_BAR_HEIGHT = 32;
 const STATUS_HEIGHT = 25;
+const PREVIEW_HEADER_HEIGHT = 43;
 
-type OnlyPreviewRendererMode = 'shell' | 'preview' | 'settings';
+type OnlyPreviewRendererMode = 'shell' | 'previewHeader' | 'preview' | 'settings' | 'guide';
 type OnlyPreviewNativeCommand =
   | 'choose-folder'
   | 'open-settings'
@@ -63,11 +67,13 @@ const rendererTarget = (mode: OnlyPreviewRendererMode): { filePath: string; url:
 const additionalArguments = (
   host: OnlyPreviewHostCapability,
   mode: OnlyPreviewRendererMode
-): string[] => [
-  `--onlypreview-host-token=${host.hostToken}`,
-  `--onlypreview-host-id=${host.hostId}`,
-  `--onlypreview-mode=${mode}`
-];
+): string[] => {
+  return [
+    `--onlypreview-host-token=${host.hostToken}`,
+    `--onlypreview-host-id=${host.hostId}`,
+    `--onlypreview-mode=${mode}`
+  ];
+};
 
 const closeView = (view: WebContentsView | null): void => {
   if (!view || view.webContents.isDestroyed()) return;
@@ -78,15 +84,19 @@ const closeView = (view: WebContentsView | null): void => {
   }
 };
 
-const configureNavigationFence = (webContents: Electron.WebContents, expectedUrl: string): void => {
+const configureNavigationFence = (
+  webContents: Electron.WebContents,
+  expectedUrl: string,
+  allowExternalHttp = true
+): void => {
   webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (allowExternalHttp && /^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   const fenceNavigation = (event: Electron.Event, url: string): void => {
     if (url === expectedUrl) return;
     event.preventDefault();
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (allowExternalHttp && /^https?:\/\//i.test(url)) void shell.openExternal(url);
   };
   webContents.on('will-navigate', fenceNavigation);
   webContents.on('will-redirect', fenceNavigation);
@@ -95,9 +105,25 @@ const configureNavigationFence = (webContents: Electron.WebContents, expectedUrl
 const isCommandModifier = (input: Input): boolean =>
   process.platform === 'darwin' ? input.meta : input.control;
 
+const isProjectSearchShortcut = (input: Input): boolean => {
+  if (
+    input.type !== 'keyDown' ||
+    input.isAutoRepeat ||
+    input.key.toLowerCase() !== 'f' ||
+    !input.shift ||
+    input.alt ||
+    !isCommandModifier(input)
+  ) {
+    return false;
+  }
+  return process.platform === 'darwin' ? !input.control : !input.meta;
+};
+
+const shouldAutoOpenOnlyPreviewDevTools = (): boolean =>
+  import.meta.env.VITE_MODE === 'debug' && process.env.BITTERLESS_E2E !== '1';
+
 const isOnlyPreviewDevToolsEnabled = (): boolean =>
-  import.meta.env.VITE_MODE === 'debug' ||
-  (process.env.BITTERLESS_E2E === '1' && !app.isPackaged);
+  import.meta.env.VITE_MODE === 'debug' || (process.env.BITTERLESS_E2E === '1' && !app.isPackaged);
 
 const isOnlyPreviewDevToolsShortcut = (input: Input): boolean => {
   if (input.type !== 'keyDown' || input.isAutoRepeat) return false;
@@ -163,14 +189,19 @@ const settingsBoundsForParent = (
 export class OnlyPreviewWindowHelper {
   baseWindow: BaseWindow | null = null;
   shellView: WebContentsView | null = null;
+  previewHeaderView: WebContentsView | null = null;
   previewView: WebContentsView | null = null;
   settingsWindow: BrowserWindow | null = null;
+  agentSkillGuideWindow: BrowserWindow | null = null;
   private standaloneHost: OnlyPreviewHostCapability | null = null;
   private settingsHost: OnlyPreviewHostCapability | null = null;
+  private agentSkillGuideHost: OnlyPreviewHostCapability | null = null;
+  private searchBootstrapToken: string | null = null;
+  private previewHostBounds: Rectangle | null = null;
   private baseWindowState: WindowStateController | null = null;
   private settingsWindowState: WindowStateController | null = null;
+  private agentSkillGuideWindowState: WindowStateController | null = null;
   private commandHandler: ((payload: OnlyPreviewNativeCommandPayload) => void) | null = null;
-  private readonly lastShiftKeyDownByHost = new Map<string, number>();
 
   setCommandHandler(handler: (payload: OnlyPreviewNativeCommandPayload) => void): void {
     this.commandHandler = handler;
@@ -262,21 +293,27 @@ export class OnlyPreviewWindowHelper {
   updatePreviewBounds(hostToken: string, value: OnlyPreviewBounds): void {
     const host = this.requireStandaloneHost(hostToken);
     const window = this.baseWindow;
-    const view = this.previewView;
-    if (!window || window.isDestroyed() || !view || view.webContents.isDestroyed()) {
+    const headerView = this.previewHeaderView;
+    const contentView = this.previewView;
+    if (
+      !window ||
+      window.isDestroyed() ||
+      !headerView ||
+      headerView.webContents.isDestroyed() ||
+      !contentView ||
+      contentView.webContents.isDestroyed()
+    ) {
       throw new Error(`OnlyPreview host ${host.hostId} has no active preview surface.`);
     }
     const [contentWidth, contentHeight] = window.getContentSize();
-    view.setBounds(clampPreviewBounds(value, contentWidth, contentHeight));
+    this.applyPreviewHostBounds(clampPreviewBounds(value, contentWidth, contentHeight));
   }
 
   async openSettings(sourceHostToken: string): Promise<void> {
     const parentWindow = this.requireStandaloneWindow(sourceHostToken);
     const current = this.settingsWindow;
     if (current && !current.isDestroyed()) {
-      current.setBounds(
-        settingsBoundsForParent(parentWindow.getBounds(), ...current.getSize())
-      );
+      current.setBounds(settingsBoundsForParent(parentWindow.getBounds(), ...current.getSize()));
       current.show();
       current.focus();
       return;
@@ -335,6 +372,89 @@ export class OnlyPreviewWindowHelper {
     }
   }
 
+  async openAgentSkillGuide(sourceHostToken: string): Promise<void> {
+    const parentWindow = this.requireStandaloneWindow(sourceHostToken);
+    const current = this.agentSkillGuideWindow;
+    if (current && !current.isDestroyed()) {
+      current.setBounds(settingsBoundsForParent(parentWindow.getBounds(), ...current.getSize()));
+      current.show();
+      current.focus();
+      return;
+    }
+    this.destroyAgentSkillGuide();
+    const host = onlyPreviewHostRegistry.issue('guide', 'guide');
+    this.agentSkillGuideHost = host;
+    const restored = windowStateService.resolve('onlypreview-guide');
+    const width = restored?.bounds.width ?? MIN_WIDTH;
+    const height = restored?.bounds.height ?? MIN_HEIGHT;
+    const bounds = settingsBoundsForParent(parentWindow.getBounds(), width, height);
+    const target = rendererTarget('guide');
+    const window = new BrowserWindow({
+      title: 'Copy the skill to your agent',
+      ...bounds,
+      parent: parentWindow,
+      minWidth: MIN_WIDTH,
+      minHeight: MIN_HEIGHT,
+      show: false,
+      autoHideMenuBar: true,
+      backgroundColor: '#f6f7fa',
+      webPreferences: {
+        preload: join(__dirname, '../preload/onlypreview.js'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+        additionalArguments: additionalArguments(host, 'guide')
+      }
+    });
+    this.agentSkillGuideWindow = window;
+    this.agentSkillGuideWindowState = windowStateService.register('onlypreview-guide', window);
+    configureNavigationFence(window.webContents, target.url, false);
+    window.once('ready-to-show', () => {
+      if (this.agentSkillGuideWindow !== window) return;
+      window.setBounds(settingsBoundsForParent(parentWindow.getBounds(), ...window.getSize()));
+      window.show();
+      window.focus();
+    });
+    window.webContents.once('render-process-gone', () => {
+      if (this.agentSkillGuideWindow === window) this.destroyAgentSkillGuide();
+    });
+    window.once('closed', () => {
+      if (this.agentSkillGuideWindow !== window) return;
+      this.agentSkillGuideWindow = null;
+      this.agentSkillGuideWindowState = null;
+      if (this.agentSkillGuideHost?.hostToken === host.hostToken) {
+        this.agentSkillGuideHost = null;
+      }
+      onlyPreviewHostRegistry.revoke(host.hostToken);
+    });
+    try {
+      await (is.dev && process.env['ELECTRON_RENDERER_URL']
+        ? window.loadURL(target.url)
+        : window.loadFile(target.filePath));
+    } catch (error) {
+      if (this.agentSkillGuideWindow === window) this.destroyAgentSkillGuide();
+      throw error;
+    }
+  }
+
+  requireAgentSkillGuideHost(hostToken: unknown): OnlyPreviewHostCapability {
+    const host = onlyPreviewHostRegistry.require(hostToken, ['guide']);
+    const window = this.agentSkillGuideWindow;
+    if (
+      host.kind !== 'guide' ||
+      host.hostToken !== this.agentSkillGuideHost?.hostToken ||
+      !window ||
+      window.isDestroyed()
+    ) {
+      throw new OnlyPreviewContractError(
+        'HOST_ROLE_DENIED',
+        'OnlyPreview request does not belong to the active agent skill Guide.'
+      );
+    }
+    return host;
+  }
+
   closeSettings(hostToken: string): void {
     const host = onlyPreviewHostRegistry.require(hostToken, ['settings']);
     if (host.hostToken !== this.settingsHost?.hostToken) {
@@ -347,16 +467,27 @@ export class OnlyPreviewWindowHelper {
   }
 
   destroyStandalone(): void {
+    this.destroySettings();
+    this.destroyAgentSkillGuide();
     const window = this.baseWindow;
     const shellView = this.shellView;
+    const previewHeaderView = this.previewHeaderView;
     const previewView = this.previewView;
     this.baseWindow = null;
     this.shellView = null;
+    this.previewHeaderView = null;
     this.previewView = null;
+    this.previewHostBounds = null;
     this.baseWindowState = null;
+    onlyPreviewSearchUtilityLifecycleService.stop();
     if (window && !window.isDestroyed()) {
       try {
         if (shellView) window.contentView.removeChildView(shellView);
+      } catch {
+        // The view may already have been detached by Electron during teardown.
+      }
+      try {
+        if (previewHeaderView) window.contentView.removeChildView(previewHeaderView);
       } catch {
         // The view may already have been detached by Electron during teardown.
       }
@@ -367,10 +498,14 @@ export class OnlyPreviewWindowHelper {
       }
     }
     closeView(shellView);
+    closeView(previewHeaderView);
     closeView(previewView);
     if (window && !window.isDestroyed()) window.destroy();
+    if (this.searchBootstrapToken) {
+      onlyPreviewSearchBootstrapRegistry.revoke(this.searchBootstrapToken);
+    }
+    this.searchBootstrapToken = null;
     if (this.standaloneHost) onlyPreviewHostRegistry.revoke(this.standaloneHost.hostToken);
-    if (this.standaloneHost) this.lastShiftKeyDownByHost.delete(this.standaloneHost.hostToken);
     this.standaloneHost = null;
   }
 
@@ -383,8 +518,20 @@ export class OnlyPreviewWindowHelper {
     this.settingsHost = null;
   }
 
+  destroyAgentSkillGuide(): void {
+    const window = this.agentSkillGuideWindow;
+    const windowState = this.agentSkillGuideWindowState;
+    this.agentSkillGuideWindow = null;
+    this.agentSkillGuideWindowState = null;
+    windowState?.flushAndDispose();
+    if (window && !window.isDestroyed()) window.destroy();
+    if (this.agentSkillGuideHost) {
+      onlyPreviewHostRegistry.revoke(this.agentSkillGuideHost.hostToken);
+    }
+    this.agentSkillGuideHost = null;
+  }
+
   destroy(): void {
-    this.destroySettings();
     this.destroyStandalone();
   }
 
@@ -425,11 +572,25 @@ export class OnlyPreviewWindowHelper {
     });
     this.baseWindow = window;
     this.baseWindowState = windowStateService.register('onlypreview', window);
+    const searchBootstrap = onlyPreviewSearchBootstrapRegistry.issue(host.hostToken);
+    this.searchBootstrapToken = searchBootstrap.searchToken;
+    await onlyPreviewSearchUtilityLifecycleService.start({
+      host,
+      searchToken: searchBootstrap.searchToken,
+      broadcast: (eventName, params) => xpcMain.broadcast(eventName, params),
+      onUnexpectedExit: () => this.destroyStandalone()
+    });
+    if (this.baseWindow !== window || this.standaloneHost?.hostToken !== host.hostToken) {
+      throw new Error('OnlyPreview search utility startup was superseded.');
+    }
     const shellView = this.createView(host, 'shell');
+    const previewHeaderView = this.createView(host, 'previewHeader');
     const previewView = this.createView(host, 'preview');
     this.shellView = shellView;
+    this.previewHeaderView = previewHeaderView;
     this.previewView = previewView;
     window.contentView.addChildView(shellView);
+    window.contentView.addChildView(previewHeaderView);
     window.contentView.addChildView(previewView);
     this.applyInitialBounds();
 
@@ -437,6 +598,7 @@ export class OnlyPreviewWindowHelper {
       if (this.baseWindow === window) this.destroyStandalone();
     };
     shellView.webContents.once('render-process-gone', closeOnRendererFailure);
+    previewHeaderView.webContents.once('render-process-gone', closeOnRendererFailure);
     previewView.webContents.once('render-process-gone', closeOnRendererFailure);
     shellView.webContents.once('did-finish-load', () => {
       if (this.baseWindow === window) this.baseWindowState?.show();
@@ -445,28 +607,66 @@ export class OnlyPreviewWindowHelper {
       if (this.baseWindow !== window) return;
       const [width, height] = window.getContentSize();
       shellView.setBounds({ x: 0, y: 0, width, height });
-      previewView.setBounds(clampPreviewBounds(previewView.getBounds(), width, height));
+      const currentBounds = this.previewHostBounds || {
+        x: previewView.getBounds().x,
+        y: Math.max(MENU_BAR_HEIGHT, previewHeaderView.getBounds().y),
+        width: previewView.getBounds().width,
+        height: previewHeaderView.getBounds().height + previewView.getBounds().height
+      };
+      this.applyPreviewHostBounds(clampPreviewBounds(currentBounds, width, height));
     });
     window.once('closed' as any, () => {
       if (this.baseWindow !== window) return;
+      this.destroySettings();
+      this.destroyAgentSkillGuide();
       this.baseWindow = null;
       this.shellView = null;
+      this.previewHeaderView = null;
       this.previewView = null;
+      this.previewHostBounds = null;
       this.baseWindowState = null;
+      onlyPreviewSearchUtilityLifecycleService.stop();
       closeView(shellView);
+      closeView(previewHeaderView);
       closeView(previewView);
-      this.lastShiftKeyDownByHost.delete(host.hostToken);
+      if (this.searchBootstrapToken === searchBootstrap.searchToken) {
+        onlyPreviewSearchBootstrapRegistry.revoke(searchBootstrap.searchToken);
+        this.searchBootstrapToken = null;
+      }
       if (this.standaloneHost?.hostToken === host.hostToken) this.standaloneHost = null;
       onlyPreviewHostRegistry.revoke(host.hostToken);
     });
-    await Promise.all([this.loadView(shellView, 'shell'), this.loadView(previewView, 'preview')]);
+    await this.loadView(previewView, 'preview');
+    await Promise.all([
+      this.loadView(shellView, 'shell'),
+      this.loadView(previewHeaderView, 'previewHeader')
+    ]);
+    if (
+      !shouldAutoOpenOnlyPreviewDevTools() ||
+      this.baseWindow !== window ||
+      this.shellView !== shellView ||
+      this.previewHeaderView !== previewHeaderView ||
+      this.previewView !== previewView ||
+      window.isDestroyed() ||
+      previewView.webContents.isDestroyed() ||
+      previewView.webContents.isDevToolsOpened()
+    ) {
+      return;
+    }
+    previewView.webContents.openDevTools({ mode: 'detach', activate: false });
   }
 
-  private createView(host: OnlyPreviewHostCapability, mode: 'shell' | 'preview'): WebContentsView {
+  private createView(
+    host: OnlyPreviewHostCapability,
+    mode: 'shell' | 'previewHeader' | 'preview'
+  ): WebContentsView {
     const target = rendererTarget(mode);
     const view = new WebContentsView({
       webPreferences: {
-        preload: join(__dirname, '../preload/onlypreview.js'),
+        preload: join(
+          __dirname,
+          mode === 'preview' ? '../preload/onlypreviewContent.js' : '../preload/onlypreview.js'
+        ),
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -474,13 +674,16 @@ export class OnlyPreviewWindowHelper {
         additionalArguments: additionalArguments(host, mode)
       }
     });
-    configureNavigationFence(view.webContents, target.url);
+    configureNavigationFence(view.webContents, target.url, mode === 'shell');
     this.bindNativeShortcuts(view.webContents, host);
     bindOnlyPreviewDevToolsShortcut(view.webContents);
     return view;
   }
 
-  private async loadView(view: WebContentsView, mode: 'shell' | 'preview'): Promise<void> {
+  private async loadView(
+    view: WebContentsView,
+    mode: 'shell' | 'previewHeader' | 'preview'
+  ): Promise<void> {
     const target = rendererTarget(mode);
     await (is.dev && process.env['ELECTRON_RENDERER_URL']
       ? view.webContents.loadURL(target.url)
@@ -488,14 +691,34 @@ export class OnlyPreviewWindowHelper {
   }
 
   private applyInitialBounds(): void {
-    if (!this.baseWindow || !this.shellView || !this.previewView) return;
+    if (!this.baseWindow || !this.shellView || !this.previewHeaderView || !this.previewView) return;
     const [width, height] = this.baseWindow.getContentSize();
     this.shellView.setBounds({ x: 0, y: 0, width, height });
-    this.previewView.setBounds({
+    this.applyPreviewHostBounds({
       x: Math.min(DEFAULT_SIDEBAR_WIDTH + RESIZE_HANDLE_WIDTH, width),
       y: Math.min(MENU_BAR_HEIGHT, height),
       width: Math.max(0, width - DEFAULT_SIDEBAR_WIDTH - RESIZE_HANDLE_WIDTH),
       height: Math.max(0, height - MENU_BAR_HEIGHT - STATUS_HEIGHT)
+    });
+  }
+
+  private applyPreviewHostBounds(bounds: Rectangle): void {
+    const headerView = this.previewHeaderView;
+    const contentView = this.previewView;
+    if (!headerView || !contentView) return;
+    const headerHeight = Math.min(PREVIEW_HEADER_HEIGHT, Math.max(0, bounds.height));
+    this.previewHostBounds = { ...bounds };
+    headerView.setBounds({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: headerHeight
+    });
+    contentView.setBounds({
+      x: bounds.x,
+      y: bounds.y + headerHeight,
+      width: bounds.width,
+      height: Math.max(0, bounds.height - headerHeight)
     });
   }
 
@@ -513,23 +736,7 @@ export class OnlyPreviewWindowHelper {
     ) {
       return 'focus-project';
     }
-    if (
-      input.type === 'keyDown' &&
-      key === 'shift' &&
-      !input.isAutoRepeat &&
-      !input.control &&
-      !input.meta &&
-      !input.alt
-    ) {
-      const now = Date.now();
-      const previous = this.lastShiftKeyDownByHost.get(host.hostToken) ?? 0;
-      this.lastShiftKeyDownByHost.set(host.hostToken, now);
-      if (now - previous <= 400) {
-        this.lastShiftKeyDownByHost.delete(host.hostToken);
-        return 'focus-search';
-      }
-      return null;
-    }
+    if (isProjectSearchShortcut(input)) return 'focus-search';
     if (input.type === 'keyDown' && key === 'f5') return 'refresh';
     if (input.type !== 'keyDown' || !isCommandModifier(input)) return null;
     if (key === 'o') return 'choose-folder';

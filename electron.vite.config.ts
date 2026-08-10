@@ -121,16 +121,20 @@ const onlyPreviewDevCspPlugin = {
 
 const onlyPreviewSandboxPreloadPlugin = {
   name: 'bitterless:onlypreview-sandbox-preload',
-  apply: 'build' as const,
-  async closeBundle() {
+  async writeBundle() {
     await esbuild({
-      entryPoints: [resolve('src/preload/onlypreview/onlypreview.preload.ts')],
-      outfile: resolve('out/preload/onlypreview.js'),
+      entryPoints: {
+        onlypreview: resolve('src/preload/onlypreview/onlypreview.preload.ts'),
+        onlypreviewContent: resolve('src/preload/onlypreview/onlypreviewContent.preload.ts')
+      },
+      outdir: resolve('out/preload'),
+      entryNames: '[name]',
       bundle: true,
       platform: 'node',
       format: 'cjs',
       target: 'node22',
       external: ['electron'],
+      define: bitterlessPreloadBuildDefine,
       sourcemap: false,
       logLevel: 'silent'
     })
@@ -166,7 +170,7 @@ const onlyPreviewHtmlSecurityPlugin = {
     }
   },
   closeBundle() {
-    for (const mode of ['shell', 'preview', 'settings']) {
+    for (const mode of ['shell', 'previewHeader', 'preview', 'settings', 'guide']) {
       const htmlPath = resolve('out/renderer/onlypreview', mode, 'index.html')
       const html = readFileSync(htmlPath, 'utf8')
       const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? ''
@@ -218,7 +222,8 @@ export default defineConfig({
         input: {
           'app.main': resolve('src/main/app.main.ts'),
           codexHookHelper: resolve('src/main/eyesOnAgents/codexHookHelper.main.ts'),
-          mcpHelper: resolve('src/main/mcp/mcpHelper.main.ts')
+          mcpHelper: resolve('src/main/mcp/mcpHelper.main.ts'),
+          onlypreviewSearchUtility: resolve('src/utility/onlypreview/onlyPreviewSearch.utility.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp']
       },
@@ -258,6 +263,7 @@ export default defineConfig({
           translator: resolve('src/preload/translator/translator.preload.ts'),
           motto: resolve('src/preload/motto/motto.preload.ts'),
           onlypreview: resolve('src/preload/onlypreview/onlypreview.preload.ts'),
+          onlypreviewContent: resolve('src/preload/onlypreview/onlypreviewContent.preload.ts'),
           omni: resolve('src/preload/omni/omni.preload.ts'),
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
           coin: resolve('src/preload/coin/coin.preload.ts'),
@@ -299,8 +305,10 @@ export default defineConfig({
           translator: resolve('src/renderer/translator/index.html'),
           motto: resolve('src/renderer/motto/index.html'),
           'onlypreview/shell': resolve('src/renderer/onlypreview/shell/index.html'),
+          'onlypreview/previewHeader': resolve('src/renderer/onlypreview/previewHeader/index.html'),
           'onlypreview/preview': resolve('src/renderer/onlypreview/preview/index.html'),
           'onlypreview/settings': resolve('src/renderer/onlypreview/settings/index.html'),
+          'onlypreview/guide': resolve('src/renderer/onlypreview/guide/index.html'),
           'omni/omniCell': resolve('src/renderer/omni/omniCell/index.html'),
           'omni/omniControl': resolve('src/renderer/omni/omniControl/index.html'),
           'omni/omniWindow': resolve('src/renderer/omni/omniWindow/index.html'),

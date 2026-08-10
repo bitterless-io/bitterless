@@ -13,8 +13,13 @@ const FIRST_PARTY_RENDERER_ENTRIES = [
   { path: '/translator/index.html', process: 'renderer:translator' },
   { path: '/motto/index.html', process: 'renderer:motto' },
   { path: '/onlypreview/shell/index.html', process: 'renderer:onlypreviewShell' },
+  {
+    path: '/onlypreview/previewHeader/index.html',
+    process: 'renderer:onlypreviewPreviewHeader'
+  },
   { path: '/onlypreview/preview/index.html', process: 'renderer:onlypreviewPreview' },
   { path: '/onlypreview/settings/index.html', process: 'renderer:onlypreviewSettings' },
+  { path: '/onlypreview/guide/index.html', process: 'renderer:onlypreviewGuide' },
   { path: '/coin/index.html', process: 'renderer:coin' },
   { path: '/omni/omniCell/index.html', process: 'renderer:omniCell' },
   { path: '/omni/omniControl/index.html', process: 'renderer:omniControl' },

@@ -1,4 +1,4 @@
-import { dialog, Menu, shell } from 'electron';
+import { app, dialog, Menu, shell } from 'electron';
 import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import {
   OnlyPreviewContractError,
@@ -11,14 +11,19 @@ import {
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewApi,
+  type OnlyPreviewAgentSkillGuideInfo,
   type OnlyPreviewFileRef,
   type OnlyPreviewHostRequest,
   type OnlyPreviewResult,
   type OnlyPreviewWorkspace
 } from '@shared/onlypreview/onlyPreview.types';
+import {
+  createMcpConfigJson,
+  getMcpServerName
+} from '@shared/mcp/mcpBridge.shared';
+import { ONLY_PREVIEW_AGENT_SKILL_VERSION_CODE } from '@shared/onlypreview/onlyPreviewAgentSkillVersion.shared';
 import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/onlypreview/onlyPreviewWorkspace.registry';
-import { onlyPreviewIndexService } from '@main/onlypreview/onlyPreviewIndex.service';
 import { onlyPreviewClassifierService } from '@main/onlypreview/onlyPreviewClassifier.service';
 import { onlyPreviewSettingsService } from '@main/onlypreview/onlyPreviewSettings.service';
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
@@ -28,6 +33,12 @@ import {
   onlyPreviewRecentDirectoryService,
   type OnlyPreviewRecentDirectoryStorage
 } from '@main/onlypreview/onlyPreviewRecentDirectory.service';
+import {
+  createOnlyPreviewAgentSkillGuideInfo,
+  requireOnlyPreviewAgentSkillPath,
+  resolveOnlyPreviewAgentSkillPath
+} from '@main/onlypreview/onlyPreviewAgentSkill.service';
+import { mcpHandler } from './mcp.handler';
 
 type ApiParams<T extends keyof OnlyPreviewApi> = Parameters<OnlyPreviewApi[T]>[0];
 
@@ -91,17 +102,6 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     return await runOperation(async () =>
       await onlyPreviewRecentDirectoryService.restoreWorkspace(params?.hostToken)
     );
-  }
-
-  async buildIndex(params: ApiParams<'buildIndex'>): ReturnType<OnlyPreviewApi['buildIndex']> {
-    return await runOperation(async () => {
-      const settings = await onlyPreviewSettingsService.get();
-      return await onlyPreviewIndexService.build({
-        hostToken: params?.hostToken,
-        workspaceId: params?.workspaceId,
-        showHiddenFiles: settings.showHiddenFiles
-      });
-    });
   }
 
   async describeFile(
@@ -267,6 +267,39 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
   ): ReturnType<OnlyPreviewApi['closeSettings']> {
     return await runOperation(async () => {
       onlyPreviewWindowHelper.closeSettings(params?.hostToken);
+    });
+  }
+
+  async openAgentSkillGuide(
+    params: ApiParams<'openAgentSkillGuide'>
+  ): ReturnType<OnlyPreviewApi['openAgentSkillGuide']> {
+    return await runOperation(async () => {
+      const host = onlyPreviewHostRegistry.require(params?.hostToken, ['content']);
+      await onlyPreviewWindowHelper.openAgentSkillGuide(host.hostToken);
+    });
+  }
+
+  async getAgentSkillGuideInfo(
+    params: ApiParams<'getAgentSkillGuideInfo'>
+  ): Promise<OnlyPreviewResult<OnlyPreviewAgentSkillGuideInfo>> {
+    return await runOperation(async () => {
+      onlyPreviewWindowHelper.requireAgentSkillGuideHost(params?.hostToken);
+      const commandPath = await mcpHandler.ensureShim();
+      const serverName = getMcpServerName(app.getName());
+      const skillPath = requireOnlyPreviewAgentSkillPath(
+        resolveOnlyPreviewAgentSkillPath({
+          appPath: app.getAppPath(),
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath
+        })
+      );
+      onlyPreviewWindowHelper.requireAgentSkillGuideHost(params?.hostToken);
+      return createOnlyPreviewAgentSkillGuideInfo({
+        configJson: createMcpConfigJson(commandPath, serverName),
+        serverName,
+        skillPath,
+        skillVersionCode: ONLY_PREVIEW_AGENT_SKILL_VERSION_CODE
+      });
     });
   }
 }

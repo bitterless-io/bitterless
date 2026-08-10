@@ -131,7 +131,7 @@ const isolatedEnv = (params: {
   };
 };
 
-export type OnlyPreviewRendererMode = 'shell' | 'preview';
+export type OnlyPreviewRendererMode = 'shell' | 'previewHeader' | 'preview';
 
 export interface OnlyPreviewE2ESession {
   app: ElectronApplication;
@@ -174,7 +174,11 @@ export const test = base.extend<OnlyPreviewFixtures>({
           applicationPath: projectRoot,
           applicationArguments: [`--onlypreview-open=${fixtures.root}`]
         }),
-        env: isolatedEnv({ homeDir, userDataDir, mockOrigin: mock.origin }),
+        env: isolatedEnv({
+          homeDir,
+          userDataDir,
+          mockOrigin: mock.origin
+        }),
         timeout: 60_000
       });
       for (const stream of [app.process().stdout, app.process().stderr]) {
@@ -196,21 +200,22 @@ export const test = base.extend<OnlyPreviewFixtures>({
       };
       for (const page of app.windows()) captureRendererDiagnostics(page);
       app.on('window', captureRendererDiagnostics);
-      await expect
-        .poll(
-          async () =>
-            await app!.evaluate(
-              ({ BaseWindow }) =>
-                BaseWindow.getAllWindows().filter((window) => window.getTitle() === 'OnlyPreview')
-                  .length
-            ),
-          {
-            timeout: 60_000,
-            message: () => `OnlyPreview did not open.\n${output.slice(-40).join('')}`
-          }
-        )
-        .toBe(1);
-
+      try {
+        await expect
+          .poll(
+            async () =>
+              await app!.evaluate(
+                ({ BaseWindow }) =>
+                  BaseWindow.getAllWindows().filter((window) => window.getTitle() === 'OnlyPreview')
+                    .length
+              ),
+            { timeout: 60_000 }
+          )
+          .toBe(1);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`OnlyPreview did not open.\n${output.slice(-40).join('')}\n${detail}`);
+      }
       const evaluateRenderer = async <T>(
         mode: OnlyPreviewRendererMode,
         expression: string
@@ -257,7 +262,15 @@ export const test = base.extend<OnlyPreviewFixtures>({
         input: Electron.InputEvent
       ): Promise<void> => await sendInputs(mode, [input]);
 
-      await use({ app, fixtures, tempRoot, output, evaluateRenderer, sendInput, sendInputs });
+      await use({
+        app,
+        fixtures,
+        tempRoot,
+        output,
+        evaluateRenderer,
+        sendInput,
+        sendInputs
+      });
     } finally {
       const errors: unknown[] = [];
       if (app) {

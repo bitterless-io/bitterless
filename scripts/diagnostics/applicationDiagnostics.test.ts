@@ -91,6 +91,19 @@ test('renderer log capture accepts only known first-party renderer entries', () 
   );
   assert.equal(
     resolveFirstPartyRendererProcess(
+      'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer/onlypreview/previewHeader/index.html'
+    ),
+    'renderer:onlypreviewPreviewHeader'
+  );
+  assert.equal(
+    resolveFirstPartyRendererProcess(
+      'http://127.0.0.1:5173/onlypreview/previewHeader/index.html',
+      'http://127.0.0.1:5173'
+    ),
+    'renderer:onlypreviewPreviewHeader'
+  );
+  assert.equal(
+    resolveFirstPartyRendererProcess(
       'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer/maestro/home/index.html'
     ),
     'renderer:maestroHome'

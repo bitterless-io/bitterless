@@ -6,6 +6,7 @@ import type {
   McpBridgeEndpoint,
 } from '@shared/mcp/mcpBridge.shared';
 import { MCP_LOCAL_RPC_MAX_BYTES } from '@shared/mcp/mcpBridge.shared';
+import { ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH } from '@shared/onlypreview/onlyPreview.types';
 
 type JsonRpcId = string | number | null;
 
@@ -334,6 +335,23 @@ const tools: McpTool[] = [
       required: ['id'],
       properties: {
         id: TODO_ID_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'preview.open',
+    description:
+      'Open one explicit absolute local file or folder in the existing read-only Bitterless OnlyPreview window. This tool does not read content, enumerate directories, mutate files, or return the path.',
+    inputSchema: {
+      type: 'object',
+      required: ['path'],
+      properties: {
+        path: {
+          type: 'string',
+          minLength: 1,
+          maxLength: ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH,
+        },
       },
       additionalProperties: false,
     },

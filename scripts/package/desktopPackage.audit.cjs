@@ -20,6 +20,12 @@ const BETTER_SQLITE3_BINARY_PARTS = Object.freeze([
   'Release',
   'better_sqlite3.node',
 ]);
+const ONLY_PREVIEW_AGENT_SKILL_FILES = Object.freeze([
+  'SKILL.md',
+  path.join('agents', 'openai.yaml'),
+  path.join('references', 'mcp-setup.md'),
+  path.join('references', 'tools.md'),
+]);
 const ELECTRON_BUILTINS = new Set(['electron', 'original-fs']);
 const NODE_BUILTINS = new Set(builtinModules.map((moduleName) => moduleName.replace(/^node:/, '')));
 
@@ -136,6 +142,26 @@ const inspectIcnsFile = (filePath) => {
 const inspectApplicationIcons = (resourcesPath) => {
   const bundleIcnsPath = inspectIcnsFile(path.join(resourcesPath, 'icon.icns'));
   return { bundleIcnsPath };
+};
+
+const inspectOnlyPreviewAgentSkill = (resourcesPath) => {
+  const skillPath = path.join(resourcesPath, 'agent-skills', 'bitterless-preview');
+  for (const directoryPath of [
+    skillPath,
+    path.join(skillPath, 'agents'),
+    path.join(skillPath, 'references'),
+  ]) {
+    const stats = fs.lstatSync(directoryPath);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error(`Preview skill directory must be a real directory: ${directoryPath}`);
+    }
+  }
+  const files = ONLY_PREVIEW_AGENT_SKILL_FILES.map((relativePath) => {
+    const filePath = path.join(skillPath, relativePath);
+    readRealFile(filePath, 'Preview skill file');
+    return filePath;
+  });
+  return { skillPath, files };
 };
 
 const machArchForCpuType = (cpuType) => {
@@ -495,6 +521,13 @@ const auditDesktopPackage = (inputPath, options = {}) => {
       failures.push(`application icon gate failed: ${error.message}`);
     }
   }
+  let onlyPreviewAgentSkill = null;
+  try {
+    onlyPreviewAgentSkill = inspectOnlyPreviewAgentSkill(resourcesPath);
+    console.log('[desktop-package-audit] Bitterless Preview agent skill verified');
+  } catch (error) {
+    failures.push(`Preview agent skill gate failed: ${error.message}`);
+  }
   let externalPackageReferences;
   try {
     externalPackageReferences = collectExternalPackageReferences(asarPath, archiveEntries);
@@ -539,6 +572,7 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     targetArch: applicationTarget.arch,
     betterSqlite3BinaryPath,
     applicationIconPaths,
+    onlyPreviewAgentSkill,
     externalPackageRoots: [...externalPackageReferences.keys()].sort(),
   };
 };
@@ -586,5 +620,6 @@ module.exports.getExternalPackageRoot = getExternalPackageRoot;
 module.exports.getPathSize = getPathSize;
 module.exports.inspectApplicationIcons = inspectApplicationIcons;
 module.exports.inspectBinary = inspectBinary;
+module.exports.inspectOnlyPreviewAgentSkill = inspectOnlyPreviewAgentSkill;
 module.exports.packageIsPresent = packageIsPresent;
 module.exports.resolveApplicationPath = resolveApplicationPath;

@@ -12,6 +12,7 @@ import {
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
+import type { OnlyPreviewSettingsCategory } from './onlyPreviewSettings.type';
 
 class OnlyPreviewSettingsStore {
   committed: OnlyPreviewSettings = cloneDefaultOnlyPreviewSettings();
@@ -19,6 +20,7 @@ class OnlyPreviewSettingsStore {
   loading = false;
   saving = false;
   errorMessage = '';
+  activeCategory: OnlyPreviewSettingsCategory = 'preview';
   private initialized = false;
 
   get dirty(): boolean {
@@ -43,12 +45,12 @@ class OnlyPreviewSettingsStore {
     this.draft.wordWrap = value === true;
   }
 
-  setShowHiddenFiles(value: boolean | string | number): void {
-    this.draft.showHiddenFiles = value === true;
-  }
-
   setOpenFilesWithSingleClick(value: boolean | string | number): void {
     this.draft.openFilesWithSingleClick = value === true;
+  }
+
+  selectCategory(category: OnlyPreviewSettingsCategory): void {
+    this.activeCategory = category;
   }
 
   async save(): Promise<void> {

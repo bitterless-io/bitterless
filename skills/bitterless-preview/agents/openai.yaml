@@ -1,0 +1,10 @@
+interface:
+  display_name: "Bitterless Preview"
+  short_description: "Open explicit local targets in read-only Bitterless Preview"
+  default_prompt: "Use $bitterless-preview to open an explicit local file or folder in Bitterless Preview."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "bitterless"
+      description: "Production Bitterless local MCP server"
+      transport: "stdio"

@@ -3,7 +3,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import sharp from 'sharp';
-import { expect, test, type OnlyPreviewE2ESession } from '../fixtures/onlyPreviewApp.fixture';
+import {
+  expect,
+  test,
+  type OnlyPreviewE2ESession,
+  type OnlyPreviewRendererMode
+} from '../fixtures/onlyPreviewApp.fixture';
 
 const screenshotRoot = resolve('out/playwright/onlypreview/screenshots');
 const ONLY_PREVIEW_ROYAL_BLUE = [0x4e, 0x58, 0x82] as const;
@@ -93,18 +98,22 @@ const selectionBroadcastCount = async (app: ElectronApplication): Promise<number
 
 const waitForRenderer = async <T>(
   session: OnlyPreviewE2ESession,
-  mode: 'shell' | 'preview',
+  mode: OnlyPreviewRendererMode,
   expression: string,
   expected: T
 ): Promise<void> => {
-  await expect
-    .poll(async () => await session.evaluateRenderer<T>(mode, expression), {
-      message: () =>
-        `OnlyPreview ${mode} did not reach ${JSON.stringify(expected)}.\n${session.output
-          .slice(-40)
-          .join('')}`
-    })
-    .toEqual(expected);
+  try {
+    await expect
+      .poll(async () => await session.evaluateRenderer<T>(mode, expression))
+      .toEqual(expected);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `OnlyPreview ${mode} did not reach ${JSON.stringify(expected)}.\n${session.output
+        .slice(-40)
+        .join('')}\n${detail}`
+    );
+  }
 };
 
 const waitForPage = async (
@@ -277,7 +286,7 @@ const expectMediaMetadataAndSeek = async (
   expect(Math.abs(result.currentTime - result.target)).toBeLessThan(0.15);
 };
 
-test('owns two secure views, exact native geometry, shortcuts, and a composite 800x600 capture', async ({
+test('owns three secure views, exact native geometry, shortcuts, and a composite 800x600 capture', async ({
   onlyPreview
 }) => {
   const { app, evaluateRenderer, sendInput, sendInputs } = onlyPreview;
@@ -314,6 +323,8 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
         window?.contentView.children.map((view) => ({
           url: view.webContents.getURL(),
           bounds: view.getBounds(),
+          webContentsId: view.webContents.id,
+          osProcessId: view.webContents.getOSProcessId(),
           preferences: view.webContents.getLastWebPreferences()
         })) ?? []
     };
@@ -340,14 +351,18 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   } else if (graph.platform === 'win32') {
     expect(graph.menuBarVisible).toBe(false);
   }
-  expect(graph.children).toHaveLength(2);
+  expect(graph.children).toHaveLength(3);
   expect(graph.children.map(({ url }) => url)).toEqual(
     expect.arrayContaining([
       expect.stringMatching(/\/onlypreview\/shell\/index\.html/),
+      expect.stringMatching(/\/onlypreview\/previewHeader\/index\.html/),
       expect.stringMatching(/\/onlypreview\/preview\/index\.html/)
     ])
   );
+  expect(new Set(graph.children.map(({ webContentsId }) => webContentsId)).size).toBe(3);
   for (const child of graph.children) {
+    expect(child.webContentsId).toBeGreaterThan(0);
+    expect(child.osProcessId).toBeGreaterThan(0);
     expect(child.preferences).toMatchObject({
       sandbox: true,
       contextIsolation: true,
@@ -361,11 +376,16 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
       `({ require: typeof globalThis.require, process: typeof globalThis.process })`
     ),
     evaluateRenderer(
+      'previewHeader',
+      `({ require: typeof globalThis.require, process: typeof globalThis.process })`
+    ),
+    evaluateRenderer(
       'preview',
       `({ require: typeof globalThis.require, process: typeof globalThis.process })`
     )
   ]);
   expect(globals).toEqual([
+    { require: 'undefined', process: 'undefined' },
     { require: 'undefined', process: 'undefined' },
     { require: 'undefined', process: 'undefined' }
   ]);
@@ -405,6 +425,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   expect(menuBar.identity).toContain('OnlyPreview');
   expect(menuBar.actionNames).toEqual([
     'onlypreview__openFolder',
+    'onlypreview__agentSkillGuide',
     'onlypreview__settings',
     ...(menuBar.platform === 'win32'
       ? ['onlypreview__minimize', 'onlypreview__maximize', 'onlypreview__close']
@@ -699,7 +720,8 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   });
   expect(compact.bounds).toMatchObject({ width: 800, height: 600 });
   const shell = compact.children.find(({ url }) => /\/shell\//.test(url));
-  const preview = compact.children.find(({ url }) => /\/preview\//.test(url));
+  const previewHeader = compact.children.find(({ url }) => /\/previewHeader\//.test(url));
+  const previewContent = compact.children.find(({ url }) => /\/preview\//.test(url));
   expect(shell?.bounds).toEqual({
     x: 0,
     y: 0,
@@ -711,12 +733,23 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     `(() => { const bounds = document.querySelector('[name="onlypreview__previewHost"]')?.getBoundingClientRect();
       return bounds ? { x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) } : null; })()`
   );
-  expect(preview?.bounds).toEqual(domBounds);
-  expect(preview?.bounds.x).toBeGreaterThanOrEqual(185);
-  expect(preview?.bounds.y).toBe(32);
-  expect((preview?.bounds.y ?? 0) + (preview?.bounds.height ?? 0)).toBeLessThanOrEqual(
-    compact.contentSize[1] - 25
-  );
+  expect(previewHeader?.bounds).toEqual({
+    x: domBounds.x,
+    y: domBounds.y,
+    width: domBounds.width,
+    height: 43
+  });
+  expect(previewContent?.bounds).toEqual({
+    x: domBounds.x,
+    y: domBounds.y + 43,
+    width: domBounds.width,
+    height: domBounds.height - 43
+  });
+  expect(previewHeader?.bounds.x).toBeGreaterThanOrEqual(185);
+  expect(previewHeader?.bounds.y).toBe(32);
+  expect(
+    (previewContent?.bounds.y ?? 0) + (previewContent?.bounds.height ?? 0)
+  ).toBeLessThanOrEqual(compact.contentSize[1] - 25);
 
   await sendInputs('preview', [
     { type: 'keyDown', keyCode: '1', modifiers: ['alt'] },
@@ -812,7 +845,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     1
   );
 
-  await sendInputs('preview', [
+  await sendInputs('shell', [
     { type: 'keyDown', keyCode: 'Shift' },
     { type: 'keyUp', keyCode: 'Shift' },
     { type: 'keyDown', keyCode: 'Shift' },
@@ -957,11 +990,7 @@ test('opens a Main-owned native file menu and revalidates each file action', asy
         })
     )
     .toEqual({
-      ids: [
-        'onlypreview-preview',
-        'onlypreview-open-externally',
-        'onlypreview-reveal-in-folder'
-      ],
+      ids: ['onlypreview-preview', 'onlypreview-open-externally', 'onlypreview-reveal-in-folder'],
       labels: ['Preview', 'Open in system app', 'Reveal in folder'],
       ownerMatches: true,
       popupCount: 1
@@ -1022,7 +1051,7 @@ test('opens a Main-owned native file menu and revalidates each file action', asy
     .toEqual({ opened: [true], revealed: [true] });
 });
 
-test('toggles detached Shell and Preview DevTools independently without changing view bounds', async ({
+test('toggles detached Shell, Header, and Content DevTools independently without changing view bounds', async ({
   onlyPreview
 }) => {
   const { app, sendInputs } = onlyPreview;
@@ -1034,7 +1063,7 @@ test('toggles detached Shell and Preview DevTools independently without changing
   );
 
   type DevToolsState = Record<
-    'shell' | 'preview',
+    OnlyPreviewRendererMode,
     {
       bounds: { x: number; y: number; width: number; height: number };
       open: boolean;
@@ -1049,7 +1078,7 @@ test('toggles detached Shell and Preview DevTools independently without changing
       );
       if (!window) throw new Error('OnlyPreview BaseWindow unavailable');
       const state = Object.fromEntries(
-        (['shell', 'preview'] as const).map((mode) => {
+        (['shell', 'previewHeader', 'preview'] as const).map((mode) => {
           const view = window.contentView.children.find((candidate) =>
             new RegExp(`/onlypreview/${mode}/index\\.html(?:$|[?#])`).test(
               candidate.webContents.getURL()
@@ -1069,7 +1098,7 @@ test('toggles detached Shell and Preview DevTools independently without changing
       return state as DevToolsState;
     });
   const sendShortcut = async (
-    mode: 'shell' | 'preview',
+    mode: OnlyPreviewRendererMode,
     keyCode: string,
     modifiers: InputModifiers = []
   ): Promise<void> => {
@@ -1078,50 +1107,74 @@ test('toggles detached Shell and Preview DevTools independently without changing
       { type: 'keyUp', keyCode, modifiers }
     ]);
   };
-  const expectDevTools = async (shellOpen: boolean, previewOpen: boolean): Promise<void> => {
+  const expectDevTools = async (
+    shellOpen: boolean,
+    previewHeaderOpen: boolean,
+    previewOpen: boolean
+  ): Promise<void> => {
     await expect
       .poll(async () => {
         const state = await readDevToolsState();
         return {
           shell: { open: state.shell.open, scheme: state.shell.url.split(':', 1)[0] },
+          previewHeader: {
+            open: state.previewHeader.open,
+            scheme: state.previewHeader.url.split(':', 1)[0]
+          },
           preview: { open: state.preview.open, scheme: state.preview.url.split(':', 1)[0] }
         };
       })
       .toEqual({
         shell: { open: shellOpen, scheme: shellOpen ? 'devtools' : '' },
+        previewHeader: {
+          open: previewHeaderOpen,
+          scheme: previewHeaderOpen ? 'devtools' : ''
+        },
         preview: { open: previewOpen, scheme: previewOpen ? 'devtools' : '' }
       });
+  };
+  const expectViewBoundsUnchanged = (state: DevToolsState, baseline: DevToolsState): void => {
+    for (const mode of ['shell', 'previewHeader', 'preview'] as const) {
+      expect(state[mode].bounds).toEqual(baseline[mode].bounds);
+    }
   };
 
   const initial = await readDevToolsState();
   expect(initial.shell.open).toBe(false);
+  expect(initial.previewHeader.open).toBe(false);
   expect(initial.preview.open).toBe(false);
 
   await sendShortcut('shell', 'F12');
-  await expectDevTools(true, false);
+  await expectDevTools(true, false, false);
   let current = await readDevToolsState();
-  expect(current.shell.bounds).toEqual(initial.shell.bounds);
-  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+  expectViewBoundsUnchanged(current, initial);
 
   const inspectModifiers: InputModifiers =
     process.platform === 'darwin' ? ['meta', 'alt'] : ['control', 'shift'];
-  await sendShortcut('preview', 'I', inspectModifiers);
-  await expectDevTools(true, true);
+  await sendShortcut('previewHeader', 'F12');
+  await expectDevTools(true, true, false);
   current = await readDevToolsState();
-  expect(current.shell.bounds).toEqual(initial.shell.bounds);
-  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+  expectViewBoundsUnchanged(current, initial);
+
+  await sendShortcut('preview', 'I', inspectModifiers);
+  await expectDevTools(true, true, true);
+  current = await readDevToolsState();
+  expectViewBoundsUnchanged(current, initial);
 
   await sendShortcut('shell', 'F12');
-  await expectDevTools(false, true);
+  await expectDevTools(false, true, true);
   current = await readDevToolsState();
-  expect(current.shell.bounds).toEqual(initial.shell.bounds);
-  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+  expectViewBoundsUnchanged(current, initial);
+
+  await sendShortcut('previewHeader', 'F12');
+  await expectDevTools(false, false, true);
+  current = await readDevToolsState();
+  expectViewBoundsUnchanged(current, initial);
 
   await sendShortcut('preview', 'I', inspectModifiers);
-  await expectDevTools(false, false);
+  await expectDevTools(false, false, false);
   current = await readDevToolsState();
-  expect(current.shell.bounds).toEqual(initial.shell.bounds);
-  expect(current.preview.bounds).toEqual(initial.preview.bounds);
+  expectViewBoundsUnchanged(current, initial);
 });
 
 test('renders immutable text, selectable PDF, image pixels, and seekable audio/video', async ({
@@ -1386,8 +1439,25 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     await expect(page.locator('[name="onlypreview__settingsApp"]')).toBeVisible();
     return page;
   };
+  const selectSettingsCategory = async (
+    page: Page,
+    category: 'Preview' | 'Project' | 'Appearance'
+  ): Promise<void> => {
+    const categoryButton = page.locator(`[name="onlypreview__settingsCategory${category}"]`);
+    await categoryButton.click();
+    await expect(categoryButton).toHaveAttribute('aria-current', 'page');
+    const visiblePanels = await page
+      .locator(
+        '[name="onlypreview__settingsPreview"], [name="onlypreview__settingsProject"], [name="onlypreview__settingsAppearance"]'
+      )
+      .evaluateAll((elements) => elements.map((element) => element.getAttribute('name')));
+    expect(visiblePanels).toEqual([`onlypreview__settings${category}`]);
+  };
 
   const firstSettingsPage = await openSettings();
+  await expect(
+    firstSettingsPage.locator('[name="onlypreview__hiddenFiles"], #onlypreview-hidden-files')
+  ).toHaveCount(0);
   const firstSettingsToken = await firstSettingsPage.evaluate(
     () => (window as unknown as { onlyPreviewEnv: { hostToken: string } }).onlyPreviewEnv.hostToken
   );
@@ -1463,7 +1533,20 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     };
     return {
       viewport: { width: window.innerWidth, height: window.innerHeight },
+      categories: rect(document.querySelector('[name="onlypreview__settingsCategories"]')),
+      content: rect(document.querySelector('[name="onlypreview__settingsContent"]')),
       footer: rect(document.querySelector('[name="onlypreview__settingsActions"]')),
+      categoryButtons: Array.from(
+        document.querySelectorAll('[name^="onlypreview__settingsCategory"]')
+      ).map((element) => ({
+        name: element.getAttribute('name'),
+        current: element.getAttribute('aria-current')
+      })),
+      visiblePanels: Array.from(
+        document.querySelectorAll(
+          '[name="onlypreview__settingsPreview"], [name="onlypreview__settingsProject"], [name="onlypreview__settingsAppearance"]'
+        )
+      ).map((element) => element.getAttribute('name')),
       buttons: Array.from(
         document.querySelectorAll('[name="onlypreview__settingsActions"] button')
       ).map(rect)
@@ -1471,6 +1554,16 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
   });
   expect(settingsLayout.viewport.width).toBeGreaterThanOrEqual(780);
   expect(settingsLayout.viewport.height).toBeGreaterThanOrEqual(540);
+  expect(settingsLayout.categories).not.toBeNull();
+  expect(settingsLayout.content).not.toBeNull();
+  expect(settingsLayout.categories!.right).toBeLessThanOrEqual(settingsLayout.content!.left + 1);
+  expect(settingsLayout.categories!.top).toBe(settingsLayout.content!.top);
+  expect(settingsLayout.categoryButtons).toEqual([
+    { name: 'onlypreview__settingsCategoryPreview', current: 'page' },
+    { name: 'onlypreview__settingsCategoryProject', current: null },
+    { name: 'onlypreview__settingsCategoryAppearance', current: null }
+  ]);
+  expect(settingsLayout.visiblePanels).toEqual(['onlypreview__settingsPreview']);
   expect(settingsLayout.footer).not.toBeNull();
   expect(settingsLayout.footer!.top).toBeGreaterThanOrEqual(0);
   expect(settingsLayout.footer!.bottom).toBeLessThanOrEqual(settingsLayout.viewport.height + 1);
@@ -1513,10 +1606,20 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
   await expect(wordWrap).toHaveAttribute('aria-checked', 'false');
   await wordWrap.click();
   await expect(wordWrap).toHaveAttribute('aria-checked', 'true');
+  await selectSettingsCategory(firstSettingsPage, 'Project');
+  await expect(fontSizeInput).toHaveCount(0);
   const singleClick = firstSettingsPage.locator('[name="onlypreview__singleClick"]');
   await expect(singleClick).toHaveAttribute('aria-checked', 'true');
   await singleClick.click();
   await expect(singleClick).toHaveAttribute('aria-checked', 'false');
+  await selectSettingsCategory(firstSettingsPage, 'Appearance');
+  const lightTheme = firstSettingsPage.locator('[name="onlypreview__themeLight"]');
+  await expect(lightTheme).toHaveCount(1);
+  await expect(lightTheme).toBeDisabled();
+  await expect(singleClick).toHaveCount(0);
+  await selectSettingsCategory(firstSettingsPage, 'Preview');
+  await expect(fontSizeInput).toHaveValue('18');
+  await expect(wordWrap).toHaveAttribute('aria-checked', 'true');
   await Promise.all([
     firstSettingsPage.waitForEvent('close'),
     firstSettingsPage.locator('.onlypreview-settings__actions .arco-btn-primary').click()
@@ -1564,9 +1667,7 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
   await expect.poll(async () => await selectionBroadcastCount(app)).toBe(1);
 
   await app.evaluate(({ BaseWindow, screen }) => {
-    const parent = BaseWindow.getAllWindows().find(
-      (window) => window.getTitle() === 'OnlyPreview'
-    );
+    const parent = BaseWindow.getAllWindows().find((window) => window.getTitle() === 'OnlyPreview');
     if (!parent) throw new Error('OnlyPreview BaseWindow unavailable');
     const bounds = parent.getBounds();
     const workArea = screen.getDisplayMatching(bounds).workArea;
@@ -1581,9 +1682,7 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     const state = globalThis as typeof globalThis & {
       __onlyPreviewOriginalDisplayMatching?: typeof screen.getDisplayMatching;
     };
-    const parent = BaseWindow.getAllWindows().find(
-      (window) => window.getTitle() === 'OnlyPreview'
-    );
+    const parent = BaseWindow.getAllWindows().find((window) => window.getTitle() === 'OnlyPreview');
     if (!parent) throw new Error('OnlyPreview BaseWindow unavailable');
     state.__onlyPreviewOriginalDisplayMatching = screen.getDisplayMatching.bind(screen);
     screen.getDisplayMatching = (bounds) => {
@@ -1671,18 +1770,24 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     'aria-checked',
     'true'
   );
+  await selectSettingsCategory(secondSettingsPage, 'Project');
   await expect(secondSettingsPage.locator('[name="onlypreview__singleClick"]')).toHaveAttribute(
     'aria-checked',
     'false'
   );
+  await selectSettingsCategory(secondSettingsPage, 'Preview');
   await persistedFontSizeInput.fill('17');
   await persistedFontSizeInput.press('Tab');
   await secondSettingsPage.locator('[name="onlypreview__wordWrap"]').click();
+  await selectSettingsCategory(secondSettingsPage, 'Project');
   await secondSettingsPage.locator('[name="onlypreview__singleClick"]').click();
+  await selectSettingsCategory(secondSettingsPage, 'Preview');
   await expect(secondSettingsPage.locator('[name="onlypreview__wordWrap"]')).toHaveAttribute(
     'aria-checked',
     'false'
   );
+  await expect(persistedFontSizeInput).toHaveValue('17');
+  await selectSettingsCategory(secondSettingsPage, 'Project');
   await expect(secondSettingsPage.locator('[name="onlypreview__singleClick"]')).toHaveAttribute(
     'aria-checked',
     'true'
@@ -1715,6 +1820,7 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     'aria-checked',
     'true'
   );
+  await selectSettingsCategory(thirdSettingsPage, 'Project');
   await expect(thirdSettingsPage.locator('[name="onlypreview__singleClick"]')).toHaveAttribute(
     'aria-checked',
     'false'

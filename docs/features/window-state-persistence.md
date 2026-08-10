@@ -24,6 +24,7 @@ The Main-owned state file uses one stable key for every reachable user-visible t
 | `eyes-on-agents` | standalone EyesOnAgents |
 | `onlypreview` | standalone OnlyPreview `BaseWindow` |
 | `onlypreview-settings` | OnlyPreview app-specific Setting window |
+| `onlypreview-guide` | OnlyPreview Agent Preview setup Guide window |
 | `maestro` | Maestro / legacy Cowork main window |
 | `coin` | Coin |
 | `plugin-content` | development Plugin Content window |

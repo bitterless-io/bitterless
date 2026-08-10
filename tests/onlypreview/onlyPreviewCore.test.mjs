@@ -121,6 +121,7 @@ test('strict contracts normalize only relative capabilities and preserve error e
 });
 
 test('settings and preview bounds reject partial, extra, and unsafe values', () => {
+  assert.equal(runtime.DEFAULT_ONLY_PREVIEW_SETTINGS.showHiddenFiles, true);
   assert.deepEqual(
     runtime.parseOnlyPreviewSettings({
       theme: 'light',
@@ -158,6 +159,100 @@ test('settings and preview bounds reject partial, extra, and unsafe values', () 
   );
   assert.throws(() => runtime.parseOnlyPreviewBounds({ x: -1, y: 0, width: 1, height: 1 }));
   assert.throws(() => runtime.parseOnlyPreviewBounds({ x: 0, y: 0, width: Infinity, height: 1 }));
+});
+
+test('Settings hides the retired hidden-files control while preserving serialized compatibility', () => {
+  const settingsApp = source('src/renderer/onlypreview/settings/src/App.vue');
+  const settingsStore = source(
+    'src/renderer/onlypreview/settings/src/onlyPreviewSettings.store.ts'
+  );
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  const sharedTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const sharedContract = source('src/shared/onlypreview/onlyPreview.contract.ts');
+
+  assert.doesNotMatch(
+    settingsApp,
+    /onlypreview-hidden-files|onlypreview__hiddenFiles|showHiddenFiles|settings\.hiddenFiles/
+  );
+  assert.doesNotMatch(settingsStore, /setShowHiddenFiles|draft\.showHiddenFiles/);
+  assert.doesNotMatch(i18n, /^\s*hiddenFiles(?:Hint)?:/m);
+
+  assert.match(
+    sharedTypes,
+    /interface OnlyPreviewSettings \{[\s\S]*showHiddenFiles: boolean;[\s\S]*\}/
+  );
+  assert.match(sharedContract, /DEFAULT_ONLY_PREVIEW_SETTINGS[\s\S]*showHiddenFiles: true/);
+  const parseSettings = sharedContract.slice(
+    sharedContract.indexOf('export const parseOnlyPreviewSettings'),
+    sharedContract.indexOf('export const cloneDefaultOnlyPreviewSettings')
+  );
+  assert.match(parseSettings, /'showHiddenFiles'/);
+  assert.match(parseSettings, /typeof record\.showHiddenFiles !== 'boolean'/);
+  assert.match(parseSettings, /showHiddenFiles: record\.showHiddenFiles/);
+  assert.match(
+    settingsStore,
+    /committed: OnlyPreviewSettings = cloneDefaultOnlyPreviewSettings\(\)[\s\S]*draft: OnlyPreviewSettings = cloneDefaultOnlyPreviewSettings\(\)/
+  );
+  assert.match(settingsStore, /settings: \{ \.\.\.this\.draft \}/);
+  assert.match(
+    settingsStore,
+    /this\.committed = \{ \.\.\.settings \};[\s\S]*this\.draft = \{ \.\.\.settings \};/
+  );
+});
+
+test('dormant Electron acceptance tracks the three-view security and geometry contract', () => {
+  const fixture = source('tests/onlypreview/fixtures/onlyPreviewApp.fixture.ts');
+  const e2e = source('tests/onlypreview/specs/onlyPreview.spec.ts');
+
+  assert.match(fixture, /OnlyPreviewRendererMode = 'shell' \| 'previewHeader' \| 'preview'/);
+  const graph = e2e.slice(
+    e2e.indexOf("test('owns three secure views"),
+    e2e.indexOf('const menuBar = await evaluateRenderer')
+  );
+  assert.match(graph, /expect\(graph\.children\)\.toHaveLength\(3\)/);
+  for (const renderer of ['shell', 'previewHeader', 'preview']) {
+    assert.ok(graph.includes(`onlypreview\\/${renderer}\\/index`));
+  }
+  assert.match(graph, /webContentsId: view\.webContents\.id/);
+  assert.match(graph, /osProcessId: view\.webContents\.getOSProcessId\(\)/);
+  assert.match(
+    graph,
+    /new Set\(graph\.children\.map\(\(\{ webContentsId \}\) => webContentsId\)\)\.size/
+  );
+  assert.equal((graph.match(/new Set\(/g) ?? []).length, 1);
+  assert.match(graph, /expect\(child\.webContentsId\)\.toBeGreaterThan\(0\)/);
+  assert.match(graph, /expect\(child\.osProcessId\)\.toBeGreaterThan\(0\)/);
+  assert.match(graph, /sandbox: true/);
+  assert.match(
+    graph,
+    /contextIsolation: true,[\s\S]*nodeIntegration: false,[\s\S]*webSecurity: true/
+  );
+
+  const geometry = e2e.slice(
+    e2e.indexOf('const compact = await app.evaluate'),
+    e2e.indexOf("await sendInputs('preview'", e2e.indexOf('const compact = await app.evaluate'))
+  );
+  assert.match(
+    geometry,
+    /expect\(previewHeader\?\.bounds\)\.toEqual\(\{[\s\S]*y: domBounds\.y,[\s\S]*height: 43/
+  );
+  assert.match(
+    geometry,
+    /expect\(previewContent\?\.bounds\)\.toEqual\(\{[\s\S]*y: domBounds\.y \+ 43,[\s\S]*height: domBounds\.height - 43/
+  );
+
+  const devTools = e2e.slice(
+    e2e.indexOf("test('toggles detached Shell, Header, and Content DevTools"),
+    e2e.indexOf("test('renders immutable text", e2e.indexOf("test('toggles detached"))
+  );
+  assert.match(devTools, /\['shell', 'previewHeader', 'preview'\] as const/);
+  assert.match(devTools, /sendShortcut\('previewHeader', 'F12'\)/);
+  assert.match(devTools, /expectDevTools\(true, true, true\)/);
+  assert.match(devTools, /expectDevTools\(false, false, false\)/);
+  assert.match(
+    e2e,
+    /locator\('\[name="onlypreview__hiddenFiles"\], #onlypreview-hidden-files'\)[\s\S]*\.toHaveCount\(0\)/
+  );
 });
 
 test('Settings bounds constrain oversized persisted dimensions to the current parent display', () => {
@@ -445,6 +540,15 @@ test('index is directory-first, naturally sorted, ignores heavy folders, and kee
     assert.equal(
       index.entries.some(({ relativePath }) => /node_modules|\.git/.test(relativePath)),
       false
+    );
+    assert.deepEqual(
+      index.entries
+        .filter(({ relativePath }) => relativePath === 'Folder2' || relativePath === '.env')
+        .map(({ relativePath, mediaType, isText }) => ({ relativePath, mediaType, isText })),
+      [
+        { relativePath: 'Folder2', mediaType: 'unknown', isText: false },
+        { relativePath: '.env', mediaType: 'text', isText: true }
+      ]
     );
     assert.equal(index.truncated, false);
   });
@@ -771,7 +875,10 @@ test('full-app E2E launchers require shared mock-Keychain isolation before Main 
     /isHelperMode \|\| !isE2E \|\| app\.isPackaged \|\| process\.platform !== 'darwin'/
   );
   assert.match(guardBody, /app\.commandLine\.hasSwitch\('use-mock-keychain'\)/);
-  assert.match(guardBody, /throw new Error\('BITTERLESS_E2E on macOS requires --use-mock-keychain'\)/);
+  assert.match(
+    guardBody,
+    /throw new Error\('BITTERLESS_E2E on macOS requires --use-mock-keychain'\)/
+  );
 });
 
 test('recent-directory wiring stays Main-owned, value-free, and renderer-contract neutral', () => {
@@ -780,7 +887,10 @@ test('recent-directory wiring stays Main-owned, value-free, and renderer-contrac
   const appMain = source('src/main/app.main.ts');
   const types = source('src/shared/onlypreview/onlyPreview.types.ts');
 
-  assert.match(service, /Pick<[\s\S]*SettingDao[\s\S]*'getStored' \| 'insertIfAbsent' \| 'compareAndSet'/);
+  assert.match(
+    service,
+    /Pick<[\s\S]*SettingDao[\s\S]*'getStored' \| 'insertIfAbsent' \| 'compareAndSet'/
+  );
   assert.match(service, /RECENT_DIRECTORY_KEY = 'onlypreview_workspace'/);
   assert.match(service, /RECENT_DIRECTORY_SUB_KEY = 'last_directory'/);
   assert.doesNotMatch(service, /storage\.get\(|\.upsert\(/);
@@ -795,8 +905,7 @@ test('recent-directory wiring stays Main-owned, value-free, and renderer-contrac
     handler.indexOf('export const destroyOnlyPreviewForAuth')
   );
   assert.ok(
-    absoluteOpen.indexOf('beginExplicitTarget()') <
-      absoluteOpen.indexOf('ensureStandalone()'),
+    absoluteOpen.indexOf('beginExplicitTarget()') < absoluteOpen.indexOf('ensureStandalone()'),
     'OS targets must suppress restore before mounting standalone renderers'
   );
   assert.match(handler, /restoreWorkspace\(params\?\.hostToken\)/);
@@ -835,7 +944,6 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     'openOnlyPreviewWindow',
     'chooseFolder',
     'restoreWorkspace',
-    'buildIndex',
     'describeFile',
     'readText',
     'selectStandaloneFile',
@@ -849,7 +957,9 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     'getSettings',
     'saveSettings',
     'openSettings',
-    'closeSettings'
+    'closeSettings',
+    'openAgentSkillGuide',
+    'getAgentSkillGuideInfo'
   ]);
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
   const classBody = handler.slice(
@@ -907,7 +1017,7 @@ test('OnlyPreview window commands stay host-capability scoped and Shell-owned', 
   assert.match(shellStyle, /\.arco-btn:focus-visible[\s\S]*outline:\s*2px solid/);
 });
 
-test('workspace updates have one authoritative event path and stale index results are discarded', () => {
+test('workspace updates have one authoritative event path and stale search snapshots are discarded', () => {
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
   const broadcastWorkspaceBody = handler.slice(
     handler.indexOf('const broadcastWorkspace'),
@@ -949,20 +1059,44 @@ test('workspace updates have one authoritative event path and stale index result
   assert.match(chooseFolderBody, /onlyPreviewClient\.chooseFolder/);
   assert.doesNotMatch(chooseFolderBody, /applyWorkspace\(|this\.workspace\s*=/);
 
-  const buildIndexBody = shellStore.slice(
-    shellStore.indexOf('private async buildIndex()'),
+  const initializeIndexBody = shellStore.slice(
+    shellStore.indexOf('private async initializeIndex()'),
+    shellStore.indexOf('private async refreshIndex()')
+  );
+  assert.match(initializeIndexBody, /const workspaceId = workspace\.workspaceId/);
+  assert.match(initializeIndexBody, /const generation = this\.searchWorkspaceGeneration/);
+  assert.match(
+    initializeIndexBody,
+    /onlyPreviewSearchClient\.initialize\(\{[\s\S]*hostToken,[\s\S]*workspaceId,[\s\S]*generation[\s\S]*\}\)/
+  );
+  assert.match(initializeIndexBody, /await this\.applySearchSnapshot\(snapshot\)/);
+
+  const refreshIndexBody = shellStore.slice(
+    shellStore.indexOf('private async refreshIndex()'),
+    shellStore.indexOf('private async applySearchSnapshot(')
+  );
+  assert.match(
+    refreshIndexBody,
+    /onlyPreviewSearchClient\.refresh\(\{ hostToken, workspaceId, generation \}\)/
+  );
+
+  const applySnapshotBody = shellStore.slice(
+    shellStore.indexOf('private async applySearchSnapshot('),
     shellStore.indexOf('private async includeExplicitSelection')
   );
-  assert.match(buildIndexBody, /const workspaceId = workspace\.workspaceId/);
+  assert.match(applySnapshotBody, /const revision = \+\+this\.searchSnapshotRevision/);
   assert.match(
-    buildIndexBody,
+    applySnapshotBody,
+    /snapshot\.workspaceId !== workspace\.workspaceId[\s\S]*snapshot\.generation !== this\.searchWorkspaceGeneration[\s\S]*snapshot\.index\.workspaceId !== workspace\.workspaceId/
+  );
+  assert.match(
+    applySnapshotBody,
     /const selectedRelativePath = workspace\.selectedRelativePath \|\| ''/
   );
-  assert.match(buildIndexBody, /const generation = \+\+this\.generation/);
-  assert.match(buildIndexBody, /await this\.includeExplicitSelection/);
+  assert.match(applySnapshotBody, /await this\.includeExplicitSelection/);
   assert.match(
-    buildIndexBody,
-    /generation !== this\.generation[\s\S]*workspaceId !== this\.workspace\?\.workspaceId[\s\S]*selectedRelativePath !== \(this\.workspace\?\.selectedRelativePath \|\| ''\)/
+    applySnapshotBody,
+    /snapshot\.generation !== this\.searchWorkspaceGeneration[\s\S]*snapshot\.workspaceId !== this\.workspace\?\.workspaceId[\s\S]*revision !== this\.searchSnapshotRevision[\s\S]*selectedRelativePath !== \(this\.workspace\?\.selectedRelativePath \|\| ''\)/
   );
 
   const selectFileBody = shellStore.slice(
@@ -974,6 +1108,7 @@ test('workspace updates have one authoritative event path and stale index result
     selectFileBody,
     /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\)/
   );
+  assert.doesNotMatch(handler, /buildIndex|OnlyPreviewIndexService|onlyPreviewIndexService/);
 });
 
 test('OnlyPreview folder-first chrome, current-file locator, and native file menu stay capability scoped', () => {
@@ -1023,14 +1158,17 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(shellApp, /:disabled="!onlyPreviewShellStore\.selectedEntry"/);
   assert.match(
     shellStore,
-    /locateSelectedFile\(\): string \{[\s\S]*this\.searchQuery = ''[\s\S]*this\.expandSelectedParents\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
+    /locateSelectedFile\(\): string \{[\s\S]*this\.clearSearch\(\)[\s\S]*this\.expandSelectedParents\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
   );
   assert.match(shellApp, /scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\)/);
   assert.match(shellApp, /item\.focus\(center \? \{ preventScroll: true \} : undefined\)/);
   assert.match(shellStyle, /\.onlypreview-shell__project-action\.arco-btn \{[\s\S]*height:\s*27px/);
   assert.match(shellStyle, /\.onlypreview-shell__project-action\.arco-btn:focus-visible/);
 
-  assert.match(shellApp, /@contextmenu\.prevent\.stop="onlyPreviewShellStore\.showFileContextMenu\(row\.entry\)"/);
+  assert.match(
+    shellApp,
+    /@contextmenu\.prevent\.stop="onlyPreviewShellStore\.showFileContextMenu\(row\.entry\)"/
+  );
   assert.match(
     shellStore,
     /showFileContextMenu\(entry: OnlyPreviewIndexEntry\)[\s\S]*entry\.nodeKind !== 'file'[\s\S]*onlyPreviewClient\.showFileContextMenu/
@@ -1058,15 +1196,16 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(menuBody, /Menu\.buildFromTemplate\([\s\S]*\.popup\(\{ window \}\)/);
   assert.doesNotMatch(menuBody, /realPath/);
   for (const catalog of [nativeEnglish, nativeChinese]) {
-    assert.match(catalog, /onlyPreviewFileMenu:[\s\S]*preview:[\s\S]*openExternally:[\s\S]*revealInFolder:/);
+    assert.match(
+      catalog,
+      /onlyPreviewFileMenu:[\s\S]*preview:[\s\S]*openExternally:[\s\S]*revealInFolder:/
+    );
   }
 });
 
 test('OnlyPreview Settings restores size but derives parented work-area bounds on every open', () => {
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
-  const boundsService = source(
-    'src/main/onlypreview/onlyPreviewWindowBounds.service.ts'
-  );
+  const boundsService = source('src/main/onlypreview/onlyPreviewWindowBounds.service.ts');
   const positioning = windowHelper.slice(
     windowHelper.indexOf('const settingsBoundsForParent'),
     windowHelper.indexOf('export class OnlyPreviewWindowHelper')
@@ -1079,11 +1218,20 @@ test('OnlyPreview Settings restores size but derives parented work-area bounds o
   assert.match(positioning, /screen\.getDisplayMatching\(parentBounds\)\.workArea/);
   assert.match(positioning, /resolveOnlyPreviewSettingsBounds\(\{/);
   assert.match(positioning, /minWidth: MIN_WIDTH[\s\S]*minHeight: MIN_HEIGHT/);
-  assert.match(boundsService, /Math\.min\(Math\.round\(request\.width\), Math\.max\(workArea\.width, minWidth\)\)/);
-  assert.match(boundsService, /Math\.min\(Math\.round\(request\.height\), Math\.max\(workArea\.height, minHeight\)\)/);
+  assert.match(
+    boundsService,
+    /Math\.min\(Math\.round\(request\.width\), Math\.max\(workArea\.width, minWidth\)\)/
+  );
+  assert.match(
+    boundsService,
+    /Math\.min\(Math\.round\(request\.height\), Math\.max\(workArea\.height, minHeight\)\)/
+  );
   assert.match(boundsService, /Math\.min\(maxX, Math\.max\(workArea\.x, centeredX\)\)/);
   assert.match(boundsService, /Math\.min\(maxY, Math\.max\(workArea\.y, centeredY\)\)/);
-  assert.match(openSettings, /const parentWindow = this\.requireStandaloneWindow\(sourceHostToken\)/);
+  assert.match(
+    openSettings,
+    /const parentWindow = this\.requireStandaloneWindow\(sourceHostToken\)/
+  );
   assert.match(openSettings, /restored\?\.bounds\.width[\s\S]*restored\?\.bounds\.height/);
   assert.doesNotMatch(openSettings, /restored\.bounds\.(?:x|y)/);
   assert.match(openSettings, /parent: parentWindow/);
@@ -1107,7 +1255,25 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   assert.match(standalone, /RESIZE_HANDLE_WIDTH\s*=\s*5/);
   assert.match(standalone, /MENU_BAR_HEIGHT\s*=\s*32/);
   assert.match(standalone, /STATUS_HEIGHT\s*=\s*25/);
-  assert.match(standalone, /clampPreviewBounds\(previewView\.getBounds\(\),\s*width,\s*height\)/);
+  assert.match(standalone, /PREVIEW_HEADER_HEIGHT\s*=\s*43/);
+  assert.match(
+    standalone,
+    /addChildView\(shellView\)[\s\S]*addChildView\(previewHeaderView\)[\s\S]*addChildView\(previewView\)/
+  );
+  assert.match(
+    standalone,
+    /this\.applyPreviewHostBounds\(clampPreviewBounds\(currentBounds, width, height\)\)/
+  );
+  assert.doesNotMatch(standalone, /sandbox:\s*mode !== 'preview'/);
+  assert.match(standalone, /mode === 'preview'[\s\S]*onlypreviewContent\.js[\s\S]*onlypreview\.js/);
+  assert.match(
+    standalone,
+    /configureNavigationFence\(view\.webContents, target\.url, mode === 'shell'\)/
+  );
+  assert.match(
+    standalone,
+    /await this\.loadView\(previewView, 'preview'\);[\s\S]*await Promise\.all\(\[[\s\S]*this\.loadView\(shellView, 'shell'\)[\s\S]*this\.loadView\(previewHeaderView, 'previewHeader'\)/
+  );
   assert.match(standalone, /onlyPreviewHostRegistry\.revoke\(host\.hostToken\)/);
   assert.match(standalone, /minWidth:\s*MIN_WIDTH/);
   assert.match(standalone, /minHeight:\s*MIN_HEIGHT/);
@@ -1137,15 +1303,31 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
     /private requireStandaloneWindow\(hostToken: string\): BaseWindow \{[\s\S]*this\.requireStandaloneHost\(hostToken\)/
   );
 
+  const autoOpenDevToolsGuard = standalone.slice(
+    standalone.indexOf('const shouldAutoOpenOnlyPreviewDevTools'),
+    standalone.indexOf('const isOnlyPreviewDevToolsEnabled')
+  );
+  assert.match(
+    autoOpenDevToolsGuard,
+    /import\.meta\.env\.VITE_MODE === 'debug' && process\.env\.BITTERLESS_E2E !== '1'/
+  );
+  assert.doesNotMatch(autoOpenDevToolsGuard, /app\.isPackaged|is\.dev|\|\|/);
+  for (const { viteMode, e2e, expected } of [
+    { viteMode: 'debug', e2e: undefined, expected: true },
+    { viteMode: 'debug', e2e: '0', expected: true },
+    { viteMode: 'debug', e2e: '1', expected: false },
+    { viteMode: 'release', e2e: undefined, expected: false },
+    { viteMode: 'release', e2e: '1', expected: false }
+  ]) {
+    assert.equal(viteMode === 'debug' && e2e !== '1', expected);
+  }
+
   const devToolsGuard = standalone.slice(
     standalone.indexOf('const isOnlyPreviewDevToolsEnabled'),
     standalone.indexOf('const isOnlyPreviewDevToolsShortcut')
   );
   assert.match(devToolsGuard, /import\.meta\.env\.VITE_MODE === 'debug'/);
-  assert.match(
-    devToolsGuard,
-    /process\.env\.BITTERLESS_E2E === '1' && !app\.isPackaged/
-  );
+  assert.match(devToolsGuard, /process\.env\.BITTERLESS_E2E === '1' && !app\.isPackaged/);
   const devToolsShortcut = standalone.slice(
     standalone.indexOf('const isOnlyPreviewDevToolsShortcut'),
     standalone.indexOf('const bindOnlyPreviewDevToolsShortcut')
@@ -1187,7 +1369,35 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
     createViewBody,
     /this\.bindNativeShortcuts\(view\.webContents, host\);[\s\S]*bindOnlyPreviewDevToolsShortcut\(view\.webContents\)/
   );
-  assert.equal((standalone.match(/openDevTools\(/g) ?? []).length, 1);
+  assert.doesNotMatch(createViewBody, /openDevTools\(/);
+  const standaloneStartup = standalone.slice(
+    standalone.indexOf('private async createStandaloneWindow('),
+    standalone.indexOf('private createView(')
+  );
+  const initialLoads = standaloneStartup.indexOf('await Promise.all([');
+  const autoOpenGuard = standaloneStartup.indexOf('shouldAutoOpenOnlyPreviewDevTools()');
+  const previewAutoOpen = standaloneStartup.indexOf('previewView.webContents.openDevTools(');
+  assert.ok(initialLoads >= 0 && initialLoads < autoOpenGuard && autoOpenGuard < previewAutoOpen);
+  assert.match(
+    standaloneStartup,
+    /this\.baseWindow !== window[\s\S]*this\.shellView !== shellView[\s\S]*this\.previewView !== previewView/
+  );
+  assert.match(
+    standaloneStartup,
+    /window\.isDestroyed\(\)[\s\S]*previewView\.webContents\.isDestroyed\(\)[\s\S]*previewView\.webContents\.isDevToolsOpened\(\)/
+  );
+  assert.match(
+    standaloneStartup,
+    /previewView\.webContents\.openDevTools\(\{ mode: 'detach', activate: false \}\)/
+  );
+  assert.doesNotMatch(standaloneStartup, /shellView\.webContents\.openDevTools\(/);
+  assert.equal((standaloneStartup.match(/openDevTools\(/g) ?? []).length, 1);
+  const loadViewBody = standalone.slice(
+    standalone.indexOf('private async loadView('),
+    standalone.indexOf('private applyInitialBounds(')
+  );
+  assert.doesNotMatch(loadViewBody, /openDevTools\(|did-finish-load/);
+  assert.equal((standalone.match(/openDevTools\(/g) ?? []).length, 2);
 
   const omni = source('src/main/windows/omniWindow.helper.ts');
   assert.doesNotMatch(omni, /onlypreview/i);
@@ -1279,15 +1489,25 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
   assert.doesNotMatch(omniRuntime, /onlypreview/i);
 
   const onlyPreviewTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
-  assert.match(onlyPreviewTypes, /OnlyPreviewHostKind = 'standalone' \| 'settings'/);
+  assert.match(onlyPreviewTypes, /OnlyPreviewHostKind = 'standalone' \| 'settings' \| 'guide'/);
   assert.doesNotMatch(onlyPreviewTypes, /OnlyPreviewHostKind[^;]*omni/i);
 
   const preload = source('src/preload/onlypreview/onlypreview.preload.ts');
+  const contentPreload = source('src/preload/onlypreview/onlypreviewContent.preload.ts');
+  const envPreload = source('src/preload/onlypreview/onlyPreviewEnv.preload.ts');
   const preloadTypes = source('src/preload/onlypreview/onlypreview.preload.type.ts');
-  assert.match(preload, /contextBridge\.exposeInMainWorld/);
-  assert.match(preload, /hostToken/);
-  assert.doesNotMatch(preload, /ipcMain|ipcRenderer/);
-  assert.doesNotMatch(preload, /containerMode|--mode=/);
+  assert.match(preload, /exposeOnlyPreviewEnv\(\)/);
+  assert.match(envPreload, /contextBridge\.exposeInMainWorld/);
+  assert.match(envPreload, /hostToken/);
+  assert.match(contentPreload, /exposeOnlyPreviewEnv\(\)/);
+  assert.doesNotMatch(
+    contentPreload,
+    /OnlyPreviewSearchRuntimeHandler|search-token|worker_threads/
+  );
+  for (const preloadSource of [preload, contentPreload, envPreload]) {
+    assert.doesNotMatch(preloadSource, /ipcMain|ipcRenderer/);
+    assert.doesNotMatch(preloadSource, /containerMode|--mode=/);
+  }
   assert.doesNotMatch(preloadTypes, /containerMode|ContainerMode|omni/i);
 
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
@@ -1333,13 +1553,27 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
   );
 
   const vite = source('electron.vite.config.ts');
+  const preloadConfigStart = vite.indexOf('  preload: {');
+  const rendererConfigStart = vite.indexOf('\n  renderer:', preloadConfigStart);
+  assert.ok(preloadConfigStart >= 0 && rendererConfigStart > preloadConfigStart);
+  const preloadConfig = vite.slice(preloadConfigStart, rendererConfigStart);
   assert.match(
-    vite,
-    /onlypreview:\s*resolve\('src\/preload\/onlypreview\/onlypreview\.preload\.ts'\)/
+    preloadConfig,
+    /input:\s*\{[\s\S]*onlypreview:\s*resolve\('src\/preload\/onlypreview\/onlypreview\.preload\.ts'\)[\s\S]*onlypreviewContent:\s*resolve\('src\/preload\/onlypreview\/onlypreviewContent\.preload\.ts'\)/
   );
-  for (const renderer of ['shell', 'preview', 'settings']) {
+  for (const renderer of ['shell', 'previewHeader', 'preview', 'settings', 'guide']) {
     assert.match(vite, new RegExp(`'onlypreview/${renderer}'`));
   }
+  assert.match(vite, /onlypreviewSearchUtility:\s*resolve\(/);
+  const sandboxPluginStart = vite.indexOf('const onlyPreviewSandboxPreloadPlugin');
+  const nextPluginStart = vite.indexOf('const secureOnlyPreviewHtml', sandboxPluginStart);
+  assert.ok(sandboxPluginStart >= 0 && nextPluginStart > sandboxPluginStart);
+  const sandboxPlugin = vite.slice(sandboxPluginStart, nextPluginStart);
+  assert.match(
+    sandboxPlugin,
+    /async writeBundle\(\)[\s\S]*onlypreview:\s*resolve\([\s\S]*onlypreviewContent:\s*resolve\([\s\S]*bundle: true[\s\S]*format: 'cjs'/
+  );
+  assert.doesNotMatch(sandboxPlugin, /apply:\s*'build'/);
   assert.match(vite, /vite-plugin-monaco-editor-esm/);
   assert.match(vite, /unpdf/);
 
@@ -1443,6 +1677,20 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(pdf, /intent:\s*'print'/);
   assert.match(pdf, /new TextLayer/);
   assert.match(pdf, /canvas/);
+});
+
+test('partial index remains a compact status without an explanatory Project block', () => {
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  assert.match(shellApp, /index\.truncated[\s\S]*project\.indexPartial\.toUpperCase\(\)/);
+  assert.doesNotMatch(shellApp, /onlypreview__truncated|truncatedMessage|project\.truncated/);
+
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  assert.doesNotMatch(shellStyle, /\.onlypreview-shell__truncated/);
+
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  assert.match(i18n, /indexPartial:\s*'Index partial'/);
+  assert.match(i18n, /indexPartial:\s*'索引不完整'/);
+  assert.doesNotMatch(i18n, /truncated:/);
 });
 
 test('Markdown rendering and selection counts stay renderer-only, inert, and host-scoped', () => {
@@ -1549,7 +1797,11 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   );
   assert.match(
     previewStore,
-    /ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT[\s\S]*restoreSelection\(payload\.params\.revision\)/
+    /xpcRenderer\.subscribe\(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT[\s\S]*restoreSelection\(payload\.params\.revision\)/
+  );
+  assert.doesNotMatch(
+    previewStore,
+    /xpcRenderer\.subscribe\(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT/
   );
   assert.match(
     previewStore,
@@ -1610,10 +1862,10 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore.indexOf('async openSettings()')
   );
   assert.match(directRefresh, /beginCharacterCountTransition\(\)/);
-  assert.match(directRefresh, /await this\.buildIndex\(\)/);
+  assert.match(directRefresh, /await this\.refreshIndex\(\)/);
   assert.ok(
     directRefresh.indexOf('beginCharacterCountTransition()') <
-      directRefresh.indexOf('await this.buildIndex()')
+      directRefresh.indexOf('await this.refreshIndex()')
   );
   assert.match(directRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
   assert.doesNotMatch(directRefresh, /broadcast\(ONLY_PREVIEW_REFRESH_EVENT/);
@@ -1623,10 +1875,10 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT')
   );
   assert.match(nativeRefresh, /beginCharacterCountTransition\(\)/);
-  assert.match(nativeRefresh, /this\.buildIndex\(\)/);
+  assert.match(nativeRefresh, /this\.refreshIndex\(\)/);
   assert.ok(
     nativeRefresh.indexOf('beginCharacterCountTransition()') <
-      nativeRefresh.indexOf('this.buildIndex()')
+      nativeRefresh.indexOf('this.refreshIndex()')
   );
   assert.match(nativeRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
   assert.ok((shellStore.match(/this\.selectedCharacterCount = 0/g) || []).length >= 6);
@@ -1656,4 +1908,216 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   ]) {
     assert.doesNotMatch(source(mainBoundary), /CHARACTER_COUNT_|characterCount/);
   }
+});
+
+test('deep Project rows and HTML rendering stay complete, inert, and renderer-only', () => {
+  const sharedTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
+  assert.match(sharedTypes, /export const ONLY_PREVIEW_MAX_HTML_BYTES = 1024 \* 1024;/);
+
+  const classifier = source('src/main/onlypreview/onlyPreviewClassifier.service.ts');
+  const textExtensions = classifier.match(
+    /const TEXT_EXTENSIONS = new Set\(\[([\s\S]*?)\]\);/
+  )?.[1];
+  assert.ok(textExtensions);
+  assert.match(textExtensions, /'\.htm'/);
+  assert.match(textExtensions, /'\.html'/);
+  assert.match(classifier, /'\.htm':\s*'html'/);
+  assert.match(classifier, /'\.html':\s*'html'/);
+
+  const surface = source(
+    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
+  );
+  const htmlBranch = surface.indexOf('<HtmlPreview');
+  const monacoBranch = surface.indexOf('<MonacoTextPreview');
+  assert.ok(htmlBranch >= 0 && htmlBranch < monacoBranch);
+  const htmlPredicate = surface.slice(
+    surface.indexOf('const isHtml = computed'),
+    surface.indexOf('const descriptorType = computed')
+  );
+  assert.match(
+    htmlPredicate,
+    /descriptor\.extension === '\.html' \|\| descriptor\.extension === '\.htm'/
+  );
+  assert.doesNotMatch(htmlPredicate, /\.xml|\.vue/);
+  assert.doesNotMatch(surface, /<(?:iframe|webview)\b/i);
+
+  const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
+  assert.match(
+    previewStore,
+    /descriptor\.kind !== 'text'[\s\S]*onlyPreviewClient\.readText\(\{[\s\S]*\.\.\.fileRef/
+  );
+
+  const htmlService = source('src/renderer/onlypreview/preview/src/onlyPreviewHtml.service.ts');
+  assert.match(htmlService, /from 'dompurify'/);
+  assert.match(htmlService, /ONLY_PREVIEW_MAX_HTML_BYTES/);
+  assert.match(htmlService, /new TextEncoder\(\)\.encode\(source\)\.byteLength/);
+  assert.match(htmlService, /purifier\.sanitize\(source/);
+  assert.match(htmlService, /ALLOWED_ATTR:\s*\[\]/);
+  assert.match(htmlService, /ALLOWED_NAMESPACES:\s*\['http:\/\/www\.w3\.org\/1999\/xhtml'\]/);
+  assert.match(htmlService, /ALLOW_ARIA_ATTR:\s*false/);
+  assert.match(htmlService, /ALLOW_DATA_ATTR:\s*false/);
+  assert.match(htmlService, /ADD_FORBID_CONTENTS:/);
+  assert.match(htmlService, /FORCE_BODY:\s*true/);
+  assert.match(htmlService, /KEEP_CONTENT:\s*true/);
+  for (const forbiddenTag of [
+    'script',
+    'style',
+    'template',
+    'noscript',
+    'form',
+    'iframe',
+    'frame',
+    'object',
+    'embed',
+    'svg',
+    'math',
+    'audio',
+    'video',
+    'img',
+    'link'
+  ]) {
+    assert.match(htmlService, new RegExp(`'${forbiddenTag}'`));
+  }
+  assert.doesNotMatch(htmlService, /from 'marked'|assetUrl|fetch\(|<iframe|webview/i);
+
+  const htmlComponent = source(
+    'src/renderer/onlypreview/preview/src/components/HtmlPreview/HtmlPreview.vue'
+  );
+  assert.match(htmlComponent, /v-html="renderResult\.html"/);
+  assert.match(htmlComponent, /countOnlyPreviewDomSelection\(documentRef\.value/);
+  assert.match(
+    htmlComponent,
+    /if \(!mounted \|\| !renderResult\.value\.ok\) return;[\s\S]*document\.addEventListener\('selectionchange'[\s\S]*armCharacterCountReporting\(props\.reportingRevision\)/
+  );
+  assert.match(
+    htmlComponent,
+    /disposeSelectionListener = \(\) =>[\s\S]*document\.removeEventListener\('selectionchange'/
+  );
+  assert.match(htmlComponent, /reportCharacterCount\(0, props\.reportingRevision\)/);
+  assert.match(htmlComponent, /onBeforeUnmount\([\s\S]*disposeSelection\(\)/);
+
+  const htmlStyle = source(
+    'src/renderer/onlypreview/preview/src/components/HtmlPreview/HtmlPreview.less'
+  );
+  assert.match(htmlStyle, /\.onlypreview-html \{[\s\S]*overflow:\s*auto/);
+  assert.match(htmlStyle, /--onlypreview-royal/);
+  assert.match(htmlStyle, /border-collapse:\s*collapse/);
+  assert.match(htmlStyle, /font-family:\s*'JetBrains Mono'/);
+  assert.match(htmlStyle, /@media \(max-width:\s*700px\)/);
+  assert.doesNotMatch(htmlStyle, /animation|transition|box-shadow/);
+
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  const treeViewport = shellStyle.slice(
+    shellStyle.indexOf('.onlypreview-shell__tree {'),
+    shellStyle.indexOf('.onlypreview-shell__tree-row {')
+  );
+  assert.match(treeViewport, /overflow:\s*auto/);
+  assert.match(
+    treeViewport,
+    /\.onlypreview-shell__tree::-webkit-scrollbar \{[\s\S]*width:\s*8px;[\s\S]*height:\s*8px;/
+  );
+  assert.match(
+    treeViewport,
+    /::-webkit-scrollbar-track,[\s\S]*::-webkit-scrollbar-corner \{[\s\S]*background:\s*transparent/
+  );
+  assert.match(
+    treeViewport,
+    /::-webkit-scrollbar-thumb \{[\s\S]*background:\s*var\(--onlypreview-divider\)/
+  );
+  const treeRow = shellStyle.slice(
+    shellStyle.indexOf('.onlypreview-shell__tree-row {'),
+    shellStyle.indexOf('.onlypreview-shell__tree-row:hover')
+  );
+  assert.match(treeRow, /width:\s*max-content/);
+  assert.match(treeRow, /min-width:\s*100%/);
+  assert.match(treeRow, /height:\s*27px/);
+  assert.match(treeRow, /overflow:\s*visible/);
+  assert.match(treeRow, /var\(--onlypreview-tree-depth\) \* 14px/);
+  const treeName = shellStyle.slice(
+    shellStyle.indexOf('.onlypreview-shell__tree-name {'),
+    shellStyle.indexOf('.onlypreview-shell__inline-error {')
+  );
+  assert.match(treeName, /white-space:\s*nowrap/);
+  assert.doesNotMatch(treeName, /overflow|text-overflow|ellipsis/);
+
+  assert.match(
+    shellStyle,
+    /grid-template-columns:\s*var\(--onlypreview-project-width\) 5px minmax\(0, 1fr\)/
+  );
+  assert.match(shellStyle, /--onlypreview-project-surface:\s*#f9fafc/);
+  const projectSurface = shellStyle.slice(
+    shellStyle.indexOf('.onlypreview-shell__project {'),
+    shellStyle.indexOf('.onlypreview-shell__project-header {')
+  );
+  assert.match(projectSurface, /background:\s*var\(--onlypreview-project-surface\)/);
+  const resizeHandle = shellStyle.slice(
+    shellStyle.indexOf('.onlypreview-shell__resize-handle {'),
+    shellStyle.indexOf('.onlypreview-shell__preview-host {')
+  );
+  assert.match(resizeHandle, /width:\s*5px/);
+  assert.match(resizeHandle, /background:\s*var\(--onlypreview-project-surface\)/);
+  assert.match(resizeHandle, /cursor:\s*col-resize/);
+  assert.match(resizeHandle, /touch-action:\s*none/);
+  assert.doesNotMatch(resizeHandle, /border-(?:left|right)|::after|#eef0f5|#b8bdcd/);
+  assert.doesNotMatch(shellStyle, /\.onlypreview-shell__resize-handle::after/);
+
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  assert.match(shellApp, /scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\)/);
+
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  assert.match(i18n, /htmlLimit:\s*'HTML rendering is limited to 1 MB\.'/);
+  assert.match(i18n, /htmlLimit:\s*'HTML 渲染上限为 1 MB。'/);
+
+  const api = sharedTypes.match(/export interface OnlyPreviewApi \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(api);
+  assert.doesNotMatch(api, /readHtml|renderHtml|htmlContent|assetHtml/i);
+  for (const rendererBoundary of [
+    'src/main/xpc/onlyPreview.handler.ts',
+    'src/preload/onlypreview/onlypreview.preload.ts'
+  ]) {
+    assert.doesNotMatch(source(rendererBoundary), /readHtml|renderHtml|htmlContent|assetHtml/i);
+  }
+  assert.match(source('src/renderer/onlypreview/preview/index.html'), /frame-src 'none'/);
+});
+
+test('OnlyPreview shell shows the current folder identity without a duplicate path slash', () => {
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  const menuIdentity = shellApp.slice(
+    shellApp.indexOf('name="onlypreview__identity"'),
+    shellApp.indexOf('name="onlypreview__menuActions"')
+  );
+  assert.match(
+    menuIdentity,
+    /onlyPreviewShellStore\.workspace\?\.displayPath \|\| onlyPreviewI18n\.topbar\.noWorkspace/
+  );
+  assert.doesNotMatch(menuIdentity, /onlypreview-shell__location-divider|>\s*\/\s*<\/span>/);
+
+  const projectHeader = shellApp.slice(
+    shellApp.indexOf('name="onlypreview__projectHeader"'),
+    shellApp.indexOf('name="onlypreview__search"')
+  );
+  assert.match(projectHeader, /name="onlypreview__projectTitle"/);
+  assert.match(projectHeader, /class="onlypreview-shell__project-title"/);
+  assert.match(
+    projectHeader,
+    /:title="[\s\S]*onlyPreviewShellStore\.workspace\?\.displayPath \|\| onlyPreviewI18n\.project\.label[\s\S]*"/
+  );
+  assert.match(
+    projectHeader,
+    /onlyPreviewShellStore\.workspace\?\.rootName \|\| onlyPreviewI18n\.project\.label/
+  );
+
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  assert.doesNotMatch(shellStyle, /\.onlypreview-shell__location-divider/);
+  const projectTitle = shellStyle.slice(
+    shellStyle.indexOf('.onlypreview-shell__project-title {'),
+    shellStyle.indexOf('.onlypreview-shell__project-action.arco-btn')
+  );
+  assert.match(projectTitle, /min-width:\s*0/);
+  assert.match(projectTitle, /flex:\s*1/);
+  assert.match(projectTitle, /overflow:\s*hidden/);
+  assert.match(projectTitle, /letter-spacing:\s*0/);
+  assert.match(projectTitle, /text-overflow:\s*ellipsis/);
+  assert.match(projectTitle, /text-transform:\s*none/);
+  assert.match(projectTitle, /white-space:\s*nowrap/);
 });

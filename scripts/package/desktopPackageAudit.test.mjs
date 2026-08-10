@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,6 +30,12 @@ const {
 const projectRoot = path.resolve(new URL('../..', import.meta.url).pathname);
 const temporaryRoots = [];
 const ELECTRON_LANGUAGES = ['zh_CN', 'zh_TW', 'ja', 'en', 'id', 'ko', 'fr'];
+const ONLY_PREVIEW_AGENT_SKILL_FILES = [
+  'SKILL.md',
+  'agents/openai.yaml',
+  'references/mcp-setup.md',
+  'references/tools.md',
+];
 
 const readProjectFile = (filePath) => {
   return readFileSync(path.join(projectRoot, filePath), 'utf-8');
@@ -62,6 +79,7 @@ const createSyntheticApplication = async ({
   includeBetterSqlite3Binary = true,
   betterSqlite3Arch,
   includeMacIcon = true,
+  includeOnlyPreviewAgentSkill = true,
 } = {}) => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'bitterless-desktop-package-'));
   temporaryRoots.push(fixtureRoot);
@@ -87,6 +105,15 @@ const createSyntheticApplication = async ({
   const nativeBinaryPath = platform === 'mac'
     ? 'Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers/build/Release/better_sqlite3.node'
     : 'resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers/build/Release/better_sqlite3.node';
+  const resourcesPrefix = platform === 'mac' ? 'Contents/Resources' : 'resources';
+  const previewSkillFiles = includeOnlyPreviewAgentSkill
+    ? Object.fromEntries(
+        ONLY_PREVIEW_AGENT_SKILL_FILES.map((relativePath) => [
+          `${resourcesPrefix}/agent-skills/bitterless-preview/${relativePath}`,
+          `${relativePath}\n`,
+        ]),
+      )
+    : {};
   mkdirSync(resourcesPath, { recursive: true });
   await createPackage(archiveSource, path.join(resourcesPath, 'app.asar'));
   writeFixtureFiles(applicationPath, {
@@ -99,6 +126,7 @@ const createSyntheticApplication = async ({
           'Contents/Resources/icon.icns': readFileSync(path.join(projectRoot, 'build/icon.icns')),
         }
       : {}),
+    ...previewSkillFiles,
     ...appFiles,
   });
 
@@ -106,6 +134,7 @@ const createSyntheticApplication = async ({
     applicationPath,
     outputPath: path.dirname(applicationPath),
     asarPath: path.join(resourcesPath, 'app.asar'),
+    resourcesPath,
   };
 };
 
@@ -135,7 +164,53 @@ test('synthetic app.asar passes the desktop package audit', async () => {
   assert.equal(result.targetPlatform, 'darwin');
   assert.equal(result.targetArch, 'arm64');
   assert(result.applicationIconPaths.bundleIcnsPath.endsWith('icon.icns'));
+  assert.equal(result.onlyPreviewAgentSkill.files.length, 4);
   await afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 });
+});
+
+test('packaged Preview skill gate rejects missing files and symlinks', async () => {
+  const missing = await createSyntheticApplication();
+  unlinkSync(path.join(missing.resourcesPath, 'agent-skills/bitterless-preview/references/tools.md'));
+  assert.throws(
+    () => auditDesktopPackage(missing.applicationPath),
+    /Preview agent skill gate failed/,
+  );
+
+  const fileSymlink = await createSyntheticApplication();
+  const toolsPath = path.join(
+    fileSymlink.resourcesPath,
+    'agent-skills/bitterless-preview/references/tools.md',
+  );
+  unlinkSync(toolsPath);
+  symlinkSync('mcp-setup.md', toolsPath);
+  assert.throws(
+    () => auditDesktopPackage(fileSymlink.applicationPath),
+    /Preview skill file must be a non-empty real file/,
+  );
+
+  const emptyFile = await createSyntheticApplication();
+  writeFileSync(
+    path.join(emptyFile.resourcesPath, 'agent-skills/bitterless-preview/agents/openai.yaml'),
+    '',
+  );
+  assert.throws(
+    () => auditDesktopPackage(emptyFile.applicationPath),
+    /Preview skill file must be a non-empty real file/,
+  );
+
+  const directorySymlink = await createSyntheticApplication();
+  const skillPath = path.join(
+    directorySymlink.resourcesPath,
+    'agent-skills/bitterless-preview',
+  );
+  const referencesPath = path.join(skillPath, 'references');
+  const movedReferencesPath = `${referencesPath}-real`;
+  renameSync(referencesPath, movedReferencesPath);
+  symlinkSync(movedReferencesPath, referencesPath, 'dir');
+  assert.throws(
+    () => auditDesktopPackage(directorySymlink.applicationPath),
+    /Preview skill directory must be a real directory/,
+  );
 });
 
 test('macOS application icon gate rejects a missing or empty packaged ICNS', async () => {
@@ -284,12 +359,15 @@ test('dependency classification keeps external runtime roots and bundles selecte
     'better-sqlite3-multiple-ciphers',
     'compare-versions',
     'dingtalk-stream',
+    'dompurify',
+    'electron-log',
     'electron-updater',
     'electron-xpc',
     'es-toolkit',
     'fs-extra',
     'https-proxy-agent',
     'inversify',
+    'marked',
     'moment',
     'node-fetch',
     'node-llama-cpp',
@@ -400,6 +478,15 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
   assert.match(builder, /^\s+- '!output\/\*\*'$/m);
   assert.match(builder, /^\s+- '!node_modules\/@micromeet\/cli\{,\/\*\*\}'$/m);
   assert.match(builder, /^\s+- '!node_modules\/\*\*\/\*\.map'$/m);
+  const config = parseYaml(builder);
+  assert(
+    config.extraResources?.some(
+      (resource) =>
+        resource.from === 'skills/bitterless-preview'
+        && resource.to === 'agent-skills/bitterless-preview',
+    ),
+    'Electron Builder must copy the complete Bitterless Preview skill directory',
+  );
 });
 
 test('Electron Builder locale allowlist is exact in the template and optional generated config', () => {
@@ -447,7 +534,7 @@ test('publish audits an existing packaged app before DMG finalization or upload'
   const buildIndex = mainSource.indexOf('runBuild(options)');
   const auditIndex = mainSource.indexOf('auditPackagedApplication(options.platform)');
   const finalizeIndex = mainSource.indexOf('finalizeMacDmg(options.platform)');
-  const uploadIndex = mainSource.indexOf('await uploadFile(');
+  const uploadIndex = mainSource.indexOf('await publishRelease({');
 
   assert(buildIndex >= 0);
   assert(auditIndex > buildIndex);

@@ -9,12 +9,15 @@ import {
   ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT,
-  ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT,
+  ONLY_PREVIEW_HEADER_METADATA_EVENT,
+  ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT,
+  ONLY_PREVIEW_PREVIEW_CONTROL_EVENT,
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
-  type OnlyPreviewCharacterCountRevisionEvent,
   type OnlyPreviewDescriptor,
   type OnlyPreviewErrorCode,
   type OnlyPreviewFileRef,
+  type OnlyPreviewHeaderMetadata,
+  type OnlyPreviewPreviewControlEvent,
   type OnlyPreviewSettings,
   type OnlyPreviewTextContent
 } from '@shared/onlypreview/onlyPreview.types';
@@ -23,15 +26,22 @@ import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { OnlyPreviewCharacterCountSourceGate } from '../../common/onlyPreviewCharacterCountGate.service';
 
-const isRevisionEvent = (value: unknown): value is OnlyPreviewCharacterCountRevisionEvent => {
+const isExactHostEvent = (value: unknown): value is { hostId: string } => {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  return Object.keys(event).length === 1 && typeof event.hostId === 'string';
+};
+
+const isPreviewControlEvent = (value: unknown): value is OnlyPreviewPreviewControlEvent => {
   if (!value || typeof value !== 'object') return false;
   const event = value as Record<string, unknown>;
   return (
-    Object.keys(event).length === 2 &&
+    Object.keys(event).length === 3 &&
     typeof event.hostId === 'string' &&
     typeof event.revision === 'string' &&
     event.revision.length > 0 &&
-    event.revision.length <= 128
+    event.revision.length <= 128 &&
+    (event.action === 'render' || event.action === 'reload' || event.action === 'clear')
   );
 };
 
@@ -60,6 +70,7 @@ class OnlyPreviewPreviewStore {
       this.errorMessage = onlyPreviewI18n.errors.HOST_NOT_FOUND;
       return;
     }
+    this.broadcastHeaderMetadata();
     xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, {
       hostId: onlyPreviewEnv.hostId
     });
@@ -79,6 +90,7 @@ class OnlyPreviewPreviewStore {
     this.actionError = '';
     this.descriptor = null;
     this.textContent = null;
+    this.broadcastHeaderMetadata();
     try {
       const descriptor = unwrapOnlyPreviewResult(
         await onlyPreviewClient.describeFile({
@@ -90,6 +102,7 @@ class OnlyPreviewPreviewStore {
         return;
       }
       this.descriptor = descriptor;
+      this.broadcastHeaderMetadata();
       if (descriptor.previewError) {
         this.presentationError =
           descriptor.previewError.code === 'SIGNATURE_MISMATCH'
@@ -137,6 +150,7 @@ class OnlyPreviewPreviewStore {
     this.presentationError = '';
     this.actionError = '';
     this.selectionReportingRevision = '';
+    this.broadcastHeaderMetadata();
   }
 
   reportMediaError(kind: 'pdf' | 'media', reportingRevision: string): void {
@@ -171,13 +185,26 @@ class OnlyPreviewPreviewStore {
   }
 
   private subscribe(): void {
-    xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, (payload) => {
-      if (isRevisionEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        void this.restoreSelection(payload.params.revision);
-      }
-    });
     xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT, () => {
       void this.refreshSettings();
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT, (payload) => {
+      if (
+        !isPreviewControlEvent(payload.params) ||
+        payload.params.hostId !== onlyPreviewEnv.hostId
+      ) {
+        return;
+      }
+      if (payload.params.action === 'clear') {
+        this.clear();
+        return;
+      }
+      void this.restoreSelection(payload.params.revision);
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT, (payload) => {
+      if (isExactHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        this.broadcastHeaderMetadata();
+      }
     });
   }
 
@@ -231,6 +258,22 @@ class OnlyPreviewPreviewStore {
       hostId,
       characterCount
     });
+  }
+
+  private broadcastHeaderMetadata(): void {
+    const hostId = onlyPreviewEnv.hostId;
+    if (!hostId) return;
+    const descriptor = this.descriptor;
+    const metadata: OnlyPreviewHeaderMetadata | null = descriptor
+      ? {
+          fileName: descriptor.name,
+          relativePath: descriptor.relativePath,
+          kind: descriptor.kind,
+          extension: descriptor.extension,
+          language: descriptor.language
+        }
+      : null;
+    xpcRenderer.broadcast(ONLY_PREVIEW_HEADER_METADATA_EVENT, { hostId, metadata });
   }
 
   private async refreshSettings(): Promise<void> {

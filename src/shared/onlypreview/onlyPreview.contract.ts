@@ -27,7 +27,7 @@ export const DEFAULT_ONLY_PREVIEW_SETTINGS: Readonly<OnlyPreviewSettings> = Obje
   theme: 'light',
   editorFontSize: 13,
   wordWrap: false,
-  showHiddenFiles: false,
+  showHiddenFiles: true,
   openFilesWithSingleClick: true
 });
 

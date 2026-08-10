@@ -27,5 +27,6 @@ export type WindowStateKey =
   | 'coin'
   | 'onlypreview'
   | 'onlypreview-settings'
+  | 'onlypreview-guide'
   | 'plugin-content'
   | 'plugin-options';
