@@ -65,6 +65,14 @@ await build({
       projectRoot,
       'src/renderer/onlypreview/shell/src/onlyPreviewSearchSnapshot.service.ts'
     ),
+    progress: join(
+      projectRoot,
+      'src/renderer/onlypreview/shell/src/onlyPreviewSearchProgress.service.ts'
+    ),
+    browseListing: join(
+      projectRoot,
+      'src/renderer/onlypreview/shell/src/onlyPreviewBrowseListing.service.ts'
+    ),
     tree: join(projectRoot, 'src/renderer/onlypreview/shell/src/onlyPreviewTree.service.ts'),
     characterCountGate: join(
       projectRoot,
@@ -109,6 +117,8 @@ const projectSearchModule = await import(
   pathToFileURL(join(buildRoot, 'projectSearchStore.mjs')).href
 );
 const snapshot = await import(pathToFileURL(join(buildRoot, 'snapshot.mjs')).href);
+const progress = await import(pathToFileURL(join(buildRoot, 'progress.mjs')).href);
+const browseListing = await import(pathToFileURL(join(buildRoot, 'browseListing.mjs')).href);
 const tree = await import(pathToFileURL(join(buildRoot, 'tree.mjs')).href);
 const characterCountGate = await import(
   pathToFileURL(join(buildRoot, 'characterCountGate.mjs')).href
@@ -920,12 +930,240 @@ test('snapshot guard rejects malformed memory telemetry without coercion', () =>
   }
 });
 
+const searchProgressEvent = (progressOverrides = {}) => ({
+  hostId: 'host-search-shell',
+  progress: {
+    workspaceId: 'workspace-current',
+    generation: 4,
+    buildRevision: 1,
+    phase: 'counting',
+    ...progressOverrides
+  }
+});
+
+test('progress guard accepts only exact path-free counting and indexing envelopes', () => {
+  assert.equal(progress.isOnlyPreviewSearchProgressEvent(searchProgressEvent()), true);
+  assert.equal(
+    progress.isOnlyPreviewSearchProgressEvent(
+      searchProgressEvent({ phase: 'indexing', completed: 10, total: 20 })
+    ),
+    true
+  );
+
+  for (const mutate of [
+    (event) => Object.assign(event, { extra: true }),
+    (event) => Object.assign(event.progress, { extra: true }),
+    (event) => {
+      event.hostId = '';
+    },
+    (event) => {
+      event.progress.workspaceId = '';
+    },
+    (event) => {
+      event.progress.generation = -1;
+    },
+    (event) => {
+      event.progress.buildRevision = 0;
+    },
+    (event) => {
+      event.progress.phase = 'ready';
+    }
+  ]) {
+    const event = searchProgressEvent();
+    mutate(event);
+    assert.equal(progress.isOnlyPreviewSearchProgressEvent(event), false);
+  }
+
+  for (const mutate of [
+    (event) => {
+      event.progress.completed = -1;
+    },
+    (event) => {
+      event.progress.completed = 21;
+    },
+    (event) => {
+      event.progress.total = Number.POSITIVE_INFINITY;
+    },
+    (event) => {
+      event.progress.relativePath = 'private/file.txt';
+    },
+    (event) => {
+      delete event.progress.total;
+    }
+  ]) {
+    const event = searchProgressEvent({ phase: 'indexing', completed: 10, total: 20 });
+    mutate(event);
+    assert.equal(progress.isOnlyPreviewSearchProgressEvent(event), false);
+  }
+});
+
+test('progress reducer fences stale revisions, invalid phase order, and regressing totals', () => {
+  const expected = { workspaceId: 'workspace-current', generation: 4 };
+  let state = progress.createOnlyPreviewSearchProgressState();
+  state = progress.reduceOnlyPreviewSearchProgress(state, searchProgressEvent().progress, expected);
+  assert.equal(state.buildRevision, 1);
+  assert.equal(state.progress.phase, 'counting');
+
+  state = progress.reduceOnlyPreviewSearchProgress(
+    state,
+    searchProgressEvent({ phase: 'indexing', completed: 0, total: 20 }).progress,
+    expected
+  );
+  assert.equal(state.progress.phase, 'indexing');
+  const active = state;
+  for (const rejected of [
+    searchProgressEvent({ phase: 'counting' }).progress,
+    searchProgressEvent({ phase: 'indexing', completed: 1, total: 21 }).progress,
+    searchProgressEvent({ phase: 'indexing', completed: -1, total: 20 }).progress,
+    searchProgressEvent({ buildRevision: 0, phase: 'indexing', completed: 10, total: 20 }).progress,
+    searchProgressEvent({ buildRevision: 2, phase: 'indexing', completed: 0, total: 20 }).progress,
+    searchProgressEvent({
+      workspaceId: 'workspace-stale',
+      buildRevision: 2,
+      phase: 'counting'
+    }).progress,
+    searchProgressEvent({
+      generation: 3,
+      buildRevision: 2,
+      phase: 'counting'
+    }).progress
+  ]) {
+    assert.equal(progress.reduceOnlyPreviewSearchProgress(state, rejected, expected), state);
+  }
+
+  state = progress.reduceOnlyPreviewSearchProgress(
+    state,
+    searchProgressEvent({ phase: 'indexing', completed: 10, total: 20 }).progress,
+    expected
+  );
+  assert.notEqual(state, active);
+  assert.equal(state.progress.completed, 10);
+  for (const rejected of [
+    searchProgressEvent({ phase: 'indexing', completed: 9, total: 20 }).progress,
+    searchProgressEvent({ phase: 'indexing', completed: 10, total: 19 }).progress
+  ]) {
+    assert.equal(progress.reduceOnlyPreviewSearchProgress(state, rejected, expected), state);
+  }
+  state = progress.settleOnlyPreviewSearchProgress(state);
+  assert.equal(state.buildRevision, 1);
+  assert.equal(state.progress, null);
+  assert.equal(
+    progress.reduceOnlyPreviewSearchProgress(
+      state,
+      searchProgressEvent({ phase: 'indexing', completed: 20, total: 20 }).progress,
+      expected
+    ),
+    state,
+    'a settled revision cannot revive its rail'
+  );
+  assert.equal(
+    progress.reduceOnlyPreviewSearchProgress(
+      state,
+      searchProgressEvent({ buildRevision: 2, phase: 'indexing', completed: 0, total: 20 })
+        .progress,
+      expected
+    ),
+    state,
+    'a newer revision must begin with counting'
+  );
+  state = progress.reduceOnlyPreviewSearchProgress(
+    state,
+    searchProgressEvent({ buildRevision: 2 }).progress,
+    expected
+  );
+  assert.equal(state.buildRevision, 2);
+  assert.equal(state.progress.phase, 'counting');
+  assert.deepEqual(progress.resetOnlyPreviewSearchProgress(), {
+    buildRevision: 0,
+    progress: null
+  });
+});
+
+const browseListingEvent = () => ({
+  hostId: 'host-search-shell',
+  listing: {
+    workspaceId: 'workspace-current',
+    generation: 4,
+    directoryToken: 'root-directory-token',
+    relativePath: '',
+    entries: [
+      {
+        relativePath: 'docs',
+        parentRelativePath: '',
+        name: 'docs',
+        nodeKind: 'directory',
+        size: 0,
+        modifiedAt: 1,
+        previewHint: 'unsupported',
+        mediaType: 'unknown',
+        isText: false,
+        directoryToken: 'docs-directory-token'
+      },
+      {
+        relativePath: 'readme.md',
+        parentRelativePath: '',
+        name: 'readme.md',
+        nodeKind: 'file',
+        size: 10,
+        modifiedAt: 1,
+        previewHint: 'text',
+        mediaType: 'text',
+        isText: true,
+        directoryToken: null
+      }
+    ]
+  }
+});
+
+test('browse listing guard accepts only exact opaque-token directory metadata', () => {
+  assert.equal(browseListing.isOnlyPreviewBrowseListingEvent(browseListingEvent()), true);
+  for (const mutate of [
+    (event) => Object.assign(event, { extra: true }),
+    (event) => Object.assign(event.listing, { absolutePath: '/private/workspace' }),
+    (event) => Object.assign(event.listing.entries[0], { extra: true }),
+    (event) => {
+      event.listing.relativePath = '../outside';
+    },
+    (event) => {
+      event.listing.entries[0].parentRelativePath = 'other';
+    },
+    (event) => {
+      event.listing.entries[0].directoryToken = null;
+    },
+    (event) => {
+      event.listing.entries[1].directoryToken = 'file-token';
+    },
+    (event) => {
+      event.listing.entries[1].relativePath = 'docs';
+      event.listing.entries[1].name = 'docs';
+    },
+    (event) => {
+      event.listing.entries[1].nodeKind = 'directory';
+      event.listing.entries[1].size = 0;
+      event.listing.entries[1].previewHint = 'unsupported';
+      event.listing.entries[1].mediaType = 'unknown';
+      event.listing.entries[1].isText = false;
+      event.listing.entries[1].directoryToken = 'docs-directory-token';
+    },
+    (event) => {
+      delete event.listing.entries[0];
+    }
+  ]) {
+    const event = structuredClone(browseListingEvent());
+    mutate(event);
+    assert.equal(browseListing.isOnlyPreviewBrowseListingEvent(event), false);
+  }
+});
+
 test('Shell Project Search source preserves exact narrow client, UI, and lifecycle boundaries', () => {
   const clientSource = source('src/renderer/onlypreview/shell/src/onlyPreviewSearch.client.ts');
   const storeSource = source(
     'src/renderer/onlypreview/shell/src/onlyPreviewProjectSearch.store.ts'
   );
   const shellSource = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const shellEventsSource = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
+  );
   const snapshotSource = source(
     'src/renderer/onlypreview/shell/src/onlyPreviewSearchSnapshot.service.ts'
   );
@@ -969,41 +1207,46 @@ test('Shell Project Search source preserves exact narrow client, UI, and lifecyc
   assert.match(snapshotSource, /normalizeOnlyPreviewRelativePath/);
   assert.match(snapshotSource, /isOnlyPreviewIndexEntryArray\(value\.index\.entries\)/);
   assert.match(snapshotSource, /MEMORY_NUMBER_KEYS\.every/);
-  assert.match(shellSource, /payload\.params\.hostId === onlyPreviewEnv\.hostId/);
+  assert.ok(shellSource.split(/\r?\n/).length < 800);
+  assert.match(shellSource, /subscribeOnlyPreviewShellEvents\(onlyPreviewEnv\.hostId/);
+  assert.match(shellEventsSource, /value\.hostId === hostId/);
+  assert.match(
+    shellEventsSource,
+    /isOnlyPreviewBrowseListingEvent\(params\) && isCurrentHost\(params\)[\s\S]*handlers\.browseListing\(params\.listing\)/
+  );
+  assert.match(
+    shellEventsSource,
+    /isOnlyPreviewSearchProgressEvent\(params\) && isCurrentHost\(params\)[\s\S]*handlers\.searchProgress\(params\.progress\)/
+  );
   assert.match(shellSource, /snapshot\.workspaceId !== workspace\.workspaceId/);
   assert.match(shellSource, /snapshot\.generation !== this\.searchWorkspaceGeneration/);
-  assert.ok(
-    shellSource.indexOf('const revision = ++this.searchSnapshotRevision') >
-      shellSource.indexOf('snapshot.index.workspaceId !== workspace.workspaceId')
-  );
   assert.match(shellSource, /onlyPreviewProjectSearchStore\.suspendForIndex\(\)/);
-  assert.match(shellSource, /snapshot\.state !== 'ready' \|\| this\.index !== null/);
   assert.match(shellSource, /onlyPreviewProjectSearchStore\.resumeForReadyIndex\(\)/);
-  assert.ok(shellSource.split('\n').length < 800);
+  const applySearchSnapshot = shellSource.slice(
+    shellSource.indexOf('private async applySearchSnapshot('),
+    shellSource.indexOf('private applyBrowseListing(')
+  );
+  assert.match(applySearchSnapshot, /snapshot\.state !== 'ready'/);
+  assert.match(applySearchSnapshot, /settleOnlyPreviewSearchProgress\(this\.indexProgressState\)/);
+  assert.doesNotMatch(applySearchSnapshot, /this\.index\s*=|clearBrowseProjection/);
   const refreshSettings = shellSource.slice(
     shellSource.indexOf('private async refreshSettings()'),
     shellSource.indexOf('private async activateEntry(')
   );
   assert.doesNotMatch(refreshSettings, /showHiddenFiles|refreshIndex/);
   assert.match(
-    shellSource,
+    shellEventsSource,
     /const isPreviewControlEvent[\s\S]*?Reflect\.ownKeys\(event\)\.length === 3[\s\S]*?event\.action === 'render'[\s\S]*?event\.action === 'reload'[\s\S]*?event\.action === 'clear'/
   );
-  const previewControlSubscription = shellSource.slice(
-    shellSource.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT'),
-    shellSource.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT')
+  const previewControlHandler = shellSource.slice(
+    shellSource.indexOf('previewControl: (revision)'),
+    shellSource.indexOf('characterCountSyncRequested:')
   );
-  assert.match(
-    previewControlSubscription,
-    /characterCountGate\.beginTransition\(payload\.params\.revision\)/
-  );
-  assert.match(
-    previewControlSubscription,
-    /characterCountGate\.resume\(payload\.params\.revision\)/
-  );
-  assert.match(previewControlSubscription, /selectedCharacterCount = 0/);
-  assert.match(previewControlSubscription, /pendingCharacterCount = 0/);
-  assert.doesNotMatch(previewControlSubscription, /broadcast|refreshIndex|restoreSelection/);
+  assert.match(previewControlHandler, /characterCountGate\.beginTransition\(revision\)/);
+  assert.match(previewControlHandler, /characterCountGate\.resume\(revision\)/);
+  assert.match(previewControlHandler, /selectedCharacterCount = 0/);
+  assert.match(previewControlHandler, /pendingCharacterCount = 0/);
+  assert.doesNotMatch(previewControlHandler, /broadcast|refreshIndex|restoreSelection/);
 
   assert.match(appSource, /@compositionstart="handleSearchCompositionStart"/);
   assert.match(appSource, /@compositionend="handleSearchCompositionEnd"/);

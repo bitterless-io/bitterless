@@ -30,7 +30,7 @@ const collect = async (iterable) => {
   return entries;
 };
 
-test('tree metadata ignores search excludes while excluded files never enter the body index', async () => {
+test('search traversal physically excludes hidden, fixed, and configured paths before body reads', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     const outside = join(temp, 'outside');
@@ -70,7 +70,9 @@ exclude:
     });
     const files = await collect(traversal.entries);
     const byPath = new Map(files.map((entry) => [entry.relativePath, entry]));
-    const treeByPath = new Map(traversal.treeEntries.map((entry) => [entry.relativePath, entry]));
+    const searchProjection = new Map(
+      traversal.treeEntries.map((entry) => [entry.relativePath, entry])
+    );
 
     assert.equal(byPath.has('node_modules/pkg/secret.txt'), false);
     assert.equal(byPath.has('dist/output.txt'), false);
@@ -89,7 +91,7 @@ exclude:
       '.hidden/private.txt',
       'generated/drop/no.txt'
     ])
-      assert.ok(treeByPath.has(relativePath), relativePath);
+      assert.equal(searchProjection.has(relativePath), false, relativePath);
     assert.equal(
       readCandidates.some((relativePath) =>
         /(?:^|\/)(?:node_modules|dist|output|\.hidden)(?:\/|$)/u.test(relativePath)
@@ -97,9 +99,9 @@ exclude:
       false
     );
     assert.equal(readCandidates.includes('generated/drop/no.txt'), false);
-    assert.equal(treeByPath.get('generated').nodeKind, 'directory');
-    assert.equal(treeByPath.get('generated/keep').nodeKind, 'directory');
-    assert.equal(treeByPath.get('outside-link').nodeKind, 'symlink');
+    assert.equal(searchProjection.has('generated'), false);
+    assert.equal(searchProjection.get('generated/keep').nodeKind, 'directory');
+    assert.equal(searchProjection.get('outside-link').nodeKind, 'symlink');
     assert.equal(byPath.has('outside-link/escaped.txt'), false);
 
     assert.equal(byPath.get('.env.production').mediaType, 'text');

@@ -7,6 +7,8 @@ import {
 import type { OnlyPreviewResult } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewSearchBootstrap } from '@shared/onlypreview/onlyPreviewSearchBootstrap.types';
 import type {
+  OnlyPreviewBrowseDirectoryRequest,
+  OnlyPreviewBrowseListing,
   OnlyPreviewSearchCancelRequest,
   OnlyPreviewSearchInitializeRequest,
   OnlyPreviewSearchRequest,
@@ -59,6 +61,12 @@ export class OnlyPreviewSearchRuntimeHandler
     return await this._call(params?.hostToken ?? '', 'refresh', params, CONTROL_TIMEOUT_MS);
   }
 
+  async browseDirectory(
+    params: OnlyPreviewBrowseDirectoryRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewBrowseListing>> {
+    return await this._call(params?.hostToken ?? '', 'browseDirectory', params, CONTROL_TIMEOUT_MS);
+  }
+
   async search(
     params: OnlyPreviewSearchRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchResponse>> {
@@ -75,7 +83,7 @@ export class OnlyPreviewSearchRuntimeHandler
 
   private async _call<T>(
     hostToken: string,
-    method: 'initialize' | 'refresh' | 'search' | 'cancel' | 'shutdown',
+    method: 'initialize' | 'refresh' | 'browseDirectory' | 'search' | 'cancel' | 'shutdown',
     params: unknown,
     timeoutMs: number,
     bootstrap?: OnlyPreviewSearchBootstrap

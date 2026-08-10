@@ -4,6 +4,13 @@ Tasks are executed serially in the existing working directory because this Elect
 large native dependency installation and the current branch contains an unrelated in-progress
 Electron/SQLite pin. Coin runtime verification is currently handed to the owner by request.
 
+The 2026-08-10 `onlypreview-layered-index-browse-009` and
+`onlypreview-index-progress-010` records are retained as completed historical deliveries. Their
+Main-owned `listDirectory`/`buildIndex`, 100,000-entry, and depth-20 implementation was superseded
+by the later 012–016 UtilityProcess, persistent SQLite, dual-tier, hard-prune, and watch design.
+Their durable product intent—complete browsing independent of Project Search and one 2px no-copy
+progress rail—remains part of the current feature contract.
+
 ## Active delivery
 
 | id | scope | status | depends-on |
@@ -16,6 +23,8 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [onlypreview-recent-directory-006](tasks/onlypreview-recent-directory-006.md) | restore the last canonical directory from SQLite without persisting file selection or capabilities | implemented; owner verification pending | onlypreview-shell-ux-005 |
 | [onlypreview-e2e-keychain-isolation-007](tasks/onlypreview-e2e-keychain-isolation-007.md) | retain full-application E2E with mandatory mock Keychain isolation on macOS | implemented; owner verification pending | onlypreview-recent-directory-006 |
 | [onlypreview-safe-markdown-selection-008](tasks/onlypreview-safe-markdown-selection-008.md) | safely render Markdown and show selected-text character counts in the bottom status rail | implemented; owner verification pending | onlypreview-e2e-keychain-isolation-007 |
+| [onlypreview-layered-index-browse-009](tasks/onlypreview-layered-index-browse-009.md) | historical complete-browse/BFS delivery; product intent retained, Main implementation superseded by 012–016 | done (historical) | onlypreview-safe-markdown-selection-008 |
+| [onlypreview-index-progress-010](tasks/onlypreview-index-progress-010.md) | historical counted-index rail delivery; 2px no-copy rail retained on the current UtilityProcess runtime | done (historical) | onlypreview-layered-index-browse-009 |
 | [onlypreview-agent-skill-guide-009](tasks/onlypreview-agent-skill-guide-009.md) | portable Preview skill, read-only `preview.open` MCP tool, and one-copy MenuBar Guide window | implemented; owner verification pending | onlypreview-safe-markdown-selection-008 |
 | [onlypreview-tree-html-preview-010](tasks/onlypreview-tree-html-preview-010.md) | horizontally scroll complete deep Project paths and safely render HTML in the Preview pane | implemented; owner verification pending | onlypreview-safe-markdown-selection-008 |
 | [onlypreview-preview-debug-identity-011](tasks/onlypreview-preview-debug-identity-011.md) | auto-open Preview DevTools in debug and align workspace identity labels | implemented; owner verification pending | onlypreview-devtools-004, onlypreview-tree-html-preview-010 |

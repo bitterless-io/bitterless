@@ -1,4 +1,8 @@
-import type { OnlyPreviewIndex, OnlyPreviewResult } from './onlyPreview.types';
+import type {
+  OnlyPreviewIndex,
+  OnlyPreviewIndexEntry,
+  OnlyPreviewResult
+} from './onlyPreview.types';
 
 export const ONLY_PREVIEW_SEARCH_MAX_RESULTS = 500;
 export const ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS = 50;
@@ -6,6 +10,8 @@ export const ONLY_PREVIEW_SEARCH_MAX_BATCH_DELAY_MS = 16;
 export const ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT = 'onlypreview/search-snapshot' as const;
 export const ONLY_PREVIEW_SEARCH_BATCH_EVENT = 'onlypreview/search-batch' as const;
 export const ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT = 'onlypreview/search-watch-commit' as const;
+export const ONLY_PREVIEW_SEARCH_PROGRESS_EVENT = 'onlypreview/search-progress' as const;
+export const ONLY_PREVIEW_BROWSE_LISTING_EVENT = 'onlypreview/browse-listing' as const;
 export const ONLY_PREVIEW_SEARCH_MAX_WATCH_PATHS = 512;
 
 export type OnlyPreviewSearchMediaType = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'unknown';
@@ -51,6 +57,44 @@ export interface OnlyPreviewSearchSnapshotEvent {
   snapshot: OnlyPreviewSearchSnapshot;
 }
 
+export type OnlyPreviewSearchBuildProgress =
+  | {
+      workspaceId: string;
+      generation: number;
+      buildRevision: number;
+      phase: 'counting';
+    }
+  | {
+      workspaceId: string;
+      generation: number;
+      buildRevision: number;
+      phase: 'indexing';
+      completed: number;
+      total: number;
+    };
+
+export interface OnlyPreviewSearchProgressEvent {
+  hostId: string;
+  progress: OnlyPreviewSearchBuildProgress;
+}
+
+export interface OnlyPreviewBrowseEntry extends OnlyPreviewIndexEntry {
+  directoryToken: string | null;
+}
+
+export interface OnlyPreviewBrowseListing {
+  workspaceId: string;
+  generation: number;
+  directoryToken: string;
+  relativePath: string;
+  entries: OnlyPreviewBrowseEntry[];
+}
+
+export interface OnlyPreviewBrowseListingEvent {
+  hostId: string;
+  listing: OnlyPreviewBrowseListing;
+}
+
 export interface OnlyPreviewSearchInitializeRequest {
   hostToken: string;
   workspaceId: string;
@@ -58,6 +102,13 @@ export interface OnlyPreviewSearchInitializeRequest {
 }
 
 export type OnlyPreviewSearchRefreshRequest = OnlyPreviewSearchInitializeRequest;
+
+export interface OnlyPreviewBrowseDirectoryRequest {
+  hostToken: string;
+  workspaceId: string;
+  generation: number;
+  directoryToken: string;
+}
 
 export type OnlyPreviewSearchScope =
   | { kind: 'project' }
@@ -122,6 +173,9 @@ export interface OnlyPreviewSearchRuntimeHandler {
   refresh(
     params: OnlyPreviewSearchRefreshRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>>;
+  browseDirectory(
+    params: OnlyPreviewBrowseDirectoryRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewBrowseListing>>;
   search(params: OnlyPreviewSearchRequest): Promise<OnlyPreviewResult<OnlyPreviewSearchResponse>>;
   cancel(params: OnlyPreviewSearchCancelRequest): Promise<OnlyPreviewResult<void>>;
   shutdown(params: OnlyPreviewSearchShutdownRequest): Promise<OnlyPreviewResult<void>>;

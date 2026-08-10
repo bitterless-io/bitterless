@@ -5,10 +5,11 @@ Status: Accepted
 ## Purpose And Boundary
 
 OnlyPreview is Bitterless's read-only local-file workbench. Its visible picker opens one directory,
-the user navigates a bounded project index on the left, and the selected file is previewed on the
-right without leaving Bitterless. Main-owned operating-system file-open routes may still target an
-individual file and derive its containing workspace. The first delivery is optimized for source
-code, text, PDF, image, audio, and video files used in development and ordinary desktop work.
+the user navigates a complete demand-loaded project tree on the left, and the selected file is
+previewed on the right without leaving Bitterless. Main-owned operating-system file-open routes may
+still target an individual file and derive its containing workspace. The first delivery is optimized
+for source code, text, PDF, image, audio, and video files used in development and ordinary desktop
+work.
 
 OnlyPreview owns local file discovery, a persistent incremental search index, preview
 classification, read-only rendering, its app-specific preferences, and the standalone window
@@ -57,9 +58,9 @@ implementation contract inside Bitterless and contains no private user data.
 │ ├──────────────────────┬───────────────────────────────────────────┤ │
 │ │ local filter/tree or │ preview host placeholder                  │ │
 │ │ Project Search files │                                           │ │
-│ │                      │                                           │ │
+│ │ ━ 2px index rail     │                                           │ │
 │ ├──────────────────────┴───────────────────────────────────────────┤ │
-│ │ Index Rail / status                                              │ │
+│ │ selected-file metadata status                                    │ │
 │ └──────────────────────────────────────────────────────────────────┘ │
 │                        ┌────────────────────────────────────────────┐ │
 │                        │ PreviewHeader WebContentsView · 43px      │ │
@@ -175,7 +176,8 @@ Required properties:
   under the recent-directory contract below; the reconstruction always mints a new `workspaceId`.
 - Returned display paths are presentation metadata. They cannot be supplied back as read authority.
 
-The Main API surface is read-only:
+The renderer-visible surfaces are read-only. The Main API intentionally has no directory-listing or
+index-build method; browse/search requests use the narrow supervised search-runtime proxy:
 
 ```ts
 interface OnlyPreviewApi {
@@ -208,21 +210,40 @@ interface OnlyPreviewApi {
   ): Promise<OnlyPreviewResult<OnlyPreviewAgentSkillGuideInfo>>;
 }
 
-interface OnlyPreviewSearchPreloadApi {
+interface OnlyPreviewSearchRuntimeApi {
   initialize(
-    params: SearchHostRequest & { workspaceId: string }
+    params: OnlyPreviewSearchInitializeRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>>;
   refresh(
-    params: SearchHostRequest & { workspaceId: string }
+    params: OnlyPreviewSearchRefreshRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>>;
+  browseDirectory(
+    params: OnlyPreviewBrowseDirectoryRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewBrowseListing>>;
   search(params: OnlyPreviewSearchRequest): Promise<OnlyPreviewResult<OnlyPreviewSearchResponse>>;
-  cancel(params: SearchHostRequest & { requestId: string }): Promise<OnlyPreviewResult<void>>;
-  shutdown(params: SearchHostRequest): Promise<OnlyPreviewResult<void>>;
+  cancel(params: OnlyPreviewSearchCancelRequest): Promise<OnlyPreviewResult<void>>;
+  shutdown(params: OnlyPreviewSearchShutdownRequest): Promise<OnlyPreviewResult<void>>;
 }
 
 type OnlyPreviewResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code: OnlyPreviewErrorCode; message: string } };
+
+type OnlyPreviewSearchBuildProgress =
+  | {
+      workspaceId: string;
+      generation: number;
+      buildRevision: number;
+      phase: 'counting';
+    }
+  | {
+      workspaceId: string;
+      generation: number;
+      buildRevision: number;
+      phase: 'indexing';
+      completed: number;
+      total: number;
+    };
 ```
 
 Every method accepts zero or one object parameter to preserve the `electron-xpc` contract.
@@ -241,10 +262,10 @@ Shell calls a narrow Main XPC runtime proxy with the shared content host and opa
 Main rejects any other host/workspace generation, resolves the private bootstrap internally, and
 enriches only the UtilityProcess initialization message with `{ rootPath, databasePath }`. The
 UtilityProcess uses raw `parentPort` request/response messages; Main bounds pending requests,
-rejects them on timeout/exit, and relays only whitelisted, shape-validated snapshot, batch, and watch
-events after binding them to the attached `hostId`. Renderers receive those events through
-`xpcMain.broadcast`, never through UtilityProcess XPC registration. There is no Main traversal,
-index-build, query, or watch implementation.
+rejects them on timeout/exit, and relays only whitelisted, shape-validated snapshot, browse-listing,
+batch, progress, and watch events after binding them to the attached `hostId`. Renderers receive
+those events through `xpcMain.broadcast`, never through UtilityProcess XPC registration. There is no
+Main traversal, index-build, query, or watch implementation.
 
 ## Recent Directory Persistence
 
@@ -286,7 +307,7 @@ table. Main owns this state; no new renderer storage or path-bearing API is adde
   late history read cannot replace an explicit target, and among serialized explicit requests the
   latest explicit target remains visible and becomes the remembered directory.
 
-## Index Contract
+## Browse And Search Index Contract
 
 The UtilityProcess owns two independent indexes with different policy boundaries:
 
@@ -308,8 +329,8 @@ summed into runtime memory.
 | Constraint                             | Product value                                                                                                                                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Maximum visible Project Search results | 500 files                                                                                                                                                |
-| Maximum traversal depth                | 32                                                                                                                                                       |
-| Directory-name tier                    | file + directory metadata; ignores Project Search config/hard excludes; ordinary filter searches only the `entry.name` field with substring semantics    |
+| Project Search traversal depth         | 32; complete demand-loaded directory browsing is independent and has no global depth cap                                                                 |
+| Directory-name tier                    | complete demand-loaded file + directory metadata; ignores Project Search config/hard excludes; ordinary filter searches only `entry.name`                 |
 | Project Search hidden policy           | every file below any dot-prefixed directory is physically absent; root dotfiles remain eligible unless separately excluded                               |
 | Project Search fixed exclusions        | `.git`, `node_modules`, `dist`, `build`, `out`, `output`, `.next`, `coverage`, `.cache`, `.turbo` at any depth; immutable against `!`                    |
 | Workspace config                       | flat version-1 ordered `exclude` globs in `.bitterless/preview-config.yml`                                                                               |
@@ -356,6 +377,14 @@ strict contract.
 The tree publishes every directory's complete direct-child set before deeper traversal, including
 root-level files, dot-prefixed entries, generated-output directories, and config-excluded entries.
 Those names remain available to the ordinary local filter because it is not a Project Search query.
+The UtilityProcess publishes the complete root listing early in initialization and mints opaque
+directory tokens for expandable rows. Shell requests an expansion with only the current host,
+workspace, generation, and `directoryToken`; it never sends a relative or absolute directory path.
+The UtilityProcess alone maps that token back to a contained relative path and returns relative
+metadata. Main validates and relays without performing the directory walk. The initial or
+incremental Project Search traversal bound cannot remove a root row or an expanded directory child
+from ordinary browsing. Refresh and workspace replacement discard stale listings and token maps,
+reload the root, and fence every late listing by host, workspace, generation, and token ownership.
 Both Project Search scopes use the same physical eligibility: a root-level hidden file remains
 eligible unless separately excluded, while a file below any hidden/fixed directory or matched by
 workspace config is absent. Anchoring `In Directory` at such a tree directory therefore returns no
@@ -389,6 +418,14 @@ batch/result by host, workspace, request, and generation. It flushes verified up
 running at no more than 50 results per batch or a 16ms deadline; its terminal message carries only
 metadata and canonical result order, so the full row payload is not serialized twice. The last
 input is dispatched exactly once.
+
+During an active initial build or full reconcile, the UtilityProcess publishes bounded aggregate
+`counting` and `indexing` progress through `onlypreview/search-progress`. Each event is fenced by
+`workspaceId`, `generation`, and opaque `buildRevision`; Main shape-validates and relays only the
+attached current generation without doing search I/O. Shell accepts only its current revision,
+rejects regressing or inconsistent counts, clamps the determinate ratio to `0..1`, and clears the
+rail when that build settles, fails, or is superseded. The event contains no path, filename, file
+content, setting, or absolute filesystem metadata.
 
 `fs.watch` updates are hints, not authority. After the 400ms trailing edge, the UtilityProcess
 revalidates the changed relative path once, updates tree metadata regardless of Project Search
@@ -711,8 +748,9 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 │   ▾ components       │ read-only preview surface                         │
 │       FileTree.vue   │                                                   │
 │   App.vue            │                                                   │
+│ ━━━━━━━ Index Rail   │                                                   │
 ├──────────────────────┴───────────────────────────────────────────────────┤
-│ INDEX READY                    SELECTED 24 CHARACTERS · UTF-8 · 18 KB   │
+│                                SELECTED 24 CHARACTERS · UTF-8 · 18 KB   │
 └──────────────────────────────────────────────────────────────────────────┘
 
 Cmd/Ctrl+Shift+F:
@@ -744,7 +782,8 @@ Cmd/Ctrl+Shift+F:
 - The icon-only Tabler Robot action sits immediately before Settings and uses the localized direct
   label `Copy the skill to your agent`. It opens/focuses the parented Guide; it does not mount a
   DOM modal inside Shell, where the sibling native Header/Content views would cover it.
-- Project headers and the status rail never display indexed file/item totals. The interface does
+- Project headers and the status rail never display index status, phase labels, percentages,
+  indexed file/item totals, partial-index explanations, or other index copy. The interface does
   not repeat a visible `READ ONLY` badge or status label; the actual editor and content authority
   remain read-only.
 - The Project header shows the current workspace's case-preserving `rootName`, truncates only when
@@ -782,7 +821,11 @@ Cmd/Ctrl+Shift+F:
 - HTML uses the same white Preview canvas as a responsive semantic document with system text,
   Royal Blue headings, bordered tables, and monospace code. File-provided CSS and attributes are
   intentionally absent; this is an inert readable rendering, not a live browser page.
-- The Index Rail is the single signature motion. It respects `prefers-reduced-motion`.
+- The 2px Index Rail sits at the bottom edge of the Project directory pane and is the single
+  signature motion. The counting phase uses an indeterminate Royal Blue sweep; the indexing phase
+  uses a determinate fill from `completed / total`. It has an accessible non-visible label, renders
+  no visible text or number, reserves no space when idle, disappears immediately after the current
+  build settles, and respects `prefers-reduced-motion`.
 - Structural and repeated elements carry stable `name` attributes and `onlypreview`-rooted BEM
   classes with sibling Less files. No Tailwind utilities.
 - Each column owns its scroll; root/grid children use `min-width: 0` and `min-height: 0`. The Project
@@ -833,10 +876,13 @@ that view's open DevTools. Auto-repeat is ignored.
 ## State And Error Contract
 
 - **Empty:** the Open Folder action and shortcut are available; no Open File action is shown.
-- **Indexing:** start or resume the UtilityProcess in the background, retain the last valid filename tier
-  and search database, and animate the Index Rail without blocking Shell input.
-- **Index partial:** show the returned prefix and `INDEX PARTIAL` status only; do not add
-  explanatory copy beneath the tree.
+- **Counting index:** keep loaded directory listings browsable and show only the indeterminate
+  Project-bottom Index Rail.
+- **Indexing:** retain the last valid directory-name tier and search database, keep browsing
+  available, and show only the determinate Project-bottom Index Rail. Hide it as soon as the current
+  generation settles.
+- **Index partial:** keep directory browsing complete and expose no visible partial state,
+  explanation, count, or warning.
 - **Project Search pending:** retain the last accepted result set until the latest throttled request
   returns; stale or cancelled batches cannot replace it.
 - **Project Search scope:** default to the captured current directory; changing scope cancels or
@@ -930,18 +976,21 @@ them.
   errors, size limits, exact asset URL parsing, active stream revocation, and manual Range response
   semantics.
 - Search unit tests cover private bootstrap ownership, Main zero-search-I/O, strict scope parsing,
-  directory-anchor precedence, root scope, pre-I/O excludes, symlink/containment, visible dot items,
-  In Project hidden-directory exclusion, explicit hidden In Directory, root hidden files, media
-  classification, strict decode/size limits, persistent schema/reopen, filename-tier hydration,
+  early complete root listing, opaque directory-token ownership/generation fencing, complete
+  per-directory browsing independent of Project Search exclusions and bounds, directory-anchor
+  precedence, root scope, pre-I/O excludes, symlink/containment, visible dot items, In Project
+  hidden-directory exclusion, explicit hidden In Directory, root hidden files, media classification,
+  strict decode/size limits, persistent schema/reopen, filename-tier hydration,
   content-defined boundary matches, trigram/CJK and short-query strategies, NFKC plus literal
   verification, exact file-only result shape, title/content merge, grapheme 16/48 snippets,
   exact result-cap truncation, direct-child-before-descendant traversal, transaction-safe
   upsert/delete, legacy-schema recovery, stat/read-race full reconciliation, 400ms watch trailing
-  reconciliation, selected-Preview rerender, and separate runtime/disk telemetry.
+  reconciliation, selected-Preview rerender, bounded monotonic build progress, and separate
+  runtime/disk telemetry.
 - Runtime/coordinator tests use fake time and isolated engine fixtures to cover fixed 120ms
   leading-plus-trailing behavior, IME composition, scope changes, one-active/one-latest single
   flight, active cancellation, final query/scope exactly once, bounded batches, and stale
-  host/workspace/request/watch fences.
+  host/workspace/request/build-revision/browse-token/watch fences.
 - Router tests cover macOS early `open-file`, packaged Windows initial/second-instance argv, helper
   exclusions, development explicit arguments, and serialized queue behavior.
 - Recent-directory tests cover schema parsing, ready/failure latching, pre-ready latest-write
@@ -949,8 +998,9 @@ them.
   Shell/Preview single flight, host cleanup, and an explicit OS target winning a late restore.
 - Source/integration tests cover five renderer entries, official preload and UtilityProcess build
   entries, sandboxed Shell/Header/Content/Setting/Guide preferences, private Main-only bootstrap,
-  raw-parent-port UtilityProcess transport, bounded pending rejection on cancel/timeout/exit, and
-  whitelisted host-bound Main event relay,
+  raw-parent-port UtilityProcess transport, bounded pending rejection on cancel/timeout/exit,
+  whitelisted host-bound snapshot/browse/progress/watch relay, and the absence of a Main browse or
+  index-build path,
   explicit three-child-view cleanup, hidden titlebar/traffic-light/window-control wiring, Content-only
   initial debug DevTools auto-open plus detached manual shortcut wiring, workspace identity labels,
   exact 32px Preview offset, Home card, auth/quit cleanup, log policy, i18n registration, and the
@@ -967,9 +1017,11 @@ them.
 - Renderer verification covers stale-result suppression, read-only Monaco options and disposal,
   pre-query-visible `entry.name` filtering without expansion, root/dot row visibility, default
   `In Directory` plus scope switching, file-only Project Search, text-only highlighted summaries,
-  title-only non-text rows, watch-selected Preview reload, indexing/search/error/memory states,
-  tree/preview/settings states, intrinsic-width horizontal tree scrolling, inert HTML/Markdown
-  routing and sanitizer boundaries, BEM/name markers, and keyboard routing.
+  title-only non-text rows, watch-selected Preview reload, complete demand-loaded browsing,
+  current-build progress fencing, the 2px no-copy Project-bottom rail,
+  indexing/search/error/memory states, tree/preview/settings states, intrinsic-width horizontal tree
+  scrolling, inert HTML/Markdown routing and sanitizer boundaries, BEM/name markers, and keyboard
+  routing.
 - Canonical PRODUCT-P01 remains immutable history for the earlier hidden-inclusive physical corpus
   and deleted preload-Worker boundary; it is not current-policy acceptance. The dual-index,
   hidden-pruned Utility runtime requires a new canonical PRODUCT-P02 point, which has not run.

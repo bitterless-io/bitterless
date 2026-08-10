@@ -72,6 +72,7 @@ const savedSettings = {
   ...defaultSettings,
   editorFontSize: 18,
   wordWrap: true,
+  showHiddenFiles: false,
   openFilesWithSingleClick: false
 };
 

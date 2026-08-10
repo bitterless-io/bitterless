@@ -13,6 +13,7 @@ export interface OnlyPreviewSearchUtilityReadyMessage {
 export type OnlyPreviewSearchUtilityMethod =
   | 'initialize'
   | 'refresh'
+  | 'browseDirectory'
   | 'search'
   | 'cancel'
   | 'shutdown';

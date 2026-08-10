@@ -147,7 +147,7 @@ test('initialization rejects an in-workspace database and accepts sibling user d
   });
 });
 
-test('tree metadata and Project Search maintain independent exclusion boundaries', async () => {
+test('Utility browse listings stay complete while the Search projection applies exclusions', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     await write(
@@ -161,14 +161,25 @@ test('tree metadata and Project Search maintain independent exclusion boundaries
     await write(join(root, 'dist/bundle.txt'), 'dist body token');
     await write(join(root, 'output/report.txt'), 'output body token');
 
-    const engine = createOnlyPreviewSearchEngine();
+    const browseListings = [];
+    const engine = createOnlyPreviewSearchEngine({
+      onBrowseListing: (listing) => browseListings.push(listing)
+    });
     const snapshot = await engine.initialize({
       workspaceId: 'workspace',
       generation: 1,
       rootPath: root,
       databasePath: join(temp, 'cache', 'search.sqlite')
     });
-    const treePaths = new Set(snapshot.index.entries.map(({ relativePath }) => relativePath));
+    assert.equal(browseListings.length, 1);
+    assert.deepEqual(
+      browseListings[0].entries.map(({ name }) => name),
+      ['.bitterless', '.hidden', 'dist', 'excluded', 'node_modules', 'output', 'visible.txt']
+    );
+
+    const searchProjectionPaths = new Set(
+      snapshot.index.entries.map(({ relativePath }) => relativePath)
+    );
     for (const relativePath of [
       '.bitterless',
       '.bitterless/preview-config.yml',
@@ -179,7 +190,8 @@ test('tree metadata and Project Search maintain independent exclusion boundaries
       'dist/bundle.txt',
       'output/report.txt'
     ])
-      assert.ok(treePaths.has(relativePath), relativePath);
+      assert.equal(searchProjectionPaths.has(relativePath), false, relativePath);
+    assert.equal(searchProjectionPaths.has('visible.txt'), true);
     assert.deepEqual(indexedPaths(engine), ['visible.txt']);
     assert.equal((await search(engine, 'body token')).results.length, 1);
     assert.equal(snapshot.memory.treeMetadataEntryCount, snapshot.index.entries.length);
@@ -254,7 +266,7 @@ test('watch uses 400ms trailing updates and falls back when recursive watch is u
   });
 });
 
-test('watch CRUD, rename, and config transitions converge tree and search tiers', async () => {
+test('watch CRUD, rename, and config transitions converge Search projection and SQLite', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     const configPath = join(root, '.bitterless/preview-config.yml');
@@ -330,7 +342,106 @@ test('watch CRUD, rename, and config transitions converge tree and search tiers'
       paths: ['.bitterless/preview-config.yml']
     });
     assert.equal(indexedPaths(engine).includes('excluded/drop.txt'), false);
-    assert.ok(engine.treeEntries.some(({ relativePath }) => relativePath === 'excluded/drop.txt'));
+    assert.equal(
+      engine.treeEntries.some(({ relativePath }) => relativePath === 'excluded/drop.txt'),
+      false
+    );
+    await engine.shutdown();
+  });
+});
+
+test('watch refreshes a loaded excluded browse directory without admitting it to Search', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    await write(join(root, '.hidden/old.txt'), 'browse only');
+    const browseListings = [];
+    const commits = [];
+    const engine = createOnlyPreviewSearchEngine({
+      onBrowseListing: (listing) => browseListings.push(listing),
+      onWatchCommit: (commit) => commits.push(commit)
+    });
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await engine.watchController.close({ drain: false });
+    engine.watchController = undefined;
+    engine.watchRevision += 1;
+
+    const rootListing = browseListings.at(-1);
+    const hiddenDirectory = rootListing.entries.find(
+      ({ relativePath }) => relativePath === '.hidden'
+    );
+    const initialHiddenListing = await engine.browseDirectory({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: hiddenDirectory.directoryToken
+    });
+    assert.deepEqual(
+      initialHiddenListing.entries.map(({ name }) => name),
+      ['old.txt']
+    );
+    browseListings.length = 0;
+
+    await write(join(root, '.hidden/new.txt'), 'new browse-only value');
+    await applyWatch(engine, { full: false, paths: ['.hidden/new.txt'] });
+    assert.equal(commits.at(-1).full, false);
+    assert.equal(browseListings.length, 1);
+    assert.equal(browseListings[0].relativePath, '.hidden');
+    assert.equal(browseListings[0].directoryToken, hiddenDirectory.directoryToken);
+    assert.deepEqual(
+      browseListings[0].entries.map(({ name }) => name),
+      ['new.txt', 'old.txt']
+    );
+    assert.equal(
+      engine.treeEntries.some(({ relativePath }) => relativePath.startsWith('.hidden')),
+      false
+    );
+    assert.deepEqual(indexedPaths(engine), []);
+    assert.deepEqual((await search(engine, 'browse-only value')).results, []);
+
+    browseListings.length = 0;
+    const updatedContent = 'updated browse-only value with a new size';
+    await write(join(root, '.hidden/new.txt'), updatedContent);
+    await applyWatch(engine, { full: false, paths: ['.hidden/new.txt'] });
+    assert.equal(commits.at(-1).full, false);
+    assert.equal(browseListings.length, 1);
+    assert.equal(
+      browseListings[0].entries.find(({ name }) => name === 'new.txt').size,
+      Buffer.byteLength(updatedContent)
+    );
+
+    browseListings.length = 0;
+    await unlink(join(root, '.hidden/old.txt'));
+    await applyWatch(engine, { full: false, paths: ['.hidden/old.txt'] });
+    assert.equal(commits.at(-1).full, false);
+    assert.equal(browseListings.length, 1);
+    assert.deepEqual(
+      browseListings[0].entries.map(({ name }) => name),
+      ['new.txt']
+    );
+
+    browseListings.length = 0;
+    await mkdir(join(root, '.hidden/new-folder'));
+    await applyWatch(engine, { full: false, paths: ['.hidden/new-folder'] });
+    assert.equal(commits.at(-1).full, false);
+    assert.equal(browseListings.length, 1);
+    assert.deepEqual(
+      browseListings[0].entries.map(({ name }) => name),
+      ['new-folder', 'new.txt']
+    );
+
+    browseListings.length = 0;
+    await rm(join(root, '.hidden/new-folder'), { recursive: true, force: true });
+    await applyWatch(engine, { full: false, paths: ['.hidden/new-folder'] });
+    assert.equal(commits.at(-1).full, false);
+    assert.equal(browseListings.length, 1);
+    assert.deepEqual(
+      browseListings[0].entries.map(({ name }) => name),
+      ['new.txt']
+    );
     await engine.shutdown();
   });
 });
@@ -480,7 +591,7 @@ test('a rename watch hint always promotes incremental paths to a full reconcile'
   await controller.close();
 });
 
-test('an oversized watch burst reconciles both tiers before processing individual paths', async () => {
+test('an oversized watch burst reconciles Search projection and SQLite before individual paths', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     await write(join(root, 'burst.txt'), 'old burst value');

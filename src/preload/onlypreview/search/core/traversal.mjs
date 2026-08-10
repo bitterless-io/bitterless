@@ -8,7 +8,7 @@ import {
   mediaTypeToPreviewHint,
   readClassifiedSearchContent
 } from './classification.mjs';
-import { isExcludedByOrderedGlobs } from './glob-config.mjs';
+import { canOrderedGlobReincludeDescendant, isExcludedByOrderedGlobs } from './glob-config.mjs';
 import { createBackgroundWorkSlicer } from './work-slicer.mjs';
 
 const naturalCollator = new Intl.Collator('und', { numeric: true, sensitivity: 'base' });
@@ -39,21 +39,44 @@ const sameFileIdentity = (left, right) =>
   left.size === right.size &&
   Math.trunc(left.mtimeMs) === Math.trunc(right.mtimeMs);
 
-const searchDirectorySegments = (relativePath, entry) => {
+const searchDirectorySegments = (relativePath, isDirectory) => {
   const segments = normalizeRelative(relativePath).split('/').filter(Boolean);
-  if (!entry.isDirectory()) segments.pop();
+  if (!isDirectory) segments.pop();
   return segments;
 };
 
-export const createTraversalPolicy = ({ rules = [] } = {}) => ({
-  rules,
-  isExcluded(relativePath, entry) {
-    const excludedDirectory = searchDirectorySegments(relativePath, entry).some(
+export const createTraversalPolicy = ({ rules = [] } = {}) => {
+  const isCoreExcluded = (relativePath, isDirectory) =>
+    searchDirectorySegments(relativePath, isDirectory).some(
       (segment) => segment.startsWith('.') || CORE_EXCLUDED_DIRECTORY_NAMES.has(segment)
     );
-    return excludedDirectory || isExcludedByOrderedGlobs(relativePath, rules);
-  }
-});
+  const isExcludedPath = (relativePath, isDirectory) =>
+    isCoreExcluded(relativePath, isDirectory) || isExcludedByOrderedGlobs(relativePath, rules);
+  const canTraverseExcludedDirectoryPath = (relativePath) =>
+    !isCoreExcluded(relativePath, true) && canOrderedGlobReincludeDescendant(relativePath, rules);
+  return {
+    rules,
+    isExcluded(relativePath, entry) {
+      return isExcludedPath(relativePath, entry.isDirectory());
+    },
+    isExcludedFilePath(relativePath) {
+      return isExcludedPath(relativePath, false);
+    },
+    isExcludedDirectoryPath(relativePath) {
+      return isExcludedPath(relativePath, true);
+    },
+    canTraverseExcludedDirectoryPath,
+    isPhysicallyExcludedPath(relativePath) {
+      return (
+        isExcludedPath(relativePath, false) ||
+        (isExcludedPath(relativePath, true) && !canTraverseExcludedDirectoryPath(relativePath))
+      );
+    },
+    canTraverseExcludedDirectory(relativePath, entry) {
+      return entry.isDirectory() && canTraverseExcludedDirectoryPath(relativePath);
+    }
+  };
+};
 
 const createTreeEntry = ({ relativePath, stat, nodeKind, mediaType }) => ({
   relativePath,
@@ -88,6 +111,8 @@ const openValidatedFile = async (rootRealPath, absolutePath, beforeStat) => {
 export const createWorkspaceTraversal = async ({
   rootPath,
   config,
+  collectTreeEntries = true,
+  metadataOnly = false,
   onTreeEntry,
   onProgress,
   shouldReadContent,
@@ -134,6 +159,12 @@ export const createWorkspaceTraversal = async ({
           continue;
         }
         const searchExcluded = policy.isExcluded(relativePath, child);
+        const traverseExcludedDirectory =
+          searchExcluded && policy.canTraverseExcludedDirectory(relativePath, child);
+        if (searchExcluded && !traverseExcludedDirectory) {
+          statistics.excludedEntryCount += 1;
+          continue;
+        }
         if (searchExcluded) statistics.excludedEntryCount += 1;
         if (child.isSymbolicLink()) {
           let linkStat;
@@ -149,7 +180,7 @@ export const createWorkspaceTraversal = async ({
             nodeKind: 'symlink',
             mediaType: 'unknown'
           });
-          treeEntries.push(treeEntry);
+          if (collectTreeEntries) treeEntries.push(treeEntry);
           onTreeEntry?.(treeEntry);
           statistics.symlinkCount += 1;
           continue;
@@ -170,15 +201,17 @@ export const createWorkspaceTraversal = async ({
             statistics.unreadableEntryCount += 1;
             continue;
           }
-          const treeEntry = createTreeEntry({
-            relativePath,
-            stat: directoryStat,
-            nodeKind: 'directory',
-            mediaType: 'unknown'
-          });
-          treeEntries.push(treeEntry);
-          onTreeEntry?.(treeEntry);
-          statistics.directoryCount += 1;
+          if (!searchExcluded) {
+            const treeEntry = createTreeEntry({
+              relativePath,
+              stat: directoryStat,
+              nodeKind: 'directory',
+              mediaType: 'unknown'
+            });
+            if (collectTreeEntries) treeEntries.push(treeEntry);
+            onTreeEntry?.(treeEntry);
+            statistics.directoryCount += 1;
+          }
           if (depth >= MAX_INDEX_DEPTH) statistics.maxDepthReached = true;
           else childDirectories.push(directoryRealPath);
           continue;
@@ -189,7 +222,7 @@ export const createWorkspaceTraversal = async ({
         try {
           beforeStat = await lstat(absolutePath);
           if (!beforeStat.isFile() || beforeStat.isSymbolicLink()) continue;
-          if (searchExcluded) {
+          if (metadataOnly) {
             const mediaType = classifySearchMediaType(relativePath);
             const treeEntry = createTreeEntry({
               relativePath,
@@ -197,9 +230,18 @@ export const createWorkspaceTraversal = async ({
               nodeKind: 'file',
               mediaType
             });
-            treeEntries.push(treeEntry);
+            if (collectTreeEntries) treeEntries.push(treeEntry);
             onTreeEntry?.(treeEntry);
             statistics.fileCount += 1;
+            statistics.searchFileCount += 1;
+            yield {
+              ...treeEntry,
+              size: beforeStat.size,
+              modifiedMs: Math.trunc(beforeStat.mtimeMs),
+              contentIndexed: false,
+              originalContent: ''
+            };
+            onProgress?.({ ...statistics });
             continue;
           }
           const cached = shouldReadContent?.({
@@ -214,7 +256,7 @@ export const createWorkspaceTraversal = async ({
               nodeKind: 'file',
               mediaType: cached.mediaType
             });
-            treeEntries.push(treeEntry);
+            if (collectTreeEntries) treeEntries.push(treeEntry);
             onTreeEntry?.(treeEntry);
             statistics.fileCount += 1;
             statistics.searchFileCount += 1;
@@ -245,7 +287,7 @@ export const createWorkspaceTraversal = async ({
             nodeKind: 'file',
             mediaType: classified.mediaType
           });
-          treeEntries.push(treeEntry);
+          if (collectTreeEntries) treeEntries.push(treeEntry);
           onTreeEntry?.(treeEntry);
           statistics.fileCount += 1;
           statistics.searchFileCount += 1;
@@ -272,6 +314,21 @@ export const createWorkspaceTraversal = async ({
   })();
 
   return { rootRealPath, entries, treeEntries, statistics };
+};
+
+export const countWorkspaceSearchEntries = async ({ rootPath, config, workSlicer }) => {
+  const traversal = await createWorkspaceTraversal({
+    rootPath,
+    config,
+    collectTreeEntries: false,
+    metadataOnly: true,
+    workSlicer
+  });
+  let count = 0;
+  for await (const entry of traversal.entries) {
+    if (entry !== undefined) count += 1;
+  }
+  return count;
 };
 
 export const readSingleWorkspaceFile = async ({ rootPath, relativePath }) => {

@@ -12,3 +12,6 @@ Non-blocking review findings are recorded here after task verification.
 - Split `tests/coin/specs/trench-omni.spec.ts` before adding another Omni scenario. Task015 Verify
   measured 921 lines, above the `code-review` TS-1 800-line limit; move the reusable Agent Guide and
   viewport helpers into a focused fixture/support module without weakening the real Electron flow.
+- Add a lightweight bundled Shell-store behavior harness for OnlyPreview browse/search projection
+  races. Current service behavior is covered with real fixtures, while renderer generation,
+  refresh, selected-ancestor, and stale-listing guarantees are primarily source-pattern guards.

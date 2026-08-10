@@ -27,9 +27,7 @@ export const buildOnlyPreviewTreeRows = (
   const visit = (parent: string, depth: number): void => {
     const children = entriesByParent.get(parent) || [];
     for (const entry of children) {
-      const hasChildren =
-        entry.nodeKind === 'directory' &&
-        (entriesByParent.get(entry.relativePath)?.length || 0) > 0;
+      const hasChildren = entry.nodeKind === 'directory';
       const expanded = expandedPaths.has(entry.relativePath);
       rows.push({ entry, depth, expanded, hasChildren });
       if (entry.nodeKind === 'directory' && expanded) {

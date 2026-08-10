@@ -5,11 +5,12 @@ import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { MAX_WATCH_CHANGE_PATHS, ONE_GIB_BYTES, TWO_GIB_BYTES } from './constants.mjs';
 import { SEARCH_ENGINE_IDENTITY, OnlyPreviewSqliteIndex } from './sqlite-index.mjs';
 import {
-  classifyTreePathWithoutIo,
+  countWorkspaceSearchEntries,
   createTraversalPolicy,
   createWorkspaceTraversal,
   readSingleWorkspaceFile
 } from './traversal.mjs';
+import { createOnlyPreviewBrowseIndex } from './browse-index.mjs';
 import {
   WORKSPACE_CONFIG_RELATIVE_PATH,
   loadOnlyPreviewWorkspaceConfig,
@@ -59,7 +60,7 @@ const prospectiveRealPath = async (candidatePath) => {
   }
 };
 
-const requireSearchScope = (scope, treeEntries) => {
+const requireSearchScope = (scope, treeEntries, hasBrowseDirectory = () => false) => {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
     throw new TypeError('Invalid search scope');
   }
@@ -88,7 +89,8 @@ const requireSearchScope = (scope, treeEntries) => {
     scope.relativePath &&
     !treeEntries.some(
       (entry) => entry.nodeKind === 'directory' && entry.relativePath === scope.relativePath
-    )
+    ) &&
+    !hasBrowseDirectory(scope.relativePath)
   ) {
     throw new TypeError('Search directory scope does not exist');
   }
@@ -190,7 +192,15 @@ export const assessOnlyPreviewSearchMemory = ({
 };
 
 export class OnlyPreviewSearchEngine {
-  constructor({ onSnapshot, onWatchCommit, readWorkspaceFile = readSingleWorkspaceFile } = {}) {
+  constructor({
+    onBrowseListing,
+    onProgress,
+    onSnapshot,
+    onWatchCommit,
+    readWorkspaceFile = readSingleWorkspaceFile
+  } = {}) {
+    this.onBrowseListing = onBrowseListing;
+    this.onProgress = onProgress;
     this.onSnapshot = onSnapshot;
     this.onWatchCommit = onWatchCommit;
     this.readWorkspaceFile = readWorkspaceFile;
@@ -201,6 +211,7 @@ export class OnlyPreviewSearchEngine {
     this.snapshotEmitTail = Promise.resolve();
     this.watchRevision = 0;
     this.watchCommitRevision = 0;
+    this.buildRevision = 0;
   }
 
   enqueue(operation) {
@@ -249,6 +260,7 @@ export class OnlyPreviewSearchEngine {
     this.config = await loadOnlyPreviewWorkspaceConfig(rootRealPath);
     this.searchPolicy = createTraversalPolicy(this.config);
     this.index = new OnlyPreviewSqliteIndex(this.databasePath);
+    this.browseIndex = createOnlyPreviewBrowseIndex(this.rootPath);
     this.identity = {
       workspaceHash: createHash('sha256').update(rootRealPath).digest('hex'),
       configHash: this.config.hash,
@@ -267,8 +279,16 @@ export class OnlyPreviewSearchEngine {
     });
     this.state = canReconcile ? 'reconciling' : 'building';
     this.treeEntries = [];
+    await this.emitRootBrowseListing();
+    const buildRevision = ++this.buildRevision;
+    this.emitBuildProgress({ buildRevision, phase: 'counting' });
     await this.emitSnapshot();
-    await this.runTraversal({ reconcileExisting: canReconcile });
+    const total = await countWorkspaceSearchEntries({
+      rootPath: this.rootPath,
+      config: this.config
+    });
+    this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
+    await this.runTraversal({ reconcileExisting: canReconcile, buildRevision, total });
     this.state = 'ready';
     await this.emitSnapshot();
     if (this.watchNeedsFullReconcile) {
@@ -278,7 +298,7 @@ export class OnlyPreviewSearchEngine {
     return await this.snapshot();
   }
 
-  async runTraversal({ reconcileExisting }) {
+  async runTraversal({ reconcileExisting, buildRevision, total }) {
     const traversal = await createWorkspaceTraversal({
       rootPath: this.rootPath,
       config: this.config,
@@ -287,8 +307,30 @@ export class OnlyPreviewSearchEngine {
         ? (metadata) => this.index.metadataForTraversal(metadata)
         : undefined
     });
-    if (reconcileExisting) await this.index.reconcile(traversal.entries, this.identity);
-    else await this.index.rebuild(traversal.entries, this.identity);
+    let lastReportedCompleted = 0;
+    const onBatch = ({ fileCount }) => {
+      const completed = Math.min(total, fileCount);
+      if (completed < total && completed - lastReportedCompleted < 256) return;
+      lastReportedCompleted = completed;
+      this.emitBuildProgress({
+        buildRevision,
+        phase: 'indexing',
+        completed,
+        total
+      });
+    };
+    const outcome = reconcileExisting
+      ? await this.index.reconcile(traversal.entries, this.identity, { onBatch })
+      : await this.index.rebuild(traversal.entries, this.identity, { onBatch });
+    const completed = Math.min(total, outcome.fileCount);
+    if (completed !== lastReportedCompleted) {
+      this.emitBuildProgress({
+        buildRevision,
+        phase: 'indexing',
+        completed,
+        total
+      });
+    }
     this.treeEntries = sortTreeEntries(traversal.treeEntries);
     this.maxDepthReached = traversal.statistics.maxDepthReached;
   }
@@ -309,10 +351,21 @@ export class OnlyPreviewSearchEngine {
     this.searchPolicy = createTraversalPolicy(nextConfig);
     this.identity = { ...this.identity, configHash: nextConfig.hash };
     this.state = configChanged ? 'building' : 'reconciling';
+    this.browseIndex.reset();
+    await this.emitRootBrowseListing();
+    const buildRevision = ++this.buildRevision;
+    this.emitBuildProgress({ buildRevision, phase: 'counting' });
     await this.emitSnapshot();
     this.treeEntries = [];
+    const total = await countWorkspaceSearchEntries({
+      rootPath: this.rootPath,
+      config: this.config
+    });
+    this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
     await this.runTraversal({
-      reconcileExisting: !configChanged && this.index.canReconcile(this.identity)
+      reconcileExisting: !configChanged && this.index.canReconcile(this.identity),
+      buildRevision,
+      total
     });
     this.state = 'ready';
     await this.emitSnapshot();
@@ -321,6 +374,12 @@ export class OnlyPreviewSearchEngine {
       this.watchController?.requestFullReconcile();
     }
     return await this.snapshot();
+  }
+
+  async browseDirectory({ workspaceId, generation, directoryToken }) {
+    this.requireWorkspace(workspaceId, generation);
+    if (!this.browseIndex) throw new TypeError('Browse workspace is not initialized');
+    return await this.browseIndex.list({ workspaceId, generation, directoryToken });
   }
 
   async search({
@@ -361,7 +420,11 @@ export class OnlyPreviewSearchEngine {
   }) {
     this.requireWorkspace(workspaceId, generation);
     if (this.state !== 'ready') throw new TypeError('Search index is not ready');
-    const validatedScope = requireSearchScope(scope, this.treeEntries);
+    const validatedScope = requireSearchScope(
+      scope,
+      this.treeEntries,
+      (relativePath) => this.browseIndex?.hasDirectory(relativePath) === true
+    );
     const outcome = await this.index.search(query, {
       maxResults,
       scope: validatedScope,
@@ -422,22 +485,27 @@ export class OnlyPreviewSearchEngine {
           continue;
         }
         if (currentStat.isDirectory()) {
-          requiresFullReconcile = true;
+          if (
+            this.searchPolicy.isExcludedDirectoryPath(relativePath) &&
+            !this.searchPolicy.canTraverseExcludedDirectoryPath(relativePath)
+          ) {
+            this.removeTreePath(relativePath);
+            this.index.delete(relativePath);
+          } else {
+            requiresFullReconcile = true;
+          }
         } else if (currentStat.isSymbolicLink()) {
           this.index.delete(relativePath);
-          requiresFullReconcile = true;
+          if (this.searchPolicy.isExcludedFilePath(relativePath)) {
+            this.removeTreePath(relativePath);
+          } else {
+            requiresFullReconcile = true;
+          }
         } else if (currentStat.isFile()) {
-          if (this.searchPolicy.isExcluded(relativePath, currentStat)) {
+          const searchExcluded = this.searchPolicy.isExcludedFilePath(relativePath);
+          if (searchExcluded) {
             this.index.delete(relativePath);
-            const classified = classifyTreePathWithoutIo(relativePath);
-            this.upsertTreeEntry(
-              toTreeFileEntry({
-                relativePath,
-                size: currentStat.size,
-                modifiedMs: Math.trunc(currentStat.mtimeMs),
-                ...classified
-              })
-            );
+            this.removeTreePath(relativePath);
           } else {
             const entry = await this.readWorkspaceFile({
               rootPath: this.rootPath,
@@ -448,7 +516,7 @@ export class OnlyPreviewSearchEngine {
               this.upsertTreeEntry(toTreeFileEntry(entry));
             } else requiresFullReconcile = true;
           }
-          if (!(await this.refreshParentDirectoryTreeEntry(relativePath))) {
+          if (!searchExcluded && !(await this.refreshParentDirectoryTreeEntry(relativePath))) {
             requiresFullReconcile = true;
           }
         } else requiresFullReconcile = true;
@@ -456,7 +524,10 @@ export class OnlyPreviewSearchEngine {
         if (error?.code === 'ENOENT') {
           this.removeTreePath(relativePath);
           this.index.delete(relativePath);
-          if (!(await this.refreshParentDirectoryTreeEntry(relativePath))) {
+          if (
+            !this.searchPolicy.isPhysicallyExcludedPath(relativePath) &&
+            !(await this.refreshParentDirectoryTreeEntry(relativePath))
+          ) {
             requiresFullReconcile = true;
           }
         } else requiresFullReconcile = true;
@@ -467,6 +538,7 @@ export class OnlyPreviewSearchEngine {
       this.emitWatchCommit({ full: true, paths: [] });
     } else {
       await this.emitSnapshot();
+      await this.emitBrowseListingsForChangedPaths([...committedPaths]);
       this.emitWatchCommit({ full: false, paths: [...committedPaths] });
     }
   }
@@ -594,6 +666,56 @@ export class OnlyPreviewSearchEngine {
     await emitted;
   }
 
+  emitBuildProgress(progress) {
+    if (!this.workspaceId || !Number.isSafeInteger(this.generation)) return;
+    try {
+      this.onProgress?.({
+        workspaceId: this.workspaceId,
+        generation: this.generation,
+        ...progress
+      });
+    } catch {
+      // Delivery failure cannot stop the active search-index transaction.
+    }
+  }
+
+  async emitRootBrowseListing() {
+    if (!this.workspaceId || !Number.isSafeInteger(this.generation) || !this.browseIndex) return;
+    const listing = await this.browseIndex.rootListing({
+      workspaceId: this.workspaceId,
+      generation: this.generation
+    });
+    try {
+      this.onBrowseListing?.(listing);
+    } catch {
+      // The matching initialize response can still establish the search workspace.
+    }
+  }
+
+  async emitBrowseListingsForChangedPaths(relativePaths) {
+    if (!this.workspaceId || !Number.isSafeInteger(this.generation) || !this.browseIndex) return;
+    const parentPaths = new Set(
+      relativePaths.map((relativePath) => {
+        const parent = normalizedRelativePath(dirname(relativePath));
+        return parent === '.' ? '' : parent;
+      })
+    );
+    for (const relativePath of parentPaths) {
+      const directoryToken = this.browseIndex.directoryTokenForListedPath(relativePath);
+      if (!directoryToken) continue;
+      try {
+        const listing = await this.browseIndex.list({
+          workspaceId: this.workspaceId,
+          generation: this.generation,
+          directoryToken
+        });
+        this.onBrowseListing?.(listing);
+      } catch {
+        // A concurrent rename/delete will be represented by the next watch batch.
+      }
+    }
+  }
+
   async shutdown() {
     return await this.enqueue(async () => await this.shutdownInternal());
   }
@@ -605,6 +727,7 @@ export class OnlyPreviewSearchEngine {
     await watchController?.close({ drain: false });
     this.index?.close();
     this.index = undefined;
+    this.browseIndex = undefined;
     this.workspaceId = undefined;
     this.rootPath = undefined;
     this.databasePath = undefined;

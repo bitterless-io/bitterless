@@ -74,6 +74,28 @@ test('search request scope is a strict project-or-relative-directory discriminat
   );
 });
 
+test('browse requests expose only the opaque directory capability and workspace fence', () => {
+  const request = {
+    hostToken: 'host-token',
+    workspaceId: 'workspace-token',
+    generation: 1,
+    directoryToken: 'opaque-directory-token'
+  };
+  assert.deepEqual(runtime.parseOnlyPreviewBrowseDirectoryRequest(request), request);
+  for (const invalid of [
+    { ...request, relativePath: 'private/directory' },
+    { ...request, absolutePath: '/private/directory' },
+    { ...request, directoryToken: '' },
+    { ...request, generation: -1 },
+    { hostToken: request.hostToken, workspaceId: request.workspaceId, generation: 1 }
+  ]) {
+    assert.throws(
+      () => runtime.parseOnlyPreviewBrowseDirectoryRequest(invalid),
+      (error) => error?.code === 'INVALID_INPUT'
+    );
+  }
+});
+
 test('watch reload gates selected paths, stale runtime events, and repeated quiet-edge revisions', () => {
   const active = { sessionId: 7, workspaceId: 'workspace-current', generation: 4 };
   assert.equal(
@@ -347,12 +369,84 @@ test('utility RPC enriches initialize privately and relays only current valid ra
       truncated: false,
       limit: 20_000
     },
-    memory: { measurementComplete: false }
+    memory: {
+      measurementComplete: false,
+      processRssBytes: null,
+      workerHeapUsedBytes: null,
+      workerExternalBytes: null,
+      treeMetadataEntryCount: null,
+      treeMetadataEstimatedBytes: null,
+      filenameTierEstimatedBytes: null,
+      diskIndexBytes: null,
+      runtimeOneGiBWarning: false,
+      runtimeTwoGiBLimitExceeded: false
+    }
   };
   child.emit('message', {
     type: 'onlypreview-search-utility-event',
     eventName: 'onlypreview/search-snapshot',
     value: { snapshot: validSnapshot }
+  });
+  const validRootListing = {
+    workspaceId: 'workspace-current',
+    generation: 4,
+    directoryToken: 'root-directory-token',
+    relativePath: '',
+    entries: [
+      {
+        relativePath: 'docs',
+        parentRelativePath: '',
+        name: 'docs',
+        nodeKind: 'directory',
+        size: 0,
+        modifiedAt: 1,
+        previewHint: 'unsupported',
+        mediaType: 'unknown',
+        isText: false,
+        directoryToken: 'docs-directory-token'
+      },
+      {
+        relativePath: 'readme.md',
+        parentRelativePath: '',
+        name: 'readme.md',
+        nodeKind: 'file',
+        size: 10,
+        modifiedAt: 1,
+        previewHint: 'text',
+        mediaType: 'text',
+        isText: true,
+        directoryToken: null
+      }
+    ]
+  };
+  child.emit('message', {
+    type: 'onlypreview-search-utility-event',
+    eventName: 'onlypreview/browse-listing',
+    value: { listing: validRootListing }
+  });
+  const validCountingProgress = {
+    workspaceId: 'workspace-current',
+    generation: 4,
+    buildRevision: 1,
+    phase: 'counting'
+  };
+  child.emit('message', {
+    type: 'onlypreview-search-utility-event',
+    eventName: 'onlypreview/search-progress',
+    value: { progress: validCountingProgress }
+  });
+  const validIndexingProgress = {
+    workspaceId: 'workspace-current',
+    generation: 4,
+    buildRevision: 1,
+    phase: 'indexing',
+    completed: 10,
+    total: 20
+  };
+  child.emit('message', {
+    type: 'onlypreview-search-utility-event',
+    eventName: 'onlypreview/search-progress',
+    value: { progress: validIndexingProgress }
   });
   for (const message of [
     {
@@ -374,6 +468,39 @@ test('utility RPC enriches initialize privately and relays only current valid ra
       type: 'onlypreview-search-utility-event',
       eventName: 'onlypreview/search-snapshot',
       value: { snapshot: { ...validSnapshot, entries: [] } }
+    },
+    {
+      type: 'onlypreview-search-utility-event',
+      eventName: 'onlypreview/browse-listing',
+      value: { listing: { ...validRootListing, generation: 3 } }
+    },
+    {
+      type: 'onlypreview-search-utility-event',
+      eventName: 'onlypreview/browse-listing',
+      value: { listing: { ...validRootListing, absolutePath: '/private/workspace' } }
+    },
+    {
+      type: 'onlypreview-search-utility-event',
+      eventName: 'onlypreview/browse-listing',
+      value: {
+        listing: {
+          ...validRootListing,
+          entries: [
+            validRootListing.entries[0],
+            { ...validRootListing.entries[1], directoryToken: 'docs-directory-token' }
+          ]
+        }
+      }
+    },
+    {
+      type: 'onlypreview-search-utility-event',
+      eventName: 'onlypreview/search-progress',
+      value: { progress: { ...validCountingProgress, stale: true } }
+    },
+    {
+      type: 'onlypreview-search-utility-event',
+      eventName: 'onlypreview/search-progress',
+      value: { progress: { ...validIndexingProgress, completed: 21 } }
     }
   ]) {
     child.emit('message', message);
@@ -382,6 +509,18 @@ test('utility RPC enriches initialize privately and relays only current valid ra
     {
       eventName: 'onlypreview/search-snapshot',
       params: { hostId: 'bound-host-id', snapshot: validSnapshot }
+    },
+    {
+      eventName: 'onlypreview/browse-listing',
+      params: { hostId: 'bound-host-id', listing: validRootListing }
+    },
+    {
+      eventName: 'onlypreview/search-progress',
+      params: { hostId: 'bound-host-id', progress: validCountingProgress }
+    },
+    {
+      eventName: 'onlypreview/search-progress',
+      params: { hostId: 'bound-host-id', progress: validIndexingProgress }
     }
   ]);
 
@@ -398,7 +537,7 @@ test('utility RPC enriches initialize privately and relays only current valid ra
     eventName: 'onlypreview/search-snapshot',
     value: { snapshot: validSnapshot }
   });
-  assert.equal(broadcasts.length, 1, 'events from a detached utility are stale and ignored');
+  assert.equal(broadcasts.length, 4, 'events from a detached utility are stale and ignored');
 });
 
 test('window and preload source keep search authority utility-owned and Main search-I/O free', () => {
@@ -410,9 +549,8 @@ test('window and preload source keep search authority utility-owned and Main sea
   const contentPreload = source('src/preload/onlypreview/onlypreviewContent.preload.ts');
   const preloadType = source('src/preload/onlypreview/onlypreview.preload.type.ts');
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
-  const bootstrapTypes = source(
-    'src/shared/onlypreview/onlyPreviewSearchBootstrap.types.ts'
-  );
+  const bootstrapTypes = source('src/shared/onlypreview/onlyPreviewSearchBootstrap.types.ts');
+  const searchContract = source('src/shared/onlypreview/onlyPreviewSearch.contract.ts');
   const runtimeHandler = source('src/utility/onlypreview/onlyPreviewSearchRuntime.utility.ts');
   const runtimeCoordinator = source(
     'src/utility/onlypreview/onlyPreviewSearchCoordinator.utility.ts'
@@ -470,7 +608,10 @@ test('window and preload source keep search authority utility-owned and Main sea
     /previewView\.webContents\.openDevTools\(\{ mode: 'detach', activate: false \}\)/
   );
   assert.doesNotMatch(windowHelper, /readdir|readFile|node:sqlite|OnlyPreviewIndexService/);
-  assert.doesNotMatch(handler, /OnlyPreviewIndexService|onlyPreviewIndexService|async buildIndex/);
+  assert.doesNotMatch(
+    handler,
+    /OnlyPreviewIndexService|onlyPreviewIndexService|async buildIndex|async listDirectory/
+  );
   assert.doesNotMatch(handler, /OnlyPreviewSearchAuthority/);
   assert.doesNotMatch(bootstrapTypes, /AuthorityApi|AuthorityRequest|searchToken/);
   assert.match(preloadType, /'previewHeader'/);
@@ -486,6 +627,18 @@ test('window and preload source keep search authority utility-owned and Main sea
   assert.doesNotMatch(
     runtimeHandler,
     /electron-xpc|AUTHORITY_CHANNEL|node:worker_threads|new Worker/
+  );
+  assert.match(
+    runtimeHandler,
+    /async browseDirectory\([\s\S]*parseOnlyPreviewBrowseDirectoryRequest\(params\)[\s\S]*_requireActiveRequest\(request\)[\s\S]*coordinator\.browseDirectory\(request\)/
+  );
+  assert.match(
+    runtimeHandler,
+    /onBrowseListing: \(listing\) => \{[\s\S]*isOnlyPreviewSearchRuntimeEventCurrent\(active, sessionId, listing\)[\s\S]*this\.registration\.emit\(ONLY_PREVIEW_BROWSE_LISTING_EVENT, \{ listing \}\)/
+  );
+  assert.match(
+    runtimeHandler,
+    /onProgress: \(progress\) => \{[\s\S]*isOnlyPreviewSearchRuntimeEventCurrent\(active, sessionId, progress\)[\s\S]*this\.registration\.emit\(ONLY_PREVIEW_SEARCH_PROGRESS_EVENT, \{ progress \}\)/
   );
   assert.match(
     runtimeHandler,
@@ -516,7 +669,15 @@ test('window and preload source keep search authority utility-owned and Main sea
   assert.match(runtimeProxy, /onlyPreviewSearchBootstrapRegistry\.resolve\(/);
   assert.match(runtimeRpc, /this\._rejectPending\(active\)/);
   assert.match(runtimeRpc, /ONLY_PREVIEW_SEARCH_UTILITY_EVENT_MESSAGE/);
+  assert.match(runtimeRpc, /ONLY_PREVIEW_BROWSE_LISTING_EVENT/);
+  assert.match(runtimeRpc, /ONLY_PREVIEW_SEARCH_PROGRESS_EVENT/);
   assert.match(runtimeRpc, /method,[\s\S]*params/);
+  const browseParser = searchContract.slice(
+    searchContract.indexOf('export const parseOnlyPreviewBrowseDirectoryRequest'),
+    searchContract.indexOf('export const parseOnlyPreviewSearchRequest')
+  );
+  assert.match(browseParser, /\['directoryToken', 'generation', 'hostToken', 'workspaceId'\]/);
+  assert.doesNotMatch(browseParser, /relativePath|absolutePath|rootPath|displayPath/);
   assert.doesNotMatch(runtimeProxy, /readdir|readFile|node:sqlite|database\.exec/);
   assert.doesNotMatch(bridgeType, /searchToken|rootPath|databasePath/);
   assert.match(vite, /onlypreviewSearchUtility:\s*resolve\(/);

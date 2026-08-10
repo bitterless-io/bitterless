@@ -13,13 +13,13 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 | Host/workspace capability registry | Main-created views + native-dialog/OS absolute path    | host-bound opaque workspace + relative refs                                                             | Node fs/path, UUID                                     | host isolation/revocation/containment tests                         |
 | Recent-directory service           | canonical workspace root + Core SQLite lifecycle       | latest directory candidate, per-host restore, fresh workspace capability                                | `SettingDao`, workspace/host registries                | latch/CAS/single-flight/order tests                                 |
 | Search bootstrap capability        | attached host + opaque workspace                       | private root/database paths injected only into UtilityProcess initialization                            | host/workspace registries, user-data path              | token/revocation/no-renderer-path tests                             |
-| Search UtilityProcess runtime      | private root/database paths, query/config/watch events | exclude-independent tree-name tier, excluded v7 SQLite file/content tier, file-only search results, aggregate telemetry | Electron utility process, `node:sqlite`, YAML, filesystem | dual-corpus/schema/query/snippet/watch/cancel/memory/recovery tests |
+| Search UtilityProcess runtime      | private root/database paths, browse/query/config/watch events | complete demand-loaded directory listings, exclude-independent tree-name tier, excluded v7 SQLite file/content tier, file-only search results, aggregate progress/telemetry | Electron utility process, `node:sqlite`, YAML, filesystem | browse/dual-corpus/schema/query/snippet/watch/progress/cancel/memory/recovery tests |
 | File descriptor/text service       | authorized relative file ref                           | typed descriptor/text or explicit error                                                                 | workspace registry                                     | signature/binary/encoding/size tests                                |
 | Asset protocol                     | authorized descriptor                                  | tokenized manual full/206 streaming response                                                            | Electron protocol, Node fs streams, token registry     | token/range/source guards + Electron smoke                          |
 | Open router                        | macOS event or Windows argv                            | serialized standalone-open request                                                                      | app lifecycle, window handler                          | argv/early queue tests                                              |
 | Standalone window graph            | folder-open/selection/bounds/settings/menu commands    | BaseWindow, Shell/Header/Content views, parented Setting window, native file menu                       | window state, renderer targets                         | lifecycle/source/E2E tests                                          |
 | Agent skill and Guide              | explicit absolute file/folder + current helper/runtime | read-only `preview.open`, portable skill, parented Guide window                                         | MCP bridge, OnlyPreview open router, package resources | pure schema/dispatch/path/resource/source tests                     |
-| Shell renderer                     | workspace/index/settings/scoped search batches         | pre-query-visible name filter, scoped file-only Project Search, preview-file locator, status, commands  | preload XPC, Arco, Tabler icons                        | renderer source/type tests                                          |
+| Shell renderer                     | workspace/listings/index/settings/scoped search batches/progress | complete demand-loaded tree, pre-query-visible name filter, scoped file-only Project Search, 2px no-copy progress rail, preview-file locator, status, commands | preload XPC, Arco, Tabler icons | renderer source/type tests |
 | Preview Header renderer            | display-only descriptor/control                        | fixed 43px file identity/type and Content render/reload/clear                                           | renderer-local XPC broadcasts                          | source/lifecycle tests                                              |
 | Preview Content renderer/component | file ref/settings/watch revision                       | code/inert HTML+Markdown/PDF.js canvas+TextLayer/image/audio/video/fallback plus selected-file rerender | XPC, Monaco, DOMPurify, unpdf/pdfjs, asset scheme      | pure renderer/source tests + owner acceptance                       |
 | Setting renderer                   | current settings + active category                     | left category navigation, one focused setting list, validated saved snapshot or cancel                   | XPC, Arco                                              | component/source/E2E tests                                          |
@@ -39,7 +39,10 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
    then gives Shell only an opaque workspace snapshot. A private search-bootstrap capability stays
    in Main; after host/workspace validation Main enriches only the UtilityProcess initialization
    message with root/database paths. Descriptor/read methods retain host + workspace + relative-path
-   containment, and no preload or page receives the bootstrap token or absolute paths.
+   containment, and no preload or page receives the bootstrap token or absolute paths. The
+   UtilityProcess emits the root listing early and mints a generation-bound opaque token for each
+   expandable directory. Shell expands with that token rather than a relative path; Main validates
+   and relays but never resolves or walks the directory or reads searchable content.
 5. Shell reports its preview-host rectangle; Main validates it, assigns its first 43px to Header,
    and assigns the remainder to Content.
 6. Shell selection notifies Header and Content with a capability file ref. Header owns display and
@@ -92,10 +95,14 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
     authority.
 21. Shell initializes and queries a narrow Main XPC proxy. Main validates the attached host, resolves
     the private bootstrap, supervises one host-bound UtilityProcess, and relays bounded calls without
-    search I/O. Only the UtilityProcess walks directories, classifies media, reads searchable text,
-    builds/reopens SQLite, applies 400ms trailing file updates, and executes/cancels queries. It owns
-    one-active/one-latest execution and emits at most 500 exact file-only results with text-only
-    grapheme snippets; Shell retains its 120ms leading-plus-trailing IME-aware scheduler.
+    search I/O. Only the UtilityProcess produces complete demand-loaded directory listings, owns the
+    generation-local directory-token map, walks search candidates, classifies media, reads
+    searchable text, builds/reopens SQLite, applies 400ms trailing file updates, and
+    executes/cancels queries. It owns one-active/one-latest execution, emits at most 500 exact
+    file-only results with text-only grapheme snippets, and publishes only aggregate
+    workspace/generation/build-revision-fenced counting/indexing progress. Shell retains its 120ms
+    leading-plus-trailing IME-aware scheduler and shows progress only as the 2px no-copy
+    Project-bottom rail.
 22. Entering Project Search captures a stable current-directory anchor and sends a strict relative
     `In Directory` scope by default; the Shell selector can switch the same query to `In Project`.
     Ordinary filtering never enters that protocol: it matches only `entry.name` on the rows visible
@@ -128,6 +135,12 @@ before GUI startup.
 `onlypreview-safe-markdown-selection-008` finishes the reader surface by rendering ordinary
 Markdown through an explicit parser/sanitizer boundary and reporting grapheme-aware selections
 from the Content view to the Shell-owned bottom status rail.
+The 2026-08-10 `onlypreview-layered-index-browse-009` and
+`onlypreview-index-progress-010` deliveries established complete browsing independent of search and
+the 2px no-copy Project-bottom progress rail. Their reviewed Main-owned `listDirectory`/`buildIndex`,
+100,000-entry, depth-20 implementation remains historical evidence; tasks 012–016 superseded that
+architecture with the UtilityProcess, persistent SQLite, dual-tier eligibility, hard pruning, and
+watch reconciliation while retaining both product intents.
 `onlypreview-agent-skill-guide-009` adds a portable read-only Preview skill, one production
 `preview.open` MCP command that reuses the existing open router, and a parented MenuBar Guide whose
 single copy action teaches an agent both MCP connection and skill installation.
@@ -187,7 +200,7 @@ converges create/update/delete/rename across both destinations.
 | A DOM context menu is clipped or covered by sibling Header/Content views | Main owns a capability-scoped native `Menu` and attaches it to the active OnlyPreview `BaseWindow`                                                                                                                                                                                                                                                                                        |
 | Setting restores an unrelated historic screen position                   | retain only its stored size; parent, center, and work-area clamp it from the currently authorized standalone window on every open                                                                                                                                                                                                                                                         |
 | Shell and Content race to restore one persisted directory                | one per-host restore promise with workspace rechecks before and after the SQLite latch                                                                                                                                                                                                                                                                                                    |
-| Search path capability leaks into a page                                 | Main-only bootstrap; root/database paths enter only the UtilityProcess initialization request and never contextBridge, renderer results, or logs                                                                                                                                                                                                                                          |
+| Search or browse path capability leaks into a page                       | Main-only bootstrap; root/database paths enter only UtilityProcess initialization, while Shell expands directories with generation-bound opaque tokens and receives only relative metadata                                                                                                                                                                                               |
 | Search I/O blocks Main or Shell typing                                   | Main performs no traversal/read/query/watch; UtilityProcess owns the runtime and Shell owns input                                                                                                                                                                                                                                                                                         |
 | Watch events are lost, spoofed, or update only the index                 | 400ms trailing UtilityProcess commit → raw fenced event → Main validation/host binding/XPC broadcast → Header selection/revision gate → existing reload control → Content generation/read                                                                                                                                                                                                  |
 | Local filter silently searches collapsed paths or expands the tree       | freeze the pre-query visible rows, match exact `entry.name` only, retain context ancestors, and never mutate expansion                                                                                                                                                                                                                                                                    |
@@ -217,11 +230,13 @@ converges create/update/delete/rename across both destinations.
 
 ## Verification Layers
 
-1. Pure unit tests for contracts, classifier, capability containment, visible-row filtering,
-   directory/project scopes, persistent indexing, throttle/IME/cancellation, snippets, watch
-   reconciliation plus selected-Preview rerender, and open-argument
-   parsing, plus recent-directory codec, latch, CAS, generation, and per-host single-flight state.
-2. Focused source/integration tests for host wiring and security preferences.
+1. Pure unit tests for contracts, classifier, capability containment, opaque browse-token ownership,
+   early root listing, complete per-directory browsing, visible-row filtering, directory/project
+   scopes, persistent indexing, bounded build progress, throttle/IME/cancellation, snippets, watch
+   reconciliation plus selected-Preview rerender, and open-argument parsing, plus recent-directory
+   codec, latch, CAS, generation, and per-host single-flight state.
+2. Focused source/integration tests for host wiring, Main zero-search/browse-I/O, whitelisted
+   browse/progress relay, 2px no-copy rail behavior, and security preferences.
 3. Node and web typechecks, renderer i18n guard, targeted ESLint, `git diff --check`.
 4. Full Electron Vite build and output audit. Earlier UtilityProcess integration evidence has
    `yarn build` PASS with the official shared/Content preload and Main UtilityProcess entries;

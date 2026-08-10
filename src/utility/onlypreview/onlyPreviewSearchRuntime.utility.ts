@@ -6,15 +6,20 @@ import {
 import type { OnlyPreviewResult } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewSearchBootstrap } from '@shared/onlypreview/onlyPreviewSearchBootstrap.types';
 import {
+  parseOnlyPreviewBrowseDirectoryRequest,
   parseOnlyPreviewSearchCancelRequest,
   parseOnlyPreviewSearchInitializeRequest,
   parseOnlyPreviewSearchRequest,
   parseOnlyPreviewSearchShutdownRequest
 } from '@shared/onlypreview/onlyPreviewSearch.contract';
 import {
+  ONLY_PREVIEW_BROWSE_LISTING_EVENT,
   ONLY_PREVIEW_SEARCH_BATCH_EVENT,
+  ONLY_PREVIEW_SEARCH_PROGRESS_EVENT,
   ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT,
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
+  type OnlyPreviewBrowseDirectoryRequest,
+  type OnlyPreviewBrowseListing,
   type OnlyPreviewSearchCancelRequest,
   type OnlyPreviewSearchInitializeRequest,
   type OnlyPreviewSearchRequest,
@@ -129,6 +134,16 @@ export class OnlyPreviewSearchRuntimeUtility implements OnlyPreviewSearchRuntime
     });
   }
 
+  async browseDirectory(
+    params: OnlyPreviewBrowseDirectoryRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewBrowseListing>> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewBrowseDirectoryRequest(params);
+      const active = this._requireActiveRequest(request);
+      return await active.coordinator.browseDirectory(request);
+    });
+  }
+
   async search(
     params: OnlyPreviewSearchRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchResponse>> {
@@ -162,6 +177,16 @@ export class OnlyPreviewSearchRuntimeUtility implements OnlyPreviewSearchRuntime
 
   private _createCoordinator(sessionId: number): OnlyPreviewSearchCoordinator {
     return createOnlyPreviewSearchUtilityCoordinator({
+      onBrowseListing: (listing) => {
+        const active = this.active;
+        if (!isOnlyPreviewSearchRuntimeEventCurrent(active, sessionId, listing)) return;
+        this.registration.emit(ONLY_PREVIEW_BROWSE_LISTING_EVENT, { listing });
+      },
+      onProgress: (progress) => {
+        const active = this.active;
+        if (!isOnlyPreviewSearchRuntimeEventCurrent(active, sessionId, progress)) return;
+        this.registration.emit(ONLY_PREVIEW_SEARCH_PROGRESS_EVENT, { progress });
+      },
       onSearchBatch: (batch) => {
         const active = this.active;
         if (!isOnlyPreviewSearchRuntimeEventCurrent(active, sessionId, batch)) return;

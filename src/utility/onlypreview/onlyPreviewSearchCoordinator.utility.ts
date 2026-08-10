@@ -1,4 +1,7 @@
 import type {
+  OnlyPreviewBrowseDirectoryRequest,
+  OnlyPreviewBrowseListing,
+  OnlyPreviewSearchBuildProgress,
   OnlyPreviewSearchResponse,
   OnlyPreviewSearchResult,
   OnlyPreviewSearchScope,
@@ -30,12 +33,15 @@ export interface OnlyPreviewSearchCoordinator {
     databasePath: string;
   }): Promise<OnlyPreviewSearchSnapshot>;
   refresh(params: { workspaceId: string; generation: number }): Promise<OnlyPreviewSearchSnapshot>;
+  browseDirectory(params: OnlyPreviewBrowseDirectoryRequest): Promise<OnlyPreviewBrowseListing>;
   search(params: SearchValue): Promise<OnlyPreviewSearchResponse>;
   cancel(params: { requestId: string }): Promise<void>;
   shutdown(): Promise<void>;
 }
 
 interface CreateOnlyPreviewSearchCoordinatorOptions {
+  onBrowseListing?(listing: OnlyPreviewBrowseListing): void;
+  onProgress?(progress: OnlyPreviewSearchBuildProgress): void;
   onSnapshot?(snapshot: OnlyPreviewSearchSnapshot): void;
   onSearchBatch?(batch: {
     workspaceId: string;
@@ -50,6 +56,8 @@ export const createOnlyPreviewSearchUtilityCoordinator = (
   options: CreateOnlyPreviewSearchCoordinatorOptions
 ): OnlyPreviewSearchCoordinator => {
   const engine = createOnlyPreviewSearchEngine({
+    onBrowseListing: options.onBrowseListing,
+    onProgress: options.onProgress,
     onSnapshot: options.onSnapshot,
     onWatchCommit: options.onWatchCommit
   });
@@ -107,6 +115,7 @@ export const createOnlyPreviewSearchUtilityCoordinator = (
   return {
     initialize: async (value) => await runControl(async () => await engine.initialize(value)),
     refresh: async (value) => await runControl(async () => await engine.refresh(value)),
+    browseDirectory: async (value) => await engine.browseDirectory(value),
     search: async (value) => {
       if (shuttingDown) throw new Error('OnlyPreview search utility is closing.');
       return (await searchScheduler.submit(value)) as OnlyPreviewSearchResponse;

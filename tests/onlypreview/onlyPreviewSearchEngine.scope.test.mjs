@@ -42,7 +42,7 @@ const search = async (
     cancelBuffer: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
   });
 
-test('SQL scopes retain root dotfiles but contain no hidden-directory descendants', async () => {
+test('browsed hidden directories remain valid empty Search scopes outside the Search projection', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     const longQuery = 'q'.repeat(70);
@@ -62,24 +62,39 @@ test('SQL scopes retain root dotfiles but contain no hidden-directory descendant
     await write(join(root, 'docs/.hidden/title-scope-hit.pdf'), Buffer.from('%PDF-1.7'));
     await write(join(root, 'visible/scope-hit-folder/neutral.txt'), 'neutral');
 
-    const engine = createOnlyPreviewSearchEngine();
+    const browseListings = [];
+    const engine = createOnlyPreviewSearchEngine({
+      onBrowseListing: (listing) => browseListings.push(listing)
+    });
     const snapshot = await engine.initialize({
       workspaceId: 'workspace',
       generation: 1,
       rootPath: root,
       databasePath: join(temp, 'cache', 'search.sqlite')
     });
+    assert.equal(browseListings.length, 1);
+    const rootListing = browseListings[0];
+    const rootEntry = (name) => rootListing.entries.find((entry) => entry.name === name);
+    assert.equal(rootEntry('.hidden').nodeKind, 'directory');
+    assert.equal(rootEntry('docs').nodeKind, 'directory');
+    const docsListing = await engine.browseDirectory({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: rootEntry('docs').directoryToken
+    });
     assert.equal(
-      snapshot.index.entries.some(
-        ({ relativePath, nodeKind }) => relativePath === '.hidden' && nodeKind === 'directory'
+      docsListing.entries.some(
+        ({ relativePath, nodeKind }) => relativePath === 'docs/.hidden' && nodeKind === 'directory'
       ),
       true
     );
     assert.equal(
-      snapshot.index.entries.some(
-        ({ relativePath, nodeKind }) => relativePath === 'docs/.hidden' && nodeKind === 'directory'
-      ),
-      true
+      snapshot.index.entries.some(({ relativePath }) => relativePath === '.hidden'),
+      false
+    );
+    assert.equal(
+      snapshot.index.entries.some(({ relativePath }) => relativePath === 'docs/.hidden'),
+      false
     );
 
     const inProject = new Map(

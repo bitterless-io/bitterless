@@ -304,7 +304,7 @@
         </div>
 
         <div
-          v-else-if="onlyPreviewShellStore.index && !onlyPreviewShellStore.indexLoading"
+          v-else-if="onlyPreviewShellStore.projectionReady"
           name="onlypreview__noResults"
           class="onlypreview-shell__no-results"
         >
@@ -313,6 +313,32 @@
               ? onlyPreviewI18n.project.noResults
               : onlyPreviewI18n.project.emptyProject
           }}
+        </div>
+
+        <div
+          v-if="onlyPreviewShellStore.indexProgress"
+          name="onlypreview__indexProgress"
+          class="onlypreview-shell__index-progress"
+          :class="`onlypreview-shell__index-progress--${onlyPreviewShellStore.indexProgress.phase}`"
+          role="progressbar"
+          :aria-label="onlyPreviewI18n.project.indexProgressLabel"
+          :aria-valuemin="onlyPreviewShellStore.indexProgress.phase === 'indexing' ? 0 : undefined"
+          :aria-valuemax="
+            onlyPreviewShellStore.indexProgress.phase === 'indexing'
+              ? onlyPreviewShellStore.indexProgress.total
+              : undefined
+          "
+          :aria-valuenow="
+            onlyPreviewShellStore.indexProgress.phase === 'indexing'
+              ? onlyPreviewShellStore.indexProgress.completed
+              : undefined
+          "
+        >
+          <span
+            class="onlypreview-shell__index-progress-fill"
+            :style="indexProgressStyle"
+            aria-hidden="true"
+          ></span>
         </div>
       </aside>
 
@@ -347,14 +373,6 @@
       role="status"
       aria-live="polite"
     >
-      <span class="onlypreview-shell__index-state">
-        <span
-          class="onlypreview-shell__index-pulse"
-          :class="{ 'onlypreview-shell__index-pulse--active': onlyPreviewShellStore.indexLoading }"
-          aria-hidden="true"
-        ></span>
-        {{ indexStatus }}
-      </span>
       <span v-if="onlyPreviewShellStore.selectedEntry" class="onlypreview-shell__file-state">
         <template v-if="onlyPreviewShellStore.selectedCharacterCount > 0">
           <span class="onlypreview-shell__selection-state">{{ selectedCharacterStatus }}</span>
@@ -413,21 +431,11 @@ const projectSearchScopeTarget = computed(
     onlyPreviewI18n.project.label
 );
 
-const indexStatus = computed(() => {
-  if (onlyPreviewShellStore.projectSearchMemory?.runtimeTwoGiBLimitExceeded) {
-    return onlyPreviewI18n.project.indexMemoryWarning.toUpperCase();
-  }
-  if (onlyPreviewShellStore.projectSearchMemory?.runtimeOneGiBWarning) {
-    return onlyPreviewI18n.project.indexMemoryAdvisory.toUpperCase();
-  }
-  if (onlyPreviewShellStore.indexLoading) return onlyPreviewI18n.project.indexing.toUpperCase();
-  if (!onlyPreviewShellStore.workspace) return onlyPreviewI18n.project.readyToOpen.toUpperCase();
-  if (!onlyPreviewShellStore.index) return onlyPreviewI18n.project.indexFailed.toUpperCase();
-  if (onlyPreviewShellStore.index.truncated) {
-    return onlyPreviewI18n.project.indexPartial.toUpperCase();
-  }
-  return onlyPreviewI18n.project.indexReady.toUpperCase();
-});
+const indexProgressStyle = computed(() =>
+  onlyPreviewShellStore.indexProgress?.phase === 'indexing'
+    ? { transform: `scaleX(${onlyPreviewShellStore.indexProgressRatio})` }
+    : undefined
+);
 
 const selectedCharacterStatus = computed(() =>
   interpolateOnlyPreview(onlyPreviewI18n.project.selectedCharacters, {
@@ -535,8 +543,8 @@ const focusProjectTree = (): void => {
   void focusTreePath(onlyPreviewShellStore.focusTree());
 };
 
-const locateCurrentFile = (): void => {
-  void focusTreePath(onlyPreviewShellStore.locateSelectedFile(), true);
+const locateCurrentFile = async (): Promise<void> => {
+  await focusTreePath(await onlyPreviewShellStore.locateSelectedFile(), true);
 };
 
 const handleTreeKeydown = (event: KeyboardEvent): void => {

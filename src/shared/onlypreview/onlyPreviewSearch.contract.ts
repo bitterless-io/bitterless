@@ -1,15 +1,13 @@
 import {
   ONLY_PREVIEW_SEARCH_MAX_RESULTS,
+  type OnlyPreviewBrowseDirectoryRequest,
   type OnlyPreviewSearchCancelRequest,
   type OnlyPreviewSearchInitializeRequest,
   type OnlyPreviewSearchRequest,
   type OnlyPreviewSearchScope,
   type OnlyPreviewSearchShutdownRequest
 } from './onlyPreviewSearch.type';
-import {
-  normalizeOnlyPreviewRelativePath,
-  OnlyPreviewContractError
-} from './onlyPreview.contract';
+import { normalizeOnlyPreviewRelativePath, OnlyPreviewContractError } from './onlyPreview.contract';
 
 const MAX_QUERY_CODE_UNITS = 16_384;
 
@@ -74,6 +72,23 @@ export const parseOnlyPreviewSearchInitializeRequest = (
     hostToken: expectToken(record.hostToken, 'Host capability'),
     workspaceId: expectToken(record.workspaceId, 'Workspace capability'),
     generation: expectGeneration(record.generation)
+  };
+};
+
+export const parseOnlyPreviewBrowseDirectoryRequest = (
+  value: unknown
+): OnlyPreviewBrowseDirectoryRequest => {
+  const record = expectRecord(value, 'Browse directory request');
+  expectExactKeys(
+    record,
+    ['directoryToken', 'generation', 'hostToken', 'workspaceId'],
+    'Browse directory request'
+  );
+  return {
+    hostToken: expectToken(record.hostToken, 'Host capability'),
+    workspaceId: expectToken(record.workspaceId, 'Workspace capability'),
+    generation: expectGeneration(record.generation),
+    directoryToken: expectToken(record.directoryToken, 'Directory capability')
   };
 };
 

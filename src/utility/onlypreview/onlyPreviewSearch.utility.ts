@@ -35,7 +35,9 @@ process.parentPort?.on('message', (event) => {
   if (
     request?.type !== ONLY_PREVIEW_SEARCH_UTILITY_REQUEST_MESSAGE ||
     typeof request.requestId !== 'string' ||
-    !['initialize', 'refresh', 'search', 'cancel', 'shutdown'].includes(request.method)
+    !['initialize', 'refresh', 'browseDirectory', 'search', 'cancel', 'shutdown'].includes(
+      request.method
+    )
   ) {
     return;
   }

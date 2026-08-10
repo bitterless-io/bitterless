@@ -1082,21 +1082,18 @@ test('workspace updates have one authoritative event path and stale search snaps
 
   const applySnapshotBody = shellStore.slice(
     shellStore.indexOf('private async applySearchSnapshot('),
-    shellStore.indexOf('private async includeExplicitSelection')
+    shellStore.indexOf('private applyBrowseListing(')
   );
-  assert.match(applySnapshotBody, /const revision = \+\+this\.searchSnapshotRevision/);
   assert.match(
     applySnapshotBody,
     /snapshot\.workspaceId !== workspace\.workspaceId[\s\S]*snapshot\.generation !== this\.searchWorkspaceGeneration[\s\S]*snapshot\.index\.workspaceId !== workspace\.workspaceId/
   );
-  assert.match(
+  assert.match(applySnapshotBody, /snapshot\.state !== 'ready'/);
+  assert.match(applySnapshotBody, /settleOnlyPreviewSearchProgress\(this\.indexProgressState\)/);
+  assert.match(applySnapshotBody, /await this\.loadSelectedParentListings\(\)/);
+  assert.doesNotMatch(
     applySnapshotBody,
-    /const selectedRelativePath = workspace\.selectedRelativePath \|\| ''/
-  );
-  assert.match(applySnapshotBody, /await this\.includeExplicitSelection/);
-  assert.match(
-    applySnapshotBody,
-    /snapshot\.generation !== this\.searchWorkspaceGeneration[\s\S]*snapshot\.workspaceId !== this\.workspace\?\.workspaceId[\s\S]*revision !== this\.searchSnapshotRevision[\s\S]*selectedRelativePath !== \(this\.workspace\?\.selectedRelativePath \|\| ''\)/
+    /searchSnapshotRevision|includeExplicitSelection|this\.index\s*=|snapshot\.index\.entries/
   );
 
   const selectFileBody = shellStore.slice(
@@ -1109,6 +1106,111 @@ test('workspace updates have one authoritative event path and stale search snaps
     /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\)/
   );
   assert.doesNotMatch(handler, /buildIndex|OnlyPreviewIndexService|onlyPreviewIndexService/);
+});
+
+test('Utility browse and progress stay capability-scoped while the Project rail stays copy-free', () => {
+  const searchTypes = source('src/shared/onlypreview/onlyPreviewSearch.type.ts');
+  const mainTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const runtime = source('src/utility/onlypreview/onlyPreviewSearchRuntime.utility.ts');
+  const rpc = source('src/main/onlypreview/onlyPreviewSearchUtilityRpc.service.ts');
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const shellEvents = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
+  );
+  const browseProjection = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewBrowseProjection.service.ts'
+  );
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+
+  assert.match(searchTypes, /ONLY_PREVIEW_BROWSE_LISTING_EVENT = 'onlypreview\/browse-listing'/);
+  assert.match(searchTypes, /ONLY_PREVIEW_SEARCH_PROGRESS_EVENT = 'onlypreview\/search-progress'/);
+  const progressType = searchTypes.slice(
+    searchTypes.indexOf('export type OnlyPreviewSearchBuildProgress'),
+    searchTypes.indexOf('export interface OnlyPreviewSearchProgressEvent')
+  );
+  assert.match(progressType, /workspaceId: string/);
+  assert.match(progressType, /generation: number/);
+  assert.match(progressType, /buildRevision: number/);
+  assert.match(progressType, /phase: 'counting'/);
+  assert.match(progressType, /phase: 'indexing'/);
+  assert.match(progressType, /completed: number/);
+  assert.match(progressType, /total: number/);
+  assert.doesNotMatch(
+    progressType,
+    /relativePath|absolutePath|displayPath|filename|content|settings/
+  );
+  const browseRequestType = searchTypes.slice(
+    searchTypes.indexOf('export interface OnlyPreviewBrowseDirectoryRequest'),
+    searchTypes.indexOf('export type OnlyPreviewSearchScope')
+  );
+  assert.match(browseRequestType, /hostToken: string/);
+  assert.match(browseRequestType, /workspaceId: string/);
+  assert.match(browseRequestType, /generation: number/);
+  assert.match(browseRequestType, /directoryToken: string/);
+  assert.doesNotMatch(browseRequestType, /relativePath|absolutePath|displayPath/);
+  assert.doesNotMatch(mainTypes, /\blistDirectory\s*\(|\bbuildIndex\s*\(/);
+  assert.doesNotMatch(handler, /\basync listDirectory\s*\(|\basync buildIndex\s*\(/);
+
+  assert.match(
+    runtime,
+    /onBrowseListing:[\s\S]*isOnlyPreviewSearchRuntimeEventCurrent[\s\S]*ONLY_PREVIEW_BROWSE_LISTING_EVENT/
+  );
+  assert.match(
+    runtime,
+    /onProgress:[\s\S]*isOnlyPreviewSearchRuntimeEventCurrent[\s\S]*ONLY_PREVIEW_SEARCH_PROGRESS_EVENT/
+  );
+  assert.match(rpc, /ONLY_PREVIEW_BROWSE_LISTING_EVENT/);
+  assert.match(rpc, /ONLY_PREVIEW_SEARCH_PROGRESS_EVENT/);
+  assert.doesNotMatch(rpc, /readdir|readFile|node:sqlite|database\.exec/);
+
+  assert.ok(shellStore.split(/\r?\n/).length < 800);
+  assert.match(shellEvents, /value\.hostId === hostId/);
+  assert.match(shellEvents, /isOnlyPreviewBrowseListingEvent\(params\)/);
+  assert.match(
+    browseProjection,
+    /onlyPreviewSearchClient\.browseDirectory\(\{[\s\S]*\.\.\.context,[\s\S]*directoryToken[\s\S]*\}\)/
+  );
+  assert.match(
+    browseProjection,
+    /requestRevisionByToken\.get\(directoryToken\) !== requestRevision[\s\S]*directoryTokenByPath\.get\(relativePath\) !== directoryToken[\s\S]*listing\.directoryToken !== directoryToken/
+  );
+  assert.match(browseProjection, /requestRevisionByToken\.delete\(listing\.directoryToken\)/);
+  assert.match(shellEvents, /isOnlyPreviewSearchProgressEvent\(params\)/);
+  assert.match(
+    shellStore,
+    /reduceOnlyPreviewSearchProgress\([\s\S]*workspaceId: workspace\.workspaceId,[\s\S]*generation: this\.searchWorkspaceGeneration/
+  );
+  assert.match(shellStore, /settleOnlyPreviewSearchProgress\(this\.indexProgressState\)/);
+
+  const progressMarkup = shellApp.slice(
+    shellApp.indexOf('name="onlypreview__indexProgress"'),
+    shellApp.indexOf('</aside>')
+  );
+  assert.match(
+    progressMarkup,
+    /onlypreview-shell__index-progress--\$\{onlyPreviewShellStore\.indexProgress\.phase\}/
+  );
+  assert.match(progressMarkup, /:aria-label="onlyPreviewI18n\.project\.indexProgressLabel"/);
+  assert.doesNotMatch(progressMarkup, /\{\{|\bv-text\b|>\s*[^<\s][^<]*</);
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__index-progress \{[\s\S]*height:\s*2px[\s\S]*flex:\s*0 0 2px[\s\S]*margin-top:\s*auto/
+  );
+  assert.match(shellStyle, /onlypreview-index-counting[\s\S]*infinite/);
+  assert.match(
+    shellStyle,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*index-progress--counting[\s\S]*animation:\s*none/
+  );
+  assert.doesNotMatch(shellApp, /onlypreview__truncated|index-state|indexStatus|truncatedMessage/);
+  assert.doesNotMatch(
+    shellApp,
+    /indexPartial|indexReady|Search covers the first|搜索覆盖按层级排列的前/
+  );
+  assert.match(i18n, /indexProgressLabel:\s*'Building project search index'/);
+  assert.match(i18n, /indexProgressLabel:\s*'正在建立项目搜索索引'/);
 });
 
 test('OnlyPreview folder-first chrome, current-file locator, and native file menu stay capability scoped', () => {
@@ -1158,7 +1260,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(shellApp, /:disabled="!onlyPreviewShellStore\.selectedEntry"/);
   assert.match(
     shellStore,
-    /locateSelectedFile\(\): string \{[\s\S]*this\.clearSearch\(\)[\s\S]*this\.expandSelectedParents\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
+    /async locateSelectedFile\(\): Promise<string> \{[\s\S]*this\.clearSearch\(\)[\s\S]*this\.expandSelectedParents\(\)[\s\S]*await this\.loadSelectedParentListings\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
   );
   assert.match(shellApp, /scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\)/);
   assert.match(shellApp, /item\.focus\(center \? \{ preventScroll: true \} : undefined\)/);
@@ -1402,7 +1504,7 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   const omni = source('src/main/windows/omniWindow.helper.ts');
   assert.doesNotMatch(omni, /onlypreview/i);
   assert.match(omni, /render-process-gone/);
-  assert.match(omni, /additionalArguments:\s*\['--mode=omni'\]/);
+  assert.match(omni, /additionalArguments:\s*\[\s*'--mode=omni'/);
   assert.match(omni, /content\.webContents\.on\('will-redirect',\s*fenceMiniAppNavigation\)/);
   const firstContentCreationCatch = omni.slice(
     omni.indexOf('let content: WebContentsView;'),
@@ -1619,7 +1721,7 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(shellApp, /empty|emptyState|empty-state/i);
   assert.match(shellStore, /error/);
   assert.doesNotMatch(shellApp, />\s*INDEX_FAILED\s*</);
-  assert.match(shellApp, /index\.truncated[\s\S]*indexPartial[\s\S]*indexReady/);
+  assert.doesNotMatch(shellApp, /index\.truncated|indexPartial|indexReady/);
   assert.match(
     shellApp,
     /:tabindex="row\.entry\.relativePath === treeFocusRelativePath \? 0 : -1"/
@@ -1661,10 +1763,6 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(settingsStyle, /html,[\s\S]*#app[\s\S]*height:\s*100%/);
   assert.match(settingsStyle, /\.onlypreview-settings[\s\S]*min-height:\s*0/);
 
-  const onlyPreviewI18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
-  assert.match(onlyPreviewI18n, /indexPartial:\s*'Index partial'/);
-  assert.match(onlyPreviewI18n, /indexPartial:\s*'索引不完整'/);
-
   const monaco = source(
     'src/renderer/onlypreview/preview/src/components/MonacoTextPreview/MonacoTextPreview.vue'
   );
@@ -1677,20 +1775,6 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(pdf, /intent:\s*'print'/);
   assert.match(pdf, /new TextLayer/);
   assert.match(pdf, /canvas/);
-});
-
-test('partial index remains a compact status without an explanatory Project block', () => {
-  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
-  assert.match(shellApp, /index\.truncated[\s\S]*project\.indexPartial\.toUpperCase\(\)/);
-  assert.doesNotMatch(shellApp, /onlypreview__truncated|truncatedMessage|project\.truncated/);
-
-  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
-  assert.doesNotMatch(shellStyle, /\.onlypreview-shell__truncated/);
-
-  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
-  assert.match(i18n, /indexPartial:\s*'Index partial'/);
-  assert.match(i18n, /indexPartial:\s*'索引不完整'/);
-  assert.doesNotMatch(i18n, /truncated:/);
 });
 
 test('Markdown rendering and selection counts stay renderer-only, inert, and host-scoped', () => {
@@ -1814,29 +1898,42 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.doesNotMatch(previewStore, /selectedText|selectionText|text:\s*character/);
 
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
-  assert.match(shellStore, /keys\.length === 2/);
-  assert.match(shellStore, /Number\.isSafeInteger\(event\.characterCount\)/);
-  assert.match(
-    shellStore,
-    /isCharacterCountEvent\(payload\.params\)[\s\S]*payload\.params\.hostId === onlyPreviewEnv\.hostId/
+  const shellEvents = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
   );
-  assert.match(shellStore, /characterCountGate\.canAcceptCount\(payload\.params\.characterCount\)/);
-  assert.match(shellStore, /characterCountGate\.canBufferCount\(payload\.params\.characterCount\)/);
-  assert.match(shellStore, /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT/);
-  assert.match(shellStore, /characterCountGate\.acceptReady\(payload\.params\.revision\)/);
-  assert.match(shellStore, /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT/);
+  assert.match(shellEvents, /keys\.length === 2/);
+  assert.match(shellEvents, /Number\.isSafeInteger\(event\.characterCount\)/);
+  assert.match(
+    shellEvents,
+    /isCharacterCountEvent\(params\) && isCurrentHost\(params\)[\s\S]*handlers\.characterCountChanged\(params\.characterCount\)/
+  );
+  assert.match(shellStore, /characterCountGate\.canAcceptCount\(characterCount\)/);
+  assert.match(shellStore, /characterCountGate\.canBufferCount\(characterCount\)/);
+  assert.match(shellEvents, /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT/);
+  assert.match(shellStore, /characterCountGate\.acceptReady\(revision\)/);
+  assert.match(shellEvents, /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT/);
   assert.match(
     shellStore,
     /syncCharacterCountTransition\(\)[\s\S]*!this\.characterCountGate\.isSuspended\(\)[\s\S]*beginCharacterCountTransition\(\)/
   );
   assert.match(shellStore, /const revision = crypto\.randomUUID\(\)/);
-  assert.match(
-    shellStore,
-    /ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT[\s\S]*beginCharacterCountTransition\(\)[\s\S]*restoreWorkspace\(\)/
+  assert.match(shellEvents, /ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/);
+  const workspaceChangedHandler = shellStore.slice(
+    shellStore.indexOf('workspaceChanged: () =>'),
+    shellStore.indexOf('selectionChanged: () =>')
   );
   assert.match(
-    shellStore,
-    /ONLY_PREVIEW_SELECTION_CHANGED_EVENT[\s\S]*beginCharacterCountTransition\(\)[\s\S]*syncSelection\(\)/
+    workspaceChangedHandler,
+    /beginCharacterCountTransition\(\)[\s\S]*restoreWorkspace\(\)/
+  );
+  assert.match(shellEvents, /ONLY_PREVIEW_SELECTION_CHANGED_EVENT/);
+  const selectionChangedHandler = shellStore.slice(
+    shellStore.indexOf('selectionChanged: () =>'),
+    shellStore.indexOf('characterCountChanged:')
+  );
+  assert.match(
+    selectionChangedHandler,
+    /beginCharacterCountTransition\(\)[\s\S]*syncSelection\(\)/
   );
   const selectFile = shellStore.slice(
     shellStore.indexOf('private async selectFile('),
@@ -1870,9 +1967,10 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.match(directRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
   assert.doesNotMatch(directRefresh, /broadcast\(ONLY_PREVIEW_REFRESH_EVENT/);
 
+  assert.match(shellEvents, /ONLY_PREVIEW_REFRESH_EVENT/);
   const nativeRefresh = shellStore.slice(
-    shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT'),
-    shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT')
+    shellStore.indexOf('refresh: () =>'),
+    shellStore.indexOf('browseListing:')
   );
   assert.match(nativeRefresh, /beginCharacterCountTransition\(\)/);
   assert.match(nativeRefresh, /this\.refreshIndex\(\)/);
