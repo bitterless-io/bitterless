@@ -1,6 +1,6 @@
 export const ONLY_PREVIEW_SCHEME = 'bitterless-preview' as const;
-export const ONLY_PREVIEW_MAX_INDEX_ENTRIES = 20_000;
-export const ONLY_PREVIEW_MAX_INDEX_DEPTH = 32;
+export const ONLY_PREVIEW_MAX_INDEX_ENTRIES = 100_000;
+export const ONLY_PREVIEW_MAX_INDEX_DEPTH = 20;
 export const ONLY_PREVIEW_MAX_TEXT_BYTES = 8 * 1024 * 1024;
 export const ONLY_PREVIEW_MAX_MARKDOWN_BYTES = 1024 * 1024;
 
@@ -72,6 +72,12 @@ export interface OnlyPreviewIndex {
   limit: number;
 }
 
+export interface OnlyPreviewDirectoryListing {
+  workspaceId: string;
+  relativePath: string;
+  entries: OnlyPreviewIndexEntry[];
+}
+
 export interface OnlyPreviewDescriptorError {
   code: 'SIGNATURE_MISMATCH' | 'UNSUPPORTED_CODEC';
   message: string;
@@ -119,6 +125,20 @@ export interface OnlyPreviewHostEvent {
   hostId: string;
 }
 
+export type OnlyPreviewIndexProgressEvent =
+  | {
+      hostId: string;
+      indexRevision: string;
+      phase: 'counting';
+    }
+  | {
+      hostId: string;
+      indexRevision: string;
+      phase: 'indexing';
+      completed: number;
+      total: number;
+    };
+
 export interface OnlyPreviewCharacterCountEvent extends OnlyPreviewHostEvent {
   characterCount: number;
 }
@@ -133,6 +153,7 @@ export const ONLY_PREVIEW_REFRESH_EVENT = 'onlypreview/refresh' as const;
 export const ONLY_PREVIEW_FOCUS_PROJECT_EVENT = 'onlypreview/focusProject' as const;
 export const ONLY_PREVIEW_FOCUS_SEARCH_EVENT = 'onlypreview/focusSearch' as const;
 export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged' as const;
+export const ONLY_PREVIEW_INDEX_PROGRESS_EVENT = 'onlypreview/indexProgress' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT =
   'onlypreview/characterCountChanged' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT = 'onlypreview/characterCountReady' as const;
@@ -149,8 +170,11 @@ export interface OnlyPreviewApi {
   restoreWorkspace(
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
+  listDirectory(
+    params: OnlyPreviewHostRequest & { workspaceId: string; relativePath: string }
+  ): Promise<OnlyPreviewResult<OnlyPreviewDirectoryListing>>;
   buildIndex(
-    params: OnlyPreviewHostRequest & { workspaceId: string }
+    params: OnlyPreviewHostRequest & { workspaceId: string; indexRevision: string }
   ): Promise<OnlyPreviewResult<OnlyPreviewIndex>>;
   describeFile(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef

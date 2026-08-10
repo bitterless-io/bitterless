@@ -16,6 +16,8 @@ Electron/SQLite pin. Coin runtime verification is currently handed to the owner 
 | [onlypreview-recent-directory-006](tasks/onlypreview-recent-directory-006.md) | restore the last canonical directory from SQLite without persisting file selection or capabilities | implemented; owner verification pending | onlypreview-shell-ux-005 |
 | [onlypreview-e2e-keychain-isolation-007](tasks/onlypreview-e2e-keychain-isolation-007.md) | retain full-application E2E with mandatory mock Keychain isolation on macOS | implemented; owner verification pending | onlypreview-recent-directory-006 |
 | [onlypreview-safe-markdown-selection-008](tasks/onlypreview-safe-markdown-selection-008.md) | safely render Markdown and show selected-text character counts in the bottom status rail | implemented; owner verification pending | onlypreview-e2e-keychain-isolation-007 |
+| [onlypreview-layered-index-browse-009](tasks/onlypreview-layered-index-browse-009.md) | decouple complete demand-loaded directory browsing from a larger breadth-first search index | done | onlypreview-safe-markdown-selection-008 |
+| [onlypreview-index-progress-010](tasks/onlypreview-index-progress-010.md) | show one temporary no-copy Project-bottom rail for counted search-index generation | done | onlypreview-layered-index-browse-009 |
 | [cowork-subapp-001](tasks/cowork-subapp-001.md) | original Cowork runtime and host integration | done | — |
 | [cowork-subapp-003](tasks/cowork-subapp-003.md) | dev-local SQLCipher key without OS Keychain | done | cowork-subapp-001 |
 | [cowork-subapp-002](tasks/cowork-subapp-002.md) | parity checks and Bitterless-launched Electron E2E | done | cowork-subapp-001, cowork-subapp-003 |

@@ -9,3 +9,6 @@ Non-blocking review findings are recorded here after task verification.
 - Make the OnlyPreview native MenuBar hover check deterministic across synthetic pointer injection;
   the product hover state is correct, but one review run missed the injected `mouseMove` before
   succeeding on focused and full reruns.
+- Add a lightweight bundled Shell-store behavior harness for OnlyPreview browse/search projection
+  races. Current service behavior is covered with real fixtures, while renderer generation,
+  refresh, selected-ancestor, and stale-listing guarantees are primarily source-pattern guards.

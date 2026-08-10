@@ -64,7 +64,7 @@ const defaultSettings = {
   theme: 'light',
   editorFontSize: 13,
   wordWrap: false,
-  showHiddenFiles: false,
+  showHiddenFiles: true,
   openFilesWithSingleClick: true
 };
 
@@ -72,6 +72,7 @@ const savedSettings = {
   ...defaultSettings,
   editorFontSize: 18,
   wordWrap: true,
+  showHiddenFiles: false,
   openFilesWithSingleClick: false
 };
 

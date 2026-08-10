@@ -27,7 +27,7 @@ export const DEFAULT_ONLY_PREVIEW_SETTINGS: Readonly<OnlyPreviewSettings> = Obje
   theme: 'light',
   editorFontSize: 13,
   wordWrap: false,
-  showHiddenFiles: false,
+  showHiddenFiles: true,
   openFilesWithSingleClick: true
 });
 
@@ -47,6 +47,13 @@ const expectBoundedToken = (value: unknown, label: string): string => {
 
 export const parseOnlyPreviewHostToken = (value: unknown): string =>
   expectBoundedToken(value, 'Host capability');
+
+export const parseOnlyPreviewIndexRevision = (value: unknown): string => {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Index revision is invalid.');
+  }
+  return value;
+};
 
 export const normalizeOnlyPreviewRelativePath = (
   value: unknown,

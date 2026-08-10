@@ -4,9 +4,11 @@ import {
   OnlyPreviewContractError,
   onlyPreviewFailure,
   onlyPreviewSuccess,
-  parseOnlyPreviewBounds
+  parseOnlyPreviewBounds,
+  parseOnlyPreviewIndexRevision
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
+  ONLY_PREVIEW_INDEX_PROGRESS_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
@@ -93,13 +95,36 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     );
   }
 
+  async listDirectory(
+    params: ApiParams<'listDirectory'>
+  ): ReturnType<OnlyPreviewApi['listDirectory']> {
+    return await runOperation(async () => {
+      const settings = await onlyPreviewSettingsService.get();
+      return await onlyPreviewIndexService.listDirectory({
+        hostToken: params?.hostToken,
+        workspaceId: params?.workspaceId,
+        relativePath: params?.relativePath,
+        showHiddenFiles: settings.showHiddenFiles
+      });
+    });
+  }
+
   async buildIndex(params: ApiParams<'buildIndex'>): ReturnType<OnlyPreviewApi['buildIndex']> {
     return await runOperation(async () => {
+      const host = onlyPreviewHostRegistry.require(params?.hostToken, ['content']);
+      const indexRevision = parseOnlyPreviewIndexRevision(params?.indexRevision);
       const settings = await onlyPreviewSettingsService.get();
       return await onlyPreviewIndexService.build({
         hostToken: params?.hostToken,
         workspaceId: params?.workspaceId,
-        showHiddenFiles: settings.showHiddenFiles
+        showHiddenFiles: settings.showHiddenFiles,
+        onProgress: (progress) => {
+          xpcMain.broadcast(ONLY_PREVIEW_INDEX_PROGRESS_EVENT, {
+            hostId: host.hostId,
+            indexRevision,
+            ...progress
+          });
+        }
       });
     });
   }

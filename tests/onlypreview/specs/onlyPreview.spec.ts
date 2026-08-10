@@ -285,7 +285,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     onlyPreview,
     'shell',
     `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
-    7
+    6
   );
 
   const graph = await app.evaluate(({ BaseWindow }) => {
@@ -433,7 +433,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     projectCount: false,
     locateDisabled: true
   });
-  expect(folderFirstChrome.statusText).toBe('INDEX READY');
+  expect(folderFirstChrome.statusText).toBe('');
   expect(folderFirstChrome.statusText).not.toMatch(/\d|READ ONLY/i);
 
   const isMaximized = async (): Promise<boolean> =>
@@ -510,14 +510,13 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     await expect.poll(isMaximized).toBe(false);
   }
 
-  await dispatchTreeDoubleClick(onlyPreview, 'nested');
   await waitForRenderer(
     onlyPreview,
     'shell',
     `document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested"]')?.getAttribute('aria-expanded')`,
     'false'
   );
-  const reopenedDirectory = await evaluateRenderer<boolean>(
+  const expandedDirectory = await evaluateRenderer<boolean>(
     'shell',
     `(() => {
       const row = document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested"]');
@@ -526,12 +525,18 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
       return true;
     })()`
   );
-  expect(reopenedDirectory).toBe(true);
+  expect(expandedDirectory).toBe(true);
   await waitForRenderer(
     onlyPreview,
     'shell',
     `document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested"]')?.getAttribute('aria-expanded')`,
     'true'
+  );
+  await waitForRenderer(
+    onlyPreview,
+    'shell',
+    `document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested/inside.txt"]')?.textContent?.trim() || ''`,
+    'inside.txt'
   );
 
   await resetSelectionBroadcastProbe(app);
@@ -872,7 +877,7 @@ test('opens a Main-owned native file menu and revalidates each file action', asy
     onlyPreview,
     'shell',
     `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
-    7
+    6
   );
 
   await app.evaluate(({ BaseWindow, Menu, shell }) => {
@@ -1030,7 +1035,7 @@ test('toggles detached Shell and Preview DevTools independently without changing
     onlyPreview,
     'shell',
     `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
-    7
+    6
   );
 
   type DevToolsState = Record<
@@ -1132,7 +1137,7 @@ test('renders immutable text, selectable PDF, image pixels, and seekable audio/v
     onlyPreview,
     'shell',
     `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
-    7
+    6
   );
 
   await clickTreeFile(onlyPreview, 'copy.txt');
@@ -1356,7 +1361,7 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
     onlyPreview,
     'shell',
     `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
-    7
+    6
   );
   await clickTreeFile(onlyPreview, 'copy.txt');
   await waitForRenderer(

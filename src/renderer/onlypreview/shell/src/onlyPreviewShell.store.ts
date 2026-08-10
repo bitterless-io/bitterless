@@ -12,6 +12,8 @@ import {
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
+  ONLY_PREVIEW_INDEX_PROGRESS_EVENT,
+  ONLY_PREVIEW_MAX_INDEX_ENTRIES,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
@@ -20,6 +22,7 @@ import {
   type OnlyPreviewCharacterCountRevisionEvent,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
+  type OnlyPreviewIndexProgressEvent,
   type OnlyPreviewResult,
   type OnlyPreviewSettings,
   type OnlyPreviewWorkspace
@@ -69,6 +72,36 @@ const isExactHostEvent = (value: unknown): value is { hostId: string } => {
   return Object.keys(event).length === 1 && typeof event.hostId === 'string';
 };
 
+const isIndexProgressEvent = (value: unknown): value is OnlyPreviewIndexProgressEvent => {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  if (
+    typeof event.hostId !== 'string' ||
+    typeof event.indexRevision !== 'string' ||
+    event.indexRevision.length === 0 ||
+    event.indexRevision.length > 128
+  ) {
+    return false;
+  }
+  if (event.phase === 'counting') {
+    return Object.keys(event).length === 3;
+  }
+  return (
+    event.phase === 'indexing' &&
+    Object.keys(event).length === 5 &&
+    Number.isSafeInteger(event.completed) &&
+    Number.isSafeInteger(event.total) &&
+    (event.completed as number) >= 0 &&
+    (event.total as number) >= 0 &&
+    (event.completed as number) <= (event.total as number) &&
+    (event.total as number) <= ONLY_PREVIEW_MAX_INDEX_ENTRIES
+  );
+};
+
+type OnlyPreviewShellIndexProgress =
+  | { phase: 'counting' }
+  | { phase: 'indexing'; completed: number; total: number };
+
 const errorMessage = (error: unknown): string => {
   if (error instanceof OnlyPreviewContractError) {
     return getOnlyPreviewErrorMessage(error.code);
@@ -92,19 +125,25 @@ class OnlyPreviewShellStore {
   expandedPaths = new Set<string>();
   projectWidth = 264;
   indexLoading = false;
+  indexProgress: OnlyPreviewShellIndexProgress | null = null;
   targetLoading = false;
   errorMessage = '';
   focusProjectRevision = 0;
   focusSearchRevision = 0;
   private initialized = false;
-  private generation = 0;
+  private projectionGeneration = 0;
   private restoreGeneration = 0;
   private workspaceGeneration = 0;
   private selectionGeneration = 0;
+  private currentIndexRevision = '';
+  private readonly directoryListings = new Map<string, OnlyPreviewIndexEntry[]>();
+  private readonly directoryLoadGenerationByPath = new Map<string, number>();
   private readonly characterCountGate = new OnlyPreviewCharacterCountHostGate();
   private pendingCharacterCount = 0;
 
   get visibleRows(): OnlyPreviewTreeRow[] {
+    const query = this.searchQuery.trim().toLocaleLowerCase();
+    if (!query) return this.browseRows;
     if (!this.index) return [];
     const entriesByParent = new Map<string, OnlyPreviewIndexEntry[]>();
     for (const entry of this.index.entries) {
@@ -113,16 +152,18 @@ class OnlyPreviewShellStore {
       entriesByParent.set(entry.parentRelativePath, siblings);
     }
 
-    const query = this.searchQuery.trim().toLocaleLowerCase();
     const included = new Set<string>();
-    if (query) {
-      for (const entry of this.index.entries) {
-        if (!entry.relativePath.toLocaleLowerCase().includes(query)) continue;
-        let current = entry.relativePath;
-        while (current) {
-          included.add(current);
-          current = parentPath(current);
-        }
+    for (const entry of this.index.entries) {
+      if (
+        !entry.name.toLocaleLowerCase().includes(query) &&
+        !entry.relativePath.toLocaleLowerCase().includes(query)
+      ) {
+        continue;
+      }
+      let current = entry.relativePath;
+      while (current) {
+        included.add(current);
+        current = parentPath(current);
       }
     }
 
@@ -130,11 +171,13 @@ class OnlyPreviewShellStore {
     const visit = (parent: string, depth: number): void => {
       const children = entriesByParent.get(parent) || [];
       for (const entry of children) {
-        if (query && !included.has(entry.relativePath)) continue;
+        if (!included.has(entry.relativePath)) continue;
         const hasChildren =
           entry.nodeKind === 'directory' &&
-          (entriesByParent.get(entry.relativePath)?.length || 0) > 0;
-        const expanded = query ? true : this.expandedPaths.has(entry.relativePath);
+          (entriesByParent.get(entry.relativePath) || []).some((child) =>
+            included.has(child.relativePath)
+          );
+        const expanded = entry.nodeKind === 'directory' && hasChildren;
         rows.push({ entry, depth, expanded, hasChildren });
         if (entry.nodeKind === 'directory' && expanded) {
           visit(entry.relativePath, depth + 1);
@@ -145,10 +188,36 @@ class OnlyPreviewShellStore {
     return rows;
   }
 
+  private get browseRows(): OnlyPreviewTreeRow[] {
+    const rows: OnlyPreviewTreeRow[] = [];
+    const visit = (parentRelativePath: string, depth: number): void => {
+      for (const entry of this.directoryListings.get(parentRelativePath) || []) {
+        const loadedChildren = this.directoryListings.get(entry.relativePath);
+        const hasChildren =
+          entry.nodeKind === 'directory' &&
+          (loadedChildren === undefined || loadedChildren.length > 0);
+        const expanded =
+          entry.nodeKind === 'directory' && this.expandedPaths.has(entry.relativePath);
+        rows.push({ entry, depth, expanded, hasChildren });
+        if (expanded && loadedChildren) visit(entry.relativePath, depth + 1);
+      }
+    };
+    visit('', 0);
+    return rows;
+  }
+
+  get projectionReady(): boolean {
+    return this.searchQuery.trim() ? this.index !== null : this.directoryListings.has('');
+  }
+
+  get indexProgressRatio(): number {
+    if (this.indexProgress?.phase !== 'indexing') return 0;
+    if (this.indexProgress.total === 0) return 1;
+    return Math.min(1, Math.max(0, this.indexProgress.completed / this.indexProgress.total));
+  }
+
   get selectedEntry(): OnlyPreviewIndexEntry | null {
-    return (
-      this.index?.entries.find((entry) => entry.relativePath === this.selectedRelativePath) || null
-    );
+    return this.findEntry(this.selectedRelativePath);
   }
 
   get treeFocusRelativePath(): string {
@@ -201,7 +270,7 @@ class OnlyPreviewShellStore {
     if (!this.workspace) return;
     const reportingRevision = this.beginCharacterCountTransition();
     try {
-      await this.buildIndex();
+      await this.reloadWorkspaceProjection();
     } finally {
       this.resumeCharacterCountReporting(reportingRevision);
     }
@@ -255,10 +324,11 @@ class OnlyPreviewShellStore {
     return relativePath;
   }
 
-  locateSelectedFile(): string {
+  async locateSelectedFile(): Promise<string> {
     if (!this.selectedEntry) return '';
     this.searchQuery = '';
     this.expandSelectedParents();
+    await this.loadSelectedParentListings();
     this.focusedRelativePath = this.selectedEntry.relativePath;
     return this.focusedRelativePath;
   }
@@ -304,6 +374,7 @@ class OnlyPreviewShellStore {
     } else if (key === 'ArrowRight' && current.entry.nodeKind === 'directory') {
       if (current.hasChildren && !current.expanded) {
         this.expandedPaths.add(current.entry.relativePath);
+        void this.loadDirectory(current.entry.relativePath);
       } else if (current.hasChildren) {
         const firstChild = rows[currentIndex + 1];
         if (firstChild && firstChild.depth > current.depth) {
@@ -336,17 +407,16 @@ class OnlyPreviewShellStore {
   }
 
   activateFocusedEntry(): void {
-    const entry = this.index?.entries.find(
-      (candidate) => candidate.relativePath === this.focusedRelativePath
-    );
+    const entry = this.findEntry(this.focusedRelativePath);
     if (entry) void this.activateEntry(entry, true);
   }
 
-  toggleDirectory(relativePath: string): void {
+  async toggleDirectory(relativePath: string): Promise<void> {
     if (this.expandedPaths.has(relativePath)) {
       this.expandedPaths.delete(relativePath);
     } else {
       this.expandedPaths.add(relativePath);
+      await this.loadDirectory(relativePath);
     }
   }
 
@@ -420,13 +490,40 @@ class OnlyPreviewShellStore {
     xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
         const reportingRevision = this.beginCharacterCountTransition();
-        void this.buildIndex().finally(() => {
+        void this.reloadWorkspaceProjection().finally(() => {
           this.resumeCharacterCountReporting(reportingRevision);
         });
       }
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT, () => {
       void this.refreshSettings();
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_INDEX_PROGRESS_EVENT, (payload) => {
+      if (
+        !isIndexProgressEvent(payload.params) ||
+        payload.params.hostId !== onlyPreviewEnv.hostId ||
+        payload.params.indexRevision !== this.currentIndexRevision
+      ) {
+        return;
+      }
+      if (payload.params.phase === 'counting') {
+        if (this.indexProgress?.phase === 'indexing') return;
+        this.indexProgress = { phase: 'counting' };
+        return;
+      }
+      const previous = this.indexProgress;
+      if (
+        previous?.phase === 'indexing' &&
+        (payload.params.total !== previous.total ||
+          payload.params.completed < previous.completed)
+      ) {
+        return;
+      }
+      this.indexProgress = {
+        phase: 'indexing',
+        completed: payload.params.completed,
+        total: payload.params.total
+      };
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_PROJECT_EVENT, (payload) => {
       if (isHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
@@ -460,9 +557,16 @@ class OnlyPreviewShellStore {
       if (generation !== this.restoreGeneration) return;
       if (!workspace) {
         this.workspaceGeneration += 1;
+        this.projectionGeneration += 1;
         this.selectionGeneration += 1;
         this.workspace = null;
         this.index = null;
+        this.directoryListings.clear();
+        this.directoryLoadGenerationByPath.clear();
+        this.expandedPaths.clear();
+        this.indexLoading = false;
+        this.currentIndexRevision = '';
+        this.indexProgress = null;
         this.selectedRelativePath = '';
         this.selectedCharacterCount = 0;
         return;
@@ -477,11 +581,13 @@ class OnlyPreviewShellStore {
     const generation = ++this.workspaceGeneration;
     this.selectionGeneration += 1;
     this.workspace = workspace;
+    this.index = null;
+    this.expandedPaths.clear();
     this.selectedCharacterCount = 0;
     this.selectedRelativePath = workspace.selectedRelativePath || '';
     this.focusedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
-    await this.buildIndex();
+    await this.reloadWorkspaceProjection();
     if (
       generation !== this.workspaceGeneration ||
       workspace.workspaceId !== this.workspace?.workspaceId
@@ -508,90 +614,112 @@ class OnlyPreviewShellStore {
       this.selectedRelativePath = workspace.selectedRelativePath || '';
       this.focusedRelativePath = this.selectedRelativePath;
       this.expandSelectedParents();
+      await this.loadSelectedParentListings();
     } catch (error) {
       if (generation === this.restoreGeneration) this.errorMessage = errorMessage(error);
     }
   }
 
-  private async buildIndex(): Promise<void> {
+  private async reloadWorkspaceProjection(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     const workspace = this.workspace;
     if (!hostToken || !workspace) return;
     const workspaceId = workspace.workspaceId;
-    const selectedRelativePath = workspace.selectedRelativePath || '';
-    const generation = ++this.generation;
+    const generation = ++this.projectionGeneration;
+    const indexRevision = crypto.randomUUID();
+    this.currentIndexRevision = indexRevision;
+    this.indexProgress = null;
+    this.directoryListings.clear();
+    this.directoryLoadGenerationByPath.clear();
+    this.expandedPaths.clear();
     this.indexLoading = true;
     this.errorMessage = '';
     try {
+      const rootLoaded = await this.loadDirectory('', generation);
+      if (
+        !rootLoaded ||
+        generation !== this.projectionGeneration ||
+        workspaceId !== this.workspace?.workspaceId
+      ) {
+        return;
+      }
+      await this.loadSelectedParentListings(generation);
+      if (
+        generation !== this.projectionGeneration ||
+        workspaceId !== this.workspace?.workspaceId
+      ) {
+        return;
+      }
       const nextIndex = unwrapOnlyPreviewResult(
         await onlyPreviewClient.buildIndex({
           hostToken,
-          workspaceId
+          workspaceId,
+          indexRevision
         })
       );
-      if (generation !== this.generation || workspaceId !== this.workspace?.workspaceId) {
-        return;
-      }
-      await this.includeExplicitSelection({
-        hostToken,
-        index: nextIndex,
-        selectedRelativePath,
-        workspaceId
-      });
       if (
-        generation !== this.generation ||
-        workspaceId !== this.workspace?.workspaceId ||
-        selectedRelativePath !== (this.workspace?.selectedRelativePath || '')
+        generation !== this.projectionGeneration ||
+        workspaceId !== this.workspace?.workspaceId
       ) {
         return;
       }
       this.index = nextIndex;
       this.expandSelectedParents();
-      if (!this.expandedPaths.size) {
-        for (const entry of nextIndex.entries) {
-          if (entry.parentRelativePath === '' && entry.nodeKind === 'directory') {
-            this.expandedPaths.add(entry.relativePath);
-          }
-        }
-      }
     } catch (error) {
-      if (generation === this.generation) this.errorMessage = errorMessage(error);
+      if (generation === this.projectionGeneration) this.errorMessage = errorMessage(error);
     } finally {
-      if (generation === this.generation) this.indexLoading = false;
+      if (
+        generation === this.projectionGeneration &&
+        indexRevision === this.currentIndexRevision
+      ) {
+        this.indexLoading = false;
+        this.currentIndexRevision = '';
+        this.indexProgress = null;
+      }
     }
   }
 
-  private async includeExplicitSelection(params: {
-    hostToken: string;
-    index: OnlyPreviewIndex;
-    selectedRelativePath: string;
-    workspaceId: string;
-  }): Promise<void> {
-    const { hostToken, index, selectedRelativePath, workspaceId } = params;
-    if (
-      !selectedRelativePath ||
-      index.entries.some((entry) => entry.relativePath === selectedRelativePath)
-    )
-      return;
+  private async loadDirectory(
+    relativePath: string,
+    generation = this.projectionGeneration
+  ): Promise<boolean> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    const workspace = this.workspace;
+    if (!hostToken || !workspace) return false;
+    if (this.directoryListings.has(relativePath)) return true;
+    if (this.directoryLoadGenerationByPath.get(relativePath) === generation) return false;
+    const workspaceId = workspace.workspaceId;
+    this.directoryLoadGenerationByPath.set(relativePath, generation);
     try {
-      const descriptor = unwrapOnlyPreviewResult(
-        await onlyPreviewClient.describeFile({
+      const listing = unwrapOnlyPreviewResult(
+        await onlyPreviewClient.listDirectory({
           hostToken,
           workspaceId,
-          relativePath: selectedRelativePath
+          relativePath
         })
       );
-      index.entries.push({
-        relativePath: selectedRelativePath,
-        parentRelativePath: parentPath(selectedRelativePath),
-        name: descriptor.name,
-        nodeKind: 'file',
-        size: descriptor.size,
-        modifiedAt: descriptor.modifiedAt,
-        previewHint: descriptor.kind
-      });
-    } catch {
-      // The Preview surface reports the typed selection error; the index remains usable.
+      if (
+        generation !== this.projectionGeneration ||
+        workspaceId !== this.workspace?.workspaceId ||
+        listing.workspaceId !== workspaceId ||
+        listing.relativePath !== relativePath
+      ) {
+        return false;
+      }
+      this.directoryListings.set(relativePath, listing.entries);
+      return true;
+    } catch (error) {
+      if (
+        generation === this.projectionGeneration &&
+        workspaceId === this.workspace?.workspaceId
+      ) {
+        this.errorMessage = errorMessage(error);
+      }
+      return false;
+    } finally {
+      if (this.directoryLoadGenerationByPath.get(relativePath) === generation) {
+        this.directoryLoadGenerationByPath.delete(relativePath);
+      }
     }
   }
 
@@ -607,22 +735,52 @@ class OnlyPreviewShellStore {
         previousShowHidden !== settings.showHiddenFiles &&
         this.workspace
       ) {
-        await this.buildIndex();
+        await this.reloadWorkspaceProjection();
       }
     } catch (error) {
       this.errorMessage = errorMessage(error);
     }
   }
 
+  private async loadSelectedParentListings(
+    generation = this.projectionGeneration
+  ): Promise<void> {
+    const parents: string[] = [];
+    let current = parentPath(this.selectedRelativePath);
+    while (current) {
+      parents.unshift(current);
+      current = parentPath(current);
+    }
+    for (const relativePath of parents) {
+      if (
+        generation !== this.projectionGeneration ||
+        !this.workspace
+      ) {
+        return;
+      }
+      this.expandedPaths.add(relativePath);
+      await this.loadDirectory(relativePath, generation);
+    }
+  }
+
   private async activateEntry(entry: OnlyPreviewIndexEntry, force: boolean): Promise<void> {
     this.focusedRelativePath = entry.relativePath;
     if (entry.nodeKind === 'directory') {
-      this.toggleDirectory(entry.relativePath);
+      await this.toggleDirectory(entry.relativePath);
       return;
     }
     if (entry.nodeKind !== 'file') return;
     if (!force && !this.settings?.openFilesWithSingleClick) return;
     await this.selectFile(entry.relativePath);
+  }
+
+  private findEntry(relativePath: string): OnlyPreviewIndexEntry | null {
+    if (!relativePath) return null;
+    for (const entries of this.directoryListings.values()) {
+      const entry = entries.find((candidate) => candidate.relativePath === relativePath);
+      if (entry) return entry;
+    }
+    return this.index?.entries.find((entry) => entry.relativePath === relativePath) || null;
   }
 
   private async selectFile(relativePath: string): Promise<void> {

@@ -401,15 +401,40 @@ input {
   font-size: 11px;
 }
 
-.onlypreview-shell__truncated {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 8px 10px;
-  border-top: 1px solid var(--onlypreview-divider);
-  color: var(--onlypreview-muted);
-  background: #f1f2f7;
-  font-size: 10px;
-  line-height: 1.45;
+.onlypreview-shell__index-progress {
+  position: relative;
+  height: 2px;
+  flex: 0 0 2px;
+  margin-top: auto;
+  overflow: hidden;
+  background: #dfe2ed;
+}
+
+.onlypreview-shell__index-progress-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--onlypreview-royal);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+.onlypreview-shell__index-progress--counting .onlypreview-shell__index-progress-fill {
+  width: 40%;
+  animation: onlypreview-index-counting 900ms ease-in-out infinite;
+}
+
+.onlypreview-shell__index-progress--indexing .onlypreview-shell__index-progress-fill {
+  transition: transform 80ms linear;
+}
+
+@keyframes onlypreview-index-counting {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
 }
 
 .onlypreview-shell__resize-handle {
@@ -448,7 +473,7 @@ input {
   flex: 0 0 25px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   padding: 0 9px;
   overflow: hidden;
@@ -460,7 +485,6 @@ input {
   letter-spacing: 0.07em;
 }
 
-.onlypreview-shell__index-state,
 .onlypreview-shell__file-state {
   min-width: 0;
   display: flex;
@@ -477,47 +501,18 @@ input {
   text-overflow: ellipsis;
 }
 
-.onlypreview-shell__index-pulse {
-  position: relative;
-  width: 17px;
-  height: 2px;
-  flex: 0 0 17px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: #c8ccd9;
-}
-
-.onlypreview-shell__index-pulse::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  background: var(--onlypreview-royal);
-}
-
-.onlypreview-shell__index-pulse--active::after {
-  animation: onlypreview-index-rail 900ms ease-in-out infinite;
-}
-
-@keyframes onlypreview-index-rail {
-  0% {
-    transform: translateX(-100%);
-  }
-  55% {
-    transform: translateX(20%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .onlypreview-shell__tree-chevron {
     transition: none;
   }
 
-  .onlypreview-shell__index-pulse--active::after {
+  .onlypreview-shell__index-progress--counting .onlypreview-shell__index-progress-fill {
     animation: none;
-    transform: translateX(0);
+    width: 100%;
+    transform: none;
+  }
+
+  .onlypreview-shell__index-progress--indexing .onlypreview-shell__index-progress-fill {
+    transition: none;
   }
 }

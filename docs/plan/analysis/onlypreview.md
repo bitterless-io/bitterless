@@ -12,12 +12,12 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 | Shared contracts | untrusted XPC/settings/index values | parsed types and discriminated result envelopes | none | pure contract tests |
 | Host/workspace capability registry | Main-created views + native-dialog/OS absolute path | host-bound opaque workspace + relative refs | Node fs/path, UUID | host isolation/revocation/containment tests |
 | Recent-directory service | canonical workspace root + Core SQLite lifecycle | latest directory candidate, per-host restore, fresh workspace capability | `SettingDao`, workspace/host registries | latch/CAS/single-flight/order tests |
-| Index service | authorized workspace, settings | bounded flat metadata index | workspace registry | fixture traversal/sort/limit tests |
+| Browse/index service | authorized workspace, relative directory, settings, progress callback | complete immediate-child listing + counted bounded breadth-first metadata search index + throttled progress | workspace registry | fixture listing/traversal/sort/limit/progress tests |
 | File descriptor/text service | authorized relative file ref | typed descriptor/text or explicit error | workspace registry | signature/binary/encoding/size tests |
 | Asset protocol | authorized descriptor | tokenized manual full/206 streaming response | Electron protocol, Node fs streams, token registry | token/range/source guards + Electron smoke |
 | Open router | macOS event or Windows argv | serialized standalone-open request | app lifecycle, window handler | argv/early queue tests |
 | Standalone window graph | folder-open/selection/bounds/settings/menu commands | BaseWindow, Shell/Preview views, parented Setting window, native file menu | window state, renderer targets | lifecycle/source/E2E tests |
-| Shell renderer | workspace/index/settings | searchable tree, preview-file locator, count-free status, commands | XPC, Arco, Tabler icons | renderer source/type/E2E tests |
+| Shell renderer | workspace/listings/search index/progress/settings | demand-loaded complete tree, bounded path search, Project-bottom progress rail, preview-file locator, commands | XPC, Arco, Tabler icons | renderer source/type/E2E tests |
 | Preview renderer/component | file ref/settings | code/PDF.js canvas+TextLayer/image/audio/video/fallback | XPC, Monaco, unpdf/pdfjs, asset scheme | renderer/E2E fixtures |
 | Setting renderer | current settings | validated saved snapshot or cancel | XPC, Arco | component/source/E2E tests |
 | Home integration | card click | focus/create standalone window | XPC handler | catalog/i18n tests |
@@ -33,45 +33,51 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
    view and exposes it only through that view's preload context. Shell and Preview share one
    content host; Setting uses a distinct settings-only host.
 4. The handler asks the workspace registry to validate the target and bind it to the live host,
-   then gives the Shell only an opaque workspace snapshot. Shell calls index/descriptor/read
-   methods with host + workspace + relative path; every service call re-enters host ownership and
-   containment checks and returns a result envelope rather than relying on thrown XPC errors.
-5. Shell reports its preview-host rectangle; handler validates it and changes only the standalone
+   then gives the Shell only an opaque workspace snapshot. Shell calls directory-listing,
+   search-index, descriptor, and read methods with host + workspace + relative path; every service
+   call re-enters host ownership and containment checks and returns a result envelope rather than
+   relying on thrown XPC errors. Root and expanded-directory listings remain complete even when the
+   independent breadth-first search index reaches its bound.
+5. Shell assigns each index build an opaque revision. Main counts the bounded breadth-first search
+   projection, then generates it while broadcasting host/revision-scoped phase and progress events.
+   Shell renders only a no-copy Project-bottom rail for the current revision and removes it when
+   that build settles; stale events cannot revive it.
+6. Shell reports its preview-host rectangle; handler validates it and changes only the standalone
    Preview `WebContentsView` bounds.
-6. Shell selection reloads/notifies the dedicated Preview view with a capability file ref.
-7. Descriptor authorizes a host-bound asset token. Image/media requests use the internal scheme;
+7. Shell selection reloads/notifies the dedicated Preview view with a capability file ref.
+8. Descriptor authorizes a host-bound asset token. Image/media requests use the internal scheme;
    protocol resolves the token and manually returns full or correct single-range stream responses.
    PDF fetches the same authorized bytes and renders PDF.js canvases plus selectable TextLayers.
-8. Shell/Preview opens the Setting window through the same handler; save validates, persists in
+9. Shell/Preview opens the Setting window through the same handler; save validates, persists in
    `SettingDao`, then broadcasts the committed snapshot to live OnlyPreview renderers.
-9. Omni's shared mini-app parser, runtime registry, and Control selector all reject or omit
+10. Omni's shared mini-app parser, runtime registry, and Control selector all reject or omit
    `onlypreview`; OnlyPreview has no embedded container mode or cell lifecycle.
-10. Standalone/Setting teardown revokes the exact host, its workspaces, and media tokens. Auth
+11. Standalone/Setting teardown revokes the exact host, its workspaces, and media tokens. Auth
     invalidation and host quit close every remaining child webContents, window, capability, and
     token.
-11. Electron Vite produces one preload and three renderer entries; logging/i18n/package audits
+12. Electron Vite produces one preload and three renderer entries; logging/i18n/package audits
     recognize every emitted path.
-12. The Shell renders the standalone 32px MenuBar and sends capability-scoped window-control
+13. The Shell renders the standalone 32px MenuBar and sends capability-scoped window-control
     intents through the OnlyPreview XPC handler; Main alone minimizes, toggles maximize, or closes
     the current `BaseWindow`, while Preview bounds begin immediately below that bar.
-13. In the debug runtime profile, Main intercepts standard DevTools shortcuts on each standalone
+14. In the debug runtime profile, Main intercepts standard DevTools shortcuts on each standalone
     child `webContents` and toggles that exact Shell or Preview target in a detached window. Release
     profiles keep the path disabled; no renderer API or capability is added.
-14. The visible picker is folder-only. The Shell can locate its already-authorized current file
+15. The visible picker is folder-only. The Shell can locate its already-authorized current file
     locally, while file-row context menus cross the child-view boundary through a capability-scoped
     request and a Main-owned native `Menu` attached to the active `BaseWindow`.
-15. The Setting `BrowserWindow` uses the active content host's `BaseWindow` as its parent and is
+16. The Setting `BrowserWindow` uses the active content host's `BaseWindow` as its parent and is
     centered/clamped from that current window whenever opened; persisted Setting size must not
     restore a stale independent screen position.
-16. A successful folder open or Main-owned OS file target gives the recent-directory service only
+17. A successful folder open or Main-owned OS file target gives the recent-directory service only
     the canonical workspace root. The service stores version 1 under
     `onlypreview_workspace/last_directory` with `getStored` plus `insertIfAbsent`/`compareAndSet`;
     no file selection or capability identifier is persisted or logged.
-17. `app.main.ts` resolves the recent-directory service's Core SQLite ready/failure latch. Shell
+18. `app.main.ts` resolves the recent-directory service's Core SQLite ready/failure latch. Shell
     and Preview `restoreWorkspace` calls share one per-host flight after that latch, reconstruct a
     fresh directory workspace at most once, and clear all coordination state when the host is
     revoked.
-18. The OS-open path advances the explicit-target generation and suppresses history restore before
+19. The OS-open path advances the explicit-target generation and suppresses history restore before
     `ensureStandalone()` mounts child renderers. The latest explicit request wins any late history
     read and is the only target allowed to update the remembered directory.
 

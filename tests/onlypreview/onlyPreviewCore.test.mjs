@@ -71,6 +71,13 @@ const source = (relativePath) => readFileSync(join(projectRoot, relativePath), '
 test('strict contracts normalize only relative capabilities and preserve error envelopes', () => {
   const token = 'a'.repeat(64);
   assert.equal(runtime.parseOnlyPreviewHostToken(token), token);
+  assert.equal(runtime.parseOnlyPreviewIndexRevision('index-revision-1'), 'index-revision-1');
+  for (const invalidRevision of [null, '', 'x'.repeat(129)]) {
+    assert.throws(
+      () => runtime.parseOnlyPreviewIndexRevision(invalidRevision),
+      expectOnlyPreviewError('INVALID_INPUT')
+    );
+  }
   assert.equal(runtime.normalizeOnlyPreviewRelativePath('folder/file.txt'), 'folder/file.txt');
   assert.equal(runtime.normalizeOnlyPreviewRelativePath('', { allowEmpty: true }), '');
   for (const invalid of [
@@ -121,6 +128,7 @@ test('strict contracts normalize only relative capabilities and preserve error e
 });
 
 test('settings and preview bounds reject partial, extra, and unsafe values', () => {
+  assert.equal(runtime.DEFAULT_ONLY_PREVIEW_SETTINGS.showHiddenFiles, true);
   assert.deepEqual(
     runtime.parseOnlyPreviewSettings({
       theme: 'light',
@@ -383,6 +391,15 @@ test('workspace resolution rejects traversal, directories, and escaping symbolic
       }),
       expectOnlyPreviewError('PATH_NOT_REGULAR_FILE')
     );
+    await assert.rejects(
+      new runtime.OnlyPreviewIndexService(workspaces).listDirectory({
+        hostToken: host.hostToken,
+        workspaceId: workspace.workspaceId,
+        relativePath: 'escape.txt',
+        showHiddenFiles: true
+      }),
+      expectOnlyPreviewError('PATH_OUTSIDE_WORKSPACE')
+    );
   });
 });
 
@@ -407,10 +424,19 @@ test('index rejects a workspace root replaced by an outside symbolic link', asyn
       }),
       expectOnlyPreviewError('PATH_OUTSIDE_WORKSPACE')
     );
+    await assert.rejects(
+      new runtime.OnlyPreviewIndexService(workspaces).listDirectory({
+        hostToken: host.hostToken,
+        workspaceId: workspace.workspaceId,
+        relativePath: '',
+        showHiddenFiles: true
+      }),
+      expectOnlyPreviewError('PATH_OUTSIDE_WORKSPACE')
+    );
   });
 });
 
-test('index is directory-first, naturally sorted, ignores heavy folders, and keeps an explicit hidden file', async () => {
+test('directory listings and the breadth-first index share natural visibility rules', async () => {
   await withTempDirectory('onlypreview-index-', async (root) => {
     write(join(root, 'z10.txt'), 'ten');
     write(join(root, 'z2.txt'), 'two');
@@ -418,25 +444,46 @@ test('index is directory-first, naturally sorted, ignores heavy folders, and kee
     write(join(root, '.env'), 'VISIBLE=explicit');
     write(join(root, 'Folder10', 'item.txt'), 'item');
     write(join(root, 'Folder2', 'item.txt'), 'item');
+    symlinkSync(join(root, 'Folder2'), join(root, 'folder-link'), 'dir');
     write(join(root, 'node_modules', 'ignored.js'), 'ignored');
     write(join(root, '.git', 'ignored'), 'ignored');
     const { hosts, workspaces } = createRegistries();
     const host = hosts.issue('standalone', 'content');
     const selected = await workspaces.createForTarget(host.hostToken, join(root, '.env'));
-    const index = await new runtime.OnlyPreviewIndexService(workspaces).build({
+    const service = new runtime.OnlyPreviewIndexService(workspaces);
+    const listing = await service.listDirectory({
+      hostToken: host.hostToken,
+      workspaceId: selected.workspaceId,
+      relativePath: '',
+      showHiddenFiles: false
+    });
+    assert.deepEqual(
+      listing.entries.map(({ name }) => name),
+      ['Folder2', 'Folder10', '.env', 'folder-link', 'z2.txt', 'z10.txt']
+    );
+    const index = await service.build({
       hostToken: host.hostToken,
       workspaceId: selected.workspaceId,
       showHiddenFiles: false
     });
     assert.deepEqual(
-      index.entries.slice(0, 4).map(({ relativePath }) => relativePath),
-      ['Folder2', 'Folder2/item.txt', 'Folder10', 'Folder10/item.txt']
+      index.entries.map(({ relativePath }) => relativePath),
+      [
+        'Folder2',
+        'Folder10',
+        '.env',
+        'folder-link',
+        'z2.txt',
+        'z10.txt',
+        'Folder2/item.txt',
+        'Folder10/item.txt'
+      ]
     );
     assert.deepEqual(
       index.entries
         .filter(({ parentRelativePath }) => parentRelativePath === '')
         .map(({ name }) => name),
-      ['Folder2', 'Folder10', '.env', 'z2.txt', 'z10.txt']
+      ['Folder2', 'Folder10', '.env', 'folder-link', 'z2.txt', 'z10.txt']
     );
     assert.equal(
       index.entries.some(({ relativePath }) => relativePath === '.hidden.txt'),
@@ -446,15 +493,20 @@ test('index is directory-first, naturally sorted, ignores heavy folders, and kee
       index.entries.some(({ relativePath }) => /node_modules|\.git/.test(relativePath)),
       false
     );
+    assert.equal(
+      index.entries.some(({ relativePath }) => relativePath === 'folder-link/item.txt'),
+      false
+    );
     assert.equal(index.truncated, false);
   });
 });
 
-test('index enforces the 20k entry and depth-32 limits with explicit truncation', async () => {
-  await withTempDirectory('onlypreview-index-limit-', async (root) => {
-    for (let index = 0; index < runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES + 1; index += 1) {
-      writeFileSync(join(root, `file-${String(index).padStart(5, '0')}.txt`), 'x');
-    }
+test('index is strict breadth-first across three levels', async () => {
+  await withTempDirectory('onlypreview-index-bfs-', async (root) => {
+    write(join(root, 'alpha', 'alpha-child', 'level-three.txt'), 'deep');
+    write(join(root, 'alpha', 'level-two.txt'), 'two');
+    write(join(root, 'beta', 'level-two.txt'), 'two');
+    write(join(root, 'root.txt'), 'one');
     const { hosts, workspaces } = createRegistries();
     const host = hosts.issue('standalone', 'content');
     const workspace = await workspaces.createForTarget(host.hostToken, root);
@@ -463,34 +515,198 @@ test('index enforces the 20k entry and depth-32 limits with explicit truncation'
       workspaceId: workspace.workspaceId,
       showHiddenFiles: true
     });
+    assert.deepEqual(
+      index.entries.map(({ relativePath }) => relativePath),
+      [
+        'alpha',
+        'beta',
+        'root.txt',
+        'alpha/alpha-child',
+        'alpha/level-two.txt',
+        'beta/level-two.txt',
+        'alpha/alpha-child/level-three.txt'
+      ]
+    );
+    assert.equal(index.truncated, false);
+  });
+});
+
+test('index progress uses a real counting pass before throttled breadth-first generation', async () => {
+  await withTempDirectory('onlypreview-index-progress-', async (root) => {
+    const branch = join(root, 'branch');
+    mkdirSync(branch);
+    write(join(root, 'root.txt'), 'root');
+    for (let index = 0; index < 300; index += 1) {
+      writeFileSync(join(branch, `file-${String(index).padStart(3, '0')}.txt`), 'x');
+    }
+    const { hosts, workspaces } = createRegistries();
+    const host = hosts.issue('standalone', 'content');
+    const workspace = await workspaces.createForTarget(host.hostToken, root);
+    const progress = [];
+    let changedBetweenPasses = false;
+    const index = await new runtime.OnlyPreviewIndexService(workspaces).build({
+      hostToken: host.hostToken,
+      workspaceId: workspace.workspaceId,
+      showHiddenFiles: true,
+      onProgress: (event) => {
+        progress.push(event);
+        if (
+          !changedBetweenPasses &&
+          event.phase === 'indexing' &&
+          event.completed === 0
+        ) {
+          changedBetweenPasses = true;
+          rmSync(join(branch, 'file-299.txt'));
+        }
+      }
+    });
+
+    assert.equal(changedBetweenPasses, true);
+    assert.equal(index.entries.length, 301);
+    assert.deepEqual(progress[0], { phase: 'counting' });
+    assert.deepEqual(progress[1], { phase: 'indexing', completed: 0, total: 302 });
+    assert.deepEqual(
+      progress.slice(2),
+      [
+        { phase: 'indexing', completed: 256, total: 302 },
+        { phase: 'indexing', completed: 301, total: 302 }
+      ]
+    );
+    const indexingProgress = progress.filter(({ phase }) => phase === 'indexing');
+    for (let offset = 1; offset < indexingProgress.length; offset += 1) {
+      assert.ok(indexingProgress[offset].completed >= indexingProgress[offset - 1].completed);
+      assert.ok(indexingProgress[offset].completed <= indexingProgress[offset].total);
+    }
+  });
+});
+
+test('empty index emits counting and one settled zero-total indexing event', async () => {
+  await withTempDirectory('onlypreview-index-progress-empty-', async (root) => {
+    const { hosts, workspaces } = createRegistries();
+    const host = hosts.issue('standalone', 'content');
+    const workspace = await workspaces.createForTarget(host.hostToken, root);
+    const progress = [];
+    const index = await new runtime.OnlyPreviewIndexService(workspaces).build({
+      hostToken: host.hostToken,
+      workspaceId: workspace.workspaceId,
+      showHiddenFiles: true,
+      onProgress: (event) => progress.push(event)
+    });
+    assert.deepEqual(index.entries, []);
+    assert.deepEqual(progress, [
+      { phase: 'counting' },
+      { phase: 'indexing', completed: 0, total: 0 }
+    ]);
+  });
+});
+
+test('100k search truncation never bounds complete demand-loaded directory listings', async () => {
+  await withTempDirectory('onlypreview-index-limit-', async (root) => {
+    const saturatedBranch = join(root, 'a-saturated');
+    const completeBranch = join(root, 'z-complete');
+    mkdirSync(saturatedBranch);
+    mkdirSync(completeBranch);
+    for (let index = 0; index < runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES; index += 1) {
+      writeFileSync(join(saturatedBranch, `file-${String(index).padStart(6, '0')}.txt`), 'x');
+    }
+    write(join(completeBranch, 'still-browsable.txt'), 'visible');
+    write(join(root, 'root-file.txt'), 'root');
+    const { hosts, workspaces } = createRegistries();
+    const host = hosts.issue('standalone', 'content');
+    const workspace = await workspaces.createForTarget(host.hostToken, root);
+    const service = new runtime.OnlyPreviewIndexService(workspaces);
+    const progress = [];
+    const rootListing = await service.listDirectory({
+      hostToken: host.hostToken,
+      workspaceId: workspace.workspaceId,
+      relativePath: '',
+      showHiddenFiles: true
+    });
+    assert.deepEqual(
+      rootListing.entries.map(({ relativePath }) => relativePath),
+      ['a-saturated', 'z-complete', 'root-file.txt']
+    );
+    const index = await service.build({
+      hostToken: host.hostToken,
+      workspaceId: workspace.workspaceId,
+      showHiddenFiles: true,
+      onProgress: (event) => progress.push(event)
+    });
     assert.equal(index.entries.length, runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES);
     assert.equal(index.truncated, true);
+    assert.deepEqual(progress[0], { phase: 'counting' });
+    assert.deepEqual(progress[1], {
+      phase: 'indexing',
+      completed: 0,
+      total: runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES
+    });
+    assert.equal(progress.at(-1).completed, runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES);
+    assert.equal(progress.at(-1).total, runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES);
+    assert.ok(progress.length <= Math.ceil(runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES / 256) + 3);
+    assert.equal(
+      index.entries.some(({ relativePath }) => relativePath === 'z-complete/still-browsable.txt'),
+      false
+    );
+    const completeListing = await service.listDirectory({
+      hostToken: host.hostToken,
+      workspaceId: workspace.workspaceId,
+      relativePath: 'z-complete',
+      showHiddenFiles: true
+    });
+    assert.deepEqual(
+      completeListing.entries.map(({ relativePath }) => relativePath),
+      ['z-complete/still-browsable.txt']
+    );
   });
+});
 
+test('search silently stops at depth 20 while directory browsing continues deeper', async () => {
   await withTempDirectory('onlypreview-index-depth-', async (root) => {
     let current = root;
+    const segments = [];
     for (let depth = 1; depth <= runtime.ONLY_PREVIEW_MAX_INDEX_DEPTH + 1; depth += 1) {
-      current = join(current, `level-${String(depth).padStart(2, '0')}`);
+      const segment = `level-${String(depth).padStart(2, '0')}`;
+      segments.push(segment);
+      current = join(current, segment);
       mkdirSync(current);
     }
     write(join(current, 'too-deep.txt'), 'deep');
     const { hosts, workspaces } = createRegistries();
     const host = hosts.issue('standalone', 'content');
     const workspace = await workspaces.createForTarget(host.hostToken, root);
-    const index = await new runtime.OnlyPreviewIndexService(workspaces).build({
+    const service = new runtime.OnlyPreviewIndexService(workspaces);
+    const index = await service.build({
       hostToken: host.hostToken,
       workspaceId: workspace.workspaceId,
       showHiddenFiles: true
     });
-    assert.equal(index.truncated, true);
+    assert.equal(index.truncated, false);
     assert.equal(
       index.entries.some(({ name }) => name === 'too-deep.txt'),
+      false
+    );
+    assert.equal(
+      index.entries.some(({ name }) => name === 'level-21'),
       false
     );
     assert.equal(
       Math.max(...index.entries.map(({ relativePath }) => relativePath.split('/').length)),
       runtime.ONLY_PREVIEW_MAX_INDEX_DEPTH
     );
+    const levelTwentyListing = await service.listDirectory({
+      hostToken: host.hostToken,
+      workspaceId: workspace.workspaceId,
+      relativePath: segments.slice(0, runtime.ONLY_PREVIEW_MAX_INDEX_DEPTH).join('/'),
+      showHiddenFiles: true
+    });
+    assert.deepEqual(levelTwentyListing.entries.map(({ name }) => name), ['level-21']);
+    const levelTwentyOneListing = await service.listDirectory({
+      hostToken: host.hostToken,
+      workspaceId: workspace.workspaceId,
+      relativePath: segments.join('/'),
+      showHiddenFiles: true
+    });
+    assert.deepEqual(levelTwentyOneListing.entries.map(({ name }) => name), ['too-deep.txt']);
   });
 });
 
@@ -523,6 +739,15 @@ test('permission failures map to the focused PATH_PERMISSION_DENIED envelope', a
         new runtime.OnlyPreviewIndexService(workspaces).build({
           hostToken: host.hostToken,
           workspaceId: workspace.workspaceId,
+          showHiddenFiles: true
+        }),
+        expectOnlyPreviewError('PATH_PERMISSION_DENIED')
+      );
+      await assert.rejects(
+        new runtime.OnlyPreviewIndexService(workspaces).listDirectory({
+          hostToken: host.hostToken,
+          workspaceId: workspace.workspaceId,
+          relativePath: '',
           showHiddenFiles: true
         }),
         expectOnlyPreviewError('PATH_PERMISSION_DENIED')
@@ -835,6 +1060,7 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     'openOnlyPreviewWindow',
     'chooseFolder',
     'restoreWorkspace',
+    'listDirectory',
     'buildIndex',
     'describeFile',
     'readText',
@@ -907,7 +1133,7 @@ test('OnlyPreview window commands stay host-capability scoped and Shell-owned', 
   assert.match(shellStyle, /\.arco-btn:focus-visible[\s\S]*outline:\s*2px solid/);
 });
 
-test('workspace updates have one authoritative event path and stale index results are discarded', () => {
+test('workspace updates have one authoritative event path and stale browse/index results are discarded', () => {
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
   const broadcastWorkspaceBody = handler.slice(
     handler.indexOf('const broadcastWorkspace'),
@@ -949,21 +1175,36 @@ test('workspace updates have one authoritative event path and stale index result
   assert.match(chooseFolderBody, /onlyPreviewClient\.chooseFolder/);
   assert.doesNotMatch(chooseFolderBody, /applyWorkspace\(|this\.workspace\s*=/);
 
-  const buildIndexBody = shellStore.slice(
-    shellStore.indexOf('private async buildIndex()'),
-    shellStore.indexOf('private async includeExplicitSelection')
+  const projectionBody = shellStore.slice(
+    shellStore.indexOf('private async reloadWorkspaceProjection()'),
+    shellStore.indexOf('private async loadDirectory(')
   );
-  assert.match(buildIndexBody, /const workspaceId = workspace\.workspaceId/);
+  assert.match(projectionBody, /const workspaceId = workspace\.workspaceId/);
+  assert.match(projectionBody, /const generation = \+\+this\.projectionGeneration/);
+  assert.match(projectionBody, /this\.directoryListings\.clear\(\)/);
+  assert.match(projectionBody, /this\.expandedPaths\.clear\(\)/);
+  assert.match(projectionBody, /await this\.loadDirectory\('', generation\)/);
+  assert.match(projectionBody, /await this\.loadSelectedParentListings\(generation\)/);
+  assert.ok(
+    projectionBody.indexOf("await this.loadDirectory('', generation)") <
+      projectionBody.indexOf('await onlyPreviewClient.buildIndex'),
+    'the complete root listing must resolve before the search index starts'
+  );
   assert.match(
-    buildIndexBody,
-    /const selectedRelativePath = workspace\.selectedRelativePath \|\| ''/
+    projectionBody,
+    /generation !== this\.projectionGeneration[\s\S]*workspaceId !== this\.workspace\?\.workspaceId/
   );
-  assert.match(buildIndexBody, /const generation = \+\+this\.generation/);
-  assert.match(buildIndexBody, /await this\.includeExplicitSelection/);
+
+  const listingBody = shellStore.slice(
+    shellStore.indexOf('private async loadDirectory('),
+    shellStore.indexOf('private async refreshSettings()')
+  );
+  assert.match(listingBody, /onlyPreviewClient\.listDirectory/);
   assert.match(
-    buildIndexBody,
-    /generation !== this\.generation[\s\S]*workspaceId !== this\.workspace\?\.workspaceId[\s\S]*selectedRelativePath !== \(this\.workspace\?\.selectedRelativePath \|\| ''\)/
+    listingBody,
+    /generation !== this\.projectionGeneration[\s\S]*workspaceId !== this\.workspace\?\.workspaceId[\s\S]*listing\.workspaceId !== workspaceId[\s\S]*listing\.relativePath !== relativePath/
   );
+  assert.match(listingBody, /this\.directoryListings\.set\(relativePath, listing\.entries\)/);
 
   const selectFileBody = shellStore.slice(
     shellStore.indexOf('private async selectFile('),
@@ -974,6 +1215,160 @@ test('workspace updates have one authoritative event path and stale index result
     selectFileBody,
     /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\)/
   );
+});
+
+test('Shell keeps complete browse listings separate from the bounded breadth-first search projection', () => {
+  assert.equal(runtime.ONLY_PREVIEW_MAX_INDEX_ENTRIES, 100_000);
+  assert.equal(runtime.ONLY_PREVIEW_MAX_INDEX_DEPTH, 20);
+  const service = source('src/main/onlypreview/onlyPreviewIndex.service.ts');
+  const listDirectoryBody = service.slice(
+    service.indexOf('async listDirectory('),
+    service.indexOf('async build(')
+  );
+  assert.match(listDirectoryBody, /readDirectoryEntries/);
+  assert.doesNotMatch(listDirectoryBody, /ONLY_PREVIEW_MAX_INDEX_ENTRIES/);
+  const buildBody = service.slice(
+    service.indexOf('async build('),
+    service.indexOf('private async readDirectoryEntries(')
+  );
+  assert.match(buildBody, /directories: Array<\{ relativePath: string; depth: number \}>/);
+  assert.match(buildBody, /for \(let directoryIndex = 0; directoryIndex < directories\.length/);
+  assert.match(buildBody, /directories\.push\(\{ relativePath: child\.relativePath, depth: childDepth \}\)/);
+
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const visibleRows = shellStore.slice(
+    shellStore.indexOf('get visibleRows()'),
+    shellStore.indexOf('private get browseRows')
+  );
+  assert.match(visibleRows, /if \(!query\) return this\.browseRows/);
+  assert.match(visibleRows, /this\.index\.entries/);
+  const browseRows = shellStore.slice(
+    shellStore.indexOf('private get browseRows'),
+    shellStore.indexOf('get projectionReady()')
+  );
+  assert.match(browseRows, /this\.directoryListings\.get\(parentRelativePath\)/);
+  assert.doesNotMatch(browseRows, /this\.index/);
+  assert.match(shellStore, /async toggleDirectory[\s\S]*await this\.loadDirectory\(relativePath\)/);
+
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  assert.doesNotMatch(i18n, /Search covers the first|搜索覆盖按层级排列的前/);
+  assert.doesNotMatch(i18n, /Narrow the folder|缩小文件夹范围/);
+});
+
+test('index progress stays exact, host-revision scoped, and visually copy-free', () => {
+  const types = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const contract = source('src/shared/onlypreview/onlyPreview.contract.ts');
+  const service = source('src/main/onlypreview/onlyPreviewIndex.service.ts');
+  const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+
+  assert.equal(runtime.ONLY_PREVIEW_INDEX_PROGRESS_EVENT, 'onlypreview/indexProgress');
+  assert.match(
+    types,
+    /buildIndex\(\s*params: OnlyPreviewHostRequest & \{ workspaceId: string; indexRevision: string \}/
+  );
+  const progressType = types.slice(
+    types.indexOf('export type OnlyPreviewIndexProgressEvent'),
+    types.indexOf('export interface OnlyPreviewCharacterCountEvent')
+  );
+  assert.match(progressType, /hostId: string/);
+  assert.match(progressType, /indexRevision: string/);
+  assert.match(progressType, /phase: 'counting'/);
+  assert.match(progressType, /phase: 'indexing'/);
+  assert.match(progressType, /completed: number/);
+  assert.match(progressType, /total: number/);
+  assert.doesNotMatch(
+    progressType,
+    /relativePath|absolutePath|displayPath|filename|content|settings/
+  );
+  assert.match(
+    contract,
+    /parseOnlyPreviewIndexRevision[\s\S]*value\.length === 0[\s\S]*value\.length > 128/
+  );
+
+  const buildBody = service.slice(
+    service.indexOf('async build('),
+    service.indexOf('private async readDirectoryEntries(')
+  );
+  assert.ok(buildBody.indexOf("phase: 'counting'") < buildBody.indexOf('const counted ='));
+  assert.ok(buildBody.indexOf('const counted =') < buildBody.indexOf("phase: 'indexing'"));
+  assert.ok(buildBody.indexOf("phase: 'indexing'") < buildBody.indexOf('const generated ='));
+  assert.match(buildBody, /completed % 256 !== 0/);
+  assert.match(buildBody, /maximumEntries: ONLY_PREVIEW_MAX_INDEX_ENTRIES/);
+  assert.match(buildBody, /maximumEntries: total/);
+
+  const handlerBuild = handler.slice(
+    handler.indexOf('async buildIndex('),
+    handler.indexOf('async describeFile(')
+  );
+  assert.match(handlerBuild, /parseOnlyPreviewIndexRevision\(params\?\.indexRevision\)/);
+  assert.match(
+    handlerBuild,
+    /ONLY_PREVIEW_INDEX_PROGRESS_EVENT[\s\S]*hostId: host\.hostId,[\s\S]*indexRevision,[\s\S]*\.\.\.progress/
+  );
+  const broadcastPayload = handlerBuild.slice(
+    handlerBuild.indexOf('xpcMain.broadcast(ONLY_PREVIEW_INDEX_PROGRESS_EVENT'),
+    handlerBuild.indexOf('...progress') + '...progress'.length
+  );
+  assert.doesNotMatch(broadcastPayload, /relativePath|absolutePath|displayPath|content|settings/);
+
+  assert.match(shellStore, /Object\.keys\(event\)\.length === 3/);
+  assert.match(shellStore, /Object\.keys\(event\)\.length === 5/);
+  assert.match(shellStore, /event\.total as number\) <= ONLY_PREVIEW_MAX_INDEX_ENTRIES/);
+  assert.match(
+    shellStore,
+    /payload\.params\.hostId !== onlyPreviewEnv\.hostId[\s\S]*payload\.params\.indexRevision !== this\.currentIndexRevision/
+  );
+  assert.match(
+    shellStore,
+    /payload\.params\.completed < previous\.completed[\s\S]*return;/
+  );
+  const projectionBody = shellStore.slice(
+    shellStore.indexOf('private async reloadWorkspaceProjection()'),
+    shellStore.indexOf('private async loadDirectory(')
+  );
+  assert.match(
+    projectionBody,
+    /const indexRevision = crypto\.randomUUID\(\)[\s\S]*this\.currentIndexRevision = indexRevision[\s\S]*indexRevision/
+  );
+  assert.match(
+    projectionBody,
+    /indexRevision === this\.currentIndexRevision[\s\S]*this\.currentIndexRevision = ''[\s\S]*this\.indexProgress = null/
+  );
+
+  assert.match(shellApp, /name="onlypreview__indexProgress"/);
+  assert.match(shellApp, /onlypreview-shell__index-progress--\$\{onlyPreviewShellStore\.indexProgress\.phase\}/);
+  assert.match(shellApp, /:aria-label="onlyPreviewI18n\.project\.indexProgressLabel"/);
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__index-progress \{[\s\S]*height:\s*2px[\s\S]*flex:\s*0 0 2px[\s\S]*margin-top:\s*auto/,
+    'the active rail must remain at the Project bottom when no body branch is rendered'
+  );
+  const zeroRowProjection = shellApp.slice(
+    shellApp.indexOf('v-else-if="onlyPreviewShellStore.projectionReady'),
+    shellApp.indexOf('name="onlypreview__indexProgress"')
+  );
+  assert.match(zeroRowProjection, /!onlyPreviewShellStore\.indexLoading/);
+  assert.match(
+    zeroRowProjection,
+    /onlyPreviewShellStore\.searchQuery\.trim\(\)[\s\S]*project\.noResults[\s\S]*project\.emptyProject/,
+    'the same bottom anchor must cover active empty-folder and active search-no-result states'
+  );
+  assert.match(shellStyle, /onlypreview-index-counting[\s\S]*infinite/);
+  assert.match(
+    shellStyle,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*index-progress--counting[\s\S]*animation:\s*none/
+  );
+  assert.doesNotMatch(shellApp, /onlypreview__truncated|index-state|indexStatus|truncatedMessage/);
+  assert.doesNotMatch(
+    i18n,
+    /indexPartial|indexReady|indexFailed|readyToOpen|Search covers the first|搜索覆盖按层级排列的前/
+  );
+  assert.match(i18n, /indexProgressLabel:\s*'Building project search index'/);
+  assert.match(i18n, /indexProgressLabel:\s*'正在建立项目搜索索引'/);
 });
 
 test('OnlyPreview folder-first chrome, current-file locator, and native file menu stay capability scoped', () => {
@@ -999,11 +1394,24 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   );
   assert.match(
     types,
+    /listDirectory\(\s*params: OnlyPreviewHostRequest & \{ workspaceId: string; relativePath: string \}\s*\): Promise<OnlyPreviewResult<OnlyPreviewDirectoryListing>>/
+  );
+  assert.match(
+    types,
     /showFileContextMenu\(\s*params: OnlyPreviewHostRequest & OnlyPreviewFileRef\s*\): Promise<OnlyPreviewResult<void>>/
   );
   assert.doesNotMatch(types, /OnlyPreviewTargetKind|chooseTarget/);
   assert.doesNotMatch(handler, /parseTargetKind|chooseTarget/);
   assert.doesNotMatch(shellStore, /chooseTarget|chooseFile/);
+  const listDirectoryBody = handler.slice(
+    handler.indexOf('async listDirectory('),
+    handler.indexOf('async buildIndex(')
+  );
+  assert.match(
+    listDirectoryBody,
+    /hostToken: params\?\.hostToken[\s\S]*workspaceId: params\?\.workspaceId[\s\S]*relativePath: params\?\.relativePath/
+  );
+  assert.doesNotMatch(listDirectoryBody, /absolutePath|displayPath|limit|depth/);
   assert.match(handler, /properties:\s*\['openDirectory'\]/);
   assert.match(windowHelper, /if \(key === 'o'\) return 'choose-folder'/);
   assert.match(
@@ -1023,7 +1431,11 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(shellApp, /:disabled="!onlyPreviewShellStore\.selectedEntry"/);
   assert.match(
     shellStore,
-    /locateSelectedFile\(\): string \{[\s\S]*this\.searchQuery = ''[\s\S]*this\.expandSelectedParents\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
+    /async locateSelectedFile\(\): Promise<string> \{[\s\S]*this\.searchQuery = ''[\s\S]*this\.expandSelectedParents\(\)[\s\S]*await this\.loadSelectedParentListings\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
+  );
+  assert.match(
+    shellStore,
+    /private findEntry[\s\S]*this\.directoryListings\.values\(\)[\s\S]*this\.index\?\.entries/
   );
   assert.match(shellApp, /scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\)/);
   assert.match(shellApp, /item\.focus\(center \? \{ preventScroll: true \} : undefined\)/);
@@ -1385,7 +1797,7 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(shellApp, /empty|emptyState|empty-state/i);
   assert.match(shellStore, /error/);
   assert.doesNotMatch(shellApp, />\s*INDEX_FAILED\s*</);
-  assert.match(shellApp, /index\.truncated[\s\S]*indexPartial[\s\S]*indexReady/);
+  assert.doesNotMatch(shellApp, /index\.truncated|indexPartial|indexReady/);
   assert.match(
     shellApp,
     /:tabindex="row\.entry\.relativePath === treeFocusRelativePath \? 0 : -1"/
@@ -1428,8 +1840,7 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(settingsStyle, /\.onlypreview-settings[\s\S]*min-height:\s*0/);
 
   const onlyPreviewI18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
-  assert.match(onlyPreviewI18n, /indexPartial:\s*'Index partial'/);
-  assert.match(onlyPreviewI18n, /indexPartial:\s*'索引不完整'/);
+  assert.doesNotMatch(onlyPreviewI18n, /indexPartial|indexReady/);
 
   const monaco = source(
     'src/renderer/onlypreview/preview/src/components/MonacoTextPreview/MonacoTextPreview.vue'
@@ -1610,10 +2021,10 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore.indexOf('async openSettings()')
   );
   assert.match(directRefresh, /beginCharacterCountTransition\(\)/);
-  assert.match(directRefresh, /await this\.buildIndex\(\)/);
+  assert.match(directRefresh, /await this\.reloadWorkspaceProjection\(\)/);
   assert.ok(
     directRefresh.indexOf('beginCharacterCountTransition()') <
-      directRefresh.indexOf('await this.buildIndex()')
+      directRefresh.indexOf('await this.reloadWorkspaceProjection()')
   );
   assert.match(directRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
   assert.doesNotMatch(directRefresh, /broadcast\(ONLY_PREVIEW_REFRESH_EVENT/);
@@ -1623,10 +2034,10 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore.indexOf('xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT')
   );
   assert.match(nativeRefresh, /beginCharacterCountTransition\(\)/);
-  assert.match(nativeRefresh, /this\.buildIndex\(\)/);
+  assert.match(nativeRefresh, /this\.reloadWorkspaceProjection\(\)/);
   assert.ok(
     nativeRefresh.indexOf('beginCharacterCountTransition()') <
-      nativeRefresh.indexOf('this.buildIndex()')
+      nativeRefresh.indexOf('this.reloadWorkspaceProjection()')
   );
   assert.match(nativeRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
   assert.ok((shellStore.match(/this\.selectedCharacterCount = 0/g) || []).length >= 6);

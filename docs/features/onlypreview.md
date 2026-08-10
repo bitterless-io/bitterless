@@ -50,9 +50,9 @@ implementation contract inside Bitterless and contains no private user data.
 │ │ 32px Royal Blue MenuBar + platform window controls              │ │
 │ ├──────────────────────┬───────────────────────────────────────────┤ │
 │ │ index search + tree  │ preview host placeholder                  │ │
-│ │                      │                                           │ │
+│ │ ━ Project index rail │                                           │ │
 │ ├──────────────────────┴───────────────────────────────────────────┤ │
-│ │ Index Rail / status                                              │ │
+│ │ selected-file metadata status                                    │ │
 │ └──────────────────────────────────────────────────────────────────┘ │
 │                        ┌────────────────────────────────────────────┐ │
 │                        │ Preview WebContentsView, bounded exactly  │ │
@@ -149,7 +149,8 @@ interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
   chooseFolder(params: HostRequest): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
   restoreWorkspace(params: HostRequest): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
-  buildIndex(params: HostRequest & { workspaceId: string }): Promise<OnlyPreviewResult<OnlyPreviewIndex>>;
+  listDirectory(params: HostRequest & { workspaceId: string; relativePath: string }): Promise<OnlyPreviewResult<OnlyPreviewDirectoryListing>>;
+  buildIndex(params: HostRequest & { workspaceId: string; indexRevision: string }): Promise<OnlyPreviewResult<OnlyPreviewIndex>>;
   describeFile(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<OnlyPreviewDescriptor>>;
   readText(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<OnlyPreviewTextContent>>;
   selectStandaloneFile(params: HostRequest & OnlyPreviewFileRef): Promise<OnlyPreviewResult<void>>;
@@ -169,6 +170,16 @@ interface OnlyPreviewApi {
 type OnlyPreviewResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code: OnlyPreviewErrorCode; message: string } };
+
+type OnlyPreviewIndexProgressEvent =
+  | { hostId: string; indexRevision: string; phase: 'counting' }
+  | {
+      hostId: string;
+      indexRevision: string;
+      phase: 'indexing';
+      completed: number;
+      total: number;
+    };
 ```
 
 Every method accepts zero or one object parameter to preserve the `electron-xpc` contract.
@@ -217,30 +228,53 @@ table. Main owns this state; no new renderer storage or path-bearing API is adde
   late history read cannot replace an explicit target, and among serialized explicit requests the
   latest explicit target remains visible and becomes the remembered directory.
 
-## Index Contract
+## Browse And Search Index Contract
 
-The index is metadata-only and in-memory. It is neither a full-text database nor a long-running
-watcher.
+Directory browsing and search indexing are separate read-only projections over the same authorized
+workspace. Browsing is demand-driven and complete per loaded directory; the search index is a
+bounded, metadata-only, in-memory accelerator. It is neither a full-text database nor a
+long-running watcher.
 
-| Constraint | MVP value |
+| Constraint | Value |
 |---|---|
-| Maximum returned entries | 20,000 |
-| Maximum traversal depth | 32 |
-| Default hidden-item policy | excluded |
+| Maximum search-index entries | 100,000 |
+| Maximum search-index depth | 20; demand-loaded browsing has no global depth cap |
+| Default hidden-item policy | included; an existing saved preference remains authoritative |
 | Fixed excluded directories | `.git`, `node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `.cache`, `.turbo` |
 | Symlink policy | leaf only, never recurse |
 | Sort | directories first, then natural case-insensitive name order |
 
-The result is a flat typed record set with relative path, parent relative path, name, node kind,
-size, modified time, and inexpensive extension-based preview hint. Search matches filename and
-relative path only. Unknown types are sampled only when selected, not during the walk.
+`listDirectory` accepts the workspace root (`relativePath: ''`) or an indexed directory-relative
+path and returns every visible immediate child in that one directory. The Shell loads the root
+listing before starting the background search index, then loads a directory listing when the user
+expands that directory. A search-index bound never removes a file or directory from ordinary tree
+browsing. Root is depth zero; search indexing stops after child-entry depth 20. A depth-20 directory
+remains expandable through `listDirectory`, and every deeper browsed level remains visible; only
+search coverage stops after depth 20. A refreshed workspace discards loaded listings and reloads
+the root; a stale listing from an older workspace/generation is ignored.
+
+The search-index result is a flat typed record set with relative path, parent relative path, name,
+node kind, size, modified time, and inexpensive extension-based preview hint. Main first performs a
+breadth-first counting pass to determine the exact number of entries it will generate, capped at
+100,000. It then performs a second breadth-first generation pass: all visible level-one entries,
+then level two, then level three, and so on. Search matches filename and relative path only. Unknown
+types are sampled only when selected, not during either walk.
 Before each directory read, Main requires a non-symlink directory, resolves it again, verifies the
 root is unchanged or the child remains contained, and reads the canonical directory. Replacing the
 workspace root or an indexed child with an outside symlink fails without exposing outside metadata.
 
-If the bound is reached, Main returns the valid prefix with `truncated: true`; the Shell shows
-`INDEX PARTIAL`. A newer index request supersedes stale renderer results. Refresh explicitly
-rebuilds the index; no watcher is created in the MVP.
+If the search bound is reached, Main returns the breadth-first prefix with `truncated: true`; the
+Shell does not display that internal state or an explanatory message. A newer index or listing
+request supersedes stale renderer results. Refresh explicitly reloads the root listing and rebuilds
+the search index; no watcher is created.
+
+Each Shell-generated build request carries one opaque `indexRevision`. Main emits a host-scoped
+`onlypreview/indexProgress` event for that exact revision: `counting` once before the count pass,
+then `indexing` with `completed` and `total` at generation start, at bounded intervals, and at the
+final item. `total` is the exact number the bounded generation pass intends to emit. Shell accepts
+only its current host and revision, clamps the visible ratio to `0..1`, and clears progress when the
+matching build settles, fails, or is superseded. Progress events carry no path, filename, file
+content, setting, or absolute filesystem metadata.
 
 ## Preview Classification And Rendering
 
@@ -331,7 +365,7 @@ interface OnlyPreviewSettings {
 }
 ```
 
-Defaults are `light`, `13`, `false`, `false`, and `true`. A missing setting uses the defaults.
+Defaults are `light`, `13`, `false`, `true`, and `true`. A missing setting uses the defaults.
 Malformed persisted settings are rejected, logged without values/paths, and recover to these
 explicitly authorized defaults. `saveSettings` validates the entire value before one `SettingDao`
 upsert and broadcasts the committed snapshot. Saving `showHiddenFiles` causes live Shells to
@@ -395,8 +429,9 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 │   ▾ components       │ read-only preview surface                         │
 │       FileTree.vue   │                                                   │
 │   App.vue            │                                                   │
+│ ━━━━━━━ Index Rail   │                                                   │
 ├──────────────────────┴───────────────────────────────────────────────────┤
-│ INDEX READY                    SELECTED 24 CHARACTERS · UTF-8 · 18 KB   │
+│                                SELECTED 24 CHARACTERS · UTF-8 · 18 KB   │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -412,7 +447,8 @@ routing accepts any regular file and shows its fallback surface for an unsupport
   shortcuts remain available for changed content without adding chrome. Hover, active, and
   keyboard-focus states use the same translucent-light treatment as EyesOnAgents; disabled actions
   remain legible.
-- Project headers and the status rail never display indexed file/item totals. The interface does
+- Project headers and the status rail never display index status, phase labels, percentages,
+  indexed file/item totals, partial-index explanations, or other index copy. The interface does
   not repeat a visible `READ ONLY` badge or status label; the actual editor and content authority
   remain read-only.
 - The status rail conditionally inserts `Selected {count} characters` / `已选择 {count} 个字符`
@@ -431,7 +467,11 @@ routing accepts any regular file and shows its fallback surface for an unsupport
   restrained heading rhythm, Royal Blue blockquote/link accents, bordered tables, and monospace
   code blocks. It is a document-reading surface inside the existing white Preview canvas, not a
   second card/dashboard theme.
-- The Index Rail is the single signature motion. It respects `prefers-reduced-motion`.
+- The 2px Index Rail sits at the bottom edge of the Project directory pane and is the single
+  signature motion. The counting pass uses an indeterminate Royal Blue sweep; the generation pass
+  uses a determinate fill from `completed / total`. It has an accessible non-visible label, renders
+  no visible text or number, reserves no space when idle, disappears immediately after the current
+  build settles, and respects `prefers-reduced-motion`.
 - Structural and repeated elements carry stable `name` attributes and `onlypreview`-rooted BEM
   classes with sibling Less files. No Tailwind utilities.
 - Each column owns its scroll; root/grid children use `min-width: 0` and `min-height: 0`.
@@ -470,8 +510,12 @@ input. The same shortcut closes that view's open DevTools. Auto-repeat is ignore
 ## State And Error Contract
 
 - **Empty:** the Open Folder action and shortcut are available; no Open File action is shown.
-- **Indexing:** retain the last valid index and animate the Index Rail.
-- **Index partial:** show the returned prefix and the fixed limit explanation.
+- **Counting index:** keep loaded directory listings browsable and show only the indeterminate
+  Project-bottom Index Rail.
+- **Generating index:** keep browsing available and show only the determinate Project-bottom Index
+  Rail. Hide it as soon as the current build settles.
+- **Index partial:** keep directory browsing complete; display no partial state, explanation,
+  count, or warning.
 - **Loading preview:** retain stable bounds and show a quiet progress state.
 - **Missing/permission denied:** distinguish `PATH_NOT_FOUND` from `PATH_PERMISSION_DENIED`; the
   latter uses the user-facing message “Bitterless does not have permission to read this file or
