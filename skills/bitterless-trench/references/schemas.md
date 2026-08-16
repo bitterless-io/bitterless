@@ -113,3 +113,23 @@ Rules:
 All analysis/request IDs are 1–128 characters, begin with an alphanumeric character, and contain
 only alphanumerics plus `.`, `_`, `:`, or `-`. Every timestamp is ISO-8601 and no more than five
 minutes in the future.
+
+## Person import chunk
+
+The bundled converter emits exact `bl-trench-person-import-v1` tool arguments. Every chunk repeats
+the same UUIDv4-shaped `importId`/`requestId`, lowercase raw-source and normalized-content SHA-256
+digests, explicit chain, `walletKind: "user"`, normalization version, total row/chunk counts, and
+contains 1–250 rows. Each row is exactly:
+
+```json
+{
+  "address": "0x0000000000000000000000000000000000000001",
+  "name": "Imported display name",
+  "displayEmoji": null
+}
+```
+
+`name` and `displayEmoji` are bounded NFC strings or null. EVM addresses are lowercase; Solana keeps
+validated Base58 case. `chunkHash` hashes the exact compact JSON rows array. `contentSha256` hashes
+the exact compact JSON array formed by concatenating every chunk in order. The receipt contains no
+row, name, emoji, or full address.

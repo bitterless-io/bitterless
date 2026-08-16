@@ -1,8 +1,13 @@
-import { BrowserWindow, BrowserWindowConstructorOptions } from 'electron';
+import { app, BrowserWindow, BrowserWindowConstructorOptions } from 'electron';
+import { is } from '@electron-toolkit/utils';
 import { WindowHelper } from './window.helper';
 import { createXpcMainEmitter } from 'electron-xpc/main';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
+import {
+  createSnipingRendererTargets,
+  matchesSnipingRendererTarget,
+} from '@main/sniping/snipingSender.guard';
 
 const WINDOW_LAYOUT_KEY = 'window_layout';
 const WINDOW_LAYOUT_SUB_KEY = 'main';
@@ -44,8 +49,17 @@ class MainWindowHelper extends WindowHelper {
     canCreate = () => true,
   }: MainWindowCreateOptions = {}): BrowserWindow | null {
     if (!canCreate()) return null;
-
-    return super.create();
+    const expectedHomeUrl = createSnipingRendererTargets(
+      app.getAppPath(),
+      is.dev ? process.env.ELECTRON_RENDERER_URL : undefined,
+    ).home;
+    return super.create((window) => {
+      const fenceNavigation = (event: Electron.Event, targetUrl: string): void => {
+        if (!matchesSnipingRendererTarget(targetUrl, expectedHomeUrl)) event.preventDefault();
+      };
+      window.webContents.on('will-navigate', fenceNavigation);
+      window.webContents.on('will-redirect', fenceNavigation);
+    });
   }
 
   async hydratePersistedLayout(): Promise<void> {

@@ -42,6 +42,7 @@ The helper now serves Todo and Trench, so its MCP wire identity is `name: bitter
 | `trench.negative_wallet_holdings.put` | `{record,replaceNewer?}` | persisted holdings detail + `changed` | requires live tag |
 | `trench.negative_wallet_holdings.get` | `{chain,address}` | parsed holdings, exact document, hash | read-only |
 | `trench.negative_wallet.archive` | `{chain,address,expectedTagId,expectedContentHash}` | archive receipt | whole-directory CAS |
+| `trench.person.import` | normalized staged chunk with explicit chain/user kind, IDs, SHA-256 hashes, counts, rows, and finalize intent | aggregate-only import receipt | insert-only staged atomic finalize |
 
 List queries trim to at most 200 Unicode code points; limits default to 50 and cap at 100. Cursor
 values bind the normalized query/module/revision. Pages carry
@@ -157,7 +158,7 @@ The guide contains:
 2. **Install bitterless-trench** — the complete bundled skill directory, Codex and Claude Code
    destinations, and current 12-digit skill version.
 3. **Restart and verify** — start a fresh agent session, keep this Bitterless instance running,
-   confirm all 12 `trench.*` tools, then invoke `$bitterless-trench` in Codex or
+   confirm all 13 `trench.*` tools, then invoke `$bitterless-trench` in Codex or
    `/bitterless-trench` in Claude Code.
 
 One primary `Complete setup instructions` action copies an English payload containing all three

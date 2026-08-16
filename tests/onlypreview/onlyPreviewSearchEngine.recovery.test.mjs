@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -105,6 +105,78 @@ test('a file-to-directory race promotes the watch hint to a full reconcile', asy
       scope: { kind: 'project' }
     });
     assert.equal(result.results.length, 1);
+    await engine.shutdown();
+  });
+});
+
+test('candidate failure and cancellation preserve the active index and remove artifacts', async () => {
+  await withTempDirectory(async (temp) => {
+    const rootPath = join(temp, 'workspace');
+    const cachePath = join(temp, 'cache');
+    const databasePath = join(cachePath, 'search.sqlite');
+    await write(join(rootPath, 'active.txt'), 'stable active value');
+    const engine = createOnlyPreviewSearchEngine();
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath,
+      databasePath
+    });
+    const activeConfigHash = engine.config.hash;
+    const activeIdentity = engine.identity;
+    await write(
+      join(rootPath, '.bitterless', 'preview-config.yml'),
+      'version: 1\nexclude:\n  - active.txt\n'
+    );
+
+    const originalRunTraversal = engine.runTraversal.bind(engine);
+    engine.runTraversal = async () => {
+      throw new Error('candidate build failed');
+    };
+    await assert.rejects(
+      engine.refresh({ workspaceId: 'workspace', generation: 1 }),
+      /candidate build failed/u
+    );
+    assert.equal(engine.config.hash, activeConfigHash);
+    assert.equal(engine.identity, activeIdentity);
+    assert.equal(engine.searchPolicy.isExcludedFilePath('active.txt'), false);
+    assert.equal(
+      (
+        await engine.search({
+          workspaceId: 'workspace',
+          generation: 1,
+          requestId: 'after-failure',
+          query: 'stable active value',
+          maxResults: 10,
+          scope: { kind: 'project' }
+        })
+      ).results.length,
+      1
+    );
+    assert.equal((await readdir(cachePath)).some((name) => name.includes('.candidate-')), false);
+
+    engine.runTraversal = async (...args) => {
+      engine.cancelBuild();
+      return await originalRunTraversal(...args);
+    };
+    await assert.rejects(
+      engine.refresh({ workspaceId: 'workspace', generation: 1 }),
+      (error) => error?.code === 'CANCELLED'
+    );
+    assert.equal(
+      (
+        await engine.search({
+          workspaceId: 'workspace',
+          generation: 1,
+          requestId: 'after-cancel',
+          query: 'stable active value',
+          maxResults: 10,
+          scope: { kind: 'project' }
+        })
+      ).results.length,
+      1
+    );
+    assert.equal((await readdir(cachePath)).some((name) => name.includes('.candidate-')), false);
     await engine.shutdown();
   });
 });

@@ -47,3 +47,14 @@ After every successful mutation, call the matching get once. Compare the record 
 identity, relevant chain set, and returned content hash. For a Negative tag, compare the tag hash;
 for holdings, compare the holdings byte hash and then confirm the Negative composite state. Do not
 claim persistence based only on a successful put response.
+
+## Person import
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `trench.person.import` | one exact normalized chunk; explicit `chain`, `walletKind: "user"`, hashes, IDs, indices/counts, rows, and final-chunk intent | aggregate-only staged/completed receipt with hashes, counts, revision, and replay state |
+
+The tool accepts no path or raw file text. A chunk contains at most 250 rows and must be sent in
+ascending index order. The final chunk is the only chunk that may set `finalize: true`. After a
+completed response, resend the exact final chunk and compare the returned completed receipt with
+`replayed: true`; a different import/request identity or content fails closed.

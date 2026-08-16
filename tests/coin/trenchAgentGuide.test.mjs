@@ -135,7 +135,7 @@ test('creates one complete production payload with exact helper, config, skill, 
   assert.match(info.instruction, /1\. Connect the current MCP server named `bitterless`/);
   assert.match(info.instruction, /2\. Install the entire `bitterless-trench` skill directory/);
   assert.match(info.instruction, /3\. Restart the agent and verify/);
-  assert.match(info.instruction, /all 12 `trench\.\*` tools/);
+  assert.match(info.instruction, /all 13 `trench\.\*` tools/);
   assert.match(info.instruction, /\$bitterless-trench/);
   assert.match(info.instruction, /\/bitterless-trench/);
   assert.match(info.instruction, new RegExp(info.skillVersionCode));

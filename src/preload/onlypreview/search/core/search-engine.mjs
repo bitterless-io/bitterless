@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { lstat, mkdir, realpath, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
+import { backup } from 'node:sqlite';
 
 import { MAX_WATCH_CHANGE_PATHS, ONE_GIB_BYTES, TWO_GIB_BYTES } from './constants.mjs';
 import { SEARCH_ENGINE_IDENTITY, OnlyPreviewSqliteIndex } from './sqlite-index.mjs';
@@ -57,6 +58,24 @@ const prospectiveRealPath = async (candidatePath) => {
       missingSegments.push(basename(existingPath));
       existingPath = parentPath;
     }
+  }
+};
+
+const removeSqliteArtifacts = async (databasePath) => {
+  await Promise.all(
+    ['', '-shm', '-wal'].map((suffix) => rm(`${databasePath}${suffix}`, { force: true }))
+  );
+};
+
+const cancelledError = () => Object.assign(new Error('Search cancelled'), { code: 'CANCELLED' });
+
+const nextTurn = async () => await new Promise((resolveTurn) => setImmediate(resolveTurn));
+
+const closeIndex = (index) => {
+  try {
+    index?.close();
+  } catch {
+    // Closing is idempotent at the engine boundary even though node:sqlite close is not.
   }
 };
 
@@ -212,6 +231,8 @@ export class OnlyPreviewSearchEngine {
     this.watchRevision = 0;
     this.watchCommitRevision = 0;
     this.buildRevision = 0;
+    this.buildEpoch = 0;
+    this.activeQueryCount = 0;
   }
 
   enqueue(operation) {
@@ -223,14 +244,18 @@ export class OnlyPreviewSearchEngine {
     return result;
   }
 
+  cancelBuild() {
+    this.buildEpoch += 1;
+  }
+
   requireWorkspace(workspaceId, generation) {
-    if (!this.index || workspaceId !== this.workspaceId || generation !== this.generation) {
+    if (!this.browseIndex || workspaceId !== this.workspaceId || generation !== this.generation) {
       throw new TypeError('Search workspace generation is stale');
     }
   }
 
   async initialize({ workspaceId, generation, rootPath, databasePath }) {
-    return await this.enqueue(
+    const build = this.enqueue(
       async () =>
         await this.initializeInternal({
           workspaceId,
@@ -239,6 +264,12 @@ export class OnlyPreviewSearchEngine {
           databasePath
         })
     );
+    this.currentBuildPromise = build;
+    try {
+      return await build;
+    } finally {
+      if (this.currentBuildPromise === build) this.currentBuildPromise = undefined;
+    }
   }
 
   async initializeInternal({ workspaceId, generation, rootPath, databasePath }) {
@@ -259,14 +290,16 @@ export class OnlyPreviewSearchEngine {
     this.databasePath = databaseRealPath;
     this.config = await loadOnlyPreviewWorkspaceConfig(rootRealPath);
     this.searchPolicy = createTraversalPolicy(this.config);
-    this.index = new OnlyPreviewSqliteIndex(this.databasePath);
     this.browseIndex = createOnlyPreviewBrowseIndex(this.rootPath);
     this.identity = {
       workspaceHash: createHash('sha256').update(rootRealPath).digest('hex'),
       configHash: this.config.hash,
       engineHash
     };
-    const canReconcile = this.index.canReconcile(this.identity);
+    const seedIndex = new OnlyPreviewSqliteIndex(this.databasePath);
+    const hasActiveIndex = seedIndex.isReusable(this.identity);
+    const canReconcile = seedIndex.canReconcile(this.identity);
+    this.index = hasActiveIndex ? seedIndex : undefined;
     const watchRevision = ++this.watchRevision;
     this.watchController = createWorkspaceWatchController({
       rootPath: this.rootPath,
@@ -279,32 +312,85 @@ export class OnlyPreviewSearchEngine {
     });
     this.state = canReconcile ? 'reconciling' : 'building';
     this.treeEntries = [];
-    await this.emitRootBrowseListing();
-    const buildRevision = ++this.buildRevision;
-    this.emitBuildProgress({ buildRevision, phase: 'counting' });
-    await this.emitSnapshot();
-    const total = await countWorkspaceSearchEntries({
-      rootPath: this.rootPath,
-      config: this.config
-    });
-    this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
-    await this.runTraversal({ reconcileExisting: canReconcile, buildRevision, total });
-    this.state = 'ready';
-    await this.emitSnapshot();
-    if (this.watchNeedsFullReconcile) {
-      this.watchNeedsFullReconcile = false;
-      this.watchController.requestFullReconcile();
+    try {
+      await this.emitRootBrowseListing();
+      const buildRevision = ++this.buildRevision;
+      const buildEpoch = ++this.buildEpoch;
+      this.emitBuildProgress({ buildRevision, phase: 'counting' });
+      await this.emitSnapshot();
+      const total = await countWorkspaceSearchEntries({
+        rootPath: this.rootPath,
+        config: this.config,
+        isCancelled: () => buildEpoch !== this.buildEpoch
+      });
+      this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
+      await this.buildAndPromoteCandidate({
+        seedIndex,
+        reconcileExisting: canReconcile,
+        buildRevision,
+        total,
+        buildEpoch
+      });
+      this.state = 'ready';
+      await this.emitSnapshot();
+      if (this.watchNeedsFullReconcile) {
+        this.watchNeedsFullReconcile = false;
+        this.watchController.requestFullReconcile();
+      }
+      return await this.snapshot();
+    } catch (error) {
+      if (this.index) {
+        this.state = 'ready';
+        await this.emitSnapshot().catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      if (seedIndex !== this.index) closeIndex(seedIndex);
     }
-    return await this.snapshot();
   }
 
-  async runTraversal({ reconcileExisting, buildRevision, total }) {
+  async buildAndPromoteCandidate({
+    seedIndex,
+    reconcileExisting,
+    buildRevision,
+    total,
+    buildEpoch
+  }) {
+    const candidatePath = `${this.databasePath}.candidate-${randomUUID()}`;
+    let candidate;
+    try {
+      await removeSqliteArtifacts(candidatePath);
+      if (reconcileExisting) await backup(seedIndex.database, candidatePath);
+      candidate = new OnlyPreviewSqliteIndex(candidatePath);
+      const candidateTreeEntries = await this.runTraversal({
+        targetIndex: candidate,
+        reconcileExisting,
+        buildRevision,
+        total,
+        buildEpoch
+      });
+      if (buildEpoch !== this.buildEpoch) throw cancelledError();
+      const promotedCandidate = candidate;
+      candidate = undefined;
+      await this.promoteCandidate(promotedCandidate, candidatePath, seedIndex);
+      this.treeEntries = sortTreeEntries(candidateTreeEntries.entries);
+      this.maxDepthReached = candidateTreeEntries.maxDepthReached;
+    } finally {
+      closeIndex(candidate);
+      await removeSqliteArtifacts(candidatePath);
+    }
+  }
+
+  async runTraversal({ targetIndex, reconcileExisting, buildRevision, total, buildEpoch }) {
+    const candidateTreeEntries = [];
+    const isCancelled = () => buildEpoch !== this.buildEpoch;
     const traversal = await createWorkspaceTraversal({
       rootPath: this.rootPath,
       config: this.config,
-      onTreeEntry: (entry) => this.treeEntries.push(entry),
+      onTreeEntry: (entry) => candidateTreeEntries.push(entry),
+      isCancelled,
       shouldReadContent: reconcileExisting
-        ? (metadata) => this.index.metadataForTraversal(metadata)
+        ? (metadata) => targetIndex.metadataForTraversal(metadata)
         : undefined
     });
     let lastReportedCompleted = 0;
@@ -320,8 +406,8 @@ export class OnlyPreviewSearchEngine {
       });
     };
     const outcome = reconcileExisting
-      ? await this.index.reconcile(traversal.entries, this.identity, { onBatch })
-      : await this.index.rebuild(traversal.entries, this.identity, { onBatch });
+      ? await targetIndex.reconcile(traversal.entries, this.identity, { onBatch })
+      : await targetIndex.rebuild(traversal.entries, this.identity, { onBatch });
     const completed = Math.min(total, outcome.fileCount);
     if (completed !== lastReportedCompleted) {
       this.emitBuildProgress({
@@ -331,49 +417,111 @@ export class OnlyPreviewSearchEngine {
         total
       });
     }
-    this.treeEntries = sortTreeEntries(traversal.treeEntries);
-    this.maxDepthReached = traversal.statistics.maxDepthReached;
+    if (isCancelled()) throw cancelledError();
+    return {
+      entries: candidateTreeEntries,
+      maxDepthReached: traversal.statistics.maxDepthReached
+    };
+  }
+
+  async promoteCandidate(candidate, candidatePath, seedIndex) {
+    let resolvePromotion = () => undefined;
+    this.promotionPromise = new Promise((resolvePromotionValue) => {
+      resolvePromotion = resolvePromotionValue;
+    });
+    const previousPath = `${this.databasePath}.previous-${randomUUID()}`;
+    let movedPrevious = false;
+    try {
+      while (this.activeQueryCount > 0) await nextTurn();
+      closeIndex(candidate);
+      closeIndex(this.index);
+      if (seedIndex !== this.index) closeIndex(seedIndex);
+      this.index = undefined;
+      try {
+        await rename(this.databasePath, previousPath);
+        movedPrevious = true;
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+      await rename(candidatePath, this.databasePath);
+      this.index = new OnlyPreviewSqliteIndex(this.databasePath);
+      await removeSqliteArtifacts(previousPath);
+    } catch (error) {
+      if (movedPrevious) {
+        await removeSqliteArtifacts(this.databasePath);
+        await rename(previousPath, this.databasePath).catch(() => undefined);
+      }
+      try {
+        this.index = new OnlyPreviewSqliteIndex(this.databasePath);
+      } catch {
+        this.index = undefined;
+      }
+      throw error;
+    } finally {
+      resolvePromotion();
+      this.promotionPromise = undefined;
+    }
   }
 
   async refresh({ workspaceId, generation }) {
     this.requireWorkspace(workspaceId, generation);
     if (this.refreshPromise) return await this.refreshPromise;
-    this.refreshPromise = this.enqueue(async () => await this.refreshInternal()).finally(() => {
+    const build = this.enqueue(async () => await this.refreshInternal());
+    this.currentBuildPromise = build;
+    this.refreshPromise = build.finally(() => {
       this.refreshPromise = undefined;
+      if (this.currentBuildPromise === build) this.currentBuildPromise = undefined;
     });
     return await this.refreshPromise;
   }
 
   async refreshInternal() {
+    const previousConfig = this.config;
+    const previousSearchPolicy = this.searchPolicy;
+    const previousIdentity = this.identity;
     const nextConfig = await loadOnlyPreviewWorkspaceConfig(this.rootPath);
     const configChanged = nextConfig.hash !== this.config.hash;
     this.config = nextConfig;
     this.searchPolicy = createTraversalPolicy(nextConfig);
     this.identity = { ...this.identity, configHash: nextConfig.hash };
-    this.state = configChanged ? 'building' : 'reconciling';
-    this.browseIndex.reset();
-    await this.emitRootBrowseListing();
-    const buildRevision = ++this.buildRevision;
-    this.emitBuildProgress({ buildRevision, phase: 'counting' });
-    await this.emitSnapshot();
-    this.treeEntries = [];
-    const total = await countWorkspaceSearchEntries({
-      rootPath: this.rootPath,
-      config: this.config
-    });
-    this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
-    await this.runTraversal({
-      reconcileExisting: !configChanged && this.index.canReconcile(this.identity),
-      buildRevision,
-      total
-    });
-    this.state = 'ready';
-    await this.emitSnapshot();
-    if (this.watchNeedsFullReconcile) {
-      this.watchNeedsFullReconcile = false;
-      this.watchController?.requestFullReconcile();
+    try {
+      this.state = configChanged ? 'building' : 'reconciling';
+      this.browseIndex.reset();
+      await this.emitRootBrowseListing();
+      const buildRevision = ++this.buildRevision;
+      const buildEpoch = ++this.buildEpoch;
+      this.emitBuildProgress({ buildRevision, phase: 'counting' });
+      await this.emitSnapshot();
+      const total = await countWorkspaceSearchEntries({
+        rootPath: this.rootPath,
+        config: this.config,
+        isCancelled: () => buildEpoch !== this.buildEpoch
+      });
+      this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
+      const seedIndex = this.index;
+      if (!seedIndex) throw new TypeError('Search index is not initialized');
+      await this.buildAndPromoteCandidate({
+        seedIndex,
+        reconcileExisting: !configChanged && seedIndex.canReconcile(this.identity),
+        buildRevision,
+        total,
+        buildEpoch
+      });
+      this.state = 'ready';
+      await this.emitSnapshot();
+      if (this.watchNeedsFullReconcile) {
+        this.watchNeedsFullReconcile = false;
+        this.watchController?.requestFullReconcile();
+      }
+      return await this.snapshot();
+    } catch (error) {
+      this.config = previousConfig;
+      this.searchPolicy = previousSearchPolicy;
+      this.identity = previousIdentity;
+      this.state = 'ready';
+      await this.emitSnapshot().catch(() => undefined);
+      throw error;
     }
-    return await this.snapshot();
   }
 
   async browseDirectory({ workspaceId, generation, directoryToken }) {
@@ -390,22 +538,21 @@ export class OnlyPreviewSearchEngine {
     maxResults,
     scope,
     cancelBuffer,
+    isCancelled,
     onResult
   }) {
     this.requireWorkspace(workspaceId, generation);
-    return await this.enqueue(
-      async () =>
-        await this.searchInternal({
-          workspaceId,
-          generation,
-          requestId,
-          query,
-          maxResults,
-          scope,
-          cancelBuffer,
-          onResult
-        })
-    );
+    return await this.searchInternal({
+      workspaceId,
+      generation,
+      requestId,
+      query,
+      maxResults,
+      scope,
+      cancelBuffer,
+      isCancelled,
+      onResult
+    });
   }
 
   async searchInternal({
@@ -416,25 +563,61 @@ export class OnlyPreviewSearchEngine {
     maxResults,
     scope,
     cancelBuffer,
+    isCancelled: cancellationRequested,
     onResult
   }) {
     this.requireWorkspace(workspaceId, generation);
-    if (this.state !== 'ready') throw new TypeError('Search index is not ready');
+    const isCancelled =
+      typeof cancellationRequested === 'function'
+        ? cancellationRequested
+        : () =>
+            typeof SharedArrayBuffer !== 'undefined' &&
+            cancelBuffer instanceof SharedArrayBuffer &&
+            Atomics.load(new Int32Array(cancelBuffer), 0) !== 0;
     const validatedScope = requireSearchScope(
       scope,
       this.treeEntries,
       (relativePath) => this.browseIndex?.hasDirectory(relativePath) === true
     );
-    const outcome = await this.index.search(query, {
-      maxResults,
-      scope: validatedScope,
-      isCancelled: () =>
-        cancelBuffer instanceof SharedArrayBuffer &&
-        Atomics.load(new Int32Array(cancelBuffer), 0) !== 0,
-      onResult
-    });
-    if (outcome.cancelled)
-      throw Object.assign(new Error('Search cancelled'), { code: 'CANCELLED' });
+    if (this.promotionPromise) await this.promotionPromise;
+    let targetIndex = this.index;
+    if (!targetIndex && validatedScope.kind === 'directory') {
+      return await this.searchDirectoryWithoutActiveIndex({
+        workspaceId,
+        generation,
+        requestId,
+        query,
+        maxResults,
+        scope: validatedScope,
+        isCancelled,
+        onResult
+      });
+    }
+    if (!targetIndex) {
+      const build = this.currentBuildPromise;
+      if (!build) throw new TypeError('Search index is not ready');
+      while (this.currentBuildPromise === build) {
+        if (isCancelled()) throw cancelledError();
+        await nextTurn();
+      }
+      await build;
+      if (this.promotionPromise) await this.promotionPromise;
+      targetIndex = this.index;
+    }
+    if (!targetIndex) throw new TypeError('Search index is not ready');
+    this.activeQueryCount += 1;
+    let outcome;
+    try {
+      outcome = await targetIndex.search(query, {
+        maxResults,
+        scope: validatedScope,
+        isCancelled,
+        onResult
+      });
+    } finally {
+      this.activeQueryCount -= 1;
+    }
+    if (outcome.cancelled) throw cancelledError();
     return {
       workspaceId,
       generation,
@@ -444,7 +627,47 @@ export class OnlyPreviewSearchEngine {
     };
   }
 
-  async applyWatchChangesInternal({ full, paths }) {
+  async searchDirectoryWithoutActiveIndex({
+    workspaceId,
+    generation,
+    requestId,
+    query,
+    maxResults,
+    scope,
+    isCancelled,
+    onResult
+  }) {
+    const scopedIndex = new OnlyPreviewSqliteIndex(':memory:');
+    try {
+      const traversal = await createWorkspaceTraversal({
+        rootPath: this.rootPath,
+        config: this.config,
+        collectTreeEntries: false,
+        scopeRelativePath: scope.relativePath,
+        isCancelled
+      });
+      await scopedIndex.rebuild(traversal.entries, this.identity);
+      if (isCancelled()) throw cancelledError();
+      const outcome = await scopedIndex.search(query, {
+        maxResults,
+        scope,
+        isCancelled,
+        onResult
+      });
+      if (outcome.cancelled) throw cancelledError();
+      return {
+        workspaceId,
+        generation,
+        requestId,
+        results: outcome.results,
+        truncated: outcome.truncated
+      };
+    } finally {
+      closeIndex(scopedIndex);
+    }
+  }
+
+  async applyWatchChangesInternal({ full, paths, renamePaths = [] }) {
     if (!this.index) return;
     if (this.state !== 'ready') {
       this.watchNeedsFullReconcile = true;
@@ -461,6 +684,7 @@ export class OnlyPreviewSearchEngine {
     }
     let requiresFullReconcile = false;
     const committedPaths = new Set();
+    const renamePathSet = new Set(renamePaths);
     for (const pathValue of paths) {
       const relativePath = normalizedWatchRelativePath(pathValue);
       if (!relativePath) {
@@ -468,6 +692,10 @@ export class OnlyPreviewSearchEngine {
         continue;
       }
       committedPaths.add(relativePath);
+      const renameHint = renamePathSet.has(relativePath);
+      const previousTreeEntry = renameHint
+        ? this.treeEntries.find((entry) => entry.relativePath === relativePath)
+        : undefined;
       const absolutePath = resolve(this.rootPath, ...relativePath.split('/'));
       if (!pathIsWithin(this.rootPath, absolutePath)) {
         requiresFullReconcile = true;
@@ -502,6 +730,10 @@ export class OnlyPreviewSearchEngine {
             requiresFullReconcile = true;
           }
         } else if (currentStat.isFile()) {
+          if (renameHint && previousTreeEntry?.nodeKind !== 'file') {
+            requiresFullReconcile = true;
+            continue;
+          }
           const searchExcluded = this.searchPolicy.isExcludedFilePath(relativePath);
           if (searchExcluded) {
             this.index.delete(relativePath);
@@ -522,6 +754,7 @@ export class OnlyPreviewSearchEngine {
         } else requiresFullReconcile = true;
       } catch (error) {
         if (error?.code === 'ENOENT') {
+          if (renameHint) requiresFullReconcile = true;
           this.removeTreePath(relativePath);
           this.index.delete(relativePath);
           if (
@@ -653,6 +886,15 @@ export class OnlyPreviewSearchEngine {
     };
   }
 
+  hasActiveSearchIndex({ workspaceId, generation }) {
+    return (
+      this.workspaceId === workspaceId &&
+      this.generation === generation &&
+      this.state === 'ready' &&
+      this.index !== undefined
+    );
+  }
+
   async emitSnapshot() {
     if (!this.workspaceId) return;
     const snapshot = this.snapshot();
@@ -717,21 +959,24 @@ export class OnlyPreviewSearchEngine {
   }
 
   async shutdown() {
+    this.cancelBuild();
     return await this.enqueue(async () => await this.shutdownInternal());
   }
 
   async shutdownInternal() {
+    this.buildEpoch += 1;
     this.watchRevision += 1;
     const watchController = this.watchController;
     this.watchController = undefined;
     await watchController?.close({ drain: false });
-    this.index?.close();
+    closeIndex(this.index);
     this.index = undefined;
     this.browseIndex = undefined;
     this.workspaceId = undefined;
     this.rootPath = undefined;
     this.databasePath = undefined;
     this.searchPolicy = undefined;
+    this.identity = undefined;
     this.treeEntries = [];
   }
 }

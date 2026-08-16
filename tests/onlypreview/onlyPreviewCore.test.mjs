@@ -1108,12 +1108,12 @@ test('workspace updates have one authoritative event path and stale search snaps
   assert.doesNotMatch(handler, /buildIndex|OnlyPreviewIndexService|onlyPreviewIndexService/);
 });
 
-test('Utility browse and progress stay capability-scoped while the Project rail stays copy-free', () => {
+test('file-search browse and progress stay capability-scoped while the Project rail stays copy-free', () => {
   const searchTypes = source('src/shared/onlypreview/onlyPreviewSearch.type.ts');
   const mainTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
-  const runtime = source('src/utility/onlypreview/onlyPreviewSearchRuntime.utility.ts');
-  const rpc = source('src/main/onlypreview/onlyPreviewSearchUtilityRpc.service.ts');
+  const runtime = source('src/preload/fileSearch/fileSearchRuntime.ts');
+  const rpc = source('src/main/fileSearch/fileSearchRuntimeRelay.service.ts');
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
   const shellEvents = source(
     'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
@@ -1663,10 +1663,15 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
     preloadConfig,
     /input:\s*\{[\s\S]*onlypreview:\s*resolve\('src\/preload\/onlypreview\/onlypreview\.preload\.ts'\)[\s\S]*onlypreviewContent:\s*resolve\('src\/preload\/onlypreview\/onlypreviewContent\.preload\.ts'\)/
   );
+  assert.match(
+    preloadConfig,
+    /fileSearch:\s*resolve\('src\/preload\/fileSearch\/fileSearch\.preload\.ts'\)/
+  );
   for (const renderer of ['shell', 'previewHeader', 'preview', 'settings', 'guide']) {
     assert.match(vite, new RegExp(`'onlypreview/${renderer}'`));
   }
-  assert.match(vite, /onlypreviewSearchUtility:\s*resolve\(/);
+  assert.match(vite, /fileSearch:\s*resolve\('src\/renderer\/fileSearch\/index\.html'\)/);
+  assert.doesNotMatch(vite, /onlypreviewSearchUtility|onlyPreviewSearch\.utility/);
   const sandboxPluginStart = vite.indexOf('const onlyPreviewSandboxPreloadPlugin');
   const nextPluginStart = vite.indexOf('const trenchSandboxPreloadPlugin', sandboxPluginStart);
   assert.ok(sandboxPluginStart >= 0 && nextPluginStart > sandboxPluginStart);

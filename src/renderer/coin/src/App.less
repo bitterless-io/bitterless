@@ -68,12 +68,20 @@ input:focus-visible,
   font-size: 13px;
 }
 
-@media (max-height: 359px) {
-  .trench-app .trench-header {
-    flex-basis: 32px;
-    height: 32px;
-  }
+.trench-app__body,
+.trench-app__viewport {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
 
+.trench-app__viewport {
+  flex-direction: column;
+}
+
+@media (max-height: 359px) {
   .trench-app .trench-module-bar {
     flex-basis: 32px;
     height: 32px;

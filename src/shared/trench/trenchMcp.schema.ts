@@ -9,6 +9,12 @@ import {
   TRENCH_MAX_EXPLANATION_LENGTH,
   TRENCH_MAX_LIST_LIMIT
 } from '@shared/trench/trench.validation';
+import {
+  TRENCH_PERSON_IMPORT_MAX_CHUNKS,
+  TRENCH_PERSON_IMPORT_MAX_ROWS_PER_CHUNK,
+  TRENCH_PERSON_IMPORT_NORMALIZATION_VERSION,
+  TRENCH_PERSON_IMPORT_SCHEMA,
+} from '@shared/trench/trenchPerson.type';
 
 interface TrenchMcpToolDefinition {
   name: string;
@@ -26,6 +32,11 @@ const requestIdSchema = {
 const contentHashSchema = {
   type: 'string',
   pattern: '^sha256:[0-9a-f]{64}$'
+} as const;
+const sha256HexSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' } as const;
+const uuidV4Schema = {
+  type: 'string',
+  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
 } as const;
 const evidenceSchema = {
   type: 'object',
@@ -307,6 +318,54 @@ export const TRENCH_MCP_TOOLS: TrenchMcpToolDefinition[] = [
         address: addressSchema,
         expectedTagId: requestIdSchema,
         expectedContentHash: contentHashSchema
+      },
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'trench.person.import',
+    description:
+      'Stage one bounded normalized person-wallet chunk and atomically finalize an insert-only import. Requires explicit chain and walletKind=user; accepts no paths or raw source text.',
+    inputSchema: {
+      type: 'object',
+      required: [
+        'schema', 'importId', 'requestId', 'sourceSha256', 'contentSha256',
+        'normalizationVersion', 'chain', 'walletKind', 'chunkIndex', 'chunkCount', 'chunkHash',
+        'rowCount', 'rows', 'finalize'
+      ],
+      properties: {
+        schema: { const: TRENCH_PERSON_IMPORT_SCHEMA },
+        importId: uuidV4Schema,
+        requestId: uuidV4Schema,
+        sourceSha256: sha256HexSchema,
+        contentSha256: sha256HexSchema,
+        normalizationVersion: { const: TRENCH_PERSON_IMPORT_NORMALIZATION_VERSION },
+        chain: chainSchema,
+        walletKind: { const: 'user' },
+        chunkIndex: { type: 'integer', minimum: 0, maximum: TRENCH_PERSON_IMPORT_MAX_CHUNKS - 1 },
+        chunkCount: { type: 'integer', minimum: 1, maximum: TRENCH_PERSON_IMPORT_MAX_CHUNKS },
+        chunkHash: sha256HexSchema,
+        rowCount: {
+          type: 'integer',
+          minimum: 1,
+          maximum: TRENCH_PERSON_IMPORT_MAX_CHUNKS * TRENCH_PERSON_IMPORT_MAX_ROWS_PER_CHUNK
+        },
+        rows: {
+          type: 'array',
+          minItems: 1,
+          maxItems: TRENCH_PERSON_IMPORT_MAX_ROWS_PER_CHUNK,
+          items: {
+            type: 'object',
+            required: ['address', 'name', 'displayEmoji'],
+            properties: {
+              address: addressSchema,
+              name: { type: ['string', 'null'], maxLength: 200 },
+              displayEmoji: { type: ['string', 'null'], maxLength: 16 }
+            },
+            additionalProperties: false
+          }
+        },
+        finalize: { type: 'boolean' }
       },
       additionalProperties: false
     }

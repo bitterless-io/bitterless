@@ -34,7 +34,8 @@ const TRENCH_TOOL_NAMES = [
   'trench.negative_wallet.get',
   'trench.negative_wallet_holdings.put',
   'trench.negative_wallet_holdings.get',
-  'trench.negative_wallet.archive'
+  'trench.negative_wallet.archive',
+  'trench.person.import'
 ] as const;
 
 interface McpResponse {

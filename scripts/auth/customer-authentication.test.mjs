@@ -390,10 +390,18 @@ test('Core authentication commits without awaiting optional local runtimes', () 
   assert.doesNotMatch(activation[0], /clearLocalSession|await authEmitter/);
   assert.ok(
     activateToken[0].indexOf('persist: setCustomerToken') <
-      activateToken[0].indexOf('this.activateAuthenticatedSession(current)'),
+      activateToken[0].indexOf('this.activateAuthenticatedSession(current, previousSessionId)'),
     'validated Core session must commit before optional runtime activation'
   );
   assert.doesNotMatch(activateToken[0], /await this\.activateAuthenticatedSession/);
+  assert.ok(
+    activateToken[0].indexOf('const previousSessionId = getCustomerSessionId()') <
+      activateToken[0].indexOf('persist: setCustomerToken'),
+    'replacement must capture the old session before persisting the new token',
+  );
+  assert.match(activation[0], /snipingSessionActivation\.replace\(/);
+  assert.match(activation[0], /previousSessionId !== sessionId/);
+  assert.match(activation[0], /scheduleBestEffort\(\(\) => activation/);
 });
 
 test('optional activation rejection is observed without becoming a session failure', async () => {

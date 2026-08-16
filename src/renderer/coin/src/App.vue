@@ -4,27 +4,53 @@
     class="trench-app"
     :class="{ 'trench-app--embedded': host.host === 'omni' }"
     :data-host="host.host"
-    :data-mobile-detail="trenchVaultStore.mobileDetailOpen"
   >
     <TrenchHeader />
-    <TrenchModuleBar />
-    <TrenchRecordWorkspace />
+    <div name="trench__body" class="trench-app__body">
+      <TrenchModuleNavigation />
+      <section name="trench__module-viewport" class="trench-app__viewport">
+        <TrenchIndexWorkspace
+          v-if="navigation.module === 'index'"
+          :selected-chain="navigation.selectedChain"
+        />
+        <TrenchersWorkspace v-else-if="navigation.module === 'trenchers'" />
+        <SnipingWorkspace v-else-if="navigation.module === 'sniping'" :scope="navigation.snipingScope" />
+        <LongTermMonitoringWorkspace v-else :scope="navigation.monitoringScope" />
+      </section>
+    </div>
+    <TrenchGmgnSettings />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, watch } from 'vue';
 import TrenchHeader from './components/TrenchHeader/TrenchHeader.vue';
-import TrenchModuleBar from './components/TrenchModuleBar/TrenchModuleBar.vue';
-import TrenchRecordWorkspace from './components/TrenchRecordWorkspace/TrenchRecordWorkspace.vue';
+import TrenchGmgnSettings from './components/TrenchGmgnSettings/TrenchGmgnSettings.vue';
+import TrenchIndexWorkspace from './components/TrenchIndexWorkspace/TrenchIndexWorkspace.vue';
+import TrenchModuleNavigation from './components/TrenchModuleNavigation/TrenchModuleNavigation.vue';
+import TrenchersWorkspace from './components/TrenchersWorkspace/TrenchersWorkspace.vue';
+import SnipingWorkspace from './components/SnipingWorkspace/SnipingWorkspace.vue';
+import LongTermMonitoringWorkspace from './components/LongTermMonitoringWorkspace/LongTermMonitoringWorkspace.vue';
 import { trenchHost } from './contextBridge/trenchHost.bridge';
-import { trenchVaultStore } from './views/vault/trenchVault.runtime';
+import { trenchIndexStore } from './views/index/trenchIndex.runtime';
+import { trenchNavigationStore as navigation } from './views/navigation/trenchNavigation.runtime';
+import { trenchPersonStore } from './views/trenchers/trenchPerson.runtime';
+import { monitoringStore } from './views/monitoring/monitoring.runtime';
 
 const host = trenchHost;
 
 onMounted(() => {
-  void trenchVaultStore.initialize();
+  void trenchIndexStore.initialize();
 });
+
+watch(
+  () => navigation.module,
+  (module) => {
+    if (module === 'trenchers') void trenchPersonStore.initialize();
+    if (module === 'monitoring') void monitoringStore.initialize();
+  },
+  { immediate: true },
+);
 </script>
 
 <style lang="less">

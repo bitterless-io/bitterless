@@ -14,14 +14,15 @@ work.
 OnlyPreview owns local file discovery, a persistent incremental search index, preview
 classification, read-only rendering, its app-specific preferences, and the standalone window
 graph. Search traversal, searchable content reads, SQLite indexing, watch reconciliation, and
-queries run only in a dedicated Electron `UtilityProcess`; Electron Main validates capabilities,
-privately enriches initialization with bootstrap paths, supervises the process, and performs a
-bounded XPC relay without search I/O. OnlyPreview never edits, writes, creates, renames, moves, or
-deletes user files. Unsupported local files still open to an explicit metadata surface with an
-action to use the system application.
+queries run only in the trusted Node-context preload of a dedicated invisible `fileSearch`
+`BrowserWindow`; Electron Main validates capabilities, privately enriches initialization with
+bootstrap paths, supervises that renderer, and performs a bounded XPC relay without search I/O.
+OnlyPreview never edits, writes, creates, renames, moves, or deletes user files. Unsupported local
+files still open to an explicit metadata surface with an action to use the system application.
 
-The public identity is `OnlyPreview`; stable code IDs, renderer directories, setting keys, and
-window-state keys use `onlypreview`.
+The public identity is `OnlyPreview`; its visible code IDs, renderer directories, setting keys, and
+window-state keys use `onlypreview`. The reusable invisible search owner is the independent
+top-level `fileSearch` renderer domain.
 
 The product-level rationale and visual direction live in
 `areas/only-preview/feature-design.md` in the private overmind parent. This document is the
@@ -36,7 +37,7 @@ implementation contract inside Bitterless and contains no private user data.
 | Standalone `BaseWindow`, child view bounds, Setting/Guide windows, cleanup                   | OnlyPreview window handler/helper                                           |
 | Per-view host, search-bootstrap, workspace, and media ownership                              | Main OnlyPreview capability registries                                      |
 | Workspace capabilities, selected-file containment, descriptor, preview text reads            | Main OnlyPreview file service                                               |
-| Project traversal, media classification, filename tier, full-text SQLite, watch/update/query | dedicated OnlyPreview search `UtilityProcess`                               |
+| Project traversal, media classification, filename tier, full-text SQLite, watch/update/query | invisible top-level `fileSearch` renderer's Node-context preload            |
 | Last canonical directory persistence and restore ordering                                    | Main OnlyPreview recent-directory service + Core SQLite `setting` table     |
 | Media/PDF byte streaming                                                                     | Main token registry + manual Range-capable `bitterless-preview://` protocol |
 | Tree, local filter, Project Search input/results, keyboard commands, selection               | OnlyPreview Shell renderer                                                  |
@@ -70,7 +71,7 @@ implementation contract inside Bitterless and contains no private user data.
 │                        └────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────┘
 
-Main capability/XPC supervisor ── raw parentPort ── search UtilityProcess
+Main capability/XPC supervisor ── private typed XPC ── hidden fileSearch renderer preload
 
 ┌──────────────────── BrowserWindow ────────────────────┐
 │ OnlyPreview Setting renderer                          │
@@ -90,9 +91,10 @@ Main capability/XPC supervisor ── raw parentPort ── search UtilityProces
   actual preview body and returns display-only descriptor metadata. Neither message contains file
   content, an absolute path, or search-bootstrap authority.
 - Shell input, Header control, Content rendering, and search I/O do not share an event loop. The
-  UtilityProcess owns the search runtime; Main only validates and relays bounded messages.
-- Closing the `BaseWindow` terminates the host-bound UtilityProcess, rejects pending relay calls,
-  detaches all three child views, and closes all three child views' `webContents`.
+  hidden `fileSearch` renderer preload owns the search runtime; Main only validates and relays
+  bounded XPC messages.
+- Closing the `BaseWindow` destroys the host-bound hidden `fileSearch` renderer, rejects pending
+  relay calls, detaches all three child views, and closes all three child views' `webContents`.
 - The standalone, Setting, and Agent Guide windows are singletons. Reopening focuses the existing
   instance. Setting and Guide are parented to the active standalone window.
 - All three top-level windows use `windowStateService`, `minWidth: 800`, and `minHeight: 600`.
@@ -116,13 +118,15 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 | `onlypreview/preview`       | `onlypreviewContent.js` | `preview`       | Content-only preview body                                                                    |
 | `onlypreview/settings`      | `onlypreview.js`        | `settings`      | app-specific settings form                                                                   |
 | `onlypreview/guide`         | `onlypreview.js`        | `guide`         | one-copy MCP and portable Preview-skill setup                                                |
+| `fileSearch`                | `fileSearch.js`         | `background`    | invisible page whose trusted Node-context preload owns browse/index/search/watch             |
 
-Both preloads import `electron-xpc/preload` and expose only immutable mode/platform context plus the
+Both visible preloads import `electron-xpc/preload` and expose only immutable mode/platform context plus the
 Main-issued content host through `contextBridge`. Main creates and pre-registers one unguessable
 `hostToken` before each OnlyPreview view is created, then passes it through
 `additionalArguments`. Shell, Header, and Content share one content host; the Setting and Guide
 windows each have their own narrow host. The search-bootstrap capability remains private in Main;
-no preload or page receives its token, absolute workspace root, or database path.
+no visible preload or page receives its token, absolute workspace root, or database path. Only the
+trusted `fileSearch` preload receives the paths inside a capability-bound initialization call.
 
 Every visible OnlyPreview view uses `sandbox: true`, `contextIsolation: true`,
 `nodeIntegration: false`, `webSecurity: true`, an exact navigation fence, and no Node or filesystem
@@ -130,6 +134,13 @@ bridge. The sandbox-safe `onlypreview.js` serves Shell, Header, Setting, and Gui
 `onlypreviewContent.js` serves Content and contains no search runtime or token. Every renderer
 initializes language before Vue mount. All five HTML entries remain first-party local targets
 registered in the application log policy and i18n checker.
+
+The invisible top-level `fileSearch` renderer is not a visible OnlyPreview view. It uses
+`sandbox: false`, `contextIsolation: true`, `nodeIntegration: false`, `webSecurity: true`, exact
+local navigation fencing, `backgroundThrottling: false`, and no window-open or external-navigation
+capability. Its empty page has no business UI; all privileged work stays in `fileSearch.js`. Main
+destroys it on host revoke, auth invalidation, standalone close, load/preload/navigation failure,
+renderer exit, or app quit.
 
 ## Workspace Capability Contract
 
@@ -260,12 +271,13 @@ launch action and is not part of Guide-token authority.
 
 Shell calls a narrow Main XPC runtime proxy with the shared content host and opaque workspace ID.
 Main rejects any other host/workspace generation, resolves the private bootstrap internally, and
-enriches only the UtilityProcess initialization message with `{ rootPath, databasePath }`. The
-UtilityProcess uses raw `parentPort` request/response messages; Main bounds pending requests,
-rejects them on timeout/exit, and relays only whitelisted, shape-validated snapshot, browse-listing,
-batch, progress, and watch events after binding them to the attached `hostId`. Renderers receive
-those events through `xpcMain.broadcast`, never through UtilityProcess XPC registration. There is no
-Main traversal, index-build, query, or watch implementation.
+enriches only the private `FileSearchRuntime` XPC initialization call with
+`{ rootPath, databasePath }`. The hidden preload registers the capability-bound runtime through
+`electron-xpc`; Main bounds pending requests, rejects them on timeout/exit, and relays only
+whitelisted, shape-validated snapshot, browse-listing, batch, progress, and watch events after
+binding them to the attached `hostId`. Visible renderers receive those events only through the
+existing Main broadcast surface. There is no Main traversal, index-build, query, or watch
+implementation, and a visible renderer cannot call the private runtime without Main's capability.
 
 ## Recent Directory Persistence
 
@@ -309,7 +321,7 @@ table. Main owns this state; no new renderer storage or path-bearing API is adde
 
 ## Browse And Search Index Contract
 
-The UtilityProcess owns two independent indexes with different policy boundaries:
+The hidden `fileSearch` preload owns two independent indexes with different policy boundaries:
 
 1. an in-memory directory-name tier containing file and directory metadata for the ordinary Project
    tree/filter; it ignores Project Search excludes and never reads file bodies; and
@@ -323,7 +335,7 @@ per-file transaction-safe upsert/delete. NeDB and the native `simple` extension 
 dependencies. Historical prototype evidence includes a roughly 12MiB filename-tier estimate,
 under 17MiB retained heap delta, and about 1.412GB of SQLite disk footprint. Those prototype numbers
 guide budgets only: they do not prove the current product scope UI, local-filter semantics,
-UtilityProcess relay, or selected-Preview refresh. Disk footprint is not RAM and is never
+background-renderer XPC relay, or selected-Preview refresh. Disk footprint is not RAM and is never
 summed into runtime memory.
 
 | Constraint                             | Product value                                                                                                                                            |
@@ -340,7 +352,7 @@ summed into runtime memory.
 | Watch reconcile                        | 400ms trailing per changed path; overflow/error/missing filename triggers full reconcile                                                                 |
 | Runtime memory                         | strictly above 1GiB advisory; strictly above 2GiB sets `performanceAccepted=false` and `stop=false` without invalidating the recorded artifact or method |
 
-Traversal starts in the dedicated UtilityProcess on first open and advances in bounded elapsed-time
+Traversal starts in the dedicated hidden `fileSearch` preload on first open and advances in bounded elapsed-time
 slices, yielding between batches. It emits metadata into the directory-name tier independently of
 Project Search eligibility. Before any file body is opened, the Project Search branch rejects every
 file below a hidden/fixed directory and then applies ordered workspace excludes. Each tree record
@@ -377,10 +389,10 @@ strict contract.
 The tree publishes every directory's complete direct-child set before deeper traversal, including
 root-level files, dot-prefixed entries, generated-output directories, and config-excluded entries.
 Those names remain available to the ordinary local filter because it is not a Project Search query.
-The UtilityProcess publishes the complete root listing early in initialization and mints opaque
+The hidden `fileSearch` preload publishes the complete root listing early in initialization and mints opaque
 directory tokens for expandable rows. Shell requests an expansion with only the current host,
 workspace, generation, and `directoryToken`; it never sends a relative or absolute directory path.
-The UtilityProcess alone maps that token back to a contained relative path and returns relative
+The hidden `fileSearch` preload alone maps that token back to a contained relative path and returns relative
 metadata. Main validates and relays without performing the directory walk. The initial or
 incremental Project Search traversal bound cannot remove a root row or an expanded directory child
 from ordinary browsing. Refresh and workspace replacement discard stale listings and token maps,
@@ -412,14 +424,14 @@ grapheme. Newlines and composed/ZWJ sequences remain original text; highlight of
 returned snippet.
 
 Shell dispatches Project Search with a fixed 120ms leading-plus-trailing throttle. IME composition
-never dispatches an intermediate composition string. The UtilityProcess runtime permits at most one
+never dispatches an intermediate composition string. The background file-search runtime permits at most one
 active query and one latest pending query, explicitly cancels superseded work, and fences every
 batch/result by host, workspace, request, and generation. It flushes verified upserts while the query is
 running at no more than 50 results per batch or a 16ms deadline; its terminal message carries only
 metadata and canonical result order, so the full row payload is not serialized twice. The last
 input is dispatched exactly once.
 
-During an active initial build or full reconcile, the UtilityProcess publishes bounded aggregate
+During an active initial build or full reconcile, the hidden file-search preload publishes bounded aggregate
 `counting` and `indexing` progress through `onlypreview/search-progress`. Each event is fenced by
 `workspaceId`, `generation`, and opaque `buildRevision`; Main shape-validates and relays only the
 attached current generation without doing search I/O. Shell accepts only its current revision,
@@ -427,7 +439,23 @@ rejects regressing or inconsistent counts, clamps the determinate ratio to `0..1
 rail when that build settles, fails, or is superseded. The event contains no path, filename, file
 content, setting, or absolute filesystem metadata.
 
-`fs.watch` updates are hints, not authority. After the 400ms trailing edge, the UtilityProcess
+Index progress and Project Search availability are independent. When a complete SQLite index
+already exists, it remains the active read-only query authority while a separate candidate index is
+counted and built. A query never observes partially written candidate rows. Successful completion
+atomically promotes the candidate for later queries; cancellation or failure discards it and leaves
+the active index searchable. Starting, replacing, failing, or completing a build does not cancel an
+accepted query or clear its accepted results.
+
+On the first build, before any complete active index exists, `In Directory` performs one complete
+scope-bounded traversal with the same hidden/fixed-directory, workspace-exclude, file
+classification, decoding, containment, cancellation, result-ordering, and maximum-result rules as
+the project index. It returns only after that directory scope is completely searched, while the
+background project build continues. It must not query an incomplete candidate and must not use SQL
+`LIKE`: `LIKE` can only inspect rows already written to SQLite and would still turn unindexed files
+into false negatives. First-build `In Project` remains pending until the complete candidate is
+promoted and must never publish a false empty result merely because indexing is in progress.
+
+`fs.watch` updates are hints, not authority. After the 400ms trailing edge, the hidden file-search preload
 revalidates the changed relative path once, updates tree metadata regardless of Project Search
 excludes, and upserts or deletes the SQLite file according to current eligibility. Create, update,
 delete, delete/recreate, and exclusion transitions converge at that commit. Rename, directory/type
@@ -435,8 +463,8 @@ changes, lost/ambiguous events, and watch errors request a cooperative full dual
 refresh uses the same path; it does not reintroduce a Main directory walk.
 
 The committed trailing update also publishes a bounded host/workspace/relative-path/watch-revision
-signal over raw `parentPort`. Main validates the event, binds it to the attached host, and broadcasts
-it through `electron-xpc`; PreviewHeader accepts it only for its current selection and a newer
+signal through the private capability-bound XPC event channel. Main validates the event, binds it to
+the attached host, and broadcasts it through `electron-xpc`; PreviewHeader accepts it only for its current selection and a newer
 revision, then uses the existing reload control to notify PreviewContent.
 Content advances its Preview load generation before reading, so an old workspace, selection, read,
 or watch revision cannot install. Delete/rename renders the typed missing state; a later recreation
@@ -450,12 +478,12 @@ performs no file watch, search I/O, or Preview polling.
 hidden-inclusive physical SQLite policy. They indexed 726 hidden-directory descendant files and
 therefore do not accept the dual-index, hidden-pruned policy introduced by task 016. Their recorded
 latency/memory/disk values must not be presented as current-policy results. A fresh PRODUCT-P02
-point using the bundled current Utility runtime and product core in a fresh Node child, separate
+point using the product core in a fresh Node child, separate
 directory metadata tier, eligibility before file-body open, and create/update/delete/rename gates is
-required and has not yet been run. Electron `utilityProcess.fork` startup, Main relay, Shell
-scheduling, and renderer commit remain outside that timing boundary and require targeted Electron
-acceptance. Metadata-only tree `lstat` work is allowed and must be reported separately rather than
-described as zero I/O.
+required and has not yet been run. The hidden file-search BrowserWindow/preload startup, XPC relay,
+Shell scheduling, and renderer commit remain outside that timing boundary and require targeted
+Electron acceptance. Metadata-only tree `lstat` work is allowed and must be reported separately
+rather than described as zero I/O.
 
 The current development Overmind workspace supplies an actual flat
 `<workspace>/.bitterless/preview-config.yml` outside this public submodule. It excludes Keychain,
@@ -856,7 +884,7 @@ Cmd/Ctrl+Shift+F:
 | copy card                        | Guide                                    | copy one complete English MCP-plus-skill setup instruction                                                             |
 | `Cmd/Ctrl+O`                     | Shell or Preview                         | Open Folder                                                                                                            |
 | `Cmd+,` or `Ctrl+Alt+S`          | Shell or Preview                         | open Setting window                                                                                                    |
-| `F5` or `Cmd/Ctrl+R`             | Shell or Preview                         | reconcile the UtilityProcess index and refresh selected preview                                                        |
+| `F5` or `Cmd/Ctrl+R`             | Shell or Preview                         | reconcile the background file-search index and refresh selected preview                                                |
 | `F12`                            | Shell, Header, or Content, debug profile | toggle detached DevTools for the view that received the shortcut                                                       |
 | `Cmd+Option+I` or `Ctrl+Shift+I` | Shell, Header, or Content, debug profile | toggle detached DevTools for the view that received the shortcut                                                       |
 | `Cmd/Ctrl+F`                     | Monaco                                   | find without invoking a Shell search                                                                                   |
@@ -881,6 +909,9 @@ that view's open DevTools. Auto-repeat is ignored.
 - **Indexing:** retain the last valid directory-name tier and search database, keep browsing
   available, and show only the determinate Project-bottom Index Rail. Hide it as soon as the current
   generation settles.
+- **Search while indexing:** query the last complete active index without exposing candidate rows.
+  If no complete index exists, finish a same-policy `In Directory` scope scan before returning;
+  `In Project` waits for promotion. Build progress never clears or cancels accepted search results.
 - **Index partial:** keep directory browsing complete and expose no visible partial state,
   explanation, count, or warning.
 - **Project Search pending:** retain the last accepted result set until the latest throttled request
@@ -929,9 +960,10 @@ them.
 - Shell, Header, Content, Setting, and Guide all use `sandbox: true`, `contextIsolation: true`,
   `nodeIntegration: false`, `webSecurity: true`, exact local navigation fencing, and no `<webview>`.
 - The search-bootstrap token stays private in Main and is never passed in preload `process.argv`,
-  copied to `contextBridge`, renderer state, logs, or a result. Main validates the host/workspace and
-  sends absolute root/database paths only inside the UtilityProcess initialization request. The
-  UtilityProcess returns only relative metadata and aggregate telemetry.
+  copied to `contextBridge`, visible renderer state, logs, or a result. Main validates the
+  host/workspace and sends absolute root/database paths only inside the private capability-bound
+  file-search XPC initialization request. The hidden preload returns only relative metadata and
+  aggregate telemetry.
 - Never give arbitrary web content an OnlyPreview preload.
 - HTML is sanitized into inert zero-attribute semantic markup inside the existing Preview renderer;
   it does not receive a nested browsing context, preload, resource URL, script, style, form, or
@@ -939,7 +971,7 @@ them.
 - Deny renderer top-level navigation and redirects away from its exact local target, and deny new
   windows.
 - File operations are read-only and capability-scoped. No broad filesystem API is exposed. Main
-  never traverses or reads searchable content; the UtilityProcess opens only contained
+  never traverses or reads searchable content; the hidden file-search preload opens only contained
   workspace-relative paths and keeps its persistent database below application user data.
 - Sensitive credential-like files (`.env`, `.env.*`, `.npmrc`, `.netrc`, `*.pem`, `*.key`) remain
   explicitly previewable through the existing selected-file capability but are title-only in
@@ -996,9 +1028,11 @@ them.
 - Recent-directory tests cover schema parsing, ready/failure latching, pre-ready latest-write
   flushing, CAS conflict/stale-generation handling, invalid-candidate CAS clear, per-host
   Shell/Preview single flight, host cleanup, and an explicit OS target winning a late restore.
-- Source/integration tests cover five renderer entries, official preload and UtilityProcess build
-  entries, sandboxed Shell/Header/Content/Setting/Guide preferences, private Main-only bootstrap,
-  raw-parent-port UtilityProcess transport, bounded pending rejection on cancel/timeout/exit,
+- Source/integration tests cover the five visible renderer entries plus the invisible top-level
+  `fileSearch` entry, official preloads, no UtilityProcess build entry, sandboxed
+  Shell/Header/Content/Setting/Guide preferences, the background preload's bounded sandbox
+  exception, private Main-only bootstrap, capability-bound XPC transport, bounded pending rejection
+  on cancel/timeout/exit,
   whitelisted host-bound snapshot/browse/progress/watch relay, and the absence of a Main browse or
   index-build path,
   explicit three-child-view cleanup, hidden titlebar/traffic-light/window-control wiring, Content-only
@@ -1024,14 +1058,14 @@ them.
   routing.
 - Canonical PRODUCT-P01 remains immutable history for the earlier hidden-inclusive physical corpus
   and deleted preload-Worker boundary; it is not current-policy acceptance. The dual-index,
-  hidden-pruned Utility runtime requires a new canonical PRODUCT-P02 point, which has not run.
-  PRODUCT-P02 covers the bundled current Utility runtime and product core in a fresh Node child;
-  Electron UtilityProcess startup, Main relay, Shell scheduling, Header/Content commit, and packaged
-  startup remain outside that artifact and require the targeted Electron/build acceptance below.
+  hidden-pruned runtime requires a new canonical PRODUCT-P02 point, which has not run.
+  PRODUCT-P02 covers the bundled product core in a fresh Node child; hidden file-search renderer
+  startup, Main XPC relay, Shell scheduling, Header/Content commit, and packaged startup remain
+  outside that artifact and require the targeted Electron/build acceptance below.
 - Earlier UtilityProcess integration build acceptance has `yarn build` PASS, emitting all five
   renderer HTML files, `out/preload/onlypreview.js`, `out/preload/onlypreviewContent.js`, and
-  `out/main/onlypreviewSearchUtility.js` through official Electron Vite inputs. Task 016 has not
-  rerun the build.
+  `out/main/onlypreviewSearchUtility.js` through official Electron Vite inputs. It is historical
+  evidence only; task 017 must replace it with `fileSearch` renderer/preload build evidence.
 - Earlier Electron acceptance has `yarn test:e2e:onlypreview` PASS (7/7) for three visible sandboxed
   views, exact 43px Header/Content geometry, detached per-view DevTools, media, Settings, Project
   Search, and selected-file watch reload. Task 016 has updated the E2E contract for independent tree

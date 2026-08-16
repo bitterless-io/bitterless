@@ -62,6 +62,12 @@ import {
 } from './xpc/onlyPreview.handler';
 import { onlyPreviewSettingsService } from './onlypreview/onlyPreviewSettings.service';
 import { onlyPreviewRecentDirectoryService } from './onlypreview/onlyPreviewRecentDirectory.service';
+import { trenchIoWindowService } from './trench/trenchIoWindow.service';
+import { registerTrenchGmgnIpc } from './coin/coinIpc.service';
+import { coinResourceService } from './coin/resources/coinResource.runtime';
+import { registerSnipingIpc } from './sniping/snipingIpc.service';
+import { snipingSessionService } from './sniping/snipingSession.service';
+import { registerMonitoringIpc } from './monitoring/monitoringIpc.service';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
@@ -237,6 +243,11 @@ const configureE2EUserData = (): void => {
 };
 
 configureE2EUserData();
+if (!isHelperMode) {
+  registerTrenchGmgnIpc(coinResourceService);
+  registerSnipingIpc();
+  registerMonitoringIpc();
+}
 initializeApplicationLogging(runtimeProfile);
 
 if (!isHelperMode) {
@@ -377,6 +388,7 @@ const cleanupResources = (): Promise<void> => {
   isShutdownStarted = true;
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
+    try { snipingSessionService.clearCurrent(); } catch {}
 
     try { await optionalIntegrationsLifecycle.fenceAndJoin(); } catch {
       // Startup errors are logged at their source; cleanup still owns every initialized resource.
@@ -402,6 +414,7 @@ const cleanupResources = (): Promise<void> => {
     try { llamaWindowHelper.destroy(); } catch {}
     try { connectorWindowHelper.destroy(); } catch {}
     try { omniWindowHelper.destroy(); } catch {}
+    try { trenchIoWindowService.stop(); } catch {}
     try { destroyOnlyPreviewForHostQuit(); } catch {
       // Continue shutdown if Electron has already torn down OnlyPreview windows.
     }
@@ -494,7 +507,7 @@ const startGui = async (): Promise<void> => {
     initializeLanguageFallback: () => {
       initializeApplicationLanguageFallback();
     },
-    initializeForegroundRuntime: () => {
+    initializeForegroundRuntime: async () => {
       installE2ENetworkGuard();
       electronApp.setAppUserModelId(
         import.meta.env.VITE_ENV === 'dev'
@@ -502,6 +515,9 @@ const startGui = async (): Promise<void> => {
           : 'io.bitterless.desktop'
       );
       if (process.platform === 'darwin') app.dock.setBadge('');
+      await runDiagnosedStartupStage('trench-io', async () => {
+        await trenchIoWindowService.start();
+      });
     },
     createHome: () => {
       mainWindowHelper.create({ canCreate: () => !isShutdownStarted });

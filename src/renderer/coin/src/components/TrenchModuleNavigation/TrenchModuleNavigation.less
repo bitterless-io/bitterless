@@ -1,0 +1,75 @@
+.trench-module-navigation {
+  width: 148px;
+  min-width: 148px;
+  min-height: 0;
+  flex: 0 0 148px;
+  overflow: auto;
+  border-right: 1px solid var(--trench-border);
+  background: var(--trench-utility);
+  scrollbar-gutter: stable;
+}
+
+.trench-module-navigation__menu.arco-menu {
+  width: 100%;
+  min-height: 100%;
+  padding: 5px 0;
+  background: transparent;
+  color: var(--trench-text);
+}
+
+.trench-module-navigation__menu .arco-menu-inner {
+  padding: 0;
+}
+
+.trench-module-navigation__menu .arco-menu-inline-header,
+.trench-module-navigation__menu .arco-menu-item {
+  height: 31px;
+  margin: 0;
+  border-radius: 0;
+  font-size: 11px;
+  line-height: 31px;
+}
+
+.trench-module-navigation__menu .arco-menu-inline-header {
+  color: var(--trench-text);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.trench-module-navigation__menu .arco-menu-item {
+  color: var(--trench-text-muted);
+  font-weight: 600;
+}
+
+.trench-module-navigation__menu .arco-menu-item-selected {
+  box-shadow: inset 3px 0 0 var(--trench-primary);
+  background: var(--trench-surface);
+  color: var(--trench-primary);
+}
+
+.trench-module-navigation__menu .arco-menu-item:hover,
+.trench-module-navigation__menu .arco-menu-inline-header:hover {
+  background: color-mix(in srgb, var(--trench-primary) 7%, transparent);
+}
+
+@media (max-width: 559px) {
+  .trench-module-navigation {
+    width: 112px;
+    min-width: 112px;
+    flex-basis: 112px;
+  }
+
+  .trench-module-navigation__menu .arco-menu-inline-header,
+  .trench-module-navigation__menu .arco-menu-item {
+    padding-right: 8px;
+  }
+}
+
+@media (max-height: 359px) {
+  .trench-module-navigation__menu .arco-menu-inline-header,
+  .trench-module-navigation__menu .arco-menu-item {
+    height: 27px;
+    line-height: 27px;
+  }
+}

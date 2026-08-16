@@ -1,0 +1,95 @@
+.sniping-form {
+  display: grid;
+  gap: 12px;
+}
+
+.sniping-form__group,
+.sniping-form__derived {
+  padding: 12px;
+  border: 1px solid var(--trench-border);
+  background: var(--trench-surface);
+}
+
+.sniping-form__group-title {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--trench-primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.sniping-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.sniping-form__field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sniping-form__field--wide {
+  grid-column: 1 / -1;
+}
+
+.sniping-form__label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--trench-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.sniping-form__label small,
+.sniping-form__derived small {
+  color: var(--trench-text-muted);
+  font-weight: 500;
+}
+
+.sniping-form__issue {
+  color: var(--trench-danger);
+  font-family: var(--trench-mono);
+  font-size: 10px;
+}
+
+.sniping-form__derived dl {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.sniping-form__derived dl div {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sniping-form__derived dt {
+  color: var(--trench-text-muted);
+}
+
+.sniping-form__derived dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--trench-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 559px) {
+  .sniping-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sniping-form__field--wide {
+    grid-column: auto;
+  }
+}

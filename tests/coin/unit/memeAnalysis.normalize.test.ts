@@ -50,10 +50,12 @@ const holderCaseResult = (name: string) => {
   const holderKinds = holderCase.holderKinds ?? Object.fromEntries(
     rawHolders.map((holder: Fixture) => [holder.address, 'wallet']),
   );
-  const holders = rawHolders.map((holder: Fixture) =>
-    holder.addr_type !== undefined || holderKinds[holder.address] !== 'wallet'
+  const holders = rawHolders.map((holder: Fixture) => {
+    const kind = holderKinds[holder.address.toLowerCase()] ?? holderKinds[holder.address];
+    return holder.addr_type !== undefined || kind !== 'wallet'
       ? holder
-      : { ...holder, addr_type: 0 });
+      : { ...holder, addr_type: 0 };
+  });
   const value = {
     chain,
     contractAddress: holderUniverseFixture.contractAddress,

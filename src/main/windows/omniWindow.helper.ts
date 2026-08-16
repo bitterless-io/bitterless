@@ -226,6 +226,16 @@ export class OmniWindowHelper {
     return this.creationPromise !== null;
   }
 
+  isLiveMiniAppWebContents(miniAppId: OmniMiniAppId, sender: Electron.WebContents): boolean {
+    const window = this.baseWindow;
+    if (!window || window.isDestroyed() || sender.isDestroyed()) return false;
+    return this.cells.some((cell) =>
+      cell.contentMode === 'miniapp' &&
+      cell.miniAppId === miniAppId &&
+      cell.content.webContents === sender &&
+      this.isWebContentsAlive(cell.content.webContents));
+  }
+
   show(): void {
     const window = this.baseWindow;
     if (!window || window.isDestroyed()) return;

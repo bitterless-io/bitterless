@@ -1,5 +1,5 @@
-import { renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import type { ElectronApplication } from '@playwright/test';
 import {
   expect,
@@ -204,8 +204,14 @@ const resetReloadProbe = async (app: ElectronApplication): Promise<void> => {
     const probe = globalThis as typeof globalThis & {
       __onlyPreviewReloadBroadcastIds?: Set<string>;
       __onlyPreviewReloadPatchedWebContents?: Set<number>;
+      __onlyPreviewWatchCommits?: Array<{
+        changedRelativePaths: string[];
+        full: boolean;
+        revision: number;
+      }>;
     };
     probe.__onlyPreviewReloadBroadcastIds = new Set<string>();
+    probe.__onlyPreviewWatchCommits = [];
     probe.__onlyPreviewReloadPatchedWebContents ??= new Set<number>();
     for (const contents of webContents.getAllWebContents()) {
       if (probe.__onlyPreviewReloadPatchedWebContents.has(contents.id)) continue;
@@ -216,7 +222,7 @@ const resetReloadProbe = async (app: ElectronApplication): Promise<void> => {
           | {
               id?: unknown;
               handleName?: unknown;
-              params?: { action?: unknown };
+              params?: { action?: unknown; commit?: unknown };
             }
           | undefined;
         if (
@@ -226,6 +232,30 @@ const resetReloadProbe = async (app: ElectronApplication): Promise<void> => {
           typeof payload.id === 'string'
         ) {
           probe.__onlyPreviewReloadBroadcastIds?.add(payload.id);
+        }
+        if (
+          channel === '__xpc_broadcast_dispatch__' &&
+          payload?.handleName === 'onlypreview/search-watch-commit' &&
+          payload.params?.commit &&
+          typeof payload.params.commit === 'object'
+        ) {
+          const commit = payload.params.commit as {
+            changedRelativePaths?: unknown;
+            full?: unknown;
+            revision?: unknown;
+          };
+          if (
+            Array.isArray(commit.changedRelativePaths) &&
+            commit.changedRelativePaths.every((value) => typeof value === 'string') &&
+            typeof commit.full === 'boolean' &&
+            typeof commit.revision === 'number'
+          ) {
+            probe.__onlyPreviewWatchCommits?.push({
+              changedRelativePaths: commit.changedRelativePaths,
+              full: commit.full,
+              revision: commit.revision
+            });
+          }
         }
         send(channel, ...args);
       };
@@ -241,33 +271,164 @@ const reloadBroadcastCount = async (app: ElectronApplication): Promise<number> =
     return probe.__onlyPreviewReloadBroadcastIds?.size ?? 0;
   });
 
+const reloadProbeState = async (
+  app: ElectronApplication
+): Promise<{
+  reloadCount: number;
+  watchCommits: Array<{ changedRelativePaths: string[]; full: boolean; revision: number }>;
+}> =>
+  await app.evaluate(() => {
+    const probe = globalThis as typeof globalThis & {
+      __onlyPreviewReloadBroadcastIds?: Set<string>;
+      __onlyPreviewWatchCommits?: Array<{
+        changedRelativePaths: string[];
+        full: boolean;
+        revision: number;
+      }>;
+    };
+    return {
+      reloadCount: probe.__onlyPreviewReloadBroadcastIds?.size ?? 0,
+      watchCommits: probe.__onlyPreviewWatchCommits ?? []
+    };
+  });
+
 const previewText = async (session: OnlyPreviewE2ESession): Promise<string> =>
   await session.evaluateRenderer<string>(
     'preview',
     `(document.querySelector('[name="onlypreview__monaco"] .view-lines')?.textContent || '').replaceAll('\u00a0', ' ')`
   );
 
-const expectSearchUtilityProcess = async (app: ElectronApplication): Promise<void> => {
+const fileSearchOwnerState = async (app: ElectronApplication) =>
+  await app.evaluate(async ({ BrowserWindow, webContents }) => {
+    const isExactTarget = (value: string): boolean => {
+      try {
+        const url = new URL(value);
+        return (
+          url.pathname.endsWith('/fileSearch/index.html') && url.search === '' && url.hash === ''
+        );
+      } catch {
+        return false;
+      }
+    };
+    const windows = BrowserWindow.getAllWindows().filter((window) =>
+      isExactTarget(window.webContents.getURL())
+    );
+    const contents = webContents
+      .getAllWebContents()
+      .filter((candidate) => isExactTarget(candidate.getURL()));
+    const owner = windows[0];
+    const preferences = owner?.webContents.getLastWebPreferences();
+    const page = owner
+      ? await owner.webContents.executeJavaScript(
+          `({
+            childElementCount: document.body?.childElementCount ?? -1,
+            bodyText: (document.body?.textContent || '').trim(),
+            hasNodeProcess: typeof process !== 'undefined',
+            hasRequire: typeof require !== 'undefined',
+          })`,
+          true
+        )
+      : null;
+    return {
+      windowCount: windows.length,
+      webContentsCount: contents.length,
+      oneOwnerMatchesOneContents:
+        windows.length === 1 && contents.length === 1 && owner?.webContents.id === contents[0]?.id,
+      ownerHidden: owner?.isVisible() === false,
+      ownerParentless: owner?.getParentWindow() == null,
+      ownerType: owner?.webContents.getType(),
+      security: preferences
+        ? {
+            sandbox: preferences.sandbox,
+            contextIsolation: preferences.contextIsolation,
+            nodeIntegration: preferences.nodeIntegration,
+            webSecurity: preferences.webSecurity,
+            backgroundThrottling: owner.webContents.getBackgroundThrottling()
+          }
+        : null,
+      page
+    };
+  });
+
+const expectSingleHiddenFileSearchOwner = async (app: ElectronApplication): Promise<void> => {
+  const oldUtilityEntry = resolve(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    'out',
+    'main',
+    'onlypreviewSearchUtility.js'
+  );
+  expect(existsSync(oldUtilityEntry)).toBe(false);
+  await expect
+    .poll(async () => await fileSearchOwnerState(app))
+    .toEqual({
+      windowCount: 1,
+      webContentsCount: 1,
+      oneOwnerMatchesOneContents: true,
+      ownerHidden: true,
+      ownerParentless: true,
+      ownerType: 'window',
+      security: {
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+        backgroundThrottling: false
+      },
+      page: {
+        childElementCount: 0,
+        bodyText: '',
+        hasNodeProcess: false,
+        hasRequire: false
+      }
+    });
+};
+
+const closeStandaloneAndExpectFileSearchCleanup = async (
+  app: ElectronApplication
+): Promise<void> => {
+  await app.evaluate(({ BaseWindow }) => {
+    const standalone = BaseWindow.getAllWindows().find(
+      (window) => window.getTitle() === 'OnlyPreview'
+    );
+    standalone?.close();
+  });
   await expect
     .poll(
       async () =>
-        await app.evaluate(({ app }) =>
-          app
-            .getAppMetrics()
-            .filter(
-              ({ serviceName, type }) =>
-                type === 'Utility' && serviceName === 'node.mojom.NodeService'
-            )
-            .map(({ pid, serviceName, type }) => ({ pid, serviceName, type }))
-        )
+        await app.evaluate(({ BaseWindow, BrowserWindow, webContents }) => {
+          const isExactTarget = (value: string): boolean => {
+            try {
+              const url = new URL(value);
+              return (
+                url.pathname.endsWith('/fileSearch/index.html') &&
+                url.search === '' &&
+                url.hash === ''
+              );
+            } catch {
+              return false;
+            }
+          };
+          return {
+            standaloneCount: BaseWindow.getAllWindows().filter(
+              (window) => window.getTitle() === 'OnlyPreview'
+            ).length,
+            fileSearchWindowCount: BrowserWindow.getAllWindows().filter((window) =>
+              isExactTarget(window.webContents.getURL())
+            ).length,
+            fileSearchWebContentsCount: webContents
+              .getAllWebContents()
+              .filter((candidate) => isExactTarget(candidate.getURL())).length
+          };
+        })
     )
-    .toEqual([
-      {
-        pid: expect.any(Number),
-        serviceName: 'node.mojom.NodeService',
-        type: 'Utility'
-      }
-    ]);
+    .toEqual({
+      standaloneCount: 0,
+      fileSearchWindowCount: 0,
+      fileSearchWebContentsCount: 0
+    });
 };
 
 test('Project Search keeps a separate tree-name tier and a hidden-pruned file/content index', async ({
@@ -281,8 +442,10 @@ test('Project Search keeps a separate tree-name tier and a hidden-pruned file/co
   await waitForTreePath(onlyPreview, 'node_modules');
   await waitForTreePath(onlyPreview, 'dist');
   await waitForTreePath(onlyPreview, 'output');
-  await expectSearchUtilityProcess(onlyPreview.app);
+  await expectSingleHiddenFileSearchOwner(onlyPreview.app);
 
+  await focusTreePath(onlyPreview, 'nested', true);
+  await waitForTreePath(onlyPreview, 'nested/inside.txt');
   await focusTreePath(onlyPreview, 'nested/inside.txt', true);
   await expect
     .poll(
@@ -349,6 +512,7 @@ test('Project Search keeps a separate tree-name tier and a hidden-pruned file/co
   await waitForTreePath(onlyPreview, 'node_modules');
   expect(await readSearchRows(onlyPreview)).toEqual([]);
   await sendShortcut(onlyPreview, 'shell', 'Escape');
+  await closeStandaloneAndExpectFileSearchCleanup(onlyPreview.app);
 });
 
 test('Project Search watch converges create, update, rename, and delete', async ({
@@ -406,6 +570,7 @@ test('selected-file watch reload is 400ms trailing and ignores nonselected chang
 
   writeFileSync(searchFixtures.nonSelectedWatchPath, 'nonselected watch update\n', 'utf8');
   await new Promise((resolveWait) => setTimeout(resolveWait, 850));
-  expect(await reloadBroadcastCount(onlyPreview.app)).toBe(1);
+  const reloadState = await reloadProbeState(onlyPreview.app);
+  expect(reloadState.reloadCount, JSON.stringify(reloadState.watchCommits)).toBe(1);
   expect(await previewText(onlyPreview)).toContain('watch final visible content');
 });

@@ -1,6 +1,6 @@
 import { registerHooks } from 'node:module';
-import { pathToFileURL } from 'node:url';
-import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
@@ -171,6 +171,13 @@ export const installMcpSourceHooks = ({
       if (specifier.startsWith('@shared/')) {
         const sourcePath = join(projectRoot, 'src', 'shared', `${specifier.slice(8)}.ts`);
         return { shortCircuit: true, url: pathToFileURL(sourcePath).href };
+      }
+      if (specifier.startsWith('.') && context.parentURL?.endsWith('.ts') &&
+        !/\.(?:[cm]?js|json|ts)$/.test(specifier)) {
+        return {
+          shortCircuit: true,
+          url: pathToFileURL(resolve(dirname(fileURLToPath(context.parentURL)), `${specifier}.ts`)).href
+        };
       }
       return nextResolve(specifier, context);
     }

@@ -17,6 +17,8 @@ import {
 } from '@/stores/auth/authToken.service';
 import { todoistSyncSessionEmitter } from '@/stores/auth/todoistSyncSession.emitter';
 import { TodoistSyncActivationService } from '@/stores/auth/todoistSyncActivation.service';
+import { snipingSessionBridge } from '@/contextBridge/snipingSession.bridge';
+import { SnipingSessionActivationService } from '@/stores/auth/snipingSessionActivation.service';
 import type { TodoistSyncActivateParams } from '@shared/todoistSync/todoistSync.type';
 import {
   changePasswordApi,
@@ -85,6 +87,11 @@ class AuthStore {
   private readonly todoistSyncActivation = markRaw(new TodoistSyncActivationService(
     async (params) => await todoistSyncSessionEmitter.activate(params),
   ));
+  private readonly snipingSessionActivation = markRaw(new SnipingSessionActivationService(
+    snipingSessionBridge,
+    2_000,
+    (operation) => console.warn(`[AuthStore] Sniping session ${operation} is unavailable`),
+  ));
 
   isAuthenticated(): boolean {
     return !!getCustomerToken();
@@ -151,11 +158,40 @@ class AuthStore {
     );
   }
 
-  private activateAuthenticatedSession(current: CurrentCustomer): void {
-    ensureSessionEligibleCustomer(current);
-    if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
-      throw new Error('账号尚未完成首次密码设置');
+  private async activateSnipingSession(coreToken: string, sessionId: string): Promise<void> {
+    await this.snipingSessionActivation.activate({ coreToken, sessionId });
+  }
+
+  private async clearSnipingSession(sessionId: string): Promise<void> {
+    await this.snipingSessionActivation.clear({ sessionId });
+  }
+
+  private activateAuthenticatedSession(
+    current: CurrentCustomer,
+    previousSessionId: string | null = null,
+  ): void {
+    let activation: Promise<void>;
+    try {
+      ensureSessionEligibleCustomer(current);
+      if (current.status !== 'active' || customerNeedsPasswordSetup(current)) return;
+
+      const coreToken = getCustomerToken();
+      const sessionId = getCustomerSessionId();
+      if (!coreToken || !sessionId) return;
+      activation = previousSessionId && previousSessionId !== sessionId
+        ? this.snipingSessionActivation.replace(
+          { sessionId: previousSessionId },
+          { coreToken, sessionId },
+        )
+        : this.activateSnipingSession(coreToken, sessionId);
+    } catch {
+      console.warn('[AuthStore] Sniping session activation is unavailable');
+      return;
     }
+
+    scheduleBestEffort(() => activation, () => {
+      console.warn('[AuthStore] Sniping session activation is unavailable');
+    });
 
     scheduleBestEffort(() => authEmitter.activateSession(), (err) => {
       console.error('[AuthStore] Failed to activate optional authenticated runtimes:', err);
@@ -164,6 +200,7 @@ class AuthStore {
   }
 
   private async activateToken(token: string): Promise<CurrentCustomer> {
+    const previousSessionId = getCustomerSessionId();
     this.todoistSyncActivation.invalidate();
     this.current = null;
     const current = await activateCustomerToken({
@@ -181,7 +218,7 @@ class AuthStore {
     this.current = current;
 
     if (!customerNeedsPasswordSetup(current)) {
-      this.activateAuthenticatedSession(current);
+      this.activateAuthenticatedSession(current, previousSessionId);
     }
     return current;
   }
@@ -307,6 +344,14 @@ class AuthStore {
   }
 
   clearLocalSession(): void {
+    const sessionId = getCustomerSessionId();
+    if (sessionId) {
+      const cleanup = this.clearSnipingSession(sessionId);
+      scheduleBestEffort(
+        async () => await cleanup,
+        () => undefined,
+      );
+    }
     this.todoistSyncActivation.invalidate();
     clearCustomerToken();
     this.current = null;

@@ -19,8 +19,8 @@ agent session after installing or updating so the current version is loaded.
 
 Use the production Bitterless Guide to copy the exact MCP configuration generated for the current
 machine. Register it under the exact server name `bitterless`, keep production Bitterless running,
-then start a new agent session. Confirm `trench.analysis.put` and the other `trench.*` tools appear
-in `tools/list`.
+then start a new agent session. Confirm all 13 `trench.*` tools, including
+`trench.person.import`, appear in `tools/list`.
 
 Names such as `bitterless-debug`, `bitterless-dev`, and `bitterless-dev-debug` are test-only. Never
 register a development helper under `bitterless`, and never write real Trench records through one.

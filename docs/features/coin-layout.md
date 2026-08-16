@@ -1,6 +1,7 @@
 # BL Trench Record Vault Layout
 
-Status: Accepted for implementation
+Status: Superseded below the already-delivered Todo-parity menu bar by
+[`trench-index-layout.md`](trench-index-layout.md)
 
 ## Visual direction
 
@@ -16,7 +17,7 @@ index on the left, and one legible evidence document on the right.
 
 ```text
 ┌────────────────────────────── BL Trench ───────────────────────────────────┐
-│ Trench · local record vault                  synced locally · agent · refresh│
+│ Trench                               ● synced locally · agent · refresh     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ [ CA Records ] [ Index Wallets ] [ Negative Wallets ]                     │
 ├───────────────────────────┬─────────────────────────────────────────────────┤
@@ -32,9 +33,17 @@ index on the left, and one legible evidence document on the right.
 └───────────────────────────┴─────────────────────────────────────────────────┘
 ```
 
-- Header: 40px standalone, 34px embedded. Omni removes drag and native window controls.
-- Header Agent action: an icon-only Robot button opens the current instance's Trench skill/MCP
-  setup guide; at narrow widths the subtitle/status text yields before either required action clips.
+- Header/menu bar: the same 32px Royal Blue shell as Todo in every host, with `#4e5882`
+  background, `#3d4666` bottom border, 12px horizontal padding, a 13px semibold near-white title,
+  and a right-aligned action group using 28px icon buttons with 8px gaps. Standalone macOS keeps
+  78px left traffic-light clearance; Omni uses 12px padding and removes the drag region.
+- Header identity is the single `Trench` title. The old `BL` mark and `local record vault` subtitle
+  are removed so the information hierarchy and baseline match Todo. The live local/loading/error
+  status remains Trench's one domain-specific signature, grouped with the right-side actions; its
+  text yields at narrow widths before either required action clips.
+- Header Agent and Refresh actions are icon-only buttons with the same near-white, hover, tooltip,
+  and focus treatment as Todo. Agent opens the current instance's Trench skill/MCP setup guide;
+  Refresh preserves its existing repository reload behavior and disabled/loading semantics.
 - Module bar: one semantic navigation row, keyboard roving focus, active underline/background.
 - Left pane: 288px default, 240–360px bounded; its own vertical scroll.
 - Right pane: flexible, `min-width: 0`; metadata stays compact and one continuous structured
@@ -89,7 +98,7 @@ representation, prove that the copied bytes produce the displayed content hash.
 | width >= 760px         | list and detail remain side by side                                                                         |
 | width 480–759px        | left pane narrows to 220px; metadata and evidence tables wrap or scroll only inside their section           |
 | width < 480px          | list and detail become mutually exclusive views; selecting a row opens detail with an explicit Back control |
-| height < 360px         | compact header/module rows; content keeps independent vertical scroll and actions remain reachable          |
+| height < 360px         | header remains 32px and module row compacts; content keeps independent vertical scroll and actions reachable |
 
 `html`, `body`, `#app`, and the embedded Trench root use `min-width: 0; min-height: 0`. Only the native
 standalone `BrowserWindow` retains the platform 800×600 minimum. No layout state relies on hover.
@@ -134,7 +143,7 @@ numbered rail encodes a real installation sequence rather than decoration.
 │    Codex / Claude Code destinations             │
 │                                                 │
 │ ③ RESTART AND VERIFY                           │
-│    New session · 12 trench.* tools · invocation │
+│    New session · 13 trench.* tools · invocation │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -149,7 +158,7 @@ numbered rail encodes a real installation sequence rather than decoration.
 
 ```text
 TrenchApp
-├─ TrenchHeader                  host-aware standalone/Omni chrome
+├─ TrenchHeader                  Todo-aligned 32px host-aware menu bar
 │  └─ TrenchAgentGuide trigger   current-instance skill/MCP setup
 ├─ TrenchAgentGuideModal
 │  └─ trenchAgentGuide.store     load/copy/error state

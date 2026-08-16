@@ -202,7 +202,7 @@ class OnlyPreviewShellStore {
     return {
       workspaceId: workspace.workspaceId,
       generation: this.searchWorkspaceGeneration,
-      ready: this.projectionReady && !this.indexLoading,
+      ready: this.projectionReady,
       rootName: workspace.rootName,
       focusedRelativePath: focusedEntry?.relativePath || '',
       focusedNodeKind: focusedEntry?.nodeKind || null,
@@ -406,7 +406,6 @@ class OnlyPreviewShellStore {
     if (next === this.indexProgressState) return;
     this.indexProgressState = next;
     this.indexLoading = true;
-    onlyPreviewProjectSearchStore.suspendForIndex();
   }
 
   private async runWindowCommand(command: () => Promise<OnlyPreviewResult<void>>): Promise<void> {
@@ -499,7 +498,6 @@ class OnlyPreviewShellStore {
     if (!hostToken || !workspace) return;
     const workspaceId = workspace.workspaceId;
     const generation = this.searchWorkspaceGeneration;
-    onlyPreviewProjectSearchStore.suspendForIndex();
     this.indexLoading = true;
     this.errorMessage = '';
     try {
@@ -519,7 +517,6 @@ class OnlyPreviewShellStore {
         this.errorMessage = errorMessage(error);
         this.indexLoading = false;
         this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
-        onlyPreviewProjectSearchStore.stopWaitingForIndex();
       }
     }
   }
@@ -530,7 +527,6 @@ class OnlyPreviewShellStore {
     if (!hostToken || !workspace) return;
     const workspaceId = workspace.workspaceId;
     const generation = this.searchWorkspaceGeneration;
-    onlyPreviewProjectSearchStore.suspendForIndex();
     this.indexLoading = true;
     this.errorMessage = '';
     try {
@@ -546,7 +542,6 @@ class OnlyPreviewShellStore {
         this.errorMessage = errorMessage(error);
         this.indexLoading = false;
         this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
-        onlyPreviewProjectSearchStore.stopWaitingForIndex();
       }
     }
   }
@@ -563,12 +558,9 @@ class OnlyPreviewShellStore {
     }
     this.projectSearchMemory = snapshot.memory;
     this.indexLoading = snapshot.state !== 'ready';
-    if (snapshot.state !== 'ready') {
-      onlyPreviewProjectSearchStore.suspendForIndex();
-      return;
-    }
+    if (snapshot.state !== 'ready') return;
     this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
-    onlyPreviewProjectSearchStore.resumeForReadyIndex();
+    onlyPreviewProjectSearchStore.resumeForAvailableRuntime();
     this.expandSelectedParents();
     await this.loadSelectedParentListings();
   }
@@ -580,6 +572,9 @@ class OnlyPreviewShellStore {
     this.commitBrowseProjectionResult(result, context);
     if (listing.relativePath === '' && this.selectedRelativePath) {
       void this.loadSelectedParentListings();
+    }
+    if (listing.relativePath === '') {
+      onlyPreviewProjectSearchStore.resumeForAvailableRuntime();
     }
     return result.loaded;
   }

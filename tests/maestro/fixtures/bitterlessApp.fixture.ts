@@ -8,7 +8,7 @@ import {
 import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { buildBitterlessE2ELaunchArgs } from '../../e2e/electronLaunchArgs'
 import {
@@ -22,6 +22,7 @@ import {
   withDebugE2ERuntimeEnvironment
 } from '../../e2e/e2eRuntimeMode'
 import {
+  GMGN_CLI_FIXTURE_DESKTOP_PATH,
   installGmgnCliFixture,
   type GmgnCliFixtureCall
 } from '../../coin/fixtures/gmgnCli.fixture'
@@ -237,7 +238,7 @@ const isolatedLaunchEnv = (paths: {
   homeDir: string
   userDataDir: string
   mockOrigin: string
-  gmgnBinDir?: string
+  useMinimalDesktopPath?: boolean
   targetDisplayLabel?: string
 }): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {}
@@ -262,9 +263,7 @@ const isolatedLaunchEnv = (paths: {
   }
   return withDebugE2ERuntimeEnvironment({
     ...env,
-    PATH: paths.gmgnBinDir
-      ? `${paths.gmgnBinDir}${delimiter}${env.PATH || ''}`
-      : env.PATH,
+    PATH: paths.useMinimalDesktopPath ? GMGN_CLI_FIXTURE_DESKTOP_PATH : env.PATH,
     NODE_ENV: 'production',
     HOME: paths.homeDir,
     USERPROFILE: paths.homeDir,
@@ -304,7 +303,7 @@ export const test = base.extend<MaestroFixtures>({
     mkdirSync(join(homeDir, 'AppData', 'Local'), { recursive: true })
 
     const gmgnFixture = coinGmgnFixture
-      ? installGmgnCliFixture(tempRoot, homeDir)
+      ? installGmgnCliFixture(homeDir)
       : null
 
     const mock = await startMockServer()
@@ -319,7 +318,7 @@ export const test = base.extend<MaestroFixtures>({
       homeDir,
       userDataDir,
       mockOrigin: mock.origin,
-      gmgnBinDir: gmgnFixture?.binDir,
+      useMinimalDesktopPath: Boolean(gmgnFixture),
       targetDisplayLabel
     })
     if (previousSentinel == null) delete process.env[sentinelKey]

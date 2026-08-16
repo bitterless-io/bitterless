@@ -22,6 +22,7 @@ try {
     platform: 'node',
     format: 'cjs',
     target: 'node20',
+    tsconfig: join(rootDir, 'tsconfig.node.json'),
     logLevel: 'silent',
   })
   const require = createRequire(import.meta.url)

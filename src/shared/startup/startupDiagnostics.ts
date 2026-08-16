@@ -2,6 +2,7 @@ export const STARTUP_DIAGNOSTICS_CHANGED_EVENT = 'startup-diagnostics/changed';
 
 export const STARTUP_DIAGNOSTIC_STAGES = [
   'core-sqlite',
+  'trench-io',
   'application-language',
   'window-layout',
   'mcp-shim',

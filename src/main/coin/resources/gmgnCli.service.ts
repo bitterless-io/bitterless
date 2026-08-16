@@ -1,10 +1,15 @@
 import {
   accessSync,
   chmodSync,
+  closeSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -27,6 +32,8 @@ import {
 import { parseGmgnOfficialLinkTarget } from './resourceValidation';
 
 const VERSION_ARGS = ['--version'] as const;
+export const GMGN_ELECTRON_NODE_BOOTSTRAP =
+  'process.execArgv=[]; process.defaultApp=true; import(process.argv[1])';
 export const GMGN_READ_ONLY_PROBE_ARGS = [
   'market',
   'trending',
@@ -43,6 +50,7 @@ const PROBE_TIMEOUT_MS = 20_000;
 const VERSION_OUTPUT_LIMIT = 4 * 1024;
 const PROBE_OUTPUT_LIMIT = 256 * 1024;
 const MAX_CREDENTIAL_FILE_BYTES = 64 * 1024;
+const MAX_WINDOWS_CMD_BYTES = 16 * 1024;
 const READ_TIMEOUT_MS = 25_000;
 const READ_OUTPUT_LIMIT = 512 * 1024;
 const READ_START_COOLDOWN_MS = 750;
@@ -59,6 +67,7 @@ interface ResolvedGmgnExecutable {
   displayPath: string;
   command: string;
   prefixArgs: string[];
+  runAsNode: boolean;
 }
 
 interface GmgnCredentialInspection {
@@ -85,10 +94,18 @@ export type GmgnReadInput =
       address: string;
     }
   | {
-      operation: 'token-holders' | 'token-traders';
+      operation: 'token-holders';
       chain: CoinChain;
       address: string;
       limit: number;
+    }
+  | {
+      operation: 'token-traders';
+      chain: CoinChain;
+      address: string;
+      limit: number;
+      orderBy?: 'profit';
+      direction?: 'desc';
     };
 
 export type GmgnReadErrorCode =
@@ -135,7 +152,13 @@ const ensurePrivateDirectory = (directory: string): void => {
 
 const isExecutable = (path: string, platform: NodeJS.Platform): boolean => {
   if (!existsSync(path)) return false;
-  if (platform === 'win32') return true;
+  if (platform === 'win32') {
+    try {
+      return statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  }
   try {
     accessSync(path, constants.X_OK);
     return true;
@@ -154,8 +177,10 @@ const readPackageBin = (packageRoot: string): string | null => {
   if (!existsSync(packagePath)) return null;
   try {
     const parsed = JSON.parse(readFileSync(packagePath, 'utf8')) as {
+      name?: unknown;
       bin?: string | Record<string, string>;
     };
+    if (parsed.name !== 'gmgn-cli') return null;
     const bin =
       typeof parsed.bin === 'string'
         ? parsed.bin
@@ -167,6 +192,196 @@ const readPackageBin = (packageRoot: string): string | null => {
     if (!bin) return null;
     const entry = resolve(packageRoot, bin);
     return isPathInside(packageRoot, entry) && existsSync(entry) ? entry : null;
+  } catch {
+    return null;
+  }
+};
+
+const isEnvNodeLauncher = (path: string): boolean => {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(path, 'r');
+    const header = Buffer.alloc(64);
+    const bytesRead = readSync(descriptor, header, 0, header.length, 0);
+    const firstLine = header.subarray(0, bytesRead).toString('utf8').split(/\r?\n/, 1)[0];
+    return firstLine === '#!/usr/bin/env node';
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+};
+
+const resolveYarnNodeEntry = (candidate: string, homeDir: string): string | null => {
+  let realCandidate: string;
+  try {
+    realCandidate = realpathSync(candidate);
+  } catch {
+    return null;
+  }
+  const packageRoots = [
+    join(homeDir, '.config', 'yarn', 'global', 'node_modules', 'gmgn-cli'),
+    join(homeDir, '.yarn', 'global', 'node_modules', 'gmgn-cli'),
+  ];
+  for (const packageRoot of packageRoots) {
+    const entry = readPackageBin(packageRoot);
+    if (!entry) continue;
+    try {
+      const realPackageRoot = realpathSync(packageRoot);
+      const realEntry = realpathSync(entry);
+      if (
+        isPathInside(realPackageRoot, realEntry) &&
+        realEntry === realCandidate &&
+        isEnvNodeLauncher(realEntry)
+      ) return realEntry;
+    } catch {
+      // Invalid package entries are ignored and never delegated to the app Node runtime.
+    }
+  }
+  return null;
+};
+
+interface WindowsGmgnInstall {
+  candidate: string;
+  packageContainerRoot: string;
+  packageRoot: string;
+}
+
+const windowsGmgnInstalls = (env: NodeJS.ProcessEnv): WindowsGmgnInstall[] => [
+  ...(env.LOCALAPPDATA
+    ? [{
+        candidate: join(env.LOCALAPPDATA, 'Yarn', 'bin', 'gmgn-cli.cmd'),
+        packageContainerRoot: join(
+          env.LOCALAPPDATA,
+          'Yarn',
+          'Data',
+          'global',
+          'node_modules',
+        ),
+        packageRoot: join(
+          env.LOCALAPPDATA,
+          'Yarn',
+          'Data',
+          'global',
+          'node_modules',
+          'gmgn-cli',
+        ),
+      }]
+    : []),
+  ...(env.APPDATA
+    ? [{
+        candidate: join(env.APPDATA, 'npm', 'gmgn-cli.cmd'),
+        packageContainerRoot: join(env.APPDATA, 'npm', 'node_modules'),
+        packageRoot: join(env.APPDATA, 'npm', 'node_modules', 'gmgn-cli'),
+      }]
+    : []),
+];
+
+const sameWindowsPath = (left: string, right: string): boolean =>
+  resolve(left).toLowerCase() === resolve(right).toLowerCase();
+
+const resolveWindowsLauncherReference = (
+  candidate: string,
+  reference: string,
+): string | null => {
+  const candidateDirectory = dirname(candidate);
+  let expanded = reference.trim();
+  if (/^%~dp0/i.test(expanded)) {
+    expanded = `${candidateDirectory}/${expanded.slice('%~dp0'.length)}`;
+  } else if (/^%dp0%/i.test(expanded)) {
+    expanded = `${candidateDirectory}/${expanded.slice('%dp0%'.length)}`;
+  } else if (!isAbsolute(expanded)) {
+    if (expanded.startsWith('/') || /^[A-Za-z]:[\\/]/.test(expanded)) return null;
+    expanded = `${candidateDirectory}/${expanded}`;
+  }
+  if (expanded.includes('%')) return null;
+  return resolve(expanded.replace(/[\\/]+/g, sep));
+};
+
+const windowsLauncherEntryReference = (line: string): string | null => {
+  const patterns = [
+    /^@?"%~dp0[\\/]node\.exe"\s+"([^"]+)"\s+%\*$/i,
+    /^@?node(?:\.exe)?\s+"?([^"\s]+)"?\s+%\*$/i,
+    /^endlocal\s+&\s+goto\s+#_undefined_#\s+2>nul\s+\|\|\s+title\s+%comspec%\s+&\s+"%_prog%"\s+"([^"]+)"\s+%\*$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+};
+
+const isAllowedWindowsLauncherScaffold = (line: string): boolean => [
+  /^@?echo\s+off$/i,
+  /^goto\s+start$/i,
+  /^:find_dp0$/i,
+  /^:start$/i,
+  /^set\s+dp0=%~dp0$/i,
+  /^exit\s+\/b$/i,
+  /^setlocal$/i,
+  /^@?setlocal$/i,
+  /^call\s+:find_dp0$/i,
+  /^@?if\s+exist\s+"%(?:~dp0|dp0%)[\\/]node\.exe"\s+\($/i,
+  /^\)\s+else\s+\($/i,
+  /^\)$/,
+  /^set\s+"_prog=%dp0%[\\/]node\.exe"$/i,
+  /^set\s+"_prog=node"$/i,
+  /^@?set\s+pathext=%pathext:;\.js;=;%$/i,
+].some((pattern) => pattern.test(line));
+
+const isVerifiedWindowsCmdLauncher = (
+  candidate: string,
+  realEntry: string,
+): boolean => {
+  try {
+    if (!lstatSync(candidate).isFile() || statSync(candidate).size > MAX_WINDOWS_CMD_BYTES) {
+      return false;
+    }
+    const text = readFileSync(candidate, 'utf8');
+    if (!text || text.includes('\0')) return false;
+    let invocationCount = 0;
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const reference = windowsLauncherEntryReference(line);
+      if (reference) {
+        const resolvedReference = resolveWindowsLauncherReference(candidate, reference);
+        if (!resolvedReference || !sameWindowsPath(realpathSync(resolvedReference), realEntry)) {
+          return false;
+        }
+        invocationCount += 1;
+        continue;
+      }
+      if (!isAllowedWindowsLauncherScaffold(line)) return false;
+    }
+    return invocationCount === 1;
+  } catch {
+    return false;
+  }
+};
+
+const resolveWindowsCmdNodeEntry = (
+  candidate: string,
+  env: NodeJS.ProcessEnv,
+): string | null => {
+  const installation = windowsGmgnInstalls(env).find((value) =>
+    sameWindowsPath(value.candidate, candidate),
+  );
+  if (!installation) return null;
+  const entry = readPackageBin(installation.packageRoot);
+  if (!entry) return null;
+  try {
+    const realPackageContainerRoot = realpathSync(installation.packageContainerRoot);
+    const realPackageRoot = realpathSync(installation.packageRoot);
+    const realEntry = realpathSync(entry);
+    if (
+      realPackageRoot === realPackageContainerRoot ||
+      !isPathInside(realPackageContainerRoot, realPackageRoot) ||
+      !isPathInside(realPackageRoot, realEntry) ||
+      !isEnvNodeLauncher(realEntry) ||
+      !isVerifiedWindowsCmdLauncher(candidate, realEntry)
+    ) return null;
+    return realEntry;
   } catch {
     return null;
   }
@@ -319,6 +534,14 @@ export const buildGmgnReadArgs = (input: GmgnReadInput): string[] => {
   }
   if (!('address' in input)) throw new GmgnReadError('invalid-input');
   const action = input.operation.replace('token-', '');
+  const traderOrdering = input.operation === 'token-traders'
+    ? input.orderBy === undefined && input.direction === undefined
+      ? []
+      : input.orderBy === 'profit' && input.direction === 'desc'
+        ? ['--order-by', 'profit', '--direction', 'desc']
+        : null
+    : [];
+  if (traderOrdering === null) throw new GmgnReadError('invalid-input');
   return [
     'token',
     action,
@@ -326,6 +549,7 @@ export const buildGmgnReadArgs = (input: GmgnReadInput): string[] => {
     chain,
     '--address',
     validateAddress(input.chain, input.address),
+    ...traderOrdering,
     ...('limit' in input ? ['--limit', validateLimit(input.limit)] : []),
     '--raw',
   ];
@@ -499,36 +723,60 @@ export class GmgnCliService {
     const env = this.dependencies.processEnv();
     const pathValue = env.PATH || '';
     const pathDelimiter = this.dependencies.platform === 'win32' ? ';' : delimiter;
+    const rawSearchDirectories = [
+      ...pathValue.split(pathDelimiter),
+      join(this.dependencies.homeDir(), '.yarn', 'bin'),
+      ...(this.dependencies.platform === 'win32'
+        ? windowsGmgnInstalls(env).map(({ candidate }) => dirname(candidate))
+        : []),
+    ];
+    const searchDirectories = rawSearchDirectories.map((directory) => resolve(directory));
+    const yarnBinDirectory = resolve(this.dependencies.homeDir(), '.yarn', 'bin');
+    const visitedDirectories = new Set<string>();
     const names = this.dependencies.platform === 'win32'
       ? ['gmgn-cli.exe', 'gmgn-cli.cmd']
       : ['gmgn-cli'];
-    for (const directory of pathValue.split(pathDelimiter)) {
+    for (const directory of searchDirectories) {
       if (!directory.trim()) continue;
+      const resolvedDirectory = directory;
+      const deduplicationKey = this.dependencies.platform === 'win32'
+        ? resolvedDirectory.toLowerCase()
+        : resolvedDirectory;
+      if (visitedDirectories.has(deduplicationKey)) continue;
+      visitedDirectories.add(deduplicationKey);
       for (const name of names) {
-        const candidate = resolve(directory, name);
+        const candidate = resolve(resolvedDirectory, name);
         if (!isExecutable(candidate, this.dependencies.platform)) continue;
         if (this.dependencies.platform !== 'win32' || name.endsWith('.exe')) {
+          if (
+            this.dependencies.platform !== 'win32' &&
+            resolvedDirectory === yarnBinDirectory &&
+            isEnvNodeLauncher(candidate)
+          ) {
+            const entry = resolveYarnNodeEntry(candidate, this.dependencies.homeDir());
+            if (!entry) continue;
+            return {
+              displayPath: displayPath(candidate, this.dependencies.homeDir()),
+              command: this.dependencies.nodeExecutable || process.execPath,
+              prefixArgs: ['--eval', GMGN_ELECTRON_NODE_BOOTSTRAP, entry],
+              runAsNode: true,
+            };
+          }
           return {
             displayPath: displayPath(candidate, this.dependencies.homeDir()),
             command: candidate,
             prefixArgs: [],
+            runAsNode: false,
           };
         }
-        const packageRoots = [
-          env.LOCALAPPDATA
-            ? join(env.LOCALAPPDATA, 'Yarn', 'Data', 'global', 'node_modules', 'gmgn-cli')
-            : '',
-          env.APPDATA ? join(env.APPDATA, 'npm', 'node_modules', 'gmgn-cli') : '',
-        ].filter(Boolean);
-        for (const packageRoot of packageRoots) {
-          const entry = readPackageBin(packageRoot);
-          if (!entry) continue;
-          return {
-            displayPath: displayPath(candidate, this.dependencies.homeDir()),
-            command: this.dependencies.nodeExecutable || process.execPath,
-            prefixArgs: [entry],
-          };
-        }
+        const entry = resolveWindowsCmdNodeEntry(candidate, env);
+        if (!entry) continue;
+        return {
+          displayPath: displayPath(candidate, this.dependencies.homeDir()),
+          command: this.dependencies.nodeExecutable || process.execPath,
+          prefixArgs: ['--eval', GMGN_ELECTRON_NODE_BOOTSTRAP, entry],
+          runAsNode: true,
+        };
       }
     }
     return null;
@@ -540,14 +788,16 @@ export class GmgnCliService {
     options: { timeoutMs: number; maxOutputBytes: number; signal?: AbortSignal },
   ): CoinProcessRequest {
     const source = this.dependencies.processEnv();
+    const env = buildSanitizedGmgnEnv(
+      source,
+      this.dependencies.homeDir(),
+      source.PATH || '',
+    );
+    if (executable.runAsNode) env.ELECTRON_RUN_AS_NODE = '1';
     return {
       command: executable.command,
       args: [...executable.prefixArgs, ...args],
-      env: buildSanitizedGmgnEnv(
-        source,
-        this.dependencies.homeDir(),
-        source.PATH || '',
-      ),
+      env,
       timeoutMs: options.timeoutMs,
       maxOutputBytes: options.maxOutputBytes,
       signal: options.signal,

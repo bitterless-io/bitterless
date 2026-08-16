@@ -533,7 +533,7 @@ test('renders the secure read-only Trench vault with exact live local evidence',
     guideInfo.skillPath
   );
   await expect(guide.locator('[name="trench__agent-guide__restart"]')).toContainText(
-    '12 trench.*'
+    '13 trench.*'
   );
   for (const [kind, expectedText] of [
     ['complete', guideInfo.instruction],

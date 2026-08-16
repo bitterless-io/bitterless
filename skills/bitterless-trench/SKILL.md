@@ -1,13 +1,14 @@
 ---
 name: bitterless-trench
 metadata:
-  version_code: "260809005952"
+  version_code: "260813155645"
 description: >-
   Research and persist BL Trench CA analyses, derived Index Wallet evidence, and explicitly
   human-tagged Negative Wallet holdings for BSC, Solana, or Robinhood through the production
   `bitterless` MCP server. Use when the user asks to analyze a token contract address, save a
   source-backed multi-chain CA record, inspect the current positive/negative wallet dictionaries,
-  tag a negative wallet with the user's reason, or refresh that wallet's separate holdings record.
+  tag a negative wallet with the user's reason, refresh that wallet's separate holdings record, or
+  convert and import a human-supplied person-wallet JSON file without overwriting existing data.
   This skill is read-only toward providers, never trades, and never handles credentials or writes
   Bitterless files directly.
 ---
@@ -79,6 +80,30 @@ Read [references/schemas.md](references/schemas.md) before constructing records 
 
 Archive only after an explicit human request. First get the current record, then pass its exact ID
 and current content hash to the matching archive tool. V1 has no MCP restore.
+
+## Import person wallets without overwriting records
+
+1. Require the human to choose exactly one chain: `bsc`, `solana`, or `robinhood`. Address syntax
+   never chooses the chain. This workflow always sends `walletKind: "user"` and must not be used for
+   AMM, exchange, contract, or unknown wallets.
+2. Read [references/person-import.md](references/person-import.md), then run the bundled deterministic
+   converter with an empty temporary output directory. The source must be strict UTF-8 JSON containing
+   one array of exact `{address, rename, emoji}` objects. Never print or paste its rows into chat.
+3. Inspect only the converter's aggregate manifest. Confirm its explicit chain, row/chunk counts,
+   source/content hashes, UUIDv4-shaped IDs, and normalization version. A failed or conflicting
+   conversion is terminal; do not hand-edit generated chunks.
+4. Call `trench.person.import` once per generated chunk in ascending `chunkIndex`. Send the exact JSON
+   object from that chunk file. Only the last chunk has `finalize: true`. Never pass a path, raw source
+   text, credential, note, or extra field to MCP.
+5. After finalization, call `trench.person.import` once more with the exact final chunk. Require a
+   completed receipt with the same import/request IDs, source/content hashes, chain, row/chunk counts,
+   revision, and aggregate mutation counts; this reread must return `replayed: true`.
+6. Delete the temporary generated chunk directory after the completed replay receipt is verified.
+   If a call times out, resend only that exact same chunk; never create new IDs or modify content.
+
+The import is insert-only. Existing wallet/person/profile/name/avatar/note/classification/metadata
+bytes are never overwritten. An existing unlinked wallet may gain the explicit chain account and one
+membership. Equal names on different addresses never merge people.
 
 ## Recover setup or provider failures
 

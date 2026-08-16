@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/main/env.d.ts",
+    "../../src/preload/env.d.ts",
+    "../../src/main/security/**/*.ts",
+    "../../src/main/trench/trenchIo*.ts",
+    "../../src/main/xpc/trenchIoSystem.handler.ts",
+    "../../src/renderer/trench-io/**/*.ts",
+    "../../src/shared/trench/trench.type.ts",
+    "../../src/shared/trench/trenchIndex.type.ts",
+    "../../src/shared/trench/trenchPerson.type.ts",
+    "../../src/shared/trench/trenchPerson.validation.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noCheck": false,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true
+  }
+}

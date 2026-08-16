@@ -396,9 +396,10 @@ const normalizeExposure = (
   if (exposure.holding !== null && typeof exposure.holding !== 'boolean') {
     throw new Error(`${label}.holding must be boolean or null`);
   }
+  const holding = exposure.holding as boolean | null;
   const normalized: TrenchWalletExposure = {
     address: canonicalizeTrenchAddress(exposure.address, chain, `${label}.address`),
-    holding: exposure.holding
+    holding
   };
   if (exposure.balance !== undefined) {
     normalized.balance = assertSingleLineString(

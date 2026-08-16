@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.web.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": [
+    "../../src/shared/sniping/snipingBridge.type.ts",
+    "../../src/main/sniping/snipingRequest.validation.ts",
+    "../../src/main/sniping/snipingResponse.validation.ts",
+    "../../src/renderer/coin/src/views/sniping/snipingDraft.service.ts",
+    "../../src/renderer/coin/src/views/sniping/snipingSchema.service.ts",
+    "../../src/renderer/coin/src/views/sniping/sniping.store.ts",
+    "../../src/renderer/coin/src/views/sniping/snipingEvidence.service.ts",
+    "./unit/snipingSchema.service.test.ts",
+    "./unit/snipingResponse.validation.test.ts",
+    "./unit/snipingStore.test.ts",
+    "./unit/snipingStoreEvidence.test.ts"
+  ]
+}

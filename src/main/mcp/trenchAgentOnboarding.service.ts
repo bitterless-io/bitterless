@@ -103,7 +103,7 @@ export const createTrenchAgentSetupInstruction = (params: {
   'Copy the directory contents additively and overwrite same-named files. Do not delete other skills.',
   '',
   '3. Restart the agent and verify the integration in a fresh session.',
-  'Confirm tools/list exposes all 12 `trench.*` tools, then invoke `$bitterless-trench` in Codex or `/bitterless-trench` in Claude Code.',
+  'Confirm tools/list exposes all 13 `trench.*` tools, then invoke `$bitterless-trench` in Codex or `/bitterless-trench` in Claude Code.',
   createInstanceSafetyInstruction(params.serverName),
 ].join('\n');
 

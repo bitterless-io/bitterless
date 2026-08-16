@@ -116,6 +116,8 @@ export const createWorkspaceTraversal = async ({
   onTreeEntry,
   onProgress,
   shouldReadContent,
+  scopeRelativePath = '',
+  isCancelled = () => false,
   workSlicer = createBackgroundWorkSlicer()
 }) => {
   const requestedRoot = resolve(rootPath);
@@ -124,6 +126,18 @@ export const createWorkspaceTraversal = async ({
     throw new TypeError('Search workspace root must be a real directory');
   }
   const rootRealPath = await realpath(requestedRoot);
+  const scopePath = scopeRelativePath
+    ? resolve(rootRealPath, ...scopeRelativePath.split('/'))
+    : rootRealPath;
+  const scopeRealPath = await realpath(scopePath);
+  const scopeStat = await lstat(scopeRealPath);
+  if (
+    !scopeStat.isDirectory() ||
+    scopeStat.isSymbolicLink() ||
+    !isContainedPath(rootRealPath, scopeRealPath)
+  ) {
+    throw new TypeError('Search directory scope must be a contained real directory');
+  }
   const policy = createTraversalPolicy(config);
   const treeEntries = [];
   const statistics = {
@@ -139,6 +153,7 @@ export const createWorkspaceTraversal = async ({
 
   const entries = (async function* streamWorkspace() {
     const visit = async function* visitDirectory(directoryPath, depth) {
+      if (isCancelled()) return;
       let directory;
       try {
         directory = await opendir(directoryPath);
@@ -151,6 +166,7 @@ export const createWorkspaceTraversal = async ({
       children.sort(compareDirectoryEntries);
       const childDirectories = [];
       for (const child of children) {
+        if (isCancelled()) return;
         await workSlicer.checkpoint();
         const absolutePath = join(directoryPath, child.name);
         const relativePath = normalizeRelative(relative(rootRealPath, absolutePath));
@@ -307,21 +323,28 @@ export const createWorkspaceTraversal = async ({
         }
       }
       for (const childDirectory of childDirectories) {
+        if (isCancelled()) return;
         yield* visitDirectory(childDirectory, depth + 1);
       }
     };
-    yield* visit(rootRealPath, 1);
+    yield* visit(scopeRealPath, scopeRelativePath ? scopeRelativePath.split('/').length + 1 : 1);
   })();
 
   return { rootRealPath, entries, treeEntries, statistics };
 };
 
-export const countWorkspaceSearchEntries = async ({ rootPath, config, workSlicer }) => {
+export const countWorkspaceSearchEntries = async ({
+  rootPath,
+  config,
+  isCancelled,
+  workSlicer
+}) => {
   const traversal = await createWorkspaceTraversal({
     rootPath,
     config,
     collectTreeEntries: false,
     metadataOnly: true,
+    isCancelled,
     workSlicer
   });
   let count = 0;

@@ -24,7 +24,7 @@ import {
 } from '@main/onlypreview/onlyPreviewHost.registry';
 import { resolveOnlyPreviewSettingsBounds } from '@main/onlypreview/onlyPreviewWindowBounds.service';
 import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPreviewSearchBootstrap.registry';
-import { onlyPreviewSearchUtilityLifecycleService } from '@main/onlypreview/onlyPreviewSearchUtilityLifecycle.service';
+import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import '@main/xpc/onlyPreviewSearchRuntime.handler';
 import { windowStateService, type WindowStateController } from './windowState.service';
 
@@ -479,7 +479,7 @@ export class OnlyPreviewWindowHelper {
     this.previewView = null;
     this.previewHostBounds = null;
     this.baseWindowState = null;
-    onlyPreviewSearchUtilityLifecycleService.stop();
+    fileSearchWindowService.stop();
     if (window && !window.isDestroyed()) {
       try {
         if (shellView) window.contentView.removeChildView(shellView);
@@ -574,14 +574,14 @@ export class OnlyPreviewWindowHelper {
     this.baseWindowState = windowStateService.register('onlypreview', window);
     const searchBootstrap = onlyPreviewSearchBootstrapRegistry.issue(host.hostToken);
     this.searchBootstrapToken = searchBootstrap.searchToken;
-    await onlyPreviewSearchUtilityLifecycleService.start({
+    await fileSearchWindowService.start({
       host,
-      searchToken: searchBootstrap.searchToken,
+      bootstrapToken: searchBootstrap.searchToken,
       broadcast: (eventName, params) => xpcMain.broadcast(eventName, params),
       onUnexpectedExit: () => this.destroyStandalone()
     });
     if (this.baseWindow !== window || this.standaloneHost?.hostToken !== host.hostToken) {
-      throw new Error('OnlyPreview search utility startup was superseded.');
+      throw new Error('OnlyPreview file-search runtime startup was superseded.');
     }
     const shellView = this.createView(host, 'shell');
     const previewHeaderView = this.createView(host, 'previewHeader');
@@ -625,7 +625,7 @@ export class OnlyPreviewWindowHelper {
       this.previewView = null;
       this.previewHostBounds = null;
       this.baseWindowState = null;
-      onlyPreviewSearchUtilityLifecycleService.stop();
+      fileSearchWindowService.stop();
       closeView(shellView);
       closeView(previewHeaderView);
       closeView(previewView);

@@ -210,6 +210,98 @@ test('browsed hidden directories remain valid empty Search scopes outside the Se
   });
 });
 
+test('first-build directory search scans its complete eligible scope while project search waits', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    await write(join(root, 'docs/deep/complete-scope.txt'), 'first build scoped needle');
+    await write(join(root, 'docs/node_modules/excluded.txt'), 'first build scoped needle');
+    await write(join(root, 'docs/.hidden/excluded.txt'), 'first build scoped needle');
+    await write(join(root, 'outside.txt'), 'first build scoped needle');
+
+    const engine = createOnlyPreviewSearchEngine();
+    let releasePromotion;
+    const promotionGate = new Promise((resolve) => {
+      releasePromotion = resolve;
+    });
+    let candidateComplete;
+    const candidateCompletePromise = new Promise((resolve) => {
+      candidateComplete = resolve;
+    });
+    const originalPromote = engine.promoteCandidate.bind(engine);
+    engine.promoteCandidate = async (...args) => {
+      candidateComplete();
+      await promotionGate;
+      return await originalPromote(...args);
+    };
+    const initialize = engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await candidateCompletePromise;
+
+    const scopedBatches = [];
+    const scoped = await engine.search({
+      workspaceId: 'workspace',
+      generation: 1,
+      requestId: 'first-directory',
+      query: 'first build scoped needle',
+      maxResults: 500,
+      scope: { kind: 'directory', relativePath: 'docs' },
+      cancelBuffer: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+      onResult: (result) => scopedBatches.push(result.relativePath)
+    });
+    assert.deepEqual(
+      scoped.results.map(({ relativePath }) => relativePath),
+      ['docs/deep/complete-scope.txt']
+    );
+    assert.deepEqual(scopedBatches, ['docs/deep/complete-scope.txt']);
+
+    let projectSettled = false;
+    const project = search(engine, 1, 'first-project', 'first build scoped needle').finally(() => {
+      projectSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(projectSettled, false, 'In Project must wait for first candidate promotion');
+    releasePromotion();
+    await initialize;
+    assert.deepEqual(
+      (await project).results.map(({ relativePath }) => relativePath),
+      ['docs/deep/complete-scope.txt', 'outside.txt']
+    );
+    await engine.shutdown();
+  });
+});
+
+test('preload-owned search cancellation works without a renderer SharedArrayBuffer global', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    await write(join(root, 'cancelled.txt'), 'callback cancellation needle');
+    const engine = createOnlyPreviewSearchEngine();
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+
+    await assert.rejects(
+      engine.search({
+        workspaceId: 'workspace',
+        generation: 1,
+        requestId: 'callback-cancelled',
+        query: 'callback cancellation needle',
+        maxResults: 50,
+        scope: { kind: 'project' },
+        isCancelled: () => true
+      }),
+      (error) => error?.code === 'CANCELLED'
+    );
+    await engine.shutdown();
+  });
+});
+
 test('directory scopes fail closed for legacy hidden rows outside Project Search', async () => {
   const index = new OnlyPreviewSqliteIndex(':memory:');
   const identity = {

@@ -572,7 +572,7 @@ test(
   }
 );
 
-test('a rename watch hint always promotes incremental paths to a full reconcile', async () => {
+test('rename watch hints retain path context for authoritative engine classification', async () => {
   const emitter = new EventEmitter();
   emitter.close = () => undefined;
   let listener;
@@ -587,8 +587,57 @@ test('a rename watch hint always promotes incremental paths to a full reconcile'
   });
   listener('rename', 'renamed.txt');
   await controller.flushNow();
-  assert.deepEqual(changes, [{ full: true, paths: [] }]);
+  assert.deepEqual(changes, [
+    { full: false, paths: ['renamed.txt'], renamePaths: ['renamed.txt'] }
+  ]);
   await controller.close();
+});
+
+test('rename hints update a stable file incrementally but reconcile an actual rename', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    const originalPath = join(root, 'original.txt');
+    const renamedPath = join(root, 'renamed.txt');
+    const commits = [];
+    await write(originalPath, 'original value');
+    const engine = createOnlyPreviewSearchEngine({
+      onWatchCommit: (commit) => commits.push(commit)
+    });
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await engine.watchController.close({ drain: false });
+    engine.watchController = undefined;
+    engine.watchRevision += 1;
+
+    await write(originalPath, 'updated in place');
+    await applyWatch(engine, {
+      full: false,
+      paths: ['original.txt'],
+      renamePaths: ['original.txt']
+    });
+    assert.deepEqual(commits.at(-1), {
+      workspaceId: 'workspace',
+      generation: 1,
+      revision: 1,
+      full: false,
+      changedRelativePaths: ['original.txt']
+    });
+    assert.equal((await search(engine, 'updated in place')).results.length, 1);
+
+    await rename(originalPath, renamedPath);
+    await applyWatch(engine, {
+      full: false,
+      paths: ['original.txt', 'renamed.txt'],
+      renamePaths: ['original.txt', 'renamed.txt']
+    });
+    assert.equal(commits.at(-1).full, true);
+    assert.equal((await search(engine, 'updated in place')).results[0].relativePath, 'renamed.txt');
+    await engine.shutdown();
+  });
 });
 
 test('an oversized watch burst reconciles Search projection and SQLite before individual paths', async () => {

@@ -1,6 +1,7 @@
 # BL Trench Record Vault
 
-Status: Accepted for implementation; supersedes the in-app analysis workspace
+Status: Superseded for the visible UI by [`trench-index.md`](trench-index.md); retained as the
+legacy JSON/MCP repository contract
 
 ## Purpose
 

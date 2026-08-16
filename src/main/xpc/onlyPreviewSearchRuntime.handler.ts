@@ -17,20 +17,20 @@ import type {
   OnlyPreviewSearchShutdownRequest,
   OnlyPreviewSearchSnapshot
 } from '@shared/onlypreview/onlyPreviewSearch.type';
-import { onlyPreviewSearchUtilityRpcService } from '@main/onlypreview/onlyPreviewSearchUtilityRpc.service';
+import { fileSearchRuntimeRelayService } from '@main/fileSearch/fileSearchRuntimeRelay.service';
 import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPreviewSearchBootstrap.registry';
 
 const CONTROL_TIMEOUT_MS = 10 * 60_000;
 const SEARCH_TIMEOUT_MS = 60_000;
 const CANCEL_TIMEOUT_MS = 5_000;
 
-const failedUtilityResult = (error: unknown): OnlyPreviewResult<never> =>
+const failedRuntimeResult = (error: unknown): OnlyPreviewResult<never> =>
   onlyPreviewFailure(
     error instanceof OnlyPreviewContractError
       ? error
       : new OnlyPreviewContractError(
           'OPERATION_FAILED',
-          error instanceof Error ? error.message : 'OnlyPreview search utility failed.'
+          error instanceof Error ? error.message : 'OnlyPreview file-search runtime failed.'
         )
   );
 
@@ -43,7 +43,7 @@ export class OnlyPreviewSearchRuntimeHandler
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>> {
     const hostToken = params?.hostToken ?? '';
     try {
-      const searchToken = onlyPreviewSearchUtilityRpcService.searchTokenForHost(hostToken);
+      const searchToken = fileSearchRuntimeRelayService.bootstrapTokenForHost(hostToken);
       const bootstrap = onlyPreviewSearchBootstrapRegistry.resolve(
         searchToken,
         params?.workspaceId,
@@ -51,7 +51,7 @@ export class OnlyPreviewSearchRuntimeHandler
       );
       return await this._call(hostToken, 'initialize', params, CONTROL_TIMEOUT_MS, bootstrap);
     } catch (error) {
-      return failedUtilityResult(error);
+      return failedRuntimeResult(error);
     }
   }
 
@@ -89,7 +89,7 @@ export class OnlyPreviewSearchRuntimeHandler
     bootstrap?: OnlyPreviewSearchBootstrap
   ): Promise<OnlyPreviewResult<T>> {
     try {
-      return (await onlyPreviewSearchUtilityRpcService.call(
+      return (await fileSearchRuntimeRelayService.call(
         hostToken,
         method,
         params,
@@ -97,7 +97,7 @@ export class OnlyPreviewSearchRuntimeHandler
         bootstrap
       )) as OnlyPreviewResult<T>;
     } catch (error) {
-      return failedUtilityResult(error);
+      return failedRuntimeResult(error);
     }
   }
 }

@@ -7,10 +7,13 @@ import {
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_SEARCH_BATCH_EVENT,
+  ONLY_PREVIEW_SEARCH_MAX_WATCH_PATHS,
   ONLY_PREVIEW_SEARCH_MAX_RESULTS,
+  ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
   type OnlyPreviewSearchBatch,
   type OnlyPreviewSearchResult,
-  type OnlyPreviewSearchScope
+  type OnlyPreviewSearchScope,
+  type OnlyPreviewSearchWatchCommitEvent
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
@@ -36,6 +39,62 @@ const errorMessage = (error: unknown): string => {
     return getOnlyPreviewErrorMessage(error.code);
   }
   return onlyPreviewI18n.project.projectSearchFailed;
+};
+
+const isWatchRelativePath = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= 16_384 &&
+  !value.includes('\0') &&
+  !value.startsWith('/') &&
+  !value.includes('\\') &&
+  !/^[a-zA-Z]:/.test(value) &&
+  !value.split('/').some((segment) => !segment || segment === '.' || segment === '..');
+
+const hasExactKeys = (value: Record<string, unknown>, expected: readonly string[]): boolean => {
+  const keys = Reflect.ownKeys(value);
+  return (
+    keys.length === expected.length &&
+    keys.every((key) => typeof key === 'string' && expected.includes(key))
+  );
+};
+
+const isWatchCommitEvent = (value: unknown): value is OnlyPreviewSearchWatchCommitEvent => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  if (
+    !hasExactKeys(event, ['hostId', 'commit']) ||
+    typeof event.hostId !== 'string' ||
+    !event.commit ||
+    typeof event.commit !== 'object' ||
+    Array.isArray(event.commit)
+  ) {
+    return false;
+  }
+  const commit = event.commit as Record<string, unknown>;
+  return (
+    hasExactKeys(commit, [
+      'workspaceId',
+      'generation',
+      'revision',
+      'full',
+      'changedRelativePaths'
+    ]) &&
+    typeof commit.workspaceId === 'string' &&
+    commit.workspaceId.length > 0 &&
+    commit.workspaceId.length <= 256 &&
+    !commit.workspaceId.includes('\0') &&
+    Number.isSafeInteger(commit.generation) &&
+    (commit.generation as number) >= 0 &&
+    Number.isSafeInteger(commit.revision) &&
+    (commit.revision as number) > 0 &&
+    typeof commit.full === 'boolean' &&
+    Array.isArray(commit.changedRelativePaths) &&
+    commit.changedRelativePaths.length <= ONLY_PREVIEW_SEARCH_MAX_WATCH_PATHS &&
+    commit.changedRelativePaths.every(isWatchRelativePath) &&
+    new Set(commit.changedRelativePaths).size === commit.changedRelativePaths.length &&
+    (!commit.full || commit.changedRelativePaths.length === 0)
+  );
 };
 
 class OnlyPreviewProjectSearchStore {
@@ -80,6 +139,11 @@ class OnlyPreviewProjectSearchStore {
         payload.params.hostId === onlyPreviewEnv.hostId
       ) {
         this.acceptBatch(payload.params.batch);
+      }
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT, (payload) => {
+      if (isWatchCommitEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        this.acceptWatchCommit(payload.params.commit);
       }
     });
   }
@@ -181,24 +245,19 @@ class OnlyPreviewProjectSearchStore {
     this.scheduleSearch?.();
   }
 
-  suspendForIndex(): void {
-    this.cancelActive();
-    this.lastDispatchedInputGeneration = -1;
-    this.clearResults();
-    this.pending = this.active && Boolean(this.query.trim());
-  }
-
-  resumeForReadyIndex(): void {
+  resumeForAvailableRuntime(): void {
     const context = this.resolveContext?.() ?? null;
-    if (!this.active || this.composing || !this.query.trim() || !context || context.ready === false)
+    if (
+      !this.active ||
+      this.composing ||
+      !this.query.trim() ||
+      !context ||
+      context.ready === false ||
+      this.inputGeneration === this.lastDispatchedInputGeneration
+    )
       return;
     this.pending = true;
     this.scheduleSearch?.();
-  }
-
-  stopWaitingForIndex(): void {
-    this.cancelActive();
-    this.pending = false;
   }
 
   async dispatchLatest(): Promise<void> {
@@ -328,6 +387,37 @@ class OnlyPreviewProjectSearchStore {
         this.results[existingIndex] = result;
       }
     }
+  }
+
+  private acceptWatchCommit(commit: OnlyPreviewSearchWatchCommitEvent['commit']): void {
+    const context = this.resolveContext?.() ?? null;
+    if (
+      !this.active ||
+      this.composing ||
+      !this.query.trim() ||
+      !context ||
+      context.workspaceId !== commit.workspaceId ||
+      context.generation !== commit.generation
+    ) {
+      return;
+    }
+    if (
+      !commit.full &&
+      this.scopeKind === 'directory' &&
+      this.directoryRelativePath &&
+      !commit.changedRelativePaths.some(
+        (relativePath) =>
+          relativePath === this.directoryRelativePath ||
+          relativePath.startsWith(`${this.directoryRelativePath}/`)
+      )
+    ) {
+      return;
+    }
+    this.inputGeneration += 1;
+    this.error = '';
+    this.cancelActive();
+    this.pending = true;
+    if (context.ready !== false) this.scheduleSearch?.();
   }
 
   private clearResults(): void {

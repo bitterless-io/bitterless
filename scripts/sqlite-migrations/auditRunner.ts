@@ -29,6 +29,17 @@ import {
   type TodoistSyncMigration,
   type TodoistSyncMigrationDatabase,
 } from '../../src/preload/sqlite/todoistSync/todoistSync.migration'
+import {
+  applyTrenchIoMigrations,
+  assertTrenchIoSchema,
+  TRENCH_IO_CHAIN_SCHEMA,
+  TRENCH_IO_CHAIN_SCHEMA_VERSION_CODE,
+  TRENCH_IO_INITIAL_SCHEMA,
+  TRENCH_IO_INITIAL_SCHEMA_VERSION_CODE,
+  TRENCH_IO_PERSON_SCHEMA_VERSION_CODE,
+  TRENCH_IO_SCHEMA_VERSION_CODE,
+  type TrenchIoMigrationDatabase,
+} from '../../src/renderer/trench-io/trenchIo.migration'
 
 interface TableColumnInfo {
   name: string
@@ -127,6 +138,9 @@ const getColumns = (db: Database.Database, tableName: string): string[] => {
   return (db.prepare(`PRAGMA table_info(${tableName})`).all() as TableColumnInfo[])
     .map((column) => column.name)
 }
+
+const getScalar = (db: Database.Database, sql: string): unknown =>
+  Object.values(db.prepare(sql).get() as Record<string, unknown>)[0]
 
 const assertColumns = (
   db: Database.Database,
@@ -1345,14 +1359,251 @@ const auditManifestValidation = (): void => {
   console.log('✓ Version-code and manifest validation')
 }
 
+const asTrenchMigrationDatabase = (db: Database.Database): TrenchIoMigrationDatabase =>
+  db as unknown as TrenchIoMigrationDatabase
+
+const auditTrenchIo = (): void => {
+  const fresh = openAuditDatabase(join(auditDir, 'trench-fresh.db'))
+  try {
+    fresh.exec('PRAGMA foreign_keys = ON;')
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(fresh), currentVersionCode, 1)
+    assertTrenchIoSchema(asTrenchMigrationDatabase(fresh))
+    const ledger = fresh.prepare(
+      'SELECT version_code FROM trench_schema_migrations ORDER BY version_code',
+    ).all() as Array<{ version_code: string }>
+    assert.deepEqual(ledger.map(({ version_code }) => version_code), [
+      TRENCH_IO_INITIAL_SCHEMA_VERSION_CODE,
+      TRENCH_IO_CHAIN_SCHEMA_VERSION_CODE,
+      TRENCH_IO_PERSON_SCHEMA_VERSION_CODE,
+      TRENCH_IO_SCHEMA_VERSION_CODE,
+    ])
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(fresh), currentVersionCode, 2)
+    assertHealthy(fresh)
+    console.log('✓ trench-io fresh/current schema and idempotent reopen')
+  } finally {
+    fresh.close()
+  }
+
+  const upgraded = openAuditDatabase(join(auditDir, 'trench-upgrade-018.db'))
+  try {
+    upgraded.exec(TRENCH_IO_INITIAL_SCHEMA)
+    upgraded.prepare('INSERT INTO trench_schema_migrations VALUES (?,?,?)')
+      .run(TRENCH_IO_INITIAL_SCHEMA_VERSION_CODE, 'initial-index-schema', 1)
+    upgraded.prepare('INSERT INTO trench_repository_state VALUES (1,0,NULL,1)').run()
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(upgraded), currentVersionCode, 2)
+    assertTrenchIoSchema(asTrenchMigrationDatabase(upgraded))
+    assert.deepEqual(getColumns(upgraded, 'trench_index_wallets'), [
+      'run_id', 'wallet_account_id', 'chain', 'chain_rank', 'total_profit_usd', 'source_ca_count',
+      'profitable_ca_count', 'best_source_rank', 'realized_profit_usd', 'unrealized_profit_usd',
+    ])
+    assertHealthy(upgraded)
+    console.log('✓ trench-io 018 upgrade converges on current person-registry schema')
+  } finally {
+    upgraded.close()
+  }
+
+  const upgraded019 = openAuditDatabase(join(auditDir, 'trench-upgrade-019.db'))
+  try {
+    upgraded019.exec(TRENCH_IO_CHAIN_SCHEMA)
+    upgraded019.prepare('INSERT INTO trench_schema_migrations VALUES (?,?,?)')
+      .run(TRENCH_IO_INITIAL_SCHEMA_VERSION_CODE, 'initial-index-schema', 1)
+    upgraded019.prepare('INSERT INTO trench_schema_migrations VALUES (?,?,?)')
+      .run(TRENCH_IO_CHAIN_SCHEMA_VERSION_CODE, 'chain-partitioned-index', 2)
+    const currentRun = '11111111-1111-4111-8111-111111111111'
+    const historicalRun = '22222222-2222-4222-8222-222222222222'
+    const currentUser = '33333333-3333-4333-8333-333333333333'
+    const currentExchange = '44444444-4444-4444-8444-444444444444'
+    const historicalUser = '55555555-5555-4555-8555-555555555555'
+    const candidateOnlyUser = '88888888-8888-4888-8888-888888888888'
+    const currentTarget = '99999999-9999-4999-8999-999999999999'
+    const insertRun = upgraded019.prepare(`
+      INSERT INTO trench_index_runs (
+        run_id,request_id,request_fingerprint,trigger,status,started_at,completed_at,target_count,
+        candidate_count,eligible_count,published_count,policy_version
+      ) VALUES (?,?,?,'reanalyze','completed',1,2,1,0,0,?,'profit-sum-v1')
+    `)
+    insertRun.run(currentRun, '66666666-6666-4666-8666-666666666666', 'a'.repeat(64), 2)
+    insertRun.run(historicalRun, '77777777-7777-4777-8777-777777777777', 'b'.repeat(64), 1)
+    upgraded019.prepare(`
+      UPDATE trench_index_runs SET candidate_count=1,eligible_count=1 WHERE run_id=?
+    `).run(currentRun)
+    upgraded019.prepare(`
+      INSERT INTO trench_index_targets (
+        target_id,chain,canonical_address,address,metadata_observed_at,created_at,updated_at
+      ) VALUES (?,'bsc',?,?,1,1,1)
+    `).run(currentTarget, '0x9999999999999999999999999999999999999999',
+      '0x9999999999999999999999999999999999999999')
+    upgraded019.prepare(`
+      INSERT INTO trench_index_target_snapshots (
+        run_id,target_id,highest_market_cap_kind,observed_at
+      ) VALUES (?,?,'unavailable',1)
+    `).run(currentRun, currentTarget)
+    const insertWallet = upgraded019.prepare(`
+      INSERT INTO trench_wallets (
+        wallet_id,chain,canonical_address,address,metadata_json,metadata_source,wallet_kind,
+        classification_source,classification_updated_at,first_seen_at,last_seen_at,metadata_updated_at
+      ) VALUES (?,?,?,?,?,'gmgn',?,'gmgn-addr-type',1,1,1,1)
+    `)
+    insertWallet.run(currentUser, 'bsc', '0x1111111111111111111111111111111111111111',
+      '0x1111111111111111111111111111111111111111', '{"walletScore":1}', 'user')
+    insertWallet.run(currentExchange, 'bsc', '0x2222222222222222222222222222222222222222',
+      '0x2222222222222222222222222222222222222222', '{}', 'exchange')
+    insertWallet.run(historicalUser, 'bsc', '0x3333333333333333333333333333333333333333',
+      '0x3333333333333333333333333333333333333333', '{}', 'user')
+    insertWallet.run(candidateOnlyUser, 'bsc', '0x8888888888888888888888888888888888888888',
+      '0x8888888888888888888888888888888888888888', '{}', 'user')
+    upgraded019.prepare(`
+      INSERT INTO trench_index_wallet_candidates (
+        run_id,target_id,wallet_id,source_rank,profit_usd,eligible,evidence_json
+      ) VALUES (?,?,?,1,5,1,'{}')
+    `).run(currentRun, currentTarget, candidateOnlyUser)
+    const insertResult = upgraded019.prepare(`
+      INSERT INTO trench_index_wallets (
+        run_id,wallet_id,chain,chain_rank,total_profit_usd,source_ca_count,profitable_ca_count,
+        best_source_rank
+      ) VALUES (?,?,'bsc',?,?,1,1,1)
+    `)
+    insertResult.run(currentRun, currentUser, 1, 10)
+    insertResult.run(currentRun, currentExchange, 2, 20)
+    insertResult.run(historicalRun, historicalUser, 1, 30)
+    upgraded019.prepare('INSERT INTO trench_repository_state VALUES (1,7,?,2)').run(currentRun)
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(upgraded019), currentVersionCode, 3)
+    assertTrenchIoSchema(asTrenchMigrationDatabase(upgraded019))
+    assert.deepEqual(getColumns(upgraded019, 'trench_wallets'), [
+      'wallet_id', 'address_namespace', 'canonical_address', 'address', 'name', 'avatar_url',
+      'note', 'metadata_json', 'metadata_source', 'first_seen_at', 'last_seen_at',
+      'metadata_updated_at',
+    ])
+    assert.equal(getScalar(upgraded019, 'SELECT COUNT(*) FROM trench_index_wallets'), 3)
+    assert.equal(getScalar(upgraded019, 'SELECT COUNT(*) FROM trench_index_wallet_candidates'), 1)
+    assert.equal(getScalar(upgraded019,
+      'SELECT revision FROM trench_repository_state WHERE id=1'), 7)
+    assert.equal(getScalar(upgraded019,
+      'SELECT current_run_id FROM trench_repository_state WHERE id=1'), currentRun)
+    const backfilledPeople = upgraded019.prepare(`
+      SELECT memberships.wallet_id,persons.status,persons.display_name,
+        persons.display_name_source,memberships.link_source
+      FROM trench_person_wallets memberships
+      JOIN trench_persons persons ON persons.person_id=memberships.person_id
+    `).all().map((row) => ({ ...(row as Record<string, unknown>) }))
+    assert.deepEqual(backfilledPeople, [{
+      wallet_id: currentUser,
+      status: 'active',
+      display_name: null,
+      display_name_source: 'system',
+      link_source: 'index-auto',
+    }])
+    assertHealthy(upgraded019)
+    console.log('✓ trench-io 019 upgrade converges on global wallet and person schema')
+  } finally {
+    upgraded019.close()
+  }
+
+  const partial = openAuditDatabase(join(auditDir, 'trench-partial.db'))
+  try {
+    partial.exec('CREATE TABLE trench_wallets (wallet_id TEXT PRIMARY KEY);')
+    assert.throws(() => applyTrenchIoMigrations(
+      asTrenchMigrationDatabase(partial),
+      currentVersionCode,
+      1,
+    ), /partial pre-ledger schema/)
+    console.log('✓ trench-io partial pre-ledger schema fails closed')
+  } finally {
+    partial.close()
+  }
+
+  const future = openAuditDatabase(join(auditDir, 'trench-future.db'))
+  try {
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(future), currentVersionCode, 1)
+    future.prepare(`
+      INSERT INTO trench_schema_migrations (version_code,name,applied_at) VALUES (?,?,?)
+    `).run('991231235959', 'future-fixture', 2)
+    assert.throws(() => applyTrenchIoMigrations(
+      asTrenchMigrationDatabase(future),
+      currentVersionCode,
+      3,
+    ), /exact supported manifest prefix/)
+    assertHealthy(future)
+    console.log('✓ trench-io future migration fails closed')
+  } finally {
+    future.close()
+  }
+
+  const missingPredecessors = openAuditDatabase(join(auditDir, 'trench-missing-ledger.db'))
+  try {
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(missingPredecessors), currentVersionCode, 1)
+    missingPredecessors.prepare(`
+      DELETE FROM trench_schema_migrations WHERE version_code IN (?,?)
+    `).run(TRENCH_IO_INITIAL_SCHEMA_VERSION_CODE, TRENCH_IO_CHAIN_SCHEMA_VERSION_CODE)
+    assert.throws(() => applyTrenchIoMigrations(
+      asTrenchMigrationDatabase(missingPredecessors), currentVersionCode, 2,
+    ), /identity or order is invalid/)
+    const retainedLedger = missingPredecessors.prepare(`
+      SELECT version_code,name FROM trench_schema_migrations ORDER BY version_code
+    `).all().map((row) => ({ ...(row as Record<string, unknown>) }))
+    assert.deepEqual(retainedLedger, [
+      {
+        version_code: TRENCH_IO_PERSON_SCHEMA_VERSION_CODE,
+        name: 'global-wallet-person-registry',
+      },
+      {
+        version_code: TRENCH_IO_SCHEMA_VERSION_CODE,
+        name: 'person-import-ledger',
+      },
+    ])
+    assert.equal(getScalar(missingPredecessors,
+      'SELECT revision FROM trench_repository_state WHERE id=1'), 0)
+    assertHealthy(missingPredecessors)
+    console.log('✓ trench-io current shape with missing predecessor ledger fails closed')
+  } finally {
+    missingPredecessors.close()
+  }
+
+  const unknownLower = openAuditDatabase(join(auditDir, 'trench-unknown-ledger.db'))
+  try {
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(unknownLower), currentVersionCode, 1)
+    unknownLower.prepare(`
+      INSERT INTO trench_schema_migrations (version_code,name,applied_at) VALUES (?,?,?)
+    `).run('260101000000', 'unknown-lower-fixture', 0)
+    assert.throws(() => applyTrenchIoMigrations(
+      asTrenchMigrationDatabase(unknownLower), currentVersionCode, 2,
+    ), /exact supported manifest prefix/)
+    assert.equal(getScalar(unknownLower, 'SELECT COUNT(*) FROM trench_schema_migrations'), 5)
+    assert.equal(getScalar(unknownLower,
+      'SELECT revision FROM trench_repository_state WHERE id=1'), 0)
+    assertHealthy(unknownLower)
+    console.log('✓ trench-io unknown lower ledger entry fails closed without mutation')
+  } finally {
+    unknownLower.close()
+  }
+
+  const wrongIdentity = openAuditDatabase(join(auditDir, 'trench-wrong-ledger-name.db'))
+  try {
+    applyTrenchIoMigrations(asTrenchMigrationDatabase(wrongIdentity), currentVersionCode, 1)
+    wrongIdentity.prepare(`
+      UPDATE trench_schema_migrations SET name='wrong-name' WHERE version_code=?
+    `).run(TRENCH_IO_CHAIN_SCHEMA_VERSION_CODE)
+    assert.throws(() => applyTrenchIoMigrations(
+      asTrenchMigrationDatabase(wrongIdentity), currentVersionCode, 2,
+    ), /identity or order is invalid/)
+    assert.equal(getScalar(wrongIdentity,
+      'SELECT revision FROM trench_repository_state WHERE id=1'), 0)
+    assertHealthy(wrongIdentity)
+    console.log('✓ trench-io known ledger version with wrong identity fails closed')
+  } finally {
+    wrongIdentity.close()
+  }
+}
+
 try {
   auditManifestValidation()
   auditRunnerFailurePolicy()
   auditCoreBaselines()
   auditMaestroBaselines()
   auditTodoistBaselines()
+  auditTrenchIo()
   console.log(
-    `SQLite migration audit passed (${coreBaselines.length} Core + ${maestroBaselines.length} Maestro + 10 Todoist sync baselines).`,
+    `SQLite migration audit passed (${coreBaselines.length} Core + ${maestroBaselines.length} Maestro + 10 Todoist sync + 8 Trench baselines).`,
   )
 } finally {
   rmSync(auditDir, { recursive: true, force: true })

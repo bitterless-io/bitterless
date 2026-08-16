@@ -1,0 +1,785 @@
+.monitoring-workspace {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--trench-surface);
+}
+
+.monitoring-workspace__header {
+  min-height: 54px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--trench-border);
+  background: var(--trench-surface);
+}
+
+.monitoring-workspace__header > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.monitoring-workspace__eyebrow {
+  color: var(--trench-primary);
+  font-family: var(--trench-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.monitoring-workspace__header p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--trench-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-workspace__boundary {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid var(--trench-primary);
+  color: var(--trench-primary);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.monitoring-watches {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(260px, 286px) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.monitoring-watch-list {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--trench-border);
+  background: var(--trench-utility);
+}
+
+.monitoring-watch-list__search {
+  flex: 0 0 auto;
+  padding: 9px;
+  border-bottom: 1px solid var(--trench-border);
+}
+
+.monitoring-watch-list__notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--trench-warning) 35%, white);
+  background: color-mix(in srgb, var(--trench-warning) 7%, white);
+  color: var(--trench-warning);
+  font-size: 9px;
+}
+
+.monitoring-watch-list__rows {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.monitoring-watch-list__row {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--trench-border);
+  background: transparent;
+  color: var(--trench-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.monitoring-watch-list__row:hover {
+  background: color-mix(in srgb, var(--trench-primary) 6%, white);
+}
+
+.monitoring-watch-list__row--selected {
+  box-shadow: inset 3px 0 0 var(--trench-primary);
+  background: var(--trench-surface);
+}
+
+.monitoring-watch-list__row-top,
+.monitoring-watch-list__meta,
+.monitoring-watch-list__pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.monitoring-watch-list__row-top strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-watch-list__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--trench-border-strong);
+}
+
+.monitoring-watch-list__dot--good {
+  background: var(--trench-positive);
+}
+.monitoring-watch-list__dot--warm {
+  background: var(--trench-warning);
+}
+.monitoring-watch-list__dot--bad {
+  background: var(--trench-danger);
+}
+
+.monitoring-watch-list__score {
+  color: var(--trench-primary);
+  font-family: var(--trench-mono);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.monitoring-watch-list__row code,
+.monitoring-watch-list__meta {
+  overflow: hidden;
+  color: var(--trench-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-watch-list__state {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 20px;
+  color: var(--trench-text-muted);
+  text-align: center;
+}
+
+.monitoring-watch-list__pagination {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding: 7px 8px;
+  border-top: 1px solid var(--trench-border);
+  color: var(--trench-text-muted);
+  font-size: 10px;
+}
+
+.monitoring-watch-detail {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--trench-surface);
+}
+
+.monitoring-watch-detail__back {
+  display: none;
+}
+
+.monitoring-watch-detail__empty {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  padding: 24px;
+  color: var(--trench-text-muted);
+  text-align: center;
+}
+
+.monitoring-watch-detail__header {
+  min-width: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px 8px;
+}
+
+.monitoring-watch-detail__identity {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.monitoring-watch-detail__chain {
+  color: var(--trench-primary);
+  font-family: var(--trench-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.monitoring-watch-detail__identity h1 {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--trench-display);
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-watch-detail__identity code {
+  overflow: hidden;
+  color: var(--trench-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-watch-detail__actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.monitoring-watch-detail__notice,
+.monitoring-panel__partial,
+.monitoring-anomalies__error,
+.monitoring-anomalies__warning {
+  margin: 0 14px 7px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--trench-warning) 45%, white);
+  background: color-mix(in srgb, var(--trench-warning) 7%, white);
+  color: var(--trench-warning);
+  font-size: 10px;
+}
+
+.monitoring-watch-detail__notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.monitoring-watch-detail__notice--danger,
+.monitoring-anomalies__error,
+.monitoring-anomalies__warning {
+  border-color: color-mix(in srgb, var(--trench-danger) 42%, white);
+  background: color-mix(in srgb, var(--trench-danger) 6%, white);
+  color: var(--trench-danger);
+}
+
+.monitoring-watch-detail__facts {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0 14px 8px;
+  border: 1px solid var(--trench-border);
+  background: var(--trench-surface-raised);
+}
+
+.monitoring-watch-detail__facts > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-right: 1px solid var(--trench-border);
+}
+
+.monitoring-watch-detail__facts > div:last-child {
+  border-right: 0;
+}
+
+.monitoring-watch-detail__facts span,
+.monitoring-watch-detail__facts small {
+  overflow: hidden;
+  color: var(--trench-text-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-watch-detail__facts strong {
+  overflow: hidden;
+  font-family: var(--trench-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-tone--good {
+  color: var(--trench-positive);
+}
+.monitoring-tone--warm {
+  color: var(--trench-warning);
+}
+.monitoring-tone--bad {
+  color: var(--trench-danger);
+}
+
+.monitoring-watch-detail__scroll {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 14px 14px;
+  scrollbar-gutter: stable;
+}
+
+.monitoring-panel {
+  margin-bottom: 9px;
+  border: 1px solid var(--trench-border);
+  background: var(--trench-surface);
+}
+
+.monitoring-panel__header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--trench-border);
+  background: var(--trench-surface-raised);
+}
+
+.monitoring-panel__header h2 {
+  margin: 0;
+  font-family: var(--trench-display);
+  font-size: 14px;
+}
+
+.monitoring-panel__header p {
+  margin: 2px 0 0;
+  color: var(--trench-text-muted);
+  font-size: 9px;
+}
+
+.monitoring-panel__asset {
+  display: block;
+  max-width: min(100%, 520px);
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--trench-primary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-panel__revision {
+  flex: 0 0 154px;
+  display: grid;
+  gap: 2px;
+  color: var(--trench-text-muted);
+  font-size: 9px;
+}
+
+.monitoring-chart {
+  height: 190px;
+  min-height: 150px;
+  position: relative;
+  padding: 28px 10px 23px;
+  overflow: hidden;
+  background:
+    linear-gradient(to bottom, transparent 49%, var(--trench-border) 50%, transparent 51%),
+    repeating-linear-gradient(to right, transparent, transparent calc(20% - 1px), #f0f1f5 20%);
+}
+
+.monitoring-chart__legend {
+  position: absolute;
+  inset: 7px 9px auto;
+  display: flex;
+  gap: 15px;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.monitoring-chart__legend-count {
+  color: var(--trench-primary);
+}
+.monitoring-chart__legend-z {
+  color: var(--trench-warning);
+}
+
+.monitoring-chart svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.monitoring-chart polyline {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.monitoring-chart__count {
+  stroke: var(--trench-primary);
+}
+.monitoring-chart__z {
+  stroke: var(--trench-warning);
+}
+
+.monitoring-chart__threshold {
+  vector-effect: non-scaling-stroke;
+  stroke: color-mix(in srgb, var(--trench-danger) 60%, transparent);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+}
+
+.monitoring-chart__empty {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  color: var(--trench-text-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.monitoring-chart__gap {
+  position: absolute;
+  right: 9px;
+  bottom: 6px;
+  color: var(--trench-danger);
+  font-family: var(--trench-mono);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.monitoring-panel__partial {
+  margin: 7px 9px;
+}
+
+.monitoring-panel__cursor {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--trench-border);
+  color: var(--trench-text-muted);
+  font-size: 9px;
+}
+
+.monitoring-panel__disclaimer {
+  margin: 0;
+  padding: 7px 9px;
+  border-top: 1px solid var(--trench-border);
+  color: var(--trench-text-muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.monitoring-panel__state {
+  min-height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--trench-text-muted);
+}
+
+.monitoring-region-rail {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  position: relative;
+  padding: 10px;
+}
+
+.monitoring-region-rail__card {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid var(--trench-border-strong);
+  background: var(--trench-surface-raised);
+}
+
+.monitoring-region-rail__card span {
+  color: var(--trench-primary);
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.monitoring-region-rail__card small,
+.monitoring-region-rail__card code {
+  overflow: hidden;
+  color: var(--trench-text-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-region-rail__link {
+  width: 28px;
+  height: 1px;
+  position: absolute;
+  top: 50%;
+  left: calc(50% - 14px);
+  background: var(--trench-danger);
+}
+
+.monitoring-region-rail__link::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  position: absolute;
+  top: -3px;
+  left: 11px;
+  border-radius: 50%;
+  background: inherit;
+}
+
+.monitoring-region-rail__link--matched {
+  background: var(--trench-positive);
+}
+
+.monitoring-evidence-table__region,
+.monitoring-anomalies__list {
+  min-width: 0;
+  overflow: auto;
+}
+
+.monitoring-evidence-table,
+.monitoring-anomalies__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.monitoring-evidence-table {
+  min-width: 690px;
+}
+.monitoring-anomalies__table {
+  min-width: 760px;
+}
+
+.monitoring-evidence-table th,
+.monitoring-evidence-table td,
+.monitoring-anomalies__table th,
+.monitoring-anomalies__table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--trench-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.monitoring-evidence-table th,
+.monitoring-anomalies__table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--trench-surface-raised);
+  color: var(--trench-text-muted);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.monitoring-evidence-table td small,
+.monitoring-anomalies__table td code {
+  display: block;
+  margin-top: 2px;
+  color: var(--trench-text-muted);
+  font-size: 9px;
+}
+
+.monitoring-evidence-table__empty,
+.monitoring-anomalies__empty {
+  display: grid;
+  place-content: center;
+  min-height: 96px;
+  padding: 16px;
+  color: var(--trench-text-muted);
+  text-align: center;
+}
+
+.monitoring-watch-detail__reset-note {
+  margin: 0;
+  padding: 8px;
+  border-left: 3px solid var(--trench-warning);
+  background: color-mix(in srgb, var(--trench-warning) 6%, white);
+  color: var(--trench-text-muted);
+  font-size: 9px;
+}
+
+.monitoring-watch-dialog__body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.monitoring-dialog-title,
+.monitoring-drawer-title {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.monitoring-watch-dialog__field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: var(--trench-text-muted);
+  font-size: 11px;
+}
+
+.monitoring-watch-dialog__field--wide,
+.monitoring-watch-dialog__error,
+.monitoring-watch-dialog__notice {
+  grid-column: 1 / -1;
+}
+
+.monitoring-watch-dialog__field small {
+  font-size: 9px;
+}
+
+.monitoring-watch-dialog__error,
+.monitoring-watch-dialog__notice {
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--trench-danger) 40%, white);
+  background: color-mix(in srgb, var(--trench-danger) 5%, white);
+  color: var(--trench-danger);
+  font-size: 10px;
+}
+
+.monitoring-watch-dialog__notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-color: color-mix(in srgb, var(--trench-warning) 40%, white);
+  background: color-mix(in srgb, var(--trench-warning) 5%, white);
+  color: var(--trench-warning);
+}
+
+.monitoring-watch-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.monitoring-anomalies {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.monitoring-anomalies__filters {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--trench-border);
+  background: var(--trench-surface-raised);
+}
+
+.monitoring-anomalies__filters .arco-select {
+  min-width: 180px;
+}
+.monitoring-anomalies__error {
+  flex: 0 0 auto;
+  margin-top: 8px;
+}
+.monitoring-anomalies__list {
+  min-height: 0;
+  flex: 1;
+}
+
+.monitoring-anomalies__table tbody tr:hover {
+  background: color-mix(in srgb, var(--trench-primary) 4%, white);
+}
+
+.monitoring-anomalies__row-trigger {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--trench-primary);
+  font-family: var(--trench-mono);
+  font-size: 10px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.monitoring-anomalies__cursor {
+  min-height: 39px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 7px 11px;
+  border-top: 1px solid var(--trench-border);
+  color: var(--trench-text-muted);
+  font-size: 10px;
+}
+
+.monitoring-anomalies__drawer-facts {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border: 1px solid var(--trench-border);
+}
+
+.monitoring-anomalies__drawer-facts > div {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 9px;
+  padding: 8px;
+  border-bottom: 1px solid var(--trench-border);
+}
+
+.monitoring-anomalies__drawer-facts > div:last-child {
+  border-bottom: 0;
+}
+
+.monitoring-anomalies__drawer-facts dt {
+  color: var(--trench-text-muted);
+  font-size: 10px;
+}
+
+.monitoring-anomalies__drawer-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--trench-mono);
+  font-size: 10px;
+}
+
+@import './MonitoringResponsive.less';

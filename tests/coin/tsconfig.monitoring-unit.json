@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.web.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": [
+    "../../src/env.d.ts",
+    "../../src/shared/monitoring/monitoringBridge.type.ts",
+    "../../src/main/monitoring/monitoringRequest.validation.ts",
+    "../../src/main/monitoring/monitoringResponse.validation.ts",
+    "../../src/main/monitoring/monitoringBridge.service.ts",
+    "../../src/renderer/coin/src/views/monitoring/monitoringPresentation.service.ts",
+    "../../src/renderer/coin/src/views/monitoring/monitoring.store.ts",
+    "./unit/monitoringFixtures.ts",
+    "./unit/monitoringRequest.validation.test.ts",
+    "./unit/monitoringResponse.validation.test.ts",
+    "./unit/monitoringBridge.service.test.ts",
+    "./unit/monitoringPresentation.test.ts",
+    "./unit/monitoringStore.test.ts",
+    "./unit/monitoringStoreLifecycle.test.ts"
+  ]
+}

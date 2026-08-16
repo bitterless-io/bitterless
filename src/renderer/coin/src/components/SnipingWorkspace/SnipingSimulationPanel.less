@@ -1,0 +1,241 @@
+.sniping-simulation {
+  display: grid;
+  gap: 12px;
+}
+
+.sniping-simulation__section {
+  padding: 14px;
+  border: 1px solid var(--trench-border);
+  background: var(--trench-surface);
+}
+
+.sniping-simulation__section-header,
+.sniping-simulation__actions,
+.sniping-run-list__row header,
+.sniping-page-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sniping-simulation__section h3 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.sniping-simulation__section > p {
+  color: var(--trench-text-muted);
+  line-height: 1.45;
+}
+
+.sniping-simulation__eyebrow,
+.sniping-simulation__simulated {
+  color: var(--trench-primary);
+  font-family: var(--trench-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.sniping-simulation__event-list,
+.sniping-run-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.sniping-simulation__event {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 16px minmax(160px, .8fr) minmax(130px, 1.2fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--trench-border);
+  cursor: pointer;
+}
+
+.sniping-simulation__event--selected {
+  border-color: var(--trench-primary);
+  background: color-mix(in srgb, var(--trench-primary) 6%, white);
+}
+
+.sniping-simulation__event label,
+.sniping-run-list__row header div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sniping-simulation__event label {
+  cursor: pointer;
+}
+
+.sniping-simulation__copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sniping-simulation__event small,
+.sniping-simulation__request-id {
+  color: var(--trench-text-muted);
+}
+
+.sniping-simulation__event code,
+.sniping-simulation__request-id code,
+.sniping-run-list code {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--trench-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sniping-simulation__empty {
+  margin: 10px 0;
+  padding: 18px;
+  border: 1px dashed var(--trench-border-strong);
+  color: var(--trench-text-muted);
+  text-align: center;
+}
+
+.sniping-simulation__policy {
+  display: grid;
+  grid-template-columns: .7fr 1.4fr .9fr;
+  gap: 8px;
+}
+
+.sniping-simulation__policy label {
+  display: grid;
+  gap: 5px;
+  color: var(--trench-text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.sniping-simulation__actions {
+  justify-content: flex-start;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+
+.sniping-run-list__row {
+  padding: 10px;
+  border-left: 3px solid var(--trench-primary);
+  background: var(--trench-surface-raised);
+}
+
+.sniping-run-list__row--stale {
+  border-left-color: var(--trench-border-strong);
+  opacity: .78;
+}
+
+.sniping-run-list__state {
+  padding: 2px 6px;
+  border: 1px solid var(--trench-border-strong);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.sniping-run-list__state--failed,
+.sniping-run-list__state--blocked {
+  color: var(--trench-danger);
+}
+
+.sniping-run-list__evidence,
+.sniping-run-list__positions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  color: var(--trench-text-muted);
+  font-size: 11px;
+}
+
+.sniping-run-list__report {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.sniping-run-list__report div {
+  min-width: 0;
+  padding: 6px;
+  background: white;
+}
+
+.sniping-run-list__report dt {
+  color: var(--trench-text-muted);
+  font-size: 10px;
+}
+
+.sniping-run-list__report dd {
+  margin: 3px 0 0;
+  overflow: hidden;
+  font-family: var(--trench-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sniping-run-list__position {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 4px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--trench-border);
+}
+
+.sniping-run-list__position div {
+  min-width: 0;
+}
+
+.sniping-run-list__position dt {
+  color: var(--trench-text-muted);
+  font-size: 9px;
+}
+
+.sniping-run-list__position dd {
+  margin: 2px 0 0;
+  overflow: hidden;
+  font-family: var(--trench-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sniping-page-buttons {
+  justify-content: flex-end;
+  margin-left: auto;
+  color: var(--trench-text-muted);
+  font-size: 11px;
+}
+
+@media (max-width: 559px) {
+  .sniping-simulation__policy,
+  .sniping-run-list__report {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sniping-simulation__event {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+
+  .sniping-simulation__event code {
+    grid-column: 2;
+  }
+
+  .sniping-simulation__copy-actions {
+    grid-column: 2;
+    flex-wrap: wrap;
+  }
+
+  .sniping-run-list__position {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

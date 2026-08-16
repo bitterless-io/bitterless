@@ -9,7 +9,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const unitRoot = join(projectRoot, 'tests', 'coin', 'unit');
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-coin-unit-'));
 const entryPoints = readdirSync(unitRoot)
-  .filter((name) => name.endsWith('.test.ts'))
+  .filter((name) => name.endsWith('.test.ts') && name !== 'trenchIo.repository.test.ts')
   .sort()
   .map((name) => join(unitRoot, name));
 

@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trench Sniping Workbench · UI Design</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --royal-950: #101321;
+      --royal-900: #1e2237;
+      --royal-800: #323955;
+      --royal-700: #3e4568;
+      --royal-600: #4e5882;
+      --royal-500: #606b9d;
+      --royal-300: #a3aac5;
+      --royal-200: #c4cadf;
+      --royal-100: #e2e4eb;
+      --royal-50: #f3f5fc;
+      --paper: #ffffff;
+      --canvas: #edf0f6;
+      --raised: #f9faff;
+      --text: #1e2237;
+      --muted: #667085;
+      --green: #2f7d4a;
+      --green-bg: #eef8f1;
+      --amber: #9a5b0b;
+      --amber-bg: #fff7e8;
+      --red: #b42318;
+      --red-bg: #fff0ee;
+      --orange: #c2410c;
+      --line: #e2e4eb;
+      --line-strong: #c4cadf;
+      --shadow: 0 18px 48px rgba(30, 34, 55, .16);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        linear-gradient(rgba(78,88,130,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(78,88,130,.035) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 24px 24px;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.5;
+    }
+    button, input { font: inherit; }
+    .sheet { width: min(1520px, calc(100% - 40px)); margin: 34px auto 72px; }
+    .intro { display: grid; grid-template-columns: 1.2fr .8fr; gap: 28px; align-items: end; margin: 0 0 22px; }
+    .eyebrow { color: var(--royal-600); font: 700 12px/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 8px 0 8px; font-family: "Avenir Next", Inter, sans-serif; font-size: clamp(30px, 4vw, 54px); line-height: 1.04; letter-spacing: -.035em; }
+    .lede { max-width: 820px; margin: 0; color: var(--muted); font-size: 15px; }
+    .decision { padding: 13px 15px; border-left: 3px solid var(--orange); background: rgba(255,255,255,.7); color: var(--muted); font-size: 13px; }
+    .decision strong { color: var(--text); }
+
+    .window {
+      height: min(850px, calc(100vh - 88px));
+      min-height: 720px;
+      overflow: hidden;
+      border: 1px solid var(--royal-300);
+      border-radius: 18px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .menubar { height: 32px; display: flex; align-items: center; gap: 9px; padding: 0 12px; color: white; background: var(--royal-600); border-bottom: 1px solid var(--royal-700); }
+    .mark { width: 19px; height: 19px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.7); font: 800 9px/1 "SFMono-Regular", monospace; }
+    .brand { font-family: "Avenir Next", Inter, sans-serif; font-size: 13px; font-weight: 700; letter-spacing: .01em; }
+    .vault { color: rgba(255,255,255,.68); font-size: 12px; }
+    .menubar__right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+    .header-status { display: flex; align-items: center; gap: 6px; margin-right: 5px; color: rgba(255,255,255,.85); font-size: 11px; }
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #70d694; box-shadow: 0 0 0 3px rgba(112,214,148,.14); }
+    .header-action { height: 24px; padding: 0 8px; border: 0; border-radius: 4px; color: white; background: transparent; font-size: 11px; }
+    .header-action:hover { background: rgba(255,255,255,.12); }
+    .header-action.icon { width: 24px; padding: 0; font-size: 15px; }
+    .app { display: grid; grid-template-columns: 148px 260px minmax(0, 1fr); height: calc(100% - 32px); min-height: 0; }
+
+    .module-rail { min-height: 0; overflow: auto; padding: 9px 7px; border-right: 1px solid var(--line); background: #f7f8fc; }
+    .module-group { margin-bottom: 10px; }
+    .module-title { height: 31px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border-radius: 5px; color: var(--royal-800); font-size: 12px; font-weight: 750; letter-spacing: .015em; }
+    .module-title .chev { color: var(--royal-400, #808ab1); font-size: 9px; }
+    .module-item { height: 29px; display: flex; align-items: center; margin: 1px 0 1px 16px; padding: 0 9px; border-radius: 5px; color: var(--muted); font-size: 12px; }
+    .module-item.active { color: var(--royal-800); background: var(--royal-100); font-weight: 700; box-shadow: inset 2px 0 var(--royal-600); }
+    .module-item .count { margin-left: auto; color: var(--royal-400, #808ab1); font: 10px/1 "SFMono-Regular", monospace; }
+
+    .product-pane { min-height: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--paper); }
+    .pane-head { position: sticky; top: 0; z-index: 2; padding: 14px 14px 10px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.96); }
+    .pane-kicker { color: var(--muted); font: 700 10px/1.2 "SFMono-Regular", monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .pane-title-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+    .pane-title { font-size: 16px; font-weight: 780; }
+    .plus { margin-left: auto; width: 26px; height: 26px; border: 1px solid var(--royal-200); border-radius: 6px; color: var(--royal-600); background: var(--royal-50); font-size: 17px; line-height: 1; }
+    .search { width: 100%; height: 30px; margin-top: 10px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; outline: none; color: var(--text); background: #f7f8fb; font-size: 12px; }
+    .search:focus { border-color: var(--royal-500); box-shadow: 0 0 0 2px rgba(96,107,157,.14); }
+    .pane-section { padding: 13px 10px 4px; color: var(--muted); font: 700 10px/1.2 "SFMono-Regular", monospace; letter-spacing: .09em; text-transform: uppercase; }
+    .product-row { margin: 3px 7px; padding: 10px 10px 9px; border: 1px solid transparent; border-radius: 8px; }
+    .product-row.active { border-color: var(--royal-200); background: var(--royal-50); box-shadow: inset 3px 0 var(--royal-600); }
+    .product-row__top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .health { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--royal-300); }
+    .health.green { background: var(--green); }
+    .health.amber { background: #d18616; }
+    .health.blocked { border: 1px solid var(--royal-300); background: transparent; }
+    .product-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 740; }
+    .product-state { margin-left: auto; color: var(--muted); font: 9.5px/1 "SFMono-Regular", monospace; text-transform: uppercase; }
+    .product-meta { margin: 5px 0 0 15px; color: var(--muted); font-size: 10.5px; }
+    .catalog-row { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 8px; margin: 2px 7px; padding: 8px 9px; border-radius: 7px; }
+    .catalog-row:hover { background: #f7f8fb; }
+    .catalog-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--royal-600); background: var(--royal-50); font: 800 10px/1 "SFMono-Regular", monospace; }
+    .catalog-title { font-size: 11.5px; font-weight: 700; }
+    .catalog-desc { color: var(--muted); font-size: 9.5px; }
+    .catalog-arrow { color: var(--royal-300); font-size: 15px; }
+    .catalog-row.unavailable { opacity: .58; }
+    .catalog-row.unavailable .catalog-arrow { padding: 3px 5px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--muted); font: 8px/1 "SFMono-Regular", monospace; }
+
+    .workspace { min-width: 0; min-height: 0; overflow: auto; background: var(--raised); }
+    .workspace-head { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.97); }
+    .product-heading { min-width: 0; }
+    .product-heading__title { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 800; }
+    .protocol-tag { padding: 3px 6px; border: 1px solid var(--royal-200); border-radius: 4px; color: var(--royal-600); background: var(--royal-50); font: 9px/1 "SFMono-Regular", monospace; }
+    .product-heading__desc { margin-top: 2px; color: var(--muted); font-size: 10.5px; }
+    .workspace-head__right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .state-pill { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 999px; color: var(--muted); background: var(--royal-50); font: 700 9.5px/1 "SFMono-Regular", monospace; text-transform: uppercase; }
+    .state-pill .health { width: 6px; height: 6px; }
+    .btn { height: 30px; padding: 0 12px; border: 1px solid var(--royal-200); border-radius: 6px; color: var(--royal-800); background: white; font-size: 11px; font-weight: 650; }
+    .btn.primary { color: white; border-color: var(--royal-600); background: var(--royal-600); }
+    .btn.primary.disabled { opacity: .42; }
+    .back-products { display: none; }
+
+    .content { padding: 14px 18px 26px; }
+    .qualification { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .qual-step { min-height: 48px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+    .qual-step.done { border-color: #b9dec5; background: var(--green-bg); }
+    .qual-step.current { border-color: var(--royal-500); box-shadow: inset 3px 0 var(--royal-600); }
+    .qual-step.locked { color: var(--muted); background: #f7f8fb; }
+    .qual-name { font-size: 10.5px; font-weight: 780; }
+    .qual-state { margin-top: 3px; color: var(--muted); font: 8.7px/1.25 "SFMono-Regular", monospace; }
+    .qual-step.done .qual-state { color: var(--green); }
+    .execution-rail { display: grid; grid-template-columns: repeat(5, minmax(72px, 1fr)); margin-bottom: 14px; border: 1px solid var(--royal-200); border-radius: 9px; overflow: hidden; background: white; }
+    .stage { position: relative; min-height: 62px; padding: 10px 11px 9px 14px; border-right: 1px solid var(--line); }
+    .stage:last-child { border-right: 0; }
+    .stage:after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--royal-200); }
+    .stage.active:after { background: var(--royal-600); }
+    .stage.ready:after { background: var(--green); }
+    .stage.blocked:after { background: #d18a1f; }
+    .stage__num { color: var(--royal-300); font: 800 9px/1 "SFMono-Regular", monospace; }
+    .stage__name { margin-top: 4px; font-size: 11px; font-weight: 760; }
+    .stage__state { margin-top: 2px; color: var(--muted); font: 9px/1.2 "SFMono-Regular", monospace; }
+    .stage.blocked .stage__state { color: var(--amber); }
+
+    .tabs { display: flex; gap: 18px; height: 33px; padding: 0 4px; border-bottom: 1px solid var(--line); }
+    .tab { position: relative; padding: 6px 0 8px; color: var(--muted); font-size: 11px; font-weight: 650; }
+    .tab.active { color: var(--royal-800); }
+    .tab.active:after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--royal-600); }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 254px; gap: 14px; padding-top: 14px; }
+    .card { border: 1px solid var(--line); border-radius: 9px; background: white; overflow: hidden; }
+    .card + .card { margin-top: 12px; }
+    .card-head { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-bottom: 1px solid var(--line); }
+    .card-index { color: var(--royal-400, #808ab1); font: 800 9px/1 "SFMono-Regular", monospace; }
+    .card-title { font-size: 12px; font-weight: 780; }
+    .card-note { margin-left: auto; color: var(--muted); font-size: 9.5px; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px 14px; padding: 13px; }
+    .field.full { grid-column: 1 / -1; }
+    .label { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; color: var(--royal-800); font-size: 10px; font-weight: 700; }
+    .required { color: var(--orange); }
+    .control { min-height: 31px; display: flex; align-items: center; gap: 7px; padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text); background: white; font-size: 11px; }
+    .control.fixed { color: var(--muted); background: #f7f8fb; }
+    .control.mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 9.5px; }
+    .token-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border-radius: 4px; color: #61470d; background: #fff4d6; font-weight: 750; }
+    .token-dot { width: 7px; height: 7px; border-radius: 50%; background: #d5a51c; }
+    .address { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+    .caret { margin-left: auto; color: var(--royal-300); }
+    .suffix { margin-left: auto; color: var(--muted); }
+    .hint { margin-top: 4px; color: var(--muted); font-size: 9px; }
+    .switch-row { display: flex; align-items: center; justify-content: space-between; min-height: 31px; padding: 5px 0; font-size: 10.5px; }
+    .switch { width: 28px; height: 16px; position: relative; border-radius: 999px; background: var(--royal-200); }
+    .switch:after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: white; box-shadow: 0 1px 2px rgba(30,34,55,.25); }
+
+    .readiness { padding: 7px 12px; }
+    .ready-row { display: grid; grid-template-columns: 16px 1fr auto; gap: 7px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .ready-row:last-child { border-bottom: 0; }
+    .ready-icon { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--green); font-size: 9px; font-weight: 800; }
+    .ready-icon.missing { color: var(--amber); background: var(--amber-bg); border: 1px solid #edbd72; }
+    .ready-title { font-size: 10.5px; font-weight: 700; }
+    .ready-desc { color: var(--muted); font-size: 8.8px; }
+    .ready-state { color: var(--green); font: 800 8.5px/1 "SFMono-Regular", monospace; text-transform: uppercase; }
+    .ready-state.missing { color: var(--amber); }
+    .risk-note { margin: 12px; padding: 10px; border: 1px solid #f0d098; border-radius: 7px; color: #755016; background: var(--amber-bg); font-size: 9.5px; }
+    .risk-note strong { display: block; margin-bottom: 2px; color: var(--amber); }
+    .actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px 13px; border-top: 1px solid var(--line); background: rgba(255,255,255,.98); }
+    .actions .push { margin-left: auto; }
+    .validation { color: var(--green); font: 700 9px/1.2 "SFMono-Regular", monospace; }
+
+    .activity-card { margin-top: 14px; }
+    .activity-table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+    .activity-table th { padding: 7px 9px; color: var(--muted); background: #f7f8fb; font: 700 8.5px/1 "SFMono-Regular", monospace; text-align: left; text-transform: uppercase; }
+    .activity-table td { padding: 8px 9px; border-top: 1px solid var(--line); }
+    .mono { font-family: "SFMono-Regular", Consolas, monospace; }
+    .outcome { display: inline-flex; padding: 3px 6px; border-radius: 999px; font: 700 8px/1 "SFMono-Regular", monospace; }
+    .outcome.filtered { color: var(--muted); background: var(--royal-50); }
+    .outcome.blocked { color: var(--amber); background: var(--amber-bg); }
+    .outcome.ready { color: var(--green); background: var(--green-bg); }
+
+    .notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 22px; }
+    .note { min-height: 126px; padding: 16px; border: 1px solid rgba(78,88,130,.18); border-radius: 10px; background: rgba(255,255,255,.78); }
+    .note__k { color: var(--royal-600); font: 800 10px/1.2 "SFMono-Regular", monospace; letter-spacing: .09em; text-transform: uppercase; }
+    .note h2 { margin: 8px 0 5px; font-size: 15px; }
+    .note p { margin: 0; color: var(--muted); font-size: 12px; }
+    .note.blocked { border-color: rgba(154,91,11,.28); background: rgba(255,247,232,.82); }
+    .note.blocked .note__k { color: var(--amber); }
+    .specimen-title { margin: 32px 0 12px; color: var(--royal-600); font: 800 11px/1.2 "SFMono-Regular", monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .specimens { display: grid; grid-template-columns: 1.2fr .8fr; gap: 16px; }
+    .specimen { min-height: 360px; display: grid; place-items: center; padding: 24px; border: 1px solid rgba(78,88,130,.18); border-radius: 12px; background: rgba(249,250,255,.84); }
+    .modal { width: min(620px, 100%); overflow: hidden; border: 1px solid var(--royal-200); border-radius: 12px; background: white; box-shadow: 0 18px 42px rgba(30,34,55,.15); }
+    .modal-head { padding: 16px 18px 13px; border-bottom: 1px solid var(--line); }
+    .modal-eyebrow { color: var(--orange); font: 800 9px/1.2 "SFMono-Regular", monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .modal-title { margin-top: 4px; font-size: 17px; font-weight: 800; }
+    .modal-body { padding: 15px 18px; }
+    .summary { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+    .summary th, .summary td { padding: 7px 8px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .summary th { width: 105px; color: var(--muted); background: #f7f8fb; font-weight: 700; }
+    .confirm { display: flex; align-items: flex-start; gap: 9px; margin-top: 13px; padding: 11px; border: 1px solid #f0d098; border-radius: 7px; color: #755016; background: var(--amber-bg); font-size: 10.5px; }
+    .checkbox { width: 15px; height: 15px; flex: 0 0 auto; border: 1px solid #c68a2b; border-radius: 3px; background: white; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 11px 18px; border-top: 1px solid var(--line); }
+    .source-card { width: min(430px, 100%); padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+    .source-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); background: var(--royal-50); font: 800 15px/1 "SFMono-Regular", monospace; }
+    .source-card h3 { margin: 12px 0 5px; font-size: 16px; }
+    .source-card p { margin: 0; color: var(--muted); font-size: 11px; }
+    .source-evidence { margin-top: 13px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: #f7f8fb; font: 9.5px/1.55 "SFMono-Regular", monospace; color: var(--muted); }
+    .source-state { display: inline-flex; margin-top: 13px; padding: 4px 7px; border-radius: 999px; color: var(--amber); background: var(--amber-bg); font: 800 8.5px/1 "SFMono-Regular", monospace; text-transform: uppercase; }
+    .activity-specimen { grid-column: 1 / -1; }
+    .configuration-only { display: none; }
+
+    @media (max-width: 1120px) {
+      .sheet { width: calc(100% - 20px); }
+      .intro { grid-template-columns: 1fr; }
+      .window { min-height: 760px; }
+      .app { grid-template-columns: 148px 260px minmax(0,1fr); }
+      .layout { grid-template-columns: 1fr; }
+      .side { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .side .card + .card { margin-top: 0; }
+    }
+    @media (max-width: 920px) {
+      .sheet { width: 100%; margin: 0; }
+      .intro, .notes, .specimen-title, .specimens { display: none; }
+      .window { height: 100vh; min-height: 0; border: 0; border-radius: 0; }
+      .app { grid-template-columns: 148px minmax(0,1fr); }
+      .product-pane { display: none; }
+      .app.show-product-list .product-pane { display: block; }
+      .app.show-product-list .workspace { display: none; }
+      .workspace-head { align-items: flex-start; flex-direction: column; }
+      .workspace-head__right { margin-left: 0; width: 100%; }
+      .execution-rail { grid-template-columns: 1fr; }
+      .qualification { grid-template-columns: 1fr 1fr; }
+      .stage { min-height: 43px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .fields, .side { grid-template-columns: 1fr; }
+      .content { padding: 10px; }
+      .workspace-head { padding: 9px 10px; }
+      .activity-card { overflow-x: auto; }
+      .activity-table { min-width: 580px; }
+      .back-products { display: inline-flex; }
+    }
+    @media (max-width: 560px) {
+      .app { grid-template-columns: 112px minmax(0,1fr); }
+      .menubar { gap: 6px; padding-inline: 8px; }
+      .vault, .header-status { display: none; }
+      .menubar__right { gap: 2px; }
+      .header-action { padding-inline: 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <header class="intro">
+      <div>
+        <div class="eyebrow">Trench / Sniping / Products</div>
+        <h1>先看清风险，再让策略动钱。</h1>
+        <p class="lede">这不是一张 JSON 配置表。产品、信号、仿真、资格、风控、执行权与结果必须同时可见；Flap 指定底池币是第一个产品，SPCX 测试实例与 GME 实例分开。</p>
+      </div>
+      <div class="decision"><strong>设计签名：只读证据轨。</strong> Signal → Canonical → Request → Exact call → Shadow 是页面上唯一的强视觉元素；交易轨道要等执行模块独立验收。</div>
+    </header>
+
+    <section class="window" aria-label="Trench Sniping workbench static design">
+      <header class="menubar">
+        <div class="mark">BL</div>
+        <div class="brand">Trench</div>
+        <div class="vault">local record vault</div>
+        <div class="menubar__right">
+          <div class="header-status"><span class="live-dot"></span>Private connected</div>
+          <button class="header-action">Agent</button>
+          <button class="header-action">Refresh</button>
+          <button class="header-action icon" aria-label="Settings">⚙</button>
+        </div>
+      </header>
+
+      <div class="app">
+        <nav class="module-rail" aria-label="Trench modules">
+          <div class="module-group">
+            <div class="module-title"><span class="chev">▼</span> INDEX</div>
+            <div class="module-item">SOL</div>
+            <div class="module-item">BSC</div>
+            <div class="module-item">Robinhood</div>
+          </div>
+          <div class="module-group">
+            <div class="module-title"><span class="chev">▼</span> Trenchers</div>
+            <div class="module-item">All traders</div>
+          </div>
+          <div class="module-group">
+            <div class="module-title"><span class="chev">▼</span> Sniping</div>
+            <div class="module-item active">Products <span class="count">3</span></div>
+            <div class="module-item">Activity <span class="count">18</span></div>
+          </div>
+        </nav>
+
+        <aside class="product-pane" aria-label="Sniping products">
+          <div class="pane-head">
+            <div class="pane-kicker">My products</div>
+            <div class="pane-title-row"><div class="pane-title">Sniping</div><button class="plus" aria-label="New product">+</button></div>
+            <input class="search" value="" placeholder="Search products…" aria-label="Search products">
+          </div>
+          <div class="pane-section">Configured · 2</div>
+          <div class="product-row active">
+            <div class="product-row__top"><span class="health amber"></span><span class="product-name">Flap · SPCX test</span><span class="product-state">Monitoring</span></div>
+            <div class="product-meta">BSC · revision 4</div>
+          </div>
+          <div class="product-row">
+            <div class="product-row__top"><span class="health blocked"></span><span class="product-name">Flap · GME</span><span class="product-state">Disabled</span></div>
+            <div class="product-meta">BSC · revision 1</div>
+          </div>
+          <div class="pane-section">Catalog</div>
+          <div class="catalog-row"><div class="catalog-icon">FL</div><div><div class="catalog-title">Flap quote token</div><div class="catalog-desc">Launch match → fixed simulation</div></div><div class="catalog-arrow">›</div></div>
+          <div class="pane-section">Roadmap · unavailable</div>
+          <div class="catalog-row unavailable"><div class="catalog-icon">CA</div><div><div class="catalog-title">Known token sniper</div><div class="catalog-desc">Wait for trade / liquidity open</div></div><div class="catalog-arrow">PLANNED</div></div>
+          <div class="catalog-row unavailable"><div class="catalog-icon">LM</div><div><div class="catalog-title">Launch / migration</div><div class="catalog-desc">New, near complete, listed</div></div><div class="catalog-arrow">PLANNED</div></div>
+          <div class="catalog-row unavailable"><div class="catalog-icon">MS</div><div><div class="catalog-title">GMGN market signal</div><div class="catalog-desc">CTO, smart money, price</div></div><div class="catalog-arrow">PLANNED</div></div>
+          <div class="catalog-row unavailable"><div class="catalog-icon">WC</div><div><div class="catalog-title">Wallet copy</div><div class="catalog-desc">Single or consensus</div></div><div class="catalog-arrow">PLANNED</div></div>
+          <div class="catalog-row unavailable"><div class="catalog-icon">EX</div><div><div class="catalog-title">Exit policies</div><div class="catalog-desc">TP, SL, trailing, dev sell</div></div><div class="catalog-arrow">PLANNED</div></div>
+          <div class="catalog-row unavailable"><div class="catalog-icon">X</div><div><div class="catalog-title">Twitter CA</div><div class="catalog-desc">No callable CLI feed</div></div><div class="catalog-arrow">BLOCKED</div></div>
+        </aside>
+
+        <section class="workspace">
+          <header class="workspace-head">
+            <button class="btn back-products">← Back to products</button>
+            <div class="product-heading">
+              <div class="product-heading__title">Flap · SPCX test <span class="protocol-tag">v1.0.0</span></div>
+              <div class="product-heading__desc">Monitor Flap launches and test one exact SPCX quote-token configuration without moving funds.</div>
+            </div>
+            <div class="workspace-head__right">
+              <span class="state-pill"><span class="health amber"></span>Monitoring · read-only</span>
+              <button class="btn">More</button>
+              <button class="btn primary">Stop monitoring</button>
+            </div>
+          </header>
+
+          <div class="content">
+            <section class="qualification" aria-label="Qualification stages">
+              <div class="qual-step done"><div class="qual-name">1 · Monitor</div><div class="qual-state">canonical events captured ✓</div></div>
+              <div class="qual-step current"><div class="qual-name">2 · Simulate</div><div class="qual-state">run exact unsigned call</div></div>
+              <div class="qual-step locked"><div class="qual-name">3 · Canary</div><div class="qual-state">locked · execution module not installed</div></div>
+              <div class="qual-step locked"><div class="qual-name">4 · Armed</div><div class="qual-state">locked · execution module not installed</div></div>
+            </section>
+            <section class="execution-rail" aria-label="Read-only evidence rail">
+              <div class="stage active"><div class="stage__num">01</div><div class="stage__name">Signal</div><div class="stage__state">watching</div></div>
+              <div class="stage ready"><div class="stage__num">02</div><div class="stage__name">Canonical</div><div class="stage__state">finalized</div></div>
+              <div class="stage blocked"><div class="stage__num">03</div><div class="stage__name">Request</div><div class="stage__state">stale config</div></div>
+              <div class="stage"><div class="stage__num">04</div><div class="stage__name">Exact call</div><div class="stage__state">idle</div></div>
+              <div class="stage"><div class="stage__num">05</div><div class="stage__name">Shadow</div><div class="stage__state">not run</div></div>
+            </section>
+
+            <nav class="tabs" aria-label="Product detail tabs">
+              <div class="tab">Configuration</div><div class="tab active">Simulation</div><div class="tab">Versions</div>
+            </nav>
+
+            <div class="layout">
+              <div class="main-form">
+                <section class="card configuration-only">
+                  <div class="card-head"><span class="card-index">01</span><div class="card-title">Signal</div><div class="card-note">Compiled protocol boundary</div></div>
+                  <div class="fields">
+                    <div><div class="label">Chain</div><div class="control fixed">BNB Smart Chain <span class="suffix mono">56</span></div></div>
+                    <div><div class="label">Release</div><div class="control fixed mono">flap-quote-token-snipe@1.0.0</div></div>
+                    <div class="field full">
+                      <div class="label">Quote token · exactly one <span class="required">*</span></div>
+                      <div class="control mono"><span class="token-chip"><span class="token-dot"></span>SPCX</span><span class="address">0x… exact BSC contract required</span><span class="caret">›</span></div>
+                      <div class="hint">One config, one canonical token. SPCX and GME use separate revisions, limits and evidence.</div>
+                    </div>
+                    <div><div class="label">Trigger finality</div><div class="control fixed">Finalized</div><div class="hint">Canonical evidence only; no latest-block fallback.</div></div>
+                    <div><div class="label">Declared quote-token decimals</div><div class="control mono">18 <span class="suffix">verified again on-chain</span></div></div>
+                  </div>
+                </section>
+
+                <section class="card configuration-only">
+                  <div class="card-head"><span class="card-index">02</span><div class="card-title">Entry</div><div class="card-note">Exact-input Flap swap</div></div>
+                  <div class="fields">
+                    <div><div class="label">Simulation spend <span class="required">*</span></div><div class="control mono">1 <span class="suffix">SPCX · example only</span></div></div>
+                    <div><div class="label">Maximum slippage</div><div class="control mono">500 <span class="suffix">bps</span></div></div>
+                    <div><div class="label">Maximum gas units</div><div class="control mono">500000 <span class="suffix">gas · example only</span></div></div>
+                    <div><div class="label">Maximum gas cost</div><div class="control mono">3000000000000000 <span class="suffix">wei</span></div></div>
+                    <div><div class="label">Mode</div><div class="control fixed mono">read-only exact simulation</div></div>
+                    <div class="field full"><div class="switch-row"><span>Fresh pinned-state simulation is mandatory and cannot be disabled</span><span class="protocol-tag">LOCKED ON</span></div></div>
+                  </div>
+                </section>
+
+                <section class="card">
+                  <div class="card-head"><span class="card-index">03</span><div class="card-title">Simulation evidence</div><div class="card-note">Read-only · zero funds moved</div></div>
+                  <div class="fields">
+                    <div><div class="label">Last result</div><div class="control fixed"><span class="outcome blocked">STALE</span><span class="suffix mono">CONFIG_FINGERPRINT_CHANGED</span></div></div>
+                    <div><div class="label">Eligible finalized event</div><div class="control mono">Select from server projection <span class="caret">⌄</span></div></div>
+                    <div><div class="label">Pinned chain state</div><div class="control fixed mono">BSC block/hash required</div></div>
+                    <div><div class="label">Request identity</div><div class="control fixed mono">Portal · component · config · executor</div></div>
+                    <div><div class="label">Expected / minimum output</div><div class="control fixed mono">— / —</div></div>
+                    <div><div class="label">Estimated gas</div><div class="control fixed mono">—</div></div>
+                    <div><div class="label">Financial effect</div><div class="control fixed mono">— · no signature · no broadcast</div></div>
+                    <div class="field full"><div class="hint">A fresh report is generated from a reconciled real event by the production request builder. Unsupported historical state or nondeterministic output blocks Canary.</div></div>
+                  </div>
+                </section>
+
+                <section class="card">
+                  <div class="card-head"><span class="card-index">04</span><div class="card-title">Shadow run cohort</div><div class="card-note">SIMULATED · no receipts</div></div>
+                  <div class="fields">
+                    <div><div class="label">Run state</div><div class="control fixed"><span class="outcome filtered">NOT RUN</span><span class="suffix mono">— matches</span></div></div>
+                    <div><div class="label">Position latency</div><div class="control fixed mono">— · no shadow positions</div></div>
+                    <div><div class="label">Executable / blocked / unknown</div><div class="control fixed mono">— / — / —</div></div>
+                    <div><div class="label">Regional duplicates</div><div class="control fixed mono">— · deduped before metrics</div></div>
+                    <div><div class="label">Virtual checkpoints</div><div class="control fixed mono">Owner-bounded windows · no data</div></div>
+                    <div><div class="label">Maximum events <span class="required">*</span></div><div class="control mono">Required · 1–500</div></div>
+                    <div><div class="label">Checkpoint blocks <span class="required">*</span></div><div class="control mono">Required · ordered unique offsets</div></div>
+                    <div><div class="label">Evidence TTL <span class="required">*</span></div><div class="control mono">Required · seconds</div></div>
+                    <div><div class="label">Request id</div><div class="control fixed mono">Created on submit · retry reuses unchanged input</div></div>
+                    <div class="field full"><div class="hint">Each explicit request supplies max events, ordered checkpoint blocks and evidence TTL. Missing historical quotes stay Unknown; virtual values are never receipts or realized profit.</div></div>
+                  </div>
+                </section>
+
+                <section class="card configuration-only">
+                  <div class="card-head"><span class="card-index">05</span><div class="card-title">Observation bounds</div><div class="card-note">Advanced generic fields</div></div>
+                  <div class="fields">
+                    <div><div class="label">Provider profiles</div><div class="control mono">bsc-primary <span class="suffix">opaque id</span></div></div>
+                    <div><div class="label">Finality</div><div class="control fixed mono">finalized</div></div>
+                    <div class="field full"><div class="label">Remaining observation fields</div><div class="control fixed">Advanced JSON <span class="suffix">closed schema · exact validation</span></div></div>
+                  </div>
+                </section>
+              </div>
+
+              <aside class="side">
+                <section class="card">
+                  <div class="card-head"><div class="card-title">Simulation facts</div><div class="card-note">server projections</div></div>
+                  <div class="readiness">
+                    <div class="ready-row"><span class="ready-icon">✓</span><div><div class="ready-title">Singapore observer</div><div class="ready-desc">Runtime heartbeat projected</div></div><div class="ready-state">Active</div></div>
+                    <div class="ready-row"><span class="ready-icon">✓</span><div><div class="ready-title">Tokyo observer</div><div class="ready-desc">Runtime heartbeat projected</div></div><div class="ready-state">Standby</div></div>
+                    <div class="ready-row"><span class="ready-icon missing">!</span><div><div class="ready-title">Fresh simulation</div><div class="ready-desc">No valid config-bound report</div></div><div class="ready-state missing">Required</div></div>
+                    <div class="ready-row"><span class="ready-icon missing">!</span><div><div class="ready-title">Shadow cohort</div><div class="ready-desc">No explicit request has completed</div></div><div class="ready-state missing">Not run</div></div>
+                  </div>
+                  <div class="risk-note"><strong>Execution module not installed</strong>Canary and financial Armed remain locked. This page can monitor and simulate only.</div>
+                </section>
+
+                <section class="card">
+                  <div class="card-head"><div class="card-title">Evidence boundary</div></div>
+                  <div class="readiness">
+                    <div class="ready-row"><span class="card-index">0</span><div><div class="ready-title">Financial actions</div><div class="ready-desc">no nonce, signature or broadcast</div></div></div>
+                    <div class="ready-row"><span class="card-index">#</span><div><div class="ready-title">Canonical identity</div><div class="ready-desc">event + block + config + build</div></div></div>
+                    <div class="ready-row"><span class="card-index">⏱</span><div><div class="ready-title">Evidence expiry</div><div class="ready-desc">config or build change invalidates</div></div></div>
+                  </div>
+                </section>
+              </aside>
+            </div>
+
+            <div class="actions">
+              <span class="validation">READ-ONLY · REVISION 4</span>
+              <button class="btn push">New shadow run</button><button class="btn">Retry unchanged request</button><button class="btn primary">Run exact simulation</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="notes" aria-label="Design decisions">
+      <article class="note"><div class="note__k">01 · Navigation</div><h2>第三个一级模块，不另起一个应用。</h2><p>INDEX、Trenchers、Sniping 共用唯一 Arco 两级菜单与全局 menubar；Product 与 Activity 是 Sniping 二级入口。</p></article>
+      <article class="note"><div class="note__k">02 · Qualification</div><h2>先验证仿真；执行模块保持锁定。</h2><p>SPCX 与 GME 是两个配置。仿真绑定真实事件、区块、Portal、配置和构建版本；Canary 与 financial Armed 只在后端执行合同独立验证后出现。</p></article>
+      <article class="note blocked"><div class="note__k">03 · Signal gate</div><h2>Twitter CA 显示但不可启用。</h2><p>GMGN 产品有 SnipeX，但本机 gmgn-cli 1.5.2 没有 Twitter 事件命令；DeBot 也没有可调用 CLI/API。没有信号源就不伪造能力。</p></article>
+    </section>
+    <div class="specimen-title">Critical states</div>
+    <section class="specimens" aria-label="Locked execution and unavailable-source specimens">
+      <article class="specimen">
+        <div class="source-card">
+          <div class="source-icon">🔒</div>
+          <h3>Execution module not installed</h3>
+          <p>Task 026 can monitor and run read-only exact/shadow simulations. It has no Canary dialog,
+            financial Armed command, signer, nonce or broadcast bridge.</p>
+          <span class="source-state">Canary / Armed locked</span>
+        </div>
+      </article>
+      <article class="specimen">
+        <div class="source-card">
+          <div class="source-icon">X</div>
+          <h3>Twitter CA signal</h3>
+          <p>This detector is visible for roadmap clarity but cannot be created or armed until an official callable event feed is configured.</p>
+          <div class="source-evidence">GMGN product: SnipeX available<br>gmgn-cli 1.5.2: no Twitter event command<br>DeBot product: Twitter Alert available<br>debot/dbot CLI: not installed / no documented feed</div>
+          <span class="source-state">Signal source unavailable</span>
+        </div>
+      </article>
+      <article class="specimen activity-specimen">
+        <section class="card activity-card">
+          <div class="card-head"><div class="card-title">Activity · all sources</div><div class="card-note">Server cursor · sanitized evidence</div></div>
+          <div class="actions"><button class="btn">All sources</button><button class="btn">All outcomes</button><button class="btn">BSC</button><button class="btn">Search token / reason</button></div>
+          <table class="activity-table">
+            <thead><tr><th>Time</th><th>Product / token</th><th>Source</th><th>Outcome</th><th>Reason</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">17:42:08</td><td>Flap · SPCX test · <span class="mono">0x91b4…7777</span></td><td>Exact simulation</td><td><span class="outcome blocked">BLOCKED</span></td><td class="mono">CONFIG_FINGERPRINT_CHANGED</td><td>—</td></tr>
+              <tr><td class="mono">17:39:10</td><td>Flap · SPCX test · <span class="mono">0x7e11…7777</span></td><td>Shadow</td><td><span class="outcome ready">SIMULATED</span></td><td class="mono">EXACT_CALL_PASSED</td><td>— · read-only</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

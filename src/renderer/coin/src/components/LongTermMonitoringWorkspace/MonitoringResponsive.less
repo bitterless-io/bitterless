@@ -1,0 +1,176 @@
+@media (max-width: 919px) {
+  .monitoring-watches {
+    display: block;
+  }
+
+  .monitoring-watch-list,
+  .monitoring-watch-detail {
+    width: 100%;
+    height: 100%;
+    border-right: 0;
+  }
+
+  .monitoring-watches:not(.monitoring-watches--detail) .monitoring-watch-detail,
+  .monitoring-watches--detail .monitoring-watch-list {
+    display: none;
+  }
+
+  .monitoring-watch-detail__back {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-self: flex-start;
+    margin: 7px 14px 0;
+  }
+
+  .monitoring-watch-detail__facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .monitoring-watch-detail__facts > div:nth-child(3) {
+    border-right: 0;
+  }
+  .monitoring-watch-detail__facts > div:nth-child(n + 4) {
+    border-top: 1px solid var(--trench-border);
+  }
+}
+
+@media (max-width: 460px) {
+  .monitoring-evidence-table,
+  .monitoring-evidence-table tbody,
+  .monitoring-evidence-table tr,
+  .monitoring-evidence-table td,
+  .monitoring-anomalies__table,
+  .monitoring-anomalies__table tbody,
+  .monitoring-anomalies__table tr,
+  .monitoring-anomalies__table td {
+    display: block;
+  }
+  .monitoring-evidence-table,
+  .monitoring-anomalies__table {
+    min-width: 0;
+  }
+  .monitoring-evidence-table__region {
+    overflow-x: hidden;
+  }
+  .monitoring-evidence-table thead,
+  .monitoring-anomalies__table thead {
+    display: none;
+  }
+
+  .monitoring-evidence-table tr,
+  .monitoring-anomalies__table tr {
+    padding: 8px;
+    border-bottom: 1px solid var(--trench-border);
+  }
+
+  .monitoring-evidence-table td,
+  .monitoring-anomalies__table td {
+    min-width: 0;
+    padding: 3px 0 3px 94px;
+    position: relative;
+    border: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .monitoring-evidence-table td::before,
+  .monitoring-anomalies__table td::before {
+    content: attr(data-label);
+    width: 86px;
+    position: absolute;
+    left: 0;
+    color: var(--trench-text-muted);
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 559px) {
+  .monitoring-workspace__header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 6px 8px;
+  }
+
+  .monitoring-workspace__header > div {
+    flex-basis: 100%;
+  }
+  .monitoring-workspace__header p {
+    white-space: normal;
+  }
+  .monitoring-workspace__boundary {
+    margin-right: auto;
+  }
+  .monitoring-watch-detail__header {
+    flex-direction: column;
+    padding: 8px;
+  }
+  .monitoring-watch-detail__back {
+    margin-left: 8px;
+  }
+  .monitoring-watch-detail__actions {
+    width: 100%;
+  }
+  .monitoring-watch-detail__facts {
+    margin-inline: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .monitoring-watch-detail__facts > div:nth-child(3) {
+    border-right: 1px solid var(--trench-border);
+  }
+  .monitoring-watch-detail__facts > div:nth-child(even) {
+    border-right: 0;
+  }
+  .monitoring-watch-detail__facts > div:nth-child(n + 3) {
+    border-top: 1px solid var(--trench-border);
+  }
+  .monitoring-watch-detail__scroll {
+    padding-inline: 8px;
+  }
+  .monitoring-panel__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .monitoring-panel__revision {
+    width: 100%;
+    flex-basis: auto;
+  }
+  .monitoring-region-rail {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .monitoring-region-rail__link {
+    display: none;
+  }
+  .monitoring-watch-dialog__body {
+    grid-template-columns: 1fr;
+  }
+  .monitoring-watch-dialog__field--wide,
+  .monitoring-watch-dialog__error,
+  .monitoring-watch-dialog__notice {
+    grid-column: auto;
+  }
+}
+
+@media (max-height: 359px) {
+  .monitoring-workspace__header {
+    min-height: 44px;
+    padding-block: 4px;
+  }
+  .monitoring-workspace__header p {
+    margin-top: 1px;
+  }
+  .monitoring-watch-detail {
+    display: block;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  .monitoring-watch-detail__back {
+    display: inline-flex;
+  }
+  .monitoring-watch-detail__scroll {
+    overflow: visible;
+    padding-bottom: 8px;
+  }
+  .monitoring-chart {
+    height: 160px;
+  }
+}

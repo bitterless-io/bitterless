@@ -225,13 +225,29 @@ export const test = base.extend<OnlyPreviewFixtures>({
           .poll(
             async () =>
               await app!.evaluate(
-                ({ BaseWindow }) =>
-                  BaseWindow.getAllWindows().filter((window) => window.getTitle() === 'OnlyPreview')
-                    .length
+                ({ BaseWindow }) => {
+                  const standalone = BaseWindow.getAllWindows().filter(
+                    (window) => window.getTitle() === 'OnlyPreview'
+                  );
+                  const rendererModes = standalone[0]?.contentView.children
+                    .map((view) =>
+                      view.webContents
+                        .getURL()
+                        .match(
+                          /\/onlypreview\/(preview|previewHeader|shell)\/index\.html(?:$|[?#])/
+                        )?.[1]
+                    )
+                    .filter((mode): mode is string => typeof mode === 'string')
+                    .sort();
+                  return { standaloneCount: standalone.length, rendererModes };
+                }
               ),
             { timeout: 60_000 }
           )
-          .toBe(1);
+          .toEqual({
+            standaloneCount: 1,
+            rendererModes: ['preview', 'previewHeader', 'shell']
+          });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(`OnlyPreview did not open.\n${output.slice(-40).join('')}\n${detail}`);

@@ -12,8 +12,8 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 | Shared contracts                   | untrusted XPC/settings/index values                    | parsed types and discriminated result envelopes                                                         | none                                                   | pure contract tests                                                 |
 | Host/workspace capability registry | Main-created views + native-dialog/OS absolute path    | host-bound opaque workspace + relative refs                                                             | Node fs/path, UUID                                     | host isolation/revocation/containment tests                         |
 | Recent-directory service           | canonical workspace root + Core SQLite lifecycle       | latest directory candidate, per-host restore, fresh workspace capability                                | `SettingDao`, workspace/host registries                | latch/CAS/single-flight/order tests                                 |
-| Search bootstrap capability        | attached host + opaque workspace                       | private root/database paths injected only into UtilityProcess initialization                            | host/workspace registries, user-data path              | token/revocation/no-renderer-path tests                             |
-| Search UtilityProcess runtime      | private root/database paths, browse/query/config/watch events | complete demand-loaded directory listings, exclude-independent tree-name tier, excluded v7 SQLite file/content tier, file-only search results, aggregate progress/telemetry | Electron utility process, `node:sqlite`, YAML, filesystem | browse/dual-corpus/schema/query/snippet/watch/progress/cancel/memory/recovery tests |
+| Search bootstrap capability        | attached host + opaque workspace                       | private root/database paths injected only into hidden file-search preload initialization                 | host/workspace registries, user-data path              | token/revocation/no-visible-renderer-path tests                     |
+| Background file-search renderer    | private root/database paths, browse/query/config/watch events | complete demand-loaded directory listings, exclude-independent tree-name tier, excluded v7 SQLite file/content tier, file-only search results, aggregate progress/telemetry | hidden BrowserWindow, trusted Node preload, XPC, `node:sqlite`, YAML, filesystem | lifecycle/XPC/browse/dual-corpus/schema/query/snippet/watch/progress/cancel/memory/recovery tests |
 | File descriptor/text service       | authorized relative file ref                           | typed descriptor/text or explicit error                                                                 | workspace registry                                     | signature/binary/encoding/size tests                                |
 | Asset protocol                     | authorized descriptor                                  | tokenized manual full/206 streaming response                                                            | Electron protocol, Node fs streams, token registry     | token/range/source guards + Electron smoke                          |
 | Open router                        | macOS event or Windows argv                            | serialized standalone-open request                                                                      | app lifecycle, window handler                          | argv/early queue tests                                              |
@@ -37,10 +37,11 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
    content host; Setting uses a distinct settings-only host.
 4. The handler asks the workspace registry to validate the target and bind it to the live host,
    then gives Shell only an opaque workspace snapshot. A private search-bootstrap capability stays
-   in Main; after host/workspace validation Main enriches only the UtilityProcess initialization
+   in Main; after host/workspace validation Main enriches only the hidden file-search preload's
+   capability-bound XPC initialization
    message with root/database paths. Descriptor/read methods retain host + workspace + relative-path
    containment, and no preload or page receives the bootstrap token or absolute paths. The
-   UtilityProcess emits the root listing early and mints a generation-bound opaque token for each
+   hidden file-search preload emits the root listing early and mints a generation-bound opaque token for each
    expandable directory. Shell expands with that token rather than a relative path; Main validates
    and relays but never resolves or walks the directory or reads searchable content.
 5. Shell reports its preview-host rectangle; Main validates it, assigns its first 43px to Header,
@@ -57,8 +58,9 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 10. Standalone/Setting teardown revokes the exact host, its workspaces, and media tokens. Auth
     invalidation and host quit close every remaining child webContents, window, capability, and
     token.
-11. Electron Vite produces the sandbox-safe shared preload, sandbox-safe Content preload, dedicated
-    Main-side UtilityProcess entry, and five renderer entries through official watched inputs;
+11. Electron Vite produces the sandbox-safe shared preload, sandbox-safe Content preload, trusted
+    `fileSearch` preload, five visible renderer entries, and one invisible top-level `fileSearch`
+    renderer entry through official watched inputs. No OnlyPreview UtilityProcess entry remains;
     logging/i18n/package audits recognize every emitted path in build and development mode.
 12. The Shell renders the standalone 32px MenuBar and sends capability-scoped window-control
     intents through the OnlyPreview XPC handler; Main alone minimizes, toggles maximize, or closes
@@ -94,8 +96,9 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
     `openOnlyPreviewWindow` endpoint remains an independent global launch action, not Guide-token
     authority.
 21. Shell initializes and queries a narrow Main XPC proxy. Main validates the attached host, resolves
-    the private bootstrap, supervises one host-bound UtilityProcess, and relays bounded calls without
-    search I/O. Only the UtilityProcess produces complete demand-loaded directory listings, owns the
+    the private bootstrap, supervises one host-bound invisible `fileSearch` BrowserWindow, and
+    relays bounded calls to its trusted preload through a private capability-bound XPC runtime
+    without search I/O. Only that preload produces complete demand-loaded directory listings, owns the
     generation-local directory-token map, walks search candidates, classifies media, reads
     searchable text, builds/reopens SQLite, applies 400ms trailing file updates, and
     executes/cancels queries. It owns one-active/one-latest execution, emits at most 500 exact
@@ -107,8 +110,9 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
     `In Directory` scope by default; the Shell selector can switch the same query to `In Project`.
     Ordinary filtering never enters that protocol: it matches only `entry.name` on the rows visible
     before the query and preserves expansion exactly.
-23. After the UtilityProcess's final 400ms-trailing committed change, it raw-posts a fenced event to
-    Main. Main whitelists and shape-validates the event, binds it to the attached `hostId`, and uses
+23. After the file-search preload's final 400ms-trailing committed change, it sends a fenced event
+    through its internal XPC event path. Main whitelists and shape-validates the event, binds it to
+    the attached `hostId`, and uses
     `xpcMain.broadcast`; PreviewHeader accepts only the current selected path and a newer revision,
     reuses its existing reload control, and PreviewContent advances its generation before reading.
     A stale workspace, selection, read, or revision cannot install; Main performs no watch or reload
@@ -181,6 +185,12 @@ Search eligibility. The tree keeps file/directory metadata even for hidden, gene
 workspace-config-excluded paths; the file/content SQLite branch physically rejects hidden-directory
 descendants and immutable output directories before body reads. The same 400ms trailing watcher
 converges create/update/delete/rename across both destinations.
+`onlypreview-search-during-index-017` supersedes the UtilityProcess transport with one invisible
+top-level `fileSearch` BrowserWindow. Its trusted Node-context preload owns the same browse/index/
+query/watch core and communicates through capability-bound XPC; Main retains bootstrap validation,
+lifecycle, response/event validation, and public relay. The same delivery keeps the last complete
+SQLite index queryable while a candidate builds and performs a complete scoped first-build
+directory search without a SQL `LIKE` fallback.
 
 ## Main Risks And Decisions
 
@@ -188,8 +198,8 @@ converges create/update/delete/rename across both destinations.
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | XPC lacks sender identity                                                | Main-issued per-view host capability + host-bound workspace/media capabilities; relative paths only; realpath containment on every operation                                                                                                                                                                                                                                              |
 | XPC handler swallows exceptions                                          | every fallible API returns a discriminated success/error envelope                                                                                                                                                                                                                                                                                                                         |
-| `BaseWindow` child views or search runtime leak                          | host-bound UtilityProcess termination and pending-call rejection plus detach + `webContents.close()` for Shell, Header, and Content                                                                                                                                                                                                                                                       |
-| large directories freeze UI                                              | cooperative UtilityProcess metadata traversal, time-sliced batches, Project Search fixed/ordered body-index exclusions, cancellation/generation fences                                                                                                                                                                                                                                    |
+| `BaseWindow` child views or search runtime leak                          | host-bound hidden file-search window destruction and pending-call rejection plus detach + `webContents.close()` for Shell, Header, and Content                                                                                                                                                                                                                                            |
+| large directories freeze UI                                              | cooperative background-preload metadata traversal, time-sliced batches, `backgroundThrottling: false`, Project Search fixed/ordered body-index exclusions, cancellation/generation fences                                                                                                                                                                                                 |
 | media cannot seek                                                        | privileged streaming custom scheme + manual bounded 206 byte ranges                                                                                                                                                                                                                                                                                                                       |
 | untrusted HTML/SVG executes                                              | `.html`/`.htm` use a 1 MiB zero-attribute semantic DOMPurify allowlist with active/resource/navigation tags and contents removed; no iframe/preload/asset URL is created; SVG remains only an image resource                                                                                                                                                                              |
 | deep tree indentation and names are clipped                              | the tree viewport owns both axes; rows use intrinsic width with a viewport-width floor and names remain complete single-line content                                                                                                                                                                                                                                                      |
@@ -200,9 +210,10 @@ converges create/update/delete/rename across both destinations.
 | A DOM context menu is clipped or covered by sibling Header/Content views | Main owns a capability-scoped native `Menu` and attaches it to the active OnlyPreview `BaseWindow`                                                                                                                                                                                                                                                                                        |
 | Setting restores an unrelated historic screen position                   | retain only its stored size; parent, center, and work-area clamp it from the currently authorized standalone window on every open                                                                                                                                                                                                                                                         |
 | Shell and Content race to restore one persisted directory                | one per-host restore promise with workspace rechecks before and after the SQLite latch                                                                                                                                                                                                                                                                                                    |
-| Search or browse path capability leaks into a page                       | Main-only bootstrap; root/database paths enter only UtilityProcess initialization, while Shell expands directories with generation-bound opaque tokens and receives only relative metadata                                                                                                                                                                                               |
-| Search I/O blocks Main or Shell typing                                   | Main performs no traversal/read/query/watch; UtilityProcess owns the runtime and Shell owns input                                                                                                                                                                                                                                                                                         |
-| Watch events are lost, spoofed, or update only the index                 | 400ms trailing UtilityProcess commit → raw fenced event → Main validation/host binding/XPC broadcast → Header selection/revision gate → existing reload control → Content generation/read                                                                                                                                                                                                  |
+| Search or browse path capability leaks into a page                       | Main-only bootstrap; root/database paths enter only the private capability-bound hidden-preload initialization, while visible pages receive only opaque directory tokens and relative metadata                                                                                                                                                                                             |
+| Search I/O blocks Main or Shell typing                                   | Main performs no traversal/read/query/watch; the dedicated file-search renderer preload owns the runtime and Shell owns input                                                                                                                                                                                                                                                             |
+| XPC routes a visible renderer to the privileged search handler           | every private file-search request/event requires a Main-held capability and exact host/workspace/generation shape before path access or public relay                                                                                                                                                                                                                                      |
+| Watch events are lost, spoofed, or update only the index                 | 400ms trailing background-preload commit → private fenced XPC event → Main validation/host binding/public XPC broadcast → Header selection/revision gate → existing reload control → Content generation/read                                                                                                                                                                                |
 | Local filter silently searches collapsed paths or expands the tree       | freeze the pre-query visible rows, match exact `entry.name` only, retain context ancestors, and never mutate expansion                                                                                                                                                                                                                                                                    |
 | Project Search scope drifts with result selection                        | capture one relative directory before results replace the tree; default In Directory and switch explicitly to In Project                                                                                                                                                                                                                                                                  |
 | Tree visibility and Project Search exclusions accidentally share policy  | keep an exclude-independent metadata/name tier for the ordinary tree; apply hidden/fixed/config policy only to the separate file/content SQLite tier before body reads                                                                                                                                                                                                                     |
@@ -238,9 +249,10 @@ converges create/update/delete/rename across both destinations.
 2. Focused source/integration tests for host wiring, Main zero-search/browse-I/O, whitelisted
    browse/progress relay, 2px no-copy rail behavior, and security preferences.
 3. Node and web typechecks, renderer i18n guard, targeted ESLint, `git diff --check`.
-4. Full Electron Vite build and output audit. Earlier UtilityProcess integration evidence has
-   `yarn build` PASS with the official shared/Content preload and Main UtilityProcess entries;
-   task 016 has not rerun the build.
+4. Full Electron Vite build and output audit. Earlier UtilityProcess integration evidence remains
+   historical. Task 017 must prove the official shared/Content/file-search preloads, top-level
+   invisible `fileSearch` renderer, exact hidden-window security/lifecycle, and absence of a Main
+   UtilityProcess entry.
 5. Electron/Node unit tests simulate storage ready/failure, fresh hosts, concurrent restore, and
    explicit-target ordering. Retained full-application E2E launches through one shared argument
    builder; macOS prepends `--use-mock-keychain`, and Main rejects E2E mode without that switch
@@ -277,9 +289,10 @@ converges create/update/delete/rename across both destinations.
    This artifact remains immutable history only after task 016: its SQLite physically contains 726
    hidden-directory descendants, so it cannot accept the new hidden-pruned Project Search policy.
 10. Task 016 requires a new PRODUCT-P02 current point after dual-index pure/Electron acceptance.
-    It measures the bundled current Utility runtime and product core in a fresh Node child, records
+    It measures the product core in a fresh Node child, records
     directory metadata and Project Search resources separately, proves zero
     hidden/fixed/config-excluded SQLite rows before any body read, and gates
-    create/update/delete/rename convergence. Electron UtilityProcess startup, Main relay, Shell, and
-    renderer timing remain outside PRODUCT-P02 and require targeted Electron acceptance.
+    create/update/delete/rename convergence. Hidden file-search renderer/preload startup, Main XPC
+    relay, Shell, and renderer timing remain outside PRODUCT-P02 and require targeted Electron
+    acceptance.
     PRODUCT-P02 has not been run.

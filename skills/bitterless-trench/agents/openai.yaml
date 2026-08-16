@@ -1,7 +1,7 @@
 interface:
   display_name: "Bitterless Trench"
-  short_description: "Research and persist Trench records through Bitterless MCP"
-  default_prompt: "Use $bitterless-trench to research a CA or negative wallet and persist verified evidence through the production Bitterless MCP server."
+  short_description: "Research, curate, and import Trench evidence through Bitterless"
+  default_prompt: "Use $bitterless-trench to research a CA, curate a negative wallet, or import person wallets through the production Bitterless MCP server."
 dependencies:
   tools:
     - type: "mcp"

@@ -105,7 +105,38 @@ test('extracts exactly one bounded CA and chooses candidate chains without user 
 });
 
 test('requires a strict top-level GMGN token-info address proof', () => {
-  assert.equal(gmgnTokenInfoProvesAddress({ address: EVM_ADDRESS.toUpperCase() }, 'bsc', EVM_ADDRESS), true);
+  assert.equal(gmgnTokenInfoProvesAddress({
+    address: EVM_ADDRESS.toUpperCase(),
+    name: '币安人生',
+    symbol: '币安人生',
+    circulating_supply: '1000000000',
+  }, 'bsc', EVM_ADDRESS), true);
+  assert.equal(gmgnTokenInfoIdentityOutcome({
+    address: EVM_ADDRESS,
+    name: '',
+    symbol: '',
+    circulating_supply: '0',
+    pool: {
+      address: '',
+      pool_address: '',
+      liquidity: '0',
+      base_reserve: '0',
+      quote_reserve: '0',
+      exchange: '',
+    },
+    price: { price: '0', price_1m: '0', price_5m: '0' },
+    dev: { address: '', balance: '0' },
+    link: { website: '', twitter_username: '', telegram: '' },
+  }, 'robinhood', EVM_ADDRESS), 'no-match');
+  assert.equal(gmgnTokenInfoIdentityOutcome({
+    address: EVM_ADDRESS,
+    name: '币安人生',
+    symbol: '币安人生',
+    circulating_supply: '1000000000',
+    pool: { address: '0x9999999999999999999999999999999999999999' },
+    price: { price: '0.001' },
+  }, 'bsc', EVM_ADDRESS), 'match');
+  assert.equal(gmgnTokenInfoIdentityOutcome({ address: EVM_ADDRESS }, 'bsc', EVM_ADDRESS), 'provider-error');
   assert.equal(gmgnTokenInfoProvesAddress({ data: { address: EVM_ADDRESS } }, 'bsc', EVM_ADDRESS), false);
   assert.equal(gmgnTokenInfoProvesAddress({ address: OTHER_EVM_ADDRESS }, 'bsc', EVM_ADDRESS), false);
   assert.equal(gmgnTokenInfoProvesAddress({ address: SOLANA_ADDRESS.toLowerCase() }, 'solana', SOLANA_ADDRESS), false);
@@ -116,7 +147,7 @@ test('requires a strict top-level GMGN token-info address proof', () => {
 
 test('probes both EVM chains before analysis and resolves BSC without a service fallback', async () => {
   const fixture = createService({
-    bsc: { address: EVM_ADDRESS, data: { name: 'BSC fixture', symbol: 'BSC' } },
+    bsc: { address: EVM_ADDRESS, name: 'BSC fixture', symbol: 'BSC' },
     robinhood: { address: OTHER_EVM_ADDRESS },
   });
   const envelope = await fixture.service.autoAnalyzeMeme(autoInput(EVM_ADDRESS));
@@ -137,7 +168,7 @@ test('probes both EVM chains before analysis and resolves BSC without a service 
 test('resolves Robinhood only after both EVM identity probes complete', async () => {
   const fixture = createService({
     bsc: { address: OTHER_EVM_ADDRESS },
-    robinhood: { address: EVM_ADDRESS, data: { name: 'Robinhood fixture', symbol: 'RHC' } },
+    robinhood: { address: EVM_ADDRESS, name: 'Robinhood fixture', symbol: 'RHC' },
   });
   const envelope = await fixture.service.autoAnalyzeMeme(autoInput(EVM_ADDRESS));
 
@@ -149,8 +180,8 @@ test('resolves Robinhood only after both EVM identity probes complete', async ()
 
 test('records a genuine dual EVM match in stable BSC then Robinhood order', async () => {
   const fixture = createService({
-    bsc: { address: EVM_ADDRESS },
-    robinhood: { address: EVM_ADDRESS },
+    bsc: { address: EVM_ADDRESS, symbol: 'BSC' },
+    robinhood: { address: EVM_ADDRESS, symbol: 'RHC' },
   });
   const envelope = await fixture.service.autoAnalyzeMeme(autoInput(EVM_ADDRESS));
 
@@ -162,7 +193,7 @@ test('records a genuine dual EVM match in stable BSC then Robinhood order', asyn
 
 test('a Solana-shaped address probes only Solana', async () => {
   const fixture = createService({
-    solana: { address: SOLANA_ADDRESS },
+    solana: { address: SOLANA_ADDRESS, symbol: 'SOL' },
   });
   const envelope = await fixture.service.autoAnalyzeMeme(autoInput(SOLANA_ADDRESS));
 

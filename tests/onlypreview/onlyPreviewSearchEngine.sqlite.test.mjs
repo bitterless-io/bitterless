@@ -713,7 +713,7 @@ test('watch retains one backoff full-reconcile retry until a transient rejection
   await controller.close();
 });
 
-test('search, explicit refresh, and watch mutation share one serialized SQLite lane', async () => {
+test('refresh builds a private candidate while the complete active index remains searchable', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     await mkdir(root);
@@ -729,50 +729,46 @@ test('search, explicit refresh, and watch mutation share one serialized SQLite l
     engine.watchController = undefined;
     engine.watchRevision += 1;
 
-    let releaseSearch;
-    const searchGate = new Promise((resolve) => {
-      releaseSearch = resolve;
-    });
-    let searchRunning = false;
-    let refreshStarted = false;
-    let watchStarted = false;
-    const originalSearch = engine.index.search.bind(engine.index);
-    engine.index.search = async (...args) => {
-      searchRunning = true;
-      await searchGate;
-      const result = await originalSearch(...args);
-      searchRunning = false;
-      return result;
-    };
-    const originalRefresh = engine.refreshInternal.bind(engine);
-    engine.refreshInternal = async () => {
-      assert.equal(searchRunning, false);
-      refreshStarted = true;
-      return await originalRefresh();
-    };
-    const originalWatch = engine.applyWatchChangesInternal.bind(engine);
-    engine.applyWatchChangesInternal = async (...args) => {
-      assert.equal(searchRunning, false);
-      watchStarted = true;
-      return await originalWatch(...args);
-    };
+    const progress = [];
+    engine.onProgress = (value) => progress.push(value);
+    await write(join(root, 'candidate-only.txt'), 'candidate-only searchable value');
 
-    const activeSearch = search(engine, 1, 'lane-search', 'base');
-    await nextTurn();
-    await write(join(root, 'queued.txt'), 'queued update');
+    let releasePromotion;
+    const promotionGate = new Promise((resolve) => {
+      releasePromotion = resolve;
+    });
+    let candidateComplete;
+    const candidateCompletePromise = new Promise((resolve) => {
+      candidateComplete = resolve;
+    });
+    const originalPromote = engine.promoteCandidate.bind(engine);
+    engine.promoteCandidate = async (...args) => {
+      candidateComplete();
+      await promotionGate;
+      return await originalPromote(...args);
+    };
     const refresh = engine.refresh({ workspaceId: 'workspace', generation: 1 });
-    const watchMutation = engine.enqueue(
-      async () => await engine.applyWatchChangesInternal({ full: false, paths: ['queued.txt'] })
+    await candidateCompletePromise;
+
+    assert.equal((await search(engine, 1, 'active-during-build', 'base query')).results.length, 1);
+    assert.equal(
+      (await search(engine, 1, 'candidate-hidden', 'candidate-only searchable value')).results
+        .length,
+      0,
+      'completed candidate rows remain invisible before atomic promotion'
     );
-    await nextTurn();
-    assert.equal(searchRunning, true);
-    assert.equal(refreshStarted, false);
-    assert.equal(watchStarted, false);
-    releaseSearch();
-    await Promise.all([activeSearch, refresh, watchMutation]);
-    assert.equal(refreshStarted, true);
-    assert.equal(watchStarted, true);
-    assert.equal((await search(engine, 1, 'lane-final', 'queued update')).results.length, 1);
+    assert.deepEqual(
+      [...new Set(progress.map(({ phase }) => phase))],
+      ['counting', 'indexing']
+    );
+
+    releasePromotion();
+    await refresh;
+    assert.equal(
+      (await search(engine, 1, 'candidate-promoted', 'candidate-only searchable value')).results
+        .length,
+      1
+    );
     await engine.shutdown();
   });
 });

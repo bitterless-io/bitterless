@@ -33,6 +33,7 @@ progress rail—remains part of the current feature contract.
 | [onlypreview-search-performance-acceptance-014](tasks/onlypreview-search-performance-acceptance-014.md) | canonical PRODUCT-P01 direct `<100ms` acceptance plus 7/7 three-view Electron E2E | done | onlypreview-search-scope-watch-013 |
 | [onlypreview-settings-category-navigation-015](tasks/onlypreview-settings-category-navigation-015.md) | two-column Settings with category navigation and one focused settings list | done | onlypreview-search-performance-acceptance-014 |
 | [onlypreview-dual-index-exclusion-watch-016](tasks/onlypreview-dual-index-exclusion-watch-016.md) | independent directory-name and excluded file/content indexes with watch CRUD convergence | in-progress | onlypreview-settings-category-navigation-015 |
+| [onlypreview-search-during-index-017](tasks/onlypreview-search-during-index-017.md) | replace the search UtilityProcess with a hidden XPC fileSearch renderer and keep queries truthful during indexing | done | — |
 | [cowork-subapp-001](tasks/cowork-subapp-001.md) | original Cowork runtime and host integration | done | — |
 | [cowork-subapp-003](tasks/cowork-subapp-003.md) | dev-local SQLCipher key without OS Keychain | done | cowork-subapp-001 |
 | [cowork-subapp-002](tasks/cowork-subapp-002.md) | parity checks and Bitterless-launched Electron E2E | done | cowork-subapp-001, cowork-subapp-003 |
@@ -81,6 +82,18 @@ progress rail—remains part of the current feature contract.
 | [trench-agent-skill-integration-013](tasks/trench-agent-skill-integration-013.md) | portable `bitterless-trench` skill and MCP→disk→standalone/Omni acceptance | done | trench-record-store-mcp-010, trench-record-browser-011, trench-omni-embedding-012 |
 | [trench-structured-record-detail-014](tasks/trench-structured-record-detail-014.md) | structured CA/Index/Negative evidence details with exact-document copy | done | trench-record-browser-011, trench-omni-embedding-012 |
 | [trench-agent-skill-guide-015](tasks/trench-agent-skill-guide-015.md) | current-instance MCP and `bitterless-trench` installation guide | done | trench-agent-skill-integration-013, trench-omni-embedding-012 |
+| [trench-index-analysis-017](tasks/trench-index-analysis-017.md) | target CA set, shared wallet registry, hidden SQLCipher, profit-ranked global INDEX, and two-column UI | done | trench-todo-menubar-parity-016, trench-agent-skill-guide-015 |
+| [trench-io-runtime-018](tasks/trench-io-runtime-018.md) | name and colocate the hidden Trench SQLCipher renderer runtime as `trench-io` under `src/renderer` | done | trench-index-analysis-017 |
+| [trench-index-chain-separation-019](tasks/trench-index-chain-separation-019.md) | partition INDEX ranking and the two-column workspace by Solana/BSC chain | done | trench-io-runtime-018 |
+| [trench-gmgn-settings-020](tasks/trench-gmgn-settings-020.md) | expose GMGN setup/verification from the Trench menu and provider-error recovery | done | trench-index-chain-separation-019 |
+| [trench-gmgn-electron-argv-021](tasks/trench-gmgn-electron-argv-021.md) | execute the verified Yarn GMGN entry with Commander-correct Electron argv | done | trench-gmgn-settings-020 |
+| [trench-remote-avatar-csp-022](tasks/trench-remote-avatar-csp-022.md) | allow HTTPS wallet avatars in Trench and fall back cleanly when the remote source fails | done; owner visual acceptance pending | trench-gmgn-electron-argv-021 |
+| [trench-person-registry-023](tasks/trench-person-registry-023.md) | raise each chain INDEX to 300 and add person/profile/membership identity storage and API | done | trench-remote-avatar-csp-022 |
+| [trench-trenchers-ui-024](tasks/trench-trenchers-ui-024.md) | add Arco INDEX/Trenchers navigation and the person master-detail workspace | done | trench-person-registry-023 |
+| [trench-person-import-skill-025](tasks/trench-person-import-skill-025.md) | staged non-overwriting person import MCP plus portable messy-file conversion skill | done; owner runtime acceptance pending | trench-person-registry-023, trench-trenchers-ui-024 |
+| [trench-sniping-workbench-026](tasks/trench-sniping-workbench-026.md) | first-level Sniping monitor, exact/shadow simulation and Activity UI | implemented; owner verification pending | trench-trenchers-ui-024 |
+| [trench-sniping-execution-ui-027](tasks/trench-sniping-execution-ui-027.md) | Canary, financial Armed, execution rail and receipt controls | pending; waits for verified Private 004/005 | trench-sniping-workbench-026 |
+| [trench-long-term-monitoring-028](tasks/trench-long-term-monitoring-028.md) | fourth first-level explicit-CA watches, Transfer-event Z-score charts and anomaly ledger | implemented; owner runtime/visual acceptance pending | trench-sniping-workbench-026, bitterless-private/sniping-monitoring-products-010 |
 | [coding-agent-sessions-core-001](tasks/coding-agent-sessions-core-001.md) | storage, Codex/Claude discovery, normalization, and safe opening | done | — |
 | [coding-agent-sessions-bridge-002](tasks/coding-agent-sessions-bridge-002.md) | lifecycle helper, local bridge, and reversible hook settings | done | coding-agent-sessions-core-001 |
 | [coding-agent-sessions-ui-003](tasks/coding-agent-sessions-ui-003.md) | authenticated Home dashboard and real XPC interactions | done | coding-agent-sessions-bridge-002 |
@@ -162,6 +175,11 @@ progress rail—remains part of the current feature contract.
 
 Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md),
 [BL Trench record vault](analysis/trench-record-vault.md),
+[BL Trench INDEX](analysis/trench-index-analysis.md),
+[BL Trench person registry](analysis/trench-person-registry-analysis.md),
+[BL Trench Sniping workbench](analysis/trench-sniping-workbench-design.html),
+[BL Trench Long-term Monitoring](analysis/trench-long-term-monitoring-analysis.md),
+[BL Trench Long-term Monitoring visual design](analysis/trench-long-term-monitoring-design.html),
 [historical Coin sub-application](analysis/coin-subapp.md),
 [Coding-agent sessions](analysis/coding-agent-sessions.md),
 [EyesOnAgents](analysis/eyes-on-agents.md),

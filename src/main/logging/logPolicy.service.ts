@@ -20,6 +20,7 @@ const FIRST_PARTY_RENDERER_ENTRIES = [
   { path: '/onlypreview/preview/index.html', process: 'renderer:onlypreviewPreview' },
   { path: '/onlypreview/settings/index.html', process: 'renderer:onlypreviewSettings' },
   { path: '/onlypreview/guide/index.html', process: 'renderer:onlypreviewGuide' },
+  { path: '/fileSearch/index.html', process: 'renderer:fileSearch' },
   { path: '/coin/index.html', process: 'renderer:coin' },
   { path: '/omni/omniCell/index.html', process: 'renderer:omniCell' },
   { path: '/omni/omniControl/index.html', process: 'renderer:omniControl' },

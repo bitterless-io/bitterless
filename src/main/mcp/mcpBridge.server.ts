@@ -37,6 +37,7 @@ import { assertTodoistSyncEntityId } from '@shared/todoistSync/todoistSync.contr
 import { todoSqliteClient } from './todoSqlite.client';
 import type { TrenchRepository } from '@main/trench/trenchRepository.service';
 import { trenchRepository } from '@main/trench/trench.runtime';
+import { importTrenchPersonWallets } from '@main/trench/trenchPersonImport.service';
 
 type RpcParams = Record<string, unknown>;
 type DomainRow = McpDomainRow;
@@ -1020,6 +1021,8 @@ export class McpBridgeServer {
         return this.getTrenchNegativeWalletHoldings(params);
       case 'trench.negative_wallet.archive':
         return this.archiveTrenchNegativeWallet(params);
+      case 'trench.person.import':
+        return await this.importTrenchPersons(params);
       default:
         throw new Error(`Unknown method: ${method}`);
     }
@@ -1137,6 +1140,17 @@ export class McpBridgeServer {
       expectedTagId: params.expectedTagId,
       expectedContentHash: params.expectedContentHash
     });
+  }
+
+  private async importTrenchPersons(params: RpcParams): Promise<unknown> {
+    assertOnlyKeys(params, [
+      'schema', 'importId', 'requestId', 'sourceSha256', 'contentSha256',
+      'normalizationVersion', 'chain', 'walletKind', 'chunkIndex', 'chunkCount', 'chunkHash',
+      'rowCount', 'rows', 'finalize'
+    ], 'trench.person.import');
+    const result = await importTrenchPersonWallets(params);
+    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    return result.value;
   }
 
   private async listDomains(): Promise<{

@@ -24,6 +24,7 @@ export const createWorkspaceWatchController = ({
       : MAX_RECONCILE_RETRY_MS
   );
   const pendingPaths = new Set();
+  const pendingRenamePaths = new Set();
   let fullReconcile = false;
   let retryFullReconcile = false;
   let timer;
@@ -79,13 +80,16 @@ export const createWorkspaceWatchController = ({
     clearTrailingTimer();
     if (force) clearRetryTimer();
     const paths = [...pendingPaths];
+    const renamePaths = [...pendingRenamePaths].filter((path) => pendingPaths.has(path));
     const full = fullReconcile || retryFullReconcile;
     if (!full && paths.length === 0) return;
     pendingPaths.clear();
+    pendingRenamePaths.clear();
     fullReconcile = false;
     reconcileRunning = true;
+    const reconcileChange = renamePaths.length > 0 ? { full, paths, renamePaths } : { full, paths };
     running = Promise.resolve()
-      .then(() => onReconcile({ full, paths }))
+      .then(() => onReconcile(reconcileChange))
       .then(
         () => {
           if (!full) return;
@@ -123,8 +127,13 @@ export const createWorkspaceWatchController = ({
 
   try {
     watcher = watchFactory(rootPath, { recursive: true }, (eventType, filename) => {
-      if (filename === null || eventType === 'rename') fullReconcile = true;
-      else pendingPaths.add(String(filename).replaceAll('\\', '/'));
+      if (filename === null) {
+        fullReconcile = true;
+      } else {
+        const relativePath = String(filename).replaceAll('\\', '/');
+        pendingPaths.add(relativePath);
+        if (eventType === 'rename') pendingRenamePaths.add(relativePath);
+      }
       schedule();
     });
     watcher.on('error', (error) => {

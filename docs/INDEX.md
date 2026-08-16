@@ -14,10 +14,22 @@ design document.
   services with unchanged XPC and runtime behavior.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
-- [BL Trench record vault](features/coin.md) - read-only CA records, derived Index Wallets, human
-  negative-wallet evidence, one-CA/one-JSON storage, and standalone/Omni hosting.
-- [BL Trench record layout](features/coin-layout.md) - Royal Blue list/detail evidence browsing and
-  responsive embedded states without analysis controls.
+- [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
+  registry, hidden encrypted SQLite, and one global INDEX.
+- [BL Trench INDEX layout](features/trench-index-layout.md) - count-free INDEX navigation, Add CA,
+  Reanalyze, and responsive target/wallet columns.
+- [BL Trench person registry](features/trench-person-registry.md) - one person to many wallets,
+  profile provenance, current profit projection, X identity, and non-overwriting import.
+- [BL Trench navigation and Trenchers layout](features/trench-navigation-layout.md) - Arco two-level
+  module navigation plus the person master-detail workspace.
+- [BL Trench Sniping workbench layout](features/trench-sniping-layout.md) - third first-level module,
+  one quote token per Flap instance, pinned-state simulation, Canary qualification,
+  component catalog, generated/JSON configuration, execution rail, readiness, and activity ledger.
+- [BL Trench Long-term Monitoring layout](features/trench-long-term-monitoring-layout.md) - fourth
+  first-level module, explicit CA watches, finalized Transfer-event buckets, Z-score evidence and
+  anomaly history.
+- [Legacy BL Trench record vault](features/coin.md) - retained JSON/MCP contract superseded for the
+  visible renderer by INDEX.
 - [Trench raw JSON detail is hard to read](issues/trench-raw-json-detail-hard-to-read.md) - fixed:
   domain components render readable evidence while exact canonical document copy remains available.
 - [BL Trench MCP and skill](features/trench-mcp.md) - production MCP writes, atomic local storage,
@@ -54,6 +66,9 @@ design document.
   startup with main-owned failures surfaced from the Home menubar.
 - [Settings notification test](issues/settings-notification-test.md) - one direct native-notification
   smoke test routed from the Settings renderer to Main through XPC.
+- [Trench GMGN verification fails under Electron Node mode](issues/trench-gmgn-electron-node-argv.md) -
+  fixed: one constrained bootstrap gives Commander the verified Yarn entry as its script path
+  while preserving every allowlisted GMGN argument.
 - [Settings notification test silently does nothing](issues/settings-notification-test-silent-noop.md) -
   implemented; owner verification pending: retain the native object, observe its lifecycle, and
   return typed visible feedback instead of treating every no-op as success.
@@ -101,6 +116,11 @@ design document.
 - [Delivery plan](plan/README.md)
 - [Delivery backlog](plan/backlog.md)
 - [BL Trench record-vault delivery analysis](plan/analysis/trench-record-vault.md)
+- [BL Trench INDEX delivery analysis](plan/analysis/trench-index-analysis.md)
+- [BL Trench person registry delivery analysis](plan/analysis/trench-person-registry-analysis.md)
+- [BL Trench Sniping workbench design](plan/analysis/trench-sniping-workbench-design.html)
+- [BL Trench Long-term Monitoring delivery analysis](plan/analysis/trench-long-term-monitoring-analysis.md)
+- [BL Trench Long-term Monitoring visual design](plan/analysis/trench-long-term-monitoring-design.html)
 - [Historical Coin delivery analysis](plan/analysis/coin-subapp.md)
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
 - [Omni mini-app cells delivery analysis](plan/analysis/omni-miniapp-cells.md)

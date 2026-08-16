@@ -47,7 +47,7 @@ export interface LocalMemeReadSet {
   receipts: CoinSourceReceipt[];
 }
 
-interface LocalHolder {
+export interface LocalHolder {
   address: string;
   sourceRank: number;
   sharePct: number | null;
@@ -61,7 +61,7 @@ interface LocalHolder {
   unrealizedPnlUsd: number | null;
 }
 
-interface ClassifiedLocalHolder {
+export interface ClassifiedLocalHolder {
   holder: LocalHolder;
   status: 'independent' | 'excluded' | 'unknown';
   class: CoinHolderExclusionClass | null;
@@ -206,7 +206,7 @@ const isExchangeCustodyBrandLabel = (value: string): boolean =>
 const isLiquidityPoolLabel = (value: string): boolean =>
   LIQUIDITY_POOL_MARKERS.some((marker) => value.includes(marker));
 
-const classifyLocalHolder = (
+export const classifyLocalHolder = (
   chain: CoinChain,
   holder: LocalHolder,
   holderEvidence: string[],

@@ -32,6 +32,40 @@ installMcpSourceHooks({
 });
 
 const { McpBridgeServer } = await import('../../src/main/mcp/mcpBridge.server.ts');
+const { trenchIoClientService } = await import('../../src/main/trench/trenchIoClient.service.ts');
+const personImports = [];
+trenchIoClientService.attach({
+  capability: 'a'.repeat(43),
+  instanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  client: {
+    async importPersonWallets(input) {
+      personImports.push(input.request);
+      return {
+        ok: true,
+        value: {
+          schema: 'bl-trench-person-import-receipt-v1',
+          importId: input.request.importId,
+          requestId: input.request.requestId,
+          sourceSha256: input.request.sourceSha256,
+          contentSha256: input.request.contentSha256,
+          chain: input.request.chain,
+          chunkCount: input.request.chunkCount,
+          rowCount: input.request.rowCount,
+          stagedChunkCount: input.request.chunkIndex + 1,
+          completed: input.request.finalize,
+          replayed: false,
+          createdPersons: input.request.finalize ? input.request.rowCount : 0,
+          createdWallets: input.request.finalize ? input.request.rowCount : 0,
+          createdChainAccounts: input.request.finalize ? input.request.rowCount : 0,
+          linkedExistingWallets: 0,
+          skippedExistingMemberships: 0,
+          collapsedDuplicates: 0,
+          revision: input.request.finalize ? 1 : 0
+        }
+      };
+    }
+  }
+});
 
 class PublicMcpClient {
   constructor(bridgePath) {
@@ -172,7 +206,8 @@ try {
       'trench.negative_wallet.get',
       'trench.negative_wallet_holdings.put',
       'trench.negative_wallet_holdings.get',
-      'trench.negative_wallet.archive'
+      'trench.negative_wallet.archive',
+      'trench.person.import'
     ]
   );
   for (const tool of trenchTools) {
@@ -184,6 +219,58 @@ try {
   }
   const negativePutTool = trenchTools.find((tool) => tool.name === 'trench.negative_wallet.put');
   assert.equal(negativePutTool.inputSchema.properties.explanation.maxLength, 2000);
+  const personImportTool = trenchTools.find((tool) => tool.name === 'trench.person.import');
+  assert.equal(personImportTool.inputSchema.properties.rows.maxItems, 250);
+  assert.equal(personImportTool.inputSchema.properties.walletKind.const, 'user');
+  assert.equal(
+    personImportTool.inputSchema.properties.rows.items.properties.displayEmoji.maxLength,
+    16
+  );
+  assert.equal(Object.hasOwn(personImportTool.inputSchema.properties, 'path'), false);
+
+  const importRow = {
+    address: `0x${'3'.repeat(40)}`,
+    name: 'Synthetic import',
+    displayEmoji: '🧭'.repeat(16)
+  };
+  const personImport = await client.callTool('trench.person.import', {
+    schema: 'bl-trench-person-import-v1',
+    importId: '11111111-1111-4111-8111-111111111111',
+    requestId: '22222222-2222-4222-8222-222222222222',
+    sourceSha256: 'a'.repeat(64),
+    contentSha256: 'b'.repeat(64),
+    normalizationVersion: 'trench-person-import-v1',
+    chain: 'bsc',
+    walletKind: 'user',
+    chunkIndex: 0,
+    chunkCount: 1,
+    chunkHash: 'c'.repeat(64),
+    rowCount: 1,
+    rows: [importRow],
+    finalize: true
+  });
+  assert.equal(personImport.completed, true);
+  assert.equal(personImports.length, 1);
+  assert.deepEqual(personImports[0].rows, [importRow]);
+  await assert.rejects(client.callTool('trench.person.import', {
+    schema: 'bl-trench-person-import-v1',
+    importId: '33333333-3333-4333-8333-333333333333',
+    requestId: '44444444-4444-4444-8444-444444444444',
+    sourceSha256: 'd'.repeat(64),
+    contentSha256: 'e'.repeat(64),
+    normalizationVersion: 'trench-person-import-v1',
+    chain: 'bsc',
+    walletKind: 'user',
+    chunkIndex: 0,
+    chunkCount: 1,
+    chunkHash: 'f'.repeat(64),
+    rowCount: 1,
+    rows: [{ ...importRow, displayEmoji: '🧭'.repeat(17) }],
+    finalize: true
+  }), /invalid|displayEmoji|maxLength/i);
+  await assert.rejects(client.callTool('trench.person.import', {
+    path: '/tmp/forbidden.json'
+  }), /unknown argument|unknown field/i);
 
   for (const toolName of [
     'trench.analysis.list',
@@ -316,6 +403,7 @@ try {
   assert.deepEqual(
     broadcasts.map((event) => event.name),
     [
+      'trench/person-changed',
       'trench/data-changed',
       'trench/data-changed',
       'trench/data-changed',
@@ -324,9 +412,14 @@ try {
     ]
   );
   assert.deepEqual(
-    broadcasts.map((event) => event.payload.operation),
+    broadcasts.filter((event) => event.name === 'trench/data-changed')
+      .map((event) => event.payload.operation),
     ['put', 'put', 'put', 'archive', 'archive']
   );
+  assert.deepEqual(broadcasts[0]?.payload, {
+    schema: 'bl-trench-person-changed-v1',
+    revision: 1
+  });
 
   const highEscapeResult = Object.fromEntries(
     Array.from({ length: 17 }, (_, index) => [`padding${index}`, '\\'.repeat(60_000)])

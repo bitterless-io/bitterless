@@ -11,7 +11,7 @@ import type { CoinStateService } from './state/coinState.service';
 import type { CoinStrategyService } from './strategy/coinStrategy.service';
 import type { CoinAiAnalysisService } from './ai/coinAiAnalysis.service';
 import type { CoinXBrowserService } from './x/coinXBrowser.service';
-import { assertCoinIpcSender } from './coinSender.guard';
+import { assertCoinIpcSender, assertTrenchResourceIpcSender } from './coinSender.guard';
 
 export interface CoinIpcDependencies {
   getWindow(): BrowserWindow | null;
@@ -46,10 +46,39 @@ const withCoinWindow = (
   assertCoinIpcSender(channel, event, getWindow()) as BrowserWindow;
 
 let registered = false;
+let trenchGmgnRegistered = false;
+
+export const registerTrenchGmgnIpc = (resources: CoinResourceService): void => {
+  if (trenchGmgnRegistered) return;
+  trenchGmgnRegistered = true;
+
+  const trenchResourceHandle = (
+    channel: string,
+    listener: (value?: unknown) => unknown,
+  ): void => {
+    ipcMain.handle(channel, (event, value) => {
+      assertTrenchResourceIpcSender(channel, event);
+      return listener(value);
+    });
+  };
+
+  trenchResourceHandle(COIN_IPC_CHANNELS.gmgnDetect, async () =>
+    await resources.detectGmgn());
+
+  trenchResourceHandle(COIN_IPC_CHANNELS.gmgnSaveApiKey, async (value) =>
+    await resources.saveGmgnApiKey(value));
+
+  trenchResourceHandle(COIN_IPC_CHANNELS.gmgnVerify, async () =>
+    await resources.verifyGmgn());
+
+  trenchResourceHandle(COIN_IPC_CHANNELS.gmgnOpenOfficialLink, async (value) =>
+    await resources.openGmgnOfficialLink(value));
+};
 
 export const registerCoinIpc = (dependencies: CoinIpcDependencies): void => {
   if (registered) return;
   registered = true;
+  registerTrenchGmgnIpc(dependencies.resources);
 
   const scopedHandle = (
     channel: string,
@@ -101,20 +130,8 @@ export const registerCoinIpc = (dependencies: CoinIpcDependencies): void => {
     return result;
   });
 
-  scopedHandle(COIN_IPC_CHANNELS.gmgnDetect, async () =>
-    await dependencies.resources.detectGmgn());
-
-  scopedHandle(COIN_IPC_CHANNELS.gmgnSaveApiKey, async (_window, value) =>
-    await dependencies.resources.saveGmgnApiKey(value));
-
-  scopedHandle(COIN_IPC_CHANNELS.gmgnVerify, async () =>
-    await dependencies.resources.verifyGmgn());
-
   scopedHandle(COIN_IPC_CHANNELS.gmgnCancelVerify, () =>
     dependencies.resources.cancelGmgnVerify());
-
-  scopedHandle(COIN_IPC_CHANNELS.gmgnOpenOfficialLink, async (_window, value) =>
-    await dependencies.resources.openGmgnOfficialLink(value));
 
   scopedHandle(COIN_IPC_CHANNELS.serviceSave, async (_window, value) =>
     await dependencies.resources.saveService(value));

@@ -177,9 +177,32 @@ const trenchSandboxPreloadPlugin = {
       format: 'cjs',
       target: 'node22',
       external: ['electron'],
+      alias: {
+        '@shared': resolve('src/shared')
+      },
       sourcemap: false,
       logLevel: 'silent'
     });
+  }
+};
+
+const trenchIoBlankHtmlPlugin = {
+  name: 'bitterless:trench-io-blank-html',
+  transformIndexHtml: {
+    order: 'post' as const,
+    handler(html: string, context: { path: string }) {
+      if (!context.path.includes('/trench-io/')) return html;
+      return html.replace(/\s*<script(?:\s[^>]*)?>[\s\S]*?<\/script>\s*/gi, '\n');
+    }
+  },
+  closeBundle() {
+    const html = readFileSync(resolve('out/renderer/trench-io/index.html'), 'utf8');
+    if (!/default-src 'none'/.test(html) || !/<body>\s*<\/body>/.test(html)) {
+      throw new Error('trench-io output must retain its restrictive CSP and empty body');
+    }
+    if (/<(?:script|link|style|img|iframe)\b/i.test(html)) {
+      throw new Error('trench-io output must not import or execute page resources');
+    }
   }
 };
 
@@ -361,8 +384,7 @@ export default defineConfig({
         input: {
           'app.main': resolve('src/main/app.main.ts'),
           codexHookHelper: resolve('src/main/eyesOnAgents/codexHookHelper.main.ts'),
-          mcpHelper: resolve('src/main/mcp/mcpHelper.main.ts'),
-          onlypreviewSearchUtility: resolve('src/utility/onlypreview/onlyPreviewSearch.utility.ts')
+          mcpHelper: resolve('src/main/mcp/mcpHelper.main.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp']
       },
@@ -403,6 +425,8 @@ export default defineConfig({
           motto: resolve('src/preload/motto/motto.preload.ts'),
           onlypreview: resolve('src/preload/onlypreview/onlypreview.preload.ts'),
           onlypreviewContent: resolve('src/preload/onlypreview/onlypreviewContent.preload.ts'),
+          fileSearch: resolve('src/preload/fileSearch/fileSearch.preload.ts'),
+          'trench-io': resolve('src/renderer/trench-io/trenchIo.preload.ts'),
           omni: resolve('src/preload/omni/omni.preload.ts'),
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
           trench: resolve('src/preload/trench/trench.preload.ts'),
@@ -448,6 +472,8 @@ export default defineConfig({
           'onlypreview/preview': resolve('src/renderer/onlypreview/preview/index.html'),
           'onlypreview/settings': resolve('src/renderer/onlypreview/settings/index.html'),
           'onlypreview/guide': resolve('src/renderer/onlypreview/guide/index.html'),
+          fileSearch: resolve('src/renderer/fileSearch/index.html'),
+          'trench-io': resolve('src/renderer/trench-io/index.html'),
           'omni/omniCell': resolve('src/renderer/omni/omniCell/index.html'),
           'omni/omniControl': resolve('src/renderer/omni/omniControl/index.html'),
           'omni/omniWindow': resolve('src/renderer/omni/omniWindow/index.html'),
@@ -493,6 +519,7 @@ export default defineConfig({
       monacoEditorPlugin({
         customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork')
       }),
+      trenchIoBlankHtmlPlugin,
       onlyPreviewHtmlSecurityPlugin,
       coinHtmlSecurityPlugin
     ],

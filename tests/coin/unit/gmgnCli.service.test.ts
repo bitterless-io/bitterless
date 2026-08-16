@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,6 +18,7 @@ import { join } from 'node:path';
 import {
   GmgnCliService,
   GmgnReadError,
+  GMGN_ELECTRON_NODE_BOOTSTRAP,
   GMGN_READ_ONLY_PROBE_ARGS,
   buildGmgnReadArgs,
   buildSanitizedGmgnEnv,
@@ -21,6 +26,7 @@ import {
 } from '../../../src/main/coin/resources/gmgnCli.service';
 import {
   CoinProcessError,
+  runCoinProcess,
   type CoinProcessRequest,
   type CoinProcessRunner,
 } from '../../../src/main/coin/resources/coinProcess.runner';
@@ -36,6 +42,144 @@ const makeFixture = () => {
   chmodSync(executable, 0o700);
   return { root, home, bin, executable };
 };
+
+const installYarnNodeFixture = (fixture: ReturnType<typeof makeFixture>) => {
+  const yarnBin = join(fixture.home, '.yarn', 'bin');
+  const globalModules = join(
+    fixture.home,
+    '.config',
+    'yarn',
+    'global',
+    'node_modules',
+  );
+  const packageRoot = join(globalModules, 'gmgn-cli');
+  const entry = join(packageRoot, 'dist', 'index.js');
+  const callsPath = join(fixture.home, 'gmgn-unit-calls.ndjson');
+  mkdirSync(yarnBin, { recursive: true });
+  mkdirSync(join(globalModules, '.bin'), { recursive: true });
+  mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+  mkdirSync(join(packageRoot, 'node_modules'), { recursive: true });
+  writeFileSync(
+    join(packageRoot, 'package.json'),
+    JSON.stringify({ name: 'gmgn-cli', version: '1.5.2', bin: { 'gmgn-cli': './dist/index.js' } }),
+    'utf8',
+  );
+  writeFileSync(
+    entry,
+    '#!/usr/bin/env node\n' +
+      "const { appendFileSync } = require('node:fs');\n" +
+      "const { join } = require('node:path');\n" +
+      "const { Command } = require('commander');\n" +
+      "const args = process.argv.slice(2);\n" +
+      "appendFileSync(join(process.env.HOME, 'gmgn-unit-calls.ndjson'), JSON.stringify({ args }) + '\\n');\n" +
+      "const program = new Command().name('gmgn-cli').version('gmgn-cli 1.5.2');\n" +
+      "const market = program.command('market');\n" +
+      "market.command('trending').requiredOption('--chain <chain>').requiredOption('--interval <interval>').requiredOption('--limit <limit>').option('--raw').action(() => process.stdout.write(JSON.stringify({ code: 0, data: [{ symbol: 'UNIT' }] })));\n" +
+      "const token = program.command('token');\n" +
+      "token.command('info').requiredOption('--chain <chain>').requiredOption('--address <address>').option('--raw').action(() => process.stdout.write(JSON.stringify({ code: 0, data: { symbol: 'UNIT' } })));\n" +
+      "token.command('traders').requiredOption('--chain <chain>').requiredOption('--address <address>').requiredOption('--order-by <order>').requiredOption('--direction <direction>').requiredOption('--limit <limit>').option('--raw').action(() => process.stdout.write(JSON.stringify({ code: 0, data: { list: [] } })));\n" +
+      "program.parseAsync();\n",
+    'utf8',
+  );
+  chmodSync(entry, 0o700);
+  symlinkSync(
+    join(process.cwd(), 'node_modules', 'commander'),
+    join(packageRoot, 'node_modules', 'commander'),
+    'dir',
+  );
+  symlinkSync('../gmgn-cli/dist/index.js', join(globalModules, '.bin', 'gmgn-cli'));
+  symlinkSync(
+    '../../.config/yarn/global/node_modules/.bin/gmgn-cli',
+    join(yarnBin, 'gmgn-cli'),
+  );
+  return {
+    calls: () => existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { args: string[] })
+      : [],
+    entry,
+    executable: join(yarnBin, 'gmgn-cli'),
+  };
+};
+
+const electronExecutable = (): string => process.platform === 'darwin'
+  ? join(
+      process.cwd(),
+      'node_modules',
+      'electron',
+      'dist',
+      'Electron.app',
+      'Contents',
+      'MacOS',
+      'Electron',
+    )
+  : join(process.cwd(), 'node_modules', 'electron', 'dist', 'electron');
+
+const installWindowsYarnFixture = (
+  fixture: ReturnType<typeof makeFixture>,
+  options: { launcher?: string; entryTarget?: string } = {},
+) => {
+  const localAppData = join(fixture.root, 'Local App Data');
+  const yarnBin = join(localAppData, 'Yarn', 'bin');
+  const packageRoot = join(
+    localAppData,
+    'Yarn',
+    'Data',
+    'global',
+    'node_modules',
+    'gmgn-cli',
+  );
+  const entry = join(packageRoot, 'dist', 'index.js');
+  const candidate = join(yarnBin, 'gmgn-cli.cmd');
+  mkdirSync(yarnBin, { recursive: true });
+  mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+  writeFileSync(
+    join(packageRoot, 'package.json'),
+    JSON.stringify({ name: 'gmgn-cli', bin: { 'gmgn-cli': './dist/index.js' } }),
+    'utf8',
+  );
+  writeFileSync(entry, '#!/usr/bin/env node\n', 'utf8');
+  const relativeEntry = options.entryTarget ??
+    '..\\Data\\global\\node_modules\\gmgn-cli\\dist\\index.js';
+  const launcherEntry = relativeEntry.replaceAll('\\', '/');
+  writeFileSync(
+    candidate,
+    options.launcher ?? `@echo off\r\nnode "${launcherEntry}" %*\r\n`,
+    'utf8',
+  );
+  return {
+    candidate,
+    entry,
+    localAppData,
+    packageContainerRoot: join(
+      localAppData,
+      'Yarn',
+      'Data',
+      'global',
+      'node_modules',
+    ),
+    packageRoot,
+    yarnBin,
+  };
+};
+
+const windowsServiceFor = (
+  fixture: ReturnType<typeof makeFixture>,
+  localAppData: string,
+  pathValue: string,
+  runProcess: CoinProcessRunner = async () => ({ stdout: '', stderr: '' }),
+) => serviceFor(fixture, async () => ({ stdout: '', stderr: '' }), {
+  platform: 'win32',
+  processEnv: () => ({
+    PATH: pathValue,
+    LOCALAPPDATA: localAppData,
+    LANG: 'en_US.UTF-8',
+  }),
+  nodeExecutable: 'C:\\Bitterless\\Electron.exe',
+  runProcess,
+});
 
 const serviceFor = (
   fixture: ReturnType<typeof makeFixture>,
@@ -73,6 +217,358 @@ test('reports a missing executable without spawning a shell or fallback command'
     const status = await service.detect();
     assert.equal(status.installed, false);
     assert.equal(status.displayPath, null);
+    assert.equal(calls, 0);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('finds an executable in the exact Yarn global bin when GUI PATH omits it', async () => {
+  const fixture = makeFixture();
+  const yarnBin = join(fixture.home, '.yarn', 'bin');
+  const yarnExecutable = join(yarnBin, 'gmgn-cli');
+  mkdirSync(yarnBin, { recursive: true });
+  writeFileSync(yarnExecutable, '#!/bin/sh\n', 'utf8');
+  chmodSync(yarnExecutable, 0o700);
+  const requests: CoinProcessRequest[] = [];
+  try {
+    rmSync(fixture.executable);
+    const service = serviceFor(
+      fixture,
+      async (request) => {
+        requests.push(request);
+        return { stdout: 'gmgn-cli 1.5.2\n', stderr: '' };
+      },
+      { processEnv: () => ({ PATH: fixture.bin, LANG: 'en_US.UTF-8' }) },
+    );
+    const status = await service.detect();
+    assert.equal(status.installed, true);
+    assert.equal(status.displayPath, '~/.yarn/bin/gmgn-cli');
+    assert.equal(requests[0]?.command, yarnExecutable);
+    assert.equal(requests[0]?.env.PATH, fixture.bin);
+    assert.equal(requests[0]?.env.ELECTRON_RUN_AS_NODE, undefined);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('bootstraps a verified Commander Yarn entry under Electron without rewriting GMGN args', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX Yarn launcher contract');
+    return;
+  }
+  const fixture = makeFixture();
+  try {
+    rmSync(fixture.executable);
+    const yarnFixture = installYarnNodeFixture(fixture);
+    const guiPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+    const appElectron = electronExecutable();
+    assert.equal(existsSync(appElectron), true);
+    const processRequests: CoinProcessRequest[] = [];
+    const oldEnvironment = buildSanitizedGmgnEnv({}, fixture.home, guiPath);
+    oldEnvironment.ELECTRON_RUN_AS_NODE = '1';
+    await assert.rejects(
+      runCoinProcess({
+        command: appElectron,
+        args: [realpathSync(yarnFixture.entry), ...GMGN_READ_ONLY_PROBE_ARGS],
+        env: oldEnvironment,
+        timeoutMs: 5_000,
+        maxOutputBytes: 64 * 1024,
+      }),
+      (error) => error instanceof CoinProcessError && error.code === 'process-failed',
+    );
+    const service = serviceFor(fixture, async (nextRequest) => {
+      processRequests.push(nextRequest);
+      return await runCoinProcess(nextRequest);
+    }, {
+      processEnv: () => ({ PATH: guiPath, LANG: 'en_US.UTF-8' }),
+      nodeExecutable: appElectron,
+      now: Date.now,
+    });
+
+    const status = await service.detect();
+    assert.equal(status.installed, true);
+    assert.equal(status.version, '1.5.2');
+    assert.equal(status.displayPath, '~/.yarn/bin/gmgn-cli');
+    assert.equal((await service.saveApiKey({ apiKey: 'gmgn_unit_commander_fixture' })).ok, true);
+    assert.equal((await service.verify()).code, 'verified');
+    await service.read({
+      operation: 'token-info',
+      chain: 'bsc',
+      address: '0x1111111111111111111111111111111111111111',
+    });
+    await service.read({
+      operation: 'token-traders',
+      chain: 'bsc',
+      address: '0x1111111111111111111111111111111111111111',
+      orderBy: 'profit',
+      direction: 'desc',
+      limit: 100,
+    });
+
+    const entry = realpathSync(yarnFixture.entry);
+    const originalArguments = [
+      ['--version'],
+      ['--version'],
+      [...GMGN_READ_ONLY_PROBE_ARGS],
+      ['token', 'info', '--chain', 'bsc', '--address',
+        '0x1111111111111111111111111111111111111111', '--raw'],
+      ['token', 'traders', '--chain', 'bsc', '--address',
+        '0x1111111111111111111111111111111111111111', '--order-by', 'profit',
+        '--direction', 'desc', '--limit', '100', '--raw'],
+    ];
+    assert.deepEqual(
+      processRequests.map(({ args }) => args),
+      originalArguments.map((args) => [
+        '--eval',
+        GMGN_ELECTRON_NODE_BOOTSTRAP,
+        entry,
+        ...args,
+      ]),
+    );
+    assert.deepEqual(yarnFixture.calls().slice(-5).map(({ args }) => args), originalArguments);
+    assert.equal(processRequests.every(({ command }) => command === appElectron), true);
+    const expectedEnvironment = buildSanitizedGmgnEnv(
+      { PATH: guiPath, LANG: 'en_US.UTF-8' },
+      fixture.home,
+      guiPath,
+    );
+    expectedEnvironment.ELECTRON_RUN_AS_NODE = '1';
+    assert.equal(processRequests.every(({ env }) => env.PATH === guiPath), true);
+    assert.deepEqual(
+      processRequests.map(({ env }) => env),
+      processRequests.map(() => expectedEnvironment),
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('does not delegate an unverified Yarn env-node script to the app runtime', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX Yarn launcher contract');
+    return;
+  }
+  const fixture = makeFixture();
+  const yarnBin = join(fixture.home, '.yarn', 'bin');
+  const yarnExecutable = join(yarnBin, 'gmgn-cli');
+  mkdirSync(yarnBin, { recursive: true });
+  writeFileSync(yarnExecutable, '#!/usr/bin/env node\nprocess.stdout.write("1.5.2")\n', 'utf8');
+  chmodSync(yarnExecutable, 0o700);
+  let calls = 0;
+  try {
+    rmSync(fixture.executable);
+    const service = serviceFor(fixture, async () => {
+      calls += 1;
+      return { stdout: '1.5.2', stderr: '' };
+    }, {
+      processEnv: () => ({ PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }),
+      nodeExecutable: process.execPath,
+    });
+
+    const status = await service.detect();
+
+    assert.equal(status.installed, false);
+    assert.equal(calls, 0);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('maps only an exact Windows Yarn launcher to its contained declared entry', async () => {
+  const fixture = makeFixture();
+  try {
+    rmSync(fixture.executable);
+    const windowsFixture = installWindowsYarnFixture(fixture);
+    const pathValue = `${windowsFixture.yarnBin};C:\\Windows\\System32`;
+    const requests: CoinProcessRequest[] = [];
+    const service = windowsServiceFor(
+      fixture,
+      windowsFixture.localAppData,
+      pathValue,
+      async (request) => {
+        requests.push(request);
+        return { stdout: 'gmgn-cli 1.5.2\n', stderr: '' };
+      },
+    );
+
+    const status = await service.detect();
+    const resolved = requests[0];
+
+    assert.ok(resolved);
+    assert.equal(status.installed, true);
+    assert.equal(status.displayPath, windowsFixture.candidate);
+    assert.equal(resolved.command, 'C:\\Bitterless\\Electron.exe');
+    assert.deepEqual(resolved.args, [
+      '--eval',
+      GMGN_ELECTRON_NODE_BOOTSTRAP,
+      realpathSync(windowsFixture.entry),
+      '--version',
+    ]);
+    const expectedEnvironment = buildSanitizedGmgnEnv(
+      { PATH: pathValue, LOCALAPPDATA: windowsFixture.localAppData, LANG: 'en_US.UTF-8' },
+      fixture.home,
+      pathValue,
+    );
+    expectedEnvironment.ELECTRON_RUN_AS_NODE = '1';
+    assert.deepEqual(resolved.env, expectedEnvironment);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects blank, malicious, unrelated, and missing Windows cmd/package mappings', async () => {
+  const cases: Array<{ name: string; mutate: (
+    fixture: ReturnType<typeof makeFixture>,
+    windowsFixture: ReturnType<typeof installWindowsYarnFixture>,
+  ) => void }> = [
+    {
+      name: 'blank launcher',
+      mutate: (_fixture, { candidate }) => writeFileSync(candidate, '@echo off\r\n', 'utf8'),
+    },
+    {
+      name: 'malicious command',
+      mutate: (_fixture, { candidate }) => writeFileSync(
+        candidate,
+        '@echo off\r\nnode "../Data/global/node_modules/gmgn-cli/dist/index.js" %*\r\ncalc.exe\r\n',
+        'utf8',
+      ),
+    },
+    {
+      name: 'duplicate exact invocation',
+      mutate: (_fixture, { candidate }) => writeFileSync(
+        candidate,
+        '@echo off\r\n' +
+          'node "../Data/global/node_modules/gmgn-cli/dist/index.js" %*\r\n' +
+          'node "../Data/global/node_modules/gmgn-cli/dist/index.js" %*\r\n',
+        'utf8',
+      ),
+    },
+    {
+      name: 'unrelated entry',
+      mutate: (fixture, { candidate }) => {
+        const unrelated = join(fixture.root, 'unrelated.js');
+        writeFileSync(unrelated, '#!/usr/bin/env node\n', 'utf8');
+        writeFileSync(candidate, `@echo off\r\nnode "${unrelated}" %*\r\n`, 'utf8');
+      },
+    },
+    {
+      name: 'missing package',
+      mutate: (_fixture, { entry }) => rmSync(entry),
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    const fixture = makeFixture();
+    try {
+      rmSync(fixture.executable);
+      const windowsFixture = installWindowsYarnFixture(fixture);
+      fixtureCase.mutate(fixture, windowsFixture);
+      const service = windowsServiceFor(
+        fixture,
+        windowsFixture.localAppData,
+        windowsFixture.yarnBin,
+      );
+      assert.equal((await service.detect()).installed, false, fixtureCase.name);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('rejects a Windows package entry whose real path escapes its expected root', async () => {
+  const fixture = makeFixture();
+  try {
+    rmSync(fixture.executable);
+    const windowsFixture = installWindowsYarnFixture(fixture);
+    const outsideEntry = join(fixture.root, 'outside-entry.js');
+    writeFileSync(outsideEntry, '#!/usr/bin/env node\n', 'utf8');
+    rmSync(windowsFixture.entry);
+    symlinkSync(outsideEntry, windowsFixture.entry);
+    const service = windowsServiceFor(
+      fixture,
+      windowsFixture.localAppData,
+      windowsFixture.yarnBin,
+    );
+
+    assert.equal((await service.detect()).installed, false);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a whole Windows package root symlink that escapes the allowed container', async () => {
+  const fixture = makeFixture();
+  try {
+    rmSync(fixture.executable);
+    const windowsFixture = installWindowsYarnFixture(fixture);
+    const outsidePackageRoot = join(fixture.root, 'outside-package-root');
+    renameSync(windowsFixture.packageRoot, outsidePackageRoot);
+    symlinkSync(outsidePackageRoot, windowsFixture.packageRoot, 'dir');
+    const service = windowsServiceFor(
+      fixture,
+      windowsFixture.localAppData,
+      windowsFixture.yarnBin,
+    );
+
+    assert.equal((await service.detect()).installed, false);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('allows the exact Windows package container root to be relocated as one unit', async () => {
+  const fixture = makeFixture();
+  try {
+    rmSync(fixture.executable);
+    const windowsFixture = installWindowsYarnFixture(fixture);
+    const relocatedContainerRoot = join(fixture.root, 'relocated-node-modules');
+    renameSync(windowsFixture.packageContainerRoot, relocatedContainerRoot);
+    symlinkSync(relocatedContainerRoot, windowsFixture.packageContainerRoot, 'dir');
+    const requests: CoinProcessRequest[] = [];
+    const service = windowsServiceFor(
+      fixture,
+      windowsFixture.localAppData,
+      windowsFixture.yarnBin,
+      async (request) => {
+        requests.push(request);
+        return { stdout: 'gmgn-cli 1.5.2\n', stderr: '' };
+      },
+    );
+
+    const status = await service.detect();
+
+    assert.equal(status.installed, true);
+    assert.deepEqual(requests[0]?.args, [
+      '--eval',
+      GMGN_ELECTRON_NODE_BOOTSTRAP,
+      realpathSync(windowsFixture.entry),
+      '--version',
+    ]);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a non-executable candidate in the exact Yarn global bin', async () => {
+  const fixture = makeFixture();
+  const yarnBin = join(fixture.home, '.yarn', 'bin');
+  mkdirSync(yarnBin, { recursive: true });
+  writeFileSync(join(yarnBin, 'gmgn-cli'), '#!/bin/sh\n', 'utf8');
+  chmodSync(join(yarnBin, 'gmgn-cli'), 0o600);
+  let calls = 0;
+  try {
+    rmSync(fixture.executable);
+    const service = serviceFor(
+      fixture,
+      async () => {
+        calls += 1;
+        return { stdout: 'gmgn-cli 1.5.2\n', stderr: '' };
+      },
+      { processEnv: () => ({ PATH: fixture.bin, LANG: 'en_US.UTF-8' }) },
+    );
+    const status = await service.detect();
+    assert.equal(status.installed, false);
     assert.equal(calls, 0);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
@@ -272,6 +768,19 @@ test('builds only allowlisted typed read commands and rejects arbitrary addresse
   }), [
     'token', 'holders', '--chain', 'sol',
     '--address', '11111111111111111111111111111111',
+    '--limit', '100', '--raw',
+  ]);
+  assert.deepEqual(buildGmgnReadArgs({
+    operation: 'token-traders',
+    chain: 'bsc',
+    address: '0x1111111111111111111111111111111111111111',
+    orderBy: 'profit',
+    direction: 'desc',
+    limit: 100,
+  }), [
+    'token', 'traders', '--chain', 'bsc',
+    '--address', '0x1111111111111111111111111111111111111111',
+    '--order-by', 'profit', '--direction', 'desc',
     '--limit', '100', '--raw',
   ]);
   assert.throws(

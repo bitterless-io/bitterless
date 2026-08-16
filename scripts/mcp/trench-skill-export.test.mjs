@@ -24,8 +24,10 @@ const expectedFiles = [
   'SKILL.md',
   'agents/openai.yaml',
   'references/mcp-setup.md',
+  'references/person-import.md',
   'references/schemas.md',
-  'references/tools.md'
+  'references/tools.md',
+  'scripts/convert-person-import.mjs'
 ];
 
 const collectRelativeFiles = (directory) => {
@@ -115,10 +117,17 @@ try {
     (tools.match(/`trench\.[a-z_.]+`/g) ?? []).filter(
       (value, index, values) => values.indexOf(value) === index
     ).length,
-    12
+    13
   );
   assert.match(tools, /After every successful mutation, call the matching get once/);
   assert.match(tools, /A timeout is indeterminate/);
+  assert.match(tools, /`trench\.person\.import`/);
+
+  const personImport = readFileSync(join(skillRoot, 'references', 'person-import.md'), 'utf8');
+  assert.match(personImport, /strict UTF-8 JSON/);
+  assert.match(personImport, /empty temporary directory/);
+  assert.match(personImport, /delete the whole temporary directory/);
+  assert.match(personImport, /stable UUIDv4-shaped IDs/);
 
   const schemas = readFileSync(join(skillRoot, 'references', 'schemas.md'), 'utf8');
   assert.match(schemas, /BSC and Robinhood use lowercase EVM identity/);

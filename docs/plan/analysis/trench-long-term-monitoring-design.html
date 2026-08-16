@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BL Trench · Long-term Monitoring</title>
+  <style>
+    :root {
+      --ink: #20243a;
+      --muted: #66708a;
+      --line: #dfe3ec;
+      --soft: #f5f6fa;
+      --blue: #4e5882;
+      --blue-deep: #303858;
+      --orange: #ea7d28;
+      --green: #23845a;
+      --red: #c13f4a;
+      --amber: #a56a13;
+      --paper: #ffffff;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #eaecf2;
+      font-family: var(--sans);
+      font-size: 13px;
+    }
+    button, input, select { font: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid rgb(78 88 130 / 32%);
+      outline-offset: 2px;
+    }
+    .page {
+      width: min(1440px, calc(100vw - 40px));
+      margin: 20px auto 56px;
+    }
+    .design-note {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: end;
+      margin: 0 0 14px;
+    }
+    .design-note h1 { margin: 0 0 6px; font-size: 21px; letter-spacing: -.02em; }
+    .design-note p { margin: 0; color: var(--muted); line-height: 1.5; }
+    .legend { display: flex; gap: 14px; color: var(--muted); white-space: nowrap; }
+    .legend b { color: var(--ink); }
+    .app {
+      height: min(720px, calc(100vh - 16px));
+      min-height: 282px;
+      overflow: hidden;
+      border: 1px solid #cfd4df;
+      border-radius: 12px;
+      background: var(--paper);
+      box-shadow: 0 18px 48px rgb(36 42 67 / 13%);
+    }
+    .menubar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px;
+      color: #fff;
+      background: var(--blue-deep);
+    }
+    .brand { font-weight: 750; letter-spacing: .06em; }
+    .menubar__spacer { flex: 1; }
+    .menubar__fact { color: #d9ddef; font-size: 12px; }
+    .menubar__action {
+      border: 0;
+      color: #fff;
+      background: transparent;
+      padding: 3px 7px;
+    }
+    .shell { display: grid; grid-template-columns: 148px minmax(0, 1fr); height: calc(100% - 34px); min-height: 0; }
+    .rail {
+      overflow-y: auto;
+      border-right: 1px solid var(--line);
+      background: #f8f8fb;
+      padding: 10px 8px;
+    }
+    .rail__group { margin: 0 0 10px; }
+    .rail__title {
+      padding: 7px 9px 5px;
+      color: var(--blue-deep);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .rail__item {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-radius: 6px;
+      padding: 7px 10px 7px 17px;
+      color: #566078;
+      text-align: left;
+      background: transparent;
+    }
+    .rail__item--selected { color: #fff; background: var(--blue); font-weight: 650; }
+    .workspace { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    .workspace__header {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .workspace__header h2 { margin: 0; font-size: 15px; letter-spacing: .03em; }
+    .workspace__eyebrow { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+    .workspace__header-spacer { flex: 1; }
+    .button {
+      min-height: 30px;
+      border: 1px solid #cbd1dd;
+      border-radius: 6px;
+      padding: 5px 11px;
+      color: var(--ink);
+      background: #fff;
+    }
+    .button--primary { border-color: var(--blue); color: #fff; background: var(--blue); font-weight: 650; }
+    .button--danger { border-color: #e8c8cb; color: var(--red); }
+    .button:disabled { color: #9299aa; background: #f2f3f6; cursor: not-allowed; }
+    .workspace__body { flex: 1; min-height: 0; display: grid; grid-template-columns: 276px minmax(0, 1fr); }
+    .watch-pane { min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); }
+    .search { padding: 10px; border-bottom: 1px solid var(--line); }
+    .search input {
+      width: 100%;
+      height: 32px;
+      border: 1px solid #cdd3df;
+      border-radius: 6px;
+      padding: 0 10px;
+      color: var(--ink);
+      background: #fff;
+    }
+    .watch { display: block; width: 100%; border: 0; padding: 12px 11px; color: inherit; text-align: left; background: #fff; border-bottom: 1px solid #eceef4; }
+    .watch--selected { background: #eef0f8; box-shadow: inset 3px 0 0 var(--blue); }
+    .watch__top { display: flex; align-items: center; gap: 7px; }
+    .watch__name { min-width: 0; flex: 1; font-weight: 720; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .watch__address { margin: 5px 0 7px 17px; color: var(--muted); font: 11px/1.35 var(--mono); }
+    .watch__meta { margin-left: 17px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
+    .dot { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: #9da5b7; }
+    .dot--active { background: var(--green); }
+    .dot--warm { background: var(--amber); }
+    .dot--bad { background: var(--red); }
+    .pill { border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 750; letter-spacing: .03em; }
+    .pill--high { color: #9e2431; background: #fdebed; }
+    .pill--warm { color: #855510; background: #fff4dc; }
+    .pill--ok { color: #176e49; background: #e6f6ee; }
+    .watch-pagination { display: flex; justify-content: space-between; padding: 10px; color: var(--muted); font-size: 11px; }
+    .detail { min-width: 0; min-height: 0; overflow-y: auto; background: #fff; }
+    .detail__head {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .detail__identity { min-width: 0; flex: 1; }
+    .detail__identity h3 { margin: 0 0 5px; font-size: 18px; }
+    .asset-key { color: var(--muted); font: 11px/1.4 var(--mono); word-break: break-all; }
+    .detail__actions { display: flex; gap: 7px; }
+    .mobile-back { display: none; }
+    .facts { display: grid; grid-template-columns: repeat(5, minmax(118px, 1fr)); border-bottom: 1px solid var(--line); }
+    .fact { min-width: 0; padding: 10px 12px; border-right: 1px solid var(--line); }
+    .fact:last-child { border-right: 0; }
+    .fact__label { margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+    .fact__value { font-weight: 720; }
+    .fact__sub { margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .fact__value--good { color: var(--green); }
+    .fact__value--high { color: var(--red); }
+    .section { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .section__head { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+    .section__head h4 { margin: 0; font-size: 12px; letter-spacing: .06em; }
+    .section__head span { color: var(--muted); font-size: 11px; }
+    .section__spacer { flex: 1; }
+    .chart {
+      position: relative;
+      height: 226px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(to bottom, transparent 24%, #e7eaf1 25%, transparent 26%, transparent 49%, #e7eaf1 50%, transparent 51%, transparent 74%, #e7eaf1 75%, transparent 76%),
+        #fafbfc;
+      overflow: hidden;
+    }
+    .chart svg { width: 100%; height: 100%; display: block; }
+    .chart__label { position: absolute; left: 9px; padding: 2px 5px; border-radius: 3px; font: 10px var(--mono); background: rgb(255 255 255 / 86%); }
+    .chart__label--count { top: 8px; color: var(--blue); }
+    .chart__label--z { bottom: 8px; color: var(--orange); }
+    .chart__gap { position: absolute; top: 0; bottom: 0; left: 61%; width: 7%; background: repeating-linear-gradient(135deg, rgb(193 63 74 / 8%) 0 5px, transparent 5px 10px); border-left: 1px dashed #d68a91; border-right: 1px dashed #d68a91; }
+    .chart__gap span { position: absolute; top: 88px; left: 50%; transform: translateX(-50%) rotate(-90deg); color: var(--red); font-size: 9px; white-space: nowrap; }
+    .evidence-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr); gap: 12px; }
+    .ledger { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .ledger__row { display: grid; grid-template-columns: 92px 88px minmax(0, 1fr) 68px; align-items: center; gap: 8px; padding: 8px 9px; border-bottom: 1px solid #eceef4; }
+    .ledger__row:last-child { border-bottom: 0; }
+    .ledger__row--head { color: var(--muted); background: var(--soft); font-size: 10px; font-weight: 750; text-transform: uppercase; }
+    .mono { font-family: var(--mono); }
+    .state-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+    .state-card__title { display: flex; gap: 8px; align-items: center; margin-bottom: 9px; font-weight: 750; }
+    .state-card dl { display: grid; grid-template-columns: 118px 1fr; gap: 7px 10px; margin: 0; }
+    .state-card dt { color: var(--muted); }
+    .state-card dd { margin: 0; text-align: right; font-family: var(--mono); }
+    .disclaimer { margin-top: 10px; padding: 8px 10px; border-left: 3px solid var(--orange); color: #785022; background: #fff7ee; font-size: 11px; line-height: 1.45; }
+    .section__actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    .section__actions span { color: var(--muted); font-size: 11px; }
+    .truth-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+    .truth-card { padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+    .truth-card strong { display: block; margin-bottom: 3px; font-size: 11px; }
+    .truth-card span { color: var(--muted); font-size: 10px; line-height: 1.35; }
+    .anomaly-specimen { margin-top: 22px; }
+    .app--anomalies { height: min(620px, calc(100vh - 16px)); }
+    .filters { display: flex; align-items: end; gap: 9px; min-width: 0; overflow-x: auto; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+    .filter { flex: 0 0 210px; }
+    .filter--state { flex-basis: 240px; }
+    .filter label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
+    .filter select { width: 100%; height: 32px; border: 1px solid #cdd3df; border-radius: 6px; padding: 0 8px; color: var(--ink); background: #fff; }
+    .anomaly-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 330px; }
+    .app--anomalies[data-drawer-open="false"] .anomaly-layout { grid-template-columns: 1fr; }
+    .app--anomalies[data-drawer-open="false"] .drawer { display: none; }
+    .anomaly-list { min-width: 0; min-height: 0; overflow: auto; padding: 12px 14px; }
+    .anomaly-table { width: 100%; border-collapse: collapse; border: 1px solid var(--line); background: #fff; }
+    .anomaly-table th, .anomaly-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+    .anomaly-table th { color: var(--muted); background: var(--soft); font-size: 10px; text-transform: uppercase; }
+    .anomaly-table td:nth-child(3), .anomaly-table td:nth-child(4) { font-family: var(--mono); }
+    .anomaly-table tr:last-child td { border-bottom: 0; }
+    .anomaly-layout .anomaly-table { min-width: 760px; }
+    [name="monitoring__state-matrix"] .anomaly-table { table-layout: fixed; }
+    [name="monitoring__state-matrix"] td { overflow-wrap: anywhere; }
+    .anomaly-table tr[aria-selected="true"] td { background: #eef0f8; }
+    .row-trigger { border: 0; padding: 0; color: var(--blue-deep); text-align: left; background: transparent; font-weight: 700; }
+    .cursor { display: flex; justify-content: center; align-items: center; gap: 9px; padding: 11px; color: var(--muted); }
+    .drawer { min-height: 0; overflow-y: auto; border-left: 1px solid var(--line); padding: 14px; background: #fbfbfd; }
+    .drawer__head { display: flex; align-items: start; gap: 9px; margin-bottom: 12px; }
+    .drawer__head h3 { flex: 1; margin: 0; font-size: 14px; }
+    .drawer__facts { display: grid; grid-template-columns: 116px 1fr; gap: 7px 10px; margin: 0; }
+    .drawer__facts dt { color: var(--muted); }
+    .drawer__facts dd { margin: 0; text-align: right; font-family: var(--mono); overflow-wrap: anywhere; }
+    .drawer__warning { margin: 12px 0; padding: 9px; border-left: 3px solid var(--red); color: #762a32; background: #fff0f1; line-height: 1.45; }
+    .dialog { width: min(520px, calc(100vw - 24px)); max-height: calc(100vh - 16px); overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: 0; color: var(--ink); box-shadow: 0 24px 64px rgb(31 36 57 / 25%); }
+    .dialog::backdrop { background: rgb(31 36 57 / 42%); }
+    .dialog__head { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .dialog__head h2 { margin: 0; font-size: 16px; }
+    .dialog__body { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; padding: 14px 16px; }
+    .field--wide { grid-column: 1 / -1; }
+    .field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .field input, .field select { width: 100%; height: 34px; border: 1px solid #cdd3df; border-radius: 6px; padding: 0 9px; color: var(--ink); background: #fff; }
+    .field input:disabled { color: #59627a; background: var(--soft); }
+    .dialog__hint { grid-column: 1 / -1; padding: 8px 9px; border-left: 3px solid var(--blue); color: var(--muted); background: #f3f4f9; font-size: 11px; line-height: 1.4; }
+    .dialog__actions { display: flex; justify-content: flex-end; gap: 8px; padding: 11px 16px; border-top: 1px solid var(--line); }
+    @media (max-width: 920px) {
+      .page { width: min(100%, calc(100vw - 16px)); margin-top: 8px; }
+      .design-note { grid-template-columns: 1fr; }
+      .legend { flex-wrap: wrap; }
+      .shell { grid-template-columns: 112px minmax(0, 1fr); }
+      .workspace__body { grid-template-columns: 1fr; }
+      .watch-pane, .detail { grid-area: 1 / 1; }
+      .app[data-mobile-view="list"] .watch-pane { display: block; }
+      .app[data-mobile-view="list"] .detail { display: none; }
+      .app[data-mobile-view="detail"] .watch-pane { display: none; }
+      .app[data-mobile-view="detail"] .detail { display: block; }
+      .mobile-back { display: inline-flex; }
+      .facts { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      .fact { border-bottom: 1px solid var(--line); }
+      .evidence-grid { grid-template-columns: 1fr; }
+      .detail__head { flex-wrap: wrap; }
+      .detail__actions { width: 100%; }
+      .truth-grid { grid-template-columns: 1fr; }
+      .anomaly-layout { grid-template-columns: 1fr; }
+      .drawer { display: none; border-left: 0; }
+      .app--anomalies[data-drawer-open="true"] .anomaly-list { display: none; }
+      .app--anomalies[data-drawer-open="true"] .drawer { display: block; }
+    }
+    @media (max-width: 560px) {
+      .app { border-radius: 0; }
+      .page { width: 100%; margin: 0; }
+      .design-note, .anomaly-specimen { margin-left: 10px; margin-right: 10px; }
+      .menubar__fact { display: none; }
+      .workspace__header { flex-wrap: wrap; }
+      .chart { height: 190px; }
+      .facts { grid-template-columns: 1fr; }
+      .fact { border-right: 0; }
+      .ledger__row { grid-template-columns: 64px minmax(0, 1fr); }
+      .ledger__row > :nth-child(even) { text-align: right; }
+      .dialog__body { grid-template-columns: 1fr; }
+      .field--wide, .dialog__hint { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="design-note">
+      <div>
+        <h1>长期监控 · Watches</h1>
+        <p>设计稿：BSC ERC-20 Transfer 事件计数，五分钟完整桶，24 小时历史基线。所有地址和数值均为合成示例；此处展示英文 locale，产品文案全部使用 Coin i18n keys。</p>
+      </div>
+      <div class="legend"><span><b>绿色</b> 证据完整</span><span><b>橙色</b> Z-score</span><span><b>红色</b> 异常/缺口</span></div>
+    </header>
+
+    <section class="app" name="monitoring__app" data-mobile-view="list" aria-label="Trench Long-term Monitoring design specimen">
+      <header class="menubar">
+        <span class="brand">TRENCH</span>
+        <span class="menubar__fact">Long-term Monitoring · Core connected</span>
+        <span class="menubar__spacer"></span>
+        <span class="menubar__fact">SG 14s · JP 18s</span>
+        <button type="button" name="monitoring__header__agent" class="menubar__action">Agent</button>
+        <button type="button" name="monitoring__header__refresh" class="menubar__action">Refresh</button>
+        <button type="button" name="monitoring__header__settings" class="menubar__action" aria-label="Settings">⚙</button>
+      </header>
+      <div class="shell">
+        <nav class="rail" name="monitoring__navigation" aria-label="Trench modules">
+          <div class="rail__group"><div class="rail__title">INDEX</div><button type="button" class="rail__item">SOL</button><button type="button" class="rail__item">BSC</button><button type="button" class="rail__item">Robinhood</button></div>
+          <div class="rail__group"><div class="rail__title">Trenchers</div><button type="button" class="rail__item">All traders</button></div>
+          <div class="rail__group"><div class="rail__title">Sniping</div><button type="button" class="rail__item">Products</button><button type="button" class="rail__item">Activity</button></div>
+          <div class="rail__group"><div class="rail__title">Monitoring</div><button type="button" name="monitoring__navigation__watches" class="rail__item rail__item--selected" aria-current="page">Watches</button><button type="button" name="monitoring__navigation__anomalies" class="rail__item">Anomalies</button></div>
+        </nav>
+
+        <section class="workspace">
+          <header class="workspace__header">
+            <div><div class="workspace__eyebrow">MONITORING</div><h2>Watches</h2></div>
+            <span class="workspace__header-spacer"></span>
+            <button type="button" name="monitoring__watch__add" class="button button--primary" data-open-watch-dialog>＋ Add CA</button>
+          </header>
+          <div class="workspace__body">
+            <aside class="watch-pane">
+              <div class="search"><input aria-label="Search watches" value="" placeholder="Search CA or label…" /></div>
+              <button type="button" name="monitoring__watch__row" class="watch watch--selected" data-watch-row aria-current="true">
+                <div class="watch__top"><span class="dot dot--active"></span><span class="watch__name">PEPE flow</span><span class="pill pill--high">Z +3.42</span></div>
+                <div class="watch__address">0x8f…d29c · eip155:56</div>
+                <div class="watch__meta"><span>Monitoring</span><span>·</span><span>HIGH</span></div>
+              </button>
+              <button type="button" name="monitoring__watch__row" class="watch" data-watch-row>
+                <div class="watch__top"><span class="dot dot--warm"></span><span class="watch__name">GME activity</span><span class="pill pill--warm">41 / 72</span></div>
+                <div class="watch__address">0x31…be04 · eip155:56</div>
+                <div class="watch__meta"><span>Monitoring</span><span>·</span><span>Warming</span></div>
+              </button>
+              <button type="button" name="monitoring__watch__row" class="watch" data-watch-row>
+                <div class="watch__top"><span class="dot dot--bad"></span><span class="watch__name">0x71…a90f</span></div>
+                <div class="watch__address">0x71…a90f · eip155:56</div>
+                <div class="watch__meta"><span>Degraded</span><span>·</span><span>Incomplete range</span></div>
+              </button>
+              <button type="button" name="monitoring__watch__row" class="watch" data-watch-row>
+                <div class="watch__top"><span class="dot"></span><span class="watch__name">SPCX baseline</span><span class="pill pill--ok">READY</span></div>
+                <div class="watch__address">0xb4…1e83 · eip155:56</div>
+                <div class="watch__meta"><span>Disabled</span><span>·</span><span>Z −0.17</span></div>
+              </button>
+              <div class="watch-pagination"><button type="button" name="monitoring__watch__previous" class="row-trigger">Previous</button><span>1 / 8</span><button type="button" name="monitoring__watch__next" class="row-trigger">Next</button></div>
+            </aside>
+
+            <article class="detail">
+              <header class="detail__head">
+                <button type="button" name="monitoring__watch__back" class="button mobile-back" data-watch-back>← Back to watches</button>
+                <div class="detail__identity">
+                  <h3>PEPE flow <span class="pill pill--high">HIGH</span></h3>
+                  <div class="asset-key">eip155:56:0x8f4a7d713fa7f9cc2fe7a05ecbc1a9cd874bd29c</div>
+                </div>
+                <div class="detail__actions"><button type="button" name="monitoring__watch__stop" class="button button--danger">Stop monitoring</button><button type="button" name="monitoring__watch__edit" class="button" aria-describedby="edit-disabled-reason" disabled>Edit</button></div>
+                <span id="edit-disabled-reason" class="asset-key">Stop monitoring before editing.</span>
+              </header>
+
+              <div class="facts">
+                <div class="fact"><div class="fact__label">Latest finalized bucket</div><div class="fact__value">187 events</div><div class="fact__sub">17:35–17:40 UTC</div></div>
+                <div class="fact"><div class="fact__label">Z-score</div><div class="fact__value fact__value--high">+3.42</div><div class="fact__sub">threshold ±3.00</div></div>
+                <div class="fact"><div class="fact__label">Baseline</div><div class="fact__value">72 / 288</div><div class="fact__sub">latest bucket excluded</div></div>
+                <div class="fact"><div class="fact__label">Regions</div><div class="fact__value fact__value--good">MATCHED</div><div class="fact__sub">SG · JP fingerprints</div></div>
+                <div class="fact"><div class="fact__label">Finalized</div><div class="fact__value mono">#56,883,912</div><div class="fact__sub">rev 4 · detector v1</div></div>
+              </div>
+
+              <section class="section">
+                <div class="section__head"><h4>TRANSFER EVENT ACTIVITY</h4><span>Latest 500 buckets · up to 41h40m · five-minute UTC</span><span class="section__spacer"></span><span>Count + Z-score</span></div>
+                <div class="chart" name="monitoring__watch__chart" aria-label="Synthetic latest 500 Transfer event count and Z-score chart">
+                  <span class="chart__label chart__label--count">Transfer event count</span>
+                  <span class="chart__label chart__label--z">Z-score · ±3 threshold</span>
+                  <div class="chart__gap"><span>INCOMPLETE</span></div>
+                  <svg viewBox="0 0 900 226" preserveAspectRatio="none" role="img" aria-label="Synthetic trend with one incomplete gap and a high Z-score spike">
+                    <path d="M0 130 L32 124 L64 132 L96 118 L128 127 L160 121 L192 136 L224 126 L256 131 L288 116 L320 124 L352 119 L384 129 L416 122 L448 126 L480 115 L512 120 L544 118" fill="none" stroke="#4e5882" stroke-width="2" />
+                    <path d="M612 121 L644 116 L676 128 L708 119 L740 124 L772 112 L804 117 L836 101 L868 46 L900 60" fill="none" stroke="#4e5882" stroke-width="2" />
+                    <path d="M0 184 L32 180 L64 187 L96 174 L128 181 L160 177 L192 191 L224 180 L256 184 L288 171 L320 178 L352 175 L384 184 L416 179 L448 181 L480 170 L512 177 L544 176" fill="none" stroke="#ea7d28" stroke-width="2" />
+                    <path d="M612 177 L644 173 L676 184 L708 176 L740 180 L772 169 L804 173 L836 160 L868 103 L900 116" fill="none" stroke="#ea7d28" stroke-width="2" />
+                    <line x1="0" y1="128" x2="900" y2="128" stroke="#ea7d28" stroke-width="1" stroke-dasharray="5 5" opacity=".7" />
+                    <circle cx="868" cy="46" r="4" fill="#c13f4a" /><circle cx="868" cy="103" r="4" fill="#c13f4a" />
+                  </svg>
+                </div>
+                <div class="section__actions"><button type="button" name="monitoring__watch__load-older" class="button">Load older evidence</button><span>Uses before_bucket_sequence · retained up to 8,640 buckets</span></div>
+                <div class="disclaimer"><strong>Evidence label:</strong> these are ERC-20 <code>Transfer</code> log counts, including valid mint/burn events. They are not price, swaps, buyers, volume, profit or a trade signal.</div>
+              </section>
+
+              <section class="section">
+                <div class="section__head"><h4>LATEST EVIDENCE</h4><span>missing ranges never become zero</span></div>
+                <div class="evidence-grid">
+                  <div class="ledger" name="monitoring__watch__evidence-table" role="table" aria-label="Textual evidence matching the loaded chart data">
+                    <div class="ledger__row ledger__row--head" role="row"><span role="columnheader">Bucket</span><span role="columnheader">Count</span><span role="columnheader">State / reason</span><span role="columnheader">Z</span></div>
+                    <div class="ledger__row" name="monitoring__watch__evidence-row" role="row"><span class="mono" role="cell">17:35</span><span class="mono" role="cell">187</span><span role="cell"><span class="pill pill--high">HIGH</span></span><span class="mono" role="cell">+3.42</span></div>
+                    <div class="ledger__row" name="monitoring__watch__evidence-row" role="row"><span class="mono" role="cell">17:30</span><span class="mono" role="cell">66</span><span role="cell">READY</span><span class="mono" role="cell">−0.18</span></div>
+                    <div class="ledger__row" name="monitoring__watch__evidence-row" role="row"><span class="mono" role="cell">17:25</span><span class="mono" role="cell">—</span><span role="cell">INCOMPLETE_RANGE</span><span class="mono" role="cell">—</span></div>
+                    <div class="ledger__row" name="monitoring__watch__evidence-row" role="row"><span class="mono" role="cell">17:20</span><span class="mono" role="cell">0</span><span role="cell">COMPLETE · verified zero</span><span class="mono" role="cell">−1.06</span></div>
+                  </div>
+                  <aside class="state-card">
+                    <div class="state-card__title"><span class="dot dot--active"></span>Regional evidence</div>
+                    <dl>
+                      <dt>Singapore</dt><dd>active · 14s</dd>
+                      <dt>Japan</dt><dd>active · 18s</dd>
+                      <dt>Fingerprint</dt><dd>match · 9c1e…ab70</dd>
+                      <dt>Cursor lag</dt><dd>0 finalized blocks</dd>
+                      <dt>Baseline mean</dt><dd>61.42</dd>
+                      <dt>Population σ</dt><dd>36.71</dd>
+                    </dl>
+                  </aside>
+                </div>
+                <div class="truth-grid" name="monitoring__watch__regional-truth">
+                  <div class="truth-card"><strong>MATCHED</strong><span>Paired server values. HIGH/LOW may be confirmed.</span></div>
+                  <div class="truth-card"><strong>SINGLE_REGION · unconfirmed</strong><span>Aggregate count and Z-score stay Unknown; one region is diagnostic only.</span></div>
+                  <div class="truth-card"><strong>REGION_MISMATCH · unconfirmed</strong><span>Show both fingerprints; never average or confirm HIGH/LOW.</span></div>
+                </div>
+              </section>
+            </article>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <dialog id="watch-dialog" name="monitoring__watch__dialog" class="dialog" aria-labelledby="watch-dialog-title">
+      <header class="dialog__head"><h2 id="watch-dialog-title">Add BSC watch</h2></header>
+      <div class="dialog__body">
+        <div class="field"><label for="watch-chain">Chain</label><input id="watch-chain" name="monitoring__watch__chain" value="BSC · eip155:56" disabled /></div>
+        <div class="field"><label for="watch-regions">Observers</label><input id="watch-regions" name="monitoring__watch__regions" value="Singapore + Japan" disabled /></div>
+        <div class="field field--wide"><label for="watch-ca">Contract address</label><input id="watch-ca" name="monitoring__watch__address" value="0x8f4a7d713fa7f9cc2fe7a05ecbc1a9cd874bd29c" autocomplete="off" /></div>
+        <div class="field"><label for="watch-label">Label (optional)</label><input id="watch-label" name="monitoring__watch__label" value="PEPE flow" /></div>
+        <div class="field"><label for="watch-threshold">Absolute Z-score threshold</label><input id="watch-threshold" name="monitoring__watch__threshold" type="number" min="2" max="10" step="0.01" value="3.00" /></div>
+        <div class="dialog__hint"><strong>Duplicate recovery:</strong> an <code>Already watched</code> response keeps every field and exposes <button type="button" name="monitoring__watch__open-existing" class="row-trigger">Open existing watch</button>. Create always returns Disabled revision 1; Start monitoring is a separate reviewed action.</div>
+      </div>
+      <div class="dialog__actions"><button type="button" name="monitoring__watch__cancel" class="button" data-close-watch-dialog>Cancel</button><button type="button" name="monitoring__watch__create" class="button button--primary">Create disabled watch</button></div>
+    </dialog>
+
+    <section class="anomaly-specimen">
+      <header class="design-note">
+        <div><h1>Anomalies · cross-watch ledger</h1><p>服务端 cursor 排序；只有可选 Watch config_id 与精确 state filters。BSC 固定，无前端搜索或拼表。</p></div>
+      </header>
+      <section class="app app--anomalies" name="monitoring__anomalies__app" data-drawer-open="true" aria-label="Trench Monitoring Anomalies design specimen">
+        <header class="menubar"><span class="brand">TRENCH</span><span class="menubar__fact">Long-term Monitoring · BSC</span><span class="menubar__spacer"></span><button type="button" class="menubar__action">Refresh</button></header>
+        <div class="shell">
+          <nav class="rail" name="monitoring__navigation" aria-label="Trench modules">
+            <div class="rail__group"><div class="rail__title">INDEX</div><button type="button" class="rail__item">SOL</button><button type="button" class="rail__item">BSC</button><button type="button" class="rail__item">Robinhood</button></div>
+            <div class="rail__group"><div class="rail__title">Trenchers</div><button type="button" class="rail__item">All traders</button></div>
+            <div class="rail__group"><div class="rail__title">Sniping</div><button type="button" class="rail__item">Products</button><button type="button" class="rail__item">Activity</button></div>
+            <div class="rail__group"><div class="rail__title">Monitoring</div><button type="button" class="rail__item">Watches</button><button type="button" name="monitoring__navigation__anomalies" class="rail__item rail__item--selected" aria-current="page">Anomalies</button></div>
+          </nav>
+          <section class="workspace">
+            <header class="workspace__header"><div><div class="workspace__eyebrow">MONITORING</div><h2>Anomalies</h2></div><span class="workspace__header-spacer"></span><span class="pill pill--ok">BSC fixed</span></header>
+            <div class="filters" name="monitoring__anomaly__filters">
+              <div class="filter"><label for="anomaly-watch">Watch (optional config_id)</label><select id="anomaly-watch" name="monitoring__anomaly__config-id"><option value="">All watches</option><option value="103">PEPE flow · config 103</option><option value="117">GME activity · config 117</option></select></div>
+              <div class="filter filter--state"><label for="anomaly-state">Exact state filter</label><select id="anomaly-state" name="monitoring__anomaly__states"><option value="">All exception states</option><option>WARMING</option><option>BASELINE_FLAT</option><option>HIGH</option><option>LOW</option><option>INCOMPLETE_RANGE</option><option>REGION_MISMATCH</option><option>SINGLE_REGION</option></select></div>
+              <button type="button" name="monitoring__anomaly__retry" class="button">Retry current cursor</button>
+            </div>
+            <div class="anomaly-layout">
+              <div class="anomaly-list" name="monitoring__anomaly__list">
+                <table class="anomaly-table" aria-label="Synthetic cross-watch exception ledger">
+                  <thead><tr><th>Bucket UTC</th><th>Watch / asset</th><th>Evidence</th><th>Z-score</th><th>State</th><th>Regions</th></tr></thead>
+                  <tbody>
+                    <tr name="monitoring__anomaly__row"><td><button type="button" class="row-trigger" data-anomaly-row>17:35–17:40</button></td><td><strong>PEPE flow</strong><br><span class="asset-key">0x8f…d29c</span></td><td>187 Transfer events</td><td>+3.42</td><td><span class="pill pill--high">HIGH · confirmed</span></td><td>MATCHED</td></tr>
+                    <tr name="monitoring__anomaly__row"><td><button type="button" class="row-trigger" data-anomaly-row>14:20–14:25</button></td><td><strong>GME activity</strong><br><span class="asset-key">0x31…be04</span></td><td>44 Transfer events</td><td>—</td><td>BASELINE_FLAT</td><td>MATCHED</td></tr>
+                    <tr name="monitoring__anomaly__row"><td><button type="button" class="row-trigger" data-anomaly-row>11:05–11:10</button></td><td><strong>0x71…a90f</strong><br><span class="asset-key">0x71…a90f</span></td><td>Unknown</td><td>—</td><td>SINGLE_REGION · unconfirmed</td><td>SG only</td></tr>
+                    <tr name="monitoring__anomaly__row" aria-selected="true"><td><button type="button" name="monitoring__anomaly__open-detail" class="row-trigger" data-anomaly-row>09:40–09:45</button></td><td><strong>SPCX baseline</strong><br><span class="asset-key">0xb4…1e83</span></td><td>Unknown</td><td>—</td><td>REGION_MISMATCH · unconfirmed</td><td>SG ≠ JP</td></tr>
+                  </tbody>
+                </table>
+                <div class="cursor"><button type="button" name="monitoring__anomaly__load-older" class="button">Load older</button><span>next_cursor · bucket 5,659,476 / config 103</span></div>
+              </div>
+              <aside class="drawer" name="monitoring__anomaly__drawer" aria-label="Selected anomaly evidence">
+                <div class="drawer__head"><button type="button" name="monitoring__anomaly__drawer-back" class="button mobile-back" data-close-drawer>← Back to evidence</button><h3>SPCX baseline · 09:40 UTC</h3><button type="button" name="monitoring__anomaly__drawer-close" class="row-trigger" aria-label="Close evidence drawer" data-close-drawer>×</button></div>
+                <div class="drawer__warning"><strong>REGION_MISMATCH · unconfirmed.</strong> Aggregate Transfer count and Z-score are Unknown. Regional values are diagnostic and are never averaged.</div>
+                <dl class="drawer__facts">
+                  <dt>Config / revision</dt><dd>103 / rev 4</dd><dt>Asset</dt><dd>eip155:56:0xb4…1e83</dd><dt>Bucket</dt><dd>09:40–09:45 UTC</dd><dt>Block range</dt><dd>#56,882,410–#56,882,496</dd><dt>Aggregate count</dt><dd>Unknown</dd><dt>Aggregate Z</dt><dd>—</dd><dt>Threshold</dt><dd>±3.00</dd><dt>Detector</dt><dd>zscore-population-v1</dd><dt>Release</dt><dd>monitor@1.0.0</dd><dt>SG diagnostic</dt><dd>187 · Z +3.42 · 9c1e…ab70</dd><dt>JP diagnostic</dt><dd>172 · Z +2.98 · 77b4…ae19</dd>
+                </dl>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+
+    <section class="anomaly-specimen" name="monitoring__state-matrix">
+      <header class="design-note"><div><h1>Recovery and lifecycle matrix</h1><p>每个错误只影响自己的 scope；已验证证据保留并标记 stale，不用 0 掩盖未知。</p></div></header>
+      <table class="anomaly-table" aria-label="Monitoring recovery and lifecycle states">
+        <thead><tr><th>State</th><th>Visible truth</th><th>Recovery / action</th></tr></thead>
+        <tbody>
+          <tr><td>No watches</td><td>No fabricated detail</td><td>Add CA</td></tr>
+          <tr><td>Search empty</td><td>No watches match</td><td>Clear search; Add CA remains</td></tr>
+          <tr><td>No anomaly rows</td><td>No evidence exceptions for this filter</td><td>Change Watch/state filter</td></tr>
+          <tr><td>Core offline</td><td>Last verified evidence · Stale since time</td><td>Retry fixed route; mutations disabled</td></tr>
+          <tr><td>SINGLE_REGION</td><td>Aggregate count/Z Unknown · unconfirmed</td><td>Inspect available region; Retry</td></tr>
+          <tr><td>REGION_MISMATCH</td><td>Both fingerprints · no aggregate</td><td>Retry; never average</td></tr>
+          <tr><td>List/detail/series error</td><td>Other verified scopes remain</td><td>Retry only the failed scope</td></tr>
+          <tr><td>CAS conflict</td><td>Draft remains open</td><td>Reload server version or Cancel</td></tr>
+          <tr><td>Mutation failed</td><td>Draft/detail remains; action unlocks</td><td>Correct the error and retry</td></tr>
+          <tr><td>Start monitoring</td><td>New revision · WARMING 0 / 72</td><td>Accumulate at least 72 complete prior buckets</td></tr>
+          <tr><td>Stop monitoring</td><td>Disabled; historical revisions remain readable</td><td>Edit or Start a new monitoring revision</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const watchApp = document.querySelector('[name="monitoring__app"]');
+    const watchDialog = document.querySelector('#watch-dialog');
+    let selectedWatchRow = null;
+    document.querySelectorAll('[data-watch-row]').forEach((row) => row.addEventListener('click', () => {
+      selectedWatchRow = row;
+      if (watchApp instanceof HTMLElement) watchApp.dataset.mobileView = 'detail';
+    }));
+    document.querySelector('[data-watch-back]')?.addEventListener('click', () => {
+      if (watchApp instanceof HTMLElement) watchApp.dataset.mobileView = 'list';
+      if (selectedWatchRow instanceof HTMLElement) selectedWatchRow.focus();
+    });
+    document.querySelector('[data-open-watch-dialog]')?.addEventListener('click', () => {
+      if (watchDialog instanceof HTMLDialogElement) watchDialog.showModal();
+    });
+    document.querySelector('[data-close-watch-dialog]')?.addEventListener('click', () => {
+      if (watchDialog instanceof HTMLDialogElement) watchDialog.close();
+    });
+    const anomalyApp = document.querySelector('[name="monitoring__anomalies__app"]');
+    let anomalyInvoker = document.querySelector('[name="monitoring__anomaly__open-detail"]');
+    const compactAnomaly = window.matchMedia('(max-width: 920px)');
+    if (compactAnomaly.matches && anomalyApp instanceof HTMLElement) anomalyApp.dataset.drawerOpen = 'false';
+    document.querySelectorAll('[data-anomaly-row]').forEach((row) => row.addEventListener('click', () => {
+      anomalyInvoker = row;
+      if (anomalyApp instanceof HTMLElement) anomalyApp.dataset.drawerOpen = 'true';
+    }));
+    document.querySelectorAll('[data-close-drawer]').forEach((control) => control.addEventListener('click', () => {
+      if (anomalyApp instanceof HTMLElement) anomalyApp.dataset.drawerOpen = 'false';
+      if (anomalyInvoker instanceof HTMLElement) anomalyInvoker.focus();
+    }));
+  </script>
+</body>
+</html>

@@ -726,7 +726,7 @@ test('host-scoped batches upsert in first-seen order and stale batches are rejec
   );
 });
 
-test('query waits for the ready index and stale workspace responses never render', async () => {
+test('query waits for an available browse runtime and stale workspace responses never render', async () => {
   let context = null;
   const scheduling = resetProjectSearch(() => context);
   projectSearchStore.setQuery('needle');
@@ -735,7 +735,7 @@ test('query waits for the ready index and stale workspace responses never render
   assert.equal(projectSearchStore.pending, true);
 
   context = { workspaceId: 'workspace-search-shell', generation: 3 };
-  projectSearchStore.resumeForReadyIndex();
+  projectSearchStore.resumeForAvailableRuntime();
   assert.equal(scheduling.scheduled(), 1);
   const pending = deferred();
   searchResponder = () => pending.promise;
@@ -746,6 +746,116 @@ test('query waits for the ready index and stale workspace responses never render
   pending.resolve(responseFor(searchCalls[0], [textResult('stale.md')]));
   await dispatch;
   assert.deepEqual(projectSearchStore.results, []);
+});
+
+test('completed directory query stays settled across later root and ready resumes', async () => {
+  const context = projectSearchContext({
+    focusedRelativePath: 'nested',
+    focusedNodeKind: 'directory'
+  });
+  const scheduling = resetProjectSearch(() => context);
+  const accepted = textResult('nested/accepted.md');
+  searchResponder = async (request) => responseFor(request, [accepted]);
+
+  projectSearchStore.setQuery('needle');
+  await projectSearchStore.dispatchLatest();
+  assert.equal(searchCalls.length, 1);
+  assert.deepEqual(searchCalls[0].scope, { kind: 'directory', relativePath: 'nested' });
+  assert.equal(projectSearchStore.pending, false);
+  assert.deepEqual(projectSearchStore.results, [accepted]);
+
+  const scheduledBeforeResume = scheduling.scheduled();
+  projectSearchStore.resumeForAvailableRuntime();
+  projectSearchStore.resumeForAvailableRuntime();
+  assert.equal(scheduling.scheduled(), scheduledBeforeResume);
+  assert.equal(searchCalls.length, 1);
+  assert.equal(projectSearchStore.pending, false);
+  assert.deepEqual(projectSearchStore.results, [accepted]);
+
+  projectSearchStore.subscribeToBatches();
+  const watchCommitListener = rendererSubscriptions.get('onlypreview/search-watch-commit');
+  assert.equal(typeof watchCommitListener, 'function');
+  const emitWatchCommit = (hostId, commit, extra = {}) =>
+    watchCommitListener({ params: { hostId, commit, ...extra } });
+  const commit = {
+    workspaceId: context.workspaceId,
+    generation: context.generation,
+    revision: 1,
+    full: false,
+    changedRelativePaths: ['nested/accepted.md']
+  };
+  emitWatchCommit('wrong-host', commit);
+  emitWatchCommit('host-search-shell', { ...commit, workspaceId: 'stale-workspace' });
+  emitWatchCommit('host-search-shell', { ...commit, generation: context.generation + 1 });
+  emitWatchCommit('host-search-shell', {
+    ...commit,
+    changedRelativePaths: ['outside/ignored.md']
+  });
+  emitWatchCommit('host-search-shell', {
+    ...commit,
+    changedRelativePaths: ['nested/accepted.md', 'nested/accepted.md']
+  });
+  emitWatchCommit('host-search-shell', commit, { unexpected: true });
+  assert.equal(scheduling.scheduled(), scheduledBeforeResume);
+  assert.equal(projectSearchStore.pending, false);
+  assert.deepEqual(projectSearchStore.results, [accepted]);
+
+  emitWatchCommit('host-search-shell', commit);
+  assert.equal(scheduling.scheduled(), scheduledBeforeResume + 1);
+  assert.equal(projectSearchStore.pending, true);
+  assert.deepEqual(projectSearchStore.results, [accepted]);
+
+  const refreshed = textResult('nested/refreshed.md');
+  searchResponder = async (request) => responseFor(request, [refreshed]);
+  await projectSearchStore.dispatchLatest();
+  assert.equal(searchCalls.length, 2);
+  assert.equal(projectSearchStore.pending, false);
+  assert.deepEqual(projectSearchStore.results, [refreshed]);
+});
+
+test('a committed watch revision retries an accepted query after its initial search failed', async () => {
+  const context = projectSearchContext({
+    focusedRelativePath: 'nested',
+    focusedNodeKind: 'directory'
+  });
+  const scheduling = resetProjectSearch(() => context);
+  projectSearchStore.subscribeToBatches();
+  const watchCommitListener = rendererSubscriptions.get('onlypreview/search-watch-commit');
+  assert.equal(typeof watchCommitListener, 'function');
+  searchResponder = async () => ({
+    ok: false,
+    error: { code: 'OPERATION_FAILED', message: 'initial search unavailable' }
+  });
+
+  projectSearchStore.setQuery('created');
+  await projectSearchStore.dispatchLatest();
+  assert.equal(projectSearchStore.pending, false);
+  assert.equal(projectSearchStore.error, 'OnlyPreview could not complete this action.');
+  assert.deepEqual(projectSearchStore.results, []);
+
+  const scheduledBeforeCommit = scheduling.scheduled();
+  watchCommitListener({
+    params: {
+      hostId: 'host-search-shell',
+      commit: {
+        workspaceId: context.workspaceId,
+        generation: context.generation,
+        revision: 1,
+        full: false,
+        changedRelativePaths: ['nested/watch-created.txt']
+      }
+    }
+  });
+  assert.equal(scheduling.scheduled(), scheduledBeforeCommit + 1);
+  assert.equal(projectSearchStore.pending, true);
+  assert.equal(projectSearchStore.error, '');
+
+  const created = textResult('nested/watch-created.txt');
+  searchResponder = async (request) => responseFor(request, [created]);
+  await projectSearchStore.dispatchLatest();
+  assert.equal(projectSearchStore.pending, false);
+  assert.equal(projectSearchStore.error, '');
+  assert.deepEqual(projectSearchStore.results, [created]);
 });
 
 test('snapshot guard accepts only exact, internally consistent nested snapshots', () => {
@@ -1220,8 +1330,16 @@ test('Shell Project Search source preserves exact narrow client, UI, and lifecyc
   );
   assert.match(shellSource, /snapshot\.workspaceId !== workspace\.workspaceId/);
   assert.match(shellSource, /snapshot\.generation !== this\.searchWorkspaceGeneration/);
-  assert.match(shellSource, /onlyPreviewProjectSearchStore\.suspendForIndex\(\)/);
-  assert.match(shellSource, /onlyPreviewProjectSearchStore\.resumeForReadyIndex\(\)/);
+  assert.doesNotMatch(shellSource, /suspendForIndex|stopWaitingForIndex|resumeForReadyIndex/);
+  assert.match(shellSource, /ready: this\.projectionReady/);
+  assert.doesNotMatch(shellSource, /ready: this\.projectionReady\s*&&\s*!this\.indexLoading/);
+  const applySearchProgress = shellSource.slice(
+    shellSource.indexOf('private applySearchProgress('),
+    shellSource.indexOf('private async runWindowCommand(')
+  );
+  assert.match(applySearchProgress, /this\.indexProgressState = next/);
+  assert.doesNotMatch(applySearchProgress, /onlyPreviewProjectSearchStore|cancel|clear/);
+  assert.match(shellSource, /onlyPreviewProjectSearchStore\.resumeForAvailableRuntime\(\)/);
   const applySearchSnapshot = shellSource.slice(
     shellSource.indexOf('private async applySearchSnapshot('),
     shellSource.indexOf('private applyBrowseListing(')
