@@ -133,6 +133,11 @@ progress rail—remains part of the current feature contract.
 | [eyes-on-agents-search-result-domain-033](tasks/eyes-on-agents-search-result-domain-033.md) | two-line global-search result rows with custom Domain context | implemented; owner verification pending | eyes-on-agents-token-title-search-032 |
 | [eyes-on-agents-completed-unknown-open-034](tasks/eyes-on-agents-completed-unknown-open-034.md) | settle completed unknown recovery candidates and acknowledge them in one Open | implemented; owner verification pending | eyes-on-agents-working-recovery-027, eyes-on-agents-open-status-sync-029 |
 | [eyes-on-agents-working-start-order-035](tasks/eyes-on-agents-working-start-order-035.md) | stable active-task presentation order by current working-state start time | implemented; owner verification pending | eyes-on-agents-completed-unknown-open-034 |
+| [eyes-on-agents-provider-identity-036](tasks/eyes-on-agents-provider-identity-036.md) | provider-qualified persistence and renderer identity without Codex behavior change | done | eyes-on-agents-working-start-order-035 |
+| [eyes-on-agents-claude-inventory-open-037](tasks/eyes-on-agents-claude-inventory-open-037.md) | Claude singleton inventory, Desktop archive reconciliation, Agent View fallback, and Desktop UI Open | done | eyes-on-agents-provider-identity-036 |
+| [eyes-on-agents-claude-observation-ui-038](tasks/eyes-on-agents-claude-observation-ui-038.md) | Claude plugin lifecycle observation, connection guide, provider icons, and full integration | implemented; owner verification pending | eyes-on-agents-claude-inventory-open-037 |
+| [eyes-on-agents-claude-directory-runtime-039](tasks/eyes-on-agents-claude-directory-runtime-039.md) | persisted Claude config directory, automatic watcher recovery, health status, and Connection controls | implemented; owner verification pending | eyes-on-agents-claude-observation-ui-038 |
+| [eyes-on-agents-claude-provider-toggle-040](tasks/eyes-on-agents-claude-provider-toggle-040.md) | persisted Claude provider pause with Codex-isolated lifecycle, projection, and compact switch | implemented; owner verification pending | eyes-on-agents-claude-directory-runtime-039 |
 | [desktop-helper-process-isolation-001](tasks/desktop-helper-process-isolation-001.md) | Node-only Codex helpers, GUI singleton, and observable SQLite-first startup | in-progress | todo-mcp-multi-instance, eyes-on-agents-global-onboarding-008 |
 | [preload-linkedom-worker-003](tasks/preload-linkedom-worker-003.md) | canvas-free LinkeDOM preload bundling and production development startup | done | desktop-helper-process-isolation-001 |
 | [desktop-package-size-002](tasks/desktop-package-size-002.md) | production dependency boundary and pre-sign desktop package-size gate | done | — |
@@ -183,6 +188,7 @@ Analysis: [Cowork sub-application migration](analysis/cowork-subapp-migration.md
 [historical Coin sub-application](analysis/coin-subapp.md),
 [Coding-agent sessions](analysis/coding-agent-sessions.md),
 [EyesOnAgents](analysis/eyes-on-agents.md),
+[EyesOnAgents Claude](analysis/eyes-on-agents-claude.md),
 [Translator](analysis/translator.md),
 [Motto](analysis/motto.md),
 [Omni mini-app cells](analysis/omni-miniapp-cells.md),

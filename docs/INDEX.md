@@ -45,6 +45,8 @@ design document.
   Project metadata and an All-column source filter.
 - [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
   lifecycle, lightweight reliable delivery, Codex trust review, and App Server independence.
+- [EyesOnAgents Claude observation](features/eyes-on-agents-claude-observation.md) - provider-aware
+  local Claude discovery, Desktop archive metadata, plugin lifecycle Hooks, and Desktop UI Open.
 - [EyesOnAgents last user prompt](features/eyes-on-agents-last-user-prompt.md) - narrow capture of one
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
@@ -56,6 +58,8 @@ design document.
 - [Translator mini app](features/translator.md) - fixed GPT-5.5 realtime bilingual translation
   inside Omni with thinking disabled, one exact 60-second deadline, strict Zod output, and a
   dedicated sanitized translation log.
+- [Submodules mini app](features/submodules.md) - one watched directory, `.gitmodules`-derived
+  inventory, live per-submodule branch state, and Open in the running WebStorm.
 - [Motto mini app](features/motto.md) - local title/subtitle reminder cards inside Omni with
   whole-array Web Storage persistence.
 - [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
@@ -95,8 +99,8 @@ design document.
 
 ## Integrations
 
-- [EyesOnAgents](integrations/eyes-on-agents.md) - Codex-only App Server connection, raw inventory snapshots, Domain
-  classification, Focus/unread semantics, Desktop status bridge, and persistence boundary.
+- [EyesOnAgents](integrations/eyes-on-agents.md) - Codex App Server plus local Claude observation,
+  provider-aware persistence, Domain classification, and Focus/unread semantics.
 - [EyesOnAgents layout](integrations/eyes-on-agents-layout.md) - standalone Mini App window,
   wrapping observation board, compact title/action cards, and responsive interaction states.
 - [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - two-line result metadata implemented; owner verification pending:
@@ -123,6 +127,7 @@ design document.
 - [BL Trench Long-term Monitoring visual design](plan/analysis/trench-long-term-monitoring-design.html)
 - [Historical Coin delivery analysis](plan/analysis/coin-subapp.md)
 - [EyesOnAgents delivery analysis](plan/analysis/eyes-on-agents.md)
+- [EyesOnAgents Claude delivery analysis](plan/analysis/eyes-on-agents-claude.md)
 - [Omni mini-app cells delivery analysis](plan/analysis/omni-miniapp-cells.md)
 - [OnlyPreview MVP delivery analysis](plan/analysis/onlypreview.md)
 - [Translator delivery analysis](plan/analysis/translator.md)

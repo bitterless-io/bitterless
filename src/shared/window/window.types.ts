@@ -23,6 +23,7 @@ export type WindowStateKey =
   | 'todo'
   | 'omni'
   | 'eyes-on-agents'
+  | 'submodules'
   | 'maestro'
   | 'coin'
   | 'onlypreview'

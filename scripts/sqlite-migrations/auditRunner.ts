@@ -17,6 +17,10 @@ import {
   finalizeCoreSqliteSchema,
 } from '../../src/preload/sqlite/coreSqlite.release'
 import {
+  ensureEyesOnAgentsClaudeInventorySchema,
+  migrateEyesOnAgentsProviderIdentitySchema,
+} from '../../src/preload/sqlite/dao/eyesOnAgents.migration'
+import {
   createMaestroSqliteSchema,
   maestroSqliteMigrations,
 } from '../../src/preload/maestro/sqlite/maestroSqlite.release'
@@ -60,6 +64,9 @@ interface CoreFixtureOptions {
   historicalVersionCode?: string
   codingAgent?: boolean
   legacySettingTemp?: boolean
+  providerBlindCurrent?: boolean
+  providerAwareCurrent?: boolean
+  claudeInventoryCurrent?: boolean
 }
 
 interface CoreBaseline {
@@ -356,6 +363,55 @@ const createCoreFixture = (
         );
       `)
     }
+    if (options.providerBlindCurrent) {
+      db.exec(`
+        ALTER TABLE eyes_on_agents_thread ADD COLUMN last_user_prompt_preview TEXT;
+        ALTER TABLE eyes_on_agents_thread ADD COLUMN last_user_prompt_turn_id TEXT;
+        ALTER TABLE eyes_on_agents_thread ADD COLUMN last_user_prompt_at INTEGER;
+        ALTER TABLE eyes_on_agents_thread
+          ADD COLUMN last_user_prompt_truncated INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE eyes_on_agents_thread ADD COLUMN last_user_prompt_source TEXT;
+        ALTER TABLE eyes_on_agents_thread ADD COLUMN last_user_prompt_checked_at INTEGER;
+        UPDATE eyes_on_agents_thread
+        SET last_completed_turn_id = 'audit-turn',
+          last_completed_at = 2,
+          is_unread = 1,
+          last_user_prompt_preview = 'audit-prompt',
+          last_user_prompt_turn_id = 'audit-turn',
+          last_user_prompt_at = 2,
+          last_user_prompt_source = 'app_server',
+          last_user_prompt_checked_at = 2;
+        CREATE TABLE eyes_on_agents_hook_delivery_receipt (
+          delivery_id TEXT PRIMARY KEY,
+          thread_id TEXT NOT NULL,
+          observed_at INTEGER NOT NULL,
+          committed_at INTEGER NOT NULL
+        );
+        INSERT INTO eyes_on_agents_hook_delivery_receipt (
+          delivery_id, thread_id, observed_at, committed_at
+        ) VALUES (
+          'audit-delivery', '11111111-1111-4111-8111-111111111111', 2, 3
+        );
+        CREATE TABLE eyes_on_agents_completion_alert_receipt (
+          thread_id TEXT NOT NULL,
+          turn_id TEXT NOT NULL,
+          completed_at INTEGER NOT NULL,
+          claimed_at INTEGER NOT NULL,
+          PRIMARY KEY (thread_id, turn_id)
+        );
+        INSERT INTO eyes_on_agents_completion_alert_receipt (
+          thread_id, turn_id, completed_at, claimed_at
+        ) VALUES (
+          '11111111-1111-4111-8111-111111111111', 'audit-turn', 2, 3
+        );
+      `)
+    }
+    if (options.providerAwareCurrent) {
+      migrateEyesOnAgentsProviderIdentitySchema(db)
+    }
+    if (options.claudeInventoryCurrent) {
+      ensureEyesOnAgentsClaudeInventorySchema(db)
+    }
   }
 
   if (options.codingAgent) {
@@ -391,13 +447,25 @@ const verifyCoreSchema = (
   assertColumns(db, 'todos', ['note', 'repeat_interval', 'source'])
   assertColumns(db, 'domain', ['description', 'archived'])
   assertColumns(db, 'eyes_on_agents_thread', [
+    'session_key',
+    'provider',
+    'thread_id',
+    'desktop_session_id',
+    'desktop_identity_ambiguous',
+    'transcript_path',
+    'transcript_identity_ambiguous',
+    'status_fresh_until',
+    'transcript_activity_at',
     'project_key',
     'project_root',
     'project_name',
     'is_archived',
+    'archive_state',
     'is_unread',
   ])
   assertColumns(db, 'eyes_on_agents_thread_snapshot', [
+    'session_key',
+    'provider',
     'thread_id',
     'payload_json',
     'is_archived',
@@ -407,9 +475,19 @@ const verifyCoreSchema = (
   ])
   assertColumns(db, 'eyes_on_agents_hook_delivery_receipt', [
     'delivery_id',
+    'session_key',
+    'provider',
     'thread_id',
     'observed_at',
     'committed_at',
+  ])
+  assertColumns(db, 'eyes_on_agents_completion_alert_receipt', [
+    'session_key',
+    'provider',
+    'thread_id',
+    'turn_id',
+    'completed_at',
+    'claimed_at',
   ])
   const indexes = db.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'eyes_on_agents_thread'",
@@ -421,6 +499,10 @@ const verifyCoreSchema = (
   assert(
     indexes.some((index) => index.name === 'idx_eyes_on_agents_thread_archive_activity'),
     'EyesOnAgents archive index is missing',
+  )
+  assert(
+    indexes.some((index) => index.name === 'idx_eyes_on_agents_thread_provider_activity'),
+    'EyesOnAgents provider activity index is missing',
   )
   if (baseline.fixture) {
     const setting = db.prepare(
@@ -444,21 +526,58 @@ const verifyCoreSchema = (
   }
   if (baseline.fixture?.eyesStage) {
     const thread = db.prepare(
-      "SELECT title, is_unread FROM eyes_on_agents_thread WHERE thread_id = '11111111-1111-4111-8111-111111111111'",
-    ).get() as { title: string; is_unread: number }
+      `SELECT session_key, provider, title, archive_state, is_unread
+       FROM eyes_on_agents_thread
+       WHERE thread_id = '11111111-1111-4111-8111-111111111111'`,
+    ).get() as {
+      session_key: string
+      provider: string
+      title: string
+      archive_state: string
+      is_unread: number
+    }
+    assert.equal(thread.session_key, 'codex:11111111-1111-4111-8111-111111111111')
+    assert.equal(thread.provider, 'codex')
+    assert.equal(thread.archive_state, 'active')
     assert.equal(thread.title, 'audit-thread')
     if (baseline.fixture.eyesStage >= 3) {
       assert.equal(thread.is_unread, 1, 'unread state must survive/backfill across Eyes upgrades')
     }
     if (baseline.fixture.eyesStage >= 4) {
       const raw = db.prepare(
-        "SELECT payload_json FROM eyes_on_agents_thread_snapshot WHERE thread_id = '11111111-1111-4111-8111-111111111111'",
-      ).get() as { payload_json: string }
+        `SELECT session_key, provider, payload_json
+         FROM eyes_on_agents_thread_snapshot
+         WHERE thread_id = '11111111-1111-4111-8111-111111111111'`,
+      ).get() as { session_key: string; provider: string; payload_json: string }
+      assert.equal(raw.session_key, 'codex:11111111-1111-4111-8111-111111111111')
+      assert.equal(raw.provider, 'codex')
       assert.equal(
         JSON.parse(raw.payload_json).preview,
         'audit-private-preview',
         'raw inventory snapshots must survive an idempotent current-schema audit',
       )
+    }
+    if (baseline.fixture.providerBlindCurrent) {
+      const prompt = db.prepare(
+        `SELECT last_user_prompt_preview FROM eyes_on_agents_thread
+         WHERE session_key = 'codex:11111111-1111-4111-8111-111111111111'`,
+      ).get() as { last_user_prompt_preview: string }
+      assert.equal(prompt.last_user_prompt_preview, 'audit-prompt')
+      const hookReceipt = db.prepare(
+        `SELECT session_key, provider FROM eyes_on_agents_hook_delivery_receipt
+         WHERE delivery_id = 'audit-delivery'`,
+      ).get() as { session_key: string; provider: string }
+      assert.equal(hookReceipt.session_key, 'codex:11111111-1111-4111-8111-111111111111')
+      assert.equal(hookReceipt.provider, 'codex')
+      const completionReceipt = db.prepare(
+        `SELECT session_key, provider FROM eyes_on_agents_completion_alert_receipt
+         WHERE turn_id = 'audit-turn'`,
+      ).get() as { session_key: string; provider: string }
+      assert.equal(
+        completionReceipt.session_key,
+        'codex:11111111-1111-4111-8111-111111111111',
+      )
+      assert.equal(completionReceipt.provider, 'codex')
     }
   }
   if (baseline.fixture?.codingAgent) {
@@ -611,6 +730,54 @@ const coreBaselines: readonly CoreBaseline[] = [
       domainArchived: true,
       eyesStage: 4,
       historicalVersionCode: '260716000004',
+    },
+  },
+  {
+    name: 'eyes-current-stamped-provider-blind',
+    dbExistedBeforeOpen: true,
+    fixture: {
+      settingSubKey: true,
+      note: true,
+      repeatInterval: true,
+      source: true,
+      domainDescription: true,
+      domainArchived: true,
+      eyesStage: 4,
+      historicalVersionCode: '260813155645',
+      providerBlindCurrent: true,
+    },
+  },
+  {
+    name: 'eyes-provider-aware-before-claude-inventory',
+    dbExistedBeforeOpen: true,
+    fixture: {
+      settingSubKey: true,
+      note: true,
+      repeatInterval: true,
+      source: true,
+      domainDescription: true,
+      domainArchived: true,
+      eyesStage: 4,
+      historicalVersionCode: '260817143129',
+      providerBlindCurrent: true,
+      providerAwareCurrent: true,
+    },
+  },
+  {
+    name: 'eyes-claude-inventory-before-transcript-heartbeat',
+    dbExistedBeforeOpen: true,
+    fixture: {
+      settingSubKey: true,
+      note: true,
+      repeatInterval: true,
+      source: true,
+      domainDescription: true,
+      domainArchived: true,
+      eyesStage: 4,
+      historicalVersionCode: '260817144544',
+      providerBlindCurrent: true,
+      providerAwareCurrent: true,
+      claudeInventoryCurrent: true,
     },
   },
 ]

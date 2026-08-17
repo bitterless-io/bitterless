@@ -237,6 +237,8 @@
           </a-button>
         </div>
       </section>
+
+      <ClaudeObservationCard />
     </div>
   </a-drawer>
 </template>
@@ -245,6 +247,7 @@
 import { computed } from 'vue';
 import { IconInfoCircle, IconPlugConnected, IconRefresh } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import ClaudeObservationCard from './ClaudeObservationCard.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 const props = defineProps<{ visible: boolean }>();

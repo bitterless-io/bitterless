@@ -46,26 +46,29 @@
       >
         <button
           v-for="thread in eyesOnAgentsStore.threadSearchResults"
-          :id="threadSearchOptionId(thread.threadId)"
-          :key="thread.threadId"
+          :id="threadSearchOptionId(thread.sessionKey)"
+          :key="thread.sessionKey"
           name="eyesOnAgents__threadSearch__result"
           class="thread-search__result"
           :class="{
             'thread-search__result--selected':
-              thread.threadId === eyesOnAgentsStore.threadSearchSelectedThreadId,
+              thread.sessionKey === eyesOnAgentsStore.threadSearchSelectedSessionKey,
           }"
           type="button"
           role="option"
           tabindex="-1"
           :aria-label="resultAriaLabel(thread)"
           :aria-selected="
-            thread.threadId === eyesOnAgentsStore.threadSearchSelectedThreadId
+            thread.sessionKey === eyesOnAgentsStore.threadSearchSelectedSessionKey
           "
           @mousedown.prevent
-          @click="handleResultClick(thread.threadId)"
+          @click="handleResultClick(thread.sessionKey)"
         >
-          <span class="thread-search__result-title" :title="displayTitle(thread)">
-            {{ displayTitle(thread) }}
+          <span class="thread-search__result-heading">
+            <ProviderGlyph :provider="thread.provider" />
+            <span class="thread-search__result-title" :title="displayTitle(thread)">
+              {{ displayTitle(thread) }}
+            </span>
           </span>
           <span
             class="thread-search__result-domain"
@@ -95,19 +98,23 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { IconSearch } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import type { EyesOnAgentsThread } from '@shared/eyesOnAgents/eyesOnAgents.type';
+import type {
+  EyesOnAgentsSessionKey,
+  EyesOnAgentsThread,
+} from '@shared/eyesOnAgents/eyesOnAgents.type';
+import ProviderGlyph from '../ProviderGlyph/ProviderGlyph.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 const RESULT_LIST_ID = 'eyes-on-agents-thread-search-results';
 const inputRef = ref<{ focus: () => void } | null>(null);
 const resultsRef = ref<HTMLElement | null>(null);
 
-const threadSearchOptionId = (threadId: string): string =>
-  `eyes-on-agents-thread-search-option-${encodeURIComponent(threadId)}`;
+const threadSearchOptionId = (sessionKey: string): string =>
+  `eyes-on-agents-thread-search-option-${encodeURIComponent(sessionKey)}`;
 
 const selectedOptionId = computed(() => {
-  const threadId = eyesOnAgentsStore.threadSearchSelectedThreadId;
-  return threadId ? threadSearchOptionId(threadId) : undefined;
+  const sessionKey = eyesOnAgentsStore.threadSearchSelectedSessionKey;
+  return sessionKey ? threadSearchOptionId(sessionKey) : undefined;
 });
 
 const inputAttributes = computed(() => ({
@@ -127,7 +134,13 @@ const emptyMessage = computed(() =>
 
 const displayTitle = (thread: EyesOnAgentsThread): string =>
   thread.title?.trim()
-  || `${i18nHelper.eyesOnAgents.thread.untitled} · ${thread.threadId.slice(0, 8)}`;
+  || `${thread.provider === 'claude'
+    ? i18nHelper.eyesOnAgents.thread.untitledClaude
+    : i18nHelper.eyesOnAgents.thread.untitledCodex} · ${thread.threadId.slice(0, 8)}`;
+
+const providerLabel = (thread: EyesOnAgentsThread): string => thread.provider === 'claude'
+  ? i18nHelper.eyesOnAgents.provider.claude
+  : i18nHelper.eyesOnAgents.provider.codex;
 
 const customDomainTitle = (thread: EyesOnAgentsThread): string | null =>
   eyesOnAgentsStore.customDomainTitle(thread.domainId);
@@ -151,6 +164,7 @@ const runtimeLabel = (thread: EyesOnAgentsThread): string => {
 };
 
 const resultAriaLabel = (thread: EyesOnAgentsThread): string => [
+  providerLabel(thread),
   displayTitle(thread),
   domainAriaLabel(thread),
   runtimeLabel(thread),
@@ -187,8 +201,8 @@ const openSelectedResult = async (): Promise<void> => {
   await focusInput();
 };
 
-const handleResultClick = async (threadId: string): Promise<void> => {
-  await eyesOnAgentsStore.openThreadSearchResult(threadId).catch(() => undefined);
+const handleResultClick = async (sessionKey: EyesOnAgentsSessionKey): Promise<void> => {
+  await eyesOnAgentsStore.openThreadSearchResult(sessionKey).catch(() => undefined);
   await focusInput();
 };
 
@@ -219,7 +233,7 @@ const handleKeydown = (event: KeyboardEvent): void => {
 };
 
 watch(
-  () => eyesOnAgentsStore.threadSearchSelectedThreadId,
+  () => eyesOnAgentsStore.threadSearchSelectedSessionKey,
   () => {
     void scrollSelectedResultIntoView();
   },

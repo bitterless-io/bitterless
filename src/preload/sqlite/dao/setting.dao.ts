@@ -20,12 +20,10 @@ export class SettingDao extends BaseDao {
   /** Get a setting value by key and optional sub_key. Returns parsed JSON or null if not found. */
   async get<T = any>(params: { key: string; sub_key?: string }): Promise<T | null> {
     const subKey = params.sub_key ?? '';
-    console.log('getting value', params);
     const row = await sqliteHelper.safeGet<SettingRow>(
       'SELECT key, sub_key, value FROM setting WHERE key = ? AND sub_key = ?',
       [params.key, subKey],
     );
-    console.log('row', row);
     if (!row) return null;
     try {
       return JSON.parse(row.value) as T;
@@ -97,7 +95,6 @@ export class SettingDao extends BaseDao {
   /** Upsert a setting. Value will be JSON-serialized. */
   async upsert(params: { key: string; sub_key?: string; value: any }): Promise<string> {
     const subKey = params.sub_key ?? '';
-    console.log('upserting value', params);
     const jsonValue = serializeSettingValue(params.value);
     const now = Date.now();
     await sqliteHelper.safeRun(

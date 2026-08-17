@@ -277,7 +277,11 @@ export const zh: typeof en = {
     },
     eyesOnAgents: {
       name: 'EyesOnAgents',
-      subtitle: '观测运行中的 Codex 任务，并按 Domain 整理'
+      subtitle: '观测本机 Codex 与 Claude 任务，并按 Domain 整理'
+    },
+    submodules: {
+      name: 'Submodules',
+      subtitle: '实时查看一个目录下所有 Git 子模块当前所在的分支'
     },
     translator: {
       name: '翻译器',
@@ -357,6 +361,10 @@ export const zh: typeof en = {
   },
   eyesOnAgents: {
     title: 'EyesOnAgents',
+    provider: {
+      codex: 'Codex',
+      claude: 'Claude'
+    },
     completionNotification: {
       title: 'Thread 结束',
       body: '《{title}》'
@@ -368,7 +376,7 @@ export const zh: typeof en = {
       syncing: '同步中',
       disconnected: '未连接',
       error: '连接异常',
-      title: 'Codex 连接',
+      title: 'Agent 连接',
       managedTitle: '托管 App Server',
       managedDescription:
         '“连接”只控制 Bitterless 的任务清单同步与这个本机 Codex App Server 进程。',
@@ -435,6 +443,81 @@ export const zh: typeof en = {
       checkAgain: '再次检查',
       disable: '禁用'
     },
+    claudeBridge: {
+      eyebrow: 'Claude 观测',
+      title: '本机 Claude 观测',
+      provider: 'Claude 支持',
+      off: '已关闭',
+      paused: 'Claude 支持已暂停；Codex 观测会继续正常运行。',
+      pausedError: 'Claude 支持已暂停：{error}',
+      description: '本机元数据负责会话清单与归档状态；准确的生命周期更新需要 Bitterless Claude 插件。',
+      notInstalled: '未安装',
+      installed: '等待活动',
+      observing: '观测中',
+      needsReview: '需要检查',
+      drifted: '需要修复',
+      error: '状态不可用',
+      plugin: '插件',
+      notConfigured: '未配置',
+      enabled: '已启用',
+      disabled: '已禁用',
+      listener: '监听器',
+      listenerActive: '运行中',
+      listenerPaused: '已暂停',
+      listeningSince: '开始监听',
+      observationProof: 'Hook 状态',
+      proofConfirmed: '已由事件确认',
+      proofPrevious: '此前收到过事件',
+      proofNeedsReview: '可能需要检查',
+      proofAwaiting: '等待第一个事件',
+      firstReceipt: '首次收到事件',
+      lastReceipt: '最近收到事件',
+      lastInspected: '最近检查',
+      never: '从未',
+      restartRequired: '插件已安装。检查观测状态前，请重新加载插件或重新打开 Claude 会话。',
+      reviewRequired: 'Claude 尚未交付事件，请在 Claude 中检查 Bitterless hooks 与工作区信任状态。',
+      guideTitle: 'Claude 观测设置',
+      guideInstallTitle: '启用或修复',
+      guideInstallDescription:
+        '“启用”只安装 Bitterless 自有的用户级插件；状态发生漂移时，“修复”只恢复这个插件。',
+      guideReloadTitle: '重新加载会话',
+      guideReloadDescription:
+        '已打开的 Claude 会话不会自动加载新插件。请重新加载插件，或新开一个 Claude Code / Desktop Code 会话。',
+      guideReloadCli: '在 Claude 会话中输入：/reload-plugins',
+      guideInspectTitle: '检查 hooks 与信任',
+      guideInspectDescription:
+        '在 Claude Code 或 Desktop Code 中检查 Bitterless 生命周期 hooks，并确认当前工作区已启用。',
+      guideInspectCli: '在 Claude 会话中输入：/hooks',
+      guideVerifyTitle: '验证一次生命周期事件',
+      guideVerifyDescription:
+        '开始或结束一次回复，然后选择“检查状态”。只有已提交的事件才能证明观测正在工作。',
+      guideBoundary:
+        'Hooks 只发送生命周期元数据；不会采集问题、回答、推理、工具、附件或对话文件内容。归档状态来自 Claude Desktop 元数据，而不是 Hooks。',
+      enable: '启用观测',
+      repair: '修复',
+      checkStatus: '检查状态',
+      removePlugin: '移除插件'
+    },
+    claudeDirectory: {
+      title: '会话目录',
+      pathLabel: 'Claude 配置目录',
+      automatic: '自动发现',
+      custom: '自定义',
+      starting: '正在启动',
+      watching: '正在监听',
+      waiting: '等待 Claude 数据',
+      degraded: '部分可用',
+      retrying: '正在重试',
+      error: '配置错误',
+      stopped: '已停止',
+      unavailable: '目录不可用',
+      desktopDirectories: 'Desktop 元数据目录：{count}',
+      lastSuccessfulScan: '最近成功扫描：{time}',
+      nextRetry: '下次重试：{time}',
+      change: '更改',
+      useAutomatic: '恢复自动发现',
+      retry: '重试'
+    },
     actions: {
       sync: '同步',
       refresh: '刷新',
@@ -445,6 +528,8 @@ export const zh: typeof en = {
       maximize: '最大化或还原',
       close: '关闭 EyesOnAgents',
       open: '打开',
+      claudeDesktopOpenUnavailable: '没有匹配的 Claude Desktop 会话',
+      previewTranscript: '预览对话文件',
       more: '更多操作',
       moveTo: '移动到 Domain',
       delete: '删除',
@@ -474,8 +559,8 @@ export const zh: typeof en = {
       emptyProject: '这个 Project 下没有任务',
       emptyNoProject: '没有无 Project 的任务',
       emptyTitleSearch: '没有匹配此搜索的任务标题',
-      emptyTitle: '还没有 Codex 任务',
-      emptyBody: '连接托管 App Server，然后同步本机 Codex 任务。',
+      emptyTitle: '还没有 Agent 任务',
+      emptyBody: '连接 Codex 或刷新本机 Claude 会话后即可开始观测。',
       loading: '正在加载观测面板',
       addDomain: '添加 Domain',
       domainPlaceholder: 'Domain 名称',
@@ -484,12 +569,14 @@ export const zh: typeof en = {
     domain: {
       options: 'Domain 操作',
       deleteTitle: '删除 Domain',
-      deleteBody: '该 Domain 内的任务仍可在「All」中找到，不会删除 Codex 任务。',
+      deleteBody: '该 Domain 内的任务仍可在「All」中找到，不会删除 Agent 任务。',
       duplicate: '已经存在同名 Domain。',
       required: '请输入 Domain 名称。'
     },
     thread: {
-      untitled: '未命名 Codex 任务',
+      untitled: '未命名 Agent 任务',
+      untitledCodex: '未命名 Codex 任务',
+      untitledClaude: '未命名 Claude 任务',
       new: '未读',
       workingDirectory: '工作目录：{path}',
       source: '证据：{source}',
@@ -514,7 +601,8 @@ export const zh: typeof en = {
     errors: {
       load: '无法加载观测面板。',
       action: '无法完成该操作。',
-      open: 'Codex 无法打开这个任务。'
+      open: 'Agent 应用无法打开这个任务。',
+      preview: '无法预览 Claude 对话文件。'
     }
   },
   coin: zhCoin,
@@ -628,6 +716,50 @@ export const zh: typeof en = {
     syncPermanentFailures: '永久失败',
     syncRetry: '重试',
     syncDiscard: '丢弃'
+  },
+  submodules: {
+    title: 'Submodules',
+    count: '{count} 个子模块',
+    actions: {
+      openFolder: '打开目录',
+      refresh: '刷新',
+      openInWebStorm: 'WebStorm',
+      dismiss: '知道了',
+      minimize: '最小化',
+      maximize: '最大化',
+      close: '关闭'
+    },
+    watch: {
+      live: '实时',
+      paused: '未监听'
+    },
+    branch: {
+      detached: '游离 HEAD',
+      uninitialized: '未初始化',
+      missing: '路径不存在',
+      unknown: '未知',
+      configured: '.gitmodules 指定 {branch}',
+      mismatch: '与 .gitmodules 不一致'
+    },
+    empty: {
+      loading: '正在读取子模块…',
+      title: '尚未选择目录',
+      body: '选择一个 .gitmodules 中声明了 Git 子模块的目录。Bitterless 会记住它，并持续更新每个子模块所在的分支。',
+      noSubmodules: '该目录没有声明任何子模块。'
+    },
+    error: {
+      rootMissing: '已保存的目录不存在了。',
+      rootNotADirectory: '已保存的路径不是目录。',
+      gitmodulesMissing: '该目录下没有 .gitmodules 文件。',
+      gitmodulesUnreadable: '.gitmodules 文件无法读取。',
+      scanFailed: '无法读取子模块信息。',
+      gitdirUnreadable: 'Git 目录无法读取',
+      headUnreadable: 'HEAD 无法读取',
+      headMalformed: 'HEAD 内容异常',
+      chooseFailed: '无法打开该目录。',
+      openPathMissing: '该子模块目录已不存在。',
+      ideNotFound: '本机无法启动 WebStorm。'
+    }
   },
   common: {
     confirm: '确定',

@@ -7,10 +7,26 @@ export type EyesOnAgentsRuntimeState =
   | 'ended'
   | 'unknown';
 
+export type EyesOnAgentsProvider = 'codex' | 'claude';
+
+export type EyesOnAgentsSessionKey = `${EyesOnAgentsProvider}:${string}`;
+
+export type EyesOnAgentsDesktopSessionId = `local_${string}`;
+
+export type EyesOnAgentsArchiveState = 'active' | 'archived' | 'unknown';
+
+export interface EyesOnAgentsThreadIdentity {
+  sessionKey: EyesOnAgentsSessionKey;
+  provider: EyesOnAgentsProvider;
+  threadId: string;
+}
+
 export type EyesOnAgentsStatusSource =
   | 'app_server'
   | 'app_server_turn'
   | 'codex_hook'
+  | 'claude_hook'
+  | 'claude_agent_view'
   | 'discovery';
 
 export type EyesOnAgentsActiveTurnSource = Extract<
@@ -62,8 +78,10 @@ export interface EyesOnAgentsLastUserPrompt {
   truncated: boolean;
 }
 
-export interface EyesOnAgentsThread {
-  threadId: string;
+export interface EyesOnAgentsThread extends EyesOnAgentsThreadIdentity {
+  archiveState: EyesOnAgentsArchiveState;
+  desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  canPreviewTranscript: boolean;
   domainId: number;
   title: string | null;
   cwd: string | null;
@@ -79,6 +97,7 @@ export interface EyesOnAgentsThread {
   lastOpenedAt: string | null;
   statusSource: EyesOnAgentsStatusSource;
   statusObservedAt: string | null;
+  statusFreshUntil: string | null;
   lastActivityAt: string | null;
   isUnread: boolean;
   isFocused: boolean;
@@ -102,6 +121,67 @@ export interface EyesOnAgentsBridgeStatus {
   error: string | null;
 }
 
+export type EyesOnAgentsClaudeBridgeState =
+  | 'not_installed'
+  | 'installed'
+  | 'observing'
+  | 'needs_review'
+  | 'drifted'
+  | 'error';
+
+export type EyesOnAgentsClaudeObservationProof = 'none' | 'receipt';
+
+export interface EyesOnAgentsClaudeBridgeStatus {
+  state: EyesOnAgentsClaudeBridgeState;
+  configured: boolean;
+  enabled: boolean;
+  listening: boolean;
+  listeningSince: string | null;
+  firstReceiptAt: string | null;
+  lastReceiptAt: string | null;
+  lastInspectedAt: string | null;
+  observationProof: EyesOnAgentsClaudeObservationProof;
+  restartRequired: boolean;
+  error: string | null;
+}
+
+export type EyesOnAgentsClaudeDirectoryMode = 'automatic' | 'custom';
+
+export interface EyesOnAgentsClaudeDirectoryConfig {
+  schemaVersion: 1;
+  mode: EyesOnAgentsClaudeDirectoryMode;
+  configDirectory: string | null;
+}
+
+export type EyesOnAgentsClaudeDirectoryState =
+  | 'starting'
+  | 'watching'
+  | 'waiting'
+  | 'degraded'
+  | 'retrying'
+  | 'error'
+  | 'stopped';
+
+export interface EyesOnAgentsClaudeDirectoryStatus {
+  mode: EyesOnAgentsClaudeDirectoryMode;
+  configuredDirectory: string | null;
+  effectiveDirectory: string | null;
+  projectsDirectory: string | null;
+  desktopDirectoryCount: number;
+  state: EyesOnAgentsClaudeDirectoryState;
+  watching: boolean;
+  lastScanAt: string | null;
+  lastSuccessfulScanAt: string | null;
+  nextRetryAt: string | null;
+  error: string | null;
+}
+
+export interface EyesOnAgentsClaudeProviderStatus {
+  enabled: boolean;
+  error: string | null;
+  revision: number;
+}
+
 export type EyesOnAgentsTitleEnrichmentDiagnosticState = 'skipped' | 'rejected';
 
 export type EyesOnAgentsTitleEnrichmentDiagnosticReason =
@@ -121,6 +201,9 @@ export interface EyesOnAgentsSnapshot {
   threads: EyesOnAgentsThread[];
   connection: EyesOnAgentsConnectionStatus;
   bridge: EyesOnAgentsBridgeStatus;
+  claudeBridge: EyesOnAgentsClaudeBridgeStatus;
+  claudeDirectory: EyesOnAgentsClaudeDirectoryStatus;
+  claudeProvider: EyesOnAgentsClaudeProviderStatus;
   lastSyncedAt: string | null;
   lastUserPromptCaptureEnabled: boolean;
   titleEnrichmentDiagnostic: EyesOnAgentsTitleEnrichmentDiagnostic | null;
@@ -211,6 +294,8 @@ export interface EyesOnAgentsThreadRefreshRecoveryCandidate {
 }
 
 export interface EyesOnAgentsThreadRefreshCandidate {
+  sessionKey: EyesOnAgentsSessionKey;
+  provider: EyesOnAgentsProvider;
   threadId: string;
   lastUserPromptCheckedAt: number | null;
   activeTurn: EyesOnAgentsThreadRefreshActiveTurn | null;
@@ -230,6 +315,8 @@ export interface EyesOnAgentsHookLastUserPromptCandidate {
 }
 
 export interface EyesOnAgentsCompletionAlertIntent {
+  sessionKey: EyesOnAgentsSessionKey;
+  provider: EyesOnAgentsProvider;
   threadId: string;
   turnId: string;
   title: string | null;
@@ -237,6 +324,39 @@ export interface EyesOnAgentsCompletionAlertIntent {
 
 export interface EyesOnAgentsRepositoryMutationResult {
   changed: boolean;
+}
+
+export interface EyesOnAgentsClaudeInventoryThread {
+  threadId: string;
+  desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  transcriptPath: string | null;
+  clearDesktopSessionId?: boolean;
+  clearTranscriptPath?: boolean;
+  desktopEvidenceComplete?: boolean;
+  transcriptEvidenceComplete?: boolean;
+  title: string | null;
+  cwd: string | null;
+  project?: EyesOnAgentsProjectMetadata | null;
+  archiveState: EyesOnAgentsArchiveState;
+  transcriptActivityAt: number | null;
+  lastActivityAt: number | null;
+  observedAt: number;
+}
+
+export interface EyesOnAgentsClaudeAgentState {
+  threadId: string;
+  runtimeState: EyesOnAgentsRuntimeState;
+  title: string | null;
+  cwd: string | null;
+  startedAt: number | null;
+  observedAt: number;
+}
+
+export interface EyesOnAgentsClaudeOpenTarget {
+  sessionKey: EyesOnAgentsSessionKey;
+  desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  transcriptPath: string | null;
+  runtimeState: EyesOnAgentsRuntimeState;
 }
 
 export interface EyesOnAgentsThreadPagePersistenceResult
@@ -255,7 +375,7 @@ export type EyesOnAgentsRuntimeEvent =
       runtimeState: EyesOnAgentsRuntimeState;
       activeFlags: string[];
       observedAt: number;
-      source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook'>;
+      source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook' | 'claude_hook'>;
       cwd?: string | null;
       project?: EyesOnAgentsProjectMetadata | null;
       turnId?: string | null;
@@ -265,7 +385,7 @@ export type EyesOnAgentsRuntimeEvent =
       threadId: string;
       turnId: string | null;
       observedAt: number;
-      source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook'>;
+      source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook' | 'claude_hook'>;
       cwd?: string | null;
       project?: EyesOnAgentsProjectMetadata | null;
     }
@@ -275,7 +395,7 @@ export type EyesOnAgentsRuntimeEvent =
       turnId: string | null;
       outcome: 'completed' | 'failed' | 'interrupted';
       observedAt: number;
-      source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook'>;
+      source: Extract<EyesOnAgentsStatusSource, 'app_server' | 'codex_hook' | 'claude_hook'>;
       cwd?: string | null;
       project?: EyesOnAgentsProjectMetadata | null;
     };
@@ -334,13 +454,35 @@ export interface EyesOnAgentsRepositoryApi {
     threadId: string;
     title: string;
   }): Promise<EyesOnAgentsRepositoryMutationResult>;
-  markOpened(params: { threadId: string; openedAt: number }): Promise<void>;
-  markAllRead(): Promise<EyesOnAgentsRepositoryMutationResult>;
+  markOpened(params: { sessionKey: EyesOnAgentsSessionKey; openedAt: number }): Promise<void>;
+  markAllRead(params: {
+    providers: EyesOnAgentsProvider[];
+  }): Promise<EyesOnAgentsRepositoryMutationResult>;
   createDomain(params: { title: string }): Promise<void>;
   renameDomain(params: { domainId: number; title: string }): Promise<void>;
   deleteDomain(params: { domainId: number }): Promise<void>;
   reorderDomains(params: { domainIds: number[] }): Promise<void>;
-  moveThread(params: { threadId: string; domainId: number }): Promise<void>;
+  moveThread(params: { sessionKey: EyesOnAgentsSessionKey; domainId: number }): Promise<void>;
+  upsertClaudeInventory(params: {
+    threads: EyesOnAgentsClaudeInventoryThread[];
+  }): Promise<EyesOnAgentsRepositoryMutationResult>;
+  reconcileClaudeAgentStates(params: {
+    agents: EyesOnAgentsClaudeAgentState[];
+    completeSnapshot: boolean;
+    observedAt: number;
+  }): Promise<EyesOnAgentsRepositoryMutationResult>;
+  expireClaudeAgentStates(params: {
+    observedAt: number;
+    statusSources?: Array<'claude_agent_view' | 'claude_hook'>;
+    force?: boolean;
+  }): Promise<EyesOnAgentsRepositoryMutationResult>;
+  clearClaudeTranscriptCapabilities(): Promise<EyesOnAgentsRepositoryMutationResult>;
+  getRuntimeReceiptSummary(params: {
+    provider: EyesOnAgentsProvider;
+  }): Promise<{ firstReceivedAt: number | null; lastReceivedAt: number | null }>;
+  getClaudeOpenTarget(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+  }): Promise<EyesOnAgentsClaudeOpenTarget | null>;
 }
 
 export interface EyesOnAgentsApi {
@@ -348,17 +490,29 @@ export interface EyesOnAgentsApi {
   connectAppServer(): Promise<EyesOnAgentsSnapshot>;
   disconnectAppServer(): Promise<EyesOnAgentsSnapshot>;
   syncThreads(): Promise<EyesOnAgentsSnapshot>;
+  refreshClaudeInventory(): Promise<EyesOnAgentsSnapshot>;
   refreshThreadPages(): Promise<EyesOnAgentsThreadPagesRefreshResult>;
-  openThread(params: { threadId: string }): Promise<{
+  openThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
     url: string;
     snapshot: EyesOnAgentsSnapshot;
   }>;
+  previewThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void>;
   markAllRead(): Promise<EyesOnAgentsSnapshot>;
   installCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   reviewCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   refreshCodexBridgeStatus(): Promise<EyesOnAgentsSnapshot>;
   removeCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   getCodexBridgeStatus(): Promise<EyesOnAgentsBridgeStatus>;
+  installClaudeBridge(): Promise<EyesOnAgentsSnapshot>;
+  refreshClaudeBridgeStatus(): Promise<EyesOnAgentsSnapshot>;
+  removeClaudeBridge(): Promise<EyesOnAgentsSnapshot>;
+  getClaudeBridgeStatus(): Promise<EyesOnAgentsClaudeBridgeStatus>;
+  changeClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
+  useAutomaticClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
+  retryClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
+  setClaudeProviderEnabled(params: {
+    enabled: boolean;
+  }): Promise<EyesOnAgentsSnapshot>;
   setLastUserPromptCaptureEnabled(params: {
     enabled: boolean;
   }): Promise<EyesOnAgentsSnapshot>;
@@ -366,5 +520,8 @@ export interface EyesOnAgentsApi {
   renameDomain(params: { domainId: number; title: string }): Promise<EyesOnAgentsSnapshot>;
   deleteDomain(params: { domainId: number }): Promise<EyesOnAgentsSnapshot>;
   reorderDomains(params: { domainIds: number[] }): Promise<EyesOnAgentsSnapshot>;
-  moveThread(params: { threadId: string; domainId: number }): Promise<EyesOnAgentsSnapshot>;
+  moveThread(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+    domainId: number;
+  }): Promise<EyesOnAgentsSnapshot>;
 }

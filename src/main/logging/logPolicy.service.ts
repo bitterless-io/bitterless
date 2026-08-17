@@ -12,6 +12,7 @@ const FIRST_PARTY_RENDERER_ENTRIES = [
   { path: '/eyesOnAgents/index.html', process: 'renderer:eyesOnAgents' },
   { path: '/translator/index.html', process: 'renderer:translator' },
   { path: '/motto/index.html', process: 'renderer:motto' },
+  { path: '/submodules/index.html', process: 'renderer:submodules' },
   { path: '/onlypreview/shell/index.html', process: 'renderer:onlypreviewShell' },
   {
     path: '/onlypreview/previewHeader/index.html',

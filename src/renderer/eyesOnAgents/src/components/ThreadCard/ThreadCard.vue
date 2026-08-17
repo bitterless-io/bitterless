@@ -3,6 +3,8 @@
     name="eyesOnAgents__threadCard"
     class="thread-card"
     :data-thread-id="thread.threadId"
+    :data-session-key="thread.sessionKey"
+    :data-provider="thread.provider"
     tabindex="0"
     :aria-label="cardAriaLabel"
     @dblclick="handleDoubleClick"
@@ -10,6 +12,7 @@
   >
     <div class="thread-card__content">
       <div class="thread-card__title-row">
+        <ProviderGlyph :provider="thread.provider" />
         <h3 class="thread-card__title" :title="displayTitle">{{ displayTitle }}</h3>
         <span
           v-if="thread.runtimeState === 'working'"
@@ -45,15 +48,15 @@
             </span>
           </a-tooltip>
 
-          <a-tooltip :content="i18nHelper.eyesOnAgents.actions.open" position="top" mini>
+          <a-tooltip :content="openTooltip" position="top" mini>
             <span class="thread-card__open-control thread-card__control">
               <a-button
                 size="mini"
                 type="primary"
-                :title="i18nHelper.eyesOnAgents.actions.open"
+                :title="openTooltip"
                 :aria-label="openAriaLabel"
-                :loading="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
-                :disabled="eyesOnAgentsStore.openingThreadIds.has(thread.threadId)"
+                :loading="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
+                :disabled="!canOpenThread || eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
                 @click.stop="handleOpen"
               >
                 <template #icon><IconExternalLink :size="9" /></template>
@@ -77,6 +80,14 @@
               <template #icon><IconDots :size="12" /></template>
             </a-button>
             <template #content>
+              <a-doption
+                v-if="thread.provider === 'claude' && thread.canPreviewTranscript"
+                :disabled="eyesOnAgentsStore.previewingSessionKeys.has(thread.sessionKey)"
+                @click="handlePreview"
+              >
+                <IconFileText :size="13" />
+                {{ i18nHelper.eyesOnAgents.actions.previewTranscript }}
+              </a-doption>
               <a-dgroup :title="i18nHelper.eyesOnAgents.actions.moveTo">
                 <a-doption
                   v-for="domain in eyesOnAgentsStore.domains"
@@ -105,6 +116,7 @@ import {
   IconCheck,
   IconDots,
   IconExternalLink,
+  IconFileText,
   IconFolder,
 } from '@tabler/icons-vue';
 import type {
@@ -112,6 +124,7 @@ import type {
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import ProviderGlyph from '../ProviderGlyph/ProviderGlyph.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 import { globalStore } from '../../store/global.store';
 
@@ -119,8 +132,13 @@ const props = defineProps<{ thread: EyesOnAgentsThread }>();
 
 const displayTitle = computed(() =>
   props.thread.title?.trim()
-  || `${i18nHelper.eyesOnAgents.thread.untitled} · ${props.thread.threadId.slice(0, 8)}`,
+  || `${props.thread.provider === 'claude'
+    ? i18nHelper.eyesOnAgents.thread.untitledClaude
+    : i18nHelper.eyesOnAgents.thread.untitledCodex} · ${props.thread.threadId.slice(0, 8)}`,
 );
+const providerLabel = computed(() => props.thread.provider === 'claude'
+  ? i18nHelper.eyesOnAgents.provider.claude
+  : i18nHelper.eyesOnAgents.provider.codex);
 const runtimeLabel = computed(() => {
   switch (props.thread.runtimeState) {
     case 'working': return i18nHelper.eyesOnAgents.thread.working;
@@ -155,17 +173,23 @@ const promptAriaLabel = computed(() => {
     : prompt;
 });
 const cardAriaLabel = computed(() => [
+  providerLabel.value,
   displayTitle.value,
   runtimeLabel.value,
   promptAriaLabel.value,
 ].filter(Boolean).join(', '));
 const folderLabel = computed(() => i18nHelper.eyesOnAgents.thread.workingDirectory
   .replace('{path}', props.thread.cwd ?? ''));
+const canOpenThread = computed(() => props.thread.provider === 'codex'
+  || props.thread.desktopSessionId !== null);
+const openTooltip = computed(() => canOpenThread.value
+  ? i18nHelper.eyesOnAgents.actions.open
+  : i18nHelper.eyesOnAgents.actions.claudeDesktopOpenUnavailable);
 const showUnreadDot = computed(() =>
   props.thread.isUnread && props.thread.runtimeState === 'idle');
 const openAriaLabel = computed(() => showUnreadDot.value
-  ? `${i18nHelper.eyesOnAgents.actions.open}, ${i18nHelper.eyesOnAgents.thread.new}`
-  : i18nHelper.eyesOnAgents.actions.open);
+  ? `${openTooltip.value}, ${i18nHelper.eyesOnAgents.thread.new}`
+  : openTooltip.value);
 const activityLabel = computed(() => {
   const value = props.thread.lastActivityAt ?? props.thread.lastCompletedAt;
   if (!value) return i18nHelper.eyesOnAgents.thread.unknown;
@@ -184,7 +208,12 @@ const activityLabel = computed(() => {
 });
 
 const handleOpen = async (): Promise<void> => {
-  await eyesOnAgentsStore.openThread(props.thread.threadId).catch(() => undefined);
+  if (!canOpenThread.value) return;
+  await eyesOnAgentsStore.openThread(props.thread.sessionKey).catch(() => undefined);
+};
+
+const handlePreview = async (): Promise<void> => {
+  await eyesOnAgentsStore.previewThread(props.thread.sessionKey).catch(() => undefined);
 };
 
 const handleDoubleClick = async (event: MouseEvent): Promise<void> => {
@@ -193,7 +222,7 @@ const handleDoubleClick = async (event: MouseEvent): Promise<void> => {
 };
 
 const handleMove = async (domainId: number): Promise<void> => {
-  await eyesOnAgentsStore.moveThread(props.thread.threadId, domainId).catch(() => undefined);
+  await eyesOnAgentsStore.moveThread(props.thread.sessionKey, domainId).catch(() => undefined);
 };
 
 const domainLabel = (domain: EyesOnAgentsDomain): string =>

@@ -3,6 +3,7 @@ import omniIcon from '@renderer/common/assets/icons/omni.png';
 import maestroIcon from '@renderer/common/assets/icons/maestro.png';
 import coinIcon from '@renderer/common/assets/icons/coin.png';
 import eyesOnAgentsIcon from '@renderer/common/assets/icons/eyes-on-agents.svg';
+import submodulesIcon from '@renderer/common/assets/icons/submodules.svg';
 import onlyPreviewIcon from '@renderer/common/assets/icons/onlypreview.svg';
 import type { en } from '@renderer/common/i18n/en';
 
@@ -21,6 +22,7 @@ export const createMiniApps = (
   openEyesOnAgents: () => void,
   openOmniBrowser: () => void,
   openOnlyPreview: () => void,
+  openSubmodules: () => void,
   i18n: typeof en,
 ): MiniApp[] => [
   {
@@ -53,6 +55,13 @@ export const createMiniApps = (
     subtitle: i18n.miniApp.eyesOnAgents.subtitle,
     icon: eyesOnAgentsIcon,
     action: openEyesOnAgents,
+  },
+  {
+    id: 'submodules',
+    name: i18n.miniApp.submodules.name,
+    subtitle: i18n.miniApp.submodules.subtitle,
+    icon: submodulesIcon,
+    action: openSubmodules,
   },
   {
     id: 'onlypreview',

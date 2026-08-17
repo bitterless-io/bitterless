@@ -1,27 +1,29 @@
 # EyesOnAgents Integration
 
-Status: two-line global-search result metadata implemented; owner verification pending
+Status: Implemented; owner runtime and visual verification pending
 
-Date: 2026-07-17
+Date: 2026-08-17
 
-Verified: 2026-07-30 (through task 033 non-Electron checks; runtime owner verification pending)
+Verified: 2026-08-17 (through task 040 non-Electron checks; runtime owner verification pending)
 
 ## Decision
 
-Replace the provider-neutral Coding-agent Sessions page with **EyesOnAgents**, a Codex-only Mini
-App that opens in its own Bitterless window. EyesOnAgents is an observation board: it discovers
-Codex threads, groups them into user-managed Domains, shows work that needs attention in a derived
-Focus column, and opens an exact task in Codex Desktop.
+Replace the former provider-neutral Coding-agent Sessions page with **EyesOnAgents**, a
+provider-aware Mini App that opens in its own Bitterless window. EyesOnAgents discovers local Codex
+and Claude Code sessions, groups them into user-managed Domains, shows work that needs attention in
+a derived Focus column, and opens an exact task in its provider's desktop UI.
 
-Claude support is removed from the active product, runtime, UI, tests, and setup flows. Historical
-Claude rows may remain in the legacy SQLite table so the migration is non-destructive, but
-EyesOnAgents never reads or displays them.
+Codex retains its App Server and trusted Hook contracts. Claude is an additive adapter with
+read-only Desktop metadata, bounded JSONL inventory, Agent View polling, a user-installed
+Bitterless plugin/Hook, and Desktop-only Open. Its exact capability and privacy boundary is defined
+by [EyesOnAgents Claude Observation](../features/eyes-on-agents-claude-observation.md).
 
 ## Goals
 
 - Connect to a Bitterless-managed local Codex App Server and keep that connection alive while the
   application is running.
-- Import Codex threads into a dedicated, display-oriented SQLite model.
+- Import Codex threads and local Claude Code sessions into a dedicated, provider-aware,
+  display-oriented SQLite model.
 - Persist each validated active and archived `thread/list` object as a local source snapshot, while
   keeping Bitterless-owned Domain and read markers in a separate normalized overlay.
 - Put every newly discovered thread into the system `Uncategorized` Domain until the user moves it.
@@ -45,6 +47,8 @@ EyesOnAgents never reads or displays them.
 - Provide a visible Refresh action that can reconnect and run full reconciliation from disconnected
   or error state as well as from an existing connection.
 - Open the exact Codex Desktop task with `codex://threads/<thread-id>`.
+- Open a Claude session by validated Session ID in the Claude Desktop UI without launching Claude
+  CLI, with explicit read-only JSONL preview as a separate action.
 - Supplement managed App Server events with an independently enabled global Codex observation
   bridge: lifecycle delivery stays metadata-only by default, while a separate opt-in may retain one
   bounded latest user question from trusted live delivery.
@@ -52,7 +56,8 @@ EyesOnAgents never reads or displays them.
 
 ## Non-goals
 
-- Claude Code, Claude Desktop, `claude agents --json`, or Claude hook support.
+- Claude.ai chat history or remote/cloud Claude sessions.
+- Launching `claude --resume`, `claude attach`, or any terminal command from a Claude card.
 - Reading earlier user prompts, complete transcripts, tool calls, diffs, or model output. The one
   latest-user-question exception is defined separately and remains default-off.
 - Sending prompts, steering an active turn, or implementing a client-side message queue in this
@@ -65,7 +70,7 @@ EyesOnAgents never reads or displays them.
 
 ## Product boundary
 
-EyesOnAgents receives two kinds of evidence and keeps them distinct:
+EyesOnAgents receives provider-scoped evidence and keeps every authority distinct:
 
 ```text
 Codex thread store
@@ -78,6 +83,8 @@ EyesOnAgents service ------------------------------------+
       ^                                                   |
       |  lifecycle + optional bounded latest question    v
 opt-in Codex Desktop hooks -> local bridge       SQLite + XPC broadcast
+Claude Desktop metadata + JSONL inventory -------^       ^
+Claude Agent View + plugin Hooks -> local bridge --------|
                                                           |
                                                           v
                                                 EyesOnAgents window
@@ -99,6 +106,26 @@ for Desktop/CLI work after installation but does not provide transcripts. A prio
 row becomes `unknown` when listener-start invalidation establishes a new lifetime. A durable event
 accepted and committed by that new listener may then restore state even when the provider event
 occurred while Bitterless was closed. Stale or contradictory evidence becomes `unknown`.
+
+Claude uses an independent bridge and never inherits Codex connection or trust state. Its
+user-scope Bitterless plugin is required for timely foreground working/completion observation in
+both Claude CLI and local Claude Desktop Code sessions. Read-only Desktop session metadata supplies
+title/activity plus an explicit `isArchived` flag, while JSONL inventory and
+`claude agents --json --all` cover local discovery and runtime fallback. CLI-only rows without a
+matched Desktop metadata file retain unknown archive state. The complete Claude contract is
+[EyesOnAgents Claude Observation](../features/eyes-on-agents-claude-observation.md).
+
+Claude also has one persisted provider-level support switch, default-on for upgrade compatibility.
+Off means Main stops Claude inventory, watcher, retry, Agent View, Hook intake/listener, and
+notifications; returned snapshots omit Claude rows without deleting their SQLite state. The
+installed plugin and saved directory remain untouched. Enabling clears disabled-period outbox data,
+using a persisted pending-admission sentinel before cleanup and a finite cutoff before source
+admission, starts fresh inventory, and resumes only a still-valid installed plugin. A pending
+sentinel is crash-recovered; ordinary enabled restarts retain their existing cutoff and valid
+offline backlog. The listener remains unarmed until ordered coverage inspection and replay finish,
+and late provider snapshots cannot overtake a newer Off response because Main and renderer enforce
+a monotonic provider revision. Codex never reads this preference and remains fully operational in
+either state.
 
 The upstream protocols can expose conversation content: `UserPromptSubmit` supplies the exact
 submitted `prompt`, `Stop` may supply `last_assistant_message`, and App Server can return history.
@@ -351,6 +378,11 @@ Protocol basis: the official
 [Codex App Server reference](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 and the TypeScript schema generated from the bundled Codex CLI version used by Bitterless.
 
+These App Server archive rules are Codex-only. A matched Claude Desktop metadata file supplies its
+own explicit `isArchived` boolean and may hide or restore that Claude row. A CLI-only Claude row has
+unknown archive state. File absence, JSONL deletion, Hook events, process exit, or Agent View
+omission never count as Claude archive evidence.
+
 ## Domain model
 
 EyesOnAgents uses dedicated tables rather than Todo's `domain` and `todo` tables. The two products
@@ -378,14 +410,17 @@ nor Focus is stored as a separate table row.
 
 | column | meaning |
 |---|---|
-| `thread_id` | validated Codex UUID primary key |
+| `session_key` | internal primary key in the form `<provider>:<provider-session-id>` |
+| `provider` | `codex` or `claude` |
+| `thread_id` | validated provider-owned UUID; unique together with `provider` |
+| `desktop_session_id` | nullable validated Claude Desktop `local_<uuid>` identity used only for UI routing |
 | `domain_id` | non-null reference to an active EyesOnAgents Domain |
 | `title` | Codex name/preview fallback, display only |
 | `cwd` | working directory when Codex exposes it |
 | `project_key` | normalized nearest Git worktree root used for grouping/filtering |
 | `project_root` | canonical native Git worktree root for display |
 | `project_name` | compact worktree-root basename |
-| `is_archived` | Codex archive visibility flag; archived rows are retained but omitted from snapshots |
+| `archive_state` | `active`, `archived`, or `unknown`; only explicit `archived` is hidden |
 | `runtime_state` | normalized status enum |
 | `active_flags_json` | App Server active flags, never transcript content |
 | `active_turn_id` | currently observed turn when known |
@@ -394,7 +429,7 @@ nor Focus is stored as a separate table row.
 | `last_opened_turn_id` | terminal/active turn seen when opened through EyesOnAgents |
 | `last_opened_at` | successful Codex deep-link open time |
 | `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open or Focus `Read all` clears it for confirmed terminal rows only |
-| `status_source` | `app_server`, `app_server_turn`, `codex_hook`, or `discovery`; `app_server_turn` marks active state recovered from persisted newest-turn metadata rather than process-local status |
+| `status_source` | provider-scoped App Server, Hook, Agent View, or discovery authority |
 | `status_observed_at` | freshness boundary for runtime evidence |
 | `last_activity_at` | sort/display timestamp from reliable metadata or events |
 | `created_at`, `updated_at` | local lifecycle timestamps |
@@ -403,7 +438,9 @@ nor Focus is stored as a separate table row.
 
 | column | meaning |
 |---|---|
-| `thread_id` | validated Codex UUID primary key and link to the normalized overlay |
+| `session_key` | provider-qualified primary key and link to the normalized overlay |
+| `provider` | snapshot owner; Claude snapshots remain metadata-only |
+| `thread_id` | validated provider-owned UUID |
 | `payload_json` | complete JSON object returned for that thread by the latest `thread/list` inventory |
 | `is_archived` | whether the object came from the archived inventory |
 | `synced_at` | time this exact source object was observed |
@@ -414,10 +451,12 @@ replaces `payload_json` for an observed thread but never overwrites `domain_id`,
 chosen by Bitterless, open markers, or `is_unread`. Absence from an inventory does not delete a raw
 snapshot because filters and concurrent archive transitions can omit entries.
 
-Initial migration imports only active Codex rows from the legacy `coding_agent_session` table.
-Imported and newly discovered rows are assigned to `Uncategorized`; subsequent syncs preserve an
-existing Domain assignment. Historical import does not synthesize a completion marker, so old
-threads do not flood Focus as unread.
+The provider-identity migration converts every current EyesOnAgents row and receipt to `codex`
+without changing Domain, runtime, archive, unread, prompt, or Open state. It then imports valid
+legacy Claude rows idempotently when no provider-qualified row exists and never drops the legacy
+table. Imported and newly discovered rows are assigned to `Uncategorized`; subsequent syncs
+preserve an existing Domain assignment. Historical import does not synthesize a completion marker,
+so old sessions do not flood Focus as unread.
 
 Deleting a custom Domain soft-deletes it and moves all of its threads to `Uncategorized` in one
 transaction. The system Domain cannot be renamed or deleted, and the affected threads remain
@@ -534,10 +573,12 @@ Both acknowledgement paths share one positive terminal allowlist — `idle`, `fa
   `is_unread` only when the row is in a confirmed terminal state. Active and `unknown` rows keep
   their latent marker, so neither a still-running turn nor a temporary authority gap can be
   acknowledged away.
-- Focus `Read all` clears `is_unread` for every non-archived unread terminal row in one repository
-  mutation. It is not filtered by renderer DOM, current scroll position, Domain, Project, or title
-  search, it does not deep-link to Codex, and it never changes runtime evidence or `last_opened_*`.
-  The renderer enables the action from the same allowlist.
+- Focus `Read all` clears `is_unread` for every non-archived unread terminal row belonging to the
+  Main-provided visible-provider allowlist in one repository mutation. It is not filtered by
+  renderer DOM, current scroll position, Domain, Project, or title search, it does not deep-link to
+  Codex, and it never changes runtime evidence or `last_opened_*`. When Claude is paused the
+  allowlist is Codex-only, so hidden Claude attention is preserved. The renderer enables the action
+  from the same allowlist.
 
 Acknowledged terminal rows leave Focus. A newer lifecycle observation committed after either
 mutation may set a cleared thread unread again, preserving newer activity. Metadata polling cannot
@@ -702,13 +743,19 @@ EyesOnAgentsHandler (main)
   disconnectAppServer()
   syncThreads()
   refreshThreadPages() -> { changed }
-  openThread({ threadId })
+  openThread({ sessionKey })
+  previewClaudeTranscript({ sessionKey })
   markAllRead()
   installCodexBridge()
   reviewCodexBridge()
   refreshCodexBridgeStatus()
   removeCodexBridge()
   getCodexBridgeStatus()
+  installClaudeBridge()
+  refreshClaudeBridgeStatus()
+  removeClaudeBridge()
+  getClaudeBridgeStatus()
+  setClaudeProviderEnabled({ enabled })
   setLastUserPromptCaptureEnabled({ enabled })
 
 EyesOnAgentsRepositoryHandler (SQLite preload)
@@ -720,16 +767,17 @@ EyesOnAgentsRepositoryHandler (SQLite preload)
   upsertDiscoveredThreads({ threads })
   upsertThreadSnapshots({ snapshots })
   applyRuntimeEvent({ event })
-  markOpened({ threadId, openedAt })
+  markOpened({ sessionKey, openedAt })
   markAllRead() -> { changed }
   createDomain({ title })
   renameDomain({ domainId, title })
   deleteDomain({ domainId })
   reorderDomains({ domainIds })
-  moveThread({ threadId, domainId })
+  moveThread({ sessionKey, domainId })
 ```
 
-The main process validates UUIDs and owns process launch, provider settings, and deep links. The
+The main process validates provider-qualified identities and owns provider settings, fixed desktop
+deep links, and canonical transcript-preview targets. The
 SQLite preload owns all transactions and soft-delete rules. The renderer groups one snapshot in
 memory; it does not issue one query per Domain.
 
@@ -749,7 +797,8 @@ memory; it does not issue one query per Domain.
 - Although `UserPromptSubmit` Hook input contains `prompt`, forward it only as the separately
   consented bounded live preview and strip it before every offline write. `Stop.last_assistant_message`
   and every other content field remain outside the allowlist and are never forwarded or persisted.
-- Validate every thread ID before persistence and before constructing the deep link.
+- Validate every provider/session pair before persistence and before constructing a fixed desktop
+  deep link. Renderer input never supplies a URL, executable, command, or transcript path.
 - Start Codex with `spawn`/`execFile` argument arrays and `shell: false`.
 - The local hook bridge remains isolated by Bitterless `userData` identity and accepts only the
   minimal allowlisted event schema.
@@ -758,5 +807,6 @@ memory; it does not issue one query per Domain.
 ## Delivery replacement
 
 This contract supersedes [Coding-agent Session Integration](coding-agent-sessions.md) and its
-provider-neutral main-window design. Those documents remain historical evidence for the previous
-implementation and are not current product requirements.
+provider-neutral main-window design. Its retired runtime is not restored; the new Claude adapter is
+provider-qualified and uses current EyesOnAgents reliability/privacy contracts. Those documents
+remain historical evidence and are not current product requirements.

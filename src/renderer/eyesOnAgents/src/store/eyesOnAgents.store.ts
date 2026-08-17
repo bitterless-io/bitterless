@@ -2,6 +2,7 @@ import { computed, reactive } from 'vue';
 import type {
   EyesOnAgentsDomain,
   EyesOnAgentsSnapshot,
+  EyesOnAgentsSessionKey,
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
@@ -52,8 +53,8 @@ const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
     const timestamp = presentationTimestamp(right, rightRank)
       - presentationTimestamp(left, leftRank);
     if (timestamp !== 0) return timestamp;
-    if (left.threadId === right.threadId) return 0;
-    return left.threadId < right.threadId ? -1 : 1;
+    if (left.sessionKey === right.sessionKey) return 0;
+    return left.sessionKey < right.sessionKey ? -1 : 1;
   });
 
 const THREAD_SEARCH_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;
@@ -71,18 +72,20 @@ class EyesOnAgentsState {
   loadError: string | null = null;
   actionError: string | null = null;
   busyAction: string | null = null;
-  openingThreadIds = new Set<string>();
+  openingSessionKeys = new Set<string>();
+  previewingSessionKeys = new Set<string>();
   allProjectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
   allTitleQuery = '';
   threadSearchVisible = false;
   threadSearchQuery = '';
-  threadSearchSelectedThreadId: string | null = null;
+  threadSearchSelectedSessionKey: EyesOnAgentsSessionKey | null = null;
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private activationPromise: Promise<void> | null = null;
   private backgroundRefreshPromise: Promise<void> | null = null;
   private refreshTimer: number | null = null;
   private subscribed = false;
+  private highestClaudeProviderRevision = -1;
 
   get domains(): EyesOnAgentsDomain[] {
     return [...(this.snapshot?.domains ?? [])].sort((left, right) => {
@@ -228,50 +231,51 @@ class EyesOnAgentsState {
   openThreadSearch(): void {
     if (this.threadSearchVisible) return;
     this.threadSearchVisible = true;
-    this.threadSearchSelectedThreadId = this.threadSearchResults[0]?.threadId ?? null;
+    this.threadSearchSelectedSessionKey = this.threadSearchResults[0]?.sessionKey ?? null;
   }
 
   closeThreadSearch(): void {
     this.threadSearchVisible = false;
     this.threadSearchQuery = '';
-    this.threadSearchSelectedThreadId = null;
+    this.threadSearchSelectedSessionKey = null;
   }
 
   setThreadSearchQuery(query: string): void {
     if (this.threadSearchQuery === query) return;
     this.threadSearchQuery = query;
-    this.threadSearchSelectedThreadId = this.threadSearchResults[0]?.threadId ?? null;
+    this.threadSearchSelectedSessionKey = this.threadSearchResults[0]?.sessionKey ?? null;
   }
 
-  selectThreadSearchResult(threadId: string): void {
-    if (!this.threadSearchResults.some((thread) => thread.threadId === threadId)) return;
-    this.threadSearchSelectedThreadId = threadId;
+  selectThreadSearchResult(sessionKey: EyesOnAgentsSessionKey): void {
+    if (!this.threadSearchResults.some((thread) => thread.sessionKey === sessionKey)) return;
+    this.threadSearchSelectedSessionKey = sessionKey;
   }
 
   moveThreadSearchSelection(delta: -1 | 1): void {
     const results = this.threadSearchResults;
     if (results.length === 0) {
-      this.threadSearchSelectedThreadId = null;
+      this.threadSearchSelectedSessionKey = null;
       return;
     }
 
     const selectedIndex = results.findIndex(
-      (thread) => thread.threadId === this.threadSearchSelectedThreadId,
+      (thread) => thread.sessionKey === this.threadSearchSelectedSessionKey,
     );
     const currentIndex = selectedIndex < 0 ? 0 : selectedIndex;
     const nextIndex = Math.min(results.length - 1, Math.max(0, currentIndex + delta));
-    this.threadSearchSelectedThreadId = results[nextIndex]?.threadId ?? null;
+    this.threadSearchSelectedSessionKey = results[nextIndex]?.sessionKey ?? null;
   }
 
   async openSelectedThreadSearchResult(): Promise<void> {
-    if (!this.threadSearchSelectedThreadId) return;
-    await this.openThreadSearchResult(this.threadSearchSelectedThreadId);
+    if (!this.threadSearchSelectedSessionKey) return;
+    await this.openThreadSearchResult(this.threadSearchSelectedSessionKey);
   }
 
-  async openThreadSearchResult(threadId: string): Promise<void> {
-    if (!this.threadSearchResults.some((thread) => thread.threadId === threadId)) return;
-    this.threadSearchSelectedThreadId = threadId;
-    await this.openThread(threadId);
+  async openThreadSearchResult(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
+    const thread = this.threadSearchResults.find((item) => item.sessionKey === sessionKey);
+    if (!thread) return;
+    this.threadSearchSelectedSessionKey = sessionKey;
+    await this.openThread(sessionKey);
   }
 
   async loadSnapshot(quiet = false): Promise<void> {
@@ -320,6 +324,12 @@ class EyesOnAgentsState {
     );
   }
 
+  async setClaudeProviderEnabled(enabled: boolean): Promise<void> {
+    await this.runSnapshotAction('claude-provider-toggle', () =>
+      eyesOnAgentsEmitter.setClaudeProviderEnabled({ enabled }),
+    );
+  }
+
   async refreshOnWindowActivation(): Promise<void> {
     if (this.activationPromise) return await this.activationPromise;
 
@@ -348,20 +358,80 @@ class EyesOnAgentsState {
     await this.runSnapshotAction('bridge-remove', () => eyesOnAgentsEmitter.removeCodexBridge());
   }
 
-  async openThread(threadId: string): Promise<void> {
-    if (this.openingThreadIds.has(threadId)) return;
-    this.openingThreadIds = new Set(this.openingThreadIds).add(threadId);
+  async installClaudeBridge(): Promise<void> {
+    await this.runSnapshotAction('claude-bridge-install', () =>
+      eyesOnAgentsEmitter.installClaudeBridge(),
+    );
+  }
+
+  async refreshClaudeBridgeStatus(): Promise<void> {
+    await this.runSnapshotAction('claude-bridge-refresh', () =>
+      eyesOnAgentsEmitter.refreshClaudeBridgeStatus(),
+    );
+  }
+
+  async removeClaudeBridge(): Promise<void> {
+    await this.runSnapshotAction('claude-bridge-remove', () =>
+      eyesOnAgentsEmitter.removeClaudeBridge(),
+    );
+  }
+
+  async changeClaudeDirectory(): Promise<void> {
+    await this.runSnapshotAction('claude-directory-change', () =>
+      eyesOnAgentsEmitter.changeClaudeDirectory(),
+    );
+  }
+
+  async useAutomaticClaudeDirectory(): Promise<void> {
+    await this.runSnapshotAction('claude-directory-automatic', () =>
+      eyesOnAgentsEmitter.useAutomaticClaudeDirectory(),
+    );
+  }
+
+  async retryClaudeDirectory(): Promise<void> {
+    await this.runSnapshotAction('claude-directory-retry', () =>
+      eyesOnAgentsEmitter.retryClaudeDirectory(),
+    );
+  }
+
+  async openThread(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
+    const thread = this.threads.find((item) => item.sessionKey === sessionKey);
+    if (!thread || (thread.provider === 'claude' && thread.desktopSessionId === null)) return;
+    if (this.openingSessionKeys.has(sessionKey)) return;
+    this.openingSessionKeys = new Set(this.openingSessionKeys).add(sessionKey);
     this.actionError = null;
     try {
-      const result = await eyesOnAgentsEmitter.openThread({ threadId });
+      const result = await eyesOnAgentsEmitter.openThread({ sessionKey });
       this.applySnapshot(result.snapshot);
     } catch (error) {
       this.actionError = this.errorMessage(error);
       throw error;
     } finally {
-      const next = new Set(this.openingThreadIds);
-      next.delete(threadId);
-      this.openingThreadIds = next;
+      const next = new Set(this.openingSessionKeys);
+      next.delete(sessionKey);
+      this.openingSessionKeys = next;
+    }
+  }
+
+  async previewThread(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
+    const thread = this.threads.find((item) => item.sessionKey === sessionKey);
+    if (
+      !thread
+      || thread.provider !== 'claude'
+      || !thread.canPreviewTranscript
+      || this.previewingSessionKeys.has(sessionKey)
+    ) return;
+    this.previewingSessionKeys = new Set(this.previewingSessionKeys).add(sessionKey);
+    this.actionError = null;
+    try {
+      await eyesOnAgentsEmitter.previewThread({ sessionKey });
+    } catch (error) {
+      this.actionError = this.errorMessage(error);
+      throw error;
+    } finally {
+      const next = new Set(this.previewingSessionKeys);
+      next.delete(sessionKey);
+      this.previewingSessionKeys = next;
     }
   }
 
@@ -404,11 +474,11 @@ class EyesOnAgentsState {
     );
   }
 
-  async moveThread(threadId: string, domainId: number): Promise<void> {
-    const current = this.threads.find((thread) => thread.threadId === threadId);
+  async moveThread(sessionKey: EyesOnAgentsSessionKey, domainId: number): Promise<void> {
+    const current = this.threads.find((thread) => thread.sessionKey === sessionKey);
     if (!current || current.domainId === domainId) return;
-    await this.runSnapshotAction(`thread-move:${threadId}`, () =>
-      eyesOnAgentsEmitter.moveThread({ threadId, domainId }),
+    await this.runSnapshotAction(`thread-move:${sessionKey}`, () =>
+      eyesOnAgentsEmitter.moveThread({ sessionKey, domainId }),
     );
   }
 
@@ -418,20 +488,6 @@ class EyesOnAgentsState {
 
   private async performRefreshPollingTick(): Promise<void> {
     if (this.snapshotPromise || this.busyAction || this.backgroundRefreshPromise) return;
-
-    const connection = this.snapshot?.connection;
-    if (
-      !connection
-      || connection.state === 'connecting'
-      || connection.state === 'syncing'
-    ) return;
-
-    const shouldSync = connection.state === 'connected'
-      || (
-        connection.autoConnectEnabled
-        && (connection.state === 'disconnected' || connection.state === 'error')
-      );
-    if (!shouldSync) return;
 
     const request = this.performBackgroundThreadPagesRefresh();
     this.backgroundRefreshPromise = request.finally(() => {
@@ -443,6 +499,7 @@ class EyesOnAgentsState {
   private async performBackgroundThreadPagesRefresh(): Promise<void> {
     try {
       await eyesOnAgentsEmitter.refreshThreadPages();
+      this.applySnapshot(await eyesOnAgentsEmitter.getSnapshot());
     } catch {
       // Background refresh keeps the last valid snapshot and stays silent.
     }
@@ -450,19 +507,31 @@ class EyesOnAgentsState {
 
   private async performWindowActivationRefresh(): Promise<void> {
     const connection = this.snapshot?.connection;
-    const shouldSync = connection?.state === 'connected'
+    const shouldSyncCodex = connection?.state === 'connected'
       || Boolean(
         connection?.autoConnectEnabled
         && (connection.state === 'disconnected' || connection.state === 'error'),
-      );
-    if (shouldSync) {
-      await this.syncThreads();
+    );
+    if (shouldSyncCodex) await this.syncThreads();
+    else if (this.snapshot?.claudeProvider?.enabled) {
+      try {
+        this.applySnapshot(await eyesOnAgentsEmitter.refreshClaudeInventory());
+      } catch {
+        this.applySnapshot(await eyesOnAgentsEmitter.getSnapshot());
+      }
     } else {
-      await this.loadSnapshot(true);
+      this.applySnapshot(await eyesOnAgentsEmitter.getSnapshot());
     }
 
     if (this.snapshot?.bridge.state !== 'not_installed') {
-      await this.refreshCodexBridgeStatus();
+      await this.refreshCodexBridgeStatus().catch(() => undefined);
+    }
+    if (
+      this.snapshot?.claudeProvider?.enabled
+      && this.snapshot?.claudeBridge
+      && this.snapshot.claudeBridge.state !== 'not_installed'
+    ) {
+      await this.refreshClaudeBridgeStatus().catch(() => undefined);
     }
   }
 
@@ -484,19 +553,30 @@ class EyesOnAgentsState {
   }
 
   private applySnapshot(snapshot: EyesOnAgentsSnapshot): void {
+    const claudeProviderRevision = snapshot.claudeProvider?.revision ?? 0;
+    if (claudeProviderRevision < this.highestClaudeProviderRevision) return;
+    this.highestClaudeProviderRevision = claudeProviderRevision;
     this.snapshot = snapshot;
     this.loadError = null;
+    this.reconcileAllProjectFilter();
     this.reconcileThreadSearchSelection();
+  }
+
+  private reconcileAllProjectFilter(): void {
+    if (this.allProjectFilter.type !== 'project') return;
+    const projectKey = this.allProjectFilter.projectKey;
+    if (this.threads.some((thread) => thread.projectKey === projectKey)) return;
+    this.allProjectFilter = { type: 'all' };
   }
 
   private reconcileThreadSearchSelection(): void {
     if (!this.threadSearchVisible) return;
     const results = this.threadSearchResults;
     if (
-      this.threadSearchSelectedThreadId
-      && results.some((thread) => thread.threadId === this.threadSearchSelectedThreadId)
+      this.threadSearchSelectedSessionKey
+      && results.some((thread) => thread.sessionKey === this.threadSearchSelectedSessionKey)
     ) return;
-    this.threadSearchSelectedThreadId = results[0]?.threadId ?? null;
+    this.threadSearchSelectedSessionKey = results[0]?.sessionKey ?? null;
   }
 
   private errorMessage(error: unknown): string {

@@ -6,6 +6,8 @@ import './pluginTest.handler';
 import './todoWindow.handler';
 import './eyesOnAgentsWindow.handler';
 import './eyesOnAgents.handler';
+import './submodulesWindow.handler';
+import './submodulesSystem.handler';
 import './omniWindow.handler';
 import './shell.handler';
 import './sqlitePassword.handler';

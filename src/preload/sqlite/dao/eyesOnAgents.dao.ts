@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import { BaseDao } from './base.dao';
 import { sqliteHelper } from '../sqliteHelper/sqlite.helper';
 import { sqliteManager } from '../sqliteHelper/sqlite.manager';
 import type {
   EyesOnAgentsCompletionAlertIntent,
+  EyesOnAgentsClaudeAgentState,
+  EyesOnAgentsClaudeInventoryThread,
+  EyesOnAgentsClaudeOpenTarget,
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsDomain,
   EyesOnAgentsHookLastUserPromptCandidate,
   EyesOnAgentsLastUserPrompt,
   EyesOnAgentsProjectMetadata,
+  EyesOnAgentsProvider,
+  EyesOnAgentsSessionKey,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsRepositoryMutationResult,
   EyesOnAgentsRuntimeDeliveryPersistenceResult,
@@ -29,16 +35,20 @@ import {
   isEyesOnAgentsRecord,
   normalizeEyesOnAgentsProviderThreadTitle,
   parseEyesOnAgentsActiveFlags,
+  parseEyesOnAgentsDesktopSessionId,
   parseEyesOnAgentsHookLastUserPromptCandidate,
   parseEyesOnAgentsLastUserPromptPreview,
   parseEyesOnAgentsPath,
   parseEyesOnAgentsProjectMetadata,
+  parseEyesOnAgentsProvider,
   parseEyesOnAgentsRuntimeEvent,
   parseEyesOnAgentsRuntimeState,
   parseEyesOnAgentsText,
   parseEyesOnAgentsThreadRefreshPatch,
   parseEyesOnAgentsTimestamp,
-  parseEyesOnAgentsUuid
+  parseEyesOnAgentsUuid,
+  buildEyesOnAgentsSessionKey,
+  parseEyesOnAgentsSessionKey
 } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 
 interface DomainRow {
@@ -50,7 +60,11 @@ interface DomainRow {
 }
 
 interface ThreadRow {
+  session_key: string;
+  provider: string;
   thread_id: string;
+  desktop_session_id: string | null;
+  transcript_path: string | null;
   domain_id: number;
   title: string | null;
   cwd: string | null;
@@ -65,8 +79,10 @@ interface ThreadRow {
   last_opened_turn_id: string | null;
   last_opened_at: number | null;
   is_unread: number;
+  archive_state: string;
   status_source: string;
   status_observed_at: number | null;
+  status_fresh_until: number | null;
   last_activity_at: number | null;
   last_user_prompt_preview: string | null;
   last_user_prompt_turn_id: string | null;
@@ -116,10 +132,58 @@ const parseStatusSource = (value: unknown): EyesOnAgentsStatusSource => {
     value === 'app_server'
     || value === 'app_server_turn'
     || value === 'codex_hook'
+    || value === 'claude_hook'
+    || value === 'claude_agent_view'
     || value === 'discovery'
   ) return value;
   throw new Error('status source is unsupported');
 };
+
+const normalizeClaudeTranscriptPath = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  const path = parseEyesOnAgentsPath(value);
+  if (path === null || !isAbsolute(path)) throw new Error('Claude transcript path must be absolute');
+  return path;
+};
+
+const normalizeClaudeInventoryThread = (
+  value: EyesOnAgentsClaudeInventoryThread
+): EyesOnAgentsClaudeInventoryThread => {
+  const archiveState = value?.archiveState;
+  if (archiveState !== 'active' && archiveState !== 'archived' && archiveState !== 'unknown') {
+    throw new Error('Claude archive state is unsupported');
+  }
+  return {
+    threadId: parseEyesOnAgentsUuid(value.threadId),
+    desktopSessionId: parseEyesOnAgentsDesktopSessionId(value.desktopSessionId),
+    transcriptPath: normalizeClaudeTranscriptPath(value.transcriptPath),
+    clearDesktopSessionId: value.clearDesktopSessionId === true,
+    clearTranscriptPath: value.clearTranscriptPath === true,
+    desktopEvidenceComplete: value.desktopEvidenceComplete === true,
+    transcriptEvidenceComplete: value.transcriptEvidenceComplete === true,
+    title: parseEyesOnAgentsText(value.title, 'Claude title', 300),
+    cwd: parseEyesOnAgentsPath(value.cwd),
+    project: value.project === undefined ? undefined : parseEyesOnAgentsProjectMetadata(value.project),
+    archiveState,
+    transcriptActivityAt: parseEyesOnAgentsTimestamp(
+      value.transcriptActivityAt,
+      'transcriptActivityAt'
+    ),
+    lastActivityAt: parseEyesOnAgentsTimestamp(value.lastActivityAt, 'lastActivityAt'),
+    observedAt: parseEyesOnAgentsTimestamp(value.observedAt, 'observedAt', false) as number
+  };
+};
+
+const normalizeClaudeAgentState = (
+  value: EyesOnAgentsClaudeAgentState
+): EyesOnAgentsClaudeAgentState => ({
+  threadId: parseEyesOnAgentsUuid(value?.threadId),
+  runtimeState: parseEyesOnAgentsRuntimeState(value?.runtimeState),
+  title: parseEyesOnAgentsText(value?.title, 'Claude agent title', 300),
+  cwd: parseEyesOnAgentsPath(value?.cwd),
+  startedAt: parseEyesOnAgentsTimestamp(value?.startedAt, 'startedAt'),
+  observedAt: parseEyesOnAgentsTimestamp(value?.observedAt, 'observedAt', false) as number
+});
 
 const parseTurnId = (value: unknown, label: string): string | null => {
   return parseEyesOnAgentsText(value, label, 200);
@@ -226,6 +290,15 @@ const projectColumns = (
 };
 
 const toThread = (row: ThreadRow): EyesOnAgentsThread => {
+  const provider = parseEyesOnAgentsProvider(row.provider);
+  const threadId = parseEyesOnAgentsUuid(row.thread_id);
+  const sessionKey = parseEyesOnAgentsSessionKey(row.session_key);
+  if (sessionKey !== buildEyesOnAgentsSessionKey(provider, threadId)) {
+    throw new Error('session identity is inconsistent');
+  }
+  if (!['active', 'archived', 'unknown'].includes(row.archive_state)) {
+    throw new Error('archive state is unsupported');
+  }
   const runtimeState = parseEyesOnAgentsRuntimeState(row.runtime_state);
   const lastCompletedAt = parseEyesOnAgentsTimestamp(
     row.last_completed_at,
@@ -251,7 +324,12 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
   );
   const project = projectFromRow(row);
   return {
-    threadId: parseEyesOnAgentsUuid(row.thread_id),
+    sessionKey,
+    provider,
+    threadId,
+    archiveState: row.archive_state as 'active' | 'archived' | 'unknown',
+    desktopSessionId: parseEyesOnAgentsDesktopSessionId(row.desktop_session_id),
+    canPreviewTranscript: provider === 'claude' && row.transcript_path !== null,
     domainId: parsePositiveId(row.domain_id, 'domain id'),
     title: parseEyesOnAgentsText(row.title, 'thread title', 300),
     cwd: parseEyesOnAgentsPath(row.cwd),
@@ -267,6 +345,9 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
     lastOpenedAt: toIso(lastOpenedAt),
     statusSource: parseStatusSource(row.status_source),
     statusObservedAt: toIso(statusObservedAt),
+    statusFreshUntil: toIso(
+      parseEyesOnAgentsTimestamp(row.status_fresh_until, 'status_fresh_until')
+    ),
     lastActivityAt: toIso(
       parseEyesOnAgentsTimestamp(row.last_activity_at, 'last_activity_at')
     ),
@@ -277,10 +358,12 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
 };
 
 const THREAD_REFRESH_CANDIDATE_COLUMNS =
-  `thread_id, runtime_state, active_turn_id, is_unread, status_source,
+  `session_key, provider, thread_id, runtime_state, active_turn_id, is_unread, status_source,
     status_observed_at, last_user_prompt_checked_at`;
 
 interface ThreadRefreshCandidateRow {
+  session_key: string;
+  provider: string;
   thread_id: string;
   runtime_state: string;
   active_turn_id: string | null;
@@ -317,6 +400,8 @@ const toRefreshCandidate = (
     ? { statusObservedAt }
     : null;
   return {
+    sessionKey: parseEyesOnAgentsSessionKey(row.session_key),
+    provider: parseEyesOnAgentsProvider(row.provider),
     threadId: parseEyesOnAgentsUuid(row.thread_id),
     lastUserPromptCheckedAt: parseEyesOnAgentsTimestamp(
       row.last_user_prompt_checked_at,
@@ -407,11 +492,19 @@ const eventState = (event: EyesOnAgentsRuntimeEvent): EyesOnAgentsRuntimeState =
   return 'idle';
 };
 
-const titleFromStoredThreadSnapshot = (threadId: string): string | null => {
+const runtimeEventProvider = (event: EyesOnAgentsRuntimeEvent): EyesOnAgentsProvider => (
+  event.source === 'claude_hook' ? 'claude' : 'codex'
+);
+
+const titleFromStoredThreadSnapshot = (
+  provider: EyesOnAgentsProvider,
+  threadId: string
+): string | null => {
+  if (provider !== 'codex') return null;
   const row = sqliteManager.db.prepare(
     `SELECT payload_json FROM eyes_on_agents_thread_snapshot
-     WHERE thread_id = ?`
-  ).get(threadId) as { payload_json: string } | undefined;
+     WHERE provider = ? AND thread_id = ?`
+  ).get(provider, threadId) as { payload_json: string } | undefined;
   if (!row) return null;
   try {
     const value = JSON.parse(row.payload_json) as unknown;
@@ -424,13 +517,15 @@ const titleFromStoredThreadSnapshot = (threadId: string): string | null => {
 };
 
 const runtimePersistenceResult = (
+  provider: EyesOnAgentsProvider,
   threadId: string,
   created: boolean,
   completionAlert: EyesOnAgentsCompletionAlertIntent | null = null
 ): EyesOnAgentsRuntimePersistenceResult => {
   const row = sqliteManager.db.prepare(
-    `SELECT title, is_archived FROM eyes_on_agents_thread WHERE thread_id = ?`
-  ).get(threadId) as { title: string | null; is_archived: number };
+    `SELECT title, is_archived FROM eyes_on_agents_thread
+     WHERE provider = ? AND thread_id = ?`
+  ).get(provider, threadId) as { title: string | null; is_archived: number };
   return {
     created,
     titleMissing: row.is_archived === 0 && row.title === null,
@@ -439,6 +534,7 @@ const runtimePersistenceResult = (
 };
 
 const claimCompletionAlertInTransaction = (params: {
+  provider: EyesOnAgentsProvider;
   threadId: string;
   turnId: string;
   completedAt: number;
@@ -446,21 +542,30 @@ const claimCompletionAlertInTransaction = (params: {
 }): EyesOnAgentsCompletionAlertIntent | null => {
   const row = sqliteManager.db.prepare(
     `SELECT title FROM eyes_on_agents_thread
-     WHERE thread_id = ?
+     WHERE provider = ? AND thread_id = ?
        AND is_archived = 0
        AND runtime_state = 'idle'
        AND is_unread = 1
        AND last_completed_turn_id = ?`
-  ).get(params.threadId, params.turnId) as { title: string | null } | undefined;
+  ).get(params.provider, params.threadId, params.turnId) as { title: string | null } | undefined;
   if (!row) return null;
   const claimed = sqliteManager.db.prepare(
     `INSERT INTO eyes_on_agents_completion_alert_receipt (
-      thread_id, turn_id, completed_at, claimed_at
-    ) VALUES (?, ?, ?, ?)
-    ON CONFLICT(thread_id, turn_id) DO NOTHING`
-  ).run(params.threadId, params.turnId, params.completedAt, params.claimedAt);
+      session_key, provider, thread_id, turn_id, completed_at, claimed_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_key, turn_id) DO NOTHING`
+  ).run(
+    buildEyesOnAgentsSessionKey(params.provider, params.threadId),
+    params.provider,
+    params.threadId,
+    params.turnId,
+    params.completedAt,
+    params.claimedAt
+  );
   if (Number(claimed.changes) !== 1) return null;
   return {
+    sessionKey: buildEyesOnAgentsSessionKey(params.provider, params.threadId),
+    provider: params.provider,
     threadId: params.threadId,
     turnId: params.turnId,
     title: normalizeEyesOnAgentsProviderThreadTitle({ name: row.title })
@@ -472,30 +577,39 @@ const applyRuntimeEventInTransaction = (
   hasCurrentListenerReplayAuthority = false
 ): EyesOnAgentsRuntimePersistenceResult => {
   const now = Date.now();
+  const provider = runtimeEventProvider(event);
   const domainId = defaultDomainId();
   const state = eventState(event);
   const activeFlags = event.type === 'thread_status' ? event.activeFlags : [];
   const project = projectColumns(event.project);
-  const snapshotTitle = titleFromStoredThreadSnapshot(event.threadId);
+  const snapshotTitle = titleFromStoredThreadSnapshot(provider, event.threadId);
   const startedTurnId = event.type === 'turn_started'
-    ? event.turnId ?? (event.source === 'codex_hook' ? `hook-${event.observedAt}` : null)
+    ? event.turnId ?? (
+      event.source === 'codex_hook' || event.source === 'claude_hook'
+        ? provider === 'codex' ? `hook-${event.observedAt}` : `hook-claude-${event.observedAt}`
+        : null
+    )
     : event.type === 'thread_status'
       ? event.turnId ?? null
       : null;
   const inserted = sqliteManager.db.prepare(
     `INSERT OR IGNORE INTO eyes_on_agents_thread (
-      thread_id, domain_id, title, cwd, project_key, project_root, project_name,
+      session_key, provider, thread_id, domain_id, title, cwd,
+      project_key, project_root, project_name, archive_state,
       runtime_state, active_flags_json,
       active_turn_id, last_completed_turn_id, last_completed_at,
       last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
-      last_activity_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`
+      status_fresh_until, last_activity_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
+    buildEyesOnAgentsSessionKey(provider, event.threadId),
+    provider,
     event.threadId,
     domainId,
     snapshotTitle,
     event.cwd ?? null,
     ...project,
+    provider === 'codex' ? 'active' : 'unknown',
     state,
     JSON.stringify(activeFlags),
     startedTurnId,
@@ -503,6 +617,9 @@ const applyRuntimeEventInTransaction = (
       || event.type === 'turn_completed' ? 1 : 0,
     event.source,
     event.observedAt,
+    provider === 'claude' && ['working', 'waiting_approval', 'waiting_input'].includes(state)
+      ? event.observedAt + 30_000
+      : null,
     event.observedAt,
     now,
     now
@@ -511,16 +628,16 @@ const applyRuntimeEventInTransaction = (
   if (snapshotTitle !== null) {
     sqliteManager.db.prepare(
       `UPDATE eyes_on_agents_thread SET title = ?, updated_at = ?
-       WHERE thread_id = ? AND title IS NULL`
-    ).run(snapshotTitle, now, event.threadId);
+       WHERE provider = ? AND thread_id = ? AND title IS NULL`
+    ).run(snapshotTitle, now, provider, event.threadId);
   }
   const created = Number(inserted.changes) === 1;
 
   const existing = sqliteManager.db.prepare(
     `SELECT runtime_state, status_source, status_observed_at, active_turn_id,
       last_completed_turn_id
-     FROM eyes_on_agents_thread WHERE thread_id = ?`
-  ).get(event.threadId) as {
+     FROM eyes_on_agents_thread WHERE provider = ? AND thread_id = ?`
+  ).get(provider, event.threadId) as {
     runtime_state: string;
     status_source: string;
     status_observed_at: number | null;
@@ -528,7 +645,7 @@ const applyRuntimeEventInTransaction = (
     last_completed_turn_id: string | null;
   };
   const mayRestoreUnknownDiscovery = hasCurrentListenerReplayAuthority
-    && event.source === 'codex_hook'
+    && (event.source === 'codex_hook' || event.source === 'claude_hook')
     && existing.status_source === 'discovery'
     && parseEyesOnAgentsRuntimeState(existing.runtime_state) === 'unknown';
   if (
@@ -536,7 +653,7 @@ const applyRuntimeEventInTransaction = (
     && existing.status_observed_at !== null
     && existing.status_observed_at > event.observedAt
   ) {
-    return runtimePersistenceResult(event.threadId, created);
+    return runtimePersistenceResult(provider, event.threadId, created);
   }
   if (
     (state === 'working' || state === 'waiting_approval' || state === 'waiting_input')
@@ -544,14 +661,14 @@ const applyRuntimeEventInTransaction = (
     && event.turnId !== undefined
     && existing.last_completed_turn_id === event.turnId
   ) {
-    return runtimePersistenceResult(event.threadId, created);
+    return runtimePersistenceResult(provider, event.threadId, created);
   }
   if (event.project !== undefined) {
     sqliteManager.db.prepare(
       `UPDATE eyes_on_agents_thread SET
         project_key = ?, project_root = ?, project_name = ?
-       WHERE thread_id = ?`
-    ).run(...project, event.threadId);
+       WHERE provider = ? AND thread_id = ?`
+    ).run(...project, provider, event.threadId);
   }
 
   if (event.type === 'turn_completed') {
@@ -572,9 +689,10 @@ const applyRuntimeEventInTransaction = (
         is_unread = 1,
         status_source = ?,
         status_observed_at = ?,
+        status_fresh_until = NULL,
         last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
         updated_at = ?
-       WHERE thread_id = ?`
+       WHERE provider = ? AND thread_id = ?`
     ).run(
       event.cwd ?? null,
       state,
@@ -584,6 +702,7 @@ const applyRuntimeEventInTransaction = (
       event.observedAt,
       event.observedAt,
       now,
+      provider,
       event.threadId
     );
     const completionAlert = Number(completed.changes) === 1
@@ -591,12 +710,13 @@ const applyRuntimeEventInTransaction = (
       && alertTurnId !== null
       ? claimCompletionAlertInTransaction({
           threadId: event.threadId,
+          provider,
           turnId: alertTurnId,
           completedAt: event.observedAt,
           claimedAt: now
         })
       : null;
-    return runtimePersistenceResult(event.threadId, created, completionAlert);
+    return runtimePersistenceResult(provider, event.threadId, created, completionAlert);
   }
 
   sqliteManager.db.prepare(
@@ -615,9 +735,10 @@ const applyRuntimeEventInTransaction = (
       END,
       status_source = ?,
       status_observed_at = ?,
+      status_fresh_until = ?,
       last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
       updated_at = ?
-     WHERE thread_id = ?`
+     WHERE provider = ? AND thread_id = ?`
   ).run(
     event.cwd ?? null,
     state,
@@ -627,11 +748,15 @@ const applyRuntimeEventInTransaction = (
     state,
     event.source,
     event.observedAt,
+    provider === 'claude' && ['working', 'waiting_approval', 'waiting_input'].includes(state)
+      ? event.observedAt + 30_000
+      : null,
     event.observedAt,
     now,
+    provider,
     event.threadId
   );
-  return runtimePersistenceResult(event.threadId, created);
+  return runtimePersistenceResult(provider, event.threadId, created);
 };
 
 const normalizeHookLastUserPromptCandidate = (
@@ -658,7 +783,7 @@ const applyHookLastUserPromptInTransaction = (
       last_user_prompt_source = 'codex_hook',
       last_user_prompt_checked_at = NULL,
       updated_at = ?
-     WHERE thread_id = ?
+     WHERE provider = 'codex' AND thread_id = ?
        AND (last_user_prompt_at IS NULL OR last_user_prompt_at < ?)`
   ).run(
     candidate.preview,
@@ -681,16 +806,20 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       []
     );
     const rows = await sqliteHelper.safeAll<ThreadRow>(
-      `SELECT thread_id, domain_id, title, cwd, project_key, project_root, project_name,
+      `SELECT session_key, provider, thread_id, desktop_session_id, transcript_path,
+        domain_id, title, cwd,
+        project_key, project_root, project_name, archive_state,
         runtime_state, active_flags_json,
         active_turn_id, last_completed_turn_id, last_completed_at,
         last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
+        status_fresh_until,
         last_activity_at, last_user_prompt_preview, last_user_prompt_turn_id,
         last_user_prompt_at, last_user_prompt_truncated, last_user_prompt_source,
         last_user_prompt_checked_at
        FROM eyes_on_agents_thread
-       WHERE is_archived = 0
-       ORDER BY COALESCE(last_activity_at, updated_at) DESC, updated_at DESC, thread_id ASC`,
+       WHERE archive_state <> 'archived'
+       ORDER BY COALESCE(last_activity_at, updated_at) DESC,
+         updated_at DESC, session_key ASC`,
       []
     );
     return { domains: domains.map(toDomain), threads: rows.map(toThread) };
@@ -718,7 +847,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const countRow = sqliteManager.db.prepare(
         `SELECT COUNT(*) AS count
          FROM eyes_on_agents_thread
-         WHERE is_archived = 0`
+         WHERE provider = 'codex' AND archive_state = 'active'`
       ).get() as { count: number };
       const count = Number(countRow.count);
       if (!Number.isSafeInteger(count) || count < 0) {
@@ -735,7 +864,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const selectPage = sqliteManager.db.prepare(
         `SELECT ${THREAD_REFRESH_CANDIDATE_COLUMNS}
          FROM eyes_on_agents_thread
-         WHERE is_archived = 0
+         WHERE provider = 'codex' AND archive_state = 'active'
          ORDER BY COALESCE(last_activity_at, updated_at) DESC,
            updated_at DESC, thread_id ASC
          LIMIT ? OFFSET ?`
@@ -767,7 +896,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     const row = await sqliteHelper.safeGet<ThreadRefreshCandidateRow>(
       `SELECT ${THREAD_REFRESH_CANDIDATE_COLUMNS}
        FROM eyes_on_agents_thread
-       WHERE thread_id = ? AND is_archived = 0`,
+       WHERE provider = 'codex' AND thread_id = ? AND archive_state = 'active'`,
       [threadId]
     );
     return row ? toRefreshCandidate(row) : null;
@@ -789,7 +918,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         `SELECT title, last_activity_at,
           last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
           last_user_prompt_truncated, last_user_prompt_source, last_user_prompt_checked_at
-         FROM eyes_on_agents_thread WHERE thread_id = ? AND is_archived = 0`
+         FROM eyes_on_agents_thread
+         WHERE provider = 'codex' AND thread_id = ? AND archive_state = 'active'`
       );
       const now = Date.now();
       let changed = false;
@@ -881,7 +1011,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           const columns = [...updates.keys()];
           const result = sqliteManager.db.prepare(
             `UPDATE eyes_on_agents_thread SET ${columns.map((column) => `${column} = ?`).join(', ')}
-             WHERE thread_id = ? AND is_archived = 0`
+             WHERE provider = 'codex' AND thread_id = ? AND archive_state = 'active'`
           ).run(...updates.values(), thread.threadId);
           if (Number(result.changes) === 1) changed = true;
         }
@@ -903,8 +1033,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               status_source = 'app_server',
               last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
               updated_at = ?
-             WHERE thread_id = ?
-               AND is_archived = 0
+             WHERE provider = 'codex' AND thread_id = ?
+               AND archive_state = 'active'
                AND status_source = ?
                AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
                AND active_turn_id = ?
@@ -924,6 +1054,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             changed = true;
             if (thread.terminalTurn.outcome === 'completed') {
               const completionAlert = claimCompletionAlertInTransaction({
+                provider: 'codex',
                 threadId: thread.threadId,
                 turnId: thread.terminalTurn.turnId,
                 completedAt: thread.terminalTurn.completedAt,
@@ -951,8 +1082,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               status_source = 'app_server',
               last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
               updated_at = ?
-             WHERE thread_id = ?
-               AND is_archived = 0
+             WHERE provider = 'codex' AND thread_id = ?
+               AND archive_state = 'active'
                AND is_unread = 1
                AND status_source = 'discovery'
                AND runtime_state = 'unknown'
@@ -971,6 +1102,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             changed = true;
             if (thread.settledTurn.outcome === 'completed') {
               const completionAlert = claimCompletionAlertInTransaction({
+                provider: 'codex',
                 threadId: thread.threadId,
                 turnId: thread.settledTurn.turnId,
                 completedAt: thread.settledTurn.completedAt,
@@ -992,8 +1124,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               status_observed_at = ?,
               last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
               updated_at = ?
-             WHERE thread_id = ?
-               AND is_archived = 0
+             WHERE provider = 'codex' AND thread_id = ?
+               AND archive_state = 'active'
                AND is_unread = 1
                AND status_source = 'discovery'
                AND runtime_state = 'unknown'
@@ -1019,8 +1151,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               status_observed_at = ?,
               last_activity_at = MAX(COALESCE(last_activity_at, 0), ?),
               updated_at = ?
-             WHERE thread_id = ?
-               AND is_archived = 0
+             WHERE provider = 'codex' AND thread_id = ?
+               AND archive_state = 'active'
                AND status_source = ?
                AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
                AND active_turn_id = ?
@@ -1080,7 +1212,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         status_source = 'discovery',
         status_observed_at = ?,
         updated_at = ?
-       WHERE status_source = 'app_server'`,
+       WHERE provider = 'codex' AND status_source = 'app_server'`,
       [observedAt, Date.now()]
     );
   }
@@ -1099,7 +1231,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         status_source = 'discovery',
         status_observed_at = ?,
         updated_at = ?
-       WHERE status_source = 'codex_hook'
+       WHERE provider = 'codex' AND status_source = 'codex_hook'
          AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')`,
       [observedAt, Date.now()]
     );
@@ -1115,16 +1247,18 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const now = Date.now();
       const statement = sqliteManager.db.prepare(
         `INSERT INTO eyes_on_agents_thread (
-          thread_id, domain_id, title, cwd, project_key, project_root, project_name,
+          session_key, provider, thread_id, domain_id, title, cwd,
+          project_key, project_root, project_name, archive_state,
           runtime_state, active_flags_json,
           active_turn_id, last_completed_turn_id, last_completed_at,
           last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
           last_activity_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(thread_id) DO UPDATE SET
+        ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(provider, thread_id) DO UPDATE SET
           title = COALESCE(excluded.title, eyes_on_agents_thread.title),
           cwd = COALESCE(excluded.cwd, eyes_on_agents_thread.cwd),
           is_archived = 0,
+          archive_state = 'active',
           runtime_state = CASE
             WHEN eyes_on_agents_thread.status_source = 'app_server_turn'
               THEN eyes_on_agents_thread.runtime_state
@@ -1195,6 +1329,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       for (const thread of threads) {
         const project = projectColumns(thread.project);
         statement.run(
+          buildEyesOnAgentsSessionKey('codex', thread.threadId),
           thread.threadId,
           domainId,
           thread.title,
@@ -1213,7 +1348,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           sqliteManager.db.prepare(
             `UPDATE eyes_on_agents_thread SET
               project_key = ?, project_root = ?, project_name = ?
-             WHERE thread_id = ?`
+             WHERE provider = 'codex' AND thread_id = ?`
           ).run(...project, thread.threadId);
         }
       }
@@ -1235,9 +1370,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const now = Date.now();
       const statement = sqliteManager.db.prepare(
         `INSERT INTO eyes_on_agents_thread_snapshot (
-          thread_id, payload_json, is_archived, synced_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(thread_id) DO UPDATE SET
+          session_key, provider, thread_id, payload_json, is_archived,
+          synced_at, created_at, updated_at
+        ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(provider, thread_id) DO UPDATE SET
           payload_json = excluded.payload_json,
           is_archived = excluded.is_archived,
           synced_at = excluded.synced_at,
@@ -1245,6 +1381,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       );
       for (const snapshot of snapshots) {
         statement.run(
+          buildEyesOnAgentsSessionKey('codex', snapshot.threadId),
           snapshot.threadId,
           snapshot.payloadJson,
           snapshot.archived ? 1 : 0,
@@ -1274,18 +1411,25 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       sqliteManager.db.prepare(
         `UPDATE eyes_on_agents_thread SET
           is_archived = ?,
+          archive_state = ?,
           runtime_state = 'unknown',
           active_flags_json = '[]',
           active_turn_id = NULL,
           status_source = 'discovery',
           status_observed_at = ?,
           updated_at = ?
-         WHERE thread_id = ?`
-      ).run(params.archived ? 1 : 0, observedAt, now, threadId);
+         WHERE provider = 'codex' AND thread_id = ?`
+      ).run(
+        params.archived ? 1 : 0,
+        params.archived ? 'archived' : 'active',
+        observedAt,
+        now,
+        threadId
+      );
       sqliteManager.db.prepare(
         `UPDATE eyes_on_agents_thread_snapshot SET
           is_archived = ?, updated_at = ?
-         WHERE thread_id = ?`
+         WHERE provider = 'codex' AND thread_id = ?`
       ).run(params.archived ? 1 : 0, now, threadId);
     });
     transaction();
@@ -1314,18 +1458,19 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const statement = sqliteManager.db.prepare(
         `UPDATE eyes_on_agents_thread SET
           is_archived = 1,
+          archive_state = 'archived',
           runtime_state = 'unknown',
           active_flags_json = '[]',
           active_turn_id = NULL,
           status_source = 'discovery',
           status_observed_at = ?,
           updated_at = ?
-         WHERE thread_id = ?`
+         WHERE provider = 'codex' AND thread_id = ?`
       );
       const snapshotStatement = sqliteManager.db.prepare(
         `UPDATE eyes_on_agents_thread_snapshot SET
           is_archived = 1, updated_at = ?
-         WHERE thread_id = ?`
+         WHERE provider = 'codex' AND thread_id = ?`
       );
       for (const threadId of threadIds) {
         statement.run(observedAt, now, threadId);
@@ -1366,8 +1511,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     if (!params) throw new Error('delivery params are required');
     const deliveryId = parseEyesOnAgentsUuid(params.deliveryId, 'deliveryId');
     const event = parseEyesOnAgentsRuntimeEvent(params.event);
-    if (event.source !== 'codex_hook') {
-      throw new Error('delivery event source must be codex_hook');
+    if (event.source !== 'codex_hook' && event.source !== 'claude_hook') {
+      throw new Error('delivery event source must be a supported hook source');
     }
     if (
       params.replayAuthority !== undefined
@@ -1381,12 +1526,20 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     );
     const transaction = sqliteManager.db.transaction(
       (): EyesOnAgentsRuntimeDeliveryPersistenceResult => {
+        const provider = runtimeEventProvider(event);
         const result = sqliteManager.db.prepare(
           `INSERT INTO eyes_on_agents_hook_delivery_receipt (
-            delivery_id, thread_id, observed_at, committed_at
-          ) VALUES (?, ?, ?, ?)
+            delivery_id, session_key, provider, thread_id, observed_at, committed_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(delivery_id) DO NOTHING`
-        ).run(deliveryId, event.threadId, event.observedAt, Date.now());
+        ).run(
+          deliveryId,
+          buildEyesOnAgentsSessionKey(provider, event.threadId),
+          provider,
+          event.threadId,
+          event.observedAt,
+          Date.now()
+        );
         if (Number(result.changes) === 0) {
           return {
             duplicate: true,
@@ -1416,14 +1569,18 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     const title = parseEyesOnAgentsText(params?.title, 'thread title', 300, false) as string;
     const result = await sqliteHelper.safeRun(
       `UPDATE eyes_on_agents_thread SET title = ?, updated_at = ?
-       WHERE thread_id = ? AND is_archived = 0 AND title IS NULL`,
+       WHERE provider = 'codex' AND thread_id = ?
+         AND archive_state = 'active' AND title IS NULL`,
       [title, Date.now(), threadId]
     );
     return { changed: Number(result.changes) === 1 };
   }
 
-  async markOpened(params: { threadId: string; openedAt: number }): Promise<void> {
-    const threadId = parseEyesOnAgentsUuid(params?.threadId);
+  async markOpened(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+    openedAt: number;
+  }): Promise<void> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
     const openedAt = parseEyesOnAgentsTimestamp(params?.openedAt, 'openedAt', false) as number;
     const result = await sqliteHelper.safeRun(
       `UPDATE eyes_on_agents_thread SET
@@ -1434,19 +1591,32 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ELSE is_unread
         END,
         updated_at = ?
-       WHERE thread_id = ?`,
-      [openedAt, Date.now(), threadId]
+       WHERE session_key = ?`,
+      [openedAt, Date.now(), sessionKey]
     );
     if (Number(result.changes) === 0) throw new Error('Thread was not found');
   }
 
-  async markAllRead(): Promise<EyesOnAgentsRepositoryMutationResult> {
+  async markAllRead(params: {
+    providers: EyesOnAgentsProvider[];
+  }): Promise<EyesOnAgentsRepositoryMutationResult> {
+    if (!params || Object.keys(params).sort().join(',') !== 'providers' ||
+      !Array.isArray(params.providers) || params.providers.length < 1 ||
+      params.providers.length > 2) {
+      throw new Error('Read all providers are invalid');
+    }
+    const providers = params.providers.map(parseEyesOnAgentsProvider);
+    if (new Set(providers).size !== providers.length) {
+      throw new Error('Read all providers must be unique');
+    }
+    const placeholders = providers.map(() => '?').join(', ');
     const result = await sqliteHelper.safeRun(
       `UPDATE eyes_on_agents_thread SET is_unread = 0
-       WHERE is_archived = 0
+       WHERE archive_state <> 'archived'
          AND is_unread = 1
-         AND runtime_state IN ('idle', 'failed', 'ended')`,
-      []
+         AND runtime_state IN ('idle', 'failed', 'ended')
+         AND provider IN (${placeholders})`,
+      providers
     );
     return { changed: Number(result.changes) > 0 };
   }
@@ -1528,15 +1698,344 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     transaction();
   }
 
-  async moveThread(params: { threadId: string; domainId: number }): Promise<void> {
-    const threadId = parseEyesOnAgentsUuid(params?.threadId);
+  async moveThread(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+    domainId: number;
+  }): Promise<void> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
     const domainId = parsePositiveId(params?.domainId, 'domainId');
     requireActiveDomain(domainId);
     const result = await sqliteHelper.safeRun(
-      'UPDATE eyes_on_agents_thread SET domain_id = ?, updated_at = ? WHERE thread_id = ?',
-      [domainId, Date.now(), threadId]
+      'UPDATE eyes_on_agents_thread SET domain_id = ?, updated_at = ? WHERE session_key = ?',
+      [domainId, Date.now(), sessionKey]
     );
     if (Number(result.changes) === 0) throw new Error('Thread was not found');
+  }
+
+  async upsertClaudeInventory(params: {
+    threads: EyesOnAgentsClaudeInventoryThread[];
+  }): Promise<EyesOnAgentsRepositoryMutationResult> {
+    if (!params || !Array.isArray(params.threads) || params.threads.length > 40_000) {
+      throw new Error('Claude inventory threads are invalid');
+    }
+    const threads = params.threads.map(normalizeClaudeInventoryThread);
+    if (new Set(threads.map((thread) => thread.threadId)).size !== threads.length) {
+      throw new Error('Claude inventory thread IDs must be unique');
+    }
+    const transaction = sqliteManager.db.transaction((): EyesOnAgentsRepositoryMutationResult => {
+      const domainId = defaultDomainId();
+      const now = Date.now();
+      let changed = false;
+      const select = sqliteManager.db.prepare(
+        `SELECT desktop_session_id, desktop_identity_ambiguous, transcript_path,
+          transcript_identity_ambiguous, title, cwd,
+          project_key, project_root, project_name, archive_state, last_activity_at,
+          transcript_activity_at, runtime_state, status_source, status_fresh_until
+         FROM eyes_on_agents_thread WHERE provider = 'claude' AND thread_id = ?`
+      );
+      for (const thread of threads) {
+        const collision = thread.desktopSessionId === null ? false : Boolean(
+          sqliteManager.db.prepare(
+            `SELECT 1 FROM eyes_on_agents_thread
+             WHERE provider = 'claude' AND thread_id <> ? AND desktop_session_id = ? LIMIT 1`
+          ).get(thread.threadId, thread.desktopSessionId)
+        );
+        if (collision && thread.desktopSessionId !== null) {
+          const cleared = sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET desktop_session_id = NULL,
+              desktop_identity_ambiguous = 1, updated_at = ?
+             WHERE provider = 'claude' AND desktop_session_id = ?`
+          ).run(now, thread.desktopSessionId);
+          if (Number(cleared.changes) > 0) changed = true;
+        }
+        const row = select.get(thread.threadId) as {
+          desktop_session_id: string | null; desktop_identity_ambiguous: number;
+          transcript_path: string | null; transcript_identity_ambiguous: number;
+          title: string | null; cwd: string | null; project_key: string | null;
+          project_root: string | null; project_name: string | null;
+          archive_state: string; last_activity_at: number | null;
+          transcript_activity_at: number | null; runtime_state: string;
+          status_source: string; status_fresh_until: number | null;
+        } | undefined;
+        const project = projectColumns(thread.project);
+        if (!row) {
+          sqliteManager.db.prepare(
+            `INSERT INTO eyes_on_agents_thread (
+              session_key, provider, thread_id, desktop_session_id,
+              desktop_identity_ambiguous, transcript_path, transcript_identity_ambiguous,
+              domain_id, title, cwd, project_key, project_root, project_name,
+              is_archived, archive_state, runtime_state, active_flags_json,
+              is_unread, status_source, status_observed_at, last_activity_at,
+              transcript_activity_at, created_at, updated_at
+            ) VALUES (?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', '[]',
+              0, 'discovery', ?, ?, ?, ?, ?)`
+          ).run(
+            buildEyesOnAgentsSessionKey('claude', thread.threadId), thread.threadId,
+            collision || thread.clearDesktopSessionId ? null : thread.desktopSessionId,
+            collision || thread.clearDesktopSessionId ? 1 : 0,
+            thread.clearTranscriptPath ? null : thread.transcriptPath,
+            thread.clearTranscriptPath ? 1 : 0,
+            domainId, thread.title,
+            thread.cwd, ...project, thread.archiveState === 'archived' ? 1 : 0,
+            thread.archiveState, thread.observedAt, thread.lastActivityAt,
+            thread.transcriptActivityAt, now, now
+          );
+          changed = true;
+          continue;
+        }
+        const desktopIdentityChanged = thread.desktopSessionId !== null &&
+          row.desktop_session_id !== null && thread.desktopSessionId !== row.desktop_session_id;
+        const transcriptIdentityChanged = thread.transcriptPath !== null &&
+          row.transcript_path !== null && thread.transcriptPath !== row.transcript_path;
+        const archiveState = thread.archiveState === 'unknown' ? row.archive_state : thread.archiveState;
+        const desktopAmbiguous = collision || thread.clearDesktopSessionId ||
+          (desktopIdentityChanged && !thread.desktopEvidenceComplete) ||
+          (row.desktop_identity_ambiguous === 1 && !thread.desktopEvidenceComplete);
+        const transcriptAmbiguous = thread.clearTranscriptPath ||
+          (transcriptIdentityChanged && !thread.transcriptEvidenceComplete) ||
+          (row.transcript_identity_ambiguous === 1 && !thread.transcriptEvidenceComplete);
+        const next = {
+          desktopSessionId: desktopAmbiguous
+            ? null
+            : thread.desktopSessionId ?? row.desktop_session_id,
+          desktopIdentityAmbiguous: desktopAmbiguous ? 1 : 0,
+          transcriptPath: transcriptAmbiguous
+            ? null
+            : thread.transcriptPath ?? row.transcript_path,
+          transcriptIdentityAmbiguous: transcriptAmbiguous ? 1 : 0,
+          title: thread.title ?? row.title,
+          cwd: thread.cwd ?? row.cwd,
+          projectKey: thread.project === undefined ? row.project_key : project[0],
+          projectRoot: thread.project === undefined ? row.project_root : project[1],
+          projectName: thread.project === undefined ? row.project_name : project[2],
+          archiveState,
+          lastActivityAt: thread.lastActivityAt === null
+            ? row.last_activity_at
+            : Math.max(row.last_activity_at ?? 0, thread.lastActivityAt),
+          transcriptActivityAt: thread.transcriptActivityAt === null
+            ? row.transcript_activity_at
+            : Math.max(row.transcript_activity_at ?? 0, thread.transcriptActivityAt),
+          statusFreshUntil: thread.transcriptActivityAt !== null &&
+            thread.transcriptActivityAt > (row.transcript_activity_at ?? 0) &&
+            row.status_source === 'claude_hook' &&
+            ['working', 'waiting_approval', 'waiting_input'].includes(row.runtime_state)
+            ? Math.max(row.status_fresh_until ?? 0, thread.transcriptActivityAt + 30_000)
+            : row.status_fresh_until
+        };
+        if (next.desktopSessionId === row.desktop_session_id &&
+          next.desktopIdentityAmbiguous === row.desktop_identity_ambiguous &&
+          next.transcriptPath === row.transcript_path &&
+          next.transcriptIdentityAmbiguous === row.transcript_identity_ambiguous &&
+          next.title === row.title &&
+          next.cwd === row.cwd && next.projectKey === row.project_key &&
+          next.projectRoot === row.project_root && next.projectName === row.project_name &&
+          next.archiveState === row.archive_state && next.lastActivityAt === row.last_activity_at &&
+          next.transcriptActivityAt === row.transcript_activity_at &&
+          next.statusFreshUntil === row.status_fresh_until) continue;
+        sqliteManager.db.prepare(
+          `UPDATE eyes_on_agents_thread SET desktop_session_id = ?, desktop_identity_ambiguous = ?,
+            transcript_path = ?, transcript_identity_ambiguous = ?,
+            title = ?, cwd = ?, project_key = ?, project_root = ?, project_name = ?,
+            is_archived = ?, archive_state = ?, last_activity_at = ?,
+            transcript_activity_at = ?, status_fresh_until = ?, updated_at = ?
+           WHERE provider = 'claude' AND thread_id = ?`
+        ).run(
+          next.desktopSessionId, next.desktopIdentityAmbiguous, next.transcriptPath,
+          next.transcriptIdentityAmbiguous, next.title, next.cwd,
+          next.projectKey, next.projectRoot, next.projectName,
+          next.archiveState === 'archived' ? 1 : 0, next.archiveState,
+          next.lastActivityAt, next.transcriptActivityAt, next.statusFreshUntil,
+          now, thread.threadId
+        );
+        changed = true;
+      }
+      return { changed };
+    });
+    return transaction();
+  }
+
+  async reconcileClaudeAgentStates(params: {
+    agents: EyesOnAgentsClaudeAgentState[];
+    completeSnapshot: boolean;
+    observedAt: number;
+  }): Promise<EyesOnAgentsRepositoryMutationResult> {
+    if (!params || !Array.isArray(params.agents) || params.agents.length > 10_000) {
+      throw new Error('Claude Agent View rows are invalid');
+    }
+    const agents = params.agents.map(normalizeClaudeAgentState);
+    if (typeof params.completeSnapshot !== 'boolean') throw new Error('Claude snapshot completeness is invalid');
+    const snapshotObservedAt = parseEyesOnAgentsTimestamp(
+      params.observedAt,
+      'Claude snapshot observedAt',
+      false
+    ) as number;
+    const transaction = sqliteManager.db.transaction((): EyesOnAgentsRepositoryMutationResult => {
+      const now = Date.now();
+      let changed = false;
+      for (const agent of agents) {
+        if (agent.runtimeState === 'unknown') continue;
+        const row = sqliteManager.db.prepare(
+          `SELECT runtime_state, status_observed_at, status_fresh_until, title, cwd, active_turn_id,
+            last_activity_at
+           FROM eyes_on_agents_thread WHERE provider = 'claude' AND thread_id = ?`
+        ).get(agent.threadId) as {
+          runtime_state: string; status_observed_at: number | null; status_fresh_until: number | null; title: string | null;
+          cwd: string | null; active_turn_id: string | null; last_activity_at: number | null;
+        } | undefined;
+        if (!row || (row.status_observed_at !== null && row.status_observed_at > agent.observedAt)) continue;
+        const wasActive = ['working', 'waiting_approval', 'waiting_input'].includes(row.runtime_state);
+        const isActive = ['working', 'waiting_approval', 'waiting_input'].includes(agent.runtimeState);
+        const startedTurnId = agent.startedAt === null ? null : `claude-agent-${agent.startedAt}`;
+        const newActiveRun = isActive && wasActive && startedTurnId !== null &&
+          row.active_turn_id !== startedTurnId;
+        const activeTurnId = isActive
+          ? newActiveRun
+            ? startedTurnId
+            : row.active_turn_id ?? `claude-agent-${agent.startedAt ?? agent.observedAt}`
+          : null;
+        const title = row.title ?? agent.title;
+        const cwd = agent.cwd ?? row.cwd;
+        const terminalTransition = wasActive && !isActive;
+        const activeTransitionObservedAt = isActive && agent.startedAt !== null && agent.startedAt <= agent.observedAt
+          ? agent.startedAt
+          : agent.observedAt;
+        const statusObservedAt = row.runtime_state === agent.runtimeState && !newActiveRun
+          ? row.status_observed_at ?? agent.observedAt
+          : activeTransitionObservedAt;
+        const statusFreshUntil = isActive ? agent.observedAt + 30_000 : null;
+        const lastActivityAt = isActive || row.runtime_state !== agent.runtimeState
+          ? agent.observedAt
+          : row.last_activity_at;
+        const result = sqliteManager.db.prepare(
+          `UPDATE eyes_on_agents_thread SET title = ?, cwd = ?, runtime_state = ?,
+            active_flags_json = '[]',
+            last_completed_turn_id = CASE WHEN ? THEN active_turn_id ELSE last_completed_turn_id END,
+            last_completed_at = CASE WHEN ? THEN ? ELSE last_completed_at END,
+            active_turn_id = ?, is_unread = CASE WHEN ? OR ? THEN 1 ELSE is_unread END,
+            status_source = 'claude_agent_view', status_observed_at = ?,
+            status_fresh_until = ?, last_activity_at = ?,
+            updated_at = ?
+           WHERE provider = 'claude' AND thread_id = ? AND (
+             runtime_state <> ? OR COALESCE(status_observed_at, -1) <> ? OR
+             COALESCE(status_fresh_until, -1) <> ? OR
+             COALESCE(title, '') <> COALESCE(?, '') OR COALESCE(cwd, '') <> COALESCE(?, '') OR
+             COALESCE(active_turn_id, '') <> COALESCE(?, '') OR
+             COALESCE(last_activity_at, -1) <> COALESCE(?, -1)
+           )`
+        ).run(
+          title, cwd, agent.runtimeState, terminalTransition ? 1 : 0,
+          terminalTransition ? 1 : 0, agent.observedAt, activeTurnId,
+          isActive ? 1 : 0, terminalTransition ? 1 : 0, statusObservedAt,
+          statusFreshUntil, lastActivityAt, now, agent.threadId,
+          agent.runtimeState, statusObservedAt, statusFreshUntil, title, cwd, activeTurnId,
+          lastActivityAt
+        );
+        if (Number(result.changes) === 1) changed = true;
+      }
+      if (params.completeSnapshot) {
+        const present = agents.map((agent) => agent.threadId);
+        const placeholders = present.map(() => '?').join(', ');
+        const sql = `UPDATE eyes_on_agents_thread SET runtime_state = 'unknown',
+          active_flags_json = '[]', active_turn_id = NULL, status_source = 'discovery',
+          status_observed_at = ?, status_fresh_until = NULL, updated_at = ?
+          WHERE provider = 'claude' AND status_source = 'claude_agent_view'
+            AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
+            AND COALESCE(status_fresh_until, 0) <= ?
+            ${present.length === 0 ? '' : `AND thread_id NOT IN (${placeholders})`}`;
+        const expired = sqliteManager.db.prepare(sql).run(
+          snapshotObservedAt, now, snapshotObservedAt, ...present
+        );
+        if (Number(expired.changes) > 0) changed = true;
+      }
+      return { changed };
+    });
+    return transaction();
+  }
+
+  async clearClaudeTranscriptCapabilities(): Promise<EyesOnAgentsRepositoryMutationResult> {
+    const result = await sqliteHelper.safeRun(
+      `UPDATE eyes_on_agents_thread
+       SET transcript_path = NULL, transcript_identity_ambiguous = 0,
+         transcript_activity_at = NULL, updated_at = ?
+       WHERE provider = 'claude' AND (
+         transcript_path IS NOT NULL OR transcript_identity_ambiguous <> 0 OR
+         transcript_activity_at IS NOT NULL
+       )`,
+      [Date.now()]
+    );
+    return { changed: Number(result.changes) > 0 };
+  }
+
+  async expireClaudeAgentStates(params: {
+    observedAt: number;
+    statusSources?: Array<'claude_agent_view' | 'claude_hook'>;
+    force?: boolean;
+  }): Promise<EyesOnAgentsRepositoryMutationResult> {
+    const observedAt = parseEyesOnAgentsTimestamp(
+      params?.observedAt,
+      'Claude expiry observedAt',
+      false
+    ) as number;
+    const sources = params.statusSources ?? ['claude_agent_view', 'claude_hook'];
+    if (!Array.isArray(sources) || sources.length === 0 ||
+      sources.some((source) => !['claude_agent_view', 'claude_hook'].includes(source))) {
+      throw new Error('Claude expiry sources are invalid');
+    }
+    const placeholders = sources.map(() => '?').join(', ');
+    const result = await sqliteHelper.safeRun(
+      `UPDATE eyes_on_agents_thread SET runtime_state = 'unknown', active_flags_json = '[]',
+        active_turn_id = NULL, status_source = 'discovery', status_observed_at = ?,
+        status_fresh_until = NULL, updated_at = ?
+       WHERE provider = 'claude' AND status_source IN (${placeholders})
+         AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
+         ${params.force === true ? '' : 'AND COALESCE(status_fresh_until, 0) <= ?'}`,
+      params.force === true
+        ? [observedAt, Date.now(), ...sources]
+        : [observedAt, Date.now(), ...sources, observedAt]
+    );
+    return { changed: Number(result.changes) > 0 };
+  }
+
+  async getRuntimeReceiptSummary(params: {
+    provider: EyesOnAgentsProvider;
+  }): Promise<{ firstReceivedAt: number | null; lastReceivedAt: number | null }> {
+    const provider = parseEyesOnAgentsProvider(params?.provider);
+    const row = await sqliteHelper.safeGet<{
+      first_received_at: number | null;
+      last_received_at: number | null;
+    }>(
+      `SELECT MIN(committed_at) AS first_received_at, MAX(committed_at) AS last_received_at
+       FROM eyes_on_agents_hook_delivery_receipt WHERE provider = ?`,
+      [provider]
+    );
+    const normalize = (value: number | null | undefined): number | null => (
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+    );
+    return {
+      firstReceivedAt: normalize(row?.first_received_at),
+      lastReceivedAt: normalize(row?.last_received_at)
+    };
+  }
+
+  async getClaudeOpenTarget(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+  }): Promise<EyesOnAgentsClaudeOpenTarget | null> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
+    if (!sessionKey.startsWith('claude:')) throw new Error('Claude session key is required');
+    const row = await sqliteHelper.safeGet<{
+      desktop_session_id: string | null; transcript_path: string | null; runtime_state: string;
+    }>(
+      `SELECT desktop_session_id, transcript_path, runtime_state
+       FROM eyes_on_agents_thread WHERE session_key = ? AND provider = 'claude'`,
+      [sessionKey]
+    );
+    if (!row) return null;
+    return {
+      sessionKey,
+      desktopSessionId: parseEyesOnAgentsDesktopSessionId(row.desktop_session_id),
+      transcriptPath: normalizeClaudeTranscriptPath(row.transcript_path),
+      runtimeState: parseEyesOnAgentsRuntimeState(row.runtime_state)
+    };
   }
 }
 

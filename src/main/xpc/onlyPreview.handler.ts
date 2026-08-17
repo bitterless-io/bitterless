@@ -29,6 +29,7 @@ import { onlyPreviewSettingsService } from '@main/onlypreview/onlyPreviewSetting
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { i18nHelper } from '@main/i18n/i18n.helper';
+import { registerOnlyPreviewExplicitTarget } from '@main/onlypreview/onlyPreviewExplicitTarget.registry';
 import {
   onlyPreviewRecentDirectoryService,
   type OnlyPreviewRecentDirectoryStorage
@@ -338,6 +339,8 @@ export const openOnlyPreviewAbsoluteTarget = async (target: string): Promise<voi
     onlyPreviewRecentDirectoryService.finishExplicitTarget(generation);
   }
 };
+
+registerOnlyPreviewExplicitTarget(openOnlyPreviewAbsoluteTarget);
 
 export const destroyOnlyPreviewForAuth = (): void => {
   onlyPreviewWindowHelper.destroy();

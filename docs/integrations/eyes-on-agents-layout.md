@@ -1,16 +1,22 @@
 # EyesOnAgents Layout
 
-Status: two-line global-search result metadata implemented; owner verification pending
+Status: Implemented; owner visual verification pending
 
 ## Product stance
 
-EyesOnAgents is a daylight operations board for one person supervising several Codex tasks. Its
+EyesOnAgents is a daylight operations board for one person supervising several Codex and Claude
+tasks. Its
 single job is to answer: **what is running, what just finished, and where does each task belong?**
 
 It borrows Todo's standalone window and Domain-board interaction, but none of Todo's
 checkbox, due-date, repeat, subtask, or detail-editor behavior. Avoid a generic dark developer
 dashboard: the surface remains calm Royal Blue, white, and cool grey, with status color used only
 for live signals.
+
+The Claude extension keeps the existing palette, system typography, wrapped 300–500px column grid,
+and background-led hierarchy. Its one visual signature is a compact provider glyph in the title
+line. A review rejected provider badges, a new metadata row, permanent card borders, and provider
+brand-color panels because each would add height or compete with working/unread attention.
 
 ## Window and navigation
 
@@ -122,7 +128,7 @@ resolved titles display `-`; All and Focus are projections and never appear as D
 Domain titles remain one line, ellipsize, and retain a full-value tooltip.
 
 Opening or clearing the modal leaves selection empty. A meaningful query with matches selects its
-first result. Selection is stored by thread ID so an Open acknowledgement or polling refresh cannot
+first result. Selection is stored by provider-qualified session key so an Open acknowledgement or polling refresh cannot
 silently move selection to a different thread when attention ordering changes. Background updates
 preserve a selected thread that remains in the result set and otherwise fall back to the first
 current match.
@@ -133,7 +139,7 @@ current match.
 | repeated shortcut | keep the modal open and refocus the input |
 | `ArrowDown` | move to the next result, stopping at the last row |
 | `ArrowUp` | move to the previous result, stopping at the first row |
-| `Enter` | open the selected Codex task and keep the modal/query active |
+| `Enter` | open the selected task in its provider desktop UI and keep the modal/query active |
 | click result | select and open the task and keep the modal/query active |
 | `Escape` | close the modal and clear its transient query/selection |
 
@@ -144,12 +150,13 @@ The menu bar shows:
 - application title;
 - a labelled `Add Domain` control whose anchored form creates a custom Domain without occupying a
   board column;
-- App Server connection dot and compact state text;
+- compact provider connection state;
 - labelled `Refresh`, available from connected, disconnected, and error states and disabled while
   another board action, connection, or synchronization is in flight; while the renderer remains
   mounted, one idempotent store-owned poll requests a silent tiered field refresh every 10 seconds
   when connection intent allows it;
 - independent Codex observation status/action;
+- independent Claude observation/plugin status/action;
 - a compact settings/always-on-top control and platform window controls.
 
 Clicking the connection status opens a small panel with:
@@ -158,6 +165,8 @@ Clicking the connection status opens a small panel with:
 - last successful sync time and latest error, if any;
 - an explicit note that this connection does not attach to Codex Desktop's private stdio process;
 - Codex observation status with `Enable`, `Review in Codex`, `Check again`, `Repair`, or `Disable`;
+- Claude provider switch plus observation status with `Enable/Repair`, `Check status`, or
+  `Remove plugin` while enabled;
 - an always-visible four-step guide covering installation/repair, Codex review, Bitterless
   verification, and the independent default-off latest-question permission; reason-specific review
   text appears above it only when attention is needed.
@@ -177,6 +186,19 @@ The panel separates the two lifecycles visually and semantically:
 │ │ CLI: /hooks · Hook trust is not content permission    │ │
 │ └────────────────────────────────────────────────────────┘ │
 │                                                [Disable]    │
+│                                                            │
+│ Claude observation · Not installed       Claude [on]       │
+│ Desktop metadata + Agent View + lifecycle plugin           │
+│ ┌ Session directories · Watching ───────────────────────┐ │
+│ │ [ /Users/ral/.claude                         ] [Change]│ │
+│ │ Automatic · Desktop detected · Last scan 10:42        │ │
+│ │                                      [Retry] [Custom] │ │
+│ └────────────────────────────────────────────────────────┘ │
+│ ┌ Claude observation setup ─────────────────────────────┐ │
+│ │ 1 Install plugin  2 allow workspace hooks if asked    │ │
+│ │ 3 Check status · first receipt proves observation     │ │
+│ └────────────────────────────────────────────────────────┘ │
+│                           [Enable plugin] [Check status]    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -201,6 +223,71 @@ complete consent, busy, cleanup, error, and privacy contract lives in
 [EyesOnAgents Last User Prompt](../features/eyes-on-agents-last-user-prompt.md). The connection
 drawer never displays question text; the ThreadCard may display only the normalized bounded value
 under the optional presentation contract below.
+
+The Claude section reports metadata discovery, plugin installation, listener state, and last
+committed Hook receipt separately. It does not enumerate unrelated plugins and never claims Hook
+coverage merely because installation files exist. Its user-scope plugin is required for timely
+working/completion status in local CLI and Desktop Code sessions. Archive/unarchive comes from the
+read-only Desktop `isArchived` metadata scan, not from Hook trust. The setup guide explains how to
+open `/hooks` when a workspace withholds the plugin and how Enable/Repair can be retried without
+overwriting any existing Hook or plugin.
+
+The Claude header pairs the existing status pill with one small Arco Switch labelled
+**Claude support**.
+It is the provider-level support switch, not the plugin lifecycle action. Turning it off folds the
+card to one neutral line and leaves no directory, receipt, setup guide, or plugin action visible:
+
+```text
+┌ Claude observation · Off                    Claude [off] ┐
+│ Claude observation and tasks are paused. Codex continues.│
+└────────────────────────────────────────────────────────────┘
+```
+
+The folded state adds no separator, border, shadow, or extra status row. Existing Claude cards are
+removed from Focus, All, custom Domains, Project filters, and global search in one snapshot update;
+their persisted annotations return when the provider is enabled. The switch remains available when
+the saved preference is invalid so it can replace the value. The existing plugin removal control is
+labelled **Remove plugin**, avoiding ambiguity with the provider switch.
+
+The Claude card also contains one compact **Session directories** block before the Hook guide. It
+uses the card's existing quiet neutral background hierarchy and no decorative border or shadow.
+The current config directory appears in a bordered, read-only Arco Input so it can be selected and
+copied but not edited into an untrusted renderer-supplied path. **Change** opens Main's native folder
+picker. Custom mode adds **Use automatic**; unhealthy states add **Retry**. Canceling the picker is a
+no-op, while a successful choice persists and immediately applies the directory.
+
+```text
+┌ Session directories ─────────────────────────────────────┐
+│ Watching                                                  │
+│ [ /Users/ral/.claude__________________________ ] [Change] │
+│ Automatic · Desktop metadata detected                     │
+│ Last successful scan 10:42                                │
+│                                              [Retry]      │
+└───────────────────────────────────────────────────────────┘
+```
+
+The block reuses system typography and Royal Blue actions. Its only emphasis is the state text;
+there is no additional provider badge or animation. Long paths remain one line, ellipsize in the
+input, and expose the full configured value through the input/tooltip. Buttons use the existing
+mini size and wrap below the input on narrow drawers.
+
+| directory state | visible behavior |
+|---|---|
+| automatic + watching | resolved config root, Automatic label, last successful scan |
+| custom + watching | canonical selected root plus **Use automatic** |
+| waiting | directory is valid but `projects` has not appeared; show next retry, not an error |
+| degraded | another source remains watched while the configured transcript source is unavailable |
+| retrying | retain path and persisted tasks; show bounded error, next retry, and **Retry** |
+| error | malformed saved config or unsafe directory; watcher stopped, Change/Use automatic remain |
+| stopped | signed-out/shutdown state; never claim watching |
+| choosing/applying | disable competing Claude directory actions; keep the last snapshot visible |
+| Claude provider disabled | fold the Claude card to its switch and one explanation; hide every Claude task without deleting it |
+| Claude provider enabling/disabling | disable the switch and all connection actions; persisted Off immediately gates every subsequent snapshot, while On keeps Claude rows hidden until cleanup and the full refresh complete |
+
+Changing directories does not clear the board. It removes stale Preview availability until the new
+root rediscovers the matching UUID, then restores Preview without moving the card or changing its
+Domain/unread/archive state. Hook plugin actions and directory actions have separate busy keys and
+neither one implies the other is installed.
 
 Clicking Add Domain opens a compact form anchored below the menubar control. The input receives
 focus, uses the existing required/duplicate/`All` validation, and creates through the existing store
@@ -279,6 +366,8 @@ menu's All destination removes a custom classification.
 
 A card displays only observation metadata:
 
+- a compact accessible provider glyph before the title: Codex knot or Claude asterisk, with no
+  badge, border, new row, or provider-colored card surface;
 - title, falling back to a shortened UUID; its default/minimum height is one 18px line and it grows
   only when text wraps, up to a 36px/two-line maximum before clamping;
 - a compact loading indicator to the title's right only while the thread is actively working;
@@ -310,13 +399,16 @@ idle-unread dot are the only visible status marks and do not create another visu
 and Open control keep localized runtime/unread accessibility text for the state currently shown,
 so these states do not depend on color alone.
 
-The whole card may focus keyboard navigation, but only `Open`, double-click, or `Enter` launches
-Codex and marks the observed turn read after the deep link succeeds. Dragging or selecting never
-marks read.
+The whole card may focus keyboard navigation, but only `Open`, double-click, or `Enter` launches the
+provider desktop UI and marks a confirmed terminal observation read after the fixed deep link is
+accepted. Codex uses `codex://threads/<uuid>`. A Claude row with `desktopSessionId` uses
+`claude://claude.ai/epitaxy/<desktopSessionId>`; a CLI-only row has no interactive Open. Claude's
+More menu exposes **Preview transcript** when a canonical JSONL exists. Dragging, selecting, or
+previewing never marks read.
 
 ```text
 ┌────────────────────────────────────────┐
-│ Thread title, one or two lines       ◌ │
+│ ◉ Thread title, one or two lines     ◌ │
 │ latest user question…                  │  available or pending only
 │ now                         [⌂][↗][…] │
 └────────────────────────────────────────┘
@@ -332,7 +424,7 @@ the same attention rank, representing the time the task entered its current work
 Reply, title, question, and `last_activity_at` refreshes cannot move an active card. A missing or
 invalid active timestamp sorts as zero rather than falling back to message activity. Non-active
 cards keep `last_activity_at` (then completion time) descending. Every equal-rank/equal-time result
-uses immutable thread ID ascending, so SQLite input order cannot move a card. Domain assignment is
+uses immutable provider-qualified session key ascending, so SQLite input order cannot move a card. Domain assignment is
 manual; thread order is intentionally not separately persisted.
 
 ## Focus ordering
@@ -345,7 +437,7 @@ Focus uses this stable order:
 4. newly completed unread;
 5. newest current-state entry within the same active group;
 6. newest activity within the same non-active group;
-7. thread ID ascending as the stable final tie-breaker.
+7. provider-qualified session key ascending as the stable final tie-breaker.
 
 Focus, All, custom Domains, and global search share this comparator. The hot/cold SQLite refresh
 pages continue to use activity order for fetch-budget allocation; they do not define presentation
@@ -382,7 +474,7 @@ until its state actually resolves.
 | global result has custom Domain | second line shows Domain left and runtime state right |
 | global result is unclassified/stale | second-line Domain value is `-`; runtime state remains visible |
 | global search has no matches | localized empty result occupies the bounded result region; Enter is a no-op |
-| global search result opened | exact Codex task opens; modal, query, input, and selected thread remain available |
+| global search result opened | exact provider task opens; modal, query, input, and selected session remain available |
 | Add Domain closed/open | labelled menubar control; opening shows a focused anchored form and no board placeholder column |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
@@ -392,6 +484,10 @@ until its state actually resolves.
 | bridge disabled in Codex | Review safely re-enables only exact Bitterless entries, then still requires Codex trust when applicable |
 | bridge installed, listener stopped | explicit `Installed, paused`; never claim live observation |
 | unknown runtime | accessible runtime label remains `Unknown`; no working loader is shown |
+| Claude Desktop archived | explicit metadata transition hides the row; unarchive restores its Domain/read state |
+| Claude CLI-only archive | state remains unknown and visible; absence never hides the row |
+| Claude CLI-only Open | Open is unavailable; Preview transcript remains available when safe |
+| Claude provider off | Claude rows and controls are absent from the board/search; Codex remains fully interactive |
 | long title/path | title grows from one 18px line to at most two/36px; folder metadata stays icon-only with full-path tooltip |
 
 ## Accessibility and responsive behavior
@@ -419,6 +515,8 @@ EyesOnAgentsApp
   ├─ EyesOnAgentsMenuBar
   │    └─ AddDomainPopover (anchored form)
   ├─ ConnectionPanel
+  │    ├─ CodexConnectionSection
+  │    └─ ClaudeConnectionSection
   ├─ ThreadSearch (global modal)
   │    └─ ThreadSearchResult × N
   └─ AgentBoard

@@ -119,7 +119,7 @@
         v-model="visibleThreads"
         class="agent-domain__thread-list"
         :group="dragGroup"
-        item-key="threadId"
+        item-key="sessionKey"
         :sort="!focus && !all"
         :animation="160"
         @add="handleThreadAdded"
@@ -263,7 +263,7 @@ const handleThreadAdded = async (event: ThreadAddEvent): Promise<void> => {
   if (props.focus || props.all || !props.domain || event.newIndex === undefined) return;
   const thread = visibleThreads.value[event.newIndex];
   if (!thread) return;
-  await eyesOnAgentsStore.moveThread(thread.threadId, props.domain.id).catch(() => undefined);
+  await eyesOnAgentsStore.moveThread(thread.sessionKey, props.domain.id).catch(() => undefined);
   visibleThreads.value = [...props.threads];
 };
 

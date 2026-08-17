@@ -1,0 +1,79 @@
+.submodules-menu-bar {
+  height: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  background: #4e5882;
+  border-bottom: 1px solid #3d4666;
+  color: #f6f7fc;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.submodules-menu-bar--mac {
+  padding-left: 78px;
+}
+
+.submodules-menu-bar__identity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.submodules-menu-bar__title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.submodules-menu-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.submodules-menu-bar__watch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  margin-right: 4px;
+  border: 1px solid oklch(100% 0 0 / 18%);
+  border-radius: 11px;
+  background: oklch(100% 0 0 / 8%);
+  font-size: 11px;
+}
+
+.submodules-menu-bar__watch-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: oklch(75% 0.02 265);
+}
+
+.submodules-menu-bar__watch-dot--live {
+  background: oklch(78% 0.13 155);
+  box-shadow: 0 0 0 2px oklch(78% 0.13 155 / 25%);
+}
+
+.submodules-menu-bar .arco-btn-text {
+  color: #f6f7fc;
+}
+
+.submodules-menu-bar .arco-btn-text:hover {
+  background: oklch(100% 0 0 / 15%);
+  color: #ffffff;
+}
+
+.submodules-menu-bar .arco-btn-text[disabled] {
+  color: oklch(100% 0 0 / 45%);
+}
+
+.submodules-menu-bar__close:hover {
+  background: oklch(58% 0.2 25) !important;
+}

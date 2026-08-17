@@ -7,3 +7,7 @@ export interface EyesOnAgentsWindowApi {
   getAlwaysOnTop(): Promise<boolean>;
   setAlwaysOnTop(params: { enable: boolean }): Promise<void>;
 }
+
+export interface EyesOnAgentsEnvApi {
+  host: 'standalone' | 'omni';
+}

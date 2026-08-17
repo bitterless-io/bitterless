@@ -43,8 +43,11 @@ test('completed threads use one localized silent notification and bundled cross-
   assert.match(notifier, /i18nHelper\.getMessages\(\)\.eyesOnAgents/);
   assert.match(notifier, /messages\.thread\.untitled/);
   assert.match(notifier, /MAX_NOTIFICATION_THREAD_TITLE_LENGTH = 300/);
-  assert.match(notifier, /new Notification\(\{\s*title:[\s\S]*body:[\s\S]*silent: true/);
-  assert.doesNotMatch(notifier, /\.on\('click'|\.once\('click'/);
+  assert.match(
+    notifier,
+    /this\.runtime\.createNotification\(\{\s*title: messages\.completionNotification\.title,[\s\S]*body:[\s\S]*silent: true/
+  );
+  assert.doesNotMatch(notifier, /shell\.openExternal|openThread\(/);
   assert.doesNotMatch(notifier, /intent\.(?:prompt|response)|lastUserPrompt/);
 
   assert.match(notifier, /app\.isPackaged/);
@@ -52,7 +55,7 @@ test('completed threads use one localized silent notification and bundled cross-
   assert.match(notifier, /app\.getAppPath\(\), 'build', 'sounds'/);
   assert.match(notifier, /spawn\('\/usr\/bin\/afplay', \[soundPath\]/);
   assert.match(notifier, /System\.Media\.SoundPlayer/);
-  assert.match(notifier, /spawn\('powershell\.exe'/);
+  assert.match(notifier, /spawn\(\s*'powershell\.exe'/);
   assert.equal((notifier.match(/shell: false/g) ?? []).length, 2);
   assert.doesNotMatch(notifier, /\bexec(?:File|Sync)?\(/);
 
@@ -128,6 +131,12 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   const backgroundRefresh = store.match(
     /  private async performBackgroundThreadPagesRefresh\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async performWindowActivationRefresh)/
   );
+  const mainThreadPagesRefresh = mainService.match(
+    /  async refreshThreadPages\(\): Promise<EyesOnAgentsThreadPagesRefreshResult> \{[\s\S]*?\n  \}(?=\n\n  private async joinBackgroundRefresh)/
+  );
+  const mainClaudeBackgroundRefresh = mainService.match(
+    /  private refreshClaudeBackground\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async joinClaudeBackgroundRefresh)/
+  );
   const mainTieredRefresh = mainService.match(
     /  private async performRefreshThreadPages\(context: AppServerContext\): Promise<boolean> \{[\s\S]*?\n  \}(?=\n\n  private async refreshThreadBatch)/
   );
@@ -188,24 +197,35 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     pollingTick[0],
-    /!connection[\s\S]*connection\.state === 'connecting'[\s\S]*connection\.state === 'syncing'/
+    /const request = this\.performBackgroundThreadPagesRefresh\(\);[\s\S]*this\.backgroundRefreshPromise = request\.finally\(\(\) => \{[\s\S]*this\.backgroundRefreshPromise = null;[\s\S]*await this\.backgroundRefreshPromise/
   );
-  assert.match(
-    pollingTick[0],
-    /connection\.state === 'connected'[\s\S]*connection\.autoConnectEnabled[\s\S]*connection\.state === 'disconnected'[\s\S]*connection\.state === 'error'/
-  );
-  assert.match(
-    pollingTick[0],
-    /if \(!shouldSync\) return;[\s\S]*const request = this\.performBackgroundThreadPagesRefresh\(\);[\s\S]*this\.backgroundRefreshPromise = request\.finally\(\(\) => \{[\s\S]*this\.backgroundRefreshPromise = null;[\s\S]*await this\.backgroundRefreshPromise/
-  );
+  assert.doesNotMatch(pollingTick[0], /connection|shouldSync/);
   assert.ok(backgroundRefresh, 'Missing silent tiered All refresh helper');
   assert.match(
     backgroundRefresh[0],
-    /try \{\s*await eyesOnAgentsEmitter\.refreshThreadPages\(\);\s*\} catch/
+    /try \{\s*await eyesOnAgentsEmitter\.refreshThreadPages\(\);\s*this\.applySnapshot\(await eyesOnAgentsEmitter\.getSnapshot\(\)\);\s*\} catch/
   );
-  assert.doesNotMatch(backgroundRefresh[0], /applySnapshot/);
   assert.match(backgroundRefresh[0], /catch \{[\s\S]*\}/);
   assert.doesNotMatch(backgroundRefresh[0], /actionError|loadError|throw/);
+  assert.ok(mainThreadPagesRefresh, 'Missing Main-owned provider refresh coordinator');
+  assert.ok(mainClaudeBackgroundRefresh, 'Missing Main-owned Claude reconciliation chain');
+  assert.match(
+    mainThreadPagesRefresh[0],
+    /void this\.refreshClaudeBackground\(\);/,
+  );
+  assert.match(
+    mainClaudeBackgroundRefresh[0],
+    /await this\.dependencies\.claudeObservation\?\.refresh\('poll'\)[\s\S]*await this\.dependencies\.repository\.expireClaudeAgentStates\?\./,
+  );
+  assert.match(
+    mainThreadPagesRefresh[0],
+    /status\.state === 'connecting' \|\| status\.state === 'syncing'[\s\S]*!this\.dependencies\.appServer\.isConnected\(\) && !this\.autoConnectEnabled/,
+  );
+  assert.ok(
+    mainThreadPagesRefresh[0].indexOf('this.refreshClaudeBackground()')
+      < mainThreadPagesRefresh[0].indexOf('this.backgroundRefreshPromise'),
+    'Claude polling and lease expiry must remain independent of the Codex connection gate',
+  );
   const backgroundPollingFlow = `${pollingTick[0]}\n${backgroundRefresh[0]}`;
   assert.doesNotMatch(
     backgroundPollingFlow,
@@ -238,8 +258,8 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
     /private foregroundAppServerOperationPending = 0/,
   );
   assert.match(
-    mainService,
-    /async refreshThreadPages\(\): Promise<EyesOnAgentsThreadPagesRefreshResult> \{\s*if \(this\.backgroundRefreshPromise\) \{\s*return await this\.backgroundRefreshPromise;\s*\}\s*if \(this\.foregroundAppServerOperationPending > 0\) return \{ changed: false \}/,
+    mainThreadPagesRefresh[0],
+    /if \(this\.foregroundAppServerOperationPending > 0\) return false/,
   );
   assert.match(mainService, /const THREAD_REFRESH_PAGE_SIZE = 40/);
   assert.match(mainService, /const THREAD_REFRESH_CONCURRENCY = 4/);
@@ -277,7 +297,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     repositoryDao,
-    /async getThreadRefreshCandidate\(params: \{[\s\S]*?WHERE thread_id = \? AND is_archived = 0[\s\S]*?toRefreshCandidate\(row\)/,
+    /async getThreadRefreshCandidate\(params: \{[\s\S]*?WHERE provider = 'codex' AND thread_id = \? AND archive_state = 'active'[\s\S]*?toRefreshCandidate\(row\)/,
     'one-thread status sync must reuse the same candidate classification',
   );
   assert.match(
@@ -354,15 +374,15 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     repositoryDao,
-    /if \(updates\.size > 0\) \{[\s\S]*WHERE thread_id = \? AND is_archived = 0/,
+    /if \(updates\.size > 0\) \{[\s\S]*WHERE provider = 'codex' AND thread_id = \? AND archive_state = 'active'/,
   );
   assert.match(
     repositoryDao,
-    /status_source = 'app_server'[\s\S]*WHERE thread_id = \?[\s\S]*AND is_archived = 0[\s\S]*AND status_source = \?[\s\S]*AND runtime_state IN \('working', 'waiting_approval', 'waiting_input'\)[\s\S]*AND active_turn_id = \?[\s\S]*AND status_observed_at = \?/,
+    /status_source = 'app_server'[\s\S]*WHERE provider = 'codex' AND thread_id = \?[\s\S]*AND archive_state = 'active'[\s\S]*AND status_source = \?[\s\S]*AND runtime_state IN \('working', 'waiting_approval', 'waiting_input'\)[\s\S]*AND active_turn_id = \?[\s\S]*AND status_observed_at = \?/,
   );
   assert.match(
     repositoryDao,
-    /runtime_state = 'working',[\s\S]*status_source = 'app_server_turn',[\s\S]*WHERE thread_id = \?[\s\S]*AND is_archived = 0[\s\S]*AND is_unread = 1[\s\S]*AND status_source = 'discovery'[\s\S]*AND runtime_state = 'unknown'[\s\S]*AND active_turn_id IS NULL[\s\S]*AND status_observed_at = \?[\s\S]*AND COALESCE\(last_completed_turn_id, ''\) <> \?/,
+    /runtime_state = 'working',[\s\S]*status_source = 'app_server_turn',[\s\S]*WHERE provider = 'codex' AND thread_id = \?[\s\S]*AND archive_state = 'active'[\s\S]*AND is_unread = 1[\s\S]*AND status_source = 'discovery'[\s\S]*AND runtime_state = 'unknown'[\s\S]*AND active_turn_id IS NULL[\s\S]*AND status_observed_at = \?[\s\S]*AND COALESCE\(last_completed_turn_id, ''\) <> \?/,
     'working recovery must compare-and-set against the exact selected candidate',
   );
   assert.match(
@@ -497,7 +517,6 @@ test('observation board exposes stable regions and reduced motion', () => {
   assert.match(source, /prefers-reduced-motion: reduce/);
   assert.match(source, /pull: 'clone', put: false/);
   assert.match(source, /eyesOnAgentsEmitter\.moveThread/);
-  assert.doesNotMatch(source, /Claude|claude/);
 });
 
 test('observation surfaces use Todo-style background hierarchy without decorative borders', () => {
@@ -596,7 +615,7 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(component, /:aria-label="cardAriaLabel"/);
   assert.match(component, /@dblclick="handleDoubleClick"/);
   assert.match(component, /@keydown\.enter\.prevent="handleOpen"/);
-  assert.match(component, /eyesOnAgentsStore\.openThread\(props\.thread\.threadId\)/);
+  assert.match(component, /eyesOnAgentsStore\.openThread\(props\.thread\.sessionKey\)/);
   assert.match(
     component,
     /v-if="thread\.runtimeState === 'working'"[\s\S]*?class="thread-card__working"[\s\S]*?role="status"[\s\S]*?:aria-label="runtimeLabel"[\s\S]*?<a-spin :size="12"/
@@ -638,13 +657,13 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(chinese, /workingDirectory: '工作目录：\{path\}'/);
 
   const openAction = component.match(
-    /<a-tooltip :content="i18nHelper\.eyesOnAgents\.actions\.open"[\s\S]*?<a-button[\s\S]*?<\/a-button>[\s\S]*?<\/a-tooltip>/
+    /<a-tooltip :content="openTooltip"[\s\S]*?<a-button[\s\S]*?<\/a-button>[\s\S]*?<\/a-tooltip>/
   );
   assert.ok(openAction, 'Missing localized Open tooltip and button');
-  assert.match(openAction[0], /:title="i18nHelper\.eyesOnAgents\.actions\.open"/);
+  assert.match(openAction[0], /:title="openTooltip"/);
   assert.match(openAction[0], /:aria-label="openAriaLabel"/);
-  assert.match(openAction[0], /:loading="eyesOnAgentsStore\.openingThreadIds\.has\(thread\.threadId\)"/);
-  assert.match(openAction[0], /:disabled="eyesOnAgentsStore\.openingThreadIds\.has\(thread\.threadId\)"/);
+  assert.match(openAction[0], /:loading="eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
+  assert.match(openAction[0], /:disabled="!canOpenThread \|\| eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
   assert.match(openAction[0], /@click\.stop="handleOpen"/);
   assert.match(openAction[0], /<template #icon><IconExternalLink :size="9" \/><\/template>/);
   assert.doesNotMatch(
@@ -657,7 +676,7 @@ test('thread cards use compact title and action rows with accessible status mark
   );
   assert.match(
     component,
-    /const openAriaLabel = computed\(\(\) => showUnreadDot\.value[\s\S]*?actions\.open[\s\S]*?thread\.new/
+    /const openAriaLabel = computed\(\(\) => showUnreadDot\.value[\s\S]*?openTooltip\.value[\s\S]*?thread\.new/
   );
   assert.equal((component.match(/eyesOnAgents\.thread\.new/g) ?? []).length, 1);
   assert.doesNotMatch(component, /v-if\s*=\s*["']thread\.isUnread["']/);
@@ -689,6 +708,156 @@ test('thread cards use compact title and action rows with accessible status mark
     styles,
     /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.thread-card__working \.arco-icon-loading\s*\{[\s\S]*?animation: none/
   );
+});
+
+test('Claude UI stays provider-qualified, compact, and content-boundary safe', () => {
+  const card = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
+  );
+  const search = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadSearch/ThreadSearch.vue'
+  );
+  const glyph = read(
+    'src/renderer/eyesOnAgents/src/components/ProviderGlyph/ProviderGlyph.vue'
+  );
+  const glyphStyles = read(
+    'src/renderer/eyesOnAgents/src/components/ProviderGlyph/ProviderGlyph.less'
+  );
+  const panel = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
+  );
+  const claudeCard = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue'
+  );
+  const panelStyles = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.less'
+  );
+  const handler = read('src/main/xpc/eyesOnAgents.handler.ts');
+  const sharedTypes = read('src/shared/eyesOnAgents/eyesOnAgents.type.ts');
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+  const rendererSource = walk('src/renderer/eyesOnAgents')
+    .filter((path) => /\.(?:ts|vue)$/.test(path))
+    .map((path) => read(path))
+    .join('\n');
+
+  assert.match(
+    card,
+    /class="thread-card__title-row">\s*<ProviderGlyph :provider="thread\.provider" \/>\s*<h3 class="thread-card__title"/,
+  );
+  assert.match(card, /:data-session-key="thread\.sessionKey"/);
+  assert.match(card, /:data-provider="thread\.provider"/);
+  assert.match(
+    search,
+    /class="thread-search__result-heading">\s*<ProviderGlyph :provider="thread\.provider" \/>/,
+  );
+  assert.match(glyph, /IconBrandOpenai v-if="provider === 'codex'"/);
+  assert.match(glyph, /IconAsteriskSimple v-else/);
+  assert.match(glyph, /role="img"/);
+  assert.match(glyph, /:aria-label="providerLabel"/);
+  const glyphShell = cssRule(glyphStyles, '.provider-glyph');
+  assert.match(glyphShell, /width: 13px/);
+  assert.match(glyphShell, /height: 18px/);
+  assert.doesNotMatch(glyphStyles, /\bborder\s*:|background|box-shadow/);
+
+  assert.match(
+    card,
+    /v-if="thread\.provider === 'claude' && thread\.canPreviewTranscript"[\s\S]*actions\.previewTranscript/,
+  );
+  assert.match(
+    card,
+    /eyesOnAgentsStore\.previewThread\(props\.thread\.sessionKey\)/,
+  );
+  assert.match(
+    store,
+    /async previewThread\(sessionKey: EyesOnAgentsSessionKey\): Promise<void>[\s\S]*thread\.provider !== 'claude'[\s\S]*!thread\.canPreviewTranscript[\s\S]*eyesOnAgentsEmitter\.previewThread\(\{ sessionKey \}\)/,
+  );
+  assert.doesNotMatch(
+    store,
+    /openThreadSearchResult\([\s\S]*await this\.previewThread\(sessionKey\)/,
+  );
+  assert.doesNotMatch(rendererSource, /transcriptPath|\.jsonl|claude:\/\//);
+
+  assert.match(panel, /<ClaudeObservationCard \/>/);
+  assert.match(claudeCard, /snapshot\?\.claudeBridge/);
+  assert.match(claudeCard, /bridge\?\.listeningSince/);
+  assert.match(claudeCard, /bridge\?\.firstReceiptAt/);
+  assert.match(claudeCard, /bridge\?\.lastReceiptAt/);
+  assert.match(claudeCard, /bridge\?\.lastInspectedAt/);
+  assert.match(claudeCard, /bridge\.value\?\.observationProof === 'receipt'/);
+  assert.match(claudeCard, /state\.value === 'observing'/);
+  assert.match(claudeCard, /claudeBridge\.proofPrevious/);
+  assert.match(claudeCard, /state\.value === 'needs_review'/);
+  assert.match(
+    claudeCard,
+    /\['not_installed', 'drifted', 'error'\]\.includes\(state\.value\)[\s\S]*bridge\.value\?\.configured === true && bridge\.value\.enabled === false/,
+  );
+  assert.doesNotMatch(
+    claudeCard,
+    /\['not_installed',[^\]]*'needs_review'/,
+  );
+  const claudeInstalledStatus = cssRule(
+    panelStyles,
+    '.eyes-connection-card--claude .eyes-connection-card__status--installed'
+  );
+  assert.match(claudeInstalledStatus, /color: #586077/);
+  assert.match(claudeInstalledStatus, /background: #eef0f5/);
+  assert.match(claudeCard, /bridge\?\.restartRequired/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.installClaudeBridge\(\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.refreshClaudeBridgeStatus\(\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.removeClaudeBridge\(\)/);
+  assert.match(claudeCard, /providerError\.value !== null \|\|/);
+  assert.match(
+    store,
+    /installClaudeBridge\(\)[\s\S]*refreshClaudeBridgeStatus\(\)[\s\S]*removeClaudeBridge\(\)/,
+  );
+  assert.match(claudeCard, /name="eyesOnAgents__connections__claudeDirectories"/);
+  assert.match(
+    claudeCard,
+    /<a-input[\s\S]*:model-value="directoryPath"[\s\S]*readonly[\s\S]*\/>/,
+    'the directory path must use a read-only Arco Input',
+  );
+  assert.match(claudeCard, /eyesOnAgentsStore\.changeClaudeDirectory\(\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.useAutomaticClaudeDirectory\(\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.retryClaudeDirectory\(\)/);
+  assert.match(
+    claudeCard,
+    /const canUseAutomaticDirectory = computed\(\(\) => \([\s\S]*directory\.value\?\.mode === 'custom' \|\| directory\.value\?\.state === 'error'/,
+    'a malformed saved directory must still expose Use automatic recovery',
+  );
+  assert.match(store, /eyesOnAgentsEmitter\.changeClaudeDirectory\(\)/);
+  assert.match(store, /eyesOnAgentsEmitter\.useAutomaticClaudeDirectory\(\)/);
+  assert.match(store, /eyesOnAgentsEmitter\.retryClaudeDirectory\(\)/);
+  assert.match(handler, /dialog\.showOpenDialog\(\{[\s\S]*properties: \['openDirectory'\]/);
+  assert.match(handler, /async changeClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
+  assert.match(handler, /async useAutomaticClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
+  assert.match(handler, /async retryClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
+  assert.match(sharedTypes, /changeClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
+  assert.doesNotMatch(sharedTypes, /changeClaudeDirectory\([^)]*(?:path|directory|url)/i,
+    'the renderer contract must not accept a custom path');
+  assert.doesNotMatch(rendererSource, /showOpenDialog|pickDirectory|configDirectory\s*:/);
+  const directorySurface = cssRule(panelStyles, '.eyes-connection-card__directories');
+  assert.match(directorySurface, /background:/);
+  assert.doesNotMatch(directorySurface, /\bborder\s*:|box-shadow/,
+    'the directory block must use background hierarchy without a decorative border');
+
+  assert.match(english, /guideReloadCli: 'In a Claude session: \/reload-plugins'/);
+  assert.match(english, /guideInspectCli: 'In a Claude session: \/hooks'/);
+  assert.match(english, /In Claude Code or Desktop Code, inspect the Bitterless lifecycle hooks/);
+  assert.match(english, /A committed event is the only proof that observation is active\./);
+  assert.match(english, /Archive state comes from Claude Desktop metadata, not Hooks\./);
+  assert.match(chinese, /guideReloadCli: '在 Claude 会话中输入：\/reload-plugins'/);
+  assert.match(chinese, /guideInspectCli: '在 Claude 会话中输入：\/hooks'/);
+  assert.match(chinese, /在 Claude Code 或 Desktop Code 中检查 Bitterless 生命周期 hooks/);
+  assert.match(chinese, /previewTranscript: '预览对话文件'/);
+  assert.match(chinese, /不会采集问题、回答、推理、工具、附件或对话文件内容/);
+  assert.match(chinese, /只有已提交的事件才能证明观测正在工作/);
+  assert.match(chinese, /归档状态来自 Claude Desktop 元数据，而不是 Hooks/);
+  assert.match(english, /title: 'Session directories'/);
+  assert.match(english, /useAutomatic: 'Use automatic'/);
+  assert.match(chinese, /title: '会话目录'/);
+  assert.match(chinese, /useAutomatic: '恢复自动发现'/);
 });
 
 test('thread cards disclose only the bounded latest-question projection', () => {
@@ -854,10 +1023,9 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
 
   assert.match(
     sharedTypes,
-    /markAllRead\(\): Promise<EyesOnAgentsRepositoryMutationResult>/
+    /markAllRead\(params: \{\s*providers: EyesOnAgentsProvider\[\];\s*\}\): Promise<EyesOnAgentsRepositoryMutationResult>/
   );
   assert.match(sharedTypes, /markAllRead\(\): Promise<EyesOnAgentsSnapshot>/);
-  assert.doesNotMatch(sharedTypes, /markAllRead\(params/);
   assert.match(
     mainHandler,
     /async markAllRead\(\): Promise<EyesOnAgentsSnapshot> \{\s*return await eyesOnAgentsService\.markAllRead\(\);\s*\}/
@@ -866,15 +1034,17 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
     /  async markAllRead\(\): Promise<EyesOnAgentsSnapshot> \{[\s\S]*?\n  \}/
   );
   assert.ok(serviceAction, 'Missing Main Read all orchestration');
-  assert.match(serviceAction[0], /repository\.markAllRead\(\)/);
+  assert.match(serviceAction[0], /isClaudeProviderAvailable\(\)/);
+  assert.match(serviceAction[0], /repository\.markAllRead\(\{ providers: \[\.\.\.providers\] \}\)/);
   assert.match(serviceAction[0], /if \(result\.changed\) this\.notify\(\)/);
   assert.match(serviceAction[0], /return await this\.getSnapshot\(\)/);
   const repositoryAction = repository.match(
-    /  async markAllRead\(\): Promise<EyesOnAgentsRepositoryMutationResult> \{[\s\S]*?\n  \}/
+    /  async markAllRead\(params: \{[\s\S]*?Promise<EyesOnAgentsRepositoryMutationResult> \{[\s\S]*?\n  \}/
   );
   assert.ok(repositoryAction, 'Missing persistent Read all mutation');
-  assert.match(repositoryAction[0], /is_archived = 0/);
+  assert.match(repositoryAction[0], /archive_state <> 'archived'/);
   assert.match(repositoryAction[0], /is_unread = 1/);
+  assert.match(repositoryAction[0], /provider IN \(\$\{placeholders\}\)/);
   assert.match(
     repositoryAction[0],
     /runtime_state IN \('idle', 'failed', 'ended'\)/,
@@ -974,7 +1144,7 @@ test('global title search is lifecycle-safe, accessible, and independently bound
   );
   assert.ok(searchResult, 'Missing global search result row');
   assert.match(searchResult[0], /role="option"/);
-  assert.match(searchResult[0], /@click="handleResultClick\(thread\.threadId\)"/);
+  assert.match(searchResult[0], /@click="handleResultClick\(thread\.sessionKey\)"/);
   const titlePosition = searchResult[0].indexOf('class="thread-search__result-title"');
   const domainPosition = searchResult[0].indexOf('class="thread-search__result-domain"');
   const statePosition = searchResult[0].indexOf('class="thread-search__result-state"');
@@ -1024,9 +1194,12 @@ test('global title search is lifecycle-safe, accessible, and independently bound
     /grid-template-columns: minmax\(0, 1fr\) auto/
   );
   assert.match(resultStyle, /grid-template-rows: auto auto/);
+  const resultHeadingStyle = cssRule(styles, '.thread-search__result-heading');
+  assert.match(resultHeadingStyle, /grid-column: 1 \/ -1/);
+  assert.match(resultHeadingStyle, /grid-row: 1/);
+  assert.match(resultHeadingStyle, /display: flex/);
   const resultTitleStyle = cssRule(styles, '.thread-search__result-title');
-  assert.match(resultTitleStyle, /grid-column: 1 \/ -1/);
-  assert.match(resultTitleStyle, /grid-row: 1/);
+  assert.match(resultTitleStyle, /overflow: hidden/);
   const resultDomainStyle = cssRule(styles, '.thread-search__result-domain');
   assert.match(resultDomainStyle, /grid-column: 1/);
   assert.match(resultDomainStyle, /grid-row: 2/);
@@ -1129,22 +1302,22 @@ test('global title search is lifecycle-safe, accessible, and independently bound
   );
   assert.match(
     store,
-    /setThreadSearchQuery\(query: string\): void \{[\s\S]*this\.threadSearchSelectedThreadId = this\.threadSearchResults\[0\]\?\.threadId \?\? null/
+    /setThreadSearchQuery\(query: string\): void \{[\s\S]*this\.threadSearchSelectedSessionKey = this\.threadSearchResults\[0\]\?\.sessionKey \?\? null/
   );
   assert.match(
     store,
-    /reconcileThreadSearchSelection\(\): void \{[\s\S]*thread\.threadId === this\.threadSearchSelectedThreadId[\s\S]*this\.threadSearchSelectedThreadId = results\[0\]\?\.threadId \?\? null/
+    /reconcileThreadSearchSelection\(\): void \{[\s\S]*thread\.sessionKey === this\.threadSearchSelectedSessionKey[\s\S]*this\.threadSearchSelectedSessionKey = results\[0\]\?\.sessionKey \?\? null/
   );
   const openSearchResult = store.match(
-    /async openThreadSearchResult\(threadId: string\): Promise<void> \{[\s\S]*?\n  \}/
+    /async openThreadSearchResult\(sessionKey: EyesOnAgentsSessionKey\): Promise<void> \{[\s\S]*?\n  \}/
   );
   assert.ok(openSearchResult, 'Missing global search Open path');
-  assert.match(openSearchResult[0], /this\.threadSearchSelectedThreadId = threadId/);
-  assert.match(openSearchResult[0], /await this\.openThread\(threadId\)/);
+  assert.match(openSearchResult[0], /this\.threadSearchSelectedSessionKey = sessionKey/);
+  assert.match(openSearchResult[0], /await this\.openThread\(sessionKey\)/);
   assert.doesNotMatch(openSearchResult[0], /closeThreadSearch|threadSearchQuery\s*=/);
   assert.match(
     store,
-    /closeThreadSearch\(\): void \{\s*this\.threadSearchVisible = false;\s*this\.threadSearchQuery = '';\s*this\.threadSearchSelectedThreadId = null/
+    /closeThreadSearch\(\): void \{\s*this\.threadSearchVisible = false;\s*this\.threadSearchQuery = '';\s*this\.threadSearchSelectedSessionKey = null/
   );
 
   const queryOwners = walk('src')
@@ -1532,9 +1705,9 @@ test('Codex observation exposes explicit local latest-question retention', () =>
   assert.match(preference, /background: oklch/);
   assert.doesNotMatch(preference, /\bborder\s*:|box-shadow/);
   assert.match(english, /promptRetentionLabel: 'Store latest user question'/);
-  assert.match(english, /promptRetentionDescription: '[^']*off by default[^']*8192 bytes[^']*local SQLite only[^']*turning it off clears saved previews[^']*Replies and history are not stored\.'/);
+  assert.match(english, /promptRetentionDescription:\s*'[^']*off by default[^']*8192 bytes[^']*local SQLite only[^']*turning it off clears saved previews[^']*Replies and history are not stored\.'/);
   assert.match(chinese, /promptRetentionLabel: '保存最后一个用户问题'/);
-  assert.match(chinese, /promptRetentionDescription: '[^']*默认关闭[^']*本机 SQLite[^']*8192 字节[^']*关闭会清空已保存的预览[^']*不保存回答或历史记录。'/);
+  assert.match(chinese, /promptRetentionDescription:\s*'[^']*默认关闭[^']*本机 SQLite[^']*8192 字节[^']*关闭会清空已保存的预览[^']*不保存回答或历史记录。'/);
 });
 
 test('connection panel presents independent Codex observation onboarding and review', () => {
@@ -1729,12 +1902,12 @@ test('title enrichment diagnostics stay bounded and drawer-only', () => {
   assert.match(diagnostic, /background: oklch/);
   assert.doesNotMatch(diagnostic, /\bborder\s*:|box-shadow|#[\da-f]{3,8}\b|\brgba?\(/i);
 
-  assert.match(english, /titleEnrichmentDeferred: '[^']*\{thread\}[^']*App Server unavailable[^']*A later Refresh can retry\.'/);
-  assert.match(english, /titleEnrichmentReadRejected: '[^']*\{thread\}[^']*A later Refresh can retry\.'/);
-  assert.match(english, /titleEnrichmentUnusable: '[^']*\{thread\}[^']*A later Refresh can retry\.'/);
-  assert.match(chinese, /titleEnrichmentDeferred: '[^']*\{thread\}[^']*App Server 不可用[^']*稍后可通过刷新重试。'/);
-  assert.match(chinese, /titleEnrichmentReadRejected: '[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
-  assert.match(chinese, /titleEnrichmentUnusable: '[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
+  assert.match(english, /titleEnrichmentDeferred:\s*'[^']*\{thread\}[^']*App Server unavailable[^']*A later Refresh can retry\.'/);
+  assert.match(english, /titleEnrichmentReadRejected:\s*'[^']*\{thread\}[^']*A later Refresh can retry\.'/);
+  assert.match(english, /titleEnrichmentUnusable:\s*'[^']*\{thread\}[^']*A later Refresh can retry\.'/);
+  assert.match(chinese, /titleEnrichmentDeferred:\s*'[^']*\{thread\}[^']*App Server 不可用[^']*稍后可通过刷新重试。'/);
+  assert.match(chinese, /titleEnrichmentReadRejected:\s*'[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
+  assert.match(chinese, /titleEnrichmentUnusable:\s*'[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
 });
 
 test('header Refresh is visible and can recover disconnected or error state', () => {

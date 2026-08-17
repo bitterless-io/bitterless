@@ -25,6 +25,9 @@ const DELIVERY_F = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 const DELIVERY_G = '12121212-1212-4212-8212-121212121212';
 const DELIVERY_H = '13131313-1313-4313-8313-131313131313';
 const DELIVERY_I = '14141414-1414-4414-8414-141414141414';
+const DELIVERY_CLAUDE = '15151515-1515-4515-8515-151515151515';
+const codexKey = (threadId) => `codex:${threadId}`;
+const claudeKey = (threadId) => `claude:${threadId}`;
 const INVALID_VERSION_THREAD = '33333333-3333-0333-8333-333333333333';
 const INVALID_VARIANT_THREAD = '44444444-4444-4444-7444-444444444444';
 const EXTRA_HYPHEN_THREAD = '55555555-5555-4555-8555-55555555555-';
@@ -118,7 +121,8 @@ try {
     ensureEyesOnAgentsLegacyImport,
     ensureEyesOnAgentsProjectMetadataSchema,
     ensureEyesOnAgentsSyncPersistenceSchema,
-    migrateEyesOnAgentsCompletionAlertSchema
+    migrateEyesOnAgentsCompletionAlertSchema,
+    migrateEyesOnAgentsProviderIdentitySchema
   } = await loadTypeScriptModule(
     'migration',
     'src/preload/sqlite/dao/eyesOnAgents.migration.ts'
@@ -143,9 +147,9 @@ try {
   ensureEyesOnAgentsLastUserPromptSchema(repairDb);
   repairDb.prepare(
     `INSERT INTO eyes_on_agents_hook_delivery_receipt (
-      delivery_id, thread_id, observed_at, committed_at
-    ) VALUES (?, ?, 1, 2)`
-  ).run(DELIVERY_A, THREAD_A);
+      delivery_id, session_key, provider, thread_id, observed_at, committed_at
+    ) VALUES (?, ?, 'codex', ?, 1, 2)`
+  ).run(DELIVERY_A, codexKey(THREAD_A), THREAD_A);
   ensureEyesOnAgentsHookDeliverySchema(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
   ensureEyesOnAgentsLegacyImport(repairDb);
@@ -166,15 +170,36 @@ try {
 
   const oldDb = new TestDatabase();
   oldDb.exec(`
+    CREATE TABLE eyes_on_agents_domain (
+      id INTEGER PRIMARY KEY,
+      domain_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      sort_index INTEGER NOT NULL DEFAULT 0,
+      is_system INTEGER NOT NULL DEFAULT 0,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      delete_flag TEXT NOT NULL DEFAULT '0',
+      deleted_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO eyes_on_agents_domain (id, domain_key, title)
+      VALUES (1, 'uncategorized', 'Uncategorized');
     CREATE TABLE eyes_on_agents_thread (
       thread_id TEXT PRIMARY KEY,
       domain_id INTEGER NOT NULL,
+      title TEXT,
+      cwd TEXT,
       runtime_state TEXT NOT NULL DEFAULT 'unknown',
+      active_flags_json TEXT NOT NULL DEFAULT '[]',
+      active_turn_id TEXT,
       last_completed_turn_id TEXT,
       last_completed_at INTEGER,
       last_opened_turn_id TEXT,
       last_opened_at INTEGER,
+      status_source TEXT NOT NULL DEFAULT 'discovery',
+      status_observed_at INTEGER,
       last_activity_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
     INSERT INTO eyes_on_agents_thread (
@@ -196,6 +221,8 @@ try {
   migrateEyesOnAgentsCompletionAlertSchema(oldDb);
   ensureEyesOnAgentsLastUserPromptSchema(oldDb);
   ensureEyesOnAgentsLastUserPromptSchema(oldDb);
+  migrateEyesOnAgentsProviderIdentitySchema(oldDb);
+  migrateEyesOnAgentsProviderIdentitySchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -213,6 +240,11 @@ try {
     migratedColumns.some((column) => column.name === 'is_unread'),
     true,
     'old databases must receive the persistent unread migration'
+  );
+  assert.deepEqual(
+    migratedColumns.slice(0, 3).map((column) => column.name),
+    ['session_key', 'provider', 'thread_id'],
+    'retained provider-blind databases must rebuild around provider-qualified identity'
   );
   assert.deepEqual(
     migratedColumns
@@ -249,17 +281,17 @@ try {
   assert.deepEqual(
     oldDb.prepare('PRAGMA table_info(eyes_on_agents_hook_delivery_receipt)').all()
       .map((column) => column.name),
-    ['delivery_id', 'thread_id', 'observed_at', 'committed_at'],
+    ['delivery_id', 'session_key', 'provider', 'thread_id', 'observed_at', 'committed_at'],
     'old databases must receive the idempotent hook delivery receipt table'
   );
   assert.deepEqual(
     oldDb.prepare(
-      `SELECT thread_id, turn_id FROM eyes_on_agents_completion_alert_receipt
-       ORDER BY thread_id`
+      `SELECT session_key, provider, thread_id, turn_id
+       FROM eyes_on_agents_completion_alert_receipt ORDER BY thread_id`
     ).all().map((row) => ({ ...row })),
     [
-      { thread_id: THREAD_A, turn_id: 'turn-a' },
-      { thread_id: THREAD_B, turn_id: 'turn-b' }
+      { session_key: codexKey(THREAD_A), provider: 'codex', thread_id: THREAD_A, turn_id: 'turn-a' },
+      { session_key: codexKey(THREAD_B), provider: 'codex', thread_id: THREAD_B, turn_id: 'turn-b' }
     ],
     'the versioned completion-alert migration must seed every current historical completion'
   );
@@ -308,10 +340,12 @@ try {
 
   ensureEyesOnAgentsLegacyImport(db);
   ensureEyesOnAgentsLegacyImport(db);
+  migrateEyesOnAgentsProviderIdentitySchema(db);
+  migrateEyesOnAgentsProviderIdentitySchema(db);
   assert.equal(
     db.prepare('SELECT COUNT(*) AS count FROM eyes_on_agents_thread').get().count,
-    1,
-    'legacy import must be Codex-only and idempotent even without provider_title'
+    2,
+    'provider migration must preserve Codex and import active legacy Claude idempotently'
   );
   const imported = db.prepare(
     'SELECT last_completed_at, status_source FROM eyes_on_agents_thread WHERE thread_id = ?'
@@ -369,11 +403,24 @@ try {
       }
     ]
   });
+  snapshot = await repository.getSnapshot();
+  assert.deepEqual(
+    snapshot.threads
+      .filter((thread) => thread.threadId === THREAD_B)
+      .map((thread) => ({ sessionKey: thread.sessionKey, provider: thread.provider }))
+      .sort((left, right) => left.provider.localeCompare(right.provider)),
+    [
+      { sessionKey: claudeKey(THREAD_B), provider: 'claude' },
+      { sessionKey: codexKey(THREAD_B), provider: 'codex' }
+    ],
+    'provider-qualified identity must allow the same UUID without row collision'
+  );
+  db.prepare("DELETE FROM eyes_on_agents_thread WHERE provider = 'claude'").run();
   await repository.createDomain({ title: 'Bitterless' });
   snapshot = await repository.getSnapshot();
   const custom = snapshot.domains.find((domain) => domain.title === 'Bitterless');
   assert.ok(custom);
-  await repository.moveThread({ threadId: THREAD_A, domainId: custom.id });
+  await repository.moveThread({ sessionKey: codexKey(THREAD_A), domainId: custom.id });
   await repository.upsertThreadSnapshots({
     snapshots: [
       {
@@ -535,9 +582,10 @@ try {
   );
   db.prepare(
     `INSERT INTO eyes_on_agents_thread_snapshot (
-      thread_id, payload_json, is_archived, synced_at, created_at, updated_at
-    ) VALUES (?, ?, 0, 180, 180, 180)`
-  ).run(THREAD_H, '{malformed-json');
+      session_key, provider, thread_id, payload_json, is_archived,
+      synced_at, created_at, updated_at
+    ) VALUES (?, 'codex', ?, ?, 0, 180, 180, 180)`
+  ).run(codexKey(THREAD_H), THREAD_H, '{malformed-json');
   const corruptSnapshotResult = await repository.applyRuntimeEvent({
     event: {
       type: 'turn_started',
@@ -612,7 +660,7 @@ try {
     true,
     'a running event must set unread'
   );
-  await repository.markOpened({ threadId: THREAD_A, openedAt: 210 });
+  await repository.markOpened({ sessionKey: codexKey(THREAD_A), openedAt: 210 });
   snapshot = await repository.getSnapshot();
   const openedRunningA = snapshot.threads.find((thread) => thread.threadId === THREAD_A);
   assert.equal(
@@ -649,7 +697,7 @@ try {
     true,
     'a later thread/list running observation must keep unread attention'
   );
-  await repository.markOpened({ threadId: THREAD_A, openedAt: 216 });
+  await repository.markOpened({ sessionKey: codexKey(THREAD_A), openedAt: 216 });
   const syntheticCompletion = await repository.applyRuntimeEvent({
     event: {
       type: 'turn_completed',
@@ -692,6 +740,8 @@ try {
     }
   });
   assert.deepEqual(completedTurnB.completionAlert, {
+    sessionKey: codexKey(THREAD_A),
+    provider: 'codex',
     threadId: THREAD_A,
     turnId: 'turn-b',
     title: 'Still running'
@@ -957,7 +1007,7 @@ try {
     'hook-500',
     'reconnect preparation must not erase Desktop hook ownership'
   );
-  await repository.markOpened({ threadId: THREAD_B, openedAt: 705 });
+  await repository.markOpened({ sessionKey: codexKey(THREAD_B), openedAt: 705 });
   await repository.invalidateCodexHookStatuses({ observedAt: 710 });
   snapshot = await repository.getSnapshot();
   const hookAfterDisconnectB = snapshot.threads.find((thread) => thread.threadId === THREAD_B);
@@ -1095,7 +1145,7 @@ try {
     }
   });
   await repository.applyRuntimeEventDelivery({
-    deliveryId: DELIVERY_H,
+    deliveryId: DELIVERY_CLAUDE,
     replayAuthority: 'current_listener',
     event: {
       type: 'turn_completed',
@@ -1123,7 +1173,7 @@ try {
   await repository.createDomain({ title: 'Rollback check' });
   snapshot = await repository.getSnapshot();
   const rollbackDomain = snapshot.domains.find((domain) => domain.title === 'Rollback check');
-  await repository.moveThread({ threadId: THREAD_B, domainId: rollbackDomain.id });
+  await repository.moveThread({ sessionKey: codexKey(THREAD_B), domainId: rollbackDomain.id });
   db.exec(`
     CREATE TRIGGER abort_eyes_domain_delete
     BEFORE UPDATE OF is_deleted ON eyes_on_agents_domain
@@ -1370,7 +1420,7 @@ try {
         source: 'app_server'
       }
     }),
-    /source must be codex_hook/
+    /source must be a supported hook source/
   );
 
   const firstDelivery = await repository.applyRuntimeEventDelivery({
@@ -1400,6 +1450,13 @@ try {
   assert.equal(receipt.observed_at, 800);
   assert.equal(receipt.observed_at_type, 'integer');
   assert.equal(receipt.committed_at_type, 'integer');
+  const codexReceiptSummary = await repository.getRuntimeReceiptSummary({ provider: 'codex' });
+  assert.equal(typeof codexReceiptSummary.firstReceivedAt, 'number');
+  assert(codexReceiptSummary.firstReceivedAt <= codexReceiptSummary.lastReceivedAt);
+  assert.deepEqual(
+    await repository.getRuntimeReceiptSummary({ provider: 'claude' }),
+    { firstReceivedAt: null, lastReceivedAt: null }
+  );
   assert.equal(
     db.prepare('SELECT runtime_state FROM eyes_on_agents_thread WHERE thread_id = ?')
       .get(THREAD_D).runtime_state,
@@ -1432,6 +1489,76 @@ try {
     db.prepare('SELECT title FROM eyes_on_agents_thread WHERE thread_id = ?')
       .get(THREAD_D).title,
     'Targeted delivery title'
+  );
+
+  const claudeHookThreadId = refreshThreadId(9300);
+  const claudeStarted = await repository.applyRuntimeEventDelivery({
+    deliveryId: DELIVERY_H,
+    event: {
+      type: 'turn_started', threadId: claudeHookThreadId, turnId: null,
+      observedAt: 850, source: 'claude_hook'
+    },
+    replayAuthority: 'current_listener'
+  });
+  assert.equal(claudeStarted.duplicate, false);
+  assert.equal(
+    db.prepare('SELECT provider FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(claudeHookThreadId).provider,
+    'claude'
+  );
+  const claudeSummary = await repository.getRuntimeReceiptSummary({ provider: 'claude' });
+  assert.equal(typeof claudeSummary.firstReceivedAt, 'number');
+  assert.equal(claudeSummary.firstReceivedAt, claudeSummary.lastReceivedAt);
+  const initialClaudeRuntime = db.prepare(
+    `SELECT status_observed_at, status_fresh_until, active_turn_id
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(claudeHookThreadId));
+  assert.deepEqual(await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeHookThreadId,
+    desktopSessionId: null,
+    transcriptPath: `/tmp/${claudeHookThreadId}.jsonl`,
+    transcriptActivityAt: 900,
+    title: null,
+    cwd: null,
+    archiveState: 'unknown',
+    lastActivityAt: 900,
+    observedAt: 900
+  }] }), { changed: true });
+  const heartbeatRuntime = db.prepare(
+    `SELECT status_observed_at, status_fresh_until, active_turn_id, transcript_activity_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(claudeHookThreadId));
+  assert.equal(heartbeatRuntime.status_observed_at, initialClaudeRuntime.status_observed_at);
+  assert.equal(heartbeatRuntime.active_turn_id, initialClaudeRuntime.active_turn_id);
+  assert.equal(heartbeatRuntime.transcript_activity_at, 900);
+  assert.equal(heartbeatRuntime.status_fresh_until, 30_900);
+  assert.deepEqual(await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeHookThreadId,
+    desktopSessionId: null,
+    transcriptPath: `/tmp/${claudeHookThreadId}.jsonl`,
+    transcriptActivityAt: 900,
+    title: null,
+    cwd: null,
+    archiveState: 'unknown',
+    lastActivityAt: 900,
+    observedAt: 910
+  }] }), { changed: false }, 'an unchanged JSONL mtime must not renew the Hook lease');
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeHookThreadId,
+    desktopSessionId: `local_${claudeHookThreadId}`,
+    transcriptPath: null,
+    transcriptActivityAt: null,
+    title: 'Desktop activity',
+    cwd: null,
+    archiveState: 'active',
+    lastActivityAt: 20_000,
+    observedAt: 20_000
+  }] });
+  assert.equal(
+    db.prepare('SELECT status_fresh_until FROM eyes_on_agents_thread WHERE session_key = ?')
+      .get(claudeKey(claudeHookThreadId)).status_fresh_until,
+    30_900,
+    'Desktop activity must not renew a Claude Hook lease'
   );
 
   db.close();
@@ -1596,17 +1723,20 @@ try {
   ).get().id;
   const insertRefreshThread = db.prepare(
     `INSERT INTO eyes_on_agents_thread (
-      thread_id, domain_id, title, is_archived, last_activity_at,
+      session_key, provider, thread_id, domain_id, title, is_archived, archive_state,
+      last_activity_at,
       last_user_prompt_checked_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   for (let index = 1; index <= 86; index += 1) {
     const tiedHotActivity = index === 84 || index === 85;
     insertRefreshThread.run(
+      codexKey(refreshThreadId(index)),
       refreshThreadId(index),
       refreshDomainId,
       `Refresh ${index}`,
       index === 86 ? 1 : 0,
+      index === 86 ? 'archived' : 'active',
       tiedHotActivity ? 10_000 : index,
       index,
       index,
@@ -1665,7 +1795,9 @@ try {
   );
   for (const candidate of selectedThirdPage.cold) {
     db.prepare(
-      'UPDATE eyes_on_agents_thread SET is_archived = 1 WHERE thread_id = ?'
+      `UPDATE eyes_on_agents_thread
+       SET is_archived = 1, archive_state = 'archived'
+       WHERE provider = 'codex' AND thread_id = ?`
     ).run(candidate.threadId);
   }
   const resetColdPage = await repository.getThreadRefreshPages({
@@ -1770,7 +1902,7 @@ try {
     'the repository contract must reject runtime patches from metadata refresh'
   );
 
-  await repository.markOpened({ threadId: refreshTargetId, openedAt: 40_001 });
+  await repository.markOpened({ sessionKey: codexKey(refreshTargetId), openedAt: 40_001 });
   snapshot = await repository.getSnapshot();
   refreshTargetSnapshot = snapshot.threads.find(
     (thread) => thread.threadId === refreshTargetId
@@ -1980,7 +2112,7 @@ try {
     'failed terminal proof must reconcile to failed'
   );
 
-  await repository.markOpened({ threadId: refreshTargetId, openedAt: 45_500 });
+  await repository.markOpened({ sessionKey: codexKey(refreshTargetId), openedAt: 45_500 });
   snapshot = await repository.getSnapshot();
   refreshTargetSnapshot = snapshot.threads.find(
     (thread) => thread.threadId === refreshTargetId
@@ -2125,10 +2257,20 @@ try {
   const recoveryThreadId = refreshThreadId(300);
   db.prepare(
     `INSERT INTO eyes_on_agents_thread (
-      thread_id, domain_id, title, is_archived, runtime_state, status_source,
+      session_key, provider, thread_id, domain_id, title, is_archived, archive_state,
+      runtime_state, status_source,
       status_observed_at, is_unread, last_activity_at, created_at, updated_at
-    ) VALUES (?, ?, 'Missed working', 0, 'unknown', 'discovery', ?, 1, ?, ?, ?)`
-  ).run(recoveryThreadId, refreshDomainId, 60_000, 60_000, 60_000, 60_000);
+    ) VALUES (?, 'codex', ?, ?, 'Missed working', 0, 'active',
+      'unknown', 'discovery', ?, 1, ?, ?, ?)`
+  ).run(
+    codexKey(recoveryThreadId),
+    recoveryThreadId,
+    refreshDomainId,
+    60_000,
+    60_000,
+    60_000,
+    60_000
+  );
   const recoveryRow = () => db.prepare(
     `SELECT runtime_state, status_source, status_observed_at, active_turn_id, is_unread,
       last_activity_at, last_completed_turn_id
@@ -2145,7 +2287,7 @@ try {
     }
   });
   const resetRecoveryRow = (columns) => {
-    const entries = Object.entries({
+    const values = {
       runtime_state: 'unknown',
       status_source: 'discovery',
       status_observed_at: 60_000,
@@ -2153,11 +2295,16 @@ try {
       active_flags_json: '[]',
       is_unread: 1,
       is_archived: 0,
+      archive_state: 'active',
       last_completed_turn_id: null,
       last_completed_at: null,
       last_activity_at: 60_000,
       ...columns
-    });
+    };
+    if ('is_archived' in columns && !('archive_state' in columns)) {
+      values.archive_state = columns.is_archived === 1 ? 'archived' : 'active';
+    }
+    const entries = Object.entries(values);
     db.prepare(
       `UPDATE eyes_on_agents_thread
        SET ${entries.map(([column]) => `${column} = ?`).join(', ')}
@@ -2293,6 +2440,8 @@ try {
     {
       changed: true,
       completionAlerts: [{
+        sessionKey: codexKey(recoveryThreadId),
+        provider: 'codex',
         threadId: recoveryThreadId,
         turnId: 'settled-completed',
         title: 'Missed working'
@@ -2302,7 +2451,7 @@ try {
   );
   assert.equal(settlementRow().runtime_state, 'idle');
   assert.equal(settlementRow().is_unread, 1);
-  await repository.markOpened({ threadId: recoveryThreadId, openedAt: 63_000 });
+  await repository.markOpened({ sessionKey: codexKey(recoveryThreadId), openedAt: 63_000 });
   assert.equal(
     settlementRow().is_unread,
     0,
@@ -2311,9 +2460,9 @@ try {
 
   db.prepare(
     `INSERT OR IGNORE INTO eyes_on_agents_completion_alert_receipt (
-      thread_id, turn_id, completed_at, claimed_at
-    ) VALUES (?, ?, ?, ?)`
-  ).run(recoveryThreadId, 'settled-existing', 58_000, 58_000);
+      session_key, provider, thread_id, turn_id, completed_at, claimed_at
+    ) VALUES (?, 'codex', ?, ?, ?, ?)`
+  ).run(codexKey(recoveryThreadId), recoveryThreadId, 'settled-existing', 58_000, 58_000);
   resetRecoveryRow({
     active_flags_json: '["waitingOnApproval"]',
     last_completed_turn_id: 'settled-existing',
@@ -2471,6 +2620,8 @@ try {
     {
       changed: true,
       completionAlerts: [{
+        sessionKey: codexKey(recoveryThreadId),
+        provider: 'codex',
         threadId: recoveryThreadId,
         turnId: 'missed-turn',
         title: 'Inventory notLoaded'
@@ -2598,6 +2749,8 @@ try {
     {
       changed: true,
       completionAlerts: [{
+        sessionKey: codexKey(recoveryThreadId),
+        provider: 'codex',
         threadId: recoveryThreadId,
         turnId: 'live-hook-turn',
         title: 'Inventory notLoaded'
@@ -2629,23 +2782,23 @@ try {
   );
   const seedReadAllRow = db.prepare(
     `UPDATE eyes_on_agents_thread SET
-      is_archived = ?, runtime_state = ?, is_unread = 1,
+      is_archived = ?, archive_state = ?, runtime_state = ?, is_unread = 1,
       last_opened_turn_id = ?, last_opened_at = ?, updated_at = ?
      WHERE thread_id = ?`
   );
   const readAllFixtures = [
-    [0, 'idle', 'opened-idle', 50_001, 51_001, readAllIdleId],
-    [0, 'working', 'opened-working', 50_002, 51_002, readAllWorkingId],
-    [0, 'waiting_approval', 'opened-approval', 50_003, 51_003, readAllWaitingApprovalId],
-    [0, 'waiting_input', 'opened-input', 50_004, 51_004, readAllWaitingInputId],
-    [0, 'unknown', 'opened-unknown', 50_006, 51_006, readAllUnknownId],
-    [1, 'idle', 'opened-archived', 50_005, 51_005, readAllArchivedId]
+    [0, 'active', 'idle', 'opened-idle', 50_001, 51_001, readAllIdleId],
+    [0, 'active', 'working', 'opened-working', 50_002, 51_002, readAllWorkingId],
+    [0, 'active', 'waiting_approval', 'opened-approval', 50_003, 51_003, readAllWaitingApprovalId],
+    [0, 'active', 'waiting_input', 'opened-input', 50_004, 51_004, readAllWaitingInputId],
+    [0, 'active', 'unknown', 'opened-unknown', 50_006, 51_006, readAllUnknownId],
+    [1, 'archived', 'idle', 'opened-archived', 50_005, 51_005, readAllArchivedId]
   ];
   for (const fixture of readAllFixtures) {
     assert.equal(seedReadAllRow.run(...fixture).changes, 1);
   }
   assert.deepEqual(
-    await repository.markAllRead(),
+    await repository.markAllRead({ providers: ['codex', 'claude'] }),
     { changed: true },
     'Read all must report when it clears an eligible unread row'
   );
@@ -2696,9 +2849,375 @@ try {
     'Read all must not mutate archived unread rows'
   );
   assert.deepEqual(
-    await repository.markAllRead(),
+    await repository.markAllRead({ providers: ['codex', 'claude'] }),
     { changed: false },
     'repeating Read all without another eligible unread row must be a no-op'
+  );
+
+  const claudeThreadId = '45454545-4545-4545-8545-454545454545';
+  const claudeSessionKey = claudeKey(claudeThreadId);
+  await repository.createDomain({ title: 'Claude Domain Audit' });
+  const claudeDomain = (await repository.getSnapshot()).domains.find(
+    (domain) => domain.title === 'Claude Domain Audit'
+  );
+  assert.ok(claudeDomain);
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [{
+      threadId: claudeThreadId,
+      desktopSessionId: `local_${claudeThreadId}`,
+      transcriptPath: `/tmp/project/${claudeThreadId}.jsonl`,
+      title: 'Claude audit',
+      cwd: '/tmp/project',
+      archiveState: 'active',
+      lastActivityAt: 90_000,
+      observedAt: 90_000
+    }]
+  }), { changed: true });
+  await repository.moveThread({ sessionKey: claudeSessionKey, domainId: claudeDomain.id });
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [{
+      threadId: claudeThreadId,
+      desktopSessionId: `local_${claudeThreadId}`,
+      transcriptPath: `/tmp/project/${claudeThreadId}.jsonl`,
+      title: 'Claude audit renamed',
+      cwd: '/tmp/project',
+      archiveState: 'archived',
+      lastActivityAt: 91_000,
+      observedAt: 91_000
+    }]
+  }), { changed: true });
+  assert.equal(
+    db.prepare('SELECT domain_id FROM eyes_on_agents_thread WHERE session_key = ?').get(claudeSessionKey).domain_id,
+    claudeDomain.id,
+    'Claude archive/title reconciliation must preserve Domain assignment'
+  );
+  assert.deepEqual(await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId,
+      runtimeState: 'working',
+      title: null,
+      cwd: null,
+      startedAt: 92_000,
+      observedAt: 93_000
+    }],
+    completeSnapshot: true,
+    observedAt: 93_000
+  }), { changed: true });
+  const workingClaude = db.prepare(
+    'SELECT runtime_state, status_observed_at, status_fresh_until FROM eyes_on_agents_thread WHERE session_key = ?'
+  ).get(claudeSessionKey);
+  assert.deepEqual({ ...workingClaude }, {
+    runtime_state: 'working',
+    status_observed_at: 92_000,
+    status_fresh_until: 123_000
+  });
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId,
+      runtimeState: 'working',
+      title: null,
+      cwd: null,
+      startedAt: 92_000,
+      observedAt: 100_000
+    }],
+    completeSnapshot: true,
+    observedAt: 100_000
+  });
+  assert.equal(
+    db.prepare('SELECT status_observed_at FROM eyes_on_agents_thread WHERE session_key = ?').get(claudeSessionKey).status_observed_at,
+    92_000,
+    'same-state Agent View polling must retain the working-start sort timestamp'
+  );
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId,
+      runtimeState: 'working',
+      title: null,
+      cwd: null,
+      startedAt: 105_000,
+      observedAt: 106_000
+    }],
+    completeSnapshot: true,
+    observedAt: 106_000
+  });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT status_observed_at, active_turn_id FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeSessionKey) }, {
+    status_observed_at: 105_000,
+    active_turn_id: 'claude-agent-105000'
+  }, 'a changed explicit Agent View start time must establish a new working run');
+  assert.deepEqual(await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId,
+      runtimeState: 'idle',
+      title: null,
+      cwd: null,
+      startedAt: 92_000,
+      observedAt: 110_000
+    }],
+    completeSnapshot: true,
+    observedAt: 110_000
+  }), { changed: true });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT runtime_state, status_observed_at, status_fresh_until, last_activity_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeSessionKey) }, {
+    runtime_state: 'idle',
+    status_observed_at: 110_000,
+    status_fresh_until: null,
+    last_activity_at: 110_000
+  });
+  assert.deepEqual(await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId,
+      runtimeState: 'idle',
+      title: null,
+      cwd: null,
+      startedAt: 92_000,
+      observedAt: 120_000
+    }],
+    completeSnapshot: true,
+    observedAt: 120_000
+  }), { changed: false }, 'repeated terminal Agent View rows must not advance ordering or write');
+  assert.deepEqual({ ...db.prepare(
+    `SELECT status_observed_at, status_fresh_until, last_activity_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeSessionKey) }, {
+    status_observed_at: 110_000,
+    status_fresh_until: null,
+    last_activity_at: 110_000
+  });
+  db.prepare(
+    `UPDATE eyes_on_agents_thread SET runtime_state = 'idle', archive_state = 'active',
+      is_archived = 0, is_unread = 1 WHERE thread_id IN (?, ?)`
+  ).run(readAllIdleId, claudeThreadId);
+  assert.deepEqual(await repository.markAllRead({ providers: ['codex'] }), { changed: true });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT
+      (SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?) AS codex_unread,
+      (SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?) AS claude_unread`
+  ).get(readAllIdleId, claudeThreadId) }, {
+    codex_unread: 0,
+    claude_unread: 1
+  }, 'provider-scoped Read all must leave hidden Claude unread evidence unchanged');
+  assert.deepEqual(
+    await repository.markAllRead({ providers: ['codex', 'claude'] }),
+    { changed: true }
+  );
+  assert.equal(
+    db.prepare('SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?')
+      .get(claudeThreadId).is_unread,
+    0,
+    'visible-provider Read all may acknowledge Claude terminal unread evidence'
+  );
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId,
+      runtimeState: 'working',
+      title: null,
+      cwd: null,
+      startedAt: 121_000,
+      observedAt: 121_000
+    }],
+    completeSnapshot: true,
+    observedAt: 121_000
+  });
+  assert.deepEqual(await repository.expireClaudeAgentStates({ observedAt: 152_000 }), {
+    changed: true
+  });
+  assert.deepEqual(await repository.expireClaudeAgentStates({ observedAt: 153_000 }), {
+    changed: false
+  }, 'expired Claude leases must be a changed-only provider-safe reconciliation');
+  assert.equal(
+    db.prepare('SELECT runtime_state FROM eyes_on_agents_thread WHERE session_key = ?').get(claudeSessionKey).runtime_state,
+    'unknown',
+    'a complete Agent View snapshot must expire an omitted active row only after its lease'
+  );
+  assert.deepEqual(await repository.getClaudeOpenTarget({ sessionKey: claudeSessionKey }), {
+    sessionKey: claudeSessionKey,
+    desktopSessionId: `local_${claudeThreadId}`,
+    transcriptPath: `/tmp/project/${claudeThreadId}.jsonl`,
+    runtimeState: 'unknown'
+  });
+  db.prepare(
+    `UPDATE eyes_on_agents_thread
+     SET transcript_identity_ambiguous = 1, transcript_activity_at = 153500
+     WHERE session_key = ?`
+  ).run(claudeSessionKey);
+  const preservedBeforeDirectoryChange = { ...db.prepare(
+    `SELECT desktop_session_id, domain_id, title, cwd, project_key, project_root, project_name,
+      archive_state, runtime_state, active_flags_json, active_turn_id, last_completed_turn_id,
+      last_completed_at, last_opened_turn_id, last_opened_at, is_unread, status_source,
+      status_observed_at, status_fresh_until, last_activity_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeSessionKey) };
+  assert.deepEqual(await repository.clearClaudeTranscriptCapabilities(), { changed: true });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT transcript_path, transcript_identity_ambiguous, transcript_activity_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeSessionKey) }, {
+    transcript_path: null,
+    transcript_identity_ambiguous: 0,
+    transcript_activity_at: null
+  }, 'a directory replacement must revoke only stale transcript capability fields');
+  assert.deepEqual({ ...db.prepare(
+    `SELECT desktop_session_id, domain_id, title, cwd, project_key, project_root, project_name,
+      archive_state, runtime_state, active_flags_json, active_turn_id, last_completed_turn_id,
+      last_completed_at, last_opened_turn_id, last_opened_at, is_unread, status_source,
+      status_observed_at, status_fresh_until, last_activity_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeSessionKey) }, preservedBeforeDirectoryChange,
+  'directory replacement must preserve task, Domain, unread, archive, Desktop ID, title, and runtime state');
+  assert.deepEqual(await repository.clearClaudeTranscriptCapabilities(), { changed: false });
+  await repository.upsertClaudeInventory({
+    threads: [{
+      threadId: claudeThreadId,
+      desktopSessionId: null,
+      transcriptPath: `/tmp/project/${claudeThreadId}.jsonl`,
+      transcriptEvidenceComplete: true,
+      title: null,
+      cwd: null,
+      archiveState: 'unknown',
+      transcriptActivityAt: 153_500,
+      lastActivityAt: null,
+      observedAt: 153_500
+    }]
+  });
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [{
+      threadId: claudeThreadId,
+      desktopSessionId: null,
+      transcriptPath: null,
+      clearDesktopSessionId: true,
+      clearTranscriptPath: true,
+      title: null,
+      cwd: null,
+      archiveState: 'unknown',
+      lastActivityAt: null,
+      observedAt: 153_000
+    }]
+  }), { changed: true });
+  assert.deepEqual(await repository.getClaudeOpenTarget({ sessionKey: claudeSessionKey }), {
+    sessionKey: claudeSessionKey,
+    desktopSessionId: null,
+    transcriptPath: null,
+    runtimeState: 'unknown'
+  }, 'ambiguous provider identities must revoke Open/Preview capability without deleting the task');
+  assert.equal(
+    db.prepare('SELECT domain_id FROM eyes_on_agents_thread WHERE session_key = ?').get(claudeSessionKey).domain_id,
+    claudeDomain.id
+  );
+
+  const collisionA = '56565656-5656-4565-8565-565656565656';
+  const collisionB = '67676767-6767-4676-8767-676767676767';
+  const sharedDesktopId = `local_${collisionA}`;
+  await repository.upsertClaudeInventory({ threads: [
+    {
+      threadId: collisionA, desktopSessionId: sharedDesktopId, transcriptPath: null,
+      title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 160_000
+    },
+    {
+      threadId: collisionB, desktopSessionId: sharedDesktopId, transcriptPath: null,
+      title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 160_000
+    }
+  ] });
+  assert.equal((await repository.getClaudeOpenTarget({ sessionKey: claudeKey(collisionA) })).desktopSessionId, null);
+  assert.equal((await repository.getClaudeOpenTarget({ sessionKey: claudeKey(collisionB) })).desktopSessionId, null);
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: collisionA, desktopSessionId: sharedDesktopId, transcriptPath: null,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 161_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(collisionA) })).desktopSessionId,
+    null,
+    'a partial poll must not pick a winner after a reverse Desktop identity collision'
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: collisionA, desktopSessionId: sharedDesktopId, transcriptPath: null,
+    desktopEvidenceComplete: true,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 162_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(collisionA) })).desktopSessionId,
+    sharedDesktopId,
+    'only complete Desktop evidence may resolve a persisted identity ambiguity'
+  );
+
+  const remapThread = '78787878-7878-4787-8787-787878787878';
+  const remapOriginal = `local_${remapThread}`;
+  const remapReplacement = `local_${collisionB}`;
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: remapThread, desktopSessionId: remapOriginal, transcriptPath: null,
+    desktopEvidenceComplete: true,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 170_000
+  }] });
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: remapThread, desktopSessionId: remapReplacement, transcriptPath: null,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 171_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(remapThread) })).desktopSessionId,
+    null,
+    'a partial Desktop ID remap must immediately revoke the stale Open capability'
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: remapThread, desktopSessionId: remapReplacement, transcriptPath: null,
+    desktopEvidenceComplete: true,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 172_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(remapThread) })).desktopSessionId,
+    remapReplacement,
+    'complete unique Desktop evidence must resolve an ID remap'
+  );
+
+  const transcriptRemapThread = '89898989-8989-4898-8989-898989898989';
+  const transcriptOld = `/tmp/old/${transcriptRemapThread}.jsonl`;
+  const transcriptNew = `/tmp/new/${transcriptRemapThread}.jsonl`;
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: transcriptRemapThread, desktopSessionId: null, transcriptPath: transcriptOld,
+    transcriptEvidenceComplete: true,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 180_000
+  }] });
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: transcriptRemapThread, desktopSessionId: null, transcriptPath: transcriptNew,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 181_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(transcriptRemapThread) })).transcriptPath,
+    null,
+    'a partial transcript remap must immediately revoke the stale Preview capability'
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: transcriptRemapThread, desktopSessionId: null, transcriptPath: transcriptNew,
+    transcriptEvidenceComplete: true,
+    title: null, cwd: null, archiveState: 'unknown', lastActivityAt: null, observedAt: 182_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(transcriptRemapThread) })).transcriptPath,
+    transcriptNew,
+    'complete unique transcript evidence must resolve a path remap'
+  );
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId, runtimeState: 'idle', title: 'Agent View overwrite', cwd: null,
+      startedAt: null, observedAt: 190_000
+    }, {
+      threadId: collisionB, runtimeState: 'idle', title: 'Agent View fallback', cwd: null,
+      startedAt: null, observedAt: 190_000
+    }],
+    completeSnapshot: true,
+    observedAt: 190_000
+  });
+  assert.equal(
+    db.prepare('SELECT title FROM eyes_on_agents_thread WHERE session_key = ?').get(claudeSessionKey).title,
+    'Claude audit renamed',
+    'Agent View names must not overwrite a Desktop conversation title'
+  );
+  assert.equal(
+    db.prepare('SELECT title FROM eyes_on_agents_thread WHERE session_key = ?').get(claudeKey(collisionB)).title,
+    'Agent View fallback',
+    'Agent View names may fill a missing title'
   );
 
   db.close();

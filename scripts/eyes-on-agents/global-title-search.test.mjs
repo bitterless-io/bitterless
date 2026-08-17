@@ -7,6 +7,7 @@ import { build } from 'esbuild';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const buildRoot = mkdtempSync(join(projectRoot, '.eyes-global-title-search-'));
+const sessionKey = (threadId, provider = 'codex') => `${provider}:${threadId}`;
 
 const emitterPlugin = {
   name: 'eyes-on-agents-global-title-search-emitter',
@@ -22,7 +23,8 @@ const emitterPlugin = {
           const harness = () => globalThis.__eyesOnAgentsGlobalTitleSearchHarness;
           export const eyesOnAgentsEmitter = {
             getSnapshot: () => harness().getSnapshot(),
-            openThread: (params) => harness().openThread(params)
+            openThread: (params) => harness().openThread(params),
+            previewThread: (params) => harness().previewThread(params)
           };
           export const subscribeEyesOnAgentsChanges = () => undefined;
         `,
@@ -35,6 +37,9 @@ const emitterPlugin = {
 const createThread = ({
   threadId,
   title,
+  provider = 'codex',
+  desktopSessionId = null,
+  canPreviewTranscript = false,
   domainId = 1,
   cwd = null,
   projectName = null,
@@ -45,7 +50,12 @@ const createThread = ({
   lastActivityAt = null,
   lastUserPromptPreview = null,
 }) => ({
+  sessionKey: sessionKey(threadId, provider),
+  provider,
   threadId,
+  archiveState: 'active',
+  desktopSessionId,
+  canPreviewTranscript,
   domainId,
   title,
   cwd,
@@ -106,6 +116,19 @@ const createSnapshot = (threads, domains = []) => ({
     lastInspectedAt: null,
     error: null,
   },
+  claudeBridge: {
+    state: 'not_installed',
+    configured: false,
+    enabled: false,
+    listening: false,
+    listeningSince: null,
+    firstReceiptAt: null,
+    lastReceiptAt: null,
+    lastInspectedAt: null,
+    observationProof: 'none',
+    restartRequired: false,
+    error: null,
+  },
   lastSyncedAt: null,
   lastUserPromptCaptureEnabled: false,
   titleEnrichmentDiagnostic: null,
@@ -132,11 +155,15 @@ test('global title search store contract', async (context) => {
     let currentSnapshot = createSnapshot([]);
     let openSnapshot = currentSnapshot;
     const openedThreadIds = [];
+    const previewedThreadIds = [];
     globalThis.__eyesOnAgentsGlobalTitleSearchHarness = {
       getSnapshot: async () => currentSnapshot,
-      openThread: async ({ threadId }) => {
-        openedThreadIds.push(threadId);
+      openThread: async ({ sessionKey: openedSessionKey }) => {
+        openedThreadIds.push(openedSessionKey);
         return { snapshot: openSnapshot };
+      },
+      previewThread: async ({ sessionKey: previewedSessionKey }) => {
+        previewedThreadIds.push(previewedSessionKey);
       },
     };
 
@@ -150,6 +177,7 @@ test('global title search store contract', async (context) => {
       currentSnapshot = snapshot;
       openSnapshot = snapshot;
       openedThreadIds.length = 0;
+      previewedThreadIds.length = 0;
     };
     const threadIds = (threads) => threads.map((thread) => thread.threadId);
     const projectionThreadIds = () => ({
@@ -170,7 +198,7 @@ test('global title search store contract', async (context) => {
       assert.equal(store.threadSearchVisible, true);
       assert.equal(store.hasThreadSearchQueryTokens, false);
       assert.deepEqual(store.threadSearchResults, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
 
       store.setThreadSearchQuery('ops');
       assert.equal(store.hasThreadSearchQueryTokens, true);
@@ -178,20 +206,20 @@ test('global title search store contract', async (context) => {
         store.threadSearchResults.map((item) => item.threadId),
         ['ops'],
       );
-      assert.equal(store.threadSearchSelectedThreadId, 'ops');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('ops'));
 
       store.setThreadSearchQuery('');
       assert.equal(store.hasThreadSearchQueryTokens, false);
       assert.deepEqual(store.threadSearchResults, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
 
       store.setThreadSearchQuery('  - _ . / \\ : | \t  ');
       assert.equal(store.hasThreadSearchQueryTokens, false);
       assert.deepEqual(store.threadSearchResults, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
 
       store.setThreadSearchQuery('ops');
-      assert.equal(store.threadSearchSelectedThreadId, 'ops');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('ops'));
     });
 
     await context.test('token matching ignores order and mixed supported separators', () => {
@@ -250,7 +278,7 @@ test('global title search store contract', async (context) => {
 
       store.setThreadSearchQuery('ops missing');
       assert.deepEqual(store.threadSearchResults, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
     });
 
     await context.test(
@@ -500,11 +528,11 @@ test('global title search store contract', async (context) => {
         store.threadSearchResults.map((thread) => thread.threadId),
         ['title-match'],
       );
-      assert.equal(store.threadSearchSelectedThreadId, 'title-match');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('title-match'));
 
       store.setThreadSearchQuery('ops missing');
       assert.deepEqual(store.threadSearchResults, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
     });
 
     await context.test('custom Domain titles resolve live with null classification fallbacks', async () => {
@@ -559,28 +587,28 @@ test('global title search store contract', async (context) => {
       });
       resetStore(createSnapshot([second, first]));
       store.openThreadSearch();
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
 
       store.setThreadSearchQuery('task');
-      assert.equal(store.threadSearchSelectedThreadId, 'first');
-      store.selectThreadSearchResult('second');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('first'));
+      store.selectThreadSearchResult(sessionKey('second'));
       store.setThreadSearchQuery('ta');
-      assert.equal(store.threadSearchSelectedThreadId, 'first');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('first'));
 
       store.moveThreadSearchSelection(-1);
-      assert.equal(store.threadSearchSelectedThreadId, 'first');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('first'));
       store.moveThreadSearchSelection(1);
-      assert.equal(store.threadSearchSelectedThreadId, 'second');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('second'));
       store.moveThreadSearchSelection(1);
-      assert.equal(store.threadSearchSelectedThreadId, 'second');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('second'));
       store.moveThreadSearchSelection(-1);
-      assert.equal(store.threadSearchSelectedThreadId, 'first');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('first'));
 
       store.setThreadSearchQuery('');
       assert.deepEqual(store.threadSearchResults, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
       store.setThreadSearchQuery('task');
-      assert.equal(store.threadSearchSelectedThreadId, 'first');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('first'));
     });
 
     await context.test('a valid query set before a snapshot selects, preserves, then falls back', async () => {
@@ -599,19 +627,19 @@ test('global title search store contract', async (context) => {
       store.setThreadSearchQuery('git ops');
       assert.equal(store.hasThreadSearchQueryTokens, true);
       assert.deepEqual(store.threadSearchResults, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
 
       currentSnapshot = createSnapshot([selected, first]);
       await store.loadSnapshot(true);
-      assert.equal(store.threadSearchSelectedThreadId, 'first');
-      store.selectThreadSearchResult('selected');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('first'));
+      store.selectThreadSearchResult(sessionKey('selected'));
 
       currentSnapshot = createSnapshot([
         { ...selected, lastActivityAt: '2026-07-30T04:00:00.000Z' },
         { ...first, lastActivityAt: '2026-07-30T03:00:00.000Z' },
       ]);
       await store.loadSnapshot(true);
-      assert.equal(store.threadSearchSelectedThreadId, 'selected');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('selected'));
 
       const replacement = createThread({
         threadId: 'replacement',
@@ -620,7 +648,7 @@ test('global title search store contract', async (context) => {
       });
       currentSnapshot = createSnapshot([first, replacement]);
       await store.loadSnapshot(true);
-      assert.equal(store.threadSearchSelectedThreadId, 'replacement');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('replacement'));
     });
 
     await context.test('Open preserves modal, query, and ID through attention reorder', async () => {
@@ -639,7 +667,7 @@ test('global title search store contract', async (context) => {
       resetStore(createSnapshot([first, selected]));
       store.openThreadSearch();
       store.setThreadSearchQuery('task');
-      assert.equal(store.threadSearchSelectedThreadId, 'selected');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('selected'));
 
       openSnapshot = createSnapshot([
         { ...selected, isUnread: false },
@@ -647,14 +675,40 @@ test('global title search store contract', async (context) => {
       ]);
       await store.openSelectedThreadSearchResult();
 
-      assert.deepEqual(openedThreadIds, ['selected']);
+      assert.deepEqual(openedThreadIds, [sessionKey('selected')]);
       assert.equal(store.threadSearchVisible, true);
       assert.equal(store.threadSearchQuery, 'task');
-      assert.equal(store.threadSearchSelectedThreadId, 'selected');
+      assert.equal(store.threadSearchSelectedSessionKey, sessionKey('selected'));
       assert.deepEqual(
         store.threadSearchResults.map((thread) => thread.threadId),
         ['first', 'selected'],
       );
+    });
+
+    await context.test('CLI-only Claude results never silently preview a transcript', async () => {
+      const codex = createThread({
+        threadId: 'shared-id',
+        title: 'Shared Codex task',
+      });
+      const claude = createThread({
+        threadId: 'shared-id',
+        title: 'Shared Claude task',
+        provider: 'claude',
+        canPreviewTranscript: true,
+      });
+      resetStore(createSnapshot([codex, claude]));
+      store.openThreadSearch();
+      store.setThreadSearchQuery('shared claude');
+
+      await store.openSelectedThreadSearchResult();
+
+      assert.deepEqual(openedThreadIds, []);
+      assert.deepEqual(previewedThreadIds, []);
+      assert.equal(
+        store.threadSearchSelectedSessionKey,
+        sessionKey('shared-id', 'claude'),
+      );
+      assert.equal(store.threadSearchVisible, true);
     });
 
     await context.test('empty, separator-only, and unmatched Enter are no-ops', async () => {
@@ -670,11 +724,11 @@ test('global title search store contract', async (context) => {
       await store.openSelectedThreadSearchResult();
 
       assert.deepEqual(openedThreadIds, []);
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
       store.closeThreadSearch();
       assert.equal(store.threadSearchVisible, false);
       assert.equal(store.threadSearchQuery, '');
-      assert.equal(store.threadSearchSelectedThreadId, null);
+      assert.equal(store.threadSearchSelectedSessionKey, null);
     });
   } finally {
     delete globalThis.__eyesOnAgentsGlobalTitleSearchHarness;

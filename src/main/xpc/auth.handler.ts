@@ -9,6 +9,7 @@ import { sqliteWindowHelper } from '@main/windows/sqliteWindow.helper';
 import { pluginTestHandler } from './pluginTest.handler';
 import { todoWindowHandler } from './todoWindow.handler';
 import { eyesOnAgentsWindowHandler } from './eyesOnAgentsWindow.handler';
+import { submodulesWindowHandler } from './submodulesWindow.handler';
 import {
   resumeEyesOnAgentsAfterAuth,
   suspendEyesOnAgentsForAuth,
@@ -129,6 +130,9 @@ class AuthHandler extends XpcMainHandler {
     });
     await eyesOnAgentsWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy EyesOnAgents window:', err);
+    });
+    await submodulesWindowHandler._destroyForAuth().catch((err) => {
+      console.warn('[AuthHandler] Failed to destroy Submodules window:', err);
     });
     await maestroWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy Maestro window:', err);

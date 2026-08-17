@@ -271,7 +271,7 @@ export const createCodexHookEvent = (params: {
   occurredAt: number;
 }): CodexHookEventV1 => {
   if (!isEyesOnAgentsRecord(params.rawInput)) throw new Error('Hook input must be an object');
-  const parsed = parseEventIdentity(params);
+  const parsed = parseEventIdentity({ ...params, rawInput: params.rawInput });
   return {
     schemaVersion: 1,
     installationId: parsed.installationId,
@@ -289,7 +289,7 @@ export const createCodexHookEventV2 = (params: {
   captureUserPrompt: boolean;
 }): CodexHookEventV2 => {
   if (!isEyesOnAgentsRecord(params.rawInput)) throw new Error('Hook input must be an object');
-  const parsed = parseEventIdentity(params);
+  const parsed = parseEventIdentity({ ...params, rawInput: params.rawInput });
   if (parsed.payload.hookEventName !== 'UserPromptSubmit') {
     return {
       schemaVersion: 2,

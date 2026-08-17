@@ -1,0 +1,874 @@
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  opendirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import type {
+  EyesOnAgentsClaudeBridgeStatus,
+  EyesOnAgentsClaudeBridgeState
+} from '@shared/eyesOnAgents/eyesOnAgents.type';
+import {
+  CLAUDE_HOOK_HELPER_ARG,
+  CLAUDE_HOOK_INSTALLATION_ARG,
+  CLAUDE_HOOK_OUTBOX_ARG,
+  CLAUDE_HOOK_SOCKET_ARG,
+  getClaudeHookBridgeEndpoint,
+  getClaudeHookOutboxPath
+} from '@shared/eyesOnAgents/claudeHookBridge.contract';
+import { parseEyesOnAgentsUuid } from '@shared/eyesOnAgents/eyesOnAgents.contract';
+import { runClaudeCommand, type ClaudeCommandResult } from './claudeCommand.runner';
+
+const MARKETPLACE_NAME = 'bitterless-local';
+const PLUGIN_NAME = 'bitterless-observer';
+const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
+const MAX_ERROR_LENGTH = 300;
+const MAX_ARTIFACT_BYTES = 1024 * 1024;
+const MAX_ARTIFACT_FILES = 32;
+const OWNER_MARKER = '.bitterless-owner.json';
+const MAX_STATE_BYTES = 16 * 1024;
+const MAX_OWNER_MARKER_BYTES = 4 * 1024;
+const MAX_ARTIFACT_ENTRIES = 64;
+const MAX_ARTIFACT_DEPTH = 8;
+const MAX_DATE_MILLISECONDS = 8_640_000_000_000_000;
+const BRIDGE_STATE_KEYS = [
+  'schemaVersion', 'installationId', 'installed', 'artifactDigest', 'firstReceiptAt',
+  'lastReceiptAt', 'restartRequired', 'recoveryReason'
+] as const;
+
+interface BridgeState {
+  schemaVersion: 1;
+  installationId: string;
+  installed: boolean;
+  artifactDigest: string | null;
+  firstReceiptAt: number | null;
+  lastReceiptAt: number | null;
+  restartRequired: boolean;
+  recoveryReason: 'coverage_gap' | 'outbox_cleanup' | null;
+}
+
+interface Inspection {
+  configured: boolean;
+  enabled: boolean;
+  drifted: boolean;
+  marketplace: 'absent' | 'exact' | 'collision';
+  marketplaceNamespaceExclusive: boolean;
+  catalogExact: boolean;
+  pluginPresent: boolean;
+  inspectedAt: number;
+  error: string | null;
+}
+
+interface Artifact {
+  relativePath: string;
+  content: Buffer;
+  mode: number;
+}
+
+interface ClaudePluginBridgeDependencies {
+  userDataPath: string;
+  execPath: string;
+  appRootPath: string;
+  pluginVersion: string;
+  executableCandidates: string[];
+  helperSourcePath?: string;
+  platform?: NodeJS.Platform;
+  now?: () => number;
+  idFactory?: () => string;
+  runCommand?: typeof runClaudeCommand;
+  runtimeStatus: () => { listening: boolean; listeningSince: number | null };
+}
+
+const atomicWrite = (path: string, content: Buffer | string, mode: number): void => {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(temp, content, { flag: 'wx', mode });
+    renameSync(temp, path);
+    if (process.platform !== 'win32') chmodSync(path, mode);
+  } finally {
+    if (existsSync(temp)) unlinkSync(temp);
+  }
+};
+
+const boundedError = (value: unknown): string => {
+  const text = value instanceof Error ? value.message : String(value);
+  return (text.trim() || 'Claude plugin operation failed').slice(0, MAX_ERROR_LENGTH);
+};
+
+export const resolveClaudeHookRuntimeExecutable = (params: {
+  execPath: string;
+  appImagePath?: string;
+  isPackaged: boolean;
+  platform?: NodeJS.Platform;
+}): string => {
+  if ((params.platform ?? process.platform) !== 'linux' || !params.isPackaged ||
+    !params.appImagePath || !isAbsolute(params.appImagePath)) return params.execPath;
+  try {
+    const stat = lstatSync(params.appImagePath);
+    if (stat.isFile() && !stat.isSymbolicLink() && (stat.mode & 0o111) !== 0) {
+      return params.appImagePath;
+    }
+  } catch {
+    // A missing, unreadable, relative, non-regular, or non-executable APPIMAGE is untrusted.
+  }
+  return params.execPath;
+};
+
+const readBoundedRegularFile = (path: string, maxBytes: number): Buffer => {
+  const pathStat = lstatSync(path);
+  if (!pathStat.isFile() || pathStat.size > maxBytes) {
+    throw new Error('Claude plugin file is not a bounded regular file');
+  }
+  const noFollow = process.platform === 'win32' ? 0 : (constants.O_NOFOLLOW ?? 0);
+  const descriptor = openSync(path, constants.O_RDONLY | noFollow);
+  try {
+    const openedStat = fstatSync(descriptor);
+    if (!openedStat.isFile() || openedStat.size > maxBytes ||
+      openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+      throw new Error('Claude plugin file identity changed');
+    }
+    const content = Buffer.alloc(openedStat.size);
+    let offset = 0;
+    while (offset < content.length) {
+      const bytesRead = readSync(descriptor, content, offset, content.length - offset, offset);
+      if (bytesRead === 0) throw new Error('Claude plugin file ended unexpectedly');
+      offset += bytesRead;
+    }
+    const finalStat = fstatSync(descriptor);
+    if (finalStat.size !== openedStat.size || finalStat.dev !== openedStat.dev ||
+      finalStat.ino !== openedStat.ino) {
+      throw new Error('Claude plugin file changed while reading');
+    }
+    return content;
+  } finally {
+    closeSync(descriptor);
+  }
+};
+
+const parseJsonArray = (text: string, label: string): Array<Record<string, unknown>> => {
+  const value = JSON.parse(text) as unknown;
+  if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry === 'object')) {
+    throw new Error(`${label} output is invalid`);
+  }
+  return value as Array<Record<string, unknown>>;
+};
+
+const quoteSh = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
+const quotePowerShell = (value: string): string => `'${value.replace(/'/g, "''")}'`;
+const EMPTY_INSTALLATION_ID = '00000000-0000-4000-8000-000000000000';
+
+export const claudePluginVersionFromVersionCode = (value: unknown): string => {
+  if (typeof value !== 'string' || !/^\d{12}$/.test(value)) {
+    throw new Error('Bitterless version_code must match YYMMDDHHmmss');
+  }
+  return `0.${value.slice(0, 6)}.${Number(value.slice(6))}`;
+};
+
+export class ClaudePluginBridgeService {
+  private readonly platform: NodeJS.Platform;
+  private readonly now: () => number;
+  private readonly idFactory: () => string;
+  private readonly runCommand: typeof runClaudeCommand;
+  private readonly marketplaceRoot: string;
+  private readonly pluginRoot: string;
+  private readonly statePath: string;
+  private readonly helperSourcePath: string;
+  private inspection: Inspection | null = null;
+  private executable: string | null = null;
+
+  constructor(private readonly dependencies: ClaudePluginBridgeDependencies) {
+    this.platform = dependencies.platform ?? process.platform;
+    this.now = dependencies.now ?? Date.now;
+    this.idFactory = dependencies.idFactory ?? randomUUID;
+    this.runCommand = dependencies.runCommand ?? runClaudeCommand;
+    this.marketplaceRoot = join(dependencies.userDataPath, 'eyes-on-agents', 'claude-marketplace');
+    this.pluginRoot = join(this.marketplaceRoot, 'plugins', PLUGIN_NAME);
+    this.statePath = join(dependencies.userDataPath, 'eyes-on-agents', 'claude-plugin-bridge.json');
+    this.helperSourcePath = dependencies.helperSourcePath ?? join(
+      dependencies.appRootPath,
+      'out',
+      'main',
+      'claudeHookHelper.js'
+    );
+  }
+
+  ensureInstallationId(): string {
+    const inspected = this.inspectState();
+    if (inspected.kind === 'valid') return inspected.value.installationId;
+    if (inspected.kind === 'corrupt') throw new Error('Claude plugin bridge state is corrupt');
+    const created: BridgeState = {
+      schemaVersion: 1,
+      installationId: parseEyesOnAgentsUuid(this.idFactory(), 'Claude installation ID'),
+      installed: false,
+      artifactDigest: null,
+      firstReceiptAt: null,
+      lastReceiptAt: null,
+      restartRequired: false,
+      recoveryReason: null
+    };
+    this.writeState(created);
+    return created.installationId;
+  }
+
+  hasInstallationIntent(): boolean {
+    const state = this.inspectState();
+    return state.kind === 'valid' && state.value.installed;
+  }
+
+  getInstallationId(): string {
+    return this.ensureInstallationId();
+  }
+
+  acceptsInstallation(installationId: string): boolean {
+    try {
+      const state = this.readState();
+      if (!state?.installed || state.installationId !== installationId ||
+        state.recoveryReason !== null) return false;
+      return this.inspection === null || (
+        this.inspection.marketplace === 'exact' &&
+        this.inspection.pluginPresent &&
+        this.inspection.enabled &&
+        !this.inspection.drifted &&
+        this.inspection.error === null
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  getStatus(): EyesOnAgentsClaudeBridgeStatus {
+    const stateInspection = this.inspectState();
+    const state = stateInspection.kind === 'valid' ? stateInspection.value : {
+      schemaVersion: 1 as const,
+      installationId: EMPTY_INSTALLATION_ID,
+      installed: false,
+      artifactDigest: null,
+      firstReceiptAt: null,
+      lastReceiptAt: null,
+      restartRequired: false,
+      recoveryReason: null
+    };
+    const runtime = this.dependencies.runtimeStatus();
+    const inspection = this.inspection;
+    const configured = (inspection?.configured ?? false) || state.installed ||
+      stateInspection.kind === 'corrupt' || existsSync(this.marketplaceRoot);
+    const enabled = inspection?.enabled ?? false;
+    const error = inspection?.error ?? (
+      stateInspection.kind === 'corrupt'
+        ? 'Claude plugin bridge state is corrupt'
+        : state.recoveryReason === 'coverage_gap'
+          ? 'Claude hook observation lost durable coverage; Repair is required'
+          : state.recoveryReason === 'outbox_cleanup'
+            ? 'Claude hook outbox cleanup failed; Repair is required'
+          : null
+    );
+    let bridgeState: EyesOnAgentsClaudeBridgeState = 'not_installed';
+    if (error) bridgeState = 'error';
+    else if (inspection?.drifted) bridgeState = 'drifted';
+    else if (configured && enabled && runtime.listening && !state.restartRequired &&
+      state.firstReceiptAt !== null) {
+      bridgeState = 'observing';
+    } else if (configured && enabled && runtime.listening && !state.restartRequired) {
+      bridgeState = 'needs_review';
+    } else if (configured && !enabled) bridgeState = 'needs_review';
+    else if (configured) bridgeState = 'installed';
+    return {
+      state: bridgeState,
+      configured,
+      enabled,
+      listening: runtime.listening,
+      listeningSince: runtime.listeningSince === null
+        ? null
+        : new Date(runtime.listeningSince).toISOString(),
+      firstReceiptAt: state.firstReceiptAt === null ? null : new Date(state.firstReceiptAt).toISOString(),
+      lastReceiptAt: state.lastReceiptAt === null ? null : new Date(state.lastReceiptAt).toISOString(),
+      lastInspectedAt: inspection === null ? null : new Date(inspection.inspectedAt).toISOString(),
+      observationProof: state.installed && state.firstReceiptAt !== null &&
+        !state.restartRequired && state.recoveryReason === null
+        ? 'receipt'
+        : 'none',
+      restartRequired: state.restartRequired,
+      error
+    };
+  }
+
+  async refresh(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+    try {
+      const stateInspection = this.inspectState();
+      const installationId = stateInspection.kind === 'valid'
+        ? stateInspection.value.installationId
+        : EMPTY_INSTALLATION_ID;
+      const artifacts = this.expectedArtifacts(installationId);
+      const digest = this.digestArtifacts(artifacts);
+      const executable = await this.resolveExecutable();
+      const [pluginsResult, marketplacesResult] = await Promise.all([
+        this.command(executable, ['plugin', 'list', '--json']),
+        this.command(executable, ['plugin', 'marketplace', 'list', '--json'])
+      ]);
+      const plugins = parseJsonArray(pluginsResult.stdout, 'Claude plugin list');
+      const marketplaces = parseJsonArray(marketplacesResult.stdout, 'Claude marketplace list');
+      const plugin = plugins.find((entry) => entry.id === PLUGIN_ID && entry.scope === 'user');
+      const marketplacePlugins = plugins.filter((entry) => {
+        const id = typeof entry.id === 'string' ? entry.id : null;
+        return id?.endsWith(`@${MARKETPLACE_NAME}`) === true ||
+          entry.marketplace === MARKETPLACE_NAME;
+      });
+      const marketplaceNamespaceExclusive = marketplacePlugins.length <= 1 &&
+        marketplacePlugins.every((entry) => entry.id === PLUGIN_ID && entry.scope === 'user');
+      const state = stateInspection.kind === 'valid' ? stateInspection.value : null;
+      const marketplaceEntries = marketplaces.filter((entry) => entry.name === MARKETPLACE_NAME);
+      const marketplaceExact = marketplaceEntries.length === 1 &&
+        this.marketplaceEntryMatches(marketplaceEntries[0]);
+      const marketplace = marketplaceEntries.length === 0
+        ? 'absent'
+        : marketplaceExact ? 'exact' : 'collision';
+      const pluginPresent = plugin !== undefined;
+      const pluginVersionExact = plugin?.version === this.dependencies.pluginVersion;
+      const configured = marketplace === 'exact' || pluginPresent || state?.installed === true;
+      const enabled = pluginPresent && plugin?.enabled === true;
+      const artifactExact = this.artifactsExact(artifacts);
+      const catalogArtifact = artifacts.find(
+        (artifact) => artifact.relativePath === '.claude-plugin/marketplace.json'
+      );
+      const catalogExact = marketplace === 'exact' && catalogArtifact !== undefined &&
+        this.artifactExact(catalogArtifact);
+      const drifted = marketplace === 'collision' || pluginPresent && marketplace !== 'exact' ||
+        pluginPresent && !pluginVersionExact ||
+        configured && (!artifactExact || state?.artifactDigest !== digest);
+      this.inspection = {
+        configured, enabled, drifted, marketplace, marketplaceNamespaceExclusive,
+        catalogExact, pluginPresent,
+        inspectedAt: this.now(), error: null
+      };
+    } catch (error) {
+      const state = this.inspectState();
+      const installed = state.kind === 'valid' && state.value.installed;
+      this.inspection = {
+        configured: installed || existsSync(this.marketplaceRoot),
+        enabled: false,
+        drifted: false,
+        marketplace: 'absent',
+        marketplaceNamespaceExclusive: false,
+        catalogExact: false,
+        pluginPresent: false,
+        inspectedAt: this.now(),
+        error: boundedError(error)
+      };
+    }
+    return this.getStatus();
+  }
+
+  async install(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+    const previous = this.readState();
+    const executable = await this.resolveExecutable();
+    await this.refresh();
+    if (this.inspection?.error) throw new Error(this.inspection.error);
+    this.assertSafeInstallOwnership(previous);
+    try {
+      // The Main listener is already stopped by the lifecycle coordinator. Clear every older
+      // generation before the new wrapper can be installed or enabled, so an event emitted by the
+      // newly enabled plugin can never be deleted by Repair itself.
+      rmSync(getClaudeHookOutboxPath(this.dependencies.userDataPath), {
+        recursive: true,
+        force: true
+      });
+    } catch (error) {
+      if (previous) {
+        this.writeState({
+          ...previous,
+          firstReceiptAt: null,
+          lastReceiptAt: null,
+          restartRequired: true,
+          recoveryReason: 'outbox_cleanup'
+        });
+      }
+      throw error;
+    }
+    const installationId = parseEyesOnAgentsUuid(this.idFactory(), 'Claude installation ID');
+    this.writeState({
+      schemaVersion: 1,
+      installationId,
+      installed: previous?.installed ?? false,
+      artifactDigest: null,
+      firstReceiptAt: null,
+      lastReceiptAt: null,
+      restartRequired: true,
+      recoveryReason: previous?.recoveryReason ?? null
+    });
+    const artifacts = this.expectedArtifacts(installationId);
+    this.writeArtifacts(artifacts);
+    await this.refresh();
+    if (this.inspection?.error) throw new Error(this.inspection.error);
+    this.assertSafeInstallOwnership(previous);
+    const pluginPresent = this.inspection?.pluginPresent === true;
+    if (this.inspection?.marketplace === 'exact') {
+      await this.command(executable, ['plugin', 'marketplace', 'update', MARKETPLACE_NAME]);
+    } else {
+      await this.command(executable, [
+        'plugin', 'marketplace', 'add', this.marketplaceRoot, '--scope', 'user'
+      ]);
+    }
+    if (!pluginPresent) {
+      await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
+    } else {
+      // Claude may keep a same-version plugin cache even when the local marketplace files changed.
+      // Repair rotates the installation ID, so force an exact user-scoped reinstall before admitting
+      // the new generation instead of trusting a same-version update no-op.
+      await this.command(executable, [
+        'plugin', 'uninstall', PLUGIN_ID, '--scope', 'user', '-y'
+      ]);
+      await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
+    }
+    await this.command(executable, ['plugin', 'enable', PLUGIN_ID, '--scope', 'user']);
+    this.writeState({
+      schemaVersion: 1,
+      installationId,
+      installed: true,
+      artifactDigest: this.digestArtifacts(artifacts),
+      firstReceiptAt: null,
+      lastReceiptAt: null,
+      restartRequired: true,
+      recoveryReason: previous?.recoveryReason ?? null
+    });
+    await this.refresh();
+    if (this.inspection?.error || this.inspection?.marketplace !== 'exact' ||
+      !this.inspection.pluginPresent || !this.inspection.enabled || this.inspection.drifted ||
+      !this.inspection.marketplaceNamespaceExclusive || !this.inspection.catalogExact) {
+      throw new Error(this.inspection?.error ?? 'Claude plugin version or installation is not exact');
+    }
+    const installedState = this.readState();
+    if (installedState?.installationId === installationId &&
+      installedState.recoveryReason !== null) {
+      this.writeState({ ...installedState, recoveryReason: null });
+    }
+    return this.getStatus();
+  }
+
+  async remove(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+    const previous = this.readState();
+    const executable = await this.resolveExecutable();
+    await this.refresh();
+    if (this.inspection?.error) throw new Error(this.inspection.error);
+    if (this.inspection?.marketplace === 'collision' ||
+      this.inspection?.pluginPresent && this.inspection.marketplace !== 'exact') {
+      throw new Error('The Bitterless Claude plugin ownership could not be proven');
+    }
+    if (this.inspection?.marketplace === 'exact' &&
+      (!this.inspection.marketplaceNamespaceExclusive || !this.inspection.catalogExact)) {
+      throw new Error('The Bitterless Claude marketplace contains unowned or drifted entries; manual cleanup is required');
+    }
+    if (this.inspection?.pluginPresent && this.inspection.marketplace === 'exact') {
+      await this.command(executable, ['plugin', 'uninstall', PLUGIN_ID, '--scope', 'user', '-y']);
+    }
+    if (this.inspection?.marketplace === 'exact') {
+      await this.refresh();
+      if (this.inspection?.error || this.inspection?.marketplace !== 'exact' ||
+        this.inspection.pluginPresent || !this.inspection.marketplaceNamespaceExclusive ||
+        !this.inspection.catalogExact) {
+        throw new Error(this.inspection?.error ??
+          'The Bitterless Claude marketplace changed during removal; manual cleanup is required');
+      }
+      await this.command(executable, [
+        'plugin', 'marketplace', 'remove', MARKETPLACE_NAME, '--scope', 'user'
+      ]);
+    }
+    if (this.isOwnedArtifactRoot()) {
+      rmSync(this.marketplaceRoot, { recursive: true, force: true });
+    }
+    rmSync(getClaudeHookOutboxPath(this.dependencies.userDataPath), {
+      recursive: true,
+      force: true
+    });
+    this.writeState({
+      schemaVersion: 1,
+      installationId: previous?.installed === false
+        ? previous.installationId
+        : parseEyesOnAgentsUuid(this.idFactory(), 'Claude installation ID'),
+      installed: false,
+      artifactDigest: null,
+      firstReceiptAt: null,
+      lastReceiptAt: null,
+      restartRequired: false,
+      recoveryReason: null
+    });
+    this.inspection = {
+      configured: false,
+      enabled: false,
+      drifted: false,
+      marketplace: 'absent',
+      marketplaceNamespaceExclusive: true,
+      catalogExact: false,
+      pluginPresent: false,
+      inspectedAt: this.now(),
+      error: null
+    };
+    return this.getStatus();
+  }
+
+  recordLiveReceipt(installationId: string, committedAt: number): void {
+    const state = this.readState();
+    if (!state?.installed || state.installationId !== installationId ||
+      state.recoveryReason !== null) return;
+    this.writeState({
+      ...state,
+      firstReceiptAt: state.firstReceiptAt ?? committedAt,
+      lastReceiptAt: Math.max(state.lastReceiptAt ?? 0, committedAt),
+      restartRequired: false
+    });
+  }
+
+  revokeObservationProof(reason: 'coverage_gap' | null = null): void {
+    const state = this.readState();
+    if (!state?.installed) return;
+    this.writeState({
+      ...state,
+      firstReceiptAt: null,
+      lastReceiptAt: null,
+      restartRequired: true,
+      recoveryReason: reason ?? state.recoveryReason
+    });
+  }
+
+  private readState(): BridgeState | null {
+    const state = this.inspectState();
+    return state.kind === 'valid' ? state.value : null;
+  }
+
+  private inspectState():
+    | { kind: 'missing' }
+    | { kind: 'corrupt' }
+    | { kind: 'valid'; value: BridgeState } {
+    if (!existsSync(this.statePath)) return { kind: 'missing' };
+    try {
+      const parsed = JSON.parse(
+        readBoundedRegularFile(this.statePath, MAX_STATE_BYTES).toString('utf8')
+      ) as unknown;
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { kind: 'corrupt' };
+      }
+      const value = parsed as Record<string, unknown>;
+      if (Object.keys(value).sort().join(',') !== [...BRIDGE_STATE_KEYS].sort().join(',') ||
+        value.schemaVersion !== 1 || typeof value.installed !== 'boolean' ||
+        typeof value.restartRequired !== 'boolean') return { kind: 'corrupt' };
+      const timestamp = (input: unknown): number | null => {
+        if (input === null) return null;
+        if (!Number.isSafeInteger(input) || (input as number) < 0 ||
+          (input as number) > MAX_DATE_MILLISECONDS) throw new Error('invalid timestamp');
+        return input as number;
+      };
+      const recoveryReason = value.recoveryReason === null
+        ? null
+        : value.recoveryReason === 'coverage_gap' || value.recoveryReason === 'outbox_cleanup'
+          ? value.recoveryReason
+          : null;
+      if (value.recoveryReason !== null && recoveryReason === null) throw new Error('invalid recovery reason');
+      const artifactDigest = value.artifactDigest === null
+        ? null
+        : typeof value.artifactDigest === 'string' && /^[0-9a-f]{64}$/.test(value.artifactDigest)
+          ? value.artifactDigest
+          : null;
+      if (value.artifactDigest !== null && artifactDigest === null) {
+        throw new Error('invalid artifact digest');
+      }
+      const firstReceiptAt = timestamp(value.firstReceiptAt);
+      const lastReceiptAt = timestamp(value.lastReceiptAt);
+      if ((firstReceiptAt === null) !== (lastReceiptAt === null) ||
+        firstReceiptAt !== null && lastReceiptAt !== null && firstReceiptAt > lastReceiptAt) {
+        throw new Error('invalid receipt timestamp range');
+      }
+      if (value.installed === false && firstReceiptAt !== null) {
+        throw new Error('disabled bridge state cannot carry receipt proof');
+      }
+      return {
+        kind: 'valid',
+        value: {
+          schemaVersion: 1,
+          installationId: parseEyesOnAgentsUuid(value.installationId, 'Claude installation ID'),
+          installed: value.installed as boolean,
+          artifactDigest,
+          firstReceiptAt,
+          lastReceiptAt,
+          restartRequired: value.restartRequired as boolean,
+          recoveryReason
+        }
+      };
+    } catch {
+      return { kind: 'corrupt' };
+    }
+  }
+
+  private writeState(state: BridgeState): void {
+    atomicWrite(this.statePath, `${JSON.stringify(state, null, 2)}\n`, 0o600);
+  }
+
+  private expectedArtifacts(installationId: string): Artifact[] {
+    const endpoint = getClaudeHookBridgeEndpoint(this.dependencies.userDataPath, this.platform);
+    const outbox = getClaudeHookOutboxPath(this.dependencies.userDataPath, installationId);
+    const helperTarget = join(this.pluginRoot, 'scripts', 'claudeHookHelper.js');
+    const wrapperRelative = this.platform === 'win32' ? 'scripts/observe.ps1' : 'scripts/observe.sh';
+    const command = this.platform === 'win32'
+      ? {
+          type: 'command', command: 'powershell.exe',
+          args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+            '${CLAUDE_PLUGIN_ROOT}/scripts/observe.ps1'], timeout: 2
+        }
+      : { type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/scripts/observe.sh', args: [], timeout: 2 };
+    const hooks = Object.fromEntries([
+      'SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop', 'StopFailure', 'SessionEnd'
+    ].map((event) => [event, [{ hooks: [command] }]]));
+    const wrapper = this.platform === 'win32'
+      ? [
+          "$env:ELECTRON_RUN_AS_NODE = '1'",
+          'try {',
+          `  & ${quotePowerShell(this.dependencies.execPath)} (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/claudeHookHelper.js') ${quotePowerShell(CLAUDE_HOOK_HELPER_ARG)} ${quotePowerShell(CLAUDE_HOOK_SOCKET_ARG)} ${quotePowerShell(endpoint.path)} ${quotePowerShell(CLAUDE_HOOK_INSTALLATION_ARG)} ${quotePowerShell(installationId)} ${quotePowerShell(CLAUDE_HOOK_OUTBOX_ARG)} ${quotePowerShell(outbox)} *> $null`,
+          '} catch {}',
+          'exit 0',
+          ''
+        ].join('\r\n')
+      : [
+          '#!/bin/sh',
+          `ELECTRON_RUN_AS_NODE=1 ${quoteSh(this.dependencies.execPath)} "\${CLAUDE_PLUGIN_ROOT}/scripts/claudeHookHelper.js" ${quoteSh(CLAUDE_HOOK_HELPER_ARG)} ${quoteSh(CLAUDE_HOOK_SOCKET_ARG)} ${quoteSh(endpoint.path)} ${quoteSh(CLAUDE_HOOK_INSTALLATION_ARG)} ${quoteSh(installationId)} ${quoteSh(CLAUDE_HOOK_OUTBOX_ARG)} ${quoteSh(outbox)} >/dev/null 2>&1 || exit 0`,
+          'exit 0',
+          ''
+        ].join('\n');
+    const base: Artifact[] = [
+      {
+        relativePath: OWNER_MARKER, mode: 0o600,
+        content: Buffer.from(`${JSON.stringify({ owner: 'Bitterless', plugin: PLUGIN_ID }, null, 2)}\n`)
+      },
+      {
+        relativePath: '.claude-plugin/marketplace.json', mode: 0o600,
+        content: Buffer.from(`${JSON.stringify({
+          name: MARKETPLACE_NAME,
+          description: 'Bitterless local lifecycle observation plugins',
+          owner: { name: 'Bitterless' },
+          plugins: [{
+            name: PLUGIN_NAME,
+            source: `./plugins/${PLUGIN_NAME}`,
+            description: 'Content-free local Claude lifecycle observation for Bitterless'
+          }]
+        }, null, 2)}\n`)
+      },
+      {
+        relativePath: `plugins/${PLUGIN_NAME}/.claude-plugin/plugin.json`, mode: 0o600,
+        content: Buffer.from(`${JSON.stringify({
+          name: PLUGIN_NAME,
+          version: this.dependencies.pluginVersion,
+          author: { name: 'Bitterless' },
+          description: 'Content-free local Claude lifecycle observation for Bitterless'
+        }, null, 2)}\n`)
+      },
+      {
+        relativePath: `plugins/${PLUGIN_NAME}/hooks/hooks.json`, mode: 0o600,
+        content: Buffer.from(`${JSON.stringify({ hooks }, null, 2)}\n`)
+      },
+      { relativePath: `plugins/${PLUGIN_NAME}/${wrapperRelative}`, mode: 0o700, content: Buffer.from(wrapper) }
+    ];
+    const helperFiles = this.collectHelperFiles().map((file) => ({
+      ...file,
+      relativePath: `plugins/${PLUGIN_NAME}/scripts/${file.relativePath}`,
+      mode: 0o600
+    }));
+    if (!helperFiles.some((file) => resolve(this.marketplaceRoot, file.relativePath) === helperTarget)) {
+      throw new Error('Claude hook helper entry is missing');
+    }
+    return [...base, ...helperFiles];
+  }
+
+  private collectHelperFiles(): Array<Pick<Artifact, 'relativePath' | 'content'>> {
+    const sourceRoot = dirname(this.helperSourcePath);
+    const queue = [this.helperSourcePath];
+    const visited = new Set<string>();
+    const files: Array<Pick<Artifact, 'relativePath' | 'content'>> = [];
+    let bytes = 0;
+    while (queue.length > 0) {
+      const path = resolve(queue.shift() as string);
+      if (visited.has(path)) continue;
+      visited.add(path);
+      const relativePath = relative(sourceRoot, path);
+      if (!relativePath || relativePath.startsWith('..')) {
+        throw new Error('Claude hook helper dependency escaped its build directory');
+      }
+      const content = readFileSync(path);
+      bytes += content.length;
+      if (files.length >= MAX_ARTIFACT_FILES || bytes > MAX_ARTIFACT_BYTES) {
+        throw new Error('Claude hook helper artifact exceeds its limit');
+      }
+      files.push({ relativePath, content });
+      const text = content.toString('utf8');
+      for (const match of text.matchAll(/require\(["'](\.[^"']+)["']\)/g)) {
+        let dependency = resolve(dirname(path), match[1]);
+        if (!existsSync(dependency) && existsSync(`${dependency}.js`)) dependency = `${dependency}.js`;
+        if (existsSync(dependency)) queue.push(dependency);
+      }
+    }
+    return files;
+  }
+
+  private writeArtifacts(artifacts: Artifact[]): void {
+    if (existsSync(this.marketplaceRoot) && !this.isOwnedArtifactRoot()) {
+      throw new Error('Claude plugin artifact directory is not owned by Bitterless');
+    }
+    if (this.isOwnedArtifactRoot()) rmSync(this.marketplaceRoot, { recursive: true, force: true });
+    for (const artifact of artifacts) {
+      atomicWrite(resolve(this.marketplaceRoot, artifact.relativePath), artifact.content, artifact.mode);
+    }
+  }
+
+  private artifactsExact(artifacts: Artifact[]): boolean {
+    try {
+      if (!this.isOwnedArtifactRoot()) return false;
+      const expected = new Set(artifacts.map((artifact) => artifact.relativePath));
+      const actual: string[] = [];
+      let entryCount = 0;
+      const visit = (directory: string, depth: number): void => {
+        if (depth > MAX_ARTIFACT_DEPTH) throw new Error('Claude plugin artifact tree is too deep');
+        const handle = opendirSync(directory);
+        try {
+          let entry = handle.readSync();
+          while (entry !== null) {
+            entryCount += 1;
+            if (entryCount > MAX_ARTIFACT_ENTRIES) {
+              throw new Error('Claude plugin artifact tree has too many entries');
+            }
+            const path = join(directory, entry.name);
+            if (entry.isDirectory()) visit(path, depth + 1);
+            else if (entry.isFile()) actual.push(relative(this.marketplaceRoot, path));
+            else throw new Error('Claude plugin artifact contains an unsupported entry');
+            entry = handle.readSync();
+          }
+        } finally {
+          handle.closeSync();
+        }
+      };
+      visit(this.marketplaceRoot, 0);
+      if (actual.length !== expected.size || actual.some((path) => !expected.has(path))) return false;
+      return artifacts.every((artifact) => {
+        const path = resolve(this.marketplaceRoot, artifact.relativePath);
+        const stat = lstatSync(path);
+        return stat.isFile() &&
+          (this.platform === 'win32' || (stat.mode & 0o777) === artifact.mode) &&
+          stat.size === artifact.content.length &&
+          readBoundedRegularFile(path, artifact.content.length).equals(artifact.content);
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  private assertSafeInstallOwnership(previous: BridgeState | null): void {
+    if (this.inspection?.marketplace === 'collision') {
+      throw new Error('The Bitterless Claude marketplace name is owned by another source');
+    }
+    if (this.inspection?.marketplaceNamespaceExclusive === false) {
+      throw new Error('The Bitterless Claude marketplace namespace contains another plugin or scope');
+    }
+    const strongPriorOwnership = previous?.installed === true && this.isOwnedArtifactRoot();
+    if (this.inspection?.pluginPresent && this.inspection.marketplace !== 'exact' &&
+      !strongPriorOwnership) {
+      throw new Error('The existing Claude plugin ownership could not be proven');
+    }
+    if (existsSync(this.marketplaceRoot) && !this.isOwnedArtifactRoot()) {
+      throw new Error('Claude plugin artifact directory is not owned by Bitterless');
+    }
+  }
+
+  private artifactExact(artifact: Artifact): boolean {
+    try {
+      if (!this.isOwnedArtifactRoot()) return false;
+      const path = resolve(this.marketplaceRoot, artifact.relativePath);
+      const stat = lstatSync(path);
+      return stat.isFile() &&
+        (this.platform === 'win32' || (stat.mode & 0o777) === artifact.mode) &&
+        stat.size === artifact.content.length &&
+        readBoundedRegularFile(path, artifact.content.length).equals(artifact.content);
+    } catch {
+      return false;
+    }
+  }
+
+  private isOwnedArtifactRoot(): boolean {
+    try {
+      const value = JSON.parse(readBoundedRegularFile(
+        join(this.marketplaceRoot, OWNER_MARKER),
+        MAX_OWNER_MARKER_BYTES
+      ).toString('utf8')) as {
+        owner?: unknown; plugin?: unknown;
+      };
+      return value.owner === 'Bitterless' && value.plugin === PLUGIN_ID;
+    } catch {
+      return false;
+    }
+  }
+
+  private digestArtifacts(artifacts: Artifact[]): string {
+    const hash = createHash('sha256');
+    for (const artifact of artifacts) {
+      hash.update(artifact.relativePath).update(String(artifact.mode)).update(artifact.content);
+    }
+    return hash.digest('hex');
+  }
+
+  private marketplaceEntryMatches(entry: Record<string, unknown>): boolean {
+    const source = entry.source !== null && typeof entry.source === 'object'
+      ? entry.source as Record<string, unknown>
+      : null;
+    const sourceKind = typeof entry.source === 'string' ? entry.source
+      : typeof source?.source === 'string' ? source.source
+        : typeof source?.type === 'string' ? source.type
+          : null;
+    const sourcePath = typeof entry.path === 'string' ? entry.path
+      : typeof entry.sourcePath === 'string' ? entry.sourcePath
+        : typeof source?.path === 'string' ? source.path
+          : (sourceKind === 'directory' || sourceKind === 'local') && typeof entry.repo === 'string'
+            ? entry.repo
+            : null;
+    if (sourceKind !== null && !['directory', 'local'].includes(sourceKind)) return false;
+    if (sourcePath === null) return false;
+    try {
+      return realpathSync.native(sourcePath) === realpathSync.native(this.marketplaceRoot);
+    } catch {
+      return resolve(sourcePath) === resolve(this.marketplaceRoot);
+    }
+  }
+
+  private async resolveExecutable(): Promise<string> {
+    if (this.executable) return this.executable;
+    for (const candidate of this.dependencies.executableCandidates) {
+      try {
+        const result = await this.command(candidate, ['plugin', '--help']);
+        if (result.exitCode === 0 && result.stdout.includes('marketplace')) {
+          this.executable = candidate;
+          return candidate;
+        }
+      } catch {
+        // Probe the next allowlisted Claude installation.
+      }
+    }
+    throw new Error('A Claude executable with plugin support was not found');
+  }
+
+  private async command(executable: string, args: string[]): Promise<ClaudeCommandResult> {
+    const result = await this.runCommand(executable, args, {
+      timeoutMs: 30_000,
+      maxOutputBytes: 1024 * 1024
+    });
+    if (result.exitCode !== 0) throw new Error(`Claude plugin command failed (${result.exitCode})`);
+    return result;
+  }
+}

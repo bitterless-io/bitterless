@@ -1,5 +1,9 @@
 # EyesOnAgents Delivery Analysis
 
+> Historical Codex delivery analysis through task 035. The additive provider/Claude architecture
+> begins with [EyesOnAgents Claude Delivery Analysis](eyes-on-agents-claude.md); its provider-scope
+> decisions supersede the Codex-only rows below without changing their delivered Codex behavior.
+
 ## Goal decomposition
 
 Delivery is complete when Ral can open a standalone EyesOnAgents Mini App, connect a persistent

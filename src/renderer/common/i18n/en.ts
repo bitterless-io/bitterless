@@ -283,7 +283,11 @@ export const en = {
     },
     eyesOnAgents: {
       name: 'EyesOnAgents',
-      subtitle: 'Observe active Codex tasks and organize them by Domain'
+      subtitle: 'Observe local Codex and Claude tasks and organize them by Domain'
+    },
+    submodules: {
+      name: 'Submodules',
+      subtitle: 'Watch the current branch of every Git submodule in one directory'
     },
     translator: {
       name: 'Translator',
@@ -363,6 +367,10 @@ export const en = {
   },
   eyesOnAgents: {
     title: 'EyesOnAgents',
+    provider: {
+      codex: 'Codex',
+      claude: 'Claude'
+    },
     completionNotification: {
       title: 'Thread finished',
       body: '《{title}》'
@@ -374,7 +382,7 @@ export const en = {
       syncing: 'Syncing',
       disconnected: 'Disconnected',
       error: 'Connection error',
-      title: 'Codex connections',
+      title: 'Agent connections',
       managedTitle: 'Managed App Server',
       managedDescription:
         'Connect controls only Bitterless thread inventory and this local Codex App Server process.',
@@ -446,6 +454,84 @@ export const en = {
       checkAgain: 'Check again',
       disable: 'Disable'
     },
+    claudeBridge: {
+      eyebrow: 'Claude observation',
+      title: 'Local Claude observation',
+      provider: 'Claude support',
+      off: 'Off',
+      paused: 'Claude support is paused. Codex monitoring continues unchanged.',
+      pausedError: 'Claude support is paused: {error}',
+      description:
+        'Local metadata supplies inventory and archive state. Accurate lifecycle updates require the Bitterless Claude plugin.',
+      notInstalled: 'Not installed',
+      installed: 'Awaiting activity',
+      observing: 'Observing',
+      needsReview: 'Needs review',
+      drifted: 'Needs repair',
+      error: 'Status unavailable',
+      plugin: 'Plugin',
+      notConfigured: 'Not configured',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      listener: 'Listener',
+      listenerActive: 'Active',
+      listenerPaused: 'Paused',
+      listeningSince: 'Listening since',
+      observationProof: 'Hook status',
+      proofConfirmed: 'Confirmed by event',
+      proofPrevious: 'Previously received an event',
+      proofNeedsReview: 'Review may be required',
+      proofAwaiting: 'Awaiting first event',
+      firstReceipt: 'First received event',
+      lastReceipt: 'Last received event',
+      lastInspected: 'Last checked',
+      never: 'Never',
+      restartRequired:
+        'The plugin is installed. Reload plugins or reopen the Claude session before checking observation.',
+      reviewRequired:
+        'Claude has not delivered an event. Review the Bitterless hooks and workspace trust in Claude.',
+      guideTitle: 'Claude observation setup',
+      guideInstallTitle: 'Enable or repair',
+      guideInstallDescription:
+        'Enable installs only the Bitterless-owned user plugin. Repair restores that plugin when its status has drifted.',
+      guideReloadTitle: 'Reload the session',
+      guideReloadDescription:
+        'Existing Claude sessions do not automatically load a newly installed plugin. Reload plugins or open a fresh Claude Code or Desktop Code session.',
+      guideReloadCli: 'In a Claude session: /reload-plugins',
+      guideInspectTitle: 'Inspect hooks and trust',
+      guideInspectDescription:
+        'In Claude Code or Desktop Code, inspect the Bitterless lifecycle hooks and confirm they are enabled for this workspace.',
+      guideInspectCli: 'In a Claude session: /hooks',
+      guideVerifyTitle: 'Verify one lifecycle event',
+      guideVerifyDescription:
+        'Start or finish one response, then select Check status. A committed event is the only proof that observation is active.',
+      guideBoundary:
+        'Hooks send lifecycle metadata only. Prompts, replies, reasoning, tools, attachments, and transcript content are never collected. Archive state comes from Claude Desktop metadata, not Hooks.',
+      enable: 'Enable observation',
+      repair: 'Repair',
+      checkStatus: 'Check status',
+      removePlugin: 'Remove plugin'
+    },
+    claudeDirectory: {
+      title: 'Session directories',
+      pathLabel: 'Claude config directory',
+      automatic: 'Automatic',
+      custom: 'Custom',
+      starting: 'Starting',
+      watching: 'Watching',
+      waiting: 'Waiting for Claude data',
+      degraded: 'Partially available',
+      retrying: 'Retrying',
+      error: 'Configuration error',
+      stopped: 'Stopped',
+      unavailable: 'Directory unavailable',
+      desktopDirectories: 'Desktop metadata directories: {count}',
+      lastSuccessfulScan: 'Last successful scan: {time}',
+      nextRetry: 'Next retry: {time}',
+      change: 'Change',
+      useAutomatic: 'Use automatic',
+      retry: 'Retry'
+    },
     actions: {
       sync: 'Sync',
       refresh: 'Refresh',
@@ -456,6 +542,8 @@ export const en = {
       maximize: 'Maximize or restore',
       close: 'Close EyesOnAgents',
       open: 'Open',
+      claudeDesktopOpenUnavailable: 'No matching Claude Desktop session',
+      previewTranscript: 'Preview transcript',
       more: 'More actions',
       moveTo: 'Move to Domain',
       delete: 'Delete',
@@ -485,8 +573,8 @@ export const en = {
       emptyProject: 'No threads match this Project',
       emptyNoProject: 'No threads without a Project',
       emptyTitleSearch: 'No thread titles match this search',
-      emptyTitle: 'No Codex threads yet',
-      emptyBody: 'Connect the managed App Server, then sync your local Codex threads.',
+      emptyTitle: 'No agent tasks yet',
+      emptyBody: 'Connect Codex or refresh local Claude sessions to start monitoring.',
       loading: 'Loading observation board',
       addDomain: 'Add Domain',
       domainPlaceholder: 'Domain name',
@@ -496,12 +584,14 @@ export const en = {
       options: 'Domain options',
       deleteTitle: 'Delete Domain',
       deleteBody:
-        'Threads in this Domain will remain available in All. Codex tasks will not be deleted.',
+        'Threads in this Domain will remain available in All. Agent tasks will not be deleted.',
       duplicate: 'A Domain with this name already exists.',
       required: 'Enter a Domain name.'
     },
     thread: {
-      untitled: 'Untitled Codex task',
+      untitled: 'Untitled agent task',
+      untitledCodex: 'Untitled Codex task',
+      untitledClaude: 'Untitled Claude task',
       new: 'Unread',
       workingDirectory: 'Working directory: {path}',
       source: 'Evidence: {source}',
@@ -526,7 +616,8 @@ export const en = {
     errors: {
       load: 'The observation board could not be loaded.',
       action: 'The action could not be completed.',
-      open: 'Codex could not open this task.'
+      open: 'The agent app could not open this task.',
+      preview: 'The Claude transcript could not be previewed.'
     }
   },
   coin: enCoin,
@@ -641,6 +732,52 @@ export const en = {
     syncPermanentFailures: 'Permanent failures',
     syncRetry: 'Retry',
     syncDiscard: 'Discard'
+  },
+  submodules: {
+    title: 'Submodules',
+    count: '{count} submodules',
+    actions: {
+      openFolder: 'Open folder',
+      refresh: 'Refresh',
+      openInWebStorm: 'WebStorm',
+      dismiss: 'Dismiss',
+      minimize: 'Minimize',
+      maximize: 'Maximize',
+      close: 'Close'
+    },
+    watch: {
+      live: 'Live',
+      paused: 'Paused'
+    },
+    branch: {
+      detached: 'Detached HEAD',
+      uninitialized: 'Not initialized',
+      missing: 'Path missing',
+      unknown: 'Unknown',
+      configured: '.gitmodules pins {branch}',
+      mismatch: 'differs from .gitmodules'
+    },
+    empty: {
+      loading: 'Reading submodules…',
+      title: 'No directory selected',
+      body:
+        'Choose a directory whose .gitmodules declares Git submodules. Bitterless remembers the ' +
+        'directory and keeps every branch up to date while you work.',
+      noSubmodules: 'This directory declares no submodules.'
+    },
+    error: {
+      rootMissing: 'The saved directory no longer exists.',
+      rootNotADirectory: 'The saved path is not a directory.',
+      gitmodulesMissing: 'This directory has no .gitmodules file.',
+      gitmodulesUnreadable: 'The .gitmodules file could not be read.',
+      scanFailed: 'The submodules could not be read.',
+      gitdirUnreadable: 'Git directory unreadable',
+      headUnreadable: 'HEAD unreadable',
+      headMalformed: 'HEAD malformed',
+      chooseFailed: 'The directory could not be opened.',
+      openPathMissing: 'That submodule directory no longer exists.',
+      ideNotFound: 'WebStorm could not be launched on this machine.'
+    }
   },
   common: {
     confirm: 'Confirm',

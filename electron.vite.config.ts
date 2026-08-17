@@ -129,6 +129,18 @@ const mottoDevCspPlugin = {
   }
 };
 
+const submodulesDevCspPlugin = {
+  name: 'bitterless:submodules-dev-csp',
+  apply: 'serve' as const,
+  transformIndexHtml(html: string, context: { path: string }) {
+    if (!context.path.includes('/submodules/')) return html;
+    return html.replace(
+      "connect-src 'none'",
+      "connect-src 'self' ws://localhost:* wss://localhost:*"
+    );
+  }
+};
+
 const onlyPreviewDevCspPlugin = {
   name: 'bitterless:onlypreview-dev-csp',
   apply: 'serve' as const,
@@ -384,6 +396,8 @@ export default defineConfig({
         input: {
           'app.main': resolve('src/main/app.main.ts'),
           codexHookHelper: resolve('src/main/eyesOnAgents/codexHookHelper.main.ts'),
+          claudeHookHelper: resolve('src/main/eyesOnAgents/claudeHookHelper.main.ts'),
+          claudeDirectoryWatcher: resolve('src/main/eyesOnAgents/claudeDirectoryWatcher.main.ts'),
           mcpHelper: resolve('src/main/mcp/mcpHelper.main.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp']
@@ -423,6 +437,7 @@ export default defineConfig({
           eyesOnAgents: resolve('src/preload/eyesOnAgents/eyesOnAgents.preload.ts'),
           translator: resolve('src/preload/translator/translator.preload.ts'),
           motto: resolve('src/preload/motto/motto.preload.ts'),
+          submodules: resolve('src/preload/submodules/submodules.preload.ts'),
           onlypreview: resolve('src/preload/onlypreview/onlypreview.preload.ts'),
           onlypreviewContent: resolve('src/preload/onlypreview/onlypreviewContent.preload.ts'),
           fileSearch: resolve('src/preload/fileSearch/fileSearch.preload.ts'),
@@ -467,6 +482,7 @@ export default defineConfig({
           eyesOnAgents: resolve('src/renderer/eyesOnAgents/index.html'),
           translator: resolve('src/renderer/translator/index.html'),
           motto: resolve('src/renderer/motto/index.html'),
+          submodules: resolve('src/renderer/submodules/index.html'),
           'onlypreview/shell': resolve('src/renderer/onlypreview/shell/index.html'),
           'onlypreview/previewHeader': resolve('src/renderer/onlypreview/previewHeader/index.html'),
           'onlypreview/preview': resolve('src/renderer/onlypreview/preview/index.html'),
@@ -514,6 +530,7 @@ export default defineConfig({
       coinDevCspPlugin,
       translatorDevCspPlugin,
       mottoDevCspPlugin,
+      submodulesDevCspPlugin,
       onlyPreviewDevCspPlugin,
       maestroSqliteDevCspPlugin,
       monacoEditorPlugin({

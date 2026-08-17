@@ -1,3 +1,3 @@
-import type { EyesOnAgentsEnvApi } from '@preload/eyesOnAgents/eyesOnAgents.preload';
+import type { EyesOnAgentsEnvApi } from '@shared/eyesOnAgents/eyesOnAgentsWindow.type';
 
 export const eyesOnAgentsEnv = (globalThis as any).eyesOnAgentsEnv as EyesOnAgentsEnvApi;

@@ -28,7 +28,15 @@ export class EyesOnAgentsTable extends BaseTable {
     );
 
     CREATE TABLE IF NOT EXISTS eyes_on_agents_thread (
-      thread_id TEXT PRIMARY KEY,
+      session_key TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      desktop_session_id TEXT,
+      desktop_identity_ambiguous INTEGER NOT NULL DEFAULT 0,
+      transcript_path TEXT,
+      transcript_identity_ambiguous INTEGER NOT NULL DEFAULT 0,
+      status_fresh_until INTEGER,
+      transcript_activity_at INTEGER,
       domain_id INTEGER NOT NULL,
       title TEXT,
       cwd TEXT,
@@ -36,6 +44,7 @@ export class EyesOnAgentsTable extends BaseTable {
       project_root TEXT,
       project_name TEXT,
       is_archived INTEGER NOT NULL DEFAULT 0,
+      archive_state TEXT NOT NULL DEFAULT 'active',
       runtime_state TEXT NOT NULL DEFAULT 'unknown',
       active_flags_json TEXT NOT NULL DEFAULT '[]',
       active_turn_id TEXT,
@@ -55,7 +64,8 @@ export class EyesOnAgentsTable extends BaseTable {
       last_user_prompt_checked_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      FOREIGN KEY (domain_id) REFERENCES eyes_on_agents_domain(id)
+      FOREIGN KEY (domain_id) REFERENCES eyes_on_agents_domain(id),
+      UNIQUE (provider, thread_id)
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_domain_activity
       ON eyes_on_agents_thread (domain_id, last_activity_at DESC, updated_at DESC);
@@ -63,18 +73,23 @@ export class EyesOnAgentsTable extends BaseTable {
       ON eyes_on_agents_thread (runtime_state, last_completed_at DESC);
 
     CREATE TABLE IF NOT EXISTS eyes_on_agents_thread_snapshot (
-      thread_id TEXT PRIMARY KEY,
+      session_key TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
       payload_json TEXT NOT NULL,
       is_archived INTEGER NOT NULL DEFAULT 0,
       synced_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      UNIQUE (provider, thread_id)
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_snapshot_inventory
       ON eyes_on_agents_thread_snapshot (is_archived, synced_at DESC);
 
     CREATE TABLE IF NOT EXISTS eyes_on_agents_hook_delivery_receipt (
       delivery_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      provider TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       observed_at INTEGER NOT NULL,
       committed_at INTEGER NOT NULL
@@ -83,11 +98,13 @@ export class EyesOnAgentsTable extends BaseTable {
       ON eyes_on_agents_hook_delivery_receipt (committed_at);
 
     CREATE TABLE IF NOT EXISTS eyes_on_agents_completion_alert_receipt (
+      session_key TEXT NOT NULL,
+      provider TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       turn_id TEXT NOT NULL,
       completed_at INTEGER NOT NULL,
       claimed_at INTEGER NOT NULL,
-      PRIMARY KEY (thread_id, turn_id)
+      PRIMARY KEY (session_key, turn_id)
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_completion_alert_receipt_claimed
       ON eyes_on_agents_completion_alert_receipt (claimed_at);

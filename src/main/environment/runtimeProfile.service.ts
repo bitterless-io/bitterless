@@ -18,7 +18,8 @@ export interface AssertRuntimeLaunchModeInput {
 
 const NODE_ONLY_HELPER_ARGUMENTS = new Set([
   '--mcp-helper',
-  '--coding-agent-hook-helper'
+  '--coding-agent-hook-helper',
+  '--claude-inventory-watcher'
 ]);
 
 const isViteEnvironment = (value: string): value is ApplicationViteEnvironment =>

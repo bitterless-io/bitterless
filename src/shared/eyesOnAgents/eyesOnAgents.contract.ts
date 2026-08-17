@@ -1,5 +1,8 @@
 import type {
   EyesOnAgentsBridgeState,
+  EyesOnAgentsDesktopSessionId,
+  EyesOnAgentsProvider,
+  EyesOnAgentsSessionKey,
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsThreadRefreshPatch,
   EyesOnAgentsHookLastUserPromptCandidate,
@@ -10,6 +13,7 @@ import type {
 } from './eyesOnAgents.type';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CLAUDE_DESKTOP_SESSION_ID_PATTERN = /^local_([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const CONTROL_CHARACTER_PATTERN = /[\0\r\n]/;
 const NUL_CHARACTER_PATTERN = /\0/;
 const MAX_LAST_USER_PROMPT_BYTES = 8_192;
@@ -35,6 +39,7 @@ const TERMINAL_STATES = new Set<EyesOnAgentsRuntimeState>([
   'failed',
   'ended'
 ]);
+const PROVIDERS = new Set<EyesOnAgentsProvider>(['codex', 'claude']);
 
 const hasUnpairedSurrogate = (value: string): boolean => {
   for (let index = 0; index < value.length; index += 1) {
@@ -82,6 +87,43 @@ export const parseEyesOnAgentsUuid = (value: unknown, label = 'threadId'): strin
     throw new Error(`${label} must be a UUID`);
   }
   return value.toLowerCase();
+};
+
+export const parseEyesOnAgentsProvider = (value: unknown): EyesOnAgentsProvider => {
+  if (typeof value !== 'string' || !PROVIDERS.has(value as EyesOnAgentsProvider)) {
+    throw new Error('provider is unsupported');
+  }
+  return value as EyesOnAgentsProvider;
+};
+
+export const parseEyesOnAgentsDesktopSessionId = (
+  value: unknown
+): EyesOnAgentsDesktopSessionId | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new Error('desktopSessionId must be a string');
+  const match = CLAUDE_DESKTOP_SESSION_ID_PATTERN.exec(value);
+  if (!match) throw new Error('desktopSessionId must be a local Claude Desktop session ID');
+  return `local_${parseEyesOnAgentsUuid(match[1], 'desktopSessionId')}`;
+};
+
+export const buildEyesOnAgentsSessionKey = (
+  provider: EyesOnAgentsProvider,
+  threadId: unknown
+): EyesOnAgentsSessionKey => {
+  return `${parseEyesOnAgentsProvider(provider)}:${parseEyesOnAgentsUuid(threadId)}`;
+};
+
+export const parseEyesOnAgentsSessionKey = (value: unknown): EyesOnAgentsSessionKey => {
+  if (typeof value !== 'string') throw new Error('sessionKey must be a string');
+  const separator = value.indexOf(':');
+  if (separator < 1 || value.indexOf(':', separator + 1) !== -1) {
+    throw new Error('sessionKey is invalid');
+  }
+  const provider = parseEyesOnAgentsProvider(value.slice(0, separator));
+  const threadId = parseEyesOnAgentsUuid(value.slice(separator + 1));
+  const normalized = buildEyesOnAgentsSessionKey(provider, threadId);
+  if (value !== normalized) throw new Error('sessionKey must be normalized');
+  return normalized;
 };
 
 export const parseEyesOnAgentsText = (
@@ -322,6 +364,7 @@ export const effectiveEyesOnAgentsRuntimeState = (
   if (statusSource === 'app_server' || statusSource === 'app_server_turn') {
     return managedServerConnected ? runtimeState : 'unknown';
   }
+  if (statusSource === 'claude_agent_view') return runtimeState;
   if (
     statusSource === 'codex_hook' &&
     hookBridgeState === 'installed' &&
@@ -337,12 +380,20 @@ export const buildEyesOnAgentsDeepLink = (threadId: unknown): string => {
   return `codex://threads/${parseEyesOnAgentsUuid(threadId)}`;
 };
 
-export const parseEyesOnAgentsThreadIdParams = (
+export const buildEyesOnAgentsClaudeDesktopDeepLink = (
+  desktopSessionId: unknown
+): string => {
+  const parsed = parseEyesOnAgentsDesktopSessionId(desktopSessionId);
+  if (parsed === null) throw new Error('Claude Desktop session ID is required');
+  return `claude://claude.ai/epitaxy/${parsed}`;
+};
+
+export const parseEyesOnAgentsSessionKeyParams = (
   value: unknown
-): { threadId: string } => {
-  if (!isEyesOnAgentsRecord(value)) throw new Error('thread params must be an object');
-  assertOnlyKeys(value, ['threadId'], 'thread params');
-  return { threadId: parseEyesOnAgentsUuid(value.threadId) };
+): { sessionKey: EyesOnAgentsSessionKey } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('session params must be an object');
+  assertOnlyKeys(value, ['sessionKey'], 'session params');
+  return { sessionKey: parseEyesOnAgentsSessionKey(value.sessionKey) };
 };
 
 export const parseEyesOnAgentsCreateDomainParams = (
@@ -389,11 +440,11 @@ export const parseEyesOnAgentsReorderDomainsParams = (
 
 export const parseEyesOnAgentsMoveThreadParams = (
   value: unknown
-): { threadId: string; domainId: number } => {
+): { sessionKey: EyesOnAgentsSessionKey; domainId: number } => {
   if (!isEyesOnAgentsRecord(value)) throw new Error('move params must be an object');
-  assertOnlyKeys(value, ['threadId', 'domainId'], 'move params');
+  assertOnlyKeys(value, ['sessionKey', 'domainId'], 'move params');
   return {
-    threadId: parseEyesOnAgentsUuid(value.threadId),
+    sessionKey: parseEyesOnAgentsSessionKey(value.sessionKey),
     domainId: parsePositiveId(value.domainId, 'domainId')
   };
 };
@@ -403,6 +454,15 @@ export const parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams = (
 ): { enabled: boolean } => {
   if (!isEyesOnAgentsRecord(value)) throw new Error('prompt capture params must be an object');
   assertOnlyKeys(value, ['enabled'], 'prompt capture params');
+  if (typeof value.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  return { enabled: value.enabled };
+};
+
+export const parseEyesOnAgentsSetClaudeProviderEnabledParams = (
+  value: unknown
+): { enabled: boolean } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude provider params must be an object');
+  assertOnlyKeys(value, ['enabled'], 'Claude provider params');
   if (typeof value.enabled !== 'boolean') throw new Error('enabled must be a boolean');
   return { enabled: value.enabled };
 };
@@ -692,7 +752,11 @@ export const parseEyesOnAgentsRuntimeEvent = (
   const turnId = event.turnId === undefined
     ? undefined
     : parseEyesOnAgentsText(event.turnId, 'turnId', 200);
-  if (event.source !== 'app_server' && event.source !== 'codex_hook') {
+  if (
+    event.source !== 'app_server'
+    && event.source !== 'codex_hook'
+    && event.source !== 'claude_hook'
+  ) {
     throw new Error('runtime event source is unsupported');
   }
   if (event.type === 'thread_status') {

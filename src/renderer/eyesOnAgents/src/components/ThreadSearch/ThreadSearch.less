@@ -99,9 +99,16 @@
   background: var(--thread-search-item-focus);
 }
 
-.thread-search__result-title {
+.thread-search__result-heading {
   grid-column: 1 / -1;
   grid-row: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.thread-search__result-title {
   min-width: 0;
   overflow: hidden;
   font-size: 12px;

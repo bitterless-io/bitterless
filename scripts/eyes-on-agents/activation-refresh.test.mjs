@@ -21,7 +21,9 @@ const emitterPlugin = {
         export const eyesOnAgentsEmitter = {
           getSnapshot: () => harness().getSnapshot(),
           syncThreads: () => harness().syncThreads(),
-          refreshCodexBridgeStatus: () => harness().refreshCodexBridgeStatus()
+          refreshClaudeInventory: () => harness().refreshClaudeInventory(),
+          refreshCodexBridgeStatus: () => harness().refreshCodexBridgeStatus(),
+          refreshClaudeBridgeStatus: () => harness().refreshClaudeBridgeStatus()
         };
         export const subscribeEyesOnAgentsChanges = () => undefined;
       `,
@@ -37,6 +39,9 @@ const snapshot = ({
   bridgeState = 'not_installed',
   reviewReason = null,
   listening = false,
+  claudeProviderEnabled = false,
+  claudeProviderRevision = 1,
+  claudeBridgeState = 'not_installed',
 }) => ({
   domains: [],
   threads: [{
@@ -75,6 +80,12 @@ const snapshot = ({
     lastInspectedAt: null,
     error: null,
   },
+  claudeProvider: {
+    enabled: claudeProviderEnabled,
+    error: null,
+    revision: claudeProviderRevision,
+  },
+  claudeBridge: { state: claudeBridgeState },
   lastSyncedAt: null,
 });
 
@@ -85,8 +96,10 @@ const createHarness = ({
   inspected = local,
   syncImplementation,
   inspectionImplementation,
+  claudeInventoryImplementation,
+  claudeInspectionImplementation,
 }) => {
-  const calls = { snapshot: 0, sync: 0, inspection: 0 };
+  const calls = { snapshot: 0, sync: 0, inspection: 0, claudeInventory: 0, claudeInspection: 0 };
   return {
     calls,
     getSnapshot: async () => {
@@ -101,6 +114,16 @@ const createHarness = ({
     refreshCodexBridgeStatus: async () => {
       calls.inspection += 1;
       if (inspectionImplementation) return await inspectionImplementation();
+      return inspected;
+    },
+    refreshClaudeInventory: async () => {
+      calls.claudeInventory += 1;
+      if (claudeInventoryImplementation) return await claudeInventoryImplementation();
+      return local;
+    },
+    refreshClaudeBridgeStatus: async () => {
+      calls.claudeInspection += 1;
+      if (claudeInspectionImplementation) return await claudeInspectionImplementation();
       return inspected;
     },
   };
@@ -308,6 +331,116 @@ test('window activation refresh follows connection intent and coalesces overlap'
         assert.equal(store.threads[0]?.title, 'trusted');
       },
     );
+
+    await context.test(
+      'a failed Claude runtime refresh cannot block Codex bridge inspection',
+      async () => {
+        const initial = snapshot({
+          state: 'disconnected',
+          autoConnectEnabled: false,
+          bridgeState: 'installed',
+          listening: true,
+          claudeProviderEnabled: true,
+          claudeBridgeState: 'installed',
+        });
+        const inspected = snapshot({
+          state: 'disconnected',
+          autoConnectEnabled: false,
+          title: 'Codex inspection survived',
+          bridgeState: 'installed',
+          listening: true,
+          claudeProviderEnabled: true,
+          claudeBridgeState: 'installed',
+        });
+        const harness = createHarness({
+          initial,
+          inspected,
+          claudeInventoryImplementation: async () => {
+            throw new Error('Claude runtime is paused');
+          },
+          claudeInspectionImplementation: async () => {
+            throw new Error('Claude bridge is unavailable');
+          },
+        });
+        const store = await loadStore(harness, initial);
+
+        await store.refreshOnWindowActivation();
+
+        assert.equal(harness.calls.claudeInventory, 1);
+        assert.equal(harness.calls.inspection, 1);
+        assert.equal(harness.calls.claudeInspection, 1);
+        assert.equal(store.threads[0]?.title, 'Codex inspection survived');
+      },
+    );
+
+    await context.test('an older provider snapshot cannot overwrite a newer Off response', async () => {
+      const initial = snapshot({
+        state: 'disconnected', autoConnectEnabled: false, claudeProviderEnabled: true,
+      });
+      const harness = createHarness({ initial });
+      const store = await loadStore(harness, initial);
+      const disabled = snapshot({
+        state: 'disconnected', autoConnectEnabled: false,
+        claudeProviderEnabled: false, claudeProviderRevision: 2,
+      });
+      const staleEnabled = snapshot({
+        state: 'disconnected', autoConnectEnabled: false,
+        claudeProviderEnabled: true, claudeProviderRevision: 1,
+      });
+      store.applySnapshot(disabled);
+      store.applySnapshot(staleEnabled);
+      assert.equal(store.snapshot.claudeProvider.enabled, false);
+      assert.equal(store.snapshot.claudeProvider.revision, 2);
+    });
+
+    await context.test('Off scrubs only a selected project that disappeared with Claude', async () => {
+      const initial = snapshot({
+        state: 'disconnected', autoConnectEnabled: false, claudeProviderEnabled: true,
+      });
+      const baseThread = initial.threads[0];
+      initial.threads = [{
+        ...baseThread,
+        provider: 'claude',
+        projectKey: 'claude-only',
+        projectRoot: '/tmp/claude-only',
+        projectName: 'claude-only',
+      }];
+      const harness = createHarness({ initial });
+      const store = await loadStore(harness, initial);
+      store.selectAllProjectFilter('project:claude-only');
+      assert.equal(store.allProjectFilter.type, 'project');
+
+      const disabled = snapshot({
+        state: 'disconnected', autoConnectEnabled: false,
+        claudeProviderEnabled: false, claudeProviderRevision: 2,
+      });
+      store.applySnapshot(disabled);
+      assert.deepEqual(store.allProjectFilter, { type: 'all' });
+      assert.equal(store.allProjectOptions.some(({ projectKey }) => projectKey === 'claude-only'), false);
+      assert.equal(JSON.stringify(store.allProjectOptions).includes('/tmp/claude-only'), false);
+
+      const sharedEnabled = snapshot({
+        state: 'disconnected', autoConnectEnabled: false,
+        claudeProviderEnabled: true, claudeProviderRevision: 3,
+      });
+      sharedEnabled.threads = [
+        { ...baseThread, provider: 'claude', projectKey: 'shared',
+          projectRoot: '/tmp/shared', projectName: 'shared' },
+        { ...baseThread, provider: 'codex', projectKey: 'shared',
+          projectRoot: '/tmp/shared', projectName: 'shared' },
+      ];
+      store.applySnapshot(sharedEnabled);
+      store.selectAllProjectFilter('project:shared');
+      const sharedDisabled = snapshot({
+        state: 'disconnected', autoConnectEnabled: false,
+        claudeProviderEnabled: false, claudeProviderRevision: 4,
+      });
+      sharedDisabled.threads = [sharedEnabled.threads[1]];
+      store.applySnapshot(sharedDisabled);
+      assert.equal(store.allProjectFilter.type, 'project');
+      assert.equal(store.allProjectFilter.projectKey, 'shared');
+      assert.equal(store.allProjectOptions.find(({ projectKey }) => projectKey === 'shared')?.count, 1);
+    });
 
     await context.test(
       'activation before the initial snapshot coalesces into a snapshot load',

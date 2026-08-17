@@ -73,7 +73,7 @@ export class NotifyHelper {
   }
 
   notifyThreadCompleted(intent: EyesOnAgentsCompletionAlertIntent): void {
-    this.showThreadCompletedNotification(intent.title);
+    this.showThreadCompletedNotification(intent);
     this.playThreadCompletionSound();
   }
 
@@ -173,11 +173,14 @@ export class NotifyHelper {
     });
   }
 
-  private showThreadCompletedNotification(rawTitle: string | null): void {
+  private showThreadCompletedNotification(intent: EyesOnAgentsCompletionAlertIntent): void {
     try {
       if (!this.runtime.isSupported()) return;
       const messages = i18nHelper.getMessages().eyesOnAgents;
-      const threadTitle = normalizeNotificationThreadTitle(rawTitle) ?? messages.thread.untitled;
+      const untitled = intent.provider === 'claude'
+        ? messages.thread.untitledClaude
+        : messages.thread.untitledCodex;
+      const threadTitle = normalizeNotificationThreadTitle(intent.title) ?? untitled;
       const notification = this.runtime.createNotification({
         title: messages.completionNotification.title,
         body: messages.completionNotification.body.replace('{title}', () => threadTitle),

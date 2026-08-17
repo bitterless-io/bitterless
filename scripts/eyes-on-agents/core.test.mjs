@@ -8,6 +8,7 @@ import { build } from 'esbuild';
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-eyes-core-'));
 const THREAD_ID = '019f653a-2ef7-7031-8f6b-c770bacffbb2';
+const SESSION_KEY = `codex:${THREAD_ID}`;
 const ARCHIVED_THREAD_ID = '11111111-1111-4111-8111-111111111111';
 const COVERAGE_GAP = {
   schemaVersion: 1,
@@ -48,6 +49,23 @@ try {
   );
   assert.equal(contract.parseEyesOnAgentsUuid(THREAD_ID.toUpperCase()), THREAD_ID);
   assert.throws(() => contract.parseEyesOnAgentsUuid('not-a-thread'), /must be a UUID/);
+  assert.equal(
+    contract.parseEyesOnAgentsDesktopSessionId(
+      'local_11111111-1111-4111-8111-111111111111'
+    ),
+    'local_11111111-1111-4111-8111-111111111111'
+  );
+  assert.equal(contract.parseEyesOnAgentsDesktopSessionId(null), null);
+  assert.throws(
+    () => contract.parseEyesOnAgentsDesktopSessionId(
+      '11111111-1111-4111-8111-111111111111'
+    ),
+    /local Claude Desktop session ID/
+  );
+  assert.throws(
+    () => contract.parseEyesOnAgentsDesktopSessionId('local_..\/..\/Applications\/Claude.app'),
+    /local Claude Desktop session ID/
+  );
   assert.equal(contract.buildEyesOnAgentsDeepLink(THREAD_ID), `codex://threads/${THREAD_ID}`);
   const nameFirstProviderThread = { name: 'Name wins' };
   Object.defineProperty(nameFirstProviderThread, 'preview', {
@@ -94,15 +112,15 @@ try {
     null
   );
   assert.throws(
-    () => contract.parseEyesOnAgentsThreadIdParams({
-      threadId: THREAD_ID,
+    () => contract.parseEyesOnAgentsSessionKeyParams({
+      sessionKey: SESSION_KEY,
       url: 'file:///tmp/not-allowed'
     }),
     /unsupported field/
   );
   assert.throws(
     () => contract.parseEyesOnAgentsMoveThreadParams({
-      threadId: THREAD_ID,
+      sessionKey: SESSION_KEY,
       domainId: 1,
       executable: '/tmp/not-allowed'
     }),
@@ -356,7 +374,15 @@ try {
   const repository = {
     getSnapshot: async () => ({
       domains: [{ id: 1, domainKey: 'uncategorized', title: 'Uncategorized', sortIndex: 0, isSystem: true }],
-      threads: []
+      threads: [{
+        sessionKey: SESSION_KEY,
+        provider: 'codex',
+        threadId: THREAD_ID,
+        runtimeState: 'unknown',
+        statusSource: 'discovery',
+        statusObservedAt: null,
+        isUnread: false
+      }]
     }),
     markOpened: async (params) => marked.push(params),
     markAllRead: async () => ({ changed: false }),
@@ -409,6 +435,10 @@ try {
       lastEventAt: null,
       error: null
     }),
+    hasInstallationIntent: () => false,
+    hasExactInstallation: () => false,
+    refreshInstalledArtifacts: () => desktopBridge.getStatus(),
+    getDisabledExactHookKeys: () => [],
     install: () => ({
       state: 'needs_trust',
       listening: false,
@@ -433,6 +463,176 @@ try {
     recoverOutboxCoverageGap: async () => undefined,
     replayOutbox: async () => undefined
   };
+  let releaseClaudeBridgeInspection;
+  let claudeBridgeInspectionReady = false;
+  let claudeBridgeListening = false;
+  let claudeBridgeBroadcasts = 0;
+  const claudeBridgeInspectionGate = new Promise((resolvePromise) => {
+    releaseClaudeBridgeInspection = resolvePromise;
+  });
+  const coldStartClaudeBridgeStatus = () => ({
+    state: claudeBridgeInspectionReady && claudeBridgeListening ? 'needs_review' : 'installed',
+    configured: true,
+    enabled: claudeBridgeInspectionReady,
+    listening: claudeBridgeListening,
+    listeningSince: claudeBridgeListening ? new Date(100).toISOString() : null,
+    firstReceiptAt: null,
+    lastReceiptAt: null,
+    lastInspectedAt: claudeBridgeInspectionReady ? new Date(90).toISOString() : null,
+    observationProof: 'none',
+    restartRequired: true,
+    error: null
+  });
+  const coldStartClaudeBridgeService = new EyesOnAgentsService({
+    repository,
+    settings,
+    appServer,
+    desktopBridge: {
+      ...desktopBridge,
+      hasInstallationIntent: () => false,
+      hasExactInstallation: () => false,
+      refreshInstalledArtifacts: () => desktopBridge.getStatus(),
+      getDisabledExactHookKeys: () => []
+    },
+    bridgeListener,
+    claudeBridge: {
+      getStatus: coldStartClaudeBridgeStatus,
+      hasInstallationIntent: () => true,
+      acceptsInstallation: () => claudeBridgeInspectionReady,
+      revokeObservationProof: () => undefined,
+      install: async () => coldStartClaudeBridgeStatus(),
+      refresh: async () => {
+        await claudeBridgeInspectionGate;
+        claudeBridgeInspectionReady = true;
+        return coldStartClaudeBridgeStatus();
+      },
+      remove: async () => coldStartClaudeBridgeStatus()
+    },
+    claudeHookListener: {
+      start: async () => { claudeBridgeListening = true; },
+      stop: async () => { claudeBridgeListening = false; },
+      replayOutbox: async () => undefined
+    },
+    openExternal: async () => undefined,
+    broadcastChanged: () => { claudeBridgeBroadcasts += 1; }
+  });
+  await coldStartClaudeBridgeService.initialize();
+  assert.equal((await coldStartClaudeBridgeService.getSnapshot()).claudeBridge.enabled, false,
+    'persisted install intent must not be projected enabled before CLI inspection completes');
+  releaseClaudeBridgeInspection();
+  for (let attempt = 0; attempt < 20 && claudeBridgeBroadcasts === 0; attempt += 1) {
+    await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  }
+  assert.equal(claudeBridgeListening, true);
+  assert.equal(claudeBridgeBroadcasts, 1,
+    'async startup inspection and listener transition must invalidate the early renderer snapshot');
+  assert.equal((await coldStartClaudeBridgeService.getSnapshot()).claudeBridge.enabled, true);
+  await coldStartClaudeBridgeService.shutdown();
+  let releaseClaudePoll;
+  let markClaudePollStarted;
+  const claudePollStarted = new Promise((resolvePromise) => {
+    markClaudePollStarted = resolvePromise;
+  });
+  const claudePollGate = new Promise((resolvePromise) => {
+    releaseClaudePoll = resolvePromise;
+  });
+  let claudeFreshUntil = 100;
+  let claudePolls = 0;
+  let claudeExpiries = 0;
+  let claudeBroadcasts = 0;
+  let markClaudeProviderStarted;
+  const claudeProviderStarted = new Promise((resolvePromise) => {
+    markClaudeProviderStarted = resolvePromise;
+  });
+  const claudeLeaseService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      expireClaudeAgentStates: async ({ observedAt }) => {
+        claudeExpiries += 1;
+        if (observedAt <= claudeFreshUntil) return { changed: false };
+        claudeFreshUntil = 0;
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer,
+    desktopBridge,
+    bridgeListener,
+    claudeObservation: {
+      start: async () => { markClaudeProviderStarted(); },
+      stop: async () => undefined,
+      refresh: async () => {
+        claudePolls += 1;
+        markClaudePollStarted();
+        await claudePollGate;
+        claudeFreshUntil = 230;
+        claudeBroadcasts += 1;
+        return { changed: true };
+      }
+    },
+    openExternal: async () => undefined,
+    broadcastChanged: () => { claudeBroadcasts += 1; },
+    now: () => 200
+  });
+  await claudeLeaseService.initialize();
+  await claudeProviderStarted;
+  await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  claudeBroadcasts = 0;
+  await Promise.all([
+    claudeLeaseService.refreshThreadPages(),
+    claudeLeaseService.refreshThreadPages()
+  ]);
+  await claudePollStarted;
+  assert.equal(claudeExpiries, 0,
+    'lease expiry must wait for the in-flight Claude inventory heartbeat');
+  releaseClaudePoll();
+  await claudeLeaseService.joinClaudeBackgroundRefresh();
+  assert.equal(claudePolls, 1,
+    'concurrent periodic ticks must share one Claude reconciliation chain');
+  assert.equal(claudeExpiries, 1);
+  assert.equal(claudeFreshUntil, 230,
+    'an advanced transcript mtime must renew the hook lease before expiry evaluates it');
+  assert.equal(claudeBroadcasts, 1,
+    'a successful Claude poll and following no-op expiry must broadcast once');
+
+  let failedLeaseExpired = false;
+  let failedLeaseBroadcasts = 0;
+  let markFailedClaudeProviderStarted;
+  const failedClaudeProviderStarted = new Promise((resolvePromise) => {
+    markFailedClaudeProviderStarted = resolvePromise;
+  });
+  const failedClaudeLeaseService = new EyesOnAgentsService({
+    repository: {
+      ...repository,
+      expireClaudeAgentStates: async () => {
+        failedLeaseExpired = true;
+        return { changed: true };
+      }
+    },
+    settings,
+    appServer,
+    desktopBridge,
+    bridgeListener,
+    claudeObservation: {
+      start: async () => { markFailedClaudeProviderStarted(); },
+      stop: async () => undefined,
+      refresh: async () => { throw new Error('Claude inventory unavailable'); }
+    },
+    openExternal: async () => undefined,
+    broadcastChanged: () => { failedLeaseBroadcasts += 1; },
+    now: () => 200
+  });
+  await failedClaudeLeaseService.initialize();
+  await failedClaudeProviderStarted;
+  await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  failedLeaseBroadcasts = 0;
+  await failedClaudeLeaseService.refreshThreadPages();
+  await failedClaudeLeaseService.joinClaudeBackgroundRefresh();
+  assert.equal(failedLeaseExpired, true,
+    'a failed Claude scan must still run the terminal lease fallback');
+  assert.equal(failedLeaseBroadcasts, 1);
+  await claudeLeaseService.shutdown();
+  await failedClaudeLeaseService.shutdown();
   let failedSyncQueries = 0;
   const failedService = new EyesOnAgentsService({
     repository: {
@@ -454,7 +654,7 @@ try {
     },
     now: () => 123
   });
-  await assert.rejects(() => failedService.openThread({ threadId: THREAD_ID }), /no handler/);
+  await assert.rejects(() => failedService.openThread({ sessionKey: SESSION_KEY }), /no handler/);
   assert.equal(marked.length, 0, 'failed deep links must not mark a thread opened');
   assert.equal(failedSyncQueries, 0, 'failed deep links must not start status synchronization');
 
@@ -468,9 +668,9 @@ try {
     openExternal: async (url) => openedUrls.push(url),
     now: () => 456
   });
-  await successfulService.openThread({ threadId: THREAD_ID });
+  await successfulService.openThread({ sessionKey: SESSION_KEY });
   assert.deepEqual(openedUrls, [`codex://threads/${THREAD_ID}`]);
-  assert.deepEqual(marked, [{ threadId: THREAD_ID, openedAt: 456 }]);
+  assert.deepEqual(marked, [{ sessionKey: SESSION_KEY, openedAt: 456 }]);
 
   const markAllReadCalls = [];
   let markAllReadChanged = false;
@@ -1329,7 +1529,7 @@ try {
       },
       now: () => 31_000
     });
-    const result = await service.openThread({ threadId: THREAD_ID });
+    const result = await service.openThread({ sessionKey: SESSION_KEY });
     return { requests, commits, marks, calls, result };
   };
   const openRecovery = await openSyncCase({
@@ -1358,6 +1558,7 @@ try {
   assert.deepEqual(
     openRecovery.calls,
     [
+      'snapshot',
       'open-external',
       'candidate',
       'read-thread',
@@ -1367,7 +1568,7 @@ try {
       'notify',
       'snapshot'
     ],
-    'Open must deep-link, synchronize, mark opened, notify, and snapshot in that order'
+    'Open must resolve identity, deep-link, synchronize, mark opened, notify, and snapshot in order'
   );
   const openSettlementState = { runtimeState: 'unknown', isUnread: true };
   const openSettlement = await openSyncCase({

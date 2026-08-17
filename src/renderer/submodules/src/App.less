@@ -1,0 +1,119 @@
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+.submodules {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: oklch(98% 0.004 265);
+  color: oklch(32% 0.03 265);
+  overflow: hidden;
+}
+
+.submodules__error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: oklch(96% 0.04 25);
+  border-bottom: 1px solid oklch(88% 0.06 25);
+  color: oklch(48% 0.17 25);
+  font-size: 12px;
+}
+
+.submodules__root {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid oklch(92% 0.01 265);
+  background: oklch(100% 0 0);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.submodules__root-name {
+  font-weight: 650;
+}
+
+// `direction: rtl` puts the ellipsis at the START, so a long path keeps its informative tail.
+// The path itself must stay inside the <bdi> in App.vue: as a blockified flex item this box has an
+// RTL paragraph direction, which would otherwise reorder the leading '/' to the visual end and
+// render /Users/ral/x as Users/ral/x/. The isolate keeps the characters in order and the ellipsis
+// on the left. Verified in Electron's own Chromium.
+.submodules__root-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: oklch(58% 0.02 265);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.submodules__root-count {
+  flex: 0 0 auto;
+  color: oklch(58% 0.02 265);
+}
+
+.submodules__main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.submodules__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.submodules__center-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: oklch(52% 0.02 265);
+  text-align: center;
+}
+
+.submodules__center-state h1 {
+  font-size: 15px;
+  font-weight: 650;
+  color: oklch(32% 0.03 265);
+}
+
+.submodules__center-state p {
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.submodules__center-state--error {
+  color: oklch(50% 0.17 25);
+}
+
+.submodules__center-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.submodules__empty-mark {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: oklch(93% 0.03 265);
+  color: oklch(45% 0.08 265);
+}
