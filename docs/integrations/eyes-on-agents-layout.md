@@ -15,8 +15,9 @@ for live signals.
 
 The Claude extension keeps the existing palette, system typography, wrapped 300–500px column grid,
 and background-led hierarchy. Its one visual signature is a compact provider glyph in the title
-line. A review rejected provider badges, a new metadata row, permanent card borders, and provider
-brand-color panels because each would add height or compete with working/unread attention.
+line: Tabler `IconPrompt` for Codex and `IconSparkles` for Claude, both at 13px in the existing fixed
+13×18px shell. A review rejected provider badges, a new metadata row, permanent card borders, and
+provider brand-color panels because each would add height or compete with working/unread attention.
 
 ## Window and navigation
 
@@ -376,7 +377,7 @@ menu's All destination removes a custom classification.
 
 A card displays only observation metadata:
 
-- a compact accessible provider glyph before the title: Codex knot or Claude asterisk, with no
+- a compact accessible provider glyph before the title: Tabler Prompt or Sparkles, with no
   badge, border, new row, or provider-colored card surface;
 - title, falling back to a shortened UUID; its default/minimum height is one 18px line and it grows
   only when text wraps, up to a 36px/two-line maximum before clamping;

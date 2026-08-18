@@ -752,8 +752,8 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
     search,
     /class="thread-search__result-heading">\s*<ProviderGlyph :provider="thread\.provider" \/>/,
   );
-  assert.match(glyph, /IconBrandOpenai v-if="provider === 'codex'"/);
-  assert.match(glyph, /IconAsteriskSimple v-else/);
+  assert.match(glyph, /IconPrompt v-if="provider === 'codex'" :size="13"/);
+  assert.match(glyph, /IconSparkles v-else :size="13"/);
   assert.match(glyph, /role="img"/);
   assert.match(glyph, /:aria-label="providerLabel"/);
   const glyphShell = cssRule(glyphStyles, '.provider-glyph');

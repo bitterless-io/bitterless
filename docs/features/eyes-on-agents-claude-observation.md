@@ -449,10 +449,10 @@ Filesystem watcher errors terminate that generation and flow through the same Ma
 
 ## UI contract
 
-Each card shows a compact provider glyph before the title: OpenAI/Codex knot for Codex and a Claude
-asterisk for Claude. The glyph has a tooltip and accessible label, consumes no new card row, and is
-the only new card decoration. It uses muted provider color and does not compete with working/unread
-signals.
+Each card shows a compact Tabler provider glyph before the title: `IconPrompt` for Codex and
+`IconSparkles` for Claude. Both render at 13px inside the fixed 13×18px title-line shell. The glyph
+has a tooltip and accessible label, consumes no new card row, and is the only new card decoration.
+It uses muted provider color and does not compete with working/unread signals.
 
 The Connection drawer has three background-separated sections: Codex App Server, Codex observation,
 and Claude observation. A compact small switch in the Claude header owns provider support. When it
