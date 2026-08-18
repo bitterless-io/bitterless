@@ -355,11 +355,27 @@ Hook evidence therefore has a bounded freshness lease. Agent View evidence can s
 work; otherwise an expired foreground state becomes `unknown` while retaining unread attention. It
 never becomes `idle` or completed merely because time passed.
 
-Plugin installation and observation are separate facts. Connection UI reports configured state,
-listener state, last received event, drift/error, and the `/hooks` inspection instruction. Workspace
-trust may withhold Hooks; the first committed event is the only proof that observation is active.
-Remove plugin removes only the Bitterless-owned plugin installation/local marketplace and leaves every
-other Claude plugin, Hook, setting, and transcript intact.
+Plugin installation and observation are separate facts. One Bitterless action owns marketplace
+registration, installation, and enablement: after install it inspects the exact user plugin and runs
+`plugin enable` only when Claude reports it disabled. An already-enabled plugin is success.
+
+The bridge also recognizes its strict interrupted-setup checkpoint. **Finish setup** uses the same
+fail-closed Repair boundary: after exact ownership proof it stops intake, clears only the owned
+setup-period outbox, rotates the installation ID, reinstalls the exact user plugin, verifies its
+enabled state, and starts the new listener generation. It does not treat pre-commit deliveries as
+observation proof because plugin-management probes can emit them while setup is incomplete. Any
+ownership ambiguity remains a fail-closed Repair/error state.
+
+An already-open Claude Code or Desktop Code session does not dynamically load a newly installed
+plugin. Bitterless therefore offers Anthropic's published `claude://code/new` route as the primary
+one-click way to open a fresh Desktop Code session, plus a copyable `/reload-plugins` action for the
+current session. It automatically updates after the first committed lifecycle event. Bitterless
+cannot execute a slash command inside an existing Claude Desktop session through a supported
+external API. `/hooks` is secondary
+troubleshooting, not a normal enable step or observation proof. Workspace trust may still withhold
+Hooks; the first committed event is the only proof that observation is active. Remove plugin
+removes only the Bitterless-owned plugin installation/local marketplace and leaves every other
+Claude plugin, Hook, setting, and transcript intact.
 
 ## Archive semantics
 
@@ -441,9 +457,14 @@ signals.
 The Connection drawer has three background-separated sections: Codex App Server, Codex observation,
 and Claude observation. A compact small switch in the Claude header owns provider support. When it
 is off, the card retains only its header and one neutral explanation that Claude observation and
-task display are paused while Codex continues normally. When it is on, Claude actions are
-Enable/Repair, Check status, and Remove plugin, followed by the plugin/`/hooks` guide. It does not
-show Codex trust language for Claude and adds no new border or card row.
+task display are paused while Codex continues normally. When it is on, one setup action is derived
+from strict state: Enable, Finish setup, Open new Claude session, Retry listener, or Repair. An
+exact installed plugin with a stopped local listener is labelled **Listener paused**, never
+Awaiting activity; retry failure remains visible. Check status remains a secondary diagnostic and
+Remove plugin remains available for the owned installation. A successful reload-command copy
+changes to **Copied** and announces that result. There is no
+always-visible setup guide; `/hooks` appears only under the collapsed **Still not working?**
+diagnostic. The card does not show Codex trust language for Claude and adds no new border or row.
 
 Global search, All, Focus, and custom Domains contain both providers and keep the established
 attention comparator. Search selection and Open loading use `sessionKey`, so a provider update
@@ -462,6 +483,8 @@ getClaudeBridgeStatus()
 installClaudeBridge()
 refreshClaudeBridgeStatus()
 removeClaudeBridge()
+openNewClaudeSession()
+copyClaudeReloadCommand()
 setClaudeProviderEnabled({ enabled })
 ```
 
@@ -500,7 +523,10 @@ Claude CLI argument.
 - Claude Open builds only the fixed validated `epitaxy` Desktop route when `desktopSessionId` exists
   and never launches CLI; transcript preview opens only the
   persisted canonical JSONL through OnlyPreview.
-- Plugin install/remove preserves all unrelated Claude settings and plugins.
+- Plugin setup owns marketplace registration, install, and enablement; an install that already
+  enabled the exact user plugin skips redundant enable, while an exact disabled plugin is enabled
+  and re-inspected. Interrupted setup exposes Finish rather than a dead end. Remove preserves all
+  unrelated Claude settings and plugins.
 - Missing directory configuration hydrates automatic mode; a valid custom directory persists across
   logout/login and App restart, starts without opening EyesOnAgents, and can return to automatic.
 - A directory change immediately fences the old scan, restarts exactly one watcher, clears only old

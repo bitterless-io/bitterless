@@ -131,8 +131,17 @@ export type EyesOnAgentsClaudeBridgeState =
 
 export type EyesOnAgentsClaudeObservationProof = 'none' | 'receipt';
 
+export type EyesOnAgentsClaudeSetupAction =
+  | 'enable'
+  | 'finish'
+  | 'reload'
+  | 'retry'
+  | 'repair'
+  | 'none';
+
 export interface EyesOnAgentsClaudeBridgeStatus {
   state: EyesOnAgentsClaudeBridgeState;
+  setupAction: EyesOnAgentsClaudeSetupAction;
   configured: boolean;
   enabled: boolean;
   listening: boolean;
@@ -507,6 +516,8 @@ export interface EyesOnAgentsApi {
   refreshClaudeBridgeStatus(): Promise<EyesOnAgentsSnapshot>;
   removeClaudeBridge(): Promise<EyesOnAgentsSnapshot>;
   getClaudeBridgeStatus(): Promise<EyesOnAgentsClaudeBridgeStatus>;
+  openNewClaudeSession(): Promise<void>;
+  copyClaudeReloadCommand(): Promise<void>;
   changeClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
   useAutomaticClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
   retryClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;

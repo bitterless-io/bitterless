@@ -725,7 +725,7 @@ try {
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue'
   ), 'utf8');
   assert.match(claudeCardSource,
-    /\['not_installed', 'drifted', 'error'\]\.includes\(state\.value\)/,
+    /case 'repair': return i18nHelper\.eyesOnAgents\.claudeBridge\.repair/,
     'the recovery error state must expose the existing Repair action');
   await cacheService.install();
   assert.equal(existsSync(oldCoverageOutbox), false,

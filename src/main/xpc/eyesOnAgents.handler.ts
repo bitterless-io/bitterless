@@ -1,4 +1,4 @@
-import { app, dialog, shell } from 'electron';
+import { app, clipboard, dialog, shell } from 'electron';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
@@ -228,6 +228,7 @@ eyesOnAgentsService = new EyesOnAgentsService({
     }
   },
   openExternal: async (url) => await shell.openExternal(url),
+  writeClipboardText: (text) => clipboard.writeText(text),
   previewAbsoluteTarget: openRegisteredOnlyPreviewExplicitTarget,
   validateClaudeTranscript: (path, expectedThreadId) => {
     return claudeObservation.requireCanonicalTranscript(path, expectedThreadId);
@@ -336,6 +337,14 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
 
   async getClaudeBridgeStatus(): Promise<EyesOnAgentsClaudeBridgeStatus> {
     return await eyesOnAgentsService.getClaudeBridgeStatus();
+  }
+
+  async openNewClaudeSession(): Promise<void> {
+    await eyesOnAgentsService.openNewClaudeSession();
+  }
+
+  async copyClaudeReloadCommand(): Promise<void> {
+    await eyesOnAgentsService.copyClaudeReloadCommand();
   }
 
   async changeClaudeDirectory(): Promise<EyesOnAgentsSnapshot> {

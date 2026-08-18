@@ -472,6 +472,7 @@ try {
   });
   const coldStartClaudeBridgeStatus = () => ({
     state: claudeBridgeInspectionReady && claudeBridgeListening ? 'needs_review' : 'installed',
+    setupAction: claudeBridgeListening ? 'reload' : 'retry',
     configured: true,
     enabled: claudeBridgeInspectionReady,
     listening: claudeBridgeListening,

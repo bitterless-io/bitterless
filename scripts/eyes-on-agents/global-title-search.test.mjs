@@ -118,6 +118,7 @@ const createSnapshot = (threads, domains = []) => ({
   },
   claudeBridge: {
     state: 'not_installed',
+    setupAction: 'enable',
     configured: false,
     enabled: false,
     listening: false,

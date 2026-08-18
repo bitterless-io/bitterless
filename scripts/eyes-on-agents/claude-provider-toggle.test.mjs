@@ -80,7 +80,7 @@ const thread = (provider) => ({
 });
 
 const bridgeStatus = () => ({
-  state: 'installed',
+  state: 'installed', setupAction: 'retry',
   configured: true,
   enabled: true,
   listening: false,

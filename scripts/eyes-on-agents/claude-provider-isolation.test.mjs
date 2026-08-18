@@ -31,7 +31,7 @@ const waitFor = async (predicate, label) => {
   assert.fail(`Timed out waiting for ${label}`);
 };
 const bridgeStatus = () => ({
-  state: 'installed', configured: true, enabled: true, listening: false,
+  state: 'installed', setupAction: 'retry', configured: true, enabled: true, listening: false,
   listeningSince: null, firstReceiptAt: null, lastReceiptAt: null,
   lastInspectedAt: null, observationProof: 'none', restartRequired: false, error: null
 });

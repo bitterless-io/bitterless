@@ -86,6 +86,7 @@ interface EyesOnAgentsServiceDependencies {
     replayOutbox(): Promise<void>;
   };
   openExternal: (url: string) => Promise<void>;
+  writeClipboardText: (text: string) => void;
   previewAbsoluteTarget?: (path: string) => Promise<void>;
   validateClaudeTranscript?: (path: string, expectedThreadId: string) => string;
   claudeObservation?: {
@@ -126,6 +127,8 @@ const MAX_LAST_USER_PROMPT_BYTES = 8_192;
 const THREAD_REFRESH_PAGE_SIZE = 40;
 const THREAD_REFRESH_CONCURRENCY = 4;
 const MAX_CLAUDE_PROVIDER_ERROR_LENGTH = 300;
+const CLAUDE_NEW_SESSION_URL = 'claude://code/new';
+const CLAUDE_RELOAD_PLUGINS_COMMAND = '/reload-plugins';
 const DEFAULT_LAST_USER_PROMPT_PREFERENCE = {
   isEnabled: (): boolean => false,
   enable: (): boolean => false,
@@ -154,6 +157,7 @@ const DEFAULT_CLAUDE_PROVIDER_PREFERENCE = {
 
 const STOPPED_CLAUDE_BRIDGE_STATUS: EyesOnAgentsClaudeBridgeStatus = {
   state: 'not_installed',
+  setupAction: 'enable',
   configured: false,
   enabled: false,
   listening: false,
@@ -2755,6 +2759,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         } catch {
           this.claudeHookIntakeEnabled = false;
           await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
+          throw new Error('Claude listener retry failed');
         }
       }
     });
@@ -2788,6 +2793,24 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         throw new Error('Claude support changed while status was being inspected');
       }
       return status;
+    });
+  }
+
+  async openNewClaudeSession(): Promise<void> {
+    await this.runClaudeBridgeLifecycle(async () => {
+      this.requireClaudeProviderManagementEnabled();
+      const runtimeVersion = this.claudeProviderRuntimeVersion;
+      await this.dependencies.openExternal(CLAUDE_NEW_SESSION_URL);
+      if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) {
+        throw new Error('Claude support changed while the new session was opening');
+      }
+    });
+  }
+
+  async copyClaudeReloadCommand(): Promise<void> {
+    await this.runClaudeBridgeLifecycle(async () => {
+      this.requireClaudeProviderManagementEnabled();
+      this.dependencies.writeClipboardText(CLAUDE_RELOAD_PLUGINS_COMMAND);
     });
   }
 
@@ -2964,6 +2987,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   private currentClaudeBridgeStatus(): EyesOnAgentsClaudeBridgeStatus {
     return this.dependencies.claudeBridge?.getStatus() ?? {
       state: 'not_installed' as const,
+      setupAction: 'enable' as const,
       configured: false,
       enabled: false,
       listening: false,

@@ -376,6 +376,18 @@ class EyesOnAgentsState {
     );
   }
 
+  async openNewClaudeSession(): Promise<void> {
+    await this.runCommandAction('claude-session-open', () =>
+      eyesOnAgentsEmitter.openNewClaudeSession(),
+    );
+  }
+
+  async copyClaudeReloadCommand(): Promise<void> {
+    await this.runCommandAction('claude-reload-copy', () =>
+      eyesOnAgentsEmitter.copyClaudeReloadCommand(),
+    );
+  }
+
   async changeClaudeDirectory(): Promise<void> {
     await this.runSnapshotAction('claude-directory-change', () =>
       eyesOnAgentsEmitter.changeClaudeDirectory(),
@@ -544,6 +556,23 @@ class EyesOnAgentsState {
     this.actionError = null;
     try {
       this.applySnapshot(await callback());
+    } catch (error) {
+      this.actionError = this.errorMessage(error);
+      throw error;
+    } finally {
+      this.busyAction = null;
+    }
+  }
+
+  private async runCommandAction(
+    action: string,
+    callback: () => Promise<unknown>,
+  ): Promise<void> {
+    if (this.busyAction) return;
+    this.busyAction = action;
+    this.actionError = null;
+    try {
+      await callback();
     } catch (error) {
       this.actionError = this.errorMessage(error);
       throw error;

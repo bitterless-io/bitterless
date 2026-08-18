@@ -789,28 +789,59 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(claudeCard, /state\.value === 'observing'/);
   assert.match(claudeCard, /claudeBridge\.proofPrevious/);
   assert.match(claudeCard, /state\.value === 'needs_review'/);
-  assert.match(
-    claudeCard,
-    /\['not_installed', 'drifted', 'error'\]\.includes\(state\.value\)[\s\S]*bridge\.value\?\.configured === true && bridge\.value\.enabled === false/,
-  );
-  assert.doesNotMatch(
-    claudeCard,
-    /\['not_installed',[^\]]*'needs_review'/,
-  );
+  assert.match(claudeCard, /bridge\.value\?\.setupAction \?\? 'enable'/);
+  assert.match(claudeCard, /v-if="setupAction !== 'none'"/);
+  assert.match(claudeCard, /v-if="setupAction === 'reload'"/);
+  assert.match(claudeCard, /v-else-if="setupAction === 'retry'"/);
+  assert.match(claudeCard, /case 'finish': return i18nHelper\.eyesOnAgents\.claudeBridge\.finishSetup/);
+  assert.match(claudeCard, /case 'retry': return i18nHelper\.eyesOnAgents\.claudeBridge\.listenerPaused/);
+  assert.match(claudeCard, /case 'repair': return i18nHelper\.eyesOnAgents\.claudeBridge\.repair/);
+  assert.doesNotMatch(claudeCard, /claudeHookGuide|claudeHookGuideStep|hook-steps/);
   const claudeInstalledStatus = cssRule(
     panelStyles,
     '.eyes-connection-card--claude .eyes-connection-card__status--installed'
   );
   assert.match(claudeInstalledStatus, /color: #586077/);
   assert.match(claudeInstalledStatus, /background: #eef0f5/);
-  assert.match(claudeCard, /bridge\?\.restartRequired/);
   assert.match(claudeCard, /eyesOnAgentsStore\.installClaudeBridge\(\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.refreshClaudeBridgeStatus\(\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.removeClaudeBridge\(\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.openNewClaudeSession\(\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.copyClaudeReloadCommand\(\)/);
+  assert.match(
+    claudeCard,
+    /setupAction === 'retry'[\s\S]*@click="handleRefresh"[\s\S]*claudeBridge\.retryListener/,
+  );
+  assert.match(
+    claudeCard,
+    /v-if="setupAction !== 'retry'"[\s\S]*claudeBridge\.checkStatus/,
+    'paused-listener setup must not duplicate Check status below the setup action',
+  );
+  assert.match(claudeCard, /<span aria-live="polite">\{\{ reloadCommandCopyLabel \}\}<\/span>/);
+  assert.match(
+    claudeCard,
+    /await eyesOnAgentsStore\.copyClaudeReloadCommand\(\);[\s\S]*reloadCommandCopied\.value = true;[\s\S]*catch \{[\s\S]*reloadCommandCopied\.value = false;/,
+  );
+  assert.match(
+    claudeCard,
+    /if \(action !== 'reload'\) \{[\s\S]*reloadCommandCopied\.value = false;/,
+  );
+  assert.match(
+    claudeCard,
+    /v-if="troubleshootingVisible"[\s\S]*claudeBridge\.hooksDiagnostic[\s\S]*claudeBridge\.hooksCommand/,
+  );
   assert.match(claudeCard, /providerError\.value !== null \|\|/);
   assert.match(
     store,
     /installClaudeBridge\(\)[\s\S]*refreshClaudeBridgeStatus\(\)[\s\S]*removeClaudeBridge\(\)/,
+  );
+  assert.match(
+    store,
+    /openNewClaudeSession\(\): Promise<void>[\s\S]*eyesOnAgentsEmitter\.openNewClaudeSession\(\)/,
+  );
+  assert.match(
+    store,
+    /copyClaudeReloadCommand\(\): Promise<void>[\s\S]*eyesOnAgentsEmitter\.copyClaudeReloadCommand\(\)/,
   );
   assert.match(claudeCard, /name="eyesOnAgents__connections__claudeDirectories"/);
   assert.match(
@@ -842,18 +873,30 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.doesNotMatch(directorySurface, /\bborder\s*:|box-shadow/,
     'the directory block must use background hierarchy without a decorative border');
 
-  assert.match(english, /guideReloadCli: 'In a Claude session: \/reload-plugins'/);
-  assert.match(english, /guideInspectCli: 'In a Claude session: \/hooks'/);
-  assert.match(english, /In Claude Code or Desktop Code, inspect the Bitterless lifecycle hooks/);
-  assert.match(english, /A committed event is the only proof that observation is active\./);
-  assert.match(english, /Archive state comes from Claude Desktop metadata, not Hooks\./);
-  assert.match(chinese, /guideReloadCli: '在 Claude 会话中输入：\/reload-plugins'/);
-  assert.match(chinese, /guideInspectCli: '在 Claude 会话中输入：\/hooks'/);
-  assert.match(chinese, /在 Claude Code 或 Desktop Code 中检查 Bitterless 生命周期 hooks/);
+  const setupSurface = cssRule(panelStyles, '.eyes-connection-card__setup');
+  assert.match(setupSurface, /background:/);
+  assert.doesNotMatch(setupSurface, /\bborder\s*:|box-shadow/,
+    'the setup action must use background hierarchy without a decorative border');
+  assert.match(english, /enable: 'Enable Claude observation'/);
+  assert.match(english, /finishSetup: 'Finish setup'/);
+  assert.match(english, /reloadInClaude: 'Reload in Claude'/);
+  assert.match(english, /listenerPaused: 'Listener paused'/);
+  assert.match(english, /retryListener: 'Retry listener'/);
+  assert.match(english, /openNewSession: 'Open new Claude session'/);
+  assert.match(english, /copyReloadCommand: 'Copy \/reload-plugins'/);
+  assert.match(english, /copied: 'Copied'/);
+  assert.match(english, /stillNotWorking: 'Still not working\?'/);
+  assert.match(english, /hooksCommand: '\/hooks'/);
+  assert.match(english, /updates automatically after the first event/);
+  assert.match(chinese, /enable: '启用 Claude 观测'/);
+  assert.match(chinese, /finishSetup: '完成设置'/);
+  assert.match(chinese, /reloadInClaude: '在 Claude 中重新加载'/);
+  assert.match(chinese, /listenerPaused: '监听已暂停'/);
+  assert.match(chinese, /retryListener: '重试监听'/);
+  assert.match(chinese, /copyReloadCommand: '复制 \/reload-plugins'/);
+  assert.match(chinese, /copied: '已复制'/);
+  assert.match(chinese, /hooksCommand: '\/hooks'/);
   assert.match(chinese, /previewTranscript: '预览对话文件'/);
-  assert.match(chinese, /不会采集问题、回答、推理、工具、附件或对话文件内容/);
-  assert.match(chinese, /只有已提交的事件才能证明观测正在工作/);
-  assert.match(chinese, /归档状态来自 Claude Desktop 元数据，而不是 Hooks/);
   assert.match(english, /title: 'Session directories'/);
   assert.match(english, /useAutomatic: 'Use automatic'/);
   assert.match(chinese, /title: '会话目录'/);

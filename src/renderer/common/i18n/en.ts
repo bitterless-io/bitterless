@@ -475,7 +475,7 @@ export const en = {
       disabled: 'Disabled',
       listener: 'Listener',
       listenerActive: 'Active',
-      listenerPaused: 'Paused',
+      listenerPaused: 'Listener paused',
       listeningSince: 'Listening since',
       observationProof: 'Hook status',
       proofConfirmed: 'Confirmed by event',
@@ -486,29 +486,27 @@ export const en = {
       lastReceipt: 'Last received event',
       lastInspected: 'Last checked',
       never: 'Never',
-      restartRequired:
-        'The plugin is installed. Reload plugins or reopen the Claude session before checking observation.',
-      reviewRequired:
-        'Claude has not delivered an event. Review the Bitterless hooks and workspace trust in Claude.',
-      guideTitle: 'Claude observation setup',
-      guideInstallTitle: 'Enable or repair',
-      guideInstallDescription:
-        'Enable installs only the Bitterless-owned user plugin. Repair restores that plugin when its status has drifted.',
-      guideReloadTitle: 'Reload the session',
-      guideReloadDescription:
-        'Existing Claude sessions do not automatically load a newly installed plugin. Reload plugins or open a fresh Claude Code or Desktop Code session.',
-      guideReloadCli: 'In a Claude session: /reload-plugins',
-      guideInspectTitle: 'Inspect hooks and trust',
-      guideInspectDescription:
-        'In Claude Code or Desktop Code, inspect the Bitterless lifecycle hooks and confirm they are enabled for this workspace.',
-      guideInspectCli: 'In a Claude session: /hooks',
-      guideVerifyTitle: 'Verify one lifecycle event',
-      guideVerifyDescription:
-        'Start or finish one response, then select Check status. A committed event is the only proof that observation is active.',
-      guideBoundary:
-        'Hooks send lifecycle metadata only. Prompts, replies, reasoning, tools, attachments, and transcript content are never collected. Archive state comes from Claude Desktop metadata, not Hooks.',
-      enable: 'Enable observation',
+      enable: 'Enable Claude observation',
+      enableDescription: 'Lifecycle status needs the Bitterless Claude plugin.',
+      finishSetup: 'Finish setup',
+      finishDescription:
+        'Claude already has the enabled plugin. Bitterless can safely rebuild its local listener setup.',
+      reloadInClaude: 'Reload in Claude',
+      reloadDescription: 'Existing Claude sessions need one plugin reload.',
+      listenerPausedDescription:
+        'The plugin remains enabled. Retry Bitterless\'s local listener when you are ready.',
+      retryListener: 'Retry listener',
       repair: 'Repair',
+      repairDescription:
+        'Bitterless found a plugin or listener problem that needs a verified repair.',
+      openNewSession: 'Open new Claude session',
+      copyReloadCommand: 'Copy /reload-plugins',
+      copied: 'Copied',
+      stillNotWorking: 'Still not working?',
+      hooksDiagnostic:
+        'Open the Hooks panel in Claude to inspect the Bitterless lifecycle hooks. This does not change settings.',
+      hooksCommand: '/hooks',
+      updatesAutomatically: 'This card updates automatically after the first event.',
       checkStatus: 'Check status',
       removePlugin: 'Remove plugin'
     },

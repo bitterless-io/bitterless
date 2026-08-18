@@ -20,7 +20,8 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type {
   EyesOnAgentsClaudeBridgeStatus,
-  EyesOnAgentsClaudeBridgeState
+  EyesOnAgentsClaudeBridgeState,
+  EyesOnAgentsClaudeSetupAction
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import {
   CLAUDE_HOOK_HELPER_ARG,
@@ -64,11 +65,15 @@ interface BridgeState {
 interface Inspection {
   configured: boolean;
   enabled: boolean;
+  enablement: 'enabled' | 'disabled' | 'unknown';
   drifted: boolean;
   marketplace: 'absent' | 'exact' | 'collision';
   marketplaceNamespaceExclusive: boolean;
   catalogExact: boolean;
   pluginPresent: boolean;
+  pluginVersionExact: boolean;
+  artifactExact: boolean;
+  finishable: boolean;
   inspectedAt: number;
   error: string | null;
 }
@@ -227,7 +232,9 @@ export class ClaudePluginBridgeService {
 
   hasInstallationIntent(): boolean {
     const state = this.inspectState();
-    return state.kind === 'valid' && state.value.installed;
+    return state.kind === 'valid' && (
+      state.value.installed || state.value.restartRequired
+    );
   }
 
   getInstallationId(): string {
@@ -287,8 +294,23 @@ export class ClaudePluginBridgeService {
       bridgeState = 'needs_review';
     } else if (configured && !enabled) bridgeState = 'needs_review';
     else if (configured) bridgeState = 'installed';
+    const exactInstalled = state.installed && state.recoveryReason === null &&
+      inspection?.marketplace === 'exact' && inspection.marketplaceNamespaceExclusive &&
+      inspection.catalogExact && inspection.pluginPresent && inspection.pluginVersionExact &&
+      inspection.artifactExact && inspection.enablement === 'enabled' &&
+      !inspection.drifted && inspection.error === null;
+    let setupAction: EyesOnAgentsClaudeSetupAction = 'repair';
+    if (inspection?.finishable === true) setupAction = 'finish';
+    else if (exactInstalled) {
+      setupAction = !runtime.listening
+        ? 'retry'
+        : state.restartRequired || state.firstReceiptAt === null ? 'reload' : 'none';
+    } else if (!configured && error === null) {
+      setupAction = 'enable';
+    }
     return {
       state: bridgeState,
+      setupAction,
       configured,
       enabled,
       listening: runtime.listening,
@@ -340,7 +362,11 @@ export class ClaudePluginBridgeService {
       const pluginPresent = plugin !== undefined;
       const pluginVersionExact = plugin?.version === this.dependencies.pluginVersion;
       const configured = marketplace === 'exact' || pluginPresent || state?.installed === true;
-      const enabled = pluginPresent && plugin?.enabled === true;
+      const enablement = !pluginPresent
+        ? 'unknown'
+        : plugin?.enabled === true ? 'enabled'
+          : plugin?.enabled === false ? 'disabled' : 'unknown';
+      const enabled = enablement === 'enabled';
       const artifactExact = this.artifactsExact(artifacts);
       const catalogArtifact = artifacts.find(
         (artifact) => artifact.relativePath === '.claude-plugin/marketplace.json'
@@ -350,9 +376,16 @@ export class ClaudePluginBridgeService {
       const drifted = marketplace === 'collision' || pluginPresent && marketplace !== 'exact' ||
         pluginPresent && !pluginVersionExact ||
         configured && (!artifactExact || state?.artifactDigest !== digest);
+      const finishable = stateInspection.kind === 'valid' && !stateInspection.value.installed &&
+        stateInspection.value.artifactDigest === null &&
+        stateInspection.value.firstReceiptAt === null &&
+        stateInspection.value.lastReceiptAt === null && stateInspection.value.restartRequired &&
+        stateInspection.value.recoveryReason === null && marketplace === 'exact' &&
+        marketplaceNamespaceExclusive && catalogExact && pluginPresent && pluginVersionExact &&
+        artifactExact && enablement === 'enabled';
       this.inspection = {
-        configured, enabled, drifted, marketplace, marketplaceNamespaceExclusive,
-        catalogExact, pluginPresent,
+        configured, enabled, enablement, drifted, marketplace, marketplaceNamespaceExclusive,
+        catalogExact, pluginPresent, pluginVersionExact, artifactExact, finishable,
         inspectedAt: this.now(), error: null
       };
     } catch (error) {
@@ -361,11 +394,15 @@ export class ClaudePluginBridgeService {
       this.inspection = {
         configured: installed || existsSync(this.marketplaceRoot),
         enabled: false,
+        enablement: 'unknown',
         drifted: false,
         marketplace: 'absent',
         marketplaceNamespaceExclusive: false,
         catalogExact: false,
         pluginPresent: false,
+        pluginVersionExact: false,
+        artifactExact: false,
+        finishable: false,
         inspectedAt: this.now(),
         error: boundedError(error)
       };
@@ -416,25 +453,50 @@ export class ClaudePluginBridgeService {
     if (this.inspection?.error) throw new Error(this.inspection.error);
     this.assertSafeInstallOwnership(previous);
     const pluginPresent = this.inspection?.pluginPresent === true;
-    if (this.inspection?.marketplace === 'exact') {
-      await this.command(executable, ['plugin', 'marketplace', 'update', MARKETPLACE_NAME]);
-    } else {
-      await this.command(executable, [
-        'plugin', 'marketplace', 'add', this.marketplaceRoot, '--scope', 'user'
-      ]);
+    try {
+      if (this.inspection?.marketplace === 'exact') {
+        await this.command(executable, ['plugin', 'marketplace', 'update', MARKETPLACE_NAME]);
+      } else {
+        await this.command(executable, [
+          'plugin', 'marketplace', 'add', this.marketplaceRoot, '--scope', 'user'
+        ]);
+      }
+    } catch {
+      throw new Error('Claude plugin setup failed at marketplace');
     }
-    if (!pluginPresent) {
-      await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
-    } else {
-      // Claude may keep a same-version plugin cache even when the local marketplace files changed.
-      // Repair rotates the installation ID, so force an exact user-scoped reinstall before admitting
-      // the new generation instead of trusting a same-version update no-op.
-      await this.command(executable, [
-        'plugin', 'uninstall', PLUGIN_ID, '--scope', 'user', '-y'
-      ]);
-      await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
+    try {
+      if (!pluginPresent) {
+        await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
+      } else {
+        // Claude may keep a same-version plugin cache even when the local marketplace files changed.
+        // Repair rotates the installation ID, so force an exact user-scoped reinstall before admitting
+        // the new generation instead of trusting a same-version update no-op.
+        await this.command(executable, [
+          'plugin', 'uninstall', PLUGIN_ID, '--scope', 'user', '-y'
+        ]);
+        await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
+      }
+    } catch {
+      throw new Error('Claude plugin setup failed at install');
     }
-    await this.command(executable, ['plugin', 'enable', PLUGIN_ID, '--scope', 'user']);
+    await this.refresh();
+    if (!this.isExactPluginInspection()) {
+      throw new Error('Claude plugin setup failed at final inspection: version or installation is not exact');
+    }
+    if (this.inspection?.enablement === 'disabled') {
+      try {
+        await this.command(executable, ['plugin', 'enable', PLUGIN_ID, '--scope', 'user']);
+      } catch {
+        // Claude may have committed enablement even when the command returned non-zero. The exact,
+        // read-only inspection below is the sole idempotent success condition.
+      }
+      await this.refresh();
+      if (!this.isExactEnabledPluginInspection()) {
+        throw new Error('Claude plugin setup failed at enable');
+      }
+    } else if (this.inspection?.enablement !== 'enabled') {
+      throw new Error('Claude plugin setup failed at final inspection: enablement is unknown');
+    }
     this.writeState({
       schemaVersion: 1,
       installationId,
@@ -449,7 +511,7 @@ export class ClaudePluginBridgeService {
     if (this.inspection?.error || this.inspection?.marketplace !== 'exact' ||
       !this.inspection.pluginPresent || !this.inspection.enabled || this.inspection.drifted ||
       !this.inspection.marketplaceNamespaceExclusive || !this.inspection.catalogExact) {
-      throw new Error(this.inspection?.error ?? 'Claude plugin version or installation is not exact');
+      throw new Error('Claude plugin setup failed at final inspection: version or installation is not exact');
     }
     const installedState = this.readState();
     if (installedState?.installationId === installationId &&
@@ -509,11 +571,15 @@ export class ClaudePluginBridgeService {
     this.inspection = {
       configured: false,
       enabled: false,
+      enablement: 'unknown',
       drifted: false,
       marketplace: 'absent',
       marketplaceNamespaceExclusive: true,
       catalogExact: false,
       pluginPresent: false,
+      pluginVersionExact: false,
+      artifactExact: false,
+      finishable: false,
       inspectedAt: this.now(),
       error: null
     };
@@ -786,6 +852,17 @@ export class ClaudePluginBridgeService {
     if (existsSync(this.marketplaceRoot) && !this.isOwnedArtifactRoot()) {
       throw new Error('Claude plugin artifact directory is not owned by Bitterless');
     }
+  }
+
+  private isExactPluginInspection(): boolean {
+    return this.inspection?.error === null && this.inspection.marketplace === 'exact' &&
+      this.inspection.marketplaceNamespaceExclusive && this.inspection.catalogExact &&
+      this.inspection.pluginPresent && this.inspection.pluginVersionExact &&
+      this.inspection.artifactExact;
+  }
+
+  private isExactEnabledPluginInspection(): boolean {
+    return this.isExactPluginInspection() && this.inspection?.enablement === 'enabled';
   }
 
   private artifactExact(artifact: Artifact): boolean {

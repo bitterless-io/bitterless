@@ -165,9 +165,10 @@ Clicking the connection status opens a small panel with:
 - last successful sync time and latest error, if any;
 - an explicit note that this connection does not attach to Codex Desktop's private stdio process;
 - Codex observation status with `Enable`, `Review in Codex`, `Check again`, `Repair`, or `Disable`;
-- Claude provider switch plus observation status with `Enable/Repair`, `Check status`, or
+- Claude provider switch plus one state-driven observation action: `Enable`, `Finish setup`,
+  `Open new Claude session`, `Copy /reload-plugins`, `Retry listener`, `Repair`, or
   `Remove plugin` while enabled;
-- an always-visible four-step guide covering installation/repair, Codex review, Bitterless
+- an always-visible Codex four-step guide covering installation/repair, Codex review, Bitterless
   verification, and the independent default-off latest-question permission; reason-specific review
   text appears above it only when attention is needed.
 
@@ -194,11 +195,13 @@ The panel separates the two lifecycles visually and semantically:
 │ │ Automatic · Desktop detected · Last scan 10:42        │ │
 │ │                                      [Retry] [Custom] │ │
 │ └────────────────────────────────────────────────────────┘ │
-│ ┌ Claude observation setup ─────────────────────────────┐ │
-│ │ 1 Install plugin  2 allow workspace hooks if asked    │ │
-│ │ 3 Check status · first receipt proves observation     │ │
+│ ┌ Reload in Claude ─────────────────────────────────────┐ │
+│ │ Existing sessions need one plugin reload.             │ │
+│ │ [Open new Claude session] [Copy /reload-plugins]      │ │
+│ │                              [Still not working?]     │ │
+│ │ Status updates automatically after the first event.   │ │
 │ └────────────────────────────────────────────────────────┘ │
-│                           [Enable plugin] [Check status]    │
+│                                      [Remove plugin]       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -228,9 +231,15 @@ The Claude section reports metadata discovery, plugin installation, listener sta
 committed Hook receipt separately. It does not enumerate unrelated plugins and never claims Hook
 coverage merely because installation files exist. Its user-scope plugin is required for timely
 working/completion status in local CLI and Desktop Code sessions. Archive/unarchive comes from the
-read-only Desktop `isArchived` metadata scan, not from Hook trust. The setup guide explains how to
-open `/hooks` when a workspace withholds the plugin and how Enable/Repair can be retried without
-overwriting any existing Hook or plugin.
+read-only Desktop `isArchived` metadata scan, not from Hook trust.
+
+The Claude setup surface is state-driven rather than an always-visible checklist. **Enable Claude
+observation** performs marketplace, install, and enablement work; **Finish setup** safely rebuilds
+an exact interrupted installation on a fresh listener generation; **Open new Claude session** uses Anthropic's
+published Desktop route so the enabled plugin loads in a fresh session; **Copy `/reload-plugins`**
+handles an already-open Claude session; **Repair** is reserved for proven drift/error.
+The first committed event updates the card automatically, so Check status is secondary diagnostics,
+not the final setup step. `/hooks` appears only under **Still not working?** troubleshooting.
 
 The Claude header pairs the existing status pill with one small Arco Switch labelled
 **Claude support**.
@@ -249,7 +258,8 @@ their persisted annotations return when the provider is enabled. The switch rema
 the saved preference is invalid so it can replace the value. The existing plugin removal control is
 labelled **Remove plugin**, avoiding ambiguity with the provider switch.
 
-The Claude card also contains one compact **Session directories** block before the Hook guide. It
+The Claude card also contains one compact **Session directories** block before the state-driven
+setup action. It
 uses the card's existing quiet neutral background hierarchy and no decorative border or shadow.
 The current config directory appears in a bordered, read-only Arco Input so it can be selected and
 copied but not edited into an untrusted renderer-supplied path. **Change** opens Main's native folder
@@ -478,16 +488,20 @@ until its state actually resolves.
 | Add Domain closed/open | labelled menubar control; opening shows a focused anchored form and no board placeholder column |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
-| any bridge state | Install/Repair → Review if requested → Check status → optional default-off question permission guide remains visible in the open drawer |
-| bridge needs review | ordered guide shows Review → inspect Hooks/Trust flagged items → Check again, includes `/hooks`, and keeps Review plus Check available |
-| bridge trust inspection unavailable | the same ordered manual guide remains visible without claiming that the Hooks are trusted |
-| bridge disabled in Codex | Review safely re-enables only exact Bitterless entries, then still requires Codex trust when applicable |
-| bridge installed, listener stopped | explicit `Installed, paused`; never claim live observation |
+| any Codex bridge state | Install/Repair → Review if requested → Check status → optional default-off question permission guide remains visible in the open drawer |
+| Codex bridge needs review | ordered guide shows Review → inspect Hooks/Trust flagged items → Check again, includes `/hooks`, and keeps Review plus Check available |
+| Codex bridge trust inspection unavailable | the same ordered manual guide remains visible without claiming that the Hooks are trusted |
+| Codex bridge disabled | Review safely re-enables only exact Bitterless entries, then still requires Codex trust when applicable |
+| Codex bridge installed, listener stopped | explicit `Installed, paused`; never claim live observation |
 | unknown runtime | accessible runtime label remains `Unknown`; no working loader is shown |
 | Claude Desktop archived | explicit metadata transition hides the row; unarchive restores its Domain/read state |
 | Claude CLI-only archive | state remains unknown and visible; absence never hides the row |
 | Claude CLI-only Open | Open is unavailable; Preview transcript remains available when safe |
 | Claude provider off | Claude rows and controls are absent from the board/search; Codex remains fully interactive |
+| Claude setup interrupted after exact install | one **Finish setup** action rebuilds the owned plugin generation; no dead-end Needs review guide |
+| Claude plugin installed, receipt pending | **Open new Claude session** is primary, Copy `/reload-plugins` is secondary, and status updates automatically |
+| exact Claude plugin, listener stopped | explicit **Listener paused** with one primary **Retry listener**; failure stays visible |
+| Claude observing | setup action and troubleshooting stay hidden; Check status and Remove plugin remain secondary controls |
 | long title/path | title grows from one 18px line to at most two/36px; folder metadata stays icon-only with full-path tooltip |
 
 ## Accessibility and responsive behavior
