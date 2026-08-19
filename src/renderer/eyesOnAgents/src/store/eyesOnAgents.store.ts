@@ -1,14 +1,10 @@
-import { computed, reactive } from 'vue';
+import { reactive } from 'vue';
 import type {
-  EyesOnAgentsDomain,
   EyesOnAgentsSnapshot,
   EyesOnAgentsSessionKey,
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
-import {
-  isEyesOnAgentsFocused,
-  isEyesOnAgentsTerminal,
-} from '@shared/eyesOnAgents/eyesOnAgents.contract';
+import { isEyesOnAgentsTerminal } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import {
   eyesOnAgentsEmitter,
   subscribeEyesOnAgentsChanges,
@@ -57,14 +53,14 @@ const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
     return left.sessionKey < right.sessionKey ? -1 : 1;
   });
 
-const THREAD_SEARCH_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;
+const THREAD_TITLE_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;
 const MAX_ACTION_ERROR_LENGTH = 300;
 
-const tokenizeThreadSearchText = (value: string): string[] =>
+const tokenizeThreadTitle = (value: string): string[] =>
   value
     .normalize('NFKC')
     .toLocaleLowerCase()
-    .split(THREAD_SEARCH_SEPARATOR_PATTERN)
+    .split(THREAD_TITLE_SEPARATOR_PATTERN)
     .filter(Boolean);
 
 class EyesOnAgentsState {
@@ -75,11 +71,8 @@ class EyesOnAgentsState {
   busyAction: string | null = null;
   openingSessionKeys = new Set<string>();
   previewingSessionKeys = new Set<string>();
-  allProjectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
-  allTitleQuery = '';
-  threadSearchVisible = false;
-  threadSearchQuery = '';
-  threadSearchSelectedSessionKey: EyesOnAgentsSessionKey | null = null;
+  projectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
+  titleQuery = '';
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private activationPromise: Promise<void> | null = null;
@@ -88,91 +81,54 @@ class EyesOnAgentsState {
   private subscribed = false;
   private highestClaudeProviderRevision = -1;
 
-  get domains(): EyesOnAgentsDomain[] {
-    return [...(this.snapshot?.domains ?? [])].sort((left, right) => {
-      if (left.domainKey === 'uncategorized') return -1;
-      if (right.domainKey === 'uncategorized') return 1;
-      return left.sortIndex - right.sortIndex;
-    });
-  }
-
-  get uncategorizedDomain(): EyesOnAgentsDomain | null {
-    return this.domains.find((domain) => domain.domainKey === 'uncategorized') ?? null;
-  }
-
-  get customDomains(): EyesOnAgentsDomain[] {
-    return this.domains.filter((domain) => domain.domainKey !== 'uncategorized');
-  }
-
   get threads(): EyesOnAgentsThread[] {
     return this.snapshot?.threads ?? [];
   }
 
   get focusThreads(): EyesOnAgentsThread[] {
-    return sortThreads(
-      this.threads.filter(
-        (thread) => isEyesOnAgentsFocused(thread.runtimeState, thread.isUnread),
-      ),
-    );
+    return sortThreads(this.threads);
   }
 
   get readableFocusThreads(): EyesOnAgentsThread[] {
-    return this.focusThreads.filter(
+    return this.threads.filter(
       (thread) => thread.isUnread && isEyesOnAgentsTerminal(thread.runtimeState),
     );
   }
 
-  get allThreads(): EyesOnAgentsThread[] {
-    return sortThreads(this.threads);
-  }
-
-  get allProjectOptions(): EyesOnAgentsProjectFilterOption[] {
+  get projectOptions(): EyesOnAgentsProjectFilterOption[] {
     return buildEyesOnAgentsProjectFilterOptions(
-      this.allThreads,
-      this.allProjectFilter,
+      this.focusThreads,
+      this.projectFilter,
     );
   }
 
-  get filteredAllThreads(): EyesOnAgentsThread[] {
+  get filteredFocusThreads(): EyesOnAgentsThread[] {
     const projectThreads = filterEyesOnAgentsThreadsByProject(
-      this.allThreads,
-      this.allProjectFilter,
+      this.focusThreads,
+      this.projectFilter,
     );
-    const query = this.allTitleQuery.trim().toLocaleLowerCase();
-    if (!query) return projectThreads;
-    return projectThreads.filter(
-      (thread) => thread.title !== null
-        && thread.title.toLocaleLowerCase().includes(query),
-    );
-  }
-
-  get threadSearchResults(): EyesOnAgentsThread[] {
-    const queryTokens = tokenizeThreadSearchText(this.threadSearchQuery);
-    if (queryTokens.length === 0) return [];
-    return this.allThreads.filter((thread) => {
+    const queryTokens = tokenizeThreadTitle(this.titleQuery);
+    if (queryTokens.length === 0) return projectThreads;
+    return projectThreads.filter((thread) => {
       if (thread.title === null) return false;
-      const titleTokens = tokenizeThreadSearchText(thread.title);
+      const titleTokens = tokenizeThreadTitle(thread.title);
       return queryTokens.every((queryToken) =>
         titleTokens.some((titleToken) => titleToken.includes(queryToken)));
     });
   }
 
-  get hasThreadSearchQueryTokens(): boolean {
-    return tokenizeThreadSearchText(this.threadSearchQuery).length > 0;
+  get projectFilterValue(): string {
+    if (this.projectFilter.type === 'all') return ALL_PROJECT_FILTER_VALUE;
+    if (this.projectFilter.type === 'none') return NO_PROJECT_FILTER_VALUE;
+    return `project:${encodeURIComponent(this.projectFilter.projectKey)}`;
   }
 
-  get allProjectFilterValue(): string {
-    if (this.allProjectFilter.type === 'all') return ALL_PROJECT_FILTER_VALUE;
-    if (this.allProjectFilter.type === 'none') return NO_PROJECT_FILTER_VALUE;
-    return `project:${encodeURIComponent(this.allProjectFilter.projectKey)}`;
+  get isProjectFiltered(): boolean {
+    return this.projectFilter.type !== 'all';
   }
 
-  get isAllProjectFiltered(): boolean {
-    return this.allProjectFilter.type !== 'all';
-  }
-
-  get isAllTitleFiltered(): boolean {
-    return Boolean(this.allTitleQuery.trim());
+  get isTitleFiltered(): boolean {
+    return tokenizeThreadTitle(this.titleQuery).length > 0;
   }
 
   initialize(): void {
@@ -196,28 +152,19 @@ class EyesOnAgentsState {
     this.refreshTimer = null;
   }
 
-  threadsForDomain(domainId: number): EyesOnAgentsThread[] {
-    return sortThreads(this.threads.filter((thread) => thread.domainId === domainId));
-  }
-
-  customDomainTitle(domainId: number): string | null {
-    const title = this.customDomains.find((domain) => domain.id === domainId)?.title.trim();
-    return title || null;
-  }
-
-  selectAllProjectFilter(value: string): void {
-    const option = this.allProjectOptions.find((item) => item.value === value);
+  selectProjectFilter(value: string): void {
+    const option = this.projectOptions.find((item) => item.value === value);
     if (!option) return;
     if (option.type === 'all') {
-      this.allProjectFilter = { type: 'all' };
+      this.projectFilter = { type: 'all' };
       return;
     }
     if (option.type === 'none') {
-      this.allProjectFilter = { type: 'none' };
+      this.projectFilter = { type: 'none' };
       return;
     }
     if (!option.projectKey || !option.projectRoot || !option.projectName) return;
-    this.allProjectFilter = {
+    this.projectFilter = {
       type: 'project',
       projectKey: option.projectKey,
       projectRoot: option.projectRoot,
@@ -225,58 +172,8 @@ class EyesOnAgentsState {
     };
   }
 
-  clearAllTitleQuery(): void {
-    this.allTitleQuery = '';
-  }
-
-  openThreadSearch(): void {
-    if (this.threadSearchVisible) return;
-    this.threadSearchVisible = true;
-    this.threadSearchSelectedSessionKey = this.threadSearchResults[0]?.sessionKey ?? null;
-  }
-
-  closeThreadSearch(): void {
-    this.threadSearchVisible = false;
-    this.threadSearchQuery = '';
-    this.threadSearchSelectedSessionKey = null;
-  }
-
-  setThreadSearchQuery(query: string): void {
-    if (this.threadSearchQuery === query) return;
-    this.threadSearchQuery = query;
-    this.threadSearchSelectedSessionKey = this.threadSearchResults[0]?.sessionKey ?? null;
-  }
-
-  selectThreadSearchResult(sessionKey: EyesOnAgentsSessionKey): void {
-    if (!this.threadSearchResults.some((thread) => thread.sessionKey === sessionKey)) return;
-    this.threadSearchSelectedSessionKey = sessionKey;
-  }
-
-  moveThreadSearchSelection(delta: -1 | 1): void {
-    const results = this.threadSearchResults;
-    if (results.length === 0) {
-      this.threadSearchSelectedSessionKey = null;
-      return;
-    }
-
-    const selectedIndex = results.findIndex(
-      (thread) => thread.sessionKey === this.threadSearchSelectedSessionKey,
-    );
-    const currentIndex = selectedIndex < 0 ? 0 : selectedIndex;
-    const nextIndex = Math.min(results.length - 1, Math.max(0, currentIndex + delta));
-    this.threadSearchSelectedSessionKey = results[nextIndex]?.sessionKey ?? null;
-  }
-
-  async openSelectedThreadSearchResult(): Promise<void> {
-    if (!this.threadSearchSelectedSessionKey) return;
-    await this.openThreadSearchResult(this.threadSearchSelectedSessionKey);
-  }
-
-  async openThreadSearchResult(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
-    const thread = this.threadSearchResults.find((item) => item.sessionKey === sessionKey);
-    if (!thread) return;
-    this.threadSearchSelectedSessionKey = sessionKey;
-    await this.openThread(sessionKey);
+  clearTitleQuery(): void {
+    this.titleQuery = '';
   }
 
   async loadSnapshot(quiet = false): Promise<void> {
@@ -459,48 +356,6 @@ class EyesOnAgentsState {
     await this.runSnapshotAction('focus-read-all', () => eyesOnAgentsEmitter.markAllRead());
   }
 
-  async createDomain(title: string): Promise<void> {
-    await this.runSnapshotAction('domain-create', () =>
-      eyesOnAgentsEmitter.createDomain({ title }),
-    );
-  }
-
-  async renameDomain(domainId: number, title: string): Promise<void> {
-    await this.runSnapshotAction(`domain-rename:${domainId}`, () =>
-      eyesOnAgentsEmitter.renameDomain({ domainId, title }),
-    );
-  }
-
-  async deleteDomain(domainId: number): Promise<void> {
-    await this.runSnapshotAction(`domain-delete:${domainId}`, () =>
-      eyesOnAgentsEmitter.deleteDomain({ domainId }),
-    );
-  }
-
-  async reorderCustomDomains(oldIndex: number, newIndex: number): Promise<void> {
-    if (oldIndex === newIndex || oldIndex < 0 || newIndex < 0) return;
-    const domains = [...this.customDomains];
-    const [moved] = domains.splice(oldIndex, 1);
-    if (!moved) return;
-    domains.splice(newIndex, 0, moved);
-    await this.runSnapshotAction('domain-reorder', () =>
-      eyesOnAgentsEmitter.reorderDomains({
-        domainIds: [
-          ...(this.uncategorizedDomain ? [this.uncategorizedDomain.id] : []),
-          ...domains.map((domain) => domain.id),
-        ],
-      }),
-    );
-  }
-
-  async moveThread(sessionKey: EyesOnAgentsSessionKey, domainId: number): Promise<void> {
-    const current = this.threads.find((thread) => thread.sessionKey === sessionKey);
-    if (!current || current.domainId === domainId) return;
-    await this.runSnapshotAction(`thread-move:${sessionKey}`, () =>
-      eyesOnAgentsEmitter.moveThread({ sessionKey, domainId }),
-    );
-  }
-
   clearActionError(): void {
     this.actionError = null;
   }
@@ -611,25 +466,14 @@ class EyesOnAgentsState {
     this.highestClaudeProviderRevision = claudeProviderRevision;
     this.snapshot = snapshot;
     this.loadError = null;
-    this.reconcileAllProjectFilter();
-    this.reconcileThreadSearchSelection();
+    this.reconcileProjectFilter();
   }
 
-  private reconcileAllProjectFilter(): void {
-    if (this.allProjectFilter.type !== 'project') return;
-    const projectKey = this.allProjectFilter.projectKey;
+  private reconcileProjectFilter(): void {
+    if (this.projectFilter.type !== 'project') return;
+    const projectKey = this.projectFilter.projectKey;
     if (this.threads.some((thread) => thread.projectKey === projectKey)) return;
-    this.allProjectFilter = { type: 'all' };
-  }
-
-  private reconcileThreadSearchSelection(): void {
-    if (!this.threadSearchVisible) return;
-    const results = this.threadSearchResults;
-    if (
-      this.threadSearchSelectedSessionKey
-      && results.some((thread) => thread.sessionKey === this.threadSearchSelectedSessionKey)
-    ) return;
-    this.threadSearchSelectedSessionKey = results[0]?.sessionKey ?? null;
+    this.projectFilter = { type: 'all' };
   }
 
   private errorMessage(error: unknown): string {
@@ -639,8 +483,3 @@ class EyesOnAgentsState {
 }
 
 export const eyesOnAgentsStore = reactive(new EyesOnAgentsState());
-
-export const eyesOnAgentsView = {
-  domains: computed(() => eyesOnAgentsStore.domains),
-  focusThreads: computed(() => eyesOnAgentsStore.focusThreads),
-};

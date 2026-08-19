@@ -62,6 +62,11 @@ class SubmodulesWindowHandler extends XpcMainHandler implements SubmodulesWindow
     this.window?.close();
   }
 
+  /** `_` prefix keeps this out of XPC registration: Main-internal liveness query, not a channel. */
+  _hasLiveWindow(): boolean {
+    return Boolean(this.window && !this.window.isDestroyed());
+  }
+
   async _destroyForAuth(): Promise<void> {
     const pending = this.creationPromise;
     if (pending) await pending.catch(() => undefined);

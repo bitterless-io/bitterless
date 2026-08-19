@@ -107,6 +107,42 @@
   font-weight: 700;
 }
 
+.translator__result-footer {
+  min-height: 30px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 3px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--translator-line), transparent 25%);
+  background: var(--translator-paper);
+}
+
+.translator__copy-status {
+  min-width: 0;
+  overflow: hidden;
+  color: oklch(0.55 0.026 272);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.translator__copy {
+  flex: 0 0 auto;
+  color: var(--translator-royal);
+}
+
+.translator__copy:hover {
+  color: var(--translator-royal);
+  background: var(--translator-royal-soft);
+}
+
+.translator__copy:focus-visible {
+  outline: 2px solid var(--translator-royal);
+  outline-offset: 1px;
+}
+
 .translator__error {
   flex: 0 0 auto;
   display: flex;

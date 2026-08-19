@@ -1,10 +1,10 @@
 import { reactive } from 'vue';
-import { XpcRendererHandler } from 'electron-xpc/renderer';
+import { xpcRenderer } from 'electron-xpc/renderer';
 import {
+  SUBMODULES_SNAPSHOT_EVENT,
   createEmptySubmodulesSnapshot,
   type SubmoduleEntry,
-  type SubmodulesSnapshot,
-  type SubmodulesStoreApi
+  type SubmodulesSnapshot
 } from '@shared/submodules/submodules.type';
 import { submodulesEmitter, submodulesSystemEmitter } from '../emitter/submodules.emitter';
 import { describeOpenError, describeScanError } from '../services/submoduleMessage.service';
@@ -112,10 +112,8 @@ class SubmodulesState {
 
 export const submodulesStore = reactive<SubmodulesState>(new SubmodulesState());
 
-export class SubmodulesStoreHandler extends XpcRendererHandler implements SubmodulesStoreApi {
-  async onSnapshot(params: SubmodulesSnapshot): Promise<void> {
-    submodulesStore.applySnapshot(params);
-  }
-}
-
-new SubmodulesStoreHandler();
+// Main is the only writer of unsolicited state: it broadcasts a snapshot whenever the observed
+// working copies changed, to this view and to every other Submodules view at the same time.
+xpcRenderer.subscribe(SUBMODULES_SNAPSHOT_EVENT, (payload) => {
+  submodulesStore.applySnapshot(payload.params as SubmodulesSnapshot | null);
+});

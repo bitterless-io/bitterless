@@ -69,7 +69,7 @@
             </span>
           </a-tooltip>
 
-          <a-dropdown trigger="click" position="br">
+          <a-dropdown v-if="canPreviewTranscript" trigger="click" position="br">
             <a-button
               class="thread-card__more-control thread-card__control"
               :class="{ 'thread-card__more-control--unread': showUnreadDot && !canOpenThread }"
@@ -82,29 +82,23 @@
             </a-button>
             <template #content>
               <a-doption
-                v-if="thread.provider === 'claude' && thread.canPreviewTranscript"
                 :disabled="eyesOnAgentsStore.previewingSessionKeys.has(thread.sessionKey)"
                 @click="handlePreview"
               >
                 <IconFileText :size="13" />
                 {{ i18nHelper.eyesOnAgents.actions.previewTranscript }}
               </a-doption>
-              <a-dgroup :title="i18nHelper.eyesOnAgents.actions.moveTo">
-                <a-doption
-                  v-for="domain in eyesOnAgentsStore.domains"
-                  :key="domain.id"
-                  :disabled="domain.id === thread.domainId"
-                  @click="handleMove(domain.id)"
-                >
-                  <IconCheck
-                    :size="13"
-                    :class="{ 'thread-card__check--hidden': domain.id !== thread.domainId }"
-                  />
-                  {{ domainLabel(domain) }}
-                </a-doption>
-              </a-dgroup>
             </template>
           </a-dropdown>
+
+          <span
+            v-else-if="showUnreadDot && !canOpenThread"
+            class="thread-card__unread-marker"
+            role="img"
+            :aria-label="i18nHelper.eyesOnAgents.thread.new"
+          >
+            <span class="thread-card__unread-dot" aria-hidden="true" />
+          </span>
         </div>
       </div>
     </div>
@@ -114,16 +108,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import {
-  IconCheck,
   IconDots,
   IconExternalLink,
   IconFileText,
   IconFolder,
 } from '@tabler/icons-vue';
-import type {
-  EyesOnAgentsDomain,
-  EyesOnAgentsThread,
-} from '@shared/eyesOnAgents/eyesOnAgents.type';
+import type { EyesOnAgentsThread } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { isEyesOnAgentsTerminal } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import ProviderGlyph from '../ProviderGlyph/ProviderGlyph.vue';
@@ -176,6 +166,8 @@ const promptAriaLabel = computed(() => {
 });
 const canOpenThread = computed(() => props.thread.provider === 'codex'
   || props.thread.desktopSessionId !== null);
+const canPreviewTranscript = computed(() => props.thread.provider === 'claude'
+  && props.thread.canPreviewTranscript);
 const showUnreadDot = computed(() =>
   props.thread.isUnread && isEyesOnAgentsTerminal(props.thread.runtimeState));
 const cardAriaLabel = computed(() => [
@@ -224,15 +216,6 @@ const handleDoubleClick = async (event: MouseEvent): Promise<void> => {
   if ((event.target as HTMLElement).closest('.thread-card__control')) return;
   await handleOpen();
 };
-
-const handleMove = async (domainId: number): Promise<void> => {
-  await eyesOnAgentsStore.moveThread(props.thread.sessionKey, domainId).catch(() => undefined);
-};
-
-const domainLabel = (domain: EyesOnAgentsDomain): string =>
-  domain.domainKey === 'uncategorized'
-    ? i18nHelper.eyesOnAgents.board.all
-    : domain.title;
 </script>
 
 <style lang="less">

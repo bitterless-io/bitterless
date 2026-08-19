@@ -4,9 +4,9 @@ Status: Accepted
 
 ## Purpose
 
-Omni layout cells can render either a remote browser page or one of five first-party Bitterless
-mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, `translator`, `motto`, and
-`trench`.
+Omni layout cells can render either a remote browser page or one of six first-party Bitterless
+mini apps. The supported mini apps are exactly `todo`, `eyesOnAgents`, `translator`, `motto`,
+`trench`, and `submodules`.
 They render directly in the cell operation `WebContentsView`; selecting one must not create or
 depend on its standalone window.
 
@@ -33,8 +33,8 @@ single-cell runtime.
 ```
 
 The Omni shell owns cell creation, bounds, persistence, and content-runtime selection. Todo,
-EyesOnAgents, Translator, Motto, and Trench continue to own their business state and persistence
-boundary.
+EyesOnAgents, Translator, Motto, Trench, and Submodules continue to own their business state and
+persistence boundary.
 
 ## Per-Cell Layout Panel
 
@@ -53,7 +53,8 @@ Mini-app cell
 │                                             ├ EyesOnAgents                 │
 │                                             ├ Translator                   │
 │                                             ├ Motto                        │
-│                                             └ Trench                       │
+│                                             ├ Trench                       │
+│                                             └ Submodules                   │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -95,7 +96,7 @@ Each leaf persists these values inside the existing `omni_layout` tree:
 |---|---|
 | `contentMode` | `'browser' | 'miniapp'` |
 | `url` | Last browser URL. Preserved while the cell displays a mini app. |
-| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator' | 'motto' | 'trench'`. Preserved while the cell displays a browser. |
+| `miniAppId` | `'todo' | 'eyesOnAgents' | 'translator' | 'motto' | 'trench' | 'submodules'`. Preserved while the cell displays a browser. |
 
 Rules:
 
@@ -129,6 +130,7 @@ renderer loads or reopens, so the localized warning cannot be lost to renderer s
 | Translator | `out/preload/translator.js` | `${ELECTRON_RENDERER_URL}/translator/index.html` | `out/renderer/translator/index.html` | default |
 | Motto | `out/preload/motto.js` | `${ELECTRON_RENDERER_URL}/motto/index.html` | `out/renderer/motto/index.html` | default |
 | Trench | `out/preload/trench.js` | `${ELECTRON_RENDERER_URL}/coin/index.html` | `out/renderer/coin/index.html` | default |
+| Submodules | `out/preload/submodules.js` | `${ELECTRON_RENDERER_URL}/submodules/index.html` | `out/renderer/submodules/index.html` | default |
 
 Generated preload and packaged renderer paths are anchored at `app.getAppPath()/out`; they never
 depend on a Rollup chunk's `__dirname`. Development first-party renderers use the Electron Vite dev
@@ -136,7 +138,7 @@ server URL, while packaged renderers use `loadFile`.
 
 Changing `contentMode` or `miniAppId` recreates the affected operation view with the correct
 preload. It does not recreate the Omni BaseWindow or open a standalone
-Todo/EyesOnAgents/Translator/Motto/Trench window.
+Todo/EyesOnAgents/Translator/Motto/Trench/Submodules window.
 Remote-browser notification interception, provider-scoped browser identity, persistent browser
 sessions, and URL navigation hooks apply only to browser cells.
 
@@ -172,7 +174,7 @@ Mini-app operation views are privileged because their preload exposes first-part
 reject top-level navigation away from the expected local renderer target. New-window requests and
 external `http`/`https` links may be handed to the system browser, but must never load inside the
 privileged operation view. Remote browser cells can never receive a Todo, EyesOnAgents,
-Translator, Motto, or Trench preload.
+Translator, Motto, Trench, or Submodules preload.
 
 ## Embedded Mini-App Behavior
 
@@ -189,6 +191,13 @@ Translator, Motto, or Trench preload.
 - Trench follows `docs/features/coin.md`, uses a dedicated read-only preload, and previews the same
   Main-owned repository as standalone Trench. It has no in-cell analysis capability or standalone
   window actions.
+- Submodules follows `docs/features/submodules.md`. It keeps its full capability in the cell — choose
+  a root, live watch state, refresh, and Open in WebStorm — and hides every standalone-window action
+  (Windows minimize/maximize/close, menu-bar double-click maximize, drag region, macOS traffic-light
+  padding). It never calls `SubmodulesWindowApi`, so an open standalone Submodules window is
+  unaffected by the cell. One Main-owned runtime does all scanning and watching and broadcasts each
+  changed snapshot, so any number of Submodules cells plus the standalone window cost one watcher set
+  and stay synchronized live, including when a cell chooses a new root.
 - Mini-app cells do not render Omni's browser chrome above the app's own header. Embedded host
   styles remove standalone drag regions, macOS traffic-light padding, and fixed 800×600 renderer
   minimums so split panes can shrink without forcing overflow.
@@ -204,7 +213,7 @@ Translator, Motto, or Trench preload.
 | Input | Scope | Behavior |
 |---|---|---|
 | Browser/Mini App selector | Layout panel | Switch content runtime, apply, and persist immediately. |
-| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, Translator, Motto, or Trench; recreate operation view and persist. |
+| Mini-app select | Mini-app panel | Allow only Todo, EyesOnAgents, Translator, Motto, Trench, or Submodules; recreate operation view and persist. |
 | URL Enter | Browser panel | Normalize/load the URL and persist navigation updates. |
 | Refresh | Browser chrome / mini-app header | Reload browser content or refresh the mini app's own data. |
 | Back/forward | Browser cell only | Navigate browser history; hidden/disabled for mini apps. |
@@ -256,10 +265,10 @@ SettingDao.omni_layout
 
 - Contract tests cover legacy migration, allowed variants, round-trip persistence fields, and
   rejection of unsupported mini apps.
-- Runtime tests cover browser/Todo/EyesOnAgents/Translator/Motto/Trench preload selection and
-  dev versus packaged targets.
-- UI guards cover Arco mode/select controls, exactly five mini-app choices, i18n, business BEM/Less,
+- Runtime tests cover browser/Todo/EyesOnAgents/Translator/Motto/Trench/Submodules preload selection
+  and dev versus packaged targets.
+- UI guards cover Arco mode/select controls, exactly six mini-app choices, i18n, business BEM/Less,
   embedded sizing/window-action behavior, the compact Omni Menu Bar update action, and the absence
   of Tailwind classes.
-- Build verification confirms all five mini-app renderer HTML files and preload bundles exist in
+- Build verification confirms all six mini-app renderer HTML files and preload bundles exist in
   `out/` and are referenced by generated-asset-safe paths.

@@ -11,7 +11,7 @@
       :class="{ 'translator__result--translating': translatorStore.translating }"
     >
       <p
-        v-if="translatorStore.ready && translatorStore.translation"
+        v-if="translatorStore.hasTranslation"
         name="translator__translation"
         class="translator__translation"
         aria-live="polite"
@@ -24,6 +24,35 @@
         <span v-if="resultEmptyBody">{{ resultEmptyBody }}</span>
       </div>
     </main>
+
+    <footer
+      v-if="translatorStore.hasTranslation"
+      name="translator__result-footer"
+      class="translator__result-footer"
+    >
+      <span
+        name="translator__copy-status"
+        class="translator__copy-status"
+        role="status"
+        aria-live="polite"
+      >
+        {{ copyStatusLabel }}
+      </span>
+      <a-button
+        name="translator__copy"
+        class="translator__copy"
+        type="text"
+        size="mini"
+        :aria-label="i18nHelper.translator.copyTranslation"
+        :title="i18nHelper.translator.copyTranslation"
+        @click="translatorStore.copyTranslation()"
+      >
+        <template #icon>
+          <IconCheck v-if="translatorStore.copyState === 'copied'" :size="16" />
+          <IconCopy v-else :size="16" />
+        </template>
+      </a-button>
+    </footer>
 
     <div v-if="errorMessage" name="translator__error" class="translator__error" role="alert">
       <span name="translator__error-message" class="translator__error-message">
@@ -98,7 +127,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
-import { IconLanguage } from '@tabler/icons-vue';
+import { IconCheck, IconCopy, IconLanguage } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { translatorStore } from './store/translator.store';
 
@@ -130,6 +159,12 @@ const statusLabel = computed(() => {
   if (translatorStore.authState === 'unavailable') return i18nHelper.translator.unavailable;
   if (translatorStore.authState === 'invalidated') return i18nHelper.translator.invalidated;
   return i18nHelper.translator.loginRequired;
+});
+
+const copyStatusLabel = computed(() => {
+  if (translatorStore.copyState === 'copied') return i18nHelper.translator.copied;
+  if (translatorStore.copyState === 'failed') return i18nHelper.translator.copyFailed;
+  return '';
 });
 
 const statusClass = computed(() => ({

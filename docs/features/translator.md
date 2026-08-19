@@ -46,6 +46,8 @@ uses the existing monospace utility stack.
 │                                                                    │
 │  empty / loading / error guidance occupies this same region        │
 │                                                                    │
+├──────────────── conditional result footer ─────────────────────────┤
+│                                                  Copied     [copy] │
 ├──────────────── conditional error strip ──────────────────────────┤
 │ Translation failed.  [Try again]                                   │
 ├──────────────────────── translation rail ──────────────────────────┤
@@ -67,6 +69,33 @@ the action is guarded against a second activation, then the error strip clears a
 Translating state takes over. Login-required and non-retryable errors keep their existing guidance
 without this action. Empty or whitespace-only source never exposes retry; clearing the source
 clears the error and previous translation, cancels active work, and returns to the empty state.
+
+## Result Footer
+
+The result region ends in a slim footer that carries exactly one action: copy the translation. It is
+a sibling strip pinned below the scrolling canvas, not content inside it, so the action stays
+reachable for a translation longer than the pane.
+
+The footer exists only while the canvas renders a translation — the same condition that renders the
+translated text. Empty, checking, login-required, authenticating, and failure-without-result states
+render no footer, because there is nothing to copy. During translation of a newer revision the
+previous result stays visible and subdued, and its footer stays active so the still-displayed text
+remains copyable.
+
+The copy control is icon-only and right-aligned. It writes the exact validated `translation` string
+to the system clipboard through the renderer clipboard API — the same string the canvas shows, with
+whitespace preserved, never the source text, the direction label, provider metadata, or any wrapper.
+Copy feedback is transient: the icon becomes a check mark and a localized `Copied` / `Copy failed`
+status appears to the left of the icon, then both return to idle. A new translation result, or
+clearing the source, resets that feedback immediately so an old confirmation is never attached to
+new text.
+
+| Input | Scope | Behavior |
+|---|---|---|
+| click / `Enter` / `Space` | copy control | write the currently displayed translation to the clipboard |
+| repeated activation | copy control | rewrite the same text and restart the transient feedback |
+| clipboard write rejected | copy control | show localized `Copy failed`; the translation is untouched |
+| new result / source cleared | result region | reset copy feedback to idle |
 
 ## Language Direction
 

@@ -17,7 +17,8 @@ test('Motto remains the fourth allowlisted Omni mini app before Trench', () => {
     'eyesOnAgents',
     'translator',
     'motto',
-    'trench'
+    'trench',
+    'submodules'
   ]);
   assert.equal(parseOmniMiniAppId('motto'), 'motto');
   assert.equal(OMNI_MINI_APP_DISPLAY_URLS.motto, 'bl://miniapp/motto');

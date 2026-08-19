@@ -20,6 +20,10 @@ import {
 
 export type TranslatorUiError = TranslatorErrorCode | 'load-provider' | 'login';
 
+export type TranslatorCopyState = 'idle' | 'copied' | 'failed';
+
+const COPY_FEEDBACK_RESET_MS = 1_600;
+
 const RETRYABLE_TRANSLATION_ERRORS = new Set<TranslatorUiError>([
   'provider-error',
   'runtime-unavailable',
@@ -42,6 +46,8 @@ class TranslatorState {
   providerAction = false;
   translating = false;
   error: TranslatorUiError | null = null;
+  copyState: TranslatorCopyState = 'idle';
+  private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
   private activeRequestId: string | null = null;
   private lastSubmittedSource: string | null = null;
   private revision = 0;
@@ -69,6 +75,10 @@ class TranslatorState {
         )
       )
     );
+  }
+
+  get hasTranslation(): boolean {
+    return this.ready && Boolean(this.translation);
   }
 
   get canRetryTranslation(): boolean {
@@ -112,6 +122,7 @@ class TranslatorState {
     this.revision += 1;
     this.error = null;
     this.targetLanguage = null;
+    this.resetCopyState();
 
     if (!boundedValue.trim()) {
       this.translation = '';
@@ -175,6 +186,7 @@ class TranslatorState {
       if (result.status === 'completed') {
         this.targetLanguage = result.targetLanguage;
         this.translation = result.translation;
+        this.resetCopyState();
       } else if (result.status === 'error') {
         this.error = result.error.code;
       }
@@ -193,6 +205,32 @@ class TranslatorState {
   async retryTranslation(): Promise<void> {
     if (!this.canRetryTranslation) return;
     await this.translateLatest({ force: true });
+  }
+
+  async copyTranslation(): Promise<void> {
+    if (!this.hasTranslation) return;
+    try {
+      await navigator.clipboard.writeText(this.translation);
+      this.markCopyState('copied');
+    } catch (error) {
+      console.error('[translator] clipboard write failed:', error);
+      this.markCopyState('failed');
+    }
+  }
+
+  private markCopyState(state: Exclude<TranslatorCopyState, 'idle'>): void {
+    this.resetCopyState();
+    this.copyState = state;
+    this.copyResetTimer = setTimeout(() => {
+      this.copyState = 'idle';
+      this.copyResetTimer = null;
+    }, COPY_FEEDBACK_RESET_MS);
+  }
+
+  private resetCopyState(): void {
+    if (this.copyResetTimer) clearTimeout(this.copyResetTimer);
+    this.copyResetTimer = null;
+    this.copyState = 'idle';
   }
 
   private applyProviderSnapshot(snapshot: ModelProviderSnapshot): void {

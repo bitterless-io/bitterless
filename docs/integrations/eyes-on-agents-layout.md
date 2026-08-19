@@ -6,14 +6,18 @@ Status: Implemented; owner visual verification pending
 
 EyesOnAgents is a daylight operations board for one person supervising several Codex and Claude
 tasks. Its
-single job is to answer: **what is running, what just finished, and where does each task belong?**
+single job is to answer: **what is running and what just finished?**
 
-It borrows Todo's standalone window and Domain-board interaction, but none of Todo's
+It borrows Todo's standalone window chrome, but none of Todo's Domain classification,
 checkbox, due-date, repeat, subtask, or detail-editor behavior. Avoid a generic dark developer
 dashboard: the surface remains calm Royal Blue, white, and cool grey, with status color used only
 for live signals.
 
-The Claude extension keeps the existing palette, system typography, wrapped 300–500px column grid,
+User-managed Domains were removed from this UI; the board is one `Focus` column that lists every
+visible thread in attention order. Domain storage is retained but unexposed — see
+[Focus-only board](../features/eyes-on-agents-focus-board.md).
+
+The Claude extension keeps the existing palette, system typography, fixed 300px column,
 and background-led hierarchy. Its one visual signature is a compact official product mark in the
 title line: the transparent Codex GA mark at 16px and Claude Spark at 15px, both centered in a fixed
 16×18px shell. A review rejected provider badges, a new metadata row, permanent card borders, and
@@ -32,34 +36,35 @@ provider brand-color panels because each would add height or compete with workin
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  EyesOnAgents  [+ Add Domain] ● Connections [↻ Refresh] [Bridge] [Settings]│
+│  EyesOnAgents            ● Connections [↻ Refresh] [Bridge] [Settings]      │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌ Focus [Read all]┐ ┌ All ──────── [⌕]┐ ┌ Bitterless ─────┐               │
-│  │ API pagination◌│ │ [Search titles][×]│ │ App Server RPC  │                │
-│  │ now      [⌂][↗]│ │ [overmind (4)▾]│ │ now      [⌂][↗]│                │
-│  │ Fix migrations │ │ Release notes   │ │                 │                │
-│  │ 1m       [⌂][↗]│ │                 │ │                 │                │
-│  └─────────────────┘ └─────────────────┘ └─────────────────┘                │
-│                                                                              │
-│  ┌ Research ──────┐ ┌ Release ────────┐                                   │
-│  │ Project notes   │ │ Fix migrations │                                   │
-│  │ 4h       [⌂][↗]│ │ 1d       [⌂][↗]│                                   │
-│  └─────────────────┘ └─────────────────┘                                   │
-│                           wrapped rows; board scrolls vertically ↓           │
+│  ┌ ⌖ Focus     [⌕] [Read all]┐                                              │
+│  │ [ Search titles      ][×] │                                              │
+│  │ [ overmind (4)         ▾ ]│                                              │
+│  │ API pagination refactor ◌ │                                              │
+│  │ now              [⌂][↗]   │                                              │
+│  │ Fix migrations          ◌ │                                              │
+│  │ 1m               [⌂][↗]   │                                              │
+│  │ Release notes             │                                              │
+│  │ 4m               [⌂][↗•]  │                                              │
+│  │ Project notes             │                                              │
+│  │ 4h               [⌂][↗]   │                                              │
+│  │        list scrolls ↓     │                                              │
+│  └───────────────────────────┘                                              │
+│   300px fixed · fills window height · empty canvas to the right              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The 32px menu bar is the drag region. The board wraps columns into as many rows as the window width
-allows and owns vertical page scrolling. Each Domain has a 300px flex basis and minimum, shares the
-remaining row width up to a 500px maximum, is capped at 600px high, and owns its own thread-list
-scrolling beyond that height. A capped incomplete final row may retain trailing canvas space so
-column alignment and drag placement stay consistent.
+The 32px menu bar is the drag region. The board holds exactly one column: fixed 300px wide — the
+former minimum — with no flex growth and no wrapping, and it stretches from below the menu bar to
+the bottom board padding. The 600px height ceiling is gone; the thread list scrolls inside the
+column body and the board no longer owns vertical page scrolling. Board padding stays 12px, so the
+area right of the column is empty canvas.
 
-Focus is fixed first and visually distinct; All is fixed second. Both are projections: Focus shows
-attention and All shows every non-archived thread, while cards also remain in their stored custom
-Domain when assigned. The persisted `uncategorized` system Domain remains the storage fallback but
-is presented as All and cannot be renamed, reordered, or deleted.
+Focus is the board. It shows every visible thread in attention order and is visually distinct
+through its warm attention background. The persisted `uncategorized` system Domain and every stored
+`domain_id` remain in SQLite as an unexposed storage fallback; no column, menu, or drag target
+presents them.
 
 ## Visual system
 
@@ -70,8 +75,7 @@ Use the existing Bitterless color contract as the source of truth:
 | menu bar / primary action | Royal Blue `#4E5882` |
 | deep text | `#323955` / `#1E2237` |
 | board canvas | near-white neutral `oklch(0.985 0 0)` |
-| regular Domain surface | cool neutral `oklch(0.96 0 0)` |
-| Focus Domain surface | warm attention tint `oklch(0.94 0.04 60)` |
+| Focus column surface | warm attention tint `oklch(0.94 0.04 60)` |
 | thread item surface | white `oklch(1 0 0)` |
 | working loader | Royal Blue |
 | unread Open dot | red |
@@ -79,79 +83,57 @@ Use the existing Bitterless color contract as the source of truth:
 Typography stays on the product's existing system-font stack. Hierarchy comes from size, weight,
 spacing, and alignment rather than a new font dependency.
 
-Surface hierarchy follows Todo: background contrast separates the board, Domains, Focus, and
-thread items. Domain shells, Domain headers, thread items, and the menubar Add Domain popup have no
+Surface hierarchy follows Todo: background contrast separates the board, the Focus column, and
+thread items. The column shell, its header, and thread items have no
 decorative outline or persistent shadow. A thread item may gain one quiet shadow
 on pointer hover without moving; keyboard focus uses a visible outline and a light background
 rather than reintroducing a permanent card border.
 
-The wrapping Domain board and its background-led hierarchy are the product signature. Thread
+The single attention-tinted column and its background-led hierarchy are the product signature. Thread
 cards contain no decorative signal rail, source badge, status row, or `New` badge. Every active
 working/waiting thread gets a compact loading indicator beside its title. The Open control gets one
 unread red dot after the thread reaches a terminal `idle`, `ended`, or `failed` state, so neither
 state consumes another card row and a later SessionEnd cannot erase completion attention.
 
-## Global task search
+## Focus search
 
-`Cmd+F` on macOS and `Ctrl+F` on Windows open one keyboard-first search modal above the current
-EyesOnAgents surface. It is independent of the All column's Project and inline title filters:
-
-```text
-┌ EyesOnAgents ────────────────────────────────────────────────────────────────┐
-│                                                                            │
-│        ┌ Search tasks ────────────────────────────────────────────┐         │
-│        │ [ Search thread titles_______________________________ ] │ fixed   │
-│        ├─────────────────────────────────────────────────────────┤         │
-│        │              Type a title to search tasks              │         │
-│        └─────────────────────────────────────────────────────────┘         │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
-The complete modal is at least 200px high and at most `80vh`. The input region remains fixed while
-only the result list scrolls. An empty, cleared, or separator-only query shows no thread rows and
-instead prompts the user to type. A meaningful query is split into case-insensitive title tokens
-after normalizing whitespace plus common separators (`-`, `_`, `.`, `/`, `\`, `:`, `|`). Every
-query token must occur in a title token, but order does not matter, so `ops git` and `git ops` both
-match `ops-git`. Each result is a compact search row rather than a draggable Domain card.
-
-Matched results use a strict two-line rhythm:
+`Cmd+F` on macOS and `Ctrl+F` on Windows activate the Focus column's own title filter. There is no
+search modal, no separate result list, and no second search surface:
 
 ```text
-┌─────────────────────────────────────────────────────────┐
-│ dsh-service&viv-admin                                   │ title
-│ Operations                                       Idle   │ Domain / runtime
-└─────────────────────────────────────────────────────────┘
+┌ ⌖ Focus                    [⌕] [Read all] ┐
+│ [ ops git________________________ ]  [×]  │  filter row, expanded by ⌕ or Cmd+F
+│ [ overmind (4)                        ▾ ] │  Project filter
+│ ops-git sync failures                     │  matched card, normal card behavior
+│ 12m                            [⌂][↗]    │
+└───────────────────────────────────────────┘
 ```
 
-The first row contains only the thread title. The second row keeps the custom Domain title on the
-left and runtime state on the right. `uncategorized`, missing/stale Domain references, and blank
-resolved titles display `-`; All and Focus are projections and never appear as Domain labels. Long
-Domain titles remain one line, ellipsize, and retain a full-value tooltip.
+The query is normalized (`NFKC`), lowercased, and split into tokens on whitespace plus `-`, `_`,
+`.`, `/`, `\`, `:`, and `|`; the same split is applied to `thread.title`. Every query token must be
+contained in some title token, and order does not matter, so `ops git` and `git ops` both match
+`ops-git`. An empty, whitespace-only, or separator-only query is not a filter and the complete list
+remains visible. Only `thread.title` is matched — never thread ID, `cwd`, Project name, prompt, or
+response content — and a thread with no resolved title never matches a non-empty query.
 
-Opening or clearing the modal leaves selection empty. A meaningful query with matches selects its
-first result. Selection is stored by provider-qualified session key so an Open acknowledgement or polling refresh cannot
-silently move selection to a different thread when attention ordering changes. Background updates
-preserve a selected thread that remains in the result set and otherwise fall back to the first
-current match.
+Filtering narrows the real card list, so a matched row keeps its provider mark, working loader,
+question echo, relative time, folder tooltip, Open/overflow controls, unread dot, and card-level
+keyboard focus. The title filter composes with the Project filter; a card must satisfy both.
 
 | input | behavior |
 |---|---|
-| `Cmd+F` / `Ctrl+F` | suppress native page Find, open the modal, and focus the input |
-| repeated shortcut | keep the modal open and refocus the input |
-| `ArrowDown` | move to the next result, stopping at the last row |
-| `ArrowUp` | move to the previous result, stopping at the first row |
-| `Enter` | open the selected task in its provider desktop UI and keep the modal/query active |
-| click result | select and open the task and keep the modal/query active |
-| `Escape` | close the modal and clear its transient query/selection |
+| `Cmd+F` / `Ctrl+F` | suppress native page Find, expand the filter row if collapsed, focus the input |
+| repeated shortcut | keep the row open and refocus the input; the current query is preserved |
+| `⌕` toggle | expand and focus, or clear and collapse |
+| typing | narrow the visible Focus cards live |
+| `×` clear | empty the query and keep the row open and focused |
+| `Escape` in the row | clear the query and collapse the row so no invisible filter remains |
 
 ## Header behavior
 
 The menu bar shows:
 
 - application title;
-- a labelled `Add Domain` control whose anchored form creates a custom Domain without occupying a
-  board column;
 - compact provider connection state;
 - labelled `Refresh`, available from connected, disconnected, and error states and disabled while
   another board action, connection, or synchronization is in flight; while the renderer remains
@@ -265,7 +247,7 @@ card to one neutral line and leaves no directory, receipt, setup guide, or plugi
 ```
 
 The folded state adds no separator, border, shadow, or extra status row. Existing Claude cards are
-removed from Focus, All, custom Domains, Project filters, and global search in one snapshot update;
+removed from Focus and its Project/title filters in one snapshot update;
 their persisted annotations return when the provider is enabled. The switch remains available when
 the saved preference is invalid so it can replace the value. The existing plugin removal control is
 labelled **Remove plugin**, avoiding ambiguity with the provider switch.
@@ -326,63 +308,52 @@ either Refresh loading indicator. Each tick processes the 40 most recent persist
 one round-robin cold page of at most 40, updating title, runtime/activity, and opted-in
 latest-question data; activation and manual Refresh retain full inventory reconciliation.
 
-## Domain column
+## Focus column
 
-Each Domain header contains its title and at most one projection-specific action: a custom Domain
-shows its management control, All shows Search, and Focus shows `Read all`. The compact Focus action
-is always present to keep the header stable and is disabled when no completed unread attention item
-can be cleared. While its mutation is in flight it shows the existing mini-button loading treatment
-and is disabled with the other foreground board actions. No Domain, Focus, All, or filtered-result
-count is rendered in the header. A custom Domain title enters inline edit when
-clicked, matching Todo: the input measures its content between 40px and 200px, focuses and selects on
-entry, commits through blur or Enter, and cancels with Escape. Focus and All never show an editable
-cursor or input. The custom Domain overflow menu contains Delete only; the separate Rename action is
-removed. Custom Domains remain reorderable. Deleting requires confirmation and states that its
-threads remain available in All; it never deletes Codex tasks.
+The Focus header contains the target glyph, the plain `Focus` title, one icon-only Search toggle, and
+`Read all`. The title is a non-editable heading: there is no inline edit, content-measuring input,
+overflow menu, Delete action, drag handle, or reorder affordance anywhere in the header. No thread or
+filtered-result count is rendered there.
 
-A regular Domain is one continuous cool-neutral background surface: its header has no divider or
-independent card background. Focus uses the same structure with a warm attention background, so
-its distinction does not depend on a border, top rule, or shadow.
+`Read all` is always present to keep the header stable and is disabled when no completed unread
+attention item can be cleared. While its mutation is in flight it shows the existing mini-button
+loading treatment and is disabled with the other foreground board actions.
 
-The scrollable Domain body has no top padding, so its Project filter or first thread begins directly
-below the header region. It retains 9px horizontal and bottom padding for column-edge spacing.
+Focus is one continuous warm attention background surface: its header has no divider or independent
+card background, so its distinction does not depend on a border, top rule, or shadow.
 
-All alone has one compact Project filter between its header and scrollable thread list. It is a
-searchable mini Select with `All`, `No project`, and one option per current Git Project across every
-visible thread. Options include counts; same-named Projects expose a shortened root. The Select uses
-a quiet background instead of a decorative border and retains a visible keyboard focus outline.
-Filtering never changes Focus, custom Domains, or the stored Domain of any thread. Project option
-counts remain available inside the filter, without adding a separate Domain-header count row.
+The scrollable column body has no top padding, so the search row, Project filter, or first thread
+begins directly below the header region. It retains 9px horizontal and bottom padding for
+column-edge spacing.
 
-The All header also contains one icon-only Search button. It expands a compact title-search row above
-the Project filter and moves focus into the input. The query is trimmed and matched as a
-case-insensitive substring of `thread.title` only; it does not search IDs, paths, Project names,
-prompts, or response content. Title and Project filters compose, while Focus and custom Domains remain
-unchanged. The explicit clear button empties the title query and restores the result set for the
-currently selected Project filter. Pressing Escape or closing the Search control also clears the
-query before hiding the row, so no invisible filter remains active. The row and controls use quiet
-background contrast, mini sizing, visible focus, and no decorative border or shadow.
+The Search toggle expands a compact title-filter row directly under the header and moves focus into
+its input; `Cmd+F` does the same. Its token matching, clear, and Escape contract is defined in
+[Focus search](#focus-search). The row and its controls use quiet background contrast, mini sizing,
+visible focus, and no decorative border or shadow.
+
+Below the search row sits one compact Project filter. It is a searchable mini Select with `All`,
+`No project`, and one option per current Git Project across every visible thread. Options include
+counts; same-named Projects expose a shortened root. The Select uses a quiet background instead of a
+decorative border and retains a visible keyboard focus outline. Filtering is renderer-session state
+and never changes the stored Domain of any thread. Project option counts remain available inside the
+filter, without adding a separate header count row.
+
+Both filters narrow the same list and compose. The column empty state names the active narrowing
+reason: title search, selected Project, or `No project`.
 
 The Focus header's `Read all` is a compact text action with the same transparent, borderless header
-treatment. Clicking it clears the persisted unread marker for every currently non-archived unread
+treatment. Clicking it clears the persisted unread marker for every currently visible unread
 thread in a confirmed terminal state — `idle`, `failed`, or `ended` — in one SQLite mutation. The
-same snapshot removes each corresponding red Open dot in Focus, All, and any custom Domain
-immediately; a terminal thread that was present only because it was unread leaves Focus. Working,
-waiting, and `unknown` rows are deliberately not acknowledged: they remain in Focus and retain the
+same snapshot removes each corresponding red Open dot in place; because Focus now lists every
+visible thread, an acknowledged row stays on the board without its dot instead of leaving. Working,
+waiting, and `unknown` rows are deliberately not acknowledged: they retain the
 latent unread marker that makes a later idle transition visible even if its terminal event is
 missed. The action is enabled only while such a terminal unread row exists, never opens Codex or
 changes `last_opened_*`, and a later accepted active or terminal observation may set a cleared
 thread unread again.
 
-Domain creation does not occupy a board column. The labelled menubar control opens the anchored form
-described in Header behavior; required, duplicate, and reserved-`All` errors remain inline there.
-Keyboard focus is visible, `Esc` or Cancel closes and resets, and `Enter` submits the form.
-
-Thread cards can be dragged between custom Domain columns. Focus and All are not sortable storage
-lists and do not participate in Domain ordering. A card dragged from Focus or All is cloned into a
-custom Domain before the underlying assignment changes, so it never disappears from either
-projection. All does not accept drops because it already contains every thread; the card Domain
-menu's All destination removes a custom classification.
+Thread cards are not draggable and there is no drop target: Domain assignment has no UI. Stored
+`domain_id` values keep their last value and are never rewritten from this surface.
 
 ## Thread card
 
@@ -399,10 +370,14 @@ A card displays only observation metadata:
 - relative last-activity time at the far left of the action row, derived from one renderer-global
   reactive clock that advances every 10 seconds so visible cards update without receiving a new
   thread snapshot;
-- working-directory folder, icon-only `Open`, and Domain overflow controls grouped
+- working-directory folder, icon-only `Open`, and the overflow control grouped
   at the right of the same action row; the folder exposes the full path through
   tooltip/accessibility text. Claude rows without a trusted Desktop Open route do not render;
-- an unread red dot at Open's upper-right when Open exists, otherwise at More, when `isUnread` is
+- the overflow (`…`) control renders only when it owns an action — today the Claude
+  **Preview transcript** option for a row with a canonical JSONL. There is no `Move to Domain`
+  group, so a row with no available action shows no empty menu;
+- an unread red dot at Open's upper-right when Open exists, otherwise at the overflow control, or as
+  a standalone action-row marker when neither exists, when `isUnread` is
   true and runtime is terminal (`idle`, `ended`, or `failed`) after a reply finishes. Working,
   waiting, and unknown cards never show this dot.
 
@@ -428,9 +403,9 @@ double-click, or `Enter` then launches the provider desktop UI and marks a confi
 observation read after the fixed deep link is accepted. Codex uses `codex://threads/<uuid>`. A
 Claude row with a unique `desktopSessionId` uses
 `claude://claude.ai/epitaxy/<desktopSessionId>`. Claude rows without that trusted Desktop route are
-Main-private inventory and do not render in Focus, All, Domains, Project filters, or search. A
+Main-private inventory and do not render in Focus, its Project filter, or its title filter. A
 visible Claude card's More menu exposes **Preview transcript** when a canonical JSONL exists.
-Dragging, selecting, or previewing never marks read.
+Selecting or previewing never marks read.
 
 ```text
 ┌────────────────────────────────────────┐
@@ -450,12 +425,13 @@ the same attention rank, representing the time the task entered its current work
 Reply, title, question, and `last_activity_at` refreshes cannot move an active card. A missing or
 invalid active timestamp sorts as zero rather than falling back to message activity. Non-active
 cards keep `last_activity_at` (then completion time) descending. Every equal-rank/equal-time result
-uses immutable provider-qualified session key ascending, so SQLite input order cannot move a card. Domain assignment is
-manual; thread order is intentionally not separately persisted.
+uses immutable provider-qualified session key ascending, so SQLite input order cannot move a card.
+Thread order is intentionally not separately persisted.
 
 ## Focus ordering
 
-Focus uses this stable order:
+Focus lists every visible thread — not only attention items — and orders them with the same
+comparator it always used. Expanding membership must not change ordering:
 
 1. waiting for approval;
 2. waiting for user input;
@@ -465,14 +441,15 @@ Focus uses this stable order:
 6. newest activity within the same non-active group;
 7. provider-qualified session key ascending as the stable final tie-breaker.
 
-Focus, All, custom Domains, and global search share this comparator. The hot/cold SQLite refresh
+The single Focus list owns this comparator. The hot/cold SQLite refresh
 pages continue to use activity order for fetch-budget allocation; they do not define presentation
 order. A genuine runtime transition may change `status_observed_at` and reposition a card, while a
 reply-only metadata update may not.
 
 Opening any card records deep-link evidence only after the deep link succeeds, and acknowledges
-unread only for a confirmed terminal card. An unread completed card leaves Focus. A working,
-waiting, or `unknown` card stays in Focus while it is opened and keeps its latent unread marker
+unread only for a confirmed terminal card. An acknowledged card drops out of the unread rank and
+sorts among ordinary threads by activity; it stays on the board. A working,
+waiting, or `unknown` card keeps its active rank and its latent unread marker
 until its state actually resolves.
 
 ## States
@@ -483,25 +460,20 @@ until its state actually resolves.
 | connecting | dot and button spinner; existing content remains interactive |
 | syncing or connecting | existing cards retained; duplicate Refresh disabled |
 | no threads | concise prompt to connect/sync; no fake sample rows |
-| no Focus items | quiet “Nothing needs attention” state |
+| threads exist, no filter | every visible thread in comparator order; a read thread stays listed |
 | working unread | title-side loader; no Open unread dot |
-| working opened | card stays in Focus with its loader; only a terminal observation can retire it |
+| working opened | card keeps its active rank and loader; only a terminal observation can retire it |
 | working completes to idle unread | loader disappears; unread dot appears at Open's upper-right |
 | new idle/unread completion | the supplied tone plays once and one localized system notification names the thread |
 | latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
 | latest question pending | one muted localized pending line; no spinner or false claim that a request is running |
 | latest question unavailable/default-off | no question line and no additional card height |
-| All Project filter has no matches | selected option remains available with scoped empty text |
-| All title search closed | Search icon remains in the All header; no title query affects the list |
-| All title search open | compact focused input plus explicit Clear control appears above Project filter |
-| All title search has no matches | title-search-specific empty text appears; Focus/custom Domains remain unchanged |
-| global search opened/cleared | modal input is focused; zero result rows and start-typing guidance |
-| global search has matches | first row is selected; keyboard selection remains visible and scrolls into view |
-| global result has custom Domain | second line shows Domain left and runtime state right |
-| global result is unclassified/stale | second-line Domain value is `-`; runtime state remains visible |
-| global search has no matches | localized empty result occupies the bounded result region; Enter is a no-op |
-| global search result opened | exact provider task opens; modal, query, input, and selected session remain available |
-| Add Domain closed/open | labelled menubar control; opening shows a focused anchored form and no board placeholder column |
+| Project filter has no matches | selected option remains available with scoped empty text |
+| search row collapsed | Search icon remains in the Focus header; no title query narrows the list |
+| search row open, empty query | compact focused input plus explicit Clear control appears above the Project filter; the full list remains |
+| search query has no matches | title-search-specific empty text appears inside the column |
+| both filters active, no matches | title-search empty text takes precedence over the Project message |
+| `Cmd+F` pressed again | the row stays open, the input regains focus, and the query is preserved |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
 | any Codex bridge state | aggregate status sentence, **Check status**, and the default-off latest-question Switch remain visible; other rows are state-specific |
@@ -528,14 +500,12 @@ until its state actually resolves.
 - Interactive controls have visible keyboard focus and accessible labels.
 - Status never depends on color alone: the card's accessible label retains normalized runtime and
   unread text, the active loader has a status label, and visible idle-unread augments Open.
-- At the minimum window size, columns remain at least 300px, wrap into multiple rows, and the board owns
-  vertical scrolling instead of collapsing into an unreadable grid.
-- No column exceeds 600px; a longer thread list scrolls inside that column without stretching its
-  row or the surrounding columns.
+- At every supported window size the Focus column keeps its fixed 300px width and full available
+  height; it never shrinks, stretches, or wraps, and the board does not scroll horizontally.
+- A long thread list scrolls inside the column body, so the board itself never scrolls vertically.
 - Dialogs and connection panels remain within the viewport and own their vertical scrolling.
-- Global search exposes a listbox/option relationship and an accessible selected state; keyboard
-  movement scrolls the selected option into view without moving the page.
-- Drag is an enhancement: each thread overflow menu also provides a Domain selector.
+- The Focus filter row is a plain search input over the real card list, so filtered results keep
+  normal card semantics and card-level keyboard focus.
 - The only card-level animation is the working loader; it becomes static under reduced-motion.
 
 ## Component boundary
@@ -545,17 +515,13 @@ MiniApp card -> EyesOnAgentsWindowHandler -> standalone renderer
 
 EyesOnAgentsApp
   ├─ EyesOnAgentsMenuBar
-  │    └─ AddDomainPopover (anchored form)
   ├─ ConnectionPanel
   │    ├─ CodexConnectionSection
   │    └─ ClaudeConnectionSection
-  ├─ ThreadSearch (global modal)
-  │    └─ ThreadSearchResult × N
   └─ AgentBoard
-       ├─ FocusColumn (derived)
-       ├─ AllColumn (all non-archived threads)
-       │    └─ ProjectFilter
-       └─ CustomDomainColumn × N
+       └─ FocusColumn (every visible thread)
+            ├─ title filter row
+            ├─ ProjectFilter
             └─ ThreadCard × N
 ```
 

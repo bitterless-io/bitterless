@@ -8,6 +8,7 @@ import './eyesOnAgentsWindow.handler';
 import './eyesOnAgents.handler';
 import './submodulesWindow.handler';
 import './submodulesSystem.handler';
+import './submodules.handler';
 import './omniWindow.handler';
 import './shell.handler';
 import './sqlitePassword.handler';

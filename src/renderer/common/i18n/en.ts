@@ -328,6 +328,9 @@ export const en = {
     unavailable: 'Codex is unavailable on this device.',
     login: 'Login to Codex',
     tryAgain: 'Try again',
+    copyTranslation: 'Copy translation',
+    copied: 'Copied',
+    copyFailed: 'Copy failed',
     characterCount: '{count} / {limit}',
     errors: {
       loadProvider: 'Could not load Codex status.',
@@ -523,48 +526,25 @@ export const en = {
       open: 'Open',
       previewTranscript: 'Preview transcript',
       more: 'More actions',
-      moveTo: 'Move to Domain',
       delete: 'Delete',
       cancel: 'Cancel',
-      create: 'Create',
       readAll: 'Read all',
       searchTitles: 'Search thread titles',
       clearTitleSearch: 'Clear title search'
     },
-    search: {
-      title: 'Search tasks',
-      placeholder: 'Search thread titles',
-      results: 'Task search results',
-      empty: 'No task titles match this search',
-      startTyping: 'Type a title to search tasks',
-      domainContext: 'Domain: {domain}',
-      noDomain: 'No Domain'
-    },
     board: {
       focus: 'Focus',
-      all: 'All',
-      projectFilterLabel: 'Filter All by Project',
+      projectFilterLabel: 'Filter by Project',
       allProjects: 'All',
       noProject: 'No project',
       emptyFocus: 'Nothing needs attention',
-      emptyDomain: 'No threads in this Domain',
       emptyProject: 'No threads match this Project',
       emptyNoProject: 'No threads without a Project',
       emptyTitleSearch: 'No thread titles match this search',
       emptyTitle: 'No agent tasks yet',
       emptyBody: 'Connect Codex or refresh local Claude sessions to start monitoring.',
       loading: 'Loading observation board',
-      addDomain: 'Add Domain',
-      domainPlaceholder: 'Domain name',
       titleSearchPlaceholder: 'Search titles'
-    },
-    domain: {
-      options: 'Domain options',
-      deleteTitle: 'Delete Domain',
-      deleteBody:
-        'Threads in this Domain will remain available in All. Agent tasks will not be deleted.',
-      duplicate: 'A Domain with this name already exists.',
-      required: 'Enter a Domain name.'
     },
     thread: {
       untitled: 'Untitled agent task',

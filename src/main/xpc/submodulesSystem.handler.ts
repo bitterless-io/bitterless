@@ -1,6 +1,6 @@
 // The two OS capabilities the Submodules mini app cannot own itself: the native directory dialog,
 // and handing a submodule directory to the WebStorm instance the owner already has running.
-import { BrowserWindow, dialog } from 'electron';
+import { BaseWindow, dialog } from 'electron';
 import { XpcMainHandler } from 'electron-xpc/main';
 import { execFile, execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
@@ -47,7 +47,9 @@ const runLauncher = (command: string, args: readonly string[]): Promise<boolean>
 
 class SubmodulesSystemHandler extends XpcMainHandler implements SubmodulesSystemApi {
   async chooseDirectory(): Promise<{ path: string | null }> {
-    const parent = BrowserWindow.getFocusedWindow();
+    // Omni is a BaseWindow, so resolving the focused window as a BrowserWindow would drop the
+    // parent and open an unattached dialog for an embedded Submodules cell.
+    const parent = BaseWindow.getFocusedWindow();
     const options = {
       title: 'Open a directory that declares Git submodules',
       properties: ['openDirectory' as const]

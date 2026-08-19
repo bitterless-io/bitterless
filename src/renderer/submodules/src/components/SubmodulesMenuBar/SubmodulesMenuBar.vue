@@ -52,7 +52,7 @@
         {{ i18nHelper.submodules.actions.refresh }}
       </a-button>
 
-      <template v-if="isWindows">
+      <template v-if="isWindows && !isOmni">
         <a-button
           name="submodules__menuBar__minimize"
           size="mini"
@@ -98,17 +98,22 @@ import {
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
+import { submodulesEnv } from '../../contextBridge/submodulesEnv.bridge';
 import { submodulesStore } from '../../store/submodules.store';
 import { submodulesWindowEmitter } from '../../emitter/submodules.emitter';
 
 const isMac = uaHelper.isMac;
 const isWindows = uaHelper.isWindows;
+const isOmni = submodulesEnv?.host === 'omni';
 const platformClass = computed(() => ({
-  'submodules-menu-bar--mac': isMac,
-  'submodules-menu-bar--windows': isWindows
+  'submodules-menu-bar--mac': isMac && !isOmni,
+  'submodules-menu-bar--windows': isWindows && !isOmni,
+  'submodules-menu-bar--omni': isOmni
 }));
 
 const handleDoubleClick = async (event: MouseEvent): Promise<void> => {
+  // `SubmodulesWindowApi` only addresses the standalone window; an Omni cell must never move it.
+  if (isOmni) return;
   if ((event.target as HTMLElement).closest('.submodules-menu-bar__actions')) return;
   await submodulesWindowEmitter.toggleMaximize();
 };

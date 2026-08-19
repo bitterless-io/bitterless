@@ -1,13 +1,13 @@
 .agent-domain {
-  width: auto;
+  width: 300px;
   min-width: 300px;
-  max-width: 500px;
-  max-height: 600px;
+  max-width: 300px;
+  height: 100%;
   min-height: 0;
   display: flex;
-  flex: 1 1 300px;
+  flex: 0 0 300px;
   flex-direction: column;
-  align-self: flex-start;
+  align-self: stretch;
   position: relative;
   overflow: hidden;
   border-radius: 8px;
@@ -32,10 +32,6 @@
   user-select: none;
 }
 
-.agent-domain__drag-handle {
-  cursor: grab;
-}
-
 .agent-domain__title-row {
   min-width: 0;
   gap: 6px;
@@ -57,49 +53,6 @@
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-domain__title--editable {
-  cursor: text;
-}
-
-.agent-domain__title--editable:hover {
-  background: oklch(0.94 0 0);
-}
-
-.agent-domain__title--editable:focus-visible {
-  outline: 2px solid var(--eyes-focus-ring);
-  outline-offset: 1px;
-}
-
-.agent-domain__title-input {
-  min-width: 40px;
-  max-width: 200px;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 4px;
-  outline: none;
-  color: #1e2237;
-  background: #fff;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  box-shadow: 0 0 0 1px #7e89b2;
-}
-
-.agent-domain__title-input:focus-visible {
-  outline: 2px solid var(--eyes-focus-ring);
-  outline-offset: 1px;
-}
-
-.agent-domain__title-sizer {
-  position: absolute;
-  visibility: hidden;
-  padding: 2px 4px;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-  pointer-events: none;
 }
 
 .agent-domain__header .arco-btn {
@@ -226,8 +179,4 @@
   font-size: 11px;
   line-height: 1.45;
   pointer-events: none;
-}
-
-.agent-domain__delete-option {
-  color: #a13d35;
 }

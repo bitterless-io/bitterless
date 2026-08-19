@@ -49,15 +49,13 @@
         </div>
       </div>
 
-      <AgentBoard v-else />
+      <AgentBoard v-else ref="agentBoardRef" />
     </main>
 
     <ConnectionPanel
       :visible="connectionsVisible"
       @close="connectionsVisible = false"
     />
-
-    <ThreadSearch ref="threadSearchRef" />
   </div>
 </template>
 
@@ -68,17 +66,16 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import AgentBoard from './components/AgentBoard/AgentBoard.vue';
 import ConnectionPanel from './components/ConnectionPanel/ConnectionPanel.vue';
 import EyesOnAgentsMenuBar from './components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue';
-import ThreadSearch from './components/ThreadSearch/ThreadSearch.vue';
 import { eyesOnAgentsStore } from './store/eyesOnAgents.store';
 import { globalStore } from './store/global.store';
 import { eyesOnAgentsEnv } from './contextBridge/eyesOnAgentsEnv.bridge';
 
-interface ThreadSearchInstance {
-  focusInput(): Promise<void>;
+interface AgentBoardInstance {
+  openTitleSearch(): Promise<void>;
 }
 
 const connectionsVisible = ref(false);
-const threadSearchRef = ref<ThreadSearchInstance | null>(null);
+const agentBoardRef = ref<AgentBoardInstance | null>(null);
 const isOmni = eyesOnAgentsEnv?.host === 'omni';
 
 const emptyActionLabel = computed(() => {
@@ -106,9 +103,9 @@ const handleWindowFocus = (): void => {
   void eyesOnAgentsStore.refreshOnWindowActivation().catch(() => undefined);
 };
 
-const focusThreadSearchInput = async (): Promise<void> => {
+const openFocusTitleSearch = async (): Promise<void> => {
   await nextTick();
-  await threadSearchRef.value?.focusInput();
+  await agentBoardRef.value?.openTitleSearch();
 };
 
 const handleWindowKeydown = (event: KeyboardEvent): void => {
@@ -119,10 +116,7 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
 
   event.preventDefault();
   event.stopPropagation();
-  if (!eyesOnAgentsStore.threadSearchVisible) {
-    eyesOnAgentsStore.openThreadSearch();
-  }
-  void focusThreadSearchInput();
+  void openFocusTitleSearch();
 };
 
 onMounted(async () => {
@@ -139,7 +133,7 @@ onBeforeUnmount(() => {
   eyesOnAgentsStore.stopRefreshPolling();
   window.removeEventListener('focus', handleWindowFocus);
   window.removeEventListener('keydown', handleWindowKeydown);
-  eyesOnAgentsStore.closeThreadSearch();
+  eyesOnAgentsStore.clearTitleQuery();
 });
 </script>
 

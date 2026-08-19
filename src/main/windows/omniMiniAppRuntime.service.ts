@@ -16,4 +16,5 @@ export const OMNI_MINI_APP_RUNTIME: Readonly<Record<OmniMiniAppId, OmniMiniAppRu
   translator: { preloadFile: 'translator.js', rendererName: 'translator', sandbox: false },
   motto: { preloadFile: 'motto.js', rendererName: 'motto', sandbox: false },
   trench: { preloadFile: 'trench.js', rendererName: 'coin', sandbox: true },
+  submodules: { preloadFile: 'submodules.js', rendererName: 'submodules', sandbox: false },
 };

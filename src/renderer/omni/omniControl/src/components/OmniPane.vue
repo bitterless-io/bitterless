@@ -10,6 +10,7 @@ import eyesOnAgentsIcon from '@renderer/common/assets/icons/eyes-on-agents.svg';
 import translatorIcon from '@renderer/common/assets/icons/translator.svg';
 import mottoIcon from '@renderer/common/assets/icons/motto.svg';
 import trenchIcon from '@renderer/common/assets/icons/coin.png';
+import submodulesIcon from '@renderer/common/assets/icons/submodules.svg';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import {
   getNodeContentMode,
@@ -61,6 +62,11 @@ const miniApps = computed<Array<{
     id: 'trench',
     icon: trenchIcon,
     name: i18nHelper.miniApp.trench.name,
+  },
+  {
+    id: 'submodules',
+    icon: submodulesIcon,
+    name: i18nHelper.miniApp.submodules.name,
   },
 ]);
 

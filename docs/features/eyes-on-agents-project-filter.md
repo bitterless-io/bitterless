@@ -1,12 +1,12 @@
 # EyesOnAgents Project Filter
 
-Status: implemented and independently statically reviewed through task 012
+Status: implemented; filter relocated from the retired `All` column into `Focus` by task 054
 
 Date: 2026-07-20
 
 ## Decision
 
-Add a source filter inside the fixed renderer `All` projection so Project work can be separated from
+Add a source filter inside the renderer `Focus` column so Project work can be separated from
 threads that have no known Git Project across the complete visible inventory. Project is derived
 metadata; it is not a Domain, never creates a Domain, and never changes `domain_id`.
 
@@ -16,7 +16,8 @@ nearest current Git worktree root found by walking upward from a thread's `cwd`.
 ## User-visible contract
 
 ```text
-┌ All ─────────────────────────────┐
+┌ ⌖ Focus ─────────────────────────┐
+│ [ Search titles             ][×] │
 │ [ Project: overmind (4)       ▾ ]│
 │                                  │
 │ thread item                      │
@@ -31,18 +32,18 @@ Filter choices:
   ...
 ```
 
-- The control appears only in the fixed `All` projection.
-- `All` shows every non-archived renderer thread regardless of its stored Domain.
+- The control lives in the `Focus` column, the only board column.
+- `All` shows every visible renderer thread regardless of its stored Domain.
 - `No project` shows threads without a known current Git worktree root.
 - Each Project option filters by its stable `project_key` and shows its complete visible count.
 - Project options are sorted by display name, then root. Same-named Projects show a shortened root
   to disambiguate them.
-- Domain headers do not render thread counts. Counts remain inside the Project choices only.
+- The Focus header does not render thread counts. Counts remain inside the Project choices only.
 - The selected filter is renderer-session state and is not written to SQLite settings.
 - If the last matching Project thread is archived or its metadata changes, the selected option
   remains visible with zero results until the user changes the filter.
-- Focus and every custom Domain remain unfiltered.
-- Moving a thread between Domains or deleting a Domain never changes All filter membership.
+- The Project filter and the title filter compose; a card must satisfy both.
+- Filtering is renderer-session state and never changes a stored `domain_id`.
 
 `No project` is deliberately not a promise about conversational intent. A normal conversation
 started inside a Git worktree belongs to that Project, while a code task started in a non-Git
@@ -91,7 +92,7 @@ modify the manually assigned Domain.
 | state | behavior |
 |---|---|
 | no visible threads | the existing full-page EyesOnAgents empty state replaces the board and filter |
-| `All` selected | every non-archived thread; the `All` choice retains its option count |
+| `All` selected | every visible thread; the `All` choice retains its option count |
 | `No project` selected | only rows whose Project metadata is null |
 | Project selected, zero results | Project-specific empty message; no separate column count row |
 | duplicate Project names | shortened roots disambiguate options |
@@ -112,7 +113,7 @@ worktree. It never reads repository content, remotes, prompts, transcripts, diff
   correct nearest Project.
 - A valid non-Git cwd is `No project`; unavailable paths preserve prior metadata.
 - Project metadata survives SQLite restart and updates without changing Domain assignment.
-- The All projection supports `All`, `No project`, and per-Project filtering with truthful counts
-  and empty states across mixed Domain assignments.
-- Focus and custom Domain contents are unchanged by the filter.
+- The Focus column supports `All`, `No project`, and per-Project filtering with truthful counts
+  and empty states.
+- Project filtering composes with the Focus title filter and never rewrites stored Domain data.
 - macOS and Windows path normalization is covered by tests.

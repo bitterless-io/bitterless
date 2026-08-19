@@ -14,7 +14,14 @@ import {
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 
 test('Trench is the fifth bounded Omni mini app and survives persisted round trips', () => {
-  assert.deepEqual(OMNI_MINI_APP_IDS, ['todo', 'eyesOnAgents', 'translator', 'motto', 'trench']);
+  assert.deepEqual(OMNI_MINI_APP_IDS, [
+    'todo',
+    'eyesOnAgents',
+    'translator',
+    'motto',
+    'trench',
+    'submodules'
+  ]);
   assert.equal(parseOmniMiniAppId('trench'), 'trench');
   assert.equal(OMNI_MINI_APP_DISPLAY_URLS.trench, 'bl://miniapp/trench');
 
@@ -86,12 +93,12 @@ test('privileged Trench operation views deny popup and remote in-cell navigation
   assert.match(miniAppFence, /webContents\.on\('will-redirect', fenceMiniAppNavigation\)/);
 });
 
-test('Omni Control exposes exactly five localized mini apps including Trench', () => {
+test('Omni Control exposes exactly the localized mini apps including Trench', () => {
   const control = read('src/renderer/omni/omniControl/src/components/OmniPane.vue');
   const en = read('src/renderer/common/i18n/en.ts');
   const zh = read('src/renderer/common/i18n/zh.ts');
   const entries = [
-    ...control.matchAll(/\bid:\s*'(todo|eyesOnAgents|translator|motto|trench)'/g)
+    ...control.matchAll(/\bid:\s*'(todo|eyesOnAgents|translator|motto|trench|submodules)'/g)
   ].map((match) => match[1]);
   assert.deepEqual(entries, OMNI_MINI_APP_IDS);
   assert.match(control, /trenchIcon from '@renderer\/common\/assets\/icons\/coin\.png'/);

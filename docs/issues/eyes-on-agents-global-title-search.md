@@ -1,6 +1,13 @@
 # EyesOnAgents Global Title Search
 
-Status: two-line result metadata implemented; owner verification pending
+Status: modal surface superseded; token matching retained inside the Focus filter
+
+The modal below was delivered by tasks 031–033 and then retired by
+[eyes-on-agents-focus-search-consolidation-055](../plan/tasks/eyes-on-agents-focus-search-consolidation-055.md).
+Its durable outcome — `Cmd+F` reaching a separator-insensitive title search over every visible
+thread — now lives in the single Focus column's own filter row, so the modal, its result rows, and
+its keyboard selection contract no longer exist. Current behavior:
+[Focus-only board](../features/eyes-on-agents-focus-board.md). The record below is historical.
 
 ## Need
 

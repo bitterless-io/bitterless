@@ -151,18 +151,13 @@ const stubsPlugin = {
 };
 
 const createStore = () => {
-  const calls = { open: [], preview: [], move: [] };
+  const calls = { open: [], preview: [] };
   return {
     calls,
     openingSessionKeys: new Set(),
     previewingSessionKeys: new Set(),
-    domains: [
-      { id: 1, domainKey: 'uncategorized', title: 'All' },
-      { id: 2, domainKey: 'shipping', title: 'Shipping' },
-    ],
     openThread: async (sessionKey) => calls.open.push(sessionKey),
     previewThread: async (sessionKey) => calls.preview.push(sessionKey),
-    moveThread: async (sessionKey, domainId) => calls.move.push([sessionKey, domainId]),
   };
 };
 
@@ -231,7 +226,7 @@ try {
     return more;
   };
   const activeDropdown = () => [...document.body.querySelectorAll('.arco-dropdown')]
-    .find((element) => element.textContent?.includes('Move to Domain'));
+    .find((element) => element.textContent?.includes('Preview transcript'));
 
   await test('Codex and Desktop-mapped Claude tasks retain Open', async () => {
     for (const thread of [
@@ -255,8 +250,12 @@ try {
       assert.equal(card.getAttribute('tabindex'), '0');
       assert.ok(open, `${thread.provider} must retain its Open control`);
       assert.ok(open.querySelector('button[aria-label^="Open"]'));
-      assert.equal(more?.getAttribute('aria-label'), 'More actions');
-      assert.equal(more?.classList.contains('thread-card__more-control--unread'), false);
+      if (thread.provider === 'claude') {
+        assert.equal(more?.getAttribute('aria-label'), 'More actions');
+        assert.equal(more?.classList.contains('thread-card__more-control--unread'), false);
+      } else {
+        assert.equal(more, null, 'a Codex card owns no overflow action and hides the control');
+      }
       if (thread.isUnread) {
         assert.ok(open.querySelector('.thread-card__unread-dot'));
         assert.match(card.getAttribute('aria-label') ?? '', /Unread/);
@@ -284,8 +283,13 @@ try {
     );
     assert.match(
       cardSource,
-      /v-if="thread\.provider === 'claude' && thread\.canPreviewTranscript"[\s\S]*?handlePreview/,
+      /a-dropdown v-if="canPreviewTranscript"[\s\S]*?handlePreview/,
     );
+    assert.match(
+      cardSource,
+      /const canPreviewTranscript = computed\(\(\) => props\.thread\.provider === 'claude'\s*&& props\.thread\.canPreviewTranscript\);/,
+    );
+    assert.doesNotMatch(cardSource, /moveThread|Move to Domain|actions\.moveTo/);
     assert.match(cardSource, /const handleOpen[\s\S]*?if \(!canOpenThread\.value\) return;/);
     assert.match(cardSource, /const handleDoubleClick[\s\S]*?await handleOpen\(\);/);
     assert.match(
@@ -294,15 +298,36 @@ try {
     );
   });
 
-  await test('the direct More trigger opens CLI Preview and normal Domain actions', async () => {
+  await test('a Claude row without Open or Preview keeps a standalone unread marker', async () => {
+    const unreachable = await render(createThread({
+      isUnread: true,
+      canPreviewTranscript: false,
+    }));
+    assert.equal(unreachable.querySelector('.thread-card__open-control'), null);
+    assert.equal(unreachable.querySelector('button.thread-card__more-control'), null);
+    const marker = unreachable.querySelector('.thread-card__unread-marker');
+    assert.ok(marker, 'unread attention must survive without Open or Preview');
+    assert.equal(marker.getAttribute('aria-label'), 'Unread');
+    assert.equal(unreachable.querySelectorAll('.thread-card__unread-dot').length, 1);
+
+    const readRow = await render(createThread({ canPreviewTranscript: false }));
+    assert.equal(readRow.querySelector('.thread-card__unread-marker'), null);
+  });
+
+  await test('the direct More trigger opens CLI Preview and hides Domain actions', async () => {
     const cliThread = createThread({ isUnread: true });
     let mounted = await mount(cliThread);
     try {
       await openMore(mounted.host);
-      let dropdown = activeDropdown();
+      const dropdown = activeDropdown();
       assert.ok(dropdown, 'CLI-only More must open its Arco Dropdown');
       assert.match(dropdown.textContent ?? '', /Preview transcript/);
-      assert.match(dropdown.textContent ?? '', /Shipping/);
+      assert.doesNotMatch(dropdown.textContent ?? '', /Domain/);
+      assert.equal(
+        dropdown.querySelectorAll('.arco-dropdown-option').length,
+        1,
+        'Preview transcript must be the only overflow action',
+      );
       assert.deepEqual(mounted.store.calls.open, [], 'More must not bubble into card Open');
 
       const preview = [...dropdown.querySelectorAll('.arco-dropdown-option')]
@@ -324,17 +349,12 @@ try {
     });
     mounted = await mount(codexThread);
     try {
-      await openMore(mounted.host);
-      const dropdown = activeDropdown();
-      assert.ok(dropdown, 'normal More must open its Domain menu');
-      assert.doesNotMatch(dropdown.textContent ?? '', /Preview transcript/);
-      const shipping = [...dropdown.querySelectorAll('.arco-dropdown-option')]
-        .find((element) => element.textContent?.includes('Shipping'));
-      assert.ok(shipping);
-      shipping.click();
-      await nextTick();
-      assert.deepEqual(mounted.store.calls.move, [[codexThread.sessionKey, 2]]);
-      assert.deepEqual(mounted.store.calls.open, [], 'Domain actions must not bubble into Open');
+      assert.equal(
+        mounted.host.querySelector('button.thread-card__more-control'),
+        null,
+        'a Codex card exposes no overflow menu once Domain actions are gone',
+      );
+      assert.equal(activeDropdown(), undefined);
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';

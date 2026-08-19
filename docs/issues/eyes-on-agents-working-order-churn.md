@@ -33,9 +33,10 @@ timestamps inherit SQLite input order, which is itself activity-based.
 - Non-active ranks continue to sort by `lastActivityAt ?? lastCompletedAt` descending.
 - Finish every equal-rank/equal-time comparison with `threadId` ascending so input order cannot
   cause movement.
-- Apply the same comparator to Focus, All, custom Domains, and global search. Do not change the
-  SQLite hot/cold refresh-page ordering, which is a data-fetch allocation policy rather than UI
-  presentation order.
+- Apply the same comparator to every rendered thread list. Since task 054 that is the single Focus
+  column, which lists every visible thread; expanding its membership did not change this comparator.
+  Do not change the SQLite hot/cold refresh-page ordering, which is a data-fetch allocation policy
+  rather than UI presentation order.
 
 Delivery:
 [eyes-on-agents-working-start-order-035](../plan/tasks/eyes-on-agents-working-start-order-035.md)

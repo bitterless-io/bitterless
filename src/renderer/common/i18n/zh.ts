@@ -322,6 +322,9 @@ export const zh: typeof en = {
     unavailable: '此设备暂时无法使用 Codex。',
     login: '登录 Codex',
     tryAgain: '重试',
+    copyTranslation: '复制译文',
+    copied: '已复制',
+    copyFailed: '复制失败',
     characterCount: '{count} / {limit}',
     errors: {
       loadProvider: '无法读取 Codex 状态。',
@@ -510,47 +513,25 @@ export const zh: typeof en = {
       open: '打开',
       previewTranscript: '预览对话文件',
       more: '更多操作',
-      moveTo: '移动到 Domain',
       delete: '删除',
       cancel: '取消',
-      create: '创建',
       readAll: '全部已读',
       searchTitles: '搜索任务标题',
       clearTitleSearch: '清除标题搜索'
     },
-    search: {
-      title: '搜索任务',
-      placeholder: '搜索任务标题',
-      results: '任务搜索结果',
-      empty: '没有匹配此搜索的任务标题',
-      startTyping: '输入任务标题开始搜索',
-      domainContext: 'Domain：{domain}',
-      noDomain: '无 Domain'
-    },
     board: {
       focus: 'Focus',
-      all: 'All',
-      projectFilterLabel: '按 Project 筛选 All',
+      projectFilterLabel: '按 Project 筛选',
       allProjects: 'All',
       noProject: '无 Project',
       emptyFocus: '现在没有需要关注的任务',
-      emptyDomain: '这个 Domain 还没有任务',
       emptyProject: '这个 Project 下没有任务',
       emptyNoProject: '没有无 Project 的任务',
       emptyTitleSearch: '没有匹配此搜索的任务标题',
       emptyTitle: '还没有 Agent 任务',
       emptyBody: '连接 Codex 或刷新本机 Claude 会话后即可开始观测。',
       loading: '正在加载观测面板',
-      addDomain: '添加 Domain',
-      domainPlaceholder: 'Domain 名称',
       titleSearchPlaceholder: '搜索标题'
-    },
-    domain: {
-      options: 'Domain 操作',
-      deleteTitle: '删除 Domain',
-      deleteBody: '该 Domain 内的任务仍可在「All」中找到，不会删除 Agent 任务。',
-      duplicate: '已经存在同名 Domain。',
-      required: '请输入 Domain 名称。'
     },
     thread: {
       untitled: '未命名 Agent 任务',

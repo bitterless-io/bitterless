@@ -407,17 +407,17 @@ test('window activation refresh follows connection intent and coalesces overlap'
       }];
       const harness = createHarness({ initial });
       const store = await loadStore(harness, initial);
-      store.selectAllProjectFilter('project:claude-only');
-      assert.equal(store.allProjectFilter.type, 'project');
+      store.selectProjectFilter('project:claude-only');
+      assert.equal(store.projectFilter.type, 'project');
 
       const disabled = snapshot({
         state: 'disconnected', autoConnectEnabled: false,
         claudeProviderEnabled: false, claudeProviderRevision: 2,
       });
       store.applySnapshot(disabled);
-      assert.deepEqual(store.allProjectFilter, { type: 'all' });
-      assert.equal(store.allProjectOptions.some(({ projectKey }) => projectKey === 'claude-only'), false);
-      assert.equal(JSON.stringify(store.allProjectOptions).includes('/tmp/claude-only'), false);
+      assert.deepEqual(store.projectFilter, { type: 'all' });
+      assert.equal(store.projectOptions.some(({ projectKey }) => projectKey === 'claude-only'), false);
+      assert.equal(JSON.stringify(store.projectOptions).includes('/tmp/claude-only'), false);
 
       const sharedEnabled = snapshot({
         state: 'disconnected', autoConnectEnabled: false,
@@ -430,16 +430,16 @@ test('window activation refresh follows connection intent and coalesces overlap'
           projectRoot: '/tmp/shared', projectName: 'shared' },
       ];
       store.applySnapshot(sharedEnabled);
-      store.selectAllProjectFilter('project:shared');
+      store.selectProjectFilter('project:shared');
       const sharedDisabled = snapshot({
         state: 'disconnected', autoConnectEnabled: false,
         claudeProviderEnabled: false, claudeProviderRevision: 4,
       });
       sharedDisabled.threads = [sharedEnabled.threads[1]];
       store.applySnapshot(sharedDisabled);
-      assert.equal(store.allProjectFilter.type, 'project');
-      assert.equal(store.allProjectFilter.projectKey, 'shared');
-      assert.equal(store.allProjectOptions.find(({ projectKey }) => projectKey === 'shared')?.count, 1);
+      assert.equal(store.projectFilter.type, 'project');
+      assert.equal(store.projectFilter.projectKey, 'shared');
+      assert.equal(store.projectOptions.find(({ projectKey }) => projectKey === 'shared')?.count, 1);
     });
 
     await context.test(

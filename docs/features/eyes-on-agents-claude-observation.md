@@ -24,7 +24,7 @@ active + archived thread/list inventory ─┐
 App Server lifecycle notifications ──────┼─> provider-aware repository
 trusted Codex Desktop Hooks ──────────────┘          │
                                                      v
-                                      Domain + Focus + unread projections
+                                      Focus + unread projections
 ```
 
 - Full Connect, Refresh, activation, archive, and unarchive reconciliation page both active and
@@ -84,7 +84,7 @@ EyesOnAgents service ─────┤
                          provider-aware SQLite repository
                                       │
                                       v
-                       Focus / All / Domain / title search
+                       Focus column + Project/title filters
 ```
 
 Provider adapters may update only their own rows and status sources. A Claude failure never
@@ -460,8 +460,9 @@ type EyesOnAgentsArchiveState = "active" | "archived" | "unknown";
 - Codex full inventory and archive notifications own `active`/`archived`.
 - A matched, valid Claude Desktop metadata file owns `active`/`archived` for that session.
 - A Claude CLI-only session uses `unknown`.
-- All and custom Domains exclude only explicit `archived`; `unknown` remains visible.
-- Focus is still active runtime OR unread and is independent from unknown archive capability.
+- The Focus column excludes only explicit `archived`; `unknown` remains visible.
+- Focus lists every visible thread and keeps its attention comparator, independent from unknown
+  archive capability.
 - No provider omission, file deletion, retention cleanup, Hook, SessionEnd, or process exit may
   create Claude `archived` evidence; only a parsed explicit Desktop `isArchived: true` may do so.
 
@@ -474,7 +475,7 @@ type EyesOnAgentsArchiveState = "active" | "archived" | "unknown";
   Hook cannot create the deleted session.
 - Invalid names, symlinks, inaccessible scopes, enumeration failure, or candidate limits preserve
   existing rows. Omission is never promoted into deletion evidence.
-- Deleted Claude rows are excluded from Focus, All, Domains, Project filters, search, Open, Preview,
+- Deleted Claude rows are excluded from Focus, its Project/title filters, Open, Preview,
   Read all, completion alerts, and sounds. Codex behavior is unchanged.
 - Re-import is owned by Claude Desktop. Only fresh unique Desktop metadata observed after its
   tombstones disappear may restore the row.
@@ -508,8 +509,8 @@ terminal, or any other CLI interaction from Open.
 Codex Open and unread acknowledgement behavior is unchanged. Claude Open performs no provider RPC;
 after the OS accepts the fixed route it marks a confirmed terminal row read, while an active or
 unknown row remains in Focus. A Claude row without a verified, unique Desktop mapping is retained
-only as Main-private reconciliation state and is absent from Focus, All, Domains, Project filters,
-search, and card actions. Once a unique mapping appears, the same canonical row becomes visible
+only as Main-private reconciliation state and is absent from Focus, its Project/title filters,
+and card actions. Once a unique mapping appears, the same canonical row becomes visible
 without creating a duplicate card. Valid CLI-only `Stop` deliveries retain the task-047 completion
 alert behavior because the user may still return to that terminal session.
 
@@ -568,8 +569,8 @@ changes to **Copied** and announces that result. There is no
 always-visible setup guide; `/hooks` appears only under the collapsed **Still not working?**
 diagnostic. The card does not show Codex trust language for Claude and adds no new border or row.
 
-Global search, All, Focus, and custom Domains contain both providers and keep the established
-attention comparator. Search selection and Open loading use `sessionKey`, so a provider update
+The Focus column contains both providers and keeps the established
+attention comparator. Filtering and Open loading use `sessionKey`, so a provider update
 cannot redirect an in-flight click to a different card.
 
 ## XPC additions
@@ -612,8 +613,8 @@ Claude CLI argument.
 - Every existing Codex repository, App Server, Hook, archive, unread, Open, poll, and notification
   contract still passes with provider `codex`.
 - Missing provider preference defaults to Claude enabled; an invalid value is visible and
-  fail-closed. Turning it off stops every Claude runtime/retry/intake path, hides Claude from Focus,
-  All, Domains, project filters, and title search, and leaves Codex synchronization unchanged.
+  fail-closed. Turning it off stops every Claude runtime/retry/intake path, hides Claude from Focus
+  and its Project/title filters, and leaves Codex synchronization unchanged.
 - Turning Claude support back on restores the saved rows and annotations, performs fresh inventory,
   resumes an already-installed valid plugin, and never replays disabled-period Hook events.
 - Read all while Claude is disabled acknowledges Codex only; hidden Claude unread state remains.

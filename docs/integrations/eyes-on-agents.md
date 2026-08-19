@@ -10,8 +10,10 @@ Verified: 2026-08-17 (through task 040 non-Electron checks; runtime owner verifi
 
 Replace the former provider-neutral Coding-agent Sessions page with **EyesOnAgents**, a
 provider-aware Mini App that opens in its own Bitterless window. EyesOnAgents discovers local Codex
-and Claude Code sessions, groups them into user-managed Domains, shows work that needs attention in
-a derived Focus column, and opens an exact task in its provider's desktop UI.
+and Claude Code sessions, lists every visible task in one attention-ordered Focus column, and opens
+an exact task in its provider's desktop UI. User-managed Domains are no longer exposed in the UI;
+their storage is retained and unused — see
+[Focus-only board](../features/eyes-on-agents-focus-board.md).
 
 Codex retains its App Server and trusted Hook contracts. Claude is an additive adapter with
 read-only Desktop metadata, bounded JSONL inventory, Agent View polling, a user-installed
@@ -26,17 +28,17 @@ by [EyesOnAgents Claude Observation](../features/eyes-on-agents-claude-observati
   display-oriented SQLite model.
 - Persist each validated active and archived `thread/list` object as a local source snapshot, while
   keeping Bitterless-owned Domain and read markers in a separate normalized overlay.
-- Put every newly discovered thread into the system `Uncategorized` Domain until the user moves it.
-- Show every non-archived thread in a fixed renderer-only `All` projection while preserving the
-  system `uncategorized` Domain as the storage fallback.
-- Derive current Git Project metadata from `cwd` and filter `All` by Project without
-  changing manual Domain assignment.
-- Find any visible non-archived task through a renderer-memory `Cmd+F` / `Ctrl+F` title search
-  without changing the All column's Project or title filters.
-- Show every running thread and every newly completed unread thread in a fixed Focus column.
+- Put every newly discovered thread into the system `Uncategorized` Domain, which remains the
+  storage fallback and is never presented in the UI.
+- Show every visible thread in the single Focus column, ordered by attention: waiting for approval,
+  waiting for input, working, unread, then everything else.
+- Derive current Git Project metadata from `cwd` and filter Focus by Project without
+  changing stored Domain assignment.
+- Narrow the same Focus list through a renderer-memory `Cmd+F` / `Ctrl+F` token title filter that
+  composes with the Project filter.
 - Play the supplied completion tone and send one localized system notification when a newly
   accepted successful turn enters the same idle/unread state as the Open red dot.
-- Persist Domain assignment and the last thread opened through EyesOnAgents across restarts.
+- Persist the stored Domain value and the last thread opened through EyesOnAgents across restarts.
 - Persist unread explicitly: every observed running state or terminal event sets unread; a
   successful Open from EyesOnAgents or explicit Focus `Read all` clears confirmed terminal
   attention until activity is observed again.
@@ -359,7 +361,7 @@ threads when `archived: true`. Its `thread/archived` and `thread/unarchived` not
 only `{ threadId }`. EyesOnAgents uses those protocol facts as follows:
 
 - `thread/archived` marks a known row archived, clears transient active evidence, and broadcasts so
-  the row disappears from every Domain and Focus immediately.
+  the row disappears from the Focus column immediately.
 - `thread/unarchived` clears the archive flag for a known row, clears stale active evidence,
   broadcasts, and runs a full Sync so a previously unknown row can be imported and current metadata
   replaces the retained snapshot.
@@ -392,6 +394,10 @@ imply archive or delete.
 
 EyesOnAgents uses dedicated tables rather than Todo's `domain` and `todo` tables. The two products
 must not share ordering, archive, or deletion semantics.
+
+Since task 054 no UI exposes Domains. The tables, columns, XPC methods, and transactional semantics
+below are retained unchanged so stored assignments survive and the surface can be restored or fully
+removed later; the renderer simply never calls them and never renders a Domain.
 
 ### `eyes_on_agents_domain`
 
@@ -475,39 +481,25 @@ non-Git directory explicitly clears Project metadata; an inaccessible or otherwi
 preserves the last known value. A `.git` directory and a bounded `gitdir:` file both identify a
 worktree, so nested repositories, submodules, and linked worktrees use their nearest root.
 
-Project is a source dimension, not classification. It never creates a Domain, changes `domain_id`,
-or filters Focus/custom Domains. The renderer may filter only the All projection by `All`, `No
-project`, or an exact `project_key`; its options and counts use every visible non-archived thread,
-regardless of stored Domain assignment. See
+Project is a source dimension, not classification. It never creates a Domain and never changes
+`domain_id`. The renderer filters the Focus column by `All`, `No project`, or an exact
+`project_key`; its options and counts use every visible thread, regardless of stored Domain
+assignment. See
 [EyesOnAgents Project Filter](../features/eyes-on-agents-project-filter.md) for the complete contract.
 
-All also has a renderer-session title query. After Project filtering, a non-empty trimmed query keeps
-only threads whose non-null `title` contains that query case-insensitively. It never reads raw source
-snapshots or conversation content and never changes persisted thread or Domain state. Clearing or
-closing title search restores the currently selected Project result rather than resetting the Project
-filter. Focus and custom Domain projections never consume this query.
+Focus also has a renderer-session title query, reached by its Search toggle or `Cmd+F` / `Ctrl+F`,
+which suppresses Chromium's native page Find. Query and title text are normalized with Unicode
+NFKC and locale-aware lowercase, then split on whitespace, hyphen, underscore, period, forward
+slash, backslash, colon, and vertical bar. A title matches only when every query token is a
+substring of at least one title token; token order does not matter. An empty, cleared, or
+separator-only query is not a filter and leaves the complete list visible.
 
-The global task finder is a separate renderer-session projection over `allThreads`. An empty,
-cleared, or separator-only query returns no threads. Meaningful query and title text are normalized
-with Unicode NFKC and locale-aware lowercase, then split on whitespace, hyphen, underscore, period,
-forward slash, backslash, colon, and vertical bar. A title matches only when every query token is a
-substring of at least one title token; token order does not matter. It never composes with
-`allProjectFilter` or `allTitleQuery`, and it never matches thread ID, cwd, Project, Domain, prompt,
-response, or `payload_json`.
-
-Global-search visibility, query, and selected thread ID remain in renderer memory. Meaningful query
-changes select the first result; clearing the query selects nothing. Snapshot updates preserve the
-selected ID while it remains matched and otherwise fall back to the first result. Opening a result
-calls the established `openThread` path and intentionally preserves the modal, query, input focus,
-and selection for repeated lookup. Closing the modal clears its transient state. No search-specific
-XPC, SQLite, App Server request, or polling loop exists.
-
-Each global-search result resolves its current custom Domain from the same renderer snapshot using
-`thread.domainId`. The title occupies the first visual line; the second line shows custom Domain at
-left and normalized runtime state at right. The system `uncategorized` storage fallback, a missing
-or stale Domain reference, and a blank resolved Domain title all display `-`. All and Focus remain
-renderer projections and are never presented as stored Domain metadata. This lookup adds no
-separate persistence or synchronization path.
+The query never reads raw source snapshots or conversation content, never matches thread ID, cwd,
+Project, Domain, prompt, response, or `payload_json`, and never changes persisted thread or Domain
+state. It composes with the Project filter: a card must satisfy both. Query text and row visibility
+remain in renderer memory, and no search-specific XPC, SQLite, App Server request, or polling loop
+exists. Filtering narrows the real card list, so matched rows keep the established `openThread`
+path and every normal card affordance.
 
 ## Runtime state
 
@@ -580,7 +572,7 @@ Both acknowledgement paths share one positive terminal allowlist — `idle`, `fa
   acknowledged away.
 - Focus `Read all` clears `is_unread` for every non-archived unread terminal row belonging to the
   Main-provided visible-provider allowlist in one repository mutation. It is not filtered by
-  renderer DOM, current scroll position, Domain, Project, or title search, it does not deep-link to
+  renderer DOM, current scroll position, Project, or title filter, it does not deep-link to
   Codex, and it never changes runtime evidence or `last_opened_*`. When Claude is paused the
   allowlist is Codex-only, so hidden Claude attention is preserved. The renderer enables the action
   from the same allowlist.

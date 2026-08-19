@@ -123,7 +123,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
     /  startRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  stopRefreshPolling)/
   );
   const stopPolling = store.match(
-    /  stopRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  threadsForDomain)/
+    /  stopRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  selectProjectFilter)/
   );
   const pollingTick = store.match(
     /  private async performRefreshPollingTick\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async performBackgroundThreadPagesRefresh)/
@@ -515,8 +515,8 @@ test('observation board exposes stable regions and reduced motion', () => {
   assert.match(source, /name="eyesOnAgents__domainColumn"/);
   assert.match(source, /name="eyesOnAgents__threadCard"/);
   assert.match(source, /prefers-reduced-motion: reduce/);
-  assert.match(source, /pull: 'clone', put: false/);
-  assert.match(source, /eyesOnAgentsEmitter\.moveThread/);
+  assert.doesNotMatch(source, /vuedraggable|<draggable/);
+  assert.doesNotMatch(source, /moveThread|createDomain|renameDomain|deleteDomain|reorderDomains/);
 });
 
 test('observation surfaces use Todo-style background hierarchy without decorative borders', () => {
@@ -526,9 +526,6 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   );
   const thread = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
-  );
-  const addDomain = read(
-    'src/renderer/eyesOnAgents/src/components/AddDomainPopover/AddDomainPopover.less'
   );
   const projectFilter = read(
     'src/renderer/eyesOnAgents/src/components/ProjectFilter/ProjectFilter.less'
@@ -552,13 +549,7 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   assert.match(domainHeader, /background: transparent/);
   assert.doesNotMatch(domainHeader, /border-bottom|box-shadow/);
 
-  const domainTitleInput = cssRule(domain, '.agent-domain__title-input');
-  assert.match(domainTitleInput, /min-width: 40px/);
-  assert.match(domainTitleInput, /max-width: 200px/);
-  assert.match(domainTitleInput, /border: 0/);
-  assert.match(domainTitleInput, /box-shadow: 0 0 0 1px/);
-  const domainTitleFocus = cssRule(domain, '.agent-domain__title-input:focus-visible');
-  assert.match(domainTitleFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
+  assert.doesNotMatch(domain, /agent-domain__title-input|agent-domain__title-sizer|agent-domain__drag-handle/);
 
   const threadCard = cssRule(thread, '.thread-card');
   assert.match(threadCard, /background: var\(--eyes-item\)/);
@@ -572,14 +563,6 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   const threadFocus = cssRule(thread, '.thread-card:focus-visible');
   assert.match(threadFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
   assert.match(threadFocus, /outline-offset: 2px/);
-
-  assert.doesNotMatch(addDomain, /border:\s*1px\s+dashed|\bdashed\b/);
-  const addDomainForm = cssRule(addDomain, '.add-domain-popover__form');
-  assert.match(addDomainForm, /border: 0/);
-  assert.match(addDomainForm, /background: oklch/);
-  const addDomainFocus = cssRule(addDomain, '.add-domain-popover__trigger:focus-visible');
-  assert.match(addDomainFocus, /outline: 2px solid oklch/);
-  assert.match(addDomainFocus, /outline-offset: 1px/);
 
   const projectSelect = cssRule(projectFilter, '.project-filter__select.arco-select-view');
   assert.match(projectSelect, /border: 0/);
@@ -741,7 +724,11 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
 
   assert.match(
     card,
-    /v-if="thread\.provider === 'claude' && thread\.canPreviewTranscript"[\s\S]*actions\.previewTranscript/,
+    /a-dropdown v-if="canPreviewTranscript"[\s\S]*actions\.previewTranscript/,
+  );
+  assert.match(
+    card,
+    /const canPreviewTranscript = computed\(\(\) => props\.thread\.provider === 'claude'\s*&& props\.thread\.canPreviewTranscript\);/,
   );
   assert.match(
     card,
@@ -751,10 +738,7 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
     store,
     /async previewThread\(sessionKey: EyesOnAgentsSessionKey\): Promise<void>[\s\S]*thread\.provider !== 'claude'[\s\S]*!thread\.canPreviewTranscript[\s\S]*eyesOnAgentsEmitter\.previewThread\(\{ sessionKey \}\)/,
   );
-  assert.doesNotMatch(
-    store,
-    /openThreadSearchResult\([\s\S]*await this\.previewThread\(sessionKey\)/,
-  );
+  assert.doesNotMatch(store, /threadSearch|openThreadSearch|closeThreadSearch/);
   assert.doesNotMatch(rendererSource, /transcriptPath|\.jsonl|claude:\/\//);
 
   assert.match(panel, /<ClaudeObservationCard \/>/);
@@ -939,7 +923,7 @@ test('thread cards disclose only the bounded latest-question projection', () => 
   assert.match(chinese, /latestQuestionTruncated: '[^']*本机 8192 字节上限[^']*'/);
 });
 
-test('All projects every thread while Focus and custom Domains retain their scopes', () => {
+test('Focus is the whole board and lists every visible thread', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
   const projectFilter = read(
@@ -949,47 +933,51 @@ test('All projects every thread while Focus and custom Domains retain their scop
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
-  assert.match(board, /:threads="eyesOnAgentsStore\.focusThreads"/);
+  assert.equal(
+    (board.match(/<DomainColumn/g) ?? []).length,
+    1,
+    'the board renders exactly one column'
+  );
+  assert.match(board, /:title="i18nHelper\.eyesOnAgents\.board\.focus"/);
+  assert.match(board, /:threads="eyesOnAgentsStore\.filteredFocusThreads"/);
+  assert.doesNotMatch(board, /board\.all|threadsForDomain|customDomains|total-count|totalCount/);
+
   const focusThreads = store.match(
     /  get focusThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
   );
   assert.ok(focusThreads, 'Missing Focus projection');
   assert.match(
     focusThreads[0],
-    /isEyesOnAgentsFocused\(thread\.runtimeState, thread\.isUnread\)/,
-    'Focus membership must be derived in memory from runtime state and unread'
+    /return sortThreads\(this\.threads\);/,
+    'Focus must list every visible thread in comparator order'
   );
   assert.doesNotMatch(
     focusThreads[0],
-    /thread\.isFocused/,
-    'Focus membership must not depend on a snapshot flag the renderer cannot recompute'
+    /isEyesOnAgentsFocused|thread\.isFocused/,
+    'Focus membership is no longer an attention subset'
   );
-  assert.match(board, /:title="i18nHelper\.eyesOnAgents\.board\.all"/);
-  assert.match(board, /:threads="eyesOnAgentsStore\.filteredAllThreads"/);
-  assert.doesNotMatch(board, /total-count|totalCount/);
-  assert.match(board, /:threads="eyesOnAgentsStore\.threadsForDomain\(element\.id\)"/);
-  assert.match(store, /get allThreads\(\): EyesOnAgentsThread\[\] \{\s*return sortThreads\(this\.threads\);/);
-  assert.match(store, /buildEyesOnAgentsProjectFilterOptions\(\s*this\.allThreads,/);
-  assert.match(store, /filterEyesOnAgentsThreadsByProject\(\s*this\.allThreads,/);
-  assert.doesNotMatch(store, /uncategorizedProjectFilter|filteredUncategorizedThreads|uncategorizedThreads/);
-  assert.match(domain, /<ProjectFilter v-if="projectFilter"/);
+  assert.match(store, /buildEyesOnAgentsProjectFilterOptions\(\s*this\.focusThreads,/);
+  assert.match(store, /filterEyesOnAgentsThreadsByProject\(\s*this\.focusThreads,/);
+  assert.doesNotMatch(
+    store,
+    /allThreads|filteredAllThreads|allTitleQuery|allProjectFilter|allProjectOptions/,
+    'the retired All projection must leave no renderer state behind'
+  );
+
+  assert.match(domain, /<ProjectFilter \/>/);
   assert.match(projectFilter, /<label name="eyesOnAgents__projectFilter"/);
   assert.match(projectFilter, /class="project-filter__label"/);
   assert.match(projectFilter, /allow-search/);
-  assert.match(projectFilter, /eyesOnAgentsStore\.allProjectFilterValue/);
-  assert.match(projectFilter, /eyesOnAgentsStore\.allProjectOptions/);
-  assert.match(projectFilter, /selectAllProjectFilter/);
+  assert.match(projectFilter, /eyesOnAgentsStore\.projectFilterValue/);
+  assert.match(projectFilter, /eyesOnAgentsStore\.projectOptions/);
+  assert.match(projectFilter, /selectProjectFilter/);
   assert.match(projectFilter, /class="project-filter__count">\{\{ option\.count \}\}/);
   assert.match(projectFilter, /`\$\{optionLabel\(option\)\} \(\$\{option\.count\}\)`/);
-  assert.match(english, /all: 'All'/);
-  assert.match(chinese, /all: 'All'/);
-  assert.match(chinese, /allProjects: 'All'/);
-  assert.match(english, /projectFilterLabel: 'Filter All by Project'/);
-  assert.match(chinese, /projectFilterLabel: '按 Project 筛选 All'/);
+  assert.match(english, /projectFilterLabel: 'Filter by Project'/);
+  assert.match(chinese, /projectFilterLabel: '按 Project 筛选'/);
   assert.match(english, /noProject: 'No project'/);
   assert.match(chinese, /noProject: '无 Project'/);
 });
-
 test('Focus header exposes a compact parameter-free Read all action', () => {
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
   const styles = read(
@@ -1004,7 +992,7 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
   const button = domain.match(
-    /<a-button\s+v-if="focus"[\s\S]*?name="eyesOnAgents__domainColumn__readAll"[\s\S]*?<\/a-button>/
+    /<a-button\s+name="eyesOnAgents__domainColumn__readAll"[\s\S]*?<\/a-button>/
   );
   assert.ok(button, 'Missing Focus-only Read all header action');
   assert.match(button[0], /class="agent-domain__read-all"/);
@@ -1020,7 +1008,7 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
     /  get readableFocusThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
   );
   assert.ok(readableFocusThreads, 'Missing readable Focus projection');
-  assert.match(readableFocusThreads[0], /this\.focusThreads\.filter/);
+  assert.match(readableFocusThreads[0], /this\.threads\.filter/);
   assert.match(readableFocusThreads[0], /thread\.isUnread/);
   assert.match(
     readableFocusThreads[0],
@@ -1085,460 +1073,159 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
   assert.match(chinese, /readAll: '全部已读'/);
 });
 
-test('global title search is lifecycle-safe, accessible, and independently bounded', () => {
-  const appPath = 'src/renderer/eyesOnAgents/src/App.vue';
-  const searchPath =
-    'src/renderer/eyesOnAgents/src/components/ThreadSearch/ThreadSearch.vue';
-  const storePath = 'src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts';
-  const app = read(appPath);
-  const search = read(searchPath);
-  const styles = read(
-    'src/renderer/eyesOnAgents/src/components/ThreadSearch/ThreadSearch.less'
-  );
-  const store = read(storePath);
+test('Cmd+F activates the Focus title filter and no search modal remains', () => {
+  const app = read('src/renderer/eyesOnAgents/src/App.vue');
+  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
+  const rendererSource = walk('src/renderer/eyesOnAgents')
+    .filter((path) => /\.(vue|less|ts|html)$/.test(path))
+    .map(read)
+    .join('\n');
 
-  assert.match(app, /<ThreadSearch ref="threadSearchRef" \/>/);
-  assert.equal(
-    (app.match(/window\.addEventListener\('keydown', handleWindowKeydown\)/g) ?? []).length,
-    1,
+  assert.doesNotMatch(
+    rendererSource,
+    /ThreadSearch|thread-search|a-modal/,
+    'the global search modal must be gone from every renderer surface'
   );
-  assert.equal(
-    (app.match(/window\.removeEventListener\('keydown', handleWindowKeydown\)/g) ?? []).length,
-    1,
-  );
-  const shortcut = app.match(
+
+  const keydown = app.match(
     /const handleWindowKeydown = \(event: KeyboardEvent\): void => \{[\s\S]*?\n\};/
   );
-  assert.ok(shortcut, 'Missing global Find shortcut handler');
-  assert.match(shortcut[0], /!event\.altKey/);
-  assert.match(shortcut[0], /event\.metaKey \|\| event\.ctrlKey/);
-  assert.match(shortcut[0], /event\.key\.toLocaleLowerCase\(\) === 'f'/);
-  assert.match(shortcut[0], /event\.preventDefault\(\)/);
-  assert.match(shortcut[0], /event\.stopPropagation\(\)/);
-  assert.match(
-    shortcut[0],
-    /if \(!eyesOnAgentsStore\.threadSearchVisible\) \{\s*eyesOnAgentsStore\.openThreadSearch\(\);\s*\}[\s\S]*focusThreadSearchInput\(\)/
-  );
-  assert.match(
-    app,
-    /const focusThreadSearchInput = async \(\): Promise<void> => \{\s*await nextTick\(\);\s*await threadSearchRef\.value\?\.focusInput\(\)/
-  );
+  assert.ok(keydown, 'Missing window keydown handler');
+  assert.match(keydown[0], /\(event\.metaKey \|\| event\.ctrlKey\)/);
+  assert.match(keydown[0], /event\.key\.toLocaleLowerCase\(\) === 'f'/);
+  assert.match(keydown[0], /event\.preventDefault\(\)/);
+  assert.match(keydown[0], /void openFocusTitleSearch\(\)/);
+  assert.doesNotMatch(keydown[0], /threadSearchVisible|openThreadSearch/);
 
-  assert.match(search, /<a-modal[\s\S]*:visible="eyesOnAgentsStore\.threadSearchVisible"/);
-  assert.match(search, /:footer="false"/);
-  assert.match(search, /modal-class="thread-search-modal"/);
-  assert.match(search, /@cancel="closeThreadSearch"/);
-  assert.match(search, /@open="handleModalOpen"/);
-  assert.match(search, /<a-input[\s\S]*?size="mini"[\s\S]*?:input-attrs="inputAttributes"/);
-  assert.match(search, /@update:model-value="handleQueryUpdate"/);
+  const opener = app.match(
+    /const openFocusTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  );
+  assert.ok(opener, 'Missing Focus filter activation');
+  assert.match(opener[0], /await nextTick\(\)/);
+  assert.match(opener[0], /agentBoardRef\.value\?\.openTitleSearch\(\)/);
+
+  assert.match(app, /<AgentBoard v-else ref="agentBoardRef" \/>/);
+  assert.match(app, /window\.addEventListener\('keydown', handleWindowKeydown\)/);
+  assert.match(app, /window\.removeEventListener\('keydown', handleWindowKeydown\)/);
+  assert.match(app, /eyesOnAgentsStore\.clearTitleQuery\(\)/);
+
+  assert.match(board, /focusColumnRef\.value\?\.openTitleSearch\(\)/);
+  assert.match(board, /defineExpose\(\{ openTitleSearch \}\)/);
+  assert.match(domain, /defineExpose\(\{ openTitleSearch \}\)/);
+
   assert.doesNotMatch(
-    search,
-    /@update:model-value="eyesOnAgentsStore\.[^"]+"/,
-    'Store class methods must not be passed as unbound Vue event callbacks'
-  );
-  const queryUpdate = search.match(
-    /const handleQueryUpdate = \(query: string\): void => \{[\s\S]*?\n\};/
-  );
-  assert.ok(queryUpdate, 'Missing receiver-safe query update wrapper');
-  assert.match(
-    queryUpdate[0],
-    /eyesOnAgentsStore\.setThreadSearchQuery\(query\)/,
-    'Query wrapper must invoke the method through its owning store object'
-  );
-  assert.match(search, /autofocus: true/);
-  assert.match(
-    search,
-    /'aria-label': i18nHelper\.eyesOnAgents\.search\.placeholder/,
-    'The real combobox input needs a stable localized accessible name'
-  );
-  assert.match(search, /const focusInput = async \(\): Promise<void>/);
-  assert.match(search, /inputRef\.value\?\.focus\(\)/);
-  assert.match(search, /defineExpose\(\{ focusInput \}\)/);
-  assert.match(search, /event\.key === 'Escape'[\s\S]*closeThreadSearch\(\)/);
-  assert.match(search, /event\.key === 'ArrowDown'[\s\S]*moveThreadSearchSelection\(1\)/);
-  assert.match(search, /event\.key === 'ArrowUp'[\s\S]*moveThreadSearchSelection\(-1\)/);
-  assert.match(search, /event\.key === 'Enter'[\s\S]*openSelectedResult\(\)/);
-  const searchResult = search.match(
-    /<button\s+v-for="thread in eyesOnAgentsStore\.threadSearchResults"[\s\S]*?<\/button>/
-  );
-  assert.ok(searchResult, 'Missing global search result row');
-  assert.match(searchResult[0], /role="option"/);
-  assert.match(searchResult[0], /@click="handleResultClick\(thread\.sessionKey\)"/);
-  const titlePosition = searchResult[0].indexOf('class="thread-search__result-title"');
-  const domainPosition = searchResult[0].indexOf('class="thread-search__result-domain"');
-  const statePosition = searchResult[0].indexOf('class="thread-search__result-state"');
-  assert.ok(
-    titlePosition >= 0 && titlePosition < domainPosition && domainPosition < statePosition,
-    'Search result DOM must keep title first, then Domain and runtime state',
-  );
-  const resultDomain = searchResult[0].match(
-    /<span\s+class="thread-search__result-domain"[\s\S]*?<\/span>/
-  );
-  assert.ok(resultDomain, 'Missing result Domain metadata');
-  assert.match(
-    resultDomain[0],
-    /:title="customDomainTitle\(thread\) \?\? undefined"/,
-    'Only a real custom Domain title may create the native tooltip',
-  );
-  assert.match(resultDomain[0], /\{\{ customDomainTitle\(thread\) \?\? '-' \}\}/);
-  assert.match(search, /role="listbox"/);
-  assert.match(search, /:aria-selected=/);
-  assert.match(search, /'aria-activedescendant': selectedOptionId\.value/);
-  assert.match(search, /scrollIntoView\(\{ block: 'nearest' \}\)/);
-  assert.doesNotMatch(search, /ThreadCard/);
-  assert.match(
-    search,
-    /const emptyMessage = computed\(\(\) =>\s*eyesOnAgentsStore\.hasThreadSearchQueryTokens\s*\? i18nHelper\.eyesOnAgents\.search\.empty\s*: i18nHelper\.eyesOnAgents\.search\.startTyping\s*\)/
-  );
-  assert.match(
-    search,
-    /v-if="eyesOnAgentsStore\.threadSearchResults\.length === 0"[\s\S]*\{\{ emptyMessage \}\}/
-  );
-
-  const modalStyle = cssRule(styles, '.thread-search-modal.arco-modal');
-  assert.match(modalStyle, /min-height: 200px/);
-  assert.match(modalStyle, /max-height: 80vh/);
-  assert.match(modalStyle, /overflow: hidden/);
-  const inputRegionStyle = cssRule(styles, '.thread-search__input-region');
-  assert.match(inputRegionStyle, /flex: 0 0 auto/);
-  const resultsStyle = cssRule(styles, '.thread-search__results');
-  assert.match(resultsStyle, /min-height: 0/);
-  assert.match(resultsStyle, /flex: 1/);
-  assert.match(resultsStyle, /overflow-y: auto/);
-  const resultStyle = cssRule(styles, '.thread-search__result');
-  assert.match(resultStyle, /min-height: 47px/);
-  assert.match(resultStyle, /display: grid/);
-  assert.match(
-    resultStyle,
-    /grid-template-columns: minmax\(0, 1fr\) auto/
-  );
-  assert.match(resultStyle, /grid-template-rows: auto auto/);
-  const resultHeadingStyle = cssRule(styles, '.thread-search__result-heading');
-  assert.match(resultHeadingStyle, /grid-column: 1 \/ -1/);
-  assert.match(resultHeadingStyle, /grid-row: 1/);
-  assert.match(resultHeadingStyle, /display: flex/);
-  const resultTitleStyle = cssRule(styles, '.thread-search__result-title');
-  assert.match(resultTitleStyle, /overflow: hidden/);
-  const resultDomainStyle = cssRule(styles, '.thread-search__result-domain');
-  assert.match(resultDomainStyle, /grid-column: 1/);
-  assert.match(resultDomainStyle, /grid-row: 2/);
-  assert.match(resultDomainStyle, /overflow: hidden/);
-  assert.match(resultDomainStyle, /text-overflow: ellipsis/);
-  assert.match(resultDomainStyle, /white-space: nowrap/);
-  const resultStateStyle = cssRule(styles, '.thread-search__result-state');
-  assert.match(resultStateStyle, /grid-column: 2/);
-  assert.match(resultStateStyle, /grid-row: 2/);
-  assert.match(resultStateStyle, /justify-self: end/);
-  assert.match(resultStateStyle, /text-align: right/);
-  assert.match(
-    cssRule(styles, '.thread-search__result:hover'),
-    /background: var\(--thread-search-item-hover\)/
-  );
-  assert.match(
-    styles,
-    /\.thread-search__result--selected,\s*\.thread-search__result--selected:hover\s*\{[^}]*background: var\(--thread-search-item-focus\)/
-  );
-
-  const searchResults = store.match(
-    /get threadSearchResults\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
-  );
-  const filteredAllThreads = store.match(
-    /get filteredAllThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
-  );
-  assert.ok(searchResults, 'Missing global title-search projection');
-  assert.ok(filteredAllThreads, 'Missing All-column projection');
-  assert.ok(
-    store.includes(
-      'const THREAD_SEARCH_SEPARATOR_PATTERN = /[\\s\\-_.\\/\\\\:|]+/u;'
-    ),
-    'Global title search must split every supported separator'
-  );
-  const tokenizeThreadSearchText = store.match(
-    /const tokenizeThreadSearchText = \(value: string\): string\[\] =>[\s\S]*?\.filter\(Boolean\);/
-  );
-  assert.ok(tokenizeThreadSearchText, 'Missing global title-search tokenizer');
-  assert.match(
-    tokenizeThreadSearchText[0],
-    /\.normalize\('NFKC'\)[\s\S]*\.toLocaleLowerCase\(\)[\s\S]*\.split\(THREAD_SEARCH_SEPARATOR_PATTERN\)[\s\S]*\.filter\(Boolean\)/
-  );
-  assert.match(
-    searchResults[0],
-    /const queryTokens = tokenizeThreadSearchText\(this\.threadSearchQuery\)/
-  );
-  assert.match(searchResults[0], /if \(queryTokens\.length === 0\) return \[\]/);
-  assert.doesNotMatch(searchResults[0], /if \([^)]*\) return this\.allThreads/);
-  assert.match(searchResults[0], /if \(thread\.title === null\) return false/);
-  assert.match(
-    searchResults[0],
-    /const titleTokens = tokenizeThreadSearchText\(thread\.title\)[\s\S]*queryTokens\.every\(\(queryToken\) =>[\s\S]*titleTokens\.some\(\(titleToken\) => titleToken\.includes\(queryToken\)\)/
-  );
-  assert.match(
     store,
-    /get hasThreadSearchQueryTokens\(\): boolean \{\s*return tokenizeThreadSearchText\(this\.threadSearchQuery\)\.length > 0/
+    /threadSearchVisible|threadSearchQuery|threadSearchResults|threadSearchSelectedSessionKey|moveThreadSearchSelection|hasThreadSearchQueryTokens/
   );
-  assert.doesNotMatch(searchResults[0], /allProjectFilter|allTitleQuery|filteredAllThreads/);
-  assert.doesNotMatch(
-    searchResults[0],
-    /thread\.(?:domainId|cwd|projectKey|projectRoot|projectName|lastUserPrompt|prompt|preview|response|content)/
-  );
-  assert.doesNotMatch(searchResults[0], /customDomainTitle|customDomains/);
-  assert.doesNotMatch(filteredAllThreads[0], /threadSearch/);
-  const customDomainTitleMethod = store.match(
-    /customDomainTitle\(domainId: number\): string \| null \{[\s\S]*?\n  \}/
-  );
-  assert.ok(customDomainTitleMethod, 'Missing current custom Domain title resolver');
-  assert.match(
-    customDomainTitleMethod[0],
-    /this\.customDomains\.find\(\(domain\) => domain\.id === domainId\)\?\.title\.trim\(\)/
-  );
-  assert.match(customDomainTitleMethod[0], /return title \|\| null/);
-  assert.doesNotMatch(
-    customDomainTitleMethod[0],
-    /uncategorizedDomain|domainKey|new Map/
-  );
-  assert.match(
-    search,
-    /const customDomainTitle = \(thread: EyesOnAgentsThread\): string \| null =>\s*eyesOnAgentsStore\.customDomainTitle\(thread\.domainId\)/
-  );
-  assert.doesNotMatch(
-    search,
-    /\.\w+\(eyesOnAgentsStore\.customDomainTitle\)/,
-    'Store Domain resolver must not be passed as an unbound callback'
-  );
-  const domainAriaLabel = search.match(
-    /const domainAriaLabel = \(thread: EyesOnAgentsThread\): string => \{[\s\S]*?\n\};/
-  );
-  assert.ok(domainAriaLabel, 'Missing accessible Domain context');
-  assert.match(domainAriaLabel[0], /customDomainTitle\(thread\)/);
-  assert.match(domainAriaLabel[0], /i18nHelper\.eyesOnAgents\.search\.noDomain/);
-  assert.match(
-    domainAriaLabel[0],
-    /i18nHelper\.eyesOnAgents\.search\.domainContext\.replace\('\{domain\}', title\)/
-  );
-  assert.match(
-    search,
-    /const resultAriaLabel[\s\S]*displayTitle\(thread\),\s*domainAriaLabel\(thread\),\s*runtimeLabel\(thread\)/
-  );
-  assert.match(
-    store,
-    /setThreadSearchQuery\(query: string\): void \{[\s\S]*this\.threadSearchSelectedSessionKey = this\.threadSearchResults\[0\]\?\.sessionKey \?\? null/
-  );
-  assert.match(
-    store,
-    /reconcileThreadSearchSelection\(\): void \{[\s\S]*thread\.sessionKey === this\.threadSearchSelectedSessionKey[\s\S]*this\.threadSearchSelectedSessionKey = results\[0\]\?\.sessionKey \?\? null/
-  );
-  const openSearchResult = store.match(
-    /async openThreadSearchResult\(sessionKey: EyesOnAgentsSessionKey\): Promise<void> \{[\s\S]*?\n  \}/
-  );
-  assert.ok(openSearchResult, 'Missing global search Open path');
-  assert.match(openSearchResult[0], /this\.threadSearchSelectedSessionKey = sessionKey/);
-  assert.match(openSearchResult[0], /await this\.openThread\(sessionKey\)/);
-  assert.doesNotMatch(openSearchResult[0], /closeThreadSearch|threadSearchQuery\s*=/);
-  assert.match(
-    store,
-    /closeThreadSearch\(\): void \{\s*this\.threadSearchVisible = false;\s*this\.threadSearchQuery = '';\s*this\.threadSearchSelectedSessionKey = null/
-  );
-
-  const queryOwners = walk('src')
-    .filter((path) => /\.(?:ts|vue)$/.test(path))
-    .filter((path) => read(path).includes('threadSearchQuery'))
-    .sort();
-  assert.deepEqual(queryOwners, [searchPath, storePath].sort());
-
-  assert.match(
-    english,
-    /search:\s*\{\s*title: 'Search tasks',\s*placeholder: 'Search thread titles',\s*results: 'Task search results',\s*empty: 'No task titles match this search',\s*startTyping: 'Type a title to search tasks',\s*domainContext: 'Domain: \{domain\}',\s*noDomain: 'No Domain'/
-  );
-  assert.match(
-    chinese,
-    /search:\s*\{\s*title: '搜索任务',\s*placeholder: '搜索任务标题',\s*results: '任务搜索结果',\s*empty: '没有匹配此搜索的任务标题',\s*startTyping: '输入任务标题开始搜索',\s*domainContext: 'Domain：\{domain\}',\s*noDomain: '无 Domain'/
-  );
+  assert.doesNotMatch(english, /Task search results|Type a title to search tasks/);
+  assert.doesNotMatch(chinese, /任务搜索结果|输入任务标题开始搜索/);
 });
-
-test('All title search is title-only, transient, and lifecycle-safe', () => {
-  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
-  const domainPath = 'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue';
-  const storePath = 'src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts';
-  const domain = read(domainPath);
+test('the Focus title filter is token-based, transient, and lifecycle-safe', () => {
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
   const styles = read(
     'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
   );
-  const store = read(storePath);
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
-  const searchTrigger = domain.match(
-    /<a-button\s+v-if="all"[\s\S]*?name="eyesOnAgents__domainColumn__titleSearchToggle"[\s\S]*?<\/a-button>/
+  const toggle = domain.match(
+    /<a-button\s+ref="titleSearchButtonRef"[\s\S]*?<\/a-button>/
   );
-  assert.ok(searchTrigger, 'Missing All-only title search trigger');
-  assert.match(searchTrigger[0], /size="mini"/);
-  assert.match(searchTrigger[0], /:aria-label="i18nHelper\.eyesOnAgents\.actions\.searchTitles"/);
-  assert.match(searchTrigger[0], /:aria-expanded="titleSearchOpen"/);
-  assert.match(searchTrigger[0], /aria-controls="eyes-on-agents-all-title-search"/);
-  assert.match(searchTrigger[0], /<IconSearch :size="13" aria-hidden="true" \/>/);
+  assert.ok(toggle, 'Missing Focus search toggle');
+  assert.match(toggle[0], /name="eyesOnAgents__domainColumn__titleSearchToggle"/);
+  assert.match(toggle[0], /size="mini"/);
+  assert.match(toggle[0], /type="text"/);
+  assert.match(toggle[0], /:aria-expanded="titleSearchOpen"/);
+  assert.match(toggle[0], /aria-controls="eyes-on-agents-focus-title-search"/);
+  assert.match(toggle[0], /@click="toggleTitleSearch"/);
+  assert.match(toggle[0], /actions\.searchTitles/);
 
-  const searchRow = domain.match(
-    /<div\s+v-if="all && titleSearchOpen"[\s\S]*?id="eyes-on-agents-all-title-search"[\s\S]*?<\/div>/
-  );
-  assert.ok(searchRow, 'Missing All-only title search row');
-  assert.ok(
-    domain.indexOf(searchRow[0]) < domain.indexOf('<ProjectFilter v-if="projectFilter" />'),
-    'Title search row must render above the Project filter',
-  );
-  assert.match(searchRow[0], /role="search"/);
-  assert.match(searchRow[0], /@keydown\.esc\.prevent\.stop="closeTitleSearch"/);
-  assert.match(
-    searchRow[0],
-    /<a-input[\s\S]*?v-model="eyesOnAgentsStore\.allTitleQuery"[\s\S]*?size="mini"/
-  );
-  assert.match(searchRow[0], /titleSearchPlaceholder/);
-  assert.match(
-    searchRow[0],
-    /name="eyesOnAgents__domainColumn__clearTitleSearch"[\s\S]*?size="mini"[\s\S]*?:aria-label="i18nHelper\.eyesOnAgents\.actions\.clearTitleSearch"[\s\S]*?@click="clearTitleSearch"/
-  );
-  assert.match(searchRow[0], /<IconX :size="12" aria-hidden="true" \/>/);
+  const row = domain.match(/<div\s+v-if="titleSearchOpen"[\s\S]*?<\/div>/);
+  assert.ok(row, 'Missing Focus search row');
+  assert.match(row[0], /id="eyes-on-agents-focus-title-search"/);
+  assert.match(row[0], /name="eyesOnAgents__domainColumn__titleSearch"/);
+  assert.match(row[0], /role="search"/);
+  assert.match(row[0], /@keydown\.esc\.prevent\.stop="closeTitleSearch"/);
+  assert.match(row[0], /v-model="eyesOnAgentsStore\.titleQuery"/);
+  assert.match(row[0], /board\.titleSearchPlaceholder/);
+  assert.match(row[0], /name="eyesOnAgents__domainColumn__clearTitleSearch"/);
+  assert.match(row[0], /@click="clearTitleSearch"/);
 
-  const focusSearch = domain.match(
-    /const focusTitleSearchInput = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  const open = domain.match(
+    /const openTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
   );
-  const closeSearch = domain.match(
+  assert.ok(open, 'Missing Focus search opener');
+  assert.match(open[0], /titleSearchOpen\.value = true/);
+  assert.match(open[0], /focusTitleSearchInput\(\)/);
+
+  const close = domain.match(
     /const closeTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
   );
-  const toggleSearch = domain.match(
-    /const toggleTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
-  );
-  const clearSearch = domain.match(
+  assert.ok(close, 'Missing Focus search close');
+  assert.match(close[0], /eyesOnAgentsStore\.clearTitleQuery\(\)/);
+  assert.match(close[0], /titleSearchOpen\.value = false/);
+  assert.match(close[0], /titleSearchButtonRef\.value\?\.\$el\?\.focus\(\)/);
+
+  const clear = domain.match(
     /const clearTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
   );
-  assert.ok(focusSearch, 'Missing title search focus helper');
-  assert.match(focusSearch[0], /await nextTick\(\)/);
-  assert.match(focusSearch[0], /titleSearchInputRef\.value\?\.focus\?\.\(\)/);
-  assert.match(
-    domain,
-    /const titleSearchButtonRef = ref<\{ \$el\?: HTMLElement \} \| null>\(null\)/
-  );
-  assert.ok(closeSearch, 'Missing title search close lifecycle');
-  assert.match(
-    closeSearch[0],
-    /clearAllTitleQuery\(\);\s*titleSearchOpen\.value = false/
-  );
-  assert.match(
-    closeSearch[0],
-    /await nextTick\(\);\s*titleSearchButtonRef\.value\?\.\$el\?\.focus\(\)/
-  );
-  assert.doesNotMatch(closeSearch[0], /titleSearchButtonRef\.value\?\.focus/);
-  assert.ok(toggleSearch, 'Missing title search toggle lifecycle');
-  assert.match(
-    toggleSearch[0],
-    /if \(titleSearchOpen\.value\) \{\s*await closeTitleSearch\(\);\s*return;\s*\}[\s\S]*titleSearchOpen\.value = true;[\s\S]*await focusTitleSearchInput\(\)/
-  );
-  assert.ok(clearSearch, 'Missing explicit title search clear lifecycle');
-  assert.match(clearSearch[0], /clearAllTitleQuery\(\);\s*await focusTitleSearchInput\(\)/);
-  assert.doesNotMatch(clearSearch[0], /allProjectFilter|selectAllProjectFilter/);
-  assert.match(
-    domain,
-    /onBeforeUnmount\(\(\) => \{\s*if \(props\.all\) eyesOnAgentsStore\.clearAllTitleQuery\(\);\s*\}\)/
-  );
+  assert.ok(clear, 'Missing Focus search clear');
+  assert.match(clear[0], /eyesOnAgentsStore\.clearTitleQuery\(\)/);
+  assert.match(clear[0], /focusTitleSearchInput\(\)/);
+  assert.match(domain, /onBeforeUnmount\(\(\) => \{\s*eyesOnAgentsStore\.clearTitleQuery\(\);/);
 
-  const filteredAllThreads = store.match(
-    /get filteredAllThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
+  const filter = store.match(
+    /  get filteredFocusThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
   );
-  assert.ok(filteredAllThreads, 'Missing composed All filters');
+  assert.ok(filter, 'Missing Focus filter projection');
+  assert.match(filter[0], /filterEyesOnAgentsThreadsByProject\(/);
+  assert.match(filter[0], /tokenizeThreadTitle\(this\.titleQuery\)/);
+  assert.match(filter[0], /queryTokens\.length === 0\) return projectThreads/);
+  assert.match(filter[0], /if \(thread\.title === null\) return false/);
   assert.match(
-    filteredAllThreads[0],
-    /const projectThreads = filterEyesOnAgentsThreadsByProject\(\s*this\.allThreads,\s*this\.allProjectFilter,\s*\)/
-  );
-  assert.match(
-    filteredAllThreads[0],
-    /const query = this\.allTitleQuery\.trim\(\)\.toLocaleLowerCase\(\)/
-  );
-  assert.match(filteredAllThreads[0], /if \(!query\) return projectThreads/);
-  const titlePredicate = filteredAllThreads[0].match(
-    /return projectThreads\.filter\(\s*\(thread\) =>[\s\S]*?\n    \);/
-  );
-  assert.ok(titlePredicate, 'Missing title-only substring predicate');
-  assert.match(
-    titlePredicate[0],
-    /thread\.title !== null[\s\S]*thread\.title\.toLocaleLowerCase\(\)\.includes\(query\)/
+    filter[0],
+    /titleTokens\.some\(\(titleToken\) => titleToken\.includes\(queryToken\)\)/
   );
   assert.doesNotMatch(
-    titlePredicate[0],
-    /thread\.(?:threadId|cwd|projectKey|projectRoot|projectName|lastUserPrompt|prompt|preview|response|content)/
+    filter[0],
+    /cwd|projectName|lastUserPrompt|threadId/,
+    'the filter must read titles only'
   );
-  assert.match(store, /allTitleQuery = ''/);
+  const tokenizer = store.match(/const tokenizeThreadTitle = [\s\S]*?\.filter\(Boolean\);/);
+  assert.ok(tokenizer, 'Missing shared tokenizer');
+  assert.match(tokenizer[0], /normalize\('NFKC'\)/);
+  assert.match(tokenizer[0], /toLocaleLowerCase\(\)/);
+  assert.match(store, /const THREAD_TITLE_SEPARATOR_PATTERN = \/\[\\s\\-_\.\\\/\\\\:\|\]\+\/u;/);
   assert.match(
     store,
-    /get isAllTitleFiltered\(\): boolean \{\s*return Boolean\(this\.allTitleQuery\.trim\(\)\);\s*\}/
-  );
-  const storeClear = store.match(
-    /clearAllTitleQuery\(\): void \{[\s\S]*?\n  \}/
-  );
-  assert.ok(storeClear, 'Missing renderer-store title query clear');
-  assert.match(storeClear[0], /this\.allTitleQuery = ''/);
-  assert.doesNotMatch(storeClear[0], /allProjectFilter|eyesOnAgentsEmitter/);
-  const applySnapshot = store.match(
-    /private applySnapshot\(snapshot: EyesOnAgentsSnapshot\): void \{[\s\S]*?\n  \}/
-  );
-  assert.ok(applySnapshot, 'Missing snapshot application boundary');
-  assert.doesNotMatch(applySnapshot[0], /allTitleQuery/);
-  const titleQueryOwners = walk('src')
-    .filter((path) => /\.(?:ts|vue)$/.test(path))
-    .filter((path) => read(path).includes('allTitleQuery'))
-    .sort();
-  assert.deepEqual(titleQueryOwners, [domainPath, storePath].sort());
-
-  const emptyLabel = domain.match(
-    /const emptyLabel = computed\(\(\) => \{[\s\S]*?\n\}\);/
-  );
-  assert.ok(emptyLabel, 'Missing Domain empty-label precedence');
-  assert.match(
-    emptyLabel[0],
-    /props\.all && eyesOnAgentsStore\.isAllTitleFiltered[\s\S]*emptyTitleSearch[\s\S]*isAllProjectFiltered/
+    /  get isTitleFiltered\(\): boolean \{\s*return tokenizeThreadTitle\(this\.titleQuery\)\.length > 0;/
   );
 
-  const searchStyles = styles.match(
-    /\.agent-domain__search-trigger[\s\S]*?(?=\.agent-domain__body)/
-  );
-  assert.ok(searchStyles, 'Missing compact title search styles');
-  assert.doesNotMatch(searchStyles[0], /#[\da-f]{3,8}\b|\brgba?\(/i);
-  const triggerStyle = cssRule(styles, '.agent-domain__search-trigger.arco-btn');
-  assert.match(triggerStyle, /width: 22px/);
-  assert.match(triggerStyle, /border: 0/);
-  assert.match(triggerStyle, /background: transparent/);
-  assert.match(triggerStyle, /box-shadow: none/);
-  const rowStyle = cssRule(styles, '.agent-domain__search-row');
-  assert.match(rowStyle, /background: oklch/);
-  assert.doesNotMatch(rowStyle, /\bborder\s*:|box-shadow/);
-  const inputStyle = cssRule(styles, '.agent-domain__search-input.arco-input-wrapper');
-  assert.match(inputStyle, /border: 0/);
-  assert.match(inputStyle, /background: oklch/);
-  assert.match(inputStyle, /box-shadow: none/);
-  const inputFocus = cssRule(
-    styles,
-    '.agent-domain__search-input.arco-input-wrapper:focus-within'
-  );
-  assert.match(inputFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
-  const clearStyle = cssRule(styles, '.agent-domain__search-clear.arco-btn');
-  assert.match(clearStyle, /width: 20px/);
-  assert.match(clearStyle, /border: 0/);
-  assert.match(clearStyle, /background: transparent/);
-  assert.match(clearStyle, /box-shadow: none/);
+  const empty = domain.match(/const emptyLabel = computed\(\(\) => \{[\s\S]*?\n\}\);/);
+  assert.ok(empty, 'Missing Focus empty state');
+  assert.match(empty[0], /isTitleFiltered[\s\S]*emptyTitleSearch/);
+  assert.match(empty[0], /isProjectFiltered[\s\S]*emptyFocus/);
+  assert.match(empty[0], /emptyNoProject/);
+  assert.match(empty[0], /emptyProject/);
 
+  const searchRow = cssRule(styles, '.agent-domain__search-row');
+  assert.match(searchRow, /background: oklch/);
+  assert.doesNotMatch(searchRow, /\bborder\s*:\s*[^0]/);
+  const searchInput = cssRule(styles, '.agent-domain__search-input.arco-input-wrapper');
+  assert.match(searchInput, /border: 0/);
+  assert.match(searchInput, /box-shadow: none/);
+
+  assert.match(english, /titleSearchPlaceholder: 'Search titles'/);
+  assert.match(chinese, /titleSearchPlaceholder: '搜索标题'/);
   assert.match(english, /searchTitles: 'Search thread titles'/);
   assert.match(english, /clearTitleSearch: 'Clear title search'/);
-  assert.match(english, /titleSearchPlaceholder: 'Search titles'/);
   assert.match(english, /emptyTitleSearch: 'No thread titles match this search'/);
-  assert.match(chinese, /searchTitles: '搜索任务标题'/);
-  assert.match(chinese, /clearTitleSearch: '清除标题搜索'/);
-  assert.match(chinese, /titleSearchPlaceholder: '搜索标题'/);
-  assert.match(chinese, /emptyTitleSearch: '没有匹配此搜索的任务标题'/);
-
-  assert.match(board, /:threads="eyesOnAgentsStore\.filteredAllThreads"[\s\S]*\sall\s+[\s\S]*project-filter/);
-  assert.doesNotMatch(domain, /debounce|setTimeout/);
 });
-
 test('Domain headers cannot restore counts or their obsolete height', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
@@ -1565,121 +1252,89 @@ test('Domain headers cannot restore counts or their obsolete height', () => {
   );
 });
 
-test('Domain board wraps one draggable list and uses clone-only fixed projections', () => {
+test('the board renders one fixed 300px Focus column that fills its height', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const boardStyles = read(
     'src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.less'
   );
-  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
   const domainStyles = read(
     'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
   );
 
-  assert.equal((board.match(/<draggable/g) ?? []).length, 1);
-  assert.match(board, /<template #header>[\s\S]*eyesOnAgents__focusColumn[\s\S]*eyesOnAgents__allColumn[\s\S]*<template #item/);
-  assert.doesNotMatch(board, /<template #footer>|AddDomainColumn|add-domain-column/);
-  assert.doesNotMatch(board, /direction="horizontal"|scrollToFocus|showJumpToFocus|IconArrowLeft/);
-  assert.match(board, /oldDraggableIndex\?: number/);
-  assert.match(board, /newDraggableIndex\?: number/);
-  assert.match(board, /reorderCustomDomains\(event\.oldDraggableIndex, event\.newDraggableIndex\)/);
-  assert.doesNotMatch(board, /event\.oldIndex|event\.newIndex/);
+  assert.doesNotMatch(board, /<draggable|vuedraggable|handleDomainDragEnd|item-key/);
+
   const boardShell = cssRule(boardStyles, '.agent-board');
-  assert.match(boardShell, /overflow-x: hidden/);
-  assert.match(boardShell, /overflow-y: auto/);
-  assert.match(boardStyles, /\.agent-board__columns\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
-  assert.doesNotMatch(boardStyles, /display:\s*contents|overflow-x:\s*auto/);
+  assert.match(boardShell, /height: 100%/);
+  assert.match(boardShell, /display: flex/);
+  assert.match(boardShell, /padding: 12px/);
+  assert.match(boardShell, /overflow: hidden/);
+  assert.doesNotMatch(
+    boardStyles,
+    /flex-wrap|agent-board__columns|overflow-y: auto/,
+    'a single column neither wraps nor scrolls the board'
+  );
 
-  assert.match(domain, /props\.focus \|\| props\.all[\s\S]*pull: 'clone', put: false/);
-  assert.match(domain, /:sort="!focus && !all"/);
-  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*max-height: 600px;/);
-  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*min-width: 300px;/);
-  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*max-width: 500px;/);
-  assert.match(domainStyles, /\.agent-domain\s*\{[^}]*flex: 1 1 300px;/);
-  assert.doesNotMatch(domainStyles, /flex:\s*0 0 300px|min-width:\s*280px|flex-basis:\s*280px/);
-  const domainBody = cssRule(domainStyles, '.agent-domain__body');
-  assert.match(domainBody, /overflow-y: auto/);
-  assert.match(domainBody, /padding: 0 9px 9px/);
-  assert.doesNotMatch(domainBody, /padding:\s*9px\s*;/);
+  const shell = cssRule(domainStyles, '.agent-domain');
+  assert.match(shell, /width: 300px/);
+  assert.match(shell, /min-width: 300px/);
+  assert.match(shell, /max-width: 300px/);
+  assert.match(shell, /height: 100%/);
+  assert.match(shell, /flex: 0 0 300px/);
+  assert.doesNotMatch(shell, /max-height/, 'the column fills the window instead of capping at 600px');
+
+  const body = cssRule(domainStyles, '.agent-domain__body');
+  assert.match(body, /min-height: 0/);
+  assert.match(body, /overflow-y: auto/);
 });
-
-test('custom Domain titles edit on click with Todo-sized inputs and no Rename menu item', () => {
-  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
-  const domainStyles = read(
-    'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
-  );
-  const addDomain = read(
-    'src/renderer/eyesOnAgents/src/components/AddDomainPopover/AddDomainPopover.vue'
-  );
-  const english = read('src/renderer/common/i18n/en.ts');
-  const chinese = read('src/renderer/common/i18n/zh.ts');
-
-  assert.match(domain, /v-else-if="canManage"[\s\S]*@click\.stop="beginRename"/);
-  assert.match(domain, /ref="titleSizerRef" class="agent-domain__title-sizer"/);
-  assert.match(domain, /:style="\{ width: `\$\{inputWidth\}px` \}"/);
-  assert.match(domain, /offsetWidth \?\? 0\) \+ 8/);
-  assert.match(domain, /Math\.min\(Math\.max\(measured, 40\), 200\)/);
-  assert.match(domain, /@blur="commitRename"/);
-  assert.match(domain, /@keydown\.enter\.prevent="blurTitleInput"/);
-  assert.match(domain, /@keydown\.esc\.prevent\.stop="cancelRename"/);
-  assert.match(domain, /value\.toLocaleLowerCase\(\) === 'all'/);
-  assert.match(addDomain, /normalizedTitle\.value\.toLocaleLowerCase\(\) === 'all'/);
-  assert.doesNotMatch(domain, /IconPencil|actions\.rename/);
-  assert.doesNotMatch(english, /rename: 'Rename'|renameTitle:/);
-  assert.doesNotMatch(chinese, /rename: '重命名'|renameTitle:/);
-  assert.match(domainStyles, /\.agent-domain__title-sizer\s*\{[^}]*visibility: hidden;/);
-  assert.match(domainStyles, /\.agent-domain__title-input\s*\{[^}]*min-width: 40px;[^}]*max-width: 200px;/);
-});
-
-test('Add Domain is an anchored menubar form with the existing creation contract', () => {
-  const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
-  const menuBar = read(
-    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue'
-  );
-  const component = read(
-    'src/renderer/eyesOnAgents/src/components/AddDomainPopover/AddDomainPopover.vue'
-  );
+test('no Domain affordance remains in the EyesOnAgents renderer', () => {
   const rendererSource = walk('src/renderer/eyesOnAgents')
     .filter((path) => /\.(vue|less|ts|html)$/.test(path))
     .map(read)
     .join('\n');
-  const rendererPaths = walk('src/renderer/eyesOnAgents').join('\n');
-
-  assert.match(menuBar, /<AddDomainPopover \/>/);
-  assert.match(menuBar, /import AddDomainPopover from '\.\.\/AddDomainPopover\/AddDomainPopover\.vue'/);
-  assert.doesNotMatch(board, /<template #footer>|AddDomain/);
-  assert.doesNotMatch(rendererSource, /AddDomainColumn|add-domain-column/);
-  assert.doesNotMatch(rendererPaths, /AddDomainColumn|add-domain-column/);
-
-  assert.match(component, /<Trigger[\s\S]*v-model:popup-visible="popupVisible"[\s\S]*trigger="click"[\s\S]*position="br"[\s\S]*:unmount-on-close="true"/);
-  assert.match(component, /name="eyesOnAgents__menuBar__addDomain"/);
-  assert.match(component, /<template #icon><IconPlus :size="14" aria-hidden="true" \/><\/template>/);
-  assert.match(component, /:aria-expanded="popupVisible"/);
-  assert.equal(
-    (component.match(/:disabled="Boolean\(eyesOnAgentsStore\.busyAction\)"/g) ?? []).length,
-    2
+  const menuBar = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue'
   );
-  assert.match(component, /size="mini"/);
-  assert.match(component, /role="dialog"[\s\S]*aria-labelledby="eyes-on-agents-add-domain-title"/);
-  assert.match(component, /@keydown\.esc\.prevent\.stop="close"/);
-  assert.match(component, /@click="close"/);
-  assert.match(component, /watch\(popupVisible,[\s\S]*if \(!visible\)[\s\S]*reset\(\)[\s\S]*nextTick\(\)[\s\S]*inputRef\.value\?\.focus/);
+  const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+  const mainHandler = read('src/main/xpc/eyesOnAgents.handler.ts');
+  const repositoryDao = read('src/preload/sqlite/dao/eyesOnAgents.dao.ts');
 
-  assert.match(component, /const normalizedTitle = computed\(\(\) => title\.value\.trim\(\)\)/);
-  assert.match(component, /domain\.title\.trim\(\)\.toLocaleLowerCase\(\) === normalizedTitle\.value\.toLocaleLowerCase\(\)/);
-  assert.match(component, /normalizedTitle\.value\.toLocaleLowerCase\(\) === 'all'/);
-  assert.match(component, /const submit = async \(\): Promise<void> => \{\s*if \(eyesOnAgentsStore\.busyAction\) return;/);
-  assert.match(component, /await eyesOnAgentsStore\.createDomain\(normalizedTitle\.value\)/);
-  assert.match(component, /try \{[\s\S]*createDomain[\s\S]*close\(\);[\s\S]*\} catch \{/);
-
-  const menuBarStyles = read(
-    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.less'
+  assert.doesNotMatch(rendererSource, /AddDomainPopover|add-domain-popover/);
+  assert.doesNotMatch(
+    rendererSource,
+    /createDomain|renameDomain|deleteDomain|reorderDomains|moveThread\(/
   );
+  assert.doesNotMatch(rendererSource, /actions\.moveTo|board\.addDomain|eyesOnAgents\.domain\./);
+  assert.doesNotMatch(menuBar, /Domain/);
+  assert.doesNotMatch(
+    domain,
+    /beginRename|commitRename|confirmDelete|agent-domain__title-input|drag-handle|a-dropdown/
+  );
+  assert.doesNotMatch(
+    store,
+    /customDomains|uncategorizedDomain|threadsForDomain|customDomainTitle|EyesOnAgentsDomain/
+  );
+  const eyesNamespace = (catalog) => {
+    const match = catalog.match(/\n  eyesOnAgents: \{[\s\S]*?\n  \},\n/);
+    assert.ok(match, 'Missing eyesOnAgents i18n namespace');
+    return match[0];
+  };
+  for (const catalog of [english, chinese]) {
+    assert.doesNotMatch(
+      eyesNamespace(catalog),
+      /addDomain:|domainPlaceholder:|moveTo:|deleteTitle:|emptyDomain:|domain: \{/
+    );
+  }
+
   assert.match(
-    menuBarStyles,
-    /\.eyes-menu-bar__actions \.eyes-menu-bar__refresh,\s*\.eyes-menu-bar__actions \.add-domain-popover__trigger\s*\{[^}]*width: auto/
+    mainHandler,
+    /createDomain/,
+    'Domain persistence stays available even though no UI calls it'
   );
+  assert.match(repositoryDao, /eyes_on_agents_domain/);
 });
-
 test('Codex observation exposes explicit local latest-question retention', () => {
   const panel = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'

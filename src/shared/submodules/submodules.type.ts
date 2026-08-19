@@ -1,7 +1,9 @@
 export const SUBMODULES_HANDLER_NAME = 'SubmodulesHandler' as const;
-export const SUBMODULES_STORE_HANDLER_NAME = 'SubmodulesStoreHandler' as const;
 export const SUBMODULES_WINDOW_HANDLER_NAME = 'SubmodulesWindowHandler' as const;
 export const SUBMODULES_SYSTEM_HANDLER_NAME = 'SubmodulesSystemHandler' as const;
+
+/** Main broadcasts a changed snapshot here; every Submodules renderer subscribes to it. */
+export const SUBMODULES_SNAPSHOT_EVENT = 'submodules/snapshot' as const;
 
 export const SUBMODULES_SETTING_KEY = 'submodules_workspace' as const;
 export const SUBMODULES_SETTING_SUB_KEY = 'root' as const;
@@ -56,21 +58,20 @@ export interface SubmodulesOpenResult {
   errorCode: SubmodulesOpenErrorCode | null;
 }
 
-/** Preload capability: reads and watches the submodule inventory, and owns its SQLite root. */
+/**
+ * Main capability: one application-wide runtime that reads and watches the submodule inventory and
+ * owns its SQLite root. Every renderer calls these four methods and otherwise waits for
+ * `SUBMODULES_SNAPSHOT_EVENT`.
+ */
 export interface SubmodulesApi {
-  /** Restore the persisted root, scan it, and start watching. */
+  /** Restore the persisted root, scan it, and arm the watcher. Idempotent across views. */
   initialize(): Promise<SubmodulesSnapshot>;
-  /** Persist a new root, scan it, and restart watching. */
+  /** Persist a new root, scan it, and re-arm watching. */
   setRoot(params: { rootPath: string }): Promise<SubmodulesSnapshot>;
   /** Rescan the current root without changing it. */
   refresh(): Promise<SubmodulesSnapshot>;
   /** Forget the persisted root and stop watching. */
   clearRoot(): Promise<SubmodulesSnapshot>;
-}
-
-/** Renderer capability: receives snapshots pushed by preload when the working copies change. */
-export interface SubmodulesStoreApi {
-  onSnapshot(params: SubmodulesSnapshot): Promise<void>;
 }
 
 /** Main capability: the two OS actions the renderer and preload cannot perform themselves. */
@@ -79,11 +80,22 @@ export interface SubmodulesSystemApi {
   openInWebStorm(params: { path: string }): Promise<SubmodulesOpenResult>;
 }
 
+/**
+ * Main capability addressing the standalone Submodules window only. An Omni-hosted renderer must
+ * never call it, so an open standalone window is never moved by an embedded cell.
+ */
 export interface SubmodulesWindowApi {
   openSubmodulesWindow(): Promise<void>;
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;
+}
+
+export type SubmodulesHost = 'standalone' | 'omni';
+
+/** Static preload context: which host renders this Submodules instance. */
+export interface SubmodulesEnvApi {
+  host: SubmodulesHost;
 }
 
 export const createEmptySubmodulesSnapshot = (): SubmodulesSnapshot => ({

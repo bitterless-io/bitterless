@@ -46,9 +46,6 @@ test('provider logos keep their compact placement, mapping, and accessibility co
   const card = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
   );
-  const search = read(
-    'src/renderer/eyesOnAgents/src/components/ThreadSearch/ThreadSearch.vue'
-  );
   const glyph = read(
     'src/renderer/eyesOnAgents/src/components/ProviderGlyph/ProviderGlyph.vue'
   );
@@ -59,10 +56,6 @@ test('provider logos keep their compact placement, mapping, and accessibility co
   assert.match(
     card,
     /class="thread-card__title-row">\s*<ProviderGlyph :provider="thread\.provider" \/>\s*<h3 class="thread-card__title"/,
-  );
-  assert.match(
-    search,
-    /class="thread-search__result-heading">\s*<ProviderGlyph :provider="thread\.provider" \/>/,
   );
   assert.match(
     glyph,

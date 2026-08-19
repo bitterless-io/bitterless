@@ -41,8 +41,10 @@ design document.
   refresh without PowerSync or logical WAL.
 - [Todo Domain board layout](features/todo-layout.md) - menu-bar Domain creation and wrapping
   300–480px Focus/Domain columns without horizontal board navigation.
+- [EyesOnAgents Focus-only board](features/eyes-on-agents-focus-board.md) - one fixed 300px Focus
+  column listing every visible thread, retired Domain UI, and Focus-owned Project/title filters.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
-  Project metadata and an All-column source filter.
+  Project metadata and a Focus-column source filter.
 - [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
   lifecycle, lightweight reliable delivery, Codex trust review, and App Server independence.
 - [EyesOnAgents Claude observation](features/eyes-on-agents-claude-observation.md) - provider-aware
@@ -51,15 +53,16 @@ design document.
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
-  or local Todo/EyesOnAgents/Translator/Motto/Trench operation views with development and packaged
-  runtime mapping.
+  or local Todo/EyesOnAgents/Translator/Motto/Trench/Submodules operation views with development and
+  packaged runtime mapping.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
 - [Translator mini app](features/translator.md) - fixed GPT-5.5 realtime bilingual translation
   inside Omni with thinking disabled, one exact 60-second deadline, strict Zod output, and a
   dedicated sanitized translation log.
 - [Submodules mini app](features/submodules.md) - one watched directory, `.gitmodules`-derived
-  inventory, live per-submodule branch state, and Open in the running WebStorm.
+  inventory, live per-submodule branch state, Open in the running WebStorm, and one renderer hosted
+  by both the standalone window and an Omni cell.
 - [Motto mini app](features/motto.md) - local title/subtitle reminder cards inside Omni with
   whole-array Web Storage persistence.
 - [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
@@ -100,11 +103,11 @@ design document.
 ## Integrations
 
 - [EyesOnAgents](integrations/eyes-on-agents.md) - Codex App Server plus local Claude observation,
-  provider-aware persistence, Domain classification, and Focus/unread semantics.
+  provider-aware persistence, retained-but-unexposed Domain storage, and Focus/unread semantics.
 - [EyesOnAgents layout](integrations/eyes-on-agents-layout.md) - standalone Mini App window,
-  wrapping observation board, compact title/action cards, and responsive interaction states.
-- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - two-line result metadata implemented; owner verification pending:
-  separator-insensitive title lookup with custom Domain and runtime context.
+  single Focus observation column, compact title/action cards, and responsive interaction states.
+- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - modal surface superseded by the Focus filter:
+  separator-insensitive title matching now narrows the Focus column itself.
 
 ## Design system
 
@@ -241,8 +244,8 @@ design document.
 - [EyesOnAgents completion alert](issues/eyes-on-agents-completion-alert.md) - fixed and runtime verified:
   each newly accepted successful completion should play the supplied tone and send one localized
   native notification without duplicate alerts from Hook, App Server, or polling races.
-- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - two-line result metadata implemented; owner verification pending:
-  empty input reveals nothing; matched rows show title plus custom Domain/runtime context.
+- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - modal surface superseded by the Focus filter:
+  `Cmd+F` now activates the Focus column's own token title filter instead of a separate result list.
 - [EyesOnAgents App Server frame overflow](issues/eyes-on-agents-app-server-frame-overflow.md) - implemented; owner verification pending:
   opted-in latest-question recovery must not aggregate ten complete turns into a frame that kills
   the managed Codex App Server connection.

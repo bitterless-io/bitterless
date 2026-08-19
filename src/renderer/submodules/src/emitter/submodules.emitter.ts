@@ -8,7 +8,7 @@ import {
   type SubmodulesWindowApi
 } from '@shared/submodules/submodules.type';
 
-/** Reading and watching live in this window's own preload. */
+/** Reading and watching live in the one Main-owned runtime shared by every Submodules view. */
 export const submodulesEmitter = createXpcRendererEmitter<SubmodulesApi>(
   SUBMODULES_HANDLER_NAME
 ) as SubmodulesApi;
