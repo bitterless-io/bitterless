@@ -7,17 +7,32 @@
       role="img"
       :aria-label="providerLabel"
     >
-      <IconPrompt v-if="provider === 'codex'" :size="13" aria-hidden="true" />
-      <IconSparkles v-else :size="13" aria-hidden="true" />
+      <img
+        v-if="provider === 'codex'"
+        class="provider-glyph__image provider-glyph__image--codex"
+        :src="codexLogo"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
+      <img
+        v-else
+        class="provider-glyph__image provider-glyph__image--claude"
+        :src="claudeLogo"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
     </span>
   </a-tooltip>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { IconPrompt, IconSparkles } from '@tabler/icons-vue';
 import type { EyesOnAgentsProvider } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import claudeLogo from '@renderer/common/assets/icons/providers/claude.png';
+import codexLogo from '@renderer/common/assets/icons/providers/codex.png';
 
 const props = defineProps<{ provider: EyesOnAgentsProvider }>();
 

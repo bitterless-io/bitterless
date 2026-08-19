@@ -7,18 +7,37 @@ Date: 2026-07-21
 Implementation tasks: [eyes-on-agents-last-user-prompt-016](../plan/tasks/eyes-on-agents-last-user-prompt-016.md),
 [eyes-on-agents-silent-focus-polling-018](../plan/tasks/eyes-on-agents-silent-focus-polling-018.md),
 [eyes-on-agents-tiered-all-polling-019](../plan/tasks/eyes-on-agents-tiered-all-polling-019.md),
-and [eyes-on-agents-thread-ingestion-prompt-card-020](../plan/tasks/eyes-on-agents-thread-ingestion-prompt-card-020.md)
+and [eyes-on-agents-thread-ingestion-prompt-card-020](../plan/tasks/eyes-on-agents-thread-ingestion-prompt-card-020.md),
+extended to Claude by [eyes-on-agents-claude-hook-last-user-prompt-049](../plan/tasks/eyes-on-agents-claude-hook-last-user-prompt-049.md)
 
 ## Decision
 
-EyesOnAgents may retain one narrow piece of Codex conversation content per thread: the latest
+EyesOnAgents may retain one narrow piece of Codex or Claude conversation content per thread: the latest
 textual user prompt. It must not retain an earlier user prompt, assistant response, reasoning,
 tool call, tool result, approval detail, diff, attachment, or transcript.
 
-Prompt retention is a separate explicit preference named **Store latest user question**. It is
-default-off for existing and new installations. **Enable Codex observation** continues to authorize
-lifecycle metadata only; it must not silently authorize content after an upgrade. Live capture and
-targeted App Server recovery both require the prompt preference to be enabled.
+Each provider has a separate explicit preference named **Store latest user question**. Both are
+default-off for existing and new installations. Enabling Codex or Claude lifecycle observation
+continues to authorize lifecycle metadata only; it must not silently authorize content after an
+upgrade. Codex live capture and targeted App Server recovery require the Codex preference. Claude
+capture requires its own preference and is live-Hook-only, with no JSONL or history recovery.
+
+## Claude Hook extension
+
+Claude uses the same one-preview SQLite projection and ThreadCard presentation but a disjoint
+preference and data path:
+
+- source: the official Claude `UserPromptSubmit.prompt` Hook field;
+- marker: `<userData>/eyes-on-agents/claude-last-user-prompt.enabled`;
+- source label at rest: `claude_hook`;
+- transport: strict V2 live socket delivery, limited to 8,192 UTF-8 bytes;
+- offline behavior: strip the preview before every outbox write and never recover it from JSONL,
+  Desktop metadata, Agent View, or transcript preview;
+- disable behavior: fence Claude prompt writes and clear only provider=`claude` prompt columns.
+
+The existing Codex marker, App Server recovery, and `codex_hook`/`app_server` values are unchanged.
+Turning either provider preference off does not clear or redact the other provider's preview.
+Official protocol basis: [Claude `UserPromptSubmit`](https://code.claude.com/docs/en/hooks#userpromptsubmit).
 
 Enabling the preference writes one content-free capability marker at
 `<userData>/eyes-on-agents/last-user-prompt.enabled`. It is a sibling of
@@ -246,7 +265,7 @@ The content-free capability marker owns the opt-in preference. The existing encr
 | `last_user_prompt_turn_id` | `TEXT NULL` | Hook/App Server turn identity when available |
 | `last_user_prompt_at` | `INTEGER NULL` | source event/turn time normalized to milliseconds |
 | `last_user_prompt_truncated` | `INTEGER NOT NULL DEFAULT 0` | boolean bound indicator |
-| `last_user_prompt_source` | `TEXT NULL` | `codex_hook` or `app_server` |
+| `last_user_prompt_source` | `TEXT NULL` | `codex_hook`, `claude_hook`, or `app_server` |
 | `last_user_prompt_checked_at` | `INTEGER NULL` | content-free provider activity watermark for suppressing unchanged recovery reads |
 
 Availability is derived without another column:
@@ -289,14 +308,16 @@ row's native tooltip and accessible card label receive the full stored bounded p
 `truncated` is true, localized wording explicitly says the preview is truncated. The row adds no
 icon, badge, border, background, spinner, or separate status region.
 
-When the capability marker is off, Main defensively normalizes every snapshot prompt to
-`unavailable` with null preview, turn, observed/check times, and `truncated: false`, even if an older
-database or failed cleanup still contains cached values. This read-time redaction never substitutes
-for cleanup: the disable operation still invokes `clearLastUserPrompts()` directly on every retry.
+When one provider's capability marker is off, Main defensively normalizes that provider's snapshot
+prompts to `unavailable` with null preview, turn, observed/check times, and `truncated: false`, even
+if an older database or failed cleanup still contains cached values. The other provider remains
+visible according to its own preference. This read-time redaction never substitutes for cleanup:
+disable still clears the matching provider rows directly on every retry.
 
-`EyesOnAgentsSnapshot` also exposes `lastUserPromptCaptureEnabled` so the Connections panel can
-render the explicit preference without reading marker files in the renderer. The only mutation is
-`setLastUserPromptCaptureEnabled({ enabled: boolean })`; it accepts no file path or content.
+`EyesOnAgentsSnapshot` exposes the existing `lastUserPromptCaptureEnabled` for Codex and a separate
+`claudeLastUserPromptCaptureEnabled` for Claude so the Connections panel can render both preferences
+without reading marker files. Their semantic mutations accept only `{ enabled: boolean }`; neither
+accepts a provider name, file path, marker path, or content.
 
 ## Ordering and atomicity
 

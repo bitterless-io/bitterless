@@ -14,9 +14,9 @@ dashboard: the surface remains calm Royal Blue, white, and cool grey, with statu
 for live signals.
 
 The Claude extension keeps the existing palette, system typography, wrapped 300–500px column grid,
-and background-led hierarchy. Its one visual signature is a compact provider glyph in the title
-line: Tabler `IconPrompt` for Codex and `IconSparkles` for Claude, both at 13px in the existing fixed
-13×18px shell. A review rejected provider badges, a new metadata row, permanent card borders, and
+and background-led hierarchy. Its one visual signature is a compact official product mark in the
+title line: the transparent Codex GA mark at 16px and Claude Spark at 15px, both centered in a fixed
+16×18px shell. A review rejected provider badges, a new metadata row, permanent card borders, and
 provider brand-color panels because each would add height or compete with working/unread attention.
 
 ## Window and navigation
@@ -86,8 +86,8 @@ on pointer hover without moving; keyboard focus uses a visible outline and a lig
 rather than reintroducing a permanent card border.
 
 The wrapping Domain board and its background-led hierarchy are the product signature. Thread
-cards contain no decorative signal rail, source badge, status row, or `New` badge. Only a genuinely
-working thread gets a compact loading indicator beside its title. The Open control gets an unread
+cards contain no decorative signal rail, source badge, status row, or `New` badge. Every active
+working/waiting thread gets a compact loading indicator beside its title. The Open control gets an unread
 red dot only after the thread has returned to `idle`, so neither state consumes another card row.
 
 ## Global task search
@@ -160,67 +160,69 @@ The menu bar shows:
 - independent Claude observation/plugin status/action;
 - a compact settings/always-on-top control and platform window controls.
 
-Clicking the connection status opens a small panel with:
+Clicking the connection status opens a 540px master-detail panel. A fixed 60px Agent App rail uses
+the official Codex and Claude PNG marks; its selected tab controls which provider detail pane is
+visible. The selected pane contains:
 
 - managed App Server status and `Connect`/`Disconnect`;
 - last successful sync time and latest error, if any;
 - an explicit note that this connection does not attach to Codex Desktop's private stdio process;
-- Codex observation status with `Enable`, `Review in Codex`, `Check again`, `Repair`, or `Disable`;
+- Codex observation status with a fixed top-level `Check status` and a compact settings list for
+  `Enable`, `Repair`, latest-question permission, and `Remove`;
 - Claude provider switch plus one state-driven observation action: `Enable`, `Finish setup`,
   `Open new Claude session`, `Copy /reload-plugins`, `Retry listener`, `Repair`, or
-  `Remove plugin` while enabled;
-- an always-visible Codex four-step guide covering installation/repair, Codex review, Bitterless
-  verification, and the independent default-off latest-question permission; reason-specific review
-  text appears above it only when attention is needed.
+  `Remove plugin` while enabled, plus its own default-off **Store latest user question** Switch;
+- when review is required, one external Codex row naming `Settings → Hooks` and the exact four
+  Bitterless hooks to turn on and trust; because the work happens in Codex, this row has no
+  right-side action button.
 
-The panel separates the two lifecycles visually and semantically:
+The rail separates the two provider lifecycles without mixing navigation and enablement:
 
 ```text
-┌ Connections ────────────────────────────────────────────────┐
-│ App Server · Disconnected                     [Connect]     │
-│ Thread inventory and this server's lifecycle notifications │
-│                                                            │
-│ Codex observation · Needs review              [Review]     │
-│ Installed globally · Listener active          [Check again]│
-│ ┌ Codex observation setup ──────────────────────────────┐ │
-│ │ 1 Install/Repair  2 Review if asked  3 Verify status  │ │
-│ │ 4 Optional question preview · Off by default          │ │
-│ │ CLI: /hooks · Hook trust is not content permission    │ │
-│ └────────────────────────────────────────────────────────┘ │
-│                                                [Disable]    │
-│                                                            │
-│ Claude observation · Not installed       Claude [on]       │
-│ Desktop metadata + Agent View + lifecycle plugin           │
-│ ┌ Session directories · Watching ───────────────────────┐ │
-│ │ [ /Users/ral/.claude                         ] [Change]│ │
-│ │ Automatic · Desktop detected · Last scan 10:42        │ │
-│ │                                      [Retry] [Custom] │ │
-│ └────────────────────────────────────────────────────────┘ │
-│ ┌ Reload in Claude ─────────────────────────────────────┐ │
-│ │ Existing sessions need one plugin reload.             │ │
-│ │ [Open new Claude session] [Copy /reload-plugins]      │ │
-│ │                              [Still not working?]     │ │
-│ │ Status updates automatically after the first event.   │ │
-│ └────────────────────────────────────────────────────────┘ │
-│                                      [Remove plugin]       │
-└─────────────────────────────────────────────────────────────┘
+┌ Agent connections ─────────────────────────────────────── × ┐
+│ Codex │ App Server · Disconnected              [Connect]   │
+│  logo │ Thread inventory and lifecycle notifications      │
+│ Codex │ Codex observation · Needs review [Check status]   │
+│       │ Status-specific one-line explanation              │
+│       │ Codex → Settings → Hooks                          │
+│       │ Trust SessionStart · UserPromptSubmit ·            │
+│       │       PermissionRequest · Stop                     │
+│       │ Store latest user question            [switch]    │
+│       │ Remove Codex observation              [Remove]    │
+│       │                                                   │
+│ Claude│                                                   │
+│  logo │                                                   │
+│Claude │                                                   │
+└───────┴───────────────────────────────────────────────────┘
+
+Selecting Claude replaces only the right pane with the complete Claude card: Claude support,
+Session directories, plugin/listener facts, a flat **Store latest user question** row whose small
+Switch authorizes only live Claude Hook capture, and the state-driven setup/reload/repair surface.
 ```
 
-App Server Connect/Disconnect never installs or removes observation. The observation section shows
-local installation, Codex trust, and current listener as separate facts. It reports **Installed,
-paused** rather than **Observing** when trusted hooks exist but the listener is not running. A user
-who skipped trust or disabled a hook always retains Review and Check actions.
+The rail is a vertical tablist, not a connection control. Click, Arrow Up/Down, Home, and End select
+and focus a provider with roving tabindex. It remains fixed while the two `v-show` detail panes own
+independent scrolling and stay mounted, so switching never loses local setup or copy state. Claude
+stays selectable while Claude support is Off. At less than 480px the rail shrinks to 52px, visible
+labels hide, and accessible provider names remain.
 
-The Hook guide is always present while the drawer is open and uses a real conditional lifecycle
-rather than another paragraph: Enable only when absent or Repair drift, use Review in Codex only
-when requested, open Settings → Hooks (or enter `/hooks` in the CLI), inspect every Bitterless
-definition and choose `Trust` only for items Codex marks for review, then use Check again while
-pending or Check status after installation. Step 4 explains that **Store latest user question** is
-independent and off by default, retains one bounded local preview only, and clears saved previews
-when turned off. A disabled Hook may need only re-enabling. The
-reason-specific disabled, modified, untrusted, or unavailable summary appears above the guide only
-while relevant. The always-visible guide uses a quiet neutral background; amber is reserved for
-that attention summary. Neither surface adds a decorative border or shadow.
+App Server Connect/Disconnect never installs or removes observation. The observation header keeps
+local installation, Codex trust, and current listener distinct through its aggregate label and
+state-specific sentence. It reports **Installed, paused** rather than **Observing** when trusted
+hooks exist but the listener is not running. A user who skipped trust or disabled a hook sees the
+external Settings instruction and retains **Check status**; there is no unsupported in-app Review
+action.
+
+The Codex observation card is a flat status-first settings list, not a guide or wizard. Its header
+always exposes aggregate status and **Check status**. Internal rows place their mini button or Switch
+on the right. Install/Repair, external Settings, and Remove rows render only in states where they
+are actionable: observing never repeats enable/trust instructions, and absent observation never
+shows an empty Remove row. The external `Codex → Settings → Hooks` row appears only when review is
+required, has no control, and names the exact owned set: `SessionStart`, `UserPromptSubmit`,
+`PermissionRequest`, and `Stop`. Users turn on and trust those definitions in Codex; `/hooks`
+remains a valid CLI inspection route. Only that attention row uses the existing pale amber
+treatment. There are no numbered steps, nested cards, facts box, Hook chips, explanatory
+paragraphs, or bottom action cluster.
 
 The Codex observation card includes a default-off **Store latest user question** switch. Its
 complete consent, busy, cleanup, error, and privacy contract lives in
@@ -233,6 +235,11 @@ committed Hook receipt separately. It does not enumerate unrelated plugins and n
 coverage merely because installation files exist. Its user-scope plugin is required for timely
 working/completion status in local CLI and Desktop Code sessions. Archive/unarchive comes from the
 read-only Desktop `isArchived` metadata scan, not from Hook trust.
+
+The Claude latest-question Switch is independent from the Codex Switch and is also default-off. It
+permits one bounded preview only on a live `UserPromptSubmit` delivery. Its helper/output queue stays
+metadata-only, and Claude JSONL content is never parsed to backfill a missed question. The row uses
+the same quiet label/copy-left, small-control-right settings-list treatment and adds no nested card.
 
 The Claude setup surface is state-driven rather than an always-visible checklist. **Enable Claude
 observation** performs marketplace, install, and enablement work; **Finish setup** safely rebuilds
@@ -377,21 +384,23 @@ menu's All destination removes a custom classification.
 
 A card displays only observation metadata:
 
-- a compact accessible provider glyph before the title: Tabler Prompt or Sparkles, with no
+- a compact accessible official provider mark before the title: Codex GA or Claude Spark, with no
   badge, border, new row, or provider-colored card surface;
 - title, falling back to a shortened UUID; its default/minimum height is one 18px line and it grows
   only when text wraps, up to a 36px/two-line maximum before clamping;
-- a compact loading indicator to the title's right only while the thread is actively working;
+- a compact loading indicator to the title's right while the thread is actively working, waiting for
+  approval, or waiting for input;
 - one optional quiet question echo between title and actions: the bounded latest user question on
   `available`, localized **last user question pending** on `pending`, and no row on `unavailable`;
 - relative last-activity time at the far left of the action row, derived from one renderer-global
   reactive clock that advances every 10 seconds so visible cards update without receiving a new
   thread snapshot;
-- working-directory folder, icon-only `Open`, and Domain overflow controls grouped at the right of
-  the same action row; the folder exposes the full path through tooltip/accessibility text;
-- an unread red dot at the Open control's upper-right only when `isUnread` is true and
-  `runtimeState === 'idle'` after a reply finishes. Working, waiting, failed, ended, and unknown
-  cards never show this dot.
+- working-directory folder, icon-only `Open`, and Domain overflow controls grouped
+  at the right of the same action row; the folder exposes the full path through
+  tooltip/accessibility text. Claude rows without a trusted Desktop Open route do not render;
+- an unread red dot at Open's upper-right when Open exists, otherwise at More, only when `isUnread`
+  is true and `runtimeState === 'idle'` after a reply finishes. Working, waiting, failed, ended, and
+  unknown cards never show this dot.
 
 The action row uses 20px control boxes so it, not Arco's default 24px mini-button height, determines
 the compact card height. Its folder, Open, and More glyphs are respectively 10px, 9px, and 12px —
@@ -410,12 +419,14 @@ idle-unread dot are the only visible status marks and do not create another visu
 and Open control keep localized runtime/unread accessibility text for the state currently shown,
 so these states do not depend on color alone.
 
-The whole card may focus keyboard navigation, but only `Open`, double-click, or `Enter` launches the
-provider desktop UI and marks a confirmed terminal observation read after the fixed deep link is
-accepted. Codex uses `codex://threads/<uuid>`. A Claude row with `desktopSessionId` uses
-`claude://claude.ai/epitaxy/<desktopSessionId>`; a CLI-only row has no interactive Open. Claude's
-More menu exposes **Preview transcript** when a canonical JSONL exists. Dragging, selecting, or
-previewing never marks read.
+Every rendered card has an interactive Open and participates in card-level keyboard focus; `Open`,
+double-click, or `Enter` then launches the provider desktop UI and marks a confirmed terminal
+observation read after the fixed deep link is accepted. Codex uses `codex://threads/<uuid>`. A
+Claude row with a unique `desktopSessionId` uses
+`claude://claude.ai/epitaxy/<desktopSessionId>`. Claude rows without that trusted Desktop route are
+Main-private inventory and do not render in Focus, All, Domains, Project filters, or search. A
+visible Claude card's More menu exposes **Preview transcript** when a canonical JSONL exists.
+Dragging, selecting, or previewing never marks read.
 
 ```text
 ┌────────────────────────────────────────┐
@@ -489,15 +500,18 @@ until its state actually resolves.
 | Add Domain closed/open | labelled menubar control; opening shows a focused anchored form and no board placeholder column |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
-| any Codex bridge state | Install/Repair → Review if requested → Check status → optional default-off question permission guide remains visible in the open drawer |
-| Codex bridge needs review | ordered guide shows Review → inspect Hooks/Trust flagged items → Check again, includes `/hooks`, and keeps Review plus Check available |
-| Codex bridge trust inspection unavailable | the same ordered manual guide remains visible without claiming that the Hooks are trusted |
-| Codex bridge disabled | Review safely re-enables only exact Bitterless entries, then still requires Codex trust when applicable |
-| Codex bridge installed, listener stopped | explicit `Installed, paused`; never claim live observation |
-| unknown runtime | accessible runtime label remains `Unknown`; no working loader is shown |
+| any Codex bridge state | aggregate status sentence, **Check status**, and the default-off latest-question Switch remain visible; other rows are state-specific |
+| Codex bridge absent | show **Install Bitterless hooks → Enable**; hide external Settings and Remove rows |
+| Codex bridge drifted | show **Install Bitterless hooks → Repair** and Remove; hide external Settings until Codex actually requests review |
+| Codex bridge needs review | show only the amber `Codex → Settings → Hooks` instruction with the exact four Hook names, plus question permission and Remove; no in-app Review action |
+| Codex bridge trust inspection unavailable | status stays unavailable with **Check status**; no ordered/manual guide or claim that Hooks are trusted |
+| Codex bridge disabled | external Settings row tells the user to turn on the exact four Hooks in Codex; Bitterless exposes no Review/re-enable control |
+| Codex bridge installed, listener stopped | explicit `Installed, paused`; hide enable/trust instructions and never claim live observation |
+| Codex bridge observing | show question permission and Remove only below the header; do not repeat installation or trust instructions |
+| unknown runtime | accessible runtime label remains `Unknown`; no active loader is shown |
 | Claude Desktop archived | explicit metadata transition hides the row; unarchive restores its Domain/read state |
-| Claude CLI-only archive | state remains unknown and visible; absence never hides the row |
-| Claude CLI-only Open | Open is unavailable; Preview transcript remains available when safe |
+| Claude Desktop deleted | explicit `deleted_<uuid>` tombstone removes the row from every board/search surface; residual JSONL and late Hooks do not restore it |
+| Claude CLI-only inventory | retained internally for reconciliation but absent from board/search until a trusted Desktop mapping exists |
 | Claude provider off | Claude rows and controls are absent from the board/search; Codex remains fully interactive |
 | Claude setup interrupted after exact install | one **Finish setup** action rebuilds the owned plugin generation; no dead-end Needs review guide |
 | Claude plugin installed, receipt pending | **Open new Claude session** is primary, Copy `/reload-plugins` is secondary, and status updates automatically |
@@ -508,9 +522,8 @@ until its state actually resolves.
 ## Accessibility and responsive behavior
 
 - Interactive controls have visible keyboard focus and accessible labels.
-- Status never depends on color alone: the card's accessible label retains the normalized runtime
-  text, the working loader has a status label, and visible idle-unread augments the Open control's
-  label.
+- Status never depends on color alone: the card's accessible label retains normalized runtime and
+  unread text, the active loader has a status label, and visible idle-unread augments Open.
 - At the minimum window size, columns remain at least 300px, wrap into multiple rows, and the board owns
   vertical scrolling instead of collapsing into an unreadable grid.
 - No column exceeds 600px; a longer thread list scrolls inside that column without stretching its

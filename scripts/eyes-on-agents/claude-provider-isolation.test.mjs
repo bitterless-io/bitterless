@@ -43,6 +43,8 @@ const codexBridgeStatus = () => ({
 const createHarness = (options = {}) => {
   const calls = [];
   const notifications = [];
+  const runtimeDeliveries = [];
+  const committedDeliveryIds = new Set();
   let connected = false;
   let preference = options.preference ?? {
     schemaVersion: 1, enabled: false, hookAdmissionAfter: null
@@ -72,19 +74,34 @@ const createHarness = (options = {}) => {
       calls.push('claude-inventory-write');
       return { changed: true };
     },
-    applyRuntimeEventDelivery: async () => {
+    applyRuntimeEventDelivery: async ({ deliveryId, event }) => {
       calls.push('claude-runtime-enter');
       if (options.runtimeDeliveryGate) await options.runtimeDeliveryGate;
       calls.push('claude-runtime-write');
+      runtimeDeliveries.push({ deliveryId, event });
+      if (committedDeliveryIds.has(deliveryId)) {
+        return {
+          duplicate: true,
+          created: false,
+          titleMissing: false,
+          completionAlert: null
+        };
+      }
+      committedDeliveryIds.add(deliveryId);
       return {
         duplicate: false,
-        completionAlert: {
-          sessionKey: `claude:${CLAUDE_ID}`,
-          provider: 'claude',
-          threadId: CLAUDE_ID,
-          turnId: 'completed',
-          title: 'Claude task'
-        }
+        created: false,
+        titleMissing: false,
+        completionAlert: event.type === 'turn_completed' && event.outcome === 'completed'
+          && event.turnId !== null
+          ? {
+              sessionKey: `claude:${CLAUDE_ID}`,
+              provider: 'claude',
+              threadId: CLAUDE_ID,
+              turnId: event.turnId,
+              title: 'Claude task'
+            }
+          : null
       };
     }
   };
@@ -167,23 +184,78 @@ const createHarness = (options = {}) => {
     openExternal: async () => undefined,
     now: () => 1_000
   });
-  return { service, calls, notifications, getPreference: () => preference };
+  return {
+    service, calls, notifications, runtimeDeliveries,
+    getPreference: () => preference
+  };
 };
 
-const delivery = {
+const createDelivery = ({
+  deliveryId = '33333333-3333-4333-8333-333333333333',
+  hookEventName = 'Stop',
+  occurredAt = 1_001
+} = {}) => ({
   schemaVersion: 1,
-  deliveryId: '33333333-3333-4333-8333-333333333333',
+  deliveryId,
   installationId: INSTALLATION_ID,
   event: {
     schemaVersion: 1,
-    eventId: '33333333-3333-4333-8333-333333333333',
-    occurredAt: 1_001,
+    eventId: deliveryId,
+    occurredAt,
     payload: {
-      hookEventName: 'Stop', sessionId: CLAUDE_ID,
+      hookEventName, sessionId: CLAUDE_ID,
       transcriptPath: `/tmp/${CLAUDE_ID}.jsonl`, cwd: '/tmp/project'
     }
   }
-};
+});
+
+const delivery = createDelivery();
+
+test('each admitted Claude Stop alerts once from its delivery identity without a prior prompt', async () => {
+  const harness = createHarness({
+    preference: { schemaVersion: 1, enabled: true, hookAdmissionAfter: 500 },
+    pluginInstalled: true
+  });
+  await harness.service.initialize();
+  await waitFor(() => harness.calls.includes('listener-start'), 'enabled Hook listener');
+
+  assert.deepEqual(await harness.service.commitClaudeHookDelivery(delivery), { duplicate: false });
+  assert.equal(harness.runtimeDeliveries[0].event.turnId, delivery.deliveryId);
+  assert.deepEqual(harness.notifications.map(({ turnId }) => turnId), [delivery.deliveryId]);
+
+  assert.deepEqual(await harness.service.commitClaudeHookDelivery(delivery), { duplicate: true });
+  assert.deepEqual(harness.notifications.map(({ turnId }) => turnId), [delivery.deliveryId]);
+
+  const distinctStop = createDelivery({
+    deliveryId: '44444444-4444-4444-8444-444444444444',
+    occurredAt: 1_002
+  });
+  assert.deepEqual(
+    await harness.service.commitClaudeHookDelivery(distinctStop),
+    { duplicate: false }
+  );
+  assert.deepEqual(
+    harness.notifications.map(({ turnId }) => turnId),
+    [delivery.deliveryId, distinctStop.deliveryId]
+  );
+
+  const stopFailure = createDelivery({
+    deliveryId: '55555555-5555-4555-8555-555555555555',
+    hookEventName: 'StopFailure',
+    occurredAt: 1_003
+  });
+  assert.deepEqual(
+    await harness.service.commitClaudeHookDelivery(stopFailure),
+    { duplicate: false }
+  );
+  assert.equal(harness.runtimeDeliveries.at(-1).event.turnId, null);
+  assert.equal(harness.runtimeDeliveries.at(-1).event.outcome, 'failed');
+  assert.deepEqual(
+    harness.notifications.map(({ turnId }) => turnId),
+    [delivery.deliveryId, distinctStop.deliveryId]
+  );
+  await harness.service.shutdown();
+});
 
 test('stored Off survives auth suspend and resume while Codex startup and polling stay complete', async () => {
   const harness = createHarness({ autoConnect: true });

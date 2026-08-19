@@ -1,11 +1,15 @@
 ---
 id: eyes-on-agents-provider-glyph-refresh-042
 scope: Replace the cramped Codex and awkward Claude provider marks with cleaner Tabler glyphs
-status: implemented; owner visual verification pending
+status: done
+superseded-by: eyes-on-agents-official-provider-logos-043
 depends-on: [eyes-on-agents-claude-setup-recovery-041]
 ---
 
 # EyesOnAgents Provider Glyph Refresh
+
+> Superseded by `eyes-on-agents-official-provider-logos-043` after owner visual review rejected the
+> Tabler approximations. This file and its reviews retain the historical 042 implementation record.
 
 ## Objective
 

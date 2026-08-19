@@ -177,6 +177,16 @@ try {
     assert.ok(setup, `${action} must render its compact setup action`);
     assert.equal(setup.querySelectorAll('.arco-btn-primary').length, 1);
     assert.match(setup.textContent ?? '', new RegExp(label));
+    if (action === 'repair') {
+      assert.match(
+        setup.textContent ?? '',
+        /Reinstall and enable the Bitterless Claude plugin, then restore local observation\./,
+      );
+      assert.doesNotMatch(
+        setup.textContent ?? '',
+        /needs a verified repair/,
+      );
+    }
     assert.equal(
       setup.querySelector('[name="eyesOnAgents__connections__claudeHookGuide"]'),
       null,

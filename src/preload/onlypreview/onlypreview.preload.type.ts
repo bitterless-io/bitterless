@@ -1,4 +1,4 @@
-export type OnlyPreviewEntryMode = 'shell' | 'previewHeader' | 'preview' | 'settings' | 'guide';
+export type OnlyPreviewEntryMode = 'shell' | 'preview' | 'settings' | 'guide';
 export type OnlyPreviewHostPlatform = 'darwin' | 'win32' | 'other';
 
 export interface OnlyPreviewEnvApi {

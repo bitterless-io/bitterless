@@ -451,7 +451,7 @@ test('Project Search keeps a separate tree-name tier and a hidden-pruned file/co
     .poll(
       async () =>
         await onlyPreview.evaluateRenderer(
-          'previewHeader',
+          'preview',
           `document.body.textContent?.includes('nested/inside.txt') || false`
         )
     )

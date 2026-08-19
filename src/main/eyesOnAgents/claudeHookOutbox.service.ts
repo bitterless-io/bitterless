@@ -6,11 +6,18 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import net from 'node:net';
 import {
-  CLAUDE_HOOK_MAX_FRAME_BYTES,
+  CLAUDE_HOOK_LIVE_MAX_FRAME_BYTES,
+  CLAUDE_HOOK_OFFLINE_MAX_FILE_BYTES,
   parseClaudeHookAcknowledgement,
-  parseClaudeHookDelivery
+  parseClaudeHookDelivery,
+  parseClaudeHookMetadataOnlyDelivery,
+  toMetadataOnlyClaudeHookDelivery
 } from '@shared/eyesOnAgents/claudeHookBridge.contract';
-import type { ClaudeHookBridgeEndpoint, ClaudeHookDelivery } from
+import type {
+  ClaudeHookBridgeEndpoint,
+  ClaudeHookDelivery,
+  ClaudeHookMetadataOnlyDelivery
+} from
   '@shared/eyesOnAgents/claudeHookBridge.type';
 
 export const CLAUDE_HOOK_OUTBOX_MAX_FILES = 128;
@@ -94,7 +101,8 @@ const atomicWrite = (path: string, content: string): void => {
 
 const readGap = (paths: OutboxPaths): ClaudeHookOutboxCoverageGap | null => {
   try {
-    if (!existsSync(paths.coverage) || statSync(paths.coverage).size > CLAUDE_HOOK_MAX_FRAME_BYTES) {
+    if (!existsSync(paths.coverage) ||
+      statSync(paths.coverage).size > CLAUDE_HOOK_OFFLINE_MAX_FILE_BYTES) {
       return null;
     }
     const value = JSON.parse(readFileSync(paths.coverage, 'utf8')) as ClaudeHookOutboxCoverageGap;
@@ -135,7 +143,8 @@ const emergencyGap = (paths: OutboxPaths, now: number): void => {
 
 const readEmergencyGapTimes = (paths: OutboxPaths, fallback: number): number[] => {
   try {
-    if (!existsSync(paths.emergency) || statSync(paths.emergency).size > CLAUDE_HOOK_MAX_FRAME_BYTES) {
+    if (!existsSync(paths.emergency) ||
+      statSync(paths.emergency).size > CLAUDE_HOOK_OFFLINE_MAX_FILE_BYTES) {
       return [fallback];
     }
     const values = readFileSync(paths.emergency, 'utf8').split('\n')
@@ -211,8 +220,12 @@ const recover = (paths: OutboxPaths, now: number): void => {
     const path = join(paths.pending, name);
     try {
       const stat = lstatSync(path);
-      if (!stat.isFile() || stat.size > CLAUDE_HOOK_MAX_FRAME_BYTES) throw new Error('invalid');
-      const delivery = parseClaudeHookDelivery(JSON.parse(readFileSync(path, 'utf8')) as unknown);
+      if (!stat.isFile() || stat.size > CLAUDE_HOOK_OFFLINE_MAX_FILE_BYTES) {
+        throw new Error('invalid');
+      }
+      const delivery = parseClaudeHookMetadataOnlyDelivery(
+        JSON.parse(readFileSync(path, 'utf8')) as unknown
+      );
       const target = join(paths.pending, deliveryName(delivery));
       if (existsSync(target)) unlinkSync(path);
       else renameSync(path, target);
@@ -226,7 +239,7 @@ export const persistClaudeHookOutboxDelivery = (params: {
   outboxPath: string;
   delivery: ClaudeHookDelivery;
 }): boolean => {
-  const delivery = parseClaudeHookDelivery(params.delivery);
+  const delivery = toMetadataOnlyClaudeHookDelivery(params.delivery);
   return withLock(params.outboxPath, (paths) => {
     recover(paths, Date.now());
     const finalPath = join(paths.pending, deliveryName(delivery));
@@ -236,7 +249,7 @@ export const persistClaudeHookOutboxDelivery = (params: {
       return false;
     }
     const content = `${JSON.stringify(delivery)}\n`;
-    if (Buffer.byteLength(content) > CLAUDE_HOOK_MAX_FRAME_BYTES) {
+    if (Buffer.byteLength(content) > CLAUDE_HOOK_OFFLINE_MAX_FILE_BYTES) {
       recordGap(paths, 'corrupt_file', Date.now());
       return false;
     }
@@ -251,7 +264,9 @@ export const sendClaudeHookDelivery = (
 ): Promise<boolean> => new Promise((resolvePromise) => {
   const delivery = parseClaudeHookDelivery(deliveryValue);
   const frame = `${JSON.stringify(delivery)}\n`;
-  if (Buffer.byteLength(frame) > CLAUDE_HOOK_MAX_FRAME_BYTES) return resolvePromise(false);
+  if (Buffer.byteLength(frame) > CLAUDE_HOOK_LIVE_MAX_FRAME_BYTES) {
+    return resolvePromise(false);
+  }
   const socket = net.createConnection(endpoint.path);
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -266,7 +281,7 @@ export const sendClaudeHookDelivery = (
   socket.once('connect', () => socket.write(frame));
   socket.on('data', (chunk: Buffer) => {
     bytes += chunk.length;
-    if (bytes > CLAUDE_HOOK_MAX_FRAME_BYTES) return finish(false);
+    if (bytes > CLAUDE_HOOK_OFFLINE_MAX_FILE_BYTES) return finish(false);
     chunks.push(chunk);
   });
   socket.once('end', () => {
@@ -289,13 +304,17 @@ export const replayClaudeHookOutbox = async (params: {
 }): Promise<number> => {
   const batch = withLock(params.outboxPath, (paths) => {
     recover(paths, Date.now());
-    const entries: Array<{ name: string; delivery: ClaudeHookDelivery }> = [];
+    const entries: Array<{ name: string; delivery: ClaudeHookMetadataOnlyDelivery }> = [];
     for (const name of pendingNames(paths).slice(0, params.maxFiles ?? 40)) {
       const path = join(paths.pending, name);
       try {
         const stat = lstatSync(path);
-        if (!stat.isFile() || stat.size > CLAUDE_HOOK_MAX_FRAME_BYTES) throw new Error('invalid');
-        const delivery = parseClaudeHookDelivery(JSON.parse(readFileSync(path, 'utf8')) as unknown);
+        if (!stat.isFile() || stat.size > CLAUDE_HOOK_OFFLINE_MAX_FILE_BYTES) {
+          throw new Error('invalid');
+        }
+        const delivery = parseClaudeHookMetadataOnlyDelivery(
+          JSON.parse(readFileSync(path, 'utf8')) as unknown
+        );
         if (deliveryName(delivery) !== basename(path)) throw new Error('identity mismatch');
         entries.push({ name, delivery });
       } catch {

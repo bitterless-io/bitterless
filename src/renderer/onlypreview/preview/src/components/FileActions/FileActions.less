@@ -1,10 +1,9 @@
 .onlypreview-file-actions {
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 7px;
-  margin-top: 18px;
 }
 
 .onlypreview-file-actions__button {
@@ -44,8 +43,11 @@
 }
 
 .onlypreview-file-actions__error {
-  width: 100%;
-  margin: 2px 0 0;
+  max-width: 220px;
+  margin: 0;
+  overflow: hidden;
   color: var(--onlypreview-danger, #a13d3d);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import { lstatSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
 import {
-  createClaudeHookEvent,
-  parseClaudeHookHelperArgs
+  createClaudeHookEventV2,
+  parseClaudeHookHelperArgs,
+  toMetadataOnlyClaudeHookDelivery
 } from '@shared/eyesOnAgents/claudeHookBridge.contract';
 import type {
   ClaudeHookDelivery,
-  ClaudeHookHelperArgs
+  ClaudeHookHelperArgs,
+  ClaudeHookMetadataOnlyDelivery
 } from '@shared/eyesOnAgents/claudeHookBridge.type';
 import {
   persistClaudeHookOutboxDelivery,
@@ -62,10 +66,25 @@ export interface ClaudeHookHelperDependencies {
   parseArgs?: (argv: readonly string[]) => ClaudeHookHelperArgs;
   readInput?: (input: Readable) => Promise<unknown>;
   send?: (args: ClaudeHookHelperArgs, delivery: ClaudeHookDelivery) => Promise<boolean>;
-  persist?: (params: { outboxPath: string; delivery: ClaudeHookDelivery }) => boolean;
+  persist?: (params: {
+    outboxPath: string;
+    delivery: ClaudeHookMetadataOnlyDelivery;
+  }) => boolean;
+  isLastUserPromptCaptureEnabled?: (outboxPath: string) => boolean;
   now?: () => number;
   idFactory?: () => string;
 }
+
+export const isClaudeHookLastUserPromptCaptureEnabled = (outboxPath: string): boolean => {
+  try {
+    return lstatSync(join(
+      dirname(dirname(outboxPath)),
+      'claude-last-user-prompt.enabled'
+    )).isFile();
+  } catch {
+    return false;
+  }
+};
 
 export const runClaudeHookHelper = async (
   argv: readonly string[],
@@ -76,10 +95,20 @@ export const runClaudeHookHelper = async (
     const args = (dependencies.parseArgs ?? parseClaudeHookHelperArgs)(argv);
     const rawInput = await (dependencies.readInput ?? readClaudeHookInput)(input);
     const deliveryId = (dependencies.idFactory ?? randomUUID)();
-    const event = createClaudeHookEvent({
+    let captureUserPrompt = false;
+    try {
+      captureUserPrompt = (
+        dependencies.isLastUserPromptCaptureEnabled ??
+        isClaudeHookLastUserPromptCaptureEnabled
+      )(args.outboxPath);
+    } catch {
+      captureUserPrompt = false;
+    }
+    const event = createClaudeHookEventV2({
       rawInput,
       eventId: deliveryId,
-      occurredAt: (dependencies.now ?? Date.now)()
+      occurredAt: (dependencies.now ?? Date.now)(),
+      captureUserPrompt
     });
     const delivery: ClaudeHookDelivery = {
       schemaVersion: 1,
@@ -96,9 +125,10 @@ export const runClaudeHookHelper = async (
       committed = false;
     }
     if (!committed) {
+      const metadataOnlyDelivery = toMetadataOnlyClaudeHookDelivery(delivery);
       (dependencies.persist ?? persistClaudeHookOutboxDelivery)({
         outboxPath: args.outboxPath,
-        delivery
+        delivery: metadataOnlyDelivery
       });
     }
   } catch {

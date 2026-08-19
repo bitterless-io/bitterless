@@ -32,7 +32,7 @@ export class FileSearchWindowService {
     host: OnlyPreviewHostCapability;
     bootstrapToken: string;
     broadcast(eventName: string, value: unknown): void;
-    onUnexpectedExit(): void;
+    onUnexpectedExit(reason: string): void;
   }): Promise<void> {
     this.stop();
     const lifecycleId = ++this.lifecycleId;
@@ -69,11 +69,11 @@ export class FileSearchWindowService {
     const stopped = new Promise<void>((resolve) => {
       resolveStopped = resolve;
     });
-    const lifecycleFence = new FileSearchLifecycleFence(target.url, () => {
+    const lifecycleFence = new FileSearchLifecycleFence(target.url, (message) => {
       if (this.window !== window || this.lifecycleId !== lifecycleId) return;
       resolveStopped();
       this.stop();
-      params.onUnexpectedExit();
+      params.onUnexpectedExit(message);
     });
     const fenceNavigation = (event: Electron.Event, url: string): void => {
       if (lifecycleFence.acceptNavigation(url)) return;

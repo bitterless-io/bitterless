@@ -1,42 +1,16 @@
-:root {
-  --onlypreview-surface: #ffffff;
-  --onlypreview-divider: #d9ddea;
-  --onlypreview-ink: #25283a;
-  --onlypreview-muted: #6f7487;
-}
-
-html,
-body,
-#app {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-body {
-  margin: 0;
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
 .onlypreview-preview-header {
   width: 100%;
   height: 43px;
   min-width: 0;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--onlypreview-divider);
+  border-bottom: 1px solid var(--onlypreview-divider, #d9ddea);
   overflow: hidden;
-  color: var(--onlypreview-ink);
+  color: var(--onlypreview-ink, #25283a);
   background: #fbfbfd;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 12px;
@@ -59,13 +33,20 @@ body {
 }
 
 .onlypreview-preview-header__file-name {
-  color: var(--onlypreview-ink);
+  color: var(--onlypreview-ink, #25283a);
   font-weight: 650;
 }
 
 .onlypreview-preview-header__file-path {
-  color: var(--onlypreview-muted);
+  color: var(--onlypreview-muted, #6f7487);
   font-size: 10px;
+}
+
+.onlypreview-preview-header__trailing {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
 
 .onlypreview-preview-header__badge {
@@ -74,10 +55,10 @@ body {
   display: inline-flex;
   align-items: center;
   padding: 0 6px;
-  border: 1px solid var(--onlypreview-divider);
+  border: 1px solid var(--onlypreview-divider, #d9ddea);
   border-radius: 4px;
-  color: var(--onlypreview-muted);
-  background: var(--onlypreview-surface);
+  color: var(--onlypreview-muted, #6f7487);
+  background: var(--onlypreview-surface, #fff);
   font-size: 9px;
   font-weight: 650;
   letter-spacing: 0.04em;

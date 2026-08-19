@@ -13,12 +13,7 @@ export const getOnlyPreviewArgument = (name: string): string | null => {
 
 const resolveEntryMode = (): OnlyPreviewEntryMode => {
   const value = getOnlyPreviewArgument('onlypreview-mode');
-  if (
-    value === 'previewHeader' ||
-    value === 'preview' ||
-    value === 'settings' ||
-    value === 'guide'
-  ) {
+  if (value === 'preview' || value === 'settings' || value === 'guide') {
     return value;
   }
   return 'shell';

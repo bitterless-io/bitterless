@@ -137,18 +137,11 @@ export interface OnlyPreviewCharacterCountRevisionEvent extends OnlyPreviewHostE
   revision: string;
 }
 
-export interface OnlyPreviewHeaderMetadata {
-  fileName: string;
-  relativePath: string;
-  kind: OnlyPreviewKind;
-  extension: string;
-  language: string;
-}
-
-export interface OnlyPreviewHeaderMetadataEvent extends OnlyPreviewHostEvent {
-  metadata: OnlyPreviewHeaderMetadata | null;
-}
-
+/**
+ * Broadcast by the Preview view when a render or reload transition starts. The Shell needs it because
+ * its character-count gate must learn about transitions whose revision originates on the Preview side,
+ * such as a watch-driven reload. The Preview view never subscribes to it.
+ */
 export interface OnlyPreviewPreviewControlEvent extends OnlyPreviewCharacterCountRevisionEvent {
   action: 'render' | 'reload' | 'clear';
 }
@@ -166,8 +159,6 @@ export const ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT =
   'onlypreview/characterCountTransition' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT =
   'onlypreview/characterCountSyncRequest' as const;
-export const ONLY_PREVIEW_HEADER_METADATA_EVENT = 'onlypreview/headerMetadata' as const;
-export const ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT = 'onlypreview/headerSyncRequest' as const;
 export const ONLY_PREVIEW_PREVIEW_CONTROL_EVENT = 'onlypreview/previewControl' as const;
 
 export interface OnlyPreviewApi {

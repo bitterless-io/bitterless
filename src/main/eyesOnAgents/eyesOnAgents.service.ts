@@ -63,6 +63,10 @@ interface EyesOnAgentsServiceDependencies {
     LastUserPromptPreferenceService,
     'isEnabled' | 'enable' | 'disable'
   >;
+  claudeLastUserPromptPreference?: Pick<
+    LastUserPromptPreferenceService,
+    'isEnabled' | 'enable' | 'disable'
+  >;
   claudeProviderPreference?: Pick<
     ClaudeProviderPreferenceService,
     'hydrate' | 'getStatus' | 'setEnabled'
@@ -665,6 +669,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     LastUserPromptPreferenceService,
     'isEnabled' | 'enable' | 'disable'
   >;
+  private readonly claudeLastUserPromptPreference: Pick<
+    LastUserPromptPreferenceService,
+    'isEnabled' | 'enable' | 'disable'
+  >;
   private readonly claudeProviderPreference: Pick<
     ClaudeProviderPreferenceService,
     'hydrate' | 'getStatus' | 'setEnabled'
@@ -682,6 +690,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   private appServerTeardownPromise: Promise<void> | null = null;
   private appServerTeardownDisableAutoConnectRequested = false;
   private lastUserPromptPreferenceEpoch = 0;
+  private claudeLastUserPromptPreferenceEpoch = 0;
   private observationIntentVersion = 0;
   private observationContext: ObservationContext | null = null;
   private desktopObservationPromise: Promise<void> | null = null;
@@ -694,6 +703,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   private teardownRemoveBridgeRequested = false;
   private readonly activeObservationOperations = new Set<Promise<void>>();
   private readonly activeHookOperations = new Set<Promise<unknown>>();
+  private readonly activeClaudeHookOperations = new Set<Promise<unknown>>();
   private readonly activeAppServerOperations = new Set<Promise<void>>();
   private readonly activeAppServerRuntimeOperations = new Set<Promise<void>>();
   private readonly titleEnrichmentOperations = new Map<string, Promise<void>>();
@@ -714,6 +724,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   constructor(private readonly dependencies: EyesOnAgentsServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
     this.lastUserPromptPreference = dependencies.lastUserPromptPreference ??
+      DEFAULT_LAST_USER_PROMPT_PREFERENCE;
+    this.claudeLastUserPromptPreference = dependencies.claudeLastUserPromptPreference ??
       DEFAULT_LAST_USER_PROMPT_PREFERENCE;
     this.claudeProviderPreference = dependencies.claudeProviderPreference ??
       DEFAULT_CLAUDE_PROVIDER_PREFERENCE;
@@ -800,6 +812,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       const claudeProviderEnabled = this.claudeProviderPreferenceEnabled;
       const claudeProviderError = this.claudeProviderError;
       const lastUserPromptCaptureEnabled = this.lastUserPromptPreference.isEnabled();
+      const claudeLastUserPromptCaptureEnabled = this.claudeLastUserPromptPreference.isEnabled();
       const connection = this.dependencies.appServer.getStatus(this.autoConnectEnabled);
       const connected = this.dependencies.appServer.isConnected();
       const bridge = this.bridgeStatus();
@@ -809,9 +822,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       const listeningSince = bridge.listeningSince === null
         ? null
         : Date.parse(bridge.listeningSince);
-      const visibleThreads = claudeProviderProjectionEnabled
-        ? persisted.threads
-        : persisted.threads.filter((thread) => thread.provider !== 'claude');
+      const visibleThreads = persisted.threads.filter((thread) =>
+        thread.provider !== 'claude' || (
+          claudeProviderProjectionEnabled && thread.desktopSessionId !== null
+        ));
       const threads = visibleThreads.map((thread) => {
         const observedAt = thread.statusObservedAt === null
           ? null
@@ -820,7 +834,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           ? null
           : Date.parse(thread.statusFreshUntil);
         const runtimeState = thread.provider === 'claude'
-          ? (thread.statusSource === 'claude_agent_view' || thread.statusSource === 'claude_hook') &&
+          ? thread.statusSource === 'claude_agent_view' &&
             ['working', 'waiting_approval', 'waiting_input'].includes(thread.runtimeState) &&
             (freshUntil === null || this.now() > freshUntil)
             ? 'unknown'
@@ -838,7 +852,11 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           ...thread,
           runtimeState,
           isFocused: isEyesOnAgentsFocused(runtimeState, thread.isUnread),
-          lastUserPrompt: lastUserPromptCaptureEnabled
+          lastUserPrompt: (
+            thread.provider === 'claude'
+              ? claudeLastUserPromptCaptureEnabled
+              : lastUserPromptCaptureEnabled
+          )
             ? thread.lastUserPrompt
             : {
                 state: 'unavailable' as const,
@@ -868,6 +886,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         },
         lastSyncedAt: connection.lastSyncedAt,
         lastUserPromptCaptureEnabled,
+        claudeLastUserPromptCaptureEnabled,
         titleEnrichmentDiagnostic: this.titleEnrichmentDiagnostic
       };
       if (claudeProviderRevision !== this.claudeProviderRevision) continue;
@@ -1006,7 +1025,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       if (!this.isClaudeProviderRuntimeCurrent(providerRuntimeVersion)) return;
       try {
         const result = await this.dependencies.repository.expireClaudeAgentStates?.({
-          observedAt: this.now()
+          observedAt: this.now(),
+          statusSources: ['claude_agent_view']
         });
         // ClaudeObservation broadcasts its own commits. Only emit here when expiry is the
         // mutation, so one reconciliation chain does not broadcast the same tick twice.
@@ -2475,6 +2495,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       if (!finalized) return;
     }
     try {
+      await this.invalidateClaudeHookActiveStates();
+      if (!this.isClaudeProviderRuntimeIntentCurrent(runtimeVersion)) return;
       await this.dependencies.claudeObservation?.start();
     } catch (error) {
       if (!this.isClaudeProviderVersionCurrent(runtimeVersion)) return;
@@ -2513,6 +2535,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           } catch (error) {
             this.claudeHookIntakeEnabled = false;
             await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
+            await this.invalidateClaudeHookActiveStates().catch(() => undefined);
             if (this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
               this.claudeProviderError = boundedClaudeProviderError(error);
               this.bumpClaudeProviderRevision();
@@ -2701,6 +2724,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       const runtimeVersion = this.claudeProviderRuntimeVersion;
       this.claudeHookIntakeEnabled = false;
       await this.dependencies.claudeHookListener?.stop();
+      await this.invalidateClaudeHookActiveStates();
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) {
         throw new Error('Claude support changed while the listener was stopping');
       }
@@ -2725,6 +2749,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       } catch (error) {
         this.claudeHookIntakeEnabled = false;
         await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
+        await this.invalidateClaudeHookActiveStates().catch(() => undefined);
         throw error;
       }
     });
@@ -2739,6 +2764,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       const runtimeVersion = this.claudeProviderRuntimeVersion;
       this.claudeHookIntakeEnabled = false;
       await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
+      await this.invalidateClaudeHookActiveStates();
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) return;
       const status = await this.dependencies.claudeBridge?.refresh();
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) return;
@@ -2759,6 +2785,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         } catch {
           this.claudeHookIntakeEnabled = false;
           await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
+          await this.invalidateClaudeHookActiveStates().catch(() => undefined);
           throw new Error('Claude listener retry failed');
         }
       }
@@ -2774,6 +2801,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       const runtimeVersion = this.claudeProviderRuntimeVersion;
       this.claudeHookIntakeEnabled = false;
       await this.dependencies.claudeHookListener?.stop();
+      await this.invalidateClaudeHookActiveStates();
       if (!this.isClaudeProviderVersionCurrent(runtimeVersion) ||
         !this.claudeProviderPreferenceEnabled) return;
       await this.dependencies.claudeBridge?.remove();
@@ -2844,10 +2872,24 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.getSnapshot();
   }
 
-  async commitClaudeHookDelivery(
+  commitClaudeHookDelivery(
     value: ClaudeHookDelivery
   ): Promise<EyesOnAgentsRuntimeDeliveryResult> {
     const delivery = parseClaudeHookDelivery(value);
+    const operation = this.commitClaudeHookDeliveryInternal(
+      delivery,
+      this.claudeLastUserPromptPreferenceEpoch
+    );
+    this.activeClaudeHookOperations.add(operation);
+    return operation.finally(() => {
+      this.activeClaudeHookOperations.delete(operation);
+    });
+  }
+
+  private async commitClaudeHookDeliveryInternal(
+    delivery: ClaudeHookDelivery,
+    lastUserPromptPreferenceEpoch: number
+  ): Promise<EyesOnAgentsRuntimeDeliveryResult> {
     if (!this.claudeHookIntakeEnabled ||
       !this.dependencies.claudeBridge?.acceptsInstallation(delivery.installationId)) {
       throw new Error('Claude hook observation is not accepting deliveries');
@@ -2864,7 +2906,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     const project = projectMetadataFromResolution(resolveEyesOnAgentsProject(payload.cwd));
     const base = {
       threadId: payload.sessionId,
-      turnId: null,
+      turnId: payload.hookEventName === 'Stop' ? delivery.deliveryId : null,
       cwd: payload.cwd,
       ...(project === undefined ? {} : { project }),
       observedAt: delivery.event.occurredAt,
@@ -2915,10 +2957,15 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     if (!this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
       throw new Error('Claude hook observation changed before runtime persistence');
     }
+    const hookLastUserPrompt = this.claudeHookLastUserPromptCandidate(
+      delivery,
+      lastUserPromptPreferenceEpoch
+    );
     const persistence = await this.dependencies.repository.applyRuntimeEventDelivery({
       deliveryId: delivery.deliveryId,
       event,
-      replayAuthority: 'current_listener'
+      replayAuthority: 'current_listener',
+      ...(hookLastUserPrompt === undefined ? {} : { hookLastUserPrompt })
     });
     if (this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
       if (persistence.completionAlert) this.notifyThreadCompleted(persistence.completionAlert);
@@ -2964,6 +3011,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     } catch (error) {
       return Promise.reject(error);
     }
+  }
+
+  private async invalidateClaudeHookActiveStates(): Promise<void> {
+    await this.dependencies.repository.expireClaudeAgentStates?.({
+      observedAt: this.now(),
+      statusSources: ['claude_hook'],
+      force: true
+    });
   }
 
   private async readClaudeBridgeStatus(): Promise<EyesOnAgentsClaudeBridgeStatus> {
@@ -3043,7 +3098,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     await Promise.allSettled(inFlightPromptWrites);
     let cleared: EyesOnAgentsRepositoryMutationResult;
     try {
-      cleared = await this.dependencies.repository.clearLastUserPrompts();
+      cleared = await this.dependencies.repository.clearLastUserPrompts({ providers: ['codex'] });
     } catch (error) {
       if (wasEnabled) {
         try {
@@ -3052,6 +3107,59 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           // Best-effort rollback must preserve the original clear error.
         }
         this.lastUserPromptPreferenceEpoch += 1;
+      }
+      throw error;
+    }
+    const snapshot = await this.getSnapshot();
+    if (preferenceChanged || cleared.changed) this.notify();
+    return snapshot;
+  }
+
+  async setClaudeLastUserPromptCaptureEnabled(
+    params: { enabled: boolean }
+  ): Promise<EyesOnAgentsSnapshot> {
+    if (typeof params?.enabled !== 'boolean') {
+      throw new Error('enabled must be a boolean');
+    }
+    if (!this.isClaudeProviderAvailable()) {
+      throw new Error('Claude support is disabled');
+    }
+    if (params.enabled) {
+      const preferenceChanged = this.claudeLastUserPromptPreference.enable();
+      if (preferenceChanged) this.claudeLastUserPromptPreferenceEpoch += 1;
+      let snapshot: EyesOnAgentsSnapshot;
+      try {
+        snapshot = await this.getSnapshot();
+      } catch (error) {
+        if (preferenceChanged) {
+          try {
+            this.claudeLastUserPromptPreference.disable();
+          } catch {
+            // Best-effort rollback must preserve the original snapshot error.
+          }
+          this.claudeLastUserPromptPreferenceEpoch += 1;
+        }
+        throw error;
+      }
+      if (preferenceChanged) this.notify();
+      return snapshot;
+    }
+
+    const wasEnabled = this.claudeLastUserPromptPreference.isEnabled();
+    this.claudeLastUserPromptPreferenceEpoch += 1;
+    const preferenceChanged = this.claudeLastUserPromptPreference.disable();
+    await Promise.allSettled([...this.activeClaudeHookOperations]);
+    let cleared: EyesOnAgentsRepositoryMutationResult;
+    try {
+      cleared = await this.dependencies.repository.clearLastUserPrompts({ providers: ['claude'] });
+    } catch (error) {
+      if (wasEnabled) {
+        try {
+          this.claudeLastUserPromptPreference.enable();
+        } catch {
+          // Best-effort rollback must preserve the original clear error.
+        }
+        this.claudeLastUserPromptPreferenceEpoch += 1;
       }
       throw error;
     }
@@ -3425,6 +3533,30 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     }
     try {
       if (!this.lastUserPromptPreference.isEnabled()) return undefined;
+    } catch {
+      return undefined;
+    }
+    if (
+      event.schemaVersion === 2 &&
+      event.payload.userPromptPreview !== undefined
+    ) {
+      return {
+        preview: event.payload.userPromptPreview,
+        truncated: event.payload.userPromptTruncated
+      };
+    }
+    return { preview: null, truncated: false };
+  }
+
+  private claudeHookLastUserPromptCandidate(
+    delivery: ClaudeHookDelivery,
+    admissionEpoch: number
+  ): EyesOnAgentsHookLastUserPromptCandidate | undefined {
+    const { event } = delivery;
+    if (event.payload.hookEventName !== 'UserPromptSubmit') return undefined;
+    if (admissionEpoch !== this.claudeLastUserPromptPreferenceEpoch) return undefined;
+    try {
+      if (!this.claudeLastUserPromptPreference.isEnabled()) return undefined;
     } catch {
       return undefined;
     }

@@ -47,8 +47,9 @@ trusted Codex Desktop Hooks ──────────────┘       
 | title/activity | App Server metadata | Desktop session metadata, Claude metadata entries, Agent View name, file mtime |
 | foreground working | App Server owner or Codex Hook | Claude plugin Hook |
 | background working | App Server owner | `claude agents --json --all` |
-| missed terminal fallback | newest-turn App Server query | Agent View state; otherwise bounded stale-to-unknown |
+| missed terminal fallback | newest-turn App Server query | listener/provider lifecycle invalidation to unknown; never timeout-completed |
 | archive/unarchive | authoritative active/archived inventory | Desktop `isArchived`; CLI-only remains unknown |
+| delete/restore | provider inventory ownership | Desktop `deleted_<uuid>` tombstones; CLI-only absence remains unknown |
 | exact open | documented Codex deep link | observed Claude Desktop Session-ID route |
 | transcript preview | prohibited | explicit read-only OnlyPreview action |
 
@@ -58,13 +59,13 @@ per local Code session under its application-support `claude-code-sessions/<acco
 directory. The same metadata file carries both `sessionId` and `cliSessionId`, allowing the Desktop
 row to join to the local JSONL identity without reading conversation content.
 
-EyesOnAgents treats that Desktop file as a versioned, read-only provider adapter: a valid changed
-file may set `active` or `archived`; malformed, missing, inaccessible, or future-schema files yield
-no new archive evidence. A missing Agent View row or JSONL file is still not archive evidence: it
-can also mean an inactive foreground process, retention cleanup, or an unavailable provider.
-CLI-only rows with no matched Desktop metadata therefore remain `archiveState = "unknown"` and
-visible in All. A Claude plugin cannot close that residual gap; it observes lifecycle only and never
-patches Claude Desktop internals or treats an unrelated Hook as archive evidence.
+EyesOnAgents treats that Desktop directory as a versioned, read-only provider adapter. A valid
+changed `local_*.json` file may set `active` or `archived`. Claude Desktop deletion is separate: an
+exact direct regular file named `deleted_<uuid>` is positive deletion evidence for that Desktop or
+CLI identity. Missing, inaccessible, malformed, or future-schema metadata and missing JSONL/Agent
+View rows yield no deletion or archive evidence. CLI-only rows without a matching tombstone remain
+Main-private inventory with `archiveState = "unknown"`; they appear only after a trusted Desktop
+identity is joined.
 
 ## Architecture
 
@@ -288,6 +289,21 @@ storage, or reads prompt/message/permission/configuration fields. A valid explic
 transition is authoritative for that matched Desktop session and is reconciled on the ten-second
 poll, window activation, and manual Refresh.
 
+Discovery also accepts only exact direct regular `deleted_<uuid>` filenames below the same
+canonical account/organization scope. It never reads tombstone contents. A tombstone is persisted
+before inventory reconciliation and hides an existing row whose canonical `threadId` or unique
+`desktopSessionId` matches it.
+
+Deletion is a soft tombstone, not archive and not physical row removal. It clears transient
+runtime/unread/Open/Preview/latest-question capabilities, while retaining provider identity,
+Domain assignment, and content-free delivery receipts. Persisted tombstones suppress residual JSONL,
+Agent View, and late Hook evidence; a late Hook is acknowledged as consumed but cannot recreate the
+row, update observation proof, notify, or play a sound. File absence alone never deletes a row. A
+deleted row may return only after a healthy complete Desktop scan observes unique valid live
+metadata for the same Desktop/CLI pair, no matching provider tombstone remains, and that live
+evidence is newer than the stored deletion. Restore preserves Domain assignment and starts without
+unread or an old latest-question preview.
+
 ### Local transcript inventory
 
 The inventory root is `${CLAUDE_CONFIG_DIR}/projects` when `CLAUDE_CONFIG_DIR` is an absolute path,
@@ -335,29 +351,64 @@ Bitterless ships one versioned user-scope Claude Code plugin containing only lif
 content-free helper. It is installed from a Bitterless-owned local marketplace through fixed Claude
 CLI arguments. This avoids editing or replacing existing `~/.claude/settings.json` Hook arrays.
 
+Claude marketplace and plugin registration are user-global, while Bitterless sockets, state, and
+outboxes are profile-local. The production profile therefore keeps the released
+`bitterless-local` / `bitterless-observer` identity, while every non-production runtime profile uses
+a deterministic profile-qualified marketplace, plugin, and artifact root. `production-debug`,
+`test-debug`, and `test-release` may coexist with production without claiming or repairing one
+another's Claude registration. Install, inspection, Repair, and Remove operate only on the current
+profile identity. Packaged production Repair may perform one bounded upgrade migration only when the
+unqualified registration points to the deterministic legacy `Bitterless_DEBUG_PROD` artifact root,
+the owner marker and single-plugin catalog are exact, and the namespace contains only the expected
+user-scope Bitterless plugin. Repair uninstalls and unregisters that proven legacy source before
+installing the production source; every unknown or shared collision remains fail-closed.
+
+Coexistence means each enabled profile plugin receives the same Claude lifecycle event and routes it
+only to that profile's endpoint. To avoid duplicate task updates or completion alerts, keep Claude
+support enabled only in the Bitterless profile currently under test; the provider switch remains the
+runtime admission boundary and does not uninstall either profile's plugin.
+
 | Hook | normalized transition |
 |---|---|
 | `SessionStart` | discover/update metadata; no fabricated working state |
-| `UserPromptSubmit` | `working`, unread, current-state start time |
+| `UserPromptSubmit` | `working`, unread, current-state start time; optional bounded latest-question preview when its separate Claude preference is enabled |
 | `PermissionRequest` | `waiting_approval`, unread |
-| `Stop` | `idle`, completed, unread, completion alert candidate |
-| `StopFailure` | `failed`, unread, completion alert candidate |
+| `Stop` | `idle`, completed, unread, one completion alert per accepted delivery UUID |
+| `StopFailure` | `failed`, unread, no completion alert |
 | `SessionEnd` | `ended` only when no newer active evidence exists |
 
 The helper accepts the common `session_id`, `transcript_path`, `cwd`, and event name, plus bounded
-classification fields needed above. It always discards prompt, last assistant message, tool input,
-tool output, attachment, and model content. It follows the Codex bridge reliability model: local
-profile socket/named pipe, content-free bounded outbox, commit-only ACK, and persistent delivery
-receipt.
+classification fields needed above. By default it discards prompt, last assistant message, tool
+input, tool output, attachment, and model content. When the separate default-off Claude **Store
+latest user question** preference is enabled, only `UserPromptSubmit.prompt` may cross the live
+profile socket/named pipe as one Unicode-safe 8,192-byte preview. The helper strips that preview
+before every outbox write, so offline recovery, quarantine, coverage markers, and receipts remain
+content-free. No Claude JSONL body is read to compensate for a missed prompt.
 
-Claude does not emit `Stop` when the user interrupts a foreground response. Non-terminal Claude
-Hook evidence therefore has a bounded freshness lease. Agent View evidence can settle background
-work; otherwise an expired foreground state becomes `unknown` while retaining unread attention. It
-never becomes `idle` or completed merely because time passed.
+`UserPromptSubmit` opens a Hook-owned response epoch. Thinking, permission, and tool-execution phases
+remain active until a newer admitted `Stop` or `StopFailure`; the former 30-second freshness lease
+must not turn a live response into `unknown`. Agent View may reconcile sessions without a current
+Hook epoch, but its `done`, `idle`, or `stopped` observation cannot terminate one. Because Claude may
+omit `Stop` after a user interruption, the response can remain active until `SessionEnd`, provider or
+listener invalidation, archive, deletion, or a new Bitterless lifecycle clears the uncertain state;
+none of those recovery paths fabricate completion or an alert.
+
+An accepted `Stop` means the main Claude agent finished one response, not that its broader task goal
+is complete. Its validated delivery UUID is the concrete turn identity for completion-alert
+deduplication, so a missing earlier `UserPromptSubmit` does not suppress the sound. If another Stop
+hook makes Claude continue, a later distinct accepted `Stop` is another response boundary and may
+alert once. Duplicate delivery, `StopFailure`, user interruption, disabled-provider events, archived
+rows, stale events superseded by newer runtime evidence, and events rejected by the current
+installation/cutoff admission boundary remain silent.
 
 Plugin installation and observation are separate facts. One Bitterless action owns marketplace
 registration, installation, and enablement: after install it inspects the exact user plugin and runs
 `plugin enable` only when Claude reports it disabled. An already-enabled plugin is success.
+Before any mutation, Main capability-probes the allowlisted Claude executables and selects one that
+supports user-scoped marketplace removal; an older fixed candidate is skipped rather than being used
+only because Finder did not inherit the terminal PATH. If no compatible Claude Code CLI exists,
+setup stops before mutation and asks the user to update Claude Code. Mutating failures identify the
+operation stage without exposing the executable path or raw unbounded output.
 
 The bridge also recognizes its strict interrupted-setup checkpoint. **Finish setup** uses the same
 fail-closed Repair boundary: after exact ownership proof it stops intake, clears only the owned
@@ -391,6 +442,20 @@ type EyesOnAgentsArchiveState = "active" | "archived" | "unknown";
 - No provider omission, file deletion, retention cleanup, Hook, SessionEnd, or process exit may
   create Claude `archived` evidence; only a parsed explicit Desktop `isArchived: true` may do so.
 
+## Delete semantics
+
+- Archive and delete remain distinct. `isArchived` controls archive state; `deleted_<uuid>` controls
+  a Main-private deletion tombstone.
+- A valid tombstone wins over JSONL, Agent View, Hook, and simultaneous stale Desktop metadata.
+- Every valid tombstone is persisted even when no thread row exists, so a later residual JSONL or
+  Hook cannot create the deleted session.
+- Invalid names, symlinks, inaccessible scopes, enumeration failure, or candidate limits preserve
+  existing rows. Omission is never promoted into deletion evidence.
+- Deleted Claude rows are excluded from Focus, All, Domains, Project filters, search, Open, Preview,
+  Read all, completion alerts, and sounds. Codex behavior is unchanged.
+- Re-import is owned by Claude Desktop. Only fresh unique Desktop metadata observed after its
+  tombstones disappear may restore the row.
+
 ## Open and transcript preview
 
 Main derives all targets from a persisted provider-qualified row.
@@ -398,7 +463,7 @@ Main derives all targets from a persisted provider-qualified row.
 | Claude evidence | primary Open |
 |---|---|
 | matched Desktop metadata | observed `claude://claude.ai/epitaxy/<desktopSessionId>` |
-| CLI-only JSONL with no Desktop metadata | no interactive Open; Preview transcript only |
+| CLI-only, missing, or ambiguous Desktop identity | Main-private inventory; no card or action |
 
 The Desktop route launches the Claude Desktop UI and never starts Claude CLI. It is verified against
 the installed Claude Desktop but is not a published Anthropic contract. `shell.openExternal`
@@ -408,7 +473,7 @@ UI copy and return types must not claim stronger evidence. The feature deliberat
 session as a side effect. `claude://code/<id>` is also excluded because the installed handler accepts
 only server/bridge identifiers rather than local Session IDs.
 
-Every Claude card also exposes **Preview transcript** when its canonical JSONL path is
+Every visible Claude card also exposes **Preview transcript** when its canonical JSONL path is
 available. Main passes that stored path directly to the existing OnlyPreview absolute-target
 service after revalidating that it is the same regular UUID transcript below the configured Claude
 projects root. Preview is explicit and read-only; it may reveal the complete local conversation and
@@ -419,7 +484,11 @@ terminal, or any other CLI interaction from Open.
 
 Codex Open and unread acknowledgement behavior is unchanged. Claude Open performs no provider RPC;
 after the OS accepts the fixed route it marks a confirmed terminal row read, while an active or
-unknown row remains in Focus.
+unknown row remains in Focus. A Claude row without a verified, unique Desktop mapping is retained
+only as Main-private reconciliation state and is absent from Focus, All, Domains, Project filters,
+search, and card actions. Once a unique mapping appears, the same canonical row becomes visible
+without creating a duplicate card. Valid CLI-only `Stop` deliveries retain the task-047 completion
+alert behavior because the user may still return to that terminal session.
 
 ## Refresh budget
 
@@ -449,15 +518,21 @@ Filesystem watcher errors terminate that generation and flow through the same Ma
 
 ## UI contract
 
-Each card shows a compact Tabler provider glyph before the title: `IconPrompt` for Codex and
-`IconSparkles` for Claude. Both render at 13px inside the fixed 13×18px title-line shell. The glyph
-has a tooltip and accessible label, consumes no new card row, and is the only new card decoration.
-It uses muted provider color and does not compete with working/unread signals.
+Each card shows the provider's official product mark before the title: the transparent Codex GA
+mark at 16px and the Claude Spark at 15px. Both render without alteration inside one fixed 16×18px
+title-line shell. The mark has a tooltip and accessible label, consumes no new card row, and remains
+the only provider decoration. Brand color stays inside the original asset and does not compete with
+working/unread signals.
 
-The Connection drawer has three background-separated sections: Codex App Server, Codex observation,
-and Claude observation. A compact small switch in the Claude header owns provider support. When it
-is off, the card retains only its header and one neutral explanation that Claude observation and
-task display are paused while Codex continues normally. When it is on, one setup action is derived
+The 540px Connection drawer has a fixed 60px Agent App rail using the official Codex and Claude PNG
+marks and one provider detail pane. Codex owns App Server plus Codex observation; Claude owns the
+complete Claude observation card. Both panes remain mounted while rail tabs switch visibility, so
+in-flight actions and troubleshooting state survive navigation. A compact small switch in the
+Claude header owns provider support. When it is off, the card retains only its header and one
+neutral explanation that Claude observation and task display are paused while Codex continues
+normally. When it is on, the flat detail list also contains a separate default-off **Store latest
+user question** Switch; it controls only Claude live Hook content and does not reuse or change the
+Codex preference. One setup action is derived
 from strict state: Enable, Finish setup, Open new Claude session, Retry listener, or Repair. An
 exact installed plugin with a stopped local listener is labelled **Listener paused**, never
 Awaiting activity; retry failure remains visible. Check status remains a secondary diagnostic and
@@ -493,9 +568,12 @@ Claude CLI argument.
 
 ## Privacy and safety
 
-- Claude prompt/message capture is not authorized by the Codex latest-question preference.
-- JSONL inventory reads no file content; raw text and payloads do not enter SQLite, XPC, logs,
-  notifications, search, or crash diagnostics.
+- Claude prompt/message capture is not authorized by the Codex latest-question preference. It has
+  its own default-off preference and capability marker.
+- JSONL inventory reads no file content. Only an explicitly authorized bounded live
+  `UserPromptSubmit` preview may enter the existing provider-qualified SQLite field and renderer
+  snapshot; raw Hook input and all other text remain outside SQLite, XPC, logs, notifications,
+  search, and crash diagnostics.
 - Transcript preview is a separate user action and displays the source file without persisting a
   second copy.
 - Provider executable and filesystem roots are main-owned and allowlisted.
@@ -515,10 +593,11 @@ Claude CLI argument.
 - Empty and multi-version databases migrate to provider-qualified keys without losing annotations.
 - A new or renamed local Claude session appears after Refresh and after the ten-second bounded poll.
 - Claude Hook start/stop/failure transitions update Focus/unread and dedupe across offline replay.
-- A foreground interrupt cannot remain authoritatively working after its lease; it becomes unknown,
-  not completed.
-- A matched Desktop `isArchived` transition hides/restores the Claude row within one poll; a
-  CLI-only row remains unknown and omission/deletion never hides it.
+- A Hook-owned foreground response remains active until admitted terminal evidence or listener,
+  provider, archive, or deletion invalidation; ordinary time passage never guesses completion.
+- A matched Desktop `isArchived` transition hides/restores the Claude row within one poll. A valid
+  `deleted_<uuid>` tombstone soft-deletes and hides the matching row even when its JSONL remains;
+  CLI-only omission remains internal inventory and does not become deletion evidence.
 - Codex and Claude cards have distinct accessible provider icons.
 - Claude Open builds only the fixed validated `epitaxy` Desktop route when `desktopSessionId` exists
   and never launches CLI; transcript preview opens only the

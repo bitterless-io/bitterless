@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs
 import { dirname } from 'node:path';
 import net, { type Server, type Socket } from 'node:net';
 import {
-  CLAUDE_HOOK_MAX_FRAME_BYTES,
+  CLAUDE_HOOK_LIVE_MAX_FRAME_BYTES,
   parseClaudeHookDelivery
 } from '@shared/eyesOnAgents/claudeHookBridge.contract';
 import type {
@@ -252,7 +252,7 @@ export class ClaudeHookBridgeServer {
     socket.on('data', (chunk: Buffer) => {
       if (dispatched) return;
       bytes += chunk.length;
-      if (bytes > CLAUDE_HOOK_MAX_FRAME_BYTES) {
+      if (bytes > CLAUDE_HOOK_LIVE_MAX_FRAME_BYTES) {
         socket.destroy();
         return;
       }
@@ -346,7 +346,7 @@ export class ClaudeHookBridgeServer {
       }
       const result = await consume(delivery);
       const committedAt = Date.now();
-      this.lastEventAt = committedAt;
+      if (!result.duplicate) this.lastEventAt = committedAt;
       try {
         this.onCommitted?.({
           committedAt,

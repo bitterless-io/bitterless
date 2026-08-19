@@ -200,19 +200,20 @@ test('Settings hides the retired hidden-files control while preserving serialize
   );
 });
 
-test('dormant Electron acceptance tracks the three-view security and geometry contract', () => {
+test('dormant Electron acceptance tracks the two-view security and geometry contract', () => {
   const fixture = source('tests/onlypreview/fixtures/onlyPreviewApp.fixture.ts');
   const e2e = source('tests/onlypreview/specs/onlyPreview.spec.ts');
 
-  assert.match(fixture, /OnlyPreviewRendererMode = 'shell' \| 'previewHeader' \| 'preview'/);
+  assert.match(fixture, /OnlyPreviewRendererMode = 'shell' \| 'preview'/);
   const graph = e2e.slice(
-    e2e.indexOf("test('owns three secure views"),
+    e2e.indexOf("test('owns two secure views"),
     e2e.indexOf('const menuBar = await evaluateRenderer')
   );
-  assert.match(graph, /expect\(graph\.children\)\.toHaveLength\(3\)/);
-  for (const renderer of ['shell', 'previewHeader', 'preview']) {
+  assert.match(graph, /expect\(graph\.children\)\.toHaveLength\(2\)/);
+  for (const renderer of ['shell', 'preview']) {
     assert.ok(graph.includes(`onlypreview\\/${renderer}\\/index`));
   }
+  assert.match(graph, /url\.includes\('\/onlypreview\/previewHeader\/'\)\)\)\.toBe\(false\)/);
   assert.match(graph, /webContentsId: view\.webContents\.id/);
   assert.match(graph, /osProcessId: view\.webContents\.getOSProcessId\(\)/);
   assert.match(
@@ -234,21 +235,21 @@ test('dormant Electron acceptance tracks the three-view security and geometry co
   );
   assert.match(
     geometry,
-    /expect\(previewHeader\?\.bounds\)\.toEqual\(\{[\s\S]*y: domBounds\.y,[\s\S]*height: 43/
+    /expect\(previewContent\?\.bounds\)\.toEqual\(\{[\s\S]*x: domBounds\.x,[\s\S]*y: domBounds\.y,[\s\S]*width: domBounds\.width,[\s\S]*height: domBounds\.height/
   );
   assert.match(
     geometry,
-    /expect\(previewContent\?\.bounds\)\.toEqual\(\{[\s\S]*y: domBounds\.y \+ 43,[\s\S]*height: domBounds\.height - 43/
+    /onlypreview__previewHeader[\s\S]*toEqual\(\{ height: 43, hasHost: true \}\)/
   );
 
   const devTools = e2e.slice(
-    e2e.indexOf("test('toggles detached Shell, Header, and Content DevTools"),
+    e2e.indexOf("test('toggles detached Shell and Preview DevTools"),
     e2e.indexOf("test('renders immutable text", e2e.indexOf("test('toggles detached"))
   );
-  assert.match(devTools, /\['shell', 'previewHeader', 'preview'\] as const/);
-  assert.match(devTools, /sendShortcut\('previewHeader', 'F12'\)/);
-  assert.match(devTools, /expectDevTools\(true, true, true\)/);
-  assert.match(devTools, /expectDevTools\(false, false, false\)/);
+  assert.match(devTools, /\['shell', 'preview'\] as const/);
+  assert.match(devTools, /sendShortcut\('preview', 'F12'\)/);
+  assert.match(devTools, /expectDevTools\(true, true\)/);
+  assert.match(devTools, /expectDevTools\(false, false\)/);
   assert.match(
     e2e,
     /locator\('\[name="onlypreview__hiddenFiles"\], #onlypreview-hidden-files'\)[\s\S]*\.toHaveCount\(0\)/
@@ -1357,11 +1358,9 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   assert.match(standalone, /RESIZE_HANDLE_WIDTH\s*=\s*5/);
   assert.match(standalone, /MENU_BAR_HEIGHT\s*=\s*32/);
   assert.match(standalone, /STATUS_HEIGHT\s*=\s*25/);
-  assert.match(standalone, /PREVIEW_HEADER_HEIGHT\s*=\s*43/);
-  assert.match(
-    standalone,
-    /addChildView\(shellView\)[\s\S]*addChildView\(previewHeaderView\)[\s\S]*addChildView\(previewView\)/
-  );
+  assert.doesNotMatch(standalone, /PREVIEW_HEADER_HEIGHT/);
+  assert.match(standalone, /addChildView\(shellView\)[\s\S]*addChildView\(previewView\)/);
+  assert.doesNotMatch(standalone, /previewHeaderView/);
   assert.match(
     standalone,
     /this\.applyPreviewHostBounds\(clampPreviewBounds\(currentBounds, width, height\)\)/
@@ -1374,7 +1373,7 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   );
   assert.match(
     standalone,
-    /await this\.loadView\(previewView, 'preview'\);[\s\S]*await Promise\.all\(\[[\s\S]*this\.loadView\(shellView, 'shell'\)[\s\S]*this\.loadView\(previewHeaderView, 'previewHeader'\)/
+    /await this\.loadView\(previewView, 'preview'\);[\s\S]*await this\.loadView\(shellView, 'shell'\)/
   );
   assert.match(standalone, /onlyPreviewHostRegistry\.revoke\(host\.hostToken\)/);
   assert.match(standalone, /minWidth:\s*MIN_WIDTH/);
@@ -1476,7 +1475,7 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
     standalone.indexOf('private async createStandaloneWindow('),
     standalone.indexOf('private createView(')
   );
-  const initialLoads = standaloneStartup.indexOf('await Promise.all([');
+  const initialLoads = standaloneStartup.indexOf("await this.loadView(shellView, 'shell')");
   const autoOpenGuard = standaloneStartup.indexOf('shouldAutoOpenOnlyPreviewDevTools()');
   const previewAutoOpen = standaloneStartup.indexOf('previewView.webContents.openDevTools(');
   assert.ok(initialLoads >= 0 && initialLoads < autoOpenGuard && autoOpenGuard < previewAutoOpen);
@@ -1667,7 +1666,7 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
     preloadConfig,
     /fileSearch:\s*resolve\('src\/preload\/fileSearch\/fileSearch\.preload\.ts'\)/
   );
-  for (const renderer of ['shell', 'previewHeader', 'preview', 'settings', 'guide']) {
+  for (const renderer of ['shell', 'preview', 'settings', 'guide']) {
     assert.match(vite, new RegExp(`'onlypreview/${renderer}'`));
   }
   assert.match(vite, /fileSearch:\s*resolve\('src\/renderer\/fileSearch\/index\.html'\)/);
@@ -1886,21 +1885,60 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   );
   assert.match(
     previewStore,
-    /xpcRenderer\.subscribe\(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT[\s\S]*restoreSelection\(payload\.params\.revision\)/
+    /xpcRenderer\.subscribe\(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT[\s\S]*this\.startTransition\(payload\.params\.revision, action\)/
   );
+  assert.match(
+    previewStore,
+    /private startTransition\(revision: string, action: 'render' \| 'reload'\): void \{[\s\S]*xpcRenderer\.broadcast\(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT, \{ hostId, revision, action \}\)[\s\S]*this\.restoreSelection\(revision\)/
+  );
+  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT/);
   assert.doesNotMatch(
     previewStore,
-    /xpcRenderer\.subscribe\(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT/
+    /ONLY_PREVIEW_HEADER_METADATA_EVENT|ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT/
   );
   assert.match(
     previewStore,
     /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT, \{[\s\S]*?hostId,[\s\S]*?revision: reportingRevision[\s\S]*?\}/
   );
   assert.match(previewStore, /characterCountGate\.canReport\(reportingRevision, normalizedCount\)/);
-  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/);
+  assert.match(
+    previewStore,
+    /xpcRenderer\.subscribe\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT[\s\S]*createOnlyPreviewWatchReloadCursor\(\)[\s\S]*this\.nextAction = 'render'/
+  );
+  assert.match(
+    previewStore,
+    /xpcRenderer\.subscribe\(ONLY_PREVIEW_REFRESH_EVENT[\s\S]*this\.nextAction = 'reload'/
+  );
+  assert.match(
+    previewStore,
+    /xpcRenderer\.subscribe\(ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT[\s\S]*evaluateOnlyPreviewWatchReload\([\s\S]*this\.currentRelativePath[\s\S]*this\.startTransition\(crypto\.randomUUID\(\), 'reload'\)/
+  );
   assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_SELECTION_CHANGED_EVENT/);
-  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_REFRESH_EVENT/);
   assert.doesNotMatch(previewStore, /selectedText|selectionText|text:\s*character/);
+
+  const previewHeaderComponent = source(
+    'src/renderer/onlypreview/preview/src/components/PreviewHeader/PreviewHeader.vue'
+  );
+  assert.match(previewHeaderComponent, /onlyPreviewPreviewStore\.descriptor\?\.name/);
+  assert.match(previewHeaderComponent, /onlyPreviewPreviewStore\.descriptor\?\.relativePath/);
+  assert.match(previewHeaderComponent, /onlyPreviewPreviewStore\.descriptorType/);
+  assert.match(previewHeaderComponent, /<FileActions \/>/);
+  assert.doesNotMatch(previewHeaderComponent, /xpcRenderer/);
+  // A failed describe leaves no descriptor; identity and the native actions must survive on the
+  // current selection so a broken file can still be opened externally or revealed.
+  assert.match(
+    previewHeaderComponent,
+    /onlyPreviewPreviewStore\.currentRef\?\.relativePath/
+  );
+  assert.match(
+    previewHeaderComponent,
+    /v-if="onlyPreviewPreviewStore\.currentRef"[\s\S]*<FileActions \/>/
+  );
+
+  const previewSurface = source(
+    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
+  );
+  assert.doesNotMatch(previewSurface, /FileActions/);
 
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
   const shellEvents = source(

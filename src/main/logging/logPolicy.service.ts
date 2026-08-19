@@ -14,10 +14,6 @@ const FIRST_PARTY_RENDERER_ENTRIES = [
   { path: '/motto/index.html', process: 'renderer:motto' },
   { path: '/submodules/index.html', process: 'renderer:submodules' },
   { path: '/onlypreview/shell/index.html', process: 'renderer:onlypreviewShell' },
-  {
-    path: '/onlypreview/previewHeader/index.html',
-    process: 'renderer:onlypreviewPreviewHeader'
-  },
   { path: '/onlypreview/preview/index.html', process: 'renderer:onlypreviewPreview' },
   { path: '/onlypreview/settings/index.html', process: 'renderer:onlypreviewSettings' },
   { path: '/onlypreview/guide/index.html', process: 'renderer:onlypreviewGuide' },

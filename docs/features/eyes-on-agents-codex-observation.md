@@ -180,59 +180,43 @@ truth after the local definition check succeeds.
 | local definition | `hooks/list` result | product state | action |
 |---|---|---|---|
 | missing | not inspected | `not_installed` | Enable |
-| exact | all exact entries enabled and `trusted` or `managed` | `installed` | Check status / Disable |
-| exact | any exact entry `untrusted` | `needs_trust: untrusted` | Review in Codex / Check again / Disable |
-| exact | any exact entry `modified` | `needs_trust: modified` | Review in Codex / Check again / Disable |
-| exact | any exact entry disabled | `needs_trust: disabled` | Re-enable and review / Check again / Disable |
-| missing, duplicate, or definition mismatch | any | `drifted` | Repair / Disable |
-| unsupported method, malformed response, warning, or transport failure | unavailable | `error` | Check again; retain last persisted board |
+| exact | all exact entries enabled and `trusted` or `managed` | `installed` | Check status / Remove |
+| exact | any exact entry `untrusted` | `needs_trust: untrusted` | Settings → Hooks instruction / Check status / Remove |
+| exact | any exact entry `modified` | `needs_trust: modified` | Settings → Hooks instruction / Check status / Remove |
+| exact | any exact entry disabled | `needs_trust: disabled` | Settings → Hooks instruction / Check status / Remove |
+| missing, duplicate, or definition mismatch | any | `drifted` | Repair / Check status / Remove |
+| unsupported method, malformed response, warning, or transport failure | unavailable | `error` | Check status; retain last persisted board |
 
 Codex 0.144.5 exposes only `managed`, `untrusted`, `trusted`, and `modified`; it has no durable
-`denied` state. Choosing to continue without trusting leaves the definition `untrusted`, so the same
-review action remains available.
+`denied` state. Choosing to continue without trusting leaves the definition `untrusted`, so the
+external **Settings → Hooks** instruction remains visible until a later Check status confirms trust.
 
 `installed` means the exact definitions are trusted. `listening` independently reports whether the
 current Bitterless process can receive them. The UI must say **Installed, paused** when trusted but
 not listening, never **Observing**.
 
-## Review and recheck contract
+## Settings list and recheck contract
 
 ```text
-┌ Codex observation ────────────────────────────────────────────┐
-│ Current state · actions remain state-specific                  │
-│                                                              │
-│ Codex observation setup                                     │
-│ 1. Enable when absent; Repair only for definition drift.     │
-│ 2. If review is requested, Trust only Codex-flagged items.   │
-│    CLI users can enter /hooks.                               │
-│ 3. Check again while pending; Check status after install.    │
-│ 4. Optional question preview is separate and Off by default. │
-│    Enabling stores one bounded local preview; Off clears it. │
-│ Only Codex grants trust; Bitterless never bypasses review.   │
-│                                                              │
-│ [Review in Codex]  [Check again]                   [Disable]  │
+┌ Codex observation ───────────────────────────────────────────┐
+│ Current state                           [Check status]       │
+│ One status-specific sentence                                 │
+│ Install Bitterless hooks                         [Enable]    │
+│ Codex → Settings → Hooks                                   │
+│ Turn on and trust SessionStart · UserPromptSubmit ·          │
+│ PermissionRequest · Stop                                    │
+│ Store latest user question                     [switch]     │
+│ Remove Codex observation                       [Remove]     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- **Review in Codex** first obtains a fresh `hooks/list` result. For exact Bitterless-owned entries
-  that are only disabled, it may set `enabled: true` with `config/batchWrite`, then rechecks. It
-  never writes `trusted_hash` or any managed policy.
-- The re-enable write uses only fresh, exact-match keys from `hooks/list`; those keys are private,
-  position-dependent, and never persisted or exposed to the renderer.
-- Review then opens the supported fixed deep link `codex://settings`. There is no supported Hook
-  page deep link or trust RPC, so the UI truthfully instructs the user to select Settings → Hooks
-  (or enter `/hooks` in the CLI). Bitterless never automates the Trust click.
-- Whenever the connection drawer is open, it presents the complete conditional lifecycle: Enable
-  only when absent or Repair drift, use Review in Codex and Trust only Codex-flagged items when
-  review is requested, then Check again while pending or Check status after installation. A fourth
-  step says the separate **Store latest user question** permission is off by default, retains one
-  bounded local preview only, and clears previews when disabled; Hook trust never grants that
-  permission, and replies/history remain prohibited. The same
-  neutral guide remains visible for absent, drifted, review-needed, error, and installed states;
-  action buttons still expose only valid current-state operations. A disabled Hook may retain trust
-  and need only re-enabling. Reason-specific review text remains a separate amber live summary, and
-  the guide explicitly says that only Codex can record trust.
-- **Check again** performs a new `hooks/list`. If the long-lived App Server is connected it is
+- The header always shows the aggregate state, one concise current-state sentence, and
+  **Check status**. There is no nested guide, facts box, or bottom action cluster.
+- Internal rows expose only operations Bitterless owns: Enable/Repair, the independent default-off
+  latest-question Switch, and Remove. The external `Codex → Settings → Hooks` row has no button and
+  names `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, and `Stop`; only Codex can enable
+  and record trust for those definitions. CLI users may inspect the same state with `/hooks`.
+- **Check status** performs a new `hooks/list`. If the long-lived App Server is connected it is
   reused. Otherwise Bitterless starts a short inspection connection, checks status, terminates it,
   and leaves the user's App Server auto-connect choice unchanged. When a durable coverage marker is
   present, the same explicit check performs the fenced cutover and preserved-suffix replay after
@@ -242,15 +226,17 @@ not listening, never **Observing**.
   separate parameter-free `refreshThreadPages()` operation. It never inspects Hook definitions,
   rewrites trust state, or performs full inventory discovery; explicit Disconnect prevents it from
   reconnecting when auto-connect intent is disabled.
-- **Repair** is reserved for missing/drifted definitions. Review and Check never rewrite an exact
+- **Repair** is reserved for missing/drifted definitions. Check status never rewrites an exact
   definition merely to provoke a new trust prompt.
 
 If `hooks/list` or `config/batchWrite` is unavailable in another Codex version, EyesOnAgents fails
-closed, keeps the manual review instructions available, and does not claim trusted observation.
+closed, shows **Status unavailable** with **Check status**, and does not claim trusted observation.
 
 ## XPC surface
 
-Renderer actions stay semantic and parameter-free:
+The XPC surface remains semantic and parameter-free. The settings list uses install, refresh, remove,
+and question permission; the older review helper remains compatible but is not rendered as an
+external-action button:
 
 ```text
 getCodexBridgeStatus()

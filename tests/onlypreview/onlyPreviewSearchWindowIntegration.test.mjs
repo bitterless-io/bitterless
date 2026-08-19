@@ -215,7 +215,7 @@ test('official graph owns search in top-level hidden preload over capability-bou
   assert.doesNotMatch(hiddenHtml, /<script|id="app"/);
 });
 
-test('Header still fences watch reloads by selected relative path and revision', () => {
+test('Preview still fences watch reloads by selected relative path and revision', () => {
   const active = { sessionId: 7, workspaceId: 'workspace-current', generation: 4 };
   assert.equal(
     runtime.isOnlyPreviewSearchRuntimeEventCurrent(active, 7, {

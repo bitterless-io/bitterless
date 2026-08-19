@@ -5,7 +5,7 @@
     :data-thread-id="thread.threadId"
     :data-session-key="thread.sessionKey"
     :data-provider="thread.provider"
-    tabindex="0"
+    :tabindex="canOpenThread ? 0 : undefined"
     :aria-label="cardAriaLabel"
     @dblclick="handleDoubleClick"
     @keydown.enter.prevent="handleOpen"
@@ -15,7 +15,7 @@
         <ProviderGlyph :provider="thread.provider" />
         <h3 class="thread-card__title" :title="displayTitle">{{ displayTitle }}</h3>
         <span
-          v-if="thread.runtimeState === 'working'"
+          v-if="['working', 'waiting_approval', 'waiting_input'].includes(thread.runtimeState)"
           class="thread-card__working"
           role="status"
           :aria-label="runtimeLabel"
@@ -48,7 +48,7 @@
             </span>
           </a-tooltip>
 
-          <a-tooltip :content="openTooltip" position="top" mini>
+          <a-tooltip v-if="canOpenThread" :content="openTooltip" position="top" mini>
             <span class="thread-card__open-control thread-card__control">
               <a-button
                 size="mini"
@@ -56,7 +56,7 @@
                 :title="openTooltip"
                 :aria-label="openAriaLabel"
                 :loading="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
-                :disabled="!canOpenThread || eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
+                :disabled="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
                 @click.stop="handleOpen"
               >
                 <template #icon><IconExternalLink :size="9" /></template>
@@ -71,10 +71,11 @@
 
           <a-dropdown trigger="click" position="br">
             <a-button
-              class="thread-card__control"
+              class="thread-card__more-control thread-card__control"
+              :class="{ 'thread-card__more-control--unread': showUnreadDot && !canOpenThread }"
               size="mini"
               type="text"
-              :aria-label="i18nHelper.eyesOnAgents.actions.more"
+              :aria-label="moreAriaLabel"
               @click.stop
             >
               <template #icon><IconDots :size="12" /></template>
@@ -172,24 +173,26 @@ const promptAriaLabel = computed(() => {
     ? `${prompt} ${i18nHelper.eyesOnAgents.thread.latestQuestionTruncated}`
     : prompt;
 });
+const canOpenThread = computed(() => props.thread.provider === 'codex'
+  || props.thread.desktopSessionId !== null);
+const showUnreadDot = computed(() =>
+  props.thread.isUnread && props.thread.runtimeState === 'idle');
 const cardAriaLabel = computed(() => [
   providerLabel.value,
   displayTitle.value,
   runtimeLabel.value,
   promptAriaLabel.value,
+  showUnreadDot.value ? i18nHelper.eyesOnAgents.thread.new : '',
 ].filter(Boolean).join(', '));
 const folderLabel = computed(() => i18nHelper.eyesOnAgents.thread.workingDirectory
   .replace('{path}', props.thread.cwd ?? ''));
-const canOpenThread = computed(() => props.thread.provider === 'codex'
-  || props.thread.desktopSessionId !== null);
-const openTooltip = computed(() => canOpenThread.value
-  ? i18nHelper.eyesOnAgents.actions.open
-  : i18nHelper.eyesOnAgents.actions.claudeDesktopOpenUnavailable);
-const showUnreadDot = computed(() =>
-  props.thread.isUnread && props.thread.runtimeState === 'idle');
+const openTooltip = computed(() => i18nHelper.eyesOnAgents.actions.open);
 const openAriaLabel = computed(() => showUnreadDot.value
   ? `${openTooltip.value}, ${i18nHelper.eyesOnAgents.thread.new}`
   : openTooltip.value);
+const moreAriaLabel = computed(() => showUnreadDot.value && !canOpenThread.value
+  ? `${i18nHelper.eyesOnAgents.actions.more}, ${i18nHelper.eyesOnAgents.thread.new}`
+  : i18nHelper.eyesOnAgents.actions.more);
 const activityLabel = computed(() => {
   const value = props.thread.lastActivityAt ?? props.thread.lastCompletedAt;
   if (!value) return i18nHelper.eyesOnAgents.thread.unknown;

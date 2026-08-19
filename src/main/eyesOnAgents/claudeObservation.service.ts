@@ -1,4 +1,5 @@
 import type {
+  EyesOnAgentsClaudeDeletionReconciliation,
   EyesOnAgentsClaudeDirectoryConfig,
   EyesOnAgentsClaudeDirectoryStatus,
   EyesOnAgentsClaudeInventoryThread,
@@ -7,8 +8,9 @@ import type {
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { projectMetadataFromResolution, resolveEyesOnAgentsProject } from './projectResolver.service';
 import {
-  discoverClaudeDesktopCandidates,
-  scanClaudeDesktopCandidates
+  discoverClaudeDesktopInventory,
+  scanClaudeDesktopCandidates,
+  scanClaudeDesktopTombstones
 } from './claudeDesktopInventory.adapter';
 import {
   discoverClaudeTranscriptCandidates,
@@ -39,6 +41,10 @@ export const isClaudeInventoryScanComplete = (candidateCount: number): boolean =
 interface InventoryScanResult {
   rows: EyesOnAgentsClaudeInventoryThread[];
   complete: boolean;
+}
+
+interface DesktopInventoryScanResult extends InventoryScanResult {
+  deletion: EyesOnAgentsClaudeDeletionReconciliation;
 }
 
 type RetryTimer = ReturnType<typeof setTimeout>;
@@ -445,7 +451,12 @@ export class ClaudeObservationService {
           transcriptResult.value.complete &&
           (thread.transcriptPath !== null || thread.clearTranscriptPath === true)
       }));
-      const result = await this.dependencies.repository.upsertClaudeInventory({ threads: merged });
+      const result = await this.dependencies.repository.upsertClaudeInventory({
+        threads: merged,
+        ...(desktopResult.status === 'fulfilled'
+          ? { deletion: desktopResult.value.deletion }
+          : {})
+      });
       changed = changed || result.changed;
     }
     if (!this.isCurrent(generation)) return { changed: false };
@@ -600,15 +611,31 @@ export class ClaudeObservationService {
   private async scanAllDesktop(
     roots: ClaudeObservationRoots,
     observedAt: number
-  ): Promise<InventoryScanResult> {
+  ): Promise<DesktopInventoryScanResult> {
     const rows: EyesOnAgentsClaudeInventoryThread[] = [];
-    const candidates = await discoverClaudeDesktopCandidates(roots.desktopRoots);
+    const discovery = await discoverClaudeDesktopInventory(roots.desktopRoots);
+    const candidates = discovery.candidates;
+    const withinLimit = isClaudeInventoryScanComplete(
+      candidates.length + discovery.tombstones.length
+    );
+    const safeForDeletion = discovery.complete && withinLimit;
     for (let page = 0; page < MAX_FULL_PAGES && page * PAGE_SIZE < candidates.length; page += 1) {
       rows.push(...await scanClaudeDesktopCandidates(
         candidates.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), observedAt
       ));
     }
-    return { rows, complete: isClaudeInventoryScanComplete(candidates.length) };
+    return {
+      rows,
+      complete: safeForDeletion,
+      deletion: {
+        tombstones: safeForDeletion
+          ? scanClaudeDesktopTombstones(discovery.tombstones, observedAt)
+          : [],
+        healthyScopeKeys: safeForDeletion ? discovery.healthyScopeKeys : [],
+        completeSnapshot: safeForDeletion,
+        observedAt
+      }
+    };
   }
 
   private async scanAllTranscripts(
@@ -630,8 +657,12 @@ export class ClaudeObservationService {
   private async scanPollDesktop(
     roots: ClaudeObservationRoots,
     observedAt: number
-  ): Promise<InventoryScanResult> {
-    const candidates = await discoverClaudeDesktopCandidates(roots.desktopRoots);
+  ): Promise<DesktopInventoryScanResult> {
+    const discovery = await discoverClaudeDesktopInventory(roots.desktopRoots);
+    const candidates = discovery.candidates;
+    const safeForDeletion = discovery.complete && isClaudeInventoryScanComplete(
+      candidates.length + discovery.tombstones.length
+    );
     const hotCandidates = candidates.slice(0, POLL_HOT_SIZE);
     const coldCandidates = candidates.slice(
       this.desktopColdOffset,
@@ -644,7 +675,18 @@ export class ClaudeObservationService {
     this.desktopColdOffset = coldCandidates.length < PAGE_SIZE - POLL_HOT_SIZE
       ? POLL_HOT_SIZE
       : this.desktopColdOffset + PAGE_SIZE - POLL_HOT_SIZE;
-    return { rows: [...hot, ...cold], complete: false };
+    return {
+      rows: [...hot, ...cold],
+      complete: false,
+      deletion: {
+        tombstones: safeForDeletion
+          ? scanClaudeDesktopTombstones(discovery.tombstones, observedAt)
+          : [],
+        healthyScopeKeys: safeForDeletion ? discovery.healthyScopeKeys : [],
+        completeSnapshot: false,
+        observedAt
+      }
+    };
   }
 
   private async scanPollTranscripts(

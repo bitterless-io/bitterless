@@ -286,7 +286,7 @@ const expectMediaMetadataAndSeek = async (
   expect(Math.abs(result.currentTime - result.target)).toBeLessThan(0.15);
 };
 
-test('owns three secure views, exact native geometry, shortcuts, and a composite 800x600 capture', async ({
+test('owns two secure views, exact native geometry, shortcuts, and a composite 800x600 capture', async ({
   onlyPreview
 }) => {
   const { app, evaluateRenderer, sendInput, sendInputs } = onlyPreview;
@@ -351,15 +351,15 @@ test('owns three secure views, exact native geometry, shortcuts, and a composite
   } else if (graph.platform === 'win32') {
     expect(graph.menuBarVisible).toBe(false);
   }
-  expect(graph.children).toHaveLength(3);
+  expect(graph.children).toHaveLength(2);
   expect(graph.children.map(({ url }) => url)).toEqual(
     expect.arrayContaining([
       expect.stringMatching(/\/onlypreview\/shell\/index\.html/),
-      expect.stringMatching(/\/onlypreview\/previewHeader\/index\.html/),
       expect.stringMatching(/\/onlypreview\/preview\/index\.html/)
     ])
   );
-  expect(new Set(graph.children.map(({ webContentsId }) => webContentsId)).size).toBe(3);
+  expect(graph.children.some(({ url }) => url.includes('/onlypreview/previewHeader/'))).toBe(false);
+  expect(new Set(graph.children.map(({ webContentsId }) => webContentsId)).size).toBe(2);
   for (const child of graph.children) {
     expect(child.webContentsId).toBeGreaterThan(0);
     expect(child.osProcessId).toBeGreaterThan(0);
@@ -376,16 +376,11 @@ test('owns three secure views, exact native geometry, shortcuts, and a composite
       `({ require: typeof globalThis.require, process: typeof globalThis.process })`
     ),
     evaluateRenderer(
-      'previewHeader',
-      `({ require: typeof globalThis.require, process: typeof globalThis.process })`
-    ),
-    evaluateRenderer(
       'preview',
       `({ require: typeof globalThis.require, process: typeof globalThis.process })`
     )
   ]);
   expect(globals).toEqual([
-    { require: 'undefined', process: 'undefined' },
     { require: 'undefined', process: 'undefined' },
     { require: 'undefined', process: 'undefined' }
   ]);
@@ -725,8 +720,8 @@ test('owns three secure views, exact native geometry, shortcuts, and a composite
   });
   expect(compact.bounds).toMatchObject({ width: 800, height: 600 });
   const shell = compact.children.find(({ url }) => /\/shell\//.test(url));
-  const previewHeader = compact.children.find(({ url }) => /\/previewHeader\//.test(url));
   const previewContent = compact.children.find(({ url }) => /\/preview\//.test(url));
+  expect(compact.children).toHaveLength(2);
   expect(shell?.bounds).toEqual({
     x: 0,
     y: 0,
@@ -738,20 +733,20 @@ test('owns three secure views, exact native geometry, shortcuts, and a composite
     `(() => { const bounds = document.querySelector('[name="onlypreview__previewHost"]')?.getBoundingClientRect();
       return bounds ? { x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) } : null; })()`
   );
-  expect(previewHeader?.bounds).toEqual({
+  expect(previewContent?.bounds).toEqual({
     x: domBounds.x,
     y: domBounds.y,
     width: domBounds.width,
-    height: 43
+    height: domBounds.height
   });
-  expect(previewContent?.bounds).toEqual({
-    x: domBounds.x,
-    y: domBounds.y + 43,
-    width: domBounds.width,
-    height: domBounds.height - 43
-  });
-  expect(previewHeader?.bounds.x).toBeGreaterThanOrEqual(185);
-  expect(previewHeader?.bounds.y).toBe(32);
+  expect(previewContent?.bounds.x).toBeGreaterThanOrEqual(185);
+  expect(previewContent?.bounds.y).toBe(32);
+  const previewHeaderStrip = await evaluateRenderer<{ height: number; hasHost: boolean }>(
+    'preview',
+    `(() => { const header = document.querySelector('[name="onlypreview__previewHeader"]');
+      return { height: header ? Math.round(header.getBoundingClientRect().height) : 0, hasHost: !!header }; })()`
+  );
+  expect(previewHeaderStrip).toEqual({ height: 43, hasHost: true });
   expect(
     (previewContent?.bounds.y ?? 0) + (previewContent?.bounds.height ?? 0)
   ).toBeLessThanOrEqual(compact.contentSize[1] - 25);
@@ -1056,7 +1051,7 @@ test('opens a Main-owned native file menu and revalidates each file action', asy
     .toEqual({ opened: [true], revealed: [true] });
 });
 
-test('toggles detached Shell, Header, and Content DevTools independently without changing view bounds', async ({
+test('toggles detached Shell and Preview DevTools independently without changing view bounds', async ({
   onlyPreview
 }) => {
   const { app, sendInputs } = onlyPreview;
@@ -1083,7 +1078,7 @@ test('toggles detached Shell, Header, and Content DevTools independently without
       );
       if (!window) throw new Error('OnlyPreview BaseWindow unavailable');
       const state = Object.fromEntries(
-        (['shell', 'previewHeader', 'preview'] as const).map((mode) => {
+        (['shell', 'preview'] as const).map((mode) => {
           const view = window.contentView.children.find((candidate) =>
             new RegExp(`/onlypreview/${mode}/index\\.html(?:$|[?#])`).test(
               candidate.webContents.getURL()
@@ -1112,73 +1107,50 @@ test('toggles detached Shell, Header, and Content DevTools independently without
       { type: 'keyUp', keyCode, modifiers }
     ]);
   };
-  const expectDevTools = async (
-    shellOpen: boolean,
-    previewHeaderOpen: boolean,
-    previewOpen: boolean
-  ): Promise<void> => {
+  const expectDevTools = async (shellOpen: boolean, previewOpen: boolean): Promise<void> => {
     await expect
       .poll(async () => {
         const state = await readDevToolsState();
         return {
           shell: { open: state.shell.open, scheme: state.shell.url.split(':', 1)[0] },
-          previewHeader: {
-            open: state.previewHeader.open,
-            scheme: state.previewHeader.url.split(':', 1)[0]
-          },
           preview: { open: state.preview.open, scheme: state.preview.url.split(':', 1)[0] }
         };
       })
       .toEqual({
         shell: { open: shellOpen, scheme: shellOpen ? 'devtools' : '' },
-        previewHeader: {
-          open: previewHeaderOpen,
-          scheme: previewHeaderOpen ? 'devtools' : ''
-        },
         preview: { open: previewOpen, scheme: previewOpen ? 'devtools' : '' }
       });
   };
   const expectViewBoundsUnchanged = (state: DevToolsState, baseline: DevToolsState): void => {
-    for (const mode of ['shell', 'previewHeader', 'preview'] as const) {
+    for (const mode of ['shell', 'preview'] as const) {
       expect(state[mode].bounds).toEqual(baseline[mode].bounds);
     }
   };
 
   const initial = await readDevToolsState();
   expect(initial.shell.open).toBe(false);
-  expect(initial.previewHeader.open).toBe(false);
   expect(initial.preview.open).toBe(false);
 
   await sendShortcut('shell', 'F12');
-  await expectDevTools(true, false, false);
+  await expectDevTools(true, false);
   let current = await readDevToolsState();
   expectViewBoundsUnchanged(current, initial);
 
   const inspectModifiers: InputModifiers =
     process.platform === 'darwin' ? ['meta', 'alt'] : ['control', 'shift'];
-  await sendShortcut('previewHeader', 'F12');
-  await expectDevTools(true, true, false);
-  current = await readDevToolsState();
-  expectViewBoundsUnchanged(current, initial);
-
   await sendShortcut('preview', 'I', inspectModifiers);
-  await expectDevTools(true, true, true);
+  await expectDevTools(true, true);
   await onlyPreview.assertDisplayRouting();
   current = await readDevToolsState();
   expectViewBoundsUnchanged(current, initial);
 
   await sendShortcut('shell', 'F12');
-  await expectDevTools(false, true, true);
+  await expectDevTools(false, true);
   current = await readDevToolsState();
   expectViewBoundsUnchanged(current, initial);
 
-  await sendShortcut('previewHeader', 'F12');
-  await expectDevTools(false, false, true);
-  current = await readDevToolsState();
-  expectViewBoundsUnchanged(current, initial);
-
-  await sendShortcut('preview', 'I', inspectModifiers);
-  await expectDevTools(false, false, false);
+  await sendShortcut('preview', 'F12');
+  await expectDevTools(false, false);
   current = await readDevToolsState();
   expectViewBoundsUnchanged(current, initial);
 });

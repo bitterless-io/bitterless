@@ -383,6 +383,7 @@ export const en = {
       disconnected: 'Disconnected',
       error: 'Connection error',
       title: 'Agent connections',
+      providerNavigation: 'Agent apps',
       managedTitle: 'Managed App Server',
       managedDescription:
         'Connect controls only Bitterless thread inventory and this local Codex App Server process.',
@@ -402,10 +403,7 @@ export const en = {
       retry: 'Retry'
     },
     bridge: {
-      eyebrow: 'Codex observation',
-      title: 'Global Codex observation',
-      description:
-        'Lifecycle observation is metadata-only by default; optional question storage is controlled separately below.',
+      title: 'Codex observation',
       notInstalled: 'Not installed',
       needsTrust: 'Needs review',
       needsReview: 'Needs review',
@@ -415,44 +413,25 @@ export const en = {
       disabled: 'Disabled in Codex',
       drifted: 'Needs repair',
       error: 'Status unavailable',
-      listener: 'Listener',
-      listenerActive: 'Active',
-      listenerPaused: 'Paused',
-      listeningSince: 'Listening since',
-      lastInspected: 'Last checked',
-      lastEvent: 'Last event',
-      never: 'Never',
+      statusNotInstalled: 'Not installed. Enable the Bitterless hooks to begin observation.',
+      statusDrifted: 'Hook definitions changed. Repair is available.',
+      statusNeedsReview: 'Needs review in Codex. Turn on and trust all four Bitterless hooks.',
+      statusDisabled: 'Disabled in Codex. Turn on all four Bitterless hooks in Settings → Hooks.',
+      statusModified: 'Definitions changed. Review and trust the current four-hook set in Codex.',
+      statusObserving: 'All four hooks are active and the listener is receiving events.',
+      statusPaused: 'The hooks are installed, but the local listener is paused.',
+      statusError: 'Status unavailable.',
+      installHooks: 'Install Bitterless hooks',
+      codexHookSettings: 'Codex → Settings → Hooks',
+      codexHookSettingsDescription:
+        'Turn on and trust: SessionStart · UserPromptSubmit · PermissionRequest · Stop',
       promptRetentionLabel: 'Store latest user question',
-      promptRetentionDescription:
-        'Independent and off by default. Keeps one preview of up to 8192 bytes per thread in local SQLite only; turning it off clears saved previews. Replies and history are not stored.',
-      untrustedReview: 'Codex has not trusted the Bitterless hooks yet.',
-      modifiedReview: 'Codex sees the Bitterless hooks as changed and requires review again.',
-      disabledReview:
-        'One or more exact Bitterless hooks are disabled and can be safely re-enabled before review.',
-      manualReview: 'Bitterless could not confirm hook trust. Review the hooks manually in Codex.',
-      hookGuideTitle: 'Codex observation setup',
-      hookGuideOpenTitle: 'Install or repair',
-      hookGuideOpenDescription:
-        'Select Enable observation only when absent, or Repair only when the status reports drift.',
-      hookGuideReviewTitle: 'Review only when requested',
-      hookGuideReviewDescription:
-        'When the status requests review, select Review in Codex or Re-enable and review. In Settings → Hooks, inspect every Bitterless definition and select Trust only for hooks Codex flags.',
-      hookGuideCli: 'CLI: enter /hooks',
-      hookGuideConfirmTitle: 'Verify status',
-      hookGuideConfirmDescription:
-        'Select Check again while review or status is pending, or Check status after installation.',
-      hookGuideContentTitle: 'Optional content: Store latest user question',
-      hookGuideContentDescription:
-        'This permission is independent and off by default; Hook trust does not grant it. Enabling stores one bounded local preview per thread; turning it off clears all saved previews. Replies, reasoning, tools, attachments, earlier questions, and history are never stored.',
-      hookGuideTrustBoundary:
-        'Bitterless may re-enable only exact disabled hooks. Only Codex grants trust; Bitterless cannot bypass review.',
-      enable: 'Enable observation',
+      promptRetentionDescription: 'Off by default · one local question preview',
+      removeObservation: 'Remove Codex observation',
+      enable: 'Enable',
       repair: 'Repair',
-      reviewInCodex: 'Review in Codex',
-      reEnableAndReview: 'Re-enable and review',
       checkStatus: 'Check status',
-      checkAgain: 'Check again',
-      disable: 'Disable'
+      remove: 'Remove'
     },
     claudeBridge: {
       eyebrow: 'Claude observation',
@@ -482,6 +461,8 @@ export const en = {
       proofPrevious: 'Previously received an event',
       proofNeedsReview: 'Review may be required',
       proofAwaiting: 'Awaiting first event',
+      promptRetentionLabel: 'Store latest user question',
+      promptRetentionDescription: 'Off by default · Hook keeps one local question preview',
       firstReceipt: 'First received event',
       lastReceipt: 'Last received event',
       lastInspected: 'Last checked',
@@ -498,7 +479,7 @@ export const en = {
       retryListener: 'Retry listener',
       repair: 'Repair',
       repairDescription:
-        'Bitterless found a plugin or listener problem that needs a verified repair.',
+        'Reinstall and enable the Bitterless Claude plugin, then restore local observation.',
       openNewSession: 'Open new Claude session',
       copyReloadCommand: 'Copy /reload-plugins',
       copied: 'Copied',
@@ -540,7 +521,6 @@ export const en = {
       maximize: 'Maximize or restore',
       close: 'Close EyesOnAgents',
       open: 'Open',
-      claudeDesktopOpenUnavailable: 'No matching Claude Desktop session',
       previewTranscript: 'Preview transcript',
       more: 'More actions',
       moveTo: 'Move to Domain',

@@ -17,12 +17,16 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type {
   EyesOnAgentsClaudeBridgeStatus,
   EyesOnAgentsClaudeBridgeState,
   EyesOnAgentsClaudeSetupAction
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
+import type {
+  ApplicationRuntimeProfile,
+  ApplicationRuntimeProfileId
+} from '@shared/diagnostics/applicationDiagnostics.contract';
 import {
   CLAUDE_HOOK_HELPER_ARG,
   CLAUDE_HOOK_INSTALLATION_ARG,
@@ -34,18 +38,21 @@ import {
 import { parseEyesOnAgentsUuid } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import { runClaudeCommand, type ClaudeCommandResult } from './claudeCommand.runner';
 
-const MARKETPLACE_NAME = 'bitterless-local';
-const PLUGIN_NAME = 'bitterless-observer';
-const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 const MAX_ERROR_LENGTH = 300;
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
 const MAX_ARTIFACT_FILES = 32;
 const OWNER_MARKER = '.bitterless-owner.json';
 const MAX_STATE_BYTES = 16 * 1024;
 const MAX_OWNER_MARKER_BYTES = 4 * 1024;
+const MAX_LEGACY_CATALOG_BYTES = 16 * 1024;
 const MAX_ARTIFACT_ENTRIES = 64;
 const MAX_ARTIFACT_DEPTH = 8;
 const MAX_DATE_MILLISECONDS = 8_640_000_000_000_000;
+const PRODUCTION_MARKETPLACE_NAME = 'bitterless-local';
+const PRODUCTION_PLUGIN_NAME = 'bitterless-observer';
+const PRODUCTION_PLUGIN_ID = 'bitterless-observer@bitterless-local';
+const MARKETPLACE_DESCRIPTION = 'Bitterless local lifecycle observation plugins';
+const PLUGIN_DESCRIPTION = 'Content-free local Claude lifecycle observation for Bitterless';
 const BRIDGE_STATE_KEYS = [
   'schemaVersion', 'installationId', 'installed', 'artifactDigest', 'firstReceiptAt',
   'lastReceiptAt', 'restartRequired', 'recoveryReason'
@@ -84,12 +91,75 @@ interface Artifact {
   mode: number;
 }
 
+interface ClaudeNamespaceInspection {
+  plugins: Array<Record<string, unknown>>;
+  marketplaces: Array<Record<string, unknown>>;
+}
+
+interface LegacyMarketplaceProof {
+  device: number;
+  inode: number;
+}
+
+export interface ClaudePluginBridgeIdentity {
+  readonly marketplaceName: string;
+  readonly pluginName: string;
+  readonly pluginId: string;
+  readonly artifactRootRelativePath: string;
+}
+
+export const resolveClaudePluginBridgeIdentity = (
+  profileId: ApplicationRuntimeProfileId
+): ClaudePluginBridgeIdentity => {
+  switch (profileId) {
+    case 'production':
+      return Object.freeze({
+        marketplaceName: 'bitterless-local',
+        pluginName: 'bitterless-observer',
+        pluginId: 'bitterless-observer@bitterless-local',
+        artifactRootRelativePath: 'eyes-on-agents/claude-marketplace'
+      });
+    case 'production-debug':
+    case 'test-debug':
+    case 'test-release': {
+      const marketplaceName = `bitterless-local-${profileId}`;
+      const pluginName = `bitterless-observer-${profileId}`;
+      return Object.freeze({
+        marketplaceName,
+        pluginName,
+        pluginId: `${pluginName}@${marketplaceName}`,
+        artifactRootRelativePath: `eyes-on-agents/claude-marketplace-${profileId}`
+      });
+    }
+    default:
+      throw new Error(`Unsupported Bitterless Claude bridge profile: ${String(profileId)}`);
+  }
+};
+
+export const resolveLegacyProductionDebugClaudeMarketplaceRoot = (params: {
+  profile: Pick<ApplicationRuntimeProfile, 'id' | 'appName'>;
+  appDataPath: string;
+  userDataPath: string;
+}): string | null => {
+  if (params.profile.id !== 'production' || params.profile.appName !== 'Bitterless' ||
+    !isAbsolute(params.appDataPath) || !isAbsolute(params.userDataPath) ||
+    resolve(params.userDataPath) !== resolve(params.appDataPath, params.profile.appName)) return null;
+  return resolve(
+    params.appDataPath,
+    'Bitterless_DEBUG_PROD',
+    'eyes-on-agents',
+    'claude-marketplace'
+  );
+};
+
 interface ClaudePluginBridgeDependencies {
+  identity: ClaudePluginBridgeIdentity;
   userDataPath: string;
   execPath: string;
   appRootPath: string;
   pluginVersion: string;
   executableCandidates: string[];
+  legacyProductionDebugMarketplaceRoot?: string;
   helperSourcePath?: string;
   platform?: NodeJS.Platform;
   now?: () => number;
@@ -201,8 +271,11 @@ export class ClaudePluginBridgeService {
     this.now = dependencies.now ?? Date.now;
     this.idFactory = dependencies.idFactory ?? randomUUID;
     this.runCommand = dependencies.runCommand ?? runClaudeCommand;
-    this.marketplaceRoot = join(dependencies.userDataPath, 'eyes-on-agents', 'claude-marketplace');
-    this.pluginRoot = join(this.marketplaceRoot, 'plugins', PLUGIN_NAME);
+    this.marketplaceRoot = resolve(
+      dependencies.userDataPath,
+      dependencies.identity.artifactRootRelativePath
+    );
+    this.pluginRoot = join(this.marketplaceRoot, 'plugins', dependencies.identity.pluginName);
     this.statePath = join(dependencies.userDataPath, 'eyes-on-agents', 'claude-plugin-bridge.json');
     this.helperSourcePath = dependencies.helperSourcePath ?? join(
       dependencies.appRootPath,
@@ -344,16 +417,22 @@ export class ClaudePluginBridgeService {
       ]);
       const plugins = parseJsonArray(pluginsResult.stdout, 'Claude plugin list');
       const marketplaces = parseJsonArray(marketplacesResult.stdout, 'Claude marketplace list');
-      const plugin = plugins.find((entry) => entry.id === PLUGIN_ID && entry.scope === 'user');
+      const plugin = plugins.find((entry) =>
+        entry.id === this.dependencies.identity.pluginId && entry.scope === 'user'
+      );
       const marketplacePlugins = plugins.filter((entry) => {
         const id = typeof entry.id === 'string' ? entry.id : null;
-        return id?.endsWith(`@${MARKETPLACE_NAME}`) === true ||
-          entry.marketplace === MARKETPLACE_NAME;
+        return id?.endsWith(`@${this.dependencies.identity.marketplaceName}`) === true ||
+          entry.marketplace === this.dependencies.identity.marketplaceName;
       });
       const marketplaceNamespaceExclusive = marketplacePlugins.length <= 1 &&
-        marketplacePlugins.every((entry) => entry.id === PLUGIN_ID && entry.scope === 'user');
+        marketplacePlugins.every((entry) =>
+          entry.id === this.dependencies.identity.pluginId && entry.scope === 'user'
+        );
       const state = stateInspection.kind === 'valid' ? stateInspection.value : null;
-      const marketplaceEntries = marketplaces.filter((entry) => entry.name === MARKETPLACE_NAME);
+      const marketplaceEntries = marketplaces.filter((entry) =>
+        entry.name === this.dependencies.identity.marketplaceName
+      );
       const marketplaceExact = marketplaceEntries.length === 1 &&
         this.marketplaceEntryMatches(marketplaceEntries[0]);
       const marketplace = marketplaceEntries.length === 0
@@ -411,10 +490,24 @@ export class ClaudePluginBridgeService {
   }
 
   async install(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+    try {
+      return await this.performInstall();
+    } catch (error) {
+      const message = this.safeInstallError(error);
+      this.retainInstallError(message);
+      throw new Error(message);
+    }
+  }
+
+  private async performInstall(): Promise<EyesOnAgentsClaudeBridgeStatus> {
     const previous = this.readState();
     const executable = await this.resolveExecutable();
     await this.refresh();
     if (this.inspection?.error) throw new Error(this.inspection.error);
+    if (await this.recoverLegacyProductionDebugMarketplace(executable)) {
+      await this.refresh();
+      if (this.inspection?.error) throw new Error(this.inspection.error);
+    }
     this.assertSafeInstallOwnership(previous);
     try {
       // The Main listener is already stopped by the lifecycle coordinator. Clear every older
@@ -453,46 +546,50 @@ export class ClaudePluginBridgeService {
     if (this.inspection?.error) throw new Error(this.inspection.error);
     this.assertSafeInstallOwnership(previous);
     const pluginPresent = this.inspection?.pluginPresent === true;
-    try {
-      if (this.inspection?.marketplace === 'exact') {
-        await this.command(executable, ['plugin', 'marketplace', 'update', MARKETPLACE_NAME]);
-      } else {
-        await this.command(executable, [
-          'plugin', 'marketplace', 'add', this.marketplaceRoot, '--scope', 'user'
-        ]);
-      }
-    } catch {
-      throw new Error('Claude plugin setup failed at marketplace');
+    if (this.inspection?.marketplace === 'exact') {
+      await this.command(executable, [
+        'plugin', 'marketplace', 'update', this.dependencies.identity.marketplaceName
+      ]);
+    } else {
+      await this.command(executable, [
+        'plugin', 'marketplace', 'add', this.marketplaceRoot, '--scope', 'user'
+      ]);
     }
-    try {
-      if (!pluginPresent) {
-        await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
-      } else {
-        // Claude may keep a same-version plugin cache even when the local marketplace files changed.
-        // Repair rotates the installation ID, so force an exact user-scoped reinstall before admitting
-        // the new generation instead of trusting a same-version update no-op.
-        await this.command(executable, [
-          'plugin', 'uninstall', PLUGIN_ID, '--scope', 'user', '-y'
-        ]);
-        await this.command(executable, ['plugin', 'install', PLUGIN_ID, '--scope', 'user']);
-      }
-    } catch {
-      throw new Error('Claude plugin setup failed at install');
+    if (!pluginPresent) {
+      await this.command(executable, [
+        'plugin', 'install', this.dependencies.identity.pluginId, '--scope', 'user'
+      ]);
+    } else {
+      // Claude may keep a same-version plugin cache even when the local marketplace files changed.
+      // Repair rotates the installation ID, so force an exact user-scoped reinstall before admitting
+      // the new generation instead of trusting a same-version update no-op.
+      await this.command(executable, [
+        'plugin', 'uninstall', this.dependencies.identity.pluginId, '--scope', 'user', '-y'
+      ]);
+      await this.command(executable, [
+        'plugin', 'install', this.dependencies.identity.pluginId, '--scope', 'user'
+      ]);
     }
     await this.refresh();
     if (!this.isExactPluginInspection()) {
       throw new Error('Claude plugin setup failed at final inspection: version or installation is not exact');
     }
     if (this.inspection?.enablement === 'disabled') {
+      let enableError: unknown = null;
       try {
-        await this.command(executable, ['plugin', 'enable', PLUGIN_ID, '--scope', 'user']);
-      } catch {
+        await this.command(executable, [
+          'plugin', 'enable', this.dependencies.identity.pluginId, '--scope', 'user'
+        ]);
+      } catch (error) {
+        enableError = error;
         // Claude may have committed enablement even when the command returned non-zero. The exact,
         // read-only inspection below is the sole idempotent success condition.
       }
       await this.refresh();
       if (!this.isExactEnabledPluginInspection()) {
-        throw new Error('Claude plugin setup failed at enable');
+        throw new Error(enableError === null
+          ? 'Claude plugin enablement failed at final inspection'
+          : boundedError(enableError));
       }
     } else if (this.inspection?.enablement !== 'enabled') {
       throw new Error('Claude plugin setup failed at final inspection: enablement is unknown');
@@ -535,7 +632,9 @@ export class ClaudePluginBridgeService {
       throw new Error('The Bitterless Claude marketplace contains unowned or drifted entries; manual cleanup is required');
     }
     if (this.inspection?.pluginPresent && this.inspection.marketplace === 'exact') {
-      await this.command(executable, ['plugin', 'uninstall', PLUGIN_ID, '--scope', 'user', '-y']);
+      await this.command(executable, [
+        'plugin', 'uninstall', this.dependencies.identity.pluginId, '--scope', 'user', '-y'
+      ]);
     }
     if (this.inspection?.marketplace === 'exact') {
       await this.refresh();
@@ -546,7 +645,8 @@ export class ClaudePluginBridgeService {
           'The Bitterless Claude marketplace changed during removal; manual cleanup is required');
       }
       await this.command(executable, [
-        'plugin', 'marketplace', 'remove', MARKETPLACE_NAME, '--scope', 'user'
+        'plugin', 'marketplace', 'remove', this.dependencies.identity.marketplaceName,
+        '--scope', 'user'
       ]);
     }
     if (this.isOwnedArtifactRoot()) {
@@ -715,39 +815,48 @@ export class ClaudePluginBridgeService {
     const base: Artifact[] = [
       {
         relativePath: OWNER_MARKER, mode: 0o600,
-        content: Buffer.from(`${JSON.stringify({ owner: 'Bitterless', plugin: PLUGIN_ID }, null, 2)}\n`)
+        content: Buffer.from(`${JSON.stringify({
+          owner: 'Bitterless',
+          plugin: this.dependencies.identity.pluginId
+        }, null, 2)}\n`)
       },
       {
         relativePath: '.claude-plugin/marketplace.json', mode: 0o600,
         content: Buffer.from(`${JSON.stringify({
-          name: MARKETPLACE_NAME,
-          description: 'Bitterless local lifecycle observation plugins',
+          name: this.dependencies.identity.marketplaceName,
+          description: MARKETPLACE_DESCRIPTION,
           owner: { name: 'Bitterless' },
           plugins: [{
-            name: PLUGIN_NAME,
-            source: `./plugins/${PLUGIN_NAME}`,
-            description: 'Content-free local Claude lifecycle observation for Bitterless'
+            name: this.dependencies.identity.pluginName,
+            source: `./plugins/${this.dependencies.identity.pluginName}`,
+            description: PLUGIN_DESCRIPTION
           }]
         }, null, 2)}\n`)
       },
       {
-        relativePath: `plugins/${PLUGIN_NAME}/.claude-plugin/plugin.json`, mode: 0o600,
+        relativePath: `plugins/${this.dependencies.identity.pluginName}/.claude-plugin/plugin.json`,
+        mode: 0o600,
         content: Buffer.from(`${JSON.stringify({
-          name: PLUGIN_NAME,
+          name: this.dependencies.identity.pluginName,
           version: this.dependencies.pluginVersion,
           author: { name: 'Bitterless' },
-          description: 'Content-free local Claude lifecycle observation for Bitterless'
+          description: PLUGIN_DESCRIPTION
         }, null, 2)}\n`)
       },
       {
-        relativePath: `plugins/${PLUGIN_NAME}/hooks/hooks.json`, mode: 0o600,
+        relativePath: `plugins/${this.dependencies.identity.pluginName}/hooks/hooks.json`,
+        mode: 0o600,
         content: Buffer.from(`${JSON.stringify({ hooks }, null, 2)}\n`)
       },
-      { relativePath: `plugins/${PLUGIN_NAME}/${wrapperRelative}`, mode: 0o700, content: Buffer.from(wrapper) }
+      {
+        relativePath: `plugins/${this.dependencies.identity.pluginName}/${wrapperRelative}`,
+        mode: 0o700,
+        content: Buffer.from(wrapper)
+      }
     ];
     const helperFiles = this.collectHelperFiles().map((file) => ({
       ...file,
-      relativePath: `plugins/${PLUGIN_NAME}/scripts/${file.relativePath}`,
+      relativePath: `plugins/${this.dependencies.identity.pluginName}/scripts/${file.relativePath}`,
       mode: 0o600
     }));
     if (!helperFiles.some((file) => resolve(this.marketplaceRoot, file.relativePath) === helperTarget)) {
@@ -887,7 +996,8 @@ export class ClaudePluginBridgeService {
       ).toString('utf8')) as {
         owner?: unknown; plugin?: unknown;
       };
-      return value.owner === 'Bitterless' && value.plugin === PLUGIN_ID;
+      return value.owner === 'Bitterless' &&
+        value.plugin === this.dependencies.identity.pluginId;
     } catch {
       return false;
     }
@@ -901,7 +1011,169 @@ export class ClaudePluginBridgeService {
     return hash.digest('hex');
   }
 
+  private async recoverLegacyProductionDebugMarketplace(executable: string): Promise<boolean> {
+    const legacyRoot = this.dependencies.legacyProductionDebugMarketplaceRoot;
+    if (!legacyRoot || !this.isProductionIdentity() || !isAbsolute(legacyRoot) ||
+      resolve(legacyRoot) === this.marketplaceRoot ||
+      basename(dirname(dirname(legacyRoot))) !== 'Bitterless_DEBUG_PROD') return false;
+
+    const initial = await this.inspectClaudeNamespace(executable);
+    const marketplaceEntries = initial.marketplaces.filter(
+      (entry) => entry.name === PRODUCTION_MARKETPLACE_NAME
+    );
+    if (marketplaceEntries.length !== 1 ||
+      !this.legacyMarketplaceEntryMatches(marketplaceEntries[0], legacyRoot)) return false;
+
+    const proof = this.inspectLegacyMarketplaceOwnership(legacyRoot);
+    if (!proof) {
+      throw new Error(
+        'The legacy Bitterless Claude marketplace ownership could not be proven'
+      );
+    }
+    const namespacePlugins = this.marketplaceNamespacePlugins(
+      initial.plugins,
+      PRODUCTION_MARKETPLACE_NAME
+    );
+    const expectedPluginPresent = namespacePlugins.length === 1 &&
+      namespacePlugins[0].id === PRODUCTION_PLUGIN_ID && namespacePlugins[0].scope === 'user';
+    if (!expectedPluginPresent && namespacePlugins.length !== 0) {
+      throw new Error(
+        'The legacy Bitterless Claude marketplace namespace is shared; manual cleanup is required'
+      );
+    }
+    if (expectedPluginPresent) {
+      await this.command(executable, [
+        'plugin', 'uninstall', PRODUCTION_PLUGIN_ID, '--scope', 'user', '-y'
+      ]);
+    }
+
+    const afterUninstall = await this.inspectClaudeNamespace(executable);
+    const remainingPlugins = this.marketplaceNamespacePlugins(
+      afterUninstall.plugins,
+      PRODUCTION_MARKETPLACE_NAME
+    );
+    const remainingMarketplaces = afterUninstall.marketplaces.filter(
+      (entry) => entry.name === PRODUCTION_MARKETPLACE_NAME
+    );
+    const repeatedProof = this.inspectLegacyMarketplaceOwnership(legacyRoot);
+    if (remainingPlugins.length !== 0 || remainingMarketplaces.length !== 1 ||
+      !this.legacyMarketplaceEntryMatches(remainingMarketplaces[0], legacyRoot) ||
+      !repeatedProof || repeatedProof.device !== proof.device || repeatedProof.inode !== proof.inode) {
+      throw new Error(
+        'The legacy Bitterless Claude marketplace changed during recovery; manual cleanup is required'
+      );
+    }
+
+    await this.command(executable, [
+      'plugin', 'marketplace', 'remove', PRODUCTION_MARKETPLACE_NAME, '--scope', 'user'
+    ]);
+
+    const afterRemoval = await this.inspectClaudeNamespace(executable);
+    if (this.marketplaceNamespacePlugins(afterRemoval.plugins, PRODUCTION_MARKETPLACE_NAME).length !== 0 ||
+      afterRemoval.marketplaces.some((entry) => entry.name === PRODUCTION_MARKETPLACE_NAME)) {
+      throw new Error(
+        'The legacy Bitterless Claude marketplace remained registered after recovery'
+      );
+    }
+    this.inspection = null;
+    return true;
+  }
+
+  private isProductionIdentity(): boolean {
+    const identity = this.dependencies.identity;
+    return identity.marketplaceName === PRODUCTION_MARKETPLACE_NAME &&
+      identity.pluginName === PRODUCTION_PLUGIN_NAME && identity.pluginId === PRODUCTION_PLUGIN_ID &&
+      identity.artifactRootRelativePath === 'eyes-on-agents/claude-marketplace';
+  }
+
+  private async inspectClaudeNamespace(executable: string): Promise<ClaudeNamespaceInspection> {
+    const [pluginsResult, marketplacesResult] = await Promise.all([
+      this.command(executable, ['plugin', 'list', '--json']),
+      this.command(executable, ['plugin', 'marketplace', 'list', '--json'])
+    ]);
+    return {
+      plugins: parseJsonArray(pluginsResult.stdout, 'Claude plugin list'),
+      marketplaces: parseJsonArray(marketplacesResult.stdout, 'Claude marketplace list')
+    };
+  }
+
+  private marketplaceNamespacePlugins(
+    plugins: Array<Record<string, unknown>>,
+    marketplaceName: string
+  ): Array<Record<string, unknown>> {
+    return plugins.filter((entry) => {
+      const id = typeof entry.id === 'string' ? entry.id : null;
+      return id?.endsWith(`@${marketplaceName}`) === true || entry.marketplace === marketplaceName;
+    });
+  }
+
+  private inspectLegacyMarketplaceOwnership(root: string): LegacyMarketplaceProof | null {
+    try {
+      const profileRoot = dirname(dirname(root));
+      for (const directory of [profileRoot, dirname(root), root, join(root, '.claude-plugin')]) {
+        const stat = lstatSync(directory);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
+      }
+      const rootStat = lstatSync(root);
+      const marker = JSON.parse(readBoundedRegularFile(
+        join(root, OWNER_MARKER),
+        MAX_OWNER_MARKER_BYTES
+      ).toString('utf8')) as unknown;
+      if (!this.exactRecord(marker, ['owner', 'plugin']) ||
+        marker.owner !== 'Bitterless' || marker.plugin !== PRODUCTION_PLUGIN_ID) return null;
+
+      const catalog = JSON.parse(readBoundedRegularFile(
+        join(root, '.claude-plugin', 'marketplace.json'),
+        MAX_LEGACY_CATALOG_BYTES
+      ).toString('utf8')) as unknown;
+      if (!this.exactRecord(catalog, ['name', 'description', 'owner', 'plugins']) ||
+        catalog.name !== PRODUCTION_MARKETPLACE_NAME ||
+        catalog.description !== MARKETPLACE_DESCRIPTION ||
+        !this.exactRecord(catalog.owner, ['name']) || catalog.owner.name !== 'Bitterless' ||
+        !Array.isArray(catalog.plugins) || catalog.plugins.length !== 1) return null;
+      const plugin = catalog.plugins[0];
+      if (!this.exactRecord(plugin, ['name', 'source', 'description']) ||
+        plugin.name !== PRODUCTION_PLUGIN_NAME ||
+        plugin.source !== `./plugins/${PRODUCTION_PLUGIN_NAME}` ||
+        plugin.description !== PLUGIN_DESCRIPTION) return null;
+      return { device: rootStat.dev, inode: rootStat.ino };
+    } catch {
+      return null;
+    }
+  }
+
+  private exactRecord(
+    value: unknown,
+    keys: readonly string[]
+  ): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+      Object.keys(value as Record<string, unknown>).sort().join(',') === [...keys].sort().join(',');
+  }
+
+  private legacyMarketplaceEntryMatches(
+    entry: Record<string, unknown>,
+    legacyRoot: string
+  ): boolean {
+    const sourcePath = this.marketplaceSourcePath(entry);
+    return sourcePath !== null && resolve(sourcePath) === resolve(legacyRoot) &&
+      this.marketplaceEntryMatchesRoot(entry, legacyRoot);
+  }
+
   private marketplaceEntryMatches(entry: Record<string, unknown>): boolean {
+    return this.marketplaceEntryMatchesRoot(entry, this.marketplaceRoot);
+  }
+
+  private marketplaceEntryMatchesRoot(entry: Record<string, unknown>, root: string): boolean {
+    const sourcePath = this.marketplaceSourcePath(entry);
+    if (sourcePath === null) return false;
+    try {
+      return realpathSync.native(sourcePath) === realpathSync.native(root);
+    } catch {
+      return resolve(sourcePath) === resolve(root);
+    }
+  }
+
+  private marketplaceSourcePath(entry: Record<string, unknown>): string | null {
     const source = entry.source !== null && typeof entry.source === 'object'
       ? entry.source as Record<string, unknown>
       : null;
@@ -915,37 +1187,103 @@ export class ClaudePluginBridgeService {
           : (sourceKind === 'directory' || sourceKind === 'local') && typeof entry.repo === 'string'
             ? entry.repo
             : null;
-    if (sourceKind !== null && !['directory', 'local'].includes(sourceKind)) return false;
-    if (sourcePath === null) return false;
-    try {
-      return realpathSync.native(sourcePath) === realpathSync.native(this.marketplaceRoot);
-    } catch {
-      return resolve(sourcePath) === resolve(this.marketplaceRoot);
-    }
+    if (sourceKind !== null && !['directory', 'local'].includes(sourceKind)) return null;
+    return sourcePath;
   }
 
   private async resolveExecutable(): Promise<string> {
-    if (this.executable) return this.executable;
+    if (this.executable !== null) return this.executable;
     for (const candidate of this.dependencies.executableCandidates) {
       try {
-        const result = await this.command(candidate, ['plugin', '--help']);
-        if (result.exitCode === 0 && result.stdout.includes('marketplace')) {
-          this.executable = candidate;
-          return candidate;
+        const pluginHelp = await this.runCommand(candidate, ['plugin', '--help'], {
+          timeoutMs: 30_000,
+          maxOutputBytes: 1024 * 1024
+        });
+        const pluginHelpOutput = `${pluginHelp.stdout}\n${pluginHelp.stderr}`;
+        if (pluginHelp.exitCode !== 0 || !pluginHelpOutput.includes('marketplace')) continue;
+        const removeHelp = await this.runCommand(
+          candidate,
+          ['plugin', 'marketplace', 'remove', '--help'],
+          { timeoutMs: 30_000, maxOutputBytes: 1024 * 1024 }
+        );
+        const removeHelpOutput = `${removeHelp.stdout}\n${removeHelp.stderr}`;
+        if (removeHelp.exitCode !== 0 || !/(?:^|\s)--scope(?:[=\s,]|$)/m.test(removeHelpOutput)) {
+          continue;
         }
+        this.executable = candidate;
+        return candidate;
       } catch {
         // Probe the next allowlisted Claude installation.
       }
     }
-    throw new Error('A Claude executable with plugin support was not found');
+    throw new Error(
+      'Update Claude Code to continue: scoped plugin marketplace removal is required'
+    );
   }
 
   private async command(executable: string, args: string[]): Promise<ClaudeCommandResult> {
-    const result = await this.runCommand(executable, args, {
-      timeoutMs: 30_000,
-      maxOutputBytes: 1024 * 1024
-    });
-    if (result.exitCode !== 0) throw new Error(`Claude plugin command failed (${result.exitCode})`);
+    let result: ClaudeCommandResult;
+    try {
+      result = await this.runCommand(executable, args, {
+        timeoutMs: 30_000,
+        maxOutputBytes: 1024 * 1024
+      });
+    } catch {
+      if (this.executable === executable) this.executable = null;
+      throw new Error(this.commandFailureStage(args));
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`${this.commandFailureStage(args)} (exit code ${result.exitCode})`);
+    }
     return result;
+  }
+
+  private commandFailureStage(args: readonly string[]): string {
+    if (args[0] === 'plugin' && args[1] === 'marketplace') {
+      if (args[2] === 'add') return 'Claude plugin marketplace registration failed';
+      if (args[2] === 'update') return 'Claude plugin marketplace update failed';
+      if (args[2] === 'remove') return 'Claude plugin marketplace removal failed';
+      if (args[2] === 'list') return 'Claude plugin marketplace inspection failed';
+    }
+    if (args[0] === 'plugin') {
+      if (args[1] === 'install') return 'Claude plugin installation failed';
+      if (args[1] === 'uninstall') return 'Claude plugin uninstall failed';
+      if (args[1] === 'enable') return 'Claude plugin enablement failed';
+      if (args[1] === 'list') return 'Claude plugin inspection failed';
+    }
+    return 'Claude plugin operation failed';
+  }
+
+  private safeInstallError(error: unknown): string {
+    const message = boundedError(error);
+    if (/^(?:Update Claude Code|Claude plugin |Claude hook |The Bitterless |The existing Claude |The legacy Bitterless )/.test(message)) {
+      return message;
+    }
+    return 'Claude plugin setup failed; retry Repair';
+  }
+
+  private retainInstallError(message: string): void {
+    if (this.inspection) {
+      this.inspection = { ...this.inspection, error: message };
+      return;
+    }
+    const state = this.inspectState();
+    const configured = state.kind === 'valid' && state.value.installed ||
+      existsSync(this.marketplaceRoot);
+    this.inspection = {
+      configured,
+      enabled: false,
+      enablement: 'unknown',
+      drifted: false,
+      marketplace: 'absent',
+      marketplaceNamespaceExclusive: false,
+      catalogExact: false,
+      pluginPresent: false,
+      pluginVersionExact: false,
+      artifactExact: false,
+      finishable: false,
+      inspectedAt: this.now(),
+      error: message
+    };
   }
 }

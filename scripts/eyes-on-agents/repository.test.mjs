@@ -26,6 +26,7 @@ const DELIVERY_G = '12121212-1212-4212-8212-121212121212';
 const DELIVERY_H = '13131313-1313-4313-8313-131313131313';
 const DELIVERY_I = '14141414-1414-4414-8414-141414141414';
 const DELIVERY_CLAUDE = '15151515-1515-4515-8515-151515151515';
+const THREAD_CLAUDE_PROMPT = '17171717-1717-4717-8717-171717171717';
 const codexKey = (threadId) => `codex:${threadId}`;
 const claudeKey = (threadId) => `claude:${threadId}`;
 const INVALID_VERSION_THREAD = '33333333-3333-0333-8333-333333333333';
@@ -115,6 +116,7 @@ try {
   );
   const {
     ensureEyesOnAgentsArchiveSchema,
+    ensureEyesOnAgentsClaudeDeletionSchema,
     ensureEyesOnAgentsCompletionAlertSchema,
     ensureEyesOnAgentsHookDeliverySchema,
     ensureEyesOnAgentsLastUserPromptSchema,
@@ -145,6 +147,8 @@ try {
   ensureEyesOnAgentsCompletionAlertSchema(repairDb);
   ensureEyesOnAgentsLastUserPromptSchema(repairDb);
   ensureEyesOnAgentsLastUserPromptSchema(repairDb);
+  ensureEyesOnAgentsClaudeDeletionSchema(repairDb);
+  ensureEyesOnAgentsClaudeDeletionSchema(repairDb);
   repairDb.prepare(
     `INSERT INTO eyes_on_agents_hook_delivery_receipt (
       delivery_id, session_key, provider, thread_id, observed_at, committed_at
@@ -223,6 +227,8 @@ try {
   ensureEyesOnAgentsLastUserPromptSchema(oldDb);
   migrateEyesOnAgentsProviderIdentitySchema(oldDb);
   migrateEyesOnAgentsProviderIdentitySchema(oldDb);
+  ensureEyesOnAgentsClaudeDeletionSchema(oldDb);
+  ensureEyesOnAgentsClaudeDeletionSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -240,6 +246,17 @@ try {
     migratedColumns.some((column) => column.name === 'is_unread'),
     true,
     'old databases must receive the persistent unread migration'
+  );
+  assert.equal(
+    migratedColumns.some((column) => column.name === 'is_deleted'),
+    true,
+    'old databases must receive the idempotent Claude deletion projection column'
+  );
+  assert.ok(
+    oldDb.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'eyes_on_agents_claude_deletion_tombstone'"
+    ).get(),
+    'old databases must receive the Main-private Claude tombstone table'
   );
   assert.deepEqual(
     migratedColumns.slice(0, 3).map((column) => column.name),
@@ -280,8 +297,17 @@ try {
   );
   assert.deepEqual(
     oldDb.prepare('PRAGMA table_info(eyes_on_agents_hook_delivery_receipt)').all()
-      .map((column) => column.name),
-    ['delivery_id', 'session_key', 'provider', 'thread_id', 'observed_at', 'committed_at'],
+      .map((column) => column.name)
+      .sort(),
+    [
+      'committed_at',
+      'delivery_id',
+      'is_observation_eligible',
+      'observed_at',
+      'provider',
+      'session_key',
+      'thread_id'
+    ],
     'old databases must receive the idempotent hook delivery receipt table'
   );
   assert.deepEqual(
@@ -1470,6 +1496,42 @@ try {
     'Delivered question',
     'a fresh delivery must apply its prompt candidate in the receipt transaction'
   );
+  await repository.applyRuntimeEvent({
+    event: {
+      type: 'turn_started',
+      threadId: THREAD_CLAUDE_PROMPT,
+      turnId: null,
+      observedAt: 810,
+      source: 'claude_hook'
+    },
+    hookLastUserPrompt: { preview: 'Claude latest question', truncated: false }
+  });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT provider, last_user_prompt_preview, last_user_prompt_source
+     FROM eyes_on_agents_thread WHERE thread_id = ?`
+  ).get(THREAD_CLAUDE_PROMPT) }, {
+    provider: 'claude',
+    last_user_prompt_preview: 'Claude latest question',
+    last_user_prompt_source: 'claude_hook'
+  }, 'Claude Hook prompt writes must stay provider-qualified');
+  assert.deepEqual(
+    await repository.clearLastUserPrompts({ providers: ['claude'] }),
+    { changed: true }
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT last_user_prompt_preview FROM eyes_on_agents_thread WHERE thread_id = ?'
+    ).get(THREAD_CLAUDE_PROMPT).last_user_prompt_preview,
+    null,
+    'Claude disable must clear only Claude prompt fields'
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT last_user_prompt_preview FROM eyes_on_agents_thread WHERE thread_id = ?'
+    ).get(THREAD_D).last_user_prompt_preview,
+    'Delivered question',
+    'Claude disable must preserve Codex prompt fields'
+  );
   assert.deepEqual(
     await repository.enrichMissingThreadTitle({
       threadId: THREAD_D,
@@ -1531,7 +1593,7 @@ try {
   assert.equal(heartbeatRuntime.status_observed_at, initialClaudeRuntime.status_observed_at);
   assert.equal(heartbeatRuntime.active_turn_id, initialClaudeRuntime.active_turn_id);
   assert.equal(heartbeatRuntime.transcript_activity_at, 900);
-  assert.equal(heartbeatRuntime.status_fresh_until, 30_900);
+  assert.equal(heartbeatRuntime.status_fresh_until, null);
   assert.deepEqual(await repository.upsertClaudeInventory({ threads: [{
     threadId: claudeHookThreadId,
     desktopSessionId: null,
@@ -1542,7 +1604,7 @@ try {
     archiveState: 'unknown',
     lastActivityAt: 900,
     observedAt: 910
-  }] }), { changed: false }, 'an unchanged JSONL mtime must not renew the Hook lease');
+  }] }), { changed: false }, 'an unchanged JSONL mtime must not rewrite the Hook epoch');
   await repository.upsertClaudeInventory({ threads: [{
     threadId: claudeHookThreadId,
     desktopSessionId: `local_${claudeHookThreadId}`,
@@ -1557,10 +1619,9 @@ try {
   assert.equal(
     db.prepare('SELECT status_fresh_until FROM eyes_on_agents_thread WHERE session_key = ?')
       .get(claudeKey(claudeHookThreadId)).status_fresh_until,
-    30_900,
-    'Desktop activity must not renew a Claude Hook lease'
+    null,
+    'Desktop activity must not create a timeout for a Claude Hook epoch'
   );
-
   db.close();
   db = new TestDatabase(dbPath);
   globalThis.__eyesTestSqliteManager.db = db;
@@ -3219,6 +3280,508 @@ try {
     'Agent View fallback',
     'Agent View names may fill a missing title'
   );
+
+  const deletionSource = '/tmp/claude-code-sessions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const deletedCliThread = 'a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1';
+  const deletedDesktopIdentity = 'b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1';
+  const deletedDesktopSession = `local_${deletedDesktopIdentity}`;
+  await repository.upsertDiscoveredThreads({
+    threads: [{
+      threadId: deletedCliThread,
+      title: 'Codex identity twin',
+      cwd: '/tmp/codex-twin',
+      project: null,
+      runtimeState: 'unknown',
+      activeFlags: [],
+      statusSource: 'discovery',
+      statusObservedAt: null,
+      lastActivityAt: 199_000
+    }]
+  });
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: deletedCliThread,
+    desktopSessionId: deletedDesktopSession,
+    desktopMetadataMtime: 199_000,
+    transcriptPath: `/tmp/project/${deletedCliThread}.jsonl`,
+    title: 'Claude deletion audit',
+    cwd: '/tmp/project',
+    archiveState: 'active',
+    lastActivityAt: 199_000,
+    observedAt: 199_000
+  }] });
+  await repository.moveThread({
+    sessionKey: claudeKey(deletedCliThread),
+    domainId: claudeDomain.id
+  });
+  const preDeletePromptDelivery = '91919191-9191-4191-8191-919191919191';
+  const preDeleteStopDelivery = '92929292-9292-4292-8292-929292929292';
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: preDeletePromptDelivery,
+    event: {
+      type: 'turn_started',
+      threadId: deletedCliThread,
+      turnId: null,
+      observedAt: 200_000,
+      source: 'claude_hook'
+    },
+    hookLastUserPrompt: { preview: 'Question that deletion must clear', truncated: false }
+  });
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: preDeleteStopDelivery,
+    event: {
+      type: 'turn_completed',
+      threadId: deletedCliThread,
+      turnId: preDeleteStopDelivery,
+      observedAt: 201_000,
+      source: 'claude_hook',
+      outcome: 'completed'
+    }
+  });
+  const preservedReceiptCounts = { ...db.prepare(
+    `SELECT
+      (SELECT COUNT(*) FROM eyes_on_agents_hook_delivery_receipt
+       WHERE delivery_id IN (?, ?)) AS hook_count,
+      (SELECT COUNT(*) FROM eyes_on_agents_completion_alert_receipt
+       WHERE session_key = ?) AS completion_count`
+  ).get(preDeletePromptDelivery, preDeleteStopDelivery, claudeKey(deletedCliThread)) };
+  const cliDeletion = {
+    tombstones: [{
+      sourceKey: deletionSource,
+      identityId: deletedCliThread,
+      deletedAt: 202_000,
+      observedAt: 203_000
+    }],
+    healthyScopeKeys: [deletionSource],
+    completeSnapshot: false,
+    observedAt: 203_000
+  };
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [],
+    deletion: cliDeletion
+  }), { changed: true }, 'a CLI-ID tombstone must hide an existing Claude row');
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [],
+    deletion: cliDeletion
+  }), { changed: false }, 'a duplicate tombstone must be projection-idempotent');
+  const deletedRow = { ...db.prepare(
+    `SELECT domain_id, archive_state, is_deleted, deleted_at, desktop_session_id,
+      transcript_path, title, cwd, project_key, project_root, project_name,
+      runtime_state, active_turn_id, last_completed_turn_id, last_completed_at,
+      last_opened_turn_id, last_opened_at, is_unread, status_source,
+      status_observed_at, status_fresh_until, last_activity_at,
+      last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
+      last_user_prompt_source
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(deletedCliThread)) };
+  assert.deepEqual(deletedRow, {
+    domain_id: claudeDomain.id,
+    archive_state: 'active',
+    is_deleted: 1,
+    deleted_at: 202_000,
+    desktop_session_id: deletedDesktopSession,
+    transcript_path: null,
+    title: null,
+    cwd: null,
+    project_key: null,
+    project_root: null,
+    project_name: null,
+    runtime_state: 'unknown',
+    active_turn_id: null,
+    last_completed_turn_id: null,
+    last_completed_at: null,
+    last_opened_turn_id: null,
+    last_opened_at: null,
+    is_unread: 0,
+    status_source: 'discovery',
+    status_observed_at: null,
+    status_fresh_until: null,
+    last_activity_at: null,
+    last_user_prompt_preview: null,
+    last_user_prompt_turn_id: null,
+    last_user_prompt_at: null,
+    last_user_prompt_source: null
+  }, 'deletion must preserve identity/Domain/archive while revoking transient capabilities');
+  assert.equal(
+    (await repository.getSnapshot()).threads.some((thread) =>
+      thread.sessionKey === claudeKey(deletedCliThread)),
+    false,
+    'deleted Claude rows must be absent from every renderer snapshot'
+  );
+  assert.equal(
+    (await repository.getSnapshot()).threads.some((thread) =>
+      thread.sessionKey === codexKey(deletedCliThread)),
+    true,
+    'the same tombstone identity must not affect Codex persistence'
+  );
+  assert.equal(await repository.getClaudeOpenTarget({
+    sessionKey: claudeKey(deletedCliThread)
+  }), null, 'deleted rows must expose neither Open nor Preview capability');
+  await assert.rejects(
+    repository.markOpened({ sessionKey: claudeKey(deletedCliThread), openedAt: 203_100 }),
+    /not found/
+  );
+  await assert.rejects(
+    repository.moveThread({ sessionKey: claudeKey(deletedCliThread), domainId: claudeDomain.id }),
+    /not found/
+  );
+  assert.deepEqual({ ...db.prepare(
+    `SELECT
+      (SELECT COUNT(*) FROM eyes_on_agents_hook_delivery_receipt
+       WHERE delivery_id IN (?, ?)) AS hook_count,
+      (SELECT COUNT(*) FROM eyes_on_agents_completion_alert_receipt
+       WHERE session_key = ?) AS completion_count`
+  ).get(preDeletePromptDelivery, preDeleteStopDelivery, claudeKey(deletedCliThread)) },
+  preservedReceiptCounts, 'soft deletion must preserve content-free deduplication receipts');
+
+  const desktopDeletedThread = 'c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1';
+  const desktopDeletedIdentity = 'd1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1';
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: desktopDeletedThread,
+    desktopSessionId: `local_${desktopDeletedIdentity}`,
+    desktopMetadataMtime: 204_000,
+    transcriptPath: null,
+    title: 'Desktop identity deletion',
+    cwd: null,
+    archiveState: 'archived',
+    lastActivityAt: 204_000,
+    observedAt: 204_000
+  }] });
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [],
+    deletion: {
+      tombstones: [{
+        sourceKey: deletionSource,
+        identityId: desktopDeletedIdentity,
+        deletedAt: 205_000,
+        observedAt: 205_500
+      }],
+      healthyScopeKeys: [deletionSource],
+      completeSnapshot: false,
+      observedAt: 205_500
+    }
+  }), { changed: true }, 'a unique Desktop-ID tombstone must hide its mapped Claude row');
+  assert.equal(await repository.getClaudeOpenTarget({
+    sessionKey: claudeKey(desktopDeletedThread)
+  }), null);
+  assert.equal(
+    db.prepare(
+      'SELECT archive_state FROM eyes_on_agents_thread WHERE session_key = ?'
+    ).get(claudeKey(desktopDeletedThread)).archive_state,
+    'archived',
+    'deletion must remain independent from Claude archive state'
+  );
+
+  const simultaneousThread = 'a2a2a2a2-a2a2-42a2-82a2-a2a2a2a2a2a2';
+  const simultaneousDesktopIdentity = 'b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2';
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [{
+      threadId: simultaneousThread,
+      desktopSessionId: `local_${simultaneousDesktopIdentity}`,
+      desktopMetadataMtime: 205_000,
+      desktopEvidenceComplete: true,
+      transcriptPath: `/tmp/stale/${simultaneousThread}.jsonl`,
+      title: 'Simultaneous stale metadata',
+      cwd: '/tmp/stale',
+      archiveState: 'active',
+      lastActivityAt: 205_000,
+      observedAt: 205_500
+    }],
+    deletion: {
+      tombstones: [{
+        sourceKey: deletionSource,
+        identityId: simultaneousThread,
+        deletedAt: 205_250,
+        observedAt: 205_500
+      }],
+      healthyScopeKeys: [deletionSource],
+      completeSnapshot: false,
+      observedAt: 205_500
+    }
+  }), { changed: false }, 'a simultaneous valid tombstone must win over stale live metadata');
+  assert.deepEqual({ ...db.prepare(
+    `SELECT is_deleted, desktop_session_id, title, cwd, transcript_path
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(simultaneousThread)) }, {
+    is_deleted: 1,
+    desktop_session_id: `local_${simultaneousDesktopIdentity}`,
+    title: null,
+    cwd: null,
+    transcript_path: null
+  }, 'the hidden identity stub must bind the pair without restoring display content');
+
+  const ambiguousDesktopA = 'c2c2c2c2-c2c2-42c2-82c2-c2c2c2c2c2c2';
+  const ambiguousDesktopB = 'd2d2d2d2-d2d2-42d2-82d2-d2d2d2d2d2d2';
+  const ambiguousDesktopIdentity = 'e2e2e2e2-e2e2-42e2-82e2-e2e2e2e2e2e2';
+  await repository.upsertClaudeInventory({ threads: [
+    {
+      threadId: ambiguousDesktopA,
+      desktopSessionId: `local_${ambiguousDesktopA}`,
+      transcriptPath: null,
+      title: null,
+      cwd: null,
+      archiveState: 'active',
+      lastActivityAt: 205_600,
+      observedAt: 205_600
+    },
+    {
+      threadId: ambiguousDesktopB,
+      desktopSessionId: `local_${ambiguousDesktopB}`,
+      transcriptPath: null,
+      title: null,
+      cwd: null,
+      archiveState: 'active',
+      lastActivityAt: 205_600,
+      observedAt: 205_600
+    }
+  ] });
+  db.prepare(
+    `UPDATE eyes_on_agents_thread SET desktop_session_id = ?, desktop_identity_ambiguous = 0
+     WHERE provider = 'claude' AND thread_id IN (?, ?)`
+  ).run(`local_${ambiguousDesktopIdentity}`, ambiguousDesktopA, ambiguousDesktopB);
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [],
+    deletion: {
+      tombstones: [{
+        sourceKey: deletionSource,
+        identityId: ambiguousDesktopIdentity,
+        deletedAt: 205_700,
+        observedAt: 205_700
+      }],
+      healthyScopeKeys: [deletionSource],
+      completeSnapshot: false,
+      observedAt: 205_700
+    }
+  }), { changed: false }, 'an ambiguous Desktop identity must never batch-delete multiple rows');
+  assert.deepEqual(
+    db.prepare(
+      `SELECT thread_id, is_deleted FROM eyes_on_agents_thread
+       WHERE provider = 'claude' AND thread_id IN (?, ?) ORDER BY thread_id`
+    ).all(ambiguousDesktopA, ambiguousDesktopB).map((row) => ({ ...row })),
+    [
+      { thread_id: ambiguousDesktopA, is_deleted: 0 },
+      { thread_id: ambiguousDesktopB, is_deleted: 0 }
+    ]
+  );
+
+  const beforeRowThread = 'e1e1e1e1-e1e1-41e1-81e1-e1e1e1e1e1e1';
+  const beforeRowDeletion = {
+    tombstones: [{
+      sourceKey: deletionSource,
+      identityId: beforeRowThread,
+      deletedAt: 206_000,
+      observedAt: 206_500
+    }],
+    healthyScopeKeys: [deletionSource],
+    completeSnapshot: false,
+    observedAt: 206_500
+  };
+  await repository.upsertClaudeInventory({ threads: [], deletion: beforeRowDeletion });
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: beforeRowThread,
+    desktopSessionId: null,
+    transcriptPath: `/tmp/residual/${beforeRowThread}.jsonl`,
+    title: null,
+    cwd: '/tmp/residual',
+    archiveState: 'unknown',
+    transcriptActivityAt: 207_000,
+    lastActivityAt: 207_000,
+    observedAt: 207_000
+  }] });
+  assert.deepEqual(await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: beforeRowThread,
+      runtimeState: 'working',
+      title: 'Residual Agent View',
+      cwd: '/tmp/residual',
+      startedAt: 207_000,
+      observedAt: 207_100
+    }],
+    completeSnapshot: true,
+    observedAt: 207_100
+  }), { changed: false });
+  const claudeProofBeforeLateDrop = await repository.getRuntimeReceiptSummary({
+    provider: 'claude'
+  });
+  const latePromptDelivery = '93939393-9393-4393-8393-939393939393';
+  const lateStopDelivery = '94949494-9494-4494-8494-949494949494';
+  const latePrompt = await repository.applyRuntimeEventDelivery({
+    deliveryId: latePromptDelivery,
+    event: {
+      type: 'turn_started', threadId: beforeRowThread, turnId: null,
+      observedAt: 207_200, source: 'claude_hook'
+    },
+    hookLastUserPrompt: { preview: 'Late question must be dropped', truncated: false }
+  });
+  const lateStop = await repository.applyRuntimeEventDelivery({
+    deliveryId: lateStopDelivery,
+    event: {
+      type: 'turn_completed', threadId: beforeRowThread, turnId: lateStopDelivery,
+      observedAt: 207_300, source: 'claude_hook', outcome: 'completed'
+    }
+  });
+  assert.deepEqual(latePrompt, {
+    duplicate: true, created: false, titleMissing: false, completionAlert: null
+  });
+  assert.deepEqual(lateStop, {
+    duplicate: true, created: false, titleMissing: false, completionAlert: null
+  }, 'late Stop must be ACK-dropped without notification/sound intent');
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) AS count FROM eyes_on_agents_hook_delivery_receipt
+       WHERE delivery_id IN (?, ?)`
+    ).get(latePromptDelivery, lateStopDelivery).count,
+    2,
+    'late deliveries must each persist one receipt so the outbox can drain'
+  );
+  assert.deepEqual(
+    db.prepare(
+      `SELECT delivery_id, is_observation_eligible
+       FROM eyes_on_agents_hook_delivery_receipt
+       WHERE delivery_id IN (?, ?) ORDER BY delivery_id`
+    ).all(latePromptDelivery, lateStopDelivery).map((row) => ({ ...row })),
+    [latePromptDelivery, lateStopDelivery].sort().map((deliveryId) => ({
+      delivery_id: deliveryId,
+      is_observation_eligible: 0
+    })),
+    'ACK-dropped Hook receipts must be durable without becoming observation proof'
+  );
+  assert.deepEqual(
+    await repository.getRuntimeReceiptSummary({ provider: 'claude' }),
+    claudeProofBeforeLateDrop,
+    'ACK-dropped Hook deliveries must not advance first/last received status'
+  );
+  assert.equal(
+    db.prepare(
+      'SELECT COUNT(*) AS count FROM eyes_on_agents_completion_alert_receipt WHERE session_key = ?'
+    ).get(claudeKey(beforeRowThread)).count,
+    0
+  );
+  assert.equal(
+    (await repository.getSnapshot()).threads.some((thread) =>
+      thread.sessionKey === claudeKey(beforeRowThread)),
+    false,
+    'residual JSONL, Agent View, and late Hooks must not recreate a deleted card'
+  );
+
+  const historyOnlySource = '/tmp/claude-code-sessions/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const historyOnlyThread = 'f1f1f1f1-f1f1-41f1-81f1-f1f1f1f1f1f1';
+  await repository.upsertClaudeInventory({
+    threads: [],
+    deletion: {
+      tombstones: [{
+        sourceKey: historyOnlySource,
+        identityId: historyOnlyThread,
+        deletedAt: 207_400,
+        observedAt: 207_400
+      }],
+      healthyScopeKeys: [historyOnlySource],
+      completeSnapshot: false,
+      observedAt: 207_400
+    }
+  });
+  await repository.upsertClaudeInventory({
+    threads: [],
+    deletion: {
+      tombstones: [],
+      healthyScopeKeys: [historyOnlySource],
+      completeSnapshot: true,
+      observedAt: 207_500
+    }
+  });
+  const historyOnlyDelivery = '95959595-9595-4595-8595-959595959595';
+  assert.deepEqual(await repository.applyRuntimeEventDelivery({
+    deliveryId: historyOnlyDelivery,
+    event: {
+      type: 'turn_completed', threadId: historyOnlyThread, turnId: historyOnlyDelivery,
+      observedAt: 207_600, source: 'claude_hook', outcome: 'completed'
+    }
+  }), {
+    duplicate: true, created: false, titleMissing: false, completionAlert: null
+  }, 'tombstone absence without newer live metadata must keep a never-created identity suppressed');
+  assert.deepEqual(
+    await repository.getRuntimeReceiptSummary({ provider: 'claude' }),
+    claudeProofBeforeLateDrop,
+    'history-only deletion barriers must also ACK-drop without observation proof'
+  );
+  assert.equal(
+    db.prepare(
+      "SELECT COUNT(*) AS count FROM eyes_on_agents_thread WHERE provider = 'claude' AND thread_id = ?"
+    ).get(historyOnlyThread).count,
+    0
+  );
+
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [],
+    deletion: {
+      tombstones: [],
+      healthyScopeKeys: [deletionSource],
+      completeSnapshot: false,
+      observedAt: 208_000
+    }
+  }), { changed: false });
+  assert.equal(
+    db.prepare(
+      `SELECT is_active FROM eyes_on_agents_claude_deletion_tombstone
+       WHERE source_key = ? AND identity_id = ?`
+    ).get(deletionSource, deletedCliThread).is_active,
+    1,
+    'partial tombstone omission must preserve the active deletion'
+  );
+  const restoreThread = (metadataMtime, desktopEvidenceComplete, observedAt) => ({
+    threadId: deletedCliThread,
+    desktopSessionId: deletedDesktopSession,
+    desktopMetadataMtime: metadataMtime,
+    transcriptPath: `/tmp/project/${deletedCliThread}.jsonl`,
+    transcriptEvidenceComplete: true,
+    desktopEvidenceComplete,
+    title: 'Claude restored',
+    cwd: '/tmp/project',
+    archiveState: 'active',
+    transcriptActivityAt: observedAt,
+    lastActivityAt: observedAt,
+    observedAt
+  });
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [restoreThread(201_999, true, 209_000)],
+    deletion: {
+      tombstones: [],
+      healthyScopeKeys: [deletionSource],
+      completeSnapshot: true,
+      observedAt: 209_000
+    }
+  }), { changed: false }, 'older live metadata cannot restore a deleted row');
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [restoreThread(210_000, false, 210_000)]
+  }), { changed: false }, 'partial newer metadata cannot restore a deleted row');
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [restoreThread(211_000, true, 211_000)],
+    deletion: {
+      tombstones: [],
+      healthyScopeKeys: [deletionSource],
+      completeSnapshot: true,
+      observedAt: 211_000
+    }
+  }), { changed: true }, 'newer unique metadata from a healthy full scan may restore the pair');
+  const restoredRow = { ...db.prepare(
+    `SELECT domain_id, is_deleted, deleted_at, is_unread, transcript_path,
+      last_user_prompt_preview, last_user_prompt_turn_id, last_user_prompt_at,
+      last_user_prompt_source
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(deletedCliThread)) };
+  assert.deepEqual(restoredRow, {
+    domain_id: claudeDomain.id,
+    is_deleted: 0,
+    deleted_at: null,
+    is_unread: 0,
+    transcript_path: `/tmp/project/${deletedCliThread}.jsonl`,
+    last_user_prompt_preview: null,
+    last_user_prompt_turn_id: null,
+    last_user_prompt_at: null,
+    last_user_prompt_source: null
+  }, 'restore must retain Domain and must not revive an old question/unread state');
+  assert.ok(await repository.getClaudeOpenTarget({
+    sessionKey: claudeKey(deletedCliThread)
+  }));
 
   db.close();
   console.log('EyesOnAgents repository tests passed');

@@ -6,6 +6,8 @@ import { sqliteManager } from '../sqliteHelper/sqlite.manager';
 import type {
   EyesOnAgentsCompletionAlertIntent,
   EyesOnAgentsClaudeAgentState,
+  EyesOnAgentsClaudeDeletionReconciliation,
+  EyesOnAgentsClaudeDeletionTombstone,
   EyesOnAgentsClaudeInventoryThread,
   EyesOnAgentsClaudeOpenTarget,
   EyesOnAgentsDiscoveredThread,
@@ -105,6 +107,7 @@ interface ThreadRefreshPersistenceRow {
 
 const MAX_ARCHIVED_THREAD_IDS = 10_000;
 const MAX_THREAD_SNAPSHOTS = 20_000;
+const MAX_CLAUDE_DELETION_TOMBSTONES = 20_000;
 const THREAD_REFRESH_PAGE_SIZE = 40;
 type ThreadRefreshColumnValue = string | number | null;
 
@@ -156,6 +159,10 @@ const normalizeClaudeInventoryThread = (
   return {
     threadId: parseEyesOnAgentsUuid(value.threadId),
     desktopSessionId: parseEyesOnAgentsDesktopSessionId(value.desktopSessionId),
+    desktopMetadataMtime: parseEyesOnAgentsTimestamp(
+      value.desktopMetadataMtime,
+      'desktopMetadataMtime'
+    ),
     transcriptPath: normalizeClaudeTranscriptPath(value.transcriptPath),
     clearDesktopSessionId: value.clearDesktopSessionId === true,
     clearTranscriptPath: value.clearTranscriptPath === true,
@@ -174,6 +181,65 @@ const normalizeClaudeInventoryThread = (
   };
 };
 
+const normalizeClaudeDeletionSourceKey = (value: unknown): string => {
+  const sourceKey = parseEyesOnAgentsPath(value);
+  if (sourceKey === null || !isAbsolute(sourceKey)) {
+    throw new Error('Claude deletion source key must be an absolute path');
+  }
+  return sourceKey;
+};
+
+const normalizeClaudeDeletionTombstone = (
+  value: EyesOnAgentsClaudeDeletionTombstone
+): EyesOnAgentsClaudeDeletionTombstone => {
+  const observedAt = parseEyesOnAgentsTimestamp(
+    value?.observedAt,
+    'Claude deletion observedAt',
+    false
+  ) as number;
+  const deletedAt = parseEyesOnAgentsTimestamp(
+    value?.deletedAt,
+    'Claude deletion deletedAt',
+    false
+  ) as number;
+  if (deletedAt > observedAt) throw new Error('Claude deletion time cannot be in the future');
+  return {
+    sourceKey: normalizeClaudeDeletionSourceKey(value?.sourceKey),
+    identityId: parseEyesOnAgentsUuid(value?.identityId, 'Claude deletion identity'),
+    deletedAt,
+    observedAt
+  };
+};
+
+const normalizeClaudeDeletionReconciliation = (
+  value: EyesOnAgentsClaudeDeletionReconciliation
+): EyesOnAgentsClaudeDeletionReconciliation => {
+  if (!value || !Array.isArray(value.tombstones) ||
+    value.tombstones.length > MAX_CLAUDE_DELETION_TOMBSTONES ||
+    !Array.isArray(value.healthyScopeKeys) ||
+    value.healthyScopeKeys.length > MAX_CLAUDE_DELETION_TOMBSTONES ||
+    typeof value.completeSnapshot !== 'boolean') {
+    throw new Error('Claude deletion reconciliation is invalid');
+  }
+  const observedAt = parseEyesOnAgentsTimestamp(
+    value.observedAt,
+    'Claude deletion reconciliation observedAt',
+    false
+  ) as number;
+  const healthyScopeKeys = value.healthyScopeKeys.map(normalizeClaudeDeletionSourceKey);
+  if (new Set(healthyScopeKeys).size !== healthyScopeKeys.length) {
+    throw new Error('Claude deletion source keys must be unique');
+  }
+  const healthyScopes = new Set(healthyScopeKeys);
+  const tombstones = value.tombstones.map(normalizeClaudeDeletionTombstone);
+  if (new Set(tombstones.map((item) => `${item.sourceKey}\0${item.identityId}`)).size !==
+    tombstones.length || tombstones.some((item) =>
+      item.observedAt !== observedAt || !healthyScopes.has(item.sourceKey))) {
+    throw new Error('Claude deletion tombstones are inconsistent');
+  }
+  return { tombstones, healthyScopeKeys, completeSnapshot: value.completeSnapshot, observedAt };
+};
+
 const normalizeClaudeAgentState = (
   value: EyesOnAgentsClaudeAgentState
 ): EyesOnAgentsClaudeAgentState => ({
@@ -189,9 +255,11 @@ const parseTurnId = (value: unknown, label: string): string | null => {
   return parseEyesOnAgentsText(value, label, 200);
 };
 
-const parseLastUserPromptSource = (value: unknown): 'app_server' | 'codex_hook' | null => {
+const parseLastUserPromptSource = (
+  value: unknown
+): 'app_server' | 'codex_hook' | 'claude_hook' | null => {
   if (value === null) return null;
-  if (value === 'app_server' || value === 'codex_hook') return value;
+  if (value === 'app_server' || value === 'codex_hook' || value === 'claude_hook') return value;
   throw new Error('last user prompt source is unsupported');
 };
 
@@ -496,6 +564,198 @@ const runtimeEventProvider = (event: EyesOnAgentsRuntimeEvent): EyesOnAgentsProv
   event.source === 'claude_hook' ? 'claude' : 'codex'
 );
 
+const claudeDesktopIdentityUuid = (desktopSessionId: string | null): string | null => {
+  const parsed = parseEyesOnAgentsDesktopSessionId(desktopSessionId);
+  return parsed === null ? null : parsed.slice('local_'.length);
+};
+
+const hasActiveClaudeDeletionIdentity = (identityId: string): boolean => Boolean(
+  sqliteManager.db.prepare(
+    `SELECT 1 FROM eyes_on_agents_claude_deletion_tombstone
+     WHERE is_active = 1 AND identity_id = ? LIMIT 1`
+  ).get(identityId)
+);
+
+const hasActiveClaudeDeletionTombstone = (
+  threadId: string,
+  desktopSessionId: string | null
+): boolean => {
+  const desktopIdentityId = claudeDesktopIdentityUuid(desktopSessionId);
+  if (hasActiveClaudeDeletionIdentity(threadId)) return true;
+  if (desktopIdentityId === null || !hasActiveClaudeDeletionIdentity(desktopIdentityId)) {
+    return false;
+  }
+  const row = sqliteManager.db.prepare(
+    `SELECT COUNT(*) AS count FROM eyes_on_agents_thread
+     WHERE provider = 'claude' AND desktop_identity_ambiguous = 0
+       AND desktop_session_id = ?`
+  ).get(desktopSessionId) as { count: number };
+  return Number(row.count) === 1;
+};
+
+const isClaudeRuntimeIdentityDeleted = (threadId: string): boolean => {
+  const row = sqliteManager.db.prepare(
+    `SELECT desktop_session_id, is_deleted FROM eyes_on_agents_thread
+     WHERE provider = 'claude' AND thread_id = ?`
+  ).get(threadId) as { desktop_session_id: string | null; is_deleted: number } | undefined;
+  if (hasActiveClaudeDeletionTombstone(threadId, row?.desktop_session_id ?? null)) return true;
+  if (row) return row.is_deleted === 1;
+  return Boolean(sqliteManager.db.prepare(
+    `SELECT 1 FROM eyes_on_agents_claude_deletion_tombstone
+     WHERE identity_id = ? LIMIT 1`
+  ).get(threadId));
+};
+
+const latestClaudeDeletionAt = (
+  threadId: string,
+  desktopSessionId: string | null,
+  rowDeletedAt: number | null
+): number | null => {
+  const desktopIdentityId = claudeDesktopIdentityUuid(desktopSessionId);
+  const row = sqliteManager.db.prepare(
+    `SELECT MAX(deleted_at) AS deleted_at
+     FROM eyes_on_agents_claude_deletion_tombstone
+     WHERE identity_id = ? OR (? IS NOT NULL AND identity_id = ?)`
+  ).get(threadId, desktopIdentityId, desktopIdentityId) as { deleted_at: number | null };
+  if (row.deleted_at === null) return rowDeletedAt;
+  return rowDeletedAt === null ? row.deleted_at : Math.max(rowDeletedAt, row.deleted_at);
+};
+
+const reconcileClaudeDeletionTombstonesInTransaction = (
+  deletion: EyesOnAgentsClaudeDeletionReconciliation
+): boolean => {
+  const now = Date.now();
+  const upsert = sqliteManager.db.prepare(
+    `INSERT INTO eyes_on_agents_claude_deletion_tombstone (
+      source_key, identity_id, deleted_at, last_seen_at, is_active, cleared_at,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 1, NULL, ?, ?)
+    ON CONFLICT(source_key, identity_id) DO UPDATE SET
+      deleted_at = MAX(eyes_on_agents_claude_deletion_tombstone.deleted_at, excluded.deleted_at),
+      last_seen_at = MAX(eyes_on_agents_claude_deletion_tombstone.last_seen_at, excluded.last_seen_at),
+      is_active = 1,
+      cleared_at = NULL,
+      updated_at = excluded.updated_at`
+  );
+  for (const tombstone of deletion.tombstones) {
+    upsert.run(
+      tombstone.sourceKey,
+      tombstone.identityId,
+      tombstone.deletedAt,
+      tombstone.observedAt,
+      now,
+      now
+    );
+  }
+
+  if (deletion.completeSnapshot && deletion.healthyScopeKeys.length > 0) {
+    const healthyPlaceholders = deletion.healthyScopeKeys.map(() => '?').join(', ');
+    const activeRows = sqliteManager.db.prepare(
+      `SELECT source_key, identity_id
+       FROM eyes_on_agents_claude_deletion_tombstone
+       WHERE is_active = 1 AND source_key IN (${healthyPlaceholders})`
+    ).all(...deletion.healthyScopeKeys) as Array<{ source_key: string; identity_id: string }>;
+    const observed = new Set(deletion.tombstones.map(
+      (item) => `${item.sourceKey}\0${item.identityId}`
+    ));
+    const clear = sqliteManager.db.prepare(
+      `UPDATE eyes_on_agents_claude_deletion_tombstone SET
+        is_active = 0, cleared_at = ?, updated_at = ?
+       WHERE source_key = ? AND identity_id = ? AND is_active = 1`
+    );
+    for (const row of activeRows) {
+      if (!observed.has(`${row.source_key}\0${row.identity_id}`)) {
+        clear.run(deletion.observedAt, now, row.source_key, row.identity_id);
+      }
+    }
+  }
+
+  const deleted = sqliteManager.db.prepare(
+    `UPDATE eyes_on_agents_thread SET
+      is_deleted = 1,
+      deleted_at = (
+        SELECT MAX(tombstone.deleted_at)
+        FROM eyes_on_agents_claude_deletion_tombstone AS tombstone
+        WHERE tombstone.is_active = 1 AND (
+          tombstone.identity_id = eyes_on_agents_thread.thread_id OR
+          (eyes_on_agents_thread.desktop_identity_ambiguous = 0 AND
+            eyes_on_agents_thread.desktop_session_id = 'local_' || tombstone.identity_id AND
+            (SELECT COUNT(*) FROM eyes_on_agents_thread AS desktop_match
+             WHERE desktop_match.provider = 'claude'
+               AND desktop_match.desktop_identity_ambiguous = 0
+               AND desktop_match.desktop_session_id = eyes_on_agents_thread.desktop_session_id) = 1)
+        )
+      ),
+      transcript_path = NULL,
+      transcript_identity_ambiguous = 0,
+      transcript_activity_at = NULL,
+      title = NULL,
+      cwd = NULL,
+      project_key = NULL,
+      project_root = NULL,
+      project_name = NULL,
+      runtime_state = 'unknown',
+      active_flags_json = '[]',
+      active_turn_id = NULL,
+      last_completed_turn_id = NULL,
+      last_completed_at = NULL,
+      last_opened_turn_id = NULL,
+      last_opened_at = NULL,
+      is_unread = 0,
+      status_source = 'discovery',
+      status_observed_at = NULL,
+      status_fresh_until = NULL,
+      last_activity_at = NULL,
+      last_user_prompt_preview = NULL,
+      last_user_prompt_turn_id = NULL,
+      last_user_prompt_at = NULL,
+      last_user_prompt_truncated = 0,
+      last_user_prompt_source = NULL,
+      last_user_prompt_checked_at = NULL,
+      updated_at = ?
+     WHERE provider = 'claude'
+       AND EXISTS (
+         SELECT 1 FROM eyes_on_agents_claude_deletion_tombstone AS tombstone
+         WHERE tombstone.is_active = 1 AND (
+           tombstone.identity_id = eyes_on_agents_thread.thread_id OR
+           (eyes_on_agents_thread.desktop_identity_ambiguous = 0 AND
+             eyes_on_agents_thread.desktop_session_id = 'local_' || tombstone.identity_id AND
+             (SELECT COUNT(*) FROM eyes_on_agents_thread AS desktop_match
+              WHERE desktop_match.provider = 'claude'
+                AND desktop_match.desktop_identity_ambiguous = 0
+                AND desktop_match.desktop_session_id = eyes_on_agents_thread.desktop_session_id) = 1)
+         )
+       )
+       AND (
+         is_deleted = 0 OR transcript_path IS NOT NULL OR transcript_activity_at IS NOT NULL OR
+         title IS NOT NULL OR cwd IS NOT NULL OR project_key IS NOT NULL OR
+         project_root IS NOT NULL OR project_name IS NOT NULL OR
+         runtime_state <> 'unknown' OR active_flags_json <> '[]' OR active_turn_id IS NOT NULL OR
+         last_completed_turn_id IS NOT NULL OR last_completed_at IS NOT NULL OR
+         last_opened_turn_id IS NOT NULL OR last_opened_at IS NOT NULL OR is_unread <> 0 OR
+         status_source <> 'discovery' OR status_observed_at IS NOT NULL OR
+         status_fresh_until IS NOT NULL OR last_activity_at IS NOT NULL OR
+         last_user_prompt_preview IS NOT NULL OR last_user_prompt_turn_id IS NOT NULL OR
+         last_user_prompt_at IS NOT NULL OR last_user_prompt_truncated <> 0 OR
+         last_user_prompt_source IS NOT NULL OR last_user_prompt_checked_at IS NOT NULL OR
+         deleted_at <> (
+           SELECT MAX(tombstone.deleted_at)
+           FROM eyes_on_agents_claude_deletion_tombstone AS tombstone
+           WHERE tombstone.is_active = 1 AND (
+             tombstone.identity_id = eyes_on_agents_thread.thread_id OR
+             (eyes_on_agents_thread.desktop_identity_ambiguous = 0 AND
+               eyes_on_agents_thread.desktop_session_id = 'local_' || tombstone.identity_id AND
+               (SELECT COUNT(*) FROM eyes_on_agents_thread AS desktop_match
+                WHERE desktop_match.provider = 'claude'
+                  AND desktop_match.desktop_identity_ambiguous = 0
+                  AND desktop_match.desktop_session_id = eyes_on_agents_thread.desktop_session_id) = 1)
+           )
+         )
+       )`
+  ).run(now);
+  return Number(deleted.changes) > 0;
+};
+
 const titleFromStoredThreadSnapshot = (
   provider: EyesOnAgentsProvider,
   threadId: string
@@ -533,6 +793,12 @@ const runtimePersistenceResult = (
   };
 };
 
+const ignoredRuntimePersistenceResult = (): EyesOnAgentsRuntimePersistenceResult => ({
+  created: false,
+  titleMissing: false,
+  completionAlert: null
+});
+
 const claimCompletionAlertInTransaction = (params: {
   provider: EyesOnAgentsProvider;
   threadId: string;
@@ -543,6 +809,7 @@ const claimCompletionAlertInTransaction = (params: {
   const row = sqliteManager.db.prepare(
     `SELECT title FROM eyes_on_agents_thread
      WHERE provider = ? AND thread_id = ?
+       AND is_deleted = 0
        AND is_archived = 0
        AND runtime_state = 'idle'
        AND is_unread = 1
@@ -617,9 +884,7 @@ const applyRuntimeEventInTransaction = (
       || event.type === 'turn_completed' ? 1 : 0,
     event.source,
     event.observedAt,
-    provider === 'claude' && ['working', 'waiting_approval', 'waiting_input'].includes(state)
-      ? event.observedAt + 30_000
-      : null,
+    null,
     event.observedAt,
     now,
     now
@@ -748,9 +1013,7 @@ const applyRuntimeEventInTransaction = (
     state,
     event.source,
     event.observedAt,
-    provider === 'claude' && ['working', 'waiting_approval', 'waiting_input'].includes(state)
-      ? event.observedAt + 30_000
-      : null,
+    null,
     event.observedAt,
     now,
     provider,
@@ -764,8 +1027,13 @@ const normalizeHookLastUserPromptCandidate = (
   value: EyesOnAgentsHookLastUserPromptCandidate | undefined
 ): EyesOnAgentsHookLastUserPromptCandidate | undefined => {
   if (value === undefined) return undefined;
-  if (event.type !== 'turn_started' || event.source !== 'codex_hook') {
-    throw new Error('hook last user prompt requires a codex_hook turn_started event');
+  if (
+    event.type !== 'turn_started' ||
+    (event.source !== 'codex_hook' && event.source !== 'claude_hook')
+  ) {
+    throw new Error(
+      'hook last user prompt requires a codex_hook turn_started event or claude_hook turn_started event'
+    );
   }
   return parseEyesOnAgentsHookLastUserPromptCandidate(value);
 };
@@ -774,23 +1042,28 @@ const applyHookLastUserPromptInTransaction = (
   event: Extract<EyesOnAgentsRuntimeEvent, { type: 'turn_started' }>,
   candidate: EyesOnAgentsHookLastUserPromptCandidate
 ): void => {
+  const provider = runtimeEventProvider(event);
+  const source = event.source;
   sqliteManager.db.prepare(
     `UPDATE eyes_on_agents_thread SET
       last_user_prompt_preview = ?,
       last_user_prompt_turn_id = ?,
       last_user_prompt_at = ?,
       last_user_prompt_truncated = ?,
-      last_user_prompt_source = 'codex_hook',
+      last_user_prompt_source = ?,
       last_user_prompt_checked_at = NULL,
       updated_at = ?
-     WHERE provider = 'codex' AND thread_id = ?
+     WHERE provider = ? AND thread_id = ?
+       AND is_deleted = 0
        AND (last_user_prompt_at IS NULL OR last_user_prompt_at < ?)`
   ).run(
     candidate.preview,
     event.turnId,
     event.observedAt,
     candidate.truncated ? 1 : 0,
+    source,
     Date.now(),
+    provider,
     event.threadId,
     event.observedAt
   );
@@ -817,7 +1090,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         last_user_prompt_at, last_user_prompt_truncated, last_user_prompt_source,
         last_user_prompt_checked_at
        FROM eyes_on_agents_thread
-       WHERE archive_state <> 'archived'
+       WHERE archive_state <> 'archived' AND is_deleted = 0
        ORDER BY COALESCE(last_activity_at, updated_at) DESC,
          updated_at DESC, session_key ASC`,
       []
@@ -1178,7 +1451,14 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     return transaction();
   }
 
-  async clearLastUserPrompts(): Promise<{ changed: boolean }> {
+  async clearLastUserPrompts(params: {
+    providers: EyesOnAgentsProvider[];
+  }): Promise<{ changed: boolean }> {
+    if (!params || !Array.isArray(params.providers) || params.providers.length < 1) {
+      throw new Error('prompt clear providers are required');
+    }
+    const providers = [...new Set(params.providers.map(parseEyesOnAgentsProvider))];
+    const placeholders = providers.map(() => '?').join(', ');
     const result = sqliteManager.db.prepare(
       `UPDATE eyes_on_agents_thread SET
         last_user_prompt_preview = NULL,
@@ -1188,13 +1468,16 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         last_user_prompt_source = NULL,
         last_user_prompt_checked_at = NULL,
         updated_at = ?
-       WHERE last_user_prompt_preview IS NOT NULL
-          OR last_user_prompt_turn_id IS NOT NULL
-          OR last_user_prompt_at IS NOT NULL
-          OR last_user_prompt_truncated <> 0
-          OR last_user_prompt_source IS NOT NULL
-          OR last_user_prompt_checked_at IS NOT NULL`
-    ).run(Date.now());
+       WHERE provider IN (${placeholders})
+         AND (
+           last_user_prompt_preview IS NOT NULL
+           OR last_user_prompt_turn_id IS NOT NULL
+           OR last_user_prompt_at IS NOT NULL
+           OR last_user_prompt_truncated <> 0
+           OR last_user_prompt_source IS NOT NULL
+           OR last_user_prompt_checked_at IS NOT NULL
+         )`
+    ).run(Date.now(), ...providers);
     return { changed: Number(result.changes) > 0 };
   }
 
@@ -1492,6 +1775,12 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     );
     const transaction = sqliteManager.db.transaction(
       (): EyesOnAgentsRuntimePersistenceResult => {
+        if (
+          runtimeEventProvider(event) === 'claude' &&
+          isClaudeRuntimeIdentityDeleted(event.threadId)
+        ) {
+          return ignoredRuntimePersistenceResult();
+        }
         const result = applyRuntimeEventInTransaction(event);
         if (hookLastUserPrompt !== undefined && event.type === 'turn_started') {
           applyHookLastUserPromptInTransaction(event, hookLastUserPrompt);
@@ -1548,6 +1837,16 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             completionAlert: null
           };
         }
+        if (provider === 'claude' && isClaudeRuntimeIdentityDeleted(event.threadId)) {
+          sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_hook_delivery_receipt
+             SET is_observation_eligible = 0 WHERE delivery_id = ?`
+          ).run(deliveryId);
+          return {
+            duplicate: true,
+            ...ignoredRuntimePersistenceResult()
+          };
+        }
         const persistence = applyRuntimeEventInTransaction(
           event,
           params.replayAuthority === 'current_listener'
@@ -1591,7 +1890,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ELSE is_unread
         END,
         updated_at = ?
-       WHERE session_key = ?`,
+       WHERE session_key = ? AND is_deleted = 0`,
       [openedAt, Date.now(), sessionKey]
     );
     if (Number(result.changes) === 0) throw new Error('Thread was not found');
@@ -1612,7 +1911,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     const placeholders = providers.map(() => '?').join(', ');
     const result = await sqliteHelper.safeRun(
       `UPDATE eyes_on_agents_thread SET is_unread = 0
-       WHERE archive_state <> 'archived'
+       WHERE archive_state <> 'archived' AND is_deleted = 0
          AND is_unread = 1
          AND runtime_state IN ('idle', 'failed', 'ended')
          AND provider IN (${placeholders})`,
@@ -1706,7 +2005,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     const domainId = parsePositiveId(params?.domainId, 'domainId');
     requireActiveDomain(domainId);
     const result = await sqliteHelper.safeRun(
-      'UPDATE eyes_on_agents_thread SET domain_id = ?, updated_at = ? WHERE session_key = ?',
+      `UPDATE eyes_on_agents_thread SET domain_id = ?, updated_at = ?
+       WHERE session_key = ? AND is_deleted = 0`,
       [domainId, Date.now(), sessionKey]
     );
     if (Number(result.changes) === 0) throw new Error('Thread was not found');
@@ -1714,40 +2014,33 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
 
   async upsertClaudeInventory(params: {
     threads: EyesOnAgentsClaudeInventoryThread[];
+    deletion?: EyesOnAgentsClaudeDeletionReconciliation;
   }): Promise<EyesOnAgentsRepositoryMutationResult> {
     if (!params || !Array.isArray(params.threads) || params.threads.length > 40_000) {
       throw new Error('Claude inventory threads are invalid');
     }
     const threads = params.threads.map(normalizeClaudeInventoryThread);
+    const deletion = params.deletion === undefined
+      ? undefined
+      : normalizeClaudeDeletionReconciliation(params.deletion);
     if (new Set(threads.map((thread) => thread.threadId)).size !== threads.length) {
       throw new Error('Claude inventory thread IDs must be unique');
     }
     const transaction = sqliteManager.db.transaction((): EyesOnAgentsRepositoryMutationResult => {
       const domainId = defaultDomainId();
       const now = Date.now();
-      let changed = false;
+      let changed = deletion === undefined
+        ? false
+        : reconcileClaudeDeletionTombstonesInTransaction(deletion);
       const select = sqliteManager.db.prepare(
         `SELECT desktop_session_id, desktop_identity_ambiguous, transcript_path,
           transcript_identity_ambiguous, title, cwd,
           project_key, project_root, project_name, archive_state, last_activity_at,
-          transcript_activity_at, runtime_state, status_source, status_fresh_until
+          transcript_activity_at, runtime_state, status_source, status_fresh_until,
+          is_deleted, deleted_at
          FROM eyes_on_agents_thread WHERE provider = 'claude' AND thread_id = ?`
       );
       for (const thread of threads) {
-        const collision = thread.desktopSessionId === null ? false : Boolean(
-          sqliteManager.db.prepare(
-            `SELECT 1 FROM eyes_on_agents_thread
-             WHERE provider = 'claude' AND thread_id <> ? AND desktop_session_id = ? LIMIT 1`
-          ).get(thread.threadId, thread.desktopSessionId)
-        );
-        if (collision && thread.desktopSessionId !== null) {
-          const cleared = sqliteManager.db.prepare(
-            `UPDATE eyes_on_agents_thread SET desktop_session_id = NULL,
-              desktop_identity_ambiguous = 1, updated_at = ?
-             WHERE provider = 'claude' AND desktop_session_id = ?`
-          ).run(now, thread.desktopSessionId);
-          if (Number(cleared.changes) > 0) changed = true;
-        }
         const row = select.get(thread.threadId) as {
           desktop_session_id: string | null; desktop_identity_ambiguous: number;
           transcript_path: string | null; transcript_identity_ambiguous: number;
@@ -1756,7 +2049,85 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           archive_state: string; last_activity_at: number | null;
           transcript_activity_at: number | null; runtime_state: string;
           status_source: string; status_fresh_until: number | null;
+          is_deleted: number; deleted_at: number | null;
         } | undefined;
+        const deletionAt = latestClaudeDeletionAt(
+          thread.threadId,
+          thread.desktopSessionId ?? row?.desktop_session_id ?? null,
+          row?.deleted_at ?? null
+        );
+        const incomingDesktopIdentity = claudeDesktopIdentityUuid(thread.desktopSessionId);
+        const activeThreadTombstone = hasActiveClaudeDeletionIdentity(thread.threadId);
+        const activeDesktopTombstone = incomingDesktopIdentity !== null &&
+          hasActiveClaudeDeletionIdentity(incomingDesktopIdentity);
+        const activeTombstone = activeThreadTombstone || activeDesktopTombstone ||
+          hasActiveClaudeDeletionTombstone(thread.threadId, row?.desktop_session_id ?? null);
+        if (activeTombstone) {
+          const desktopIdentityCollision = thread.desktopSessionId === null ? false : Boolean(
+            sqliteManager.db.prepare(
+              `SELECT 1 FROM eyes_on_agents_thread
+               WHERE provider = 'claude' AND thread_id <> ? AND desktop_session_id = ? LIMIT 1`
+            ).get(thread.threadId, thread.desktopSessionId)
+          );
+          const safeDesktopPair = thread.desktopEvidenceComplete === true &&
+            thread.clearDesktopSessionId !== true &&
+            thread.desktopSessionId !== null &&
+            !desktopIdentityCollision;
+          if (!row && deletionAt !== null && (activeThreadTombstone ||
+            (activeDesktopTombstone && safeDesktopPair))) {
+            sqliteManager.db.prepare(
+              `INSERT OR IGNORE INTO eyes_on_agents_thread (
+                session_key, provider, thread_id, desktop_session_id, domain_id,
+                archive_state, is_deleted, deleted_at, created_at, updated_at
+              ) VALUES (?, 'claude', ?, ?, ?, 'unknown', 1, ?, ?, ?)`
+            ).run(
+              buildEyesOnAgentsSessionKey('claude', thread.threadId),
+              thread.threadId,
+              safeDesktopPair ? thread.desktopSessionId : null,
+              domainId,
+              deletionAt,
+              now,
+              now
+            );
+          } else if (row?.is_deleted === 1 && row.desktop_session_id === null && safeDesktopPair) {
+            sqliteManager.db.prepare(
+              `UPDATE eyes_on_agents_thread SET desktop_session_id = ?,
+                desktop_identity_ambiguous = 0, updated_at = ?
+               WHERE provider = 'claude' AND thread_id = ? AND is_deleted = 1`
+            ).run(thread.desktopSessionId, now, thread.threadId);
+          }
+          continue;
+        }
+        const matchesPersistedDesktopIdentity = row?.desktop_session_id === null ||
+          row?.desktop_session_id === undefined ||
+          row.desktop_session_id === thread.desktopSessionId;
+        const isVerifiedRestore = deletionAt !== null &&
+          thread.desktopEvidenceComplete === true &&
+          thread.clearDesktopSessionId !== true &&
+          thread.desktopSessionId !== null &&
+          thread.desktopMetadataMtime !== null &&
+          thread.desktopMetadataMtime !== undefined &&
+          thread.desktopMetadataMtime > deletionAt &&
+          matchesPersistedDesktopIdentity;
+        const requiresVerifiedRestore = row?.is_deleted === 1 ||
+          (row === undefined && deletionAt !== null);
+        if (requiresVerifiedRestore && !isVerifiedRestore) continue;
+
+        const collision = thread.desktopSessionId === null ? false : Boolean(
+          sqliteManager.db.prepare(
+            `SELECT 1 FROM eyes_on_agents_thread
+             WHERE provider = 'claude' AND thread_id <> ? AND desktop_session_id = ? LIMIT 1`
+          ).get(thread.threadId, thread.desktopSessionId)
+        );
+        if (isVerifiedRestore && collision) continue;
+        if (collision && thread.desktopSessionId !== null) {
+          const cleared = sqliteManager.db.prepare(
+            `UPDATE eyes_on_agents_thread SET desktop_session_id = NULL,
+              desktop_identity_ambiguous = 1, updated_at = ?
+             WHERE provider = 'claude' AND desktop_session_id = ?`
+          ).run(now, thread.desktopSessionId);
+          if (Number(cleared.changes) > 0) changed = true;
+        }
         const project = projectColumns(thread.project);
         if (!row) {
           sqliteManager.db.prepare(
@@ -1815,12 +2186,9 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           transcriptActivityAt: thread.transcriptActivityAt === null
             ? row.transcript_activity_at
             : Math.max(row.transcript_activity_at ?? 0, thread.transcriptActivityAt),
-          statusFreshUntil: thread.transcriptActivityAt !== null &&
-            thread.transcriptActivityAt > (row.transcript_activity_at ?? 0) &&
-            row.status_source === 'claude_hook' &&
-            ['working', 'waiting_approval', 'waiting_input'].includes(row.runtime_state)
-            ? Math.max(row.status_fresh_until ?? 0, thread.transcriptActivityAt + 30_000)
-            : row.status_fresh_until
+          statusFreshUntil: row.status_fresh_until,
+          isDeleted: isVerifiedRestore ? 0 : row.is_deleted,
+          deletedAt: isVerifiedRestore ? null : row.deleted_at
         };
         if (next.desktopSessionId === row.desktop_session_id &&
           next.desktopIdentityAmbiguous === row.desktop_identity_ambiguous &&
@@ -1831,13 +2199,16 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           next.projectRoot === row.project_root && next.projectName === row.project_name &&
           next.archiveState === row.archive_state && next.lastActivityAt === row.last_activity_at &&
           next.transcriptActivityAt === row.transcript_activity_at &&
-          next.statusFreshUntil === row.status_fresh_until) continue;
+          next.statusFreshUntil === row.status_fresh_until &&
+          next.isDeleted === row.is_deleted && next.deletedAt === row.deleted_at) continue;
         sqliteManager.db.prepare(
           `UPDATE eyes_on_agents_thread SET desktop_session_id = ?, desktop_identity_ambiguous = ?,
             transcript_path = ?, transcript_identity_ambiguous = ?,
             title = ?, cwd = ?, project_key = ?, project_root = ?, project_name = ?,
             is_archived = ?, archive_state = ?, last_activity_at = ?,
-            transcript_activity_at = ?, status_fresh_until = ?, updated_at = ?
+            transcript_activity_at = ?, status_fresh_until = ?,
+            is_deleted = ?, deleted_at = ?, is_unread = CASE WHEN ? = 0 THEN 0 ELSE is_unread END,
+            updated_at = ?
            WHERE provider = 'claude' AND thread_id = ?`
         ).run(
           next.desktopSessionId, next.desktopIdentityAmbiguous, next.transcriptPath,
@@ -1845,6 +2216,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           next.projectKey, next.projectRoot, next.projectName,
           next.archiveState === 'archived' ? 1 : 0, next.archiveState,
           next.lastActivityAt, next.transcriptActivityAt, next.statusFreshUntil,
+          next.isDeleted, next.deletedAt, next.isDeleted,
           now, thread.threadId
         );
         changed = true;
@@ -1875,14 +2247,24 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       for (const agent of agents) {
         if (agent.runtimeState === 'unknown') continue;
         const row = sqliteManager.db.prepare(
-          `SELECT runtime_state, status_observed_at, status_fresh_until, title, cwd, active_turn_id,
+          `SELECT runtime_state, status_source, status_observed_at, status_fresh_until,
+            title, cwd, active_turn_id,
             last_activity_at
            FROM eyes_on_agents_thread WHERE provider = 'claude' AND thread_id = ?`
         ).get(agent.threadId) as {
-          runtime_state: string; status_observed_at: number | null; status_fresh_until: number | null; title: string | null;
+          runtime_state: string; status_source: string; status_observed_at: number | null;
+          status_fresh_until: number | null; title: string | null;
           cwd: string | null; active_turn_id: string | null; last_activity_at: number | null;
         } | undefined;
-        if (!row || (row.status_observed_at !== null && row.status_observed_at > agent.observedAt)) continue;
+        if (
+          !row ||
+          isClaudeRuntimeIdentityDeleted(agent.threadId) ||
+          (row.status_observed_at !== null && row.status_observed_at > agent.observedAt) ||
+          (
+            row.status_source === 'claude_hook' &&
+            ['working', 'waiting_approval', 'waiting_input'].includes(row.runtime_state)
+          )
+        ) continue;
         const wasActive = ['working', 'waiting_approval', 'waiting_input'].includes(row.runtime_state);
         const isActive = ['working', 'waiting_approval', 'waiting_input'].includes(agent.runtimeState);
         const startedTurnId = agent.startedAt === null ? null : `claude-agent-${agent.startedAt}`;
@@ -1915,7 +2297,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             status_source = 'claude_agent_view', status_observed_at = ?,
             status_fresh_until = ?, last_activity_at = ?,
             updated_at = ?
-           WHERE provider = 'claude' AND thread_id = ? AND (
+           WHERE provider = 'claude' AND thread_id = ? AND is_deleted = 0 AND (
              runtime_state <> ? OR COALESCE(status_observed_at, -1) <> ? OR
              COALESCE(status_fresh_until, -1) <> ? OR
              COALESCE(title, '') <> COALESCE(?, '') OR COALESCE(cwd, '') <> COALESCE(?, '') OR
@@ -1938,7 +2320,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         const sql = `UPDATE eyes_on_agents_thread SET runtime_state = 'unknown',
           active_flags_json = '[]', active_turn_id = NULL, status_source = 'discovery',
           status_observed_at = ?, status_fresh_until = NULL, updated_at = ?
-          WHERE provider = 'claude' AND status_source = 'claude_agent_view'
+          WHERE provider = 'claude' AND is_deleted = 0
+            AND status_source = 'claude_agent_view'
             AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
             AND COALESCE(status_fresh_until, 0) <= ?
             ${present.length === 0 ? '' : `AND thread_id NOT IN (${placeholders})`}`;
@@ -1986,8 +2369,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       `UPDATE eyes_on_agents_thread SET runtime_state = 'unknown', active_flags_json = '[]',
         active_turn_id = NULL, status_source = 'discovery', status_observed_at = ?,
         status_fresh_until = NULL, updated_at = ?
-       WHERE provider = 'claude' AND status_source IN (${placeholders})
+       WHERE provider = 'claude' AND is_deleted = 0
+         AND status_source IN (${placeholders})
          AND runtime_state IN ('working', 'waiting_approval', 'waiting_input')
+         ${params.force === true ? '' : "AND status_source <> 'claude_hook'"}
          ${params.force === true ? '' : 'AND COALESCE(status_fresh_until, 0) <= ?'}`,
       params.force === true
         ? [observedAt, Date.now(), ...sources]
@@ -2005,7 +2390,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       last_received_at: number | null;
     }>(
       `SELECT MIN(committed_at) AS first_received_at, MAX(committed_at) AS last_received_at
-       FROM eyes_on_agents_hook_delivery_receipt WHERE provider = ?`,
+       FROM eyes_on_agents_hook_delivery_receipt
+       WHERE provider = ? AND is_observation_eligible = 1`,
       [provider]
     );
     const normalize = (value: number | null | undefined): number | null => (
@@ -2026,7 +2412,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       desktop_session_id: string | null; transcript_path: string | null; runtime_state: string;
     }>(
       `SELECT desktop_session_id, transcript_path, runtime_state
-       FROM eyes_on_agents_thread WHERE session_key = ? AND provider = 'claude'`,
+       FROM eyes_on_agents_thread
+       WHERE session_key = ? AND provider = 'claude' AND is_deleted = 0`,
       [sessionKey]
     );
     if (!row) return null;

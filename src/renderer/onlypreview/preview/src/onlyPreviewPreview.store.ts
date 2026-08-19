@@ -9,22 +9,32 @@ import {
   ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT,
-  ONLY_PREVIEW_HEADER_METADATA_EVENT,
-  ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT,
+  ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT,
   ONLY_PREVIEW_PREVIEW_CONTROL_EVENT,
+  ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
+  ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
+  type OnlyPreviewCharacterCountRevisionEvent,
   type OnlyPreviewDescriptor,
   type OnlyPreviewErrorCode,
   type OnlyPreviewFileRef,
-  type OnlyPreviewHeaderMetadata,
-  type OnlyPreviewPreviewControlEvent,
   type OnlyPreviewSettings,
   type OnlyPreviewTextContent
 } from '@shared/onlypreview/onlyPreview.types';
+import {
+  ONLY_PREVIEW_SEARCH_MAX_WATCH_PATHS,
+  ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
+  type OnlyPreviewSearchWatchCommitEvent
+} from '@shared/onlypreview/onlyPreviewSearch.type';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { OnlyPreviewCharacterCountSourceGate } from '../../common/onlyPreviewCharacterCountGate.service';
+import {
+  createOnlyPreviewWatchReloadCursor,
+  evaluateOnlyPreviewWatchReload,
+  type OnlyPreviewWatchReloadCursor
+} from './onlyPreviewWatchReload.service';
 
 const isExactHostEvent = (value: unknown): value is { hostId: string } => {
   if (!value || typeof value !== 'object') return false;
@@ -32,16 +42,57 @@ const isExactHostEvent = (value: unknown): value is { hostId: string } => {
   return Object.keys(event).length === 1 && typeof event.hostId === 'string';
 };
 
-const isPreviewControlEvent = (value: unknown): value is OnlyPreviewPreviewControlEvent => {
+const isBoundedString = (value: unknown, maxLength: number): value is string =>
+  typeof value === 'string' && value.length <= maxLength && !value.includes('\0');
+
+const isRelativePath = (value: unknown): value is string => {
+  if (!isBoundedString(value, 16_384) || !value || value.startsWith('/') || value.includes('\\')) {
+    return false;
+  }
+  return (
+    !/^[a-zA-Z]:/.test(value) &&
+    !value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+  );
+};
+
+const isRevisionEvent = (value: unknown): value is OnlyPreviewCharacterCountRevisionEvent => {
   if (!value || typeof value !== 'object') return false;
   const event = value as Record<string, unknown>;
   return (
-    Object.keys(event).length === 3 &&
+    Object.keys(event).length === 2 &&
     typeof event.hostId === 'string' &&
     typeof event.revision === 'string' &&
     event.revision.length > 0 &&
-    event.revision.length <= 128 &&
-    (event.action === 'render' || event.action === 'reload' || event.action === 'clear')
+    event.revision.length <= 128
+  );
+};
+
+const isWatchCommitEvent = (value: unknown): value is OnlyPreviewSearchWatchCommitEvent => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  if (
+    Object.keys(event).sort().join(',') !== 'commit,hostId' ||
+    typeof event.hostId !== 'string' ||
+    !event.commit ||
+    typeof event.commit !== 'object' ||
+    Array.isArray(event.commit)
+  ) {
+    return false;
+  }
+  const commit = event.commit as Record<string, unknown>;
+  return (
+    Object.keys(commit).sort().join(',') ===
+      'changedRelativePaths,full,generation,revision,workspaceId' &&
+    isBoundedString(commit.workspaceId, 256) &&
+    !!commit.workspaceId &&
+    Number.isSafeInteger(commit.generation) &&
+    (commit.generation as number) >= 0 &&
+    Number.isSafeInteger(commit.revision) &&
+    (commit.revision as number) > 0 &&
+    typeof commit.full === 'boolean' &&
+    Array.isArray(commit.changedRelativePaths) &&
+    commit.changedRelativePaths.length <= ONLY_PREVIEW_SEARCH_MAX_WATCH_PATHS &&
+    commit.changedRelativePaths.every(isRelativePath)
   );
 };
 
@@ -59,7 +110,20 @@ class OnlyPreviewPreviewStore {
   private initialized = false;
   private generation = 0;
   private restoreGeneration = 0;
+  private nextAction: 'render' | 'reload' = 'render';
+  private currentRelativePath = '';
+  private watchCursor: OnlyPreviewWatchReloadCursor = createOnlyPreviewWatchReloadCursor();
   private readonly characterCountGate = new OnlyPreviewCharacterCountSourceGate();
+
+  get descriptorType(): string {
+    const descriptor = this.descriptor;
+    if (!descriptor) return '';
+    return (
+      descriptor.language ||
+      descriptor.extension.replace(/^\./, '').toUpperCase() ||
+      descriptor.kind
+    );
+  }
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -70,7 +134,6 @@ class OnlyPreviewPreviewStore {
       this.errorMessage = onlyPreviewI18n.errors.HOST_NOT_FOUND;
       return;
     }
-    this.broadcastHeaderMetadata();
     xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, {
       hostId: onlyPreviewEnv.hostId
     });
@@ -90,7 +153,7 @@ class OnlyPreviewPreviewStore {
     this.actionError = '';
     this.descriptor = null;
     this.textContent = null;
-    this.broadcastHeaderMetadata();
+    this.currentRelativePath = '';
     try {
       const descriptor = unwrapOnlyPreviewResult(
         await onlyPreviewClient.describeFile({
@@ -102,7 +165,7 @@ class OnlyPreviewPreviewStore {
         return;
       }
       this.descriptor = descriptor;
-      this.broadcastHeaderMetadata();
+      this.currentRelativePath = descriptor.relativePath;
       if (descriptor.previewError) {
         this.presentationError =
           descriptor.previewError.code === 'SIGNATURE_MISMATCH'
@@ -150,7 +213,7 @@ class OnlyPreviewPreviewStore {
     this.presentationError = '';
     this.actionError = '';
     this.selectionReportingRevision = '';
-    this.broadcastHeaderMetadata();
+    this.currentRelativePath = '';
   }
 
   reportMediaError(kind: 'pdf' | 'media', reportingRevision: string): void {
@@ -188,24 +251,51 @@ class OnlyPreviewPreviewStore {
     xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT, () => {
       void this.refreshSettings();
     });
-    xpcRenderer.subscribe(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT, (payload) => {
-      if (
-        !isPreviewControlEvent(payload.params) ||
-        payload.params.hostId !== onlyPreviewEnv.hostId
-      ) {
+    xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, (payload) => {
+      if (!isRevisionEvent(payload.params) || payload.params.hostId !== onlyPreviewEnv.hostId) {
         return;
       }
-      if (payload.params.action === 'clear') {
-        this.clear();
-        return;
-      }
-      void this.restoreSelection(payload.params.revision);
+      const action = this.nextAction;
+      this.nextAction = 'render';
+      this.startTransition(payload.params.revision, action);
     });
-    xpcRenderer.subscribe(ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT, (payload) => {
+    xpcRenderer.subscribe(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, (payload) => {
       if (isExactHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
-        this.broadcastHeaderMetadata();
+        this.watchCursor = createOnlyPreviewWatchReloadCursor();
+        this.nextAction = 'render';
       }
     });
+    xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, (payload) => {
+      if (isExactHostEvent(payload.params) && payload.params.hostId === onlyPreviewEnv.hostId) {
+        this.nextAction = 'reload';
+      }
+    });
+    xpcRenderer.subscribe(ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT, (payload) => {
+      if (!isWatchCommitEvent(payload.params) || payload.params.hostId !== onlyPreviewEnv.hostId) {
+        return;
+      }
+      const decision = evaluateOnlyPreviewWatchReload(
+        this.watchCursor,
+        payload.params.commit,
+        this.currentRelativePath
+      );
+      this.watchCursor = decision.cursor;
+      if (!decision.reload) return;
+      this.startTransition(crypto.randomUUID(), 'reload');
+    });
+  }
+
+  /**
+   * The Shell owns selection and normally issues the transition revision. The Preview view also starts
+   * its own transitions for watch-driven reloads, so every transition is announced back to the Shell
+   * before the load begins; its character-count gate keys off that revision.
+   */
+  private startTransition(revision: string, action: 'render' | 'reload'): void {
+    const hostId = onlyPreviewEnv.hostId;
+    if (hostId) {
+      xpcRenderer.broadcast(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT, { hostId, revision, action });
+    }
+    void this.restoreSelection(revision);
   }
 
   private async restoreSelection(reportingRevision: string): Promise<void> {
@@ -258,22 +348,6 @@ class OnlyPreviewPreviewStore {
       hostId,
       characterCount
     });
-  }
-
-  private broadcastHeaderMetadata(): void {
-    const hostId = onlyPreviewEnv.hostId;
-    if (!hostId) return;
-    const descriptor = this.descriptor;
-    const metadata: OnlyPreviewHeaderMetadata | null = descriptor
-      ? {
-          fileName: descriptor.name,
-          relativePath: descriptor.relativePath,
-          kind: descriptor.kind,
-          extension: descriptor.extension,
-          language: descriptor.language
-        }
-      : null;
-    xpcRenderer.broadcast(ONLY_PREVIEW_HEADER_METADATA_EVENT, { hostId, metadata });
   }
 
   private async refreshSettings(): Promise<void> {

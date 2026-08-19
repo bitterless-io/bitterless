@@ -58,6 +58,7 @@ const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
   });
 
 const THREAD_SEARCH_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;
+const MAX_ACTION_ERROR_LENGTH = 300;
 
 const tokenizeThreadSearchText = (value: string): string[] =>
   value
@@ -324,6 +325,12 @@ class EyesOnAgentsState {
     );
   }
 
+  async setClaudeLastUserPromptCaptureEnabled(enabled: boolean): Promise<void> {
+    await this.runSnapshotAction('claude-prompt-retention', () =>
+      eyesOnAgentsEmitter.setClaudeLastUserPromptCaptureEnabled({ enabled }),
+    );
+  }
+
   async setClaudeProviderEnabled(enabled: boolean): Promise<void> {
     await this.runSnapshotAction('claude-provider-toggle', () =>
       eyesOnAgentsEmitter.setClaudeProviderEnabled({ enabled }),
@@ -549,13 +556,30 @@ class EyesOnAgentsState {
 
   private async runSnapshotAction(
     action: string,
-    callback: () => Promise<EyesOnAgentsSnapshot>,
+    callback: () => Promise<EyesOnAgentsSnapshot | null>,
   ): Promise<void> {
     if (this.busyAction) return;
     this.busyAction = action;
     this.actionError = null;
     try {
-      this.applySnapshot(await callback());
+      const snapshot = await callback();
+      if (snapshot === null) {
+        let refreshError: unknown = null;
+        try {
+          const refreshed = await eyesOnAgentsEmitter.getSnapshot();
+          if (refreshed !== null) this.applySnapshot(refreshed);
+        } catch (error) {
+          refreshError = error;
+        }
+        const refreshedError = action.startsWith('claude-')
+          ? this.snapshot?.claudeBridge.error ?? this.snapshot?.claudeProvider.error
+          : null;
+        const message = refreshedError ?? (refreshError === null
+          ? 'EyesOnAgents action returned no snapshot'
+          : this.errorMessage(refreshError));
+        throw new Error(message.slice(0, MAX_ACTION_ERROR_LENGTH));
+      }
+      this.applySnapshot(snapshot);
     } catch (error) {
       this.actionError = this.errorMessage(error);
       throw error;

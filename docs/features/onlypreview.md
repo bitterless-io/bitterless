@@ -64,10 +64,13 @@ implementation contract inside Bitterless and contains no private user data.
 │ │ selected-file metadata status                                    │ │
 │ └──────────────────────────────────────────────────────────────────┘ │
 │                        ┌────────────────────────────────────────────┐ │
-│                        │ PreviewHeader WebContentsView · 43px      │ │
-│                        ├────────────────────────────────────────────┤ │
-│                        │ PreviewContent WebContentsView            │ │
-│                        │ sandboxed, preview rendering only        │ │
+│                        │ Preview WebContentsView                    │ │
+│                        │ sandboxed, preview rendering only          │ │
+│                        │ ┌────────────────────────────────────────┐ │ │
+│                        │ │ 43px DOM header · identity/type/actions│ │ │
+│                        │ ├────────────────────────────────────────┤ │ │
+│                        │ │ preview body                           │ │ │
+│                        │ └────────────────────────────────────────┘ │ │
 │                        └────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────┘
 
@@ -82,19 +85,20 @@ Main capability/XPC supervisor ── private typed XPC ── hidden fileSearch
 └───────────────────────────────────────────────────────┘
 ```
 
-- The Shell is added first and covers the content bounds. PreviewHeader is added second and
-  PreviewContent third, so both native views cover only the Shell's right-side host.
+- The Shell is added first and covers the content bounds. The Preview view is added second, so it
+  covers only the Shell's right-side host.
 - A `ResizeObserver` reports the Shell preview-host rectangle through a bounded XPC method. Main
-  validates/clamps the rectangle, assigns its first 43px to Header, and assigns the remainder to
-  Content. Both stop above the Shell-owned status rail and to the right of the resize handle.
-- Header owns file identity/type and broadcasts render/reload/clear control; Content owns every
-  actual preview body and returns display-only descriptor metadata. Neither message contains file
-  content, an absolute path, or search-bootstrap authority.
-- Shell input, Header control, Content rendering, and search I/O do not share an event loop. The
-  hidden `fileSearch` renderer preload owns the search runtime; Main only validates and relays
-  bounded XPC messages.
+  validates/clamps the rectangle and assigns it to the Preview view as one rectangle. The view stops
+  above the Shell-owned status rail and to the right of the resize handle; its 43px header is DOM
+  inside that view, not a native bounds split.
+- The Preview view owns file identity/type, the native file actions, and every actual preview body in
+  one renderer. It announces a render/reload transition revision to the Shell and returns
+  display-only selected-grapheme counts. Neither message contains file content, an absolute path, or
+  search-bootstrap authority.
+- Shell input, Preview rendering, and search I/O do not share an event loop. The hidden `fileSearch`
+  renderer preload owns the search runtime; Main only validates and relays bounded XPC messages.
 - Closing the `BaseWindow` destroys the host-bound hidden `fileSearch` renderer, rejects pending
-  relay calls, detaches all three child views, and closes all three child views' `webContents`.
+  relay calls, detaches both child views, and closes both child views' `webContents`.
 - The standalone, Setting, and Agent Guide windows are singletons. Reopening focuses the existing
   instance. Setting and Guide are parented to the active standalone window.
 - All three top-level windows use `windowStateService`, `minWidth: 800`, and `minHeight: 600`.
@@ -104,8 +108,7 @@ Main capability/XPC supervisor ── private typed XPC ── hidden fileSearch
 ### Standalone-only boundary
 
 OnlyPreview is not an Omni mini app. Its usable surface owns a native `BaseWindow` graph containing
-separate Shell, PreviewHeader, and PreviewContent `WebContentsView`s plus its app-specific Setting
-window. Omni must not
+separate Shell and Preview `WebContentsView`s plus its app-specific Setting window. Omni must not
 list `onlypreview`, accept it in persisted cell state, map it to a runtime target, or load an
 OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 
@@ -114,8 +117,7 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 | Entry                       | Preload                 | Host mode       | Responsibility                                                                               |
 | --------------------------- | ----------------------- | --------------- | -------------------------------------------------------------------------------------------- |
 | `onlypreview/shell`         | `onlypreview.js`        | `shell`         | MenuBar, tree/local filter, Project Search input/results, status, native Preview bounds host |
-| `onlypreview/previewHeader` | `onlypreview.js`        | `previewHeader` | 43px file identity/type and Content control surface                                          |
-| `onlypreview/preview`       | `onlypreviewContent.js` | `preview`       | Content-only preview body                                                                    |
+| `onlypreview/preview`       | `onlypreviewContent.js` | `preview`       | 43px DOM header (identity, type badge, file actions) plus the preview body                   |
 | `onlypreview/settings`      | `onlypreview.js`        | `settings`      | app-specific settings form                                                                   |
 | `onlypreview/guide`         | `onlypreview.js`        | `guide`         | one-copy MCP and portable Preview-skill setup                                                |
 | `fileSearch`                | `fileSearch.js`         | `background`    | invisible page whose trusted Node-context preload owns browse/index/search/watch             |
@@ -123,17 +125,17 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 Both visible preloads import `electron-xpc/preload` and expose only immutable mode/platform context plus the
 Main-issued content host through `contextBridge`. Main creates and pre-registers one unguessable
 `hostToken` before each OnlyPreview view is created, then passes it through
-`additionalArguments`. Shell, Header, and Content share one content host; the Setting and Guide
+`additionalArguments`. Shell and Preview share one content host; the Setting and Guide
 windows each have their own narrow host. The search-bootstrap capability remains private in Main;
 no visible preload or page receives its token, absolute workspace root, or database path. Only the
 trusted `fileSearch` preload receives the paths inside a capability-bound initialization call.
 
 Every visible OnlyPreview view uses `sandbox: true`, `contextIsolation: true`,
 `nodeIntegration: false`, `webSecurity: true`, an exact navigation fence, and no Node or filesystem
-bridge. The sandbox-safe `onlypreview.js` serves Shell, Header, Setting, and Guide;
-`onlypreviewContent.js` serves Content and contains no search runtime or token. Every renderer
-initializes language before Vue mount. All five HTML entries remain first-party local targets
-registered in the application log policy and i18n checker.
+bridge. The sandbox-safe `onlypreview.js` serves Shell, Setting, and Guide; `onlypreviewContent.js`
+serves the Preview view and contains no search runtime or token. Every renderer initializes language
+before Vue mount. All four HTML entries remain first-party local targets registered in the
+application log policy and i18n checker.
 
 The invisible top-level `fileSearch` renderer is not a visible OnlyPreview view. It uses
 `sandbox: false`, `contextIsolation: true`, `nodeIntegration: false`, `webSecurity: true`, exact
@@ -315,7 +317,7 @@ table. Main owns this state; no new renderer storage or path-bearing API is adde
   to the empty state and are changed to `null` only with `compareAndSet` against the exact invalid
   serialized value, so cleanup cannot erase a concurrent newer path.
 - An explicit OS target suppresses history restore before `ensureStandalone()` creates/focuses the
-  Shell, Header, and Content views. Explicit opens and restore share one per-host mutation generation; a
+  Shell and Preview views. Explicit opens and restore share one per-host mutation generation; a
   late history read cannot replace an explicit target, and among serialized explicit requests the
   latest explicit target remains visible and becomes the remembered directory.
 
@@ -464,12 +466,13 @@ refresh uses the same path; it does not reintroduce a Main directory walk.
 
 The committed trailing update also publishes a bounded host/workspace/relative-path/watch-revision
 signal through the private capability-bound XPC event channel. Main validates the event, binds it to
-the attached host, and broadcasts it through `electron-xpc`; PreviewHeader accepts it only for its current selection and a newer
-revision, then uses the existing reload control to notify PreviewContent.
-Content advances its Preview load generation before reading, so an old workspace, selection, read,
+the attached host, and broadcasts it through `electron-xpc`; the Preview view accepts it only for its
+current selection and a newer watch revision, then starts its own reload transition and announces
+that revision to the Shell.
+The Preview view advances its load generation before reading, so an old workspace, selection, read,
 or watch revision cannot install. Delete/rename renders the typed missing state; a later recreation
 carries a newer revision and reloads. Full reconcile uses the same selection-safe invalidation when
-the selected file may have changed. Header keeps its manual render/reload/clear controls; Main
+the selected file may have changed. The Preview view keeps its manual render/reload decision; Main
 performs no file watch, search I/O, or Preview polling.
 
 ### Product Overmind acceptance evidence
@@ -537,8 +540,8 @@ from RAM. Task 012 PASS and old prototype/R03/R04/R05/failed-R06 figures, includ
 roughly 1.412GB prototype disk footprint, remain historical rather than substitutes for current
 product evidence. The P00/P01 dynamic boundary is fresh child process → production Worker client →
 TypeScript Worker → search engine/result batcher → coordinator. It does not dynamically measure
-the Electron preload/XPC hop, Shell's 120ms scheduler, PreviewHeader's selection/revision gate,
-PreviewContent's reload commit, or packaged startup. Later 7/7 Electron E2E covers the unpackaged
+the Electron preload/XPC hop, Shell's 120ms scheduler, the Preview view's selection/revision gate,
+its reload commit, or packaged startup. Later 7/7 Electron E2E covers the unpackaged
 runtime/UI path; packaged release startup remains untested.
 
 ## Preview Classification And Rendering
@@ -809,7 +812,7 @@ Cmd/Ctrl+Shift+F:
   remain legible.
 - The icon-only Tabler Robot action sits immediately before Settings and uses the localized direct
   label `Copy the skill to your agent`. It opens/focuses the parented Guide; it does not mount a
-  DOM modal inside Shell, where the sibling native Header/Content views would cover it.
+  DOM modal inside Shell, where the sibling native Preview view would cover it.
 - Project headers and the status rail never display index status, phase labels, percentages,
   indexed file/item totals, partial-index explanations, or other index copy. The interface does
   not repeat a visible `READ ONLY` badge or status label; the actual editor and content authority
@@ -885,8 +888,8 @@ Cmd/Ctrl+Shift+F:
 | `Cmd/Ctrl+O`                     | Shell or Preview                         | Open Folder                                                                                                            |
 | `Cmd+,` or `Ctrl+Alt+S`          | Shell or Preview                         | open Setting window                                                                                                    |
 | `F5` or `Cmd/Ctrl+R`             | Shell or Preview                         | reconcile the background file-search index and refresh selected preview                                                |
-| `F12`                            | Shell, Header, or Content, debug profile | toggle detached DevTools for the view that received the shortcut                                                       |
-| `Cmd+Option+I` or `Ctrl+Shift+I` | Shell, Header, or Content, debug profile | toggle detached DevTools for the view that received the shortcut                                                       |
+| `F12`                            | Shell or Preview, debug profile          | toggle detached DevTools for the view that received the shortcut                                                       |
+| `Cmd+Option+I` or `Ctrl+Shift+I` | Shell or Preview, debug profile          | toggle detached DevTools for the view that received the shortcut                                                       |
 | `Cmd/Ctrl+F`                     | Monaco                                   | find without invoking a Shell search                                                                                   |
 | drag/select text                 | Monaco, Markdown, HTML, or PDF           | show the selected grapheme count in the bottom status rail; hide it when selection collapses or leaves preview content |
 | `Esc`                            | Project Search / local filter / Setting  | clear query, return to tree / clear filter / close without save                                                        |
@@ -898,7 +901,7 @@ when Monaco has focus. Only matched commands prevent default; Monaco retains sel
 find behavior. On the initial successful Preview-view load, a normal debug profile automatically
 opens that Preview `webContents` DevTools detached with `activate: false`; Shell, Settings, Guide,
 release, and isolated E2E never auto-open. Manual DevTools shortcuts remain Main-owned and target
-only the Shell, Header, or Content `webContents` that received the input. The same shortcut closes
+only the Shell or Preview `webContents` that received the input. The same shortcut closes
 that view's open DevTools. Auto-repeat is ignored.
 
 ## State And Error Contract
@@ -957,7 +960,7 @@ them.
 
 ## Security And Privacy
 
-- Shell, Header, Content, Setting, and Guide all use `sandbox: true`, `contextIsolation: true`,
+- Shell, Preview, Setting, and Guide all use `sandbox: true`, `contextIsolation: true`,
   `nodeIntegration: false`, `webSecurity: true`, exact local navigation fencing, and no `<webview>`.
 - The search-bootstrap token stays private in Main and is never passed in preload `process.argv`,
   copied to `contextBridge`, visible renderer state, logs, or a result. Main validates the
@@ -1030,12 +1033,12 @@ them.
   Shell/Preview single flight, host cleanup, and an explicit OS target winning a late restore.
 - Source/integration tests cover the five visible renderer entries plus the invisible top-level
   `fileSearch` entry, official preloads, no UtilityProcess build entry, sandboxed
-  Shell/Header/Content/Setting/Guide preferences, the background preload's bounded sandbox
+  Shell/Preview/Setting/Guide preferences, the background preload's bounded sandbox
   exception, private Main-only bootstrap, capability-bound XPC transport, bounded pending rejection
   on cancel/timeout/exit,
   whitelisted host-bound snapshot/browse/progress/watch relay, and the absence of a Main browse or
   index-build path,
-  explicit three-child-view cleanup, hidden titlebar/traffic-light/window-control wiring, Content-only
+  explicit two-child-view cleanup, hidden titlebar/traffic-light/window-control wiring, Preview-only
   initial debug DevTools auto-open plus detached manual shortcut wiring, workspace identity labels,
   exact 32px Preview offset, Home card, auth/quit cleanup, log policy, i18n registration, and the
   absence of OnlyPreview from Omni's allowlist/runtime/UI mapping.
@@ -1060,14 +1063,14 @@ them.
   and deleted preload-Worker boundary; it is not current-policy acceptance. The dual-index,
   hidden-pruned runtime requires a new canonical PRODUCT-P02 point, which has not run.
   PRODUCT-P02 covers the bundled product core in a fresh Node child; hidden file-search renderer
-  startup, Main XPC relay, Shell scheduling, Header/Content commit, and packaged startup remain
+  startup, Main XPC relay, Shell scheduling, Preview commit, and packaged startup remain
   outside that artifact and require the targeted Electron/build acceptance below.
 - Earlier UtilityProcess integration build acceptance has `yarn build` PASS, emitting all five
   renderer HTML files, `out/preload/onlypreview.js`, `out/preload/onlypreviewContent.js`, and
   `out/main/onlypreviewSearchUtility.js` through official Electron Vite inputs. It is historical
   evidence only; task 017 must replace it with `fileSearch` renderer/preload build evidence.
-- Earlier Electron acceptance has `yarn test:e2e:onlypreview` PASS (7/7) for three visible sandboxed
-  views, exact 43px Header/Content geometry, detached per-view DevTools, media, Settings, Project
+- Earlier Electron acceptance has `yarn test:e2e:onlypreview` PASS (7/7) for the visible sandboxed
+  views, exact preview-host geometry with a 43px DOM header, detached per-view DevTools, media, Settings, Project
   Search, and selected-file watch reload. Task 016 has updated the E2E contract for independent tree
   metadata, physical hidden/core/config pruning, and watch CRUD/rename, but has not rerun Electron
   acceptance yet.

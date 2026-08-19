@@ -129,6 +129,33 @@
         </div>
       </dl>
 
+      <div class="eyes-connection-card__settings-list">
+        <div
+          name="eyesOnAgents__connections__claudePromptRetention"
+          class="eyes-connection-card__setting-row"
+        >
+          <div class="eyes-connection-card__setting-copy">
+            <strong id="eyes-on-agents-claude-prompt-retention-label">
+              {{ i18nHelper.eyesOnAgents.claudeBridge.promptRetentionLabel }}
+            </strong>
+            <span id="eyes-on-agents-claude-prompt-retention-description">
+              {{ i18nHelper.eyesOnAgents.claudeBridge.promptRetentionDescription }}
+            </span>
+          </div>
+          <div class="eyes-connection-card__setting-action">
+            <a-switch
+              size="small"
+              :model-value="lastUserPromptCaptureEnabled"
+              :loading="eyesOnAgentsStore.busyAction === 'claude-prompt-retention'"
+              :disabled="Boolean(eyesOnAgentsStore.busyAction)"
+              aria-labelledby="eyes-on-agents-claude-prompt-retention-label"
+              aria-describedby="eyes-on-agents-claude-prompt-retention-description"
+              @change="handleLastUserPromptCaptureChange"
+            />
+          </div>
+        </div>
+      </div>
+
       <section
         v-if="setupAction !== 'none'"
         name="eyesOnAgents__connections__claudeSetupAction"
@@ -245,6 +272,9 @@ const bridge = computed(() => eyesOnAgentsStore.snapshot?.claudeBridge ?? null);
 const directory = computed(() => eyesOnAgentsStore.snapshot?.claudeDirectory ?? null);
 const provider = computed(() => eyesOnAgentsStore.snapshot?.claudeProvider ?? null);
 const providerEnabled = computed(() => provider.value?.enabled === true);
+const lastUserPromptCaptureEnabled = computed(
+  () => eyesOnAgentsStore.snapshot?.claudeLastUserPromptCaptureEnabled ?? false,
+);
 const providerError = computed(() => provider.value?.error ?? null);
 const state = computed(() => bridge.value?.state ?? 'not_installed');
 const setupAction = computed(() => bridge.value?.setupAction ?? 'enable');
@@ -433,5 +463,12 @@ const handleRetryDirectory = async (): Promise<void> => {
 const handleProviderChange = async (enabled: boolean | string | number): Promise<void> => {
   if (typeof enabled !== 'boolean') return;
   await eyesOnAgentsStore.setClaudeProviderEnabled(enabled).catch(() => undefined);
+};
+
+const handleLastUserPromptCaptureChange = async (
+  enabled: boolean | string | number,
+): Promise<void> => {
+  if (typeof enabled !== 'boolean') return;
+  await eyesOnAgentsStore.setClaudeLastUserPromptCaptureEnabled(enabled).catch(() => undefined);
 };
 </script>

@@ -15,14 +15,18 @@ const isExistingPathError = (error: unknown): boolean => {
   return error instanceof Error && 'code' in error && error.code === 'EEXIST';
 };
 
+export type LastUserPromptPreferenceProvider = 'codex' | 'claude';
+
 export class LastUserPromptPreferenceService {
   private readonly markerPath: string;
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, provider: LastUserPromptPreferenceProvider = 'codex') {
     this.markerPath = join(
       userDataPath,
       'eyes-on-agents',
-      'last-user-prompt.enabled'
+      provider === 'claude'
+        ? 'claude-last-user-prompt.enabled'
+        : 'last-user-prompt.enabled'
     );
   }
 

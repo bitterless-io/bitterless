@@ -62,6 +62,8 @@ export class EyesOnAgentsTable extends BaseTable {
       last_user_prompt_truncated INTEGER NOT NULL DEFAULT 0,
       last_user_prompt_source TEXT,
       last_user_prompt_checked_at INTEGER,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      deleted_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY (domain_id) REFERENCES eyes_on_agents_domain(id),
@@ -71,7 +73,6 @@ export class EyesOnAgentsTable extends BaseTable {
       ON eyes_on_agents_thread (domain_id, last_activity_at DESC, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_attention
       ON eyes_on_agents_thread (runtime_state, last_completed_at DESC);
-
     CREATE TABLE IF NOT EXISTS eyes_on_agents_thread_snapshot (
       session_key TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
@@ -92,6 +93,7 @@ export class EyesOnAgentsTable extends BaseTable {
       provider TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       observed_at INTEGER NOT NULL,
+      is_observation_eligible INTEGER NOT NULL DEFAULT 1,
       committed_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_hook_delivery_receipt_committed
@@ -108,6 +110,20 @@ export class EyesOnAgentsTable extends BaseTable {
     );
     CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_completion_alert_receipt_claimed
       ON eyes_on_agents_completion_alert_receipt (claimed_at);
+
+    CREATE TABLE IF NOT EXISTS eyes_on_agents_claude_deletion_tombstone (
+      source_key TEXT NOT NULL,
+      identity_id TEXT NOT NULL,
+      deleted_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      cleared_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (source_key, identity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_claude_deletion_active_identity
+      ON eyes_on_agents_claude_deletion_tombstone (is_active, identity_id, deleted_at DESC);
   `;
 }
 

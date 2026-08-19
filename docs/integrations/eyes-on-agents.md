@@ -112,7 +112,8 @@ user-scope Bitterless plugin is required for timely foreground working/completio
 both Claude CLI and local Claude Desktop Code sessions. Read-only Desktop session metadata supplies
 title/activity plus an explicit `isArchived` flag, while JSONL inventory and
 `claude agents --json --all` cover local discovery and runtime fallback. CLI-only rows without a
-matched Desktop metadata file retain unknown archive state. The complete Claude contract is
+matched Desktop metadata file remain Main-private inventory until a trusted Desktop mapping exists.
+The complete Claude contract is
 [EyesOnAgents Claude Observation](../features/eyes-on-agents-claude-observation.md).
 
 Claude also has one persisted provider-level support switch, default-on for upgrade compatibility.
@@ -379,9 +380,13 @@ Protocol basis: the official
 and the TypeScript schema generated from the bundled Codex CLI version used by Bitterless.
 
 These App Server archive rules are Codex-only. A matched Claude Desktop metadata file supplies its
-own explicit `isArchived` boolean and may hide or restore that Claude row. A CLI-only Claude row has
-unknown archive state. File absence, JSONL deletion, Hook events, process exit, or Agent View
-omission never count as Claude archive evidence.
+own explicit `isArchived` boolean and may hide or restore that Claude row. Claude Desktop deletion
+is independently represented by an exact `deleted_<uuid>` tombstone in the same bounded metadata
+scope. Bitterless persists that positive evidence, soft-deletes the matching Claude identity, and
+suppresses residual JSONL, Agent View, and late Hook resurrection until Claude Desktop removes the
+tombstone and publishes newer unique live metadata. A CLI-only Claude row remains internal and has
+unknown archive state; file absence, JSONL deletion, process exit, and Agent View omission never
+imply archive or delete.
 
 ## Domain model
 

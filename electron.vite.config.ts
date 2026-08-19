@@ -271,7 +271,7 @@ const onlyPreviewHtmlSecurityPlugin = {
     }
   },
   closeBundle() {
-    for (const mode of ['shell', 'previewHeader', 'preview', 'settings', 'guide']) {
+    for (const mode of ['shell', 'preview', 'settings', 'guide']) {
       const htmlPath = resolve('out/renderer/onlypreview', mode, 'index.html');
       const html = readFileSync(htmlPath, 'utf8');
       const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
@@ -484,7 +484,6 @@ export default defineConfig({
           motto: resolve('src/renderer/motto/index.html'),
           submodules: resolve('src/renderer/submodules/index.html'),
           'onlypreview/shell': resolve('src/renderer/onlypreview/shell/index.html'),
-          'onlypreview/previewHeader': resolve('src/renderer/onlypreview/previewHeader/index.html'),
           'onlypreview/preview': resolve('src/renderer/onlypreview/preview/index.html'),
           'onlypreview/settings': resolve('src/renderer/onlypreview/settings/index.html'),
           'onlypreview/guide': resolve('src/renderer/onlypreview/guide/index.html'),

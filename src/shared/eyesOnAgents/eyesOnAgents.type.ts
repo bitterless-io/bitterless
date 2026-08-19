@@ -215,6 +215,7 @@ export interface EyesOnAgentsSnapshot {
   claudeProvider: EyesOnAgentsClaudeProviderStatus;
   lastSyncedAt: string | null;
   lastUserPromptCaptureEnabled: boolean;
+  claudeLastUserPromptCaptureEnabled: boolean;
   titleEnrichmentDiagnostic: EyesOnAgentsTitleEnrichmentDiagnostic | null;
 }
 
@@ -338,6 +339,7 @@ export interface EyesOnAgentsRepositoryMutationResult {
 export interface EyesOnAgentsClaudeInventoryThread {
   threadId: string;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  desktopMetadataMtime?: number | null;
   transcriptPath: string | null;
   clearDesktopSessionId?: boolean;
   clearTranscriptPath?: boolean;
@@ -349,6 +351,20 @@ export interface EyesOnAgentsClaudeInventoryThread {
   archiveState: EyesOnAgentsArchiveState;
   transcriptActivityAt: number | null;
   lastActivityAt: number | null;
+  observedAt: number;
+}
+
+export interface EyesOnAgentsClaudeDeletionTombstone {
+  sourceKey: string;
+  identityId: string;
+  deletedAt: number;
+  observedAt: number;
+}
+
+export interface EyesOnAgentsClaudeDeletionReconciliation {
+  tombstones: EyesOnAgentsClaudeDeletionTombstone[];
+  healthyScopeKeys: string[];
+  completeSnapshot: boolean;
   observedAt: number;
 }
 
@@ -434,7 +450,9 @@ export interface EyesOnAgentsRepositoryApi {
   refreshThreadPage(params: {
     threads: EyesOnAgentsThreadRefreshPatch[];
   }): Promise<EyesOnAgentsThreadPagePersistenceResult>;
-  clearLastUserPrompts(): Promise<EyesOnAgentsRepositoryMutationResult>;
+  clearLastUserPrompts(params: {
+    providers: EyesOnAgentsProvider[];
+  }): Promise<EyesOnAgentsRepositoryMutationResult>;
   invalidateAppServerStatuses(params: { observedAt: number }): Promise<void>;
   invalidateCodexHookStatuses(params: { observedAt: number }): Promise<void>;
   upsertDiscoveredThreads(params: {
@@ -474,6 +492,7 @@ export interface EyesOnAgentsRepositoryApi {
   moveThread(params: { sessionKey: EyesOnAgentsSessionKey; domainId: number }): Promise<void>;
   upsertClaudeInventory(params: {
     threads: EyesOnAgentsClaudeInventoryThread[];
+    deletion?: EyesOnAgentsClaudeDeletionReconciliation;
   }): Promise<EyesOnAgentsRepositoryMutationResult>;
   reconcileClaudeAgentStates(params: {
     agents: EyesOnAgentsClaudeAgentState[];
@@ -525,6 +544,9 @@ export interface EyesOnAgentsApi {
     enabled: boolean;
   }): Promise<EyesOnAgentsSnapshot>;
   setLastUserPromptCaptureEnabled(params: {
+    enabled: boolean;
+  }): Promise<EyesOnAgentsSnapshot>;
+  setClaudeLastUserPromptCaptureEnabled(params: {
     enabled: boolean;
   }): Promise<EyesOnAgentsSnapshot>;
   createDomain(params: { title: string }): Promise<EyesOnAgentsSnapshot>;

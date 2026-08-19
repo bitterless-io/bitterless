@@ -1,5 +1,16 @@
+.eyes-connection-panel {
+  --eyes-focus-ring: #4e5882;
+
+  max-width: 100vw;
+}
+
+.eyes-connection-panel .arco-drawer {
+  max-width: 100vw;
+}
+
 .eyes-connection-panel .arco-drawer-body {
-  padding: 14px;
+  padding: 0;
+  overflow: hidden;
   background: #f3f5fc;
 }
 
@@ -17,9 +28,91 @@
 }
 
 .eyes-connection-panel__body {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.eyes-connection-panel__provider-rail {
+  width: 60px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  overflow: hidden;
+  background: #eef1fa;
+}
+
+.eyes-connection-panel__provider-tab {
+  width: 52px;
+  height: 56px;
+  flex: 0 0 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: #68708a;
+  background: transparent;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  appearance: none;
+}
+
+.eyes-connection-panel__provider-tab:hover {
+  background: #f7f8fc;
+}
+
+.eyes-connection-panel__provider-tab--active,
+.eyes-connection-panel__provider-tab--active:hover {
+  color: #1e2237;
+  background: #fff;
+}
+
+.eyes-connection-panel__provider-tab:focus-visible {
+  outline: 2px solid var(--eyes-focus-ring);
+  outline-offset: -2px;
+}
+
+.eyes-connection-panel__provider-logo {
+  display: block;
+  object-fit: contain;
+}
+
+.eyes-connection-panel__provider-logo--codex {
+  width: 24px;
+  height: 24px;
+}
+
+.eyes-connection-panel__provider-logo--claude {
+  width: 23px;
+  height: 23px;
+}
+
+.eyes-connection-panel__provider-label {
+  display: block;
+}
+
+.eyes-connection-panel__detail {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .eyes-connection-card {
@@ -81,38 +174,72 @@
   line-height: 1.55;
 }
 
-.eyes-connection-card__preference {
+.eyes-connection-card__status-copy {
+  min-height: 18px;
+}
+
+.eyes-connection-card.eyes-connection-card--codex-observation
+  .eyes-connection-card__status-copy {
+  margin: 8px 0 12px;
+  color: #586077;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.eyes-connection-card__settings-list {
+  border-top: 1px solid #e8eaf1;
+}
+
+.eyes-connection-card__setting-row {
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 9px 10px;
-  border-radius: 8px;
-  color: oklch(0.41 0.025 275);
-  background: oklch(0.965 0.012 275);
+  gap: 16px;
+  padding: 9px 2px;
+  border-bottom: 1px solid #e8eaf1;
 }
 
-.eyes-connection-card__preference-copy {
-  display: flex;
+.eyes-connection-card__setting-row--attention {
+  padding-right: 8px;
+  padding-left: 10px;
+  border-left: 2px solid #d99a3d;
+  background: #fff6e6;
+}
+
+.eyes-connection-card__setting-copy {
   min-width: 0;
+  display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.eyes-connection-card__preference-copy strong {
-  font-size: 11px;
+.eyes-connection-card__setting-copy strong {
+  color: #2a3048;
+  font-size: 12px;
+  font-weight: 650;
   line-height: 1.4;
 }
 
-.eyes-connection-card__preference-copy span {
-  color: oklch(0.52 0.025 275);
+.eyes-connection-card__setting-copy span {
+  color: #737a90;
   font-size: 10px;
   line-height: 1.45;
 }
 
-.eyes-connection-card__preference .arco-switch {
+.eyes-connection-card__setting-action {
+  min-width: 48px;
+  display: flex;
   flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.eyes-connection-card__setting-action:empty {
+  display: none;
+}
+
+.eyes-connection-card__setting-action .arco-btn {
+  font-size: 12px;
 }
 
 .eyes-connection-card__status {
@@ -139,6 +266,7 @@
 
 .eyes-connection-card__status--connecting,
 .eyes-connection-card__status--syncing,
+.eyes-connection-card__status--paused,
 .eyes-connection-card__status--needs_trust,
 .eyes-connection-card__status--needs_review,
 .eyes-connection-card__status--drifted {
@@ -350,72 +478,6 @@
   color: oklch(0.52 0.025 275);
 }
 
-.eyes-connection-card__trust-summary {
-  margin-bottom: 12px;
-  padding: 8px 10px;
-  border-radius: 7px;
-  color: oklch(0.45 0.09 70);
-  background: oklch(0.96 0.05 80);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.eyes-connection-card__hook-guide {
-  margin-bottom: 12px;
-  padding: 10px;
-  border-radius: 8px;
-  color: oklch(0.42 0.025 275);
-  background: oklch(0.965 0.008 275);
-}
-
-.eyes-connection-card__hook-guide h3 {
-  margin: 0 0 6px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.eyes-connection-card__hook-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 0;
-  padding-left: 22px;
-}
-
-.eyes-connection-card__hook-steps li {
-  padding: 5px 7px;
-  border-radius: 6px;
-  background: oklch(1 0 0 / 68%);
-}
-
-.eyes-connection-card__hook-steps li::marker {
-  font-weight: 750;
-}
-
-.eyes-connection-card__hook-steps strong,
-.eyes-connection-card__hook-steps span {
-  display: block;
-}
-
-.eyes-connection-card__hook-steps strong {
-  font-size: 11px;
-}
-
-.eyes-connection-card__hook-cli {
-  margin-top: 1px;
-  font-weight: 650;
-}
-
-.eyes-connection-card .eyes-connection-card__trust-boundary {
-  margin: 6px 0 0;
-  padding: 6px 8px;
-  border-radius: 6px;
-  color: inherit;
-  background: oklch(0.4 0.03 275 / 7%);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
 .eyes-connection-panel__boundary {
   align-items: flex-start;
   gap: 8px;
@@ -430,4 +492,30 @@
 .eyes-connection-panel__boundary svg {
   flex: 0 0 auto;
   margin-top: 1px;
+}
+
+@media (max-width: 479px) {
+  .eyes-connection-panel__body {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .eyes-connection-panel__provider-rail {
+    width: 52px;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .eyes-connection-panel__provider-tab {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .eyes-connection-panel__provider-label {
+    display: none;
+  }
+
+  .eyes-connection-panel__detail {
+    padding: 10px;
+  }
 }

@@ -258,7 +258,7 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
   assert.match(types, /interface OnlyPreviewAgentSkillGuideInfo \{[\s\S]*serverName: string;[\s\S]*skillVersionCode: string;[\s\S]*instruction: string;/);
   assert.match(
     preloadType,
-    /'shell' \| 'previewHeader' \| 'preview' \| 'settings' \| 'guide'/
+    /'shell' \| 'preview' \| 'settings' \| 'guide'/
   );
   assert.match(envPreload, /value === 'guide'/);
   assert.doesNotMatch(preload, /clipboard|writeText|openAgentSkillGuide|getAgentSkillGuideInfo/);
@@ -323,7 +323,7 @@ test('Guide is included in renderer, logging, i18n, and complete resource invent
   const vite = source('electron.vite.config.ts');
   assert.match(
     vite,
-    /for \(const mode of \['shell', 'previewHeader', 'preview', 'settings', 'guide'\]\)/
+    /for \(const mode of \['shell', 'preview', 'settings', 'guide'\]\)/
   );
   assert.match(vite, /'onlypreview\/guide': resolve\('src\/renderer\/onlypreview\/guide\/index\.html'\)/);
   assert.match(
@@ -332,7 +332,7 @@ test('Guide is included in renderer, logging, i18n, and complete resource invent
   );
   const i18nInventory = source('scripts/renderer-i18n/check-renderer-i18n.mjs');
   assert.match(i18nInventory, /onlyPreviewGuide.*onlypreview\/guide\/src\/main\.ts/);
-  assert.match(i18nInventory, /rendererEntries\.length, 17/);
+  assert.match(i18nInventory, /rendererEntries\.length, 16/);
   const catalog = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
   assert.match(catalog, /title: 'Copy the skill to your agent'/);
   assert.match(

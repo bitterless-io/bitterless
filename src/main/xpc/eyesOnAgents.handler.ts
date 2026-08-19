@@ -46,8 +46,11 @@ import { ClaudeObservationService } from '../eyesOnAgents/claudeObservation.serv
 import {
   ClaudePluginBridgeService,
   claudePluginVersionFromVersionCode,
-  resolveClaudeHookRuntimeExecutable
+  resolveClaudePluginBridgeIdentity,
+  resolveClaudeHookRuntimeExecutable,
+  resolveLegacyProductionDebugClaudeMarketplaceRoot
 } from '../eyesOnAgents/claudePluginBridge.service';
+import { getRuntimeProfile } from '../environment/runtimeProfile.runtime';
 import { claudeHookBridgeServer } from '../eyesOnAgents/claudeHookBridge.server';
 import {
   getClaudeHookBridgeEndpoint,
@@ -60,6 +63,10 @@ import { ClaudeProviderPreferenceService } from
 const repository = createXpcMainEmitter<EyesOnAgentsRepositoryApi>('EyesOnAgentsRepositoryDao');
 const settings = createXpcMainEmitter<SettingDao>('SettingDao');
 const lastUserPromptPreference = new LastUserPromptPreferenceService(app.getPath('userData'));
+const claudeLastUserPromptPreference = new LastUserPromptPreferenceService(
+  app.getPath('userData'),
+  'claude'
+);
 const claudeProviderPreference = new ClaudeProviderPreferenceService(settings);
 
 const desktopBridge = new CodexDesktopBridgeService({
@@ -108,8 +115,16 @@ const stopBridgeListener = async (): Promise<void> => {
   await codexHookBridgeServer.stop();
 };
 
+const runtimeProfile = getRuntimeProfile();
+const userDataPath = app.getPath('userData');
+const legacyProductionDebugMarketplaceRoot = resolveLegacyProductionDebugClaudeMarketplaceRoot({
+  profile: runtimeProfile,
+  appDataPath: app.getPath('appData'),
+  userDataPath
+});
 const claudePluginBridge = new ClaudePluginBridgeService({
-  userDataPath: app.getPath('userData'),
+  identity: resolveClaudePluginBridgeIdentity(runtimeProfile.id),
+  userDataPath,
   execPath: resolveClaudeHookRuntimeExecutable({
     execPath: process.execPath,
     appImagePath: process.env.APPIMAGE,
@@ -122,6 +137,9 @@ const claudePluginBridge = new ClaudePluginBridgeService({
   executableCandidates: resolveClaudeExecutables({
     homePath: app.getPath('home'),
     pathValue: process.env.PATH
+  }),
+  ...(legacyProductionDebugMarketplaceRoot === null ? {} : {
+    legacyProductionDebugMarketplaceRoot
   }),
   runtimeStatus: () => ({
     listening: claudeHookBridgeServer.isListening(),
@@ -215,6 +233,7 @@ eyesOnAgentsService = new EyesOnAgentsService({
   settings,
   appServer,
   lastUserPromptPreference,
+  claudeLastUserPromptPreference,
   claudeProviderPreference,
   desktopBridge,
   bridgeListener: {
@@ -371,6 +390,14 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     params: { enabled: boolean }
   ): Promise<EyesOnAgentsSnapshot> {
     return await eyesOnAgentsService.setLastUserPromptCaptureEnabled(
+      parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams(params)
+    );
+  }
+
+  async setClaudeLastUserPromptCaptureEnabled(
+    params: { enabled: boolean }
+  ): Promise<EyesOnAgentsSnapshot> {
+    return await eyesOnAgentsService.setClaudeLastUserPromptCaptureEnabled(
       parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams(params)
     );
   }

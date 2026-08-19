@@ -20,7 +20,6 @@
         >
           {{ onlyPreviewI18n.preview.textLimit }}
         </p>
-        <FileActions v-if="onlyPreviewPreviewStore.currentRef" />
       </div>
 
       <MarkdownPreview
@@ -136,7 +135,7 @@
         <dl class="onlypreview-preview__metadata">
           <div>
             <dt>{{ onlyPreviewI18n.preview.type }}</dt>
-            <dd>{{ descriptorType }}</dd>
+            <dd>{{ onlyPreviewPreviewStore.descriptorType }}</dd>
           </div>
           <div>
             <dt>{{ onlyPreviewI18n.preview.size }}</dt>
@@ -147,7 +146,6 @@
             <dd>{{ formatOnlyPreviewDate(onlyPreviewPreviewStore.descriptor.modifiedAt) }}</dd>
           </div>
         </dl>
-        <FileActions />
       </div>
 
       <div
@@ -185,7 +183,6 @@ import {
 } from '../../../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
-import FileActions from '../FileActions/FileActions.vue';
 import HtmlPreview from '../HtmlPreview/HtmlPreview.vue';
 import MarkdownPreview from '../MarkdownPreview/MarkdownPreview.vue';
 import MonacoTextPreview from '../MonacoTextPreview/MonacoTextPreview.vue';
@@ -201,14 +198,6 @@ const isHtml = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;
   if (descriptor?.kind !== 'text') return false;
   return descriptor.extension === '.html' || descriptor.extension === '.htm';
-});
-
-const descriptorType = computed(() => {
-  const descriptor = onlyPreviewPreviewStore.descriptor;
-  if (!descriptor) return '';
-  return (
-    descriptor.language || descriptor.extension.replace(/^\./, '').toUpperCase() || descriptor.kind
-  );
 });
 
 const previewKey = computed(() => {

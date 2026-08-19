@@ -27,6 +27,25 @@ try {
   const outbox = await load('outbox', 'src/main/eyesOnAgents/claudeHookOutbox.service.ts');
   const bridge = await load('bridge', 'src/main/eyesOnAgents/claudeHookBridge.server.ts');
   const plugin = await load('plugin', 'src/main/eyesOnAgents/claudePluginBridge.service.ts');
+  const productionIdentity = plugin.resolveClaudePluginBridgeIdentity('production');
+  assert.deepEqual(productionIdentity, {
+    marketplaceName: 'bitterless-local',
+    pluginName: 'bitterless-observer',
+    pluginId: 'bitterless-observer@bitterless-local',
+    artifactRootRelativePath: 'eyes-on-agents/claude-marketplace'
+  }, 'production must preserve the released Claude identity byte-for-byte');
+  for (const profileId of ['production-debug', 'test-debug', 'test-release']) {
+    assert.deepEqual(plugin.resolveClaudePluginBridgeIdentity(profileId), {
+      marketplaceName: `bitterless-local-${profileId}`,
+      pluginName: `bitterless-observer-${profileId}`,
+      pluginId: `bitterless-observer-${profileId}@bitterless-local-${profileId}`,
+      artifactRootRelativePath: `eyes-on-agents/claude-marketplace-${profileId}`
+    });
+  }
+  assert.throws(
+    () => plugin.resolveClaudePluginBridgeIdentity('future-profile'),
+    /Unsupported Bitterless Claude bridge profile/
+  );
   const appImage = join(fixtureRoot, 'Bitterless.AppImage');
   const nonExecutableAppImage = join(fixtureRoot, 'non-executable.AppImage');
   const symlinkedAppImage = join(fixtureRoot, 'symlinked.AppImage');
@@ -118,16 +137,31 @@ try {
   const socketPath = join(fixtureRoot, 'hook.sock');
   const server = new bridge.ClaudeHookBridgeServer();
   const origins = [];
+  const duplicateStatuses = [];
+  let duplicateDelivery = false;
   await server.start({
     endpoint: { transport: 'unix', path: socketPath }, installationId,
     outboxPath: join(fixtureRoot, 'server-outbox'),
-    consume: async () => ({ duplicate: false }),
-    onCommitted: (value) => { origins.push(value.origin); throw new Error('display failure'); }
+    consume: async () => ({ duplicate: duplicateDelivery }),
+    onCommitted: (value) => {
+      origins.push(value.origin);
+      duplicateStatuses.push(value.duplicate);
+      throw new Error('display failure');
+    }
   });
   assert.equal(await outbox.sendClaudeHookDelivery(
     { transport: 'unix', path: socketPath }, delivery(3, 30)
   ), true, 'a display callback failure must not prevent the SQLite commit ACK');
   assert.deepEqual(origins, ['live']);
+  const firstLiveEventAt = server.getLastEventAt();
+  assert.equal(typeof firstLiveEventAt, 'number');
+  duplicateDelivery = true;
+  assert.equal(await outbox.sendClaudeHookDelivery(
+    { transport: 'unix', path: socketPath }, delivery(30, 31)
+  ), true, 'a tombstoned duplicate-style delivery must still receive a commit ACK');
+  assert.equal(server.getLastEventAt(), firstLiveEventAt,
+    'a duplicate-style ACK must not become observation proof');
+  assert.deepEqual(duplicateStatuses, [false, true]);
   await server.stop();
   assert.equal(existsSync(socketPath), false, 'stop must remove the owned Unix socket');
 
@@ -248,6 +282,123 @@ try {
   const pluginRoot = join(fixtureRoot, 'plugin');
   const helper = join(fixtureRoot, 'claudeHookHelper.js');
   writeFileSync(helper, 'module.exports = {};\n');
+
+  const sharedProfileRegistry = {
+    marketplaces: new Map(),
+    plugins: new Map()
+  };
+  const createProfileHarness = (profileId, idOffset) => {
+    const identity = plugin.resolveClaudePluginBridgeIdentity(profileId);
+    const root = join(fixtureRoot, `profile-${profileId}`);
+    const commands = [];
+    let nextId = idOffset;
+    const service = new plugin.ClaudePluginBridgeService({
+      identity,
+      userDataPath: root,
+      execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
+      appRootPath: fixtureRoot,
+      pluginVersion: '0.260817.163734',
+      executableCandidates: ['/usr/bin/claude'],
+      helperSourcePath: helper,
+      idFactory: () => uuid(nextId++),
+      runtimeStatus: () => ({ listening: false, listeningSince: null }),
+      runCommand: async (_executable, args) => {
+        const command = args.join(' ');
+        commands.push(command);
+        if (command.endsWith('--help')) {
+          return { exitCode: 0, stdout: command === 'plugin --help' ? 'marketplace' : '--scope <scope>', stderr: '' };
+        }
+        if (command === 'plugin list --json') {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([...sharedProfileRegistry.plugins.values()]),
+            stderr: ''
+          };
+        }
+        if (command === 'plugin marketplace list --json') {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([...sharedProfileRegistry.marketplaces.entries()].map(
+              ([name, path]) => ({ name, path })
+            )),
+            stderr: ''
+          };
+        }
+        if (args[1] === 'marketplace' && args[2] === 'add') {
+          const path = args[3];
+          const manifest = JSON.parse(readFileSync(
+            join(path, '.claude-plugin', 'marketplace.json'),
+            'utf8'
+          ));
+          sharedProfileRegistry.marketplaces.set(manifest.name, path);
+        }
+        if (args[1] === 'marketplace' && args[2] === 'remove') {
+          sharedProfileRegistry.marketplaces.delete(args[3]);
+        }
+        if (args[1] === 'install') {
+          sharedProfileRegistry.plugins.set(args[2], {
+            id: args[2],
+            scope: 'user',
+            enabled: false,
+            version: '0.260817.163734'
+          });
+        }
+        if (args[1] === 'enable') {
+          const installedPlugin = sharedProfileRegistry.plugins.get(args[2]);
+          if (installedPlugin) installedPlugin.enabled = true;
+        }
+        if (args[1] === 'uninstall') sharedProfileRegistry.plugins.delete(args[2]);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
+    });
+    return { commands, identity, root, service };
+  };
+  const productionProfile = createProfileHarness('production', 10_000);
+  const debugProfile = createProfileHarness('production-debug', 11_000);
+  await productionProfile.service.install();
+  await debugProfile.service.install();
+  assert.deepEqual(
+    [...sharedProfileRegistry.plugins.keys()].sort(),
+    [productionProfile.identity.pluginId, debugProfile.identity.pluginId].sort(),
+    'production and production-debug plugins must coexist'
+  );
+  await productionProfile.service.refresh();
+  await debugProfile.service.refresh();
+  assert.equal(productionProfile.service.getStatus().state, 'installed');
+  assert.equal(debugProfile.service.getStatus().state, 'installed');
+  await productionProfile.service.install();
+  await debugProfile.service.install();
+  assert.equal(sharedProfileRegistry.plugins.has(productionProfile.identity.pluginId), true);
+  assert.equal(sharedProfileRegistry.plugins.has(debugProfile.identity.pluginId), true);
+  assert.equal(debugProfile.commands.some((command) => command.includes(
+    productionProfile.identity.pluginId
+  )), false, 'debug lifecycle commands must never target production');
+  assert.equal(debugProfile.commands.some((command) => command.split(' ').includes(
+    productionProfile.identity.marketplaceName
+  )), false, 'debug lifecycle commands must never target the production marketplace');
+  const debugMarketplaceManifest = JSON.parse(readFileSync(join(
+    debugProfile.root,
+    debugProfile.identity.artifactRootRelativePath,
+    '.claude-plugin',
+    'marketplace.json'
+  ), 'utf8'));
+  const debugOwnerMarker = JSON.parse(readFileSync(join(
+    debugProfile.root,
+    debugProfile.identity.artifactRootRelativePath,
+    '.bitterless-owner.json'
+  ), 'utf8'));
+  assert.equal(debugMarketplaceManifest.name, debugProfile.identity.marketplaceName);
+  assert.equal(debugMarketplaceManifest.plugins[0].name, debugProfile.identity.pluginName);
+  assert.equal(debugOwnerMarker.plugin, debugProfile.identity.pluginId);
+  await productionProfile.service.remove();
+  assert.equal(sharedProfileRegistry.plugins.has(debugProfile.identity.pluginId), true,
+    'production removal must preserve production-debug');
+  await debugProfile.service.refresh();
+  assert.equal(debugProfile.service.getStatus().state, 'installed');
+  await debugProfile.service.remove();
+  assert.equal(sharedProfileRegistry.plugins.size, 0);
+  assert.equal(sharedProfileRegistry.marketplaces.size, 0);
+
   const commands = [];
   let installed = false;
   let enabled = false;
@@ -258,13 +409,14 @@ try {
   let additionalPlugins = [];
   let injectExtraAfterUninstall = false;
   const service = new plugin.ClaudePluginBridgeService({
+    identity: productionIdentity,
     userDataPath: pluginRoot, execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
     appRootPath: fixtureRoot, pluginVersion: '0.260817.163734', executableCandidates: ['/usr/bin/claude'],
     helperSourcePath: helper, idFactory: () => installationId,
     runtimeStatus: () => ({ listening: false, listeningSince: null }),
     runCommand: async (_executable, args) => {
       commands.push(args);
-      if (args.join(' ') === 'plugin --help') return { exitCode: 0, stdout: 'marketplace', stderr: '' };
+      if (args.at(-1) === '--help') return { exitCode: 0, stdout: args.length === 2 ? 'marketplace' : '--scope <scope>', stderr: '' };
       if (args.join(' ') === 'plugin list --json') return {
         exitCode: 0,
         stdout: JSON.stringify([...(installed ? [{
@@ -362,7 +514,8 @@ try {
   assert.equal(service.acceptsInstallation(installationId), false);
   installsApply = false;
   await assert.rejects(() => service.install(), /version or installation is not exact/);
-  assert.equal(service.getStatus().state, 'drifted');
+  assert.equal(service.getStatus().state, 'error');
+  assert.match(service.getStatus().error ?? '', /version or installation is not exact/);
   installsApply = true;
   await service.install();
   assert.equal(service.acceptsInstallation(installationId), true);
@@ -383,7 +536,8 @@ try {
     await assert.rejects(() => service.remove(), /manual cleanup is required/, message);
     const attempted = commands.slice(commandStart).map((args) => args.join(' '));
     assert.equal(attempted.some((command) =>
-      command.startsWith('plugin uninstall ') || command.startsWith('plugin marketplace remove ')
+      command.startsWith('plugin uninstall ') ||
+      command.startsWith('plugin marketplace remove ') && !command.endsWith('--help')
     ), false, `${message}: remove must remain read-only`);
   };
   const assertUnsafeInstallDoesNotMutate = async (message) => {
@@ -395,7 +549,7 @@ try {
     const attempted = commands.slice(commandStart);
     assert.equal(attempted.some((args) =>
       ['install', 'uninstall', 'enable', 'update'].includes(args[1]) ||
-      args[1] === 'marketplace' && args[2] !== 'list'
+      args[1] === 'marketplace' && args[2] !== 'list' && args.at(-1) !== '--help'
     ), false, `${message}: install must remain read-only`);
     assert.equal(readFileSync(
       join(pluginRoot, 'eyes-on-agents', 'claude-plugin-bridge.json'), 'utf8'
@@ -514,12 +668,13 @@ try {
   mkdirSync(dirname(collisionState), { recursive: true });
   writeFileSync(collisionState, '{broken-json');
   const collisionService = new plugin.ClaudePluginBridgeService({
+    identity: productionIdentity,
     userDataPath: collisionRoot, execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
     appRootPath: fixtureRoot, pluginVersion: '0.260817.163734',
     executableCandidates: ['/usr/bin/claude'], helperSourcePath: helper,
     idFactory: () => uuid(77), runtimeStatus: () => ({ listening: false, listeningSince: null }),
     runCommand: async (_executable, args) => {
-      if (args.join(' ') === 'plugin --help') return { exitCode: 0, stdout: 'marketplace', stderr: '' };
+      if (args.at(-1) === '--help') return { exitCode: 0, stdout: args.length === 2 ? 'marketplace' : '--scope <scope>', stderr: '' };
       if (args.join(' ') === 'plugin list --json') return { exitCode: 0, stdout: '[]', stderr: '' };
       if (args.join(' ') === 'plugin marketplace list --json') return {
         exitCode: 0,
@@ -536,6 +691,7 @@ try {
   const unprovenRoot = join(fixtureRoot, 'unproven-plugin');
   const unprovenCommands = [];
   const unprovenService = new plugin.ClaudePluginBridgeService({
+    identity: productionIdentity,
     userDataPath: unprovenRoot,
     execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
     appRootPath: fixtureRoot,
@@ -546,7 +702,7 @@ try {
     runtimeStatus: () => ({ listening: false, listeningSince: null }),
     runCommand: async (_executable, args) => {
       unprovenCommands.push(args);
-      if (args.join(' ') === 'plugin --help') return { exitCode: 0, stdout: 'marketplace', stderr: '' };
+      if (args.at(-1) === '--help') return { exitCode: 0, stdout: args.length === 2 ? 'marketplace' : '--scope <scope>', stderr: '' };
       if (args.join(' ') === 'plugin list --json') return {
         exitCode: 0,
         stdout: JSON.stringify([{
@@ -564,7 +720,7 @@ try {
   await assert.rejects(() => unprovenService.install(), /ownership could not be proven/);
   assert.equal(unprovenCommands.some((args) =>
     ['install', 'uninstall', 'enable', 'update'].includes(args[1]) ||
-    args[1] === 'marketplace' && args[2] !== 'list'
+    args[1] === 'marketplace' && args[2] !== 'list' && args.at(-1) !== '--help'
   ), false);
   assert.equal(existsSync(join(unprovenRoot, 'eyes-on-agents', 'claude-plugin-bridge.json')), false);
   assert.equal(existsSync(contract.getClaudeHookOutboxPath(unprovenRoot)), false);
@@ -591,6 +747,7 @@ try {
     const raceCommands = [];
     let pluginListReads = 0;
     const raceService = new plugin.ClaudePluginBridgeService({
+      identity: productionIdentity,
       userDataPath: raceRoot,
       execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
       appRootPath: fixtureRoot,
@@ -601,8 +758,8 @@ try {
       runtimeStatus: () => ({ listening: false, listeningSince: null }),
       runCommand: async (_executable, args) => {
         raceCommands.push(args);
-        if (args.join(' ') === 'plugin --help') {
-          return { exitCode: 0, stdout: 'marketplace', stderr: '' };
+        if (args.at(-1) === '--help') {
+          return { exitCode: 0, stdout: args.length === 2 ? 'marketplace' : '--scope <scope>', stderr: '' };
         }
         if (args.join(' ') === 'plugin list --json') {
           pluginListReads += 1;
@@ -622,7 +779,7 @@ try {
     assert.equal(pluginListReads, 2, `${label}: ownership must be re-read after artifact staging`);
     assert.equal(raceCommands.some((args) =>
       ['install', 'uninstall', 'enable', 'update'].includes(args[1]) ||
-      args[1] === 'marketplace' && args[2] !== 'list'
+      args[1] === 'marketplace' && args[2] !== 'list' && args.at(-1) !== '--help'
     ), false, `${label}: the second observation must stop every mutating CLI command`);
   }
 
@@ -635,6 +792,7 @@ try {
   let cachedWrapperInstallationId = null;
   let cacheEnableEventIndex = 0;
   const cacheService = new plugin.ClaudePluginBridgeService({
+    identity: productionIdentity,
     userDataPath: cacheRoot,
     execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
     appRootPath: fixtureRoot,
@@ -645,7 +803,7 @@ try {
     runtimeStatus: () => ({ listening: false, listeningSince: null }),
     runCommand: async (_executable, args) => {
       cacheCommands.push(args.join(' '));
-      if (args.join(' ') === 'plugin --help') return { exitCode: 0, stdout: 'marketplace', stderr: '' };
+      if (args.at(-1) === '--help') return { exitCode: 0, stdout: args.length === 2 ? 'marketplace' : '--scope <scope>', stderr: '' };
       if (args.join(' ') === 'plugin list --json') return {
         exitCode: 0,
         stdout: JSON.stringify(cacheInstalled ? [{
@@ -755,6 +913,7 @@ try {
   mkdirSync(dirname(boundedState), { recursive: true });
   writeFileSync(boundedState, Buffer.alloc(20 * 1024, 0x61));
   const boundedService = new plugin.ClaudePluginBridgeService({
+    identity: productionIdentity,
     userDataPath: boundedRoot,
     execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
     appRootPath: fixtureRoot,

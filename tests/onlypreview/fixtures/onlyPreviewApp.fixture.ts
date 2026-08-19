@@ -145,7 +145,7 @@ const isolatedEnv = (params: {
   });
 };
 
-export type OnlyPreviewRendererMode = 'shell' | 'previewHeader' | 'preview';
+export type OnlyPreviewRendererMode = 'shell' | 'preview';
 
 export interface OnlyPreviewE2ESession {
   app: ElectronApplication;
@@ -224,29 +224,26 @@ export const test = base.extend<OnlyPreviewFixtures>({
         await expect
           .poll(
             async () =>
-              await app!.evaluate(
-                ({ BaseWindow }) => {
-                  const standalone = BaseWindow.getAllWindows().filter(
-                    (window) => window.getTitle() === 'OnlyPreview'
-                  );
-                  const rendererModes = standalone[0]?.contentView.children
-                    .map((view) =>
+              await app!.evaluate(({ BaseWindow }) => {
+                const standalone = BaseWindow.getAllWindows().filter(
+                  (window) => window.getTitle() === 'OnlyPreview'
+                );
+                const rendererModes = standalone[0]?.contentView.children
+                  .map(
+                    (view) =>
                       view.webContents
                         .getURL()
-                        .match(
-                          /\/onlypreview\/(preview|previewHeader|shell)\/index\.html(?:$|[?#])/
-                        )?.[1]
-                    )
-                    .filter((mode): mode is string => typeof mode === 'string')
-                    .sort();
-                  return { standaloneCount: standalone.length, rendererModes };
-                }
-              ),
+                        .match(/\/onlypreview\/(preview|shell)\/index\.html(?:$|[?#])/)?.[1]
+                  )
+                  .filter((mode): mode is string => typeof mode === 'string')
+                  .sort();
+                return { standaloneCount: standalone.length, rendererModes };
+              }),
             { timeout: 60_000 }
           )
           .toEqual({
             standaloneCount: 1,
-            rendererModes: ['preview', 'previewHeader', 'shell']
+            rendererModes: ['preview', 'shell']
           });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);

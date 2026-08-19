@@ -114,6 +114,12 @@ design document.
 - [Customer authentication](design/customer-authentication.md) - account lifecycle, deterministic
   login transition, password recovery, General account/logout controls, and login/home visual
   contract.
+- [OnlyPreview preview view merge and find ownership](design/onlypreview-preview-merge-find.md) -
+  two visible views, PreviewHeader folded into Preview, header-owned file actions and `Cmd+F` find
+  bar, per-type find adapters, and non-destructive Custom Highlight rendering.
+- [OnlyPreview preview format coverage](design/onlypreview-format-coverage.md) - per-format engine
+  matrix for `.xlsx`/`.docx`, image and media boundaries, fidelity ceilings, truthful failure states,
+  and the Preview-engine dynamic-import exception.
 
 ## Delivery
 

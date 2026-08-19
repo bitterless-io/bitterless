@@ -7,6 +7,13 @@
 > [`docs/features/onlypreview.md`](../features/onlypreview.md) 和
 > [`docs/plan/analysis/onlypreview.md`](../plan/analysis/onlypreview.md) 为准；本文保留下来的产品
 > 合同是“浏览不被搜索索引裁剪”和“构建期间仅显示 Project 底部 2px 无文案进度 rail”。
+>
+> **决策取代（2026-08-18）**：本文 #2、#4 与 `PQ-1` 关于“把 Preview 合并进 Shell 单 renderer”
+> 的已定决策（从未实施）由
+> [`onlypreview-preview-merge-find.md`](onlypreview-preview-merge-find.md) 取代 —— 新决策是
+> Preview 保持独立视图、PreviewHeader 并入 Preview、Find Bar 与内容同进程。本文 #1 的根因判断、
+> #3 的“项目搜索与当前文件查找是两条合同”，以及“不能用 `webContents.findInPage()` 顶替当前文件
+> 查找”的判据继续有效。
 
 本文决定 OnlyPreview 的当前文件查找、项目全文搜索与 Preview 渲染边界。口径：文件系统
 权限、内容读取和项目索引继续由 Main 持有，Renderer 只接收能力化结果。姊妹文档：

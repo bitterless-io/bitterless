@@ -13,23 +13,67 @@ export type ClaudeHookEventName =
   | 'StopFailure'
   | 'SessionEnd';
 
-export interface ClaudeHookEvent {
+export interface ClaudeHookEventPayloadBase {
+  hookEventName: ClaudeHookEventName;
+  sessionId: string;
+  transcriptPath: string | null;
+  cwd: string | null;
+}
+
+export interface ClaudeHookEventV1 {
   schemaVersion: 1;
   eventId: string;
   occurredAt: number;
-  payload: {
-    hookEventName: ClaudeHookEventName;
-    sessionId: string;
-    transcriptPath: string | null;
-    cwd: string | null;
-  };
+  payload: ClaudeHookEventPayloadBase;
 }
+
+type ClaudeHookPromptFieldsAbsent = {
+  userPromptPreview?: never;
+  userPromptTruncated?: never;
+};
+
+export type ClaudeHookEventV2Payload =
+  | (Omit<ClaudeHookEventPayloadBase, 'hookEventName'> & {
+      hookEventName: Exclude<ClaudeHookEventName, 'UserPromptSubmit'>;
+    } & ClaudeHookPromptFieldsAbsent)
+  | (Omit<ClaudeHookEventPayloadBase, 'hookEventName'> & {
+      hookEventName: 'UserPromptSubmit';
+    } & (
+      | ClaudeHookPromptFieldsAbsent
+      | {
+          userPromptPreview: string;
+          userPromptTruncated: boolean;
+        }
+    ));
+
+export interface ClaudeHookEventV2 {
+  schemaVersion: 2;
+  eventId: string;
+  occurredAt: number;
+  payload: ClaudeHookEventV2Payload;
+}
+
+export type ClaudeHookEvent = ClaudeHookEventV1 | ClaudeHookEventV2;
+export type ClaudeHookMetadataOnlyEvent =
+  | (Omit<ClaudeHookEventV1, 'payload'> & {
+      payload: ClaudeHookEventPayloadBase & ClaudeHookPromptFieldsAbsent;
+    })
+  | (Omit<ClaudeHookEventV2, 'payload'> & {
+      payload: ClaudeHookEventPayloadBase & ClaudeHookPromptFieldsAbsent;
+    });
 
 export interface ClaudeHookDelivery {
   schemaVersion: 1;
   deliveryId: string;
   installationId: string;
   event: ClaudeHookEvent;
+}
+
+export interface ClaudeHookMetadataOnlyDelivery {
+  schemaVersion: 1;
+  deliveryId: string;
+  installationId: string;
+  event: ClaudeHookMetadataOnlyEvent;
 }
 
 export interface ClaudeHookCommitAcknowledgement {

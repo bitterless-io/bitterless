@@ -37,9 +37,8 @@ const RESIZE_HANDLE_WIDTH = 5;
 const DEFAULT_SIDEBAR_WIDTH = 264;
 const MENU_BAR_HEIGHT = 32;
 const STATUS_HEIGHT = 25;
-const PREVIEW_HEADER_HEIGHT = 43;
 
-type OnlyPreviewRendererMode = 'shell' | 'previewHeader' | 'preview' | 'settings' | 'guide';
+type OnlyPreviewRendererMode = 'shell' | 'preview' | 'settings' | 'guide';
 type OnlyPreviewNativeCommand =
   | 'choose-folder'
   | 'open-settings'
@@ -189,7 +188,6 @@ const settingsBoundsForParent = (
 export class OnlyPreviewWindowHelper {
   baseWindow: BaseWindow | null = null;
   shellView: WebContentsView | null = null;
-  previewHeaderView: WebContentsView | null = null;
   previewView: WebContentsView | null = null;
   settingsWindow: BrowserWindow | null = null;
   agentSkillGuideWindow: BrowserWindow | null = null;
@@ -293,16 +291,8 @@ export class OnlyPreviewWindowHelper {
   updatePreviewBounds(hostToken: string, value: OnlyPreviewBounds): void {
     const host = this.requireStandaloneHost(hostToken);
     const window = this.baseWindow;
-    const headerView = this.previewHeaderView;
     const contentView = this.previewView;
-    if (
-      !window ||
-      window.isDestroyed() ||
-      !headerView ||
-      headerView.webContents.isDestroyed() ||
-      !contentView ||
-      contentView.webContents.isDestroyed()
-    ) {
+    if (!window || window.isDestroyed() || !contentView || contentView.webContents.isDestroyed()) {
       throw new Error(`OnlyPreview host ${host.hostId} has no active preview surface.`);
     }
     const [contentWidth, contentHeight] = window.getContentSize();
@@ -471,11 +461,9 @@ export class OnlyPreviewWindowHelper {
     this.destroyAgentSkillGuide();
     const window = this.baseWindow;
     const shellView = this.shellView;
-    const previewHeaderView = this.previewHeaderView;
     const previewView = this.previewView;
     this.baseWindow = null;
     this.shellView = null;
-    this.previewHeaderView = null;
     this.previewView = null;
     this.previewHostBounds = null;
     this.baseWindowState = null;
@@ -487,18 +475,12 @@ export class OnlyPreviewWindowHelper {
         // The view may already have been detached by Electron during teardown.
       }
       try {
-        if (previewHeaderView) window.contentView.removeChildView(previewHeaderView);
-      } catch {
-        // The view may already have been detached by Electron during teardown.
-      }
-      try {
         if (previewView) window.contentView.removeChildView(previewView);
       } catch {
         // The view may already have been detached by Electron during teardown.
       }
     }
     closeView(shellView);
-    closeView(previewHeaderView);
     closeView(previewView);
     if (window && !window.isDestroyed()) window.destroy();
     if (this.searchBootstrapToken) {
@@ -578,28 +560,39 @@ export class OnlyPreviewWindowHelper {
       host,
       bootstrapToken: searchBootstrap.searchToken,
       broadcast: (eventName, params) => xpcMain.broadcast(eventName, params),
-      onUnexpectedExit: () => this.destroyStandalone()
+      onUnexpectedExit: (reason) => {
+        console.warn(`[OnlyPreview] ${reason} Closing the standalone window.`);
+        this.destroyStandalone();
+      }
     });
     if (this.baseWindow !== window || this.standaloneHost?.hostToken !== host.hostToken) {
       throw new Error('OnlyPreview file-search runtime startup was superseded.');
     }
     const shellView = this.createView(host, 'shell');
-    const previewHeaderView = this.createView(host, 'previewHeader');
     const previewView = this.createView(host, 'preview');
     this.shellView = shellView;
-    this.previewHeaderView = previewHeaderView;
     this.previewView = previewView;
     window.contentView.addChildView(shellView);
-    window.contentView.addChildView(previewHeaderView);
     window.contentView.addChildView(previewView);
     this.applyInitialBounds();
 
-    const closeOnRendererFailure = (): void => {
+    // A dead view closes the whole standalone window, which otherwise looks like the window simply
+    // vanished. Name the view and the exit reason so the cause is recoverable from the log.
+    const closeOnRendererFailure = (
+      view: 'shell' | 'preview',
+      details: Electron.RenderProcessGoneDetails
+    ): void => {
+      console.warn(
+        `[OnlyPreview] The ${view} renderer exited (${details.reason}, exitCode ${details.exitCode}); closing the standalone window.`
+      );
       if (this.baseWindow === window) this.destroyStandalone();
     };
-    shellView.webContents.once('render-process-gone', closeOnRendererFailure);
-    previewHeaderView.webContents.once('render-process-gone', closeOnRendererFailure);
-    previewView.webContents.once('render-process-gone', closeOnRendererFailure);
+    shellView.webContents.once('render-process-gone', (_event, details) =>
+      closeOnRendererFailure('shell', details)
+    );
+    previewView.webContents.once('render-process-gone', (_event, details) =>
+      closeOnRendererFailure('preview', details)
+    );
     shellView.webContents.once('did-finish-load', () => {
       if (this.baseWindow === window) this.baseWindowState?.show();
     });
@@ -607,11 +600,12 @@ export class OnlyPreviewWindowHelper {
       if (this.baseWindow !== window) return;
       const [width, height] = window.getContentSize();
       shellView.setBounds({ x: 0, y: 0, width, height });
+      const previewBounds = previewView.getBounds();
       const currentBounds = this.previewHostBounds || {
-        x: previewView.getBounds().x,
-        y: Math.max(MENU_BAR_HEIGHT, previewHeaderView.getBounds().y),
-        width: previewView.getBounds().width,
-        height: previewHeaderView.getBounds().height + previewView.getBounds().height
+        x: previewBounds.x,
+        y: Math.max(MENU_BAR_HEIGHT, previewBounds.y),
+        width: previewBounds.width,
+        height: previewBounds.height
       };
       this.applyPreviewHostBounds(clampPreviewBounds(currentBounds, width, height));
     });
@@ -621,13 +615,11 @@ export class OnlyPreviewWindowHelper {
       this.destroyAgentSkillGuide();
       this.baseWindow = null;
       this.shellView = null;
-      this.previewHeaderView = null;
       this.previewView = null;
       this.previewHostBounds = null;
       this.baseWindowState = null;
       fileSearchWindowService.stop();
       closeView(shellView);
-      closeView(previewHeaderView);
       closeView(previewView);
       if (this.searchBootstrapToken === searchBootstrap.searchToken) {
         onlyPreviewSearchBootstrapRegistry.revoke(searchBootstrap.searchToken);
@@ -637,15 +629,11 @@ export class OnlyPreviewWindowHelper {
       onlyPreviewHostRegistry.revoke(host.hostToken);
     });
     await this.loadView(previewView, 'preview');
-    await Promise.all([
-      this.loadView(shellView, 'shell'),
-      this.loadView(previewHeaderView, 'previewHeader')
-    ]);
+    await this.loadView(shellView, 'shell');
     if (
       !shouldAutoOpenOnlyPreviewDevTools() ||
       this.baseWindow !== window ||
       this.shellView !== shellView ||
-      this.previewHeaderView !== previewHeaderView ||
       this.previewView !== previewView ||
       window.isDestroyed() ||
       previewView.webContents.isDestroyed() ||
@@ -656,10 +644,7 @@ export class OnlyPreviewWindowHelper {
     previewView.webContents.openDevTools({ mode: 'detach', activate: false });
   }
 
-  private createView(
-    host: OnlyPreviewHostCapability,
-    mode: 'shell' | 'previewHeader' | 'preview'
-  ): WebContentsView {
+  private createView(host: OnlyPreviewHostCapability, mode: 'shell' | 'preview'): WebContentsView {
     const target = rendererTarget(mode);
     const view = new WebContentsView({
       webPreferences: {
@@ -680,10 +665,7 @@ export class OnlyPreviewWindowHelper {
     return view;
   }
 
-  private async loadView(
-    view: WebContentsView,
-    mode: 'shell' | 'previewHeader' | 'preview'
-  ): Promise<void> {
+  private async loadView(view: WebContentsView, mode: 'shell' | 'preview'): Promise<void> {
     const target = rendererTarget(mode);
     await (is.dev && process.env['ELECTRON_RENDERER_URL']
       ? view.webContents.loadURL(target.url)
@@ -691,7 +673,7 @@ export class OnlyPreviewWindowHelper {
   }
 
   private applyInitialBounds(): void {
-    if (!this.baseWindow || !this.shellView || !this.previewHeaderView || !this.previewView) return;
+    if (!this.baseWindow || !this.shellView || !this.previewView) return;
     const [width, height] = this.baseWindow.getContentSize();
     this.shellView.setBounds({ x: 0, y: 0, width, height });
     this.applyPreviewHostBounds({
@@ -703,23 +685,10 @@ export class OnlyPreviewWindowHelper {
   }
 
   private applyPreviewHostBounds(bounds: Rectangle): void {
-    const headerView = this.previewHeaderView;
     const contentView = this.previewView;
-    if (!headerView || !contentView) return;
-    const headerHeight = Math.min(PREVIEW_HEADER_HEIGHT, Math.max(0, bounds.height));
+    if (!contentView) return;
     this.previewHostBounds = { ...bounds };
-    headerView.setBounds({
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: headerHeight
-    });
-    contentView.setBounds({
-      x: bounds.x,
-      y: bounds.y + headerHeight,
-      width: bounds.width,
-      height: Math.max(0, bounds.height - headerHeight)
-    });
+    contentView.setBounds({ ...bounds });
   }
 
   private resolveNativeCommand(

@@ -8,4 +8,4 @@ export * from '../../src/main/fileSearch/fileSearchLifecycleFence.service';
 export * from '../../src/main/fileSearch/fileSearchRuntimeReady.service';
 export * from '../../src/preload/fileSearch/fileSearchRuntime';
 export * from '../../src/shared/onlypreview/fileSearchRuntime.types';
-export * from '../../src/renderer/onlypreview/previewHeader/src/onlyPreviewWatchReload.service';
+export * from '../../src/renderer/onlypreview/preview/src/onlyPreviewWatchReload.service';

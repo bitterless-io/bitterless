@@ -3,8 +3,10 @@ import {
   mkdirSync,
   mkdtempSync,
   existsSync,
+  readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,6 +36,25 @@ const load = async (name, entry) => {
 };
 
 try {
+  const desktopAdapterSource = readFileSync(
+    join(projectRoot, 'src/main/eyesOnAgents/claudeDesktopInventory.adapter.ts'),
+    'utf8'
+  );
+  assert.match(
+    desktopAdapterSource,
+    /opened\.size !== expected\.size \|\| opened\.mtimeMs !== expected\.mtimeMs/,
+    'metadata evidence must bind the opened file to the lstat size/mtime snapshot'
+  );
+  assert.match(
+    desktopAdapterSource,
+    /after\.size !== opened\.size \|\| after\.mtimeMs !== opened\.mtimeMs/,
+    'metadata evidence must reject content changes during the bounded read'
+  );
+  assert.match(
+    desktopAdapterSource,
+    /canonical !== path[\s\S]*opened\.size !== verified\.size \|\| opened\.mtimeMs !== verified\.mtimeMs/,
+    'tombstone evidence must stay on the direct path and one verified file snapshot'
+  );
   const desktop = await load(
     'desktop',
     'src/main/eyesOnAgents/claudeDesktopInventory.adapter.ts'
@@ -114,6 +135,20 @@ try {
     cliSessionId: uuid(1),
     isArchived: false
   }));
+  const stableMetadataIdentity = uuid(103);
+  const stableMetadataPath = join(desktopDir, `local_${stableMetadataIdentity}.json`);
+  writeFileSync(stableMetadataPath, JSON.stringify({
+    sessionId: `local_${stableMetadataIdentity}`,
+    cliSessionId: stableMetadataIdentity,
+    isArchived: false
+  }));
+  utimesSync(stableMetadataPath, new Date(46_000), new Date(46_000));
+  assert.equal(
+    (await desktop.scanClaudeDesktopInventory([desktopRoot], 50_000))
+      .find((row) => row.threadId === stableMetadataIdentity)?.desktopMetadataMtime,
+    46_000,
+    'restore evidence time must come from the same verified opened metadata snapshot'
+  );
   const ambiguousDesktop = desktop.scanClaudeDesktopInventory([desktopRoot], 10_000);
   const mergedAmbiguousDesktop = transcript.mergeClaudeInventory(await ambiguousDesktop, []);
   assert.deepEqual(
@@ -146,6 +181,72 @@ try {
     reverseCollision.find((row) => row.threadId === uuid(200))?.clearDesktopSessionId,
     true,
     'the colliding CLI identity must also fail closed'
+  );
+
+  const deletionRoot = join(fixtureRoot, 'desktop-deletion');
+  const deletionAccount = uuid(9201);
+  const deletionOrganization = uuid(9202);
+  const deletionDir = join(deletionRoot, deletionAccount, deletionOrganization);
+  const deletedIdentity = uuid(9203);
+  const symlinkIdentity = uuid(9204);
+  mkdirSync(deletionDir, { recursive: true });
+  const deletedPath = join(deletionDir, `deleted_${deletedIdentity}`);
+  writeFileSync(deletedPath, 'TOMBSTONE-CONTENTS-MUST-NOT-BE-READ');
+  utimesSync(deletedPath, new Date(45_000), new Date(45_000));
+  writeFileSync(join(deletionDir, `deleted_${uuid(9205)}.txt`), 'not exact');
+  mkdirSync(join(deletionDir, 'nested'));
+  writeFileSync(join(deletionDir, 'nested', `deleted_${uuid(9206)}`), 'not direct');
+  symlinkSync(deletedPath, join(deletionDir, `deleted_${symlinkIdentity}`));
+  const unsafeDeletionDiscovery = await desktop.discoverClaudeDesktopInventory([deletionRoot]);
+  assert.deepEqual(
+    unsafeDeletionDiscovery.tombstones.map((item) => item.identityId),
+    [deletedIdentity],
+    'only direct exact regular tombstones may become positive deletion evidence'
+  );
+  assert.equal(unsafeDeletionDiscovery.complete, false,
+    'an exact symlink tombstone must make omission reconciliation unsafe');
+  assert.deepEqual(unsafeDeletionDiscovery.healthyScopeKeys, []);
+  let unsafeDeletionBatch = null;
+  const unsafeDeletionObservation = new observation.ClaudeObservationService({
+    repository: {
+      clearClaudeTranscriptCapabilities: async () => ({ changed: false }),
+      upsertClaudeInventory: async (batch) => {
+        unsafeDeletionBatch = batch;
+        return { changed: false };
+      },
+      reconcileClaudeAgentStates: async () => ({ changed: false })
+    },
+    resolveRoots: () => ({ desktopRoots: [deletionRoot], projectsRoot: null }),
+    agents: { poll: async () => null },
+    watcher: {
+      updateRoots: async () => undefined,
+      start: async () => undefined,
+      stop: async () => undefined
+    }
+  });
+  await unsafeDeletionObservation.start();
+  assert.deepEqual(unsafeDeletionBatch.deletion.tombstones, [],
+    'a symlink-compromised scope must not send even neighboring markers to deletion persistence');
+  assert.equal(unsafeDeletionBatch.deletion.completeSnapshot, false);
+  await unsafeDeletionObservation.stop();
+  rmSync(join(deletionDir, `deleted_${symlinkIdentity}`));
+  const safeDeletionDiscovery = await desktop.discoverClaudeDesktopInventory([deletionRoot]);
+  assert.equal(safeDeletionDiscovery.complete, true);
+  assert.equal(safeDeletionDiscovery.healthyScopeKeys.length, 1);
+  assert.deepEqual(
+    desktop.scanClaudeDesktopTombstones(safeDeletionDiscovery.tombstones, 50_000),
+    [{
+      sourceKey: safeDeletionDiscovery.healthyScopeKeys[0],
+      identityId: deletedIdentity,
+      deletedAt: 45_000,
+      observedAt: 50_000
+    }],
+    'tombstone scans must persist only filename identity and bounded filesystem time'
+  );
+  assert.equal(
+    JSON.stringify(safeDeletionDiscovery).includes('TOMBSTONE-CONTENTS-MUST-NOT-BE-READ'),
+    false,
+    'tombstone contents must never enter inventory memory'
   );
   const projectsRoot = join(fixtureRoot, 'projects');
   const projectA = join(projectsRoot, 'project-a');
@@ -350,8 +451,8 @@ try {
   const coalescedObservation = new observation.ClaudeObservationService({
     repository: {
       clearClaudeTranscriptCapabilities: async () => ({ changed: false }),
-      upsertClaudeInventory: async ({ threads }) => {
-        coalescedBatches.push(threads);
+      upsertClaudeInventory: async (batch) => {
+        coalescedBatches.push(batch);
         return { changed: false };
       },
       reconcileClaudeAgentStates: async () => ({ changed: false })
@@ -380,14 +481,18 @@ try {
   await Promise.all([pollOne, pollTwo, fullUpgrade]);
   assert.equal(coalescedBatches.length, 2, 'one in-flight poll must have only one coalesced follow-up');
   assert.equal(
-    coalescedBatches[0].some((row) => row.desktopEvidenceComplete === true),
+    coalescedBatches[0].threads.some((row) => row.desktopEvidenceComplete === true),
     false
   );
   assert.equal(
-    coalescedBatches[1].some((row) => row.desktopEvidenceComplete === true),
+    coalescedBatches[1].threads.some((row) => row.desktopEvidenceComplete === true),
     true,
     'a queued full refresh must upgrade the one follow-up scan'
   );
+  assert.equal(coalescedBatches[0].deletion.completeSnapshot, false,
+    'poll invalidation may persist positive markers but must not clear omissions');
+  assert.equal(coalescedBatches[1].deletion.completeSnapshot, true,
+    'the queued healthy full scan must authorize tombstone absence reconciliation');
   await coalescedObservation.stop();
 
   let stopCommitCount = 0;

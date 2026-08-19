@@ -404,7 +404,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
   );
   assert.match(
     mainService,
-    /lastUserPrompt: lastUserPromptCaptureEnabled[\s\S]*?state: 'unavailable' as const,[\s\S]*?checkedAt: null,[\s\S]*?truncated: false/,
+    /thread\.provider === 'claude'[\s\S]*?claudeLastUserPromptCaptureEnabled[\s\S]*?: lastUserPromptCaptureEnabled[\s\S]*?state: 'unavailable' as const,[\s\S]*?checkedAt: null,[\s\S]*?truncated: false/,
   );
   assert.match(
     mainService,
@@ -618,7 +618,7 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(component, /eyesOnAgentsStore\.openThread\(props\.thread\.sessionKey\)/);
   assert.match(
     component,
-    /v-if="thread\.runtimeState === 'working'"[\s\S]*?class="thread-card__working"[\s\S]*?role="status"[\s\S]*?:aria-label="runtimeLabel"[\s\S]*?<a-spin :size="12"/
+    /v-if="\['working', 'waiting_approval', 'waiting_input'\]\.includes\(thread\.runtimeState\)"[\s\S]*?class="thread-card__working"[\s\S]*?role="status"[\s\S]*?:aria-label="runtimeLabel"[\s\S]*?<a-spin :size="12"/
   );
   assert.equal((component.match(/<a-spin/g) ?? []).length, 1);
 
@@ -657,13 +657,13 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(chinese, /workingDirectory: '工作目录：\{path\}'/);
 
   const openAction = component.match(
-    /<a-tooltip :content="openTooltip"[\s\S]*?<a-button[\s\S]*?<\/a-button>[\s\S]*?<\/a-tooltip>/
+    /<a-tooltip v-if="canOpenThread" :content="openTooltip"[\s\S]*?<a-button[\s\S]*?<\/a-button>[\s\S]*?<\/a-tooltip>/
   );
   assert.ok(openAction, 'Missing localized Open tooltip and button');
   assert.match(openAction[0], /:title="openTooltip"/);
   assert.match(openAction[0], /:aria-label="openAriaLabel"/);
   assert.match(openAction[0], /:loading="eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
-  assert.match(openAction[0], /:disabled="!canOpenThread \|\| eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
+  assert.match(openAction[0], /:disabled="eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
   assert.match(openAction[0], /@click\.stop="handleOpen"/);
   assert.match(openAction[0], /<template #icon><IconExternalLink :size="9" \/><\/template>/);
   assert.doesNotMatch(
@@ -678,7 +678,6 @@ test('thread cards use compact title and action rows with accessible status mark
     component,
     /const openAriaLabel = computed\(\(\) => showUnreadDot\.value[\s\S]*?openTooltip\.value[\s\S]*?thread\.new/
   );
-  assert.equal((component.match(/eyesOnAgents\.thread\.new/g) ?? []).length, 1);
   assert.doesNotMatch(component, /v-if\s*=\s*["']thread\.isUnread["']/);
   assert.match(
     component,
@@ -690,7 +689,7 @@ test('thread cards use compact title and action rows with accessible status mark
 
   assert.match(
     component,
-    /:aria-label="i18nHelper\.eyesOnAgents\.actions\.more"[\s\S]*?<IconDots :size="12" \/>/
+    /:aria-label="moreAriaLabel"[\s\S]*?<IconDots :size="12" \/>/
   );
   const folderBox = cssRule(styles, '.thread-card__folder');
   assert.match(folderBox, /width: 20px/);
@@ -714,15 +713,6 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   const card = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
   );
-  const search = read(
-    'src/renderer/eyesOnAgents/src/components/ThreadSearch/ThreadSearch.vue'
-  );
-  const glyph = read(
-    'src/renderer/eyesOnAgents/src/components/ProviderGlyph/ProviderGlyph.vue'
-  );
-  const glyphStyles = read(
-    'src/renderer/eyesOnAgents/src/components/ProviderGlyph/ProviderGlyph.less'
-  );
   const panel = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
   );
@@ -742,24 +732,8 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
     .map((path) => read(path))
     .join('\n');
 
-  assert.match(
-    card,
-    /class="thread-card__title-row">\s*<ProviderGlyph :provider="thread\.provider" \/>\s*<h3 class="thread-card__title"/,
-  );
   assert.match(card, /:data-session-key="thread\.sessionKey"/);
   assert.match(card, /:data-provider="thread\.provider"/);
-  assert.match(
-    search,
-    /class="thread-search__result-heading">\s*<ProviderGlyph :provider="thread\.provider" \/>/,
-  );
-  assert.match(glyph, /IconPrompt v-if="provider === 'codex'" :size="13"/);
-  assert.match(glyph, /IconSparkles v-else :size="13"/);
-  assert.match(glyph, /role="img"/);
-  assert.match(glyph, /:aria-label="providerLabel"/);
-  const glyphShell = cssRule(glyphStyles, '.provider-glyph');
-  assert.match(glyphShell, /width: 13px/);
-  assert.match(glyphShell, /height: 18px/);
-  assert.doesNotMatch(glyphStyles, /\bborder\s*:|background|box-shadow/);
 
   assert.match(
     card,
@@ -1744,16 +1718,39 @@ test('Codex observation exposes explicit local latest-question retention', () =>
     /async setLastUserPromptCaptureEnabled\(enabled: boolean\): Promise<void> \{[\s\S]*this\.runSnapshotAction\('prompt-retention',[\s\S]*eyesOnAgentsEmitter\.setLastUserPromptCaptureEnabled\(\{ enabled \}\)/,
   );
 
-  const preference = cssRule(styles, '.eyes-connection-card__preference');
-  assert.match(preference, /background: oklch/);
-  assert.doesNotMatch(preference, /\bborder\s*:|box-shadow/);
+  const settingRow = cssRule(styles, '.eyes-connection-card__setting-row');
+  assert.match(settingRow, /min-height: 50px/);
+  assert.match(settingRow, /border-bottom: 1px solid/);
+  assert.doesNotMatch(settingRow, /box-shadow/);
   assert.match(english, /promptRetentionLabel: 'Store latest user question'/);
-  assert.match(english, /promptRetentionDescription:\s*'[^']*off by default[^']*8192 bytes[^']*local SQLite only[^']*turning it off clears saved previews[^']*Replies and history are not stored\.'/);
+  assert.match(english, /promptRetentionDescription: 'Off by default · one local question preview'/);
   assert.match(chinese, /promptRetentionLabel: '保存最后一个用户问题'/);
-  assert.match(chinese, /promptRetentionDescription:\s*'[^']*默认关闭[^']*本机 SQLite[^']*8192 字节[^']*关闭会清空已保存的预览[^']*不保存回答或历史记录。'/);
+  assert.match(chinese, /promptRetentionDescription: '默认关闭 · 仅保存一条本地问题预览'/);
 });
 
-test('connection panel presents independent Codex observation onboarding and review', () => {
+test('Claude observation exposes independent Hook-only latest-question retention', () => {
+  const card = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue'
+  );
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  assert.match(card, /name="eyesOnAgents__connections__claudePromptRetention"/);
+  assert.match(card, /eyesOnAgents\.claudeBridge\.promptRetentionLabel/);
+  assert.match(card, /:model-value="lastUserPromptCaptureEnabled"/);
+  assert.match(card, /busyAction === 'claude-prompt-retention'/);
+  assert.match(card, /snapshot\?\.claudeLastUserPromptCaptureEnabled \?\? false/);
+  assert.match(card, /setClaudeLastUserPromptCaptureEnabled\(enabled\)/);
+  assert.match(
+    store,
+    /setClaudeLastUserPromptCaptureEnabled[\s\S]*runSnapshotAction\('claude-prompt-retention'[\s\S]*setClaudeLastUserPromptCaptureEnabled\(\{ enabled \}\)/,
+  );
+  assert.match(english, /promptRetentionDescription: 'Off by default · Hook keeps one local question preview'/);
+  assert.match(chinese, /promptRetentionDescription: '默认关闭 · Hook 仅保存一条本地问题预览'/);
+});
+
+test('connection panel presents status-first Codex observation settings', () => {
   const panel = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
   );
@@ -1765,32 +1762,27 @@ test('connection panel presents independent Codex observation onboarding and rev
 
   assert.match(panel, /const canEnableBridge = computed\(\(\) => bridgeState\.value === 'not_installed'\)/);
   assert.match(panel, /const canRepairBridge = computed\(\(\) => bridgeState\.value === 'drifted'\)/);
-  assert.match(panel, /bridgeState\.value === 'needs_trust' \|\| bridgeState\.value === 'error'/);
-  assert.match(panel, /eyesOnAgentsStore\.reviewCodexBridge\(\)/);
+  assert.match(panel, /const showHookSettingsAttention = computed\(\(\) => bridgeState\.value === 'needs_trust'\)/);
   assert.match(panel, /eyesOnAgentsStore\.refreshCodexBridgeStatus\(\)/);
   assert.match(panel, /bridgeReviewReason\.value === 'disabled'/);
-  assert.match(panel, /bridge\.value\?\.listening[\s\S]*observing[\s\S]*installedPaused/);
-  assert.match(panel, /lastInspectedAt/);
-  assert.match(panel, /lastEventAt/);
+  assert.match(panel, /bridge\.value\?\.listening[\s\S]*statusObserving[\s\S]*statusPaused/);
+  assert.doesNotMatch(panel, /eyesOnAgentsStore\.reviewCodexBridge\(\)/);
+  assert.doesNotMatch(panel, /lastInspectedAt|lastEventAt|listeningSince/);
   assert.doesNotMatch(panel, /!canDisconnect\.value/);
   assert.match(menuBar, /case 'needs_trust'/);
-  assert.match(english, /Global Codex observation/);
+  assert.match(english, /title: 'Codex observation'/);
   assert.match(english, /Installed, paused/);
-  assert.match(english, /Review in Codex/);
-  assert.match(english, /Re-enable and review/);
-  assert.match(english, /Check again/);
-  assert.match(english, /Install or repair[\s\S]*Settings → Hooks[\s\S]*\/hooks/);
-  assert.match(chinese, /全局 Codex 观测/);
+  assert.match(english, /Codex → Settings → Hooks/);
+  assert.match(english, /SessionStart · UserPromptSubmit · PermissionRequest · Stop/);
+  assert.match(chinese, /title: 'Codex 观测'/);
   assert.match(chinese, /已安装，监听暂停/);
-  assert.match(chinese, /在 Codex 中审核/);
-  assert.match(chinese, /重新启用并审核/);
-  assert.match(chinese, /再次检查/);
-  assert.match(chinese, /安装或修复[\s\S]*设置 → Hooks[\s\S]*\/hooks/);
+  assert.match(chinese, /Codex → 设置 → Hooks/);
+  assert.match(chinese, /SessionStart · UserPromptSubmit · PermissionRequest · Stop/);
   assert.doesNotMatch(english, /Managed by Connect/);
   assert.doesNotMatch(chinese, /由“连接”统一管理/);
 });
 
-test('connection panel renders an ordered Codex observation and consent guide', () => {
+test('Codex observation uses a flat action list without unsupported external controls', () => {
   const panel = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
   );
@@ -1800,109 +1792,74 @@ test('connection panel renders an ordered Codex observation and consent guide', 
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
-  const guideOpeningTag = panel.match(
-    /<section\s+name="eyesOnAgents__connections__hookGuide"[^>]*>/
+  const bridgeCard = panel.match(
+    /<section\s+name="eyesOnAgents__connections__bridge"[\s\S]*?<\/section>/
   );
-  assert.ok(guideOpeningTag, 'Missing Hook guide opening tag');
-  assert.doesNotMatch(guideOpeningTag[0], /\bv-(?:if|show)\s*=/);
-  const guide = panel.match(
-    /<section\s+name="eyesOnAgents__connections__hookGuide"[\s\S]*?<\/section>/
-  );
-  assert.ok(guide, 'Missing Hook trust guide');
-  assert.match(guide[0], /<ol class="eyes-connection-card__hook-steps">/);
+  assert.ok(bridgeCard, 'Missing Codex observation card');
   assert.match(
-    guide[0],
-    /hookGuideOpenTitle[\s\S]*hookGuideReviewTitle[\s\S]*hookGuideConfirmTitle[\s\S]*hookGuideContentTitle/
+    bridgeCard[0],
+    /eyes-connection-card__status[\s\S]*@click="handleRefreshBridge"[\s\S]*bridge\.checkStatus/
   );
+  assert.doesNotMatch(
+    bridgeCard[0].match(/@click="handleRefreshBridge"[\s\S]*?<\/a-button>/)?.[0] ?? '',
+    /\bv-if=/
+  );
+  assert.match(bridgeCard[0], /class="eyes-connection-card__settings-list"/);
   assert.equal(
-    (guide[0].match(/<li name="eyesOnAgents__connections__hookGuideStep">/g) ?? []).length,
+    (bridgeCard[0].match(/class="eyes-connection-card__setting-row(?: [^"]*)?"/g) ?? []).length,
     4
   );
-  assert.doesNotMatch(guide[0], /role="status"/);
   assert.match(
-    panel,
-    /v-if="showReviewGuidance"[\s\S]*?class="eyes-connection-card__trust-summary"[\s\S]*?role="status"[\s\S]*?\{\{ reviewGuidance \}\}/
+    bridgeCard[0],
+    /v-if="canEnableBridge \|\| canRepairBridge"\s+name="eyesOnAgents__connections__installHooks"[\s\S]*v-if="canEnableBridge"[\s\S]*v-if="canRepairBridge"/
   );
-  assert.equal((panel.match(/v-if="showReviewGuidance"/g) ?? []).length, 1);
+  const externalRow = bridgeCard[0].match(
+    /<div\s+v-if="showHookSettingsAttention"\s+name="eyesOnAgents__connections__codexHookSettings"[\s\S]*?<\/div>\s*<\/div>/
+  );
+  assert.ok(externalRow, 'Missing Codex Settings → Hooks instruction');
+  assert.match(externalRow[0], /eyes-connection-card__setting-row--attention/);
+  assert.match(externalRow[0], /codexHookSettingsDescription/);
+  assert.doesNotMatch(externalRow[0], /<a-button|<a-switch|setting-action/);
   assert.match(
-    panel,
-    /const showReviewGuidance = computed\(\s*\(\) =>\s*bridgeState\.value === 'needs_trust'\s*\|\|\s*bridgeState\.value === 'error',?\s*\);/
+    bridgeCard[0],
+    /v-if="canDisableBridge"\s+name="eyesOnAgents__connections__removeHooks"[\s\S]*@click="handleRemoveBridge"/
   );
-  assert.doesNotMatch(panel, /hookGuideOpenDescription[\s\S]*?replace\('\{action\}'/);
-  assert.match(panel, /hookGuideReviewDescription/);
-  assert.match(panel, /hookGuideConfirmDescription/);
-  assert.match(panel, /hookGuideContentDescription/);
-  assert.match(panel, /hookGuideTrustBoundary/);
-  assert.match(panel, /@click="handleReviewBridge"[\s\S]*?\{\{ reviewActionLabel \}\}/);
-  assert.match(panel, /@click="handleRefreshBridge"[\s\S]*?bridge\.checkAgain/);
-  assert.match(panel, /@click="handleRemoveBridge"[\s\S]*?bridge\.disable/);
-  assert.match(panel, /eyesOnAgentsStore\.reviewCodexBridge\(\)/);
+  assert.doesNotMatch(
+    bridgeCard[0],
+    /hookGuide|hook-steps|trust-summary|eyes-connection-card__facts|eyes-connection-card__actions/
+  );
+  assert.doesNotMatch(panel, /handleReviewBridge|reviewActionLabel|showReviewGuidance/);
   assert.match(panel, /eyesOnAgentsStore\.refreshCodexBridgeStatus\(\)/);
   assert.match(panel, /eyesOnAgentsStore\.removeCodexBridge\(\)/);
-  assert.doesNotMatch(
-    panel,
-    /Open Codex Settings|Review the Bitterless Hooks|Only Codex grants trust|打开 Codex 设置|只有 Codex 能授予信任/
-  );
 
-  const trustSummary = cssRule(styles, '.eyes-connection-card__trust-summary');
-  assert.match(trustSummary, /background: oklch/);
-  assert.doesNotMatch(trustSummary, /\bborder\s*:|box-shadow/);
-  const hookGuide = cssRule(styles, '.eyes-connection-card__hook-guide');
-  assert.match(hookGuide, /background: oklch/);
-  assert.doesNotMatch(hookGuide, /\bborder\s*:|box-shadow/);
-  const hookStep = cssRule(styles, '.eyes-connection-card__hook-steps li');
-  assert.match(hookStep, /background: oklch\(1 0 0 \/ 68%\)/);
-  assert.doesNotMatch(hookStep, /\bborder\s*:|box-shadow/);
-  const trustBoundary = cssRule(
-    styles,
-    '.eyes-connection-card .eyes-connection-card__trust-boundary'
-  );
-  assert.match(trustBoundary, /color: inherit/);
-  assert.match(trustBoundary, /background: oklch\([^)]*\/ 7%\)/);
-  const hookGuideStyles = styles.match(
-    /\.eyes-connection-card__hook-guide h3[\s\S]*?(?=\.eyes-connection-panel__boundary)/
-  );
-  assert.ok(hookGuideStyles, 'Missing Hook guide styles');
-  assert.doesNotMatch(hookGuideStyles[0], /#[\da-f]{3,8}\b|\brgba?\(/i);
+  const settingsList = cssRule(styles, '.eyes-connection-card__settings-list');
+  assert.match(settingsList, /border-top: 1px solid/);
+  const settingRow = cssRule(styles, '.eyes-connection-card__setting-row');
+  assert.match(settingRow, /min-height: 50px/);
+  assert.match(settingRow, /border-bottom: 1px solid/);
+  const attentionRow = cssRule(styles, '.eyes-connection-card__setting-row--attention');
+  assert.match(attentionRow, /border-left: 2px solid/);
+  assert.match(attentionRow, /background: #fff6e6/);
+  assert.doesNotMatch(attentionRow, /box-shadow|border-radius/);
+  assert.doesNotMatch(styles, /eyes-connection-card__(?:hook-guide|hook-steps|trust-summary|trust-boundary)/);
 
-  assert.match(english, /hookGuideTitle: 'Codex observation setup'/);
-  assert.match(english, /hookGuideOpenTitle: 'Install or repair'/);
-  assert.match(english, /Enable observation only when absent/);
-  assert.match(english, /Repair only when the status reports drift/);
-  assert.match(english, /hookGuideReviewTitle: 'Review only when requested'/);
-  assert.match(english, /inspect every Bitterless definition/);
-  assert.match(english, /select Trust only for hooks Codex flags/);
-  assert.match(english, /Check again while review or status is pending/);
-  assert.match(english, /Check status after installation/);
-  assert.match(english, /hookGuideContentTitle: 'Optional content: Store latest user question'/);
-  assert.match(english, /Lifecycle observation is metadata-only by default/);
-  assert.match(english, /optional question storage is controlled separately below/);
-  assert.match(english, /This permission is independent and off by default/);
-  assert.match(english, /Hook trust does not grant it/);
-  assert.match(english, /one bounded local preview per thread/);
-  assert.match(english, /turning it off clears all saved previews/);
-  assert.match(english, /Replies, reasoning, tools, attachments, earlier questions, and history are never stored/);
-  assert.match(english, /may re-enable only exact disabled hooks/);
-  assert.match(english, /Only Codex grants trust; Bitterless cannot bypass review/);
-  assert.match(chinese, /hookGuideTitle: 'Codex 观测设置'/);
-  assert.match(chinese, /hookGuideOpenTitle: '安装或修复'/);
-  assert.match(chinese, /仅在未安装时选择“启用观测”/);
-  assert.match(chinese, /仅在状态提示定义漂移时选择“修复”/);
-  assert.match(chinese, /hookGuideReviewTitle: '仅在状态要求时审核'/);
-  assert.match(chinese, /检查每个 Bitterless 定义/);
-  assert.match(chinese, /仅信任 Codex 标记的项目/);
-  assert.match(chinese, /审核或状态待确认时选择“再次检查”/);
-  assert.match(chinese, /安装完成后选择“检查状态”/);
-  assert.match(chinese, /hookGuideContentTitle: '可选内容：保存最后一个用户问题'/);
-  assert.match(chinese, /生命周期观测默认只保留元数据/);
-  assert.match(chinese, /问题预览由下方独立控制/);
-  assert.match(chinese, /此权限独立且默认关闭/);
-  assert.match(chinese, /信任 Hook 不会授予此内容权限/);
-  assert.match(chinese, /每个任务仅保存一条有界的本地预览/);
-  assert.match(chinese, /关闭会清空所有已保存预览/);
-  assert.match(chinese, /回答、推理、工具、附件、更早的问题和历史记录均不会保存/);
-  assert.match(chinese, /只能重新启用精确匹配且已禁用的 hooks/);
-  assert.match(chinese, /只有 Codex 能授予信任；Bitterless 无法绕过审核/);
+  for (const statusKey of [
+    'statusNotInstalled',
+    'statusDrifted',
+    'statusNeedsReview',
+    'statusDisabled',
+    'statusModified',
+    'statusObserving',
+    'statusPaused',
+    'statusError'
+  ]) {
+    assert.match(english, new RegExp(`${statusKey}:`));
+    assert.match(chinese, new RegExp(`${statusKey}:`));
+  }
+  assert.match(english, /installHooks: 'Install Bitterless hooks'/);
+  assert.match(english, /removeObservation: 'Remove Codex observation'/);
+  assert.match(chinese, /installHooks: '安装 Bitterless hooks'/);
+  assert.match(chinese, /removeObservation: '移除 Codex 观测'/);
 });
 
 test('title enrichment diagnostics stay bounded and drawer-only', () => {

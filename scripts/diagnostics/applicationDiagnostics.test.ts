@@ -201,16 +201,16 @@ test('renderer log capture accepts only known first-party renderer entries', () 
   );
   assert.equal(
     resolveFirstPartyRendererProcess(
-      'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer/onlypreview/previewHeader/index.html'
+      'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer/onlypreview/preview/index.html'
     ),
-    'renderer:onlypreviewPreviewHeader'
+    'renderer:onlypreviewPreview'
   );
   assert.equal(
     resolveFirstPartyRendererProcess(
-      'http://127.0.0.1:5173/onlypreview/previewHeader/index.html',
+      'http://127.0.0.1:5173/onlypreview/preview/index.html',
       'http://127.0.0.1:5173'
     ),
-    'renderer:onlypreviewPreviewHeader'
+    'renderer:onlypreviewPreview'
   );
   assert.equal(
     resolveFirstPartyRendererProcess(

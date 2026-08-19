@@ -1,12 +1,12 @@
 # EyesOnAgents Completion Alert
 
-Status: fixed
+Status: implemented; Claude audible verification pending
 
 ## Need
 
-When a Codex task reaches the same newly completed state that shows the Open unread dot,
-EyesOnAgents should play the supplied short tone and send one localized operating-system
-notification:
+When a Codex task reaches the same newly completed state that shows the Open unread dot, or when an
+accepted Claude `Stop` says the main agent has finished one response, EyesOnAgents should play the
+supplied short tone and send one localized operating-system notification:
 
 ```text
 Thread finished
@@ -20,6 +20,14 @@ not by the board renderer.
 
 - Alert only for a newly accepted `completed` turn that persists `runtime_state = idle` and
   `is_unread = 1`. Failed/interrupted turns do not currently show the unread dot and do not alert.
+- A valid Claude `Stop` uses its already-validated Hook delivery UUID as the concrete completion
+  identity. It may therefore alert without a preceding `UserPromptSubmit` or persisted active turn.
+  This means “Claude finished this response; return to review it,” not “the broader task goal is
+  complete.” If another Stop hook makes Claude continue, each later distinct accepted `Stop` is a
+  separate response boundary and may alert once.
+- Claude `StopFailure`, user interruption, rejected installation generations, disabled-provider
+  events, events at or before the enable cutoff, stale events superseded by newer runtime evidence,
+  archived rows, and duplicate delivery UUIDs do not alert.
 - Claim `(thread_id, turn_id)` in a SQLite receipt table in the same transaction as the accepted
   terminal transition. Hook delivery, App Server notification, and metadata-only terminal
   reconciliation may race, but the same thread/turn emits at most one alert across restarts.
@@ -35,4 +43,5 @@ not by the board renderer.
   built-in `afplay`; Windows uses the built-in `System.Media.SoundPlayer`. The notification itself
   is silent so the supplied tone is not doubled by the OS default sound.
 
-Delivery: [eyes-on-agents-completion-alert-030](../plan/tasks/eyes-on-agents-completion-alert-030.md)
+Delivery: [eyes-on-agents-completion-alert-030](../plan/tasks/eyes-on-agents-completion-alert-030.md),
+[eyes-on-agents-claude-stop-alert-047](../plan/tasks/eyes-on-agents-claude-stop-alert-047.md)

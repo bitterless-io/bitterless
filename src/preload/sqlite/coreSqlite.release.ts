@@ -15,6 +15,7 @@ import {
   migrateEyesOnAgentsProviderIdentitySchema,
   ensureEyesOnAgentsClaudeInventorySchema,
   ensureEyesOnAgentsClaudeTranscriptActivitySchema,
+  ensureEyesOnAgentsClaudeDeletionSchema,
 } from './dao/eyesOnAgents.migration';
 import { eyesOnAgentsTable } from './dao/eyesOnAgents.table';
 import { messageTable } from './dao/message.table';
@@ -129,6 +130,7 @@ export const finalizeCoreSqliteSchema = (db: Database.Database): void => {
   ensureEyesOnAgentsCompletionAlertSchema(db);
   ensureEyesOnAgentsClaudeInventorySchema(db);
   ensureEyesOnAgentsClaudeTranscriptActivitySchema(db);
+  ensureEyesOnAgentsClaudeDeletionSchema(db);
 };
 
 export const coreSqliteMigrations: readonly SqliteMigration[] = [
@@ -207,5 +209,9 @@ export const coreSqliteMigrations: readonly SqliteMigration[] = [
   {
     versionCode: '260817163734',
     runner: ensureEyesOnAgentsClaudeTranscriptActivitySchema,
+  },
+  {
+    versionCode: '260818190001',
+    runner: ensureEyesOnAgentsClaudeDeletionSchema,
   },
 ];

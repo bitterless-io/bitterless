@@ -58,6 +58,7 @@ const createPluginHarness = ({
   const commands = [];
   let idIndex = 0;
   const service = new pluginModule.ClaudePluginBridgeService({
+    identity: pluginModule.resolveClaudePluginBridgeIdentity('production'),
     userDataPath: root,
     execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
     appRootPath: root,
@@ -74,6 +75,9 @@ const createPluginHarness = ({
       commands.push(command);
       if (command === 'plugin --help') {
         return { exitCode: 0, stdout: 'marketplace', stderr: '' };
+      }
+      if (command === 'plugin marketplace remove --help') {
+        return { exitCode: 0, stdout: '--scope <scope>', stderr: '' };
       }
       if (command === 'plugin list --json') {
         return {
@@ -208,7 +212,7 @@ try {
   });
   await assert.rejects(
     () => failedEnable.service.install(),
-    /^Error: Claude plugin setup failed at enable$/
+    /^Error: Claude plugin enablement failed \(exit code 1\)$/
   );
   assert.equal(failedEnable.service.getStatus().setupAction, 'repair');
 

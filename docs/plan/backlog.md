@@ -15,3 +15,8 @@ Non-blocking review findings are recorded here after task verification.
 - Add a lightweight bundled Shell-store behavior harness for OnlyPreview browse/search projection
   races. Current service behavior is covered with real fixtures, while renderer generation,
   refresh, selected-ancestor, and stale-listing guarantees are primarily source-pattern guards.
+- Extract Claude plugin identity and artifact generation from
+  `claudePluginBridge.service.ts`; task 048 preserved one lifecycle boundary but expanded the
+  existing file-size debt from 951 to 1,015 lines.
+- Move the task 048 profile-registry/coexistence harness out of `claude-hook.test.mjs`; the focused
+  coverage expanded that file from 789 to 931 lines and crossed the 800-line review limit.

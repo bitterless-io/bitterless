@@ -491,3 +491,39 @@ export const ensureEyesOnAgentsClaudeTranscriptActivitySchema = (
   if (!tableExists(db, 'eyes_on_agents_thread')) return;
   addColumnIfMissing(db, 'eyes_on_agents_thread', 'transcript_activity_at', 'INTEGER');
 };
+
+export const ensureEyesOnAgentsClaudeDeletionSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  addColumnIfMissing(
+    db,
+    'eyes_on_agents_thread',
+    'is_deleted',
+    'INTEGER NOT NULL DEFAULT 0'
+  );
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'deleted_at', 'INTEGER');
+  if (tableExists(db, 'eyes_on_agents_hook_delivery_receipt')) {
+    addColumnIfMissing(
+      db,
+      'eyes_on_agents_hook_delivery_receipt',
+      'is_observation_eligible',
+      'INTEGER NOT NULL DEFAULT 1'
+    );
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_thread_provider_deleted
+      ON eyes_on_agents_thread (provider, is_deleted, last_activity_at DESC);
+    CREATE TABLE IF NOT EXISTS eyes_on_agents_claude_deletion_tombstone (
+      source_key TEXT NOT NULL,
+      identity_id TEXT NOT NULL,
+      deleted_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      cleared_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (source_key, identity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_eyes_on_agents_claude_deletion_active_identity
+      ON eyes_on_agents_claude_deletion_tombstone (is_active, identity_id, deleted_at DESC);
+  `);
+};
