@@ -578,6 +578,7 @@ try {
   await claudeLeaseService.initialize();
   await claudeProviderStarted;
   await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  claudeExpiries = 0;
   claudeBroadcasts = 0;
   await Promise.all([
     claudeLeaseService.refreshThreadPages(),

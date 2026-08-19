@@ -1572,7 +1572,7 @@ try {
   assert.equal(typeof claudeSummary.firstReceivedAt, 'number');
   assert.equal(claudeSummary.firstReceivedAt, claudeSummary.lastReceivedAt);
   const initialClaudeRuntime = db.prepare(
-    `SELECT status_observed_at, status_fresh_until, active_turn_id
+    `SELECT status_observed_at, status_fresh_until, active_turn_id, runtime_state, is_unread
      FROM eyes_on_agents_thread WHERE session_key = ?`
   ).get(claudeKey(claudeHookThreadId));
   assert.deepEqual(await repository.upsertClaudeInventory({ threads: [{
@@ -1587,13 +1587,20 @@ try {
     observedAt: 900
   }] }), { changed: true });
   const heartbeatRuntime = db.prepare(
-    `SELECT status_observed_at, status_fresh_until, active_turn_id, transcript_activity_at
+    `SELECT status_observed_at, status_fresh_until, active_turn_id, transcript_activity_at,
+      runtime_state, is_unread
      FROM eyes_on_agents_thread WHERE session_key = ?`
   ).get(claudeKey(claudeHookThreadId));
   assert.equal(heartbeatRuntime.status_observed_at, initialClaudeRuntime.status_observed_at);
   assert.equal(heartbeatRuntime.active_turn_id, initialClaudeRuntime.active_turn_id);
   assert.equal(heartbeatRuntime.transcript_activity_at, 900);
   assert.equal(heartbeatRuntime.status_fresh_until, null);
+  assert.equal(heartbeatRuntime.runtime_state, 'working');
+  assert.equal(
+    heartbeatRuntime.is_unread,
+    1,
+    'ordinary transcript inventory must preserve unread while Claude is working'
+  );
   assert.deepEqual(await repository.upsertClaudeInventory({ threads: [{
     threadId: claudeHookThreadId,
     desktopSessionId: null,
@@ -1622,6 +1629,37 @@ try {
     null,
     'Desktop activity must not create a timeout for a Claude Hook epoch'
   );
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: '18181818-1818-4818-8818-181818181818',
+    event: {
+      type: 'turn_completed', threadId: claudeHookThreadId, turnId: null,
+      observedAt: 21_000, source: 'claude_hook', outcome: 'completed'
+    },
+    replayAuthority: 'current_listener'
+  });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT runtime_state, is_unread FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(claudeHookThreadId)) }, {
+    runtime_state: 'idle',
+    is_unread: 1
+  }, 'an accepted Claude Stop must leave terminal unread attention');
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeHookThreadId,
+    desktopSessionId: `local_${claudeHookThreadId}`,
+    transcriptPath: `/tmp/${claudeHookThreadId}.jsonl`,
+    transcriptActivityAt: 22_000,
+    title: 'Desktop activity after Stop',
+    cwd: null,
+    archiveState: 'active',
+    lastActivityAt: 22_000,
+    observedAt: 22_000
+  }] });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT runtime_state, is_unread FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(claudeHookThreadId)) }, {
+    runtime_state: 'idle',
+    is_unread: 1
+  }, 'ordinary Desktop/transcript inventory must preserve Stop completion attention');
   db.close();
   db = new TestDatabase(dbPath);
   globalThis.__eyesTestSqliteManager.db = db;
@@ -3779,6 +3817,42 @@ try {
     last_user_prompt_at: null,
     last_user_prompt_source: null
   }, 'restore must retain Domain and must not revive an old question/unread state');
+  const restoredPromptDelivery = '96969696-9696-4696-8696-969696969696';
+  const restoredStopDelivery = '97979797-9797-4797-8797-979797979797';
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: restoredPromptDelivery,
+    event: {
+      type: 'turn_started', threadId: deletedCliThread, turnId: null,
+      observedAt: 212_000, source: 'claude_hook'
+    },
+    hookLastUserPrompt: { preview: 'Question after verified restore', truncated: false },
+    replayAuthority: 'current_listener'
+  });
+  await repository.applyRuntimeEventDelivery({
+    deliveryId: restoredStopDelivery,
+    event: {
+      type: 'turn_completed', threadId: deletedCliThread, turnId: null,
+      observedAt: 213_000, source: 'claude_hook', outcome: 'completed'
+    },
+    replayAuthority: 'current_listener'
+  });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT runtime_state, is_unread, last_user_prompt_preview
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(deletedCliThread)) }, {
+    runtime_state: 'idle',
+    is_unread: 1,
+    last_user_prompt_preview: 'Question after verified restore'
+  }, 'a new Stop after verified restore must establish fresh terminal attention');
+  assert.deepEqual(await repository.upsertClaudeInventory({
+    threads: [restoreThread(214_000, true, 214_000)]
+  }), { changed: true });
+  assert.deepEqual({ ...db.prepare(
+    `SELECT runtime_state, is_unread FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(claudeKey(deletedCliThread)) }, {
+    runtime_state: 'idle',
+    is_unread: 1
+  }, 'historical inactive tombstones must not make ordinary inventory clear new attention');
   assert.ok(await repository.getClaudeOpenTarget({
     sessionKey: claudeKey(deletedCliThread)
   }));

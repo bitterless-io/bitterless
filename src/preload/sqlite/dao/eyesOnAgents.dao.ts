@@ -2112,6 +2112,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         const requiresVerifiedRestore = row?.is_deleted === 1 ||
           (row === undefined && deletionAt !== null);
         if (requiresVerifiedRestore && !isVerifiedRestore) continue;
+        const restoresDeletedRow = requiresVerifiedRestore && isVerifiedRestore;
 
         const collision = thread.desktopSessionId === null ? false : Boolean(
           sqliteManager.db.prepare(
@@ -2119,7 +2120,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
              WHERE provider = 'claude' AND thread_id <> ? AND desktop_session_id = ? LIMIT 1`
           ).get(thread.threadId, thread.desktopSessionId)
         );
-        if (isVerifiedRestore && collision) continue;
+        if (restoresDeletedRow && collision) continue;
         if (collision && thread.desktopSessionId !== null) {
           const cleared = sqliteManager.db.prepare(
             `UPDATE eyes_on_agents_thread SET desktop_session_id = NULL,
@@ -2187,8 +2188,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             ? row.transcript_activity_at
             : Math.max(row.transcript_activity_at ?? 0, thread.transcriptActivityAt),
           statusFreshUntil: row.status_fresh_until,
-          isDeleted: isVerifiedRestore ? 0 : row.is_deleted,
-          deletedAt: isVerifiedRestore ? null : row.deleted_at
+          isDeleted: restoresDeletedRow ? 0 : row.is_deleted,
+          deletedAt: restoresDeletedRow ? null : row.deleted_at
         };
         if (next.desktopSessionId === row.desktop_session_id &&
           next.desktopIdentityAmbiguous === row.desktop_identity_ambiguous &&
@@ -2207,7 +2208,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             title = ?, cwd = ?, project_key = ?, project_root = ?, project_name = ?,
             is_archived = ?, archive_state = ?, last_activity_at = ?,
             transcript_activity_at = ?, status_fresh_until = ?,
-            is_deleted = ?, deleted_at = ?, is_unread = CASE WHEN ? = 0 THEN 0 ELSE is_unread END,
+            is_deleted = ?, deleted_at = ?,
+            is_unread = CASE WHEN ? = 1 THEN 0 ELSE is_unread END,
             updated_at = ?
            WHERE provider = 'claude' AND thread_id = ?`
         ).run(
@@ -2216,7 +2218,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           next.projectKey, next.projectRoot, next.projectName,
           next.archiveState === 'archived' ? 1 : 0, next.archiveState,
           next.lastActivityAt, next.transcriptActivityAt, next.statusFreshUntil,
-          next.isDeleted, next.deletedAt, next.isDeleted,
+          next.isDeleted, next.deletedAt, restoresDeletedRow ? 1 : 0,
           now, thread.threadId
         );
         changed = true;

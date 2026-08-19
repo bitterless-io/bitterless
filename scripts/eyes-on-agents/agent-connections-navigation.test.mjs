@@ -304,7 +304,6 @@ try {
       'syncThreads',
       'setLastUserPromptCaptureEnabled',
       'installCodexBridge',
-      'reviewCodexBridge',
       'refreshCodexBridgeStatus',
       'removeCodexBridge'
     ]) {

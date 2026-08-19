@@ -393,6 +393,12 @@ omit `Stop` after a user interruption, the response can remain active until `Ses
 listener invalidation, archive, deletion, or a new Bitterless lifecycle clears the uncertain state;
 none of those recovery paths fabricate completion or an alert.
 
+Status inspection is not a new listener lifecycle. Window activation and **Check status** keep an
+already-running listener, its installation generation, the current Hook epoch, and unread state
+unchanged. Only a genuinely absent/failed listener, installation replacement, provider transition,
+coverage loss, explicit removal, or application shutdown may apply the corresponding lifecycle
+invalidation fence before retry/replay.
+
 An accepted `Stop` means the main Claude agent finished one response, not that its broader task goal
 is complete. Its validated delivery UUID is the concrete turn identity for completion-alert
 deduplication, so a missing earlier `UserPromptSubmit` does not suppress the sound. If another Stop
@@ -416,6 +422,23 @@ setup-period outbox, rotates the installation ID, reinstalls the exact user plug
 enabled state, and starts the new listener generation. It does not treat pre-commit deliveries as
 observation proof because plugin-management probes can emit them while setup is incomplete. Any
 ownership ambiguity remains a fail-closed Repair/error state.
+
+A normal Bitterless application release is not plugin drift. When the existing current-profile
+marketplace, owner marker, namespace, user-scope installation, committed bridge state, and
+installation identity are all exact, Main automatically upgrades the expected plugin version and
+owned artifacts before listener activation. That trusted upgrade preserves the installation ID,
+receipt history, provider admission cutoff, and pending outbox. A strictly proven installed-artifact
+Repair uses the same stable identity. Interrupted pre-commit setup, unknown ownership, coverage
+loss, or an incompatible bridge protocol retains the fresh-generation fail-closed path above.
+Existing Claude sessions can therefore continue delivering through their already-loaded helper
+while newly opened sessions load the upgraded artifacts.
+
+Main never adopts an unrecorded historical generation merely because an old outbox or cached helper
+self-reports an installation ID. A pre-fix Repair that already rotated away its committed identity
+cannot be proven distinct from an interrupted pre-commit setup, so its old backlog remains rejected;
+those already-open sessions need one `/reload-plugins` or a fresh session. Once this continuity
+contract is installed, trusted release upgrades and proven Repairs keep the identity stable and do
+not create that condition again.
 
 An already-open Claude Code or Desktop Code session does not dynamically load a newly installed
 plugin. Bitterless therefore offers Anthropic's published `claude://code/new` route as the primary
@@ -509,6 +532,10 @@ concurrent socket/activation/manual/poll requests:
 3. Run one coalesced `claude agents --json --all` capability-aware probe.
 4. Persist only field-level differences and broadcast only when at least one provider row changed.
 
+Desktop/transcript inventory may enrich identity, title, Project, archive, and Preview capability,
+but it never clears Hook runtime or unread attention. Only explicit terminal acknowledgement,
+verified deletion, or the task-051 verified Desktop restore contract may clear unread.
+
 Manual Refresh and window activation run full provider discovery. Failure from one provider is
 reported in its connection section and does not roll back the successful provider.
 
@@ -595,6 +622,9 @@ Claude CLI argument.
 - Claude Hook start/stop/failure transitions update Focus/unread and dedupe across offline replay.
 - A Hook-owned foreground response remains active until admitted terminal evidence or listener,
   provider, archive, or deletion invalidation; ordinary time passage never guesses completion.
+- Repeated window activation, Check status, directory invalidation, and inventory polling preserve
+  a current Hook epoch. A valid `Stop` remains terminal and unread through later inventory scans
+  until Open or Read all acknowledges it.
 - A matched Desktop `isArchived` transition hides/restores the Claude row within one poll. A valid
   `deleted_<uuid>` tombstone soft-deletes and hides the matching row even when its JSONL remains;
   CLI-only omission remains internal inventory and does not become deletion evidence.
@@ -606,6 +636,9 @@ Claude CLI argument.
   enabled the exact user plugin skips redundant enable, while an exact disabled plugin is enabled
   and re-inspected. Interrupted setup exposes Finish rather than a dead end. Remove preserves all
   unrelated Claude settings and plugins.
+- A trusted app-release artifact upgrade completes automatically with the existing installation ID,
+  receipts, cutoff, and outbox. It does not expose Repair merely because the Bitterless build/version
+  changed; Repair of proven installed drift also preserves that delivery identity.
 - Missing directory configuration hydrates automatic mode; a valid custom directory persists across
   logout/login and App restart, starts without opening EyesOnAgents, and can return to automatic.
 - A directory change immediately fences the old scan, restarts exactly one watcher, clears only old

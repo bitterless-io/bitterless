@@ -359,6 +359,39 @@ try {
     assert.equal(idle.querySelector('.thread-card__working'), null);
   });
 
+  await test('terminal unread states show one dot while active states show only loading', async () => {
+    for (const runtimeState of ['idle', 'ended', 'failed']) {
+      const rendered = await render(createThread({
+        runtimeState,
+        isUnread: true,
+        desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      }));
+      assert.equal(
+        rendered.querySelectorAll('.thread-card__unread-dot').length,
+        1,
+        `${runtimeState} unread must render exactly one terminal attention dot`,
+      );
+      assert.equal(rendered.querySelector('.thread-card__working'), null);
+    }
+
+    for (const runtimeState of ['working', 'waiting_approval', 'waiting_input']) {
+      const rendered = await render(createThread({
+        runtimeState,
+        isUnread: true,
+        desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      }));
+      assert.equal(
+        rendered.querySelectorAll('.thread-card__unread-dot').length,
+        0,
+        `${runtimeState} must not render a terminal attention dot`,
+      );
+      assert.ok(
+        rendered.querySelector('.thread-card__working[role="status"]'),
+        `${runtimeState} must keep its loading indicator`,
+      );
+    }
+  });
+
   await test('mounted card gestures and unread display follow the Open capability', async () => {
     const dispatchOpenGestures = async (host) => {
       const card = host.querySelector('[name="eyesOnAgents__threadCard"]');

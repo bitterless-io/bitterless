@@ -87,8 +87,9 @@ rather than reintroducing a permanent card border.
 
 The wrapping Domain board and its background-led hierarchy are the product signature. Thread
 cards contain no decorative signal rail, source badge, status row, or `New` badge. Every active
-working/waiting thread gets a compact loading indicator beside its title. The Open control gets an unread
-red dot only after the thread has returned to `idle`, so neither state consumes another card row.
+working/waiting thread gets a compact loading indicator beside its title. The Open control gets one
+unread red dot after the thread reaches a terminal `idle`, `ended`, or `failed` state, so neither
+state consumes another card row and a later SessionEnd cannot erase completion attention.
 
 ## Global task search
 
@@ -248,6 +249,9 @@ published Desktop route so the enabled plugin loads in a fresh session; **Copy `
 handles an already-open Claude session; **Repair** is reserved for proven drift/error.
 The first committed event updates the card automatically, so Check status is secondary diagnostics,
 not the final setup step. `/hooks` appears only under **Still not working?** troubleshooting.
+An ordinary Bitterless update silently upgrades a strictly owned exact installation while retaining
+its installation identity and pending deliveries; it does not present Repair just because the app
+version changed. Check status also preserves an already-running listener and live working card.
 
 The Claude header pairs the existing status pill with one small Arco Switch labelled
 **Claude support**.
@@ -398,9 +402,9 @@ A card displays only observation metadata:
 - working-directory folder, icon-only `Open`, and Domain overflow controls grouped
   at the right of the same action row; the folder exposes the full path through
   tooltip/accessibility text. Claude rows without a trusted Desktop Open route do not render;
-- an unread red dot at Open's upper-right when Open exists, otherwise at More, only when `isUnread`
-  is true and `runtimeState === 'idle'` after a reply finishes. Working, waiting, failed, ended, and
-  unknown cards never show this dot.
+- an unread red dot at Open's upper-right when Open exists, otherwise at More, when `isUnread` is
+  true and runtime is terminal (`idle`, `ended`, or `failed`) after a reply finishes. Working,
+  waiting, and unknown cards never show this dot.
 
 The action row uses 20px control boxes so it, not Arco's default 24px mini-button height, determines
 the compact card height. Its folder, Open, and More glyphs are respectively 10px, 9px, and 12px —
@@ -415,7 +419,7 @@ The card has no separate status or metadata row. It is an unbordered white item 
 radius and no persistent shadow. Pointer hover
 uses a slightly tinted background and Todo-strength light shadow, with no vertical lift. Keyboard
 focus uses a light Royal Blue background plus an explicit focus outline. The loading indicator and
-idle-unread dot are the only visible status marks and do not create another visual region. The card
+terminal-unread dot are the only visible status marks and do not create another visual region. The card
 and Open control keep localized runtime/unread accessibility text for the state currently shown,
 so these states do not depend on color alone.
 

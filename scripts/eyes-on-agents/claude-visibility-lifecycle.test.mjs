@@ -31,6 +31,11 @@ const loadTypeScriptModule = async (name, entry, plugins = []) => {
 };
 
 const tick = async () => await new Promise((resolvePromise) => setImmediate(resolvePromise));
+const deferred = () => {
+  let resolvePromise;
+  const promise = new Promise((resolve) => { resolvePromise = resolve; });
+  return { promise, resolve: resolvePromise };
+};
 const waitFor = async (predicate, label) => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (await predicate()) return;
@@ -142,6 +147,18 @@ try {
 
   await test('Main publishes only Desktop-routable Claude and invalidates before admission', async () => {
     const calls = [];
+    let listenerRunning = false;
+    let installationId = INSTALLATION_ID;
+    let refreshGate = null;
+    let replayGate = null;
+    let expireMappedRuntime = false;
+    const claudeBridgeStatus = () => ({
+      state: 'installed', setupAction: listenerRunning ? 'none' : 'retry',
+      configured: true, enabled: true,
+      listening: listenerRunning, listeningSince: listenerRunning ? new Date(1_000).toISOString() : null,
+      firstReceiptAt: null, lastReceiptAt: null,
+      lastInspectedAt: null, observationProof: 'current', restartRequired: false, error: null
+    });
     const mapped = persistedThread({
       provider: 'claude',
       threadId: MAPPED_CLAUDE_ID,
@@ -161,6 +178,11 @@ try {
       getSnapshot: async () => persisted,
       expireClaudeAgentStates: async ({ statusSources, force }) => {
         calls.push(`expire:${statusSources?.join('+')}:${Boolean(force)}`);
+        if (expireMappedRuntime && force) {
+          mapped.runtimeState = 'unknown';
+          mapped.activeTurnId = null;
+          mapped.statusSource = 'discovery';
+        }
         return { changed: false };
       },
       getRuntimeReceiptSummary: async () => ({ firstReceivedAt: null, lastReceivedAt: null })
@@ -213,29 +235,32 @@ try {
         refresh: async () => ({ changed: false })
       },
       claudeBridge: {
-        getStatus: () => ({
-          state: 'installed', setupAction: 'none', configured: true, enabled: true,
-          listening: true, listeningSince: null, firstReceiptAt: null, lastReceiptAt: null,
-          lastInspectedAt: null, observationProof: 'current', restartRequired: false, error: null
-        }),
+        getStatus: claudeBridgeStatus,
+        getInstallationId: () => installationId,
         hasInstallationIntent: () => true,
-        acceptsInstallation: (id) => id === INSTALLATION_ID,
+        acceptsInstallation: (id) => id === installationId,
         revokeObservationProof: () => undefined,
         install: async () => undefined,
         refresh: async () => {
           calls.push('plugin-refresh');
-          return {
-            state: 'installed', setupAction: 'none', configured: true, enabled: true,
-            listening: true, listeningSince: null, firstReceiptAt: null, lastReceiptAt: null,
-            lastInspectedAt: null, observationProof: 'current', restartRequired: false, error: null
-          };
+          if (refreshGate) await refreshGate;
+          return claudeBridgeStatus();
         },
         remove: async () => undefined
       },
       claudeHookListener: {
-        start: async () => calls.push('listener-start'),
-        stop: async () => calls.push('listener-stop'),
-        replayOutbox: async () => calls.push('outbox-replay')
+        start: async () => {
+          calls.push('listener-start');
+          listenerRunning = true;
+        },
+        stop: async () => {
+          calls.push('listener-stop');
+          listenerRunning = false;
+        },
+        replayOutbox: async () => {
+          calls.push('outbox-replay');
+          if (replayGate) await replayGate;
+        }
       },
       now: () => 100_000
     });
@@ -263,12 +288,106 @@ try {
       'the former 30-second lease must not alter a Hook-owned snapshot'
     );
 
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      calls.length = 0;
+      await service.refreshClaudeBridgeStatus();
+      assert.deepEqual(calls, ['plugin-refresh'],
+        'a healthy status check must not restart or invalidate the listener generation');
+      assert.equal(mapped.runtimeState, 'working');
+      assert.equal(service.canArmClaudeHookListener(), true);
+    }
+
+    listenerRunning = false;
     calls.length = 0;
     await service.refreshClaudeBridgeStatus();
-    const resumedInvalidation = calls.indexOf('expire:claude_hook:true');
-    assert.ok(resumedInvalidation >= 0);
-    assert.ok(resumedInvalidation < calls.indexOf('listener-start'));
-    assert.ok(resumedInvalidation < calls.indexOf('outbox-replay'));
+    assert.equal(calls.filter((call) => call === 'expire:claude_hook:true').length, 1);
+    assert.equal(calls.filter((call) => call === 'listener-stop').length, 1);
+    assert.equal(calls.filter((call) => call === 'listener-start').length, 1);
+    assert.equal(calls.filter((call) => call === 'outbox-replay').length, 1);
+    assert.ok(calls.indexOf('listener-stop') < calls.indexOf('expire:claude_hook:true'));
+    assert.ok(calls.indexOf('expire:claude_hook:true') < calls.indexOf('listener-start'));
+
+    installationId = '55555555-5555-4555-8555-555555555555';
+    calls.length = 0;
+    await service.refreshClaudeBridgeStatus();
+    assert.equal(calls.filter((call) => call === 'listener-stop').length, 1);
+    assert.equal(calls.filter((call) => call === 'expire:claude_hook:true').length, 1);
+    assert.equal(calls.filter((call) => call === 'listener-start').length, 1);
+    assert.equal(calls.filter((call) => call === 'outbox-replay').length, 1);
+    assert.ok(calls.indexOf('listener-stop') < calls.indexOf('expire:claude_hook:true'));
+    assert.ok(calls.indexOf('expire:claude_hook:true') < calls.indexOf('listener-start'));
+
+    mapped.runtimeState = 'working';
+    mapped.activeTurnId = `hook-claude-${MAPPED_CLAUDE_ID}`;
+    mapped.statusSource = 'claude_hook';
+    expireMappedRuntime = true;
+    listenerRunning = false;
+    const slowReplay = deferred();
+    replayGate = slowReplay.promise;
+    calls.length = 0;
+    const retryDuringDisable = service.refreshClaudeBridgeStatus();
+    await waitFor(() => calls.includes('outbox-replay'), 'deferred Claude outbox replay');
+    const disableDuringReplay = service.setClaudeProviderEnabled({ enabled: false });
+    await waitFor(
+      () => calls.filter((call) => call === 'listener-stop').length >= 2,
+      'provider disable fence during replay'
+    );
+    const replayDisableFence = calls.lastIndexOf('listener-stop');
+    assert.equal(service.canArmClaudeHookListener(), false);
+    slowReplay.resolve();
+    replayGate = null;
+    await Promise.all([retryDuringDisable, disableDuringReplay]);
+    assert.equal(mapped.runtimeState, 'unknown');
+    assert.deepEqual(
+      calls.slice(replayDisableFence + 1).filter(
+        (call) => call === 'listener-start' || call === 'outbox-replay'
+      ),
+      [],
+      'a replay admitted before Off must not restore listener intake or a Hook epoch afterward'
+    );
+    const replayDisabledSnapshot = await service.getSnapshot();
+    assert.equal(replayDisabledSnapshot.claudeProvider.enabled, false);
+    assert.deepEqual(replayDisabledSnapshot.threads.map(({ sessionKey }) => sessionKey), [
+      `codex:${CODEX_ID}`
+    ]);
+
+    expireMappedRuntime = false;
+    calls.length = 0;
+    await service.setClaudeProviderEnabled({ enabled: true });
+    assert.equal(service.canArmClaudeHookListener(), true);
+    mapped.runtimeState = 'working';
+    mapped.activeTurnId = `hook-claude-${MAPPED_CLAUDE_ID}`;
+    mapped.statusSource = 'claude_hook';
+    expireMappedRuntime = true;
+
+    const slowRefresh = deferred();
+    refreshGate = slowRefresh.promise;
+    calls.length = 0;
+    const refreshDuringDisable = service.refreshClaudeBridgeStatus();
+    await waitFor(() => calls.includes('plugin-refresh'), 'deferred Claude bridge refresh');
+    const disableDuringRefresh = service.setClaudeProviderEnabled({ enabled: false });
+    await waitFor(() => calls.includes('listener-stop'), 'provider disable fence during refresh');
+    const refreshDisableFence = calls.lastIndexOf('listener-stop');
+    assert.equal(service.canArmClaudeHookListener(), false);
+    slowRefresh.resolve();
+    refreshGate = null;
+    await Promise.all([refreshDuringDisable, disableDuringRefresh]);
+    assert.equal(mapped.runtimeState, 'unknown');
+    assert.deepEqual(
+      calls.slice(refreshDisableFence + 1).filter(
+        (call) => call === 'listener-start' || call === 'outbox-replay'
+      ),
+      [],
+      'a stale status result must not restart Claude after the provider intent changed'
+    );
+    assert.deepEqual(calls.filter((call) => call.startsWith('expire:')), [
+      'expire:claude_agent_view+claude_hook:true'
+    ]);
+    const refreshDisabledSnapshot = await service.getSnapshot();
+    assert.equal(refreshDisabledSnapshot.claudeProvider.enabled, false);
+    assert.deepEqual(refreshDisabledSnapshot.threads.map(({ sessionKey }) => sessionKey), [
+      `codex:${CODEX_ID}`
+    ]);
   });
 
   const { eyesOnAgentsTable } = await loadTypeScriptModule(

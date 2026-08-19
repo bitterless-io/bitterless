@@ -104,6 +104,7 @@ interface EyesOnAgentsServiceDependencies {
   };
   claudeBridge?: {
     getStatus(): EyesOnAgentsClaudeBridgeStatus;
+    getInstallationId?(): string;
     hasInstallationIntent(): boolean;
     acceptsInstallation(installationId: string): boolean;
     revokeObservationProof(reason?: 'coverage_gap'): void;
@@ -710,6 +711,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   private titleEnrichmentGeneration = 0;
   private titleEnrichmentDiagnostic: EyesOnAgentsTitleEnrichmentDiagnostic | null = null;
   private claudeHookIntakeEnabled = false;
+  private claudeHookListenerInstallationId: string | null = null;
   private claudeBridgeLifecycleTail: Promise<void> = Promise.resolve();
   private claudeProviderIntentTail: Promise<void> = Promise.resolve();
   private appRuntimeActive = false;
@@ -780,6 +782,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     this.claudeProviderRuntimeVersion += 1;
     this.bumpClaudeProviderRevision();
     this.claudeHookIntakeEnabled = false;
+    this.claudeHookListenerInstallationId = null;
     const claudeHookTeardown = this.runClaudeBridgeLifecycle(async () => {
       this.claudeHookIntakeEnabled = false;
       await this.dependencies.claudeHookListener?.stop();
@@ -2523,6 +2526,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         const canListen = status.configured && status.enabled &&
           !status.error && status.state !== 'drifted';
         if (canListen) {
+          const listenerInstallationId = this.currentClaudeBridgeInstallationId();
           this.claudeHookIntakeEnabled = true;
           try {
             await this.dependencies.claudeHookListener?.start();
@@ -2532,8 +2536,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
               return;
             }
             await this.dependencies.claudeHookListener?.replayOutbox();
+            this.claudeHookListenerInstallationId = listenerInstallationId;
           } catch (error) {
             this.claudeHookIntakeEnabled = false;
+            this.claudeHookListenerInstallationId = null;
             await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
             await this.invalidateClaudeHookActiveStates().catch(() => undefined);
             if (this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
@@ -2543,10 +2549,12 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           }
         } else {
           this.claudeHookIntakeEnabled = false;
+          this.claudeHookListenerInstallationId = null;
           await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
         }
       } catch (error) {
         this.claudeHookIntakeEnabled = false;
+        this.claudeHookListenerInstallationId = null;
         await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
         if (this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
           this.claudeProviderError = boundedClaudeProviderError(error);
@@ -2564,6 +2572,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     preemptedTeardown: Promise<PromiseSettledResult<unknown>[]> | null = null
   ): Promise<void> {
     this.claudeHookIntakeEnabled = false;
+    this.claudeHookListenerInstallationId = null;
     const failures: unknown[] = [];
     const listenerResult = preemptedTeardown === null
       ? await Promise.allSettled([
@@ -2688,6 +2697,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       this.claudeProviderPreferenceEnabled = params.enabled;
       this.claudeProviderEnableCutoff = cutoff;
       this.claudeHookIntakeEnabled = false;
+      this.claudeHookListenerInstallationId = null;
       this.claudeProviderProjectionEnabled = false;
       this.claudeProviderError = null;
       this.bumpClaudeProviderRevision();
@@ -2723,6 +2733,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
       this.claudeHookIntakeEnabled = false;
+      this.claudeHookListenerInstallationId = null;
       await this.dependencies.claudeHookListener?.stop();
       await this.invalidateClaudeHookActiveStates();
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) {
@@ -2739,6 +2750,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         await this.activateClaudeProvider(runtimeVersion, false);
         return;
       }
+      const listenerInstallationId = this.currentClaudeBridgeInstallationId();
       this.claudeHookIntakeEnabled = true;
       try {
         await this.dependencies.claudeHookListener?.start();
@@ -2746,8 +2758,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           throw new Error('Claude support changed while the listener was starting');
         }
         await this.dependencies.claudeHookListener?.replayOutbox();
+        this.claudeHookListenerInstallationId = listenerInstallationId;
       } catch (error) {
         this.claudeHookIntakeEnabled = false;
+        this.claudeHookListenerInstallationId = null;
         await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
         await this.invalidateClaudeHookActiveStates().catch(() => undefined);
         throw error;
@@ -2762,10 +2776,6 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     await this.runClaudeBridgeLifecycle(async () => {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
-      this.claudeHookIntakeEnabled = false;
-      await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
-      await this.invalidateClaudeHookActiveStates();
-      if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) return;
       const status = await this.dependencies.claudeBridge?.refresh();
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) return;
       if (!this.claudeProviderProjectionEnabled) {
@@ -2774,20 +2784,41 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       }
       const canListen = status?.configured === true && status.enabled &&
         !status.error && status.state !== 'drifted';
-      if (canListen) {
-        this.claudeHookIntakeEnabled = true;
-        try {
-          await this.dependencies.claudeHookListener?.start();
-          if (!this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
-            throw new Error('Claude support changed while the listener was starting');
-          }
-          await this.dependencies.claudeHookListener?.replayOutbox();
-        } catch {
-          this.claudeHookIntakeEnabled = false;
+      const listenerInstallationId = this.currentClaudeBridgeInstallationId();
+      const listenerIdentityChanged = status?.listening === true &&
+        listenerInstallationId !== null &&
+        this.claudeHookListenerInstallationId !== listenerInstallationId;
+      const listenerHealthy = canListen && status?.listening === true &&
+        this.claudeHookIntakeEnabled && !listenerIdentityChanged;
+      if (listenerHealthy) return;
+
+      const hadListenerGeneration = status?.listening === true ||
+        this.claudeHookIntakeEnabled || this.claudeHookListenerInstallationId !== null;
+      this.claudeHookIntakeEnabled = false;
+      this.claudeHookListenerInstallationId = null;
+      if (!canListen) {
+        if (hadListenerGeneration) {
           await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
-          await this.invalidateClaudeHookActiveStates().catch(() => undefined);
-          throw new Error('Claude listener retry failed');
+          await this.invalidateClaudeHookActiveStates();
         }
+        return;
+      }
+
+      await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
+      await this.invalidateClaudeHookActiveStates();
+      this.claudeHookIntakeEnabled = true;
+      try {
+        await this.dependencies.claudeHookListener?.start();
+        if (!this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
+          throw new Error('Claude support changed while the listener was starting');
+        }
+        await this.dependencies.claudeHookListener?.replayOutbox();
+        this.claudeHookListenerInstallationId = listenerInstallationId;
+      } catch {
+        this.claudeHookIntakeEnabled = false;
+        this.claudeHookListenerInstallationId = null;
+        await this.dependencies.claudeHookListener?.stop().catch(() => undefined);
+        throw new Error('Claude listener retry failed');
       }
     });
     return await this.changedSnapshot();
@@ -2800,6 +2831,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
       this.claudeHookIntakeEnabled = false;
+      this.claudeHookListenerInstallationId = null;
       await this.dependencies.claudeHookListener?.stop();
       await this.invalidateClaudeHookActiveStates();
       if (!this.isClaudeProviderVersionCurrent(runtimeVersion) ||
@@ -3019,6 +3051,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       statusSources: ['claude_hook'],
       force: true
     });
+  }
+
+  private currentClaudeBridgeInstallationId(): string | null {
+    try {
+      return this.dependencies.claudeBridge?.getInstallationId?.() ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async readClaudeBridgeStatus(): Promise<EyesOnAgentsClaudeBridgeStatus> {

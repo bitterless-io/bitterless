@@ -124,6 +124,7 @@ import type {
   EyesOnAgentsDomain,
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
+import { isEyesOnAgentsTerminal } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import ProviderGlyph from '../ProviderGlyph/ProviderGlyph.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
@@ -176,7 +177,7 @@ const promptAriaLabel = computed(() => {
 const canOpenThread = computed(() => props.thread.provider === 'codex'
   || props.thread.desktopSessionId !== null);
 const showUnreadDot = computed(() =>
-  props.thread.isUnread && props.thread.runtimeState === 'idle');
+  props.thread.isUnread && isEyesOnAgentsTerminal(props.thread.runtimeState));
 const cardAriaLabel = computed(() => [
   providerLabel.value,
   displayTitle.value,

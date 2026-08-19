@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.73",
+  "_version": "0.0.74",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -47,7 +47,7 @@
     "test:eyes-on-agents:bridge": "node scripts/eyes-on-agents/bridge.test.mjs && node scripts/eyes-on-agents/hook-delivery.test.mjs",
     "test:eyes-on-agents:ui": "node --test scripts/eyes-on-agents/global-title-search.test.mjs scripts/eyes-on-agents/ui-source.test.mjs scripts/eyes-on-agents/provider-logos.test.mjs scripts/eyes-on-agents/thread-card-open-capability.test.mjs scripts/eyes-on-agents/agent-connections-navigation.test.mjs scripts/eyes-on-agents/project-filter-render.test.mjs scripts/eyes-on-agents/claude-setup-render.test.mjs scripts/eyes-on-agents/activation-refresh.test.mjs",
     "test:eyes-on-agents:project-filter": "node scripts/eyes-on-agents/project-filter.test.mjs",
-    "test:eyes-on-agents:claude": "node scripts/eyes-on-agents/claude-inventory.test.mjs && node scripts/eyes-on-agents/claude-hook.test.mjs && node --test scripts/eyes-on-agents/claude-hook-prompt.test.mjs scripts/eyes-on-agents/claude-hook-prompt-service.test.mjs && node scripts/eyes-on-agents/claude-setup-recovery.test.mjs && node --test scripts/eyes-on-agents/claude-legacy-marketplace-recovery.test.mjs scripts/eyes-on-agents/claude-hook-admission.test.mjs && node scripts/eyes-on-agents/claude-directory-config.test.mjs && node scripts/eyes-on-agents/claude-directory-runtime.test.mjs && node scripts/eyes-on-agents/claude-directory-runtime-race.test.mjs && node --test scripts/eyes-on-agents/claude-provider-toggle.test.mjs scripts/eyes-on-agents/claude-provider-outbox.test.mjs scripts/eyes-on-agents/claude-provider-snapshot-race.test.mjs scripts/eyes-on-agents/claude-provider-isolation.test.mjs scripts/eyes-on-agents/claude-visibility-lifecycle.test.mjs",
+    "test:eyes-on-agents:claude": "node scripts/eyes-on-agents/claude-inventory.test.mjs && node scripts/eyes-on-agents/claude-hook.test.mjs && node --test scripts/eyes-on-agents/claude-hook-prompt.test.mjs scripts/eyes-on-agents/claude-hook-prompt-service.test.mjs && node scripts/eyes-on-agents/claude-setup-recovery.test.mjs && node --test scripts/eyes-on-agents/claude-legacy-marketplace-recovery.test.mjs scripts/eyes-on-agents/claude-hook-admission.test.mjs scripts/eyes-on-agents/claude-update-continuity.test.mjs && node scripts/eyes-on-agents/claude-directory-config.test.mjs && node scripts/eyes-on-agents/claude-directory-runtime.test.mjs && node scripts/eyes-on-agents/claude-directory-runtime-race.test.mjs && node --test scripts/eyes-on-agents/claude-provider-toggle.test.mjs scripts/eyes-on-agents/claude-provider-outbox.test.mjs scripts/eyes-on-agents/claude-provider-snapshot-race.test.mjs scripts/eyes-on-agents/claude-provider-isolation.test.mjs scripts/eyes-on-agents/claude-visibility-lifecycle.test.mjs",
     "test:eyes-on-agents": "yarn test:eyes-on-agents:core && yarn test:eyes-on-agents:project-resolver && yarn test:eyes-on-agents:repository && yarn test:eyes-on-agents:app-server && yarn test:eyes-on-agents:bridge && yarn test:eyes-on-agents:project-filter && yarn test:eyes-on-agents:claude && yarn test:eyes-on-agents:ui",
     "typecheck:eyes-on-agents:core": "tsc -p scripts/eyes-on-agents/tsconfig.strict.json",
     "typecheck:eyes-on-agents:ui": "vue-tsc --noEmit -p scripts/eyes-on-agents/tsconfig.ui.json --composite false",
@@ -263,6 +263,6 @@
     "rig_dev/*"
   ],
   "name": "Bitterless",
-  "version": "0.0.73",
-  "version_code": "260818190552"
+  "version": "0.0.74",
+  "version_code": "260819095139"
 }

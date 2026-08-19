@@ -672,7 +672,11 @@ test('thread cards use compact title and action rows with accessible status mark
   );
   assert.match(
     component,
-    /const showUnreadDot = computed\(\(\) =>\s*props\.thread\.isUnread && props\.thread\.runtimeState === 'idle'\);/
+    /import \{ isEyesOnAgentsTerminal \} from '@shared\/eyesOnAgents\/eyesOnAgents\.contract';/
+  );
+  assert.match(
+    component,
+    /const showUnreadDot = computed\(\(\) =>\s*props\.thread\.isUnread && isEyesOnAgentsTerminal\(props\.thread\.runtimeState\)\);/
   );
   assert.match(
     component,
