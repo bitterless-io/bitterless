@@ -1240,8 +1240,10 @@ test('the Focus header search input is always available and token-based', () => 
   assert.match(header[0], /role="search"/);
   assert.match(header[0], /name="eyesOnAgents__domainColumn__titleSearch"/);
   assert.match(header[0], /class="agent-domain__search-input"/);
+  assert.match(header[0], /allow-clear/);
   assert.match(header[0], /:model-value="eyesOnAgentsStore\.titleDraft"/);
   assert.match(header[0], /@update:model-value="handleTitleInput"/);
+  assert.match(header[0], /@clear="clearTitleSearch"/);
   assert.match(header[0], /:placeholder="titleSearchPlaceholder"/);
   assert.match(header[0], /:aria-label="i18nHelper\.eyesOnAgents\.actions\.searchTitles"/);
   assert.match(header[0], /@keydown\.esc\.prevent\.stop="clearTitleSearch"/);
@@ -1339,12 +1341,17 @@ test('the Focus header search input is always available and token-based', () => 
   assert.match(headerStyle, /display: flex/);
   assert.match(headerStyle, /justify-content: space-between/);
   const searchInput = cssRule(styles, '.agent-domain__search-input.arco-input-wrapper');
-  assert.match(searchInput, /border: 0/);
-  assert.match(searchInput, /box-shadow: none/);
+  assert.doesNotMatch(searchInput, /border:/);
+  assert.doesNotMatch(searchInput, /box-shadow:/);
   assert.match(
     searchInput,
     /background: var\(--eyes-item\)/,
     'the search input reads as a white field by default'
+  );
+  assert.doesNotMatch(
+    styles,
+    /\.agent-domain__search-input\.arco-input-wrapper:focus-within/,
+    'the input must reuse the native Arco focus border used by Submodules'
   );
   assert.doesNotMatch(
     styles,

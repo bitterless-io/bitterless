@@ -67,6 +67,14 @@ class OnlyPreviewPreviewStore {
     );
   }
 
+  get showsUnsupportedMetadata(): boolean {
+    return (
+      this.presentation?.surface === 'vue' &&
+      this.presentation.adapterId === 'unsupported' &&
+      this.descriptor !== null
+    );
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
@@ -270,6 +278,14 @@ class OnlyPreviewPreviewStore {
     this.selectionReportingRevision = reportingRevision;
     this.loading = true;
     try {
+      if (presentation.adapterId === 'unsupported') {
+        this.loading = false;
+        await nextTick();
+        if (!this.isCurrent(generation, revision)) return;
+        this.loadedRevision = revision;
+        await this.reportReady(revision);
+        return;
+      }
       if (presentation.adapterId === 'monaco' || presentation.adapterId === 'markdown-dom') {
         const textContent = unwrapOnlyPreviewResult(
           await onlyPreviewClient.readText({
@@ -304,12 +320,7 @@ class OnlyPreviewPreviewStore {
       if (!this.isCurrent(generation, revision)) return;
       this.loadedRevision = revision;
       this.loading = false;
-      if (
-        presentation.adapterId !== 'markdown-dom' &&
-        presentation.adapterId !== 'image' &&
-        presentation.adapterId !== 'audio' &&
-        presentation.adapterId !== 'video'
-      ) {
+      if (presentation.adapterId === 'monaco') {
         await this.reportReady(revision);
       }
     } catch (error) {

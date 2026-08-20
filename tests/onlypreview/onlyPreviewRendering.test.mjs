@@ -7,9 +7,87 @@ import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
+import { createSSRApp } from 'vue';
+import { renderToString } from '@vue/server-renderer';
+import { parse } from '@vue/compiler-sfc';
 
 const projectRoot = resolve(dirname(new URL(import.meta.url).pathname), '..', '..');
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-onlypreview-rendering-'));
+
+const rendererStoreHarnessPlugin = {
+  name: 'onlypreview-renderer-store-harness',
+  setup(buildContext) {
+    buildContext.onResolve({ filter: /^electron-xpc\/renderer$/ }, () => ({
+      path: 'electron-xpc-renderer',
+      namespace: 'onlypreview-renderer-harness'
+    }));
+    buildContext.onResolve({ filter: /onlyPreviewClient$/ }, ({ importer }) =>
+      importer.endsWith('onlyPreviewPreview.store.ts')
+        ? { path: 'onlypreview-client', namespace: 'onlypreview-renderer-harness' }
+        : null
+    );
+    buildContext.onResolve({ filter: /onlyPreviewEnv\.bridge$/ }, ({ importer }) =>
+      importer.endsWith('onlyPreviewPreview.store.ts')
+        ? { path: 'onlypreview-env', namespace: 'onlypreview-renderer-harness' }
+        : null
+    );
+    buildContext.onLoad({ filter: /.*/, namespace: 'onlypreview-renderer-harness' }, ({ path }) => {
+      if (path === 'electron-xpc-renderer') {
+        return {
+          loader: 'js',
+          contents: `
+              const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
+              export const xpcRenderer = {
+                broadcast: (...args) => harness().broadcasts.push(args),
+                subscribe: (eventName, callback) => harness().subscriptions.set(eventName, callback)
+              };
+              export const createXpcRendererEmitter = () => ({});
+            `
+        };
+      }
+      if (path === 'onlypreview-env') {
+        return {
+          loader: 'js',
+          contents: `
+              export const onlyPreviewEnv = {
+                hostToken: 'host-token-for-tests',
+                hostId: 'host-for-tests',
+                previewRuntimeToken: 'preview-runtime-token-for-tests'
+              };
+            `
+        };
+      }
+      return {
+        loader: 'js',
+        contents: `
+            const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
+            const success = (value) => ({ ok: true, value });
+            export const onlyPreviewClient = {
+              getVuePreviewPresentation: async () => success(harness().presentation),
+              getSettings: async () => success(harness().settings),
+              readText: async (request) => {
+                harness().readText.push(request);
+                throw new Error('unsupported adapters must not read text');
+              },
+              reportPreviewReset: async (request) => {
+                harness().resets.push(request);
+                return success(undefined);
+              },
+              reportPreviewReady: async (request) => {
+                const snapshot = harness().captureReady ? harness().captureReady() : null;
+                harness().ready.push({ request, snapshot });
+                return success(undefined);
+              },
+              reportPreviewError: async (request) => {
+                harness().errors.push(request);
+                return success(undefined);
+              }
+            };
+          `
+      };
+    });
+  }
+};
 
 await build({
   entryPoints: {
@@ -24,6 +102,10 @@ await build({
     markdown: join(
       projectRoot,
       'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
+    ),
+    previewStore: join(
+      projectRoot,
+      'src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts'
     )
   },
   outdir: buildRoot,
@@ -33,7 +115,8 @@ await build({
   format: 'esm',
   target: 'node22',
   sourcemap: 'inline',
-  tsconfig: join(projectRoot, 'tsconfig.web.json')
+  tsconfig: join(projectRoot, 'tsconfig.web.json'),
+  plugins: [rendererStoreHarnessPlugin]
 });
 
 const characterCount = await import(pathToFileURL(join(buildRoot, 'characterCount.mjs')).href);
@@ -41,6 +124,16 @@ const characterCountGate = await import(
   pathToFileURL(join(buildRoot, 'characterCountGate.mjs')).href
 );
 const markdown = await import(pathToFileURL(join(buildRoot, 'markdown.mjs')).href);
+const previewSurfaceSource = readFileSync(
+  join(
+    projectRoot,
+    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
+  ),
+  'utf8'
+);
+const previewSurfaceTemplate = parse(previewSurfaceSource).descriptor.template?.content;
+
+assert.ok(previewSurfaceTemplate, 'PreviewSurface must keep an executable Vue template');
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
@@ -50,6 +143,92 @@ const render = (source, sourceSize = Buffer.byteLength(source)) => {
     dom,
     result: markdown.renderOnlyPreviewMarkdown(source, sourceSize, dom.window)
   };
+};
+
+const officeDescriptor = (extension, kind) => ({
+  workspaceId: 'workspace-generation-for-tests',
+  relativePath: `fixtures/example${extension}`,
+  name: `example${extension}`,
+  displayPath: `/fixtures/example${extension}`,
+  extension,
+  kind,
+  mimeType: 'application/octet-stream',
+  language: '',
+  size: 4096,
+  modifiedAt: 1_700_000_000_000
+});
+
+const officePresentation = (descriptor, selectionRevision) => ({
+  hostId: 'host-for-tests',
+  workspaceId: descriptor.workspaceId,
+  selectionRevision,
+  surface: 'vue',
+  adapterId: 'unsupported',
+  status: 'loading',
+  fileRef: {
+    workspaceId: descriptor.workspaceId,
+    relativePath: descriptor.relativePath
+  },
+  descriptor,
+  error: null,
+  selectedTextAvailable: false
+});
+
+const createRendererStoreHarness = (presentation) => ({
+  presentation,
+  settings: {
+    theme: 'light',
+    editorFontSize: 13,
+    wordWrap: false,
+    showHiddenFiles: true,
+    openFilesWithSingleClick: true
+  },
+  broadcasts: [],
+  subscriptions: new Map(),
+  captureReady: null,
+  readText: [],
+  resets: [],
+  ready: [],
+  errors: []
+});
+
+const renderPreviewSurface = async (store) => {
+  const app = createSSRApp({
+    template: previewSurfaceTemplate,
+    setup: () => ({
+      onlyPreviewPreviewStore: store,
+      onlyPreviewI18n: {
+        preview: {
+          failedTitle: 'Preview failed',
+          unsupportedTitle: 'Unsupported preview',
+          unsupportedBody: 'Metadata only',
+          type: 'Type',
+          size: 'Size',
+          modified: 'Modified',
+          emptyTitle: 'No selection',
+          emptyBody: 'Choose a file',
+          loading: 'Loading'
+        }
+      },
+      isMarkdown: false,
+      selectionPreviewKey: 'selection',
+      imageAlt: '',
+      previewLimitMessage: '',
+      formatOnlyPreviewBytes: (size) => `${size} bytes`,
+      formatOnlyPreviewDate: (modifiedAt) => `date:${modifiedAt}`
+    })
+  });
+  for (const componentName of [
+    'IconAlertTriangle',
+    'IconFileSearch',
+    'IconFileUnknown',
+    'IconMusic',
+    'MarkdownPreview',
+    'MonacoTextPreview'
+  ]) {
+    app.component(componentName, { template: '<span></span>' });
+  }
+  return await renderToString(app);
 };
 
 test('Markdown keeps semantic reading structure and strips every attribute', () => {
@@ -168,14 +347,83 @@ test('Markdown admits by the original file-byte size without re-encoding toleran
 });
 
 test('raw HTML is intentionally absent from the Vue rendering bundle', () => {
-  const previewSurface = readFileSync(
-    join(
-      projectRoot,
-      'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
-    ),
-    'utf8'
-  );
-  assert.doesNotMatch(previewSurface, /HtmlPreview|v-html=.*html/i);
+  assert.doesNotMatch(previewSurfaceSource, /HtmlPreview|v-html=.*html/i);
+});
+
+test('unsupported Office adapters render metadata instead of the generic empty state', async () => {
+  const cases = [
+    ['.xlsx', 'sheet'],
+    ['.xlsm', 'sheet'],
+    ['.docx', 'document']
+  ];
+
+  for (const [extension, kind] of cases) {
+    const descriptor = officeDescriptor(extension, kind);
+    const html = await renderPreviewSurface({
+      errorMessage: '',
+      presentationError: '',
+      errorCode: null,
+      descriptor,
+      descriptorType: extension.slice(1).toUpperCase(),
+      textContent: null,
+      showsUnsupportedMetadata: true,
+      loading: false,
+      settings: {},
+      selectionReportingRevision: '1'
+    });
+
+    assert.match(html, /name="onlypreview__unsupportedPreview"/, extension);
+    assert.doesNotMatch(html, /name="onlypreview__previewEmpty"/, extension);
+    assert.match(html, new RegExp(extension.slice(1).toUpperCase()), extension);
+    assert.match(html, /4096 bytes/, extension);
+    assert.match(html, /date:1700000000000/, extension);
+  }
+});
+
+test('unsupported Office adapters become ready only as a rendered metadata fallback', async () => {
+  const cases = [
+    ['.xlsx', 'sheet'],
+    ['.xlsm', 'sheet'],
+    ['.docx', 'document']
+  ];
+
+  for (const [index, [extension, kind]] of cases.entries()) {
+    const descriptor = officeDescriptor(extension, kind);
+    const presentation = officePresentation(descriptor, index + 1);
+    const harness = createRendererStoreHarness(presentation);
+    globalThis.__onlyPreviewRendererStoreHarness = harness;
+    const previewStoreRuntime = await import(
+      `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?office=${extension.slice(1)}`
+    );
+    const store = previewStoreRuntime.onlyPreviewPreviewStore;
+    harness.captureReady = () => ({
+      descriptorKind: store.descriptor?.kind,
+      loading: store.loading,
+      showsUnsupportedMetadata: store.showsUnsupportedMetadata
+    });
+
+    await store.initialize();
+
+    assert.equal(store.descriptor?.kind, kind, extension);
+    assert.equal(store.showsUnsupportedMetadata, true, extension);
+    assert.equal(store.loading, false, extension);
+    assert.equal(harness.readText.length, 0, extension);
+    assert.equal(harness.errors.length, 0, extension);
+    assert.deepEqual(
+      harness.ready.map(({ request }) => request.selectionRevision),
+      [presentation.selectionRevision],
+      extension
+    );
+    assert.deepEqual(
+      harness.ready[0]?.snapshot,
+      {
+        descriptorKind: kind,
+        loading: false,
+        showsUnsupportedMetadata: true
+      },
+      extension
+    );
+  }
 });
 
 test('character count uses grapheme clusters and sums every non-empty selection', () => {

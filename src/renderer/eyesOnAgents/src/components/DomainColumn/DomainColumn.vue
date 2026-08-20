@@ -6,10 +6,12 @@
         name="eyesOnAgents__domainColumn__titleSearch"
         class="agent-domain__search-input"
         size="mini"
+        allow-clear
         :model-value="eyesOnAgentsStore.titleDraft"
         :placeholder="titleSearchPlaceholder"
         :aria-label="i18nHelper.eyesOnAgents.actions.searchTitles"
         @update:model-value="handleTitleInput"
+        @clear="clearTitleSearch"
         @keydown.esc.prevent.stop="clearTitleSearch"
       >
         <template #prefix>

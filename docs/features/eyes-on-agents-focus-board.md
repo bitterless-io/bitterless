@@ -132,10 +132,13 @@ column's own filter:
 |---|---|
 | `Cmd+F` / `Ctrl+F` | suppress native page Find and focus the header input; pressing it again just refocuses |
 | typing | filter the Focus list live |
+| clear icon | when text is present, clear draft and query immediately and keep focus in the input |
 | `Escape` in the input | clear the query and keep focus in the input |
 
-There is nothing to open or close, so the only reset paths are `Escape` and unmount, both of which
-clear draft and query together.
+There is nothing to open or close. The native clear icon and `Escape` reset draft and query together
+while keeping focus in the input; unmount performs the same reset without a visible action. The input
+uses the same native Arco border/focus treatment as the Submodules search control rather than an
+EyesOnAgents-only focus outline.
 
 Matching keeps the stronger token semantics delivered by
 `eyes-on-agents-token-title-search-032` instead of the previous plain substring test:

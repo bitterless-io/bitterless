@@ -122,10 +122,13 @@ keyboard focus. The title filter is the only narrowing control on this board.
 |---|---|
 | `Cmd+F` / `Ctrl+F` | suppress native page Find and focus the header input; repeating just refocuses |
 | typing | update the draft immediately; a leading-plus-trailing 120ms throttle publishes it to the list, and the trailing run always uses the newest keystroke |
+| clear icon | when text is present, clear draft and query immediately and keep focus in the input |
 | `Escape` in the input | clear the query and keep focus in the input |
 
-The input is never hidden, so no state can leave an invisible filter behind; `Escape` and unmount
-clear draft and query together.
+The input is never hidden, so no state can leave an invisible filter behind. Its native clear icon,
+`Escape`, and unmount clear draft and query together; the interactive clear paths keep input focus.
+The border and focused state reuse the native Arco treatment already used by the Submodules search
+input, with no EyesOnAgents-only outline or custom clear glyph.
 
 ## Header behavior
 
@@ -332,10 +335,11 @@ column-edge spacing.
 
 `Cmd+F` / `Ctrl+F` focuses that input and nothing else; a second press refocuses. The placeholder
 names the platform's own shortcut — `Search titles (⌘F)` on macOS, `Search titles (Ctrl+F)` on
-Windows — and the accessible label stays the plain search label. `Escape` inside the input clears the
-query and keeps focus there. Its token matching, clear, and Escape contract is defined in
+Windows — and the accessible label stays the plain search label. Arco's native clear icon appears
+only while text is present; it and `Escape` clear the query and keep focus there. Its token matching,
+clear, and Escape contract is defined in
 [Focus search](#focus-search). The row and its controls use quiet background contrast, mini sizing,
-visible focus, and no decorative border or shadow.
+and the same native border/focus treatment as the Submodules search input.
 
 There is no Project filter. The title filter is the column's only narrowing control, so the empty
 state has two cases: an active title filter shows the title-search text, otherwise the Focus empty

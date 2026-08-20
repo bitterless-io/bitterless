@@ -1,7 +1,7 @@
 ---
 id: onlypreview-preview-guards-023
 scope: Enforce size-first bounded preview/index reads while keeping non-text parser signature and archive limits
-status: implemented; independent review pending
+status: implemented; owner verification pending
 depends-on: [onlypreview-dual-preview-region-024]
 ---
 
@@ -154,11 +154,17 @@ Project Search active/candidate SQLite architecture.
 - PDF/image 100MiB, Office 25MiB primitive signature, Markdown/HTML 1MiB, Monaco 8MiB, and Search
   body 1MiB boundaries are centralized and covered at exact cap and limit+1. Large stable media
   retains exact-size Range delivery without a product cap.
-- Full OnlyPreview Node suite: **197/197 passed**. The independent Search-focused audit passed
+- Review-fix verification executes the real Preview store bundle and the `PreviewSurface` SFC:
+  bounded XLSX/XLSM/DOCX keep their `sheet`/`document` descriptors, issue no text read or parser
+  asset, render the adapter-driven unsupported metadata state, and only then report the fallback
+  ready. The focused renderer suite passed **13/13**.
+- Full OnlyPreview Node suite: **199/199 passed**. The independent Search-focused audit passed
   **43/43**. `yarn typecheck:node`, renderer i18n, scoped formatting/lint, the non-mutating Electron
   Vite source build, and `git diff --check` passed.
 - The optional strict Node TypeScript pass exhausted the default V8 heap near 4GiB before emitting a
-  diagnostic. `yarn typecheck:web` retains only the unrelated Connector/Poker/Home/Maestro/path
+  diagnostic. `yarn typecheck:web` retains only the unrelated Connector/Poker/Home/Maestro/Omni/path
   baseline errors and reports no OnlyPreview diagnostic.
 - Electron/Playwright E2E and the real application were not run. Ral retains final runtime
-  verification; this delivery is ready for the independent source verifier.
+  verification. Independent review 2 passed with no P0/P1/P2 findings after the Office metadata
+  fallback correction; see
+  [onlypreview-preview-guards-023-2](../reviews/onlypreview-preview-guards-023-2.md).

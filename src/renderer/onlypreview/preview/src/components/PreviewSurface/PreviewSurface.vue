@@ -118,7 +118,9 @@
       </div>
 
       <div
-        v-else-if="onlyPreviewPreviewStore.descriptor?.kind === 'unsupported'"
+        v-else-if="
+          onlyPreviewPreviewStore.showsUnsupportedMetadata && onlyPreviewPreviewStore.descriptor
+        "
         name="onlypreview__unsupportedPreview"
         class="onlypreview-preview__state"
       >
