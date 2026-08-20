@@ -18,19 +18,12 @@
           v-if="onlyPreviewPreviewStore.errorCode === 'TEXT_TOO_LARGE'"
           class="onlypreview-preview__state-note"
         >
-          {{ onlyPreviewI18n.preview.textLimit }}
+          {{ previewLimitMessage }}
         </p>
       </div>
 
       <MarkdownPreview
         v-else-if="isMarkdown && onlyPreviewPreviewStore.textContent"
-        :key="selectionPreviewKey"
-        :content="onlyPreviewPreviewStore.textContent"
-        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
-      />
-
-      <HtmlPreview
-        v-else-if="isHtml && onlyPreviewPreviewStore.textContent"
         :key="selectionPreviewKey"
         :content="onlyPreviewPreviewStore.textContent"
         :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
@@ -47,16 +40,6 @@
         :settings="onlyPreviewPreviewStore.settings"
       />
 
-      <PdfPreview
-        v-else-if="
-          onlyPreviewPreviewStore.descriptor?.kind === 'pdf' &&
-          onlyPreviewPreviewStore.descriptor.assetUrl
-        "
-        :key="selectionPreviewKey"
-        :asset-url="onlyPreviewPreviewStore.descriptor.assetUrl"
-        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
-      />
-
       <div
         v-else-if="
           onlyPreviewPreviewStore.descriptor?.kind === 'image' &&
@@ -68,9 +51,13 @@
         <img
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           :alt="imageAlt"
+          @load="
+            onlyPreviewPreviewStore.reportSurfaceReady(
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
           @error="
             onlyPreviewPreviewStore.reportMediaError(
-              'media',
               onlyPreviewPreviewStore.selectionReportingRevision
             )
           "
@@ -92,9 +79,13 @@
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           controls
           preload="metadata"
+          @loadedmetadata="
+            onlyPreviewPreviewStore.reportSurfaceReady(
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
           @error="
             onlyPreviewPreviewStore.reportMediaError(
-              'media',
               onlyPreviewPreviewStore.selectionReportingRevision
             )
           "
@@ -113,9 +104,13 @@
           :src="onlyPreviewPreviewStore.descriptor.assetUrl"
           controls
           preload="metadata"
+          @loadedmetadata="
+            onlyPreviewPreviewStore.reportSurfaceReady(
+              onlyPreviewPreviewStore.selectionReportingRevision
+            )
+          "
           @error="
             onlyPreviewPreviewStore.reportMediaError(
-              'media',
               onlyPreviewPreviewStore.selectionReportingRevision
             )
           "
@@ -183,21 +178,13 @@ import {
 } from '../../../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
-import HtmlPreview from '../HtmlPreview/HtmlPreview.vue';
 import MarkdownPreview from '../MarkdownPreview/MarkdownPreview.vue';
 import MonacoTextPreview from '../MonacoTextPreview/MonacoTextPreview.vue';
-import PdfPreview from '../PdfPreview/PdfPreview.vue';
 
 const isMarkdown = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;
   if (descriptor?.kind !== 'text') return false;
   return descriptor.extension === '.md';
-});
-
-const isHtml = computed(() => {
-  const descriptor = onlyPreviewPreviewStore.descriptor;
-  if (descriptor?.kind !== 'text') return false;
-  return descriptor.extension === '.html' || descriptor.extension === '.htm';
 });
 
 const previewKey = computed(() => {
@@ -214,6 +201,21 @@ const imageAlt = computed(() =>
     name: onlyPreviewPreviewStore.descriptor?.name || ''
   })
 );
+
+const previewLimitMessage = computed(() => {
+  const descriptor = onlyPreviewPreviewStore.descriptor;
+  if (descriptor?.extension === '.md') return onlyPreviewI18n.preview.markdownLimit;
+  if (descriptor?.extension === '.html' || descriptor?.extension === '.htm') {
+    return onlyPreviewI18n.preview.htmlLimit;
+  }
+  if (descriptor?.kind === 'pdf' || descriptor?.kind === 'image') {
+    return onlyPreviewI18n.preview.imagePdfLimit;
+  }
+  if (descriptor?.kind === 'sheet' || descriptor?.kind === 'document') {
+    return onlyPreviewI18n.preview.officeLimit;
+  }
+  return onlyPreviewI18n.preview.textLimit;
+});
 </script>
 
 <style lang="less">

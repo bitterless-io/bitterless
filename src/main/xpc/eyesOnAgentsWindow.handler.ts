@@ -131,7 +131,9 @@ class EyesOnAgentsWindowHandler extends XpcMainHandler implements EyesOnAgentsWi
     const options: BrowserWindowConstructorOptions = {
       width: restored?.bounds.width ?? 1120,
       height: restored?.bounds.height ?? 720,
-      minWidth: 800,
+      // Deliberate exception to the project-wide 800px floor: EyesOnAgents is usable as a
+      // narrow side panel. See docs/plan/tasks/eyes-on-agents-focus-full-width-056.md.
+      minWidth: 480,
       minHeight: 600,
       show: false,
       title: 'EyesOnAgents',

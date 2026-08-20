@@ -5,6 +5,8 @@
   --motto-line: #c4cadf;
   --motto-reminder-strong: #b42318;
   --motto-reminder-muted: #a65f59;
+  --motto-chrome-line: #3d4666;
+  --motto-chrome-ink: #f6f7fc;
   width: 100vw;
   height: 100vh;
   min-width: 0;
@@ -16,33 +18,64 @@
   background: var(--motto-royal-soft);
 }
 
-.motto__header {
-  min-height: 44px;
+/* Mini-app chrome copied from the EyesOnAgents MenuBar: Omni cells own no window to drag. */
+.motto-menu-bar {
+  height: 32px;
+  min-height: 32px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--motto-line);
-  background: #fff;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--motto-chrome-line);
+  color: var(--motto-chrome-ink);
+  background: var(--motto-royal);
+  -webkit-app-region: no-drag;
+  user-select: none;
 }
 
-.motto__title {
+.motto-menu-bar__identity {
+  min-width: 0;
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.motto-menu-bar__title {
+  min-width: 0;
   margin: 0;
-  font-size: 15px;
+  overflow: hidden;
+  font-size: 13px;
   font-weight: 650;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.motto__add {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+.motto-menu-bar__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.motto-menu-bar__actions .arco-btn {
+  width: 27px;
+  height: 27px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+  color: var(--motto-chrome-ink);
+}
+
+.motto-menu-bar__actions .arco-btn:hover,
+.motto-menu-bar__actions .arco-btn:focus-visible {
+  color: #fff;
+  background: rgb(255 255 255 / 15%);
 }
 
 .motto__storage-error {
@@ -172,7 +205,7 @@
 }
 
 @media (max-width: 420px) {
-  .motto__header {
+  .motto-menu-bar {
     padding-inline: 10px;
   }
 

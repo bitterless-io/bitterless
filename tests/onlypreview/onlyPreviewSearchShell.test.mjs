@@ -1352,19 +1352,14 @@ test('Shell Project Search source preserves exact narrow client, UI, and lifecyc
     shellSource.indexOf('private async activateEntry(')
   );
   assert.doesNotMatch(refreshSettings, /showHiddenFiles|refreshIndex/);
+  assert.match(shellEventsSource, /isOnlyPreviewPresentationNudge\(params\)/);
   assert.match(
-    shellEventsSource,
-    /const isPreviewControlEvent[\s\S]*?Reflect\.ownKeys\(event\)\.length === 3[\s\S]*?event\.action === 'render'[\s\S]*?event\.action === 'reload'[\s\S]*?event\.action === 'clear'/
+    shellSource,
+    /previewPresentation:\s*\(\) => void this\.syncPreviewPresentation\(\)/
   );
-  const previewControlHandler = shellSource.slice(
-    shellSource.indexOf('previewControl: (revision)'),
-    shellSource.indexOf('characterCountSyncRequested:')
-  );
-  assert.match(previewControlHandler, /characterCountGate\.beginTransition\(revision\)/);
-  assert.match(previewControlHandler, /characterCountGate\.resume\(revision\)/);
-  assert.match(previewControlHandler, /selectedCharacterCount = 0/);
-  assert.match(previewControlHandler, /pendingCharacterCount = 0/);
-  assert.doesNotMatch(previewControlHandler, /broadcast|refreshIndex|restoreSelection/);
+  assert.match(shellSource, /previewPresentationFetchGeneration/);
+  assert.match(shellSource, /onlyPreviewClient\.getPreviewPresentation\(\{ hostToken \}\)/);
+  assert.doesNotMatch(shellSource, /previewControl:|crypto\.randomUUID\(\)/);
 
   assert.match(appSource, /@compositionstart="handleSearchCompositionStart"/);
   assert.match(appSource, /@compositionend="handleSearchCompositionEnd"/);

@@ -11,7 +11,8 @@ required.
 
 ## Design Principles
 
-- Match Translator's compact embedded-app shell and Bitterless Royal Blue system.
+- Match Translator's compact embedded-app shell, the shared mini-app MenuBar effect, and the
+  Bitterless Royal Blue system.
 - Spend visual emphasis on the reminder cards: calm white surfaces, one strong red rule paired with
   the title, and a quieter muted-red subtitle.
 - Keep management actions available but visually secondary.
@@ -19,22 +20,37 @@ required.
 
 ### Card Palette
 
-| Token | Hex | Usage |
-|---|---|---|
-| page surface | `#F3F5FC` | quiet background around the list |
-| card surface | `#FFFFFF` | reminder card |
-| card border | `#E2E4EB` | neutral card outline |
-| reminder strong | `#B42318` | card title and left rule |
-| reminder muted | `#A65F59` | optional subtitle |
+| Token           | Hex       | Usage                                 |
+| --------------- | --------- | ------------------------------------- |
+| page surface    | `#F3F5FC` | quiet background around the list      |
+| card surface    | `#FFFFFF` | reminder card                         |
+| card border     | `#E2E4EB` | neutral card outline                  |
+| reminder strong | `#B42318` | card title and left rule              |
+| reminder muted  | `#A65F59` | optional subtitle                     |
+| chrome          | `#4E5882` | MenuBar surface                       |
+| chrome line     | `#3D4666` | MenuBar bottom divider                |
+| chrome ink      | `#F6F7FC` | MenuBar identity, title, and Add icon |
 
 The title and left rule always use the same strong red. The subtitle uses only the muted red; red
-does not spread to the header, Add action, menus, modal, or page background.
+does not spread to the MenuBar, Add action, menus, modal, or page background.
+
+### MenuBar
+
+Motto's top strip is the shared mini-app MenuBar effect already used by EyesOnAgents, Submodules,
+and Todo, reproduced by copy rather than by importing another mini app's private component. It is
+exactly 32px tall with `0 10px` padding, the Royal Blue `chrome` surface, the `chrome line` bottom
+divider, and `chrome ink` content: a 16px leading notes icon, then the 13px/650 application title,
+ellipsized before it can push the Add action.
+
+Motto runs only as an Omni mini-app cell, so the bar reproduces the embedded variant of that effect
+only: no drag region, no macOS traffic-light gutter, no window controls, and no double-click
+maximize.
 
 ## Overall Structure
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ Motto                                                  [＋]  │
+│ ▤ Motto                                                 [＋] │  32px MenuBar
 ├──────────────────────────────────────────────────────────────┤
 │ ┌──────────────────────────────────────────────────────────┐ │
 │ │ Important title                                     […] │ │
@@ -48,10 +64,10 @@ does not spread to the header, Add action, menus, modal, or page background.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The header remains fixed. Its Add action is an icon-only plus button with no visible text; the icon
-is centered horizontally and vertically inside the button, while localized `title` and
-`aria-label` text preserve its accessible name. The vertically stacked card region owns scrolling
-and keeps one column at every supported pane width.
+The MenuBar remains fixed. Its Add action is an icon-only plus button with no visible text, sized
+as the shared 27px light MenuBar control; the icon is centered horizontally and vertically inside
+the button, while localized `title` and `aria-label` text preserve its accessible name. The
+vertically stacked card region owns scrolling and keeps one column at every supported pane width.
 
 ## Editor Modal
 
@@ -100,31 +116,32 @@ confirmation dialog is added for this small local list.
 
 ## State Variants
 
-| State | Card region |
-|---|---|
-| empty | centered invitation with an Add action |
-| populated | one vertical, scrollable card column |
-| editing | existing cards remain visible beneath the modal overlay |
+| State         | Card region                                                                 |
+| ------------- | --------------------------------------------------------------------------- |
+| empty         | centered invitation with an Add action                                      |
+| populated     | one vertical, scrollable card column                                        |
+| editing       | existing cards remain visible beneath the modal overlay                     |
 | storage error | localized alert above the card list; last safe in-memory collection remains |
-| constrained | card text wraps, header actions remain reachable, list scrolls |
+| constrained   | card text wraps, MenuBar actions remain reachable, list scrolls             |
 
 ## Interaction Contract
 
-| Input | Scope | Behavior |
-|---|---|---|
-| click plus / Add | header / empty state | open empty editor |
-| click ellipsis | card | open Edit/Delete menu |
-| click Edit | card menu | open prefilled editor |
-| click Delete | card menu | persist removal immediately |
-| `Enter` | single-line form input | follow normal form/modal submit behavior |
-| `Esc` | modal | close and discard draft |
-| `Tab` | modal/menu | move through controls using Arco focus behavior |
+| Input            | Scope                  | Behavior                                        |
+| ---------------- | ---------------------- | ----------------------------------------------- |
+| click plus / Add | MenuBar / empty state  | open empty editor                               |
+| click ellipsis   | card                   | open Edit/Delete menu                           |
+| click Edit       | card menu              | open prefilled editor                           |
+| click Delete     | card menu              | persist removal immediately                     |
+| `Enter`          | single-line form input | follow normal form/modal submit behavior        |
+| `Esc`            | modal                  | close and discard draft                         |
+| `Tab`            | modal/menu             | move through controls using Arco focus behavior |
 
 ## Component Tree
 
 ```text
 Motto App
-├─ fixed header
+├─ fixed MenuBar
+│  ├─ identity icon + title
 │  └─ Add icon button
 ├─ storage alert (conditional)
 ├─ scrollable card list / empty state

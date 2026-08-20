@@ -15,8 +15,12 @@ import {
   CodexMemoryCredentialStore,
   type CodexCredentialStore
 } from '../../../src/main/codex/codexCredential.store';
-import type { CodexBrowserCallbackCapture } from '../../../src/main/codex/codexCallbackCapture';
+import {
+  createCodexBrowserCallbackCapture,
+  type CodexBrowserCallbackCapture
+} from '../../../src/main/codex/codexCallbackCapture';
 import { codexAuthPath, codexModelsPath } from '../../../src/main/codex/codexPaths';
+import { connect } from 'node:net';
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
@@ -591,4 +595,39 @@ test('logs out only the openai-codex credential', async () => {
   const status = await createService(pi).disconnect();
   assert.equal(status.connected, false);
   assert.equal(pi.logoutCount, 1);
+});
+
+test('the real callback companion closes while a browser still holds its socket', async () => {
+  // Regression for the 2026-08-20 production log: `performConnect` reached
+  // `cleanup-capture-closing` after `attempt-succeeded` and never reached
+  // `cleanup-capture-closed`, so an already-promoted credential never left Main.
+  // `server.close()` waits forever on a connection that is mid-request or awaiting a response.
+  const port = 14572;
+  const unavailable: string[] = [];
+  const capture = await createCodexBrowserCallbackCapture({
+    port,
+    closeTimeoutMs: 4_000,
+    onUnavailable: (message) => unavailable.push(message)
+  });
+
+  const socket = await new Promise<ReturnType<typeof connect>>((resolve, reject) => {
+    const pending = connect({ host: '::1', port, family: 6 }, () => {
+      // Headers started, never terminated: the state that wedges `server.close()`.
+      pending.write(`GET /auth/callback HTTP/1.1\r\nHost: localhost:${port}\r\n`);
+      setTimeout(() => resolve(pending), 50);
+    });
+    pending.once('error', reject);
+  });
+
+  const startedAt = Date.now();
+  await capture.close();
+  const elapsed = Date.now() - startedAt;
+  socket.destroy();
+
+  assert.ok(elapsed < 2_000, `close() must force the socket shut, took ${elapsed}ms`);
+  // Forced teardown, not the deadline giving up: the deadline is the last-resort backstop.
+  assert.deepEqual(unavailable, []);
+
+  // A second close is idempotent and must not wait on anything.
+  await capture.close();
 });

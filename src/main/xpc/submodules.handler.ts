@@ -1,8 +1,12 @@
 // XPC facade for the one Main-owned Submodules runtime. Every prototype method of an XpcMainHandler
-// becomes a callable channel, so this class carries the four contract methods and nothing else. The
+// becomes a callable channel, so this class carries the contract methods and nothing else. The
 // channel name is unchanged from the former preload handler, so renderer emitters are untouched.
 import { XpcMainHandler } from 'electron-xpc/main';
-import type { SubmodulesApi, SubmodulesSnapshot } from '@shared/submodules/submodules.type';
+import type {
+  SubmodulesApi,
+  SubmodulesSnapshot,
+  SubmodulesViewSettings
+} from '@shared/submodules/submodules.type';
 import { submodulesRuntime } from '@main/submodules/submodulesRuntime.service';
 
 export class SubmodulesHandler extends XpcMainHandler implements SubmodulesApi {
@@ -22,6 +26,10 @@ export class SubmodulesHandler extends XpcMainHandler implements SubmodulesApi {
 
   async clearRoot(): Promise<SubmodulesSnapshot> {
     return await submodulesRuntime.forget();
+  }
+
+  async updateViewSettings(params: Partial<SubmodulesViewSettings>): Promise<SubmodulesSnapshot> {
+    return await submodulesRuntime.updateViewSettings(params ?? {});
   }
 }
 

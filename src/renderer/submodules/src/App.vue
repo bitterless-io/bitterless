@@ -30,6 +30,8 @@
       </span>
     </div>
 
+    <SubmodulesListControls v-if="submodulesStore.snapshot.rootPath" ref="listControlsRef" />
+
     <main name="submodules__main" class="submodules__main">
       <div
         v-if="submodulesStore.loading && !submodulesStore.entries.length"
@@ -84,9 +86,20 @@
         <p>{{ i18nHelper.submodules.empty.noSubmodules }}</p>
       </div>
 
+      <div
+        v-else-if="!submodulesStore.visibleEntries.length"
+        name="submodules__noMatches"
+        class="submodules__center-state"
+      >
+        <p>{{ i18nHelper.submodules.empty.noMatches }}</p>
+        <a-button size="mini" @click="submodulesStore.clearSearch()">
+          {{ i18nHelper.submodules.actions.clearSearch }}
+        </a-button>
+      </div>
+
       <div v-else name="submodules__list" class="submodules__list">
         <SubmoduleRow
-          v-for="entry in submodulesStore.entries"
+          v-for="entry in submodulesStore.visibleEntries"
           :key="entry.path"
           :entry="entry"
           :loading="submodulesStore.openingPath === entry.absolutePath"
@@ -98,24 +111,63 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { IconAlertTriangle, IconFolder, IconGitBranch } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import type { SubmoduleEntry } from '@shared/submodules/submodules.type';
+import SubmodulesListControls from './components/SubmodulesListControls/SubmodulesListControls.vue';
 import SubmodulesMenuBar from './components/SubmodulesMenuBar/SubmodulesMenuBar.vue';
 import SubmoduleRow from './components/SubmoduleRow/SubmoduleRow.vue';
 import { submodulesStore } from './store/submodules.store';
 
+interface ListControlsInstance {
+  focusSearch(): Promise<void>;
+}
+
+const listControlsRef = ref<ListControlsInstance | null>(null);
+
+// While a search is active the count states what is on screen, so a filtered list never looks wrong.
 const countLabel = computed(() =>
-  i18nHelper.submodules.count.replace('{count}', String(submodulesStore.entries.length))
+  i18nHelper.submodules.count.replace(
+    '{count}',
+    submodulesStore.isSearching
+      ? `${submodulesStore.visibleEntries.length}/${submodulesStore.entries.length}`
+      : String(submodulesStore.entries.length)
+  )
 );
 
 const handleOpen = async (entry: SubmoduleEntry): Promise<void> => {
   await submodulesStore.openInWebStorm(entry);
 };
 
+/**
+ * Focus the search box on `Cmd+F` (macOS), `Alt+F` and `Ctrl+F` (Windows — Chat's own search accepts
+ * `Alt+F` there, and `Ctrl+F` is what every other Windows list uses, so both fire). The renderer has
+ * no find-in-page of its own, so the shortcut is free to mean "search this list".
+ *
+ * `event.code` leads because macOS `Option+F` reports `event.key === 'ƒ'`, which a `key === 'f'`
+ * check would miss; `key` stays as the fallback for layouts that report no code.
+ */
+const handleWindowKeydown = (event: KeyboardEvent): void => {
+  const pressedF = event.code === 'KeyF' || event.key.toLocaleLowerCase() === 'f';
+  if (!pressedF || !(event.metaKey || event.ctrlKey || event.altKey)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void focusSearch();
+};
+
+const focusSearch = async (): Promise<void> => {
+  await nextTick();
+  await listControlsRef.value?.focusSearch();
+};
+
 onMounted(async () => {
+  window.addEventListener('keydown', handleWindowKeydown);
   await submodulesStore.initialize();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleWindowKeydown);
 });
 </script>
 

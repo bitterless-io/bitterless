@@ -15,12 +15,20 @@
         <ProviderGlyph :provider="thread.provider" />
         <h3 class="thread-card__title" :title="displayTitle">{{ displayTitle }}</h3>
         <span
-          v-if="['working', 'waiting_approval', 'waiting_input'].includes(thread.runtimeState)"
-          class="thread-card__working"
+          v-if="isActiveRuntime"
+          class="thread-card__status"
           role="status"
           :aria-label="runtimeLabel"
         >
           <a-spin :size="12" aria-hidden="true" />
+        </span>
+        <span
+          v-else-if="showUnreadDot"
+          class="thread-card__status"
+          role="img"
+          :aria-label="i18nHelper.eyesOnAgents.thread.new"
+        >
+          <span class="thread-card__unread-dot" aria-hidden="true" />
         </span>
       </div>
 
@@ -48,57 +56,52 @@
             </span>
           </a-tooltip>
 
-          <a-tooltip v-if="canOpenThread" :content="openTooltip" position="top" mini>
-            <span class="thread-card__open-control thread-card__control">
-              <a-button
-                size="mini"
-                type="primary"
-                :title="openTooltip"
-                :aria-label="openAriaLabel"
-                :loading="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
-                :disabled="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
-                @click.stop="handleOpen"
-              >
-                <template #icon><IconExternalLink :size="9" /></template>
-              </a-button>
-              <span
-                v-if="showUnreadDot"
-                class="thread-card__unread-dot"
-                aria-hidden="true"
-              />
-            </span>
-          </a-tooltip>
-
-          <a-dropdown v-if="canPreviewTranscript" trigger="click" position="br">
+          <a-dropdown trigger="click" position="br">
             <a-button
               class="thread-card__more-control thread-card__control"
-              :class="{ 'thread-card__more-control--unread': showUnreadDot && !canOpenThread }"
               size="mini"
               type="text"
-              :aria-label="moreAriaLabel"
+              :aria-label="i18nHelper.eyesOnAgents.actions.more"
               @click.stop
             >
               <template #icon><IconDots :size="12" /></template>
             </a-button>
             <template #content>
               <a-doption
+                v-if="canOpenThread"
+                class="thread-card__option"
+                :disabled="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
+                @click="handleOpen"
+              >
+                <IconExternalLink :size="13" />
+                <span class="thread-card__option-label">{{ openLabel }}</span>
+                {{ ' ' }}
+                <span class="thread-card__option-hint">
+                  {{ i18nHelper.eyesOnAgents.actions.doubleClickHint }}
+                </span>
+              </a-doption>
+              <a-doption
+                class="thread-card__option"
+                :disabled="eyesOnAgentsStore.busyAction !== null"
+                @click="handleToggleReadState"
+              >
+                <IconCircle v-if="thread.isUnread" :size="13" />
+                <IconCircleDot v-else :size="13" />
+                <span class="thread-card__option-label">{{ readStateLabel }}</span>
+              </a-doption>
+              <a-doption
+                v-if="canPreviewTranscript"
+                class="thread-card__option"
                 :disabled="eyesOnAgentsStore.previewingSessionKeys.has(thread.sessionKey)"
                 @click="handlePreview"
               >
                 <IconFileText :size="13" />
-                {{ i18nHelper.eyesOnAgents.actions.previewTranscript }}
+                <span class="thread-card__option-label">
+                  {{ i18nHelper.eyesOnAgents.actions.previewTranscript }}
+                </span>
               </a-doption>
             </template>
           </a-dropdown>
-
-          <span
-            v-else-if="showUnreadDot && !canOpenThread"
-            class="thread-card__unread-marker"
-            role="img"
-            :aria-label="i18nHelper.eyesOnAgents.thread.new"
-          >
-            <span class="thread-card__unread-dot" aria-hidden="true" />
-          </span>
         </div>
       </div>
     </div>
@@ -108,6 +111,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import {
+  IconCircle,
+  IconCircleDot,
   IconDots,
   IconExternalLink,
   IconFileText,
@@ -164,6 +169,8 @@ const promptAriaLabel = computed(() => {
     ? `${prompt} ${i18nHelper.eyesOnAgents.thread.latestQuestionTruncated}`
     : prompt;
 });
+const isActiveRuntime = computed(() =>
+  ['working', 'waiting_approval', 'waiting_input'].includes(props.thread.runtimeState));
 const canOpenThread = computed(() => props.thread.provider === 'codex'
   || props.thread.desktopSessionId !== null);
 const canPreviewTranscript = computed(() => props.thread.provider === 'claude'
@@ -179,13 +186,12 @@ const cardAriaLabel = computed(() => [
 ].filter(Boolean).join(', '));
 const folderLabel = computed(() => i18nHelper.eyesOnAgents.thread.workingDirectory
   .replace('{path}', props.thread.cwd ?? ''));
-const openTooltip = computed(() => i18nHelper.eyesOnAgents.actions.open);
-const openAriaLabel = computed(() => showUnreadDot.value
-  ? `${openTooltip.value}, ${i18nHelper.eyesOnAgents.thread.new}`
-  : openTooltip.value);
-const moreAriaLabel = computed(() => showUnreadDot.value && !canOpenThread.value
-  ? `${i18nHelper.eyesOnAgents.actions.more}, ${i18nHelper.eyesOnAgents.thread.new}`
-  : i18nHelper.eyesOnAgents.actions.more);
+const openLabel = computed(() => props.thread.provider === 'claude'
+  ? i18nHelper.eyesOnAgents.actions.openInClaude
+  : i18nHelper.eyesOnAgents.actions.openInCodex);
+const readStateLabel = computed(() => props.thread.isUnread
+  ? i18nHelper.eyesOnAgents.actions.markRead
+  : i18nHelper.eyesOnAgents.actions.markUnread);
 const activityLabel = computed(() => {
   const value = props.thread.lastActivityAt ?? props.thread.lastCompletedAt;
   if (!value) return i18nHelper.eyesOnAgents.thread.unknown;
@@ -210,6 +216,12 @@ const handleOpen = async (): Promise<void> => {
 
 const handlePreview = async (): Promise<void> => {
   await eyesOnAgentsStore.previewThread(props.thread.sessionKey).catch(() => undefined);
+};
+
+const handleToggleReadState = async (): Promise<void> => {
+  await eyesOnAgentsStore
+    .setThreadUnread(props.thread.sessionKey, !props.thread.isUnread)
+    .catch(() => undefined);
 };
 
 const handleDoubleClick = async (event: MouseEvent): Promise<void> => {

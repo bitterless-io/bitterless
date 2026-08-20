@@ -268,12 +268,17 @@ try {
   await test('source and styles preserve the master-detail visual contract', () => {
     assert.match(componentSource, /<a-drawer[\s\S]*?:width="540"/);
     assert.match(
-      styleSource,
-      /\.eyes-connection-panel\s*\{[\s\S]*?--eyes-focus-ring: #4e5882;[\s\S]*?max-width: 100vw;/,
+      componentSource,
+      /popup-container="\.eyes-on-agents__main"/,
+      "the drawer stays inside the board region so the menu bar remains visible",
     );
     assert.match(
       styleSource,
-      /\.eyes-connection-panel \.arco-drawer\s*\{[\s\S]*?max-width: 100vw;/,
+      /\.eyes-connection-panel\s*\{[\s\S]*?--eyes-focus-ring: #4e5882;[\s\S]*?max-width: 100%;/,
+    );
+    assert.match(
+      styleSource,
+      /\.eyes-connection-panel \.arco-drawer\s*\{[\s\S]*?max-width: 100%;/,
     );
     assert.match(
       componentSource,

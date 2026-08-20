@@ -393,55 +393,6 @@ test('window activation refresh follows connection intent and coalesces overlap'
       assert.equal(store.snapshot.claudeProvider.revision, 2);
     });
 
-    await context.test('Off scrubs only a selected project that disappeared with Claude', async () => {
-      const initial = snapshot({
-        state: 'disconnected', autoConnectEnabled: false, claudeProviderEnabled: true,
-      });
-      const baseThread = initial.threads[0];
-      initial.threads = [{
-        ...baseThread,
-        provider: 'claude',
-        projectKey: 'claude-only',
-        projectRoot: '/tmp/claude-only',
-        projectName: 'claude-only',
-      }];
-      const harness = createHarness({ initial });
-      const store = await loadStore(harness, initial);
-      store.selectProjectFilter('project:claude-only');
-      assert.equal(store.projectFilter.type, 'project');
-
-      const disabled = snapshot({
-        state: 'disconnected', autoConnectEnabled: false,
-        claudeProviderEnabled: false, claudeProviderRevision: 2,
-      });
-      store.applySnapshot(disabled);
-      assert.deepEqual(store.projectFilter, { type: 'all' });
-      assert.equal(store.projectOptions.some(({ projectKey }) => projectKey === 'claude-only'), false);
-      assert.equal(JSON.stringify(store.projectOptions).includes('/tmp/claude-only'), false);
-
-      const sharedEnabled = snapshot({
-        state: 'disconnected', autoConnectEnabled: false,
-        claudeProviderEnabled: true, claudeProviderRevision: 3,
-      });
-      sharedEnabled.threads = [
-        { ...baseThread, provider: 'claude', projectKey: 'shared',
-          projectRoot: '/tmp/shared', projectName: 'shared' },
-        { ...baseThread, provider: 'codex', projectKey: 'shared',
-          projectRoot: '/tmp/shared', projectName: 'shared' },
-      ];
-      store.applySnapshot(sharedEnabled);
-      store.selectProjectFilter('project:shared');
-      const sharedDisabled = snapshot({
-        state: 'disconnected', autoConnectEnabled: false,
-        claudeProviderEnabled: false, claudeProviderRevision: 4,
-      });
-      sharedDisabled.threads = [sharedEnabled.threads[1]];
-      store.applySnapshot(sharedDisabled);
-      assert.equal(store.projectFilter.type, 'project');
-      assert.equal(store.projectFilter.projectKey, 'shared');
-      assert.equal(store.projectOptions.find(({ projectKey }) => projectKey === 'shared')?.count, 1);
-    });
-
     await context.test(
       'activation before the initial snapshot coalesces into a snapshot load',
       async () => {

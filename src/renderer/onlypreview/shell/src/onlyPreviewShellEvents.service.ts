@@ -2,17 +2,15 @@ import { xpcRenderer } from 'electron-xpc/renderer';
 import {
   ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
-  ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
-  ONLY_PREVIEW_PREVIEW_CONTROL_EVENT,
+  ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewCharacterCountEvent,
-  type OnlyPreviewCharacterCountRevisionEvent,
-  type OnlyPreviewPreviewControlEvent
+  type OnlyPreviewCharacterCountRevisionEvent
 } from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_BROWSE_LISTING_EVENT,
@@ -23,6 +21,7 @@ import {
   type OnlyPreviewSearchSnapshot
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import { isOnlyPreviewBrowseListingEvent } from './onlyPreviewBrowseListing.service';
+import { isOnlyPreviewPresentationNudge } from '../../common/onlyPreviewPresentation.service';
 import { isOnlyPreviewSearchProgressEvent } from './onlyPreviewSearchProgress.service';
 import { isOnlyPreviewSearchSnapshotEvent } from './onlyPreviewSearchSnapshot.service';
 
@@ -31,8 +30,7 @@ interface OnlyPreviewShellEventHandlers {
   selectionChanged: () => void;
   characterCountChanged: (characterCount: number) => void;
   characterCountReady: (revision: string) => void;
-  previewControl: (revision: string) => void;
-  characterCountSyncRequested: () => void;
+  previewPresentation: () => void;
   refresh: () => void;
   browseListing: (listing: OnlyPreviewBrowseListing) => void;
   searchProgress: (progress: OnlyPreviewSearchBuildProgress) => void;
@@ -77,23 +75,8 @@ const isCharacterCountRevisionEvent = (
 ): value is OnlyPreviewCharacterCountRevisionEvent =>
   isRevisionEvent(value) && Reflect.ownKeys(value).length === 2;
 
-const isExactHostEvent = (value: unknown): value is { hostId: string } => {
-  if (!value || typeof value !== 'object') return false;
-  const event = value as Record<string, unknown>;
-  return Object.keys(event).length === 1 && typeof event.hostId === 'string';
-};
-
-const isPreviewControlEvent = (value: unknown): value is OnlyPreviewPreviewControlEvent => {
-  if (!isRevisionEvent(value)) return false;
-  const event = value as unknown as Record<string, unknown>;
-  return (
-    Reflect.ownKeys(event).length === 3 &&
-    (event.action === 'render' || event.action === 'reload' || event.action === 'clear')
-  );
-};
-
 export const subscribeOnlyPreviewShellEvents = (
-  hostId: string | undefined,
+  hostId: string | null | undefined,
   handlers: OnlyPreviewShellEventHandlers
 ): void => {
   if (!hostId) return;
@@ -114,13 +97,10 @@ export const subscribeOnlyPreviewShellEvents = (
       handlers.characterCountReady(params.revision);
     }
   });
-  xpcRenderer.subscribe(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT, ({ params }) => {
-    if (isPreviewControlEvent(params) && isCurrentHost(params)) {
-      handlers.previewControl(params.revision);
+  xpcRenderer.subscribe(ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT, ({ params }) => {
+    if (isOnlyPreviewPresentationNudge(params) && isCurrentHost(params)) {
+      handlers.previewPresentation();
     }
-  });
-  xpcRenderer.subscribe(ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, ({ params }) => {
-    if (isExactHostEvent(params) && isCurrentHost(params)) handlers.characterCountSyncRequested();
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_REFRESH_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.refresh();

@@ -4,6 +4,10 @@ import type {
   OnlyPreviewErrorPayload,
   OnlyPreviewFileRef,
   OnlyPreviewResult,
+  OnlyPreviewPreviewErrorRequest,
+  OnlyPreviewPreviewRuntimeRequest,
+  OnlyPreviewPreviewRevisionRequest,
+  OnlyPreviewTextReadRequest,
   OnlyPreviewSettings
 } from './onlyPreview.types';
 
@@ -138,6 +142,76 @@ export const parseOnlyPreviewBounds = (value: unknown): OnlyPreviewBounds => {
     width: Math.round(width),
     height: Math.round(height)
   };
+};
+
+export const parseOnlyPreviewSelectionRevision = (value: unknown): number => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Preview selection revision is invalid.');
+  }
+  return value as number;
+};
+
+export const parseOnlyPreviewPreviewRuntimeRequest = (
+  value: unknown
+): OnlyPreviewPreviewRuntimeRequest => {
+  const record = expectRecord(value, 'Preview runtime request');
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    previewRuntimeToken: expectBoundedToken(
+      record.previewRuntimeToken,
+      'Preview runtime capability'
+    )
+  };
+};
+
+export const parseOnlyPreviewPreviewRevisionRequest = (
+  value: unknown
+): OnlyPreviewPreviewRevisionRequest => {
+  const request = parseOnlyPreviewPreviewRuntimeRequest(value);
+  const record = expectRecord(value, 'Preview revision request');
+  return {
+    ...request,
+    selectionRevision: parseOnlyPreviewSelectionRevision(record.selectionRevision)
+  };
+};
+
+export const parseOnlyPreviewTextReadRequest = (value: unknown): OnlyPreviewTextReadRequest => {
+  const request = parseOnlyPreviewPreviewRevisionRequest(value);
+  const fileRef = parseOnlyPreviewFileRef(value);
+  const record = expectRecord(value, 'Preview text request');
+  if (record.adapterId !== 'monaco' && record.adapterId !== 'markdown-dom') {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Preview text adapter is invalid.');
+  }
+  return { ...request, ...fileRef, adapterId: record.adapterId };
+};
+
+export const parseOnlyPreviewPreviewErrorRequest = (
+  value: unknown
+): OnlyPreviewPreviewErrorRequest => {
+  const request = parseOnlyPreviewPreviewRevisionRequest(value);
+  const record = value as Record<string, unknown>;
+  const errorCodes = new Set([
+    'INVALID_INPUT',
+    'HOST_NOT_FOUND',
+    'HOST_ROLE_DENIED',
+    'WORKSPACE_NOT_FOUND',
+    'WORKSPACE_ACCESS_DENIED',
+    'PATH_NOT_FOUND',
+    'PATH_PERMISSION_DENIED',
+    'PATH_OUTSIDE_WORKSPACE',
+    'PATH_NOT_REGULAR_FILE',
+    'PATH_UNSUPPORTED_DEVICE',
+    'TEXT_TOO_LARGE',
+    'SIGNATURE_MISMATCH',
+    'SETTINGS_INVALID',
+    'INDEX_FAILED',
+    'OPERATION_FAILED',
+    'PROTOCOL_ERROR'
+  ]);
+  if (typeof record.errorCode !== 'string' || !errorCodes.has(record.errorCode)) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Preview error code is invalid.');
+  }
+  return { ...request, errorCode: record.errorCode as OnlyPreviewPreviewErrorRequest['errorCode'] };
 };
 
 export const toOnlyPreviewErrorPayload = (error: unknown): OnlyPreviewErrorPayload => {

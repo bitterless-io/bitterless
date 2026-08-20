@@ -510,28 +510,24 @@ export const zh: typeof en = {
       minimize: '最小化',
       maximize: '最大化或还原',
       close: '关闭 EyesOnAgents',
-      open: '打开',
+      openInCodex: '在 Codex 中打开',
+      openInClaude: '在 Claude 中打开',
+      doubleClickHint: '（双击）',
+      markRead: '标为已读',
+      markUnread: '标为未读',
       previewTranscript: '预览对话文件',
       more: '更多操作',
-      delete: '删除',
-      cancel: '取消',
       readAll: '全部已读',
       searchTitles: '搜索任务标题',
-      clearTitleSearch: '清除标题搜索'
+      searchTitlesMac: '搜索标题（⌘F）',
+      searchTitlesWindows: '搜索标题（Ctrl+F）'
     },
     board: {
-      focus: 'Focus',
-      projectFilterLabel: '按 Project 筛选',
-      allProjects: 'All',
-      noProject: '无 Project',
       emptyFocus: '现在没有需要关注的任务',
-      emptyProject: '这个 Project 下没有任务',
-      emptyNoProject: '没有无 Project 的任务',
       emptyTitleSearch: '没有匹配此搜索的任务标题',
       emptyTitle: '还没有 Agent 任务',
       emptyBody: '连接 Codex 或刷新本机 Claude 会话后即可开始观测。',
-      loading: '正在加载观测面板',
-      titleSearchPlaceholder: '搜索标题'
+      loading: '正在加载观测面板'
     },
     thread: {
       untitled: '未命名 Agent 任务',
@@ -685,6 +681,11 @@ export const zh: typeof en = {
       refresh: '刷新',
       openInWebStorm: 'WebStorm',
       dismiss: '知道了',
+      settings: '列表设置',
+      search: '搜索子模块',
+      searchShortcutMac: '搜索 (⌘F)',
+      searchShortcutWin: '搜索 (Alt+F)',
+      clearSearch: '清空搜索',
       minimize: '最小化',
       maximize: '最大化',
       close: '关闭'
@@ -692,6 +693,16 @@ export const zh: typeof en = {
     watch: {
       live: '实时',
       paused: '未监听'
+    },
+    sort: {
+      label: '排序',
+      name: '名称',
+      updated: '更新时间'
+    },
+    settings: {
+      title: '列表设置',
+      showDiffOnTop: '差异优先显示',
+      showDiffOnTopHint: '与 .gitmodules 不一致的子模块排在最前面。'
     },
     branch: {
       detached: '游离 HEAD',
@@ -705,7 +716,8 @@ export const zh: typeof en = {
       loading: '正在读取子模块…',
       title: '尚未选择目录',
       body: '选择一个 .gitmodules 中声明了 Git 子模块的目录。Bitterless 会记住它，并持续更新每个子模块所在的分支。',
-      noSubmodules: '该目录没有声明任何子模块。'
+      noSubmodules: '该目录没有声明任何子模块。',
+      noMatches: '没有匹配该搜索的子模块。'
     },
     error: {
       rootMissing: '已保存的目录不存在了。',
@@ -718,7 +730,8 @@ export const zh: typeof en = {
       headMalformed: 'HEAD 内容异常',
       chooseFailed: '无法打开该目录。',
       openPathMissing: '该子模块目录已不存在。',
-      ideNotFound: '本机无法启动 WebStorm。'
+      ideNotFound: '本机无法启动 WebStorm。',
+      settingsFailed: '列表设置保存失败。'
     }
   },
   common: {

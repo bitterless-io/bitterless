@@ -3,6 +3,7 @@
 // the refs HEAD points at. Every read is defensive because a working copy can change mid-scan.
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, resolve } from 'node:path';
+import { createDefaultSubmodulesViewSettings } from '@shared/submodules/submodules.type';
 import type {
   SubmoduleEntry,
   SubmoduleEntryErrorCode,
@@ -153,10 +154,45 @@ export const readHead = (gitDirectory: string): HeadReading => {
 
 const shortCommit = (commit: string | null): string | null => (commit ? commit.slice(0, 7) : null);
 
+const newestMtime = (paths: readonly string[]): number | null => {
+  let newest: number | null = null;
+  for (const path of paths) {
+    try {
+      const mtime = statSync(path).mtimeMs;
+      if (newest === null || mtime > newest) newest = mtime;
+    } catch {
+      // A path a working copy simply does not have (no `index`, no `packed-refs`) is not an error.
+    }
+  }
+  return newest;
+};
+
+/**
+ * "When did I last work in this repository", answered with a fixed, tiny set of `stat` calls: the
+ * directory entry plus the Git state files this scan already reads. Every ordinary Git action —
+ * commit, checkout, branch switch, fetch, `add`, even a `status` that refreshes the index — moves one
+ * of them. A recursive working-tree walk or watch is deliberately avoided: with `node_modules` and
+ * build output in 30-odd submodules it would cost thousands of watches and event storms for a rank
+ * that these five paths already give.
+ */
+const readChangedAt = (absolutePath: string, gitDirectory: string | null): number | null => {
+  const probes = [absolutePath];
+  if (gitDirectory) {
+    const commonDirectory = resolveCommonDirectory(gitDirectory);
+    probes.push(
+      join(gitDirectory, 'HEAD'),
+      join(gitDirectory, 'index'),
+      join(commonDirectory, 'packed-refs'),
+      join(commonDirectory, 'refs')
+    );
+  }
+  return newestMtime(probes);
+};
+
 const describeSubmodule = (rootPath: string, section: GitmodulesSection): SubmoduleEntry => {
   const declaredPath = section.path as string;
   const absolutePath = resolve(rootPath, declaredPath);
-  const base: Omit<SubmoduleEntry, 'state' | 'branch' | 'commit' | 'errorCode'> = {
+  const base: Omit<SubmoduleEntry, 'state' | 'branch' | 'commit' | 'errorCode' | 'changedAt'> = {
     name: section.name,
     path: declaredPath,
     absolutePath,
@@ -165,10 +201,18 @@ const describeSubmodule = (rootPath: string, section: GitmodulesSection): Submod
   };
 
   if (!isDirectory(absolutePath)) {
-    return { ...base, state: 'missing', branch: null, commit: null, errorCode: null };
+    return {
+      ...base,
+      state: 'missing',
+      branch: null,
+      commit: null,
+      errorCode: null,
+      changedAt: null
+    };
   }
 
   const gitDirectory = resolveGitDirectory(absolutePath);
+  const changedAt = readChangedAt(absolutePath, gitDirectory);
   if (!gitDirectory) {
     const hasGitEntry = existsSync(join(absolutePath, '.git'));
     return {
@@ -176,20 +220,29 @@ const describeSubmodule = (rootPath: string, section: GitmodulesSection): Submod
       state: hasGitEntry ? 'error' : 'uninitialized',
       branch: null,
       commit: null,
-      errorCode: hasGitEntry ? 'gitdir-unreadable' : null
+      errorCode: hasGitEntry ? 'gitdir-unreadable' : null,
+      changedAt
     };
   }
 
   const head = readHead(gitDirectory);
   if (head.errorCode) {
-    return { ...base, state: 'error', branch: null, commit: null, errorCode: head.errorCode };
+    return {
+      ...base,
+      state: 'error',
+      branch: null,
+      commit: null,
+      errorCode: head.errorCode,
+      changedAt
+    };
   }
   return {
     ...base,
     state: head.branch ? 'ok' : 'detached',
     branch: head.branch,
     commit: shortCommit(head.commit),
-    errorCode: null
+    errorCode: null,
+    changedAt
   };
 };
 
@@ -200,7 +253,10 @@ export const scanSubmodules = (rootPath: string): SubmodulesSnapshot => {
     scannedAt: Date.now(),
     watching: false,
     entries: [],
-    error: null
+    error: null,
+    // Reading is settings-blind: entries come out in declared-path order and the runtime, which owns
+    // the persisted controls, replaces this placeholder and reorders before publishing.
+    settings: createDefaultSubmodulesViewSettings()
   };
 
   if (!existsSync(rootPath)) return { ...snapshot, error: 'root-missing' };

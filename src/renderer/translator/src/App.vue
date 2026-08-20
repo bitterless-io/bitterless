@@ -1,8 +1,14 @@
 <template>
   <div name="translator__app" class="translator">
-    <header name="translator__header" class="translator__header">
-      <h1 class="translator__title">{{ i18nHelper.translator.title }}</h1>
-      <span class="translator__model">{{ i18nHelper.translator.model }}</span>
+    <header name="translator__menuBar" class="translator-menu-bar">
+      <div name="translator__menuBar__identity" class="translator-menu-bar__identity">
+        <IconLanguage :size="16" aria-hidden="true" />
+        <h1 class="translator-menu-bar__title">{{ i18nHelper.translator.title }}</h1>
+      </div>
+
+      <span name="translator__menuBar__model" class="translator-menu-bar__model">
+        {{ i18nHelper.translator.model }}
+      </span>
     </header>
 
     <main

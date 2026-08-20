@@ -3,6 +3,7 @@
     v-model:visible="drawerVisible"
     class="eyes-connection-panel"
     placement="right"
+    popup-container=".eyes-on-agents__main"
     :width="540"
     :footer="false"
     :mask-closable="true"

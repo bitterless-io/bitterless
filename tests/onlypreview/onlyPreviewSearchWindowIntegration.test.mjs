@@ -123,9 +123,7 @@ test('search bootstrap remains Main-private and host/workspace bound', async () 
 test('hidden file-search owner uses exact lifecycle fencing and one terminal failure', () => {
   const failures = [];
   const expected = 'file:///app/out/renderer/fileSearch/index.html';
-  const fence = new runtime.FileSearchLifecycleFence(expected, (message) =>
-    failures.push(message)
-  );
+  const fence = new runtime.FileSearchLifecycleFence(expected, (message) => failures.push(message));
   assert.equal(fence.acceptNavigation(expected), true);
   assert.equal(fence.acceptNavigation(`${expected}?redirected=1`), false);
   fence.fail('late render-process-gone');
@@ -215,50 +213,12 @@ test('official graph owns search in top-level hidden preload over capability-bou
   assert.doesNotMatch(hiddenHtml, /<script|id="app"/);
 });
 
-test('Preview still fences watch reloads by selected relative path and revision', () => {
-  const active = { sessionId: 7, workspaceId: 'workspace-current', generation: 4 };
-  assert.equal(
-    runtime.isOnlyPreviewSearchRuntimeEventCurrent(active, 7, {
-      workspaceId: 'workspace-current',
-      generation: 4
-    }),
-    true
-  );
-  assert.equal(
-    runtime.isOnlyPreviewSearchRuntimeEventCurrent(active, 6, {
-      workspaceId: 'workspace-current',
-      generation: 4
-    }),
-    false
-  );
-
-  let cursor = runtime.createOnlyPreviewWatchReloadCursor();
-  const commit = (revision, changedRelativePaths, full = false) => ({
-    workspaceId: 'workspace-current',
-    generation: 4,
-    revision,
-    full,
-    changedRelativePaths
-  });
-  let decision = runtime.evaluateOnlyPreviewWatchReload(
-    cursor,
-    commit(1, ['notes/other.txt']),
-    'notes/selected.txt'
-  );
-  assert.equal(decision.reload, false);
-  cursor = decision.cursor;
-  decision = runtime.evaluateOnlyPreviewWatchReload(
-    cursor,
-    commit(2, ['notes/selected.txt']),
-    'notes/selected.txt'
-  );
-  assert.equal(decision.reload, true);
-  assert.equal(
-    runtime.evaluateOnlyPreviewWatchReload(
-      decision.cursor,
-      commit(2, ['notes/selected.txt']),
-      'notes/selected.txt'
-    ).reload,
-    false
-  );
+test('Preview routes selected-file watch commits through the Main-owned Region revision', () => {
+  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+  const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
+  assert.match(region, /async handleWatchCommit\(/);
+  assert.match(region, /fileRef\.workspaceId !== commit\.workspaceId/);
+  assert.match(region, /commit\.changedRelativePaths\.some/);
+  assert.match(region, /await this\.present\(runtime\.host\.hostToken, fileRef\)/);
+  assert.doesNotMatch(previewStore, /SEARCH_WATCH_COMMIT|WatchReload/);
 });

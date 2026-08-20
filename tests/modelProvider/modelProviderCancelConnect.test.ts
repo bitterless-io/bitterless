@@ -49,6 +49,7 @@ const createService = (options: {
   credentials: ModelProviderServiceDependencies['credentials'];
   broadcastSnapshot?: (snapshot: ModelProviderSnapshot) => void;
   settings?: ModelProviderServiceDependencies['settings'];
+  cancelStageTimeoutMs?: number;
 }): ModelProviderService => {
   let observedAt = 1_000;
   return new ModelProviderService({
@@ -60,6 +61,7 @@ const createService = (options: {
       observedAt += 1;
       return observedAt;
     },
+    cancelStageTimeoutMs: options.cancelStageTimeoutMs,
   });
 };
 
@@ -410,6 +412,124 @@ test('credential cleanup failure stays unavailable until an explicit replacement
   });
   assert.equal(replacementResult.ok, true);
   assert.equal(authState(replacementResult), 'ready');
+});
+
+test('cancel settles when credential status never resolves and stays fail-closed', async () => {
+  const connectEntered = deferred<void>();
+  const releaseConnect = deferred<CodexCredentialStatus>();
+  releaseConnect.promise.catch(() => undefined);
+  let statusCalls = 0;
+  const service = createService({
+    cancelStageTimeoutMs: 25,
+    credentials: {
+      getStatus: async () => {
+        statusCalls += 1;
+        // Production `getStatus()` loads the Pi module and creates a model runtime with no abort
+        // signal. The first call is provider initialization; the cancel cleanup reads it again and
+        // that read must not be able to hold the cancel open.
+        if (statusCalls === 1) return status();
+        return await new Promise<CodexCredentialStatus>(() => undefined);
+      },
+      connect: async () => {
+        connectEntered.resolve();
+        return await releaseConnect.promise;
+      },
+      cancelConnect: async () => {
+        releaseConnect.reject(new CodexCredentialError('cancelled', 'Cancelled.'));
+      },
+      disconnect: async () => status(),
+      subscribeTransitions: () => () => undefined,
+    },
+  });
+  await service.getSnapshot();
+
+  void service
+    .connect({ provider: MODEL_PROVIDER_CODEX_ID, method: 'browser' })
+    .catch(() => undefined);
+  await connectEntered.promise;
+  const cancelled = await service.cancelConnect({ provider: MODEL_PROVIDER_CODEX_ID });
+
+  assert.equal(cancelled.ok, false);
+  if (cancelled.ok) assert.fail('An unverifiable credential state must not report a clean cancel.');
+  assert.equal(cancelled.error.code, 'status-unavailable');
+  assert.equal(authState(cancelled), 'unavailable');
+  assert.equal((await service.getSnapshot()).providers[0].authState, 'unavailable');
+});
+
+test('cancel settles when the connect attempt never unwinds', async () => {
+  const connectEntered = deferred<void>();
+  const service = createService({
+    cancelStageTimeoutMs: 25,
+    credentials: {
+      getStatus: async () => status(),
+      // An uncooperative login that ignores its abort keeps `attempt.settled` pending forever, and
+      // the wedged connect still owns the mutation queue.
+      connect: async () => {
+        connectEntered.resolve();
+        return await new Promise<CodexCredentialStatus>(() => undefined);
+      },
+      cancelConnect: async () => undefined,
+      disconnect: async () => status(),
+      subscribeTransitions: () => () => undefined,
+    },
+  });
+  await service.getSnapshot();
+
+  void service
+    .connect({ provider: MODEL_PROVIDER_CODEX_ID, method: 'browser' })
+    .catch(() => undefined);
+  await connectEntered.promise;
+  const started = Date.now();
+  const cancelled = await service.cancelConnect({ provider: MODEL_PROVIDER_CODEX_ID });
+
+  assert.ok(Date.now() - started < 2_000, 'cancel must not wait on the wedged connect');
+  assert.equal(cancelled.ok, false);
+  if (cancelled.ok) assert.fail('A wedged connect must not report a clean cancel.');
+  assert.equal(cancelled.error.code, 'status-unavailable');
+  assert.equal(authState(cancelled), 'unavailable');
+
+  // The provider stays non-ready, so Setting offers Login again instead of a stuck spinner.
+  assert.equal((await service.getSnapshot()).providers[0].authState, 'unavailable');
+});
+
+test('the cancel path is instrumented at every stage that can stall', () => {
+  const source = readFileSync(resolve('src/main/modelProvider/modelProvider.service.ts'), 'utf8');
+  const credentialSource = readFileSync(
+    resolve('src/main/codex/codexCredential.service.ts'),
+    'utf8',
+  );
+
+  for (const stage of [
+    'requested',
+    'credential-aborted',
+    'attempt-settle-timeout',
+    'attempt-settled',
+    'credential-status-started',
+    'credential-status-resolved',
+    'credential-disconnect-started',
+    'credential-cleanup-failed',
+    'completed',
+  ]) {
+    assert.match(
+      source,
+      new RegExp(`logCancelStage\\(\\s*'${stage}'`),
+      `Missing cancel stage log: ${stage}`,
+    );
+  }
+  assert.match(source, /const CANCEL_STAGE_TIMEOUT_MS = 5_000;/);
+  assert.match(source, /cancelStageTimeoutMs \?\? CANCEL_STAGE_TIMEOUT_MS/);
+
+  for (const stage of [
+    'cancel-capture-closing',
+    'cancel-capture-closed',
+    'cancel-promotion-reverting',
+    'cleanup-capture-closing',
+    'cleanup-authorization-awaiting',
+    'cleanup-authorization-settled',
+    'cleanup-promotion-reverting',
+  ]) {
+    assert.ok(credentialSource.includes(stage), `Missing credential cleanup log: ${stage}`);
+  }
 });
 
 test('Settings renders localized Cancel and ignores superseded connect results', () => {

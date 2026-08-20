@@ -24,22 +24,41 @@ stays restrained around a large white translation canvas. Its signature is the s
 rail above the composer: fixed provider/model state is visible without competing with translated
 text.
 
-| Token | Value | Use |
-|---|---|---|
-| `ink` | `#242B3A` | translated text |
-| `royal` | `#4E5882` | active controls and focus |
-| `royal-soft` | `#EEF0F8` | header and composer surfaces |
-| `line` | `#D7DBEA` | structural dividers |
-| `paper` | `#FFFFFF` | translation canvas |
+| Token         | Value     | Use                                     |
+| ------------- | --------- | --------------------------------------- |
+| `ink`         | `#242B3A` | translated text                         |
+| `royal`       | `#4E5882` | active controls and focus               |
+| `royal-soft`  | `#EEF0F8` | composer surfaces                       |
+| `line`        | `#D7DBEA` | structural dividers                     |
+| `paper`       | `#FFFFFF` | translation canvas                      |
+| `chrome`      | `#4E5882` | MenuBar surface                         |
+| `chrome-line` | `#3D4666` | MenuBar bottom divider                  |
+| `chrome-ink`  | `#F6F7FC` | MenuBar identity, title, and model chip |
 
 Translation content uses the existing readable UI stack at a larger size. Provider/model metadata
 uses the existing monospace utility stack.
+
+## MenuBar
+
+Translator's top strip is the shared mini-app MenuBar effect already used by EyesOnAgents,
+Submodules, and Todo, reproduced by copy rather than by importing another mini app's private
+component. It is exactly 32px tall with `0 10px` padding, the Royal Blue `chrome` surface, the
+`chrome-line` bottom divider, and `chrome-ink` content: a 16px leading language icon, then the
+13px/650 application title, ellipsized before it can push the trailing content.
+
+The fixed provider/model label stays in the bar as a compact 24px chip with a 12px radius, an
+8%-white surface, and an 18%-white border, still rendered in the monospace metadata stack. It
+remains a label, not a control; Translator has no provider selector.
+
+Translator runs only as an Omni mini-app cell, so the bar reproduces the embedded variant of that
+effect only: no drag region, no macOS traffic-light gutter, no window controls, and no double-click
+maximize.
 
 ## Layout
 
 ```text
 ┌──────────────────────── Translator mini app ────────────────────────┐
-│ Translator                                      Codex · 5.5 · low  │
+│ ▤ Translator                                 ( Codex · 5.5 · low ) │  32px MenuBar
 ├──────────────────────── translation canvas ────────────────────────┤
 │                                                                    │
 │  Validated translated text only. Whitespace is preserved.          │
@@ -54,7 +73,7 @@ uses the existing monospace utility stack.
 │ Auto direction  [Translate to … after success] Ready / Translating │
 ├──────────────────────── input dock ─────────────────────────────────┤
 │ Source text…                                                        │
-│ [Login to Codex when required]                         123 / 12000 │
+│ [Login to Codex when required]                          123 / 1000 │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,12 +109,12 @@ status appears to the left of the icon, then both return to idle. A new translat
 clearing the source, resets that feedback immediately so an old confirmation is never attached to
 new text.
 
-| Input | Scope | Behavior |
-|---|---|---|
-| click / `Enter` / `Space` | copy control | write the currently displayed translation to the clipboard |
-| repeated activation | copy control | rewrite the same text and restart the transient feedback |
-| clipboard write rejected | copy control | show localized `Copy failed`; the translation is untouched |
-| new result / source cleared | result region | reset copy feedback to idle |
+| Input                       | Scope         | Behavior                                                   |
+| --------------------------- | ------------- | ---------------------------------------------------------- |
+| click / `Enter` / `Space`   | copy control  | write the currently displayed translation to the clipboard |
+| repeated activation         | copy control  | rewrite the same text and restart the transient feedback   |
+| clipboard write rejected    | copy control  | show localized `Copy failed`; the translation is untouched |
+| new result / source cleared | result region | reset copy feedback to idle                                |
 
 ## Language Direction
 
@@ -104,11 +123,11 @@ from Unicode character counts, UTF-8 byte lengths, or tokenizer counts, and Rend
 predict a target before the response arrives. The model judges the primary semantic
 natural-language content:
 
-| Source meaning | Target |
-|---|---|
-| Primarily Simplified or Traditional Chinese | English |
-| Primarily English | Simplified Chinese |
-| Primarily another language | Simplified Chinese |
+| Source meaning                                                 | Target             |
+| -------------------------------------------------------------- | ------------------ |
+| Primarily Simplified or Traditional Chinese                    | English            |
+| Primarily English                                              | Simplified Chinese |
+| Primarily another language                                     | Simplified Chinese |
 | Ambiguous or materially mixed without a clear primary language | Simplified Chinese |
 
 Product names, abbreviations, code identifiers, URLs, email addresses, numbers, and punctuation do
@@ -141,8 +160,12 @@ an older result direction is never presented as a prediction for new text.
 5. A newer request aborts the older request from the same Translator cell. Renderer revision
    fencing also ignores late responses. Different cells keep independent client IDs.
 6. Identical source text is not submitted twice.
-7. Source input is bounded to 12,000 Unicode code points in both renderer and Main; Main also keeps
-   a 24,000 UTF-16-unit hard bound so surrogate-pair input cannot bypass the contract.
+7. Source input is bounded to 1,000 Unicode code points in both renderer and Main; Main also keeps
+   a 2,000 UTF-16-unit hard bound (twice the code-point bound) so surrogate-pair input cannot
+   bypass the contract. The bound is deliberately short: one request stays inside the 60-second
+   deadline, and a long document is expected to be translated in owner-chosen slices rather than as
+   one oversized request. The 24,000-character translation ceiling is unchanged, because a
+   1,000-character Chinese source can legitimately expand well past its own length in English.
 
 ## Runtime And Output Contract
 
@@ -194,34 +217,34 @@ request IDs, OAuth URLs/codes, tokens, credentials, headers, or raw provider obj
 status checks, Login, callback, credential promotion, logout, and invalidation lifecycle are not
 written to the Translator log; they retain their existing application diagnostics.
 
-| Runtime | Translator log |
-|---|---|
-| packaged production | `~/Library/Logs/Bitterless/translator/translator.log` |
+| Runtime               | Translator log                                                        |
+| --------------------- | --------------------------------------------------------------------- |
+| packaged production   | `~/Library/Logs/Bitterless/translator/translator.log`                 |
 | packaged test release | Electron OS log root under `Bitterless_DEV/translator/translator.log` |
-| production debug | `<appData>/Bitterless_DEBUG_PROD/logs/translator/translator.log` |
-| test debug | `<appData>/Bitterless_DEBUG_DEV/logs/translator/translator.log` |
+| production debug      | `<appData>/Bitterless_DEBUG_PROD/logs/translator/translator.log`      |
+| test debug            | `<appData>/Bitterless_DEBUG_DEV/logs/translator/translator.log`       |
 
 ## State Variants
 
-| State | Result region | Direction rail | Composer |
-|---|---|---|---|
-| login required / invalidated | localized instruction | `Auto direction` only | Codex Login visible; requests disabled |
-| authenticating | login guidance | `Auto direction` only | login progress; requests disabled |
-| empty + ready | localized invitation to type or paste | `Auto direction` only | focused and enabled |
-| translating new source revision | previous result remains visible but subdued | `Auto direction` only | enabled |
-| complete | validated translation only | actual `Translate to …` target visible | enabled |
-| retryable translation failure | localized error plus inline `Try again`, never raw provider detail | target visible only when this unchanged revision already has a successful result | enabled; action force-retries current source |
-| non-retryable / auth failure | localized actionable guidance, never raw provider detail | no unvalidated target | no retry action; login or edit remains explicit |
-| constrained pane | result scrolls; metadata wraps | metadata wraps | input dock stays at bottom |
+| State                           | Result region                                                      | Direction rail                                                                   | Composer                                        |
+| ------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------------------------- |
+| login required / invalidated    | localized instruction                                              | `Auto direction` only                                                            | Codex Login visible; requests disabled          |
+| authenticating                  | login guidance                                                     | `Auto direction` only                                                            | login progress; requests disabled               |
+| empty + ready                   | localized invitation to type or paste                              | `Auto direction` only                                                            | focused and enabled                             |
+| translating new source revision | previous result remains visible but subdued                        | `Auto direction` only                                                            | enabled                                         |
+| complete                        | validated translation only                                         | actual `Translate to …` target visible                                           | enabled                                         |
+| retryable translation failure   | localized error plus inline `Try again`, never raw provider detail | target visible only when this unchanged revision already has a successful result | enabled; action force-retries current source    |
+| non-retryable / auth failure    | localized actionable guidance, never raw provider detail           | no unvalidated target                                                            | no retry action; login or edit remains explicit |
+| constrained pane                | result scrolls; metadata wraps                                     | metadata wraps                                                                   | input dock stays at bottom                      |
 
 ## Error Recovery Interaction
 
-| Input | Scope | Behavior |
-|---|---|---|
-| click / `Enter` / `Space` | inline `Try again` button | force-submit the current non-empty source once |
-| repeated activation while translating | inline `Try again` button | ignored by the existing translating guard |
-| source edit | composer | clears the old error and resumes the normal throttled translation path |
-| source cleared / whitespace only | composer | hide retry, clear error/result, cancel active work, issue no request |
+| Input                                 | Scope                     | Behavior                                                               |
+| ------------------------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| click / `Enter` / `Space`             | inline `Try again` button | force-submit the current non-empty source once                         |
+| repeated activation while translating | inline `Try again` button | ignored by the existing translating guard                              |
+| source edit                           | composer                  | clears the old error and resumes the normal throttled translation path |
+| source cleared / whitespace only      | composer                  | hide retry, clear error/result, cancel active work, issue no request   |
 
 ## Integration Flow
 

@@ -1,6 +1,12 @@
 # EyesOnAgents Project Filter
 
-Status: implemented; filter relocated from the retired `All` column into `Focus` by task 054
+Status: renderer filter retired; Project resolution and storage retained
+
+The Select was removed from the board by
+[task 058](../plan/tasks/eyes-on-agents-focus-search-toggle-058.md): the owner does not want a
+Project control on the single-column board. Everything below about **Project resolution, the three
+`project_*` columns, and their update semantics is still current** — Main keeps resolving and
+persisting Project metadata. The user-visible filter contract is historical.
 
 Date: 2026-07-20
 

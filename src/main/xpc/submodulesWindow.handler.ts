@@ -7,6 +7,18 @@ import { windowStateService, type WindowStateController } from '@main/windows/wi
 
 const WINDOW_STATE_KEY = 'submodules';
 
+/**
+ * Documented exception to the 800px house minimum (owner decision 2026-08-20): the two-line row list
+ * works as a narrow side panel, exactly like the EyesOnAgents window. Passed to the window-state
+ * service too, or a restored narrow width would be clamped back to the 800px default.
+ */
+const SUBMODULES_MIN_WIDTH = 480;
+const SUBMODULES_MIN_HEIGHT = 600;
+const WINDOW_STATE_OPTIONS = {
+  minWidth: SUBMODULES_MIN_WIDTH,
+  minHeight: SUBMODULES_MIN_HEIGHT
+} as const;
+
 const resolveSubmodulesOutPath = (...segments: string[]): string =>
   join(app.getAppPath(), 'out', ...segments);
 
@@ -25,6 +37,7 @@ class SubmodulesWindowHandler extends XpcMainHandler implements SubmodulesWindow
         current.show();
       }
       current.focus();
+      this.openDebugDevTools();
       return;
     }
 
@@ -42,6 +55,22 @@ class SubmodulesWindowHandler extends XpcMainHandler implements SubmodulesWindow
       created.show();
     }
     created.focus();
+    this.openDebugDevTools();
+  }
+
+  /**
+   * Debug-only DevTools, opened after the window is shown and focused. Opening it during creation
+   * put the detached DevTools window behind the window that `focus()` then raised, so it looked like
+   * DevTools never opened at all. The gate is the project-wide debug gate (`VITE_MODE`, never
+   * `is.dev`) and stays out of E2E runs so a test never fights a DevTools window for focus.
+   */
+  private openDebugDevTools(): void {
+    if (import.meta.env.VITE_MODE !== 'debug' || process.env.BITTERLESS_E2E === '1') return;
+    const current = this.window;
+    if (!current || current.isDestroyed()) return;
+    const { webContents } = current;
+    if (webContents.isDestroyed() || webContents.isDevToolsOpened()) return;
+    webContents.openDevTools({ mode: 'detach' });
   }
 
   async minimize(): Promise<void> {
@@ -83,13 +112,13 @@ class SubmodulesWindowHandler extends XpcMainHandler implements SubmodulesWindow
   }
 
   private async createWindow(): Promise<BrowserWindow> {
-    const restored = windowStateService.resolve(WINDOW_STATE_KEY);
+    const restored = windowStateService.resolve(WINDOW_STATE_KEY, WINDOW_STATE_OPTIONS);
     const isMac = process.platform === 'darwin';
     const options: BrowserWindowConstructorOptions = {
       width: restored?.bounds.width ?? 900,
       height: restored?.bounds.height ?? 700,
-      minWidth: 800,
-      minHeight: 600,
+      minWidth: SUBMODULES_MIN_WIDTH,
+      minHeight: SUBMODULES_MIN_HEIGHT,
       show: false,
       title: 'Submodules',
       autoHideMenuBar: true,
@@ -110,7 +139,11 @@ class SubmodulesWindowHandler extends XpcMainHandler implements SubmodulesWindow
 
     const created = new BrowserWindow(options);
     this.window = created;
-    this.windowStateController = windowStateService.register(WINDOW_STATE_KEY, created);
+    this.windowStateController = windowStateService.register(
+      WINDOW_STATE_KEY,
+      created,
+      WINDOW_STATE_OPTIONS
+    );
 
     created.once('closed', () => {
       if (this.window === created) {
@@ -126,9 +159,6 @@ class SubmodulesWindowHandler extends XpcMainHandler implements SubmodulesWindow
         await created.loadFile(resolveSubmodulesOutPath('renderer', 'submodules', 'index.html'));
       }
 
-      if (is.dev && import.meta.env.VITE_MODE !== 'release') {
-        created.webContents.openDevTools({ mode: 'detach' });
-      }
       return created;
     } catch (error) {
       if (!created.isDestroyed()) {

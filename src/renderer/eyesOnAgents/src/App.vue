@@ -71,7 +71,7 @@ import { globalStore } from './store/global.store';
 import { eyesOnAgentsEnv } from './contextBridge/eyesOnAgentsEnv.bridge';
 
 interface AgentBoardInstance {
-  openTitleSearch(): Promise<void>;
+  focusTitleSearch(): Promise<void>;
 }
 
 const connectionsVisible = ref(false);
@@ -103,9 +103,9 @@ const handleWindowFocus = (): void => {
   void eyesOnAgentsStore.refreshOnWindowActivation().catch(() => undefined);
 };
 
-const openFocusTitleSearch = async (): Promise<void> => {
+const focusTitleSearch = async (): Promise<void> => {
   await nextTick();
-  await agentBoardRef.value?.openTitleSearch();
+  await agentBoardRef.value?.focusTitleSearch();
 };
 
 const handleWindowKeydown = (event: KeyboardEvent): void => {
@@ -116,7 +116,7 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
 
   event.preventDefault();
   event.stopPropagation();
-  void openFocusTitleSearch();
+  void focusTitleSearch();
 };
 
 onMounted(async () => {

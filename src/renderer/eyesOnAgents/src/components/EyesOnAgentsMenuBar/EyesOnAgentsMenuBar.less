@@ -29,16 +29,24 @@
 }
 
 .eyes-menu-bar__identity {
+  min-width: 0;
+  flex: 0 1 auto;
   gap: 7px;
+  overflow: hidden;
 }
 
 .eyes-menu-bar__title {
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 650;
   letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .eyes-menu-bar__actions {
+  flex: 0 0 auto;
   gap: 4px;
   -webkit-app-region: no-drag;
 }

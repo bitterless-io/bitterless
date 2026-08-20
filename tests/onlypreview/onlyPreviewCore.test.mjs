@@ -239,8 +239,10 @@ test('dormant Electron acceptance tracks the two-view security and geometry cont
   );
   assert.match(
     geometry,
-    /onlypreview__previewHeader[\s\S]*toEqual\(\{ height: 43, hasHost: true \}\)/
+    /onlypreview__previewToolbar[\s\S]*toEqual\(\{ height: 43, hasHost: true \}\)/
   );
+  assert.match(geometry, /onlypreview__previewContentHost/);
+  assert.match(geometry, /bounds\.y\)\.toBe\(75\)/);
 
   const devTools = e2e.slice(
     e2e.indexOf("test('toggles detached Shell and Preview DevTools"),
@@ -334,11 +336,15 @@ test('host A cannot resolve host B workspace and replacement revokes old workspa
       expectOnlyPreviewError('WORKSPACE_ACCESS_DENIED')
     );
 
-    const firstFile = await workspaces.resolveFile(hostB.hostToken, {
+    const firstFile = await workspaces.openFile(hostB.hostToken, {
       workspaceId: workspaceB.workspaceId,
       relativePath: 'first.txt'
     });
-    const assetUrl = assets.issue(firstFile, 'text/plain');
+    const assetUrl = assets.issue(firstFile, 'text/plain', {
+      selectionRevision: 1,
+      maxBytes: 1024
+    });
+    await firstFile.fileHandle.close();
     const liveResponse = await assets.respond(new Request(assetUrl));
     assert.equal(liveResponse.status, 200);
     assert.equal(await liveResponse.text(), 'first workspace');
@@ -360,11 +366,15 @@ test('asset requests require the exact canonical capability URL', async () => {
     const { hosts, workspaces, assets } = createRegistries();
     const host = hosts.issue('standalone', 'content');
     const workspace = await workspaces.createForTarget(host.hostToken, filePath);
-    const file = await workspaces.resolveFile(host.hostToken, {
+    const file = await workspaces.openFile(host.hostToken, {
       workspaceId: workspace.workspaceId,
       relativePath: 'tone.wav'
     });
-    const assetUrl = assets.issue(file, 'audio/wav');
+    const assetUrl = assets.issue(file, 'audio/wav', {
+      selectionRevision: 1,
+      maxBytes: 1024
+    });
+    await file.fileHandle.close();
     const canonical = new URL(assetUrl);
     const [token, encodedName] = canonical.pathname.slice(1).split('/');
     assert.match(token, /^[a-f0-9]{64}$/);
@@ -408,11 +418,15 @@ test('revoking a host terminates an already-active asset stream', async () => {
     const { hosts, workspaces, assets } = createRegistries();
     const host = hosts.issue('standalone', 'content');
     const workspace = await workspaces.createForTarget(host.hostToken, filePath);
-    const file = await workspaces.resolveFile(host.hostToken, {
+    const file = await workspaces.openFile(host.hostToken, {
       workspaceId: workspace.workspaceId,
       relativePath: 'large.bin'
     });
-    const assetUrl = assets.issue(file, 'application/octet-stream');
+    const assetUrl = assets.issue(file, 'application/octet-stream', {
+      selectionRevision: 1,
+      maxBytes: 64 * 1024 * 1024
+    });
+    await file.fileHandle.close();
     const response = await assets.respond(new Request(assetUrl));
     assert.equal(response.status, 200);
     assert.ok(response.body);
@@ -638,17 +652,15 @@ test('permission failures map to the focused PATH_PERMISSION_DENIED envelope', a
   });
 });
 
-test('classifier combines extension, signature, text heuristics, encoding, and complete-file caps', async () => {
+test('classifier uses exact extension routing, tolerant text decoding, signatures, and byte caps', async () => {
   assert.equal(runtime.classifyOnlyPreviewExtension('README.md'), 'text');
   assert.equal(runtime.classifyOnlyPreviewExtension('photo.PNG'), 'image');
   assert.equal(runtime.classifyOnlyPreviewExtension('movie.webm'), 'video');
   assert.equal(runtime.classifyOnlyPreviewExtension('archive.bin'), 'unsupported');
-  assert.equal(runtime.isProbablyOnlyPreviewText(Buffer.from('hello\nworld')), true);
-  assert.equal(runtime.isProbablyOnlyPreviewText(Buffer.from([0, 1, 2, 3])), false);
 
   await withTempDirectory('onlypreview-classifier-', async (root) => {
-    const { hosts, workspaces, assets } = createRegistries();
-    const service = new runtime.OnlyPreviewClassifierService(assets);
+    const { hosts, workspaces } = createRegistries();
+    const service = new runtime.OnlyPreviewClassifierService(workspaces);
     const host = hosts.issue('standalone', 'content');
     const workspace = await workspaces.createForTarget(host.hostToken, root);
     const withOpenedFile = async (name, operation) => {
@@ -664,13 +676,17 @@ test('classifier combines extension, signature, text heuristics, encoding, and c
     };
     const describe = async (name) =>
       await withOpenedFile(name, async (file) => await service.describe(file));
-    const readText = async (name) =>
-      await withOpenedFile(name, async (file) => await service.readText(file));
+    const readText = async (name, adapterId = 'monaco') =>
+      await withOpenedFile(name, async (file) => await service.readText(file, adapterId));
 
     write(join(root, 'plain.unknown'), 'readable text');
     const inferred = await describe('plain.unknown');
-    assert.equal(inferred.kind, 'text');
-    assert.equal(inferred.language, 'plaintext');
+    assert.equal(inferred.kind, 'unsupported');
+
+    write(join(root, 'notes.markdown'), 'source markdown');
+    const markdownSource = await describe('notes.markdown');
+    assert.equal(markdownSource.kind, 'text');
+    assert.equal(markdownSource.language, 'markdown');
 
     write(join(root, 'fake.png'), 'not a png');
     const mismatch = await describe('fake.png');
@@ -681,11 +697,11 @@ test('classifier combines extension, signature, text heuristics, encoding, and c
     write(join(root, 'sample.pdf'), Buffer.from('%PDF-1.7\n%%EOF\n'));
     const pdf = await describe('sample.pdf');
     assert.equal(pdf.kind, 'pdf');
-    assert.match(pdf.assetUrl, /^bitterless-preview:\/\/asset\//);
+    assert.equal(pdf.assetUrl, undefined);
 
     write(join(root, 'binary.txt'), Buffer.from([0, 1, 2, 3]));
-    assert.equal((await describe('binary.txt')).kind, 'unsupported');
-    await assert.rejects(readText('binary.txt'), expectOnlyPreviewError('BINARY_TEXT'));
+    assert.equal((await describe('binary.txt')).kind, 'text');
+    assert.equal((await readText('binary.txt')).text, '\u0000\u0001\u0002\u0003');
 
     write(join(root, 'utf8.txt'), Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from('hello')]));
     assert.deepEqual(await readText('utf8.txt'), {
@@ -698,12 +714,13 @@ test('classifier combines extension, signature, text heuristics, encoding, and c
     write(join(root, 'utf16.txt'), Buffer.from([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]));
     assert.equal((await readText('utf16.txt')).text, 'hi');
     write(join(root, 'bad-utf8.txt'), Buffer.from([0xc3, 0x28]));
-    await assert.rejects(readText('bad-utf8.txt'), expectOnlyPreviewError('INVALID_ENCODING'));
+    assert.equal((await readText('bad-utf8.txt')).text, '\uFFFD(');
 
     const tooLarge = join(root, 'too-large.txt');
     const descriptor = openSync(tooLarge, 'w');
     closeSync(descriptor);
     truncateSync(tooLarge, runtime.ONLY_PREVIEW_MAX_TEXT_BYTES + 1);
+    assert.equal((await describe('too-large.txt')).previewError.code, 'TEXT_TOO_LARGE');
     await assert.rejects(readText('too-large.txt'), expectOnlyPreviewError('TEXT_TOO_LARGE'));
   });
 });
@@ -718,7 +735,8 @@ test('custom media responses implement full, bounded range, HEAD, and unsatisfia
         request,
         fileHandle,
         fileSize: fileStat.size,
-        mimeType
+        mimeType,
+        maxBytes: fileStat.size
       });
     };
     const full = await respond(
@@ -909,7 +927,7 @@ test('recent-directory wiring stays Main-owned, value-free, and renderer-contrac
     absoluteOpen.indexOf('beginExplicitTarget()') < absoluteOpen.indexOf('ensureStandalone()'),
     'OS targets must suppress restore before mounting standalone renderers'
   );
-  assert.match(handler, /restoreWorkspace\(params\?\.hostToken\)/);
+  assert.match(handler, /restoreWorkspace\(host\.hostToken\)/);
   assert.match(handler, /createXpcMainEmitter<OnlyPreviewRecentDirectoryStorage>\('SettingDao'\)/);
   assert.match(
     appMain,
@@ -945,10 +963,14 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     'openOnlyPreviewWindow',
     'chooseFolder',
     'restoreWorkspace',
-    'describeFile',
     'readText',
     'selectStandaloneFile',
     'updatePreviewBounds',
+    'getPreviewPresentation',
+    'getVuePreviewPresentation',
+    'reportPreviewReady',
+    'reportPreviewReset',
+    'reportPreviewError',
     'minimizeWindow',
     'toggleMaximizeWindow',
     'closeWindow',
@@ -1343,7 +1365,7 @@ test('OnlyPreview Settings restores size but derives parented work-area bounds o
   assert.doesNotMatch(openSettings, /settingsWindowState\?\.show\(\)/);
 });
 
-test('window sources enforce standalone isolation and generic Omni renderer cleanup', () => {
+test('window sources delegate dual Preview isolation and preserve generic Omni renderer cleanup', () => {
   const standalone = source('src/main/windows/onlyPreviewWindow.helper.ts');
   assert.match(standalone, /new BaseWindow\(/);
   assert.equal((standalone.match(/new WebContentsView\(/g) ?? []).length, 1);
@@ -1359,11 +1381,15 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   assert.match(standalone, /MENU_BAR_HEIGHT\s*=\s*32/);
   assert.match(standalone, /STATUS_HEIGHT\s*=\s*25/);
   assert.doesNotMatch(standalone, /PREVIEW_HEADER_HEIGHT/);
-  assert.match(standalone, /addChildView\(shellView\)[\s\S]*addChildView\(previewView\)/);
+  assert.match(
+    standalone,
+    /addChildView\(shellView\)[\s\S]*onlyPreviewPreviewRegionService\.start\(\{/
+  );
+  assert.doesNotMatch(standalone, /addChildView\(previewView\)/);
   assert.doesNotMatch(standalone, /previewHeaderView/);
   assert.match(
     standalone,
-    /this\.applyPreviewHostBounds\(clampPreviewBounds\(currentBounds, width, height\)\)/
+    /onlyPreviewPreviewRegionService\.updateBounds\([\s\S]*clampPreviewBounds\(currentBounds, width, height\)/
   );
   assert.doesNotMatch(standalone, /sandbox:\s*mode !== 'preview'/);
   assert.match(standalone, /mode === 'preview'[\s\S]*onlypreviewContent\.js[\s\S]*onlypreview\.js/);
@@ -1373,7 +1399,7 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   );
   assert.match(
     standalone,
-    /await this\.loadView\(previewView, 'preview'\);[\s\S]*await this\.loadView\(shellView, 'shell'\)/
+    /loadVuePreviewView: async \(view\) => await this\.loadView\(view, 'preview'\)[\s\S]*await this\.loadView\(shellView, 'shell'\)/
   );
   assert.match(standalone, /onlyPreviewHostRegistry\.revoke\(host\.hostToken\)/);
   assert.match(standalone, /minWidth:\s*MIN_WIDTH/);
@@ -1481,7 +1507,7 @@ test('window sources enforce standalone isolation and generic Omni renderer clea
   assert.ok(initialLoads >= 0 && initialLoads < autoOpenGuard && autoOpenGuard < previewAutoOpen);
   assert.match(
     standaloneStartup,
-    /this\.baseWindow !== window[\s\S]*this\.shellView !== shellView[\s\S]*this\.previewView !== previewView/
+    /this\.baseWindow !== window[\s\S]*this\.shellView !== shellView[\s\S]*!previewView/
   );
   assert.match(
     standaloneStartup,
@@ -1774,11 +1800,14 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(monaco, /domReadOnly:\s*true/);
   assert.match(monaco, /editor\.create/);
 
-  const pdf = source('src/renderer/onlypreview/preview/src/components/PdfPreview/PdfPreview.vue');
-  assert.match(pdf, /AnnotationMode\.DISABLE/);
-  assert.match(pdf, /intent:\s*'print'/);
-  assert.match(pdf, /new TextLayer/);
-  assert.match(pdf, /canvas/);
+  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+  assert.match(region, /descriptor\.kind === 'pdf'/);
+  assert.match(region, /adapterId:\s*'chromium-pdf'/);
+  assert.match(region, /plugins:\s*true/);
+  assert.doesNotMatch(
+    source('src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'),
+    /PdfPreview|pdfjs|canvas/
+  );
 });
 
 test('Markdown rendering and selection counts stay renderer-only, inert, and host-scoped', () => {
@@ -1789,8 +1818,8 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   const classifier = source('src/main/onlypreview/onlyPreviewClassifier.service.ts');
   assert.match(classifier, /TEXT_EXTENSIONS[\s\S]*'\.md'[\s\S]*'\.mdx'/);
   assert.match(classifier, /'\.md':\s*'markdown'/);
+  assert.match(classifier, /'\.markdown':\s*'markdown'/);
   assert.match(classifier, /'\.mdx':\s*'markdown'/);
-  assert.doesNotMatch(classifier, /'\.markdown'/);
 
   const surface = source(
     'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
@@ -1801,6 +1830,9 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.match(surface, /descriptor\.extension === '\.md'/);
   assert.doesNotMatch(surface, /descriptor\.extension === '\.mdx'/);
   assert.doesNotMatch(surface, /descriptor\.extension === '\.markdown'/);
+  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+  assert.match(region, /descriptor\.extension === '\.md'[\s\S]*adapterId: 'markdown-dom'/);
+  assert.doesNotMatch(region, /descriptor\.extension === '\.mdx'/);
 
   const markdownService = source(
     'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
@@ -1855,13 +1887,6 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.match(monaco, /reportCharacterCount\(0, props\.reportingRevision\)/);
   assert.match(monaco, /armCharacterCountReporting\(props\.reportingRevision\)/);
 
-  const pdf = source('src/renderer/onlypreview/preview/src/components/PdfPreview/PdfPreview.vue');
-  assert.match(pdf, /countOnlyPreviewDomSelection\(pagesRef\.value/);
-  assert.match(pdf, /document\.addEventListener\('selectionchange'/);
-  assert.match(pdf, /document\.removeEventListener\('selectionchange'/);
-  assert.match(pdf, /reportCharacterCount\(0, props\.reportingRevision\)/);
-  assert.match(pdf, /armCharacterCountReporting\(props\.reportingRevision\)/);
-
   const characterCountGate = source(
     'src/renderer/onlypreview/common/onlyPreviewCharacterCountGate.service.ts'
   );
@@ -1879,61 +1904,44 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     previewStore,
     /xpcRenderer\.broadcast\(ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT, \{\s*hostId,\s*characterCount\s*\}\);/
   );
+  assert.match(previewStore, /getVuePreviewPresentation\(\{ hostToken, previewRuntimeToken \}\)/);
+  assert.match(previewStore, /presentationFetchGeneration/);
   assert.match(
     previewStore,
-    /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT, \{[\s\S]*?hostId: onlyPreviewEnv\.hostId[\s\S]*?\}/
+    /reportPreviewReset\(\{[\s\S]*selectionRevision,[\s\S]*previewRuntimeToken/
+  );
+  assert.match(previewStore, /await nextTick\(\);[\s\S]*reportPreviewReset/);
+  assert.match(previewStore, /const reportingRevision = String\(revision\)/);
+  assert.match(
+    previewStore,
+    /reportPreviewReady\(\{ hostToken, selectionRevision, previewRuntimeToken \}\)/
   );
   assert.match(
     previewStore,
-    /xpcRenderer\.subscribe\(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT[\s\S]*this\.startTransition\(payload\.params\.revision, action\)/
-  );
-  assert.match(
-    previewStore,
-    /private startTransition\(revision: string, action: 'render' \| 'reload'\): void \{[\s\S]*xpcRenderer\.broadcast\(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT, \{ hostId, revision, action \}\)[\s\S]*this\.restoreSelection\(revision\)/
-  );
-  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_PREVIEW_CONTROL_EVENT/);
-  assert.doesNotMatch(
-    previewStore,
-    /ONLY_PREVIEW_HEADER_METADATA_EVENT|ONLY_PREVIEW_HEADER_SYNC_REQUEST_EVENT/
+    /reportPreviewError\(\{ hostToken, selectionRevision, previewRuntimeToken, errorCode \}\)/
   );
   assert.match(
     previewStore,
     /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT, \{[\s\S]*?hostId,[\s\S]*?revision: reportingRevision[\s\S]*?\}/
   );
   assert.match(previewStore, /characterCountGate\.canReport\(reportingRevision, normalizedCount\)/);
-  assert.match(
+  assert.doesNotMatch(
     previewStore,
-    /xpcRenderer\.subscribe\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT[\s\S]*createOnlyPreviewWatchReloadCursor\(\)[\s\S]*this\.nextAction = 'render'/
+    /ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT|ONLY_PREVIEW_REFRESH_EVENT|ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT|ONLY_PREVIEW_PREVIEW_CONTROL_EVENT/
   );
-  assert.match(
-    previewStore,
-    /xpcRenderer\.subscribe\(ONLY_PREVIEW_REFRESH_EVENT[\s\S]*this\.nextAction = 'reload'/
-  );
-  assert.match(
-    previewStore,
-    /xpcRenderer\.subscribe\(ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT[\s\S]*evaluateOnlyPreviewWatchReload\([\s\S]*this\.currentRelativePath[\s\S]*this\.startTransition\(crypto\.randomUUID\(\), 'reload'\)/
-  );
-  assert.doesNotMatch(previewStore, /xpcRenderer\.subscribe\(ONLY_PREVIEW_SELECTION_CHANGED_EVENT/);
   assert.doesNotMatch(previewStore, /selectedText|selectionText|text:\s*character/);
+  assert.doesNotMatch(
+    source('src/shared/onlypreview/onlyPreview.types.ts'),
+    /PREVIEW_CONTROL|PreviewControl|CHARACTER_COUNT_TRANSITION|CHARACTER_COUNT_SYNC_REQUEST|characterCountTransition|characterCountSyncRequest/
+  );
 
-  const previewHeaderComponent = source(
-    'src/renderer/onlypreview/preview/src/components/PreviewHeader/PreviewHeader.vue'
+  const previewToolbar = source(
+    'src/renderer/onlypreview/shell/src/components/PreviewToolbar/PreviewToolbar.vue'
   );
-  assert.match(previewHeaderComponent, /onlyPreviewPreviewStore\.descriptor\?\.name/);
-  assert.match(previewHeaderComponent, /onlyPreviewPreviewStore\.descriptor\?\.relativePath/);
-  assert.match(previewHeaderComponent, /onlyPreviewPreviewStore\.descriptorType/);
-  assert.match(previewHeaderComponent, /<FileActions \/>/);
-  assert.doesNotMatch(previewHeaderComponent, /xpcRenderer/);
-  // A failed describe leaves no descriptor; identity and the native actions must survive on the
-  // current selection so a broken file can still be opened externally or revealed.
-  assert.match(
-    previewHeaderComponent,
-    /onlyPreviewPreviewStore\.currentRef\?\.relativePath/
-  );
-  assert.match(
-    previewHeaderComponent,
-    /v-if="onlyPreviewPreviewStore\.currentRef"[\s\S]*<FileActions \/>/
-  );
+  assert.match(previewToolbar, /presentation\.value\?\.descriptor\?\.relativePath/);
+  assert.match(previewToolbar, /presentation\.value\?\.fileRef\?\.relativePath/);
+  assert.match(previewToolbar, /<FileActions \/>/);
+  assert.doesNotMatch(previewToolbar, /xpcRenderer/);
 
   const previewSurface = source(
     'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
@@ -1954,60 +1962,29 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.match(shellStore, /characterCountGate\.canBufferCount\(characterCount\)/);
   assert.match(shellEvents, /ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT/);
   assert.match(shellStore, /characterCountGate\.acceptReady\(revision\)/);
-  assert.match(shellEvents, /ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT/);
-  assert.match(
-    shellStore,
-    /syncCharacterCountTransition\(\)[\s\S]*!this\.characterCountGate\.isSuspended\(\)[\s\S]*beginCharacterCountTransition\(\)/
-  );
-  assert.match(shellStore, /const revision = crypto\.randomUUID\(\)/);
+  assert.match(shellEvents, /isOnlyPreviewPresentationNudge/);
+  assert.match(shellStore, /getPreviewPresentation\(\{ hostToken \}\)/);
+  assert.match(shellStore, /previewPresentationFetchGeneration/);
+  assert.doesNotMatch(shellStore, /crypto\.randomUUID/);
   assert.match(shellEvents, /ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/);
-  const workspaceChangedHandler = shellStore.slice(
-    shellStore.indexOf('workspaceChanged: () =>'),
-    shellStore.indexOf('selectionChanged: () =>')
-  );
-  assert.match(
-    workspaceChangedHandler,
-    /beginCharacterCountTransition\(\)[\s\S]*restoreWorkspace\(\)/
-  );
   assert.match(shellEvents, /ONLY_PREVIEW_SELECTION_CHANGED_EVENT/);
-  const selectionChangedHandler = shellStore.slice(
-    shellStore.indexOf('selectionChanged: () =>'),
-    shellStore.indexOf('characterCountChanged:')
-  );
-  assert.match(
-    selectionChangedHandler,
-    /beginCharacterCountTransition\(\)[\s\S]*syncSelection\(\)/
-  );
   const selectFile = shellStore.slice(
     shellStore.indexOf('private async selectFile('),
     shellStore.indexOf('private expandSelectedParents()')
   );
   assert.match(
     selectFile,
-    /private async selectFile[\s\S]*this\.restoreGeneration \+= 1;[\s\S]*rotateCharacterCountRevision\(\)[\s\S]*this\.selectedRelativePath = relativePath/
+    /this\.restoreGeneration \+= 1;[\s\S]*this\.selectedRelativePath = relativePath/
   );
   assert.match(
     selectFile,
-    /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\);[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*const recoveryRevision = this\.beginCharacterCountTransition\(\);[\s\S]*resumeCharacterCountReporting\(recoveryRevision\)/
+    /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\);[\s\S]*if \(generation !== this\.selectionGeneration\) return;/
   );
-  const pendingRevision = shellStore.slice(
-    shellStore.indexOf('private rotateCharacterCountRevision()'),
-    shellStore.indexOf('private resumeCharacterCountReporting(')
-  );
-  assert.match(pendingRevision, /characterCountGate\.beginTransition\(revision\)/);
-  assert.doesNotMatch(pendingRevision, /broadcast\(/);
-
   const directRefresh = shellStore.slice(
     shellStore.indexOf('async refresh()'),
     shellStore.indexOf('async openSettings()')
   );
-  assert.match(directRefresh, /beginCharacterCountTransition\(\)/);
   assert.match(directRefresh, /await this\.refreshIndex\(\)/);
-  assert.ok(
-    directRefresh.indexOf('beginCharacterCountTransition()') <
-      directRefresh.indexOf('await this.refreshIndex()')
-  );
-  assert.match(directRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
   assert.doesNotMatch(directRefresh, /broadcast\(ONLY_PREVIEW_REFRESH_EVENT/);
 
   assert.match(shellEvents, /ONLY_PREVIEW_REFRESH_EVENT/);
@@ -2015,14 +1992,8 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore.indexOf('refresh: () =>'),
     shellStore.indexOf('browseListing:')
   );
-  assert.match(nativeRefresh, /beginCharacterCountTransition\(\)/);
   assert.match(nativeRefresh, /this\.refreshIndex\(\)/);
-  assert.ok(
-    nativeRefresh.indexOf('beginCharacterCountTransition()') <
-      nativeRefresh.indexOf('this.refreshIndex()')
-  );
-  assert.match(nativeRefresh, /finally[\s\S]*resumeCharacterCountReporting/);
-  assert.ok((shellStore.match(/this\.selectedCharacterCount = 0/g) || []).length >= 6);
+  assert.match(shellStore, /const reportingRevision = String\(presentation\.selectionRevision\)/);
 
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
   assert.ok(
@@ -2051,7 +2022,7 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   }
 });
 
-test('deep Project rows and HTML rendering stay complete, inert, and renderer-only', () => {
+test('deep Project rows stay complete while HTML routes to the isolated Chrome surface', () => {
   const sharedTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
   assert.match(sharedTypes, /export const ONLY_PREVIEW_MAX_HTML_BYTES = 1024 \* 1024;/);
 
@@ -2068,84 +2039,23 @@ test('deep Project rows and HTML rendering stay complete, inert, and renderer-on
   const surface = source(
     'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
   );
-  const htmlBranch = surface.indexOf('<HtmlPreview');
-  const monacoBranch = surface.indexOf('<MonacoTextPreview');
-  assert.ok(htmlBranch >= 0 && htmlBranch < monacoBranch);
-  const htmlPredicate = surface.slice(
-    surface.indexOf('const isHtml = computed'),
-    surface.indexOf('const descriptorType = computed')
-  );
-  assert.match(
-    htmlPredicate,
-    /descriptor\.extension === '\.html' \|\| descriptor\.extension === '\.htm'/
-  );
-  assert.doesNotMatch(htmlPredicate, /\.xml|\.vue/);
-  assert.doesNotMatch(surface, /<(?:iframe|webview)\b/i);
+  assert.doesNotMatch(surface, /HtmlPreview|PdfPreview|<(?:iframe|webview)\b/i);
 
   const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
   assert.match(
     previewStore,
-    /descriptor\.kind !== 'text'[\s\S]*onlyPreviewClient\.readText\(\{[\s\S]*\.\.\.fileRef/
+    /presentation\.adapterId === 'html-page'[\s\S]*A Chromium-direct document was routed to the Vue Preview surface/
   );
-
-  const htmlService = source('src/renderer/onlypreview/preview/src/onlyPreviewHtml.service.ts');
-  assert.match(htmlService, /from 'dompurify'/);
-  assert.match(htmlService, /ONLY_PREVIEW_MAX_HTML_BYTES/);
-  assert.match(htmlService, /new TextEncoder\(\)\.encode\(source\)\.byteLength/);
-  assert.match(htmlService, /purifier\.sanitize\(source/);
-  assert.match(htmlService, /ALLOWED_ATTR:\s*\[\]/);
-  assert.match(htmlService, /ALLOWED_NAMESPACES:\s*\['http:\/\/www\.w3\.org\/1999\/xhtml'\]/);
-  assert.match(htmlService, /ALLOW_ARIA_ATTR:\s*false/);
-  assert.match(htmlService, /ALLOW_DATA_ATTR:\s*false/);
-  assert.match(htmlService, /ADD_FORBID_CONTENTS:/);
-  assert.match(htmlService, /FORCE_BODY:\s*true/);
-  assert.match(htmlService, /KEEP_CONTENT:\s*true/);
-  for (const forbiddenTag of [
-    'script',
-    'style',
-    'template',
-    'noscript',
-    'form',
-    'iframe',
-    'frame',
-    'object',
-    'embed',
-    'svg',
-    'math',
-    'audio',
-    'video',
-    'img',
-    'link'
-  ]) {
-    assert.match(htmlService, new RegExp(`'${forbiddenTag}'`));
-  }
-  assert.doesNotMatch(htmlService, /from 'marked'|assetUrl|fetch\(|<iframe|webview/i);
-
-  const htmlComponent = source(
-    'src/renderer/onlypreview/preview/src/components/HtmlPreview/HtmlPreview.vue'
-  );
-  assert.match(htmlComponent, /v-html="renderResult\.html"/);
-  assert.match(htmlComponent, /countOnlyPreviewDomSelection\(documentRef\.value/);
-  assert.match(
-    htmlComponent,
-    /if \(!mounted \|\| !renderResult\.value\.ok\) return;[\s\S]*document\.addEventListener\('selectionchange'[\s\S]*armCharacterCountReporting\(props\.reportingRevision\)/
-  );
-  assert.match(
-    htmlComponent,
-    /disposeSelectionListener = \(\) =>[\s\S]*document\.removeEventListener\('selectionchange'/
-  );
-  assert.match(htmlComponent, /reportCharacterCount\(0, props\.reportingRevision\)/);
-  assert.match(htmlComponent, /onBeforeUnmount\([\s\S]*disposeSelection\(\)/);
-
-  const htmlStyle = source(
-    'src/renderer/onlypreview/preview/src/components/HtmlPreview/HtmlPreview.less'
-  );
-  assert.match(htmlStyle, /\.onlypreview-html \{[\s\S]*overflow:\s*auto/);
-  assert.match(htmlStyle, /--onlypreview-royal/);
-  assert.match(htmlStyle, /border-collapse:\s*collapse/);
-  assert.match(htmlStyle, /font-family:\s*'JetBrains Mono'/);
-  assert.match(htmlStyle, /@media \(max-width:\s*700px\)/);
-  assert.doesNotMatch(htmlStyle, /animation|transition|box-shadow/);
+  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+  assert.match(region, /adapterId:\s*'html-page'/);
+  assert.match(region, /onlyPreviewDocumentRegistry\.issue\(opened, revision\)/);
+  assert.match(region, /installOnlyPreviewSessionProtocol/);
+  assert.match(region, /setProxy\(/);
+  assert.match(region, /setWebRTCIPHandlingPolicy\('disable_non_proxied_udp'\)/);
+  const documentRegistry = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
+  assert.match(documentRegistry, /script-src 'self' 'unsafe-inline'/);
+  assert.match(documentRegistry, /connect-src 'none'/);
+  assert.match(documentRegistry, /webrtc 'block'/);
 
   const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
   const treeViewport = shellStyle.slice(

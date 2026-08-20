@@ -28,6 +28,7 @@ export const exposeOnlyPreviewEnv = (): OnlyPreviewEnvApi => {
   const env: OnlyPreviewEnvApi = Object.freeze({
     hostToken: getOnlyPreviewArgument('onlypreview-host-token'),
     hostId: getOnlyPreviewArgument('onlypreview-host-id'),
+    previewRuntimeToken: getOnlyPreviewArgument('onlypreview-runtime-token'),
     mode: resolveEntryMode(),
     platform: resolvePlatform()
   });

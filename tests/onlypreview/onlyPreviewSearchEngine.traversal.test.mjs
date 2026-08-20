@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
-import { createWorkspaceTraversal } from '../../src/preload/onlypreview/search/core/traversal.mjs';
+import {
+  classifySearchMediaType,
+  readClassifiedSearchContent
+} from '../../src/preload/onlypreview/search/core/classification.mjs';
+import { MAX_TEXT_BYTES } from '../../src/preload/onlypreview/search/core/constants.mjs';
+import {
+  OnlyPreviewSqliteIndex,
+  SEARCH_ENGINE_IDENTITY
+} from '../../src/preload/onlypreview/search/core/sqlite-index.mjs';
+import {
+  createWorkspaceTraversal,
+  readSingleWorkspaceFile
+} from '../../src/preload/onlypreview/search/core/traversal.mjs';
 import {
   loadOnlyPreviewWorkspaceConfig,
   parseOnlyPreviewWorkspaceConfig
@@ -108,12 +120,209 @@ exclude:
     assert.equal(byPath.get('.env.production').contentIndexed, false);
     assert.equal(byPath.get('.env.production').originalContent, '');
     assert.equal(byPath.get('utf16.txt').originalContent, 'hello UTF16');
-    assert.equal(byPath.get('binary.txt').mediaType, 'unknown');
-    assert.equal(byPath.get('binary.txt').contentIndexed, false);
+    assert.equal(byPath.get('binary.txt').mediaType, 'text');
+    assert.equal(byPath.get('binary.txt').contentIndexed, true);
+    assert.equal(byPath.get('binary.txt').originalContent, '\u0000\u0001\u0002\u0003');
     assert.equal(byPath.get('large.txt').mediaType, 'text');
     assert.equal(byPath.get('large.txt').contentIndexed, false);
     assert.equal(byPath.get('image.png').mediaType, 'image');
     assert.equal(byPath.get('image.png').contentIndexed, false);
+  });
+});
+
+test('search text eligibility is exact, size-first, tolerant, and uses no body read for metadata-only files', async () => {
+  for (const relativePath of [
+    'src/App.vue',
+    'notes.markdown',
+    'Dockerfile',
+    'README',
+    '.gitmodules',
+    '.EDITORCONFIG'
+  ]) {
+    assert.equal(classifySearchMediaType(relativePath), 'text', relativePath);
+  }
+  assert.equal(classifySearchMediaType('plain.unknown'), 'unknown');
+
+  const createHandle = (bytes, { postSize = bytes.length } = {}) => {
+    let readCount = 0;
+    return {
+      handle: {
+        read: async (target, offset, length, position) => {
+          readCount += 1;
+          const available = Math.max(0, Math.min(length, bytes.length - position));
+          if (available > 0) bytes.copy(target, offset, position, position + available);
+          return { bytesRead: available, buffer: target };
+        },
+        stat: async () => ({
+          size: postSize,
+          dev: 1,
+          ino: 2,
+          mtimeMs: 3,
+          isFile: () => true
+        })
+      },
+      readCount: () => readCount,
+      openedStat: {
+        size: bytes.length,
+        dev: 1,
+        ino: 2,
+        mtimeMs: 3,
+        isFile: () => true
+      }
+    };
+  };
+
+  for (const [relativePath, size] of [
+    ['plain.unknown', 12],
+    ['archive.zip', 12],
+    ['huge.vue', 1024 ** 3],
+    ['.env.production', 12]
+  ]) {
+    const fixture = createHandle(Buffer.alloc(Math.min(size, 12), 0x61));
+    fixture.openedStat.size = size;
+    const result = await readClassifiedSearchContent({
+      handle: fixture.handle,
+      relativePath,
+      openedStat: fixture.openedStat
+    });
+    assert.equal(result.contentIndexed, false, relativePath);
+    assert.equal(fixture.readCount(), 0, relativePath);
+  }
+
+  const renamedZipBytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0xc3, 0x28]);
+  const renamedZip = createHandle(renamedZipBytes);
+  const renamedZipResult = await readClassifiedSearchContent({
+    handle: renamedZip.handle,
+    relativePath: 'archive.js',
+    openedStat: renamedZip.openedStat
+  });
+  assert.equal(renamedZipResult.mediaType, 'text');
+  assert.equal(renamedZipResult.contentIndexed, true);
+  assert.equal(renamedZipResult.originalContent.includes('\0'), true);
+  assert.match(renamedZipResult.originalContent, /\uFFFD/u);
+
+  const sameBytesZip = createHandle(renamedZipBytes);
+  const sameBytesZipResult = await readClassifiedSearchContent({
+    handle: sameBytesZip.handle,
+    relativePath: 'archive.zip',
+    openedStat: sameBytesZip.openedStat
+  });
+  assert.equal(sameBytesZipResult.mediaType, 'unknown');
+  assert.equal(sameBytesZipResult.contentIndexed, false);
+  assert.equal(sameBytesZip.readCount(), 0);
+
+  const oddUtf16 = createHandle(Buffer.from([0xff, 0xfe, 0x68, 0x00, 0x69]));
+  assert.equal(
+    (
+      await readClassifiedSearchContent({
+        handle: oddUtf16.handle,
+        relativePath: 'odd.txt',
+        openedStat: oddUtf16.openedStat
+      })
+    ).originalContent,
+    'h\uFFFD'
+  );
+  const oddUtf16Be = createHandle(Buffer.from([0xfe, 0xff, 0x00, 0x68, 0x00]));
+  assert.equal(
+    (
+      await readClassifiedSearchContent({
+        handle: oddUtf16Be.handle,
+        relativePath: 'odd-be.txt',
+        openedStat: oddUtf16Be.openedStat
+      })
+    ).originalContent,
+    'h\uFFFD'
+  );
+
+  const exact = createHandle(Buffer.alloc(MAX_TEXT_BYTES, 0x61));
+  assert.equal(
+    (
+      await readClassifiedSearchContent({
+        handle: exact.handle,
+        relativePath: 'exact.txt',
+        openedStat: exact.openedStat
+      })
+    ).contentIndexed,
+    true
+  );
+  const growth = createHandle(Buffer.from('stable'), { postSize: 7 });
+  const changed = await readClassifiedSearchContent({
+    handle: growth.handle,
+    relativePath: 'growing.txt',
+    openedStat: growth.openedStat
+  });
+  assert.equal(changed.changed, true);
+  assert.equal(changed.contentIndexed, false);
+  assert.equal(changed.originalContent, '');
+});
+
+test('replacement races retain traversal, watch, and SQLite filename metadata without stale body', async () => {
+  await withTempDirectory(async (root) => {
+    const target = join(root, 'race.txt');
+    const replacement = join(root, 'replacement.tmp');
+    await write(target, 'stale body');
+    await write(replacement, 'fresh body');
+    const traversal = await createWorkspaceTraversal({
+      rootPath: root,
+      config: parseOnlyPreviewWorkspaceConfig('version: 1\nexclude: []'),
+      raceHook: async ({ point, relativePath }) => {
+        if (point === 'before-file-open' && relativePath === 'race.txt') {
+          await rename(replacement, target);
+        }
+      }
+    });
+    const traversed = await collect(traversal.entries);
+    const raceEntry = traversed.find(({ relativePath }) => relativePath === 'race.txt');
+    assert.equal(raceEntry?.changed, true);
+    assert.equal(raceEntry?.contentIndexed, false);
+    assert.equal(raceEntry?.originalContent, '');
+    assert.equal(
+      traversal.treeEntries.some(({ relativePath }) => relativePath === 'race.txt'),
+      true
+    );
+
+    const watchReplacement = join(root, 'watch-replacement.tmp');
+    await write(join(root, 'watch.txt'), 'old watch body');
+    await write(watchReplacement, 'new watch body');
+    const watched = await readSingleWorkspaceFile({
+      rootPath: root,
+      relativePath: 'watch.txt',
+      raceHook: async ({ point }) => {
+        if (point === 'after-file-read') await rename(watchReplacement, join(root, 'watch.txt'));
+      }
+    });
+    assert.equal(watched.changed, true);
+    assert.equal(watched.contentIndexed, false);
+    assert.equal(watched.originalContent, '');
+
+    const index = new OnlyPreviewSqliteIndex(':memory:');
+    try {
+      await index.rebuild(
+        [
+          {
+            relativePath: 'watch.txt',
+            mediaType: 'text',
+            contentIndexed: true,
+            originalContent: 'old watch body',
+            size: 14,
+            modifiedMs: 1
+          }
+        ],
+        { workspaceHash: 'workspace', configHash: 'config', engineHash: SEARCH_ENGINE_IDENTITY }
+      );
+      index.upsert(watched);
+      assert.equal(index.filenameTier.get('watch.txt')?.contentIndexed, false);
+      assert.equal(
+        (await index.search('old watch body', { scope: { kind: 'project' } })).results.length,
+        0
+      );
+      assert.equal(
+        (await index.search('watch', { scope: { kind: 'project' } })).results[0]?.relativePath,
+        'watch.txt'
+      );
+    } finally {
+      index.close();
+    }
   });
 });
 

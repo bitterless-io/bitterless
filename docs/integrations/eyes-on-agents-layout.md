@@ -17,7 +17,7 @@ User-managed Domains were removed from this UI; the board is one `Focus` column 
 visible thread in attention order. Domain storage is retained but unexposed — see
 [Focus-only board](../features/eyes-on-agents-focus-board.md).
 
-The Claude extension keeps the existing palette, system typography, fixed 300px column,
+The Claude extension keeps the existing palette, system typography, full-width single column,
 and background-led hierarchy. Its one visual signature is a compact official product mark in the
 title line: the transparent Codex GA mark at 16px and Claude Spark at 15px, both centered in a fixed
 16×18px shell. A review rejected provider badges, a new metadata row, permanent card borders, and
@@ -28,7 +28,8 @@ provider brand-color panels because each would add height or compete with workin
 - EyesOnAgents appears as a card in Home > Mini Apps.
 - Clicking the card opens/focuses one singleton standalone window.
 - The obsolete authenticated Home `coding-agents` route and sidebar item are removed.
-- Default size is approximately `1120 × 720`; minimum size is `800 × 600`.
+- Default size is approximately `1120 × 720`; minimum size is `480 × 600` — a deliberate exception
+  to the project-wide 800px window floor so the board works as a narrow side panel.
 - Window position, size, and always-on-top state follow the existing Mini App setting pattern.
 - macOS uses a hidden titlebar with traffic-light inset; Windows uses the shared custom controls.
 
@@ -38,31 +39,28 @@ provider brand-color panels because each would add height or compete with workin
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  EyesOnAgents            ● Connections [↻ Refresh] [Bridge] [Settings]      │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│  ┌ ⌖ Focus     [⌕] [Read all]┐                                              │
-│  │ [ Search titles      ][×] │                                              │
-│  │ [ overmind (4)         ▾ ]│                                              │
-│  │ API pagination refactor ◌ │                                              │
-│  │ now              [⌂][↗]   │                                              │
-│  │ Fix migrations          ◌ │                                              │
-│  │ 1m               [⌂][↗]   │                                              │
-│  │ Release notes             │                                              │
-│  │ 4m               [⌂][↗•]  │                                              │
-│  │ Project notes             │                                              │
-│  │ 4h               [⌂][↗]   │                                              │
-│  │        list scrolls ↓     │                                              │
-│  └───────────────────────────┘                                              │
-│   300px fixed · fills window height · empty canvas to the right              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │ [ ⌕ Search titles (⌘F)                                  ] [Read all]  │ │
+│  │ API pagination refactor                                    ◌           │ │
+│  │ now                                                       [⌂][…]       │ │
+│  │ Fix migrations                                             ◌           │ │
+│  │ 1m                                                        [⌂][…]       │ │
+│  │ Release notes                                              ●           │ │
+│  │ 4m                                                        [⌂][…]       │ │
+│  │                                              list scrolls ↓            │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│   fills the board width and height                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The 32px menu bar is the drag region. The board holds exactly one column: fixed 300px wide — the
-former minimum — with no flex growth and no wrapping, and it stretches from below the menu bar to
-the bottom board padding. The 600px height ceiling is gone; the thread list scrolls inside the
-column body and the board no longer owns vertical page scrolling. Board padding stays 12px, so the
-area right of the column is empty canvas.
+The 32px menu bar is the drag region. The board holds exactly one column, and that column fills the
+board's content box: no fixed width, no maximum width, no wrapping, stretching from below the menu
+bar to the bottom board padding. The 600px height ceiling is gone; the thread list scrolls inside
+the column body and the board no longer owns vertical page scrolling. Board padding stays 12px.
 
-Focus is the board. It shows every visible thread in attention order and is visually distinct
-through its warm attention background. The persisted `uncategorized` system Domain and every stored
+Focus is the board. It shows every visible thread in attention order, and its surface follows window
+activation: the pale orange attention tint while the window is active, neutral grey while it is not.
+The persisted `uncategorized` system Domain and every stored
 `domain_id` remain in SQLite as an unexposed storage fallback; no column, menu, or drag target
 presents them.
 
@@ -75,10 +73,11 @@ Use the existing Bitterless color contract as the source of truth:
 | menu bar / primary action | Royal Blue `#4E5882` |
 | deep text | `#323955` / `#1E2237` |
 | board canvas | near-white neutral `oklch(0.985 0 0)` |
-| Focus column surface | warm attention tint `oklch(0.94 0.04 60)` |
+| column surface, window active | warm attention tint `oklch(0.94 0.04 60)` |
+| column surface, window inactive | cool neutral `oklch(0.96 0 0)` |
 | thread item surface | white `oklch(1 0 0)` |
 | working loader | Royal Blue |
-| unread Open dot | red |
+| unread dot | red |
 
 Typography stays on the product's existing system-font stack. Hierarchy comes from size, weight,
 spacing, and alignment rather than a new font dependency.
@@ -90,10 +89,10 @@ on pointer hover without moving; keyboard focus uses a visible outline and a lig
 rather than reintroducing a permanent card border.
 
 The single attention-tinted column and its background-led hierarchy are the product signature. Thread
-cards contain no decorative signal rail, source badge, status row, or `New` badge. Every active
-working/waiting thread gets a compact loading indicator beside its title. The Open control gets one
-unread red dot after the thread reaches a terminal `idle`, `ended`, or `failed` state, so neither
-state consumes another card row and a later SessionEnd cannot erase completion attention.
+cards contain no decorative signal rail, source badge, status row, or `New` badge. One 16×18px slot
+beside the title carries either the working loader or, after the thread reaches a terminal `idle`,
+`ended`, or `failed` state, one unread red dot — so neither state consumes another card row and a
+later SessionEnd cannot erase completion attention.
 
 ## Focus search
 
@@ -101,11 +100,10 @@ state consumes another card row and a later SessionEnd cannot erase completion a
 search modal, no separate result list, and no second search surface:
 
 ```text
-┌ ⌖ Focus                    [⌕] [Read all] ┐
-│ [ ops git________________________ ]  [×]  │  filter row, expanded by ⌕ or Cmd+F
-│ [ overmind (4)                        ▾ ] │  Project filter
-│ ops-git sync failures                     │  matched card, normal card behavior
-│ 12m                            [⌂][↗]    │
+┌───────────────────────────────────────────┐
+│ [ ⌕ ops git________________ ] [Read all]  │  Cmd+F focuses this input
+│ ops-git sync failures                 ●   │  matched card, normal card behavior
+│ 12m                            [⌂][…]    │
 └───────────────────────────────────────────┘
 ```
 
@@ -117,17 +115,17 @@ remains visible. Only `thread.title` is matched — never thread ID, `cwd`, Proj
 response content — and a thread with no resolved title never matches a non-empty query.
 
 Filtering narrows the real card list, so a matched row keeps its provider mark, working loader,
-question echo, relative time, folder tooltip, Open/overflow controls, unread dot, and card-level
-keyboard focus. The title filter composes with the Project filter; a card must satisfy both.
+question echo, relative time, folder tooltip, overflow menu, unread dot, and card-level
+keyboard focus. The title filter is the only narrowing control on this board.
 
 | input | behavior |
 |---|---|
-| `Cmd+F` / `Ctrl+F` | suppress native page Find, expand the filter row if collapsed, focus the input |
-| repeated shortcut | keep the row open and refocus the input; the current query is preserved |
-| `⌕` toggle | expand and focus, or clear and collapse |
-| typing | narrow the visible Focus cards live |
-| `×` clear | empty the query and keep the row open and focused |
-| `Escape` in the row | clear the query and collapse the row so no invisible filter remains |
+| `Cmd+F` / `Ctrl+F` | suppress native page Find and focus the header input; repeating just refocuses |
+| typing | update the draft immediately; a leading-plus-trailing 120ms throttle publishes it to the list, and the trailing run always uses the newest keystroke |
+| `Escape` in the input | clear the query and keep focus in the input |
+
+The input is never hidden, so no state can leave an invisible filter behind; `Escape` and unmount
+clear draft and query together.
 
 ## Header behavior
 
@@ -143,7 +141,9 @@ The menu bar shows:
 - independent Claude observation/plugin status/action;
 - a compact settings/always-on-top control and platform window controls.
 
-Clicking the connection status opens a 540px master-detail panel. A fixed 60px Agent App rail uses
+Clicking the connection status opens a 540px master-detail panel. The drawer is anchored to the
+`.eyes-on-agents__main` region rather than the document body, so its mask never covers the menu bar
+and it caps at the board width on a narrow window. A fixed 60px Agent App rail uses
 the official Codex and Claude PNG marks; its selected tab controls which provider detail pane is
 visible. The selected pane contains:
 
@@ -310,36 +310,36 @@ latest-question data; activation and manual Refresh retain full inventory reconc
 
 ## Focus column
 
-The Focus header contains the target glyph, the plain `Focus` title, one icon-only Search toggle, and
-`Read all`. The title is a non-editable heading: there is no inline edit, content-measuring input,
+The Focus header *is* the search row: an always-visible input that takes the remaining width, then
+`Read all`. There is no target glyph, no `Focus` heading, no search toggle, and no close control, so
+the filter costs no interaction before use. The title is a non-editable heading: there is no inline edit, content-measuring input,
 overflow menu, Delete action, drag handle, or reorder affordance anywhere in the header. No thread or
 filtered-result count is rendered there.
 
-`Read all` is always present to keep the header stable and is disabled when no completed unread
-attention item can be cleared. While its mutation is in flight it shows the existing mini-button
+`Read all` trails the input, is always present to keep the header stable, and is disabled when no
+completed unread attention item can be cleared. While its mutation is in flight it shows the existing mini-button
 loading treatment and is disabled with the other foreground board actions.
 
-Focus is one continuous warm attention background surface: its header has no divider or independent
-card background, so its distinction does not depend on a border, top rule, or shadow.
+Focus is one continuous background surface — warm while the window is active, neutral grey while it
+is not — and its header has no divider or independent card background, so hierarchy comes from
+canvas → column → card contrast rather than a border, top rule, or shadow. The activation state is a
+renderer-local `focus`/`blur` flag on the root element, seeded from `document.hasFocus()`; it adds no
+IPC, timer, or extra refresh, and the Omni-hosted renderer stays warm.
 
-The scrollable column body has no top padding, so the search row, Project filter, or first thread
-begins directly below the header region. It retains 9px horizontal and bottom padding for
+The scrollable column body has no top padding, so the first thread begins directly below the header
+region. It retains 9px horizontal and bottom padding for
 column-edge spacing.
 
-The Search toggle expands a compact title-filter row directly under the header and moves focus into
-its input; `Cmd+F` does the same. Its token matching, clear, and Escape contract is defined in
+`Cmd+F` / `Ctrl+F` focuses that input and nothing else; a second press refocuses. The placeholder
+names the platform's own shortcut — `Search titles (⌘F)` on macOS, `Search titles (Ctrl+F)` on
+Windows — and the accessible label stays the plain search label. `Escape` inside the input clears the
+query and keeps focus there. Its token matching, clear, and Escape contract is defined in
 [Focus search](#focus-search). The row and its controls use quiet background contrast, mini sizing,
 visible focus, and no decorative border or shadow.
 
-Below the search row sits one compact Project filter. It is a searchable mini Select with `All`,
-`No project`, and one option per current Git Project across every visible thread. Options include
-counts; same-named Projects expose a shortened root. The Select uses a quiet background instead of a
-decorative border and retains a visible keyboard focus outline. Filtering is renderer-session state
-and never changes the stored Domain of any thread. Project option counts remain available inside the
-filter, without adding a separate header count row.
-
-Both filters narrow the same list and compose. The column empty state names the active narrowing
-reason: title search, selected Project, or `No project`.
+There is no Project filter. The title filter is the column's only narrowing control, so the empty
+state has two cases: an active title filter shows the title-search text, otherwise the Focus empty
+text. Main-side Project metadata is still resolved and stored; nothing renders it.
 
 The Focus header's `Read all` is a compact text action with the same transparent, borderless header
 treatment. Clicking it clears the persisted unread marker for every currently visible unread
@@ -370,16 +370,17 @@ A card displays only observation metadata:
 - relative last-activity time at the far left of the action row, derived from one renderer-global
   reactive clock that advances every 10 seconds so visible cards update without receiving a new
   thread snapshot;
-- working-directory folder, icon-only `Open`, and the overflow control grouped
-  at the right of the same action row; the folder exposes the full path through
-  tooltip/accessibility text. Claude rows without a trusted Desktop Open route do not render;
-- the overflow (`…`) control renders only when it owns an action — today the Claude
-  **Preview transcript** option for a row with a canonical JSONL. There is no `Move to Domain`
-  group, so a row with no available action shows no empty menu;
-- an unread red dot at Open's upper-right when Open exists, otherwise at the overflow control, or as
-  a standalone action-row marker when neither exists, when `isUnread` is
-  true and runtime is terminal (`idle`, `ended`, or `failed`) after a reply finishes. Working,
-  waiting, and unknown cards never show this dot.
+- working-directory folder and the overflow control grouped at the right of the same action row; the
+  folder exposes the full path through tooltip/accessibility text. Claude rows without a trusted
+  Desktop Open route do not render. There is no icon-only `Open` button;
+- the overflow (`…`) control is always present. Its items, in order: the provider-named open item
+  (**Open in Codex** / **Open in Claude**) with a quiet `(double click)` hint, omitted when the row
+  has no trusted route; the read-state item (**Mark as read** / **Mark as unread**) labelled from the
+  stored unread flag; and the Claude **Preview transcript** option for a row with a canonical JSONL;
+- one status slot right of the title carries either the working spinner or the unread red dot — the
+  dot when `isUnread` is true and runtime is terminal (`idle`, `ended`, or `failed`) after a reply
+  finishes. Working, waiting, and unknown cards show the spinner or nothing, never the dot, so the two
+  states cannot collide in that slot.
 
 The action row uses 20px control boxes so it, not Arco's default 24px mini-button height, determines
 the compact card height. Its folder, Open, and More glyphs are respectively 10px, 9px, and 12px —
@@ -398,12 +399,12 @@ terminal-unread dot are the only visible status marks and do not create another 
 and Open control keep localized runtime/unread accessibility text for the state currently shown,
 so these states do not depend on color alone.
 
-Every rendered card has an interactive Open and participates in card-level keyboard focus; `Open`,
-double-click, or `Enter` then launches the provider desktop UI and marks a confirmed terminal
+Every openable card participates in card-level keyboard focus; the menu's open item, double-click, or
+`Enter` launches the provider desktop UI and marks a confirmed terminal
 observation read after the fixed deep link is accepted. Codex uses `codex://threads/<uuid>`. A
 Claude row with a unique `desktopSessionId` uses
 `claude://claude.ai/epitaxy/<desktopSessionId>`. Claude rows without that trusted Desktop route are
-Main-private inventory and do not render in Focus, its Project filter, or its title filter. A
+Main-private inventory and do not render in Focus or its title filter. A
 visible Claude card's More menu exposes **Preview transcript** when a canonical JSONL exists.
 Selecting or previewing never marks read.
 
@@ -461,19 +462,19 @@ until its state actually resolves.
 | syncing or connecting | existing cards retained; duplicate Refresh disabled |
 | no threads | concise prompt to connect/sync; no fake sample rows |
 | threads exist, no filter | every visible thread in comparator order; a read thread stays listed |
-| working unread | title-side loader; no Open unread dot |
+| working unread | title-side loader; the latent dot stays hidden until the row settles |
 | working opened | card keeps its active rank and loader; only a terminal observation can retire it |
-| working completes to idle unread | loader disappears; unread dot appears at Open's upper-right |
+| working completes to idle unread | the loader in the title slot is replaced by the unread dot |
+| manual mark as read | the dot clears in place; the row keeps its position rules and gains no Open receipt |
+| manual mark as unread | a terminal row shows the dot again and rejoins the unread tier |
+| manual toggle on an active row | the flag is written but stays latent until the row settles |
 | new idle/unread completion | the supplied tone plays once and one localized system notification names the thread |
 | latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
 | latest question pending | one muted localized pending line; no spinner or false claim that a request is running |
 | latest question unavailable/default-off | no question line and no additional card height |
-| Project filter has no matches | selected option remains available with scoped empty text |
-| search row collapsed | Search icon remains in the Focus header; no title query narrows the list |
-| search row open, empty query | compact focused input plus explicit Clear control appears above the Project filter; the full list remains |
+| empty query | placeholder names the platform shortcut; the full list remains |
 | search query has no matches | title-search-specific empty text appears inside the column |
-| both filters active, no matches | title-search empty text takes precedence over the Project message |
-| `Cmd+F` pressed again | the row stays open, the input regains focus, and the query is preserved |
+| `Cmd+F` pressed again | the input regains focus and the query is preserved |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
 | any Codex bridge state | aggregate status sentence, **Check status**, and the default-off latest-question Switch remain visible; other rows are state-specific |
@@ -500,8 +501,10 @@ until its state actually resolves.
 - Interactive controls have visible keyboard focus and accessible labels.
 - Status never depends on color alone: the card's accessible label retains normalized runtime and
   unread text, the active loader has a status label, and visible idle-unread augments Open.
-- At every supported window size the Focus column keeps its fixed 300px width and full available
-  height; it never shrinks, stretches, or wraps, and the board does not scroll horizontally.
+- At every supported window size — down to the 480 × 600 minimum — the Focus column fills the board
+  width and the full available height; it never wraps, and the board does not scroll horizontally.
+- At the minimum width the menu-bar identity shrinks and ellipsizes its title so the connection,
+  Refresh, bridge, and pin controls stay visible and reachable.
 - A long thread list scrolls inside the column body, so the board itself never scrolls vertically.
 - Dialogs and connection panels remain within the viewport and own their vertical scrolling.
 - The Focus filter row is a plain search input over the real card list, so filtered results keep
@@ -520,8 +523,7 @@ EyesOnAgentsApp
   │    └─ ClaudeConnectionSection
   └─ AgentBoard
        └─ FocusColumn (every visible thread)
-            ├─ title filter row
-            ├─ ProjectFilter
+            ├─ header search input + Read all
             └─ ThreadCard × N
 ```
 

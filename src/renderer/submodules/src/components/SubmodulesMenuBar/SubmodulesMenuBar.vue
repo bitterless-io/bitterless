@@ -52,6 +52,38 @@
         {{ i18nHelper.submodules.actions.refresh }}
       </a-button>
 
+      <a-popover position="br" trigger="click">
+        <a-button
+          name="submodules__menuBar__settings"
+          size="mini"
+          type="text"
+          :aria-label="i18nHelper.submodules.actions.settings"
+          :title="i18nHelper.submodules.actions.settings"
+        >
+          <template #icon><IconSettings :size="16" /></template>
+        </a-button>
+
+        <template #content>
+          <div name="submodules__menuBar__settingsPanel" class="submodules-menu-bar__settings">
+            <div class="submodules-menu-bar__settings-row">
+              <a-switch
+                name="submodules__menuBar__showDiffOnTop"
+                size="small"
+                :model-value="submodulesStore.settings.showDiffOnTop"
+                :aria-label="i18nHelper.submodules.settings.showDiffOnTop"
+                @change="handleShowDiffOnTop"
+              />
+              <span class="submodules-menu-bar__settings-label">
+                {{ i18nHelper.submodules.settings.showDiffOnTop }}
+              </span>
+            </div>
+            <p class="submodules-menu-bar__settings-hint">
+              {{ i18nHelper.submodules.settings.showDiffOnTopHint }}
+            </p>
+          </div>
+        </template>
+      </a-popover>
+
       <template v-if="isWindows && !isOmni">
         <a-button
           name="submodules__menuBar__minimize"
@@ -94,6 +126,7 @@ import {
   IconMaximize,
   IconMinus,
   IconRefresh,
+  IconSettings,
   IconX
 } from '@tabler/icons-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
@@ -110,6 +143,10 @@ const platformClass = computed(() => ({
   'submodules-menu-bar--windows': isWindows && !isOmni,
   'submodules-menu-bar--omni': isOmni
 }));
+
+const handleShowDiffOnTop = async (value: unknown): Promise<void> => {
+  await submodulesStore.setShowDiffOnTop(Boolean(value));
+};
 
 const handleDoubleClick = async (event: MouseEvent): Promise<void> => {
   // `SubmodulesWindowApi` only addresses the standalone window; an Omni cell must never move it.

@@ -4,7 +4,7 @@
   overflow: hidden;
   border-radius: 6px;
   background: var(--eyes-item);
-  cursor: grab;
+  cursor: default;
   transition: background-color 140ms ease, box-shadow 140ms ease;
 }
 
@@ -32,8 +32,7 @@
 .thread-card__actions,
 .thread-card__controls,
 .thread-card__folder,
-.thread-card__working,
-.thread-card__open-control,
+.thread-card__status,
 .thread-card__more-control {
   display: flex;
   align-items: center;
@@ -62,7 +61,7 @@
   -webkit-line-clamp: 2;
 }
 
-.thread-card__working {
+.thread-card__status {
   width: 16px;
   height: 18px;
   flex: 0 0 16px;
@@ -70,7 +69,7 @@
   color: var(--eyes-primary);
 }
 
-.thread-card__working .arco-spin-icon {
+.thread-card__status .arco-spin-icon {
   color: var(--eyes-primary);
 }
 
@@ -115,45 +114,35 @@
   height: 20px;
 }
 
-.thread-card__open-control,
 .thread-card__more-control {
   position: relative;
+  color: var(--eyes-accent);
+}
+
+.thread-card__controls .thread-card__more-control.arco-btn:hover {
+  color: var(--eyes-primary-deep);
+  background: var(--eyes-hover-surface);
 }
 
 .thread-card__unread-dot {
   width: 6px;
   height: 6px;
-  position: absolute;
-  top: -2px;
-  right: -2px;
   border-radius: 50%;
   background: #ef4444;
   pointer-events: none;
 }
 
-.thread-card__more-control--unread::after {
-  width: 6px;
-  height: 6px;
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  border-radius: 50%;
-  background: #ef4444;
-  content: '';
-  pointer-events: none;
-}
-
-.thread-card__unread-marker {
-  width: 20px;
-  height: 20px;
+/* Arco lays option content out inline, so the icon sits on the text baseline
+   instead of its middle; make each option a centered flex row. */
+.thread-card__option.arco-dropdown-option {
   display: flex;
   align-items: center;
-  justify-content: center;
-  position: relative;
+  gap: 6px;
 }
 
-.thread-card__unread-marker .thread-card__unread-dot {
-  position: static;
+.thread-card__option-hint {
+  color: oklch(0.62 0.02 275);
+  font-size: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -161,7 +150,7 @@
     transition: none;
   }
 
-  .thread-card__working .arco-icon-loading {
+  .thread-card__status .arco-icon-loading {
     animation: none !important;
   }
 }

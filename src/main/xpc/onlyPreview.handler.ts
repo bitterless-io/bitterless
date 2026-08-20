@@ -4,7 +4,11 @@ import {
   OnlyPreviewContractError,
   onlyPreviewFailure,
   onlyPreviewSuccess,
-  parseOnlyPreviewBounds
+  parseOnlyPreviewBounds,
+  parseOnlyPreviewPreviewErrorRequest,
+  parseOnlyPreviewPreviewRuntimeRequest,
+  parseOnlyPreviewPreviewRevisionRequest,
+  parseOnlyPreviewTextReadRequest
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_REFRESH_EVENT,
@@ -17,16 +21,14 @@ import {
   type OnlyPreviewResult,
   type OnlyPreviewWorkspace
 } from '@shared/onlypreview/onlyPreview.types';
-import {
-  createMcpConfigJson,
-  getMcpServerName
-} from '@shared/mcp/mcpBridge.shared';
+import { createMcpConfigJson, getMcpServerName } from '@shared/mcp/mcpBridge.shared';
 import { ONLY_PREVIEW_AGENT_SKILL_VERSION_CODE } from '@shared/onlypreview/onlyPreviewAgentSkillVersion.shared';
 import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/onlypreview/onlyPreviewWorkspace.registry';
-import { onlyPreviewClassifierService } from '@main/onlypreview/onlyPreviewClassifier.service';
 import { onlyPreviewSettingsService } from '@main/onlypreview/onlyPreviewSettings.service';
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
+import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
+import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { i18nHelper } from '@main/i18n/i18n.helper';
 import { registerOnlyPreviewExplicitTarget } from '@main/onlypreview/onlyPreviewExplicitTarget.registry';
@@ -56,7 +58,8 @@ const broadcastWorkspace = (hostId: string): void => {
 };
 
 const selectionGenerationByHost = new Map<string, number>();
-const recentDirectoryStorage = createXpcMainEmitter<OnlyPreviewRecentDirectoryStorage>('SettingDao');
+const recentDirectoryStorage =
+  createXpcMainEmitter<OnlyPreviewRecentDirectoryStorage>('SettingDao');
 onlyPreviewRecentDirectoryService.configureStorage(recentDirectoryStorage);
 
 onlyPreviewHostRegistry.onRevoke((host) => {
@@ -89,7 +92,14 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
           target,
           generation
         );
-        if (workspace) broadcastWorkspace(host.hostId);
+        if (workspace) {
+          selectionGenerationByHost.set(
+            host.hostToken,
+            (selectionGenerationByHost.get(host.hostToken) || 0) + 1
+          );
+          onlyPreviewPreviewRegionService.clearWorkspace(host.hostToken, workspace.workspaceId);
+          broadcastWorkspace(host.hostId);
+        }
         return workspace;
       } finally {
         onlyPreviewRecentDirectoryService.finishExplicitTarget(generation);
@@ -100,32 +110,43 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
   async restoreWorkspace(
     params: ApiParams<'restoreWorkspace'>
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>> {
-    return await runOperation(async () =>
-      await onlyPreviewRecentDirectoryService.restoreWorkspace(params?.hostToken)
-    );
-  }
-
-  async describeFile(
-    params: ApiParams<'describeFile'>
-  ): ReturnType<OnlyPreviewApi['describeFile']> {
     return await runOperation(async () => {
-      const file = await onlyPreviewWorkspaceRegistry.openFile(params?.hostToken, params);
-      try {
-        return await onlyPreviewClassifierService.describe(file);
-      } finally {
-        await file.fileHandle.close().catch(() => undefined);
+      const host = onlyPreviewHostRegistry.require(params?.hostToken, ['content']);
+      const generation = (selectionGenerationByHost.get(host.hostToken) || 0) + 1;
+      selectionGenerationByHost.set(host.hostToken, generation);
+      const workspace = await onlyPreviewRecentDirectoryService.restoreWorkspace(host.hostToken);
+      if (selectionGenerationByHost.get(host.hostToken) !== generation) return workspace;
+      const current = onlyPreviewPreviewRegionService.snapshot(host.hostToken);
+      if (workspace?.selectedRelativePath) {
+        if (
+          current.fileRef?.workspaceId !== workspace.workspaceId ||
+          current.fileRef.relativePath !== workspace.selectedRelativePath
+        ) {
+          await onlyPreviewPreviewRegionService.present(host.hostToken, {
+            workspaceId: workspace.workspaceId,
+            relativePath: workspace.selectedRelativePath
+          });
+        }
+      } else if (current.fileRef || current.workspaceId !== (workspace?.workspaceId ?? null)) {
+        onlyPreviewPreviewRegionService.clearWorkspace(
+          host.hostToken,
+          workspace?.workspaceId ?? null
+        );
       }
+      return workspace;
     });
   }
 
   async readText(params: ApiParams<'readText'>): ReturnType<OnlyPreviewApi['readText']> {
     return await runOperation(async () => {
-      const file = await onlyPreviewWorkspaceRegistry.openFile(params?.hostToken, params);
-      try {
-        return await onlyPreviewClassifierService.readText(file);
-      } finally {
-        await file.fileHandle.close().catch(() => undefined);
-      }
+      const request = parseOnlyPreviewTextReadRequest(params);
+      return await onlyPreviewPreviewRegionService.readText(request.hostToken, {
+        previewRuntimeToken: request.previewRuntimeToken,
+        selectionRevision: request.selectionRevision,
+        workspaceId: request.workspaceId,
+        relativePath: request.relativePath,
+        adapterId: request.adapterId
+      });
     });
   }
 
@@ -149,6 +170,11 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
         workspaceId: file.workspace.workspaceId,
         relativePath: file.relativePath
       });
+      await onlyPreviewPreviewRegionService.present(host.hostToken, {
+        workspaceId: file.workspace.workspaceId,
+        relativePath: file.relativePath
+      });
+      if (selectionGenerationByHost.get(host.hostToken) !== generation) return;
       xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: host.hostId });
     });
   }
@@ -160,6 +186,66 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
       onlyPreviewWindowHelper.updatePreviewBounds(
         params?.hostToken,
         parseOnlyPreviewBounds(params)
+      );
+    });
+  }
+
+  async getPreviewPresentation(
+    params: ApiParams<'getPreviewPresentation'>
+  ): ReturnType<OnlyPreviewApi['getPreviewPresentation']> {
+    return await runOperation(async () =>
+      onlyPreviewPreviewRegionService.snapshot(params?.hostToken)
+    );
+  }
+
+  async getVuePreviewPresentation(
+    params: ApiParams<'getVuePreviewPresentation'>
+  ): ReturnType<OnlyPreviewApi['getVuePreviewPresentation']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewPreviewRuntimeRequest(params);
+      return onlyPreviewPreviewRegionService.snapshotForVue(
+        request.hostToken,
+        request.previewRuntimeToken
+      );
+    });
+  }
+
+  async reportPreviewReady(
+    params: ApiParams<'reportPreviewReady'>
+  ): ReturnType<OnlyPreviewApi['reportPreviewReady']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewPreviewRevisionRequest(params);
+      onlyPreviewPreviewRegionService.reportVueReady(
+        request.hostToken,
+        request.selectionRevision,
+        request.previewRuntimeToken
+      );
+    });
+  }
+
+  async reportPreviewReset(
+    params: ApiParams<'reportPreviewReset'>
+  ): ReturnType<OnlyPreviewApi['reportPreviewReset']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewPreviewRevisionRequest(params);
+      onlyPreviewPreviewRegionService.reportVueReset(
+        request.hostToken,
+        request.selectionRevision,
+        request.previewRuntimeToken
+      );
+    });
+  }
+
+  async reportPreviewError(
+    params: ApiParams<'reportPreviewError'>
+  ): ReturnType<OnlyPreviewApi['reportPreviewError']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewPreviewErrorRequest(params);
+      onlyPreviewPreviewRegionService.reportVueError(
+        request.hostToken,
+        request.selectionRevision,
+        request.previewRuntimeToken,
+        request.errorCode
       );
     });
   }
@@ -311,6 +397,7 @@ onlyPreviewWindowHelper.setCommandHandler(({ hostToken, command }) => {
   if (command === 'refresh') {
     try {
       const host = onlyPreviewHostRegistry.require(hostToken, ['content']);
+      void onlyPreviewPreviewRegionService.refresh(host.hostToken).catch(() => undefined);
       xpcMain.broadcast(ONLY_PREVIEW_REFRESH_EVENT, { hostId: host.hostId });
     } catch {
       // A closing view can deliver its final input after the host has been revoked.
@@ -333,7 +420,21 @@ export const openOnlyPreviewAbsoluteTarget = async (target: string): Promise<voi
       target,
       generation
     );
-    if (workspace) broadcastWorkspace(host.hostId);
+    if (workspace) {
+      if (workspace.selectedRelativePath) {
+        onlyPreviewWorkspaceRegistry.select(host.hostToken, {
+          workspaceId: workspace.workspaceId,
+          relativePath: workspace.selectedRelativePath
+        });
+        await onlyPreviewPreviewRegionService.present(host.hostToken, {
+          workspaceId: workspace.workspaceId,
+          relativePath: workspace.selectedRelativePath
+        });
+      } else {
+        onlyPreviewPreviewRegionService.clearWorkspace(host.hostToken, workspace.workspaceId);
+      }
+      broadcastWorkspace(host.hostId);
+    }
     onlyPreviewWindowHelper.show();
   } finally {
     onlyPreviewRecentDirectoryService.finishExplicitTarget(generation);
@@ -345,6 +446,7 @@ registerOnlyPreviewExplicitTarget(openOnlyPreviewAbsoluteTarget);
 export const destroyOnlyPreviewForAuth = (): void => {
   onlyPreviewWindowHelper.destroy();
   onlyPreviewAssetRegistry.clear();
+  onlyPreviewDocumentRegistry.clear();
   onlyPreviewHostRegistry.clear();
   onlyPreviewRecentDirectoryService.clearTransientState();
 };

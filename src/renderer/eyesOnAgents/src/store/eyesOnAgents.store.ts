@@ -1,4 +1,5 @@
 import { reactive } from 'vue';
+import { useThrottleFn } from '@vueuse/core';
 import type {
   EyesOnAgentsSnapshot,
   EyesOnAgentsSessionKey,
@@ -9,14 +10,6 @@ import {
   eyesOnAgentsEmitter,
   subscribeEyesOnAgentsChanges,
 } from '../emitter/eyesOnAgents.emitter';
-import {
-  ALL_PROJECT_FILTER_VALUE,
-  NO_PROJECT_FILTER_VALUE,
-  buildEyesOnAgentsProjectFilterOptions,
-  filterEyesOnAgentsThreadsByProject,
-  type EyesOnAgentsProjectFilterOption,
-  type EyesOnAgentsProjectFilterSelection,
-} from '../services/projectFilter.service';
 
 const attentionRank = (thread: EyesOnAgentsThread): number => {
   if (thread.runtimeState === 'waiting_approval') return 0;
@@ -55,6 +48,7 @@ const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
 
 const THREAD_TITLE_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;
 const MAX_ACTION_ERROR_LENGTH = 300;
+const TITLE_QUERY_THROTTLE_MS = 120;
 
 const tokenizeThreadTitle = (value: string): string[] =>
   value
@@ -62,6 +56,35 @@ const tokenizeThreadTitle = (value: string): string[] =>
     .toLocaleLowerCase()
     .split(THREAD_TITLE_SEPARATOR_PATTERN)
     .filter(Boolean);
+
+// Both caches live outside the reactive store so filling them cannot trigger a render.
+const sortedThreadsBySnapshot = new WeakMap<EyesOnAgentsSnapshot, EyesOnAgentsThread[]>();
+const titleTokensByThread = new WeakMap<
+  EyesOnAgentsThread,
+  { title: string; tokens: string[] }
+>();
+
+const sortedSnapshotThreads = (
+  snapshot: EyesOnAgentsSnapshot | null,
+  threads: EyesOnAgentsThread[],
+): EyesOnAgentsThread[] => {
+  if (snapshot === null) return sortThreads(threads);
+  const cached = sortedThreadsBySnapshot.get(snapshot);
+  if (cached) return cached;
+  const sorted = sortThreads(threads);
+  sortedThreadsBySnapshot.set(snapshot, sorted);
+  return sorted;
+};
+
+const threadTitleTokens = (thread: EyesOnAgentsThread): string[] => {
+  const title = thread.title;
+  if (title === null) return [];
+  const cached = titleTokensByThread.get(thread);
+  if (cached && cached.title === title) return cached.tokens;
+  const tokens = tokenizeThreadTitle(title);
+  titleTokensByThread.set(thread, { title, tokens });
+  return tokens;
+};
 
 class EyesOnAgentsState {
   snapshot: EyesOnAgentsSnapshot | null = null;
@@ -71,8 +94,9 @@ class EyesOnAgentsState {
   busyAction: string | null = null;
   openingSessionKeys = new Set<string>();
   previewingSessionKeys = new Set<string>();
-  projectFilter: EyesOnAgentsProjectFilterSelection = { type: 'all' };
+  titleDraft = '';
   titleQuery = '';
+  private titleQueryScheduler: (() => void) | null = null;
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private activationPromise: Promise<void> | null = null;
@@ -86,7 +110,7 @@ class EyesOnAgentsState {
   }
 
   get focusThreads(): EyesOnAgentsThread[] {
-    return sortThreads(this.threads);
+    return sortedSnapshotThreads(this.snapshot, this.threads);
   }
 
   get readableFocusThreads(): EyesOnAgentsThread[] {
@@ -95,36 +119,16 @@ class EyesOnAgentsState {
     );
   }
 
-  get projectOptions(): EyesOnAgentsProjectFilterOption[] {
-    return buildEyesOnAgentsProjectFilterOptions(
-      this.focusThreads,
-      this.projectFilter,
-    );
-  }
-
   get filteredFocusThreads(): EyesOnAgentsThread[] {
-    const projectThreads = filterEyesOnAgentsThreadsByProject(
-      this.focusThreads,
-      this.projectFilter,
-    );
+    const threads = this.focusThreads;
     const queryTokens = tokenizeThreadTitle(this.titleQuery);
-    if (queryTokens.length === 0) return projectThreads;
-    return projectThreads.filter((thread) => {
+    if (queryTokens.length === 0) return threads;
+    return threads.filter((thread) => {
       if (thread.title === null) return false;
-      const titleTokens = tokenizeThreadTitle(thread.title);
+      const titleTokens = threadTitleTokens(thread);
       return queryTokens.every((queryToken) =>
         titleTokens.some((titleToken) => titleToken.includes(queryToken)));
     });
-  }
-
-  get projectFilterValue(): string {
-    if (this.projectFilter.type === 'all') return ALL_PROJECT_FILTER_VALUE;
-    if (this.projectFilter.type === 'none') return NO_PROJECT_FILTER_VALUE;
-    return `project:${encodeURIComponent(this.projectFilter.projectKey)}`;
-  }
-
-  get isProjectFiltered(): boolean {
-    return this.projectFilter.type !== 'all';
   }
 
   get isTitleFiltered(): boolean {
@@ -152,27 +156,29 @@ class EyesOnAgentsState {
     this.refreshTimer = null;
   }
 
-  selectProjectFilter(value: string): void {
-    const option = this.projectOptions.find((item) => item.value === value);
-    if (!option) return;
-    if (option.type === 'all') {
-      this.projectFilter = { type: 'all' };
+  configureTitleQueryScheduler(scheduler: (() => void) | null): void {
+    this.titleQueryScheduler = scheduler;
+  }
+
+  setTitleDraft(value: string): void {
+    if (this.titleDraft === value) return;
+    this.titleDraft = value;
+    if (this.titleQueryScheduler === null) {
+      this.commitTitleQuery();
       return;
     }
-    if (option.type === 'none') {
-      this.projectFilter = { type: 'none' };
-      return;
-    }
-    if (!option.projectKey || !option.projectRoot || !option.projectName) return;
-    this.projectFilter = {
-      type: 'project',
-      projectKey: option.projectKey,
-      projectRoot: option.projectRoot,
-      projectName: option.projectName,
-    };
+    this.titleQueryScheduler();
+  }
+
+  // Reads the current draft instead of a captured value, so a trailing run always
+  // publishes the newest input and no earlier keystroke can land after it.
+  commitTitleQuery(): void {
+    if (this.titleQuery === this.titleDraft) return;
+    this.titleQuery = this.titleDraft;
   }
 
   clearTitleQuery(): void {
+    this.titleDraft = '';
     this.titleQuery = '';
   }
 
@@ -351,6 +357,17 @@ class EyesOnAgentsState {
     }
   }
 
+  async setThreadUnread(
+    sessionKey: EyesOnAgentsSessionKey,
+    isUnread: boolean,
+  ): Promise<void> {
+    const thread = this.threads.find((item) => item.sessionKey === sessionKey);
+    if (!thread || thread.isUnread === isUnread) return;
+    await this.runSnapshotAction(`thread-read-state:${sessionKey}`, () =>
+      eyesOnAgentsEmitter.setThreadUnread({ sessionKey, isUnread }),
+    );
+  }
+
   async markAllRead(): Promise<void> {
     if (this.readableFocusThreads.length === 0) return;
     await this.runSnapshotAction('focus-read-all', () => eyesOnAgentsEmitter.markAllRead());
@@ -466,14 +483,6 @@ class EyesOnAgentsState {
     this.highestClaudeProviderRevision = claudeProviderRevision;
     this.snapshot = snapshot;
     this.loadError = null;
-    this.reconcileProjectFilter();
-  }
-
-  private reconcileProjectFilter(): void {
-    if (this.projectFilter.type !== 'project') return;
-    const projectKey = this.projectFilter.projectKey;
-    if (this.threads.some((thread) => thread.projectKey === projectKey)) return;
-    this.projectFilter = { type: 'all' };
   }
 
   private errorMessage(error: unknown): string {
@@ -483,3 +492,12 @@ class EyesOnAgentsState {
 }
 
 export const eyesOnAgentsStore = reactive(new EyesOnAgentsState());
+
+export const createEyesOnAgentsTitleQueryScheduler = (run: () => void): (() => void) =>
+  useThrottleFn(run, TITLE_QUERY_THROTTLE_MS, true, true);
+
+eyesOnAgentsStore.configureTitleQueryScheduler(
+  createEyesOnAgentsTitleQueryScheduler(() => {
+    eyesOnAgentsStore.commitTitleQuery();
+  }),
+);

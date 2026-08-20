@@ -45,6 +45,7 @@ export interface ModelProviderServiceDependencies {
   broadcastDeviceCode(notice: ModelProviderDeviceCodeNotice | null): void;
   watchCredentialChanges?(listener: () => void): () => void;
   now?: () => number;
+  cancelStageTimeoutMs?: number;
 }
 
 export class ModelProviderServiceError extends Error {
@@ -67,6 +68,9 @@ export interface ModelProviderRuntimeObservation {
 
 const PERSISTENCE_RETRY_DELAY_MS = 50;
 const DIRTY_RETRY_DELAYS_MS = [250, 1_000, 5_000, 15_000, 60_000] as const;
+// Login cancel must always settle. Credential I/O on the cancel path loads the Pi module and
+// creates a model runtime without an abort signal, so each step carries its own deadline.
+const CANCEL_STAGE_TIMEOUT_MS = 5_000;
 type CredentialStateLock =
   | 'credential-cleanup-failed'
   | 'persistence-unavailable'
@@ -88,6 +92,40 @@ const waitForPersistenceRetry = async (): Promise<void> =>
 const unrefTimer = (timer: ReturnType<typeof setTimeout>): void => {
   const candidate = timer as ReturnType<typeof setTimeout> & { unref?: () => void };
   candidate.unref?.();
+};
+
+export class ModelProviderCancelStageTimeoutError extends Error {
+  constructor(readonly stage: string) {
+    super(`Model provider cancel stage timed out: ${stage}`);
+    this.name = 'ModelProviderCancelStageTimeoutError';
+  }
+}
+
+const logCancelStage = (stage: string, details: string = ''): void => {
+  console.info(`[model-provider] stage=cancel-${stage}${details ? ` ${details}` : ''}`);
+};
+
+// Promise.race subscribes to `operation`, so a rejection that loses the race stays handled.
+const withCancelDeadline = async <T>(
+  stage: string,
+  operation: Promise<T>,
+  timeoutMs: number
+): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new ModelProviderCancelStageTimeoutError(stage)),
+          timeoutMs
+        );
+        unrefTimer(timer);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
 
 const fixedTarget = () => ({
@@ -144,6 +182,7 @@ const statusAuthState = (status: CodexCredentialStatus): ModelProviderRecord['au
 
 export class ModelProviderService {
   private readonly now: () => number;
+  private readonly cancelStageTimeoutMs: number;
   private record: ModelProviderRecord | null = null;
   private epoch = 0;
   private lastSnapshotObservedAt = -1;
@@ -163,6 +202,7 @@ export class ModelProviderService {
 
   constructor(private readonly dependencies: ModelProviderServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
+    this.cancelStageTimeoutMs = dependencies.cancelStageTimeoutMs ?? CANCEL_STAGE_TIMEOUT_MS;
     dependencies.credentials.subscribeTransitions((transition) => {
       this.suppressCredentialWatchUntil = this.now() + 2_000;
       this.scheduleSuppressedCredentialReconcile();
@@ -349,18 +389,47 @@ export class ModelProviderService {
     const attempt = this.activeConnectAttempt;
     const cancelGeneration = ++this.connectGeneration;
     if (attempt) attempt.cancelled = true;
-    await this.dependencies.credentials.cancelConnect().catch(() => undefined);
+    logCancelStage(
+      'requested',
+      `attempt=${attempt?.generation ?? 'none'} phase=${attempt?.phase ?? 'none'}`
+    );
+    await withCancelDeadline(
+      'credential-abort',
+      this.dependencies.credentials.cancelConnect(),
+      this.cancelStageTimeoutMs
+    ).catch((error: unknown) => {
+      logCancelStage(
+        'credential-abort-incomplete',
+        error instanceof ModelProviderCancelStageTimeoutError ? 'reason=timeout' : 'reason=error'
+      );
+    });
+    logCancelStage('credential-aborted');
 
     if (!attempt || attempt.phase === 'initializing') {
+      logCancelStage('completed', 'reason=no-active-attempt');
       return { ok: true, snapshot: this.snapshot() };
     }
-    await attempt.settled;
+
+    try {
+      await withCancelDeadline('attempt-settle', attempt.settled, this.cancelStageTimeoutMs);
+    } catch {
+      // The stalled connect still owns the mutation queue, so cleanup cannot run behind it. Fail
+      // closed here instead of leaving the renderer waiting on an unbounded cancel.
+      logCancelStage('attempt-settle-timeout', `attempt=${attempt.generation}`);
+      const previous = attempt.previous ?? this.requiredRecord();
+      const result = await this.failClosedCredentialCleanup(previous);
+      logCancelStage('completed', 'reason=attempt-settle-timeout state=unavailable');
+      return result;
+    }
+    logCancelStage('attempt-settled', `attempt=${attempt.generation}`);
     if (cancelGeneration !== this.connectGeneration) {
+      logCancelStage('completed', 'reason=superseded');
       return { ok: true, snapshot: this.snapshot() };
     }
 
     return await this.mutate(async () => {
       if (cancelGeneration !== this.connectGeneration) {
+        logCancelStage('completed', 'reason=superseded');
         return { ok: true, snapshot: this.snapshot() };
       }
       const previous = attempt.previous ?? this.requiredRecord();
@@ -380,21 +449,43 @@ export class ModelProviderService {
       }
 
       try {
-        const status = await this.dependencies.credentials.getStatus();
+        logCancelStage('credential-status-started');
+        const status = await withCancelDeadline(
+          'credential-status',
+          this.dependencies.credentials.getStatus(),
+          this.cancelStageTimeoutMs
+        );
+        logCancelStage(
+          'credential-status-resolved',
+          `connected=${status.connected} unavailable=${Boolean(status.errorCode)}`
+        );
         if (status.errorCode) {
           return await this.failClosedCredentialCleanup(previous);
         }
         if (status.connected) {
           this.credentialOperation = 'disconnect';
-          const disconnected = await this.dependencies.credentials.disconnect();
+          logCancelStage('credential-disconnect-started');
+          const disconnected = await withCancelDeadline(
+            'credential-disconnect',
+            this.dependencies.credentials.disconnect(),
+            this.cancelStageTimeoutMs
+          );
+          logCancelStage('credential-disconnect-resolved', `connected=${disconnected.connected}`);
           if (disconnected.connected || disconnected.errorCode) {
             return await this.failClosedCredentialCleanup(previous);
           }
         }
         this.credentialStateLock = null;
         await this.commit(this.cancelledRecord(previous));
+        logCancelStage('completed', 'reason=cleaned state=cancelled');
         return { ok: true, snapshot: this.snapshot() };
-      } catch {
+      } catch (error) {
+        logCancelStage(
+          'credential-cleanup-failed',
+          error instanceof ModelProviderCancelStageTimeoutError
+            ? `reason=timeout stage=${error.stage}`
+            : 'reason=error'
+        );
         return await this.failClosedCredentialCleanup(previous);
       } finally {
         this.credentialOperation = null;

@@ -126,6 +126,43 @@ try {
     }),
     /unsupported field/
   );
+  assert.deepEqual(
+    contract.parseEyesOnAgentsSetThreadUnreadParams({
+      sessionKey: SESSION_KEY,
+      isUnread: true
+    }),
+    { sessionKey: SESSION_KEY, isUnread: true }
+  );
+  assert.deepEqual(
+    contract.parseEyesOnAgentsSetThreadUnreadParams({
+      sessionKey: SESSION_KEY,
+      isUnread: false
+    }),
+    { sessionKey: SESSION_KEY, isUnread: false }
+  );
+  assert.throws(
+    () => contract.parseEyesOnAgentsSetThreadUnreadParams({ sessionKey: SESSION_KEY }),
+    /isUnread must be a boolean/
+  );
+  assert.throws(
+    () => contract.parseEyesOnAgentsSetThreadUnreadParams({
+      sessionKey: SESSION_KEY,
+      isUnread: 'yes'
+    }),
+    /isUnread must be a boolean/
+  );
+  assert.throws(
+    () => contract.parseEyesOnAgentsSetThreadUnreadParams({
+      sessionKey: SESSION_KEY,
+      isUnread: true,
+      openedAt: 1
+    }),
+    /unsupported field/
+  );
+  assert.throws(
+    () => contract.parseEyesOnAgentsSetThreadUnreadParams(null),
+    /read state params must be an object/
+  );
   const refreshTurnTransitions = {
     terminalTurn: {
       turnId: 'active-turn',

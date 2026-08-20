@@ -67,6 +67,8 @@ const en = {
     textLimit: 'Text preview is limited to 8 MB. Open this file in a system app to inspect it.',
     markdownLimit: 'Markdown rendering is limited to 1 MB.',
     htmlLimit: 'HTML rendering is limited to 1 MB.',
+    imagePdfLimit: 'PDF and image preview is limited to 100 MB.',
+    officeLimit: 'Office document preview is limited to 25 MB.',
     editorReadOnly: 'OnlyPreview does not edit files.'
   },
   settings: {
@@ -118,9 +120,7 @@ const en = {
     PATH_OUTSIDE_WORKSPACE: 'The file resolves outside the open project and cannot be previewed.',
     PATH_NOT_REGULAR_FILE: 'Only regular files can be previewed.',
     PATH_UNSUPPORTED_DEVICE: 'This device or special file cannot be previewed.',
-    TEXT_TOO_LARGE: 'This text file is larger than the 8 MB preview limit.',
-    BINARY_TEXT: 'This file contains binary data and cannot be shown as text.',
-    INVALID_ENCODING: 'The text encoding could not be decoded safely.',
+    TEXT_TOO_LARGE: 'This file is larger than its preview limit.',
     SIGNATURE_MISMATCH: 'The file contents do not match its extension.',
     SETTINGS_INVALID: 'One or more settings are invalid.',
     INDEX_FAILED: 'The project index could not be built.',
@@ -192,6 +192,8 @@ const zh: Localized<typeof en> = {
     textLimit: '文本预览上限为 8 MB。请使用系统应用查看。',
     markdownLimit: 'Markdown 渲染上限为 1 MB。',
     htmlLimit: 'HTML 渲染上限为 1 MB。',
+    imagePdfLimit: 'PDF 与图片预览上限为 100 MB。',
+    officeLimit: 'Office 文档预览上限为 25 MB。',
     editorReadOnly: 'OnlyPreview 不会编辑文件。'
   },
   settings: {
@@ -240,9 +242,7 @@ const zh: Localized<typeof en> = {
     PATH_OUTSIDE_WORKSPACE: '此文件指向当前项目之外，无法预览。',
     PATH_NOT_REGULAR_FILE: '只能预览普通文件。',
     PATH_UNSUPPORTED_DEVICE: '无法预览设备或特殊文件。',
-    TEXT_TOO_LARGE: '此文本文件超过 8 MB 预览上限。',
-    BINARY_TEXT: '此文件包含二进制数据，无法作为文本显示。',
-    INVALID_ENCODING: '无法安全解码此文本编码。',
+    TEXT_TOO_LARGE: '此文件超过对应格式的预览上限。',
     SIGNATURE_MISMATCH: '文件内容与扩展名不匹配。',
     SETTINGS_INVALID: '一项或多项设置无效。',
     INDEX_FAILED: '无法建立项目索引。',

@@ -1,11 +1,20 @@
 .eyes-connection-panel {
   --eyes-focus-ring: #4e5882;
 
-  max-width: 100vw;
+  max-width: 100%;
+}
+
+/* The drawer is anchored to .eyes-on-agents__main, so it caps at the board region
+   instead of the viewport and never covers the menu bar. Arco writes
+   `style="z-index: inherit"` inline for a container-anchored drawer, which drops its own
+   1001 and leaves the panel at the board level, so !important is the only way to pin it
+   above the board. See docs/issues/eyes-on-agents-connections-drawer-behind-board.md. */
+.eyes-connection-panel.arco-drawer-container {
+  z-index: 10 !important;
 }
 
 .eyes-connection-panel .arco-drawer {
-  max-width: 100vw;
+  max-width: 100%;
 }
 
 .eyes-connection-panel .arco-drawer-body {

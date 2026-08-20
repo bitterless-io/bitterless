@@ -73,7 +73,7 @@ test('window contract enforces singleton-safe paths and minimum size', () => {
   const source = read('src/main/xpc/eyesOnAgentsWindow.handler.ts');
 
   assert.match(source, /creationPromise: Promise<BrowserWindow> \| null/);
-  assert.match(source, /minWidth: 800/);
+  assert.match(source, /minWidth: 480/);
   assert.match(source, /minHeight: 600/);
   assert.match(source, /width: restored\?\.bounds\.width \?\? 1120/);
   assert.match(source, /windowStateService\.register\(\s*'eyes-on-agents',\s*created/);
@@ -123,7 +123,7 @@ test('silent tiered All polling owns one non-overlapping refresh interval', () =
     /  startRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  stopRefreshPolling)/
   );
   const stopPolling = store.match(
-    /  stopRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  selectProjectFilter)/
+    /  stopRefreshPolling\(\): void \{[\s\S]*?\n  \}(?=\n\n  clearTitleQuery)/
   );
   const pollingTick = store.match(
     /  private async performRefreshPollingTick\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async performBackgroundThreadPagesRefresh)/
@@ -517,6 +517,11 @@ test('observation board exposes stable regions and reduced motion', () => {
   assert.match(source, /prefers-reduced-motion: reduce/);
   assert.doesNotMatch(source, /vuedraggable|<draggable/);
   assert.doesNotMatch(source, /moveThread|createDomain|renameDomain|deleteDomain|reorderDomains/);
+  assert.doesNotMatch(
+    source,
+    /ProjectFilter|project-filter|projectFilter/,
+    'the Project filter is retired from the renderer'
+  );
 });
 
 test('observation surfaces use Todo-style background hierarchy without decorative borders', () => {
@@ -527,23 +532,43 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   const thread = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
   );
-  const projectFilter = read(
-    'src/renderer/eyesOnAgents/src/components/ProjectFilter/ProjectFilter.less'
-  );
 
   assert.match(app, /--eyes-canvas: oklch\(0\.985 0 0\)/);
-  assert.match(app, /--eyes-column: oklch\(0\.96 0 0\)/);
-  assert.match(app, /--eyes-column-focus: oklch\(0\.94 0\.04 60\)/);
   assert.match(app, /--eyes-item: oklch\(1 0 0\)/);
+  assert.match(
+    app,
+    /--eyes-accent: #606b9d;/,
+    'the text-action ink is theme.ts arcoblue-5'
+  );
+  assert.match(
+    app,
+    /--eyes-hover-surface: #e2e4eb;/,
+    'the text-button hover surface is theme.ts arcoblue-2'
+  );
+  assert.doesNotMatch(
+    app,
+    /--eyes-column/,
+    'the board has no column surface token left to paint'
+  );
 
   const domainShell = cssRule(domain, '.agent-domain');
-  assert.match(domainShell, /background: var\(--eyes-column\)/);
+  assert.match(
+    domainShell,
+    /background: transparent/,
+    'the column paints nothing: cards sit straight on the board canvas'
+  );
+  assert.doesNotMatch(domainShell, /border-radius/);
+
+  const appSource = read('src/renderer/eyesOnAgents/src/App.vue');
+  assert.doesNotMatch(
+    appSource,
+    /windowActive|handleWindowBlur|eyes-on-agents--inactive/,
+    'the activation tint retired with the surface it painted'
+  );
   assert.doesNotMatch(domainShell, /\bborder\s*:/);
   assert.doesNotMatch(domainShell, /box-shadow/);
 
-  const focusDomain = cssRule(domain, '.agent-domain--focus');
-  assert.match(focusDomain, /background: var\(--eyes-column-focus\)/);
-  assert.doesNotMatch(focusDomain, /border-color|box-shadow/);
+  assert.doesNotMatch(domain, /agent-domain--focus/);
 
   const domainHeader = cssRule(domain, '.agent-domain__header');
   assert.match(domainHeader, /background: transparent/);
@@ -563,15 +588,6 @@ test('observation surfaces use Todo-style background hierarchy without decorativ
   const threadFocus = cssRule(thread, '.thread-card:focus-visible');
   assert.match(threadFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
   assert.match(threadFocus, /outline-offset: 2px/);
-
-  const projectSelect = cssRule(projectFilter, '.project-filter__select.arco-select-view');
-  assert.match(projectSelect, /border: 0/);
-  assert.match(projectSelect, /background: oklch/);
-  const projectSelectFocus = cssRule(
-    projectFilter,
-    '.project-filter__select.arco-select-view:focus-within'
-  );
-  assert.match(projectSelectFocus, /outline: 2px solid var\(--eyes-focus-ring\)/);
 });
 
 test('thread cards use compact title and action rows with accessible status marks', () => {
@@ -601,7 +617,17 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(component, /eyesOnAgentsStore\.openThread\(props\.thread\.sessionKey\)/);
   assert.match(
     component,
-    /v-if="\['working', 'waiting_approval', 'waiting_input'\]\.includes\(thread\.runtimeState\)"[\s\S]*?class="thread-card__working"[\s\S]*?role="status"[\s\S]*?:aria-label="runtimeLabel"[\s\S]*?<a-spin :size="12"/
+    /v-if="isActiveRuntime"[\s\S]*?class="thread-card__status"[\s\S]*?role="status"[\s\S]*?:aria-label="runtimeLabel"[\s\S]*?<a-spin :size="12"/,
+    'the active spinner owns the title status slot'
+  );
+  assert.match(
+    component,
+    /const isActiveRuntime = computed\(\(\) =>\s*\['working', 'waiting_approval', 'waiting_input'\]\.includes\(props\.thread\.runtimeState\)\);/
+  );
+  assert.match(
+    component,
+    /v-else-if="showUnreadDot"[\s\S]*?class="thread-card__status"[\s\S]*?role="img"[\s\S]*?thread\.new[\s\S]*?class="thread-card__unread-dot"/,
+    'the unread dot shares that one slot, so spinner and dot can never both show'
   );
   assert.equal((component.match(/<a-spin/g) ?? []).length, 1);
 
@@ -623,7 +649,12 @@ test('thread cards use compact title and action rows with accessible status mark
 
   assert.match(
     component,
-    /<div class="thread-card__actions">\s*<span class="thread-card__time">[\s\S]*?<div class="thread-card__controls"[\s\S]*?class="thread-card__folder"[\s\S]*?class="thread-card__open-control thread-card__control"[\s\S]*?<a-dropdown/
+    /<div class="thread-card__actions">\s*<span class="thread-card__time">[\s\S]*?<div class="thread-card__controls"[\s\S]*?class="thread-card__folder"[\s\S]*?<a-dropdown/
+  );
+  assert.doesNotMatch(
+    component,
+    /thread-card__open-control|IconExternalLink :size="9"/,
+    'the icon-only Open button is retired from the action row'
   );
   const cardActions = cssRule(styles, '.thread-card__actions');
   assert.match(cardActions, /justify-content: space-between/);
@@ -639,20 +670,46 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(english, /workingDirectory: 'Working directory: \{path\}'/);
   assert.match(chinese, /workingDirectory: '工作目录：\{path\}'/);
 
-  const openAction = component.match(
-    /<a-tooltip v-if="canOpenThread" :content="openTooltip"[\s\S]*?<a-button[\s\S]*?<\/a-button>[\s\S]*?<\/a-tooltip>/
+  const openOption = component.match(
+    /<a-doption\s+v-if="canOpenThread"[\s\S]*?<\/a-doption>/
   );
-  assert.ok(openAction, 'Missing localized Open tooltip and button');
-  assert.match(openAction[0], /:title="openTooltip"/);
-  assert.match(openAction[0], /:aria-label="openAriaLabel"/);
-  assert.match(openAction[0], /:loading="eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
-  assert.match(openAction[0], /:disabled="eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
-  assert.match(openAction[0], /@click\.stop="handleOpen"/);
-  assert.match(openAction[0], /<template #icon><IconExternalLink :size="9" \/><\/template>/);
-  assert.doesNotMatch(
-    openAction[0],
-    /\{\{\s*i18nHelper\.eyesOnAgents\.actions\.open\s*\}\}/
+  assert.ok(openOption, 'Missing provider-named open menu item');
+  assert.match(openOption[0], /:disabled="eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
+  assert.match(openOption[0], /@click="handleOpen"/);
+  assert.match(openOption[0], /<IconExternalLink :size="13" \/>/);
+  assert.match(openOption[0], /\{\{ openLabel \}\}/);
+  assert.match(openOption[0], /actions\.doubleClickHint/);
+  assert.match(
+    component,
+    /const openLabel = computed\(\(\) => props\.thread\.provider === 'claude'\s*\? i18nHelper\.eyesOnAgents\.actions\.openInClaude\s*: i18nHelper\.eyesOnAgents\.actions\.openInCodex\);/,
+    'the open item names the provider it will launch'
   );
+  assert.match(english, /openInCodex: 'Open in Codex'/);
+  assert.match(english, /openInClaude: 'Open in Claude'/);
+  assert.match(english, /doubleClickHint: '\(double click\)'/);
+  assert.match(chinese, /openInCodex: '在 Codex 中打开'/);
+  assert.match(chinese, /openInClaude: '在 Claude 中打开'/);
+  assert.match(chinese, /doubleClickHint: '（双击）'/);
+
+  const readStateOption = component.match(
+    /<a-doption\s+class="thread-card__option"\s+:disabled="eyesOnAgentsStore\.busyAction !== null"[\s\S]*?<\/a-doption>/
+  );
+  assert.ok(readStateOption, 'Missing manual read-state menu item');
+  assert.match(readStateOption[0], /@click="handleToggleReadState"/);
+  assert.match(readStateOption[0], /\{\{ readStateLabel \}\}/);
+  assert.match(
+    component,
+    /const readStateLabel = computed\(\(\) => props\.thread\.isUnread\s*\? i18nHelper\.eyesOnAgents\.actions\.markRead\s*: i18nHelper\.eyesOnAgents\.actions\.markUnread\);/,
+    'the label follows the stored unread flag'
+  );
+  assert.match(
+    component,
+    /const handleToggleReadState = async \(\): Promise<void> => \{[\s\S]*?setThreadUnread\(props\.thread\.sessionKey, !props\.thread\.isUnread\)/
+  );
+  assert.match(english, /markRead: 'Mark as read'/);
+  assert.match(english, /markUnread: 'Mark as unread'/);
+  assert.match(chinese, /markRead: '标为已读'/);
+  assert.match(chinese, /markUnread: '标为未读'/);
   assert.match(
     component,
     /import \{ isEyesOnAgentsTerminal \} from '@shared\/eyesOnAgents\/eyesOnAgents\.contract';/
@@ -661,22 +718,43 @@ test('thread cards use compact title and action rows with accessible status mark
     component,
     /const showUnreadDot = computed\(\(\) =>\s*props\.thread\.isUnread && isEyesOnAgentsTerminal\(props\.thread\.runtimeState\)\);/
   );
-  assert.match(
+  assert.doesNotMatch(
     component,
-    /const openAriaLabel = computed\(\(\) => showUnreadDot\.value[\s\S]*?openTooltip\.value[\s\S]*?thread\.new/
+    /openAriaLabel|openTooltip|moreAriaLabel|thread-card__unread-marker|more-control--unread/,
+    'the retired Open button takes its labels and dot fallbacks with it'
   );
-  assert.doesNotMatch(component, /v-if\s*=\s*["']thread\.isUnread["']/);
   assert.match(
     component,
-    /v-if="showUnreadDot"\s+class="thread-card__unread-dot"\s+aria-hidden="true"/
+    /<span class="thread-card__unread-dot" aria-hidden="true" \/>/
   );
   const unreadDot = cssRule(styles, '.thread-card__unread-dot');
-  assert.match(unreadDot, /position: absolute/);
   assert.match(unreadDot, /background: #ef4444/);
+  assert.doesNotMatch(unreadDot, /position: absolute/, 'the dot now sits in flow inside its slot');
+  assert.doesNotMatch(
+    styles,
+    /thread-card__working|unread-marker|more-control--unread/,
+    'the retired status and dot styles are gone'
+  );
 
   assert.match(
     component,
-    /:aria-label="moreAriaLabel"[\s\S]*?<IconDots :size="12" \/>/
+    /:aria-label="i18nHelper\.eyesOnAgents\.actions\.more"[\s\S]*?<IconDots :size="12" \/>/
+  );
+  const optionRow = cssRule(styles, ".thread-card__option.arco-dropdown-option");
+  assert.match(optionRow, /display: flex/);
+  assert.match(
+    optionRow,
+    /align-items: center/,
+    "menu icons must center against their label instead of sitting on its baseline"
+  );
+  const moreHover = cssRule(
+    styles,
+    '.thread-card__controls .thread-card__more-control.arco-btn:hover'
+  );
+  assert.match(
+    moreHover,
+    /background: var\(--eyes-hover-surface\)/,
+    'the overflow text button gets the same hover surface as Read all'
   );
   const folderBox = cssRule(styles, '.thread-card__folder');
   assert.match(folderBox, /width: 20px/);
@@ -692,7 +770,7 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.doesNotMatch(component, /closest\('\.thread-card__actions'\)/);
   assert.match(
     styles,
-    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.thread-card__working \.arco-icon-loading\s*\{[\s\S]*?animation: none/
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.thread-card__status \.arco-icon-loading\s*\{[\s\S]*?animation: none/
   );
 });
 
@@ -724,7 +802,7 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
 
   assert.match(
     card,
-    /a-dropdown v-if="canPreviewTranscript"[\s\S]*actions\.previewTranscript/,
+    /<a-doption\s+v-if="canPreviewTranscript"[\s\S]*actions\.previewTranscript/,
   );
   assert.match(
     card,
@@ -926,9 +1004,6 @@ test('thread cards disclose only the bounded latest-question projection', () => 
 test('Focus is the whole board and lists every visible thread', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
-  const projectFilter = read(
-    'src/renderer/eyesOnAgents/src/components/ProjectFilter/ProjectFilter.vue'
-  );
   const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
@@ -938,8 +1013,8 @@ test('Focus is the whole board and lists every visible thread', () => {
     1,
     'the board renders exactly one column'
   );
-  assert.match(board, /:title="i18nHelper\.eyesOnAgents\.board\.focus"/);
   assert.match(board, /:threads="eyesOnAgentsStore\.filteredFocusThreads"/);
+  assert.doesNotMatch(board, /:title=|board\.focus/);
   assert.doesNotMatch(board, /board\.all|threadsForDomain|customDomains|total-count|totalCount/);
 
   const focusThreads = store.match(
@@ -948,7 +1023,7 @@ test('Focus is the whole board and lists every visible thread', () => {
   assert.ok(focusThreads, 'Missing Focus projection');
   assert.match(
     focusThreads[0],
-    /return sortThreads\(this\.threads\);/,
+    /return sortedSnapshotThreads\(this\.snapshot, this\.threads\);/,
     'Focus must list every visible thread in comparator order'
   );
   assert.doesNotMatch(
@@ -956,27 +1031,26 @@ test('Focus is the whole board and lists every visible thread', () => {
     /isEyesOnAgentsFocused|thread\.isFocused/,
     'Focus membership is no longer an attention subset'
   );
-  assert.match(store, /buildEyesOnAgentsProjectFilterOptions\(\s*this\.focusThreads,/);
-  assert.match(store, /filterEyesOnAgentsThreadsByProject\(\s*this\.focusThreads,/);
   assert.doesNotMatch(
     store,
     /allThreads|filteredAllThreads|allTitleQuery|allProjectFilter|allProjectOptions/,
     'the retired All projection must leave no renderer state behind'
   );
 
-  assert.match(domain, /<ProjectFilter \/>/);
-  assert.match(projectFilter, /<label name="eyesOnAgents__projectFilter"/);
-  assert.match(projectFilter, /class="project-filter__label"/);
-  assert.match(projectFilter, /allow-search/);
-  assert.match(projectFilter, /eyesOnAgentsStore\.projectFilterValue/);
-  assert.match(projectFilter, /eyesOnAgentsStore\.projectOptions/);
-  assert.match(projectFilter, /selectProjectFilter/);
-  assert.match(projectFilter, /class="project-filter__count">\{\{ option\.count \}\}/);
-  assert.match(projectFilter, /`\$\{optionLabel\(option\)\} \(\$\{option\.count\}\)`/);
-  assert.match(english, /projectFilterLabel: 'Filter by Project'/);
-  assert.match(chinese, /projectFilterLabel: '按 Project 筛选'/);
-  assert.match(english, /noProject: 'No project'/);
-  assert.match(chinese, /noProject: '无 Project'/);
+  assert.doesNotMatch(domain, /ProjectFilter/);
+  assert.doesNotMatch(
+    store,
+    /projectFilter|projectOptions|selectProjectFilter|filterEyesOnAgentsThreadsByProject/,
+    'no Project selection state survives in the store'
+  );
+  for (const catalog of [english, chinese]) {
+    const namespace = catalog.match(/\n  eyesOnAgents: \{[\s\S]*?\n  \},\n/);
+    assert.ok(namespace, 'Missing eyesOnAgents i18n namespace');
+    assert.doesNotMatch(
+      namespace[0],
+      /projectFilterLabel|allProjects|noProject|emptyProject|emptyNoProject/
+    );
+  }
 });
 test('Focus header exposes a compact parameter-free Read all action', () => {
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
@@ -995,6 +1069,11 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
     /<a-button\s+name="eyesOnAgents__domainColumn__readAll"[\s\S]*?<\/a-button>/
   );
   assert.ok(button, 'Missing Focus-only Read all header action');
+  assert.doesNotMatch(
+    domain,
+    /IconTargetArrow|agent-domain__title|<h2/,
+    'the header gave its room to the search input'
+  );
   assert.match(button[0], /class="agent-domain__read-all"/);
   assert.match(button[0], /size="mini"/);
   assert.match(button[0], /type="text"/);
@@ -1064,11 +1143,23 @@ test('Focus header exposes a compact parameter-free Read all action', () => {
   const headerStyle = cssRule(styles, '.agent-domain__header');
   assert.match(headerStyle, /justify-content: space-between/);
   const readAllStyle = cssRule(styles, '.agent-domain__read-all.arco-btn');
-  assert.match(readAllStyle, /height: 20px/);
+  assert.match(readAllStyle, /height: 22px/);
   assert.match(readAllStyle, /border: 0/);
   assert.match(readAllStyle, /background: transparent/);
   assert.match(readAllStyle, /box-shadow: none/);
   assert.match(readAllStyle, /font-size: 11px/);
+  assert.match(
+    readAllStyle,
+    /color: var\(--eyes-accent\)/,
+    'Read all uses the themed text-action ink'
+  );
+  const readAllHover = cssRule(styles, '.agent-domain__read-all.arco-btn:hover');
+  assert.match(
+    readAllHover,
+    /background: var\(--eyes-hover-surface\)/,
+    'a text button must show a hover surface, not just a color shift'
+  );
+  assert.match(readAllHover, /color: var\(--eyes-primary-deep\)/);
   assert.match(english, /readAll: 'Read all'/);
   assert.match(chinese, /readAll: '全部已读'/);
 });
@@ -1098,24 +1189,35 @@ test('Cmd+F activates the Focus title filter and no search modal remains', () =>
   assert.match(keydown[0], /\(event\.metaKey \|\| event\.ctrlKey\)/);
   assert.match(keydown[0], /event\.key\.toLocaleLowerCase\(\) === 'f'/);
   assert.match(keydown[0], /event\.preventDefault\(\)/);
-  assert.match(keydown[0], /void openFocusTitleSearch\(\)/);
+  assert.match(keydown[0], /void focusTitleSearch\(\)/);
   assert.doesNotMatch(keydown[0], /threadSearchVisible|openThreadSearch/);
 
   const opener = app.match(
-    /const openFocusTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+    /const focusTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
   );
-  assert.ok(opener, 'Missing Focus filter activation');
+  assert.ok(opener, 'Missing Focus input focus path');
   assert.match(opener[0], /await nextTick\(\)/);
-  assert.match(opener[0], /agentBoardRef\.value\?\.openTitleSearch\(\)/);
+  assert.match(opener[0], /agentBoardRef\.value\?\.focusTitleSearch\(\)/);
 
   assert.match(app, /<AgentBoard v-else ref="agentBoardRef" \/>/);
   assert.match(app, /window\.addEventListener\('keydown', handleWindowKeydown\)/);
   assert.match(app, /window\.removeEventListener\('keydown', handleWindowKeydown\)/);
   assert.match(app, /eyesOnAgentsStore\.clearTitleQuery\(\)/);
 
-  assert.match(board, /focusColumnRef\.value\?\.openTitleSearch\(\)/);
-  assert.match(board, /defineExpose\(\{ openTitleSearch \}\)/);
-  assert.match(domain, /defineExpose\(\{ openTitleSearch \}\)/);
+  assert.match(board, /focusColumnRef\.value\?\.focusTitleSearch\(\)/);
+  assert.match(board, /defineExpose\(\{ focusTitleSearch \}\)/);
+  assert.match(domain, /defineExpose\(\{ focusTitleSearch \}\)/);
+  const focusInput = domain.match(
+    /const focusTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  );
+  assert.ok(focusInput, 'Missing Focus input focus handler');
+  assert.match(focusInput[0], /await nextTick\(\)/);
+  assert.match(focusInput[0], /titleSearchInputRef\.value\?\.focus\?\.\(\)/);
+  assert.doesNotMatch(
+    domain,
+    /titleSearchOpen|toggleTitleSearch|openTitleSearch|closeTitleSearch|aria-expanded/,
+    'the filter has no open/closed state left'
+  );
 
   assert.doesNotMatch(
     store,
@@ -1124,7 +1226,7 @@ test('Cmd+F activates the Focus title filter and no search modal remains', () =>
   assert.doesNotMatch(english, /Task search results|Type a title to search tasks/);
   assert.doesNotMatch(chinese, /任务搜索结果|输入任务标题开始搜索/);
 });
-test('the Focus title filter is token-based, transient, and lifecycle-safe', () => {
+test('the Focus header search input is always available and token-based', () => {
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
   const styles = read(
     'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
@@ -1133,59 +1235,49 @@ test('the Focus title filter is token-based, transient, and lifecycle-safe', () 
   const english = read('src/renderer/common/i18n/en.ts');
   const chinese = read('src/renderer/common/i18n/zh.ts');
 
-  const toggle = domain.match(
-    /<a-button\s+ref="titleSearchButtonRef"[\s\S]*?<\/a-button>/
+  const header = domain.match(/<header class="agent-domain__header"[\s\S]*?<\/header>/);
+  assert.ok(header, 'Missing Focus header');
+  assert.match(header[0], /role="search"/);
+  assert.match(header[0], /name="eyesOnAgents__domainColumn__titleSearch"/);
+  assert.match(header[0], /class="agent-domain__search-input"/);
+  assert.match(header[0], /:model-value="eyesOnAgentsStore\.titleDraft"/);
+  assert.match(header[0], /@update:model-value="handleTitleInput"/);
+  assert.match(header[0], /:placeholder="titleSearchPlaceholder"/);
+  assert.match(header[0], /:aria-label="i18nHelper\.eyesOnAgents\.actions\.searchTitles"/);
+  assert.match(header[0], /@keydown\.esc\.prevent\.stop="clearTitleSearch"/);
+  assert.ok(
+    header[0].indexOf('eyesOnAgents__domainColumn__titleSearch')
+      < header[0].indexOf('eyesOnAgents__domainColumn__readAll'),
+    'the input leads and Read all trails in the header'
   );
-  assert.ok(toggle, 'Missing Focus search toggle');
-  assert.match(toggle[0], /name="eyesOnAgents__domainColumn__titleSearchToggle"/);
-  assert.match(toggle[0], /size="mini"/);
-  assert.match(toggle[0], /type="text"/);
-  assert.match(toggle[0], /:aria-expanded="titleSearchOpen"/);
-  assert.match(toggle[0], /aria-controls="eyes-on-agents-focus-title-search"/);
-  assert.match(toggle[0], /@click="toggleTitleSearch"/);
-  assert.match(toggle[0], /actions\.searchTitles/);
-
-  const row = domain.match(/<div\s+v-if="titleSearchOpen"[\s\S]*?<\/div>/);
-  assert.ok(row, 'Missing Focus search row');
-  assert.match(row[0], /id="eyes-on-agents-focus-title-search"/);
-  assert.match(row[0], /name="eyesOnAgents__domainColumn__titleSearch"/);
-  assert.match(row[0], /role="search"/);
-  assert.match(row[0], /@keydown\.esc\.prevent\.stop="closeTitleSearch"/);
-  assert.match(row[0], /v-model="eyesOnAgentsStore\.titleQuery"/);
-  assert.match(row[0], /board\.titleSearchPlaceholder/);
-  assert.match(row[0], /name="eyesOnAgents__domainColumn__clearTitleSearch"/);
-  assert.match(row[0], /@click="clearTitleSearch"/);
-
-  const open = domain.match(
-    /const openTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  assert.doesNotMatch(
+    domain,
+    /titleSearchToggle|search-trigger|search-close|closeTitleSearch|agent-domain__search-row/,
+    'no toggle or close control remains'
   );
-  assert.ok(open, 'Missing Focus search opener');
-  assert.match(open[0], /titleSearchOpen\.value = true/);
-  assert.match(open[0], /focusTitleSearchInput\(\)/);
 
-  const close = domain.match(
-    /const closeTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  assert.match(
+    domain,
+    /const titleSearchPlaceholder = computed\(\(\) => uaHelper\.isMac\s*\? i18nHelper\.eyesOnAgents\.actions\.searchTitlesMac\s*: i18nHelper\.eyesOnAgents\.actions\.searchTitlesWindows\);/,
+    'the placeholder keeps disclosing the platform shortcut'
   );
-  assert.ok(close, 'Missing Focus search close');
-  assert.match(close[0], /eyesOnAgentsStore\.clearTitleQuery\(\)/);
-  assert.match(close[0], /titleSearchOpen\.value = false/);
-  assert.match(close[0], /titleSearchButtonRef\.value\?\.\$el\?\.focus\(\)/);
-
-  const clear = domain.match(
-    /const clearTitleSearch = async \(\): Promise<void> => \{[\s\S]*?\n\};/
+  assert.match(
+    domain,
+    /const handleTitleInput = \(value: string\): void => \{\s*eyesOnAgentsStore\.setTitleDraft\(value\);/
   );
-  assert.ok(clear, 'Missing Focus search clear');
-  assert.match(clear[0], /eyesOnAgentsStore\.clearTitleQuery\(\)/);
-  assert.match(clear[0], /focusTitleSearchInput\(\)/);
+  assert.match(
+    domain,
+    /const clearTitleSearch = async \(\): Promise<void> => \{\s*eyesOnAgentsStore\.clearTitleQuery\(\);/
+  );
   assert.match(domain, /onBeforeUnmount\(\(\) => \{\s*eyesOnAgentsStore\.clearTitleQuery\(\);/);
+  assert.doesNotMatch(domain, /v-model="eyesOnAgentsStore\.titleQuery"/);
 
   const filter = store.match(
     /  get filteredFocusThreads\(\): EyesOnAgentsThread\[\] \{[\s\S]*?\n  \}/
   );
   assert.ok(filter, 'Missing Focus filter projection');
-  assert.match(filter[0], /filterEyesOnAgentsThreadsByProject\(/);
   assert.match(filter[0], /tokenizeThreadTitle\(this\.titleQuery\)/);
-  assert.match(filter[0], /queryTokens\.length === 0\) return projectThreads/);
+  assert.match(filter[0], /queryTokens\.length === 0\) return threads/);
   assert.match(filter[0], /if \(thread\.title === null\) return false/);
   assert.match(
     filter[0],
@@ -1206,26 +1298,75 @@ test('the Focus title filter is token-based, transient, and lifecycle-safe', () 
     /  get isTitleFiltered\(\): boolean \{\s*return tokenizeThreadTitle\(this\.titleQuery\)\.length > 0;/
   );
 
-  const empty = domain.match(/const emptyLabel = computed\(\(\) => \{[\s\S]*?\n\}\);/);
-  assert.ok(empty, 'Missing Focus empty state');
-  assert.match(empty[0], /isTitleFiltered[\s\S]*emptyTitleSearch/);
-  assert.match(empty[0], /isProjectFiltered[\s\S]*emptyFocus/);
-  assert.match(empty[0], /emptyNoProject/);
-  assert.match(empty[0], /emptyProject/);
+  assert.match(store, /import \{ useThrottleFn \} from '@vueuse\/core';/);
+  assert.match(
+    store,
+    /useThrottleFn\(run, TITLE_QUERY_THROTTLE_MS, true, true\)/,
+    'the shared leading-plus-trailing throttle keeps the last keystroke authoritative'
+  );
+  assert.match(store, /const TITLE_QUERY_THROTTLE_MS = 120;/);
+  const commit = store.match(/  commitTitleQuery\(\): void \{[\s\S]*?\n  \}/);
+  assert.ok(commit, 'Missing throttled commit');
+  assert.match(commit[0], /this\.titleQuery = this\.titleDraft;/);
+  const setDraft = store.match(/  setTitleDraft\(value: string\): void \{[\s\S]*?\n  \}/);
+  assert.ok(setDraft, 'Missing draft setter');
+  assert.match(setDraft[0], /if \(this\.titleDraft === value\) return;/);
+  assert.match(setDraft[0], /this\.titleQueryScheduler === null/);
+  assert.match(setDraft[0], /this\.titleQueryScheduler\(\);/);
+  const clear = store.match(/  clearTitleQuery\(\): void \{[\s\S]*?\n  \}/);
+  assert.ok(clear, 'Missing clear');
+  assert.match(clear[0], /this\.titleDraft = '';/);
+  assert.match(clear[0], /this\.titleQuery = '';/);
+  assert.match(store, /const sortedThreadsBySnapshot = new WeakMap</);
+  assert.match(store, /const titleTokensByThread = new WeakMap</);
+  const memoizedTokens = store.match(
+    /const threadTitleTokens = \(thread: EyesOnAgentsThread\): string\[\] => \{[\s\S]*?\n\};/
+  );
+  assert.ok(memoizedTokens, 'Missing memoized tokenizer');
+  assert.match(memoizedTokens[0], /cached\.title === title/);
+  assert.match(
+    store,
+    /  get focusThreads\(\): EyesOnAgentsThread\[\] \{\s*return sortedSnapshotThreads\(this\.snapshot, this\.threads\);/
+  );
 
-  const searchRow = cssRule(styles, '.agent-domain__search-row');
-  assert.match(searchRow, /background: oklch/);
-  assert.doesNotMatch(searchRow, /\bborder\s*:\s*[^0]/);
+  const empty = domain.match(/const emptyLabel = computed\([\s\S]*?\);/);
+  assert.ok(empty, 'Missing Focus empty state');
+  assert.match(empty[0], /isTitleFiltered/);
+  assert.match(empty[0], /emptyTitleSearch/);
+  assert.match(empty[0], /emptyFocus/);
+
+  const headerStyle = cssRule(styles, '.agent-domain__header');
+  assert.match(headerStyle, /display: flex/);
+  assert.match(headerStyle, /justify-content: space-between/);
   const searchInput = cssRule(styles, '.agent-domain__search-input.arco-input-wrapper');
   assert.match(searchInput, /border: 0/);
   assert.match(searchInput, /box-shadow: none/);
+  assert.match(
+    searchInput,
+    /background: var\(--eyes-item\)/,
+    'the search input reads as a white field by default'
+  );
+  assert.doesNotMatch(
+    styles,
+    /agent-domain__search-row|agent-domain__search-trigger|agent-domain__search-close|agent-domain__title/,
+    'retired header styles must not linger'
+  );
 
-  assert.match(english, /titleSearchPlaceholder: 'Search titles'/);
-  assert.match(chinese, /titleSearchPlaceholder: '搜索标题'/);
-  assert.match(english, /searchTitles: 'Search thread titles'/);
-  assert.match(english, /clearTitleSearch: 'Clear title search'/);
+  for (const catalog of [english, chinese]) {
+    const namespace = catalog.match(/\n  eyesOnAgents: \{[\s\S]*?\n  \},\n/);
+    assert.ok(namespace, 'Missing eyesOnAgents i18n namespace');
+    assert.doesNotMatch(
+      namespace[0],
+      /closeTitleSearch|clearTitleSearch|titleSearchPlaceholder|focus: 'Focus'/
+    );
+  }
+  assert.match(english, /searchTitlesMac: 'Search titles \(⌘F\)'/);
+  assert.match(english, /searchTitlesWindows: 'Search titles \(Ctrl\+F\)'/);
+  assert.match(chinese, /searchTitlesMac: '搜索标题（⌘F）'/);
+  assert.match(chinese, /searchTitlesWindows: '搜索标题（Ctrl\+F）'/);
   assert.match(english, /emptyTitleSearch: 'No thread titles match this search'/);
 });
+
 test('Domain headers cannot restore counts or their obsolete height', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
@@ -1252,7 +1393,7 @@ test('Domain headers cannot restore counts or their obsolete height', () => {
   );
 });
 
-test('the board renders one fixed 300px Focus column that fills its height', () => {
+test('the board renders one full-width Focus column that fills its height', () => {
   const board = read('src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.vue');
   const boardStyles = read(
     'src/renderer/eyesOnAgents/src/components/AgentBoard/AgentBoard.less'
@@ -1266,8 +1407,17 @@ test('the board renders one fixed 300px Focus column that fills its height', () 
   const boardShell = cssRule(boardStyles, '.agent-board');
   assert.match(boardShell, /height: 100%/);
   assert.match(boardShell, /display: flex/);
-  assert.match(boardShell, /padding: 12px/);
   assert.match(boardShell, /overflow: hidden/);
+  assert.doesNotMatch(
+    boardShell,
+    /padding/,
+    'the board has no padding: the list runs edge to edge'
+  );
+  assert.doesNotMatch(
+    cssRule(domainStyles, '.agent-domain__header'),
+    /padding/,
+    'the header runs edge to edge with it'
+  );
   assert.doesNotMatch(
     boardStyles,
     /flex-wrap|agent-board__columns|overflow-y: auto/,
@@ -1275,16 +1425,71 @@ test('the board renders one fixed 300px Focus column that fills its height', () 
   );
 
   const shell = cssRule(domainStyles, '.agent-domain');
-  assert.match(shell, /width: 300px/);
-  assert.match(shell, /min-width: 300px/);
-  assert.match(shell, /max-width: 300px/);
+  assert.match(
+    shell,
+    /gap: 8px/,
+    'the header and the scrolling list keep air between them'
+  );
+  assert.match(shell, /width: auto/);
+  assert.match(shell, /min-width: 0/);
   assert.match(shell, /height: 100%/);
-  assert.match(shell, /flex: 0 0 300px/);
+  assert.match(shell, /flex: 1 1 auto/);
+  assert.doesNotMatch(shell, /max-width/, 'the column stretches to the board width');
   assert.doesNotMatch(shell, /max-height/, 'the column fills the window instead of capping at 600px');
+
+  const menuBarStyles = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.less'
+  );
+  const identity = cssRule(menuBarStyles, '.eyes-menu-bar__identity');
+  assert.match(identity, /min-width: 0/, 'a 480px window must not push the action cluster off-screen');
+  assert.match(identity, /flex: 0 1 auto/);
+  const identityTitle = cssRule(menuBarStyles, '.eyes-menu-bar__title');
+  assert.match(identityTitle, /text-overflow: ellipsis/);
+  const actions = cssRule(menuBarStyles, '.eyes-menu-bar__actions');
+  assert.match(actions, /flex: 0 0 auto/);
 
   const body = cssRule(domainStyles, '.agent-domain__body');
   assert.match(body, /min-height: 0/);
   assert.match(body, /overflow-y: auto/);
+  assert.doesNotMatch(body, /padding/, 'the scrolling body carries no inset either');
+
+  const appStyles = read('src/renderer/eyesOnAgents/src/App.less');
+  const root = cssRule(appStyles, '.eyes-on-agents');
+  assert.match(root, /width: 100vw/);
+  assert.match(root, /height: 100vh/);
+  assert.match(root, /min-width: 0/);
+  assert.match(root, /min-height: 0/);
+  assert.doesNotMatch(
+    appStyles,
+    /min-width: [1-9]/,
+    'a renderer width floor stops the board reflowing inside a smaller window'
+  );
+  const mainRegion = cssRule(appStyles, '.eyes-on-agents__main');
+  assert.match(
+    mainRegion,
+    /padding: 8px/,
+    'the board region owns the inset the column gave up'
+  );
+  assert.match(mainRegion, /position: relative/);
+
+  const cardStyles = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
+  );
+  assert.doesNotMatch(cardStyles, /cursor: grab/, 'cards are not draggable any more');
+
+  const drawer = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
+  );
+  assert.match(
+    drawer,
+    /popup-container="\.eyes-on-agents__main"/,
+    'the connections drawer must stay inside the board region'
+  );
+  const drawerStyles = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.less'
+  );
+  assert.doesNotMatch(drawerStyles, /max-width: 100vw/);
+  assert.match(drawerStyles, /\.eyes-connection-panel \.arco-drawer \{[^}]*max-width: 100%/);
 });
 test('no Domain affordance remains in the EyesOnAgents renderer', () => {
   const rendererSource = walk('src/renderer/eyesOnAgents')

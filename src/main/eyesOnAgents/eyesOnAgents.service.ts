@@ -2325,6 +2325,34 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.getSnapshot();
   }
 
+  async setThreadUnread(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+    isUnread: boolean;
+  }): Promise<EyesOnAgentsSnapshot> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
+    if (typeof params?.isUnread !== 'boolean') {
+      throw new Error('Thread read state is invalid');
+    }
+    const isUnread = params.isUnread;
+    const apply = async (): Promise<void> => {
+      const stored = (await this.dependencies.repository.getSnapshot()).threads.find(
+        (thread) => thread.sessionKey === sessionKey
+      );
+      if (!stored) throw new Error('Thread was not found');
+      const result = await this.dependencies.repository.setThreadUnread({ sessionKey, isUnread });
+      if (result.changed) this.notify();
+    };
+    if (sessionKey.startsWith('claude:')) {
+      await this.runClaudeProviderIntent(async () => {
+        this.requireClaudeProviderEnabled();
+        await apply();
+      });
+      return await this.getSnapshot();
+    }
+    await apply();
+    return await this.getSnapshot();
+  }
+
   async createDomain(params: { title: string }): Promise<EyesOnAgentsSnapshot> {
     await this.dependencies.repository.createDomain(params);
     return await this.changedSnapshot();

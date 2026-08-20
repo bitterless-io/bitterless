@@ -67,6 +67,10 @@ export interface OnlyPreviewFixtureSet {
   audioPath: string;
   videoPath: string;
   nestedTextPath: string;
+  rawHtmlPath: string;
+  rawHtmlStylePath: string;
+  rawHtmlScriptPath: string;
+  rawHtmlImagePath: string;
 }
 
 export interface OnlyPreviewSearchFixtureSet {
@@ -83,6 +87,10 @@ export const createOnlyPreviewFixtures = (root: string): OnlyPreviewFixtureSet =
   const audioPath = join(root, 'tone.wav');
   const videoPath = join(root, 'video.webm');
   const nestedTextPath = join(root, 'nested', 'inside.txt');
+  const rawHtmlPath = join(root, 'nested', 'raw-page.html');
+  const rawHtmlStylePath = join(root, 'nested', 'raw-page.css');
+  const rawHtmlScriptPath = join(root, 'nested', 'raw-page.js');
+  const rawHtmlImagePath = join(root, 'nested', 'raw-page.png');
   writeFileSync(textPath, text, 'utf8');
   writeFileSync(pdfPath, createPdf('OnlyPreview selectable PDF text'));
   writeFileSync(imagePath, Buffer.from(TINY_PNG_BASE64, 'base64'));
@@ -90,7 +98,39 @@ export const createOnlyPreviewFixtures = (root: string): OnlyPreviewFixtureSet =
   writeFileSync(videoPath, Buffer.from(TINY_VP9_WEBM_BASE64, 'base64'));
   mkdirSync(join(root, 'nested'), { recursive: true });
   writeFileSync(nestedTextPath, 'nested keyboard fixture\n', 'utf8');
-  return { root, text, textPath, pdfPath, imagePath, audioPath, videoPath, nestedTextPath };
+  writeFileSync(
+    rawHtmlPath,
+    [
+      '<!doctype html>',
+      '<html><head>',
+      '<meta charset="utf-8">',
+      '<link rel="stylesheet" href="./raw-page.css">',
+      '</head><body data-inline-script="pending" data-relative-script="pending">',
+      '<h1 id="onlypreview-contained-style">OnlyPreview raw HTML fixture</h1>',
+      '<img id="onlypreview-contained-image" src="./raw-page.png" alt="contained fixture">',
+      '<script>document.body.dataset.inlineScript = "ready";</script>',
+      '<script src="./raw-page.js"></script>',
+      '</body></html>'
+    ].join(''),
+    'utf8'
+  );
+  writeFileSync(rawHtmlStylePath, '#onlypreview-contained-style { color: rgb(12, 34, 56); }\n');
+  writeFileSync(rawHtmlScriptPath, 'document.body.dataset.relativeScript = "ready";\n', 'utf8');
+  writeFileSync(rawHtmlImagePath, Buffer.from(TINY_PNG_BASE64, 'base64'));
+  return {
+    root,
+    text,
+    textPath,
+    pdfPath,
+    imagePath,
+    audioPath,
+    videoPath,
+    nestedTextPath,
+    rawHtmlPath,
+    rawHtmlStylePath,
+    rawHtmlScriptPath,
+    rawHtmlImagePath
+  };
 };
 
 export const createOnlyPreviewSearchFixtures = (root: string): OnlyPreviewSearchFixtureSet => {

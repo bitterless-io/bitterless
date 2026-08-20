@@ -23,10 +23,7 @@ test('Motto remains the fourth allowlisted Omni mini app before Trench', () => {
   assert.equal(parseOmniMiniAppId('motto'), 'motto');
   assert.equal(OMNI_MINI_APP_DISPLAY_URLS.motto, 'bl://miniapp/motto');
   assert.throws(() => parseOmniMiniAppId('unknown'));
-  assert.throws(
-    () => parseOmniMiniAppId('onlypreview'),
-    /Unsupported Omni mini app: onlypreview/
-  );
+  assert.throws(() => parseOmniMiniAppId('onlypreview'), /Unsupported Omni mini app: onlypreview/);
 
   const parsed = parseOmniPaneTree({
     id: 'motto-pane',
@@ -102,12 +99,13 @@ test('Motto UI owns the required compact card and optional-subtitle editor inter
   const header = app.match(/<header[\s\S]*?<\/header>/)?.[0] ?? '';
   const emptyState = app.match(/<section v-else name="motto__empty"[\s\S]*?<\/section>/)?.[0] ?? '';
 
-  assert.match(app, /class="motto__header"/);
+  assert.match(app, /class="motto-menu-bar"/);
+  assert.match(header, /<IconNotes :size="16" aria-hidden="true" \/>/);
   assert.match(
     header,
-    /<IconBtn[\s\S]*?name="motto__add"[\s\S]*?:title="i18nHelper\.motto\.add"[\s\S]*?:aria-label="i18nHelper\.motto\.add"/
+    /<a-button[\s\S]*?name="motto__add"[\s\S]*?:title="i18nHelper\.motto\.add"[\s\S]*?:aria-label="i18nHelper\.motto\.add"/
   );
-  assert.match(header, /<IconPlus :size="18" aria-hidden="true" \/>/);
+  assert.match(header, /<IconPlus :size="16" aria-hidden="true" \/>/);
   assert.doesNotMatch(header, /\{\{\s*i18nHelper\.motto\.add\s*\}\}/);
   assert.match(
     emptyState,
@@ -130,10 +128,10 @@ test('Motto UI owns the required compact card and optional-subtitle editor inter
   assert.match(app, /i18nHelper\.motto/);
   assert.doesNotMatch(app, /(?:class|:class)="[^"]*(?:\bflex\b|\bp-\d|\bgap-\d)/);
 
-  assert.match(style, /\.motto__header[\s\S]*?flex:\s*0 0 auto/);
+  assert.match(style, /\.motto-menu-bar[\s\S]*?flex:\s*0 0 auto/);
   assert.match(
     style,
-    /\.motto__add\s*\{[\s\S]*?width:\s*32px[\s\S]*?height:\s*32px[\s\S]*?display:\s*inline-flex[\s\S]*?align-items:\s*center[\s\S]*?justify-content:\s*center/
+    /\.motto-menu-bar__actions \.arco-btn\s*\{[\s\S]*?width:\s*27px[\s\S]*?height:\s*27px[\s\S]*?display:\s*inline-flex[\s\S]*?align-items:\s*center[\s\S]*?justify-content:\s*center/
   );
   assert.match(style, /\.motto__list[\s\S]*?flex-direction:\s*column/);
   assert.match(style, /\.motto__list[\s\S]*?overflow-y:\s*auto/);
@@ -150,8 +148,10 @@ test('Motto UI owns the required compact card and optional-subtitle editor inter
   assert.match(style, /\.motto\s*\{[^}]*background:\s*var\(--motto-royal-soft\);/);
   assert.match(
     style,
-    /\.motto__header\s*\{[^}]*border-bottom:\s*1px solid var\(--motto-line\);[^}]*background:\s*#fff;/
+    /\.motto-menu-bar\s*\{[^}]*height:\s*32px;[^}]*border-bottom:\s*1px solid var\(--motto-chrome-line\);[^}]*background:\s*var\(--motto-royal\);/
   );
+  assert.match(style, /--motto-chrome-line:\s*#3d4666;/);
+  assert.match(style, /--motto-chrome-ink:\s*#f6f7fc;/);
   assert.match(style, /\.motto__card-menu\s*\{[^}]*color:\s*#808ab1;/);
   assert.match(main, /await initializeRendererLanguage\(\)/);
   assert.ok(

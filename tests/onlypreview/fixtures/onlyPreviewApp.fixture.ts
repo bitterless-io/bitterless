@@ -229,12 +229,15 @@ export const test = base.extend<OnlyPreviewFixtures>({
                   (window) => window.getTitle() === 'OnlyPreview'
                 );
                 const rendererModes = standalone[0]?.contentView.children
-                  .map(
-                    (view) =>
-                      view.webContents
-                        .getURL()
-                        .match(/\/onlypreview\/(preview|shell)\/index\.html(?:$|[?#])/)?.[1]
-                  )
+                  .map((view) => {
+                    const url = view.webContents.getURL();
+                    return (
+                      url.match(/\/onlypreview\/(preview|shell)\/index\.html(?:$|[?#])/)?.[1] ||
+                      (/^bitterless-preview:\/\/(?:asset|document)\//.test(url)
+                        ? 'preview'
+                        : undefined)
+                    );
+                  })
                   .filter((mode): mode is string => typeof mode === 'string')
                   .sort();
                 return { standaloneCount: standalone.length, rendererModes };
@@ -260,11 +263,13 @@ export const test = base.extend<OnlyPreviewFixtures>({
             const window = BaseWindow.getAllWindows().find(
               (candidate) => candidate.getTitle() === 'OnlyPreview'
             );
-            const view = window?.contentView.children.find((candidate) =>
-              new RegExp(`/onlypreview/${args.mode}/index\\.html(?:$|[?#])`).test(
-                candidate.webContents.getURL()
-              )
-            );
+            const view = window?.contentView.children.find((candidate) => {
+              const url = candidate.webContents.getURL();
+              return args.mode === 'shell'
+                ? /\/onlypreview\/shell\/index\.html(?:$|[?#])/.test(url)
+                : /\/onlypreview\/preview\/index\.html(?:$|[?#])/.test(url) ||
+                    /^bitterless-preview:\/\/(?:asset|document)\//.test(url);
+            });
             if (!view) throw new Error(`OnlyPreview ${args.mode} view is unavailable`);
             return await view.webContents.executeJavaScript(args.expression, true);
           },
@@ -280,11 +285,13 @@ export const test = base.extend<OnlyPreviewFixtures>({
             const window = BaseWindow.getAllWindows().find(
               (candidate) => candidate.getTitle() === 'OnlyPreview'
             );
-            const view = window?.contentView.children.find((candidate) =>
-              new RegExp(`/onlypreview/${args.mode}/index\\.html(?:$|[?#])`).test(
-                candidate.webContents.getURL()
-              )
-            );
+            const view = window?.contentView.children.find((candidate) => {
+              const url = candidate.webContents.getURL();
+              return args.mode === 'shell'
+                ? /\/onlypreview\/shell\/index\.html(?:$|[?#])/.test(url)
+                : /\/onlypreview\/preview\/index\.html(?:$|[?#])/.test(url) ||
+                    /^bitterless-preview:\/\/(?:asset|document)\//.test(url);
+            });
             if (!view) throw new Error(`OnlyPreview ${args.mode} view is unavailable`);
             view.webContents.focus();
             for (const input of args.inputs) view.webContents.sendInputEvent(input);

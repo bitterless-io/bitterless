@@ -3,12 +3,21 @@ import { xpcRenderer } from 'electron-xpc/renderer';
 import {
   SUBMODULES_SNAPSHOT_EVENT,
   createEmptySubmodulesSnapshot,
+  submoduleDisplayName,
   type SubmoduleEntry,
-  type SubmodulesSnapshot
+  type SubmodulesSnapshot,
+  type SubmodulesSortMode,
+  type SubmodulesViewSettings
 } from '@shared/submodules/submodules.type';
 import { submodulesEmitter, submodulesSystemEmitter } from '../emitter/submodules.emitter';
 import { describeOpenError, describeScanError } from '../services/submoduleMessage.service';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+
+/** Same shape as the EyesOnAgents title filter: NFKC, case-folded, split on path/word separators. */
+const SEARCH_SEPARATOR_PATTERN = /[\s\-_./\\:|]+/u;
+
+const searchTokens = (value: string): string[] =>
+  value.normalize('NFKC').toLocaleLowerCase().split(SEARCH_SEPARATOR_PATTERN).filter(Boolean);
 
 class SubmodulesState {
   snapshot: SubmodulesSnapshot = createEmptySubmodulesSnapshot();
@@ -16,9 +25,33 @@ class SubmodulesState {
   choosing = false;
   openingPath: string | null = null;
   actionError: string | null = null;
+  /** Live filter over the visible rows. Deliberately not persisted: it is a lookup, not a setting. */
+  search = '';
 
+  /** Main-ordered rows: mismatch-first when enabled, then by name or by newest change. */
   get entries(): SubmoduleEntry[] {
     return this.snapshot.entries;
+  }
+
+  get settings(): SubmodulesViewSettings {
+    return this.snapshot.settings;
+  }
+
+  /**
+   * Every query token must appear in the row's name or declared path. Ordering is Main's, so the
+   * filter only removes rows — a 30-row list needs no throttling.
+   */
+  get visibleEntries(): SubmoduleEntry[] {
+    const tokens = searchTokens(this.search);
+    if (!tokens.length) return this.entries;
+    return this.entries.filter((entry) => {
+      const haystack = searchTokens(`${submoduleDisplayName(entry)} ${entry.path}`);
+      return tokens.every((token) => haystack.some((part) => part.includes(token)));
+    });
+  }
+
+  get isSearching(): boolean {
+    return searchTokens(this.search).length > 0;
   }
 
   get scanError(): string | null {
@@ -87,11 +120,18 @@ class SubmodulesState {
   }
 
   async openInWebStorm(entry: SubmoduleEntry): Promise<void> {
-    if (this.openingPath) return;
+    // Main reveals the submodule inside the watched root instead of opening it as its own project,
+    // so the root travels with the request; every entry comes from a scanned root, and the check is
+    // what narrows it for the call.
+    const { rootPath } = this.snapshot;
+    if (this.openingPath || !rootPath) return;
     this.openingPath = entry.absolutePath;
     this.actionError = null;
     try {
-      const result = await submodulesSystemEmitter.openInWebStorm({ path: entry.absolutePath });
+      const result = await submodulesSystemEmitter.openInWebStorm({
+        rootPath,
+        path: entry.absolutePath
+      });
       if (!result) {
         this.actionError = i18nHelper.submodules.error.ideNotFound;
         return;
@@ -102,6 +142,31 @@ class SubmodulesState {
       this.actionError = i18nHelper.submodules.error.ideNotFound;
     } finally {
       this.openingPath = null;
+    }
+  }
+
+  setSearch(value: string): void {
+    this.search = value;
+  }
+
+  clearSearch(): void {
+    this.search = '';
+  }
+
+  async setShowDiffOnTop(showDiffOnTop: boolean): Promise<void> {
+    await this.updateViewSettings({ showDiffOnTop });
+  }
+
+  async setSortMode(sortMode: SubmodulesSortMode): Promise<void> {
+    await this.updateViewSettings({ sortMode });
+  }
+
+  private async updateViewSettings(update: Partial<SubmodulesViewSettings>): Promise<void> {
+    try {
+      this.applySnapshot(await submodulesEmitter.updateViewSettings(update));
+    } catch (error) {
+      console.error('[submodules] updating the list controls failed:', error);
+      this.actionError = i18nHelper.submodules.error.settingsFailed;
     }
   }
 

@@ -37,7 +37,7 @@ const sameFileIdentity = (left, right) =>
   left.dev === right.dev &&
   left.ino === right.ino &&
   left.size === right.size &&
-  Math.trunc(left.mtimeMs) === Math.trunc(right.mtimeMs);
+  left.mtimeMs === right.mtimeMs;
 
 const searchDirectorySegments = (relativePath, isDirectory) => {
   const segments = normalizeRelative(relativePath).split('/').filter(Boolean);
@@ -108,6 +108,35 @@ const openValidatedFile = async (rootRealPath, absolutePath, beforeStat) => {
   }
 };
 
+const readCurrentStableFile = async (rootRealPath, absolutePath) => {
+  const beforeStat = await lstat(absolutePath);
+  if (!beforeStat.isFile() || beforeStat.isSymbolicLink()) return undefined;
+  const canonicalPath = await realpath(absolutePath);
+  if (canonicalPath !== absolutePath || !isContainedPath(rootRealPath, canonicalPath)) {
+    return undefined;
+  }
+  const afterStat = await lstat(absolutePath);
+  const canonicalAfter = await realpath(absolutePath);
+  if (
+    afterStat.isSymbolicLink() ||
+    !sameFileIdentity(beforeStat, afterStat) ||
+    canonicalAfter !== canonicalPath
+  ) {
+    return undefined;
+  }
+  return { stat: afterStat, canonicalPath };
+};
+
+const verifyOpenedFileAfterRead = async ({ rootRealPath, absolutePath, openedStat, handle }) => {
+  const handleStat = await handle.stat();
+  const current = await readCurrentStableFile(rootRealPath, absolutePath);
+  if (!current) return { stable: false, current: undefined };
+  return {
+    stable: sameFileIdentity(openedStat, handleStat) && sameFileIdentity(openedStat, current.stat),
+    current
+  };
+};
+
 export const createWorkspaceTraversal = async ({
   rootPath,
   config,
@@ -116,6 +145,7 @@ export const createWorkspaceTraversal = async ({
   onTreeEntry,
   onProgress,
   shouldReadContent,
+  raceHook,
   scopeRelativePath = '',
   isCancelled = () => false,
   workSlicer = createBackgroundWorkSlicer()
@@ -235,6 +265,7 @@ export const createWorkspaceTraversal = async ({
         if (!child.isFile()) continue;
         let beforeStat;
         let validated;
+        let published = false;
         try {
           beforeStat = await lstat(absolutePath);
           if (!beforeStat.isFile() || beforeStat.isSymbolicLink()) continue;
@@ -287,36 +318,74 @@ export const createWorkspaceTraversal = async ({
             };
             continue;
           }
+          await raceHook?.({ point: 'before-file-open', relativePath, absolutePath });
           validated = await openValidatedFile(rootRealPath, absolutePath, beforeStat);
           const classified = await readClassifiedSearchContent({
             handle: validated.handle,
             relativePath,
-            size: validated.openedStat.size
+            openedStat: validated.openedStat
           });
-          const afterStat = await validated.handle.stat();
-          if (!sameFileIdentity(validated.openedStat, afterStat)) {
-            throw new TypeError('File changed while indexing');
-          }
+          await raceHook?.({ point: 'after-file-read', relativePath, absolutePath });
+          const verified = await verifyOpenedFileAfterRead({
+            rootRealPath,
+            absolutePath,
+            openedStat: validated.openedStat,
+            handle: validated.handle
+          });
+          if (!verified.current) throw new TypeError('File changed while indexing');
+          const afterStat = verified.current.stat;
+          const acceptedContent = verified.stable && classified.changed !== true;
+          const mediaType = acceptedContent
+            ? classified.mediaType
+            : classifySearchMediaType(relativePath);
           const treeEntry = createTreeEntry({
             relativePath,
             stat: afterStat,
             nodeKind: 'file',
-            mediaType: classified.mediaType
+            mediaType
           });
           if (collectTreeEntries) treeEntries.push(treeEntry);
           onTreeEntry?.(treeEntry);
           statistics.fileCount += 1;
           statistics.searchFileCount += 1;
-          if (classified.contentIndexed) statistics.contentFileCount += 1;
+          if (acceptedContent && classified.contentIndexed) statistics.contentFileCount += 1;
           yield {
             ...treeEntry,
             size: afterStat.size,
             modifiedMs: Math.trunc(afterStat.mtimeMs),
-            contentIndexed: classified.contentIndexed,
-            originalContent: classified.originalContent
+            contentIndexed: acceptedContent && classified.contentIndexed,
+            originalContent: acceptedContent ? classified.originalContent : '',
+            ...(!acceptedContent ? { changed: true } : {})
           };
+          published = true;
           onProgress?.({ ...statistics });
         } catch {
+          const current = beforeStat
+            ? await readCurrentStableFile(rootRealPath, absolutePath).catch(() => undefined)
+            : undefined;
+          if (current && !sameFileIdentity(beforeStat, current.stat) && !published) {
+            const mediaType = classifySearchMediaType(relativePath);
+            const treeEntry = createTreeEntry({
+              relativePath,
+              stat: current.stat,
+              nodeKind: 'file',
+              mediaType
+            });
+            if (collectTreeEntries) treeEntries.push(treeEntry);
+            onTreeEntry?.(treeEntry);
+            statistics.fileCount += 1;
+            statistics.searchFileCount += 1;
+            yield {
+              ...treeEntry,
+              size: current.stat.size,
+              modifiedMs: Math.trunc(current.stat.mtimeMs),
+              contentIndexed: false,
+              originalContent: '',
+              changed: true
+            };
+            onProgress?.({ ...statistics });
+            continue;
+          }
           statistics.unreadableEntryCount += 1;
         } finally {
           await validated?.handle.close().catch(() => undefined);
@@ -354,29 +423,59 @@ export const countWorkspaceSearchEntries = async ({
   return count;
 };
 
-export const readSingleWorkspaceFile = async ({ rootPath, relativePath }) => {
+export const readSingleWorkspaceFile = async ({ rootPath, relativePath, raceHook }) => {
   const rootRealPath = await realpath(resolve(rootPath));
   const absolutePath = resolve(rootRealPath, ...relativePath.split('/'));
   if (!isContainedPath(rootRealPath, absolutePath)) throw new TypeError('Path escaped workspace');
   const beforeStat = await lstat(absolutePath);
   if (!beforeStat.isFile() || beforeStat.isSymbolicLink()) return undefined;
-  const validated = await openValidatedFile(rootRealPath, absolutePath, beforeStat);
+  let validated;
+  try {
+    await raceHook?.({ point: 'before-file-open', relativePath, absolutePath });
+    validated = await openValidatedFile(rootRealPath, absolutePath, beforeStat);
+  } catch {
+    const current = await readCurrentStableFile(rootRealPath, absolutePath).catch(() => undefined);
+    if (!current || sameFileIdentity(beforeStat, current.stat)) return undefined;
+    const mediaType = classifySearchMediaType(relativePath);
+    return {
+      relativePath,
+      size: current.stat.size,
+      modifiedMs: Math.trunc(current.stat.mtimeMs),
+      mediaType,
+      contentIndexed: false,
+      originalContent: '',
+      previewHint: mediaTypeToPreviewHint(mediaType),
+      changed: true
+    };
+  }
   try {
     const classified = await readClassifiedSearchContent({
       handle: validated.handle,
       relativePath,
-      size: validated.openedStat.size
+      openedStat: validated.openedStat
     });
-    const afterStat = await validated.handle.stat();
-    if (!sameFileIdentity(validated.openedStat, afterStat)) throw new TypeError('File changed');
+    await raceHook?.({ point: 'after-file-read', relativePath, absolutePath });
+    const verified = await verifyOpenedFileAfterRead({
+      rootRealPath,
+      absolutePath,
+      openedStat: validated.openedStat,
+      handle: validated.handle
+    });
+    if (!verified.current) return undefined;
+    const afterStat = verified.current.stat;
+    const acceptedContent = verified.stable && classified.changed !== true;
+    const mediaType = acceptedContent
+      ? classified.mediaType
+      : classifySearchMediaType(relativePath);
     return {
       relativePath,
       size: afterStat.size,
       modifiedMs: Math.trunc(afterStat.mtimeMs),
-      mediaType: classified.mediaType,
-      contentIndexed: classified.contentIndexed,
-      originalContent: classified.originalContent,
-      previewHint: mediaTypeToPreviewHint(classified.mediaType)
+      mediaType,
+      contentIndexed: acceptedContent && classified.contentIndexed,
+      originalContent: acceptedContent ? classified.originalContent : '',
+      previewHint: mediaTypeToPreviewHint(mediaType),
+      ...(!acceptedContent ? { changed: true } : {})
     };
   } finally {
     await validated.handle.close();

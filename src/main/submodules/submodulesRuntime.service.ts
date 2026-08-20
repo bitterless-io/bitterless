@@ -1,8 +1,8 @@
 // The one Submodules runtime for the whole application. It lives in Main because every view — the
 // standalone window and each Omni cell — must observe the same working copies without duplicating
-// filesystem watches: it reads the inventory, watches it, persists the watched root in Core SQLite,
-// and broadcasts a snapshot whenever the observed state changes. The XPC handler is a thin facade
-// over this service, so only the four API methods are exposed.
+// filesystem watches: it reads the inventory, watches it, persists the watched root and the list
+// controls in Core SQLite, and broadcasts a snapshot whenever the observed state changes. The XPC
+// handler is a thin facade over this service, so only the contract's API methods are exposed.
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import {
@@ -11,11 +11,15 @@ import {
   SUBMODULES_SETTING_KEY,
   SUBMODULES_SETTING_SUB_KEY,
   SUBMODULES_SNAPSHOT_EVENT,
+  SUBMODULES_VIEW_SETTING_SUB_KEY,
+  createDefaultSubmodulesViewSettings,
   createEmptySubmodulesSnapshot,
-  type SubmodulesSnapshot
+  type SubmodulesSnapshot,
+  type SubmodulesViewSettings
 } from '@shared/submodules/submodules.type';
 import { omniWindowHelper } from '@main/windows/omniWindow.helper';
 import { submodulesWindowHandler } from '@main/xpc/submodulesWindow.handler';
+import { orderSubmodules } from './submoduleOrder.service';
 import { collectWatchTargets, scanSubmodules } from './submoduleScanner.service';
 import { SubmoduleWatcher } from './submoduleWatcher.service';
 
@@ -31,11 +35,30 @@ const snapshotFingerprint = (snapshot: SubmodulesSnapshot): string =>
     rootPath: snapshot.rootPath,
     watching: snapshot.watching,
     error: snapshot.error,
+    settings: snapshot.settings,
     entries: snapshot.entries
   });
 
+/** Only known keys and values survive, so a hand-edited or older SQLite row cannot break the list. */
+const sanitizeViewSettings = (stored: unknown): SubmodulesViewSettings => {
+  const defaults = createDefaultSubmodulesViewSettings();
+  if (!stored || typeof stored !== 'object') return defaults;
+  const candidate = stored as Partial<SubmodulesViewSettings>;
+  return {
+    showDiffOnTop:
+      typeof candidate.showDiffOnTop === 'boolean'
+        ? candidate.showDiffOnTop
+        : defaults.showDiffOnTop,
+    sortMode:
+      candidate.sortMode === 'updated' || candidate.sortMode === 'name'
+        ? candidate.sortMode
+        : defaults.sortMode
+  };
+};
+
 class SubmodulesRuntime {
   private rootPath: string | null = null;
+  private settings: SubmodulesViewSettings = createDefaultSubmodulesViewSettings();
   private fingerprint = snapshotFingerprint(createEmptySubmodulesSnapshot());
   private restorePromise: Promise<SubmodulesSnapshot> | null = null;
   private restored = false;
@@ -85,24 +108,66 @@ class SubmodulesRuntime {
       .catch((error) => {
         console.error('[submodules] failed to clear the watched root:', error);
       });
-    return this.publish(createEmptySubmodulesSnapshot());
+    return this.publish(this.emptySnapshot());
+  }
+
+  /**
+   * Controls are persisted like the root and republished through the same broadcast, so a switch
+   * flipped in one view reorders every other Submodules surface without a second event.
+   */
+  async updateViewSettings(update: Partial<SubmodulesViewSettings>): Promise<SubmodulesSnapshot> {
+    this.settings = sanitizeViewSettings({ ...this.settings, ...update });
+    await settingEmitter
+      .upsert({
+        key: SUBMODULES_SETTING_KEY,
+        sub_key: SUBMODULES_VIEW_SETTING_SUB_KEY,
+        value: this.settings
+      })
+      .catch((error) => {
+        console.error('[submodules] failed to persist the list controls:', error);
+      });
+    return this.rescan();
   }
 
   rescan(): SubmodulesSnapshot {
-    if (!this.rootPath) return this.publish(createEmptySubmodulesSnapshot());
+    if (!this.rootPath) return this.publish(this.emptySnapshot());
 
     const scanned = scanSubmodules(this.rootPath);
     this.watcher.retarget(scanned.error ? [] : collectWatchTargets(scanned));
     this.startPolling();
-    return this.publish({ ...scanned, watching: this.watcher.active });
+    return this.publish({
+      ...scanned,
+      watching: this.watcher.active,
+      settings: this.settings,
+      entries: orderSubmodules(scanned.entries, this.settings)
+    });
+  }
+
+  /** An empty snapshot still carries the persisted controls, so the settings panel never flickers. */
+  private emptySnapshot(): SubmodulesSnapshot {
+    return { ...createEmptySubmodulesSnapshot(), settings: this.settings };
   }
 
   private async restore(): Promise<SubmodulesSnapshot> {
+    this.settings = await this.loadPersistedViewSettings();
     const persisted = await this.loadPersistedRoot();
     this.restored = true;
-    if (!persisted) return this.publish(createEmptySubmodulesSnapshot());
+    if (!persisted) return this.publish(this.emptySnapshot());
     this.rootPath = persisted;
     return this.rescan();
+  }
+
+  private async loadPersistedViewSettings(): Promise<SubmodulesViewSettings> {
+    const stored = await settingEmitter
+      .get<Partial<SubmodulesViewSettings> | null>({
+        key: SUBMODULES_SETTING_KEY,
+        sub_key: SUBMODULES_VIEW_SETTING_SUB_KEY
+      })
+      .catch((error) => {
+        console.error('[submodules] failed to read the list controls:', error);
+        return null;
+      });
+    return sanitizeViewSettings(stored);
   }
 
   private async loadPersistedRoot(): Promise<string | null> {

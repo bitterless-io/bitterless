@@ -40,8 +40,9 @@ by [EyesOnAgents Claude Observation](../features/eyes-on-agents-claude-observati
   accepted successful turn enters the same idle/unread state as the Open red dot.
 - Persist the stored Domain value and the last thread opened through EyesOnAgents across restarts.
 - Persist unread explicitly: every observed running state or terminal event sets unread; a
-  successful Open from EyesOnAgents or explicit Focus `Read all` clears confirmed terminal
-  attention until activity is observed again.
+  successful Open from EyesOnAgents, an explicit per-thread **Mark as read**, or Focus `Read all`
+  clears attention until activity is observed again. An explicit **Mark as unread** re-flags one
+  thread.
 - Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
   activated again.
 - Hide archived Codex threads and restore unarchived threads without losing their Domain or local
@@ -570,6 +571,19 @@ Both acknowledgement paths share one positive terminal allowlist — `idle`, `fa
   `is_unread` only when the row is in a confirmed terminal state. Active and `unknown` rows keep
   their latent marker, so neither a still-running turn nor a temporary authority gap can be
   acknowledged away.
+- Marking a Codex row unread while it sits at `status_source = 'discovery'`,
+  `runtime_state = 'unknown'`, no active turn, and a non-null `status_observed_at` makes it a
+  recovery candidate for the next background refresh: the poll may then settle its turn from
+  metadata-only proof and, if that proof is a fresh completion, claim one completion alert. That is
+  observation correcting the row rather than the toggle rewriting runtime state, but it is a real
+  consequence of re-flagging an `unknown` row.
+- The per-thread manual toggle writes only `is_unread` for one non-archived row, in either
+  direction and in any runtime state. It is an acknowledgement, not a deep-link receipt: it never
+  writes `last_opened_*`, runtime evidence, `updated_at`, or archive state, so it can neither forge an
+  Open nor disturb the `COALESCE(last_activity_at, updated_at)` refresh ordering. Observation stays
+  authoritative — a later accepted Hook or App Server event may overwrite a manual value, which is
+  what keeps "unread" meaning observed-and-unacknowledged. On an active or `unknown` row the flag is
+  latent until the row settles, matching `Read all`.
 - Focus `Read all` clears `is_unread` for every non-archived unread terminal row belonging to the
   Main-provided visible-provider allowlist in one repository mutation. It is not filtered by
   renderer DOM, current scroll position, Project, or title filter, it does not deep-link to

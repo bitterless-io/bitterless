@@ -69,8 +69,7 @@ export const renderOnlyPreviewMarkdown = (
     return { ok: false, reason: 'render-failed' };
   }
 
-  const encodedSize = new TextEncoder().encode(source).byteLength;
-  if (Math.max(sourceSize, encodedSize) > ONLY_PREVIEW_MAX_MARKDOWN_BYTES) {
+  if (sourceSize > ONLY_PREVIEW_MAX_MARKDOWN_BYTES) {
     return { ok: false, reason: 'too-large' };
   }
 

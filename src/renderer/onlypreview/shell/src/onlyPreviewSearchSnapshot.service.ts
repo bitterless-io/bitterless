@@ -1,6 +1,7 @@
 import { normalizeOnlyPreviewRelativePath } from '@shared/onlypreview/onlyPreview.contract';
 import type { OnlyPreviewIndexEntry } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewSearchSnapshotEvent } from '@shared/onlypreview/onlyPreviewSearch.type';
+import type { OnlyPreviewSearchMediaType } from '@shared/onlypreview/onlyPreviewSearch.type';
 
 const EVENT_KEYS = ['hostId', 'snapshot'] as const;
 const SNAPSHOT_KEYS = ['workspaceId', 'generation', 'state', 'index', 'memory'] as const;
@@ -72,7 +73,14 @@ const isNormalizedRelativePath = (value: unknown, allowEmpty = false): value is 
 
 export const getOnlyPreviewSearchMediaType = (
   previewHint: OnlyPreviewIndexEntry['previewHint']
-): OnlyPreviewIndexEntry['mediaType'] => (previewHint === 'unsupported' ? 'unknown' : previewHint);
+): OnlyPreviewSearchMediaType =>
+  previewHint === 'text' ||
+  previewHint === 'pdf' ||
+  previewHint === 'image' ||
+  previewHint === 'audio' ||
+  previewHint === 'video'
+    ? previewHint
+    : 'unknown';
 
 const isOnlyPreviewIndexEntry = (value: unknown): value is OnlyPreviewIndexEntry => {
   if (!isRecord(value) || !hasExactKeys(value, ENTRY_KEYS)) return false;

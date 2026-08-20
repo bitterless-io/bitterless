@@ -1,11 +1,16 @@
 ---
 id: onlypreview-preview-header-merge-018
 scope: Merge the PreviewHeader WebContentsView into the Preview view and collapse the header XPC protocol
-status: implemented; owner E2E verification pending
+status: superseded by onlypreview-dual-preview-region-024 (historical implementation retained)
 depends-on: []
 ---
 
 # Objective
+
+> Historical delivery note (2026-08-20): this merge was implemented, but the resulting single Vue
+> Preview topology is now superseded by task 024. The deleted third Header renderer remains deleted;
+> task 024 moves the 43px toolbar into Shell and introduces mutually exclusive Chrome/Vue content
+> views. The unresolved 018 Electron failure remains historical evidence and is not relabelled pass.
 
 Reduce the OnlyPreview preview side from two sibling native views to one. Delete the
 `previewHeader` renderer entry and its `WebContentsView`, and render the 43px header as DOM inside

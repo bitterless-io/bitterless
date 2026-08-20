@@ -2,6 +2,10 @@ import { createServer } from 'node:http';
 
 const CODEX_CALLBACK_PORT = 1455;
 const CODEX_CALLBACK_HOST = '::1';
+// `server.close()` only calls back once every connection is gone. The browser tab that received
+// the redirect keeps its socket open, so teardown is forced and deadline-bounded: a wedged listener
+// must never hold back an already-promoted credential.
+const CODEX_CALLBACK_CLOSE_TIMEOUT_MS = 2_000;
 
 export interface CodexBrowserCallbackCapture {
   waitForRedirect(): Promise<string>;
@@ -11,6 +15,8 @@ export interface CodexBrowserCallbackCapture {
 
 export interface CodexCallbackCaptureOptions {
   onUnavailable?: (message: string) => void;
+  port?: number;
+  closeTimeoutMs?: number;
 }
 
 export class CodexCallbackCaptureError extends Error {
@@ -55,7 +61,7 @@ export const createCodexBrowserCallbackCapture = async (
       reject(new CodexCallbackCaptureError('Codex IPv6 callback companion could not bind.'));
     };
     server.once('error', onError);
-    server.listen(CODEX_CALLBACK_PORT, CODEX_CALLBACK_HOST, () => {
+    server.listen(options.port ?? CODEX_CALLBACK_PORT, CODEX_CALLBACK_HOST, () => {
       server.removeListener('error', onError);
       server.on('error', () => {
         options.onUnavailable?.('listener-error');
@@ -74,7 +80,23 @@ export const createCodexBrowserCallbackCapture = async (
     if (!listening) return await (closing ?? Promise.resolve());
     listening = false;
     closing = new Promise<void>((resolve) => {
-      server.close(() => resolve());
+      let closed = false;
+      const finish = (): void => {
+        if (closed) return;
+        closed = true;
+        resolve();
+      };
+      const deadline = setTimeout(() => {
+        options.onUnavailable?.('close-timeout');
+        finish();
+      }, options.closeTimeoutMs ?? CODEX_CALLBACK_CLOSE_TIMEOUT_MS);
+      (deadline as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+      server.close(() => {
+        clearTimeout(deadline);
+        finish();
+      });
+      // Without this, a browser tab still holding the callback socket keeps `close()` pending.
+      server.closeAllConnections?.();
     });
     await closing;
   };

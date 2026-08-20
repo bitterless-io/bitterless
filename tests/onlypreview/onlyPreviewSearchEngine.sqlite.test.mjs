@@ -223,6 +223,62 @@ test('reopen reconciles changes and an incomplete build state is never treated a
   });
 });
 
+test('the tolerant extension classifier identity invalidates and rebuilds an older ready index', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    const databasePath = join(temp, 'cache', 'search.sqlite');
+    await mkdir(root);
+    await mkdir(dirname(databasePath), { recursive: true });
+    await write(join(root, 'current.markdown'), 'current tolerant body');
+    const rootRealPath = await realpath(root);
+    const config = await loadOnlyPreviewWorkspaceConfig(rootRealPath);
+    const previous = new OnlyPreviewSqliteIndex(databasePath);
+    await previous.rebuild(
+      [
+        {
+          relativePath: 'stale.txt',
+          mediaType: 'text',
+          contentIndexed: true,
+          originalContent: 'retired classifier row',
+          size: 22,
+          modifiedMs: 1
+        }
+      ],
+      {
+        workspaceHash: createHash('sha256').update(rootRealPath).digest('hex'),
+        configHash: config.hash,
+        engineHash: createHash('sha256').update('retired-search-classifier').digest('hex')
+      }
+    );
+    previous.close();
+
+    const snapshots = [];
+    const engine = createOnlyPreviewSearchEngine({
+      onSnapshot: (snapshot) => snapshots.push(snapshot)
+    });
+    const ready = await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath
+    });
+    assert.deepEqual(
+      snapshots.map(({ state }) => state),
+      ['building', 'ready']
+    );
+    assert.equal(
+      ready.index.entries.some(({ relativePath }) => relativePath === 'stale.txt'),
+      false
+    );
+    assert.equal(
+      ready.index.entries.some(({ relativePath }) => relativePath === 'current.markdown'),
+      true
+    );
+    assert.equal((await search(engine, 1, 'new-classifier', 'tolerant body')).results.length, 1);
+    await engine.shutdown();
+  });
+});
+
 test('CDC updates retain unchanged chunks and Atomics cancellation does not wait for a message', async () => {
   const index = new OnlyPreviewSqliteIndex(':memory:');
   const identity = {
@@ -757,10 +813,7 @@ test('refresh builds a private candidate while the complete active index remains
       0,
       'completed candidate rows remain invisible before atomic promotion'
     );
-    assert.deepEqual(
-      [...new Set(progress.map(({ phase }) => phase))],
-      ['counting', 'indexing']
-    );
+    assert.deepEqual([...new Set(progress.map(({ phase }) => phase))], ['counting', 'indexing']);
 
     releasePromotion();
     await refresh;

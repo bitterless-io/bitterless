@@ -1,15 +1,14 @@
 import { reactive } from 'vue';
-import { xpcRenderer } from 'electron-xpc/renderer';
 import {
   OnlyPreviewContractError,
   unwrapOnlyPreviewResult
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
-  ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT,
   type OnlyPreviewBounds,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
   type OnlyPreviewResult,
+  type OnlyPreviewPreviewPresentation,
   type OnlyPreviewSettings,
   type OnlyPreviewWorkspace
 } from '@shared/onlypreview/onlyPreview.types';
@@ -23,6 +22,7 @@ import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { OnlyPreviewCharacterCountHostGate } from '../../common/onlyPreviewCharacterCountGate.service';
+import { sameOnlyPreviewSelection } from '../../common/onlyPreviewPresentation.service';
 import {
   onlyPreviewProjectSearchStore,
   type OnlyPreviewProjectSearchContext
@@ -59,6 +59,8 @@ class OnlyPreviewShellStore {
   projectSearchMemory: OnlyPreviewSearchMemory | null = null;
   selectedRelativePath = '';
   selectedCharacterCount = 0;
+  previewPresentation: OnlyPreviewPreviewPresentation | null = null;
+  previewActionError = '';
   focusedRelativePath = '';
   expandedPaths = new Set<string>();
   projectWidth = 264;
@@ -72,6 +74,7 @@ class OnlyPreviewShellStore {
   private workspaceGeneration = 0;
   private selectionGeneration = 0;
   private searchWorkspaceGeneration = 0;
+  private previewPresentationFetchGeneration = 0;
   private readonly browseProjection = new OnlyPreviewBrowseProjectionService();
   private indexProgressState: OnlyPreviewSearchProgressState =
     createOnlyPreviewSearchProgressState();
@@ -98,6 +101,12 @@ class OnlyPreviewShellStore {
       this.index?.entries.find((entry) => entry.relativePath === this.selectedRelativePath) || null
     );
   }
+  get previewFileRef(): OnlyPreviewPreviewPresentation['fileRef'] {
+    return this.previewPresentation?.fileRef || null;
+  }
+  get selectedTextAvailable(): boolean {
+    return this.previewPresentation?.selectedTextAvailable === true;
+  }
   get treeFocusRelativePath(): string {
     const rows = this.visibleRows;
     if (rows.some((row) => row.entry.relativePath === this.focusedRelativePath)) {
@@ -117,12 +126,11 @@ class OnlyPreviewShellStore {
       return;
     }
 
-    const reportingRevision = this.beginCharacterCountTransition();
-    try {
-      await Promise.all([this.refreshSettings(), this.restoreWorkspace()]);
-    } finally {
-      this.resumeCharacterCountReporting(reportingRevision);
-    }
+    await Promise.all([
+      this.refreshSettings(),
+      this.restoreWorkspace(),
+      this.syncPreviewPresentation()
+    ]);
   }
   async chooseFolder(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
@@ -143,12 +151,7 @@ class OnlyPreviewShellStore {
   }
   async refresh(): Promise<void> {
     if (!this.workspace) return;
-    const reportingRevision = this.beginCharacterCountTransition();
-    try {
-      await this.refreshIndex();
-    } finally {
-      this.resumeCharacterCountReporting(reportingRevision);
-    }
+    await this.refreshIndex();
   }
   async openSettings(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
@@ -250,6 +253,12 @@ class OnlyPreviewShellStore {
       this.errorMessage = errorMessage(error);
     }
   }
+  async openPreviewExternally(): Promise<void> {
+    await this.runPreviewFileAction('open');
+  }
+  async revealPreviewInFolder(): Promise<void> {
+    await this.runPreviewFileAction('reveal');
+  }
   moveTreeFocus(
     key: 'ArrowDown' | 'ArrowUp' | 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End'
   ): string {
@@ -344,23 +353,18 @@ class OnlyPreviewShellStore {
     onlyPreviewProjectSearchStore.subscribeToBatches();
     subscribeOnlyPreviewShellEvents(onlyPreviewEnv.hostId, {
       workspaceChanged: () => {
-        const reportingRevision = this.beginCharacterCountTransition();
-        void this.restoreWorkspace().finally(() => {
-          this.resumeCharacterCountReporting(reportingRevision);
-        });
+        void this.restoreWorkspace();
       },
       selectionChanged: () => {
-        const reportingRevision = this.beginCharacterCountTransition();
-        void this.syncSelection().finally(() => {
-          this.resumeCharacterCountReporting(reportingRevision);
-        });
+        void this.syncSelection();
       },
       characterCountChanged: (characterCount) => {
         if (characterCount === 0) {
           this.selectedCharacterCount = 0;
           this.pendingCharacterCount = 0;
         } else if (
-          this.selectedRelativePath &&
+          this.selectedTextAvailable &&
+          this.previewFileRef &&
           this.characterCountGate.canAcceptCount(characterCount)
         ) {
           this.selectedCharacterCount = characterCount;
@@ -369,18 +373,9 @@ class OnlyPreviewShellStore {
         }
       },
       characterCountReady: (revision) => this.characterCountGate.acceptReady(revision),
-      previewControl: (revision) => {
-        this.characterCountGate.beginTransition(revision);
-        this.characterCountGate.resume(revision);
-        this.selectedCharacterCount = 0;
-        this.pendingCharacterCount = 0;
-      },
-      characterCountSyncRequested: () => this.syncCharacterCountTransition(),
+      previewPresentation: () => void this.syncPreviewPresentation(),
       refresh: () => {
-        const reportingRevision = this.beginCharacterCountTransition();
-        void this.refreshIndex().finally(() => {
-          this.resumeCharacterCountReporting(reportingRevision);
-        });
+        void this.refreshIndex();
       },
       browseListing: (listing) => this.applyBrowseListing(listing),
       searchProgress: (progress) => this.applySearchProgress(progress),
@@ -661,7 +656,6 @@ class OnlyPreviewShellStore {
     if (!hostToken || !workspace) return;
     const generation = ++this.selectionGeneration;
     this.restoreGeneration += 1;
-    this.rotateCharacterCountRevision();
     this.selectedRelativePath = relativePath;
     this.expandSelectedParents();
     try {
@@ -676,8 +670,6 @@ class OnlyPreviewShellStore {
       if (generation !== this.selectionGeneration) return;
       await this.syncSelection();
       if (generation !== this.selectionGeneration) return;
-      const recoveryRevision = this.beginCharacterCountTransition();
-      this.resumeCharacterCountReporting(recoveryRevision);
       this.errorMessage = errorMessage(error);
     }
   }
@@ -690,47 +682,63 @@ class OnlyPreviewShellStore {
     }
   }
 
-  private beginCharacterCountTransition(): string {
-    const hostId = onlyPreviewEnv.hostId;
-    if (!hostId) return '';
-    const revision = this.rotateCharacterCountRevision();
-    if (!revision) return '';
-    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, {
-      hostId,
-      revision
-    });
-    return revision;
-  }
-
-  private rotateCharacterCountRevision(): string {
-    const revision = crypto.randomUUID();
-    if (!this.characterCountGate.beginTransition(revision)) return '';
-    this.selectedCharacterCount = 0;
-    this.pendingCharacterCount = 0;
-    return revision;
-  }
-
-  private resumeCharacterCountReporting(reportingRevision: string): void {
-    if (!this.characterCountGate.resume(reportingRevision)) return;
-    if (this.selectedRelativePath && this.pendingCharacterCount > 0) {
-      this.selectedCharacterCount = this.pendingCharacterCount;
+  private async syncPreviewPresentation(): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken) return;
+    const generation = ++this.previewPresentationFetchGeneration;
+    try {
+      const presentation = unwrapOnlyPreviewResult(
+        await onlyPreviewClient.getPreviewPresentation({ hostToken })
+      );
+      if (generation !== this.previewPresentationFetchGeneration) return;
+      this.applyPreviewPresentation(presentation);
+    } catch (error) {
+      if (generation !== this.previewPresentationFetchGeneration) return;
+      this.errorMessage = errorMessage(error);
     }
-    this.pendingCharacterCount = 0;
   }
 
-  private syncCharacterCountTransition(): void {
-    if (!this.characterCountGate.isSuspended()) {
-      const reportingRevision = this.beginCharacterCountTransition();
-      this.resumeCharacterCountReporting(reportingRevision);
+  private applyPreviewPresentation(presentation: OnlyPreviewPreviewPresentation): void {
+    const current = this.previewPresentation;
+    if (presentation.hostId !== onlyPreviewEnv.hostId) return;
+    if (current && presentation.selectionRevision < current.selectionRevision) return;
+    if (
+      current &&
+      presentation.selectionRevision === current.selectionRevision &&
+      !sameOnlyPreviewSelection(current, presentation)
+    ) {
       return;
     }
-    const hostId = onlyPreviewEnv.hostId;
-    const revision = this.characterCountGate.revisionForSync();
-    if (!hostId || !revision) return;
-    xpcRenderer.broadcast(ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT, {
-      hostId,
-      revision
-    });
+    const revisionChanged = presentation.selectionRevision !== current?.selectionRevision;
+    this.previewPresentation = presentation;
+    if (revisionChanged) {
+      const reportingRevision = String(presentation.selectionRevision);
+      this.characterCountGate.beginTransition(reportingRevision);
+      this.characterCountGate.resume(reportingRevision);
+      this.selectedCharacterCount = 0;
+      this.pendingCharacterCount = 0;
+      this.previewActionError = '';
+    }
+    if (!presentation.selectedTextAvailable) {
+      this.selectedCharacterCount = 0;
+      this.pendingCharacterCount = 0;
+    }
+  }
+
+  private async runPreviewFileAction(action: 'open' | 'reveal'): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    const fileRef = this.previewFileRef;
+    if (!hostToken || !fileRef) return;
+    this.previewActionError = '';
+    try {
+      const result =
+        action === 'open'
+          ? await onlyPreviewClient.openExternally({ hostToken, ...fileRef })
+          : await onlyPreviewClient.revealInFolder({ hostToken, ...fileRef });
+      unwrapOnlyPreviewResult(result);
+    } catch (error) {
+      this.previewActionError = errorMessage(error);
+    }
   }
 }
 

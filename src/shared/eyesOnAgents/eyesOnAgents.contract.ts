@@ -449,6 +449,18 @@ export const parseEyesOnAgentsMoveThreadParams = (
   };
 };
 
+export const parseEyesOnAgentsSetThreadUnreadParams = (
+  value: unknown
+): { sessionKey: EyesOnAgentsSessionKey; isUnread: boolean } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('read state params must be an object');
+  assertOnlyKeys(value, ['sessionKey', 'isUnread'], 'read state params');
+  if (typeof value.isUnread !== 'boolean') throw new Error('isUnread must be a boolean');
+  return {
+    sessionKey: parseEyesOnAgentsSessionKey(value.sessionKey),
+    isUnread: value.isUnread
+  };
+};
+
 export const parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams = (
   value: unknown
 ): { enabled: boolean } => {

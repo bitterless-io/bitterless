@@ -151,13 +151,15 @@ const stubsPlugin = {
 };
 
 const createStore = () => {
-  const calls = { open: [], preview: [] };
+  const calls = { open: [], preview: [], readState: [] };
   return {
     calls,
+    busyAction: null,
     openingSessionKeys: new Set(),
     previewingSessionKeys: new Set(),
     openThread: async (sessionKey) => calls.open.push(sessionKey),
     previewThread: async (sessionKey) => calls.preview.push(sessionKey),
+    setThreadUnread: async (sessionKey, isUnread) => calls.readState.push([sessionKey, isUnread]),
   };
 };
 
@@ -226,9 +228,20 @@ try {
     return more;
   };
   const activeDropdown = () => [...document.body.querySelectorAll('.arco-dropdown')]
-    .find((element) => element.textContent?.includes('Preview transcript'));
+    .find((element) => /Preview transcript|Mark as (read|unread)|Open in/.test(
+      element.textContent ?? '',
+    ));
+  const optionTexts = (dropdown) => [...dropdown.querySelectorAll('.arco-dropdown-option')]
+    .map((element) => element.textContent?.replace(/\s+/gu, ' ').trim() ?? '');
+  const clickOption = async (dropdown, pattern) => {
+    const option = [...dropdown.querySelectorAll('.arco-dropdown-option')]
+      .find((element) => pattern.test(element.textContent ?? ''));
+    assert.ok(option, `Missing dropdown option matching ${pattern}`);
+    option.click();
+    await nextTick();
+  };
 
-  await test('Codex and Desktop-mapped Claude tasks retain Open', async () => {
+  await test('an openable card keeps its gestures and moves Open into the menu', async () => {
     for (const thread of [
       createThread({
         sessionKey: 'codex:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
@@ -243,37 +256,40 @@ try {
     ]) {
       const document = await render(thread);
       const card = document.querySelector('[name="eyesOnAgents__threadCard"]');
-      const open = document.querySelector('.thread-card__open-control');
       const more = document.querySelector('button.thread-card__more-control');
 
       assert.ok(card);
-      assert.equal(card.getAttribute('tabindex'), '0');
-      assert.ok(open, `${thread.provider} must retain its Open control`);
-      assert.ok(open.querySelector('button[aria-label^="Open"]'));
-      if (thread.provider === 'claude') {
-        assert.equal(more?.getAttribute('aria-label'), 'More actions');
-        assert.equal(more?.classList.contains('thread-card__more-control--unread'), false);
-      } else {
-        assert.equal(more, null, 'a Codex card owns no overflow action and hides the control');
-      }
+      assert.equal(card.getAttribute('tabindex'), '0', 'an openable card stays keyboard focusable');
+      assert.equal(
+        document.querySelector('.thread-card__open-control'),
+        null,
+        'the icon-only Open button is retired',
+      );
+      assert.ok(more, 'every card owns the overflow menu');
+      assert.equal(more.getAttribute('aria-label'), 'More actions');
       if (thread.isUnread) {
-        assert.ok(open.querySelector('.thread-card__unread-dot'));
         assert.match(card.getAttribute('aria-label') ?? '', /Unread/);
+        const status = document.querySelector('.thread-card__status[role="img"]');
+        assert.ok(status, 'the unread dot lives in the title status slot');
+        assert.equal(status.getAttribute('aria-label'), 'Unread');
+        assert.equal(document.querySelectorAll('.thread-card__unread-dot').length, 1);
       }
     }
   });
 
-  await test('CLI-only Claude hides Open without losing Preview or unread semantics', async () => {
+  await test('a routeless Claude row keeps unread and Preview without an open path', async () => {
     const document = await render(createThread({ isUnread: true }));
     const card = document.querySelector('[name="eyesOnAgents__threadCard"]');
     const more = document.querySelector('button.thread-card__more-control');
 
     assert.ok(card);
-    assert.equal(card.hasAttribute('tabindex'), false);
+    assert.equal(card.hasAttribute('tabindex'), false, 'a routeless row is not openable');
     assert.equal(document.querySelector('.thread-card__open-control'), null);
     assert.match(card.getAttribute('aria-label') ?? '', /Unread/);
-    assert.equal(more?.getAttribute('aria-label'), 'More actions, Unread');
-    assert.equal(more?.classList.contains('thread-card__more-control--unread'), true);
+    assert.ok(more, 'the overflow menu still hosts the read-state action');
+    const status = document.querySelector('.thread-card__status[role="img"]');
+    assert.ok(status, 'unread attention survives without any open affordance');
+    assert.equal(document.querySelectorAll('.thread-card__unread-dot').length, 1);
 
     const cardSource = read(
       'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue',
@@ -281,61 +297,124 @@ try {
     const cardStyles = read(
       'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less',
     );
-    assert.match(
-      cardSource,
-      /a-dropdown v-if="canPreviewTranscript"[\s\S]*?handlePreview/,
-    );
+    assert.match(cardSource, /v-if="canPreviewTranscript"[\s\S]*?handlePreview/);
     assert.match(
       cardSource,
       /const canPreviewTranscript = computed\(\(\) => props\.thread\.provider === 'claude'\s*&& props\.thread\.canPreviewTranscript\);/,
     );
-    assert.doesNotMatch(cardSource, /moveThread|Move to Domain|actions\.moveTo/);
     assert.match(cardSource, /const handleOpen[\s\S]*?if \(!canOpenThread\.value\) return;/);
     assert.match(cardSource, /const handleDoubleClick[\s\S]*?await handleOpen\(\);/);
-    assert.match(
+    assert.doesNotMatch(
+      cardSource,
+      /thread-card__unread-marker|more-control--unread|IconExternalLink :size="9"/,
+      'the retired dot hosts and the Open button are gone',
+    );
+    assert.doesNotMatch(
       cardStyles,
-      /\.thread-card__more-control--unread::after[\s\S]*?width: 6px[\s\S]*?background: #ef4444[\s\S]*?content: ''/,
+      /more-control--unread|unread-marker|thread-card__working/,
+      'the retired dot styles are gone with them',
     );
   });
 
-  await test('a Claude row without Open or Preview keeps a standalone unread marker', async () => {
-    const unreachable = await render(createThread({
+  await test('the read-state toggle is offered on every card and reports the stored flag', async () => {
+    const unreadRow = createThread({ isUnread: true, canPreviewTranscript: false });
+    let mounted = await mount(unreadRow);
+    try {
+      await openMore(mounted.host);
+      const dropdown = activeDropdown();
+      assert.ok(dropdown, 'a card with no Open and no Preview still opens its menu');
+      assert.deepEqual(optionTexts(dropdown), ['Mark as read']);
+      await clickOption(dropdown, /Mark as read/);
+      assert.deepEqual(
+        mounted.store.calls.readState,
+        [[unreadRow.sessionKey, false]],
+        'an unread row is acknowledged',
+      );
+      assert.deepEqual(mounted.store.calls.open, []);
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+
+    const readRow = createThread({ canPreviewTranscript: false });
+    mounted = await mount(readRow);
+    try {
+      await openMore(mounted.host);
+      const dropdown = activeDropdown();
+      assert.ok(dropdown);
+      assert.deepEqual(optionTexts(dropdown), ['Mark as unread']);
+      await clickOption(dropdown, /Mark as unread/);
+      assert.deepEqual(
+        mounted.store.calls.readState,
+        [[readRow.sessionKey, true]],
+        'a read row can be re-flagged',
+      );
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+
+    const workingRow = createThread({
+      runtimeState: 'working',
       isUnread: true,
       canPreviewTranscript: false,
-    }));
-    assert.equal(unreachable.querySelector('.thread-card__open-control'), null);
-    assert.equal(unreachable.querySelector('button.thread-card__more-control'), null);
-    const marker = unreachable.querySelector('.thread-card__unread-marker');
-    assert.ok(marker, 'unread attention must survive without Open or Preview');
-    assert.equal(marker.getAttribute('aria-label'), 'Unread');
-    assert.equal(unreachable.querySelectorAll('.thread-card__unread-dot').length, 1);
-
-    const readRow = await render(createThread({ canPreviewTranscript: false }));
-    assert.equal(readRow.querySelector('.thread-card__unread-marker'), null);
+    });
+    mounted = await mount(workingRow);
+    try {
+      await openMore(mounted.host);
+      const dropdown = activeDropdown();
+      assert.ok(dropdown);
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Mark as read'],
+        'the label follows the stored flag even while no dot is visible',
+      );
+      assert.equal(
+        mounted.host.querySelector('.thread-card__unread-dot'),
+        null,
+        'an active row shows its spinner instead of the latent dot',
+      );
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
   });
 
-  await test('the direct More trigger opens CLI Preview and hides Domain actions', async () => {
+  await test('the menu names the provider it opens and discloses the double-click', async () => {
     const cliThread = createThread({ isUnread: true });
     let mounted = await mount(cliThread);
     try {
       await openMore(mounted.host);
       const dropdown = activeDropdown();
       assert.ok(dropdown, 'CLI-only More must open its Arco Dropdown');
-      assert.match(dropdown.textContent ?? '', /Preview transcript/);
-      assert.doesNotMatch(dropdown.textContent ?? '', /Domain/);
-      assert.equal(
-        dropdown.querySelectorAll('.arco-dropdown-option').length,
-        1,
-        'Preview transcript must be the only overflow action',
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Mark as read', 'Preview transcript'],
+        'a routeless Claude row offers no open item',
       );
       assert.deepEqual(mounted.store.calls.open, [], 'More must not bubble into card Open');
-
-      const preview = [...dropdown.querySelectorAll('.arco-dropdown-option')]
-        .find((element) => element.textContent?.includes('Preview transcript'));
-      assert.ok(preview);
-      preview.click();
-      await nextTick();
+      await clickOption(dropdown, /Preview transcript/);
       assert.deepEqual(mounted.store.calls.preview, [cliThread.sessionKey]);
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+
+    const desktopClaude = createThread({
+      desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    mounted = await mount(desktopClaude);
+    try {
+      await openMore(mounted.host);
+      const dropdown = activeDropdown();
+      assert.ok(dropdown);
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Open in Claude (double click)', 'Mark as unread', 'Preview transcript'],
+        'the open item leads, names Claude, and discloses the gesture',
+      );
+      await clickOption(dropdown, /Open in Claude/);
+      assert.deepEqual(mounted.store.calls.open, [desktopClaude.sessionKey]);
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';
@@ -349,12 +428,16 @@ try {
     });
     mounted = await mount(codexThread);
     try {
-      assert.equal(
-        mounted.host.querySelector('button.thread-card__more-control'),
-        null,
-        'a Codex card exposes no overflow menu once Domain actions are gone',
+      await openMore(mounted.host);
+      const dropdown = activeDropdown();
+      assert.ok(dropdown, 'a Codex card owns a menu too');
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Open in Codex (double click)', 'Mark as unread'],
+        'a Codex row names Codex and never offers a transcript preview',
       );
-      assert.equal(activeDropdown(), undefined);
+      await clickOption(dropdown, /Open in Codex/);
+      assert.deepEqual(mounted.store.calls.open, [codexThread.sessionKey]);
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';
@@ -368,15 +451,15 @@ try {
         desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       }));
       assert.ok(
-        rendered.querySelector('.thread-card__working [role="img"], .thread-card__working svg'),
+        rendered.querySelector('.thread-card__status[role="status"] svg, .thread-card__status[role="status"] [role="img"]'),
         `${runtimeState} must render the active response spinner`,
       );
-      assert.ok(rendered.querySelector('.thread-card__working[role="status"]'));
+      assert.ok(rendered.querySelector('.thread-card__status[role="status"]'));
     }
     const idle = await render(createThread({
       desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     }));
-    assert.equal(idle.querySelector('.thread-card__working'), null);
+    assert.equal(idle.querySelector('.thread-card__status[role="status"]'), null);
   });
 
   await test('terminal unread states show one dot while active states show only loading', async () => {
@@ -391,7 +474,7 @@ try {
         1,
         `${runtimeState} unread must render exactly one terminal attention dot`,
       );
-      assert.equal(rendered.querySelector('.thread-card__working'), null);
+      assert.equal(rendered.querySelector('.thread-card__status[role="status"]'), null);
     }
 
     for (const runtimeState of ['working', 'waiting_approval', 'waiting_input']) {
@@ -406,7 +489,7 @@ try {
         `${runtimeState} must not render a terminal attention dot`,
       );
       assert.ok(
-        rendered.querySelector('.thread-card__working[role="status"]'),
+        rendered.querySelector('.thread-card__status[role="status"]'),
         `${runtimeState} must keep its loading indicator`,
       );
     }

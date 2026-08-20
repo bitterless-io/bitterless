@@ -1,0 +1,22 @@
+.submodules-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid oklch(92% 0.01 265);
+  background: oklch(100% 0 0);
+  min-width: 0;
+}
+
+.submodules-controls__search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Text only — no label and no glyph — so the 480px window spends this width on the option name and
+   nothing else. The dropdown is sized to the option text (`autoFitPopupMinWidth`), never clipped to
+   this width. Keep 132px: the search box takes the remaining room, and changing it moves both. */
+.submodules-controls__sort {
+  flex: 0 0 auto;
+  width: 132px;
+}

@@ -41,10 +41,10 @@ design document.
   refresh without PowerSync or logical WAL.
 - [Todo Domain board layout](features/todo-layout.md) - menu-bar Domain creation and wrapping
   300–480px Focus/Domain columns without horizontal board navigation.
-- [EyesOnAgents Focus-only board](features/eyes-on-agents-focus-board.md) - one fixed 300px Focus
-  column listing every visible thread, retired Domain UI, and Focus-owned Project/title filters.
+- [EyesOnAgents Focus-only board](features/eyes-on-agents-focus-board.md) - one full-width Focus
+  column listing every visible thread, retired Domain and Project UI, and an always-visible title filter.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
-  Project metadata and a Focus-column source filter.
+  Project metadata; its renderer filter is retired and only resolution/storage remains.
 - [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
   lifecycle, lightweight reliable delivery, Codex trust review, and App Server independence.
 - [EyesOnAgents Claude observation](features/eyes-on-agents-claude-observation.md) - provider-aware
@@ -61,8 +61,18 @@ design document.
   inside Omni with thinking disabled, one exact 60-second deadline, strict Zod output, and a
   dedicated sanitized translation log.
 - [Submodules mini app](features/submodules.md) - one watched directory, `.gitmodules`-derived
-  inventory, live per-submodule branch state, Open in the running WebStorm, and one renderer hosted
-  by both the standalone window and an Omni cell.
+  inventory, live per-submodule branch state, differ-first ordering by name or update time with a
+  per-view `Cmd+F` search, locate a submodule inside the running WebStorm, and one renderer hosted by
+  both the standalone window and an Omni cell.
+- [Submodules Open spawns a second WebStorm window](issues/submodules-open-spawns-second-webstorm-window.md) -
+  fixed; owner verification pending: the workspace root is the only project argument and the submodule
+  is revealed through a file inside it.
+- [Submodules row presentation](issues/submodules-row-presentation.md) - fixed; owner verification
+  pending: directory-name title, two-line row (name/branch/action then path/warnings), icon-only Open
+  action, and no per-row border or state dot.
+- [Submodules window DevTools and 480px minimum](issues/submodules-window-devtools-and-min-width.md) -
+  fixed; owner verification pending: debug DevTools opens after show/focus instead of behind the
+  window, and the window narrows to 480px with the restore path honoring it.
 - [Motto mini app](features/motto.md) - local title/subtitle reminder cards inside Omni with
   whole-array Web Storage persistence.
 - [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
@@ -105,7 +115,11 @@ design document.
 - [EyesOnAgents](integrations/eyes-on-agents.md) - Codex App Server plus local Claude observation,
   provider-aware persistence, retained-but-unexposed Domain storage, and Focus/unread semantics.
 - [EyesOnAgents layout](integrations/eyes-on-agents-layout.md) - standalone Mini App window,
-  single Focus observation column, compact title/action cards, and responsive interaction states.
+  single full-width Focus column, compact title/action cards, and responsive interaction states.
+- [EyesOnAgents narrow-window reflow](issues/eyes-on-agents-narrow-window-no-reflow.md) - implemented; owner verification pending:
+  the renderer root kept the retired 800px floor and clipped instead of re-laying out.
+- [EyesOnAgents connections drawer renders behind the board](issues/eyes-on-agents-connections-drawer-behind-board.md) - implemented; owner verification pending:
+  a container-anchored Arco drawer inherits no z-index, so the board painted over it.
 - [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - modal surface superseded by the Focus filter:
   separator-insensitive title matching now narrows the Focus column itself.
 
@@ -117,12 +131,12 @@ design document.
 - [Customer authentication](design/customer-authentication.md) - account lifecycle, deterministic
   login transition, password recovery, General account/logout controls, and login/home visual
   contract.
-- [OnlyPreview preview view merge and find ownership](design/onlypreview-preview-merge-find.md) -
-  two visible views, PreviewHeader folded into Preview, header-owned file actions and `Cmd+F` find
-  bar, per-type find adapters, and non-destructive Custom Highlight rendering.
+- [OnlyPreview dual preview views and find ownership](design/onlypreview-preview-merge-find.md) -
+  Shell-hosted Preview toolbar plus mutually exclusive `chromePreviewView` / `vuePreviewView`,
+  active-surface `Cmd+F` routing, and per-format find capabilities.
 - [OnlyPreview preview format coverage](design/onlypreview-format-coverage.md) - per-format engine
-  matrix for `.xlsx`/`.docx`, image and media boundaries, fidelity ceilings, truthful failure states,
-  and the Preview-engine dynamic-import exception.
+  matrix for Chromium-direct HTML/PDF and Vue-rendered code/Markdown/Office/image/media, fidelity
+  ceilings, truthful failure states, and the Vue preview-engine dynamic-import exception.
 
 ## Delivery
 
@@ -168,11 +182,15 @@ design document.
   in progress: keep GPT-5.5 in shared, Coin, and Maestro model catalogs while retaining GPT-5.6
   additions and the fixed GPT-5.5 Translator target.
 - [Codex Model login cancellation regression](issues/codex-model-login-cancel-regression.md) -
-  implemented; owner verification pending: Setting can cancel or reconnect Codex immediately,
-  while credential, provider, and renderer generations ignore late superseded results.
+  reopened 2026-08-20: the spinning Cancel was a symptom of a wedged login attempt. Provider-level
+  cancel is now deadline-bounded and instrumented, so it always settles and publishes `unavailable`.
 - [Codex browser login success stuck in Setting](issues/codex-model-login-browser-success-stuck.md) -
-  implemented in production `0.0.65`: callback ownership is restored; the affected Mac must restore
-  `http`/`https` from WebStorm to the owner's preferred default browser.
+  root cause found 2026-08-20: a succeeded login never returned because the IPv6 callback
+  companion's `server.close()` waited on a browser socket forever. Teardown now forces connections
+  shut behind a deadline.
+- [Connected Codex account is not identified](issues/codex-connected-account-not-identified.md) -
+  open: no surface names which ChatGPT account Bitterless is signed into, so a Bitterless-vs-CLI
+  account difference is invisible.
 - [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
   implemented; owner verification pending: default sites now keep stock Electron identity while
   Google/YouTube use a dedicated session with the verified honest Bitterless UA.

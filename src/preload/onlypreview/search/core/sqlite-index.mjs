@@ -27,7 +27,7 @@ import { configureSearchDatabase, createBuildStateStore } from './sqlite-schema.
 import { createBackgroundWorkSlicer } from './work-slicer.mjs';
 
 export const SEARCH_ENGINE_IDENTITY =
-  'onlypreview-contentless-full-v7:short-nonascii:tree-search-boundary:3';
+  'onlypreview-contentless-full-v7:short-nonascii:tree-search-boundary:4:tolerant-extension-size';
 
 const ftsPhrase = (query) => `"${query.replaceAll('"', '""')}"`;
 

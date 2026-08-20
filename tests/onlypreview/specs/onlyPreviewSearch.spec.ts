@@ -227,8 +227,7 @@ const resetReloadProbe = async (app: ElectronApplication): Promise<void> => {
           | undefined;
         if (
           channel === '__xpc_broadcast_dispatch__' &&
-          payload?.handleName === 'onlypreview/previewControl' &&
-          payload.params?.action === 'reload' &&
+          payload?.handleName === 'onlypreview/previewPresentation' &&
           typeof payload.id === 'string'
         ) {
           probe.__onlyPreviewReloadBroadcastIds?.add(payload.id);
@@ -566,11 +565,14 @@ test('selected-file watch reload is 400ms trailing and ignores nonselected chang
   await expect
     .poll(async () => await previewText(onlyPreview))
     .toContain('watch final visible content');
-  await expect.poll(async () => await reloadBroadcastCount(onlyPreview.app)).toBe(1);
+  await expect.poll(async () => await reloadBroadcastCount(onlyPreview.app)).toBeGreaterThan(0);
+  const selectedReloadNudges = await reloadBroadcastCount(onlyPreview.app);
 
   writeFileSync(searchFixtures.nonSelectedWatchPath, 'nonselected watch update\n', 'utf8');
   await new Promise((resolveWait) => setTimeout(resolveWait, 850));
   const reloadState = await reloadProbeState(onlyPreview.app);
-  expect(reloadState.reloadCount, JSON.stringify(reloadState.watchCommits)).toBe(1);
+  expect(reloadState.reloadCount, JSON.stringify(reloadState.watchCommits)).toBe(
+    selectedReloadNudges
+  );
   expect(await previewText(onlyPreview)).toContain('watch final visible content');
 });

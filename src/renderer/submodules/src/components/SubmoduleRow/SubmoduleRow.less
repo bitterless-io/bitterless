@@ -1,58 +1,30 @@
 .submodule-row {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border: 1px solid oklch(92% 0.01 265);
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
   border-radius: 6px;
   background: oklch(100% 0 0);
 }
 
-.submodule-row:hover {
-  border-color: oklch(78% 0.05 265);
-  background: oklch(98.5% 0.005 265);
-}
+/* No hover tint: owner decision 2026-08-20. The row carries state through the branch tag and the
+   line-2 warnings only, and the action button keeps its own hover fill. */
 
 .submodule-row--missing,
 .submodule-row--error {
   background: oklch(97% 0.02 30);
-  border-color: oklch(88% 0.05 30);
 }
 
-.submodule-row__state-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 8px;
-  border-radius: 50%;
-  background: oklch(80% 0.02 265);
-}
-
-.submodule-row__state-dot--ok {
-  background: oklch(70% 0.15 155);
-}
-
-.submodule-row__state-dot--detached {
-  background: oklch(78% 0.14 75);
-}
-
-.submodule-row__state-dot--uninitialized {
-  background: oklch(80% 0.02 265);
-}
-
-.submodule-row__state-dot--missing,
-.submodule-row__state-dot--error {
-  background: oklch(62% 0.19 25);
-}
-
-.submodule-row__identity {
+/* One row is two lines: identity on the left, branch/action then warnings on the right. */
+.submodule-row__line {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
 .submodule-row__name {
+  flex: 1 1 auto;
   font-size: 13px;
   font-weight: 600;
   color: oklch(32% 0.03 265);
@@ -62,6 +34,7 @@
 }
 
 .submodule-row__path {
+  flex: 1 1 auto;
   font-size: 11px;
   color: oklch(58% 0.02 265);
   overflow: hidden;
@@ -75,6 +48,14 @@
   gap: 8px;
   flex: 0 0 auto;
   max-width: 52%;
+}
+
+.submodule-row__warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  max-width: 60%;
 }
 
 .submodule-row__branch-tag {
@@ -133,6 +114,10 @@
   color: oklch(52% 0.17 25);
 }
 
-.submodule-row__open {
-  flex: 0 0 auto;
+/* The shared IconBtn is 32px; a list row stays compact, so it shrinks to the branch-tag scale. */
+.submodule-row__open.icon-btn.arco-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
 }

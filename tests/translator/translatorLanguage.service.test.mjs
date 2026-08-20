@@ -36,7 +36,7 @@ const loadTranslatorSchema = () => {
   const localRequire = (specifier) => {
     if (specifier === './translator.contract') {
       return {
-        TRANSLATOR_MAX_SOURCE_LENGTH: 12_000,
+        TRANSLATOR_MAX_SOURCE_LENGTH: 1_000,
         TRANSLATOR_MAX_TRANSLATION_LENGTH: 24_000
       };
     }

@@ -1,110 +1,138 @@
 ---
 id: onlypreview-find-in-file-019
-scope: Cmd+F find bar inside the merged Preview header with per-type find adapters and non-destructive highlighting
+scope: Add one Shell-owned current-file Find Bar routed by Main to native WebContents or Vue model adapters
 status: pending
-depends-on: [onlypreview-preview-header-merge-018]
-after: [onlypreview-xlsx-grid-020, onlypreview-docx-render-021]
+depends-on: [onlypreview-media-truthful-state-022]
 ---
 
 # Objective
 
-Add current-file find to OnlyPreview. `Cmd/Ctrl+F` opens a find bar in the merged Preview header; the
-query, case-sensitivity toggle, match set, active-match navigation, count, and highlighting all
-resolve inside the Preview renderer with no cross-view round trip. Monaco delegates to its own find; Markdown/HTML and PDF get
-adapters that match on their own text source and highlight through the CSS Custom Highlight API.
-Project Search (`Cmd/Ctrl+Shift+F`) stays a separate Shell-owned contract and is not modified.
+Add Chrome-like current-file find without injecting UI or scripts into previewed content. A single
+Find Bar lives in the fixed Shell Preview toolbar. Main is the sole owner of selection and find
+revisions and routes each accepted intent to the active renderer capability:
+
+- `webContents.findInPage()` for raw HTML, Chromium PDF, Markdown DOM, and sanitized DOCX DOM;
+- a revision-fenced Vue content adapter for Monaco's complete model and the XLSX Worker model;
+- unavailable for image, audio, video, unsupported, oversize, loading failure, or parse failure.
+
+Project Search (`Cmd/Ctrl+Shift+F`) remains a separate Shell feature and protocol.
 
 # Context
 
-- [OnlyPreview preview view merge and find ownership](../../design/onlypreview-preview-merge-find.md)
-  — #3 header composition, #4 find ownership and adapters
-- [Historical search architecture snapshot](../../design/onlypreview-search-architecture.md) — #3
-  keeps the two-contract split and the `findInPage()` prohibition
-- [OnlyPreview sub-application](../../features/onlypreview.md) — interaction and layout contracts to
-  extend
-- [Preview view merge](onlypreview-preview-header-merge-018.md)
+- [OnlyPreview dual preview views and find ownership](../../design/onlypreview-preview-merge-find.md)
+  — #7.1, #7.2, #7.4, and #7.5 are the authoritative contract
+- [Dual Preview Region](onlypreview-dual-preview-region-024.md)
+- [XLSX grid](onlypreview-xlsx-grid-020.md)
+- [DOCX render](onlypreview-docx-render-021.md)
+- [Media states](onlypreview-media-truthful-state-022.md)
+- [OnlyPreview sub-application](../../features/onlypreview.md)
 
 # Path
 
+- `src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts`
 - `src/main/windows/onlyPreviewWindow.helper.ts`
-- `src/renderer/onlypreview/preview/src/components/PreviewHeader/`
-- `src/renderer/onlypreview/preview/src/components/FindBar/` (new)
-- `src/renderer/onlypreview/preview/src/onlyPreviewFind.store.ts` (new)
-- `src/renderer/onlypreview/preview/src/onlyPreviewFindDom.service.ts` (new)
-- `src/renderer/onlypreview/preview/src/onlyPreviewFindPdf.service.ts` (new)
-- `src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.vue`
-- `src/renderer/onlypreview/preview/src/components/HtmlPreview/HtmlPreview.vue`
-- `src/renderer/onlypreview/preview/src/components/MonacoTextPreview/MonacoTextPreview.vue`
-- `src/renderer/onlypreview/preview/src/components/PdfPreview/PdfPreview.vue`
-- `src/renderer/onlypreview/common/onlyPreviewI18n.ts`
+- `src/main/xpc/onlyPreview.handler.ts`
 - `src/shared/onlypreview/onlyPreview.types.ts`
-- `tests/onlypreview/`
+- `src/shared/onlypreview/onlyPreview.contract.ts`
+- `src/renderer/onlypreview/shell/src/components/PreviewToolbar/`
+- `src/renderer/onlypreview/shell/src/components/FindBar/` (new)
+- `src/renderer/onlypreview/shell/src/onlyPreviewFind.store.ts` (new)
+- `src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts`
+- `src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts`
+- `src/renderer/onlypreview/shell/src/App.vue`
+- `src/renderer/onlypreview/shell/src/App.less`
+- `src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts`
+- `src/renderer/onlypreview/preview/src/onlyPreviewFindAdapter.service.ts` (new)
+- `src/renderer/onlypreview/preview/src/components/MonacoTextPreview/`
+- `src/renderer/onlypreview/preview/src/components/MarkdownPreview/`
+- `src/renderer/onlypreview/preview/src/components/SheetPreview/`
+- `src/renderer/onlypreview/preview/src/components/DocumentPreview/`
+- `src/renderer/onlypreview/common/onlyPreviewI18n.ts`
+- `tests/onlypreview/onlyPreviewFind.test.mjs` (new)
+- `tests/onlypreview/onlyPreviewSearchShell.test.mjs`
+- `tests/onlypreview/onlyPreviewCore.test.mjs`
+- `tests/onlypreview/fixtures/onlyPreviewApp.fixture.ts`
+- `tests/onlypreview/specs/onlyPreview.spec.ts`
 - `docs/features/onlypreview.md`
+- `docs/plan/analysis/onlypreview.md`
 - `docs/plan/README.md`
+
+Do not add a third toolbar renderer, a raw-page preload, DOM injection, regex, whole-word mode, or a
+second search input. Preserve unrelated owner changes and Project Search behavior.
+
+# Frontend Design
+
+The Find Bar occupies the right segment of the existing 43px Preview toolbar: compact input,
+case-sensitive toggle, previous/next, `n/m` (plus a localized partial marker when applicable), and
+close. File path truncates first; the toolbar never grows. Pending keeps controls disabled without
+showing false `0/0`; unavailable gives one quiet inline feedback. Highlight color uses the existing
+Royal Blue family, with a stronger active match. No modal, floating BrowserWindow, or extra card.
 
 # Delivery
 
-1. Route `Cmd/Ctrl+F` in Main through the existing `before-input-event` mechanism on both visible
-   views. It focuses the Preview view and broadcasts one host-scoped find-open event; only matched
-   input prevents default. Auto-repeat is ignored. Project Search's `Cmd/Ctrl+Shift+F` must not be
-   shadowed.
-2. Render the find bar in the merged header: input, case-sensitivity toggle, previous/next, `n/m`
-   count, close. Regex and whole-word are explicitly out of scope (design PQ-1, deferred). It is not
-   rendered until activated, keeps the header at 43px, and truncates the relative path instead of
-   growing. `Esc` and close both clear the query, drop every highlight, and return focus to the
-   content.
-3. Implement one in-process adapter contract (`find(query, { caseSensitive })` / `reveal` / `clear`)
-   resolved by descriptor. The toggle applies uniformly: Monaco receives it as its own find option,
-   the DOM and PDF adapters use it to pick the comparison mode and re-run the match set. If tasks 020
-   and 021 have landed, `.docx` reuses the DOM adapter unchanged and `.xlsx` registers a cell adapter
-   that matches parsed cell data and reveals the cell (its grid is virtualized, like Monaco):
-   Monaco delegates to its own find action; Markdown and HTML share the DOM adapter; PDF uses the
-   PDF adapter; image, audio, video, and unsupported register nothing and must not open the bar or
-   report fabricated matches.
-4. DOM adapter: build a flat text plus text-node offset table from the rendered article, match
-   substrings under the current case mode, and map matches back to `Range` objects. Rebuild on content,
-   selection-revision, or workspace change. Never mutate the sanitized `v-html` output.
-5. PDF adapter: cache `page.getTextContent()` for every page so the match set is independent of which
-   pages are rendered, map matches to (page, item, character offset), and build `Range` objects
-   inside the textLayer spans. Do not import the pdf.js viewer `PDFFindController`.
-6. Highlight through `CSS.highlights` with one registered name for all matches and a second for the
-   active match, styled with `::highlight()`; a single match spanning multiple text nodes is one
-   highlight built from several `Range`s. No `<mark>` insertion, no DOM mutation, no interference with
-   the existing selected-grapheme counting.
-7. `reveal` scrolls the active match into view (centered where possible) without stealing text
-   selection, and PDF reveal works for a match on any page.
-8. Keep find state per selection: switching files, workspace, or reloading clears the query, the match
-   set, and every highlight before the next content mounts.
-9. Update `docs/features/onlypreview.md` interaction and layout contracts in the same delivery: the
-   `Cmd/Ctrl+F` row (Monaco plus the new DOM/PDF behavior), the header find-bar layout, and the
-   explicit statement that current-file find never uses `webContents.findInPage()`.
+1. Add an exhaustive TypeScript adapter registry mapping every preview adapter to surface and
+   `webcontents-find | content-adapter | none`. A newly added adapter without a find decision must
+   fail typecheck. Static registry describes expected capability; runtime remains
+   `pending → ready | unavailable(reason)` for the exact host + selection revision + surface.
+2. Intercept `Cmd/Ctrl+F` in Main for Shell, Chrome, and Vue content WebContents, ignoring repeat and
+   explicitly excluding `Cmd/Ctrl+Shift+F`. For a ready capability, focus Shell then its Find input;
+   pending may open disabled and queue the current query; unavailable does not open and emits quiet
+   localized feedback. Closing restores focus to the current active content view.
+3. Shell submits only query/case/navigation/clear intent through its host capability. Main resolves
+   current host/selection/surface, increments the only accepted `findRevision` for each query,
+   case-mode change, next/previous, or clear, and immediately broadcasts accepted state. Shell and
+   content renderers never mint revisions or receive a `webContentsId`.
+4. Route Chrome HTML/PDF and Vue Markdown/DOCX to `webContents.findInPage()`. Initial/new query uses
+   `findNext: true`; next/previous uses the same query with `findNext: false`, correct direction, and
+   current case mode. Empty/close/surface change calls `stopFindInPage('clearSelection')`.
+5. Fence native results by exact host + selection revision + surface + find revision **and** internal
+   WebContents identity/generation + Electron requestId. A numeric requestId alone is insufficient
+   because views are destroyed/recreated. Accept only current `found-in-page` results; never expose
+   WebContents identity to a renderer.
+6. Implement the Vue adapter bridge with exact runtime capability/revision validation. Monaco uses
+   the complete model's literal matches, decorations, `revealRangeInCenter`, and active decoration;
+   it does not open Monaco's second find widget. XLSX delegates to its Worker-owned accepted model,
+   switches sheets, reveals, and highlights the active cell. Both return current/total/coverage.
+7. Normalize the result envelope to host + selection revision + surface + find revision,
+   `activeMatchOrdinal`, `matches`, `finalUpdate`, and `coverage`. Native, Monaco, Markdown, PDF, and
+   DOCX report complete coverage. XLSX alone may report `partial(sheet-model-cap, acceptedSheets,
+acceptedCells)` after successful hard gates; Shell must display that it is partial.
+8. `Esc`/close clears query, native selection/adapter decoration, active count, queued pending query,
+   and result revision. File/surface/workspace change, reload, renderer crash, or host revoke performs
+   the same clear before new capability readiness; stale events cannot reopen the bar or overwrite
+   new results.
+9. Case-sensitive matching is MVP. Regex and whole-word are absent. HTML scripts may change DOM;
+   explicit next/previous or resubmitting the same query re-runs native find. Canvas/WebGL pixels and
+   scanned PDFs without text layers truthfully yield zero matches; OCR is out of scope.
+10. Keep selected-text grapheme counts independent of find highlights. Chrome still has no preload;
+    native highlight requires no content injection. Add symmetric en/zh copy and update the feature,
+    analysis, and plan contracts.
 
 # Acceptance
 
-- `Cmd+F` from either view opens the find bar for Markdown, HTML, Monaco, and PDF previews, and does
-  nothing for image, audio, video, and unsupported previews.
-- Markdown/HTML: the count equals the real number of matches in the rendered article, next/previous
-  cycles through them, the active match is visually distinct, and Shell chrome text never matches.
-- Toggling case sensitivity re-runs the match set for Markdown, HTML, Monaco, and PDF, updates the
-  count, and keeps or clears the active match consistently instead of leaving stale highlights.
-- PDF: matches on pages far below the viewport are counted and reachable, and reveal scrolls to the
-  correct page with the match highlighted over the canvas.
-- Monaco: `Cmd+F` opens Monaco's own find and matches on lines outside the rendered viewport are
-  still found.
-- Closing with `Esc` or the close button removes every highlight; switching files clears query and
-  count without leaking highlights into the next file.
-- Selected-text grapheme counts in the Shell status rail still behave exactly as before while
-  highlights are active.
-- No `<mark>` element is inserted into preview content, and `webContents.findInPage()` is not used
-  anywhere.
+- `Cmd/Ctrl+F` from Shell, Chrome HTML/PDF, or Vue content focuses the one Shell Find Bar for every
+  ready capability without shadowing Project Search.
+- HTML/PDF/Markdown/DOCX use Chromium highlight/scroll/count through `findInPage()`; toolbar text is
+  not counted because it belongs to Shell. Monaco/XLSX find all accepted model data outside the
+  virtual viewport and reveal the target with app-owned highlights.
+- Case toggle and previous/next update the exact current result. Rapid `a → ab`, file/surface switch,
+  Chrome recreation, and late native/adapter results cannot install stale counts/highlights.
+- Image/audio/video/unsupported/error do not open a fake search session. Loading may show pending but
+  never `0/0`; XLSX model truncation is visibly partial with accepted coverage.
+- Close/Esc/workspace/reload/crash clears native and adapter highlights and restores active-content
+  focus. Selected-character metadata remains correct and is not inflated by highlights.
+- No raw HTML preload/script injection, third renderer/window, `<mark>` mutation, regex, whole-word,
+  or cross-WebContents aggregate search is introduced.
 
 # Verification
 
+- Focused native request mapping, stale fencing, capability-state, Shell store, Monaco adapter, and
+  XLSX adapter tests
 - `node --test tests/onlypreview/*.test.mjs`
 - `yarn typecheck:node`
+- `yarn typecheck:web` (separate unrelated baseline failures)
 - `yarn check:renderer-i18n`
-- Focused ESLint for the changed OnlyPreview TypeScript/Vue files
+- Focused ESLint for changed OnlyPreview files
 - `yarn build`
-- Electron E2E (`yarn test:e2e:onlypreview`): owner-run on request. Per the overmind rule, agents must
-  not launch Electron end-to-end suites unprompted; report them as not run instead.
 - `git diff --check`
+- Electron/Playwright E2E: **do not run**; Ral performs final find/highlight/focus verification.

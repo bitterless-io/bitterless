@@ -24,7 +24,8 @@ const emitterPlugin = {
           export const eyesOnAgentsEmitter = {
             getSnapshot: () => harness().getSnapshot(),
             openThread: (params) => harness().openThread(params),
-            previewThread: (params) => harness().previewThread(params)
+            previewThread: (params) => harness().previewThread(params),
+            setThreadUnread: (params) => harness().setThreadUnread(params)
           };
           export const subscribeEyesOnAgentsChanges = () => undefined;
         `,
@@ -143,6 +144,7 @@ test('Focus board store contract', async (context) => {
     let openSnapshot = currentSnapshot;
     const openedThreadIds = [];
     const previewedThreadIds = [];
+    const readStateCalls = [];
     globalThis.__eyesOnAgentsFocusBoardHarness = {
       getSnapshot: async () => currentSnapshot,
       openThread: async ({ sessionKey: openedSessionKey }) => {
@@ -152,18 +154,29 @@ test('Focus board store contract', async (context) => {
       previewThread: async ({ sessionKey: previewedSessionKey }) => {
         previewedThreadIds.push(previewedSessionKey);
       },
+      setThreadUnread: async (params) => {
+        readStateCalls.push(params);
+        const next = createSnapshot(currentSnapshot.threads.map((thread) =>
+          thread.sessionKey === params.sessionKey
+            ? { ...thread, isUnread: params.isUnread }
+            : thread));
+        currentSnapshot = next;
+        return next;
+      },
     };
 
     const module = await import(`${pathToFileURL(outfile).href}?v=${Date.now()}`);
     const store = module.eyesOnAgentsStore;
     const resetStore = (snapshot) => {
+      store.configureTitleQueryScheduler(null);
       store.snapshot = snapshot;
-      store.projectFilter = { type: 'all' };
+      store.titleDraft = '';
       store.titleQuery = '';
       currentSnapshot = snapshot;
       openSnapshot = snapshot;
       openedThreadIds.length = 0;
       previewedThreadIds.length = 0;
+      readStateCalls.length = 0;
     };
     const threadIds = (threads) => threads.map((thread) => thread.threadId);
     const focusIds = () => threadIds(store.focusThreads);
@@ -502,57 +515,165 @@ test('Focus board store contract', async (context) => {
       assert.deepEqual(filteredIds(), []);
     });
 
-    await context.test('title and Project filters compose', () => {
-      const overmindMatch = createThread({
-        threadId: 'overmind-match',
+    await context.test('the store keeps no Project selection state', () => {
+      const thread = createThread({
+        threadId: 'overmind-task',
         title: 'ops-git sync',
         projectName: 'overmind',
-        lastActivityAt: '2026-07-30T04:00:00.000Z',
       });
-      const overmindOther = createThread({
-        threadId: 'overmind-other',
-        title: 'release notes',
-        projectName: 'overmind',
-        lastActivityAt: '2026-07-30T03:00:00.000Z',
-      });
-      const bitterlessMatch = createThread({
-        threadId: 'bitterless-match',
-        title: 'ops-git audit',
-        projectName: 'bitterless',
-        lastActivityAt: '2026-07-30T02:00:00.000Z',
-      });
-      const unclassified = createThread({
-        threadId: 'no-project',
-        title: 'ops-git local',
-        lastActivityAt: '2026-07-30T01:00:00.000Z',
-      });
-      resetStore(createSnapshot([
-        overmindMatch,
-        overmindOther,
-        bitterlessMatch,
-        unclassified,
-      ]));
+      resetStore(createSnapshot([thread]));
 
-      store.selectProjectFilter('project:%2Fprojects%2Fovermind');
-      assert.equal(store.isProjectFiltered, true);
-      assert.deepEqual(filteredIds(), ['overmind-match', 'overmind-other']);
+      for (const member of [
+        'projectFilter',
+        'projectOptions',
+        'projectFilterValue',
+        'isProjectFiltered',
+        'selectProjectFilter',
+      ]) {
+        assert.equal(
+          store[member],
+          undefined,
+          `${member} must be gone with the retired Project filter`,
+        );
+      }
+      assert.deepEqual(filteredIds(), ['overmind-task']);
 
-      store.titleQuery = 'ops git';
-      assert.deepEqual(filteredIds(), ['overmind-match']);
-
-      store.selectProjectFilter('none');
-      assert.deepEqual(filteredIds(), ['no-project']);
-
-      store.selectProjectFilter('all');
+      store.titleQuery = 'overmind';
       assert.deepEqual(
         filteredIds(),
-        ['overmind-match', 'bitterless-match', 'no-project'],
+        [],
+        'a Project name must never satisfy the title filter',
       );
+    });
 
-      const allOption = store.projectOptions.find((option) => option.type === 'all');
-      const noneOption = store.projectOptions.find((option) => option.type === 'none');
-      assert.equal(allOption.count, 4, 'option counts stay unfiltered by the title query');
-      assert.equal(noneOption.count, 1);
+    await context.test(
+      'a throttled draft commits the last input and never an earlier one',
+      () => {
+        const opsGit = createThread({
+          threadId: 'ops-git',
+          title: 'ops-git sync',
+          lastActivityAt: '2026-07-30T02:00:00.000Z',
+        });
+        const release = createThread({
+          threadId: 'release',
+          title: 'release notes',
+          lastActivityAt: '2026-07-30T01:00:00.000Z',
+        });
+        resetStore(createSnapshot([opsGit, release]));
+
+        let scheduled = 0;
+        store.configureTitleQueryScheduler(() => {
+          scheduled += 1;
+        });
+
+        store.setTitleDraft('o');
+        store.setTitleDraft('op');
+        store.setTitleDraft('ops git');
+
+        assert.equal(scheduled, 3, 'each keystroke asks the scheduler to run');
+        assert.equal(store.titleDraft, 'ops git');
+        assert.equal(store.titleQuery, '', 'typing must not filter before a commit');
+        assert.deepEqual(filteredIds(), ['ops-git', 'release']);
+
+        store.commitTitleQuery();
+        assert.equal(store.titleQuery, 'ops git', 'the trailing commit uses the newest draft');
+        assert.deepEqual(filteredIds(), ['ops-git']);
+
+        const repeats = scheduled;
+        store.setTitleDraft('ops git');
+        assert.equal(scheduled, repeats, 'an unchanged draft schedules nothing');
+
+        store.clearTitleQuery();
+        assert.equal(store.titleDraft, '');
+        assert.equal(store.titleQuery, '');
+        store.commitTitleQuery();
+        assert.deepEqual(
+          filteredIds(),
+          ['ops-git', 'release'],
+          'a late trailing commit after a close can only re-apply the empty query',
+        );
+      },
+    );
+
+    await context.test('without a scheduler the draft commits synchronously', () => {
+      const thread = createThread({ threadId: 'ops', title: 'ops-git' });
+      const other = createThread({ threadId: 'other', title: 'release notes' });
+      resetStore(createSnapshot([thread, other]));
+
+      store.setTitleDraft('ops');
+      assert.equal(store.titleQuery, 'ops');
+      assert.deepEqual(filteredIds(), ['ops']);
+    });
+
+    await context.test('sorting and tokenizing are memoized instead of recomputed', async () => {
+      const working = createThread({
+        threadId: 'working',
+        title: 'ops-git sync',
+        runtimeState: 'working',
+        statusObservedAt: '2026-07-30T02:00:00.000Z',
+      });
+      const idle = createThread({
+        threadId: 'idle',
+        title: 'release notes',
+        lastActivityAt: '2026-07-30T01:00:00.000Z',
+      });
+      resetStore(createSnapshot([idle, working]));
+
+      const first = store.focusThreads;
+      assert.equal(store.focusThreads, first, 'one snapshot must reuse its sorted array');
+      assert.deepEqual(threadIds(first), ['working', 'idle']);
+
+      currentSnapshot = createSnapshot([idle, working]);
+      await store.loadSnapshot(true);
+      const second = store.focusThreads;
+      assert.notEqual(second, first, 'a new snapshot re-sorts once');
+      assert.deepEqual(threadIds(second), ['working', 'idle']);
+
+      store.setTitleDraft('ops');
+      assert.deepEqual(filteredIds(), ['working']);
+
+      const idleRow = store.snapshot.threads.find((row) => row.threadId === 'idle');
+      idleRow.title = 'renamed release';
+      store.setTitleDraft('renamed');
+      assert.deepEqual(
+        filteredIds(),
+        ['idle'],
+        'a changed title must invalidate its cached tokens',
+      );
+    });
+
+    await context.test('the manual read-state toggle is a no-op when nothing would change', async () => {
+      const unread = createThread({
+        threadId: 'unread-row',
+        title: 'Unread row',
+        isUnread: true,
+        lastActivityAt: '2026-07-30T02:00:00.000Z',
+      });
+      const read = createThread({
+        threadId: 'read-row',
+        title: 'Read row',
+        lastActivityAt: '2026-07-30T01:00:00.000Z',
+      });
+      resetStore(createSnapshot([unread, read]));
+
+      await store.setThreadUnread(sessionKey('unread-row'), true);
+      assert.deepEqual(readStateCalls, [], 'the flag it already has is never written');
+
+      await store.setThreadUnread(sessionKey('missing-row'), true);
+      assert.deepEqual(readStateCalls, [], 'an unknown session key is refused locally');
+
+      await store.setThreadUnread(sessionKey('unread-row'), false);
+      assert.deepEqual(readStateCalls, [{ sessionKey: sessionKey('unread-row'), isUnread: false }]);
+      assert.deepEqual(threadIds(store.readableFocusThreads), [], 'the row is acknowledged');
+
+      await store.setThreadUnread(sessionKey('read-row'), true);
+      assert.deepEqual(readStateCalls[1], { sessionKey: sessionKey('read-row'), isUnread: true });
+      assert.deepEqual(
+        threadIds(store.readableFocusThreads),
+        ['read-row'],
+        'a re-flagged terminal row becomes Read all eligible again'
+      );
+      assert.deepEqual(focusIds(), ['read-row', 'unread-row'], 'and it moves into the unread tier');
     });
 
     await context.test('a filtered card keeps the established Open contract', async () => {

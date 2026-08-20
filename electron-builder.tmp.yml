@@ -65,6 +65,7 @@ fileAssociations:
   - ext:
       - txt
       - md
+      - markdown
       - json
       - yaml
       - yml

@@ -1,16 +1,23 @@
 <template>
   <div name="motto__app" class="motto">
-    <header name="motto__header" class="motto__header">
-      <h1 class="motto__title">{{ i18nHelper.motto.title }}</h1>
-      <IconBtn
-        name="motto__add"
-        class="motto__add"
-        :title="i18nHelper.motto.add"
-        :aria-label="i18nHelper.motto.add"
-        @click="mottoStore.openAddEditor()"
-      >
-        <IconPlus :size="18" aria-hidden="true" />
-      </IconBtn>
+    <header name="motto__menuBar" class="motto-menu-bar">
+      <div name="motto__menuBar__identity" class="motto-menu-bar__identity">
+        <IconNotes :size="16" aria-hidden="true" />
+        <h1 class="motto-menu-bar__title">{{ i18nHelper.motto.title }}</h1>
+      </div>
+
+      <div name="motto__menuBar__actions" class="motto-menu-bar__actions">
+        <a-button
+          name="motto__add"
+          size="mini"
+          type="text"
+          :title="i18nHelper.motto.add"
+          :aria-label="i18nHelper.motto.add"
+          @click="mottoStore.openAddEditor()"
+        >
+          <template #icon><IconPlus :size="16" aria-hidden="true" /></template>
+        </a-button>
+      </div>
     </header>
 
     <a-alert

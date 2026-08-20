@@ -1,20 +1,27 @@
 import type { FileHandle } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import {
+  ONLY_PREVIEW_MAX_DOCUMENT_BYTES,
+  ONLY_PREVIEW_MAX_HTML_BYTES,
+  ONLY_PREVIEW_MAX_IMAGE_BYTES,
+  ONLY_PREVIEW_MAX_MARKDOWN_BYTES,
+  ONLY_PREVIEW_MAX_PDF_BYTES,
+  ONLY_PREVIEW_MAX_SHEET_BYTES,
   ONLY_PREVIEW_MAX_TEXT_BYTES,
   type OnlyPreviewDescriptor,
   type OnlyPreviewKind,
+  type OnlyPreviewPreviewAdapterId,
   type OnlyPreviewTextContent,
   type OnlyPreviewTextEncoding
 } from '@shared/onlypreview/onlyPreview.types';
-import type { OpenedOnlyPreviewFile } from './onlyPreviewWorkspace.registry';
 import {
-  onlyPreviewAssetRegistry,
-  type OnlyPreviewAssetRegistry
-} from './onlyPreviewAsset.registry';
+  onlyPreviewWorkspaceRegistry,
+  type OpenedOnlyPreviewFile,
+  type OnlyPreviewWorkspaceRegistry
+} from './onlyPreviewWorkspace.registry';
 
-const SAMPLE_BYTES = 8_192;
+const READ_CHUNK_BYTES = 64 * 1024;
 
 const TEXT_EXTENSIONS = new Set([
   '.c',
@@ -41,6 +48,7 @@ const TEXT_EXTENSIONS = new Set([
   '.less',
   '.log',
   '.lua',
+  '.markdown',
   '.md',
   '.mdx',
   '.mjs',
@@ -67,6 +75,32 @@ const TEXT_EXTENSIONS = new Set([
   '.zsh'
 ]);
 
+const KNOWN_TEXT_BASENAMES = new Set([
+  'dockerfile',
+  'containerfile',
+  'makefile',
+  'rakefile',
+  'gemfile',
+  'procfile',
+  'readme',
+  'license',
+  'notice',
+  'changelog',
+  'authors',
+  'codeowners',
+  '.gitignore',
+  '.gitattributes',
+  '.gitmodules',
+  '.dockerignore',
+  '.editorconfig',
+  '.npmrc',
+  '.yarnrc',
+  '.prettierrc',
+  '.eslintrc',
+  '.stylelintrc',
+  '.babelrc'
+]);
+
 const PDF_EXTENSIONS = new Set(['.pdf']);
 const IMAGE_EXTENSIONS = new Set([
   '.png',
@@ -81,6 +115,8 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.ogv', '.mov', '.m4v']);
+const SHEET_EXTENSIONS = new Set(['.xlsx', '.xlsm']);
+const DOCUMENT_EXTENSIONS = new Set(['.docx']);
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -103,7 +139,10 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.webm': 'video/webm',
   '.ogv': 'video/ogg',
   '.mov': 'video/quicktime',
-  '.m4v': 'video/x-m4v'
+  '.m4v': 'video/x-m4v',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 };
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
@@ -126,6 +165,7 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.less': 'less',
   '.lua': 'lua',
   '.md': 'markdown',
+  '.markdown': 'markdown',
   '.mdx': 'markdown',
   '.mjs': 'javascript',
   '.mts': 'typescript',
@@ -148,41 +188,29 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.zsh': 'shell'
 };
 
+const basenameOf = (relativePath: string): string => basename(relativePath).toLowerCase();
+
 const extensionOf = (relativePath: string): string => {
-  const name = relativePath.split('/').at(-1)?.toLowerCase() ?? '';
+  const name = basenameOf(relativePath);
   if (name === '.env' || name.startsWith('.env.')) return '.env';
-  return extname(relativePath).toLowerCase();
+  return extname(name);
 };
 
 export const classifyOnlyPreviewExtension = (relativePath: string): OnlyPreviewKind => {
+  const name = basenameOf(relativePath);
   const extension = extensionOf(relativePath);
-  if (TEXT_EXTENSIONS.has(extension)) return 'text';
+  if (TEXT_EXTENSIONS.has(extension) || KNOWN_TEXT_BASENAMES.has(name)) return 'text';
   if (PDF_EXTENSIONS.has(extension)) return 'pdf';
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
+  if (SHEET_EXTENSIONS.has(extension)) return 'sheet';
+  if (DOCUMENT_EXTENSIONS.has(extension)) return 'document';
   return 'unsupported';
 };
 
-export const isProbablyOnlyPreviewText = (buffer: Uint8Array): boolean => {
-  if (buffer.length === 0) return true;
-  if (
-    buffer.length >= 2 &&
-    ((buffer[0] === 0xff && buffer[1] === 0xfe) || (buffer[0] === 0xfe && buffer[1] === 0xff))
-  )
-    return true;
-  let controlBytes = 0;
-  for (const byte of buffer) {
-    if (byte === 0) return false;
-    if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 12 && byte !== 13) {
-      controlBytes += 1;
-    }
-  }
-  return controlBytes / buffer.length <= 0.1;
-};
-
 const startsWithBytes = (buffer: Uint8Array, expected: readonly number[]): boolean =>
-  expected.every((byte, index) => buffer[index] === byte);
+  buffer.length >= expected.length && expected.every((byte, index) => buffer[index] === byte);
 
 const asciiAt = (buffer: Uint8Array, start: number, length: number): string =>
   String.fromCharCode(...buffer.slice(start, start + length));
@@ -228,122 +256,155 @@ const matchesSignature = (extension: string, sample: Uint8Array): boolean => {
     return asciiAt(sample, 4, 4) === 'ftyp';
   }
   if (extension === '.webm') return startsWithBytes(sample, [0x1a, 0x45, 0xdf, 0xa3]);
-  return true;
+  if (SHEET_EXTENSIONS.has(extension) || DOCUMENT_EXTENSIONS.has(extension)) {
+    return startsWithBytes(sample, [0x50, 0x4b, 0x03, 0x04]);
+  }
+  return false;
+};
+
+const signatureBytesFor = (extension: string): number => {
+  if (extension === '.svg') return 512;
+  if (extension === '.avif') return 40;
+  return 16;
 };
 
 const readBounded = async (handle: FileHandle, byteLimit: number): Promise<Buffer> => {
-  const buffer = Buffer.alloc(byteLimit);
+  const chunks: Buffer[] = [];
   let offset = 0;
-  while (offset < buffer.length) {
-    const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+  while (offset < byteLimit) {
+    const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, byteLimit - offset));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, offset);
     if (bytesRead === 0) break;
+    chunks.push(chunk.subarray(0, bytesRead));
     offset += bytesRead;
   }
-  return buffer.subarray(0, offset);
+  return Buffer.concat(chunks, offset);
 };
 
-const decodeUtf16 = (buffer: Uint8Array, bigEndian: boolean): string => {
-  const payload = buffer.subarray(2);
-  if (payload.length % 2 !== 0) {
-    throw new OnlyPreviewContractError(
-      'INVALID_ENCODING',
-      'UTF-16 text has an incomplete code unit.'
-    );
+const decodeOnlyPreviewText = (
+  buffer: Uint8Array
+): { text: string; encoding: OnlyPreviewTextEncoding } => {
+  if (startsWithBytes(buffer, [0xff, 0xfe])) {
+    return {
+      text: new TextDecoder('utf-16le').decode(buffer.subarray(2)),
+      encoding: 'utf-16le'
+    };
   }
-  const normalized = bigEndian ? Uint8Array.from(payload) : payload;
-  if (bigEndian) {
-    for (let index = 0; index < normalized.length; index += 2) {
-      const left = normalized[index];
-      normalized[index] = normalized[index + 1];
-      normalized[index + 1] = left;
-    }
+  if (startsWithBytes(buffer, [0xfe, 0xff])) {
+    return {
+      text: new TextDecoder('utf-16be').decode(buffer.subarray(2)),
+      encoding: 'utf-16be'
+    };
   }
-  return new TextDecoder('utf-16le', { fatal: true }).decode(normalized);
+  const payload = startsWithBytes(buffer, [0xef, 0xbb, 0xbf]) ? buffer.subarray(3) : buffer;
+  return { text: new TextDecoder('utf-8').decode(payload), encoding: 'utf-8' };
+};
+
+const byteLimitForDescriptor = (relativePath: string, kind: OnlyPreviewKind): number | null => {
+  const extension = extensionOf(relativePath);
+  if (kind === 'text') {
+    if (extension === '.md') return ONLY_PREVIEW_MAX_MARKDOWN_BYTES;
+    if (extension === '.html' || extension === '.htm') return ONLY_PREVIEW_MAX_HTML_BYTES;
+    return ONLY_PREVIEW_MAX_TEXT_BYTES;
+  }
+  if (kind === 'pdf') return ONLY_PREVIEW_MAX_PDF_BYTES;
+  if (kind === 'image') return ONLY_PREVIEW_MAX_IMAGE_BYTES;
+  if (kind === 'sheet') return ONLY_PREVIEW_MAX_SHEET_BYTES;
+  if (kind === 'document') return ONLY_PREVIEW_MAX_DOCUMENT_BYTES;
+  return null;
+};
+
+const textAdapterFor = (
+  relativePath: string
+): Extract<OnlyPreviewPreviewAdapterId, 'monaco' | 'markdown-dom'> | null => {
+  const extension = extensionOf(relativePath);
+  if (extension === '.html' || extension === '.htm') return null;
+  return extension === '.md' ? 'markdown-dom' : 'monaco';
 };
 
 export class OnlyPreviewClassifierService {
-  constructor(private readonly assets: OnlyPreviewAssetRegistry) {}
+  constructor(private readonly workspaces: OnlyPreviewWorkspaceRegistry) {}
 
   async describe(file: OpenedOnlyPreviewFile): Promise<OnlyPreviewDescriptor> {
     const extension = extensionOf(file.relativePath);
-    const sample = await readBounded(file.fileHandle, SAMPLE_BYTES);
-    let kind = classifyOnlyPreviewExtension(file.relativePath);
-    if (kind === 'unsupported' && isProbablyOnlyPreviewText(sample)) kind = 'text';
-    if (kind === 'text' && !isProbablyOnlyPreviewText(sample)) kind = 'unsupported';
-
-    const mimeType =
-      MIME_BY_EXTENSION[extension] ?? (kind === 'text' ? 'text/plain' : 'application/octet-stream');
-    const signatureMatches =
-      kind === 'unsupported' || kind === 'text' ? true : matchesSignature(extension, sample);
+    const kind = classifyOnlyPreviewExtension(file.relativePath);
     const descriptor: OnlyPreviewDescriptor = {
       workspaceId: file.workspace.workspaceId,
       relativePath: file.relativePath,
-      name: file.relativePath.split('/').at(-1) ?? file.relativePath,
+      name: basename(file.relativePath),
       displayPath: file.realPath,
       extension,
       kind,
-      mimeType,
+      mimeType:
+        MIME_BY_EXTENSION[extension] ??
+        (kind === 'text' ? 'text/plain; charset=utf-8' : 'application/octet-stream'),
       language: kind === 'text' ? (LANGUAGE_BY_EXTENSION[extension] ?? 'plaintext') : '',
       size: file.size,
       modifiedAt: file.modifiedAt
     };
-    if (!signatureMatches) {
+
+    const byteLimit = byteLimitForDescriptor(file.relativePath, kind);
+    if (byteLimit !== null && file.size > byteLimit) {
+      descriptor.previewError = {
+        code: 'TEXT_TOO_LARGE',
+        message: `Preview is limited to ${byteLimit} bytes for this format.`
+      };
+      return descriptor;
+    }
+    if (kind === 'unsupported' || kind === 'text') return descriptor;
+
+    const sample = await readBounded(file.fileHandle, signatureBytesFor(extension));
+    await this.workspaces.assertOpenedFileCurrent(file);
+    if (!matchesSignature(extension, sample)) {
       descriptor.previewError = {
         code: 'SIGNATURE_MISMATCH',
         message: 'The file signature does not match its extension.'
       };
-      return descriptor;
-    }
-    if (kind === 'pdf' || kind === 'image' || kind === 'audio' || kind === 'video') {
-      descriptor.assetUrl = this.assets.issue(file, mimeType);
     }
     return descriptor;
   }
 
-  async readText(file: OpenedOnlyPreviewFile): Promise<OnlyPreviewTextContent> {
-    if (file.size > ONLY_PREVIEW_MAX_TEXT_BYTES) {
+  async readText(
+    file: OpenedOnlyPreviewFile,
+    adapterId: Extract<OnlyPreviewPreviewAdapterId, 'monaco' | 'markdown-dom'>
+  ): Promise<OnlyPreviewTextContent> {
+    const expectedAdapter = textAdapterFor(file.relativePath);
+    if (
+      expectedAdapter !== adapterId ||
+      classifyOnlyPreviewExtension(file.relativePath) !== 'text'
+    ) {
       throw new OnlyPreviewContractError(
-        'TEXT_TOO_LARGE',
-        `Text preview is limited to ${ONLY_PREVIEW_MAX_TEXT_BYTES / 1024 / 1024} MiB.`
+        'INVALID_INPUT',
+        'The selected file does not belong to this text adapter.'
       );
     }
-    const buffer = await readBounded(file.fileHandle, ONLY_PREVIEW_MAX_TEXT_BYTES + 1);
-    if (buffer.length > ONLY_PREVIEW_MAX_TEXT_BYTES) {
+    const byteLimit =
+      adapterId === 'markdown-dom' ? ONLY_PREVIEW_MAX_MARKDOWN_BYTES : ONLY_PREVIEW_MAX_TEXT_BYTES;
+    if (file.size > byteLimit) {
       throw new OnlyPreviewContractError(
         'TEXT_TOO_LARGE',
-        `Text preview is limited to ${ONLY_PREVIEW_MAX_TEXT_BYTES / 1024 / 1024} MiB.`
+        `Text preview is limited to ${byteLimit} bytes.`
       );
     }
-    let encoding: OnlyPreviewTextEncoding = 'utf-8';
-    let text: string;
-    try {
-      if (startsWithBytes(buffer, [0xff, 0xfe])) {
-        encoding = 'utf-16le';
-        text = decodeUtf16(buffer, false);
-      } else if (startsWithBytes(buffer, [0xfe, 0xff])) {
-        encoding = 'utf-16be';
-        text = decodeUtf16(buffer, true);
-      } else {
-        const payload = startsWithBytes(buffer, [0xef, 0xbb, 0xbf]) ? buffer.subarray(3) : buffer;
-        if (!isProbablyOnlyPreviewText(payload)) {
-          throw new OnlyPreviewContractError('BINARY_TEXT', 'This file contains binary data.');
-        }
-        text = new TextDecoder('utf-8', { fatal: true }).decode(payload);
-      }
-    } catch (error) {
-      if (error instanceof OnlyPreviewContractError) throw error;
-      throw new OnlyPreviewContractError('INVALID_ENCODING', 'The text encoding is not supported.');
+    const buffer = await readBounded(file.fileHandle, byteLimit + 1);
+    if (buffer.length > byteLimit) {
+      throw new OnlyPreviewContractError(
+        'TEXT_TOO_LARGE',
+        `Text preview is limited to ${byteLimit} bytes.`
+      );
     }
+    await this.workspaces.assertOpenedFileCurrent(file);
+    const decoded = decodeOnlyPreviewText(buffer);
     return {
       workspaceId: file.workspace.workspaceId,
       relativePath: file.relativePath,
-      text,
-      encoding,
+      text: decoded.text,
+      encoding: decoded.encoding,
       size: buffer.length
     };
   }
 }
 
 export const onlyPreviewClassifierService = new OnlyPreviewClassifierService(
-  onlyPreviewAssetRegistry
+  onlyPreviewWorkspaceRegistry
 );

@@ -1,0 +1,65 @@
+.onlypreview-file-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.onlypreview-file-actions__button.arco-btn {
+  height: 29px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--onlypreview-divider);
+  border-radius: 5px;
+  background: var(--onlypreview-surface);
+  color: var(--onlypreview-ink);
+  cursor: pointer;
+}
+
+.onlypreview-file-actions__button--primary.arco-btn {
+  border-color: var(--onlypreview-royal);
+  color: #fff;
+  background: var(--onlypreview-royal);
+}
+
+.onlypreview-file-actions__button.arco-btn:hover,
+.onlypreview-file-actions__button.arco-btn:focus-visible {
+  border-color: var(--onlypreview-focus);
+  color: var(--onlypreview-royal);
+  background: var(--onlypreview-royal-soft);
+}
+
+.onlypreview-file-actions__button--primary.arco-btn:hover,
+.onlypreview-file-actions__button--primary.arco-btn:focus-visible {
+  color: #fff;
+  background: #5d678f;
+}
+
+.onlypreview-file-actions__button.arco-btn:focus-visible {
+  outline: 2px solid var(--onlypreview-focus);
+  outline-offset: 1px;
+}
+
+.onlypreview-file-actions__error {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  color: var(--onlypreview-danger);
+}
+
+@media (max-width: 940px) {
+  .onlypreview-file-actions__label {
+    display: none;
+  }
+
+  .onlypreview-file-actions__button.arco-btn {
+    width: 29px;
+    padding: 0;
+  }
+}

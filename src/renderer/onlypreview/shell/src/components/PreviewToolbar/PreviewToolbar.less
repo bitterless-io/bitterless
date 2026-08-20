@@ -1,0 +1,75 @@
+.onlypreview-preview-toolbar {
+  width: 100%;
+  height: 43px;
+  min-width: 0;
+  flex: 0 0 43px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--onlypreview-divider);
+  color: var(--onlypreview-ink);
+  background: #fbfbfd;
+}
+
+.onlypreview-preview-toolbar__identity {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  overflow: hidden;
+}
+
+.onlypreview-preview-toolbar__file-name,
+.onlypreview-preview-toolbar__file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onlypreview-preview-toolbar__file-name {
+  flex: 0 1 auto;
+  color: var(--onlypreview-ink);
+  font-weight: 650;
+}
+
+.onlypreview-preview-toolbar__file-path {
+  flex: 1 2 auto;
+  color: var(--onlypreview-muted);
+  font-size: 10px;
+}
+
+.onlypreview-preview-toolbar__trailing {
+  min-width: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.onlypreview-preview-toolbar__badge {
+  height: 21px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid var(--onlypreview-divider);
+  border-radius: 4px;
+  color: var(--onlypreview-muted);
+  background: var(--onlypreview-surface);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 760px) {
+  .onlypreview-preview-toolbar__file-path,
+  .onlypreview-preview-toolbar__badge {
+    display: none;
+  }
+}

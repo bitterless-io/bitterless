@@ -61,7 +61,13 @@ onMounted(() => {
   document.addEventListener('selectionchange', reportSelection);
   if (renderResult.value.ok) {
     onlyPreviewPreviewStore.armCharacterCountReporting(props.reportingRevision);
+    onlyPreviewPreviewStore.reportSurfaceReady(props.reportingRevision);
+    return;
   }
+  onlyPreviewPreviewStore.reportSurfaceError(
+    props.reportingRevision,
+    renderResult.value.reason === 'too-large' ? 'TEXT_TOO_LARGE' : 'OPERATION_FAILED'
+  );
 });
 onBeforeUnmount(() => {
   document.removeEventListener('selectionchange', reportSelection);

@@ -387,12 +387,16 @@ export class CodexCredentialService {
     if (attempt.capture) {
       const capture = attempt.capture;
       attempt.capture = null;
+      logCodexLifecycle(attempt.id, 'cancel-capture-closing');
       await capture.close().catch(() => undefined);
+      logCodexLifecycle(attempt.id, 'cancel-capture-closed');
     }
     if (attempt.promotedStore) {
       const promotedStore = attempt.promotedStore;
       attempt.promotedStore = null;
+      logCodexLifecycle(attempt.id, 'cancel-promotion-reverting');
       await promotedStore.delete(CODEX_PROVIDER).catch(() => undefined);
+      logCodexLifecycle(attempt.id, 'cancel-promotion-reverted');
     }
     logCodexLifecycle(attempt.id, 'cancel-completed');
   }
@@ -789,13 +793,21 @@ export class CodexCredentialService {
         const capture = attempt.capture;
         attempt.capture = null;
         capture.cancel(new CodexCredentialError('cancelled', 'Codex sign-in attempt ended.'));
+        logCodexLifecycle(attempt.id, 'cleanup-capture-closing');
         await capture.close().catch(() => undefined);
+        logCodexLifecycle(attempt.id, 'cleanup-capture-closed');
       }
-      await browserAuthorization?.catch(() => undefined);
+      if (browserAuthorization) {
+        logCodexLifecycle(attempt.id, 'cleanup-authorization-awaiting');
+        await browserAuthorization.catch(() => undefined);
+        logCodexLifecycle(attempt.id, 'cleanup-authorization-settled');
+      }
       if ((attempt.cancelled || attempt.id !== this.loginAttemptId) && attempt.promotedStore) {
         const promotedStore = attempt.promotedStore;
         attempt.promotedStore = null;
+        logCodexLifecycle(attempt.id, 'cleanup-promotion-reverting');
         await promotedStore.delete(CODEX_PROVIDER).catch(() => undefined);
+        logCodexLifecycle(attempt.id, 'cleanup-promotion-reverted');
       }
       logCodexLifecycle(attempt.id, 'attempt-cleanup-completed');
     }

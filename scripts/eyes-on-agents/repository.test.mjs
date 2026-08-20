@@ -3109,6 +3109,82 @@ try {
     0,
     'visible-provider Read all may acknowledge Claude terminal unread evidence'
   );
+
+  // Manual per-thread read state: writes only is_unread, on any runtime state, both providers.
+  const manualReadSessionKey = `codex:${readAllIdleId}`;
+  const manualBefore = { ...db.prepare(
+    `SELECT is_unread, last_opened_turn_id, last_opened_at, runtime_state, updated_at,
+       last_activity_at, status_observed_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(manualReadSessionKey) };
+  assert.equal(manualBefore.is_unread, 0, 'the manual case starts from an acknowledged row');
+  assert.deepEqual(
+    await repository.setThreadUnread({ sessionKey: manualReadSessionKey, isUnread: true }),
+    { changed: true },
+    'a manual unread flag is written'
+  );
+  assert.deepEqual({ ...db.prepare(
+    `SELECT is_unread, last_opened_turn_id, last_opened_at, runtime_state, updated_at,
+       last_activity_at, status_observed_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(manualReadSessionKey) }, {
+    ...manualBefore,
+    is_unread: 1
+  }, 'manual unread must touch nothing but is_unread');
+  assert.deepEqual(
+    await repository.setThreadUnread({ sessionKey: manualReadSessionKey, isUnread: true }),
+    { changed: false },
+    'setting the flag it already has reports no change'
+  );
+  assert.deepEqual(
+    await repository.setThreadUnread({ sessionKey: manualReadSessionKey, isUnread: false }),
+    { changed: true }
+  );
+  assert.deepEqual({ ...db.prepare(
+    `SELECT is_unread, last_opened_turn_id, last_opened_at, updated_at
+     FROM eyes_on_agents_thread WHERE session_key = ?`
+  ).get(manualReadSessionKey) }, {
+    is_unread: 0,
+    last_opened_turn_id: manualBefore.last_opened_turn_id,
+    last_opened_at: manualBefore.last_opened_at,
+    updated_at: manualBefore.updated_at
+  }, 'manual read is an acknowledgement, never a deep-link receipt');
+  db.prepare(
+    `UPDATE eyes_on_agents_thread SET runtime_state = 'working' WHERE session_key = ?`
+  ).run(manualReadSessionKey);
+  assert.deepEqual(
+    await repository.setThreadUnread({ sessionKey: manualReadSessionKey, isUnread: true }),
+    { changed: true },
+    'an active row may still carry a latent manual unread marker'
+  );
+  db.prepare(
+    `UPDATE eyes_on_agents_thread SET runtime_state = 'idle', is_unread = 0, archive_state = 'archived'
+     WHERE session_key = ?`
+  ).run(manualReadSessionKey);
+  assert.deepEqual(
+    await repository.setThreadUnread({ sessionKey: manualReadSessionKey, isUnread: true }),
+    { changed: false },
+    'an archived row refuses a manual read-state write'
+  );
+  db.prepare(
+    `UPDATE eyes_on_agents_thread SET archive_state = 'active' WHERE session_key = ?`
+  ).run(manualReadSessionKey);
+  await assert.rejects(
+    () => repository.setThreadUnread({ sessionKey: manualReadSessionKey }),
+    /Thread read state params are invalid/
+  );
+  await assert.rejects(
+    () => repository.setThreadUnread({
+      sessionKey: manualReadSessionKey,
+      isUnread: true,
+      extra: 1
+    }),
+    /Thread read state params are invalid/
+  );
+  await assert.rejects(
+    () => repository.setThreadUnread({ sessionKey: 'codex:not-a-uuid', isUnread: true }),
+    /threadId must be a UUID/
+  );
   await repository.reconcileClaudeAgentStates({
     agents: [{
       threadId: claudeThreadId,

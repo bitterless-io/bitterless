@@ -523,28 +523,24 @@ export const en = {
       minimize: 'Minimize',
       maximize: 'Maximize or restore',
       close: 'Close EyesOnAgents',
-      open: 'Open',
+      openInCodex: 'Open in Codex',
+      openInClaude: 'Open in Claude',
+      doubleClickHint: '(double click)',
+      markRead: 'Mark as read',
+      markUnread: 'Mark as unread',
       previewTranscript: 'Preview transcript',
       more: 'More actions',
-      delete: 'Delete',
-      cancel: 'Cancel',
       readAll: 'Read all',
       searchTitles: 'Search thread titles',
-      clearTitleSearch: 'Clear title search'
+      searchTitlesMac: 'Search titles (⌘F)',
+      searchTitlesWindows: 'Search titles (Ctrl+F)'
     },
     board: {
-      focus: 'Focus',
-      projectFilterLabel: 'Filter by Project',
-      allProjects: 'All',
-      noProject: 'No project',
       emptyFocus: 'Nothing needs attention',
-      emptyProject: 'No threads match this Project',
-      emptyNoProject: 'No threads without a Project',
       emptyTitleSearch: 'No thread titles match this search',
       emptyTitle: 'No agent tasks yet',
       emptyBody: 'Connect Codex or refresh local Claude sessions to start monitoring.',
-      loading: 'Loading observation board',
-      titleSearchPlaceholder: 'Search titles'
+      loading: 'Loading observation board'
     },
     thread: {
       untitled: 'Untitled agent task',
@@ -699,6 +695,11 @@ export const en = {
       refresh: 'Refresh',
       openInWebStorm: 'WebStorm',
       dismiss: 'Dismiss',
+      settings: 'List settings',
+      search: 'Search submodules',
+      searchShortcutMac: 'Search (⌘F)',
+      searchShortcutWin: 'Search (Alt+F)',
+      clearSearch: 'Clear search',
       minimize: 'Minimize',
       maximize: 'Maximize',
       close: 'Close'
@@ -706,6 +707,16 @@ export const en = {
     watch: {
       live: 'Live',
       paused: 'Paused'
+    },
+    sort: {
+      label: 'Sort',
+      name: 'Name',
+      updated: 'Update time'
+    },
+    settings: {
+      title: 'List settings',
+      showDiffOnTop: 'Show differ on top',
+      showDiffOnTopHint: 'List submodules that differ from .gitmodules before every other row.'
     },
     branch: {
       detached: 'Detached HEAD',
@@ -721,7 +732,8 @@ export const en = {
       body:
         'Choose a directory whose .gitmodules declares Git submodules. Bitterless remembers the ' +
         'directory and keeps every branch up to date while you work.',
-      noSubmodules: 'This directory declares no submodules.'
+      noSubmodules: 'This directory declares no submodules.',
+      noMatches: 'No submodule matches this search.'
     },
     error: {
       rootMissing: 'The saved directory no longer exists.',
@@ -734,7 +746,8 @@ export const en = {
       headMalformed: 'HEAD malformed',
       chooseFailed: 'The directory could not be opened.',
       openPathMissing: 'That submodule directory no longer exists.',
-      ideNotFound: 'WebStorm could not be launched on this machine.'
+      ideNotFound: 'WebStorm could not be launched on this machine.',
+      settingsFailed: 'The list settings could not be saved.'
     }
   },
   common: {

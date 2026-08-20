@@ -4,13 +4,38 @@ export const ONLY_PREVIEW_MAX_INDEX_DEPTH = 32;
 export const ONLY_PREVIEW_MAX_TEXT_BYTES = 8 * 1024 * 1024;
 export const ONLY_PREVIEW_MAX_MARKDOWN_BYTES = 1024 * 1024;
 export const ONLY_PREVIEW_MAX_HTML_BYTES = 1024 * 1024;
+export const ONLY_PREVIEW_MAX_PDF_BYTES = 100 * 1024 * 1024;
+export const ONLY_PREVIEW_MAX_IMAGE_BYTES = 100 * 1024 * 1024;
+export const ONLY_PREVIEW_MAX_SHEET_BYTES = 25 * 1024 * 1024;
+export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+export const ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES = 25 * 1024 * 1024;
+export const ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES = 100 * 1024 * 1024;
 export const ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH = 16_384;
 
 export type OnlyPreviewHostKind = 'standalone' | 'settings' | 'guide';
 export type OnlyPreviewHostRole = 'content' | 'settings' | 'guide';
 export type OnlyPreviewNodeKind = 'file' | 'directory' | 'symlink';
-export type OnlyPreviewKind = 'text' | 'pdf' | 'image' | 'audio' | 'video' | 'unsupported';
+export type OnlyPreviewKind =
+  | 'text'
+  | 'pdf'
+  | 'image'
+  | 'audio'
+  | 'video'
+  | 'sheet'
+  | 'document'
+  | 'unsupported';
 export type OnlyPreviewTextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
+export type OnlyPreviewPreviewSurface = 'chrome' | 'vue';
+export type OnlyPreviewPreviewAdapterId =
+  | 'monaco'
+  | 'markdown-dom'
+  | 'html-page'
+  | 'chromium-pdf'
+  | 'image'
+  | 'audio'
+  | 'video'
+  | 'unsupported';
+export type OnlyPreviewPreviewPresentationStatus = 'empty' | 'loading' | 'ready' | 'unavailable';
 
 export type OnlyPreviewErrorCode =
   | 'INVALID_INPUT'
@@ -24,8 +49,6 @@ export type OnlyPreviewErrorCode =
   | 'PATH_NOT_REGULAR_FILE'
   | 'PATH_UNSUPPORTED_DEVICE'
   | 'TEXT_TOO_LARGE'
-  | 'BINARY_TEXT'
-  | 'INVALID_ENCODING'
   | 'SIGNATURE_MISMATCH'
   | 'SETTINGS_INVALID'
   | 'INDEX_FAILED'
@@ -77,7 +100,7 @@ export interface OnlyPreviewIndex {
 }
 
 export interface OnlyPreviewDescriptorError {
-  code: 'SIGNATURE_MISMATCH' | 'UNSUPPORTED_CODEC';
+  code: 'TEXT_TOO_LARGE' | 'SIGNATURE_MISMATCH' | 'UNSUPPORTED_CODEC';
   message: string;
 }
 
@@ -129,21 +152,41 @@ export interface OnlyPreviewHostEvent {
   hostId: string;
 }
 
+export interface OnlyPreviewPreviewPresentation extends OnlyPreviewHostEvent {
+  workspaceId: string | null;
+  selectionRevision: number;
+  surface: OnlyPreviewPreviewSurface;
+  adapterId: OnlyPreviewPreviewAdapterId;
+  status: OnlyPreviewPreviewPresentationStatus;
+  fileRef: OnlyPreviewFileRef | null;
+  descriptor: OnlyPreviewDescriptor | null;
+  error: OnlyPreviewErrorPayload | null;
+  selectedTextAvailable: boolean;
+}
+
+export interface OnlyPreviewPreviewRuntimeRequest extends OnlyPreviewHostRequest {
+  previewRuntimeToken: string;
+}
+
+export interface OnlyPreviewPreviewRevisionRequest extends OnlyPreviewPreviewRuntimeRequest {
+  selectionRevision: number;
+}
+
+export interface OnlyPreviewTextReadRequest
+  extends OnlyPreviewPreviewRevisionRequest, OnlyPreviewFileRef {
+  adapterId: 'monaco' | 'markdown-dom';
+}
+
+export interface OnlyPreviewPreviewErrorRequest extends OnlyPreviewPreviewRevisionRequest {
+  errorCode: OnlyPreviewErrorCode;
+}
+
 export interface OnlyPreviewCharacterCountEvent extends OnlyPreviewHostEvent {
   characterCount: number;
 }
 
 export interface OnlyPreviewCharacterCountRevisionEvent extends OnlyPreviewHostEvent {
   revision: string;
-}
-
-/**
- * Broadcast by the Preview view when a render or reload transition starts. The Shell needs it because
- * its character-count gate must learn about transitions whose revision originates on the Preview side,
- * such as a watch-driven reload. The Preview view never subscribes to it.
- */
-export interface OnlyPreviewPreviewControlEvent extends OnlyPreviewCharacterCountRevisionEvent {
-  action: 'render' | 'reload' | 'clear';
 }
 
 export const ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT = 'onlypreview/workspaceChanged' as const;
@@ -155,11 +198,7 @@ export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged'
 export const ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT =
   'onlypreview/characterCountChanged' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT = 'onlypreview/characterCountReady' as const;
-export const ONLY_PREVIEW_CHARACTER_COUNT_TRANSITION_EVENT =
-  'onlypreview/characterCountTransition' as const;
-export const ONLY_PREVIEW_CHARACTER_COUNT_SYNC_REQUEST_EVENT =
-  'onlypreview/characterCountSyncRequest' as const;
-export const ONLY_PREVIEW_PREVIEW_CONTROL_EVENT = 'onlypreview/previewControl' as const;
+export const ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT = 'onlypreview/previewPresentation' as const;
 
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
@@ -169,18 +208,22 @@ export interface OnlyPreviewApi {
   restoreWorkspace(
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
-  describeFile(
-    params: OnlyPreviewHostRequest & OnlyPreviewFileRef
-  ): Promise<OnlyPreviewResult<OnlyPreviewDescriptor>>;
-  readText(
-    params: OnlyPreviewHostRequest & OnlyPreviewFileRef
-  ): Promise<OnlyPreviewResult<OnlyPreviewTextContent>>;
+  readText(params: OnlyPreviewTextReadRequest): Promise<OnlyPreviewResult<OnlyPreviewTextContent>>;
   selectStandaloneFile(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;
   updatePreviewBounds(
     params: OnlyPreviewHostRequest & OnlyPreviewBounds
   ): Promise<OnlyPreviewResult<void>>;
+  getPreviewPresentation(
+    params: OnlyPreviewHostRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewPreviewPresentation>>;
+  getVuePreviewPresentation(
+    params: OnlyPreviewPreviewRuntimeRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewPreviewPresentation>>;
+  reportPreviewReset(params: OnlyPreviewPreviewRevisionRequest): Promise<OnlyPreviewResult<void>>;
+  reportPreviewReady(params: OnlyPreviewPreviewRevisionRequest): Promise<OnlyPreviewResult<void>>;
+  reportPreviewError(params: OnlyPreviewPreviewErrorRequest): Promise<OnlyPreviewResult<void>>;
   minimizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   toggleMaximizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   closeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;

@@ -123,3 +123,83 @@ preferred default browser; Bitterless must not override that preference in appli
 - With the current Main process owning the required loopback listeners, the browser opens only
   after the ownership checks, and the log shows callback receipt through final credential
   verification.
+
+## 2026-08-20 recurrence — root cause found: companion teardown wedges the succeeded login
+
+Status of this section: fixed; owner re-verification pending.
+
+Reported as "Cancel does nothing, the button spins forever". Triage showed cancel was the second
+symptom, not the origin — see
+[Codex model login cannot be cancelled](codex-model-login-cancel-regression.md).
+
+### Evidence
+
+`Bitterless_DEBUG_PROD/logs/main.log`, attempt 1 at 2026-08-20T02:19Z, with the login lifecycle
+fully instrumented:
+
+```text
+02:19:25.085  callback-listener-verified   localhost=ipv6:404 ipv4=ipv4:404 ipv6=ipv6:404
+02:19:33.566  callback-request-received    family=ipv6 path=/auth/callback hasCode=true hasState=true
+02:19:33.569  callback-response-sent       family=ipv6 status=200
+02:19:33.570  callback-forwarded-to-pi     owner=bitterless family=ipv6
+02:19:35.146  token-exchange-response      status=200
+02:19:35.164  token-credential-stored      stored=true
+02:19:35.165  promotion-completed
+02:19:35.169  status-verification-resolved connected=true unavailable=false
+02:19:35.170  attempt-succeeded
+02:19:35.171  cleanup-capture-closing      <- last line for this attempt
+```
+
+`cleanup-capture-closing` occurs once in the file. `cleanup-capture-closed` and
+`attempt-cleanup-completed` occur zero times, while the process kept logging for another 92 seconds
+(UpdateService at 02:20:21, shutdown at 02:21:07).
+
+`localhost=ipv6:404` also records why the IPv6 path is the live one on this machine: `localhost`
+resolves to `::1` first, so the browser follows Pi's announced `localhost:1455` URL to the
+Bitterless companion rather than to Pi's IPv4 listener.
+
+### Root cause
+
+The login fully succeeds — token exchanged, credential stored, promoted, and verified
+`connected=true` — and then `performConnect`'s `finally` blocks forever on `await capture.close()`.
+`credentials.connect()` therefore never settles, `ModelProviderService.connect()` never commits
+`ready`, and Setting and Translator sit on `Waiting for Codex sign-in…` with a working credential
+already on disk.
+
+`CodexBrowserCallbackCapture.close()` wrapped `server.close()` alone. Measured on Node 24:
+
+| connection state left by the client | `server.close()` callback |
+|---|---|
+| idle keep-alive after a completed response | fires in ~0 ms |
+| request sent, response never written | never fires |
+| headers started, never terminated | never fires |
+
+Node ≥ 19 closes *idle* connections on `server.close()`, which is why an isolated probe never
+reproduced it; a connection that is mid-request or awaiting a response is held instead.
+`server.closeAllConnections()` clears both wedged states in ~0-2 ms.
+
+### Repair
+
+`close()` now forces connections shut and cannot outlive a deadline:
+
+- `server.closeAllConnections()` after `server.close()`, so a held browser socket cannot pin the
+  listener.
+- `CODEX_CALLBACK_CLOSE_TIMEOUT_MS` (2 s) backstop that resolves `close()` and reports
+  `close-timeout` through `onUnavailable`, so teardown can never again hold a promoted credential.
+- `port` and `closeTimeoutMs` options so the real capture is testable.
+- `performConnect`'s `finally` now logs `cleanup-capture-closing` / `cleanup-capture-closed`,
+  `cleanup-authorization-awaiting` / `cleanup-authorization-settled`, and
+  `cleanup-promotion-reverting` / `cleanup-promotion-reverted`, so any future stall in cleanup names
+  itself instead of ending the log.
+
+### Not the cause: two different ChatGPT accounts
+
+The owner's local `codex` CLI was signed into account A while the Bitterless browser flow selected
+account B. That mismatch did not cause this hang: the log shows account B's login succeeding end to
+end, and the two credentials never share a file — the CLI uses `~/.codex/auth.json`, Bitterless uses
+`<userData>/cowork/pi/auth.json` (`codexPaths.ts`).
+
+It does expose a real gap: no surface anywhere names the connected account. `ModelProviderRecord`
+carries no account identity, so Setting shows only `Codex connected` and Translator shows only
+`Codex · GPT-5.5 · low`. Tracked separately in
+[Connected Codex account is not identified](codex-connected-account-not-identified.md).

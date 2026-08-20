@@ -360,11 +360,25 @@
         "
       ></div>
 
-      <section
-        ref="previewHostRef"
-        name="onlypreview__previewHost"
-        class="onlypreview-shell__preview-host"
-      ></section>
+      <section name="onlypreview__previewRegion" class="onlypreview-shell__preview-region">
+        <PreviewToolbar />
+        <div
+          ref="previewHostRef"
+          name="onlypreview__previewContentHost"
+          class="onlypreview-shell__preview-host"
+        >
+          <div
+            v-if="onlyPreviewShellStore.previewPresentation?.status === 'unavailable'"
+            name="onlypreview__previewUnavailable"
+            class="onlypreview-shell__preview-unavailable"
+            role="alert"
+          >
+            <IconAlertTriangle :size="24" aria-hidden="true" />
+            <strong>{{ onlyPreviewI18n.preview.failedTitle }}</strong>
+            <span>{{ onlyPreviewShellStore.previewPresentation.error?.message }}</span>
+          </div>
+        </div>
+      </section>
     </main>
 
     <footer
@@ -374,7 +388,12 @@
       aria-live="polite"
     >
       <span v-if="onlyPreviewShellStore.selectedEntry" class="onlypreview-shell__file-state">
-        <template v-if="onlyPreviewShellStore.selectedCharacterCount > 0">
+        <template
+          v-if="
+            onlyPreviewShellStore.selectedTextAvailable &&
+            onlyPreviewShellStore.selectedCharacterCount > 0
+          "
+        >
           <span class="onlypreview-shell__selection-state">{{ selectedCharacterStatus }}</span>
           <span aria-hidden="true">·</span>
         </template>
@@ -409,6 +428,7 @@ import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onl
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import ProjectSearchResults from './components/ProjectSearchResults/ProjectSearchResults.vue';
+import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
 import { onlyPreviewProjectSearchStore } from './onlyPreviewProjectSearch.store';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 

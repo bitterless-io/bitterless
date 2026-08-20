@@ -4,17 +4,17 @@
   --eyes-ink: #1e2237;
   --eyes-muted: #68708a;
   --eyes-canvas: oklch(0.985 0 0);
-  --eyes-column: oklch(0.96 0 0);
-  --eyes-column-hover: oklch(0.93 0 0);
-  --eyes-column-focus: oklch(0.94 0.04 60);
+  /* theme.ts arcoblue-5 / arcoblue-2: text-action ink and its hover surface */
+  --eyes-accent: #606b9d;
+  --eyes-hover-surface: #e2e4eb;
   --eyes-item: oklch(1 0 0);
   --eyes-item-hover: oklch(0.98 0 0);
   --eyes-item-focus: oklch(0.94 0.02 274);
   --eyes-focus-ring: oklch(0.7 0.1 250);
   width: 100vw;
   height: 100vh;
-  min-width: 800px;
-  min-height: 600px;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -22,15 +22,11 @@
   background: var(--eyes-canvas);
 }
 
-.eyes-on-agents--omni {
-  min-width: 0;
-  min-height: 0;
-}
-
 .eyes-on-agents__main {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  padding: 8px;
   position: relative;
   -webkit-app-region: no-drag;
 }

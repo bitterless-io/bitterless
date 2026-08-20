@@ -25,6 +25,7 @@ import {
   parseEyesOnAgentsSetClaudeProviderEnabledParams,
   parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams,
   parseEyesOnAgentsSessionKeyParams,
+  parseEyesOnAgentsSetThreadUnreadParams,
 } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import { codexHookBridgeServer } from '../eyesOnAgents/codexHookBridge.server';
 import type { CodexHookOutboxCoverageGap } from '../eyesOnAgents/codexHookOutbox.service';
@@ -320,6 +321,15 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
 
   async markAllRead(): Promise<EyesOnAgentsSnapshot> {
     return await eyesOnAgentsService.markAllRead();
+  }
+
+  async setThreadUnread(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+    isUnread: boolean;
+  }): Promise<EyesOnAgentsSnapshot> {
+    return await eyesOnAgentsService.setThreadUnread(
+      parseEyesOnAgentsSetThreadUnreadParams(params)
+    );
   }
 
   async installCodexBridge(): Promise<EyesOnAgentsSnapshot> {

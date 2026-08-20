@@ -157,6 +157,15 @@ export class OnlyPreviewIndexService {
         const nodeKind = toNodeKind(entryStat);
         const previewHint =
           nodeKind === 'directory' ? 'unsupported' : classifyOnlyPreviewExtension(relativePath);
+        const mediaType =
+          nodeKind === 'file' &&
+          (previewHint === 'text' ||
+            previewHint === 'pdf' ||
+            previewHint === 'image' ||
+            previewHint === 'audio' ||
+            previewHint === 'video')
+            ? previewHint
+            : 'unknown';
         entries.push({
           relativePath,
           parentRelativePath,
@@ -165,7 +174,7 @@ export class OnlyPreviewIndexService {
           size: entryStat.size,
           modifiedAt: entryStat.mtimeMs,
           previewHint,
-          mediaType: nodeKind === 'file' && previewHint !== 'unsupported' ? previewHint : 'unknown',
+          mediaType,
           isText: nodeKind === 'file' && previewHint === 'text'
         });
         visitedSinceYield += 1;

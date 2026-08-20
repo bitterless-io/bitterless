@@ -1920,6 +1920,29 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     return { changed: Number(result.changes) > 0 };
   }
 
+  // Manual acknowledgement, not a deep-link receipt: this writes only is_unread. It leaves
+  // last_opened_*, runtime evidence, and updated_at alone, so it cannot forge an Open or
+  // disturb the COALESCE(last_activity_at, updated_at) refresh ordering.
+  async setThreadUnread(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+    isUnread: boolean;
+  }): Promise<EyesOnAgentsRepositoryMutationResult> {
+    if (!params || Object.keys(params).sort().join(',') !== 'isUnread,sessionKey' ||
+      typeof params.isUnread !== 'boolean') {
+      throw new Error('Thread read state params are invalid');
+    }
+    const sessionKey = parseEyesOnAgentsSessionKey(params.sessionKey);
+    const nextValue = params.isUnread ? 1 : 0;
+    const result = await sqliteHelper.safeRun(
+      `UPDATE eyes_on_agents_thread SET is_unread = ?
+       WHERE session_key = ? AND is_deleted = 0
+         AND archive_state <> 'archived'
+         AND is_unread <> ?`,
+      [nextValue, sessionKey, nextValue]
+    );
+    return { changed: Number(result.changes) > 0 };
+  }
+
   async createDomain(params: { title: string }): Promise<void> {
     const title = parseEyesOnAgentsText(params?.title, 'Domain title', 80, false) as string;
     const transaction = sqliteManager.db.transaction(() => {

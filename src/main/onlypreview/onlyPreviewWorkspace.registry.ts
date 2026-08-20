@@ -51,6 +51,9 @@ export interface ResolvedOnlyPreviewFile {
 
 export interface OpenedOnlyPreviewFile extends ResolvedOnlyPreviewFile {
   fileHandle: FileHandle;
+  deviceId: bigint;
+  inode: bigint;
+  modifiedTimeNanoseconds: bigint;
 }
 
 const isContainedPath = (root: string, candidate: string): boolean => {
@@ -259,12 +262,52 @@ export class OnlyPreviewWorkspaceRegistry {
         ...file,
         size: Number(openedStat.size),
         modifiedAt: Number(openedStat.mtimeMs),
+        deviceId: openedStat.dev,
+        inode: openedStat.ino,
+        modifiedTimeNanoseconds: openedStat.mtimeNs,
         fileHandle
       };
     } catch (error) {
       await fileHandle?.close().catch(() => undefined);
       if (error instanceof OnlyPreviewContractError) throw error;
       throwOnlyPreviewPathAccessError(error, 'The selected file could not be opened safely.');
+    }
+  }
+
+  async assertOpenedFileCurrent(file: OpenedOnlyPreviewFile): Promise<void> {
+    const openedStat = await file.fileHandle.stat({ bigint: true });
+    if (
+      !openedStat.isFile() ||
+      openedStat.dev !== file.deviceId ||
+      openedStat.ino !== file.inode ||
+      openedStat.size !== BigInt(file.size) ||
+      openedStat.mtimeNs !== file.modifiedTimeNanoseconds
+    ) {
+      throw new OnlyPreviewContractError(
+        'PATH_NOT_FOUND',
+        'The selected file changed while it was being read.'
+      );
+    }
+
+    const current = await this.openFile(file.host.hostToken, {
+      workspaceId: file.workspace.workspaceId,
+      relativePath: file.relativePath
+    });
+    try {
+      if (
+        current.realPath !== file.realPath ||
+        current.size !== file.size ||
+        current.deviceId !== file.deviceId ||
+        current.inode !== file.inode ||
+        current.modifiedTimeNanoseconds !== file.modifiedTimeNanoseconds
+      ) {
+        throw new OnlyPreviewContractError(
+          'PATH_NOT_FOUND',
+          'The selected file was replaced while it was being read.'
+        );
+      }
+    } finally {
+      await current.fileHandle.close().catch(() => undefined);
     }
   }
 

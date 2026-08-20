@@ -116,6 +116,42 @@ const waitForRenderer = async <T>(
   }
 };
 
+const waitForRawPreview = async (
+  app: ElectronApplication,
+  authority: 'asset' | 'document'
+): Promise<{
+  url: string;
+  childCount: number;
+  preferences: Electron.WebPreferences;
+}> => {
+  let current = {
+    url: '',
+    childCount: 0,
+    preferences: {} as Electron.WebPreferences
+  };
+  await expect
+    .poll(async () => {
+      current = await app.evaluate(({ BaseWindow }, expectedAuthority) => {
+        const window = BaseWindow.getAllWindows().find(
+          (candidate) => candidate.getTitle() === 'OnlyPreview'
+        );
+        const view = window?.contentView.children.find((candidate) =>
+          new RegExp(`^bitterless-preview://${expectedAuthority}/`).test(
+            candidate.webContents.getURL()
+          )
+        );
+        return {
+          url: view?.webContents.getURL() ?? '',
+          childCount: window?.contentView.children.length ?? 0,
+          preferences: view?.webContents.getLastWebPreferences() ?? {}
+        };
+      }, authority);
+      return current.url;
+    })
+    .toMatch(new RegExp(`^bitterless-preview://${authority}/`));
+  return current;
+};
+
 const waitForPage = async (
   app: ElectronApplication,
   pattern: RegExp,
@@ -720,7 +756,9 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   });
   expect(compact.bounds).toMatchObject({ width: 800, height: 600 });
   const shell = compact.children.find(({ url }) => /\/shell\//.test(url));
-  const previewContent = compact.children.find(({ url }) => /\/preview\//.test(url));
+  const previewContent = compact.children.find(
+    ({ url }) => /\/onlypreview\/preview\//.test(url) || /^bitterless-preview:\/\//.test(url)
+  );
   expect(compact.children).toHaveLength(2);
   expect(shell?.bounds).toEqual({
     x: 0,
@@ -730,7 +768,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
   });
   const domBounds = await evaluateRenderer<{ x: number; y: number; width: number; height: number }>(
     'shell',
-    `(() => { const bounds = document.querySelector('[name="onlypreview__previewHost"]')?.getBoundingClientRect();
+    `(() => { const bounds = document.querySelector('[name="onlypreview__previewContentHost"]')?.getBoundingClientRect();
       return bounds ? { x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) } : null; })()`
   );
   expect(previewContent?.bounds).toEqual({
@@ -740,10 +778,10 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     height: domBounds.height
   });
   expect(previewContent?.bounds.x).toBeGreaterThanOrEqual(185);
-  expect(previewContent?.bounds.y).toBe(32);
+  expect(previewContent?.bounds.y).toBe(75);
   const previewHeaderStrip = await evaluateRenderer<{ height: number; hasHost: boolean }>(
-    'preview',
-    `(() => { const header = document.querySelector('[name="onlypreview__previewHeader"]');
+    'shell',
+    `(() => { const header = document.querySelector('[name="onlypreview__previewToolbar"]');
       return { height: header ? Math.round(header.getBoundingClientRect().height) : 0, hasHost: !!header }; })()`
   );
   expect(previewHeaderStrip).toEqual({ height: 43, hasHost: true });
@@ -822,7 +860,7 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     onlyPreview,
     'shell',
     `document.querySelectorAll('[name="onlypreview__treeRow"]').length`,
-    7
+    11
   );
   await pressTreeKey('End');
   await expectActiveTreeRow('video.webm');
@@ -838,12 +876,8 @@ test('owns two secure views, exact native geometry, shortcuts, and a composite 8
     `document.querySelector('[name="onlypreview__treeRow"][aria-selected="true"]')?.textContent?.trim() || ''`,
     'document.pdf'
   );
-  await waitForRenderer(
-    onlyPreview,
-    'preview',
-    `document.querySelectorAll('[name="onlypreview__pdfPage"] canvas').length`,
-    1
-  );
+  const keyboardPdf = await waitForRawPreview(app, 'asset');
+  expect(keyboardPdf.childCount).toBe(2);
 
   await sendInputs('shell', [
     { type: 'keyDown', keyCode: 'Shift' },
@@ -1299,37 +1333,94 @@ test('renders immutable text, selectable PDF, image pixels, and seekable audio/v
   expect(after).toBe(before);
 
   await clickTreeFile(onlyPreview, 'document.pdf');
+  const pdf = await waitForRawPreview(app, 'asset');
+  expect(pdf.childCount).toBe(2);
+  expect(pdf.preferences).toMatchObject({
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    webSecurity: true,
+    plugins: true
+  });
+  expect(pdf.preferences.preload).toBeUndefined();
+  expect(pdf.preferences.additionalArguments).toBeUndefined();
+
+  const expandedForHtml = await evaluateRenderer<boolean>(
+    'shell',
+    `(() => {
+      const nested = document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested"]');
+      if (!(nested instanceof HTMLButtonElement)) return false;
+      if (nested.getAttribute('aria-expanded') !== 'true') nested.click();
+      return true;
+    })()`
+  );
+  expect(expandedForHtml).toBe(true);
   await waitForRenderer(
     onlyPreview,
-    'preview',
-    `document.querySelectorAll('[name="onlypreview__pdfPage"] canvas').length`,
-    1
+    'shell',
+    `Boolean(document.querySelector('[name="onlypreview__treeRow"][data-relative-path="nested/raw-page.html"]'))`,
+    true
   );
-  const pdf = await evaluateRenderer<{ darkPixels: number; selectedText: string }>(
+  await clickTreeFile(onlyPreview, 'raw-page.html');
+  const rawHtml = await waitForRawPreview(app, 'document');
+  expect(rawHtml.childCount).toBe(2);
+  expect(rawHtml.preferences.preload).toBeUndefined();
+  expect(rawHtml.preferences.additionalArguments).toBeUndefined();
+  const containedHtml = await evaluateRenderer<{
+    inlineScript: string;
+    relativeScript: string;
+    headingColor: string;
+    imageComplete: boolean;
+    imageWidth: number;
+  }>(
     'preview',
     `(() => {
-    const canvas = document.querySelector('[name="onlypreview__pdfPage"] canvas');
-    const layer = document.querySelector('[name="onlypreview__pdfTextLayer"]');
-    if (!(canvas instanceof HTMLCanvasElement) || !(layer instanceof HTMLElement)) {
-      return { darkPixels: 0, selectedText: '' };
-    }
-    const data = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data;
-    let darkPixels = 0;
-    if (data) {
-      for (let index = 0; index < data.length; index += 4) {
-        if (data[index + 3] > 0 && data[index] + data[index + 1] + data[index + 2] < 690) darkPixels += 1;
-      }
-    }
-    const range = document.createRange();
-    range.selectNodeContents(layer);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    return { darkPixels, selectedText: selection?.toString().trim() || '' };
-  })()`
+      const image = document.querySelector('#onlypreview-contained-image');
+      const heading = document.querySelector('#onlypreview-contained-style');
+      return {
+        inlineScript: document.body.dataset.inlineScript || '',
+        relativeScript: document.body.dataset.relativeScript || '',
+        headingColor: heading ? getComputedStyle(heading).color : '',
+        imageComplete: image instanceof HTMLImageElement && image.complete,
+        imageWidth: image instanceof HTMLImageElement ? image.naturalWidth : 0,
+      };
+    })()`
   );
-  expect(pdf.darkPixels).toBeGreaterThan(100);
-  expect(pdf.selectedText).toContain('OnlyPreview selectable PDF text');
+  expect(containedHtml).toEqual({
+    inlineScript: 'ready',
+    relativeScript: 'ready',
+    headingColor: 'rgb(12, 34, 56)',
+    imageComplete: true,
+    imageWidth: 1
+  });
+  const rawHtmlDenied = await evaluateRenderer<{
+    remoteFetchDenied: boolean;
+    popupDenied: boolean;
+    permissionState: PermissionState;
+    stayedOnDocument: boolean;
+  }>(
+    'preview',
+    `(async () => {
+      const originalUrl = location.href;
+      const popupDenied = window.open('https://example.invalid/blocked-popup', '_blank') === null;
+      const remoteFetchDenied = await fetch('https://example.invalid/blocked-fetch')
+        .then(() => false)
+        .catch(() => true);
+      const permissionState = (await navigator.permissions.query({ name: 'geolocation' })).state;
+      const anchor = document.createElement('a');
+      anchor.href = 'https://example.invalid/blocked-navigation';
+      document.body.append(anchor);
+      anchor.click();
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      return { remoteFetchDenied, popupDenied, permissionState, stayedOnDocument: location.href === originalUrl };
+    })()`
+  );
+  expect(rawHtmlDenied).toEqual({
+    remoteFetchDenied: true,
+    popupDenied: true,
+    permissionState: 'denied',
+    stayedOnDocument: true
+  });
 
   await clickTreeFile(onlyPreview, 'pixel.png');
   await expect
@@ -1636,12 +1727,8 @@ test('opens one secure Settings BrowserWindow and applies persisted editor setti
 
   await resetSelectionBroadcastProbe(app);
   await dispatchTreeDoubleClick(onlyPreview, 'document.pdf');
-  await waitForRenderer(
-    onlyPreview,
-    'preview',
-    `document.querySelectorAll('[name="onlypreview__pdfPage"] canvas').length`,
-    1
-  );
+  const doubleClickPdf = await waitForRawPreview(app, 'asset');
+  expect(doubleClickPdf.childCount).toBe(2);
   await expect.poll(async () => await selectionBroadcastCount(app)).toBe(1);
 
   await app.evaluate(({ BaseWindow, screen }) => {

@@ -70,8 +70,6 @@ const ONLY_PREVIEW_ERROR_CODES = new Set([
   'PATH_NOT_REGULAR_FILE',
   'PATH_UNSUPPORTED_DEVICE',
   'TEXT_TOO_LARGE',
-  'BINARY_TEXT',
-  'INVALID_ENCODING',
   'SIGNATURE_MISMATCH',
   'SETTINGS_INVALID',
   'INDEX_FAILED',
@@ -197,7 +195,10 @@ export class FileSearchRuntimeRelayService {
   publish(message: FileSearchRuntimeEventRequest): { ok: true } {
     const active = this.active;
     if (!active) throw runtimeStoppedError();
-    if (!this._isRecord(message) || !this._hasExactKeys(message, ['capability', 'eventName', 'value'])) {
+    if (
+      !this._isRecord(message) ||
+      !this._hasExactKeys(message, ['capability', 'eventName', 'value'])
+    ) {
       throw invalidRuntimeResponseError();
     }
     if (message.capability !== active.capability) {
@@ -664,7 +665,6 @@ export class FileSearchRuntimeRelayService {
       })
     );
   }
-
 }
 
 export const fileSearchRuntimeRelayService = new FileSearchRuntimeRelayService();
