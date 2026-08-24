@@ -446,6 +446,7 @@ export default defineConfig({
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
           trench: resolve('src/preload/trench/trench.preload.ts'),
           maestroCoach: resolve('src/preload/maestro/coach.preload.ts'),
+          maestroWorkbench: resolve('src/preload/maestro/workbench.preload.ts'),
           maestroSqlite: resolve('src/preload/maestro/sqlite.preload.ts')
         },
         external: [/rig_dev\/.*\/node_modules/, 'node-llama-cpp', 'playwright', 'playwright-core']

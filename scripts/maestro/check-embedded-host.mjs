@@ -81,9 +81,8 @@ for (const entry of ['maestroHome', 'maestroControl', 'maestroWorkbench', 'maest
 assert(vite.includes("maestroCoach: resolve('src/preload/maestro/coach.preload.ts')") && vite.includes("maestroSqlite: resolve('src/preload/maestro/sqlite.preload.ts')"), 'build must include both Maestro preloads')
 assert(vite.includes('bytecode: false'), 'main bytecode must stay disabled for the embedded dynamic runtime')
 assert(card.includes(':data-mini-app-id="app.id"'), 'Mini Apps cards need stable E2E identities')
-assert(!activeApps.includes("id: 'maestro'") && !activeApps.includes('action: openMaestro'), 'Mini Apps must keep the Maestro card and Home launch action dormant')
+assert(activeApps.includes("id: 'maestro'") && activeApps.includes('action: openMaestro'), 'Mini Apps must expose the Maestro card and Home launch action')
 assert(activeApps.includes("id: 'coin'") && activeApps.includes('action: openCoin'), 'Mini Apps must keep the Trench card and Home launch action active')
-assert(apps.includes("id: 'maestro'") && apps.includes('action: openMaestro'), 'Mini Apps source must retain the dormant Maestro card for restoration')
 assert(activeApps.includes('openMaestro: () => void') && activeApps.includes('openCoin: () => void'), 'Mini Apps factory must retain the Maestro and Trench launch callbacks')
 assert(card.includes('await maestroWindowEmitter.openMaestroWindow()') && card.includes('await coinWindowEmitter.openCoinWindow()'), 'Home must retain Maestro and Coin host action wiring')
 for (const [id, action] of [['todo', 'openTodo'], ['eyes-on-agents', 'openEyesOnAgents'], ['omni-browser', 'openOmniBrowser']]) {

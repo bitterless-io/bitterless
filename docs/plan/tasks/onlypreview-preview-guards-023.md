@@ -62,6 +62,8 @@ or parser creation; the same file still appears in the directory and filename se
 - `tests/onlypreview/onlyPreviewSearchEngine.contract.test.mjs` (verification-only)
 - `tests/onlypreview/onlyPreviewSearchEngine.traversal.test.mjs`
 - `tests/onlypreview/onlyPreviewSearchEngine.sqlite.test.mjs`
+- `tests/onlypreview/onlyPreviewSearchEngineSqliteIndex.test.mjs` (Task 025 split)
+- `tests/onlypreview/onlyPreviewSearchEngineSqliteTest.helper.mjs` (Task 025 split)
 - `docs/design/onlypreview-format-coverage.md`
 - `docs/design/onlypreview-preview-merge-find.md`
 - `docs/features/onlypreview.md`
@@ -161,6 +163,10 @@ Project Search active/candidate SQLite architecture.
 - Full OnlyPreview Node suite: **199/199 passed**. The independent Search-focused audit passed
   **43/43**. `yarn typecheck:node`, renderer i18n, scoped formatting/lint, the non-mutating Electron
   Vite source build, and `git diff --check` passed.
+- Task 025 removes absolute selected-file paths from the descriptor/public/Vue boundary and splits
+  the SQLite regression source into independently discoverable index/engine/helper files without
+  changing its 12 tests or guard coverage. The final combined OnlyPreview suite passes 318/318 with
+  zero skip/only/todo, and every resulting TS/JS file is at most 800 lines.
 - The optional strict Node TypeScript pass exhausted the default V8 heap near 4GiB before emitting a
   diagnostic. `yarn typecheck:web` retains only the unrelated Connector/Poker/Home/Maestro/Omni/path
   baseline errors and reports no OnlyPreview diagnostic.

@@ -4840,6 +4840,13 @@ dmg-license@^1.0.11:
     smart-buffer "^4.0.2"
     verror "^1.10.0"
 
+docx-preview@0.4.0:
+  version "0.4.0"
+  resolved "https://registry.npmmirror.com/docx-preview/-/docx-preview-0.4.0.tgz#95800aafa393453e7b48dc79fbefc46af8da86e3"
+  integrity sha512-OdKtE/uj3M4RfGarLkGjahUzRg8/kBp0Sraj1r1NAY1tp/sTpHOBqDrzVf9onMBt9vxP6SdQ6bpLCUCsFwjgcA==
+  dependencies:
+    jszip ">=3.0.0"
+
 docx@^9.6.1:
   version "9.6.1"
   resolved "https://registry.npmmirror.com/docx/-/docx-9.6.1.tgz#c3f173b46be5de455bc5a8eb108923e2e46224e3"
@@ -6645,7 +6652,7 @@ jstoxml@^2.0.0:
   resolved "https://registry.npmmirror.com/jstoxml/-/jstoxml-2.2.9.tgz#2eebd5e55383fe66a375022ca0aa88f77bc4fb84"
   integrity sha512-OYWlK0j+roh+eyaMROlNbS5cd5R25Y+IUpdl7cNdB8HNrkgwQzIS7L9MegxOiWNBj9dQhA/yAxiMwCC5mwNoBw==
 
-jszip@^3.10.1, jszip@^3.7.1:
+jszip@>=3.0.0, jszip@^3.10.1, jszip@^3.7.1:
   version "3.10.1"
   resolved "https://registry.npmmirror.com/jszip/-/jszip-3.10.1.tgz#34aee70eb18ea1faec2f589208a157d1feb091c2"
   integrity sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==

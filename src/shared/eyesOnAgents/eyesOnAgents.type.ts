@@ -81,7 +81,7 @@ export interface EyesOnAgentsLastUserPrompt {
 export interface EyesOnAgentsThread extends EyesOnAgentsThreadIdentity {
   archiveState: EyesOnAgentsArchiveState;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
-  canPreviewTranscript: boolean;
+  canCopySessionPath: boolean;
   domainId: number;
   title: string | null;
   cwd: string | null;
@@ -529,6 +529,7 @@ export interface EyesOnAgentsApi {
     snapshot: EyesOnAgentsSnapshot;
   }>;
   previewThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void>;
+  copySessionPath(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void>;
   markAllRead(): Promise<EyesOnAgentsSnapshot>;
   setThreadUnread(params: {
     sessionKey: EyesOnAgentsSessionKey;

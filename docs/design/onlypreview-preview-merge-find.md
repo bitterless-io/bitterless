@@ -2,7 +2,13 @@
 
 本文决定 OnlyPreview 的预览视图边界、Preview header 组成，以及当前文件查找（`Cmd+F`）的归属。
 
-**状态：024 双 Preview Region 基础已实施、待 Ral 验证；019 当前文件查找仍待实施 · 开题
+**状态：024 双 Preview Region 基础已实施、待 Ral 验证；021 DOCX 为
+`implemented; owner verification pending`，已通过独立复核并等待 Ral 真实 DOCX 视觉/运行时验证；022
+媒体真话态为 `implemented; owner verification pending`，已通过独立复核并等待 Ral 真实图片/音视频
+视觉与运行时验证；019 当前文件查找为 `implemented; owner verification pending`，已通过
+[独立复核 round 2](../plan/reviews/onlypreview-find-in-file-019-2.md) 并等待 Ral 运行时/视觉验证；025
+设计收口的 [completion audit](../plan/reviews/onlypreview-design-completion-025-1.md) 已 **PASS**，当前为
+`implemented; owner verification pending` · 开题
 2026-08-18 · Ral 于 2026-08-20 指定本文已定内容为持续交付目标 · 未定且非阻塞的结论仍以
 [#pending-questions](#pending-questions--待定项) 为准。**
 
@@ -25,13 +31,13 @@ Chromium 内置 PDF 改用该 API，已在
 
 ## #0 · 总纲：预览隔离与文件内查找
 
-| 目标            | 判据（怎么算达成）                                                                                               | 现状                                                                                                                                                                            |
-| --------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| G1 内容安全边界 | raw HTML/PDF 与带 XPC 的 Vue 子应用绝不共享 `WebContents` / preload / session                                    | ✅ 024 已实施独立 `WebContents`、preload 与 session 边界 → [#7](#dual-preview-region)                                                                                           |
-| G2 稳定 toolbar | 文件身份、操作与唯一 Find Bar 留在现有 `ShellView` 的 Preview toolbar，不进入被查找内容                          | ⚠ 024 已实施固定 toolbar、身份与操作；唯一 Find Bar 仍属 019 → [#7.2](#shell-toolbar-dual-view)                                                                                 |
-| G3 双内容 View  | HTML/PDF 由零 preload 的 `chromePreviewView` 原生加载；其余由 `vuePreviewView` 组件渲染                          | ✅ 024 已实施 → [#7.2](#shell-toolbar-dual-view)                                                                                                                                |
-| G4 查找路由     | Shell toolbar 发出统一命令，Main 按 active preview surface 路由至 `findInPage()` 或 Vue model adapter            | ❌ 尚未实施 → [#7.4](#74--查找能力按-renderer-capability-路由-已定-2026-08-20-未实施)                                                                                           |
-| G5 切换隔离     | 两个 Preview view 永不同时 attach/可见；旧 find、model、worker、media、navigation 在新 revision ready 前完成清理 | ⚠ 024 已实施互斥 attach、Vue reset acknowledgement、Chrome revision teardown；find/Office worker 与完整媒体真话清理仍由 019/020/021/022 扩展 → [#7.2](#shell-toolbar-dual-view) |
+| 目标            | 判据（怎么算达成）                                                                                               | 现状                                                                                                                                                      |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1 内容安全边界 | raw HTML/PDF 与带 XPC 的 Vue 子应用绝不共享 `WebContents` / preload / session                                    | ✅ 024 已实施独立 `WebContents`、preload 与 session 边界 → [#7](#dual-preview-region)                                                                     |
+| G2 稳定 toolbar | 文件身份、操作与唯一 Find Bar 留在现有 `ShellView` 的 Preview toolbar，不进入被查找内容                          | ✅ 024 已实施固定 toolbar、身份与操作；019 已实施唯一 Find Bar → [#7.2](#shell-toolbar-dual-view)                                                         |
+| G3 双内容 View  | HTML/PDF 由零 preload 的 `chromePreviewView` 原生加载；其余由 `vuePreviewView` 组件渲染                          | ✅ 024 已实施 → [#7.2](#shell-toolbar-dual-view)                                                                                                          |
+| G4 查找路由     | Shell toolbar 发出统一命令，Main 按 active preview surface 路由至 `findInPage()` 或 Vue model adapter            | ✅ 019 已实施 Main capability registry、native/content adapter 路由与结果围栏 → [#7.4](#find-capability-routing)                                          |
+| G5 切换隔离     | 两个 Preview view 永不同时 attach/可见；旧 find、model、worker、media、navigation 在新 revision ready 前完成清理 | ✅ 024 已实施互斥 attach 与 view teardown；019 已实施 find 清理，020/021/022 已分别实施 Office/媒体清理并等待 Ral 验证 → [#7.2](#shell-toolbar-dual-view) |
 
 Shell 侧（MenuBar、文件树、文件搜索、全局搜索）本轮不改行为，见 [#6](#6--shell-侧本轮不动-已定-2026-08-18)。
 
@@ -73,7 +79,7 @@ menubar 文件树 文件搜索 和全局搜索」。
 > 2026-08-20 复议结论：Ral 将内容 renderer 明确拆成「HTML / PDF 原生直出」和「Vue 子应用组件渲染」
 > 两类。Electron 的 preload / `webPreferences` 是 `WebContents` 构造期安全边界，不能由一个可导航
 > content view 同时承担。因此 #1～#5 只描述 2026-08-18 的历史实现与决策，目标拓扑由
-> [#7](#dual-preview-region) 取代；024 已完成该拓扑基础，019 仍在其上实现当前文件查找。
+> [#7](#dual-preview-region) 取代；024 已完成该拓扑基础，019 已在其上实现当前文件查找。
 
 ## #2 · 当前已实现视图拓扑 `历史基线 2026-08-18`
 
@@ -204,6 +210,11 @@ MenuBar、文件树、文件搜索（本地过滤）、全局搜索（Project Se
 [PQ-2](#pending-questions--待定项)，不属于本文两个交付任务的范围。2026-08-20 的目标拓扑会在
 `ShellView` 的 Preview host 内增加固定 toolbar；这是 Preview chrome，不改变文件树或 Project Search。
 
+2026-08-24 的后续输入已把本地文件树优化收敛为
+[`onlypreview-filter-directory-reveal-031`](../plan/tasks/onlypreview-filter-directory-reveal-031.md)：
+点击当前查询中可见的目录，将其作为本次查询的内部 reveal root，以 O(path depth) 的分段祖先
+`Set.has()` 判断放行已加载后代；查询文本变化立即清空 root，不递归加载磁盘、不改变 Project Search。
+
 <a id="dual-preview-region"></a>
 
 ## #7 · `chromePreviewView` 与 `vuePreviewView` 双内容视图 `已定 2026-08-20` `024 基础已实施`
@@ -219,9 +230,33 @@ renderer 明确分为两类，以下名称也是实现合同：
 唯一 Find Bar、文件身份和文件操作放在已有 `ShellView` 的 Preview toolbar，不再创建第三个搜索
 renderer。内容区域任一时刻只 attach / 显示上述两个 view 中的一个。
 
-工程状态（2026-08-20）：024 已实施 Shell toolbar、互斥双 view、Main presentation owner、Vue runtime
-capability/reset acknowledgement，以及离线 raw HTML/PDF 的 bounded protocol；当前文件 Find Bar、
-`findRevision` 与 adapter 路由仍由 019 实施，Office/媒体/额外 guard 分别由 020/021/022/023 延伸。
+工程状态（2026-08-21）：024 已实施 Shell toolbar、互斥双 view、Main presentation owner、Vue runtime
+capability/reset acknowledgement，以及离线 raw HTML/PDF 的 bounded protocol；019 已实施唯一 Find
+Bar、Main-owned `findRevision`、native/content adapter 路由和 stale-result 清理，当前为
+`implemented; owner verification pending`；
+[独立复核 round 2](../plan/reviews/onlypreview-find-in-file-019-2.md) 已记录 **PASS**。020 已实现
+renderer-local XLSX adapter，021 DOCX 已实施并
+通过 [独立复核 round 2](../plan/reviews/onlypreview-docx-render-021-2.md)，当前等待 Ral 真实 DOCX
+视觉/运行时验证；媒体/额外 guard 分别由 022/023 延伸。022 的
+[独立复核 round 1](../plan/reviews/onlypreview-media-truthful-state-022-1.md) 曾因 renderer error family
+授权过宽记录 **BLOCKED**，修复后
+[独立复核 round 2](../plan/reviews/onlypreview-media-truthful-state-022-2.md) 已记录 **PASS**；其账本为
+`implemented; owner verification pending`，当前等待 Ral 真实图片/音视频视觉与运行时验证。
+
+021 的 DOCX capability 合同进一步冻结为：exact 25MiB asset 先 transfer 到 one-shot module Worker，
+复用纯 OOXML preflight 并由 adapter 施加 10 秒 hard timeout；通过后才动态加载
+`docx-preview@0.4.0`。`renderAsync()` 只写 detached body/style，使用固定关闭 altChunk/修订/批注、
+开启页眉页脚、忽略内嵌字体、`useBase64URL: false`、关闭 experimental/debug 的 options。专用
+DOM/CSS allowlist 必须在 mount 前完整扫描输出并登记所有 verified embedded blob URL；普通切换和
+stale completion 正常 revoke，而 engine rejection、无法取得完整输出或 timeout 由 Main 销毁并重建
+exact Vue view。Main 在 DOCX loading 且 view/runtime token 建立时一次性 arm 30 秒外部 watchdog，
+reset/resize 不续期，旧 timer 受 revision/runtime/view fence 约束。若 selection 在 render pending
+期间离开 DOCX，Main 立即关闭 exact 旧 Vue view 并旋转 runtime；只有 post-ready 切换才允许串行清理后
+复用 view。`renderAsync()` 没有
+`AbortSignal`，不得把 fenced stale result 描述成取消了 library call。文档 only 在 sanitized current
+DOM 实际 mount + `nextTick` 后报告 ready；失败使用 `DOCUMENT_PARSE_FAILED`、`DOCUMENT_EMPTY`、
+`DOCUMENT_SANITIZE_FAILED` 或 `DOCUMENT_RENDER_TIMEOUT`。019 只在该 exact ready 状态上启用
+`findInPage()`。
 
 ### #7.1 · Electron 能力边界 `已定 2026-08-20`
 
@@ -301,7 +336,14 @@ selectionRevision++
 ```
 
 `vuePreviewView` 切文件时必须 unmount/reset：dispose Monaco model、terminate XLSX Worker、pause media、
-revoke object URL、清除 DOM 与搜索高亮；切到 Chrome 时保持 neutral empty state。`chromePreviewView`
+remove media listeners/src、调用 `load()` 释放 native resource、abort image/media preflight、revoke image
+object URL、清除 DOM/zoom/pan/error 与搜索高亮；切到 Chrome 时保持 neutral empty state。图片从 Main asset
+有界缓冲并离屏 decode 后只保留 revision-keyed renderer Blob，Main 在 ready/error 后撤销源 token。音视频
+继续直接使用 Range asset；该 authority 跟随 selection 生命周期而非 30 分钟 TTL，直到 selection/host/
+workspace revoke，保证长时间播放后的 seek 仍可用；bounded registry 在全局达到容量时仍可淘汰最老 token。
+媒体先用可读 `Content-Length` 与经 CORS 暴露的 `Accept-Ranges` 完成 HEAD preflight，再挂
+`preload="metadata"` player；30 秒内没有 `loadedmetadata` 或 `error` 就进入 typed read failure，而不是保留
+dead player。`chromePreviewView`
 以 selection revision 为一次性边界：HTML→HTML、HTML→PDF、PDF→HTML、reload 和切到 Vue 都先 destroy
 旧 `WebContents`，再按新 revision 创建，避免页面 JS、timer、音视频、service worker、history、storage
 或网络跨文件继续运行。
@@ -314,7 +356,7 @@ revoke object URL、清除 DOM 与搜索高亮；切到 Chrome 时保持 neutral
 | host ref      | Shell 的 bounds ref / `ResizeObserver` 必须放在 toolbar **下方的 inner content host**，不能放在包含 toolbar 的 wrapper，否则 native view 会覆盖输入框                                                                                    |
 | 首帧          | active content 在收到 Shell 首个有效 host bounds 前不得 attach / visible；不能沿用当前从 `y=32` 开始的临时 bounds，否则启动时会短暂盖住 toolbar                                                                                          |
 | z-order       | Main 保存唯一 `activePreviewSurface`；旧 view 完成 stop-find / teardown / detach 后才能 attach 新 view，绝不把两个 view 同时叠在相同 bounds                                                                                              |
-| 快捷键 / 焦点 | Main 从 Shell、`chromePreviewView`、`vuePreviewView` 的 `before-input-event` 统一截获 `Cmd/Ctrl+F`，先 focus `ShellView.webContents` 再聚焦 toolbar input；关闭 / `Esc` 后恢复当前 active content。`Shift+Cmd+F` 继续属于 Project Search |
+| 快捷键 / 焦点 | Main 从 Shell、`chromePreviewView`、`vuePreviewView` 的 `before-input-event` 统一截获 `Cmd/Ctrl+F`，先 focus `ShellView.webContents` 再聚焦 toolbar input；关闭 / `Esc` 后恢复当前 active content。`Option/Alt+Cmd/Ctrl+F` 与保留的 `Shift+Cmd/Ctrl+F` 属于 Project Search |
 | renderer 崩溃 | active capability 立即变 `unavailable`，Shell toolbar 保持可用；Main 清理崩溃 view 并转到可重建的 Vue 真话错误态 / retry，不因单个 Preview renderer 崩溃关闭整个窗口；旧 ready/find 结果仍受 host + selection + surface revision 围栏    |
 
 ```text
@@ -403,10 +445,10 @@ Ral 2026-08-20 补充：「HTML 如果有引入 JS 应该也能渲染出来」�
 | HTML 自身 inline / relative JS | ✅ 允许执行                                                                                                                                                             | 这是浏览器式 HTML 预览的组成部分                                                                                        |
 | 页面获得 Node / Electron / XPC | ❌ 不允许                                                                                                                                                               | 内容文件按不可信页面处理；搜索由 Main 直接控制 `webContents`，页面不需要权限                                            |
 | preload                        | `chromePreviewView` **不配置 preload**；`vuePreviewView` 只挂 app-owned、最小 typed capability preload                                                                  | preload 不是后台解析器，更不能成为页面逃出 sandbox 的桥                                                                 |
-| renderer 安全配置              | `sandbox: true`、`nodeIntegration: false`、`contextIsolation: true`、`webSecurity: true`；每个 Chrome selection revision 使用不复用的内存 partition                     | 与 Electron 官方 untrusted-content 基线一致；不得共享 Bitterless 登录态、Cookie、cache、service worker 或 local storage |
+| renderer 安全配置              | `sandbox: true`、`nodeIntegration: false`、`contextIsolation: true`、`webSecurity: true`；所有 Chrome selection revision 共用唯一常量持久 partition `persist:onlypreview-chrome`（2026-08-21 修正：内存 partition 下 Chromium PDF 阅读器不会创建文档帧，PDF 必然白屏），每次拆除时在无 raw view 挂载的前提下清空连接/存储/缓存 | 与 Electron 官方 untrusted-content 基线一致；不共享 Bitterless 应用 session 的登录态、Cookie、cache、service worker 或 local storage |
 | 文件与资源 URL                 | `chromePreviewView` 使用 document-scoped custom protocol：入口文件授权目录内的相对 JS / CSS / 图片，经 canonical path containment 后出流；拒绝任意 `file://` 与越界路径 | 当前 exact-basename asset URL 不足以承载真实 HTML，目标实现必须新增受限 resolver                                        |
 | 导航、弹窗、权限               | 非预期导航与 `window.open` 拒绝；permission check / request 默认拒绝                                                                                                    | 页面 JS 能渲染，不代表能接管窗口或系统能力                                                                              |
-| protocol 注册                  | document resolver 必须注册在该实例的 `chromePreviewView.webContents.session.protocol`，不能只注册默认 `protocol`；销毁时撤销 handler 与 capability                      | 独立 partition 不会自动继承默认 session 的 custom protocol handler                                                      |
+| protocol 注册                  | document resolver 必须注册在该实例的 `chromePreviewView.webContents.session.protocol`，不能只注册默认 `protocol`；销毁时撤销 handler 与 capability。session 共用后每次安装领取一个 generation，迟到的 cleanup 只在仍持有当前 generation 时才 unhandle | 独立 partition 不会自动继承默认 session 的 custom protocol handler；共用 session 时，晚到的拆除不得注销新一次选择的 handler |
 | 生命周期                       | **任何 selection revision 变化**都销毁旧 `chromePreviewView`，包括 HTML→HTML、HTML↔PDF 和 watch reload；下一次重新创建                                                  | 清除页面进程内状态、timer、媒体、history 与临时 session 数据                                                            |
 
 依据：Electron `v40.10.6` 对应的
@@ -422,7 +464,9 @@ isolation / webSecurity、限制导航与新窗口、优先 custom protocol，�
 读取 document-scoped containment 下的本地相对资源，不能先上线开放网络再等待产品决定。该选择不会
 改变 Shell toolbar + 双 Preview view 拓扑，未来若开放 HTTPS 再单独审查请求、重定向与数据外传边界。
 
-### #7.4 · 查找能力按 renderer capability 路由 `已定 2026-08-20` `未实施`
+<a id="find-capability-routing"></a>
+
+### #7.4 · 查找能力按 renderer capability 路由 `已定 2026-08-20` `019 已通过独立复核，等待 Ral 验证`
 
 Ral 2026-08-20 追问：「搜索触发要不要用白名单机制，例如 js、css 等各个语言的后缀都能搜索，还是
 黑名单机制，除了图片音频视频都能搜索」。本轮决定：**两者都不用作 Find Bar 的最终开关**。扩展名
@@ -563,6 +607,10 @@ model 留在 Worker。只有文件已通过 byte / ZIP / uncompressed-size 硬�
 时，capability 才能 `ready + coverage.partial`；硬闸门失败必须 `unavailable`。Shell 的计数至少显示
 `n/m · 部分`，不能把 partial matches 呈现为完整总数。
 
+image/audio/video 永远不发布文字能力：transition 时只广播一次 `0` 以清掉前一份文本的状态，组件本身
+不 arm 或上报 character count。它们的 `ready` 只允许 Main 把 exact `loading` 推到 `ready`；同 revision
+解码/网络错误可把 `loading` 或 `ready` 推到 `unavailable`，而 error 之后迟到的 ready 必须 no-op。
+
 快捷键仍由宿主统一识别，不要求每个文件后缀注册一遍。当前
 `src/main/onlypreview/onlyPreviewClassifier.service.ts` 的 `TEXT_EXTENSIONS` 已覆盖 `.js`、`.css`、
 `.ts`、`.tsx`、`.vue`、`.py`、`.go`、`.rs` 等常用语言。023 已删除 unknown extension 的 sample
@@ -577,13 +625,21 @@ model 留在 Worker。只有文件已通过 byte / ZIP / uncompressed-size 硬�
 | capability registry（本轮决定）  | 能力与真实渲染状态一致；代价是每个新 preview adapter 必须显式声明 capability，这是刻意保留的完整性闸门   |
 
 激活细则：`findMode=none` 时快捷键不展开输入框，并给出轻量的「当前内容没有可搜索文字」反馈；可查找
-格式仍在装载时可以先展开 Find Bar，但控件保持 pending / disabled，不能把「尚未 ready」显示成 0 个
-结果；ready 后才发送首个 query。HTML 引用的 JS 源码本身不属于当前页面文字，只有它最终写入 DOM 的
-文字会被 `findInPage()` 命中；单独打开 `.js` 文件时则走 Monaco 全文查找。
+格式仍在装载时可以先展开 Find Bar，输入框和关闭保持可用并允许排队一个 query，大小写与导航按钮
+保持 disabled，且不能把「尚未 ready」显示成 0 个结果；ready 后只派发一次 queued query。HTML 引用的
+JS 源码本身不属于当前页面文字，只有它最终写入 DOM 的文字会被 `findInPage()` 命中；单独打开 `.js`
+文件时则走 Monaco 全文查找。
 
-024 已建立新的 Main owner，集中管理 `chromePreviewView` / `vuePreviewView` 的创建、layout、present 与
-teardown，Shell store 不持有 `webContentsId`。019 仍待在该 Region contract 上实现 find intent、
-`findRevision`、engine routing 与结果围栏；不得复用 2026-08-18 的单 Preview renderer 编排。
+024 已建立新的 Main owner；Region 集中管理 selection/presentation/find authority，并把
+`chromePreviewView` / `vuePreviewView` 的创建、session、navigation、attach/detach 与 teardown 委托给
+同域 `onlyPreviewPreviewView.service.ts`，Shell store 不持有 `webContentsId`。019 已在该 Region contract 上实现 find intent、
+`findRevision`、engine routing 与结果围栏；Shell/Vue 只把 `{ hostId }` 事件当 nudge，再 generation-fenced
+refetch Main snapshot。native 结果额外绑定 exact WebContents identity/generation 与 Electron requestId；
+content adapter command 绑定 exact adapter/revision/runtime，结果不会携带 runtime token 到 Shell。Monaco
+对完整 8MiB accepted model 做 literal count，但不物化全量 Range；当前项通过 Monaco model 的
+next/previous API 取得 original-model Range，只保留一个 active decoration，避免 Unicode case-fold
+扩展后的偏移错位。XLSX 搜索继续使用 Worker accepted model，并只在 model cap 时声明 partial。不得复用
+2026-08-18 的单 Preview renderer 编排。
 
 <a id="main-preview-owner"></a>
 
@@ -594,7 +650,8 @@ capability 的唯一 owner。Shell、watch runtime、Vue renderer 都只能提�
 生成一个可被其他层接受的 selection revision。
 
 024 已实现上述 selection/surface/presentation owner、host-only nudge、Vue runtime/reset/ready/error gate
-以及 Chrome load/crash observation；表中的 find authority 与 `findRevision` 仍是 019 的待实施部分。
+以及 Chrome load/crash observation；019 已补齐 Main-only find authority、`findRevision`、capability-ready
+握手、native request identity 和 content adapter result gate。
 
 | 输入                     | Main 行为                                                                                                                | Shell 得到什么                                                                          |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
@@ -609,6 +666,11 @@ selection observation；`chromePreviewView` 不注入脚本，也没有 preload�
 选区字符数，Shell 隐藏该 metadata 字段而不是显示假 `0`。若未来必须支持，应单开浏览器内容 selection
 设计，不能借此给 raw HTML 加 XPC。
 
+绝对路径也按 surface/role 降级：Shell 的 workspace header 可以读取
+`OnlyPreviewWorkspace.displayPath` 作为纯展示信息；selected-file `OnlyPreviewDescriptor`、公共 presentation
+snapshot 与 runtime-token-bound Vue snapshot 只携带 workspace-relative identity 和文件 metadata，禁止
+`displayPath`、canonical root 或 absolute selected-file path。raw Chrome 仍只取得一次性 document/asset URL。
+
 `Cmd/Ctrl+F` 与选择事件相反：Shell toolbar 是 UI owner，Main 是路由与 `selectionRevision` /
 `findRevision` 的**唯一 writer**，active content 只执行查找。watch reload、renderer crash、workspace
 change 都必须先由 Main 递增两个 revision，再允许任何新结果出现；Shell 永远不能自行递增或合成一个
@@ -616,18 +678,24 @@ change 都必须先由 Main 递增两个 revision，再允许任何新结果出�
 
 ## #pending-questions · 待定项
 
-| id       | 项                                                                                        | 所在                                                                    | 类型     | 阻塞性     | 倾向 / 拍板需要什么输入                                                                                                                                                    | 状态                                                                                                                                                                            |
-| -------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **PQ-1** | Find Bar 是否需要 regex / 大小写敏感 / 整词 开关                                          | [#7.4](#74--查找能力按-renderer-capability-路由-已定-2026-08-20-未实施) | 待拍板   | 非阻塞     | 原倾向：MVP 全不做                                                                                                                                                         | **已定 2026-08-18**（Ral「要大小写开关，其他回头搞」）——MVP 含**大小写敏感开关**；regex 与整词延后，不进 019                                                                    |
-| **PQ-2** | 「文件搜索与全局搜索需要优化」指哪一处                                                    | [#6](#6--shell-侧本轮不动-已定-2026-08-18)                              | 待补输入 | 非阻塞     | 需要 Ral 指明范围                                                                                                                                                          | **已澄清 2026-08-18**（Ral「指的是文件目录上的那个搜索，后面再讨论」）——目标是 Shell 文件树上的那个搜索（本地过滤 / Project Search 输入），**另开一轮讨论**，不属本文与 018/019 |
-| **PQ-3** | Preview 内容应使用一个可导航 view、还是分成原生浏览器与程序渲染两个 view；Find Bar 放哪里 | [#7](#dual-preview-region)                                              | 待拍板   | 原阻塞定案 | 原倾向是单独 toolbar view + 双 content surface；Ral 最终进一步收敛为复用 Shell toolbar，不增加搜索 renderer                                                                | **已定 2026-08-20**：`chromePreviewView` 直出 HTML/PDF，`vuePreviewView` 处理其余格式；同时只 attach 一个。文件头与 Find Bar 放现有 `ShellView` Preview toolbar                 |
-| **PQ-4** | HTML 引用的远程 HTTPS 脚本和页面网络请求是否默认开放                                      | [#7.3](#html-page-boundary)                                             | 待拍板   | 可后置     | **当前已实施：默认拒绝远程网络，只允许受 containment 约束的本地相对资源**；tradeoff 是依赖 CDN / API 的网页应用不能完整运行。未来拍板需要 Ral 说明是否转向「网页应用运行」 | **未来开放策略待定**；不阻塞已实施的离线边界、局部资源或查找方案定案                                                                                                            |
+| id       | 项                                                                                        | 所在                                       | 类型     | 阻塞性     | 倾向 / 拍板需要什么输入                                                                                                                                                    | 状态                                                                                                                                                                            |
+| -------- | ----------------------------------------------------------------------------------------- | ------------------------------------------ | -------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PQ-1** | Find Bar 是否需要 regex / 大小写敏感 / 整词 开关                                          | [#7.4](#find-capability-routing)           | 待拍板   | 非阻塞     | 原倾向：MVP 全不做                                                                                                                                                         | **已定 2026-08-18**（Ral「要大小写开关，其他回头搞」）——MVP 含**大小写敏感开关**；regex 与整词延后，不进 019                                                                    |
+| **PQ-2** | 「文件搜索与全局搜索需要优化」指哪一处                                                    | [#6](#6--shell-侧本轮不动-已定-2026-08-18) | 待补输入 | 非阻塞     | 需要 Ral 指明范围                                                                                                                                                          | **已澄清 2026-08-18**（Ral「指的是文件目录上的那个搜索，后面再讨论」）——目标是 Shell 文件树上的那个搜索（本地过滤 / Project Search 输入），**另开一轮讨论**，不属本文与 018/019 |
+| **PQ-3** | Preview 内容应使用一个可导航 view、还是分成原生浏览器与程序渲染两个 view；Find Bar 放哪里 | [#7](#dual-preview-region)                 | 待拍板   | 原阻塞定案 | 原倾向是单独 toolbar view + 双 content surface；Ral 最终进一步收敛为复用 Shell toolbar，不增加搜索 renderer                                                                | **已定 2026-08-20**：`chromePreviewView` 直出 HTML/PDF，`vuePreviewView` 处理其余格式；同时只 attach 一个。文件头与 Find Bar 放现有 `ShellView` Preview toolbar                 |
+| **PQ-4** | HTML 引用的远程 HTTPS 脚本和页面网络请求是否默认开放                                      | [#7.3](#html-page-boundary)                | 待拍板   | 可后置     | **当前已实施：默认拒绝远程网络，只允许受 containment 约束的本地相对资源**；tradeoff 是依赖 CDN / API 的网页应用不能完整运行。未来拍板需要 Ral 说明是否转向「网页应用运行」 | **未来开放策略待定**；不阻塞已实施的离线边界、局部资源或查找方案定案                                                                                                            |
 
 已定：当前实现的历史原因、大小写开关、文件树 / Project Search 范围、双 Preview view 拓扑、Shell
 toolbar，以及查找资格按 renderer capability 而不是后缀白 / 黑名单路由。
 收敛记账：账本 4 行 · 已解 3 行 · 待拍板 1 行 · 未解的 `阻塞定案` **0 条**。024 已交付基础拓扑；
-023/024 已交付基础拓扑与 preview guards；019/020/021/022 仍按各自 task 状态继续，不能把基础完成记成
-这些下游格式/查找能力已完成。
+023/024 已交付基础拓扑与 preview guards；020 renderer-local XLSX 网格与搜索 session 状态为
+`implemented; owner verification pending`，已通过独立复核并等待 Ral 手测；021 为
+`implemented; owner verification pending`，已通过独立复核并等待 Ral 真实 DOCX 视觉/运行时验证；
+022 为 `implemented; owner verification pending`，已通过独立复核并等待 Ral 真实图片/音视频验证；019 为
+`implemented; owner verification pending`；
+[独立复核 round 2](../plan/reviews/onlypreview-find-in-file-019-2.md) 已记录 **PASS**，其自身行为测试、
+安全构建与独立复核均已完成，剩余闸门为 Ral 的
+[手工验证清单](../plan/tasks/onlypreview-find-in-file-019.md#owner-verification)。
 
 跨姊妹文档盘点（2026-08-20）：未定共 **4** 项，blocker **0** 项；均可后置（本页远程 HTML 网络
 策略，以及格式页 `.xls/.ppt`、`.pptx`、HEIC/HEIF/TIFF）。文本准入、
@@ -676,5 +744,20 @@ XLSX/XLSM、DOCX、旧 `.doc` 与查找 capability 已定，不再计入未定�
 `onlyPreviewAsset.registry.ts` 继续承担 exact-file assets；shared/preload/XPC/i18n 与测试合同已同步。
 
 [onlypreview-dual-preview-region-024](../plan/tasks/onlypreview-dual-preview-region-024.md) 已取代 018 的单
-Preview 目标并完成基础；[019](../plan/tasks/onlypreview-find-in-file-019.md) 仍待在新 Region 上实现 Find。
-020/021/022 仍是待实施的格式能力；023 guards 已实施，不能反向推导这些格式 renderer 已完成。
+Preview 目标并完成基础；[019](../plan/tasks/onlypreview-find-in-file-019.md) 已在新 Region 上实现 Find，
+当前为 `implemented; owner verification pending`；
+[独立复核 round 2](../plan/reviews/onlypreview-find-in-file-019-2.md) 已记录 **PASS**，等待 Ral 按任务内
+手工清单完成运行时/视觉验证。
+020 XLSX/XLSM 格式能力已通过独立复核，当前为 `implemented; owner verification pending`，等待 Ral
+手测；021 DOCX renderer 已实施并通过独立复核，状态为
+`implemented; owner verification pending`，当前等待 Ral 真实 DOCX 视觉/运行时验证；022 已实施，状态为
+`implemented; owner verification pending`，其
+[独立复核 round 2](../plan/reviews/onlypreview-media-truthful-state-022-2.md) 已记录 **PASS**，当前等待 Ral
+真实图片/音视频视觉与运行时验证。023 guards 已实施。
+
+[onlypreview-design-completion-025](../plan/tasks/onlypreview-design-completion-025.md) 已将 selected-file
+descriptor/public/Vue snapshot 收口为 relative-only 白名单，统一 direct unsupported 与 typed failure 的
+metadata surface，并在不新增 renderer、preload 或 FileActions 的前提下完成所有超限 TS/JS 拆分。当前
+状态为 `implemented; owner verification pending`；
+[completion audit](../plan/reviews/onlypreview-design-completion-025-1.md) 已 **PASS**。本文与格式设计的
+非 E2E 实现已闭合，剩余仅 Ral 的真实应用、运行时与视觉手测。

@@ -1,11 +1,14 @@
 import { reactive } from 'vue';
 import { XpcRendererHandler, createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { FeishuHandler } from '@preload/connector/feishu.handler';
+import type {
+  FeishuConnectorRendererApi,
+  FeishuConnectorRuntimeApi,
+} from '@shared/connector/connector.contract';
 import { settingEmitter } from '@/emitter/setting.emitter';
 
-const feishuPreloadEmitter = createXpcRendererEmitter<FeishuHandler>(
+const feishuPreloadEmitter = createXpcRendererEmitter<FeishuConnectorRuntimeApi>(
   'FeishuHandler'
-) as FeishuHandler;
+) as FeishuConnectorRuntimeApi;
 
 interface FeishuLoginDetail {
   botName: string;
@@ -140,7 +143,7 @@ class FeishuState {
 
 export const feishuStore = reactive<FeishuState>(new FeishuState())as FeishuState;
 
-export class FeishuStoreHandler extends XpcRendererHandler {
+export class FeishuStoreHandler extends XpcRendererHandler implements FeishuConnectorRendererApi {
   async onLogin(params: FeishuLoginDetail): Promise<void> {
     feishuStore.loggedIn = true;
     feishuStore.botName = params.botName;

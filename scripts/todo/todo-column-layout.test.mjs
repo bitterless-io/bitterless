@@ -5,9 +5,12 @@ import test from 'node:test';
 
 const root = resolve(import.meta.dirname, '../..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
+// The selector must start its line: `da.domain-column { … }` contains `.domain-column { … }` as a
+// substring but is a dead rule that styles nothing, and an unanchored match accepted it as the
+// contract while every Domain column lost its width, flex, and wrapping rules.
 const cssRule = (source, selector) => {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = source.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`));
+  const match = source.match(new RegExp(`(?:^|\\n)[ \\t]*${escapedSelector}\\s*\\{([^}]*)\\}`));
   assert.ok(match, `Missing CSS rule: ${selector}`);
   return match[1];
 };
@@ -38,13 +41,21 @@ test('Todo uses one wrapping draggable with Focus fixed in its header', () => {
   assert.doesNotMatch(styles, /detail-spacer|scroll-to-left/);
 });
 
-test('Todo board scrolls vertically and reserves the 320px detail panel responsively', () => {
+test('the open detail panel overlays the board instead of squeezing it', () => {
   const app = read('src/renderer/todo/src/App.vue');
   const styles = read('src/renderer/todo/src/App.less');
   const boardScrollRule = cssRule(styles, '.todo-app__board-scroll');
-  const detailOpenRule = cssRule(
+  const detailOpenScrollRule = cssRule(
     styles,
     '.todo-app__board--detail-open .todo-app__board-scroll',
+  );
+  const detailOpenDraggableRule = cssRule(
+    styles,
+    '.todo-app__board--detail-open .todo-app__board-draggable',
+  );
+  const panelRule = cssRule(
+    read('src/renderer/todo/src/components/TodoDetail/TodoDetail.less'),
+    '.todo-detail__panel',
   );
 
   assert.match(
@@ -53,10 +64,33 @@ test('Todo board scrolls vertically and reserves the 320px detail panel responsi
   );
   assert.match(boardScrollRule, /overflow-x:\s*hidden/);
   assert.match(boardScrollRule, /overflow-y:\s*auto/);
-  assert.match(detailOpenRule, /padding-right:\s*calc\(320px \+ 12px\)/);
+  assert.match(panelRule, /position:\s*absolute/, 'the detail panel must stay a right overlay');
+  assert.match(panelRule, /width:\s*320px/);
+
+  assert.doesNotMatch(
+    detailOpenScrollRule,
+    /padding-right/,
+    'an open detail panel must not reserve board width, which would re-wrap the columns',
+  );
   assert.match(
+    detailOpenScrollRule,
+    /overflow-x:\s*auto/,
+    'an open detail panel must allow horizontal reveal of the occluded strip',
+  );
+  assert.match(
+    detailOpenDraggableRule,
+    /margin-right:\s*320px/,
+    'the wrapping draggable must carry exactly the panel width of trailing scroll slack',
+  );
+  assert.doesNotMatch(
+    detailOpenDraggableRule,
+    /width|max-width/,
+    'the draggable must keep its full-width wrapping contract while the panel is open',
+  );
+  assert.doesNotMatch(
     styles,
-    /@media \(max-width: 680px\)[\s\S]*?\.todo-app__board--detail-open \.todo-app__board-scroll\s*\{\s*padding-right:\s*12px/,
+    /@media \(max-width: 680px\)[\s\S]*?\.todo-app__board--detail-open/,
+    'the 680px override only undid the removed reservation',
   );
   assert.match(
     styles,
@@ -64,7 +98,7 @@ test('Todo board scrolls vertically and reserves the 320px detail panel responsi
   );
 });
 
-test('Focus and Domain columns share the exact flexible width contract', () => {
+test('Focus and Domain columns share the exact flexible width and height contract', () => {
   const columnSources = [
     ['Domain', read('src/renderer/todo/src/components/DomainColumn/DomainColumn.less'), '.domain-column'],
     ['Focus', read('src/renderer/todo/src/components/FocusedColumn/FocusedColumn.less'), '.focused-column'],
@@ -75,6 +109,7 @@ test('Focus and Domain columns share the exact flexible width contract', () => {
     assert.match(rule, /(?:^|\n)\s*width:\s*auto;/, `${label} must use width: auto`);
     assert.match(rule, /min-width:\s*300px;/, `${label} must keep its 300px minimum`);
     assert.match(rule, /max-width:\s*480px;/, `${label} must keep its 480px maximum`);
+    assert.match(rule, /max-height:\s*80vh;/, `${label} must cap at 80% of the window height`);
     assert.match(rule, /flex:\s*1 1 300px;/, `${label} must share row space from a 300px basis`);
     assert.match(rule, /align-self:\s*flex-start;/, `${label} must align to the row start`);
     assert.doesNotMatch(rule, /(?:^|\n)\s*width:\s*300px;/, `${label} must not use a fixed width`);
@@ -112,32 +147,66 @@ test('Add Domain is the first menu action with limit, loading, and reveal behavi
   );
 });
 
-test('Todo location uses vertical visibility and retains row centering', () => {
+test('Todo location reveals the column beside the detail panel and retains row centering', () => {
   const store = read('src/renderer/todo/src/store/todo.store.ts');
   const selection = store.match(/  async selectTodo\([\s\S]*?\n  \}(?=\n\n  async selectTodoFromFocused)/);
   const focusedSelection = store.match(
     /  async selectTodoFromFocused\([\s\S]*?\n  \}(?=\n\n  private _beginTodoSelection)/,
   );
-  const locateTodo = store.match(/  locateTodo\([\s\S]*?\n  \}(?=\n\n  closeDetail)/);
+  const locateTodo = store.match(/  locateTodo\([\s\S]*?\n  \}(?=\n\n  private _revealColumn)/);
+  const revealColumn = store.match(/  private _revealColumn\([\s\S]*?\n  \}(?=\n\n  closeDetail)/);
 
   assert.ok(selection, 'Missing Todo selection behavior');
   assert.ok(focusedSelection, 'Missing Focus selection behavior');
   assert.ok(locateTodo, 'Missing Todo location behavior');
+  assert.ok(revealColumn, 'Missing panel-aware column reveal behavior');
   assert.match(
     selection[0],
     /const detailGeneration = this\._beginTodoSelection\(todo\);\s*if \(!await this\._readAndCommitSelectedSubTodos\(todo\.id, detailGeneration\)\) return;\s*await nextTick\(\);\s*this\.locateTodo\(todo\.id, todo\.domain_id\)/,
   );
   assert.doesNotMatch(selection[0], /loadSubTodos/);
   assert.doesNotMatch(focusedSelection[0], /scrollLeft|scrollTo\(\{\s*left|offsetLeft/);
-  assert.doesNotMatch(locateTodo[0], /scrollLeft|scrollTo\(\{\s*left|offsetLeft|clientWidth/);
-  assert.match(
+
+  assert.match(locateTodo[0], /this\._revealColumn\(columnEl\)/);
+  assert.doesNotMatch(
     locateTodo[0],
-    /columnEl\.scrollIntoView\(\{ block: 'nearest', behavior: 'smooth' \}\)/,
+    /scrollIntoView/,
+    'locate must not use panel-unaware scrollIntoView',
   );
   assert.match(locateTodo[0], /const targetScrollTop = rowOffsetTop - \(bodyHeight - rowHeight\) \/ 2/);
   assert.match(
     locateTodo[0],
     /columnBody\.scrollTo\(\{ top: Math\.max\(0, targetScrollTop\), behavior: 'smooth' \}\)/,
+  );
+
+  assert.match(store, /const DETAIL_PANEL_WIDTH = 320;/);
+  assert.match(store, /const DETAIL_PANEL_GAP = 12;/);
+  assert.match(
+    revealColumn[0],
+    /document\.querySelector<HTMLElement>\('\.todo-app__board-scroll'\)/,
+  );
+  assert.match(
+    revealColumn[0],
+    /const reservedRight = this\.detailVisible \? DETAIL_PANEL_WIDTH \+ DETAIL_PANEL_GAP : 0;/,
+  );
+  assert.match(
+    revealColumn[0],
+    /\{ start: boardRect\.left, end: boardRect\.right - reservedRight \}/,
+    'the horizontal visible region must stop before the detail panel',
+  );
+  assert.match(
+    revealColumn[0],
+    /\{ start: boardRect\.top, end: boardRect\.bottom \}/,
+    'the vertical visible region must stay the whole board',
+  );
+  assert.match(
+    revealColumn[0],
+    /boardScroll\.scrollTo\(\{\s*left: Math\.max\(0, left\),\s*top: Math\.max\(0, top\),\s*behavior: 'smooth',\s*\}\)/,
+  );
+  assert.match(
+    store,
+    /const axisScrollDelta = \(\s*box: \{ start: number; end: number \},\s*visible: \{ start: number; end: number \},\s*\): number => \{/,
+    'the axis math must stay a shared two-parameter helper',
   );
 });
 

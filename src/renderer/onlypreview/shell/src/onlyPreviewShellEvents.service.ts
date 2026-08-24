@@ -2,6 +2,8 @@ import { xpcRenderer } from 'electron-xpc/renderer';
 import {
   ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
+  ONLY_PREVIEW_FIND_FOCUS_EVENT,
+  ONLY_PREVIEW_FIND_STATE_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
   ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
@@ -38,6 +40,8 @@ interface OnlyPreviewShellEventHandlers {
   settingsChanged: () => void;
   focusProject: () => void;
   focusSearch: () => void;
+  findState: () => void;
+  focusFind: () => void;
 }
 
 const isHostEvent = (value: unknown): value is { hostId: string } =>
@@ -126,5 +130,11 @@ export const subscribeOnlyPreviewShellEvents = (
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_SEARCH_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.focusSearch();
+  });
+  xpcRenderer.subscribe(ONLY_PREVIEW_FIND_STATE_EVENT, ({ params }) => {
+    if (isHostEvent(params) && isCurrentHost(params)) handlers.findState();
+  });
+  xpcRenderer.subscribe(ONLY_PREVIEW_FIND_FOCUS_EVENT, ({ params }) => {
+    if (isHostEvent(params) && isCurrentHost(params)) handlers.focusFind();
   });
 };

@@ -2,33 +2,33 @@
 
 ## Purpose and boundary
 
-This scope owns independently rendered desktop work surfaces opened from Bitterless **Mini Apps**.
-The Bitterless home renderer owns discovery and launch. Each sub-application owns its window-local
-UI and domain runtime, while the Bitterless main process owns the Electron application lifecycle,
-authentication invalidation, updates, packaging, and final cleanup.
+This scope owns independently rendered desktop work surfaces opened from **Maestro Workbench Apps**.
+The Home renderer is the login/bootstrap shell and remains hidden after authenticated Maestro
+startup. Maestro Workbench owns post-login discovery and launch. Each sub-application owns its
+window-local UI and domain runtime, while the Bitterless main process owns the Electron application
+lifecycle, authentication invalidation, updates, packaging, and final cleanup.
 
-Maestro and Coin remain integrated runtimes, but their Home Mini Apps cards and launch actions are
-temporarily hidden. Todo, EyesOnAgents, OnlyPreview, and Omni Browser remain visible. Hiding these
-two entries does not remove their window handlers, renderer entries, packaged resources, or
-persisted data.
+Maestro is the visible authenticated primary runtime. Coin, Todo, EyesOnAgents, OnlyPreview, Omni
+Browser, and the Maestro focus action remain visible in Workbench Apps. Each entry keeps its own
+window handler, renderer entries, packaged resources, and persisted data.
 
 ```text
-Bitterless Home / Mini Apps
+Bitterless Home login/bootstrap
             |
-            +---- TodoWindowHandler ---- Todo BrowserWindow
-            |
-            +---- OnlyPreviewHandler --- OnlyPreview BaseWindow + Setting window
-            |
-            +---- MaestroWindowHandler -- Maestro BrowserWindow graph (entry dormant)
-            |
-            +---- CoinWindowHandler ----- Coin BrowserWindow (entry dormant)
+            +---- authenticated handoff ---- Maestro primary window
+                                                |
+                                                +---- Workbench Apps
+                                                        ├── TodoWindowHandler ---- Todo BrowserWindow
+                                                        ├── OnlyPreviewHandler --- OnlyPreview graph
+                                                        ├── CoinWindowHandler ----- Coin BrowserWindow
+                                                        └── Maestro Open ---------- focus current window
 ```
 
 ## Ownership
 
 | Concern | Owner |
 |---|---|
-| Mini App card, translated name/description, Open action | Bitterless home renderer |
+| App card, translated name/description, Open action | Maestro Workbench Apps renderer |
 | Singleton creation/focus and authentication cleanup | main-process window handler |
 | Renderer/preload entry registration | Bitterless electron-vite configuration |
 | App update, quit, application menu, signing, installer | Bitterless host |
@@ -45,7 +45,7 @@ Bitterless Home / Mini Apps
 
 ## Scope-wide constraints
 
-- Mini Apps open as independent singleton windows; they are not hidden routes inside the home
+- Workbench Apps open independent singleton windows; they are not hidden routes inside the Home
   renderer. A documented Omni adapter may render a compatible sub-application directly inside a
   cell. OnlyPreview explicitly has no Omni adapter because it owns a multi-view native window graph.
 - All windows have a minimum usable size of `800x600`.

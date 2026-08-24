@@ -5,8 +5,10 @@ import {
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   type OnlyPreviewBounds,
+  type OnlyPreviewFileRef, type OnlyPreviewHostRequest,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
+  type OnlyPreviewProjectItemCopyKind,
   type OnlyPreviewResult,
   type OnlyPreviewPreviewPresentation,
   type OnlyPreviewSettings,
@@ -42,6 +44,7 @@ import {
   type OnlyPreviewSearchProgressState
 } from './onlyPreviewSearchProgress.service';
 import { subscribeOnlyPreviewShellEvents } from './onlyPreviewShellEvents.service';
+import { onlyPreviewFindStore } from './onlyPreviewFind.store';
 import { getOnlyPreviewParentPath, onlyPreviewTreeFilter } from './onlyPreviewTree.service';
 
 const errorMessage = (error: unknown): string => {
@@ -129,7 +132,8 @@ class OnlyPreviewShellStore {
     await Promise.all([
       this.refreshSettings(),
       this.restoreWorkspace(),
-      this.syncPreviewPresentation()
+      this.syncPreviewPresentation(),
+      onlyPreviewFindStore.initialize()
     ]);
   }
   async chooseFolder(): Promise<void> {
@@ -187,9 +191,7 @@ class OnlyPreviewShellStore {
     await this.runWindowCommand(() => onlyPreviewClient.closeWindow({ hostToken }));
   }
   setSearchQuery(value: string): void {
-    if (!this.searchQuery.trim() && value.trim()) {
-      onlyPreviewTreeFilter.begin(this.index, this.expandedPaths);
-    } else if (!value.trim()) onlyPreviewTreeFilter.end(this.expandedPaths);
+    onlyPreviewTreeFilter.transition(this.index, this.expandedPaths, this.searchQuery, value);
     this.searchQuery = value;
     this.focusedRelativePath = this.treeFocusRelativePath;
   }
@@ -233,25 +235,26 @@ class OnlyPreviewShellStore {
     this.focusedRelativePath = this.selectedEntry.relativePath;
     return this.focusedRelativePath;
   }
-  showFileContextMenu(entry: OnlyPreviewIndexEntry): Promise<void>;
-  showFileContextMenu(relativePath: string): Promise<void>;
   async showFileContextMenu(entry: OnlyPreviewIndexEntry | string): Promise<void> {
-    const hostToken = onlyPreviewEnv.hostToken;
-    const workspace = this.workspace;
-    if (typeof entry !== 'string' && entry.nodeKind !== 'file') return;
+    if (typeof entry !== 'string' && entry.nodeKind === 'symlink') return;
     const relativePath = typeof entry === 'string' ? entry : entry.relativePath;
-    if (!hostToken || !workspace || !relativePath) return;
+    const request = this.projectItemRequest(relativePath);
+    if (!request) return;
     try {
-      unwrapOnlyPreviewResult(
-        await onlyPreviewClient.showFileContextMenu({
-          hostToken,
-          workspaceId: workspace.workspaceId,
-          relativePath
-        })
-      );
+      unwrapOnlyPreviewResult(await onlyPreviewClient.showFileContextMenu(request));
     } catch (error) {
       this.errorMessage = errorMessage(error);
     }
+  }
+  async copyProjectItem(
+    relativePath: string,
+    copyKind: OnlyPreviewProjectItemCopyKind
+  ): Promise<void> {
+    const request = this.projectItemRequest(relativePath);
+    if (!request) return;
+    await this.runWindowCommand(() =>
+      onlyPreviewClient.copyProjectItem({ ...request, copyKind })
+    );
   }
   async openPreviewExternally(): Promise<void> {
     await this.runPreviewFileAction('open');
@@ -291,7 +294,7 @@ class OnlyPreviewShellStore {
       }
     } else if (key === 'ArrowLeft') {
       if (current.entry.nodeKind === 'directory' && current.expanded) {
-        this.expandedPaths.delete(current.entry.relativePath);
+        onlyPreviewTreeFilter.collapseDirectory(current.entry.relativePath, this.expandedPaths);
       } else if (current.entry.parentRelativePath) {
         const parent = rows.find(
           (row) => row.entry.relativePath === current.entry.parentRelativePath
@@ -322,12 +325,8 @@ class OnlyPreviewShellStore {
   }
 
   toggleDirectory(relativePath: string): void {
-    if (this.expandedPaths.has(relativePath)) {
-      this.expandedPaths.delete(relativePath);
-    } else {
-      this.expandedPaths.add(relativePath);
+    if (onlyPreviewTreeFilter.toggleDirectory(this.searchQuery, relativePath, this.expandedPaths))
       void this.loadDirectory(relativePath);
-    }
   }
 
   setProjectWidth(value: number): void {
@@ -359,6 +358,11 @@ class OnlyPreviewShellStore {
         void this.syncSelection();
       },
       characterCountChanged: (characterCount) => {
+        if (this.nativeFindSuppressesCharacterCount()) {
+          this.selectedCharacterCount = 0;
+          this.pendingCharacterCount = 0;
+          return;
+        }
         if (characterCount === 0) {
           this.selectedCharacterCount = 0;
           this.pendingCharacterCount = 0;
@@ -385,10 +389,43 @@ class OnlyPreviewShellStore {
         this.focusProjectRevision += 1;
       },
       focusSearch: () => {
+        onlyPreviewTreeFilter.clearRevealRoots();
         onlyPreviewProjectSearchStore.enter();
         this.focusSearchRevision += 1;
-      }
+      },
+      findState: () => void this.syncFindState(),
+      focusFind: () => void this.handleFocusFind()
     });
+  }
+
+  private nativeFindSuppressesCharacterCount(): boolean {
+    const presentation = this.previewPresentation;
+    const state = onlyPreviewFindStore.state;
+    return (
+      onlyPreviewFindStore.open &&
+      !!presentation &&
+      !!state &&
+      state.selectionRevision === presentation.selectionRevision &&
+      state.surface === presentation.surface &&
+      presentation.surface === 'vue' &&
+      (presentation.adapterId === 'markdown-dom' || presentation.adapterId === 'docx-dom')
+    );
+  }
+
+  private clearNativeFindSelectionCount(): void {
+    if (!this.nativeFindSuppressesCharacterCount()) return;
+    this.selectedCharacterCount = 0;
+    this.pendingCharacterCount = 0;
+  }
+
+  private async syncFindState(): Promise<void> {
+    await onlyPreviewFindStore.sync();
+    this.clearNativeFindSelectionCount();
+  }
+
+  private async handleFocusFind(): Promise<void> {
+    await onlyPreviewFindStore.handleFocusRequest();
+    this.clearNativeFindSelectionCount();
   }
 
   private applySearchProgress(progress: OnlyPreviewSearchBuildProgress): void {
@@ -410,7 +447,12 @@ class OnlyPreviewShellStore {
       this.errorMessage = errorMessage(error);
     }
   }
-
+  private projectItemRequest(relativePath: string): (OnlyPreviewHostRequest & OnlyPreviewFileRef) | null {
+    const hostToken = onlyPreviewEnv.hostToken;
+    const workspace = this.workspace;
+    if (!hostToken || !workspace || !relativePath) return null;
+    return { hostToken, workspaceId: workspace.workspaceId, relativePath };
+  }
   private async restoreWorkspace(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
@@ -711,6 +753,7 @@ class OnlyPreviewShellStore {
     }
     const revisionChanged = presentation.selectionRevision !== current?.selectionRevision;
     this.previewPresentation = presentation;
+    this.clearNativeFindSelectionCount();
     if (revisionChanged) {
       const reportingRevision = String(presentation.selectionRevision);
       this.characterCountGate.beginTransition(reportingRevision);

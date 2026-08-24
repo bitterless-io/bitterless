@@ -7,9 +7,9 @@ Status: Accepted
 OnlyPreview is Bitterless's read-only local-file workbench. Its visible picker opens one directory,
 the user navigates a complete demand-loaded project tree on the left, and the selected file is
 previewed on the right without leaving Bitterless. Main-owned operating-system file-open routes may
-still target an individual file and derive its containing workspace. The first delivery is optimized
-for source code, text, PDF, image, audio, and video files used in development and ordinary desktop
-work.
+still target an individual file and derive its containing workspace. The current delivery covers
+source code, text, PDF, XLSX/XLSM workbooks, DOCX documents, image, audio, and video files used in
+development and ordinary desktop work.
 
 OnlyPreview owns local file discovery, a persistent incremental search index, preview
 classification, read-only rendering, its app-specific preferences, and the standalone window
@@ -17,8 +17,12 @@ graph. Search traversal, searchable content reads, SQLite indexing, watch reconc
 queries run only in the trusted Node-context preload of a dedicated invisible `fileSearch`
 `BrowserWindow`; Electron Main validates capabilities, privately enriches initialization with
 bootstrap paths, supervises that renderer, and performs a bounded XPC relay without search I/O.
-OnlyPreview never edits, writes, creates, renames, moves, or deletes user files. Unsupported local
-files still open to an explicit metadata surface with an action to use the system application.
+OnlyPreview never edits file contents or creates, renames, or moves user files. Its one explicit
+filesystem mutation is a Main-owned, capability-scoped permanent Delete action in the native file
+  menu: files/directories also have capability-scoped native reveal and clipboard actions; Delete
+  requires a destructive confirmation and unlinks exactly one regular file from disk rather
+than moving it to Trash. Unsupported local files still open to an explicit metadata surface with an
+action to use the system application.
 
 The public identity is `OnlyPreview`; its visible code IDs, renderer directories, setting keys, and
 window-state keys use `onlypreview`. The reusable invisible search owner is the independent
@@ -36,15 +40,17 @@ implementation contract inside Bitterless and contains no private user data.
 | OS file-open queue and first/second-instance routing                                         | `app.main.ts` + OnlyPreview open router                                 |
 | Standalone `BaseWindow`, Shell, Setting/Guide windows, total cleanup                         | OnlyPreview window handler/helper                                       |
 | Preview selection revision, inner bounds, active surface, readiness, teardown                | Main `OnlyPreviewPreviewRegionService`                                  |
+| Current-file find state/revision, capability routing, native request/result fencing          | Main `OnlyPreviewFindService` inside the Preview Region                 |
 | Per-view host, search-bootstrap, workspace, and media ownership                              | Main OnlyPreview capability registries                                  |
-| Workspace capabilities, selected-file containment, descriptor, preview text reads            | Main OnlyPreview file service                                           |
+| Workspace capabilities, item containment, descriptor, clipboard projection, preview reads/delete | Main OnlyPreview file/clipboard services                            |
 | Project traversal, media classification, filename tier, full-text SQLite, watch/update/query | invisible top-level `fileSearch` renderer's Node-context preload        |
 | Last canonical directory persistence and restore ordering                                    | Main OnlyPreview recent-directory service + Core SQLite `setting` table |
 | Exact media/PDF assets and contained HTML documents                                          | Main asset/document registries + session-scoped `bitterless-preview://` |
-| Tree, Project Search, Preview toolbar/actions, status, inner bounds                          | OnlyPreview Shell renderer                                              |
-| Monaco/Markdown/image/audio/video/unsupported presentation                                   | app-owned Vue Preview surface                                           |
+| Tree, Project Search, Preview toolbar/actions/Find Bar, status, inner bounds                 | OnlyPreview Shell renderer                                              |
+| Monaco/Markdown/XLSX/DOCX/image/audio/video/unsupported presentation                         | app-owned Vue Preview surface                                           |
 | Executable contained HTML and Chromium PDF presentation                                      | disposable raw Chromium Preview surface                                 |
 | Monaco model/editor lifecycle and Vue readiness observations                                 | Vue Preview surface, fenced by Main revision/runtime token              |
+| Monaco/XLSX current-file find execution and active-match highlight                           | Vue Preview model adapters, fenced by Main command/runtime revision     |
 | Preferences                                                                                  | Main handler backed by `SettingDao`                                     |
 | Window geometry                                                                              | existing `windowStateService`                                           |
 | Portable agent skill, setup Guide, and read-only agent open                                  | OnlyPreview skill service + local MCP bridge                            |
@@ -60,7 +66,7 @@ implementation contract inside Bitterless and contains no private user data.
 │ │ 32px Royal Blue MenuBar + platform window controls              │ │
 │ ├──────────────────────┬───────────────────────────────────────────┤ │
 │ │ local filter/tree or │ 43px Preview toolbar                      │ │
-│ │ Project Search files │ identity/path              type/actions   │ │
+│ │ Project Search files │ identity/path  Find Bar    type/actions   │ │
 │ │                      ├───────────────────────────────────────────┤ │
 │ │                      │ inner content host                        │ │
 │ │ ━ 2px index rail     │                                           │ │
@@ -89,9 +95,14 @@ Main capability/XPC supervisor ── private typed XPC ── hidden fileSearch
   validates/clamps the rectangle to begin at or below y=75 (32px MenuBar + 43px toolbar), and does
   not create, load, or attach a content view before the first valid bounds arrive.
 - Main's Preview Region owns one monotonically increasing selection revision and attaches exactly
-  one content view: the app-owned Vue surface for code/Markdown/image/media/fallback states, or a
-  fresh raw Chromium surface for HTML/PDF. A transition first revokes old authority and detaches the
+  one content view: the app-owned Vue surface for code/Markdown/XLSX/DOCX/image/media/fallback states,
+  or a fresh raw Chromium surface for HTML/PDF. A transition first revokes old authority and detaches the
   old surface; resize cannot reattach it while the next descriptor is pending.
+- One Shell-owned Find Bar serves Shell, Vue, and raw Chromium shortcut entry. Main owns the only
+  accepted `findRevision`: HTML/PDF/Markdown/DOCX use the active view's `findInPage()`, Monaco uses
+  its complete accepted model with one active decoration, and XLSX uses the Worker accepted model
+  with truthful partial coverage only after a model cap. Image/audio/video/unsupported expose no
+  text capability and do not open a fake session.
 - File identity, type, and native file actions stay in the Shell toolbar even when classification,
   loading, or a content renderer fails. Presentation events carry only `{ hostId }` as an untrusted
   nudge; Shell and Vue refetch their own capability-scoped Main snapshots with local generation
@@ -120,7 +131,7 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 | Entry                  | Preload                 | Host mode    | Responsibility                                                                                |
 | ---------------------- | ----------------------- | ------------ | --------------------------------------------------------------------------------------------- |
 | `onlypreview/shell`    | `onlypreview.js`        | `shell`      | MenuBar, tree/search, Preview toolbar/actions, status, and inner content-host bounds          |
-| `onlypreview/preview`  | `onlypreviewContent.js` | `preview`    | Vue-only Monaco/Markdown/image/audio/video/unsupported/loading/error surface                  |
+| `onlypreview/preview`  | `onlypreviewContent.js` | `preview`    | Vue-only Monaco/Markdown/XLSX/DOCX/image/audio/video/unsupported/loading/error surface        |
 | raw Chromium view      | none                    | none         | disposable contained HTML or built-in PDF viewer; no first-party renderer entry or host token |
 | `onlypreview/settings` | `onlypreview.js`        | `settings`   | app-specific settings form                                                                    |
 | `onlypreview/guide`    | `onlypreview.js`        | `guide`      | one-copy MCP and portable Preview-skill setup                                                 |
@@ -193,7 +204,11 @@ Required properties:
 - `restoreWorkspace` first returns the latest workspace still owned by that same live host. When a
   fresh host has no workspace, it may reconstruct one from the persisted last canonical directory
   under the recent-directory contract below; the reconstruction always mints a new `workspaceId`.
-- Returned display paths are presentation metadata. They cannot be supplied back as read authority.
+- `OnlyPreviewWorkspace.displayPath` is Shell-only workspace presentation metadata. It cannot be
+  supplied back as read authority and is never copied into `OnlyPreviewDescriptor`, the public
+  selected-file presentation, or the runtime-token-bound Vue snapshot. Those snapshots carry only
+  workspace-relative file identity plus bounded type/size/modified metadata; no visible content
+  renderer receives a canonical root or absolute selected-file path.
 
 The renderer-visible surfaces are read-only. The Main API intentionally has no directory-listing or
 index-build method; browse/search requests use the narrow supervised search-runtime proxy:
@@ -552,18 +567,20 @@ runtime/UI path; packaged release startup remains untested.
 | `text` / Markdown | `.md`                                                                                   | Vue: centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.markdown` and `.mdx` remain Monaco |
 | `html`            | `.html`, `.htm`                                                                         | raw Chromium: executable entry document plus contained relative JS/CSS/image/font/media resources                            |
 | `pdf`             | `.pdf` with matching signature                                                          | raw Chromium: built-in PDF viewer over one exact revision-bound bounded asset                                                |
-| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                               | Vue: `<img>` contain; SVG never becomes a top-level executable document                                                      |
-| `audio`           | MP3, WAV, OGG, M4A, AAC, FLAC where Chromium has codec support                          | Vue: `<audio controls>`, no autoplay                                                                                         |
-| `video`           | MP4, WebM, OGV, MOV, M4V where Chromium has codec support                               | Vue: `<video controls>`, no autoplay                                                                                         |
-| `unsupported`     | unknown binary, Office/archive/executable in MVP                                        | Vue: name/type/size/modified/display path; system actions remain in the Shell toolbar                                        |
+| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                               | Vue: bounded Blob + off-DOM decode, then an accessible fit/zoom/reset/pan viewer                                             |
+| `audio`           | MP3, WAV, OGG, M4A, AAC, FLAC; actual codec support remains Chromium-owned              | Vue: HEAD preflight, then `<audio controls preload="metadata">`, no autoplay                                                 |
+| `video`           | MP4, WebM, OGV, MOV, M4V; actual codec support remains Chromium-owned                   | Vue: HEAD preflight, then `<video controls preload="metadata">`, no autoplay                                                 |
+| `sheet`           | `.xlsx`, `.xlsm` with bounded OOXML ZIP structure                                       | Vue: disposable ExcelJS Worker + self-owned read-only virtual workbook grid                                                  |
+| `document`        | `.docx` with bounded OOXML ZIP structure                                                | Vue: one-shot preflight Worker + dynamically loaded `docx-preview@0.4.0` + sanitized Word-like paginated DOM                 |
+| `unsupported`     | exact recognized HEIC/HEIF/TIF/TIFF/RAW or MKV/AVI/WMV/FLV, plus other unknown formats  | Vue: typed image/media unsupported reason or generic fallback; system actions remain in the Shell toolbar                    |
 
 - Text reads are complete-or-error with an 8 MiB maximum. They read at most 8 MiB + 1 byte from the
   verified handle to detect concurrent growth and are never silently truncated.
 - Text routing is extension/exact-basename first and size-first. Unknown files remain unsupported;
   admitted UTF-8 and BOM-marked UTF-16 decode tolerantly, including NUL and replacement characters.
 - HTML is routed directly only for `.html` and `.htm`; XML, Vue SFCs, and other HTML-like source
-  remain Monaco text. The entry is capped at 1 MiB. Each revision receives a new raw Chromium view,
-  isolated memory session, and document token. Inline scripts/styles and contained relative
+  remain Monaco text. The entry is capped at 1 MiB. Each revision receives a new raw Chromium view on
+  the dedicated persistent preview partition, plus its own document token. Inline scripts/styles and contained relative
   JS/CSS/image/font/media resources may run/load; traversal, symlink escape, absolute/file URLs,
   remote network, popups, redirects, downloads, and permissions remain denied. The document has no
   preload, XPC, Electron/Node API, Bitterless cookies/storage, or broad filesystem authority.
@@ -576,7 +593,30 @@ runtime/UI path; packaged release startup remains untested.
   tags and no attributes; scripts, styles, forms, frames, SVG/MathML, event handlers, `href`, `src`,
   and remote/data/local resource loads cannot survive. Links remain readable but inert, and images
   become alt-text placeholders rather than loading a resource.
-- A descriptor reports a mismatched signature or unsupported codec as a recoverable preview error.
+- Image admission checks extension, the 100 MiB limit, and a bounded signature probe. Common SVG
+  XML declaration/comment/DOCTYPE prologs, AAC `ADIF`, and plausible MOV/QuickTime
+  `ftyp/moov/mdat/wide/free/skip` first atoms are accepted by their respective gates. An admitted
+  image is fetched completely with exact response-length verification, converted to a
+  renderer-owned Blob URL, and decoded off-DOM before a live `<img>` appears. The viewer starts in
+  non-upscaling Fit, uses a 1.25 zoom factor, an effective minimum
+  `min(0.1, currentFitScale)`, an `8` maximum, exact 100% Reset, centered pan clamps, ResizeObserver,
+  primary-pointer capture/cancel, and focusable viewport arrow-key pan. Empty, read, signature, and
+  decoder failures remain distinct; every created Blob URL is revoked exactly once.
+- Audio/video stay on the revision-bound Range asset instead of buffering the full file. A HEAD
+  preflight requires the exact expected `Content-Length` plus CORS-visible `Accept-Ranges: bytes`;
+  only then does a native `preload="metadata"` player mount. `loadedmetadata` is the first ready
+  signal. `MediaError` codes 1/2/3/4 map to aborted/network/decode/source-unsupported states, a
+  missing error object maps to read failure, and a 30-second no-metadata/no-error deadline removes
+  the dead player with the same typed read failure. Ready may later demote on a playback error.
+- A descriptor reports a mismatched signature or one exact recognized unsupported image/media
+  category as a recoverable preview state. Container extensions never assert codec support;
+  Chromium's native player supplies the actual codec/source result.
+- Task 022 is `implemented; owner verification pending`.
+  [Independent review round 1](../plan/reviews/onlypreview-media-truthful-state-022-1.md) recorded
+  **BLOCKED** on renderer-error family authorization; the exhaustive adapter discriminator and
+  negative Region behavior coverage fixed that finding.
+  [Independent review round 2](../plan/reviews/onlypreview-media-truthful-state-022-2.md) recorded
+  **PASS**. Ral owns the remaining real-app image/media runtime and visual verification.
 - Monaco editor and model are both disposed on file changes and component unmount.
 - Selection/copy/find remain enabled; mutation commands and ordinary keyboard input cannot modify
   the model. Electron E2E must prove a selected range can be copied and attempted input leaves the
@@ -586,6 +626,53 @@ runtime/UI path; packaged release startup remains untested.
   when both endpoints remain inside the preview body. Raw Chromium HTML/PDF has no preload and
   therefore clears/hides this metadata. Whitespace and line breaks count. Empty,
   outside, stale, loading, error, file-change, and unmount states report zero and hide the label.
+- XLSX/XLSM admission is extension → 25MiB/signature gate → reusable OOXML preflight → dynamic
+  ExcelJS import in one disposable module Worker. The preflight proves exact ZIP record closure,
+  validates actual STORE/DEFLATE expansion length and CRC32 under 5,000-entry, 128MiB single-entry,
+  200MiB aggregate, and 200:1 ratio caps, rejects unsafe/duplicate canonical and workbook-engine
+  paths, and blocks more than 100,000 merge records or 500,000 expanded merge cells before ExcelJS.
+  A bounded model accepts at most 64 sheets, 100,000 row coordinates and 512 column coordinates per
+  sheet, 500,000 non-empty cells, 500,000 explicit dimensions, 1,048,576 formatted UTF-16 code
+  units per cell, and 16,777,216 across the workbook. Only those model caps may produce truthful
+  `sheet-model-cap` partial coverage; ZIP/parser/timeout failures are unavailable. The renderer
+  runtime-validates every Worker manifest/layout/viewport/search response, limits one viewport
+  request to 50,000 row-column coordinates, and terminally rejects malformed messages.
+- Viewport merge responses must cover more than one cell, use unique masters, remain non-overlapping,
+  and keep their aggregate intersection work within the requested viewport area. Once a manifest is
+  ready, an unexpected terminal session event clears Store/Main ready truth only through exact
+  session/generation/selection/reporting fences; normal disposal and initial load failure are silent.
+- The workbook UI has sheet tabs, sticky headers, row/column dimensions, intersecting merged-cell
+  masters, horizontal left/center/right and vertical top/middle/bottom alignment, wrap/number/date/
+  percent/currency/font/fill rendering, and viewport-sized DOM. Horizontal `fill` and `justify` are
+  rejected until bounded visible semantics exist. Display and cross-sheet literal search use the
+  same accepted formatted strings. ExcelJS `Date` values are converted back to workbook-epoch
+  serials before formatting so 1900 serials 59/60/61 and 1904 dates keep display/search parity;
+  formula cells expose only cached results. Macros, formula evaluation/recalculation, charts, pivots, conditional
+  formatting, comments, data validation, sparklines, floating images, and Shell Find integration
+  were not part of task 020; task 019 now consumes its accepted search model.
+- DOCX task 021 is `implemented; owner verification pending` after
+  [independent review round 2](../plan/reviews/onlypreview-docx-render-021-2.md) recorded **PASS**;
+  Ral owns the remaining real DOCX visual/runtime verification. Admission is extension →
+  25MiB/signature gate → reusable pure OOXML preflight in a one-shot
+  module Worker with a 10-second hard adapter timeout → dynamic `docx-preview@0.4.0` import. Only
+  preflight success may call stable `renderAsync()` into detached body/style containers, with
+  altChunk/changes/comments disabled, fonts ignored with system fallback, headers/footers enabled,
+  `useBase64URL: false`, and experimental/debug disabled. A dedicated DOM/CSS allowlist rejects
+  active/navigational markup, unsafe attributes, remote/file/custom URLs, `@import`, and every
+  unverified `url()`; CSP is not a substitute for that sanitizer. The complete detached output and
+  every verified embedded-image blob URL are scanned and registered before current DOM mount.
+- `renderAsync()` has no `AbortSignal`. Ordinary file changes serially reset the adapter, terminate
+  fetch/preflight work and immediately settle the old preflight promise, reject stale output by
+  exact runtime/host/selection revision, and revoke all known blobs. Leaving a still-loading DOCX
+  closes the exact old Vue view and rotates its runtime before the new revision; a post-ready switch
+  may reuse the view after serial cleanup. Main independently arms one 30-second watchdog when a
+  DOCX is loading and the exact
+  Vue view/runtime token exists, including first view creation after bounds; reset and resize never
+  extend it. Engine rejection, incomplete/unverifiable output, sanitizer failure, and timeout do not
+  attach partial DOM; failure paths that may orphan renderer-owned blob URLs destroy and recreate
+  the exact Vue view. Ready is reported only after sanitized current DOM is mounted and `nextTick`
+  completes. Task 019 now consumes that readiness for `webContents.findInPage()`; 021 itself did not
+  add a Find Bar.
 - Main alone mints the numeric selection revision. Vue readiness/error/selection observations must
   carry both the exact current revision and rotating Vue runtime token; Main rejects an old or
   foreign renderer even when it knows the shared host. Presentation events contain only `{ hostId }`
@@ -606,13 +693,19 @@ The Main Preview Region issues every random, revision-bound asset token only aft
 opened-file identity checks for the exact current selection. A URL contains exactly a 64-hex token and one matching encoded display filename, never
 an absolute path; credentials, ports, query strings, fragments, and path aliases are rejected. The
 handler resolves the token to a Main-owned real path only while its issuing host and workspace are
-live. Unknown, expired, or malformed tokens return a non-content response.
+live. Legacy/unbound and one-shot image/Office tokens keep the 30-minute TTL. Audio/video tokens use
+selection lifetime so a long-running player can seek after 30 minutes; selection, workspace, host,
+shutdown, or explicit revoke still invalidates them, and the bounded registry may evict its oldest
+entry under global pressure. Unknown, expired, revoked, or malformed tokens return a non-content
+response.
 
 Electron 40's `net.fetch(file:)` does not preserve Range semantics, so the handler must not delegate
 file responses to it. Main parses one valid byte-range request, opens a bounded `fs` read stream,
 and returns `206` with `Accept-Ranges`, `Content-Range`, exact `Content-Length`, and the authorized
 MIME type. Full `GET`/`HEAD`, malformed/unsatisfiable range, and unsupported method behavior are
-explicit and covered by focused protocol tests. This is required for real audio/video seeking.
+explicit and covered by focused protocol tests. Responses expose `Accept-Ranges` to the renderer's
+CORS fetch so media HEAD preflight can verify seek support. This is required for real audio/video
+seeking.
 Each live response stream remains registered to its asset. A bounded `pipeline` propagates source,
 overflow, cancellation, and revoke errors to the response body. Before successful EOF, Main
 revalidates the still-open handle and reopens the current canonical path to compare exact size,
@@ -840,9 +933,15 @@ Cmd/Ctrl+Shift+F:
   row to the center, and focuses it without reloading the preview.
 - The ordinary Project field filters only `entry.name` on rows visible before the query. It may
   match files or directories, retains already-visible ancestors for context, never searches a
-  relative path or collapsed descendant, and never expands the tree. Project Search is entered with
-  `Cmd/Ctrl+Shift+F`, defaults to the captured current directory, and replaces the tree viewport
-  with a file-only result list plus one `In Directory` / `In Project` selector. The directory label
+  relative path or collapsed descendant, and never expands the tree automatically. Clicking a
+  visible directory during that query marks it as a temporary reveal root and lazily exposes its
+  loaded descendants regardless of their names. A deeper directory is still loaded only when
+  clicked. The marker is internal and query-scoped: any search-text change clears every reveal root
+  before recomputing rows, and clearing the filter restores the pre-query expansion snapshot.
+  Project Search is entered with
+  `Option/Alt+Cmd/Ctrl+F` or the retained `Shift+Cmd/Ctrl+F`, defaults to the captured current
+  directory, and replaces the tree viewport with a file-only result list plus one `In Directory` /
+  `In Project` selector. The directory label
   is workspace-relative (or the workspace root name), never absolute. Each result shows the exact
   filename first, a muted relative directory second, a compact media type, and only for verified
   text-content matches a one-line original-text snippet with the matched range highlighted in Royal
@@ -884,37 +983,54 @@ Cmd/Ctrl+Shift+F:
 
 ## Interaction Contract
 
-| Input                            | Scope                                   | Behavior                                                                                                               |
-| -------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `Alt+1`                          | Shell                                   | focus Project tree                                                                                                     |
-| double `Shift`                   | Shell                                   | focus the local Project filter                                                                                         |
-| `Cmd/Ctrl+Shift+F`               | Shell or Preview                        | enter Project Search in the captured current directory and focus its input                                             |
-| scope selector                   | Project Search                          | switch the current query between the captured `In Directory` anchor and `In Project`                                   |
-| `Space`                          | selected file in tree                   | preview selected file                                                                                                  |
-| single click                     | tree                                    | preview only when setting is enabled; directories toggle                                                               |
-| double click                     | tree                                    | preview file or toggle directory                                                                                       |
-| crosshair                        | Project header                          | reveal and focus the currently previewed file in the tree                                                              |
-| right click                      | file row                                | open a Main-owned native file action menu at the pointer                                                               |
-| Robot                            | MenuBar                                 | open or focus the parented `Copy the skill to your agent` Guide                                                        |
-| copy card                        | Guide                                   | copy one complete English MCP-plus-skill setup instruction                                                             |
-| `Cmd/Ctrl+O`                     | Shell or Preview                        | Open Folder                                                                                                            |
-| `Cmd+,` or `Ctrl+Alt+S`          | Shell or Preview                        | open Setting window                                                                                                    |
-| `F5` or `Cmd/Ctrl+R`             | Shell or Preview                        | reconcile the background file-search index and refresh selected preview                                                |
-| `F12`                            | Shell or Preview, debug profile         | toggle detached DevTools for the view that received the shortcut                                                       |
-| `Cmd+Option+I` or `Ctrl+Shift+I` | Shell or Preview, debug profile         | toggle detached DevTools for the view that received the shortcut                                                       |
-| `Cmd/Ctrl+F`                     | Monaco                                  | find without invoking a Shell search                                                                                   |
-| drag/select text                 | Monaco or Markdown                      | show the selected grapheme count in the bottom status rail; hide it when selection collapses or leaves preview content |
-| `Esc`                            | Project Search / local filter / Setting | clear query, return to tree / clear filter / close without save                                                        |
-| double click                     | non-action MenuBar surface              | toggle maximize/restore                                                                                                |
-| minimize / maximize / close      | Windows MenuBar controls                | control the current standalone `BaseWindow` through Main                                                               |
+| Input                            | Scope                                        | Behavior                                                                                                               |
+| -------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `Alt+1`                          | Shell                                        | focus Project tree                                                                                                     |
+| double `Shift`                   | Shell                                        | focus the local Project filter                                                                                         |
+| click visible directory         | active local Project filter                  | mark/unmark it as a query-scoped reveal root; show only descendants reached through normal lazy expansion             |
+| `Option/Alt+Cmd/Ctrl+F` or `Shift+Cmd/Ctrl+F` | Shell or Preview               | enter Project Search in the captured current directory and focus its input                                             |
+| scope selector                   | Project Search                               | switch the current query between the captured `In Directory` anchor and `In Project`                                   |
+| `Space`                          | selected file in tree                        | preview selected file                                                                                                  |
+| single click                     | tree                                         | preview only when setting is enabled; directories toggle                                                               |
+| double click                     | tree                                         | preview file or toggle directory                                                                                       |
+| crosshair                        | Project header                               | reveal and focus the currently previewed file in the tree                                                              |
+| right click                      | Project file/directory row                   | open the type-specific Main-owned native reveal/copy/file-action menu at the pointer                                   |
+| `Cmd/Ctrl+C`                    | focused Project item, outside text controls  | copy the file or folder as a pasteable native filesystem item                                                          |
+| `Shift+Cmd/Ctrl+C`              | focused Project item, outside text controls  | copy its canonical absolute path as plain text                                                                         |
+| `Option/Alt+Cmd/Ctrl+C`         | focused Project item, outside text controls  | copy its basename as plain text                                                                                        |
+| Robot                            | MenuBar                                      | open or focus the parented `Copy the skill to your agent` Guide                                                        |
+| copy card                        | Guide                                        | copy one complete English MCP-plus-skill setup instruction                                                             |
+| `Cmd/Ctrl+O`                     | Shell or Preview                             | Open Folder                                                                                                            |
+| `Cmd+,` or `Ctrl+Alt+S`          | Shell or Preview                             | open Setting window                                                                                                    |
+| `F5` or `Cmd/Ctrl+R`             | Shell or Preview                             | reconcile the background file-search index and refresh selected preview                                                |
+| `F12`                            | Shell or Preview, debug profile              | toggle detached DevTools for the view that received the shortcut                                                       |
+| `Cmd+Option+I` or `Ctrl+Shift+I` | Shell or Preview, debug profile              | toggle detached DevTools for the view that received the shortcut                                                       |
+| `Cmd/Ctrl+F`                     | Shell, Vue Preview, or raw Chromium          | focus the one Shell Find Bar for the current file; never invoke Project Search or Monaco's own find widget             |
+| drag/select text                 | Monaco or Markdown                           | show the selected grapheme count in the bottom status rail; hide it when selection collapses or leaves preview content |
+| `Esc`                            | Find Bar / Project Search / filter / Setting | clear current-file find and restore content focus / return to tree / clear filter / close without save                 |
+| double click                     | non-action MenuBar surface                   | toggle maximize/restore                                                                                                |
+| minimize / maximize / close      | Windows MenuBar controls                     | control the current standalone `BaseWindow` through Main                                                               |
 
 Window-wide shortcuts use `before-input-event` on OnlyPreview webContents so they remain available
 when Monaco has focus. Only matched commands prevent default; Monaco retains selection, copy, and
-find behavior. On the initial successful Preview-view load, a normal debug profile automatically
+all other unmatched editor behavior. On the initial successful Preview-view load, a normal debug profile automatically
 opens that Preview `webContents` DevTools detached with `activate: false`; Shell, Settings, Guide,
 release, and isolated E2E never auto-open. Manual DevTools shortcuts remain Main-owned and target
 only the Shell or Preview `webContents` that received the input. The same shortcut closes
 that view's open DevTools. Auto-repeat is ignored.
+
+Task 030 is `implemented; owner verification pending` after
+[independent review 1](../plan/reviews/onlypreview-project-search-shortcut-030-1.md) recorded
+**PASS** with no P0-P2 finding. The review confirms both Project Search aliases reuse the same
+Main-owned route and that plain current-file Find remains separate; only Ral's live shortcut check
+across Shell/Vue/Chrome remains.
+
+Task 031 is `implemented; owner verification pending` after
+[independent review 1](../plan/reviews/onlypreview-filter-directory-reveal-031-1.md) recorded
+**PASS** with no P0-P2 finding. The ordinary filter keeps only clicked reveal roots plus their
+ancestor cleanup index, admits each loaded candidate through O(path depth) `Set.has()` checks, and
+does no recursive load or row-by-root scan. Only Ral's large-tree pointer/keyboard verification
+remains.
 
 ## State And Error Contract
 
@@ -929,6 +1045,9 @@ that view's open DevTools. Auto-repeat is ignored.
   `In Project` waits for promotion. Build progress never clears or cancels accepted search results.
 - **Index partial:** keep directory browsing complete and expose no visible partial state,
   explanation, count, or warning.
+- **Local filter directory reveal:** one clicked visible directory temporarily admits its loaded
+  descendants through path-segment ancestor membership. Search-text change clears all reveal roots;
+  filter exit restores the captured expansion snapshot. No disk recursion or visible badge occurs.
 - **Project Search pending:** retain the last accepted result set until the latest throttled request
   returns; stale or cancelled batches cannot replace it.
 - **Project Search scope:** default to the captured current directory; changing scope cancels or
@@ -942,17 +1061,58 @@ that view's open DevTools. Auto-repeat is ignored.
   iteration without invalidating the benchmark artifact or method. Neither value includes the
   separately reported SQLite disk footprint, and no file/path/content is logged.
 - **Loading preview:** retain stable bounds and show a quiet progress state.
+- **Current-file find pending:** the one Shell input and close action remain available so a draft
+  query can queue; case/navigation stay disabled and no false `0/0` is rendered. Exact ready
+  dispatches that queued query once.
+- **Current-file find unavailable:** image/audio/video/unsupported/oversize/render failure do not
+  open the bar; Shell shows one compact reason. Close/Esc/selection/workspace/reload/crash clears
+  native selection or the model highlight before a new capability can report.
+- **Current-file find delivery:** task 019 is `implemented; owner verification pending` after
+  [independent review round 2](../plan/reviews/onlypreview-find-in-file-019-2.md) recorded **PASS**.
+  Ral's remaining real-app checks are the task's
+  [Owner Verification checklist](../plan/tasks/onlypreview-find-in-file-019.md#owner-verification).
 - **Missing/permission denied:** distinguish `PATH_NOT_FOUND` from `PATH_PERMISSION_DENIED`; the
   latter uses the user-facing message “Bitterless does not have permission to read this file or
   folder.” without referring to a removed visible Refresh action.
 - **Too large:** show file metadata and the 8 MiB text limit; do not show partial text.
 - **Unsupported:** show metadata plus Open externally and Reveal in folder.
-- **Native file menu:** only file rows expose Preview, Open in system app, and Reveal in folder.
-  Main revalidates the host-bound file reference when a command runs and opens the menu with the
-  active OnlyPreview `BaseWindow` as owner, so it can extend beyond the Shell child view.
+- **Typed Preview failure:** direct unsupported plus image/media/Office/parser/signature/empty/size
+  unavailable states reuse the same compact content metadata block: file name, localized type or
+  extension, size, and modified time. The exact failure reason stays above it. Native Open/Reveal
+  actions remain only in the Shell toolbar; the content surface never mounts a second FileActions.
+  [Task 025's completion audit](../plan/reviews/onlypreview-design-completion-025-1.md) recorded
+  **PASS** for this relative-only descriptor and unified metadata contract. Both OnlyPreview designs
+  are therefore closed at the documented non-E2E implementation level; the ledger is
+  `implemented; owner verification pending`, with only Ral's real-app/runtime/visual verification
+  remaining.
+- **Native Project item menu:** ordinary file rows expose Preview/Open/Reveal, pasteable Copy File,
+  Copy Path, Copy Relative Path, Copy Name, and a separately grouped `Delete…`; directory rows expose
+  Reveal plus Copy Folder/the three text-copy actions, but never recursive Delete. Main opens the menu
+  and every confirmation/error dialog with
+  the active OnlyPreview `BaseWindow` as owner, so they can extend beyond the Shell child view.
+  Copy Path resolves the canonical absolute path only inside Main and writes it directly to the
+  system clipboard; the renderer receives no path result. Project-item copy uses a bounded native OS
+  clipboard adapter so Finder/Explorer receives a pasteable file/folder reference without reading
+  file bytes. Project-tree/search-result shortcuts are active only for a focused item outside
+  editable controls, preserving ordinary text copy everywhere else. Delete is never exposed as a
+  renderer filesystem API: Main revalidates the host-bound regular-file
+  reference, asks for explicit destructive confirmation with Cancel as default, rechecks canonical
+  identity immediately before one direct `unlink`, and never deletes directories or uses recursive
+  removal. Success clears selection/Preview only when the deleted file was selected; failure leaves
+  current state intact and discloses no absolute path. Task 029 is
+  `implemented; owner verification pending` after two independently found selection-generation
+  races were corrected and
+  [independent review 3](../plan/reviews/onlypreview-permanent-delete-029-3.md) recorded **PASS**
+  with no P0-P2 finding. Electron/Playwright and live clipboard/delete operations remain
+  intentionally unrun; Ral owns the task's
+  [real-OS acceptance checklist](../plan/tasks/onlypreview-permanent-delete-029.md#owner-verification).
 - **Media/PDF error:** preserve toolbar identity/actions and explain that Chromium codec/content
   support failed. A content crash does not close the Shell; it publishes a recoverable unavailable
   state under a newer revision.
+- **DOCX error:** distinguish `DOCUMENT_PARSE_FAILED`, `DOCUMENT_EMPTY`,
+  `DOCUMENT_SANITIZE_FAILED`, and `DOCUMENT_RENDER_TIMEOUT` from existing byte/signature/ZIP
+  admission errors. Preserve Shell file identity/actions, never mount partial DOM, and fence an old
+  timer or renderer result from changing a newer revision/view.
 - **Stale async result:** ignore any result whose host/workspace/request generation is no longer
   current; the coordinator starts only the latest pending query after the active request exits.
 - **Hidden item:** dot files/directories remain visible in the tree. A sensitive file such as `.env`
@@ -982,10 +1142,26 @@ them.
   file-search XPC initialization request. The hidden preload returns only relative metadata and
   aggregate telemetry.
 - Never give arbitrary web content an OnlyPreview preload. Raw HTML/PDF receives no preload,
-  `additionalArguments`, host/runtime token, XPC, Node, Electron, or shared persistent session.
-- Every HTML/PDF revision uses a new raw view and memory partition. Its session-scoped protocol
-  handlers expose only the revision's exact asset or canonical-entry-contained document resources;
-  they are removed and all streams/tokens are revoked before the view is destroyed.
+  `additionalArguments`, host/runtime token, XPC, Node, or Electron API, and never shares the
+  Bitterless application session.
+- Every HTML/PDF revision uses a new raw view on the one dedicated persistent partition
+  `persist:onlypreview-chrome`. Chromium renders a PDF through its PDF viewer component extension,
+  which never creates its document frame in an in-memory session, so this partition must stay
+  persistent — and must stay a single constant name, because each distinct `persist:` name leaves a
+  `userData/Partitions/<name>` directory behind. Session hardening is installed once and is never
+  removed by a per-selection teardown. Revision isolation comes from the session-scoped protocol
+  handlers, which expose only that revision's exact asset or canonical-entry-contained document
+  resources, are generation-guarded so a late teardown cannot unhandle a newer revision, and are
+  removed with all streams/tokens revoked before the view is destroyed; the session's connections,
+  storage, and cache are discarded whenever no raw view is mounted on it.
+- A PDF is served by Chromium's network service, not by Main-process reads: the revision's token
+  response resolves and re-verifies the file identity per request and then delegates the admitted
+  byte range to `net.fetch` on the resolved real path, synthesizing the `206`/`Content-Range`/
+  `Content-Length` contract. The byte-counting ceiling and post-stream re-`stat` do not apply to that
+  path; every other adapter keeps in-process streaming and its ceilings.
+- `chromium-pdf` becomes `ready` only once the viewer's own document frame exists at the navigation
+  URL. A finished navigation alone is not readiness — a blank viewer also finishes loading — and a
+  bounded wait that never sees the frame publishes `PDF_VIEWER_UNAVAILABLE`.
 - Raw HTML may execute inline and contained relative code, but remote network is denied by request
   filtering, response CSP, disabled DNS prefetch, an awaited unavailable proxy, and restricted
   WebRTC IP policy. Permissions, popups, downloads, redirects, `file:`, traversal, encoded
@@ -1010,7 +1186,12 @@ them.
   measured and labelled separately; they are never added together.
 - The one persisted recent-directory absolute path remains private inside Core SQLite. It is never
   broadcast, logged, or accepted back from a renderer, and carries no file selection or capability.
-- Media tokens are high entropy, bounded, revocable, and never persisted.
+- Media tokens are high entropy, bounded, revocable, and never persisted. Audio/video authority is
+  selection-lived for long seek; image source authority is one-shot and revoked once the renderer's
+  bounded Blob is ready or any terminal failure occurs.
+- DOCX output is untrusted even though it came from an app-owned renderer. Only sanitizer-approved
+  detached DOM/CSS and verified embedded-image blob URLs enter the live document; macros, OLE,
+  altChunk HTML, navigation, remote resources, and custom/file URL schemes never do.
 - The Content Security Policy is the first element in each built `<head>`. Its exact SHA-256 allows
   only Monaco's generated inline bootstrap, whose worker URLs resolve from nested OnlyPreview
   entries to the built root `monacoeditorwork` directory.
@@ -1034,6 +1215,27 @@ them.
   fencing, forged presentation nudges, public/private URL disclosure, canonical-entry symlink
   containment, same-size replacement, real growth/replacement during streaming, and consumer-body
   abort on revocation.
+- DOCX unit/source tests additionally cover real `docx-preview@0.4.0` render output, required OOXML
+  parts and preflight-before-import, ArrayBuffer transfer and the 10-second Worker timeout, malicious
+  detached DOM/CSS/resources, complete blob registration/revocation, engine rejection/empty/
+  sanitizer typed errors, actual SFC mount/readiness with no partial DOM, and Main's 30-second
+  no-reset-ack watchdog/rebuild plus revision/runtime/view fencing. Production build audit proves the
+  engine remains outside the initial Vue chunk.
+- Current-file find behavior/source tests cover the exhaustive registry, exact parsers, pending
+  queue and one-time ready dispatch, native Electron option mapping, requestId plus WebContents
+  generation/selection/find-revision fences, destroyed/throw failures, exact content-adapter ready
+  handshake, stale result rejection, XLSX partial truth, rapid Shell draft races, a Main snapshot
+  arriving during IME composition, narrow Preview panes, and an 8MiB dense Monaco model with
+  complete count but at most one decoration and no editor selection mutation. The Monaco suite also
+  covers length-changing Unicode case folding (`İx` / `x`) and verifies the active range stays on the
+  original model.
+- Image/media unit and real-SFC jsdom tests additionally cover exact supported/recognized-
+  unsupported catalogs, empty-before-signature admission, SVG/AAC/MOV signature variants, image
+  GET length/body/decode failures, Blob URL revoke-once and stale revision fences, responsive fit/
+  zoom/reset/pan accessibility, media HEAD and CORS-visible Range truth, the metadata deadline,
+  `MediaError` mapping, post-ready demotion, exact teardown order, and default-TTL versus
+  selection-lifetime asset revocation. Source build audit confirms no decoder/player engine was
+  added.
 - Search unit tests cover private bootstrap ownership, Main zero-search-I/O, strict scope parsing,
   early complete root listing, opaque directory-token ownership/generation fencing, complete
   per-directory browsing independent of Project Search exclusions and bounds, directory-anchor

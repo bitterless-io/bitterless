@@ -36,7 +36,7 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
     if (!win) return Promise.reject(new Error('Maestro window is not available.'))
     const view = new WebContentsView({
       webPreferences: {
-        preload: join(__dirname, '../preload/maestroCoach.js'),
+        preload: join(__dirname, '../preload/maestroWorkbench.js'),
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,

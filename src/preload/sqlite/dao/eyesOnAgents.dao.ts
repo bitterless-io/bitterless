@@ -397,7 +397,7 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
     threadId,
     archiveState: row.archive_state as 'active' | 'archived' | 'unknown',
     desktopSessionId: parseEyesOnAgentsDesktopSessionId(row.desktop_session_id),
-    canPreviewTranscript: provider === 'claude' && row.transcript_path !== null,
+    canCopySessionPath: provider === 'claude' && row.transcript_path !== null,
     domainId: parsePositiveId(row.domain_id, 'domain id'),
     title: parseEyesOnAgentsText(row.title, 'thread title', 300),
     cwd: parseEyesOnAgentsPath(row.cwd),

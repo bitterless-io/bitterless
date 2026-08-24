@@ -51,25 +51,30 @@ align-content: flex-start;
 align-items: flex-start;
 ```
 
-Focus and regular Domains share the exact width contract:
+Focus and regular Domains share the exact width and height contract:
 
 ```less
 width: auto;
 min-width: 300px;
 max-width: 480px;
+max-height: 80vh;
 flex: 1 1 300px;
 align-self: flex-start;
 ```
+
+A column grows with its task list and stops at 80% of the window height, then scrolls internally.
+The cap is expressed as `80vh` — not derived from menu-bar and board-padding subtraction — so a tall
+Domain always leaves visible canvas below itself and never reads as a full-height page region.
 
 A row distributes remaining width across its columns until they reach 480px. If the remaining
 space cannot fit another 300px column plus the 12px gap, the whole column moves to the next row; a
 column is never squeezed below 300px. Do not use `space-between`. A capped incomplete last row may
 retain trailing canvas space so column alignment and drag targets do not jump between rows.
 
-The board hides normal horizontal overflow and owns vertical page scrolling. Each Domain retains
-its existing internal task-list scrolling and height behavior. At exceptionally narrow embedded
-widths below one column plus board padding, local horizontal overflow is permitted rather than
-shrinking the Domain below 300px.
+The board hides horizontal overflow while the detail panel is closed and owns vertical page
+scrolling. Each Domain retains its existing internal task-list scrolling. At exceptionally narrow
+embedded widths below one column plus board padding, local horizontal overflow is permitted rather
+than shrinking the Domain below 300px.
 
 ## Todo item AI source marker
 
@@ -92,15 +97,36 @@ not retained.
 
 ## Detail panel
 
-The Todo detail panel remains a right-side 320px overlay. At normal standalone widths, the board
-reserves the panel width through its content padding so the rightmost Domain is not covered and the
-wrapping calculation uses the actually visible width. At constrained embedded widths, the detail
-panel may overlay the board instead of reducing a Domain below its 300px minimum. Closing the panel
-restores the full wrapping width; no spacer column remains in the board.
+The Todo detail panel is a right-side 320px overlay at every width. It never reserves board width:
+the board keeps the full window width and the wrapping calculation is identical whether the panel is
+open or closed, so selecting or closing a Todo never re-flows or narrows the columns.
 
-Selecting a task may bring its Domain into the nearest visible vertical board region and then
-center the task inside that Domain's own scrollable body. The historical horizontal return-to-Focus
-button and left-scroll calculations do not exist in the wrapping layout.
+Because the panel overlays instead of squeezing, the strip beneath it is reached by scrolling rather
+than by shrinking the board:
+
+```less
+.todo-app__board--detail-open .todo-app__board-scroll {
+  overflow-x: auto;
+}
+
+.todo-app__board--detail-open .todo-app__board-draggable {
+  margin-right: 320px;
+}
+```
+
+The draggable keeps `width: 100%`, so the trailing margin adds exactly the panel width of scroll
+slack and nothing more: scrolled fully left the board looks as it does with the panel closed, and
+scrolled fully right the last column's right edge sits 12px clear of the panel's left edge. Closing
+the panel restores `overflow-x: hidden` and the board returns to its single scroll position. No
+spacer column and no reserved padding exist in either state.
+
+Selecting a task, and the detail panel's own locate action, reveal the task's Domain inside the
+*visible* board region — the region that ends `320px + 12px` before the board's right edge while the
+panel is open — and then center the task inside that Domain's own scrollable body. Each axis keeps
+`nearest` semantics: no scrolling when the column already fits, and start alignment when the column
+is larger than the visible region. So a row hidden under the panel is scrolled out from under it
+instead of staying invisible. The historical horizontal return-to-Focus button does not exist in the
+wrapping layout; horizontal scrolling exists only as this panel-width reveal.
 
 ## Responsive reference
 
@@ -109,7 +135,7 @@ button and left-scroll calculations do not exist in the wrapping layout.
 | about 776px (800px window minus padding) | two columns around 382px |
 | about 876px | two columns around 432px |
 | below 612px | one column per row |
-| detail open at 800px | one visible 300–480px column per row beside the panel |
+| detail open at any width | wrapping unchanged; the panel overlays and 320px of horizontal reveal is available |
 
 ## Component ownership
 

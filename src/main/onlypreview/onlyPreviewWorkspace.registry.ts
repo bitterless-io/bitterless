@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, open, realpath, stat, type FileHandle } from 'node:fs/promises';
+import { lstat, open, realpath, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -30,6 +30,27 @@ const throwOnlyPreviewPathAccessError = (error: unknown, missingMessage: string)
   throw new OnlyPreviewContractError('PATH_NOT_FOUND', missingMessage);
 };
 
+const throwOnlyPreviewDeleteError = (error: unknown): never => {
+  if (error instanceof OnlyPreviewContractError) throw error;
+  if (isOnlyPreviewPermissionError(error)) {
+    throw new OnlyPreviewContractError(
+      'PATH_PERMISSION_DENIED',
+      'Bitterless does not have permission to delete this file.'
+    );
+  }
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (code === 'ENOENT' || code === 'ENOTDIR') {
+    throw new OnlyPreviewContractError(
+      'PATH_NOT_FOUND',
+      'The selected file is no longer available.'
+    );
+  }
+  throw new OnlyPreviewContractError(
+    'OPERATION_FAILED',
+    'The selected file could not be deleted safely.'
+  );
+};
+
 export interface OnlyPreviewWorkspaceRecord {
   workspaceId: string;
   hostToken: string;
@@ -47,6 +68,10 @@ export interface ResolvedOnlyPreviewFile {
   realPath: string;
   size: number;
   modifiedAt: number;
+}
+
+export interface ResolvedOnlyPreviewProjectItem extends ResolvedOnlyPreviewFile {
+  nodeKind: 'file' | 'directory';
 }
 
 export interface OpenedOnlyPreviewFile extends ResolvedOnlyPreviewFile {
@@ -177,7 +202,10 @@ export class OnlyPreviewWorkspaceRegistry {
     return workspace;
   }
 
-  async resolveFile(hostToken: unknown, value: unknown): Promise<ResolvedOnlyPreviewFile> {
+  async resolveProjectItem(
+    hostToken: unknown,
+    value: unknown
+  ): Promise<ResolvedOnlyPreviewProjectItem> {
     const host = this.hosts.require(hostToken, ['content']);
     const fileRef = parseOnlyPreviewFileRef(value);
     const workspace = this.requireWorkspace(host.hostToken, fileRef.workspaceId);
@@ -190,8 +218,9 @@ export class OnlyPreviewWorkspaceRegistry {
     }
 
     let candidateRealPath: string;
+    let candidateStat: Awaited<ReturnType<typeof lstat>>;
     try {
-      await lstat(candidate);
+      candidateStat = await lstat(candidate);
       candidateRealPath = await realpath(candidate);
     } catch (error) {
       throwOnlyPreviewPathAccessError(error, 'The selected file is no longer available.');
@@ -202,18 +231,22 @@ export class OnlyPreviewWorkspaceRegistry {
         'Symbolic link leaves its workspace.'
       );
     }
-    let fileStat: Awaited<ReturnType<typeof stat>>;
-    try {
-      fileStat = await stat(candidateRealPath);
-    } catch (error) {
-      throwOnlyPreviewPathAccessError(error, 'The selected file is no longer available.');
-    }
-    if (!fileStat.isFile()) {
+    if (candidateStat.isSymbolicLink()) {
       throw new OnlyPreviewContractError(
-        fileStat.isDirectory() ? 'PATH_NOT_REGULAR_FILE' : 'PATH_UNSUPPORTED_DEVICE',
-        fileStat.isDirectory()
-          ? 'Directories cannot be rendered as files.'
-          : 'Only regular files can be previewed.'
+        'PATH_NOT_REGULAR_FILE',
+        'Symbolic links cannot be used as Project items.'
+      );
+    }
+    let itemStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      itemStat = await stat(candidateRealPath);
+    } catch (error) {
+      throwOnlyPreviewPathAccessError(error, 'The selected Project item is no longer available.');
+    }
+    if (!itemStat.isFile() && !itemStat.isDirectory()) {
+      throw new OnlyPreviewContractError(
+        'PATH_UNSUPPORTED_DEVICE',
+        'Only regular files and directories can be used as Project items.'
       );
     }
     return {
@@ -221,8 +254,27 @@ export class OnlyPreviewWorkspaceRegistry {
       workspace,
       relativePath: fileRef.relativePath,
       realPath: candidateRealPath,
-      size: fileStat.size,
-      modifiedAt: fileStat.mtimeMs
+      size: itemStat.size,
+      modifiedAt: itemStat.mtimeMs,
+      nodeKind: itemStat.isFile() ? 'file' : 'directory'
+    };
+  }
+
+  async resolveFile(hostToken: unknown, value: unknown): Promise<ResolvedOnlyPreviewFile> {
+    const item = await this.resolveProjectItem(hostToken, value);
+    if (item.nodeKind !== 'file') {
+      throw new OnlyPreviewContractError(
+        'PATH_NOT_REGULAR_FILE',
+        'Directories cannot be rendered as files.'
+      );
+    }
+    return {
+      host: item.host,
+      workspace: item.workspace,
+      relativePath: item.relativePath,
+      realPath: item.realPath,
+      size: item.size,
+      modifiedAt: item.modifiedAt
     };
   }
 
@@ -311,11 +363,112 @@ export class OnlyPreviewWorkspaceRegistry {
     }
   }
 
+  async deleteOpenedFile(file: OpenedOnlyPreviewFile): Promise<ResolvedOnlyPreviewFile> {
+    let deletionContext: {
+      host: OnlyPreviewHostCapability;
+      fileRef: OnlyPreviewFileRef;
+      workspace: OnlyPreviewWorkspaceRecord;
+      candidate: string;
+    };
+    try {
+      const host = this.hosts.require(file.host.hostToken, ['content']);
+      const fileRef = parseOnlyPreviewFileRef({
+        workspaceId: file.workspace.workspaceId,
+        relativePath: file.relativePath
+      });
+      const workspace = this.requireWorkspace(host.hostToken, fileRef.workspaceId);
+      const candidate = resolve(workspace.rootRealPath, ...fileRef.relativePath.split('/'));
+      if (!isContainedPath(workspace.rootRealPath, candidate)) {
+        throw new OnlyPreviewContractError(
+          'PATH_OUTSIDE_WORKSPACE',
+          'File reference leaves its workspace.'
+        );
+      }
+      deletionContext = { host, fileRef, workspace, candidate };
+    } catch (error) {
+      await file.fileHandle.close().catch(() => undefined);
+      throw error;
+    }
+    const { host, fileRef, workspace, candidate } = deletionContext;
+
+    let openedStat: Awaited<ReturnType<FileHandle['stat']>>;
+    try {
+      openedStat = await file.fileHandle.stat({ bigint: true });
+      if (
+        !openedStat.isFile() ||
+        openedStat.dev !== file.deviceId ||
+        openedStat.ino !== file.inode ||
+        openedStat.size !== BigInt(file.size) ||
+        openedStat.mtimeNs !== file.modifiedTimeNanoseconds
+      ) {
+        throw new OnlyPreviewContractError(
+          'PATH_NOT_FOUND',
+          'The selected file changed before it could be deleted.'
+        );
+      }
+    } catch (error) {
+      throwOnlyPreviewDeleteError(error);
+    } finally {
+      await file.fileHandle.close().catch(() => undefined);
+    }
+
+    try {
+      const pathStat = await lstat(candidate, { bigint: true });
+      if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
+        throw new OnlyPreviewContractError(
+          'PATH_NOT_REGULAR_FILE',
+          'Only regular files can be deleted.'
+        );
+      }
+      const candidateRealPath = await realpath(candidate);
+      if (
+        candidateRealPath !== file.realPath ||
+        !isContainedPath(workspace.rootRealPath, candidateRealPath)
+      ) {
+        throw new OnlyPreviewContractError(
+          'PATH_OUTSIDE_WORKSPACE',
+          'File identity changed outside its workspace before deletion.'
+        );
+      }
+      if (
+        pathStat.dev !== openedStat.dev ||
+        pathStat.ino !== openedStat.ino ||
+        pathStat.size !== openedStat.size ||
+        pathStat.mtimeNs !== openedStat.mtimeNs
+      ) {
+        throw new OnlyPreviewContractError(
+          'PATH_NOT_FOUND',
+          'The selected file was replaced before it could be deleted.'
+        );
+      }
+      await unlink(candidate);
+    } catch (error) {
+      throwOnlyPreviewDeleteError(error);
+    }
+
+    return {
+      host,
+      workspace,
+      relativePath: fileRef.relativePath,
+      realPath: file.realPath,
+      size: file.size,
+      modifiedAt: file.modifiedAt
+    };
+  }
+
   select(hostToken: unknown, value: OnlyPreviewFileRef): void {
     const fileRef = parseOnlyPreviewFileRef(value);
     const workspace = this.requireWorkspace(hostToken, fileRef.workspaceId);
     workspace.selectedRelativePath = fileRef.relativePath;
     this.latestWorkspaceByHost.set(workspace.hostToken, workspace.workspaceId);
+  }
+
+  clearSelection(hostToken: unknown, value: OnlyPreviewFileRef): boolean {
+    const fileRef = parseOnlyPreviewFileRef(value);
+    const workspace = this.requireWorkspace(hostToken, fileRef.workspaceId);
+    if (workspace.selectedRelativePath !== fileRef.relativePath) return false;
+    delete workspace.selectedRelativePath;
+    return true;
   }
 
   revokeHost(hostToken: string): void {

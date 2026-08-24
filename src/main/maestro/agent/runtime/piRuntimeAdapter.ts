@@ -270,6 +270,7 @@ const extractMessageText = (message?: PiMessage): string => {
 const providerDisplayName = (providerId: string): string => {
   if (providerId.startsWith('openai')) return 'OpenAI Codex (ChatGPT subscription)'
   if (providerId === 'anthropic') return 'Claude'
+  if (providerId === 'local') return 'Bitterless Local Claude'
   return providerId
 }
 

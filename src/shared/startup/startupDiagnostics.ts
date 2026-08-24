@@ -8,6 +8,7 @@ export const STARTUP_DIAGNOSTIC_STAGES = [
   'mcp-shim',
   'tray',
   'mcp-bridge',
+  'claude-subscription',
   'eyes-on-agents',
 ] as const;
 

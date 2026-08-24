@@ -2,7 +2,53 @@
   <article name="onlypreview__previewSurface" class="onlypreview-preview">
     <section name="onlypreview__previewBody" class="onlypreview-preview__body">
       <div
-        v-if="onlyPreviewPreviewStore.errorMessage || onlyPreviewPreviewStore.presentationError"
+        v-if="onlyPreviewPreviewStore.previewMetadata"
+        name="onlypreview__previewMetadata"
+        class="onlypreview-preview__state"
+        :class="{
+          'onlypreview-preview__state--error':
+            onlyPreviewPreviewStore.previewMetadata.variant === 'error'
+        }"
+        :role="onlyPreviewPreviewStore.previewMetadata.variant === 'error' ? 'alert' : undefined"
+      >
+        <span class="onlypreview-preview__state-mark" aria-hidden="true">
+          <IconAlertTriangle
+            v-if="onlyPreviewPreviewStore.previewMetadata.variant === 'error'"
+            :size="24"
+          />
+          <IconFileUnknown v-else :size="25" />
+        </span>
+        <h1>{{ onlyPreviewPreviewStore.previewMetadata.title }}</h1>
+        <p class="onlypreview-preview__state-file">
+          {{ onlyPreviewPreviewStore.previewMetadata.name }}
+        </p>
+        <p>{{ onlyPreviewPreviewStore.previewMetadata.reason }}</p>
+        <p
+          v-if="onlyPreviewPreviewStore.errorCode === 'TEXT_TOO_LARGE'"
+          class="onlypreview-preview__state-note"
+        >
+          {{ previewLimitMessage }}
+        </p>
+        <dl class="onlypreview-preview__metadata">
+          <div>
+            <dt>{{ onlyPreviewI18n.preview.type }}</dt>
+            <dd>{{ onlyPreviewPreviewStore.previewMetadata.type }}</dd>
+          </div>
+          <div>
+            <dt>{{ onlyPreviewI18n.preview.size }}</dt>
+            <dd>{{ formatOnlyPreviewBytes(onlyPreviewPreviewStore.previewMetadata.size) }}</dd>
+          </div>
+          <div>
+            <dt>{{ onlyPreviewI18n.preview.modified }}</dt>
+            <dd>{{ formatOnlyPreviewDate(onlyPreviewPreviewStore.previewMetadata.modifiedAt) }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div
+        v-else-if="
+          onlyPreviewPreviewStore.errorMessage || onlyPreviewPreviewStore.presentationError
+        "
         name="onlypreview__previewError"
         class="onlypreview-preview__state onlypreview-preview__state--error"
         role="alert"
@@ -13,12 +59,6 @@
         <h1>{{ onlyPreviewI18n.preview.failedTitle }}</h1>
         <p>
           {{ onlyPreviewPreviewStore.errorMessage || onlyPreviewPreviewStore.presentationError }}
-        </p>
-        <p
-          v-if="onlyPreviewPreviewStore.errorCode === 'TEXT_TOO_LARGE'"
-          class="onlypreview-preview__state-note"
-        >
-          {{ previewLimitMessage }}
         </p>
       </div>
 
@@ -38,112 +78,71 @@
         :language="onlyPreviewPreviewStore.descriptor.language"
         :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
         :settings="onlyPreviewPreviewStore.settings"
+        @ready="
+          onlyPreviewPreviewStore.reportMonacoReady(
+            onlyPreviewPreviewStore.selectionReportingRevision
+          )
+        "
       />
 
-      <div
+      <DocumentPreview
+        v-else-if="
+          onlyPreviewPreviewStore.descriptor?.kind === 'document' &&
+          onlyPreviewPreviewStore.documentSession &&
+          onlyPreviewPreviewStore.documentContent
+        "
+        :key="selectionPreviewKey"
+        :content="onlyPreviewPreviewStore.documentContent"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
+        @ready="
+          onlyPreviewPreviewStore.reportDocumentReady(
+            onlyPreviewPreviewStore.selectionReportingRevision
+          )
+        "
+      />
+
+      <SheetPreview
+        v-else-if="
+          onlyPreviewPreviewStore.descriptor?.kind === 'sheet' &&
+          onlyPreviewPreviewStore.sheetSession &&
+          onlyPreviewPreviewStore.sheetManifest
+        "
+        :key="selectionPreviewKey"
+        :session="onlyPreviewPreviewStore.sheetSession"
+        :manifest="onlyPreviewPreviewStore.sheetManifest"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
+        @ready="
+          onlyPreviewPreviewStore.reportSheetReady(
+            onlyPreviewPreviewStore.selectionReportingRevision
+          )
+        "
+      />
+
+      <ImagePreview
         v-else-if="
           onlyPreviewPreviewStore.descriptor?.kind === 'image' &&
-          onlyPreviewPreviewStore.descriptor.assetUrl
+          onlyPreviewPreviewStore.imageSession &&
+          onlyPreviewPreviewStore.imageContent
         "
-        name="onlypreview__imagePreview"
-        class="onlypreview-preview__media onlypreview-preview__media--image"
-      >
-        <img
-          :src="onlyPreviewPreviewStore.descriptor.assetUrl"
-          :alt="imageAlt"
-          @load="
-            onlyPreviewPreviewStore.reportSurfaceReady(
-              onlyPreviewPreviewStore.selectionReportingRevision
-            )
-          "
-          @error="
-            onlyPreviewPreviewStore.reportMediaError(
-              onlyPreviewPreviewStore.selectionReportingRevision
-            )
-          "
-        />
-      </div>
+        :key="selectionPreviewKey"
+        :content="onlyPreviewPreviewStore.imageContent"
+        :alt="imageAlt"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
+      />
 
-      <div
+      <MediaPreview
         v-else-if="
-          onlyPreviewPreviewStore.descriptor?.kind === 'audio' &&
-          onlyPreviewPreviewStore.descriptor.assetUrl
+          (onlyPreviewPreviewStore.descriptor?.kind === 'audio' ||
+            onlyPreviewPreviewStore.descriptor?.kind === 'video') &&
+          onlyPreviewPreviewStore.descriptor.assetUrl &&
+          onlyPreviewPreviewStore.mediaPrepared
         "
-        name="onlypreview__audioPreview"
-        class="onlypreview-preview__media onlypreview-preview__media--audio"
-      >
-        <div class="onlypreview-preview__audio-disc" aria-hidden="true">
-          <IconMusic :size="28" />
-        </div>
-        <audio
-          :src="onlyPreviewPreviewStore.descriptor.assetUrl"
-          controls
-          preload="metadata"
-          @loadedmetadata="
-            onlyPreviewPreviewStore.reportSurfaceReady(
-              onlyPreviewPreviewStore.selectionReportingRevision
-            )
-          "
-          @error="
-            onlyPreviewPreviewStore.reportMediaError(
-              onlyPreviewPreviewStore.selectionReportingRevision
-            )
-          "
-        ></audio>
-      </div>
-
-      <div
-        v-else-if="
-          onlyPreviewPreviewStore.descriptor?.kind === 'video' &&
-          onlyPreviewPreviewStore.descriptor.assetUrl
-        "
-        name="onlypreview__videoPreview"
-        class="onlypreview-preview__media onlypreview-preview__media--video"
-      >
-        <video
-          :src="onlyPreviewPreviewStore.descriptor.assetUrl"
-          controls
-          preload="metadata"
-          @loadedmetadata="
-            onlyPreviewPreviewStore.reportSurfaceReady(
-              onlyPreviewPreviewStore.selectionReportingRevision
-            )
-          "
-          @error="
-            onlyPreviewPreviewStore.reportMediaError(
-              onlyPreviewPreviewStore.selectionReportingRevision
-            )
-          "
-        ></video>
-      </div>
-
-      <div
-        v-else-if="
-          onlyPreviewPreviewStore.showsUnsupportedMetadata && onlyPreviewPreviewStore.descriptor
-        "
-        name="onlypreview__unsupportedPreview"
-        class="onlypreview-preview__state"
-      >
-        <span class="onlypreview-preview__state-mark" aria-hidden="true">
-          <IconFileUnknown :size="25" />
-        </span>
-        <h1>{{ onlyPreviewI18n.preview.unsupportedTitle }}</h1>
-        <p>{{ onlyPreviewI18n.preview.unsupportedBody }}</p>
-        <dl class="onlypreview-preview__metadata">
-          <div>
-            <dt>{{ onlyPreviewI18n.preview.type }}</dt>
-            <dd>{{ onlyPreviewPreviewStore.descriptorType }}</dd>
-          </div>
-          <div>
-            <dt>{{ onlyPreviewI18n.preview.size }}</dt>
-            <dd>{{ formatOnlyPreviewBytes(onlyPreviewPreviewStore.descriptor.size) }}</dd>
-          </div>
-          <div>
-            <dt>{{ onlyPreviewI18n.preview.modified }}</dt>
-            <dd>{{ formatOnlyPreviewDate(onlyPreviewPreviewStore.descriptor.modifiedAt) }}</dd>
-          </div>
-        </dl>
-      </div>
+        :key="selectionPreviewKey"
+        :kind="onlyPreviewPreviewStore.descriptor.kind"
+        :asset-url="onlyPreviewPreviewStore.descriptor.assetUrl"
+        :name="onlyPreviewPreviewStore.descriptor.name"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
+      />
 
       <div
         v-else-if="!onlyPreviewPreviewStore.loading"
@@ -172,7 +171,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { IconAlertTriangle, IconFileSearch, IconFileUnknown, IconMusic } from '@tabler/icons-vue';
+import { IconAlertTriangle, IconFileSearch, IconFileUnknown } from '@tabler/icons-vue';
 import {
   formatOnlyPreviewBytes,
   formatOnlyPreviewDate,
@@ -180,8 +179,12 @@ import {
 } from '../../../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
+import DocumentPreview from '../DocumentPreview/DocumentPreview.vue';
+import ImagePreview from '../ImagePreview/ImagePreview.vue';
 import MarkdownPreview from '../MarkdownPreview/MarkdownPreview.vue';
+import MediaPreview from '../MediaPreview/MediaPreview.vue';
 import MonacoTextPreview from '../MonacoTextPreview/MonacoTextPreview.vue';
+import SheetPreview from '../SheetPreview/SheetPreview.vue';
 
 const isMarkdown = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;

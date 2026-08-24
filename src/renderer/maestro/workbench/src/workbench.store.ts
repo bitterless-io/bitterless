@@ -42,6 +42,7 @@ import type { HeaderMap, NetworkTiming, TraceEvent } from '@maestro-shared/trace
 import type { NetResponseEvent, Row } from '@maestro-renderer/control/src/record/record.types'
 import { fmtHeaders } from '@maestro-renderer/control/src/record/record.format'
 import { captureConfig } from '@maestro-renderer/control/src/config/captureConfig.store'
+import { CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT } from '@shared/claudeSubscription/claudeSubscription.contract'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
@@ -131,7 +132,20 @@ const requestIdOf = (row: Row | undefined): string => {
   return event && (event.kind === 'net.request' || event.kind === 'net.response') ? event.requestId : ''
 }
 
-export const workbenchPanes: WorkbenchPane[] = ['recording', 'skills', 'integrations', 'injections', 'tools', 'models', 'about', 'log']
+export const workbenchPanes: WorkbenchPane[] = [
+  'recording',
+  'skills',
+  'integrations',
+  'injections',
+  'tools',
+  'models',
+  'configuration',
+  'apps',
+  'connectors',
+  'settings',
+  'about',
+  'log'
+]
 
 export const isWorkbenchPane = (value: string): value is WorkbenchPane =>
   workbenchPanes.includes(value as WorkbenchPane)
@@ -433,6 +447,11 @@ class WorkbenchStoreState {
       this.llmLoginProvider = state?.loading ? state.provider : ''
     })
     xpcRenderer.subscribe('coach/auth', () => void this.refreshLlmConfig())
+    xpcRenderer.subscribe(CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT, () => {
+      if (this.activePane === 'models' || this.activePane === 'configuration') {
+        void this.refreshLlmConfig()
+      }
+    })
     xpcRenderer.subscribe('coach/host-approval', (payload) => {
       const params = payload.params as HostApprovalEvent | { cleared?: boolean; events?: HostApprovalEvent[] }
       if ('cleared' in params && params.cleared) {
@@ -490,7 +509,9 @@ class WorkbenchStoreState {
       void this.refreshHostApprovalEvents()
     }
     if (this.initialized && pane === 'injections') void this.refreshInjectedButtons()
-    if (this.initialized && pane === 'models') void this.refreshLlmConfig()
+    if (this.initialized && (pane === 'models' || pane === 'configuration')) {
+      void this.refreshLlmConfig()
+    }
   }
 
   get llmProviderGroups(): LlmProviderGroup[] {
@@ -530,7 +551,7 @@ class WorkbenchStoreState {
 
   get activeLlmLoginMethods(): { id: LlmLoginMethod; label: string }[] {
     const provider = this.activeLlmGroup?.provider || this.llmConfig?.provider || ''
-    return this.llmConfig?.loginProviders.find((item) => item.provider === provider)?.methods || [{ id: 'browser', label: 'Browser Login' }]
+    return this.llmConfig?.loginProviders.find((item) => item.provider === provider)?.methods || []
   }
 
   get llmSaving(): boolean {

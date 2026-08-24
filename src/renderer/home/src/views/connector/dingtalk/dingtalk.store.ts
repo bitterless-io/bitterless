@@ -1,11 +1,14 @@
 import { reactive } from 'vue';
 import { XpcRendererHandler, createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { DingtalkHandler } from '@preload/connector/dingtalk.handler';
+import type {
+  DingtalkConnectorRendererApi,
+  DingtalkConnectorRuntimeApi,
+} from '@shared/connector/connector.contract';
 import { settingEmitter } from '@/emitter/setting.emitter';
 
-const dingtalkPreloadEmitter = createXpcRendererEmitter<DingtalkHandler>(
+const dingtalkPreloadEmitter = createXpcRendererEmitter<DingtalkConnectorRuntimeApi>(
   'DingtalkHandler'
-) as DingtalkHandler;
+) as DingtalkConnectorRuntimeApi;
 
 
 interface DingtalkLoginDetail {
@@ -141,7 +144,7 @@ class DingtalkStore {
 
 export const dingtalkStore = reactive<DingtalkStore>(new DingtalkStore());
 
-export class DingtalkStoreHandler extends XpcRendererHandler {
+export class DingtalkStoreHandler extends XpcRendererHandler implements DingtalkConnectorRendererApi {
   async onLogin(params: DingtalkLoginDetail): Promise<void> {
     dingtalkStore.loggedIn = true;
     dingtalkStore.botName = params.botName;
@@ -152,6 +155,11 @@ export class DingtalkStoreHandler extends XpcRendererHandler {
   async onLogout(): Promise<void> {
     dingtalkStore.loggedIn = false;
     dingtalkStore.botName = '';
+  }
+
+  async onMessage(_params: Parameters<DingtalkConnectorRendererApi['onMessage']>[0]): Promise<void> {
+    // Connector configuration currently has no inbox. Keep the callback registered so the
+    // preload runtime does not target a missing XPC method when DingTalk delivers a message.
   }
 
   async onError(params: DingtalkErrorDetail): Promise<void> {

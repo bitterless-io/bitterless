@@ -4,7 +4,11 @@
     class="eyes-on-agents"
     :class="{ 'eyes-on-agents--omni': isOmni }"
   >
-    <EyesOnAgentsMenuBar @open-connections="connectionsVisible = true" />
+    <EyesOnAgentsMenuBar
+      :connections-open="connectionsVisible"
+      @open-connections="connectionsVisible = true"
+      @toggle-connections="connectionsVisible = !connectionsVisible"
+    />
 
     <div
       v-if="eyesOnAgentsStore.loadError || eyesOnAgentsStore.actionError"

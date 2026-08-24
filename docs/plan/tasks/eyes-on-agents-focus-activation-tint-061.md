@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-focus-activation-tint-061
 scope: tint the Focus surface pale orange while the window is active and neutral grey while it is not
-status: implemented; owner verification pending
+status: superseded by eyes-on-agents-flat-board-surface-064
 depends-on: [eyes-on-agents-focus-search-toggle-058]
 ---
 
@@ -55,6 +55,10 @@ EyesOnAgents window is the active window, neutral grey while it is not.
   exemption.
 
 ## Result
+
+Superseded by [task 064](eyes-on-agents-flat-board-surface-064.md): the owner removed the Focus
+surface entirely, and this tint had no other host, so the token, the modifier class, and the
+`windowActive` flag with its `blur` listener were all removed again. The record below is historical.
 
 Implemented. `--eyes-column-focus: oklch(0.94 0.04 60)` is back in `App.less`, `.agent-domain` paints
 it by default, and `.eyes-on-agents--inactive .agent-domain` falls back to `--eyes-column`.

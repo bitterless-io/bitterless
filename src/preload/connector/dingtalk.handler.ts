@@ -1,6 +1,9 @@
 import { XpcPreloadHandler, createXpcPreloadEmitter } from 'electron-xpc/preload';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
-import type { DingtalkStoreHandler } from '@renderer/home/src/views/connector/dingtalk/dingtalk.store';
+import type {
+  DingtalkConnectorRendererApi,
+  DingtalkConnectorRuntimeApi,
+} from '@shared/connector/connector.contract';
 import { DWClient } from 'dingtalk-stream';
 
 const settingEmitter = createXpcPreloadEmitter<SettingDao>('SettingDao') as SettingDao;
@@ -12,7 +15,9 @@ interface DingtalkConfig {
   clientSecret: string;
 }
 
-const dingtalkEmitter = createXpcPreloadEmitter<DingtalkStoreHandler>('DingtalkStoreHandler') as DingtalkStoreHandler;
+const dingtalkEmitter = createXpcPreloadEmitter<DingtalkConnectorRendererApi>(
+  'DingtalkStoreHandler'
+) as DingtalkConnectorRendererApi;
 
 let client: any = null;
 let isConnected = false;
@@ -104,7 +109,7 @@ const disconnectBot = async (): Promise<void> => {
   );
 };
 
-export class DingtalkHandler extends XpcPreloadHandler {
+export class DingtalkHandler extends XpcPreloadHandler implements DingtalkConnectorRuntimeApi {
   async init(): Promise<void> {
     console.log('[dingtalk] init called by renderer');
   }

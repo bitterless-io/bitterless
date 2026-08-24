@@ -1,0 +1,27 @@
+{
+  "model": "claude-sonnet",
+  "stream": true,
+  "reasoning": { "effort": "ultra" },
+  "instructions": "Use the browser namespace when needed.",
+  "input": "Open the local product page.",
+  "tools": [
+    {
+      "type": "namespace",
+      "name": "browser",
+      "description": "Browser controls.",
+      "tools": [
+        {
+          "type": "function",
+          "name": "open",
+          "description": "Open a URL.",
+          "parameters": {
+            "type": "object",
+            "properties": { "value": { "type": "string" } },
+            "required": ["value"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import './xpc/test.subscriber';
 import { initAuthSubscriber } from './xpc/auth.subscriber';
 import { initTodoistSyncRuntimeSubscriber } from './xpc/todoistSyncRuntime.subscriber';
 import { initUpdateSubscriber } from './xpc/update.subscriber';
+import { initHomeShellBridge } from './xpc/homeShellBridge.handler';
 
 initTodoistSyncRuntimeSubscriber();
 
@@ -43,6 +44,7 @@ const bootstrap = async (): Promise<void> => {
   initUpdateSubscriber();
   createApp(App).use(ArcoVue).use(router).use(i18n).mount('#app');
 
+  initHomeShellBridge();
   initAuthSubscriber();
 };
 

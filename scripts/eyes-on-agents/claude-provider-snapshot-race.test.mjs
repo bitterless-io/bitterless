@@ -29,7 +29,7 @@ const thread = (provider, index) => ({
   threadId: uuid(index),
   desktopSessionId: provider === 'claude' ? `local_${uuid(index)}` : null,
   transcriptPath: null,
-  canPreviewTranscript: false,
+  canCopySessionPath: false,
   domainId: 1,
   title: `${provider} task`,
   cwd: null,

@@ -19,6 +19,7 @@ import type {
 } from '@maestro-shared/coach.api'
 import { AUTH_BROADCAST } from '@maestro-shared/session.api'
 import type { AuthBroadcast } from '@maestro-shared/session.api'
+import { CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT } from '@shared/claudeSubscription/claudeSubscription.contract'
 import ChatPanel from './ChatPanel.vue'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
@@ -90,6 +91,7 @@ const activeLlmPreset = computed(() =>
 )
 const activeLlmEfforts = computed(() => activeLlmPreset.value?.efforts || [])
 const activeLlmProvider = computed(() => llmConfig.value?.providers.find((item) => item.provider === llmConfig.value?.provider))
+const activeLlmIsLocal = computed(() => llmConfig.value?.provider === 'local')
 const activeLlmEffortLabel = computed(() => {
   const effort = llmConfig.value?.effort
   if (!effort) return ''
@@ -193,6 +195,11 @@ const loginActiveProvider = async (): Promise<void> => {
   const next = await coach.loginLlm({ provider: cfg.provider, method: 'browser' })
   llmConfig.value = next
   syncLlmContextWindow(next)
+}
+
+const configureLocalProvider = async (): Promise<void> => {
+  await coach.setWorkbenchVisible({ visible: true })
+  xpcRenderer.broadcast('coach/workbench-pane', { pane: 'configuration' })
 }
 
 const openDemo = async (): Promise<void> => {
@@ -385,6 +392,11 @@ onMounted(async () => {
       })
       .catch((err) => console.error('[coach control] refresh llm after auth failed:', err))
   })
+  xpcRenderer.subscribe(CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT, () => {
+    void coach.getLlmConfig().then(applyLlmConfig).catch((err) => {
+      console.error('[coach control] refresh Local provider state failed:', err)
+    })
+  })
   xpcRenderer.subscribe('coach/agent-activity', (payload) => {
     messageStore.pushActivity(payload.params as AgentActivityStep)
   })
@@ -499,11 +511,11 @@ onMounted(async () => {
             class="control-app__login-card"
           >
             <div class="control-app__login-message">
-              Sign in to {{ activeProviderLabel }} to use this model.
+              {{ activeLlmIsLocal ? 'Connect a Claude subscription account to use this local model.' : `Sign in to ${activeProviderLabel} to use this model.` }}
             </div>
-            <Button size="small" type="primary" :loading="llmLoginLoading" :disabled="Boolean(llmLoginProvider && !llmLoginLoading)" @click="loginActiveProvider">
+            <Button size="small" type="primary" :loading="llmLoginLoading" :disabled="Boolean(llmLoginProvider && !llmLoginLoading)" @click="activeLlmIsLocal ? configureLocalProvider() : loginActiveProvider()">
               <template #icon><IconLogin2 :size="15" /></template>
-              Login
+              {{ activeLlmIsLocal ? 'Configure' : 'Login' }}
             </Button>
           </div>
         </template>

@@ -12,6 +12,7 @@
   border-bottom: 1px solid var(--onlypreview-divider);
   color: var(--onlypreview-ink);
   background: #fbfbfd;
+  container-type: inline-size;
 }
 
 .onlypreview-preview-toolbar__identity {
@@ -51,6 +52,17 @@
   gap: 9px;
 }
 
+.onlypreview-preview-toolbar__find-feedback {
+  min-width: 0;
+  max-width: 320px;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--onlypreview-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .onlypreview-preview-toolbar__badge {
   height: 21px;
   flex: 0 0 auto;
@@ -67,9 +79,15 @@
   text-transform: uppercase;
 }
 
-@media (max-width: 760px) {
+@container (max-width: 520px) {
   .onlypreview-preview-toolbar__file-path,
   .onlypreview-preview-toolbar__badge {
+    display: none;
+  }
+}
+
+@container (max-width: 440px) {
+  .onlypreview-preview-toolbar:has(.onlypreview-find-bar) .onlypreview-preview-toolbar__identity {
     display: none;
   }
 }

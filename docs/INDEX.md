@@ -39,8 +39,9 @@ design document.
 - [Todoist-style Todo synchronization](features/todoist-sync.md) - independent encrypted
   per-customer SQLite, HTTP command/outbox sync, working-set-first bootstrap, and shared UI/MCP
   refresh without PowerSync or logical WAL.
-- [Todo Domain board layout](features/todo-layout.md) - menu-bar Domain creation and wrapping
-  300–480px Focus/Domain columns without horizontal board navigation.
+- [Todo Domain board layout](features/todo-layout.md) - menu-bar Domain creation, wrapping
+  300–480px Focus/Domain columns capped at 80vh, and a detail panel that overlays with panel-width
+  horizontal reveal instead of squeezing the board.
 - [EyesOnAgents Focus-only board](features/eyes-on-agents-focus-board.md) - one full-width Focus
   column listing every visible thread, retired Domain and Project UI, and an always-visible title filter.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
@@ -57,6 +58,12 @@ design document.
   packaged runtime mapping.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
+- [Claude subscription accounts](features/claude-subscription-accounts.md) - Main-owned local
+  multi-account unmodified-CLI authorization with CLI-owned isolated credentials,
+  subscription-only execution, bounded failover, and a loopback Responses endpoint for Codex.
+- [Claude subscription accounts layout](features/claude-subscription-accounts-layout.md) - the
+  Maestro Workbench Configuration account pool, fixed Local endpoint, isolated sign-in flow, and
+  truthful state variants.
 - [Translator mini app](features/translator.md) - fixed GPT-5.5 realtime bilingual translation
   inside Omni with thinking disabled, one exact 60-second deadline, strict Zod output, and a
   dedicated sanitized translation log.
@@ -120,6 +127,8 @@ design document.
   the renderer root kept the retired 800px floor and clipped instead of re-laying out.
 - [EyesOnAgents connections drawer renders behind the board](issues/eyes-on-agents-connections-drawer-behind-board.md) - implemented; owner verification pending:
   a container-anchored Arco drawer inherits no z-index, so the board painted over it.
+- [A restarted working thread stays pinned with no visible reason](issues/eyes-on-agents-restart-unknown-pinned.md) - diagnosed; repair pending owner choice:
+  after a restart the row is `unknown` + unread, which promotes it to the unread tier while neither the spinner nor the dot renders for it.
 - [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - modal surface superseded by the Focus filter:
   separator-insensitive title matching now narrows the Focus column itself.
 
@@ -136,7 +145,11 @@ design document.
   active-surface `Cmd+F` routing, and per-format find capabilities.
 - [OnlyPreview preview format coverage](design/onlypreview-format-coverage.md) - per-format engine
   matrix for Chromium-direct HTML/PDF and Vue-rendered code/Markdown/Office/image/media, fidelity
-  ceilings, truthful failure states, and the Vue preview-engine dynamic-import exception.
+  ceilings, truthful metadata failure states, and the Vue preview-engine dynamic-import exception.
+
+The two OnlyPreview designs are closed at the documented non-E2E implementation level after the
+[Task 025 completion audit PASS](plan/reviews/onlypreview-design-completion-025-1.md). Their ledger is
+`implemented; owner verification pending`; only Ral's real-app/runtime/visual verification remains.
 
 ## Delivery
 
@@ -156,6 +169,7 @@ design document.
 - [Translator delivery analysis](plan/analysis/translator.md)
 - [Motto delivery analysis](plan/analysis/motto.md)
 - [SQLite migration release-gate analysis](plan/analysis/sqlite-migration-release-gate.md)
+- [Claude subscription accounts delivery analysis](plan/analysis/claude-subscription-accounts.md)
 - [Todoist-style Todo sync delivery analysis](plan/analysis/todoist-sync.md)
 
 ## Issues
@@ -197,12 +211,25 @@ design document.
 - [Omni root-axis collapse size mismatch](issues/omni-root-axis-collapse-size-mismatch.md) -
   implemented; owner verification pending: immutable tree edits, lifecycle-event rejection, and one
   serialized Main commit keep `H[V,V]` renderer borders and native bounds on the same geometry.
+- [Omni inactive-window first-click focus](issues/omni-inactive-window-first-click-focus.md) -
+  implemented; owner verification pending: the macOS activation click reaches the exact Website or
+  Mini App child `WebContentsView` so a different cell's input can focus without a second click.
+- [OnlyPreview PDF preview paints blank](issues/onlypreview-pdf-blank-in-memory-partition.md) -
+  implemented; owner verification pending: the raw Chromium view's in-memory session partition stopped
+  Chromium's PDF viewer from creating its document frame, so it now uses one constant `persist:`
+  partition and serves the PDF from Chromium's network service instead of Main-process IO.
+- [OnlyPreview raw view has no DevTools or Inspect menu](issues/onlypreview-chrome-view-devtools-and-inspect-menu.md) -
+  reported 2026-08-21: debug auto-opens DevTools only for the Vue preview view, and no OnlyPreview
+  view offers a right-click Inspect entry.
 - [Todo SQLCipher owned by Main](issues/todo-sqlite-owned-by-main-process.md) - fixed; owner verification pending:
   the complete synchronized Todo runtime now lives in Core SQLite preload; Main only routes XPC,
   hosts MCP, exposes narrow OS capabilities, and recovers the hidden process lifecycle.
 - [Todo Domain refresh flicker](issues/todo-domain-refresh-flicker.md) - fixed; owner verification pending:
   atomic snapshot reconciliation and origin-aware broadcasts keep synchronized updates from
   emptying and rebuilding every visible column.
+- [Todo Domain column dead selector](issues/todo-domain-column-dead-selector.md) - fixed; owner
+  verification pending: `da.domain-column` silenced the whole width/flex contract, and the layout
+  regression now anchors selector lookup so a dead rule cannot satisfy it.
 - [macOS notarization upload timeout](issues/macos-dmg-notarization-upload-timeout.md) -
   implemented; owner verification pending: retain Apple's accelerated route while adding visible,
   bounded network-only retry for application and DMG submissions.

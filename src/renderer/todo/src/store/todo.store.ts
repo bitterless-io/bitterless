@@ -151,6 +151,19 @@ const toInlineMarkdownText = (value: string): string => {
     .join(' ');
 };
 
+const DETAIL_PANEL_WIDTH = 320;
+const DETAIL_PANEL_GAP = 12;
+
+const axisScrollDelta = (
+  box: { start: number; end: number },
+  visible: { start: number; end: number },
+): number => {
+  if (box.end - box.start > visible.end - visible.start) return box.start - visible.start;
+  if (box.start < visible.start) return box.start - visible.start;
+  if (box.end > visible.end) return box.end - visible.end;
+  return 0;
+};
+
 const toBlockMarkdownText = (value: string): string => {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 };
@@ -854,7 +867,7 @@ class TodoState {
     const columnEl = document.querySelector<HTMLElement>(`.domain-column[data-domain-id="${domainId}"]`);
     if (!columnEl) return;
 
-    columnEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    this._revealColumn(columnEl);
 
     const todoRowEl = columnEl.querySelector<HTMLElement>(`[data-todo-id="${todoId}"]`);
     const columnBody = columnEl.querySelector<HTMLElement>('.domain-column__body');
@@ -865,6 +878,28 @@ class TodoState {
       const targetScrollTop = rowOffsetTop - (bodyHeight - rowHeight) / 2;
       columnBody.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' });
     }
+  }
+
+  private _revealColumn(columnEl: HTMLElement): void {
+    const boardScroll = document.querySelector<HTMLElement>('.todo-app__board-scroll');
+    if (!boardScroll) return;
+
+    const boardRect = boardScroll.getBoundingClientRect();
+    const columnRect = columnEl.getBoundingClientRect();
+    const reservedRight = this.detailVisible ? DETAIL_PANEL_WIDTH + DETAIL_PANEL_GAP : 0;
+    const left = boardScroll.scrollLeft + axisScrollDelta(
+      { start: columnRect.left, end: columnRect.right },
+      { start: boardRect.left, end: boardRect.right - reservedRight },
+    );
+    const top = boardScroll.scrollTop + axisScrollDelta(
+      { start: columnRect.top, end: columnRect.bottom },
+      { start: boardRect.top, end: boardRect.bottom },
+    );
+    boardScroll.scrollTo({
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+      behavior: 'smooth',
+    });
   }
 
   closeDetail(): void {

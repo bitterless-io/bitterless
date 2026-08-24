@@ -26,7 +26,7 @@ export interface RuntimeMediaResolution {
 
 export const mediaTransportForProvider = (providerId: string): AgentRuntimeMediaTransport => {
   const id = providerId.trim().toLowerCase()
-  if (id === 'openai-codex' || id === 'anthropic') return 'path'
+  if (id === 'openai-codex' || id === 'anthropic' || id === 'local') return 'path'
   return 'url'
 }
 

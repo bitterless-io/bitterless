@@ -19,7 +19,8 @@ await build({
   format: 'esm',
   target: 'node22',
   sourcemap: 'inline',
-  tsconfig: join(projectRoot, 'tsconfig.node.json')
+  tsconfig: join(projectRoot, 'tsconfig.node.json'),
+  alias: { electron: join(projectRoot, 'tests/onlypreview/fixtures/electron.stub.mjs') }
 });
 
 const runtime = await import(pathToFileURL(bundlePath).href);
@@ -81,7 +82,10 @@ class MemorySettingStorage {
     this.insertCount += 1;
     if (this.conflictNextInsert) {
       this.conflictNextInsert = false;
-      this.serializedValue = JSON.stringify({ version: 1, directoryPath: resolve('/tmp/conflict') });
+      this.serializedValue = JSON.stringify({
+        version: 1,
+        directoryPath: resolve('/tmp/conflict')
+      });
       return false;
     }
     if (this.serializedValue !== undefined) return false;
@@ -187,10 +191,12 @@ test('explicit open resolves while a ready storage read remains deferred', async
     service.markStorageReady();
     const generation = service.beginExplicitTarget(host.hostToken);
     let openSettled = false;
-    const opening = service.openExplicitTarget(host.hostToken, root, generation).then((workspace) => {
-      openSettled = true;
-      return workspace;
-    });
+    const opening = service
+      .openExplicitTarget(host.hostToken, root, generation)
+      .then((workspace) => {
+        openSettled = true;
+        return workspace;
+      });
 
     await readStarted;
     await settle();
@@ -259,11 +265,7 @@ test('ordinary host revoke preserves pending history while teardown fences and c
     const clearedRuntime = createService(clearedStorage);
     const clearedHost = clearedRuntime.hosts.issue('standalone', 'content');
     const clearedGeneration = clearedRuntime.service.beginExplicitTarget(clearedHost.hostToken);
-    await clearedRuntime.service.openExplicitTarget(
-      clearedHost.hostToken,
-      root,
-      clearedGeneration
-    );
+    await clearedRuntime.service.openExplicitTarget(clearedHost.hostToken, root, clearedGeneration);
     clearedRuntime.service.finishExplicitTarget(clearedGeneration);
     clearedRuntime.hosts.revoke(clearedHost.hostToken);
     clearedRuntime.service.clearTransientState();
@@ -383,9 +385,7 @@ test('a complete storage lifecycle restores a fresh directory capability and for
     assert.equal(restoredWorkspace?.displayPath, realpathSync(firstRoot));
     assert.equal(restoredWorkspace?.selectedRelativePath, undefined);
 
-    const explicitGeneration = restoredRuntime.service.beginExplicitTarget(
-      restoredHost.hostToken
-    );
+    const explicitGeneration = restoredRuntime.service.beginExplicitTarget(restoredHost.hostToken);
     const explicitWorkspace = await restoredRuntime.service.openExplicitTarget(
       restoredHost.hostToken,
       secondFile,

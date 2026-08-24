@@ -1,0 +1,217 @@
+.onlypreview-sheet {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  color: #25283a;
+}
+
+.onlypreview-sheet__tabs {
+  min-height: 34px;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  overflow-x: auto;
+  border-bottom: 1px solid #cfd3df;
+  background: #f3f4f8;
+  scrollbar-width: thin;
+}
+
+.onlypreview-sheet__tab {
+  position: relative;
+  min-width: 82px;
+  max-width: 220px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 0;
+  padding: 0 14px;
+  color: #5d6274;
+  background: transparent;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.onlypreview-sheet__tab::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 2px;
+  transform: scaleX(0);
+  background: #4e5882;
+  transition: transform 120ms ease-out;
+}
+
+.onlypreview-sheet__tab:hover {
+  color: #25283a;
+  background: #e9ebf2;
+}
+
+.onlypreview-sheet__tab:focus-visible {
+  z-index: 1;
+  outline: 2px solid #4e5882;
+  outline-offset: -2px;
+}
+
+.onlypreview-sheet__tab--active {
+  color: #25283a;
+  background: #fff;
+  font-weight: 650;
+}
+
+.onlypreview-sheet__tab--active::after {
+  transform: scaleX(1);
+}
+
+.onlypreview-sheet__coverage {
+  position: sticky;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 12px;
+  color: #6f7487;
+  background: linear-gradient(90deg, transparent, #f3f4f8 14px);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.onlypreview-sheet__grid {
+  --sheet-row-header: 52px;
+  --sheet-column-header: 27px;
+
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: #fff;
+}
+
+.onlypreview-sheet__corner,
+.onlypreview-sheet__column-headers,
+.onlypreview-sheet__row-headers {
+  position: absolute;
+  z-index: 3;
+  overflow: hidden;
+  border-color: #cfd3df;
+  background: #f3f4f8;
+}
+
+.onlypreview-sheet__corner {
+  top: 0;
+  left: 0;
+  width: var(--sheet-row-header);
+  height: var(--sheet-column-header);
+  border-right: 1px solid #cfd3df;
+  border-bottom: 1px solid #cfd3df;
+}
+
+.onlypreview-sheet__column-headers {
+  top: 0;
+  right: 0;
+  left: var(--sheet-row-header);
+  height: var(--sheet-column-header);
+  border-bottom: 1px solid #cfd3df;
+}
+
+.onlypreview-sheet__row-headers {
+  top: var(--sheet-column-header);
+  bottom: 0;
+  left: 0;
+  width: var(--sheet-row-header);
+  border-right: 1px solid #cfd3df;
+}
+
+.onlypreview-sheet__column-header-track,
+.onlypreview-sheet__row-header-track {
+  position: relative;
+  will-change: transform;
+}
+
+.onlypreview-sheet__column-header,
+.onlypreview-sheet__row-header {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-right: 1px solid #d9ddea;
+  border-bottom: 1px solid #d9ddea;
+  color: #656a7c;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.onlypreview-sheet__column-header {
+  top: 0;
+  height: var(--sheet-column-header);
+}
+
+.onlypreview-sheet__row-header {
+  right: 0;
+  left: 0;
+}
+
+.onlypreview-sheet__viewport {
+  position: absolute;
+  top: var(--sheet-column-header);
+  right: 0;
+  bottom: 0;
+  left: var(--sheet-row-header);
+  overflow: auto;
+  outline: none;
+}
+
+.onlypreview-sheet__viewport:focus-visible {
+  box-shadow: inset 0 0 0 2px #4e5882;
+}
+
+.onlypreview-sheet__canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.onlypreview-sheet__cell {
+  position: absolute;
+  display: flex;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-right: 1px solid #e1e3ea;
+  border-bottom: 1px solid #e1e3ea;
+  padding: 3px 6px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.onlypreview-sheet__cell > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onlypreview-sheet__cell--active {
+  z-index: 1;
+  box-shadow: inset 0 0 0 2px #4e5882;
+}
+
+.onlypreview-sheet__cell--match {
+  z-index: 2;
+  background: #dfe4ff !important;
+  box-shadow: inset 0 0 0 2px #4e5882;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onlypreview-sheet__tab::after {
+    transition: none;
+  }
+}

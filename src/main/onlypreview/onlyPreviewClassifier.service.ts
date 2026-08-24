@@ -115,6 +115,8 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.ogv', '.mov', '.m4v']);
+const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['.heic', '.heif', '.tif', '.tiff', '.raw']);
+const UNSUPPORTED_VIDEO_EXTENSIONS = new Set(['.mkv', '.avi', '.wmv', '.flv']);
 const SHEET_EXTENSIONS = new Set(['.xlsx', '.xlsm']);
 const DOCUMENT_EXTENSIONS = new Set(['.docx']);
 
@@ -212,8 +214,71 @@ export const classifyOnlyPreviewExtension = (relativePath: string): OnlyPreviewK
 const startsWithBytes = (buffer: Uint8Array, expected: readonly number[]): boolean =>
   buffer.length >= expected.length && expected.every((byte, index) => buffer[index] === byte);
 
+const isCompoundFileSignature = (buffer: Uint8Array): boolean =>
+  startsWithBytes(buffer, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
 const asciiAt = (buffer: Uint8Array, start: number, length: number): string =>
   String.fromCharCode(...buffer.slice(start, start + length));
+
+const skipSvgDoctype = (source: string, start: number): number => {
+  let quote = '';
+  let subsetDepth = 0;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '[') {
+      subsetDepth += 1;
+    } else if (character === ']') {
+      subsetDepth = Math.max(0, subsetDepth - 1);
+    } else if (character === '>' && subsetDepth === 0) {
+      return index + 1;
+    }
+  }
+  return -1;
+};
+
+const hasSvgRoot = (sample: Uint8Array): boolean => {
+  const source = new TextDecoder('utf-8').decode(sample).replace(/^\uFEFF/, '');
+  let offset = 0;
+  const skipWhitespace = (): void => {
+    while (/\s/u.test(source[offset] ?? '')) offset += 1;
+  };
+  skipWhitespace();
+  while (offset < source.length) {
+    if (source.startsWith('<?xml', offset)) {
+      const end = source.indexOf('?>', offset + 5);
+      if (end < 0) return false;
+      offset = end + 2;
+    } else if (source.startsWith('<!--', offset)) {
+      const end = source.indexOf('-->', offset + 4);
+      if (end < 0) return false;
+      offset = end + 3;
+    } else if (/^<!doctype\b/iu.test(source.slice(offset))) {
+      const end = skipSvgDoctype(source, offset + 9);
+      if (end < 0) return false;
+      offset = end;
+    } else {
+      break;
+    }
+    skipWhitespace();
+  }
+  return /^<svg(?:\s|>)/iu.test(source.slice(offset));
+};
+
+const hasPlausibleMediaAtom = (sample: Uint8Array, acceptedTypes: ReadonlySet<string>): boolean => {
+  if (sample.length < 8 || !acceptedTypes.has(asciiAt(sample, 4, 4))) return false;
+  const view = new DataView(sample.buffer, sample.byteOffset, sample.byteLength);
+  const atomSize = view.getUint32(0);
+  if (atomSize === 1) return sample.length >= 16 && view.getBigUint64(8) >= 16n;
+  return atomSize === 0 || atomSize >= 8;
+};
+
+const QUICKTIME_FIRST_ATOMS = new Set(['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip']);
 
 const matchesSignature = (extension: string, sample: Uint8Array): boolean => {
   if (extension === '.pdf') return asciiAt(sample, 0, 5) === '%PDF-';
@@ -230,13 +295,7 @@ const matchesSignature = (extension: string, sample: Uint8Array): boolean => {
   }
   if (extension === '.bmp') return asciiAt(sample, 0, 2) === 'BM';
   if (extension === '.ico') return startsWithBytes(sample, [0x00, 0x00, 0x01, 0x00]);
-  if (extension === '.svg') {
-    const source = new TextDecoder('utf-8')
-      .decode(sample)
-      .replace(/^\uFEFF/, '')
-      .trimStart();
-    return /^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)/i.test(source);
-  }
+  if (extension === '.svg') return hasSvgRoot(sample);
   if (extension === '.mp3') {
     return asciiAt(sample, 0, 3) === 'ID3' || (sample[0] === 0xff && (sample[1] & 0xe0) === 0xe0);
   }
@@ -245,14 +304,14 @@ const matchesSignature = (extension: string, sample: Uint8Array): boolean => {
   if (extension === '.ogg' || extension === '.ogv') return asciiAt(sample, 0, 4) === 'OggS';
   if (extension === '.flac') return asciiAt(sample, 0, 4) === 'fLaC';
   if (extension === '.aac') {
-    return (sample[0] === 0xff && (sample[1] & 0xf6) === 0xf0) || asciiAt(sample, 4, 4) === 'ftyp';
+    return (
+      (sample[0] === 0xff && (sample[1] & 0xf6) === 0xf0) ||
+      asciiAt(sample, 0, 4) === 'ADIF' ||
+      asciiAt(sample, 4, 4) === 'ftyp'
+    );
   }
-  if (
-    extension === '.m4a' ||
-    extension === '.mp4' ||
-    extension === '.mov' ||
-    extension === '.m4v'
-  ) {
+  if (extension === '.mov') return hasPlausibleMediaAtom(sample, QUICKTIME_FIRST_ATOMS);
+  if (extension === '.m4a' || extension === '.mp4' || extension === '.m4v') {
     return asciiAt(sample, 4, 4) === 'ftyp';
   }
   if (extension === '.webm') return startsWithBytes(sample, [0x1a, 0x45, 0xdf, 0xa3]);
@@ -332,7 +391,6 @@ export class OnlyPreviewClassifierService {
       workspaceId: file.workspace.workspaceId,
       relativePath: file.relativePath,
       name: basename(file.relativePath),
-      displayPath: file.realPath,
       extension,
       kind,
       mimeType:
@@ -343,6 +401,12 @@ export class OnlyPreviewClassifierService {
       modifiedAt: file.modifiedAt
     };
 
+    if (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
+      descriptor.unsupportedCategory = 'image-format';
+    } else if (UNSUPPORTED_VIDEO_EXTENSIONS.has(extension)) {
+      descriptor.unsupportedCategory = 'video-container';
+    }
+
     const byteLimit = byteLimitForDescriptor(file.relativePath, kind);
     if (byteLimit !== null && file.size > byteLimit) {
       descriptor.previewError = {
@@ -352,9 +416,30 @@ export class OnlyPreviewClassifierService {
       return descriptor;
     }
     if (kind === 'unsupported' || kind === 'text') return descriptor;
+    if (file.size === 0 && kind === 'image') {
+      descriptor.previewError = {
+        code: 'IMAGE_EMPTY',
+        message: 'The selected image is empty.'
+      };
+      return descriptor;
+    }
+    if (file.size === 0 && (kind === 'audio' || kind === 'video')) {
+      descriptor.previewError = {
+        code: 'MEDIA_EMPTY',
+        message: 'The selected media file is empty.'
+      };
+      return descriptor;
+    }
 
     const sample = await readBounded(file.fileHandle, signatureBytesFor(extension));
     await this.workspaces.assertOpenedFileCurrent(file);
+    if ((kind === 'sheet' || kind === 'document') && isCompoundFileSignature(sample)) {
+      descriptor.previewError = {
+        code: 'OOXML_ENCRYPTED',
+        message: 'Password-protected Office files are not supported.'
+      };
+      return descriptor;
+    }
     if (!matchesSignature(extension, sample)) {
       descriptor.previewError = {
         code: 'SIGNATURE_MISMATCH',

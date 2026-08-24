@@ -1,393 +1,20 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
 import test from 'node:test';
-import ts from 'typescript';
-
-const root = process.cwd();
-const source = (relativePath) => readFileSync(join(root, relativePath), 'utf8');
-const nodeRequire = createRequire(import.meta.url);
-
-const loadTypeScriptModule = (relativePath, dependencies) => {
-  const transpiled = ts.transpileModule(source(relativePath), {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022
-    },
-    fileName: relativePath,
-    reportDiagnostics: true
-  });
-  const errors = (transpiled.diagnostics ?? []).filter(
-    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error
-  );
-  assert.deepEqual(
-    errors.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
-    []
-  );
-  const loaded = { exports: {} };
-  const localRequire = (specifier) => {
-    if (Object.hasOwn(dependencies, specifier)) return dependencies[specifier];
-    if (specifier.startsWith('.') || specifier.startsWith('@')) {
-      throw new Error(`Missing test dependency ${specifier} for ${relativePath}`);
-    }
-    return nodeRequire(specifier);
-  };
-  const execute = new Function(
-    'require',
-    'module',
-    'exports',
-    `${transpiled.outputText}\n//# sourceURL=${join(root, relativePath)}`
-  );
-  execute(localRequire, loaded, loaded.exports);
-  return loaded.exports;
-};
-
-class ContractError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-  }
-}
-
-const deferred = () => {
-  let resolve;
-  let reject;
-  const promise = new Promise((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-};
-
-const tick = () => new Promise((resolve) => setImmediate(resolve));
-
-let state;
-
-class FakeSession extends EventEmitter {
-  constructor() {
-    super();
-    this.protocol = { handle: async () => {}, unhandle: () => {} };
-    this.webRequest = {
-      onBeforeRequest: (filter, handler) => {
-        this.webRequestFilter = filter;
-        this.webRequestHandler = handler;
-      }
-    };
-  }
-
-  setPermissionCheckHandler(handler) {
-    this.permissionCheckHandler = handler;
-  }
-
-  setPermissionRequestHandler(handler) {
-    this.permissionRequestHandler = handler;
-  }
-
-  async setProxy(config) {
-    this.proxyConfig = config;
-    state.proxyCalls.push({ session: this, config });
-    const pending = state.nextProxyDeferred;
-    state.nextProxyDeferred = null;
-    pending?.started.resolve(this);
-    if (pending) await pending.completion.promise;
-  }
-
-  async closeAllConnections() {
-    return undefined;
-  }
-  async clearStorageData() {
-    return undefined;
-  }
-  async clearCache() {
-    return undefined;
-  }
-}
-
-class FakeWebContents extends EventEmitter {
-  constructor(kind) {
-    super();
-    this.kind = kind;
-    this.session = new FakeSession();
-    this.destroyed = false;
-    this.loadedUrls = [];
-  }
-
-  isDestroyed() {
-    return this.destroyed;
-  }
-
-  close() {
-    this.destroyed = true;
-  }
-
-  setWindowOpenHandler(handler) {
-    this.windowOpenHandler = handler;
-  }
-
-  setWebRTCIPHandlingPolicy(policy) {
-    this.webRTCIPHandlingPolicy = policy;
-  }
-
-  async loadURL(url) {
-    this.loadedUrls.push(url);
-    if (state.nextChromeLoadError) {
-      const error = state.nextChromeLoadError;
-      state.nextChromeLoadError = null;
-      throw error;
-    }
-  }
-}
-
-class FakeView {
-  constructor(kind) {
-    this.kind = kind;
-    this.webContents = new FakeWebContents(kind);
-    this.bounds = null;
-  }
-
-  setBounds(bounds) {
-    this.bounds = { ...bounds };
-  }
-}
-
-class FakeChromeView extends FakeView {
-  constructor(options) {
-    super('chrome');
-    this.options = options;
-    state.chromeViews.push(this);
-  }
-}
-
-const descriptorFor = (relativePath, kind, assetUrl) => {
-  const extension = `.${relativePath.split('.').at(-1)}`.toLowerCase();
-  return {
-    workspaceId: 'workspace-id',
-    relativePath,
-    name: relativePath.split('/').at(-1),
-    extension,
-    kind,
-    mimeType:
-      kind === 'pdf'
-        ? 'application/pdf'
-        : kind === 'image'
-          ? 'image/png'
-          : extension === '.html'
-            ? 'text/html; charset=utf-8'
-            : 'text/plain; charset=utf-8',
-    size: 3,
-    modifiedAt: 1,
-    language: kind === 'text' ? 'markdown' : null,
-    previewError: null,
-    ...(assetUrl ? { assetUrl } : {})
-  };
-};
-
-const createState = () => ({
-  broadcasts: [],
-  vueViews: [],
-  vueLoads: [],
-  chromeViews: [],
-  proxyCalls: [],
-  protocolInstalls: [],
-  protocolCleanups: 0,
-  protocolError: null,
-  nextProxyDeferred: null,
-  nextChromeLoadError: null,
-  nextVueLoadError: null,
-  nextDocumentIssueDeferred: null,
-  describe: async () => descriptorFor('notes/readme.md', 'text'),
-  readText: async (_file, adapterId) => ({
-    workspaceId: 'workspace-id',
-    relativePath: 'notes/readme.md',
-    text: adapterId,
-    encoding: 'utf-8',
-    size: adapterId.length
-  }),
-  assertOpenedFileCurrent: async () => undefined,
-  textReadCalls: [],
-  assetIssues: [],
-  assetRevocations: 0,
-  documentRevocations: 0,
-  documentRevisionRevocations: [],
-  assetUrlsRevoked: []
-});
-
-const host = {
-  hostId: 'host-id',
-  hostToken: 'host-token',
-  kind: 'standalone',
-  roles: ['content']
-};
-
-const hostRegistry = {
-  require: (hostToken) => {
-    if (hostToken !== host.hostToken) throw new ContractError('HOST_NOT_FOUND', 'missing host');
-    return host;
-  }
-};
-
-const workspaceRegistry = {
-  openFile: async (_hostToken, fileRef) => ({
-    host,
-    workspace: { workspaceId: fileRef.workspaceId },
-    relativePath: fileRef.relativePath,
-    realPath: `/workspace/${fileRef.relativePath}`,
-    size: 3,
-    modifiedAt: 1,
-    modifiedTimeNanoseconds: 1n,
-    deviceId: 1n,
-    inode: 1n,
-    fileHandle: { close: async () => {} }
-  }),
-  assertOpenedFileCurrent: async (...args) => await state.assertOpenedFileCurrent(...args)
-};
-
-const assetRegistry = {
-  issue: (file, mimeType, options) => {
-    state.assetIssues.push({ file, mimeType, options });
-    return `bitterless-preview://asset/${'a'.repeat(64)}/${options.selectionRevision}-${file.relativePath}`;
-  },
-  revokeHost: () => {
-    state.assetRevocations += 1;
-  },
-  revokeSelection: () => {
-    state.assetRevocations += 1;
-  },
-  revokeUrl: (url) => {
-    if (url) state.assetUrlsRevoked.push(url);
-  }
-};
-
-const documentRegistry = {
-  issue: async (_file, revision) => {
-    const url = `bitterless-preview://document/${'d'.repeat(64)}/${revision}.html`;
-    const pending = state.nextDocumentIssueDeferred;
-    state.nextDocumentIssueDeferred = null;
-    pending?.started.resolve({ revision, url });
-    if (pending) await pending.completion.promise;
-    return url;
-  },
-  revokeSelection: (hostToken, revision) => {
-    state.documentRevocations += 1;
-    state.documentRevisionRevocations.push({ hostToken, revision });
-  }
-};
-
-const regionModule = loadTypeScriptModule(
-  'src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts',
-  {
-    electron: { BaseWindow: class {}, WebContentsView: FakeChromeView },
-    'electron-xpc/main': {
-      xpcMain: {
-        broadcast: (event, payload) => state.broadcasts.push({ event, payload })
-      }
-    },
-    '@shared/onlypreview/onlyPreview.contract': {
-      OnlyPreviewContractError: ContractError,
-      parseOnlyPreviewFileRef: (value) => value,
-      toOnlyPreviewErrorPayload: (error) => ({
-        code: error?.code ?? 'OPERATION_FAILED',
-        message: error instanceof Error ? error.message : 'failed'
-      })
-    },
-    '@shared/onlypreview/onlyPreview.types': {
-      ONLY_PREVIEW_MAX_PDF_BYTES: 100 * 1024 * 1024,
-      ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT: 'onlypreview/previewPresentation'
-    },
-    '@main/onlypreview/onlyPreviewAsset.registry': {
-      onlyPreviewAssetRegistry: assetRegistry
-    },
-    '@main/onlypreview/onlyPreviewClassifier.service': {
-      onlyPreviewClassifierService: {
-        describe: (...args) => state.describe(...args),
-        readText: (...args) => {
-          state.textReadCalls.push(args);
-          return state.readText(...args);
-        }
-      }
-    },
-    '@main/onlypreview/onlyPreviewDocument.registry': {
-      onlyPreviewDocumentRegistry: documentRegistry
-    },
-    '@main/onlypreview/onlyPreviewHost.registry': {
-      onlyPreviewHostRegistry: hostRegistry
-    },
-    '@main/onlypreview/onlyPreviewProtocol.service': {
-      installOnlyPreviewSessionProtocol: (session, url) => {
-        if (state.protocolError) throw state.protocolError;
-        state.protocolInstalls.push({ session, url });
-        return () => {
-          state.protocolCleanups += 1;
-        };
-      }
-    },
-    '@main/onlypreview/onlyPreviewWorkspace.registry': {
-      onlyPreviewWorkspaceRegistry: workspaceRegistry
-    }
-  }
-);
-const presentationModule = loadTypeScriptModule(
-  'src/renderer/onlypreview/common/onlyPreviewPresentation.service.ts',
-  {}
-);
-
-const createHarness = () => {
-  state = createState();
-  const children = new Set();
-  const additions = [];
-  const removals = [];
-  const window = {
-    isDestroyed: () => false,
-    contentView: {
-      addChildView: (view) => {
-        children.add(view);
-        additions.push(view);
-      },
-      removeChildView: (view) => {
-        children.delete(view);
-        removals.push(view);
-      }
-    }
-  };
-  const runtime = {
-    window,
-    host,
-    createVuePreviewView: (previewRuntimeToken) => {
-      const view = new FakeView('vue');
-      view.previewRuntimeToken = previewRuntimeToken;
-      state.vueViews.push(view);
-      return view;
-    },
-    loadVuePreviewView: async (view) => {
-      state.vueLoads.push(view);
-      if (state.nextVueLoadError) {
-        const error = state.nextVueLoadError;
-        state.nextVueLoadError = null;
-        throw error;
-      }
-    },
-    bindChromeShortcuts: (webContents) => {
-      webContents.shortcutsBound = true;
-    }
-  };
-  const service = new regionModule.OnlyPreviewPreviewRegionService();
-  service.start(runtime);
-  return { service, runtime, children, additions, removals };
-};
-
-const fileRef = (relativePath) => ({ workspaceId: 'workspace-id', relativePath });
-const bounds = { x: 300, y: 75, width: 700, height: 500 };
-
-const acknowledgeCurrentVue = (service) => {
-  const view = state.vueViews.at(-1);
-  const snapshot = service.snapshot(host.hostToken);
-  service.reportVueReset(host.hostToken, snapshot.selectionRevision, view.previewRuntimeToken);
-  return view;
-};
+import {
+  acknowledgeCurrentVue,
+  bounds,
+  ContractError,
+  createHarness,
+  deferred,
+  descriptorFor,
+  fileRef,
+  host,
+  presentationModule,
+  source,
+  state,
+  tick,
+  withFakeTimeouts
+} from './onlyPreviewPreviewRegionTest.helper.mjs';
 
 test('first valid bounds creates Vue detached and exact reset acknowledgement attaches it', () => {
   const { service, children, additions } = createHarness();
@@ -561,255 +188,587 @@ test('public presentation strips capabilities while the current Vue runtime rece
   assert.equal(service.snapshotForVue(host.hostToken, vueToken).descriptor.assetUrl, undefined);
 });
 
-test('Vue text reads require the exact runtime, revision, file ref, and adapter and reject late bodies', async () => {
-  const { service } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  state.describe = async () => descriptorFor('notes/readme.md', 'text');
-  await service.present(host.hostToken, fileRef('notes/readme.md'));
-  const vue = acknowledgeCurrentVue(service);
-  const current = service.snapshot(host.hostToken);
-  const request = {
-    previewRuntimeToken: vue.previewRuntimeToken,
-    selectionRevision: current.selectionRevision,
-    ...current.fileRef,
-    adapterId: 'markdown-dom'
-  };
-
-  assert.equal((await service.readText(host.hostToken, request)).text, 'markdown-dom');
-  assert.equal(state.textReadCalls.length, 1);
-  for (const forged of [
-    { ...request, previewRuntimeToken: 'forged-runtime-token' },
-    { ...request, selectionRevision: request.selectionRevision + 1 },
-    { ...request, relativePath: 'other.md' },
-    { ...request, adapterId: 'monaco' }
+test('recognized unsupported media and classifier-terminal empty files issue no asset or player adapter', async () => {
+  for (const [relativePath, unsupportedCategory] of [
+    ['fixture.heic', 'image-format'],
+    ['fixture.mkv', 'video-container'],
+    ['fixture.bin', undefined]
   ]) {
-    await assert.rejects(
-      service.readText(host.hostToken, forged),
-      (error) => error.code === 'INVALID_INPUT' || error.code === 'HOST_ROLE_DENIED'
-    );
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
+    state.describe = async () => ({
+      ...descriptorFor(relativePath, 'unsupported'),
+      ...(unsupportedCategory ? { unsupportedCategory } : {})
+    });
+    await service.present(host.hostToken, fileRef(relativePath));
+    const snapshot = service.snapshot(host.hostToken);
+    assert.equal(snapshot.adapterId, 'unsupported');
+    assert.equal(snapshot.descriptor.unsupportedCategory, unsupportedCategory);
+    assert.equal(snapshot.selectedTextAvailable, false);
+    assert.equal(state.assetIssues.length, 0);
+    service.destroy();
   }
-  assert.equal(state.textReadCalls.length, 1);
 
-  const pending = deferred();
-  state.readText = async () => await pending.promise;
-  const staleRead = service.readText(host.hostToken, request);
-  await tick();
-  state.describe = async () => descriptorFor('next.md', 'text');
-  await service.present(host.hostToken, fileRef('next.md'));
-  pending.resolve({
-    workspaceId: 'workspace-id',
-    relativePath: 'notes/readme.md',
-    text: 'stale',
-    encoding: 'utf-8',
-    size: 5
-  });
-  await assert.rejects(staleRead, (error) => error.code === 'INVALID_INPUT');
+  for (const [relativePath, kind, errorCode] of [
+    ['empty.png', 'image', 'IMAGE_EMPTY'],
+    ['empty.mp3', 'audio', 'MEDIA_EMPTY']
+  ]) {
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
+    state.describe = async () => ({
+      ...descriptorFor(relativePath, kind),
+      size: 0,
+      previewError: { code: errorCode, message: 'empty' }
+    });
+    await service.present(host.hostToken, fileRef(relativePath));
+    const snapshot = service.snapshot(host.hostToken);
+    assert.equal(snapshot.adapterId, 'unsupported');
+    assert.equal(snapshot.error.code, errorCode);
+    assert.equal(snapshot.descriptor.assetUrl, undefined);
+    assert.equal(state.assetIssues.length, 0);
+    service.destroy();
+  }
 });
 
-test('Chrome setup failure revokes authority and falls back to a truthful Vue error', async () => {
-  const { service, children } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  state.describe = async () => descriptorFor('page.html', 'text');
-  state.protocolError = new Error('protocol setup failed');
+test('image and media reject wrong renderer error families without mutating loading or ready authority', async () => {
+  for (const [relativePath, kind, rejectedErrorCodes] of [
+    [
+      'fixture.png',
+      'image',
+      ['MEDIA_NETWORK_FAILED', 'DOCUMENT_PARSE_FAILED', 'SHEET_PARSE_FAILED', 'OPERATION_FAILED']
+    ],
+    [
+      'fixture.mp3',
+      'audio',
+      ['IMAGE_DECODE_FAILED', 'DOCUMENT_PARSE_FAILED', 'SHEET_PARSE_FAILED', 'OPERATION_FAILED']
+    ],
+    [
+      'fixture.mp4',
+      'video',
+      ['IMAGE_DECODE_FAILED', 'DOCUMENT_PARSE_FAILED', 'SHEET_PARSE_FAILED', 'OPERATION_FAILED']
+    ]
+  ]) {
+    for (const expectedStatus of ['loading', 'ready']) {
+      const { service } = createHarness();
+      service.updateBounds(host.hostToken, bounds);
+      state.describe = async () => descriptorFor(relativePath, kind);
+      await service.present(host.hostToken, fileRef(relativePath));
+      const vue = acknowledgeCurrentVue(service);
+      const revision = service.snapshot(host.hostToken).selectionRevision;
+      if (expectedStatus === 'ready') {
+        service.reportVueReady(host.hostToken, revision, vue.previewRuntimeToken);
+      }
 
-  await service.present(host.hostToken, fileRef('page.html'));
-  const snapshot = service.snapshot(host.hostToken);
-  assert.equal(snapshot.surface, 'vue');
-  assert.equal(snapshot.status, 'unavailable');
-  assert.equal(snapshot.selectionRevision, 2);
-  assert.match(snapshot.error.message, /protocol setup failed/);
-  assert.equal(state.chromeViews[0].webContents.destroyed, true);
-  assert.equal(children.has(state.vueViews[0]), false);
-  acknowledgeCurrentVue(service);
-  assert.equal(children.has(state.vueViews[0]), true);
-  assert.ok(state.assetRevocations > 0);
-  assert.ok(state.documentRevocations > 0);
+      for (const errorCode of rejectedErrorCodes) {
+        const before = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+        const broadcastCount = state.broadcasts.length;
+        const revokeCount = state.assetSelectionRevocations.length;
+        assert.equal(before.status, expectedStatus);
+        assert.throws(
+          () =>
+            service.reportVueError(host.hostToken, revision, vue.previewRuntimeToken, errorCode),
+          (error) => error.code === 'INVALID_INPUT'
+        );
+        assert.deepEqual(service.snapshotForVue(host.hostToken, vue.previewRuntimeToken), before);
+        assert.equal(state.broadcasts.length, broadcastCount);
+        assert.equal(state.assetSelectionRevocations.length, revokeCount);
+      }
+      service.destroy();
+    }
+  }
 });
 
-test('a delayed proxy setup cannot install stale protocol state after a newer selection', async () => {
-  const { service, children } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  const proxy = { started: deferred(), completion: deferred() };
-  state.nextProxyDeferred = proxy;
-  state.describe = async () => descriptorFor('page.html', 'text');
-  const stalePresentation = service.present(host.hostToken, fileRef('page.html'));
-  await proxy.started.promise;
-  const staleChrome = state.chromeViews[0];
+test('unsupported descriptor errors accept only the exact Main-authored effective error', async () => {
+  for (const [relativePath, kind, descriptorErrorCode, effectiveErrorCode] of [
+    ['empty.png', 'image', 'IMAGE_EMPTY', 'IMAGE_EMPTY'],
+    ['bad.png', 'image', 'SIGNATURE_MISMATCH', 'SIGNATURE_MISMATCH'],
+    ['oversize.md', 'text', 'TEXT_TOO_LARGE', 'TEXT_TOO_LARGE'],
+    ['codec.mp4', 'video', 'UNSUPPORTED_CODEC', 'OPERATION_FAILED']
+  ]) {
+    for (const expectedStatus of ['loading', 'ready']) {
+      const { service } = createHarness();
+      service.updateBounds(host.hostToken, bounds);
+      state.describe = async () => ({
+        ...descriptorFor(relativePath, kind),
+        previewError: { code: descriptorErrorCode, message: 'classifier-terminal' }
+      });
+      await service.present(host.hostToken, fileRef(relativePath));
+      const vue = acknowledgeCurrentVue(service);
+      const revision = service.snapshot(host.hostToken).selectionRevision;
+      if (expectedStatus === 'ready') {
+        service.reportVueReady(host.hostToken, revision, vue.previewRuntimeToken);
+      }
 
-  state.describe = async () => descriptorFor('notes/readme.md', 'text');
-  await service.present(host.hostToken, fileRef('notes/readme.md'));
-  proxy.completion.resolve();
-  await stalePresentation;
+      const rejectedErrorCodes = [
+        'IMAGE_DECODE_FAILED',
+        'MEDIA_SOURCE_UNSUPPORTED',
+        'DOCUMENT_PARSE_FAILED',
+        'SHEET_PARSE_FAILED',
+        'OPERATION_FAILED'
+      ].filter((errorCode) => errorCode !== effectiveErrorCode);
+      for (const errorCode of rejectedErrorCodes) {
+        const before = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+        const broadcastCount = state.broadcasts.length;
+        const revokeCount = state.assetSelectionRevocations.length;
+        assert.equal(before.adapterId, 'unsupported');
+        assert.equal(before.status, expectedStatus);
+        assert.throws(
+          () =>
+            service.reportVueError(host.hostToken, revision, vue.previewRuntimeToken, errorCode),
+          (error) => error.code === 'INVALID_INPUT'
+        );
+        assert.deepEqual(service.snapshotForVue(host.hostToken, vue.previewRuntimeToken), before);
+        assert.equal(state.broadcasts.length, broadcastCount);
+        assert.equal(state.assetSelectionRevocations.length, revokeCount);
+      }
 
-  assert.equal(state.protocolInstalls.length, 0);
-  assert.equal(staleChrome.webContents.destroyed, true);
-  assert.equal(service.snapshot(host.hostToken).surface, 'vue');
-  assert.equal(service.snapshot(host.hostToken).selectionRevision, 2);
-  acknowledgeCurrentVue(service);
-  assert.equal(children.has(state.vueViews[0]), true);
+      service.reportVueError(host.hostToken, revision, vue.previewRuntimeToken, effectiveErrorCode);
+      const unavailable = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+      assert.equal(unavailable.status, 'unavailable');
+      assert.equal(unavailable.error.code, effectiveErrorCode);
+      assert.equal(unavailable.descriptor.assetUrl, undefined);
+      service.destroy();
+    }
+  }
 });
 
-test('same-kind Chrome transitions and Chrome to Vue keep exactly one view and clean session state', async () => {
-  const { service, children } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  const present = async (relativePath, kind) => {
+test('image buffering revokes on ready while audio/video keep selection-lifetime Range authority', async () => {
+  for (const [relativePath, kind, expectedLifetime] of [
+    ['fixture.png', 'image', 'ttl'],
+    ['fixture.mp3', 'audio', 'selection'],
+    ['fixture.mp4', 'video', 'selection']
+  ]) {
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
     state.describe = async () => descriptorFor(relativePath, kind);
     await service.present(host.hostToken, fileRef(relativePath));
-    assert.equal(children.size, 1);
-    return state.chromeViews.at(-1);
-  };
+    const vue = acknowledgeCurrentVue(service);
+    const loading = service.snapshot(host.hostToken);
+    const privateLoading = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
 
-  const firstHtml = await present('first.html', 'text');
-  assert.equal(firstHtml.webContents.session.listenerCount('will-download'), 1);
-  const secondHtml = await present('second.html', 'text');
-  assert.equal(firstHtml.webContents.destroyed, true);
-  assert.equal(firstHtml.webContents.session.listenerCount('will-download'), 0);
-  assert.equal(secondHtml.webContents.session.listenerCount('will-download'), 1);
-  assert.equal(state.protocolCleanups, 1);
+    assert.equal(loading.adapterId, kind);
+    assert.equal(loading.selectedTextAvailable, false);
+    assert.equal('find' in loading, false);
+    assert.equal(loading.descriptor.assetUrl, undefined);
+    assert.match(privateLoading.descriptor.assetUrl, /^bitterless-preview:\/\/asset\//u);
+    assert.deepEqual(state.assetIssues.at(-1).options, {
+      selectionRevision: loading.selectionRevision,
+      maxBytes: 3,
+      lifetime: expectedLifetime
+    });
 
-  const firstPdf = await present('first.pdf', 'pdf');
-  assert.equal(secondHtml.webContents.destroyed, true);
-  assert.equal(secondHtml.webContents.session.listenerCount('will-download'), 0);
-  assert.equal(firstPdf.webContents.session.listenerCount('will-download'), 1);
-  assert.equal(state.protocolCleanups, 2);
-
-  const secondPdf = await present('second.pdf', 'pdf');
-  assert.equal(firstPdf.webContents.destroyed, true);
-  assert.equal(firstPdf.webContents.session.listenerCount('will-download'), 0);
-  assert.equal(secondPdf.webContents.session.listenerCount('will-download'), 1);
-  assert.equal(state.protocolCleanups, 3);
-
-  state.describe = async () => descriptorFor('notes/readme.md', 'text');
-  await service.present(host.hostToken, fileRef('notes/readme.md'));
-  assert.equal(secondPdf.webContents.destroyed, true);
-  assert.equal(secondPdf.webContents.session.listenerCount('will-download'), 0);
-  assert.equal(state.protocolCleanups, 4);
-  assert.equal(state.protocolInstalls.length, 4);
-  assert.equal(children.size, 0);
-  acknowledgeCurrentVue(service);
-  assert.equal([...children][0].kind, 'vue');
+    service.reportVueReady(host.hostToken, loading.selectionRevision, vue.previewRuntimeToken);
+    const ready = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+    assert.equal(ready.status, 'ready');
+    assert.equal(ready.selectedTextAvailable, false);
+    assert.equal(
+      typeof ready.descriptor.assetUrl === 'string',
+      kind === 'audio' || kind === 'video'
+    );
+    assert.equal(
+      state.assetSelectionRevocations.some(
+        (entry) => entry.selectionRevision === loading.selectionRevision
+      ),
+      kind === 'image'
+    );
+    service.destroy();
+  }
 });
 
-test('manual Chrome refresh replaces the raw view and destroy removes protocol and download listeners', async () => {
-  const { service, children } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  state.describe = async () => descriptorFor('page.html', 'text');
-  await service.present(host.hostToken, fileRef('page.html'));
-  const firstChrome = state.chromeViews[0];
+test('image/media errors remove dead capabilities, demote ready, and reject late ready resurrection', async () => {
+  for (const [relativePath, kind, errorCode] of [
+    ['fixture.png', 'image', 'IMAGE_DECODE_FAILED'],
+    ['fixture.mp3', 'audio', 'MEDIA_NETWORK_FAILED'],
+    ['fixture.mp4', 'video', 'MEDIA_SOURCE_UNSUPPORTED']
+  ]) {
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
+    state.describe = async () => descriptorFor(relativePath, kind);
+    await service.present(host.hostToken, fileRef(relativePath));
+    const vue = acknowledgeCurrentVue(service);
+    const revision = service.snapshot(host.hostToken).selectionRevision;
+    if (kind !== 'image') {
+      service.reportVueReady(host.hostToken, revision, vue.previewRuntimeToken);
+      assert.equal(service.snapshot(host.hostToken).status, 'ready');
+    }
 
-  await service.refresh(host.hostToken);
-  const refreshedChrome = state.chromeViews[1];
-  assert.equal(firstChrome.webContents.destroyed, true);
-  assert.equal(firstChrome.webContents.session.listenerCount('will-download'), 0);
-  assert.equal(refreshedChrome.webContents.session.listenerCount('will-download'), 1);
-  assert.equal(state.protocolCleanups, 1);
-  assert.equal(children.size, 1);
+    service.reportVueError(host.hostToken, revision, vue.previewRuntimeToken, errorCode);
+    let failed = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+    assert.equal(failed.status, 'unavailable');
+    assert.equal(failed.error.code, errorCode);
+    assert.equal(failed.descriptor.assetUrl, undefined);
+    assert.equal(failed.selectedTextAvailable, false);
+    assert.equal(
+      state.assetSelectionRevocations.some((entry) => entry.selectionRevision === revision),
+      true
+    );
 
-  service.destroy();
-  assert.equal(refreshedChrome.webContents.destroyed, true);
-  assert.equal(refreshedChrome.webContents.session.listenerCount('will-download'), 0);
-  assert.equal(state.protocolCleanups, 2);
-  assert.equal(state.protocolInstalls.length, 2);
-  assert.equal(children.size, 0);
+    service.reportVueReady(host.hostToken, revision, vue.previewRuntimeToken);
+    failed = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+    assert.equal(failed.status, 'unavailable');
+    assert.equal(failed.error.code, errorCode);
+    assert.equal(failed.descriptor.assetUrl, undefined);
+    service.destroy();
+  }
 });
 
-test('Chrome crash increments revision, tears down the raw view, and rejects its old revision', async () => {
-  const { service, children } = createHarness();
+test('XLSX stays on Vue, exposes one bounded private asset, and clears it on ready or error', async () => {
+  const { service } = createHarness();
   service.updateBounds(host.hostToken, bounds);
-  const vueToken = state.vueViews[0].previewRuntimeToken;
-  state.describe = async () => descriptorFor('page.html', 'text');
-  await service.present(host.hostToken, fileRef('page.html'));
-  const chrome = state.chromeViews[0];
-  assert.equal(chrome.webContents.webRTCIPHandlingPolicy, 'disable_non_proxied_udp');
-  assert.equal(chrome.webContents.session.proxyConfig.proxyBypassRules, '<-loopback>');
+  const vue = state.vueViews[0];
+  state.describe = async () => descriptorFor('workbook.xlsx', 'sheet');
+  await service.present(host.hostToken, fileRef('workbook.xlsx'));
 
-  chrome.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
-  const snapshot = service.snapshot(host.hostToken);
-  assert.equal(snapshot.selectionRevision, 2);
+  let snapshot = service.snapshot(host.hostToken);
   assert.equal(snapshot.surface, 'vue');
+  assert.equal(snapshot.adapterId, 'xlsx-grid');
+  assert.equal(snapshot.descriptor.assetUrl, undefined);
+  assert.equal(
+    service
+      .snapshotForVue(host.hostToken, vue.previewRuntimeToken)
+      .descriptor.assetUrl?.startsWith('bitterless-preview://asset/'),
+    true
+  );
+  assert.deepEqual(state.assetIssues.at(-1).options, {
+    selectionRevision: snapshot.selectionRevision,
+    maxBytes: 3
+  });
+
+  acknowledgeCurrentVue(service);
+  service.reportVueError(
+    host.hostToken,
+    snapshot.selectionRevision,
+    vue.previewRuntimeToken,
+    'SHEET_PARSE_FAILED'
+  );
+  snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
   assert.equal(snapshot.status, 'unavailable');
-  assert.equal(chrome.webContents.destroyed, true);
-  assert.equal(children.has(state.vueViews[0]), false);
+  assert.equal(snapshot.descriptor.assetUrl, undefined);
+
+  await service.present(host.hostToken, fileRef('workbook.xlsx'));
+  snapshot = service.snapshot(host.hostToken);
+  acknowledgeCurrentVue(service);
   assert.throws(
-    () => service.reportVueReady(host.hostToken, 1, vueToken),
+    () =>
+      service.reportVueReady(host.hostToken, snapshot.selectionRevision, vue.previewRuntimeToken),
     (error) => error.code === 'INVALID_INPUT'
   );
-  acknowledgeCurrentVue(service);
-  assert.equal(children.has(state.vueViews[0]), true);
-});
-
-test('Vue crash rotates runtime capability and revision; same-revision error clears text ability', async () => {
-  const { service, children } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  const originalVue = state.vueViews[0];
-  const originalToken = originalVue.previewRuntimeToken;
-  state.describe = async () => descriptorFor('notes/readme.md', 'text');
-  await service.present(host.hostToken, fileRef('notes/readme.md'));
-  acknowledgeCurrentVue(service);
-  service.reportVueReady(host.hostToken, 1, originalToken);
-  assert.equal(service.snapshot(host.hostToken).selectedTextAvailable, true);
-  service.reportVueError(host.hostToken, 1, originalToken, 'OPERATION_FAILED');
-  assert.equal(service.snapshot(host.hostToken).selectedTextAvailable, false);
-
-  originalVue.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
-  const replacementVue = state.vueViews[1];
-  assert.ok(replacementVue);
-  assert.notEqual(replacementVue.previewRuntimeToken, originalToken);
-  assert.equal(service.snapshot(host.hostToken).selectionRevision, 2);
-  assert.equal(children.has(replacementVue), false);
   assert.throws(
-    () => service.reportVueReady(host.hostToken, 2, originalToken),
-    (error) => error.code === 'HOST_ROLE_DENIED'
-  );
-  assert.throws(
-    () => service.reportVueReady(host.hostToken, 1, replacementVue.previewRuntimeToken),
+    () =>
+      service.reportVueReady(
+        host.hostToken,
+        snapshot.selectionRevision,
+        vue.previewRuntimeToken,
+        { kind: 'complete' },
+        'monaco'
+      ),
     (error) => error.code === 'INVALID_INPUT'
   );
-  acknowledgeCurrentVue(service);
-  assert.equal(children.has(replacementVue), true);
-});
-
-test('Vue bundle load failure publishes unavailable without an automatic recreate loop', async () => {
-  const { service, children } = createHarness();
-  state.nextVueLoadError = new Error('bundle unavailable');
-  service.updateBounds(host.hostToken, bounds);
-  await tick();
-
-  assert.equal(state.vueViews.length, 1);
-  assert.equal(state.vueViews[0].webContents.destroyed, true);
-  assert.equal(children.size, 0);
-  assert.equal(service.snapshot(host.hostToken).status, 'unavailable');
-  assert.match(service.snapshot(host.hostToken).error.message, /bundle unavailable/);
-
-  state.describe = async () => descriptorFor('notes/readme.md', 'text');
-  await service.present(host.hostToken, fileRef('notes/readme.md'));
-  assert.equal(state.vueViews.length, 2);
-  assert.equal(children.has(state.vueViews[1]), false);
-  acknowledgeCurrentVue(service);
-  assert.equal(children.has(state.vueViews[1]), true);
-});
-
-test('raw Chrome source and window helper keep the hardened topology contract', () => {
-  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
-  const helper = source('src/main/windows/onlyPreviewWindow.helper.ts');
-  const chromePreferences = region.slice(
-    region.indexOf('private createChromePreviewView('),
-    region.indexOf('private configureChromeSession(')
+  service.reportVueReady(
+    host.hostToken,
+    snapshot.selectionRevision,
+    vue.previewRuntimeToken,
+    { kind: 'complete' },
+    'sheet'
   );
+  snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+  assert.equal(snapshot.status, 'ready');
+  assert.equal(snapshot.descriptor.assetUrl, undefined);
+  assert.ok(state.assetRevocations >= 2);
+});
 
-  assert.match(chromePreferences, /partition:\s*`onlypreview-chrome-/);
-  assert.match(chromePreferences, /sandbox:\s*true/);
-  assert.match(chromePreferences, /contextIsolation:\s*true/);
-  assert.match(chromePreferences, /nodeIntegration:\s*false/);
-  assert.match(chromePreferences, /webSecurity:\s*true/);
-  assert.match(chromePreferences, /plugins:\s*true/);
-  assert.doesNotMatch(chromePreferences, /preload|additionalArguments/);
-  assert.match(region, /setPermissionCheckHandler\(\(\) => false\)/);
-  assert.match(region, /setProxy\(/);
-  assert.match(region, /disable_non_proxied_udp/);
-  assert.match(region, /closeAllConnections/);
-  assert.match(helper, /PREVIEW_TOOLBAR_HEIGHT = 43/);
-  assert.match(helper, /MENU_BAR_HEIGHT \+ PREVIEW_TOOLBAR_HEIGHT/);
-  assert.match(helper, /onlyPreviewPreviewRegionService\.updateBounds/);
-  assert.match(helper, /onlyPreviewPreviewRegionService\.destroy/);
+test('Monaco readiness proves the exact registered content adapter before becoming find-ready', async () => {
+  const { service } = createHarness();
+  service.updateBounds(host.hostToken, bounds);
+  const vue = state.vueViews[0];
+  state.describe = async () => descriptorFor('source.ts', 'text');
+  await service.present(host.hostToken, fileRef('source.ts'));
+  const snapshot = service.snapshot(host.hostToken);
+  acknowledgeCurrentVue(service);
+
+  assert.equal(snapshot.adapterId, 'monaco');
+  assert.throws(
+    () =>
+      service.reportVueReady(host.hostToken, snapshot.selectionRevision, vue.previewRuntimeToken, {
+        kind: 'complete'
+      }),
+    (error) => error.code === 'INVALID_INPUT'
+  );
+  assert.throws(
+    () =>
+      service.reportVueReady(
+        host.hostToken,
+        snapshot.selectionRevision,
+        vue.previewRuntimeToken,
+        { kind: 'complete' },
+        'sheet'
+      ),
+    (error) => error.code === 'INVALID_INPUT'
+  );
+  service.reportVueReady(
+    host.hostToken,
+    snapshot.selectionRevision,
+    vue.previewRuntimeToken,
+    { kind: 'complete' },
+    'monaco'
+  );
+  assert.equal(service.snapshot(host.hostToken).status, 'ready');
+});
+
+test('DOCX stays on Vue, exposes one bounded private asset, and publishes ready only for its exact runtime', async () => {
+  await withFakeTimeouts(async (timers) => {
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
+    const vue = state.vueViews[0];
+    state.describe = async () => descriptorFor('document.docx', 'document');
+    await service.present(host.hostToken, fileRef('document.docx'));
+
+    let snapshot = service.snapshot(host.hostToken);
+    assert.equal(snapshot.surface, 'vue');
+    assert.equal(snapshot.adapterId, 'docx-dom');
+    assert.equal(snapshot.selectedTextAvailable, true);
+    assert.equal(snapshot.descriptor.assetUrl, undefined);
+    assert.equal(
+      service
+        .snapshotForVue(host.hostToken, vue.previewRuntimeToken)
+        .descriptor.assetUrl?.startsWith('bitterless-preview://asset/'),
+      true
+    );
+    assert.deepEqual(state.assetIssues.at(-1).options, {
+      selectionRevision: snapshot.selectionRevision,
+      maxBytes: 3
+    });
+    assert.equal(timers.filter((timer) => timer.delay === 30_000).length, 1);
+
+    acknowledgeCurrentVue(service);
+    service.reportVueReady(host.hostToken, snapshot.selectionRevision, vue.previewRuntimeToken);
+    snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+    assert.equal(snapshot.status, 'ready');
+    assert.equal(snapshot.descriptor.assetUrl, undefined);
+    assert.equal(timers[0].active, false);
+    service.destroy();
+  });
+});
+
+test('DOCX Main watchdog rebuilds an unresponsive Vue renderer without waiting for reset acknowledgement', async () => {
+  await withFakeTimeouts(async (timers) => {
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
+    const originalVue = state.vueViews[0];
+    state.describe = async () => descriptorFor('document.docx', 'document');
+    await service.present(host.hostToken, fileRef('document.docx'));
+
+    const watchdog = timers.find((timer) => timer.delay === 30_000);
+    assert.ok(watchdog);
+    assert.equal(service.snapshot(host.hostToken).selectionRevision, 1);
+    assert.equal(originalVue.webContents.destroyed, false);
+
+    watchdog.callback(...watchdog.args);
+
+    const snapshot = service.snapshot(host.hostToken);
+    assert.equal(snapshot.selectionRevision, 2);
+    assert.equal(snapshot.adapterId, 'docx-dom');
+    assert.equal(snapshot.status, 'unavailable');
+    assert.equal(snapshot.error.code, 'DOCUMENT_RENDER_TIMEOUT');
+    assert.equal(snapshot.descriptor.assetUrl, undefined);
+    assert.equal(originalVue.webContents.destroyed, true);
+    assert.equal(state.vueViews.length, 2);
+    assert.notEqual(state.vueViews[1].previewRuntimeToken, originalVue.previewRuntimeToken);
+    service.destroy();
+  });
+});
+
+test('DOCX bounds and reset acknowledgement never renew the external rendering deadline', async () => {
+  await withFakeTimeouts(async (timers) => {
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
+    state.describe = async () => descriptorFor('document.docx', 'document');
+    await service.present(host.hostToken, fileRef('document.docx'));
+    const vue = state.vueViews[0];
+    const revision = service.snapshot(host.hostToken).selectionRevision;
+
+    service.updateBounds(host.hostToken, { ...bounds, width: 680 });
+    service.updateBounds(host.hostToken, { ...bounds, height: 480 });
+    service.reportVueReset(host.hostToken, revision, vue.previewRuntimeToken);
+    service.reportVueReset(host.hostToken, revision, vue.previewRuntimeToken);
+
+    assert.equal(timers.filter((timer) => timer.delay === 30_000).length, 1);
+    assert.equal(timers[0].active, true);
+    service.destroy();
+    assert.equal(timers[0].active, false);
+  });
+});
+
+test('leaving a loading DOCX rebuilds Vue for Markdown or empty without letting its stale timer kill the replacement', async () => {
+  await withFakeTimeouts(async (timers) => {
+    for (const target of ['markdown', 'empty']) {
+      const { service } = createHarness();
+      service.updateBounds(host.hostToken, bounds);
+      state.describe = async () => descriptorFor('pending.docx', 'document');
+      await service.present(host.hostToken, fileRef('pending.docx'));
+      const originalVue = state.vueViews[0];
+      const staleTimer = timers.at(-1);
+      assert.equal(staleTimer.delay, 30_000);
+
+      if (target === 'markdown') {
+        state.describe = async () => descriptorFor('current.md', 'text');
+        await service.present(host.hostToken, fileRef('current.md'));
+      } else {
+        service.clearWorkspace(host.hostToken, 'workspace-id');
+      }
+
+      const replacementVue = state.vueViews[1];
+      assert.equal(originalVue.webContents.destroyed, true);
+      assert.ok(replacementVue);
+      assert.notEqual(replacementVue.previewRuntimeToken, originalVue.previewRuntimeToken);
+      assert.equal(staleTimer.active, false);
+
+      staleTimer.callback(...staleTimer.args);
+
+      const snapshot = service.snapshot(host.hostToken);
+      assert.equal(snapshot.selectionRevision, 2);
+      assert.equal(snapshot.status, target === 'markdown' ? 'loading' : 'empty');
+      assert.equal(replacementVue.webContents.destroyed, false);
+      assert.equal(state.vueViews.length, 2);
+      service.destroy();
+    }
+  });
+});
+
+test('DOCX engine and sanitizer failures rebuild only the Vue surface while empty output does not', async () => {
+  for (const errorCode of ['DOCUMENT_PARSE_FAILED', 'DOCUMENT_SANITIZE_FAILED', 'DOCUMENT_EMPTY']) {
+    await withFakeTimeouts(async () => {
+      const { service } = createHarness();
+      service.updateBounds(host.hostToken, bounds);
+      state.describe = async () => descriptorFor('document.docx', 'document');
+      await service.present(host.hostToken, fileRef('document.docx'));
+      const vue = acknowledgeCurrentVue(service);
+      const revision = service.snapshot(host.hostToken).selectionRevision;
+
+      service.reportVueError(host.hostToken, revision, vue.previewRuntimeToken, errorCode);
+
+      const snapshot = service.snapshot(host.hostToken);
+      assert.equal(snapshot.status, 'unavailable');
+      assert.equal(snapshot.error.code, errorCode);
+      assert.equal(snapshot.descriptor.assetUrl, undefined);
+      const requiresRebuild = errorCode !== 'DOCUMENT_EMPTY';
+      assert.equal(vue.webContents.destroyed, requiresRebuild);
+      assert.equal(state.vueViews.length, requiresRebuild ? 2 : 1);
+      assert.equal(snapshot.selectionRevision, requiresRebuild ? revision + 1 : revision);
+      service.destroy();
+    });
+  }
+});
+
+test('a sheet asset issued before a stale identity check is revoked by its exact old revision', async () => {
+  const { service } = createHarness();
+  service.updateBounds(host.hostToken, bounds);
+  const identityCheck = { started: deferred(), completion: deferred() };
+  let identityChecks = 0;
+  state.assertOpenedFileCurrent = async () => {
+    identityChecks += 1;
+    if (identityChecks === 2) {
+      identityCheck.started.resolve();
+      await identityCheck.completion.promise;
+    }
+  };
+  state.describe = async () => descriptorFor('stale.xlsx', 'sheet');
+  const stalePresentation = service.present(host.hostToken, fileRef('stale.xlsx'));
+  await identityCheck.started.promise;
+
+  state.describe = async () => descriptorFor('current.md', 'text');
+  await service.present(host.hostToken, fileRef('current.md'));
+  identityCheck.completion.resolve();
+  await stalePresentation;
+
+  assert.equal(service.snapshot(host.hostToken).fileRef.relativePath, 'current.md');
+  assert.equal(
+    state.assetSelectionRevocations.some(
+      (revocation) => revocation.hostToken === host.hostToken && revocation.selectionRevision === 1
+    ),
+    true
+  );
+});
+
+test('canonical presentation validation accepts the sheet and xlsx-grid contract', () => {
+  const descriptor = descriptorFor('workbook.xlsx', 'sheet');
+  assert.equal(
+    presentationModule.isOnlyPreviewPresentation({
+      hostId: 'host-id',
+      workspaceId: 'workspace-id-1234',
+      selectionRevision: 1,
+      surface: 'vue',
+      adapterId: 'xlsx-grid',
+      status: 'loading',
+      fileRef: { workspaceId: 'workspace-id-1234', relativePath: 'workbook.xlsx' },
+      descriptor: { ...descriptor, workspaceId: 'workspace-id-1234' },
+      error: null,
+      selectedTextAvailable: false
+    }),
+    true
+  );
+});
+
+test('canonical presentation validation accepts the document and docx-dom contract', () => {
+  const descriptor = descriptorFor('document.docx', 'document');
+  assert.equal(
+    presentationModule.isOnlyPreviewPresentation({
+      hostId: 'host-id',
+      workspaceId: 'workspace-id-1234',
+      selectionRevision: 1,
+      surface: 'vue',
+      adapterId: 'docx-dom',
+      status: 'loading',
+      fileRef: { workspaceId: 'workspace-id-1234', relativePath: 'document.docx' },
+      descriptor: { ...descriptor, workspaceId: 'workspace-id-1234' },
+      error: null,
+      selectedTextAvailable: true
+    }),
+    true
+  );
+});
+
+test('canonical presentation validation scopes recognized unsupported categories to unsupported descriptors', () => {
+  const descriptor = {
+    ...descriptorFor('fixture.heic', 'unsupported'),
+    workspaceId: 'workspace-id-1234',
+    unsupportedCategory: 'image-format'
+  };
+  const presentation = {
+    hostId: 'host-id',
+    workspaceId: 'workspace-id-1234',
+    selectionRevision: 1,
+    surface: 'vue',
+    adapterId: 'unsupported',
+    status: 'loading',
+    fileRef: { workspaceId: 'workspace-id-1234', relativePath: 'fixture.heic' },
+    descriptor,
+    error: null,
+    selectedTextAvailable: false
+  };
+  assert.equal(presentationModule.isOnlyPreviewPresentation(presentation), true);
+  assert.equal(
+    presentationModule.isOnlyPreviewPresentation({
+      ...presentation,
+      descriptor: { ...descriptor, unsupportedCategory: 'invented-category' }
+    }),
+    false
+  );
+  assert.equal(
+    presentationModule.isOnlyPreviewPresentation({
+      ...presentation,
+      descriptor: { ...descriptor, kind: 'image' }
+    }),
+    false
+  );
+  for (const forbidden of ['displayPath', 'absolutePath', 'canonicalPath']) {
+    assert.equal(
+      presentationModule.isOnlyPreviewPresentation({
+        ...presentation,
+        descriptor: { ...descriptor, [forbidden]: '/Users/ral/private/fixture.heic' }
+      }),
+      false,
+      forbidden
+    );
+  }
 });

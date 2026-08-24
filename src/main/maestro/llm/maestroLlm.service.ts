@@ -16,6 +16,7 @@ import type { LlmConfig, LlmEffort, LlmProviderState } from '@maestro-shared/coa
 import {
   DEFAULT_COMPRESSION_REMAINING_PERCENT,
   DEFAULT_PRESET_MODEL,
+  LOCAL_LLM_PROVIDER,
   LLM_PRESETS,
   LLM_PROVIDERS,
   applyCompressionPrefs,
@@ -28,6 +29,8 @@ import {
   parseStoredLlmCompressionPrefs,
   parseStoredLlmTarget,
   providerLabel,
+  requireSelectableLlmProvider,
+  requireSelectableLlmTarget,
   resolveLoginMethod,
   selectableLlmLoginProviders,
   selectableLlmPresets,
@@ -37,6 +40,8 @@ import {
 import { maestroAuthPath, maestroModelsPath } from './llmPaths'
 import { buildAiCrmsPiProviderConfig } from '@maestro-main/networking/api/aiCrmsRelay.api'
 import { codexCredentialService } from '../../codex/codexCredential.runtime'
+import { claudeSubscriptionRuntime } from '@main/claudeSubscription/claudeSubscription.runtime'
+import { buildLocalClaudePiProviderConfig } from './localClaudeProvider'
 
 const configStore = createXpcMainEmitter<ConfigApi>('ConfigDao')
 const aiCrmsSession = createXpcMainEmitter<SessionApi>('MaestroSessionDao')
@@ -172,6 +177,29 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     }
   }
 
+  private async syncLocalClaudeProviderModels(): Promise<boolean> {
+    try {
+      const compressionPrefs = await this.readStoredLlmCompressionPrefs()
+      const doc = this.readPiModelsJson()
+      const providers =
+        doc.providers && typeof doc.providers === 'object' && !Array.isArray(doc.providers)
+          ? (doc.providers as Record<string, unknown>)
+          : {}
+      providers[LOCAL_LLM_PROVIDER] = buildLocalClaudePiProviderConfig(compressionPrefs)
+      doc.providers = providers
+      mkdirSync(dirname(maestroModelsPath()), { recursive: true })
+      writeFileSync(maestroModelsPath(), JSON.stringify(doc, null, 2), 'utf8')
+      return true
+    } catch (err) {
+      this._state.emitTrace({
+        kind: 'error',
+        msg: 'sync Local Claude provider: ' + (err as Error).message,
+        ts: Date.now()
+      })
+      return false
+    }
+  }
+
   private async readStoredLlmTarget(): Promise<LlmStoredTarget> {
     const fallback = this._state.readMaestroSettings()
     const fromDb = await configStore.get({ domain: LLM_CONFIG_DOMAIN, key: LLM_TARGET_KEY }).catch(() => null)
@@ -204,6 +232,18 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     }
     if (provider === 'openai-codex') {
       return (await codexCredentialService.getStatus()).connected
+    }
+    if (provider === LOCAL_LLM_PROVIDER) {
+      if (!(await this.syncLocalClaudeProviderModels())) return false
+      const snapshot = await claudeSubscriptionRuntime.getSnapshot().catch(() => null)
+      return Boolean(
+        snapshot?.secureStorageAvailable &&
+          snapshot.server.state === 'ready' &&
+          snapshot.accounts.some(
+            (account) =>
+              account.enabled && (account.status === 'usable' || account.status === 'busy')
+          )
+      )
     }
     try {
       const pi = await loadPiAuthModule()
@@ -250,6 +290,7 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   async getLlmConfig(): Promise<LlmConfig> {
     const target = await this.readStoredLlmTarget()
     if (target.provider === 'ai-crms') await this.syncAiCrmsProviderModels()
+    await this.syncLocalClaudeProviderModels()
     const active = this._state.getLlmRuntimeTarget()
     if (active.provider !== target.provider || active.model !== target.model || active.effort !== target.effort) {
       this._state.applyLlmTarget(target.provider, target.model, target.effort)
@@ -271,8 +312,9 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   }
 
   async setLlmConfig(params: { provider: string; model: string; effort?: LlmEffort }): Promise<LlmConfig> {
-    const target = normalizeSelectableLlmTarget(params)
+    const target = requireSelectableLlmTarget(params)
     if (target.provider === 'ai-crms') await this.syncAiCrmsProviderModels()
+    if (target.provider === LOCAL_LLM_PROVIDER) await this.syncLocalClaudeProviderModels()
     await this.writeStoredLlmTarget(target)
     this._state.applyLlmTarget(target.provider, target.model, target.effort)
     this._state.resetLlmTurnState()
@@ -290,6 +332,7 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     prefs[modelPresetKey(preset.provider, preset.model)] = normalizeCompressionRemainingPercent(params.compressionRemainingPercent)
     await this.writeStoredLlmCompressionPrefs(prefs)
     if (preset.provider === 'ai-crms') await this.syncAiCrmsProviderModels()
+    if (preset.provider === LOCAL_LLM_PROVIDER) await this.syncLocalClaudeProviderModels()
     return await this.getAndBroadcastLlmConfig()
   }
 
@@ -316,7 +359,9 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
 
   async loginLlm(params: { provider?: string; method?: string }): Promise<LlmConfig> {
     const active = this._state.getLlmRuntimeTarget()
-    const provider = normalizeLlmProvider(params?.provider || active.provider || 'openai-codex')
+    const provider = requireSelectableLlmProvider(
+      params?.provider || active.provider || 'openai-codex'
+    )
     if (this.activeLlmLoginProvider) return await this.getLlmConfig()
     this.broadcastLlmLoginState(provider, true)
     try {
@@ -327,6 +372,7 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   }
 
   private async performLlmLogin(provider: string, requestedMethod?: string): Promise<LlmConfig> {
+    if (provider === LOCAL_LLM_PROVIDER) return await this.getAndBroadcastLlmConfig()
     const method = resolveLoginMethod(provider, requestedMethod)
     const active = this._state.getLlmRuntimeTarget()
     const target = normalizeLlmTarget({
@@ -441,7 +487,9 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
 
   async logoutLlm(params?: { provider?: string }): Promise<LlmConfig> {
     const active = this._state.getLlmRuntimeTarget()
-    const provider = normalizeLlmProvider(params?.provider || active.provider || 'openai-codex')
+    const provider = requireSelectableLlmProvider(
+      params?.provider || active.provider || 'openai-codex'
+    )
     if (provider === 'ai-crms') {
       await aiCrmsSession.clearSession().catch((err) => {
         this._state.emitTrace({ kind: 'error', msg: 'AI-CRMS logout failed: ' + (err as Error).message, ts: Date.now() })
@@ -454,6 +502,7 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
       xpcMain.broadcast('coach/llm-config', next)
       return next
     }
+    if (provider === LOCAL_LLM_PROVIDER) return await this.getAndBroadcastLlmConfig()
     try {
       if (provider === 'openai-codex') {
         await codexCredentialService.disconnect()

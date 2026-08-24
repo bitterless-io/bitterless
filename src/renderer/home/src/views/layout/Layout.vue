@@ -6,13 +6,9 @@ import {
   initSearchShortcut,
   destroySearchShortcut
 } from '../chat/components/MessageSearch/messageSearch.store';
-import { initConnectors } from '../connector/connector.init';
 
 onMounted(() => {
   initSearchShortcut();
-  initConnectors().catch((err) => {
-    console.error('[layout] failed to initialize connectors:', err);
-  });
 });
 onUnmounted(() => destroySearchShortcut());
 </script>

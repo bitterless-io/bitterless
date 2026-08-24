@@ -1,239 +1,26 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { after, test } from 'node:test';
-import { build } from 'esbuild';
+import { test } from 'node:test';
 
-const projectRoot = resolve(dirname(new URL(import.meta.url).pathname), '..', '..');
-const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-onlypreview-search-shell-'));
-const source = (relativePath) => readFileSync(join(projectRoot, relativePath), 'utf8');
-
-globalThis.window = {
-  onlyPreviewEnv: {
-    hostId: 'host-search-shell',
-    hostToken: 'host-token-search-shell-000000000000',
-    mode: 'standalone',
-    platform: 'darwin'
-  }
-};
-
-const searchCalls = [];
-const cancelCalls = [];
-const shutdownCalls = [];
-const rendererSubscriptions = new Map();
-let searchResponder = async () => {
-  throw new Error('Search responder was not configured.');
-};
-
-globalThis.__onlyPreviewSearchRuntime = {
-  initialize: async () => {
-    throw new Error('Unexpected initialize call.');
-  },
-  refresh: async () => {
-    throw new Error('Unexpected refresh call.');
-  },
-  search: async (request) => {
-    searchCalls.push(request);
-    return searchResponder(request);
-  },
-  cancel: async (request) => {
-    cancelCalls.push(request);
-    return { ok: true, value: undefined };
-  },
-  shutdown: async (request) => {
-    shutdownCalls.push(request);
-    return { ok: true, value: undefined };
-  }
-};
-globalThis.__onlyPreviewRendererSubscriptions = rendererSubscriptions;
-
-await build({
-  entryPoints: {
-    highlight: join(
-      projectRoot,
-      'src/renderer/onlypreview/shell/src/components/ProjectSearchResults/onlyPreviewSearchHighlight.service.ts'
-    ),
-    projectSearchStore: join(
-      projectRoot,
-      'src/renderer/onlypreview/shell/src/onlyPreviewProjectSearch.store.ts'
-    ),
-    snapshot: join(
-      projectRoot,
-      'src/renderer/onlypreview/shell/src/onlyPreviewSearchSnapshot.service.ts'
-    ),
-    progress: join(
-      projectRoot,
-      'src/renderer/onlypreview/shell/src/onlyPreviewSearchProgress.service.ts'
-    ),
-    browseListing: join(
-      projectRoot,
-      'src/renderer/onlypreview/shell/src/onlyPreviewBrowseListing.service.ts'
-    ),
-    tree: join(projectRoot, 'src/renderer/onlypreview/shell/src/onlyPreviewTree.service.ts'),
-    characterCountGate: join(
-      projectRoot,
-      'src/renderer/onlypreview/common/onlyPreviewCharacterCountGate.service.ts'
-    )
-  },
-  outdir: buildRoot,
-  outExtension: { '.js': '.mjs' },
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node22',
-  sourcemap: 'inline',
-  tsconfig: join(projectRoot, 'tsconfig.web.json'),
-  plugins: [
-    {
-      name: 'onlypreview-search-xpc-stub',
-      setup(buildContext) {
-        buildContext.onResolve({ filter: /^electron-xpc\/renderer$/ }, () => ({
-          path: 'electron-xpc-renderer',
-          namespace: 'onlypreview-test'
-        }));
-        buildContext.onLoad(
-          { filter: /^electron-xpc-renderer$/, namespace: 'onlypreview-test' },
-          () => ({
-            contents: `export const createXpcRendererEmitter = () => globalThis.__onlyPreviewSearchRuntime;
-               export const xpcRenderer = {
-                 subscribe(eventName, listener) {
-                   globalThis.__onlyPreviewRendererSubscriptions.set(eventName, listener);
-                 },
-                 broadcast() {}
-               };`
-          })
-        );
-      }
-    }
-  ]
-});
-
-const highlight = await import(pathToFileURL(join(buildRoot, 'highlight.mjs')).href);
-const projectSearchModule = await import(
-  pathToFileURL(join(buildRoot, 'projectSearchStore.mjs')).href
-);
-const snapshot = await import(pathToFileURL(join(buildRoot, 'snapshot.mjs')).href);
-const progress = await import(pathToFileURL(join(buildRoot, 'progress.mjs')).href);
-const browseListing = await import(pathToFileURL(join(buildRoot, 'browseListing.mjs')).href);
-const tree = await import(pathToFileURL(join(buildRoot, 'tree.mjs')).href);
-const characterCountGate = await import(
-  pathToFileURL(join(buildRoot, 'characterCountGate.mjs')).href
-);
-const projectSearchStore = projectSearchModule.onlyPreviewProjectSearchStore;
-
-after(() => {
-  projectSearchStore.exit();
-  rmSync(buildRoot, { recursive: true, force: true });
-  delete globalThis.__onlyPreviewSearchRuntime;
-  delete globalThis.__onlyPreviewRendererSubscriptions;
-  delete globalThis.window;
-});
-
-const deferred = () => {
-  let resolvePromise;
-  const promise = new Promise((resolveValue) => {
-    resolvePromise = resolveValue;
-  });
-  return { promise, resolve: resolvePromise };
-};
-
-const responseFor = (request, results = []) => ({
-  ok: true,
-  value: {
-    workspaceId: request.workspaceId,
-    generation: request.generation,
-    requestId: request.requestId,
-    results,
-    truncated: false
-  }
-});
-
-const batchFor = (request, results = []) => ({
-  workspaceId: request.workspaceId,
-  generation: request.generation,
-  requestId: request.requestId,
-  results
-});
-
-const textResult = (relativePath, contentMatch = null) => ({
-  fileName: relativePath.slice(relativePath.lastIndexOf('/') + 1),
-  relativePath,
-  mediaType: 'text',
-  contentMatch
-});
-
-const searchSnapshotEntry = (overrides = {}) => ({
-  relativePath: 'docs/readme.md',
-  parentRelativePath: 'docs',
-  name: 'readme.md',
-  nodeKind: 'file',
-  size: 128,
-  modifiedAt: 1_725_000_000_000,
-  previewHint: 'text',
-  mediaType: 'text',
-  isText: true,
-  ...overrides
-});
-
-const searchSnapshotMemory = (overrides = {}) => ({
-  measurementComplete: true,
-  processRssBytes: 512_000_000,
-  workerHeapUsedBytes: 64_000_000,
-  workerExternalBytes: 8_000_000,
-  treeMetadataEntryCount: 30_000,
-  treeMetadataEstimatedBytes: 14_000_000,
-  filenameTierEstimatedBytes: 12_000_000,
-  diskIndexBytes: 1_400_000_000,
-  runtimeOneGiBWarning: false,
-  runtimeTwoGiBLimitExceeded: false,
-  ...overrides
-});
-
-const searchSnapshotEvent = () => ({
-  hostId: 'host-search-shell',
-  snapshot: {
-    workspaceId: 'workspace-search-shell',
-    generation: 7,
-    state: 'ready',
-    index: {
-      workspaceId: 'workspace-search-shell',
-      entries: [searchSnapshotEntry()],
-      truncated: false,
-      limit: 1
-    },
-    memory: searchSnapshotMemory()
-  }
-});
-
-const resetProjectSearch = (resolveContext) => {
-  projectSearchStore.exit();
-  searchCalls.length = 0;
-  cancelCalls.length = 0;
-  shutdownCalls.length = 0;
-  let scheduled = 0;
-  const selected = [];
-  projectSearchStore.configure(resolveContext, (relativePath) => selected.push(relativePath));
-  projectSearchStore.configureScheduler(() => {
-    scheduled += 1;
-  });
-  projectSearchStore.enter();
-  return { scheduled: () => scheduled, selected };
-};
-
-const projectSearchContext = (overrides = {}) => ({
-  workspaceId: 'workspace-search-shell',
-  generation: 7,
-  ready: true,
-  rootName: 'overmind',
-  focusedRelativePath: '',
-  focusedNodeKind: null,
-  selectedRelativePath: '',
-  ...overrides
-});
+import {
+  batchFor,
+  cancelCalls,
+  characterCountGate,
+  deferred,
+  highlight,
+  projectSearchContext,
+  projectSearchModule,
+  projectSearchStore,
+  rendererSubscriptions,
+  resetProjectSearch,
+  responseFor,
+  searchCalls,
+  searchResponderState,
+  source,
+  textResult,
+  tree
+} from './onlyPreviewSearchShellTest.helper.mjs';
 
 test('highlight projection uses grapheme offsets and never summarizes non-text results', () => {
   const match = {
@@ -457,7 +244,6 @@ test('ordinary Project filter freezes visible rows and restores expansion after 
         .map((row) => row.entry.relativePath),
       ['docs', 'docs/needle.md']
     );
-    expandedPaths.delete('docs');
     expandedPaths.add('collapsed');
     index.entries.push(file('new-needle.md', ''));
     assert.deepEqual(
@@ -470,6 +256,93 @@ test('ordinary Project filter freezes visible rows and restores expansion after 
     tree.onlyPreviewTreeFilter.end(expandedPaths);
   }
   assert.deepEqual(expandedPaths, new Set(['docs']));
+});
+
+test('ordinary filter reveal roots are query-scoped, lazy, nested, and segment-safe', () => {
+  const entry = (relativePath, parentRelativePath, nodeKind) => ({
+    relativePath,
+    parentRelativePath,
+    name: relativePath.split('/').at(-1),
+    nodeKind,
+    size: nodeKind === 'file' ? 1 : 0,
+    modifiedAt: 1,
+    previewHint: nodeKind === 'file' ? 'text' : 'unsupported',
+    mediaType: nodeKind === 'file' ? 'text' : 'unknown',
+    isText: nodeKind === 'file'
+  });
+  const index = {
+    workspaceId: 'workspace-directory-reveal',
+    truncated: false,
+    limit: 7,
+    entries: [
+      entry('docs', '', 'directory'),
+      entry('docs/other.txt', 'docs', 'file'),
+      entry('docs/nested', 'docs', 'directory'),
+      entry('docs/nested/deep.txt', 'docs/nested', 'file'),
+      entry('docs-a', '', 'directory'),
+      entry('docs-a/other.txt', 'docs-a', 'file')
+    ]
+  };
+  const filter = new tree.OnlyPreviewTreeFilter();
+  const expandedPaths = new Set(['docs', 'docs-a']);
+  filter.transition(index, expandedPaths, '', 'docs');
+
+  assert.deepEqual(
+    filter.rows(index, 'docs', expandedPaths).map((row) => row.entry.relativePath),
+    ['docs', 'docs-a']
+  );
+  assert.equal(filter.toggleDirectory('docs', 'docs', expandedPaths), true);
+  assert.deepEqual(
+    filter.rows(index, 'docs', expandedPaths).map((row) => row.entry.relativePath),
+    ['docs', 'docs/other.txt', 'docs/nested', 'docs-a']
+  );
+  assert.equal(filter.toggleDirectory('docs', 'docs/nested', expandedPaths), true);
+  assert.deepEqual(
+    filter.rows(index, 'docs', expandedPaths).map((row) => row.entry.relativePath),
+    ['docs', 'docs/other.txt', 'docs/nested', 'docs/nested/deep.txt', 'docs-a']
+  );
+
+  assert.equal(filter.toggleDirectory('docs', 'docs', expandedPaths), false);
+  assert.equal(filter.toggleDirectory('docs', 'docs', expandedPaths), true);
+  assert.equal(
+    filter.toggleDirectory('docs', 'docs/nested', expandedPaths),
+    true,
+    'collapsing a reveal root must remove its nested reveal markers'
+  );
+  filter.transition(index, expandedPaths, 'docs', 'docs ');
+  assert.deepEqual(
+    filter.rows(index, 'docs ', expandedPaths).map((row) => row.entry.relativePath),
+    ['docs', 'docs-a'],
+    'an exact raw query change must clear reveal markers before normalized row recomputation'
+  );
+  filter.transition(index, expandedPaths, 'docs ', 'docs-a');
+  assert.deepEqual(
+    filter.rows(index, 'docs-a', expandedPaths).map((row) => row.entry.relativePath),
+    ['docs-a']
+  );
+  filter.transition(index, expandedPaths, 'docs-a', '');
+  assert.deepEqual(expandedPaths, new Set(['docs', 'docs-a']));
+
+  filter.transition(index, expandedPaths, '', 'docs');
+  assert.equal(filter.toggleDirectory('docs', 'docs', expandedPaths), true);
+  const replacement = { ...index, workspaceId: 'workspace-directory-replacement' };
+  assert.deepEqual(
+    filter.rows(replacement, 'docs', expandedPaths).map((row) => row.entry.relativePath),
+    ['docs', 'docs-a'],
+    'capturing a replacement workspace must clear the prior workspace reveal roots'
+  );
+  filter.end(expandedPaths);
+
+  assert.equal(tree.hasOnlyPreviewRevealAncestor('docs/child.txt', new Set(['docs'])), true);
+  assert.equal(tree.hasOnlyPreviewRevealAncestor('docs/nested/child.txt', new Set(['docs'])), true);
+  assert.equal(tree.hasOnlyPreviewRevealAncestor('docs-a/child.txt', new Set(['docs'])), false);
+  const treeSource = source('src/renderer/onlypreview/shell/src/onlyPreviewTree.service.ts');
+  const ancestorBody = treeSource.slice(
+    treeSource.indexOf('const hasOnlyPreviewRevealAncestor'),
+    treeSource.indexOf('export const buildOnlyPreviewTreeRows')
+  );
+  assert.match(ancestorBody, /while \(current\)[\s\S]*revealRoots\.has\(current\)/);
+  assert.doesNotMatch(ancestorBody, /startsWith|for \(|\.some\(/);
 });
 
 test('Project Search captures focused directory, file parent, selected parent, then root', () => {
@@ -529,7 +402,7 @@ test('scope switching cancels stale work and dispatches the stable captured dire
   });
   const scheduling = resetProjectSearch(() => context);
   const first = deferred();
-  searchResponder = () => first.promise;
+  searchResponderState.current = () => first.promise;
   projectSearchStore.setQuery('needle');
   const directoryDispatch = projectSearchStore.dispatchLatest();
   const directoryRequest = searchCalls.at(-1);
@@ -545,14 +418,15 @@ test('scope switching cancels stale work and dispatches the stable captured dire
   await directoryDispatch;
   assert.deepEqual(projectSearchStore.results, []);
 
-  searchResponder = async (request) => responseFor(request, [textResult('src/project.ts')]);
+  searchResponderState.current = async (request) =>
+    responseFor(request, [textResult('src/project.ts')]);
   await projectSearchStore.dispatchLatest();
   assert.deepEqual(searchCalls.at(-1).scope, { kind: 'project' });
   assert.equal(searchCalls.at(-1).query, 'needle');
 
   projectSearchStore.setScopeKind('directory');
   assert.equal(scheduling.scheduled(), 3);
-  searchResponder = async (request) => responseFor(request, []);
+  searchResponderState.current = async (request) => responseFor(request, []);
   await projectSearchStore.dispatchLatest();
   assert.deepEqual(searchCalls.at(-1).scope, {
     kind: 'directory',
@@ -579,7 +453,7 @@ test('IME start cancels the old request and composition end dispatches the final
   const context = { workspaceId: 'workspace-search-shell', generation: 7 };
   const scheduling = resetProjectSearch(() => context);
   const first = deferred();
-  searchResponder = () => first.promise;
+  searchResponderState.current = () => first.promise;
 
   projectSearchStore.setQuery('alpha');
   const firstDispatch = projectSearchStore.dispatchLatest();
@@ -597,7 +471,7 @@ test('IME start cancels the old request and composition end dispatches the final
 
   projectSearchStore.endComposition('alpha');
   assert.equal(scheduling.scheduled(), 2);
-  searchResponder = async (request) => responseFor(request, [textResult('fresh.md')]);
+  searchResponderState.current = async (request) => responseFor(request, [textResult('fresh.md')]);
   await projectSearchStore.dispatchLatest();
   assert.equal(searchCalls.length, 2);
   assert.deepEqual(
@@ -622,7 +496,7 @@ test('Project Search scheduler is 120ms leading plus trailing', async () => {
 test('rapid input cancels prior requests, clears old rows, and renders only the final request', async () => {
   const context = { workspaceId: 'workspace-search-shell', generation: 9 };
   resetProjectSearch(() => context);
-  searchResponder = async (request) => responseFor(request, [textResult('first.md')]);
+  searchResponderState.current = async (request) => responseFor(request, [textResult('first.md')]);
   projectSearchStore.setQuery('first');
   await projectSearchStore.dispatchLatest();
   assert.deepEqual(
@@ -633,7 +507,7 @@ test('rapid input cancels prior requests, clears old rows, and renders only the 
   const second = deferred();
   projectSearchStore.setQuery('second');
   assert.deepEqual(projectSearchStore.results, []);
-  searchResponder = () => second.promise;
+  searchResponderState.current = () => second.promise;
   const secondDispatch = projectSearchStore.dispatchLatest();
   const secondRequestId = searchCalls.at(-1).requestId;
 
@@ -643,7 +517,7 @@ test('rapid input cancels prior requests, clears old rows, and renders only the 
   await secondDispatch;
   assert.deepEqual(projectSearchStore.results, []);
 
-  searchResponder = async (request) => responseFor(request, [textResult('final.md')]);
+  searchResponderState.current = async (request) => responseFor(request, [textResult('final.md')]);
   await projectSearchStore.dispatchLatest();
   assert.deepEqual(
     projectSearchStore.results.map((result) => result.relativePath),
@@ -659,7 +533,7 @@ test('host-scoped batches upsert in first-seen order and stale batches are rejec
   assert.equal(typeof batchListener, 'function');
 
   const pending = deferred();
-  searchResponder = () => pending.promise;
+  searchResponderState.current = () => pending.promise;
   projectSearchStore.setQuery('needle');
   const dispatch = projectSearchStore.dispatchLatest();
   const request = searchCalls.at(-1);
@@ -738,7 +612,7 @@ test('query waits for an available browse runtime and stale workspace responses 
   projectSearchStore.resumeForAvailableRuntime();
   assert.equal(scheduling.scheduled(), 1);
   const pending = deferred();
-  searchResponder = () => pending.promise;
+  searchResponderState.current = () => pending.promise;
   const dispatch = projectSearchStore.dispatchLatest();
   assert.equal(searchCalls.length, 1);
 
@@ -755,7 +629,7 @@ test('completed directory query stays settled across later root and ready resume
   });
   const scheduling = resetProjectSearch(() => context);
   const accepted = textResult('nested/accepted.md');
-  searchResponder = async (request) => responseFor(request, [accepted]);
+  searchResponderState.current = async (request) => responseFor(request, [accepted]);
 
   projectSearchStore.setQuery('needle');
   await projectSearchStore.dispatchLatest();
@@ -806,7 +680,7 @@ test('completed directory query stays settled across later root and ready resume
   assert.deepEqual(projectSearchStore.results, [accepted]);
 
   const refreshed = textResult('nested/refreshed.md');
-  searchResponder = async (request) => responseFor(request, [refreshed]);
+  searchResponderState.current = async (request) => responseFor(request, [refreshed]);
   await projectSearchStore.dispatchLatest();
   assert.equal(searchCalls.length, 2);
   assert.equal(projectSearchStore.pending, false);
@@ -822,7 +696,7 @@ test('a committed watch revision retries an accepted query after its initial sea
   projectSearchStore.subscribeToBatches();
   const watchCommitListener = rendererSubscriptions.get('onlypreview/search-watch-commit');
   assert.equal(typeof watchCommitListener, 'function');
-  searchResponder = async () => ({
+  searchResponderState.current = async () => ({
     ok: false,
     error: { code: 'OPERATION_FAILED', message: 'initial search unavailable' }
   });
@@ -851,560 +725,9 @@ test('a committed watch revision retries an accepted query after its initial sea
   assert.equal(projectSearchStore.error, '');
 
   const created = textResult('nested/watch-created.txt');
-  searchResponder = async (request) => responseFor(request, [created]);
+  searchResponderState.current = async (request) => responseFor(request, [created]);
   await projectSearchStore.dispatchLatest();
   assert.equal(projectSearchStore.pending, false);
   assert.equal(projectSearchStore.error, '');
   assert.deepEqual(projectSearchStore.results, [created]);
-});
-
-test('snapshot guard accepts only exact, internally consistent nested snapshots', () => {
-  assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(searchSnapshotEvent()), true);
-
-  const rootEntry = searchSnapshotEvent();
-  rootEntry.snapshot.state = 'building';
-  rootEntry.snapshot.index.entries = [
-    searchSnapshotEntry({
-      relativePath: 'README.md',
-      parentRelativePath: '',
-      name: 'README.md'
-    })
-  ];
-  for (const key of [
-    'processRssBytes',
-    'workerHeapUsedBytes',
-    'workerExternalBytes',
-    'treeMetadataEntryCount',
-    'treeMetadataEstimatedBytes',
-    'filenameTierEstimatedBytes',
-    'diskIndexBytes'
-  ]) {
-    rootEntry.snapshot.memory[key] = null;
-  }
-  assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(rootEntry), true);
-
-  const directoryEntry = searchSnapshotEvent();
-  directoryEntry.snapshot.state = 'reconciling';
-  directoryEntry.snapshot.index.entries = [
-    searchSnapshotEntry({
-      relativePath: 'docs',
-      parentRelativePath: '',
-      name: 'docs',
-      nodeKind: 'directory',
-      size: 0,
-      previewHint: 'unsupported',
-      mediaType: 'unknown',
-      isText: false
-    })
-  ];
-  assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(directoryEntry), true);
-
-  for (const mutate of [
-    (event) => Object.assign(event, { unexpected: true }),
-    (event) => Object.assign(event.snapshot, { unexpected: true }),
-    (event) => Object.assign(event.snapshot.index, { unexpected: true }),
-    (event) => Object.assign(event.snapshot.index.entries[0], { unexpected: true }),
-    (event) => Object.assign(event.snapshot.memory, { unexpected: true }),
-    (event) => {
-      event.snapshot.index.entries.unexpected = true;
-    },
-    (event) => {
-      event.snapshot.index.entries = new Array(1);
-    },
-    (event) => {
-      delete event.snapshot.memory.diskIndexBytes;
-    }
-  ]) {
-    const event = searchSnapshotEvent();
-    mutate(event);
-    assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(event), false);
-  }
-});
-
-test('snapshot guard rejects hostile identifiers, index metadata, and entry values', () => {
-  for (const mutate of [
-    (event) => {
-      event.hostId = 'short';
-    },
-    (event) => {
-      event.snapshot.workspaceId = 'short';
-    },
-    (event) => {
-      event.snapshot.index.workspaceId = 'different-workspace-id';
-    },
-    (event) => {
-      event.snapshot.generation = -1;
-    },
-    (event) => {
-      event.snapshot.generation = 1.5;
-    },
-    (event) => {
-      event.snapshot.state = 'failed';
-    },
-    (event) => {
-      event.snapshot.index.limit = -1;
-    },
-    (event) => {
-      event.snapshot.index.limit = 0;
-    },
-    (event) => {
-      event.snapshot.index.truncated = 'false';
-    },
-    (event) => {
-      event.snapshot.index.entries[0].nodeKind = 'socket';
-    },
-    (event) => {
-      event.snapshot.index.entries[0].size = -1;
-    },
-    (event) => {
-      event.snapshot.index.entries[0].size = Number.POSITIVE_INFINITY;
-    },
-    (event) => {
-      event.snapshot.index.entries[0].modifiedAt = Number.NaN;
-    },
-    (event) => {
-      event.snapshot.index.entries[0].previewHint = 'html';
-    },
-    (event) => {
-      event.snapshot.index.entries[0].mediaType = 'binary';
-    },
-    (event) => {
-      event.snapshot.index.entries[0].isText = 1;
-    },
-    (event) => {
-      event.snapshot.index.entries[0].mediaType = 'unknown';
-    },
-    (event) => {
-      event.snapshot.index.entries[0].nodeKind = 'directory';
-    }
-  ]) {
-    const event = searchSnapshotEvent();
-    mutate(event);
-    assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(event), false);
-  }
-});
-
-test('snapshot guard rejects absolute, traversing, unnormalized, and inconsistent paths', () => {
-  for (const relativePath of [
-    '',
-    '/etc/passwd',
-    '../secret.md',
-    'docs/../secret.md',
-    'docs/./secret.md',
-    'docs//secret.md',
-    'docs\\secret.md',
-    'C:/secret.md'
-  ]) {
-    const event = searchSnapshotEvent();
-    event.snapshot.index.entries[0].relativePath = relativePath;
-    assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(event), false);
-  }
-
-  for (const parentRelativePath of ['/docs', '..', 'docs/..', 'docs\\nested']) {
-    const event = searchSnapshotEvent();
-    event.snapshot.index.entries[0].parentRelativePath = parentRelativePath;
-    assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(event), false);
-  }
-
-  const wrongParent = searchSnapshotEvent();
-  wrongParent.snapshot.index.entries[0].parentRelativePath = 'src';
-  assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(wrongParent), false);
-
-  const wrongName = searchSnapshotEvent();
-  wrongName.snapshot.index.entries[0].name = 'other.md';
-  assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(wrongName), false);
-});
-
-test('snapshot guard rejects malformed memory telemetry without coercion', () => {
-  const numericKeys = [
-    'processRssBytes',
-    'workerHeapUsedBytes',
-    'workerExternalBytes',
-    'treeMetadataEntryCount',
-    'treeMetadataEstimatedBytes',
-    'filenameTierEstimatedBytes',
-    'diskIndexBytes'
-  ];
-  for (const key of numericKeys) {
-    for (const invalidValue of [-1, Number.NaN, Number.POSITIVE_INFINITY, '1']) {
-      const event = searchSnapshotEvent();
-      event.snapshot.memory[key] = invalidValue;
-      assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(event), false);
-    }
-  }
-
-  for (const key of ['measurementComplete', 'runtimeOneGiBWarning', 'runtimeTwoGiBLimitExceeded']) {
-    const event = searchSnapshotEvent();
-    event.snapshot.memory[key] = 0;
-    assert.equal(snapshot.isOnlyPreviewSearchSnapshotEvent(event), false);
-  }
-});
-
-const searchProgressEvent = (progressOverrides = {}) => ({
-  hostId: 'host-search-shell',
-  progress: {
-    workspaceId: 'workspace-current',
-    generation: 4,
-    buildRevision: 1,
-    phase: 'counting',
-    ...progressOverrides
-  }
-});
-
-test('progress guard accepts only exact path-free counting and indexing envelopes', () => {
-  assert.equal(progress.isOnlyPreviewSearchProgressEvent(searchProgressEvent()), true);
-  assert.equal(
-    progress.isOnlyPreviewSearchProgressEvent(
-      searchProgressEvent({ phase: 'indexing', completed: 10, total: 20 })
-    ),
-    true
-  );
-
-  for (const mutate of [
-    (event) => Object.assign(event, { extra: true }),
-    (event) => Object.assign(event.progress, { extra: true }),
-    (event) => {
-      event.hostId = '';
-    },
-    (event) => {
-      event.progress.workspaceId = '';
-    },
-    (event) => {
-      event.progress.generation = -1;
-    },
-    (event) => {
-      event.progress.buildRevision = 0;
-    },
-    (event) => {
-      event.progress.phase = 'ready';
-    }
-  ]) {
-    const event = searchProgressEvent();
-    mutate(event);
-    assert.equal(progress.isOnlyPreviewSearchProgressEvent(event), false);
-  }
-
-  for (const mutate of [
-    (event) => {
-      event.progress.completed = -1;
-    },
-    (event) => {
-      event.progress.completed = 21;
-    },
-    (event) => {
-      event.progress.total = Number.POSITIVE_INFINITY;
-    },
-    (event) => {
-      event.progress.relativePath = 'private/file.txt';
-    },
-    (event) => {
-      delete event.progress.total;
-    }
-  ]) {
-    const event = searchProgressEvent({ phase: 'indexing', completed: 10, total: 20 });
-    mutate(event);
-    assert.equal(progress.isOnlyPreviewSearchProgressEvent(event), false);
-  }
-});
-
-test('progress reducer fences stale revisions, invalid phase order, and regressing totals', () => {
-  const expected = { workspaceId: 'workspace-current', generation: 4 };
-  let state = progress.createOnlyPreviewSearchProgressState();
-  state = progress.reduceOnlyPreviewSearchProgress(state, searchProgressEvent().progress, expected);
-  assert.equal(state.buildRevision, 1);
-  assert.equal(state.progress.phase, 'counting');
-
-  state = progress.reduceOnlyPreviewSearchProgress(
-    state,
-    searchProgressEvent({ phase: 'indexing', completed: 0, total: 20 }).progress,
-    expected
-  );
-  assert.equal(state.progress.phase, 'indexing');
-  const active = state;
-  for (const rejected of [
-    searchProgressEvent({ phase: 'counting' }).progress,
-    searchProgressEvent({ phase: 'indexing', completed: 1, total: 21 }).progress,
-    searchProgressEvent({ phase: 'indexing', completed: -1, total: 20 }).progress,
-    searchProgressEvent({ buildRevision: 0, phase: 'indexing', completed: 10, total: 20 }).progress,
-    searchProgressEvent({ buildRevision: 2, phase: 'indexing', completed: 0, total: 20 }).progress,
-    searchProgressEvent({
-      workspaceId: 'workspace-stale',
-      buildRevision: 2,
-      phase: 'counting'
-    }).progress,
-    searchProgressEvent({
-      generation: 3,
-      buildRevision: 2,
-      phase: 'counting'
-    }).progress
-  ]) {
-    assert.equal(progress.reduceOnlyPreviewSearchProgress(state, rejected, expected), state);
-  }
-
-  state = progress.reduceOnlyPreviewSearchProgress(
-    state,
-    searchProgressEvent({ phase: 'indexing', completed: 10, total: 20 }).progress,
-    expected
-  );
-  assert.notEqual(state, active);
-  assert.equal(state.progress.completed, 10);
-  for (const rejected of [
-    searchProgressEvent({ phase: 'indexing', completed: 9, total: 20 }).progress,
-    searchProgressEvent({ phase: 'indexing', completed: 10, total: 19 }).progress
-  ]) {
-    assert.equal(progress.reduceOnlyPreviewSearchProgress(state, rejected, expected), state);
-  }
-  state = progress.settleOnlyPreviewSearchProgress(state);
-  assert.equal(state.buildRevision, 1);
-  assert.equal(state.progress, null);
-  assert.equal(
-    progress.reduceOnlyPreviewSearchProgress(
-      state,
-      searchProgressEvent({ phase: 'indexing', completed: 20, total: 20 }).progress,
-      expected
-    ),
-    state,
-    'a settled revision cannot revive its rail'
-  );
-  assert.equal(
-    progress.reduceOnlyPreviewSearchProgress(
-      state,
-      searchProgressEvent({ buildRevision: 2, phase: 'indexing', completed: 0, total: 20 })
-        .progress,
-      expected
-    ),
-    state,
-    'a newer revision must begin with counting'
-  );
-  state = progress.reduceOnlyPreviewSearchProgress(
-    state,
-    searchProgressEvent({ buildRevision: 2 }).progress,
-    expected
-  );
-  assert.equal(state.buildRevision, 2);
-  assert.equal(state.progress.phase, 'counting');
-  assert.deepEqual(progress.resetOnlyPreviewSearchProgress(), {
-    buildRevision: 0,
-    progress: null
-  });
-});
-
-const browseListingEvent = () => ({
-  hostId: 'host-search-shell',
-  listing: {
-    workspaceId: 'workspace-current',
-    generation: 4,
-    directoryToken: 'root-directory-token',
-    relativePath: '',
-    entries: [
-      {
-        relativePath: 'docs',
-        parentRelativePath: '',
-        name: 'docs',
-        nodeKind: 'directory',
-        size: 0,
-        modifiedAt: 1,
-        previewHint: 'unsupported',
-        mediaType: 'unknown',
-        isText: false,
-        directoryToken: 'docs-directory-token'
-      },
-      {
-        relativePath: 'readme.md',
-        parentRelativePath: '',
-        name: 'readme.md',
-        nodeKind: 'file',
-        size: 10,
-        modifiedAt: 1,
-        previewHint: 'text',
-        mediaType: 'text',
-        isText: true,
-        directoryToken: null
-      }
-    ]
-  }
-});
-
-test('browse listing guard accepts only exact opaque-token directory metadata', () => {
-  assert.equal(browseListing.isOnlyPreviewBrowseListingEvent(browseListingEvent()), true);
-  for (const mutate of [
-    (event) => Object.assign(event, { extra: true }),
-    (event) => Object.assign(event.listing, { absolutePath: '/private/workspace' }),
-    (event) => Object.assign(event.listing.entries[0], { extra: true }),
-    (event) => {
-      event.listing.relativePath = '../outside';
-    },
-    (event) => {
-      event.listing.entries[0].parentRelativePath = 'other';
-    },
-    (event) => {
-      event.listing.entries[0].directoryToken = null;
-    },
-    (event) => {
-      event.listing.entries[1].directoryToken = 'file-token';
-    },
-    (event) => {
-      event.listing.entries[1].relativePath = 'docs';
-      event.listing.entries[1].name = 'docs';
-    },
-    (event) => {
-      event.listing.entries[1].nodeKind = 'directory';
-      event.listing.entries[1].size = 0;
-      event.listing.entries[1].previewHint = 'unsupported';
-      event.listing.entries[1].mediaType = 'unknown';
-      event.listing.entries[1].isText = false;
-      event.listing.entries[1].directoryToken = 'docs-directory-token';
-    },
-    (event) => {
-      delete event.listing.entries[0];
-    }
-  ]) {
-    const event = structuredClone(browseListingEvent());
-    mutate(event);
-    assert.equal(browseListing.isOnlyPreviewBrowseListingEvent(event), false);
-  }
-});
-
-test('Shell Project Search source preserves exact narrow client, UI, and lifecycle boundaries', () => {
-  const clientSource = source('src/renderer/onlypreview/shell/src/onlyPreviewSearch.client.ts');
-  const storeSource = source(
-    'src/renderer/onlypreview/shell/src/onlyPreviewProjectSearch.store.ts'
-  );
-  const shellSource = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
-  const shellEventsSource = source(
-    'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
-  );
-  const snapshotSource = source(
-    'src/renderer/onlypreview/shell/src/onlyPreviewSearchSnapshot.service.ts'
-  );
-  const batchSource = source(
-    'src/renderer/onlypreview/shell/src/onlyPreviewSearchBatch.service.ts'
-  );
-  const appSource = source('src/renderer/onlypreview/shell/src/App.vue');
-  const appStyle = source('src/renderer/onlypreview/shell/src/App.less');
-  const i18nSource = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
-  const resultsSource = source(
-    'src/renderer/onlypreview/shell/src/components/ProjectSearchResults/ProjectSearchResults.vue'
-  );
-  const resultsStyle = source(
-    'src/renderer/onlypreview/shell/src/components/ProjectSearchResults/ProjectSearchResults.less'
-  );
-
-  assert.match(clientSource, /createXpcRendererEmitter<OnlyPreviewSearchRuntimeApi>/);
-  assert.match(clientSource, /'OnlyPreviewSearchRuntimeHandler'/);
-  assert.match(storeSource, /useThrottleFn\([\s\S]*?120,[\s\S]*?true,[\s\S]*?true/);
-  assert.match(
-    storeSource,
-    /beginComposition\(\)[\s\S]*?inputGeneration \+= 1;[\s\S]*?cancelActive\(\)/
-  );
-  assert.match(storeSource, /maxResults: ONLY_PREVIEW_SEARCH_MAX_RESULTS/);
-  assert.match(storeSource, /scopeKind: OnlyPreviewSearchScope\['kind'\] = 'directory'/);
-  assert.match(storeSource, /scope[\s\S]*?kind: 'directory'[\s\S]*?directoryRelativePath/);
-  assert.match(
-    storeSource,
-    /focusedNodeKind === 'directory'[\s\S]*?focusedNodeKind === 'file'[\s\S]*?selectedRelativePath/
-  );
-  assert.match(storeSource, /currentContext\?\.workspaceId !== context\.workspaceId/);
-  assert.match(storeSource, /currentContext\.generation !== context\.generation/);
-  assert.match(storeSource, /this\.activeRequestId !== requestId/);
-  assert.match(storeSource, /ONLY_PREVIEW_SEARCH_BATCH_EVENT/);
-  assert.match(storeSource, /this\.activeRequestInputGeneration !== this\.inputGeneration/);
-  assert.match(storeSource, /this\.resultIndexByPath\.get\(result\.relativePath\)/);
-  assert.match(storeSource, /areOnlyPreviewSearchResultsEqual\(this\.results, finalResults\)/);
-  assert.match(batchSource, /Object\.keys\(value\)\.sort\(\)/);
-  assert.match(batchSource, /ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS/);
-  assert.match(snapshotSource, /Reflect\.ownKeys\(value\)/);
-  assert.match(snapshotSource, /normalizeOnlyPreviewRelativePath/);
-  assert.match(snapshotSource, /isOnlyPreviewIndexEntryArray\(value\.index\.entries\)/);
-  assert.match(snapshotSource, /MEMORY_NUMBER_KEYS\.every/);
-  assert.ok(shellSource.split(/\r?\n/).length < 800);
-  assert.match(shellSource, /subscribeOnlyPreviewShellEvents\(onlyPreviewEnv\.hostId/);
-  assert.match(shellEventsSource, /value\.hostId === hostId/);
-  assert.match(
-    shellEventsSource,
-    /isOnlyPreviewBrowseListingEvent\(params\) && isCurrentHost\(params\)[\s\S]*handlers\.browseListing\(params\.listing\)/
-  );
-  assert.match(
-    shellEventsSource,
-    /isOnlyPreviewSearchProgressEvent\(params\) && isCurrentHost\(params\)[\s\S]*handlers\.searchProgress\(params\.progress\)/
-  );
-  assert.match(shellSource, /snapshot\.workspaceId !== workspace\.workspaceId/);
-  assert.match(shellSource, /snapshot\.generation !== this\.searchWorkspaceGeneration/);
-  assert.doesNotMatch(shellSource, /suspendForIndex|stopWaitingForIndex|resumeForReadyIndex/);
-  assert.match(shellSource, /ready: this\.projectionReady/);
-  assert.doesNotMatch(shellSource, /ready: this\.projectionReady\s*&&\s*!this\.indexLoading/);
-  const applySearchProgress = shellSource.slice(
-    shellSource.indexOf('private applySearchProgress('),
-    shellSource.indexOf('private async runWindowCommand(')
-  );
-  assert.match(applySearchProgress, /this\.indexProgressState = next/);
-  assert.doesNotMatch(applySearchProgress, /onlyPreviewProjectSearchStore|cancel|clear/);
-  assert.match(shellSource, /onlyPreviewProjectSearchStore\.resumeForAvailableRuntime\(\)/);
-  const applySearchSnapshot = shellSource.slice(
-    shellSource.indexOf('private async applySearchSnapshot('),
-    shellSource.indexOf('private applyBrowseListing(')
-  );
-  assert.match(applySearchSnapshot, /snapshot\.state !== 'ready'/);
-  assert.match(applySearchSnapshot, /settleOnlyPreviewSearchProgress\(this\.indexProgressState\)/);
-  assert.doesNotMatch(applySearchSnapshot, /this\.index\s*=|clearBrowseProjection/);
-  const refreshSettings = shellSource.slice(
-    shellSource.indexOf('private async refreshSettings()'),
-    shellSource.indexOf('private async activateEntry(')
-  );
-  assert.doesNotMatch(refreshSettings, /showHiddenFiles|refreshIndex/);
-  assert.match(shellEventsSource, /isOnlyPreviewPresentationNudge\(params\)/);
-  assert.match(
-    shellSource,
-    /previewPresentation:\s*\(\) => void this\.syncPreviewPresentation\(\)/
-  );
-  assert.match(shellSource, /previewPresentationFetchGeneration/);
-  assert.match(shellSource, /onlyPreviewClient\.getPreviewPresentation\(\{ hostToken \}\)/);
-  assert.doesNotMatch(shellSource, /previewControl:|crypto\.randomUUID\(\)/);
-
-  assert.match(appSource, /@compositionstart="handleSearchCompositionStart"/);
-  assert.match(appSource, /@compositionend="handleSearchCompositionEnd"/);
-  assert.match(appSource, /<ProjectSearchResults/);
-  assert.match(
-    appSource,
-    /onlyPreviewProjectSearchStore\.exit\(\)[\s\S]*?searchInputRef\.value\?\.focus/
-  );
-  assert.match(appSource, /event\.altKey && event\.code === 'Digit1'/);
-  const scopeMarkup = appSource.slice(
-    appSource.indexOf('name="onlypreview__projectSearchScope"'),
-    appSource.indexOf('name="onlypreview__indexError"')
-  );
-  assert.match(scopeMarkup, /<select/);
-  assert.match(scopeMarkup, /name="onlypreview__projectSearchScopeSelect"/);
-  assert.match(scopeMarkup, /<option value="directory">/);
-  assert.match(scopeMarkup, /<option value="project">/);
-  assert.match(scopeMarkup, /name="onlypreview__projectSearchScopeTarget"/);
-  assert.doesNotMatch(scopeMarkup, /displayPath|absolutePath/);
-  assert.match(appSource, /onlyPreviewProjectSearchStore\.directoryLabel/);
-  assert.match(appSource, /onlyPreviewShellStore\.workspace\?\.rootName/);
-  assert.match(i18nSource, /projectSearchInDirectory: 'In Directory'/);
-  assert.match(i18nSource, /projectSearchInProject: 'In Project'/);
-  assert.match(i18nSource, /projectSearchInDirectory: '当前目录'/);
-  assert.match(i18nSource, /projectSearchInProject: '整个项目'/);
-  assert.doesNotMatch(resultsSource, /v-html/);
-  assert.match(resultsSource, /<mark/);
-  assert.match(resultsSource, /row\.result\.fileName/);
-  assert.match(resultsSource, /row\.result\.relativePath/);
-  assert.match(resultsSource, /row\.result\.mediaType/);
-  assert.match(
-    resultsSource,
-    /@contextmenu\.prevent\.stop="[\s\S]*?onlyPreviewShellStore\.showFileContextMenu/
-  );
-  assert.doesNotMatch(resultsSource, /summary|placeholder/i);
-
-  assert.match(appStyle, /onlypreview-shell__tree::-webkit-scrollbar\s*\{[\s\S]*?width: 8px/);
-  assert.match(
-    appStyle,
-    /\.onlypreview-shell__scope-select \{[\s\S]*?background: var\(--onlypreview-royal-soft\)/
-  );
-  assert.match(appStyle, /\.onlypreview-shell__scope-select:focus-visible/);
-  assert.match(
-    resultsStyle,
-    /onlypreview-project-search__list::-webkit-scrollbar\s*\{[\s\S]*?width: 8px/
-  );
-  assert.match(appSource, /name="onlypreview__resizeHandle"/);
 });

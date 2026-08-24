@@ -6,6 +6,13 @@ import { onlyPreviewDocumentRegistry } from './onlyPreviewDocument.registry';
 let schemeRegistered = false;
 let handlerInstalled = false;
 
+/**
+ * The Chrome preview session is shared across selections, so a late cleanup must never unhandle a
+ * newer selection's handler. Each install claims a generation on its session; a cleanup only
+ * unhandles while it still owns the current one.
+ */
+const sessionProtocolGenerations = new WeakMap<Session, number>();
+
 const parseProtocolTarget = (requestUrl: string): { hostname: string; token: string } | null => {
   let url: URL;
   let hostname: string;
@@ -60,6 +67,8 @@ export const installOnlyPreviewSessionProtocol = (
   if (targetSession.protocol.isProtocolHandled(ONLY_PREVIEW_SCHEME)) {
     targetSession.protocol.unhandle(ONLY_PREVIEW_SCHEME);
   }
+  const generation = (sessionProtocolGenerations.get(targetSession) ?? 0) + 1;
+  sessionProtocolGenerations.set(targetSession, generation);
   targetSession.protocol.handle(ONLY_PREVIEW_SCHEME, async (request) => {
     const target = parseProtocolTarget(request.url);
     if (!target || target.hostname !== scope.hostname || target.token !== scope.token) {
@@ -73,6 +82,7 @@ export const installOnlyPreviewSessionProtocol = (
   return () => {
     if (!installed) return;
     installed = false;
+    if (sessionProtocolGenerations.get(targetSession) !== generation) return;
     if (targetSession.protocol.isProtocolHandled(ONLY_PREVIEW_SCHEME)) {
       targetSession.protocol.unhandle(ONLY_PREVIEW_SCHEME);
     }

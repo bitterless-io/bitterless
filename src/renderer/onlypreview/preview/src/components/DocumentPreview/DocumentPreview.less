@@ -1,0 +1,40 @@
+.onlypreview-document {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #eceef4;
+}
+
+.onlypreview-document__body {
+  min-width: fit-content;
+  min-height: 100%;
+  color: var(--onlypreview-ink, #25283a);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  user-select: text;
+}
+
+.onlypreview-document__body .onlypreview-docx-wrapper {
+  min-width: min-content;
+  min-height: 100%;
+  padding: 28px 30px 1px !important;
+  background: transparent !important;
+}
+
+.onlypreview-document__body .onlypreview-docx-wrapper > section.onlypreview-docx {
+  margin-bottom: 28px !important;
+  border: 1px solid #dfe2eb;
+  box-shadow: 0 12px 32px rgb(37 40 58 / 16%) !important;
+}
+
+.onlypreview-document__body ::selection {
+  color: var(--onlypreview-ink, #25283a);
+  background: rgb(78 88 130 / 24%);
+}
+
+@media (max-width: 700px) {
+  .onlypreview-document__body .onlypreview-docx-wrapper {
+    padding: 18px 18px 1px !important;
+  }
+}

@@ -16,6 +16,12 @@ class ConnectorWindowHelper extends WindowHelper {
       webSecurity: false,
     },
   };
+
+  create(): never {
+    throw new Error(
+      'The standalone Connector window is retired; open Connectors in Maestro Workbench',
+    );
+  }
 }
 
 export const connectorWindowHelper = new ConnectorWindowHelper();

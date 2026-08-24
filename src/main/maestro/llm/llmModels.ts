@@ -1,4 +1,5 @@
 import type { LlmEffort, LlmEffortOption, LlmLoginMethod, LlmLoginProviderOption, LlmTarget } from '@maestro-shared/coach.api'
+import { CLAUDE_SUBSCRIPTION_MODELS } from '@shared/claudeSubscription/claudeSubscription.contract'
 
 export interface LlmStoredTarget {
   provider: string
@@ -34,6 +35,14 @@ const CLAUDE_EFFORTS: LlmEffortOption[] = [
   { id: 'xhigh', label: 'Extra' }
 ]
 
+export const LOCAL_LLM_PROVIDER = 'local'
+
+const LOCAL_CLAUDE_MODEL_LABELS: Record<keyof typeof CLAUDE_SUBSCRIPTION_MODELS, { label: string; shortLabel: string }> = {
+  'claude-sonnet': { label: 'Claude Sonnet', shortLabel: 'Sonnet' },
+  'claude-opus': { label: 'Claude Opus', shortLabel: 'Opus' },
+  'claude-haiku': { label: 'Claude Haiku', shortLabel: 'Haiku' }
+}
+
 export const LLM_PROVIDERS: LlmProviderDefinition[] = [
   {
     provider: 'ai-crms',
@@ -44,6 +53,12 @@ export const LLM_PROVIDERS: LlmProviderDefinition[] = [
     provider: 'openai-codex',
     label: 'Codex',
     authLabel: 'Coding agent subscription'
+  },
+  {
+    provider: LOCAL_LLM_PROVIDER,
+    label: 'Local',
+    authLabel: 'Local Claude subscriptions',
+    hint: 'Connect a paid Claude account in Workbench Configuration.'
   },
   // Claude provider option is intentionally hidden in Maestro for now. Keep the runtime,
   // preset, and login plumbing below so it can be re-enabled by uncommenting this block.
@@ -120,6 +135,22 @@ export const LLM_PRESETS: LlmTarget[] = [
     compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
     authLabel: 'Coding agent subscription'
   },
+  ...Object.keys(CLAUDE_SUBSCRIPTION_MODELS).map((model) => {
+    const id = model as keyof typeof CLAUDE_SUBSCRIPTION_MODELS
+    return {
+      provider: LOCAL_LLM_PROVIDER,
+      providerLabel: 'Local',
+      model: id,
+      label: LOCAL_CLAUDE_MODEL_LABELS[id].label,
+      shortLabel: LOCAL_CLAUDE_MODEL_LABELS[id].shortLabel,
+      effort: 'high' as const,
+      efforts: CLAUDE_EFFORTS.slice(),
+      contextLengthK: 200,
+      contextLengthLabel: '200K',
+      compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
+      authLabel: 'Local Claude subscriptions'
+    }
+  }),
   {
     provider: 'anthropic',
     providerLabel: 'Claude',
@@ -151,6 +182,7 @@ export const LLM_PRESETS: LlmTarget[] = [
 export const DEFAULT_PRESET_MODEL: Record<string, string> = {
   'ai-crms': 'qwen3.7-plus',
   'openai-codex': 'gpt-5.6-luna',
+  [LOCAL_LLM_PROVIDER]: 'claude-sonnet',
   anthropic: 'claude-opus-4-8'
 }
 
@@ -167,11 +199,6 @@ export const LLM_LOGIN_PROVIDERS: LlmLoginProviderOption[] = [
       { id: 'browser', label: 'Browser Login' },
       { id: 'device_code', label: 'Device code' }
     ]
-  },
-  {
-    provider: 'anthropic',
-    label: 'Claude',
-    methods: [{ id: 'browser', label: 'Browser Login' }]
   }
 ]
 
@@ -180,12 +207,19 @@ export const normalizeLlmProvider = (providerId: string): string => {
   if (id === 'claude' || id === 'cloud' || id === 'claude-code') return 'anthropic'
   if (id === 'ai-crms' || id === 'aicrms' || id === 'ai crms' || id === 'acms') return 'ai-crms'
   if (id === 'codex' || id === 'openai') return 'openai-codex'
+  if (id === 'local' || id === 'bitterless' || id === 'bitterless-local') return LOCAL_LLM_PROVIDER
   return id || 'openai-codex'
 }
 
 export const isLlmProviderSelectable = (providerId: string): boolean => {
   const provider = normalizeLlmProvider(providerId)
   return LLM_PROVIDERS.some((item) => item.provider === provider)
+}
+
+export const requireSelectableLlmProvider = (providerId: string): string => {
+  const provider = normalizeLlmProvider(providerId)
+  if (!isLlmProviderSelectable(provider)) throw new Error(`Unknown LLM provider: ${providerId}`)
+  return provider
 }
 
 export const selectableLlmPresets = (presets: LlmTarget[] = LLM_PRESETS): LlmTarget[] =>
@@ -251,6 +285,19 @@ export const normalizeSelectableLlmTarget = (value: { provider?: string; model?:
   return isLlmProviderSelectable(target.provider) ? target : normalizeLlmTarget({ provider: 'openai-codex' })
 }
 
+export const requireSelectableLlmTarget = (value: {
+  provider?: string
+  model?: string
+  effort?: LlmEffort | string
+}): LlmStoredTarget => {
+  const provider = requireSelectableLlmProvider(value.provider || '')
+  const model = String(value.model || '').trim()
+  if (!LLM_PRESETS.some((preset) => preset.provider === provider && preset.model === model)) {
+    throw new Error(`Unknown LLM model for ${provider}: ${model}`)
+  }
+  return normalizeLlmTarget({ provider, model, effort: value.effort })
+}
+
 export const resolveLoginMethod = (providerId: string, method?: string): LlmLoginMethod => {
   const provider = LLM_LOGIN_PROVIDERS.find((item) => item.provider === providerId)
   if (!provider) throw new Error(`Unknown LLM provider: ${providerId}`)
@@ -262,5 +309,6 @@ export const providerLabel = (providerId: string): string => {
   if (providerId === 'ai-crms') return 'Micromeet'
   if (providerId.startsWith('openai')) return 'OpenAI Codex (ChatGPT)'
   if (providerId === 'anthropic') return 'Claude'
+  if (providerId === LOCAL_LLM_PROVIDER) return 'Local'
   return providerId
 }

@@ -31,11 +31,80 @@ export type OnlyPreviewPreviewAdapterId =
   | 'markdown-dom'
   | 'html-page'
   | 'chromium-pdf'
+  | 'xlsx-grid'
+  | 'docx-dom'
   | 'image'
   | 'audio'
   | 'video'
   | 'unsupported';
 export type OnlyPreviewPreviewPresentationStatus = 'empty' | 'loading' | 'ready' | 'unavailable';
+export type OnlyPreviewFindMode = 'webcontents-find' | 'content-adapter' | 'none';
+export type OnlyPreviewFindUnavailableReason =
+  | 'non-text'
+  | 'unsupported'
+  | 'size-limit'
+  | 'render-failed';
+
+export type OnlyPreviewFindCoverage =
+  | { kind: 'complete' }
+  | {
+      kind: 'partial';
+      reason: 'sheet-model-cap';
+      acceptedSheets: number;
+      acceptedCells: number;
+    };
+
+export type OnlyPreviewFindCapability =
+  | { mode: 'webcontents-find' }
+  | { mode: 'content-adapter'; adapter: 'monaco' | 'sheet' };
+
+interface OnlyPreviewFindStateBase extends OnlyPreviewHostEvent {
+  selectionRevision: number;
+  surface: OnlyPreviewPreviewSurface;
+  findRevision: number;
+}
+
+export type OnlyPreviewFindState =
+  | (OnlyPreviewFindStateBase & { state: 'pending' })
+  | (OnlyPreviewFindStateBase & {
+      state: 'ready';
+      capability: OnlyPreviewFindCapability;
+      coverage: OnlyPreviewFindCoverage;
+    })
+  | (OnlyPreviewFindStateBase & {
+      state: 'unavailable';
+      reason: OnlyPreviewFindUnavailableReason;
+    });
+
+export interface OnlyPreviewFindResult extends OnlyPreviewFindStateBase {
+  activeMatchOrdinal: number;
+  matches: number;
+  finalUpdate: boolean;
+  coverage: OnlyPreviewFindCoverage;
+}
+
+export interface OnlyPreviewFindSnapshot {
+  state: OnlyPreviewFindState;
+  open: boolean;
+  query: string;
+  caseSensitive: boolean;
+  result: OnlyPreviewFindResult | null;
+}
+
+export interface OnlyPreviewFindIntent extends OnlyPreviewHostRequest {
+  selectionRevision: number;
+  surface: OnlyPreviewPreviewSurface;
+  query: string;
+  caseSensitive: boolean;
+  direction: 'forward' | 'backward';
+  findNext: boolean;
+}
+
+export interface OnlyPreviewFindCommand extends Omit<OnlyPreviewFindIntent, 'hostToken'> {
+  hostId: string;
+  findRevision: number;
+  adapter: 'monaco' | 'sheet';
+}
 
 export type OnlyPreviewErrorCode =
   | 'INVALID_INPUT'
@@ -50,8 +119,28 @@ export type OnlyPreviewErrorCode =
   | 'PATH_UNSUPPORTED_DEVICE'
   | 'TEXT_TOO_LARGE'
   | 'SIGNATURE_MISMATCH'
+  | 'OOXML_ARCHIVE_LIMIT'
+  | 'OOXML_ENCRYPTED'
+  | 'OOXML_ARCHIVE_INVALID'
+  | 'SHEET_PARSE_FAILED'
+  | 'SHEET_EMPTY'
+  | 'SHEET_RENDER_TIMEOUT'
+  | 'DOCUMENT_PARSE_FAILED'
+  | 'DOCUMENT_EMPTY'
+  | 'DOCUMENT_SANITIZE_FAILED'
+  | 'DOCUMENT_RENDER_TIMEOUT'
+  | 'IMAGE_EMPTY'
+  | 'IMAGE_READ_FAILED'
+  | 'IMAGE_DECODE_FAILED'
+  | 'MEDIA_EMPTY'
+  | 'MEDIA_READ_FAILED'
+  | 'MEDIA_ABORTED'
+  | 'MEDIA_NETWORK_FAILED'
+  | 'MEDIA_DECODE_FAILED'
+  | 'MEDIA_SOURCE_UNSUPPORTED'
   | 'SETTINGS_INVALID'
   | 'INDEX_FAILED'
+  | 'PDF_VIEWER_UNAVAILABLE'
   | 'OPERATION_FAILED'
   | 'PROTOCOL_ERROR';
 
@@ -80,6 +169,14 @@ export interface OnlyPreviewFileRef {
   relativePath: string;
 }
 
+export type OnlyPreviewProjectItemCopyKind = 'item' | 'absolute-path' | 'name';
+
+export interface OnlyPreviewProjectItemCopyRequest
+  extends OnlyPreviewHostRequest,
+    OnlyPreviewFileRef {
+  copyKind: OnlyPreviewProjectItemCopyKind;
+}
+
 export interface OnlyPreviewIndexEntry {
   relativePath: string;
   parentRelativePath: string;
@@ -100,7 +197,13 @@ export interface OnlyPreviewIndex {
 }
 
 export interface OnlyPreviewDescriptorError {
-  code: 'TEXT_TOO_LARGE' | 'SIGNATURE_MISMATCH' | 'UNSUPPORTED_CODEC';
+  code:
+    | 'TEXT_TOO_LARGE'
+    | 'SIGNATURE_MISMATCH'
+    | 'UNSUPPORTED_CODEC'
+    | 'OOXML_ENCRYPTED'
+    | 'IMAGE_EMPTY'
+    | 'MEDIA_EMPTY';
   message: string;
 }
 
@@ -108,7 +211,6 @@ export interface OnlyPreviewDescriptor {
   workspaceId: string;
   relativePath: string;
   name: string;
-  displayPath: string;
   extension: string;
   kind: OnlyPreviewKind;
   mimeType: string;
@@ -116,6 +218,7 @@ export interface OnlyPreviewDescriptor {
   size: number;
   modifiedAt: number;
   assetUrl?: string;
+  unsupportedCategory?: 'image-format' | 'video-container';
   previewError?: OnlyPreviewDescriptorError;
 }
 
@@ -172,6 +275,15 @@ export interface OnlyPreviewPreviewRevisionRequest extends OnlyPreviewPreviewRun
   selectionRevision: number;
 }
 
+export interface OnlyPreviewPreviewReadyRequest extends OnlyPreviewPreviewRevisionRequest {
+  findCoverage?: OnlyPreviewFindCoverage;
+  findAdapter?: 'monaco' | 'sheet';
+}
+
+export interface OnlyPreviewFindResultRequest extends OnlyPreviewPreviewRuntimeRequest {
+  result: OnlyPreviewFindResult;
+}
+
 export interface OnlyPreviewTextReadRequest
   extends OnlyPreviewPreviewRevisionRequest, OnlyPreviewFileRef {
   adapterId: 'monaco' | 'markdown-dom';
@@ -199,6 +311,9 @@ export const ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT =
   'onlypreview/characterCountChanged' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT = 'onlypreview/characterCountReady' as const;
 export const ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT = 'onlypreview/previewPresentation' as const;
+export const ONLY_PREVIEW_FIND_STATE_EVENT = 'onlypreview/findState' as const;
+export const ONLY_PREVIEW_FIND_FOCUS_EVENT = 'onlypreview/findFocus' as const;
+export const ONLY_PREVIEW_FIND_COMMAND_EVENT = 'onlypreview/findCommand' as const;
 
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
@@ -222,14 +337,21 @@ export interface OnlyPreviewApi {
     params: OnlyPreviewPreviewRuntimeRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewPreviewPresentation>>;
   reportPreviewReset(params: OnlyPreviewPreviewRevisionRequest): Promise<OnlyPreviewResult<void>>;
-  reportPreviewReady(params: OnlyPreviewPreviewRevisionRequest): Promise<OnlyPreviewResult<void>>;
+  reportPreviewReady(params: OnlyPreviewPreviewReadyRequest): Promise<OnlyPreviewResult<void>>;
   reportPreviewError(params: OnlyPreviewPreviewErrorRequest): Promise<OnlyPreviewResult<void>>;
+  getPreviewFindSnapshot(
+    params: OnlyPreviewHostRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewFindSnapshot>>;
+  submitPreviewFind(params: OnlyPreviewFindIntent): Promise<OnlyPreviewResult<void>>;
+  closePreviewFind(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  reportPreviewFindResult(params: OnlyPreviewFindResultRequest): Promise<OnlyPreviewResult<void>>;
   minimizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   toggleMaximizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   closeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   showFileContextMenu(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;
+  copyProjectItem(params: OnlyPreviewProjectItemCopyRequest): Promise<OnlyPreviewResult<void>>;
   openExternally(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;

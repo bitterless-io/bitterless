@@ -83,7 +83,23 @@ const contracts = {
   normalizeOnlyPreviewRelativePath: normalizeRelativePath,
   OnlyPreviewContractError: ContractError
 };
+/** `network` delivery hands the admitted range to Chromium instead of reading it in this process. */
+const NETWORK_DELIVERY_BYTES = Buffer.from('abcdefgh');
+const netFetchCalls = [];
+const fakeNet = {
+  // Mirrors the measured Electron behavior: `file:` fetches honour Range at the byte level but
+  // answer 200 with no range headers, so the 206 contract must be synthesized by the caller.
+  fetch: async (url, init) => {
+    netFetchCalls.push({ url, init });
+    const requestedRange = /^bytes=(\d+)-(\d+)$/.exec(init?.headers?.Range ?? '');
+    const slice = requestedRange
+      ? NETWORK_DELIVERY_BYTES.subarray(Number(requestedRange[1]), Number(requestedRange[2]) + 1)
+      : NETWORK_DELIVERY_BYTES;
+    return new Response(slice, { status: 200 });
+  }
+};
 const assetModule = loadTypeScriptModule('src/main/onlypreview/onlyPreviewAsset.registry.ts', {
+  electron: { net: fakeNet },
   '@shared/onlypreview/onlyPreview.contract': contracts,
   '@shared/onlypreview/onlyPreview.types': sharedTypes,
   './onlyPreviewHost.registry': { onlyPreviewHostRegistry: inertHosts },
@@ -223,6 +239,7 @@ test('document registry streams contained resources, budgets responses, and abor
 
   const entryResponse = await registry.respond(createRequest(entryUrl));
   assert.equal(entryResponse.status, 200);
+  assert.equal(entryResponse.headers.get('access-control-allow-origin'), null);
   assert.equal(entryResponse.headers.get('x-dns-prefetch-control'), 'off');
   assert.match(entryResponse.headers.get('content-security-policy') ?? '', /connect-src 'none'/);
   assert.match(entryResponse.headers.get('content-security-policy') ?? '', /webrtc 'block'/);
@@ -504,8 +521,26 @@ test('asset registry rejects real file growth and same-size path replacement dur
       });
       await issued.fileHandle.close();
 
+      const head = await registry.respond(createRequest(assetUrl, 'HEAD'));
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.get('access-control-allow-origin'), '*');
+      assert.equal(head.headers.get('access-control-expose-headers'), 'Accept-Ranges');
+      const range = await registry.respond(createRequest(assetUrl, 'GET', { Range: 'bytes=0-1' }));
+      assert.equal(range.status, 206);
+      assert.equal(range.headers.get('access-control-allow-origin'), '*');
+      assert.equal(Buffer.from(await range.arrayBuffer()).toString(), 'ab');
+      const unsatisfiable = await registry.respond(
+        createRequest(assetUrl, 'GET', { Range: 'bytes=9-10' })
+      );
+      assert.equal(unsatisfiable.status, 416);
+      assert.equal(unsatisfiable.headers.get('access-control-allow-origin'), '*');
+      const options = await registry.respond(createRequest(assetUrl, 'OPTIONS'));
+      assert.equal(options.status, 405);
+      assert.equal(options.headers.get('access-control-allow-origin'), null);
+
       const response = await registry.respond(createRequest(assetUrl));
       assert.equal(response.status, 200);
+      assert.equal(response.headers.get('access-control-allow-origin'), '*');
       mutate();
       await assert.rejects(response.arrayBuffer());
       registry.clear();
@@ -513,6 +548,153 @@ test('asset registry rejects real file growth and same-size path replacement dur
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('selection-lifetime media assets survive the legacy TTL until explicit selection revoke', async () => {
+  const bytes = Buffer.from('media-bytes');
+  const hosts = {
+    isLive: () => true,
+    onRevoke: () => () => {}
+  };
+  const workspaces = {
+    onRevoke: () => () => {},
+    openFile: async () => createOpenedFile('fixture.mp4', bytes)
+  };
+  const registry = new assetModule.OnlyPreviewAssetRegistry(hosts, workspaces);
+  const originalNow = Date.now;
+  let now = 1_700_000_000_000;
+  Date.now = () => now;
+  try {
+    const ttlUrl = registry.issue(createOpenedFile('fixture.mp4', bytes), 'video/mp4', {
+      selectionRevision: 1,
+      maxBytes: bytes.length
+    });
+    const selectionUrl = registry.issue(createOpenedFile('fixture.mp4', bytes), 'video/mp4', {
+      selectionRevision: 2,
+      maxBytes: bytes.length,
+      lifetime: 'selection'
+    });
+    now += assetModule.ONLY_PREVIEW_ASSET_TOKEN_TTL_MS + 1;
+
+    assert.equal((await registry.respond(createRequest(ttlUrl, 'HEAD'))).status, 404);
+    const head = await registry.respond(createRequest(selectionUrl, 'HEAD'));
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get('accept-ranges'), 'bytes');
+    const range = await registry.respond(
+      createRequest(selectionUrl, 'GET', { Range: 'bytes=6-10' })
+    );
+    assert.equal(range.status, 206);
+    assert.equal(Buffer.from(await range.arrayBuffer()).toString(), 'bytes');
+
+    registry.revokeSelection('host-token', 2);
+    assert.equal((await registry.respond(createRequest(selectionUrl, 'HEAD'))).status, 404);
+  } finally {
+    Date.now = originalNow;
+    registry.clear();
+  }
+});
+
+test('network delivery serves the PDF from Chromium and synthesizes its range contract', async () => {
+  netFetchCalls.length = 0;
+  let openedHandles = 0;
+  let closedHandles = 0;
+  const opened = {
+    host: { hostToken: 'host-token' },
+    workspace: { workspaceId: 'workspace-token', rootRealPath: '/workspace' },
+    relativePath: 'papers/report.pdf',
+    realPath: '/workspace/papers/report.pdf',
+    size: NETWORK_DELIVERY_BYTES.length,
+    modifiedAt: 1,
+    modifiedTimeNanoseconds: 1n,
+    deviceId: 1n,
+    inode: 1n,
+    fileHandle: {
+      close: async () => {
+        closedHandles += 1;
+      },
+      createReadStream: () => {
+        throw new Error('network delivery must never read the file in this process');
+      }
+    }
+  };
+  const hosts = { isLive: () => true, onRevoke: () => () => {} };
+  const workspaces = {
+    onRevoke: () => () => {},
+    openFile: async () => {
+      openedHandles += 1;
+      return opened;
+    }
+  };
+  const registry = new assetModule.OnlyPreviewAssetRegistry(hosts, workspaces);
+  const assetUrl = registry.issue(opened, 'application/pdf', {
+    selectionRevision: 1,
+    maxBytes: NETWORK_DELIVERY_BYTES.length,
+    delivery: 'network'
+  });
+
+  const full = await registry.respond(createRequest(assetUrl));
+  assert.equal(full.status, 200);
+  assert.equal(full.headers.get('content-type'), 'application/pdf');
+  assert.equal(full.headers.get('content-length'), String(NETWORK_DELIVERY_BYTES.length));
+  assert.equal(full.headers.get('accept-ranges'), 'bytes');
+  assert.equal(full.headers.get('cache-control'), 'no-store');
+  assert.equal(full.headers.get('content-range'), null);
+  assert.equal(Buffer.from(await full.arrayBuffer()).toString(), 'abcdefgh');
+
+  const ranged = await registry.respond(createRequest(assetUrl, 'GET', { Range: 'bytes=2-4' }));
+  assert.equal(ranged.status, 206);
+  assert.equal(ranged.headers.get('content-range'), `bytes 2-4/${NETWORK_DELIVERY_BYTES.length}`);
+  assert.equal(ranged.headers.get('content-length'), '3');
+  assert.equal(Buffer.from(await ranged.arrayBuffer()).toString(), 'cde');
+
+  const head = await registry.respond(createRequest(assetUrl, 'HEAD'));
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-length'), String(NETWORK_DELIVERY_BYTES.length));
+  const unsatisfiable = await registry.respond(
+    createRequest(assetUrl, 'GET', { Range: 'bytes=99-120' })
+  );
+  assert.equal(unsatisfiable.status, 416);
+  const rejectedMethod = await registry.respond(createRequest(assetUrl, 'OPTIONS'));
+  assert.equal(rejectedMethod.status, 405);
+
+  // Chromium read the file; the identity handle was still opened and closed for every request.
+  assert.deepEqual(
+    netFetchCalls.map(({ url, init }) => [
+      url,
+      init.headers.Range,
+      init.bypassCustomProtocolHandlers
+    ]),
+    [
+      ['file:///workspace/papers/report.pdf', 'bytes=0-7', true],
+      ['file:///workspace/papers/report.pdf', 'bytes=2-4', true]
+    ]
+  );
+  assert.equal(openedHandles, 5);
+  assert.equal(closedHandles, 5);
+
+  registry.revokeSelection('host-token', 1);
+  assert.equal((await registry.respond(createRequest(assetUrl))).status, 404);
+  assert.equal(netFetchCalls.length, 2);
+});
+
+test('stream delivery stays the default and keeps the byte-counting guard', () => {
+  const assets = source('src/main/onlypreview/onlyPreviewAsset.registry.ts');
+  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+
+  assert.match(assets, /delivery: options\.delivery \?\? 'stream'/);
+  assert.match(assets, /pipeline\(nodeStream, boundedStream/);
+  assert.match(assets, /bypassCustomProtocolHandlers: true/);
+  // Only the raw Chromium PDF adapter opts out of in-process reading; the Vue adapters keep their
+  // ceilings, which are load-bearing for OOXML and image/media admission.
+  const pdfIssue = region.slice(
+    region.indexOf("adapter.adapterId === 'chromium-pdf'"),
+    region.indexOf("adapter.adapterId === 'xlsx-grid'")
+  );
+  assert.match(pdfIssue, /delivery: 'network'/);
+  assert.doesNotMatch(
+    region.slice(region.indexOf("adapter.adapterId === 'xlsx-grid'")),
+    /delivery: 'network'/
+  );
 });
 
 test('document and PDF byte ceilings are enforced at issue and response time', () => {
@@ -534,6 +716,45 @@ test('document and PDF byte ceilings are enforced at issue and response time', (
   assert.match(assets, /expectedRealPath/);
   assert.match(registry, /expectedEntryRealPath/);
   assert.match(assets, /pipeline\(nodeStream, boundedStream/);
+});
+
+test('a superseded session protocol install cannot unhandle the current one', () => {
+  const protocolModule = loadTypeScriptModule(
+    'src/main/onlypreview/onlyPreviewProtocol.service.ts',
+    {
+      electron: {
+        protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {}, unhandle: () => {} }
+      },
+      '@shared/onlypreview/onlyPreview.types': { ONLY_PREVIEW_SCHEME: 'bitterless-preview' },
+      './onlyPreviewAsset.registry': {
+        onlyPreviewAssetRegistry: { respond: async () => new Response(null) }
+      },
+      './onlyPreviewDocument.registry': {
+        onlyPreviewDocumentRegistry: { respond: async () => new Response(null) }
+      }
+    }
+  );
+  const handled = [];
+  const targetSession = {
+    protocol: {
+      handle: (scheme, handler) => handled.push({ scheme, handler }),
+      unhandle: () => handled.push({ unhandled: true }),
+      isProtocolHandled: () => handled.length > 0 && !handled.at(-1).unhandled
+    }
+  };
+  const url = (token) => `bitterless-preview://asset/${token.repeat(64)}/paper.pdf`;
+
+  const firstCleanup = protocolModule.installOnlyPreviewSessionProtocol(targetSession, url('a'));
+  const secondCleanup = protocolModule.installOnlyPreviewSessionProtocol(targetSession, url('b'));
+  const installsBefore = handled.filter((entry) => entry.scheme).length;
+
+  // The shared Chrome session outlives one selection, so the stale cleanup must be inert.
+  firstCleanup();
+  assert.equal(handled.filter((entry) => entry.unhandled).length, 1);
+  assert.equal(handled.filter((entry) => entry.scheme).length, installsBefore);
+
+  secondCleanup();
+  assert.equal(handled.filter((entry) => entry.unhandled).length, 2);
 });
 
 test('default protocol excludes documents while Chrome memory sessions scope one token', () => {

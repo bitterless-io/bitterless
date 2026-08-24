@@ -90,14 +90,14 @@
                 <span class="thread-card__option-label">{{ readStateLabel }}</span>
               </a-doption>
               <a-doption
-                v-if="canPreviewTranscript"
+                v-if="thread.canCopySessionPath"
                 class="thread-card__option"
-                :disabled="eyesOnAgentsStore.previewingSessionKeys.has(thread.sessionKey)"
-                @click="handlePreview"
+                :disabled="eyesOnAgentsStore.busyAction !== null"
+                @click="handleCopySessionPath"
               >
-                <IconFileText :size="13" />
+                <IconClipboardText :size="13" />
                 <span class="thread-card__option-label">
-                  {{ i18nHelper.eyesOnAgents.actions.previewTranscript }}
+                  {{ i18nHelper.eyesOnAgents.actions.copySessionPath }}
                 </span>
               </a-doption>
             </template>
@@ -113,9 +113,9 @@ import { computed } from 'vue';
 import {
   IconCircle,
   IconCircleDot,
+  IconClipboardText,
   IconDots,
   IconExternalLink,
-  IconFileText,
   IconFolder,
 } from '@tabler/icons-vue';
 import type { EyesOnAgentsThread } from '@shared/eyesOnAgents/eyesOnAgents.type';
@@ -173,10 +173,11 @@ const isActiveRuntime = computed(() =>
   ['working', 'waiting_approval', 'waiting_input'].includes(props.thread.runtimeState));
 const canOpenThread = computed(() => props.thread.provider === 'codex'
   || props.thread.desktopSessionId !== null);
-const canPreviewTranscript = computed(() => props.thread.provider === 'claude'
-  && props.thread.canPreviewTranscript);
+// Any non-active unread row shows the dot, including 'unknown'. Without this an
+// authority-lost row is promoted to the unread tier with nothing to explain the
+// position — see docs/issues/eyes-on-agents-restart-unknown-pinned.md.
 const showUnreadDot = computed(() =>
-  props.thread.isUnread && isEyesOnAgentsTerminal(props.thread.runtimeState));
+  props.thread.isUnread && !isActiveRuntime.value);
 const cardAriaLabel = computed(() => [
   providerLabel.value,
   displayTitle.value,
@@ -214,8 +215,8 @@ const handleOpen = async (): Promise<void> => {
   await eyesOnAgentsStore.openThread(props.thread.sessionKey).catch(() => undefined);
 };
 
-const handlePreview = async (): Promise<void> => {
-  await eyesOnAgentsStore.previewThread(props.thread.sessionKey).catch(() => undefined);
+const handleCopySessionPath = async (): Promise<void> => {
+  await eyesOnAgentsStore.copySessionPath(props.thread.sessionKey).catch(() => undefined);
 };
 
 const handleToggleReadState = async (): Promise<void> => {

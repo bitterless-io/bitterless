@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/shared/claudeSubscription/**/*.ts",
+    "../../src/main/claudeSubscription/**/*.ts",
+    "../../src/main/xpc/claudeSubscription.handler.ts",
+    "../../src/main/xpc/xpc.helper.ts",
+    "../../src/main/app.main.ts",
+    "../../src/shared/startup/startupDiagnostics.ts",
+    "../../src/main/security/safeStoragePolicy.service.ts",
+    "./*.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "noCheck": false,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["node", "electron-vite/node"]
+  }
+}

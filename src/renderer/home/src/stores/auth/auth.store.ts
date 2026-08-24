@@ -360,21 +360,32 @@ class AuthStore {
   async logout(): Promise<void> {
     if (this.loggingOut) return;
 
+    const cleanup = this.prepareExternalLogout();
+    scheduleBestEffort(async () => {
+      await settleBestEffort([
+        () => authEmitter.deactivateSession(),
+        cleanup,
+      ]);
+    }, (err) => {
+      console.error('[AuthStore] Failed to settle optional logout cleanup:', err);
+    });
+  }
+
+  prepareExternalLogout(): () => Promise<void> {
+    if (this.loggingOut) return async () => undefined;
+
     const token = getCustomerToken();
     this.loggingOut = true;
     this.clearLocalSession();
-    try {
-      const cleanup = [
-        () => authEmitter.deactivateSession(),
-        () => todoistSyncSessionEmitter.deactivate(),
-      ];
+    return async () => {
+      const cleanup = [() => todoistSyncSessionEmitter.deactivate()];
       if (token) cleanup.push(() => logoutApi(token));
-      scheduleBestEffort(() => settleBestEffort(cleanup), (err) => {
-        console.error('[AuthStore] Failed to settle optional logout cleanup:', err);
-      });
-    } finally {
-      this.loggingOut = false;
-    }
+      try {
+        await settleBestEffort(cleanup);
+      } finally {
+        this.loggingOut = false;
+      }
+    };
   }
 }
 

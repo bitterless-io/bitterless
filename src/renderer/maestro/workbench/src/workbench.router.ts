@@ -5,6 +5,10 @@ import WorkbenchIntegrationsView from './views/WorkbenchIntegrationsView.vue'
 import WorkbenchInjectionsView from './views/WorkbenchInjectionsView.vue'
 import WorkbenchToolsView from './views/WorkbenchToolsView.vue'
 import WorkbenchModelsView from './views/WorkbenchModelsView.vue'
+import WorkbenchConfigurationView from './views/WorkbenchConfigurationView.vue'
+import WorkbenchAppsView from './views/WorkbenchAppsView.vue'
+import WorkbenchConnectorsView from './views/WorkbenchConnectorsView.vue'
+import WorkbenchSettingsView from './views/WorkbenchSettingsView.vue'
 import WorkbenchAboutView from './views/WorkbenchAboutView.vue'
 import WorkbenchLogView from './views/WorkbenchLogView.vue'
 import { preferredWorkbenchPane } from './workbench.store'
@@ -17,6 +21,10 @@ const routes: RouteRecordRaw[] = [
   { path: '/injections', name: 'injections', component: WorkbenchInjectionsView },
   { path: '/tools', name: 'tools', component: WorkbenchToolsView },
   { path: '/models', name: 'models', component: WorkbenchModelsView },
+  { path: '/configuration', name: 'configuration', component: WorkbenchConfigurationView },
+  { path: '/apps', name: 'apps', component: WorkbenchAppsView },
+  { path: '/connectors', name: 'connectors', component: WorkbenchConnectorsView },
+  { path: '/settings', name: 'settings', component: WorkbenchSettingsView },
   { path: '/about', name: 'about', component: WorkbenchAboutView },
   { path: '/log', name: 'log', component: WorkbenchLogView },
   { path: '/:pathMatch(.*)*', redirect: '/capture' }

@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
-import type { AuthInvalidationPayload } from '@shared/auth/auth.type';
+import type { AuthInvalidationPayload, AuthSessionApi } from '@shared/auth/auth.type';
 import { connectorWindowHelper } from '@main/windows/connectorWindow.helper';
 import { llamaWindowHelper } from '@main/windows/llamaWindow.helper';
 import { mainWindowHelper } from '@main/windows/mainWindow.helper';
@@ -25,7 +25,7 @@ const todoistSyncSessionClient = createBoundedTodoXpcClient(
   'TodoistSyncSessionHandler',
 );
 
-class AuthHandler extends XpcMainHandler {
+class AuthHandler extends XpcMainHandler implements AuthSessionApi {
   private deactivationPromise: Promise<void> | null = null;
   private sessionActivationGeneration = 0;
   private sessionShouldBeActive = false;
@@ -47,6 +47,17 @@ class AuthHandler extends XpcMainHandler {
     await maestroWindowHandler.prepareForAuthenticatedSession();
     if (this._stopStaleActivation(generation)) return;
     await coinWindowHandler.prepareForAuthenticatedSession();
+    if (this._stopStaleActivation(generation)) return;
+    await this._showAuthenticatedPrimaryWindow(generation);
+  }
+
+  async showPrimaryWindow(): Promise<void> {
+    if (!this.sessionShouldBeActive) {
+      mainWindowHelper.show();
+      return;
+    }
+
+    await this._showAuthenticatedPrimaryWindow(this.sessionActivationGeneration);
   }
 
   async deactivateSession(): Promise<void> {
@@ -105,6 +116,17 @@ class AuthHandler extends XpcMainHandler {
 
   private _stopStaleActivation(generation: number): boolean {
     return generation !== this.sessionActivationGeneration || !this.sessionShouldBeActive;
+  }
+
+  private async _showAuthenticatedPrimaryWindow(generation: number): Promise<void> {
+    try {
+      await maestroWindowHandler.openMaestroWindow();
+    } catch (err) {
+      if (!this._stopStaleActivation(generation)) mainWindowHelper.show();
+      throw err;
+    }
+    if (this._stopStaleActivation(generation)) return;
+    mainWindowHelper.hide();
   }
 
   private async _deactivateSession(): Promise<void> {

@@ -1,19 +1,22 @@
 import { Tray, Menu, nativeImage, app } from 'electron';
 import { join } from 'path';
 import { i18nHelper } from '../i18n/i18n.helper';
-import type { MainWindowHelper } from '../windows/mainWindow.helper';
 import { dialogHelper } from '../dialog/dialog.helper';
+
+interface PrimaryWindowPresenter {
+  show(): void;
+}
 
 class TrayHelper {
   private tray: Tray | null = null;
-  private mainWindowHelper: MainWindowHelper | null = null;
+  private primaryWindowPresenter: PrimaryWindowPresenter | null = null;
 
-  init(mainWindowHelper: MainWindowHelper): void {
+  init(primaryWindowPresenter: PrimaryWindowPresenter): void {
     if (process.platform !== 'win32' && process.platform !== 'darwin') {
       return;
     }
 
-    this.mainWindowHelper = mainWindowHelper;
+    this.primaryWindowPresenter = primaryWindowPresenter;
 
     const isWin = process.platform === 'win32';
     const iconFilename = isWin ? 'tray-win.ico' : 'tray-mac@2x.png';
@@ -66,8 +69,8 @@ class TrayHelper {
   }
 
   private showMainWindow(): void {
-    if (this.mainWindowHelper) {
-      this.mainWindowHelper.show();
+    if (this.primaryWindowPresenter) {
+      this.primaryWindowPresenter.show();
     }
   }
 

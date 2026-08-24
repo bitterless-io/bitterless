@@ -1,11 +1,10 @@
 import { reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import router from '@/router';
 import { settingEmitter } from '@/emitter/setting.emitter';
-import { authStore } from '@/stores/auth/auth.store';
 import type { SearchEngineHandler } from '@preload/sqlite/handler/searchEngine.handler';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import { homeShellBridge } from '@renderer/common/homeShellBridge.client';
 import {
   getCurrentRendererLanguage,
   onRendererLanguageApplied,
@@ -29,21 +28,20 @@ class GeneralSettingState {
   chatMenuSaving = false;
   loading = false;
   loggingOut = false;
+  accountEmail = '';
   private chatMenuLoaded = false;
   private chatMenuLoadPromise: Promise<void> | null = null;
-
-  get accountEmail(): string {
-    return authStore.current?.email || '';
-  }
 
   async loadSettings(): Promise<void> {
     this.currentLanguage = getCurrentRendererLanguage();
 
-    const [searchEngine] = await Promise.all([
+    const [searchEngine, , session] = await Promise.all([
       searchEngineEmitter.getSearchEngine(),
       this.loadChatMenuVisibility(),
+      homeShellBridge.getSessionSummary().catch(() => ({ email: '' })),
     ]);
     this.currentSearchEngine = (searchEngine as SearchEngine) || 'baidu';
+    this.accountEmail = session.email;
   }
 
   async loadChatMenuVisibility(): Promise<void> {
@@ -124,14 +122,8 @@ class GeneralSettingState {
     if (this.loggingOut) return;
 
     this.loggingOut = true;
-    const cleanupPromise = authStore.logout();
     try {
-      await router.replace({ name: 'login' });
-    } catch (err) {
-      console.error('[GeneralSettingState] Failed to navigate after logout:', err);
-    }
-    try {
-      await cleanupPromise;
+      await homeShellBridge.logout();
     } catch (err) {
       console.error('[GeneralSettingState] Failed to clean up after logout:', err);
     } finally {

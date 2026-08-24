@@ -58,9 +58,9 @@ board's content box: no fixed width, no maximum width, no wrapping, stretching f
 bar to the bottom board padding. The 600px height ceiling is gone; the thread list scrolls inside
 the column body and the board no longer owns vertical page scrolling. Board padding stays 12px.
 
-Focus is the board. It shows every visible thread in attention order, and its surface follows window
-activation: the pale orange attention tint while the window is active, neutral grey while it is not.
-The persisted `uncategorized` system Domain and every stored
+Focus is the board. It shows every visible thread in attention order on a transparent surface — the
+cards themselves are the only painted shapes, and the board region carries one 8px inset while the
+column keeps an 8px gap between its header and the list. The persisted `uncategorized` system Domain and every stored
 `domain_id` remain in SQLite as an unexposed storage fallback; no column, menu, or drag target
 presents them.
 
@@ -73,8 +73,9 @@ Use the existing Bitterless color contract as the source of truth:
 | menu bar / primary action | Royal Blue `#4E5882` |
 | deep text | `#323955` / `#1E2237` |
 | board canvas | near-white neutral `oklch(0.985 0 0)` |
-| column surface, window active | warm attention tint `oklch(0.94 0.04 60)` |
-| column surface, window inactive | cool neutral `oklch(0.96 0 0)` |
+| column surface | none — cards sit on the board canvas |
+| text-action ink | `theme.ts` arcoblue-5 `#606b9d` |
+| text-button hover surface | `theme.ts` arcoblue-2 `#e2e4eb` |
 | thread item surface | white `oklch(1 0 0)` |
 | working loader | Royal Blue |
 | unread dot | red |
@@ -136,6 +137,8 @@ The menu bar shows:
 
 - application title;
 - compact provider connection state;
+- the plug glyph, which **toggles** the connections drawer and reports `aria-expanded`; the status
+  pill beside it only opens the drawer, because it is a status readout rather than a switch;
 - labelled `Refresh`, available from connected, disconnected, and error states and disabled while
   another board action, connection, or synchronization is in flight; while the renderer remains
   mounted, one idempotent store-owned poll requests a silent tiered field refresh every 10 seconds
@@ -323,11 +326,11 @@ filtered-result count is rendered there.
 completed unread attention item can be cleared. While its mutation is in flight it shows the existing mini-button
 loading treatment and is disabled with the other foreground board actions.
 
-Focus is one continuous background surface — warm while the window is active, neutral grey while it
-is not — and its header has no divider or independent card background, so hierarchy comes from
-canvas → column → card contrast rather than a border, top rule, or shadow. The activation state is a
-renderer-local `focus`/`blur` flag on the root element, seeded from `document.hasFocus()`; it adds no
-IPC, timer, or extra refresh, and the Omni-hosted renderer stays warm.
+Focus paints nothing at all: no surface, no radius, no padding of its own. Hierarchy comes from the
+canvas → white card contrast alone, so the header needs no divider and the column needs no border,
+top rule, or shadow. Text actions take their ink from `theme.ts` arcoblue-5 and show an arcoblue-2
+surface on hover — a text button must react with a surface, not only a color shift — and the search
+field reads as a plain white input.
 
 The scrollable column body has no top padding, so the first thread begins directly below the header
 region. It retains 9px horizontal and bottom padding for
@@ -380,11 +383,12 @@ A card displays only observation metadata:
 - the overflow (`…`) control is always present. Its items, in order: the provider-named open item
   (**Open in Codex** / **Open in Claude**) with a quiet `(double click)` hint, omitted when the row
   has no trusted route; the read-state item (**Mark as read** / **Mark as unread**) labelled from the
-  stored unread flag; and the Claude **Preview transcript** option for a row with a canonical JSONL;
+  stored unread flag; and **Copy session path**, which puts the session JSONL's absolute path on the
+  clipboard for a Claude row with a known transcript (Codex rows have no discovered session file);
 - one status slot right of the title carries either the working spinner or the unread red dot — the
-  dot when `isUnread` is true and runtime is terminal (`idle`, `ended`, or `failed`) after a reply
-  finishes. Working, waiting, and unknown cards show the spinner or nothing, never the dot, so the two
-  states cannot collide in that slot.
+  dot for any non-active unread row, which means terminal (`idle`, `ended`, `failed`) **and**
+  `unknown`. Working and waiting cards show only the spinner, so the two states cannot collide in that
+  slot, and an authority-lost row that sits in the unread tier is no longer unexplained.
 
 The action row uses 20px control boxes so it, not Arco's default 24px mini-button height, determines
 the compact card height. Its folder, Open, and More glyphs are respectively 10px, 9px, and 12px —
@@ -409,8 +413,8 @@ observation read after the fixed deep link is accepted. Codex uses `codex://thre
 Claude row with a unique `desktopSessionId` uses
 `claude://claude.ai/epitaxy/<desktopSessionId>`. Claude rows without that trusted Desktop route are
 Main-private inventory and do not render in Focus or its title filter. A
-visible Claude card's More menu exposes **Preview transcript** when a canonical JSONL exists.
-Selecting or previewing never marks read.
+visible Claude card's More menu exposes **Copy session path** when a canonical JSONL exists.
+Selecting or copying a path never marks read.
 
 ```text
 ┌────────────────────────────────────────┐
@@ -466,7 +470,8 @@ until its state actually resolves.
 | syncing or connecting | existing cards retained; duplicate Refresh disabled |
 | no threads | concise prompt to connect/sync; no fake sample rows |
 | threads exist, no filter | every visible thread in comparator order; a read thread stays listed |
-| working unread | title-side loader; the latent dot stays hidden until the row settles |
+| working unread | title-side loader; the latent dot stays hidden until the row leaves the active states |
+| unknown unread after a restart | the dot renders, so the unread-tier position is visible rather than mysterious |
 | working opened | card keeps its active rank and loader; only a terminal observation can retire it |
 | working completes to idle unread | the loader in the title slot is replaced by the unread dot |
 | manual mark as read | the dot clears in place; the row keeps its position rules and gains no Open receipt |

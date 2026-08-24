@@ -1,4 +1,4 @@
 import { createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { AuthHandler } from '@main/xpc/auth.handler';
+import type { AuthSessionApi } from '@shared/auth/auth.type';
 
-export const authEmitter = createXpcRendererEmitter<AuthHandler>('AuthHandler');
+export const authEmitter = createXpcRendererEmitter<AuthSessionApi>('AuthHandler');

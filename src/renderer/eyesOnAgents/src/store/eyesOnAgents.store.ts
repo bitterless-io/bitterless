@@ -93,7 +93,6 @@ class EyesOnAgentsState {
   actionError: string | null = null;
   busyAction: string | null = null;
   openingSessionKeys = new Set<string>();
-  previewingSessionKeys = new Set<string>();
   titleDraft = '';
   titleQuery = '';
   private titleQueryScheduler: (() => void) | null = null;
@@ -335,26 +334,12 @@ class EyesOnAgentsState {
     }
   }
 
-  async previewThread(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
+  async copySessionPath(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
     const thread = this.threads.find((item) => item.sessionKey === sessionKey);
-    if (
-      !thread
-      || thread.provider !== 'claude'
-      || !thread.canPreviewTranscript
-      || this.previewingSessionKeys.has(sessionKey)
-    ) return;
-    this.previewingSessionKeys = new Set(this.previewingSessionKeys).add(sessionKey);
-    this.actionError = null;
-    try {
-      await eyesOnAgentsEmitter.previewThread({ sessionKey });
-    } catch (error) {
-      this.actionError = this.errorMessage(error);
-      throw error;
-    } finally {
-      const next = new Set(this.previewingSessionKeys);
-      next.delete(sessionKey);
-      this.previewingSessionKeys = next;
-    }
+    if (!thread?.canCopySessionPath) return;
+    await this.runCommandAction('session-path-copy', () =>
+      eyesOnAgentsEmitter.copySessionPath({ sessionKey }),
+    );
   }
 
   async setThreadUnread(

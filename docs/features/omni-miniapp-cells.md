@@ -219,6 +219,7 @@ Translator, Motto, Trench, or Submodules preload.
 | Back/forward | Browser cell only | Navigate browser history; hidden/disabled for mini apps. |
 | Split | Layout panel | Preserve original content and create a default browser sibling. |
 | Cell focus | Browser or mini-app cell | Remember the active cell and show its 2px accent-orange frame in the real cell views. |
+| First click after app reactivation | Omni top-level window on macOS | Activate Omni and deliver the same click to the exact child view under the pointer, so its input can focus without a second click. |
 | `Escape` | Open Layout control | Close only the top-level Layout control and clear the Menu Bar active state. |
 | `update` | Omni Menu Bar | When downloaded-ready state exists, quit and install through Main. |
 
@@ -237,6 +238,9 @@ Translator, Motto, Trench, or Submodules preload.
 - **Active cell:** The last focused surviving cell has one continuous, non-layout-affecting 2px
   accent-orange frame across its real native views. If no retained ID matches a cell, all frames
   are hidden.
+- **Inactive top-level window on macOS:** Omni opts into first-mouse delivery at the `BaseWindow`
+  boundary. One native click activates the window and reaches the browser or mini-app child view
+  under the pointer; Main does not refocus the previously active cell or synthesize renderer input.
 - **Update hidden:** no downloaded-ready snapshot or live event exists; the Omni Menu Bar reserves
   no width for an update action.
 - **Update ready:** show the exact compact `update` label with the main window's 4px × 10px padding,

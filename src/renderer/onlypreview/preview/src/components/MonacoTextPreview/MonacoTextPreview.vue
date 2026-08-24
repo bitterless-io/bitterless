@@ -12,6 +12,8 @@ import type {
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { countOnlyPreviewSelectionTexts } from '../../onlyPreviewCharacterCount.service';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
+import { onlyPreviewFindAdapterBridge } from '../../onlyPreviewFindAdapter.service';
+import { createOnlyPreviewMonacoFindAdapter } from '../../onlyPreviewMonacoFind.service';
 
 const props = defineProps<{
   content: OnlyPreviewTextContent;
@@ -19,15 +21,22 @@ const props = defineProps<{
   reportingRevision: string;
   settings: OnlyPreviewSettings;
 }>();
+const emit = defineEmits<{ ready: [] }>();
 
 const editorHostRef = ref<HTMLElement | null>(null);
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
 let model: monaco.editor.ITextModel | null = null;
 let selectionDisposable: monaco.IDisposable | null = null;
+let findAdapter: ReturnType<typeof createOnlyPreviewMonacoFindAdapter> | null = null;
+let unregisterFindAdapter: (() => void) | null = null;
 
 const disposeEditor = (): void => {
   selectionDisposable?.dispose();
   selectionDisposable = null;
+  unregisterFindAdapter?.();
+  unregisterFindAdapter = null;
+  findAdapter?.dispose();
+  findAdapter = null;
   onlyPreviewPreviewStore.reportCharacterCount(0, props.reportingRevision);
   editor?.dispose();
   model?.dispose();
@@ -82,6 +91,16 @@ const createEditor = (): void => {
       props.reportingRevision
     );
   });
+  const selectionRevision = Number(props.reportingRevision);
+  if (Number.isSafeInteger(selectionRevision) && selectionRevision >= 0) {
+    findAdapter = createOnlyPreviewMonacoFindAdapter(editor, model);
+    unregisterFindAdapter = onlyPreviewFindAdapterBridge.register(
+      'monaco',
+      selectionRevision,
+      findAdapter
+    );
+    emit('ready');
+  }
   onlyPreviewPreviewStore.armCharacterCountReporting(props.reportingRevision);
 };
 

@@ -710,14 +710,23 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(english, /markUnread: 'Mark as unread'/);
   assert.match(chinese, /markRead: '标为已读'/);
   assert.match(chinese, /markUnread: '标为未读'/);
+
   assert.match(
     component,
-    /import \{ isEyesOnAgentsTerminal \} from '@shared\/eyesOnAgents\/eyesOnAgents\.contract';/
+    /const showUnreadDot = computed\(\(\) =>\s*props\.thread\.isUnread && !isActiveRuntime\.value\);/,
+    'every non-active unread row shows the dot, including an authority-lost one'
+  );
+  assert.doesNotMatch(
+    component,
+    /previewThread|previewTranscript|previewingSessionKeys|IconFileText/,
+    'transcript preview left the card with its icon and store call'
   );
   assert.match(
     component,
-    /const showUnreadDot = computed\(\(\) =>\s*props\.thread\.isUnread && isEyesOnAgentsTerminal\(props\.thread\.runtimeState\)\);/
+    /const handleCopySessionPath = async \(\): Promise<void> => \{[\s\S]*?copySessionPath\(props\.thread\.sessionKey\)/
   );
+  assert.match(english, /copySessionPath: 'Copy session path'/);
+  assert.match(chinese, /copySessionPath: '复制会话路径'/);
   assert.doesNotMatch(
     component,
     /openAriaLabel|openTooltip|moreAriaLabel|thread-card__unread-marker|more-control--unread/,
@@ -802,19 +811,16 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
 
   assert.match(
     card,
-    /<a-doption\s+v-if="canPreviewTranscript"[\s\S]*actions\.previewTranscript/,
+    /<a-doption\s+v-if="thread\.canCopySessionPath"[\s\S]*actions\.copySessionPath/,
   );
   assert.match(
     card,
-    /const canPreviewTranscript = computed\(\(\) => props\.thread\.provider === 'claude'\s*&& props\.thread\.canPreviewTranscript\);/,
-  );
-  assert.match(
-    card,
-    /eyesOnAgentsStore\.previewThread\(props\.thread\.sessionKey\)/,
+    /eyesOnAgentsStore\.copySessionPath\(props\.thread\.sessionKey\)/,
   );
   assert.match(
     store,
-    /async previewThread\(sessionKey: EyesOnAgentsSessionKey\): Promise<void>[\s\S]*thread\.provider !== 'claude'[\s\S]*!thread\.canPreviewTranscript[\s\S]*eyesOnAgentsEmitter\.previewThread\(\{ sessionKey \}\)/,
+    /async copySessionPath\(sessionKey: EyesOnAgentsSessionKey\): Promise<void> \{[\s\S]*?!thread\?\.canCopySessionPath\) return;[\s\S]*?runCommandAction\('session-path-copy'/,
+    'the renderer refuses to ask for a path the snapshot says does not exist'
   );
   assert.doesNotMatch(store, /threadSearch|openThreadSearch|closeThreadSearch/);
   assert.doesNotMatch(rendererSource, /transcriptPath|\.jsonl|claude:\/\//);
@@ -936,7 +942,7 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(chinese, /copyReloadCommand: '复制 \/reload-plugins'/);
   assert.match(chinese, /copied: '已复制'/);
   assert.match(chinese, /hooksCommand: '\/hooks'/);
-  assert.match(chinese, /previewTranscript: '预览对话文件'/);
+  assert.match(chinese, /copySessionPath: '复制会话路径'/);
   assert.match(english, /title: 'Session directories'/);
   assert.match(english, /useAutomatic: 'Use automatic'/);
   assert.match(chinese, /title: '会话目录'/);
@@ -1779,6 +1785,44 @@ test('title enrichment diagnostics stay bounded and drawer-only', () => {
   assert.match(chinese, /titleEnrichmentDeferred:\s*'[^']*\{thread\}[^']*App Server 不可用[^']*稍后可通过刷新重试。'/);
   assert.match(chinese, /titleEnrichmentReadRejected:\s*'[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
   assert.match(chinese, /titleEnrichmentUnusable:\s*'[^']*\{thread\}[^']*稍后可通过刷新重试。'/);
+});
+
+test('the bridge glyph toggles the connections drawer', () => {
+  const menuBar = read(
+    'src/renderer/eyesOnAgents/src/components/EyesOnAgentsMenuBar/EyesOnAgentsMenuBar.vue'
+  );
+  const app = read('src/renderer/eyesOnAgents/src/App.vue');
+
+  const bridgeButton = menuBar.match(
+    /<a-button\s+name="eyesOnAgents__menuBar__bridge"[\s\S]*?<\/a-button>/
+  );
+  assert.ok(bridgeButton, 'Missing bridge glyph button');
+  assert.match(
+    bridgeButton[0],
+    /@click="\$emit\('toggle-connections'\)"/,
+    'the plug glyph toggles the drawer instead of only opening it'
+  );
+  assert.match(
+    bridgeButton[0],
+    /:aria-expanded="connectionsOpen"/,
+    'a toggle must report its expanded state'
+  );
+  assert.match(menuBar, /defineProps<\{ connectionsOpen: boolean \}>\(\);/);
+  assert.match(menuBar, /\(event: 'toggle-connections'\): void;/);
+  assert.match(
+    app,
+    /:connections-open="connectionsVisible"/,
+    'the drawer state flows down so the glyph can reflect it'
+  );
+  assert.match(
+    app,
+    /@toggle-connections="connectionsVisible = !connectionsVisible"/
+  );
+  assert.match(
+    app,
+    /@open-connections="connectionsVisible = true"/,
+    'the status pill still just opens the drawer'
+  );
 });
 
 test('header Refresh is visible and can recover disconnected or error state', () => {

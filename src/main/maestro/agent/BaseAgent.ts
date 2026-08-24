@@ -57,6 +57,7 @@ export interface BaseAgentOptions {
 const DEFAULT_PROVIDER = 'openai-codex'
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   'openai-codex': 'gpt-5.6-luna',
+  local: 'claude-sonnet',
   anthropic: 'claude-opus-4-8'
 }
 const DEFAULT_SESSION_START_TIMEOUT_MS = 45_000

@@ -25,6 +25,7 @@ import {
 import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
 import { maestroWindowHandler } from './xpc/maestroWindow.handler';
+import { authHandler } from './xpc/auth.handler';
 import { eyesOnAgentsWindowHandler } from './xpc/eyesOnAgentsWindow.handler';
 import { submodulesWindowHandler } from './xpc/submodulesWindow.handler';
 import { todoWindowHandler } from './xpc/todoWindow.handler';
@@ -69,6 +70,7 @@ import { coinResourceService } from './coin/resources/coinResource.runtime';
 import { registerSnipingIpc } from './sniping/snipingIpc.service';
 import { snipingSessionService } from './sniping/snipingSession.service';
 import { registerMonitoringIpc } from './monitoring/monitoringIpc.service';
+import { claudeSubscriptionRuntime } from './claudeSubscription/claudeSubscription.runtime';
 
 const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
@@ -397,6 +399,9 @@ const cleanupResources = (): Promise<void> => {
     try { await stopEyesOnAgentsRuntime?.(); } catch {
       // Best-effort shutdown: the remaining application resources must still be released.
     }
+    try { await claudeSubscriptionRuntime.stop(); } catch {
+      // Best-effort shutdown: Claude account processes and loopback requests are already fenced.
+    }
     try { await mcpBridgeServer.stop(); } catch {}
     try {
       await withTodoXpcTimeout(
@@ -531,9 +536,17 @@ const startGui = async (): Promise<void> => {
     },
     initializeTray: async () => {
       await runDiagnosedStartupStage('tray', () => {
-        trayHelper.init(mainWindowHelper);
+        trayHelper.init({
+          show: () => {
+            void authHandler.showPrimaryWindow().catch((err: unknown) => {
+              console.warn('[app] Failed to show the primary window from tray:', err);
+            });
+          },
+        });
         app.on('activate', () => {
-          mainWindowHelper.show();
+          void authHandler.showPrimaryWindow().catch((err: unknown) => {
+            console.warn('[app] Failed to show the primary window on activation:', err);
+          });
         });
       });
     },
@@ -574,6 +587,11 @@ const startOptionalIntegrations = async (
   });
   if (!canStartNextStage()) return;
 
+  await runDiagnosedStartupStage('claude-subscription', async () => {
+    await claudeSubscriptionRuntime.start();
+  });
+  if (!canStartNextStage()) return;
+
   await runDiagnosedStartupStage('eyes-on-agents', async () => {
     const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
     if (!canStartNextStage()) return;
@@ -604,7 +622,9 @@ if (isLegacyCodingAgentHookHelperMode) {
     if (targets.length) {
       for (const target of targets) onlyPreviewOpenQueue.enqueue(target);
     } else {
-      mainWindowHelper.show();
+      void authHandler.showPrimaryWindow().catch((err: unknown) => {
+        console.warn('[app] Failed to show the primary window for second instance:', err);
+      });
     }
   });
   void app.whenReady().then(async () => {

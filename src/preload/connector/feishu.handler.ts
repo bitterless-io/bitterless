@@ -1,6 +1,9 @@
 import { XpcPreloadHandler, createXpcPreloadEmitter } from 'electron-xpc/preload';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
-import type { FeishuStoreHandler } from '@renderer/home/src/views/connector/feishu/feishu.store';
+import type {
+  FeishuConnectorRendererApi,
+  FeishuConnectorRuntimeApi,
+} from '@shared/connector/connector.contract';
 import * as lark from '@larksuiteoapi/node-sdk';
 
 const settingEmitter = createXpcPreloadEmitter<SettingDao>('SettingDao') as SettingDao;
@@ -12,7 +15,9 @@ interface FeishuConfig {
   appSecret: string;
 }
 
-const feishuEmitter = createXpcPreloadEmitter<FeishuStoreHandler>('FeishuStoreHandler') as FeishuStoreHandler;
+const feishuEmitter = createXpcPreloadEmitter<FeishuConnectorRendererApi>(
+  'FeishuStoreHandler'
+) as FeishuConnectorRendererApi;
 
 let client: any = null;
 let isConnected = false;
@@ -82,7 +87,7 @@ const disconnectBot = async (): Promise<void> => {
   );
 };
 
-export class FeishuHandler extends XpcPreloadHandler {
+export class FeishuHandler extends XpcPreloadHandler implements FeishuConnectorRuntimeApi {
   async init(): Promise<void> {
     console.log('[feishu] init called by renderer');
   }

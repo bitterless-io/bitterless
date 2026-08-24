@@ -1,18 +1,24 @@
-import { randomUUID } from 'node:crypto';
-import { BaseWindow, WebContentsView, type Rectangle, type Session } from 'electron';
+import type { Rectangle, WebContentsView } from 'electron';
 import { xpcMain } from 'electron-xpc/main';
 import {
+  cloneOnlyPreviewDescriptor,
   OnlyPreviewContractError,
   parseOnlyPreviewFileRef,
   toOnlyPreviewErrorPayload
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_MAX_IMAGE_BYTES,
+  ONLY_PREVIEW_MAX_DOCUMENT_BYTES,
   ONLY_PREVIEW_MAX_PDF_BYTES,
+  ONLY_PREVIEW_MAX_SHEET_BYTES,
   ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
   type OnlyPreviewDescriptor,
   type OnlyPreviewErrorCode,
   type OnlyPreviewFileRef,
+  type OnlyPreviewFindCoverage,
+  type OnlyPreviewFindIntent,
+  type OnlyPreviewFindResult,
+  type OnlyPreviewFindSnapshot,
   type OnlyPreviewPreviewAdapterId,
   type OnlyPreviewPreviewPresentation,
   type OnlyPreviewPreviewSurface,
@@ -23,20 +29,21 @@ import type { OnlyPreviewSearchWatchCommit } from '@shared/onlypreview/onlyPrevi
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewClassifierService } from '@main/onlypreview/onlyPreviewClassifier.service';
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
-import {
-  onlyPreviewHostRegistry,
-  type OnlyPreviewHostCapability
-} from '@main/onlypreview/onlyPreviewHost.registry';
-import { installOnlyPreviewSessionProtocol } from '@main/onlypreview/onlyPreviewProtocol.service';
+import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/onlypreview/onlyPreviewWorkspace.registry';
+import { getOnlyPreviewAdapterSpec } from '@shared/onlypreview/onlyPreviewFind.registry';
+import { OnlyPreviewFindService } from './onlyPreviewFind.service';
+import {
+  OnlyPreviewPreviewViewService,
+  presentationAllowsRendererError,
+  type OnlyPreviewPreviewRegionRuntime
+} from './onlyPreviewPreviewView.service';
 
-interface OnlyPreviewPreviewRegionRuntime {
-  window: BaseWindow;
-  host: OnlyPreviewHostCapability;
-  createVuePreviewView: (previewRuntimeToken: string) => WebContentsView;
-  loadVuePreviewView: (view: WebContentsView) => Promise<void>;
-  bindChromeShortcuts: (webContents: Electron.WebContents) => void;
-}
+const DOCUMENT_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  'DOCUMENT_PARSE_FAILED',
+  'DOCUMENT_SANITIZE_FAILED',
+  'DOCUMENT_RENDER_TIMEOUT'
+]);
 
 const emptyPresentation = (
   hostId: string,
@@ -69,6 +76,8 @@ const adapterForDescriptor = (
       ? { surface: 'vue', adapterId: 'markdown-dom' }
       : { surface: 'vue', adapterId: 'monaco' };
   }
+  if (descriptor.kind === 'sheet') return { surface: 'vue', adapterId: 'xlsx-grid' };
+  if (descriptor.kind === 'document') return { surface: 'vue', adapterId: 'docx-dom' };
   if (descriptor.kind === 'image') return { surface: 'vue', adapterId: 'image' };
   if (descriptor.kind === 'audio') return { surface: 'vue', adapterId: 'audio' };
   if (descriptor.kind === 'video') return { surface: 'vue', adapterId: 'video' };
@@ -76,50 +85,58 @@ const adapterForDescriptor = (
 };
 
 const adapterProvidesSelectedText = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
-  adapterId === 'monaco' || adapterId === 'markdown-dom';
+  adapterId === 'monaco' || adapterId === 'markdown-dom' || adapterId === 'docx-dom';
+
+const adapterUsesOneShotAsset = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
+  adapterId === 'image' || adapterId === 'xlsx-grid' || adapterId === 'docx-dom';
+
+const adapterUsesVueAsset = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
+  adapterUsesOneShotAsset(adapterId) || adapterId === 'audio' || adapterId === 'video';
+
+const effectiveDescriptorErrorCode = (
+  descriptor: OnlyPreviewDescriptor | null
+): OnlyPreviewErrorCode | null => {
+  const errorCode = descriptor?.previewError?.code;
+  if (!errorCode) return null;
+  return errorCode === 'UNSUPPORTED_CODEC' ? 'OPERATION_FAILED' : errorCode;
+};
 
 const descriptorErrorPayload = (
   descriptor: OnlyPreviewDescriptor
 ): OnlyPreviewPreviewPresentation['error'] => {
-  if (!descriptor.previewError) return null;
+  const errorCode = effectiveDescriptorErrorCode(descriptor);
+  if (!descriptor.previewError || !errorCode) return null;
   return {
-    code:
-      descriptor.previewError.code === 'UNSUPPORTED_CODEC'
-        ? 'OPERATION_FAILED'
-        : descriptor.previewError.code,
+    code: errorCode,
     message: descriptor.previewError.message
   };
 };
 
-const closeContentView = (view: WebContentsView | null): void => {
-  if (!view || view.webContents.isDestroyed()) return;
-  try {
-    view.webContents.close();
-  } catch {
-    // The owner window may already have torn down the WebContents.
-  }
-};
-
-const preventOnlyPreviewDownload = (event: Electron.Event, item: Electron.DownloadItem): void => {
-  event.preventDefault();
-  item.cancel();
-};
-
 export class OnlyPreviewPreviewRegionService {
+  private readonly findService = new OnlyPreviewFindService();
+  private readonly viewService = new OnlyPreviewPreviewViewService({
+    getActiveSurface: () => this.activePreviewSurface,
+    canAttachVue: () => this.vueResetAcknowledgedRevision === this.selectionRevision,
+    getDocumentLoadingRevision: () =>
+      this.activePreviewSurface === 'vue' &&
+      this.presentation.adapterId === 'docx-dom' &&
+      this.presentation.status === 'loading'
+        ? this.selectionRevision
+        : null,
+    isCurrent: (runtime, revision) => this.isCurrent(runtime, revision),
+    bindFindWebContents: (surface, webContents, generation) =>
+      this.findService.bindWebContents(surface, webContents, generation),
+    unbindFindWebContents: (surface, webContents) =>
+      this.findService.unbindWebContents(surface, webContents),
+    onVueUnavailable: (runtime, error, recreate) =>
+      this.handleVueUnavailable(runtime, error, recreate),
+    onChromeReady: (runtime, view, revision) => this.handleChromeReady(runtime, view, revision),
+    onChromeUnavailable: (runtime, view, revision, error) =>
+      this.markChromeUnavailable(runtime, view, revision, error)
+  });
   private runtime: OnlyPreviewPreviewRegionRuntime | null = null;
-  private vuePreviewView: WebContentsView | null = null;
-  private vueRuntimeToken: string | null = null;
-  private chromePreviewView: WebContentsView | null = null;
-  private attachedView: WebContentsView | null = null;
-  private chromeProtocolCleanup: (() => void) | null = null;
-  private chromeSession: Session | null = null;
-  private pendingChromeMount: {
-    runtime: OnlyPreviewPreviewRegionRuntime;
-    revision: number;
-    navigationUrl: string;
-  } | null = null;
-  private contentBounds: Rectangle | null = null;
   private selectionRevision = 0;
+  private readyFindCoverage: OnlyPreviewFindCoverage | null = null;
   private activePreviewSurface: OnlyPreviewPreviewSurface | null = 'vue';
   private vueResetAcknowledgedRevision: number | null = null;
   private activeFileIdentity: {
@@ -136,41 +153,24 @@ export class OnlyPreviewPreviewRegionService {
   start(runtime: OnlyPreviewPreviewRegionRuntime): void {
     this.destroy();
     this.runtime = runtime;
+    this.viewService.start(runtime);
     this.activePreviewSurface = 'vue';
     this.vueResetAcknowledgedRevision = null;
     this.presentation = emptyPresentation(runtime.host.hostId, this.selectionRevision);
+    this.findService.reset(this.presentation);
   }
 
   getVuePreviewView(): WebContentsView | null {
-    return this.vuePreviewView;
+    return this.viewService.getVuePreviewView();
   }
 
   getBounds(): Rectangle | null {
-    return this.contentBounds ? { ...this.contentBounds } : null;
+    return this.viewService.getBounds();
   }
 
   updateBounds(hostToken: string, bounds: Rectangle): void {
     this.requireRuntime(hostToken);
-    if (
-      !Number.isFinite(bounds.x) ||
-      !Number.isFinite(bounds.y) ||
-      !Number.isFinite(bounds.width) ||
-      !Number.isFinite(bounds.height) ||
-      bounds.x < 0 ||
-      bounds.y < 0 ||
-      bounds.width < 0 ||
-      bounds.height < 0
-    ) {
-      throw new OnlyPreviewContractError('INVALID_INPUT', 'Preview bounds are invalid.');
-    }
-    this.contentBounds = {
-      x: Math.round(bounds.x),
-      y: Math.round(bounds.y),
-      width: Math.round(bounds.width),
-      height: Math.round(bounds.height)
-    };
-    this.attachActiveView();
-    this.mountPendingChromeSelection();
+    this.viewService.updateBounds(bounds);
   }
 
   async present(hostToken: string, value: unknown): Promise<void> {
@@ -190,6 +190,7 @@ export class OnlyPreviewPreviewRegionService {
       if (!this.isCurrent(runtime, revision)) return;
       const adapter = adapterForDescriptor(descriptor);
       let navigationUrl: string | null = null;
+      let assetIssued = false;
       if (adapter.adapterId === 'html-page') {
         navigationUrl = await onlyPreviewDocumentRegistry.issue(opened, revision);
         if (!this.isCurrent(runtime, revision)) {
@@ -200,9 +201,29 @@ export class OnlyPreviewPreviewRegionService {
       } else if (adapter.adapterId === 'chromium-pdf') {
         navigationUrl = onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
           selectionRevision: revision,
-          maxBytes: Math.min(opened.size, ONLY_PREVIEW_MAX_PDF_BYTES)
+          maxBytes: Math.min(opened.size, ONLY_PREVIEW_MAX_PDF_BYTES),
+          delivery: 'network'
         });
+        assetIssued = true;
         descriptor = { ...descriptor, assetUrl: navigationUrl };
+      } else if (adapter.adapterId === 'xlsx-grid') {
+        descriptor = {
+          ...descriptor,
+          assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
+            selectionRevision: revision,
+            maxBytes: Math.min(opened.size, ONLY_PREVIEW_MAX_SHEET_BYTES)
+          })
+        };
+        assetIssued = true;
+      } else if (adapter.adapterId === 'docx-dom') {
+        descriptor = {
+          ...descriptor,
+          assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
+            selectionRevision: revision,
+            maxBytes: Math.min(opened.size, ONLY_PREVIEW_MAX_DOCUMENT_BYTES)
+          })
+        };
+        assetIssued = true;
       } else if (
         adapter.adapterId === 'image' ||
         adapter.adapterId === 'audio' ||
@@ -216,13 +237,26 @@ export class OnlyPreviewPreviewRegionService {
           ...descriptor,
           assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
             selectionRevision: revision,
-            maxBytes
+            maxBytes,
+            lifetime:
+              adapter.adapterId === 'audio' || adapter.adapterId === 'video' ? 'selection' : 'ttl'
           })
         };
+        assetIssued = true;
+      }
+
+      if (assetIssued && !this.isCurrent(runtime, revision)) {
+        onlyPreviewAssetRegistry.revokeSelection(runtime.host.hostToken, revision);
+        return;
       }
 
       await onlyPreviewWorkspaceRegistry.assertOpenedFileCurrent(opened);
-      if (!this.isCurrent(runtime, revision)) return;
+      if (!this.isCurrent(runtime, revision)) {
+        if (assetIssued) {
+          onlyPreviewAssetRegistry.revokeSelection(runtime.host.hostToken, revision);
+        }
+        return;
+      }
 
       this.activeFileIdentity = {
         workspaceId: opened.workspace.workspaceId,
@@ -234,6 +268,7 @@ export class OnlyPreviewPreviewRegionService {
         modifiedTimeNanoseconds: opened.modifiedTimeNanoseconds
       };
 
+      descriptor = cloneOnlyPreviewDescriptor(descriptor);
       this.activePreviewSurface = adapter.surface;
       this.presentation = {
         hostId: runtime.host.hostId,
@@ -248,22 +283,24 @@ export class OnlyPreviewPreviewRegionService {
         selectedTextAvailable: adapterProvidesSelectedText(adapter.adapterId)
       };
       this.publishPresentation();
+      this.viewService.armDocumentWatchdogIfEligible();
 
       if (adapter.surface === 'chrome' && navigationUrl) {
-        if (this.contentBounds) {
-          await this.mountChromeSelection(runtime, revision, navigationUrl);
-        } else {
-          this.pendingChromeMount = { runtime, revision, navigationUrl };
-        }
+        await this.viewService.stageChromeSelection(
+          runtime,
+          revision,
+          navigationUrl,
+          adapter.adapterId === 'chromium-pdf'
+        );
       } else {
-        this.attachActiveView();
+        this.viewService.attachActiveView();
       }
     } catch (error) {
       if (!this.isCurrent(runtime, revision)) return;
       this.revokeCurrentAuthority();
       this.activeFileIdentity = null;
-      this.detachActiveView();
-      this.destroyChromePreviewView();
+      this.viewService.detachActiveView();
+      this.viewService.destroyChromePreviewView();
       this.activePreviewSurface = 'vue';
       this.presentation = {
         hostId: runtime.host.hostId,
@@ -278,7 +315,7 @@ export class OnlyPreviewPreviewRegionService {
         selectedTextAvailable: false
       };
       this.publishPresentation();
-      this.attachActiveView();
+      this.viewService.attachActiveView();
     } finally {
       await opened?.fileHandle.close().catch(() => undefined);
     }
@@ -317,7 +354,7 @@ export class OnlyPreviewPreviewRegionService {
       workspaceId
     };
     this.publishPresentation();
-    this.attachActiveView();
+    this.viewService.attachActiveView();
   }
 
   snapshot(hostToken: string): OnlyPreviewPreviewPresentation {
@@ -328,6 +365,36 @@ export class OnlyPreviewPreviewRegionService {
   snapshotForVue(hostToken: string, previewRuntimeToken: string): OnlyPreviewPreviewPresentation {
     this.requireVueRuntime(hostToken, previewRuntimeToken);
     return this.snapshotInternal(true);
+  }
+
+  findSnapshot(hostToken: string): OnlyPreviewFindSnapshot {
+    this.requireRuntime(hostToken);
+    return this.findService.snapshot();
+  }
+
+  openFind(hostToken: string): boolean {
+    this.requireRuntime(hostToken);
+    return this.findService.open();
+  }
+
+  submitFind(hostToken: string, intent: Omit<OnlyPreviewFindIntent, 'hostToken'>): void {
+    this.requireRuntime(hostToken);
+    this.findService.submit(intent);
+  }
+
+  closeFind(hostToken: string): void {
+    this.requireRuntime(hostToken);
+    this.findService.close();
+  }
+
+  isFindOpen(hostToken: string): boolean {
+    this.requireRuntime(hostToken);
+    return this.findService.isOpen();
+  }
+
+  focusActiveContent(hostToken: string): void {
+    this.requireRuntime(hostToken);
+    this.viewService.focusActiveContent();
   }
 
   async readText(
@@ -384,12 +451,52 @@ export class OnlyPreviewPreviewRegionService {
   reportVueReset(hostToken: string, selectionRevision: number, previewRuntimeToken: string): void {
     this.requireCurrentVueRevision(hostToken, selectionRevision, previewRuntimeToken, false);
     this.vueResetAcknowledgedRevision = selectionRevision;
-    this.attachActiveView();
+    this.viewService.attachActiveView();
   }
 
-  reportVueReady(hostToken: string, selectionRevision: number, previewRuntimeToken: string): void {
+  reportVueReady(
+    hostToken: string,
+    selectionRevision: number,
+    previewRuntimeToken: string,
+    findCoverage?: OnlyPreviewFindCoverage,
+    findAdapter?: 'monaco' | 'sheet'
+  ): void {
     this.requireCurrentVueRevision(hostToken, selectionRevision, previewRuntimeToken);
-    this.presentation = { ...this.presentation, status: 'ready', error: null };
+    if (this.presentation.status !== 'loading') return;
+    if (this.presentation.adapterId === 'xlsx-grid' && !findCoverage) {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'Workbook Preview readiness requires its accepted model coverage.'
+      );
+    }
+    if (this.presentation.adapterId !== 'xlsx-grid' && findCoverage?.kind === 'partial') {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'Partial find coverage belongs only to a workbook Preview.'
+      );
+    }
+    const expectedFind = getOnlyPreviewAdapterSpec(this.presentation.adapterId).find;
+    if (
+      (expectedFind.mode === 'content-adapter' && findAdapter !== expectedFind.adapter) ||
+      (expectedFind.mode !== 'content-adapter' && findAdapter !== undefined)
+    ) {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'Preview readiness does not match the registered find adapter.'
+      );
+    }
+    this.readyFindCoverage = findCoverage ?? { kind: 'complete' };
+    this.viewService.clearDocumentWatchdog();
+    if (adapterUsesOneShotAsset(this.presentation.adapterId)) {
+      onlyPreviewAssetRegistry.revokeSelection(hostToken, selectionRevision);
+    }
+    const descriptor = this.presentation.descriptor
+      ? { ...this.presentation.descriptor }
+      : this.presentation.descriptor;
+    if (descriptor && adapterUsesOneShotAsset(this.presentation.adapterId)) {
+      delete descriptor.assetUrl;
+    }
+    this.presentation = { ...this.presentation, descriptor, status: 'ready', error: null };
     this.publishPresentation();
   }
 
@@ -400,8 +507,41 @@ export class OnlyPreviewPreviewRegionService {
     errorCode: OnlyPreviewErrorCode
   ): void {
     this.requireCurrentVueRevision(hostToken, selectionRevision, previewRuntimeToken);
+    if (!presentationAllowsRendererError(this.presentation, errorCode)) {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'Preview error does not belong to the current adapter.'
+      );
+    }
+    if (this.presentation.status !== 'loading' && this.presentation.status !== 'ready') return;
+    const runtime = this.runtime;
+    const view = this.viewService.getVuePreviewView();
+    if (
+      runtime &&
+      view &&
+      this.presentation.adapterId === 'docx-dom' &&
+      DOCUMENT_REBUILD_ERRORS.has(errorCode)
+    ) {
+      this.viewService.clearDocumentWatchdog();
+      this.viewService.invalidateVuePreviewView(
+        view,
+        new OnlyPreviewContractError(errorCode, 'The selected document could not be rendered.'),
+        true
+      );
+      return;
+    }
+    this.findService.beginTransition();
+    this.viewService.clearDocumentWatchdog();
+    onlyPreviewAssetRegistry.revokeSelection(hostToken, selectionRevision);
+    const descriptor = this.presentation.descriptor
+      ? { ...this.presentation.descriptor }
+      : this.presentation.descriptor;
+    if (descriptor && adapterUsesVueAsset(this.presentation.adapterId)) {
+      delete descriptor.assetUrl;
+    }
     this.presentation = {
       ...this.presentation,
+      descriptor,
       status: 'unavailable',
       error: toOnlyPreviewErrorPayload(
         new OnlyPreviewContractError(errorCode, 'The selected file could not be rendered.')
@@ -411,19 +551,24 @@ export class OnlyPreviewPreviewRegionService {
     this.publishPresentation();
   }
 
+  reportVueFindResult(
+    hostToken: string,
+    previewRuntimeToken: string,
+    result: OnlyPreviewFindResult
+  ): void {
+    this.requireCurrentVueRevision(hostToken, result.selectionRevision, previewRuntimeToken);
+    this.findService.reportContentResult(result);
+  }
+
   destroy(): void {
     const runtime = this.runtime;
+    this.findService.beginTransition();
+    this.viewService.clearDocumentWatchdog();
     this.revokeCurrentAuthority();
-    this.detachActiveView();
-    this.destroyChromePreviewView();
-    closeContentView(this.vuePreviewView);
-    this.vuePreviewView = null;
-    this.vueRuntimeToken = null;
+    this.viewService.destroy();
     this.vueResetAcknowledgedRevision = null;
     this.activeFileIdentity = null;
-    this.pendingChromeMount = null;
     this.runtime = null;
-    this.contentBounds = null;
     this.activePreviewSurface = null;
     if (runtime) {
       this.presentation = emptyPresentation(runtime.host.hostId, this.selectionRevision);
@@ -433,11 +578,24 @@ export class OnlyPreviewPreviewRegionService {
   private beginTransition(fileRef: OnlyPreviewFileRef | null): number {
     const runtime = this.runtime;
     if (!runtime) throw new Error('OnlyPreview Preview Region is not running.');
+    const pendingDocumentView =
+      this.activePreviewSurface === 'vue' &&
+      this.presentation.adapterId === 'docx-dom' &&
+      this.presentation.status === 'loading'
+        ? this.viewService.getVuePreviewView()
+        : null;
+    this.findService.beginTransition();
     this.selectionRevision += 1;
+    this.readyFindCoverage = null;
+    this.viewService.clearDocumentWatchdog();
     this.revokeCurrentAuthority();
-    this.detachActiveView();
-    this.destroyChromePreviewView();
-    this.pendingChromeMount = null;
+    this.viewService.detachActiveView();
+    if (pendingDocumentView && this.viewService.getVuePreviewView() === pendingDocumentView) {
+      this.viewService.destroyVuePreviewView(pendingDocumentView);
+      this.vueResetAcknowledgedRevision = null;
+    }
+    this.viewService.destroyChromePreviewView();
+    this.viewService.clearPendingChromeSelection();
     this.activePreviewSurface = null;
     this.vueResetAcknowledgedRevision = null;
     this.activeFileIdentity = null;
@@ -458,47 +616,28 @@ export class OnlyPreviewPreviewRegionService {
     onlyPreviewAssetRegistry.revokeSelection(hostToken);
   }
 
-  private ensureVuePreviewView(): WebContentsView | null {
-    const runtime = this.runtime;
-    if (!runtime) return null;
-    if (this.vuePreviewView && !this.vuePreviewView.webContents.isDestroyed()) {
-      return this.vuePreviewView;
-    }
-    const previewRuntimeToken = randomUUID();
-    const view = runtime.createVuePreviewView(previewRuntimeToken);
-    this.vuePreviewView = view;
-    this.vueRuntimeToken = previewRuntimeToken;
-    view.webContents.once('render-process-gone', (_event, details) => {
-      this.markVueUnavailable(
-        runtime,
-        view,
-        new Error(`The Preview renderer exited (${details.reason}).`),
-        true
-      );
-    });
-    void runtime.loadVuePreviewView(view).catch((error) => {
-      this.markVueUnavailable(runtime, view, error, false);
-    });
-    return view;
-  }
-
-  private markVueUnavailable(
+  private handleVueUnavailable(
     runtime: OnlyPreviewPreviewRegionRuntime,
-    view: WebContentsView,
     error: unknown,
     recreate: boolean
   ): void {
-    if (this.vuePreviewView !== view || this.runtime !== runtime) return;
-    this.detachView(view);
-    closeContentView(view);
-    this.vuePreviewView = null;
-    this.vueRuntimeToken = null;
+    if (this.runtime !== runtime) return;
+    this.viewService.clearDocumentWatchdog();
     this.vueResetAcknowledgedRevision = null;
     if (this.activePreviewSurface !== 'vue') return;
+    this.findService.beginTransition();
     this.selectionRevision += 1;
+    this.readyFindCoverage = null;
     this.revokeCurrentAuthority();
+    const descriptor = this.presentation.descriptor
+      ? { ...this.presentation.descriptor }
+      : this.presentation.descriptor;
+    if (descriptor && adapterUsesVueAsset(this.presentation.adapterId)) {
+      delete descriptor.assetUrl;
+    }
     this.presentation = {
       ...this.presentation,
+      descriptor,
       selectionRevision: this.selectionRevision,
       status: 'unavailable',
       error: toOnlyPreviewErrorPayload(error),
@@ -507,137 +646,46 @@ export class OnlyPreviewPreviewRegionService {
     this.publishPresentation();
     if (!recreate) return;
     try {
-      this.ensureVuePreviewView();
-      this.attachActiveView();
+      this.viewService.ensureVuePreviewView();
+      this.viewService.armDocumentWatchdogIfEligible();
+      this.viewService.attachActiveView();
     } catch {
       // Keep the published unavailable state if the replacement view cannot be created.
     }
   }
 
-  private async mountChromeSelection(
+  private handleChromeReady(
     runtime: OnlyPreviewPreviewRegionRuntime,
-    revision: number,
-    navigationUrl: string
-  ): Promise<void> {
-    let view: WebContentsView | null = null;
-    let targetSession: Session | null = null;
-    let localProtocolCleanup: (() => void) | null = null;
-    try {
-      if (!this.contentBounds || !this.isCurrent(runtime, revision)) return;
-      view = this.createChromePreviewView(runtime, revision);
-      targetSession = view.webContents.session;
-      this.chromePreviewView = view;
-      this.chromeSession = targetSession;
-      await this.configureChromeSession(targetSession);
-      if (this.chromePreviewView !== view || !this.isCurrent(runtime, revision)) {
-        this.cleanupChromeResources(view, targetSession, null);
-        return;
-      }
-      localProtocolCleanup = installOnlyPreviewSessionProtocol(targetSession, navigationUrl);
-      if (this.chromePreviewView !== view || !this.isCurrent(runtime, revision)) {
-        this.cleanupChromeResources(view, targetSession, localProtocolCleanup);
-        return;
-      }
-      this.chromeProtocolCleanup = localProtocolCleanup;
-      localProtocolCleanup = null;
-      this.configureChromeNavigation(view, runtime, revision, navigationUrl);
-      this.attachActiveView();
-      await view.webContents.loadURL(navigationUrl);
-    } catch (error) {
-      if (view && targetSession && this.chromePreviewView !== view) {
-        this.cleanupChromeResources(view, targetSession, localProtocolCleanup);
-      } else {
-        localProtocolCleanup?.();
-      }
-      if (!this.isCurrent(runtime, revision)) return;
-      this.markChromeUnavailable(error);
-    }
-  }
-
-  private mountPendingChromeSelection(): void {
-    const pending = this.pendingChromeMount;
-    if (!pending || !this.contentBounds || !this.isCurrent(pending.runtime, pending.revision)) {
+    view: WebContentsView,
+    revision: number
+  ): void {
+    if (this.viewService.getChromePreviewView() !== view || !this.isCurrent(runtime, revision)) {
       return;
     }
-    this.pendingChromeMount = null;
-    void this.mountChromeSelection(pending.runtime, pending.revision, pending.navigationUrl);
+    this.readyFindCoverage = { kind: 'complete' };
+    this.presentation = { ...this.presentation, status: 'ready', error: null };
+    this.publishPresentation();
   }
 
-  private createChromePreviewView(
+  private markChromeUnavailable(
     runtime: OnlyPreviewPreviewRegionRuntime,
-    revision: number
-  ): WebContentsView {
-    const view = new WebContentsView({
-      webPreferences: {
-        partition: `onlypreview-chrome-${runtime.host.hostId}-${revision}-${randomUUID()}`,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        webSecurity: true,
-        plugins: true
-      }
-    });
-    view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
-    runtime.bindChromeShortcuts(view.webContents);
-    return view;
-  }
-
-  private async configureChromeSession(targetSession: Session): Promise<void> {
-    targetSession.setPermissionCheckHandler(() => false);
-    targetSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
-      callback(false)
-    );
-    targetSession.webRequest.onBeforeRequest(
-      {
-        urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'ftp://*/*', 'file://*/*']
-      },
-      (_details, callback) => callback({ cancel: true })
-    );
-    targetSession.on('will-download', preventOnlyPreviewDownload);
-    await targetSession.setProxy({
-      mode: 'fixed_servers',
-      proxyRules: 'http=127.0.0.1:9;https=127.0.0.1:9;socks=127.0.0.1:9',
-      proxyBypassRules: '<-loopback>'
-    });
-  }
-
-  private configureChromeNavigation(
-    view: WebContentsView,
-    runtime: OnlyPreviewPreviewRegionRuntime,
+    view: WebContentsView | null,
     revision: number,
-    navigationUrl: string
+    error: unknown
   ): void {
-    const webContents = view.webContents;
-    webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    const fenceNavigation = (event: Electron.Event, url: string): void => {
-      if (url === navigationUrl) return;
-      event.preventDefault();
-    };
-    webContents.on('will-navigate', fenceNavigation);
-    webContents.on('will-redirect', fenceNavigation);
-    webContents.on('will-frame-navigate', (event) => {
-      if (event.isMainFrame && event.url === navigationUrl) return;
-      event.preventDefault();
-    });
-    webContents.once('did-finish-load', () => {
-      if (this.chromePreviewView !== view || !this.isCurrent(runtime, revision)) return;
-      this.presentation = { ...this.presentation, status: 'ready', error: null };
-      this.publishPresentation();
-    });
-    webContents.once('render-process-gone', (_event, details) => {
-      if (this.chromePreviewView !== view || !this.isCurrent(runtime, revision)) return;
-      this.markChromeUnavailable(new Error(`The raw Preview renderer exited (${details.reason}).`));
-    });
-  }
-
-  private markChromeUnavailable(error: unknown): void {
-    const runtime = this.runtime;
-    if (!runtime) return;
+    if (
+      !this.isCurrent(runtime, revision) ||
+      (view !== null && this.viewService.getChromePreviewView() !== view)
+    ) {
+      return;
+    }
+    this.findService.beginTransition();
     this.selectionRevision += 1;
-    this.pendingChromeMount = null;
+    this.readyFindCoverage = null;
+    this.viewService.clearPendingChromeSelection();
     this.revokeCurrentAuthority();
-    this.detachActiveView();
-    this.destroyChromePreviewView();
+    this.viewService.detachActiveView();
+    this.viewService.destroyChromePreviewView();
     this.activePreviewSurface = 'vue';
     this.vueResetAcknowledgedRevision = null;
     this.presentation = {
@@ -650,93 +698,28 @@ export class OnlyPreviewPreviewRegionService {
       selectedTextAvailable: false
     };
     this.publishPresentation();
-    this.attachActiveView();
-  }
-
-  private attachActiveView(): void {
-    const runtime = this.runtime;
-    if (!runtime || !this.contentBounds || !this.activePreviewSurface) return;
-    const view =
-      this.activePreviewSurface === 'chrome' ? this.chromePreviewView : this.ensureVuePreviewView();
-    if (!view || view.webContents.isDestroyed()) return;
-    if (
-      this.activePreviewSurface === 'vue' &&
-      this.vueResetAcknowledgedRevision !== this.selectionRevision
-    ) {
-      return;
-    }
-    if (this.attachedView !== view) {
-      this.detachActiveView();
-      runtime.window.contentView.addChildView(view);
-      this.attachedView = view;
-    }
-    view.setBounds({ ...this.contentBounds });
-  }
-
-  private detachActiveView(): void {
-    if (this.attachedView) this.detachView(this.attachedView);
-    this.attachedView = null;
-  }
-
-  private detachView(view: WebContentsView): void {
-    const window = this.runtime?.window;
-    if (!window || window.isDestroyed()) return;
-    try {
-      window.contentView.removeChildView(view);
-    } catch {
-      // Electron may already have detached child views while the parent is closing.
-    }
-    if (this.attachedView === view) this.attachedView = null;
-  }
-
-  private destroyChromePreviewView(): void {
-    const view = this.chromePreviewView;
-    const targetSession = this.chromeSession;
-    const protocolCleanup = this.chromeProtocolCleanup;
-    this.chromePreviewView = null;
-    this.chromeSession = null;
-    this.chromeProtocolCleanup = null;
-    this.cleanupChromeResources(view, targetSession, protocolCleanup);
-  }
-
-  private cleanupChromeResources(
-    view: WebContentsView | null,
-    targetSession: Session | null,
-    protocolCleanup: (() => void) | null
-  ): void {
-    protocolCleanup?.();
-    if (view) this.detachView(view);
-    closeContentView(view);
-    if (targetSession) {
-      targetSession.removeListener('will-download', preventOnlyPreviewDownload);
-      targetSession.webRequest.onBeforeRequest(null);
-      targetSession.setPermissionCheckHandler(null);
-      targetSession.setPermissionRequestHandler(null);
-      void targetSession.closeAllConnections().catch(() => undefined);
-      void targetSession.clearStorageData().catch(() => undefined);
-      void targetSession.clearCache().catch(() => undefined);
-    }
+    this.viewService.attachActiveView();
   }
 
   private publishPresentation(): void {
     if (!this.runtime) return;
+    this.findService.syncPresentation(this.presentation, this.readyFindCoverage ?? undefined);
     xpcMain.broadcast(ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT, {
       hostId: this.runtime.host.hostId
     });
   }
 
   private snapshotInternal(includeVueAsset = false): OnlyPreviewPreviewPresentation {
-    const descriptor = this.presentation.descriptor ? { ...this.presentation.descriptor } : null;
-    if (
-      descriptor?.assetUrl &&
-      (!includeVueAsset ||
-        this.presentation.surface !== 'vue' ||
-        descriptor.kind === 'pdf' ||
-        descriptor.extension === '.html' ||
-        descriptor.extension === '.htm')
-    ) {
-      delete descriptor.assetUrl;
-    }
+    const sourceDescriptor = this.presentation.descriptor;
+    const includeDescriptorAsset =
+      includeVueAsset &&
+      this.presentation.surface === 'vue' &&
+      sourceDescriptor?.kind !== 'pdf' &&
+      sourceDescriptor?.extension !== '.html' &&
+      sourceDescriptor?.extension !== '.htm';
+    const descriptor = sourceDescriptor
+      ? cloneOnlyPreviewDescriptor(sourceDescriptor, { includeAsset: includeDescriptorAsset })
+      : null;
     return {
       ...this.presentation,
       fileRef: this.presentation.fileRef ? { ...this.presentation.fileRef } : null,
@@ -784,10 +767,11 @@ export class OnlyPreviewPreviewRegionService {
 
   private requireVueRuntime(hostToken: string, previewRuntimeToken: string): void {
     this.requireRuntime(hostToken);
+    const vuePreviewView = this.viewService.getVuePreviewView();
     if (
-      !this.vuePreviewView ||
-      this.vuePreviewView.webContents.isDestroyed() ||
-      previewRuntimeToken !== this.vueRuntimeToken
+      !vuePreviewView ||
+      vuePreviewView.webContents.isDestroyed() ||
+      previewRuntimeToken !== this.viewService.getVueRuntimeToken()
     ) {
       throw new OnlyPreviewContractError(
         'HOST_ROLE_DENIED',

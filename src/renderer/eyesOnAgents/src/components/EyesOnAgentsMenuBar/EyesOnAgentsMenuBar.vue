@@ -43,7 +43,8 @@
           type="text"
           :class="bridgeButtonClass"
           :aria-label="bridgeLabel"
-          @click="$emit('open-connections')"
+          :aria-expanded="connectionsOpen"
+          @click="$emit('toggle-connections')"
         >
           <template #icon><IconPlugConnected :size="16" /></template>
         </a-button>
@@ -113,8 +114,11 @@ import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 import { eyesOnAgentsWindowEmitter } from '../../emitter/eyesOnAgentsWindow.emitter';
 import { eyesOnAgentsEnv } from '../../contextBridge/eyesOnAgentsEnv.bridge';
 
+defineProps<{ connectionsOpen: boolean }>();
+
 defineEmits<{
   (event: 'open-connections'): void;
+  (event: 'toggle-connections'): void;
 }>();
 
 const isMac = uaHelper.isMac;

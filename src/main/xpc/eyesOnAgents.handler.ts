@@ -319,6 +319,10 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     await eyesOnAgentsService.previewThread(parseEyesOnAgentsSessionKeyParams(params));
   }
 
+  async copySessionPath(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void> {
+    await eyesOnAgentsService.copySessionPath(parseEyesOnAgentsSessionKeyParams(params));
+  }
+
   async markAllRead(): Promise<EyesOnAgentsSnapshot> {
     return await eyesOnAgentsService.markAllRead();
   }

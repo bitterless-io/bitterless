@@ -3,6 +3,8 @@ import type { FileHandle } from 'node:fs/promises';
 import { pipeline, Readable, Transform } from 'node:stream';
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { net } from 'electron';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import { ONLY_PREVIEW_SCHEME } from '@shared/onlypreview/onlyPreview.types';
 import type { OpenedOnlyPreviewFile } from './onlyPreviewWorkspace.registry';
@@ -13,7 +15,11 @@ import {
 } from './onlyPreviewWorkspace.registry';
 
 const MAX_ASSET_TOKENS = 512;
-const ASSET_TOKEN_TTL_MS = 30 * 60 * 1000;
+export const ONLY_PREVIEW_ASSET_TOKEN_TTL_MS = 30 * 60 * 1000;
+const ASSET_FETCH_RESPONSE_HEADERS = Object.freeze({
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Expose-Headers': 'Accept-Ranges'
+});
 
 interface AssetTokenRecord {
   token: string;
@@ -29,13 +35,28 @@ interface AssetTokenRecord {
   expectedRealPath: string;
   maxBytes: number;
   createdAt: number;
+  lifetime: 'ttl' | 'selection';
+  delivery: OnlyPreviewAssetDelivery;
   activeStreams: Set<ReadStream>;
 }
+
+export type OnlyPreviewAssetDelivery = 'stream' | 'network';
 
 export interface OnlyPreviewAssetIssueOptions {
   selectionRevision: number;
   maxBytes: number;
+  lifetime?: 'ttl' | 'selection';
+  /**
+   * `stream` reads the file in this process and keeps the byte-ceiling and streaming identity
+   * guards. `network` hands the admitted range to Chromium's network service instead, so no file
+   * byte passes through Main — used by the raw Chromium adapters, whose payloads are the large ones
+   * and whose renderer never sees the bytes as data.
+   */
+  delivery?: OnlyPreviewAssetDelivery;
 }
+
+const isAssetExpired = (asset: AssetTokenRecord): boolean =>
+  asset.lifetime === 'ttl' && Date.now() - asset.createdAt > ONLY_PREVIEW_ASSET_TOKEN_TTL_MS;
 
 export interface OnlyPreviewByteRange {
   start: number;
@@ -203,6 +224,82 @@ export const createOnlyPreviewFileResponse = async (params: {
   });
 };
 
+/**
+ * Same admitted-range contract as `createOnlyPreviewFileResponse`, with Chromium's network service
+ * — not this process — reading the file. `net.fetch` honours `Range` at the byte level but answers
+ * `200` with no range headers, so the `206`/`Content-Range`/`Content-Length` contract is synthesized
+ * from the already-verified file identity. The byte-counting ceiling and the streaming re-`stat` are
+ * unavailable here by construction; identity is instead re-verified per request before the fetch.
+ */
+export const createOnlyPreviewNetworkFileResponse = async (params: {
+  request: Request;
+  realPath: string;
+  fileSize: number;
+  mimeType: string;
+  maxBytes: number;
+  responseHeaders?: Readonly<Record<string, string>>;
+}): Promise<Response> => {
+  if (params.request.method !== 'GET' && params.request.method !== 'HEAD') {
+    return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
+  }
+  if (
+    !Number.isSafeInteger(params.maxBytes) ||
+    params.maxBytes < 0 ||
+    params.fileSize > params.maxBytes
+  ) {
+    return new Response(null, { status: 413 });
+  }
+
+  const parsedRange = parseOnlyPreviewRange(params.request.headers.get('range'), params.fileSize);
+  const baseHeaders = {
+    'Accept-Ranges': 'bytes',
+    'Content-Type': params.mimeType,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-DNS-Prefetch-Control': 'off',
+    ...params.responseHeaders
+  };
+  if (parsedRange.kind === 'invalid') {
+    return new Response(null, {
+      status: 416,
+      headers: {
+        ...baseHeaders,
+        'Content-Range': `bytes */${params.fileSize}`,
+        'Content-Length': '0'
+      }
+    });
+  }
+
+  const range =
+    parsedRange.kind === 'range'
+      ? parsedRange.range
+      : { start: 0, end: Math.max(0, params.fileSize - 1) };
+  const contentLength = params.fileSize === 0 ? 0 : range.end - range.start + 1;
+  const headers: Record<string, string> = {
+    ...baseHeaders,
+    'Content-Length': String(contentLength)
+  };
+  if (parsedRange.kind === 'range') {
+    headers['Content-Range'] = `bytes ${range.start}-${range.end}/${params.fileSize}`;
+  }
+  if (params.request.method === 'HEAD' || params.fileSize === 0) {
+    return new Response(null, {
+      status: parsedRange.kind === 'range' ? 206 : 200,
+      headers
+    });
+  }
+
+  const upstream = await net.fetch(pathToFileURL(params.realPath).toString(), {
+    headers: { Range: `bytes=${range.start}-${range.end}` },
+    bypassCustomProtocolHandlers: true
+  });
+  if (!upstream.ok || !upstream.body) return new Response(null, { status: 502 });
+  return new Response(upstream.body, {
+    status: parsedRange.kind === 'range' ? 206 : 200,
+    headers
+  });
+};
+
 export class OnlyPreviewAssetRegistry {
   private readonly assets = new Map<string, AssetTokenRecord>();
 
@@ -223,7 +320,13 @@ export class OnlyPreviewAssetRegistry {
       !Number.isSafeInteger(options.selectionRevision) ||
       options.selectionRevision < 1 ||
       !Number.isSafeInteger(options.maxBytes) ||
-      options.maxBytes < 0
+      options.maxBytes < 0 ||
+      (options.lifetime !== undefined &&
+        options.lifetime !== 'ttl' &&
+        options.lifetime !== 'selection') ||
+      (options.delivery !== undefined &&
+        options.delivery !== 'stream' &&
+        options.delivery !== 'network')
     ) {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'Asset byte ceiling is invalid.');
     }
@@ -253,6 +356,8 @@ export class OnlyPreviewAssetRegistry {
       expectedRealPath: file.realPath,
       maxBytes: options.maxBytes,
       createdAt: Date.now(),
+      lifetime: options.lifetime ?? 'ttl',
+      delivery: options.delivery ?? 'stream',
       activeStreams: new Set()
     });
     return `${ONLY_PREVIEW_SCHEME}://asset/${token}/${encodeURIComponent(basename(file.relativePath))}`;
@@ -296,7 +401,7 @@ export class OnlyPreviewAssetRegistry {
     ) {
       return new Response(null, { status: 404 });
     }
-    if (Date.now() - asset.createdAt > ASSET_TOKEN_TTL_MS) {
+    if (isAssetExpired(asset)) {
       this.revokeToken(token);
       return new Response(null, { status: 404 });
     }
@@ -313,7 +418,7 @@ export class OnlyPreviewAssetRegistry {
       if (
         this.assets.get(token) !== asset ||
         !this.hosts.isLive(asset.hostToken) ||
-        Date.now() - asset.createdAt > ASSET_TOKEN_TTL_MS
+        isAssetExpired(asset)
       ) {
         await file.fileHandle.close().catch(() => undefined);
         return new Response(null, { status: 404 });
@@ -332,12 +437,27 @@ export class OnlyPreviewAssetRegistry {
         await file.fileHandle.close().catch(() => undefined);
         return new Response(null, { status: 413 });
       }
+      if (asset.delivery === 'network') {
+        // The handle only proved this request's identity; the bytes never enter this process.
+        const realPath = file.realPath;
+        await file.fileHandle.close().catch(() => undefined);
+        file = null;
+        return await createOnlyPreviewNetworkFileResponse({
+          request,
+          realPath,
+          fileSize: asset.expectedSize,
+          mimeType: asset.mimeType,
+          maxBytes: asset.maxBytes,
+          responseHeaders: ASSET_FETCH_RESPONSE_HEADERS
+        });
+      }
       return await createOnlyPreviewFileResponse({
         request,
         fileHandle: file.fileHandle,
         fileSize: file.size,
         mimeType: asset.mimeType,
         maxBytes: asset.maxBytes,
+        responseHeaders: ASSET_FETCH_RESPONSE_HEADERS,
         verifyAfterStream: async () => {
           const streamedStat = await file.fileHandle.stat({ bigint: true });
           if (

@@ -2280,6 +2280,27 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     });
   }
 
+  async copySessionPath(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
+    if (!sessionKey.startsWith('claude:')) {
+      throw new Error('Only Claude sessions expose a session file path');
+    }
+    await this.runClaudeBridgeLifecycle(async () => {
+      this.requireClaudeProviderEnabled();
+      const target = await this.dependencies.repository.getClaudeOpenTarget({ sessionKey });
+      if (!target?.transcriptPath) throw new Error('Claude session file is unavailable');
+      if (!this.dependencies.validateClaudeTranscript) {
+        throw new Error('Claude session file validation is unavailable');
+      }
+      this.dependencies.writeClipboardText(
+        this.dependencies.validateClaudeTranscript(
+          target.transcriptPath,
+          parseEyesOnAgentsUuid(sessionKey.slice('claude:'.length), 'Claude thread ID')
+        )
+      );
+    });
+  }
+
   private async syncOpenedThreadStatus(threadId: string): Promise<void> {
     try {
       if (this.appServerTeardownPromise) return;

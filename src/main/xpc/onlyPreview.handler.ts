@@ -1,13 +1,26 @@
-import { app, dialog, Menu, shell } from 'electron';
+import {
+  app,
+  dialog,
+  Menu,
+  shell,
+  type BaseWindow,
+  type MenuItemConstructorOptions
+} from 'electron';
+import { basename } from 'node:path';
 import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import {
   OnlyPreviewContractError,
   onlyPreviewFailure,
   onlyPreviewSuccess,
   parseOnlyPreviewBounds,
+  parseOnlyPreviewFileRef,
+  parseOnlyPreviewFindIntent,
+  parseOnlyPreviewFindResultRequest,
   parseOnlyPreviewPreviewErrorRequest,
+  parseOnlyPreviewPreviewReadyRequest,
   parseOnlyPreviewPreviewRuntimeRequest,
   parseOnlyPreviewPreviewRevisionRequest,
+  parseOnlyPreviewProjectItemCopyRequest,
   parseOnlyPreviewTextReadRequest
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
@@ -25,9 +38,14 @@ import { createMcpConfigJson, getMcpServerName } from '@shared/mcp/mcpBridge.sha
 import { ONLY_PREVIEW_AGENT_SKILL_VERSION_CODE } from '@shared/onlypreview/onlyPreviewAgentSkillVersion.shared';
 import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/onlypreview/onlyPreviewWorkspace.registry';
+import {
+  onlyPreviewClipboardService,
+  type OnlyPreviewClipboardCopyKind
+} from '@main/onlypreview/onlyPreviewClipboard.service';
 import { onlyPreviewSettingsService } from '@main/onlypreview/onlyPreviewSettings.service';
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
+import { onlyPreviewSelectionCoordinator } from '@main/onlypreview/onlyPreviewSelectionCoordinator.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { i18nHelper } from '@main/i18n/i18n.helper';
@@ -57,14 +75,121 @@ const broadcastWorkspace = (hostId: string): void => {
   xpcMain.broadcast(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, { hostId });
 };
 
-const selectionGenerationByHost = new Map<string, number>();
 const recentDirectoryStorage =
   createXpcMainEmitter<OnlyPreviewRecentDirectoryStorage>('SettingDao');
 onlyPreviewRecentDirectoryService.configureStorage(recentDirectoryStorage);
 
 onlyPreviewHostRegistry.onRevoke((host) => {
-  selectionGenerationByHost.delete(host.hostToken);
+  onlyPreviewSelectionCoordinator.revoke(host.hostToken);
 });
+
+const displayOnlyPreviewFileName = (relativePath: string): string =>
+  Array.from(basename(relativePath), (character) => {
+    const codePoint = character.codePointAt(0) || 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ? '�' : character;
+  }).join('');
+
+const showOnlyPreviewDeleteFailure = async (window: BaseWindow): Promise<void> => {
+  const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
+  await dialog.showMessageBox(window, {
+    type: 'error',
+    title: labels.deleteFailureTitle,
+    message: labels.deleteFailureMessage,
+    buttons: [labels.deleteFailureOk],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+};
+
+const showOnlyPreviewCopyFailure = async (window: BaseWindow): Promise<void> => {
+  const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
+  await dialog.showMessageBox(window, {
+    type: 'error',
+    title: labels.copyFailureTitle,
+    message: labels.copyFailureMessage,
+    buttons: [labels.copyFailureOk],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+};
+
+const copyOnlyPreviewProjectItemFromUi = async (
+  window: BaseWindow,
+  request: OnlyPreviewHostRequest & OnlyPreviewFileRef,
+  copyKind: OnlyPreviewClipboardCopyKind
+): Promise<void> => {
+  try {
+    const item = await onlyPreviewWorkspaceRegistry.resolveProjectItem(
+      request.hostToken,
+      request
+    );
+    await onlyPreviewClipboardService.copyProjectItem(item, copyKind);
+  } catch {
+    await showOnlyPreviewCopyFailure(window).catch(() => undefined);
+  }
+};
+
+const deleteOnlyPreviewFileFromMenu = async (
+  window: BaseWindow,
+  request: OnlyPreviewHostRequest & OnlyPreviewFileRef
+): Promise<void> => {
+  const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
+  let file: Awaited<ReturnType<typeof onlyPreviewWorkspaceRegistry.resolveProjectItem>>;
+  try {
+    file = await onlyPreviewWorkspaceRegistry.resolveProjectItem(request.hostToken, request);
+    if (file.nodeKind !== 'file') {
+      throw new OnlyPreviewContractError(
+        'PATH_NOT_REGULAR_FILE',
+        'Only regular files can be deleted.'
+      );
+    }
+    const confirmation = await dialog.showMessageBox(window, {
+      type: 'warning',
+      title: labels.deleteConfirmTitle,
+      message: labels.deleteConfirmMessage,
+      detail: `${displayOnlyPreviewFileName(file.relativePath)}\n\n${labels.deleteConfirmDetail}`,
+      buttons: [labels.deleteCancelButton, labels.deleteConfirmButton],
+      defaultId: 0,
+      cancelId: 0,
+      destructiveId: 1,
+      noLink: true
+    });
+    if (confirmation.response !== 1) return;
+  } catch {
+    await showOnlyPreviewDeleteFailure(window).catch(() => undefined);
+    return;
+  }
+
+  let deleted: Awaited<ReturnType<typeof onlyPreviewWorkspaceRegistry.deleteOpenedFile>>;
+  try {
+    const opened = await onlyPreviewWorkspaceRegistry.openFile(request.hostToken, request);
+    deleted = await onlyPreviewWorkspaceRegistry.deleteOpenedFile(opened);
+  } catch {
+    await showOnlyPreviewDeleteFailure(window).catch(() => undefined);
+    return;
+  }
+
+  try {
+    onlyPreviewSelectionCoordinator.invalidatePendingSelection(deleted.host.hostToken, {
+      workspaceId: deleted.workspace.workspaceId,
+      relativePath: deleted.relativePath
+    });
+    const cleared = onlyPreviewWorkspaceRegistry.clearSelection(deleted.host.hostToken, {
+      workspaceId: deleted.workspace.workspaceId,
+      relativePath: deleted.relativePath
+    });
+    if (!cleared) return;
+    onlyPreviewPreviewRegionService.clearWorkspace(
+      deleted.host.hostToken,
+      deleted.workspace.workspaceId
+    );
+    xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: deleted.host.hostId });
+  } catch {
+    // The file is already deleted; a closing host owns no UI state that still needs cleanup.
+  }
+};
 
 class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
   async openOnlyPreviewWindow(): ReturnType<OnlyPreviewApi['openOnlyPreviewWindow']> {
@@ -93,10 +218,7 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
           generation
         );
         if (workspace) {
-          selectionGenerationByHost.set(
-            host.hostToken,
-            (selectionGenerationByHost.get(host.hostToken) || 0) + 1
-          );
+          onlyPreviewSelectionCoordinator.advance(host.hostToken);
           onlyPreviewPreviewRegionService.clearWorkspace(host.hostToken, workspace.workspaceId);
           broadcastWorkspace(host.hostId);
         }
@@ -112,10 +234,9 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>> {
     return await runOperation(async () => {
       const host = onlyPreviewHostRegistry.require(params?.hostToken, ['content']);
-      const generation = (selectionGenerationByHost.get(host.hostToken) || 0) + 1;
-      selectionGenerationByHost.set(host.hostToken, generation);
+      const generation = onlyPreviewSelectionCoordinator.advance(host.hostToken);
       const workspace = await onlyPreviewRecentDirectoryService.restoreWorkspace(host.hostToken);
-      if (selectionGenerationByHost.get(host.hostToken) !== generation) return workspace;
+      if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, generation)) return workspace;
       const current = onlyPreviewPreviewRegionService.snapshot(host.hostToken);
       if (workspace?.selectedRelativePath) {
         if (
@@ -162,20 +283,24 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
           'Only the active standalone OnlyPreview window can synchronize selection.'
         );
       }
-      const generation = (selectionGenerationByHost.get(host.hostToken) || 0) + 1;
-      selectionGenerationByHost.set(host.hostToken, generation);
-      const file = await onlyPreviewWorkspaceRegistry.resolveFile(host.hostToken, params);
-      if (selectionGenerationByHost.get(host.hostToken) !== generation) return;
-      onlyPreviewWorkspaceRegistry.select(host.hostToken, {
-        workspaceId: file.workspace.workspaceId,
-        relativePath: file.relativePath
-      });
-      await onlyPreviewPreviewRegionService.present(host.hostToken, {
-        workspaceId: file.workspace.workspaceId,
-        relativePath: file.relativePath
-      });
-      if (selectionGenerationByHost.get(host.hostToken) !== generation) return;
-      xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: host.hostId });
+      const fileRef = parseOnlyPreviewFileRef(params);
+      const generation = onlyPreviewSelectionCoordinator.beginSelection(host.hostToken, fileRef);
+      try {
+        const file = await onlyPreviewWorkspaceRegistry.resolveFile(host.hostToken, fileRef);
+        if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, generation)) return;
+        onlyPreviewWorkspaceRegistry.select(host.hostToken, {
+          workspaceId: file.workspace.workspaceId,
+          relativePath: file.relativePath
+        });
+        await onlyPreviewPreviewRegionService.present(host.hostToken, {
+          workspaceId: file.workspace.workspaceId,
+          relativePath: file.relativePath
+        });
+        if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, generation)) return;
+        xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: host.hostId });
+      } finally {
+        onlyPreviewSelectionCoordinator.finishSelection(host.hostToken, generation);
+      }
     });
   }
 
@@ -214,11 +339,13 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     params: ApiParams<'reportPreviewReady'>
   ): ReturnType<OnlyPreviewApi['reportPreviewReady']> {
     return await runOperation(async () => {
-      const request = parseOnlyPreviewPreviewRevisionRequest(params);
+      const request = parseOnlyPreviewPreviewReadyRequest(params);
       onlyPreviewPreviewRegionService.reportVueReady(
         request.hostToken,
         request.selectionRevision,
-        request.previewRuntimeToken
+        request.previewRuntimeToken,
+        request.findCoverage,
+        request.findAdapter
       );
     });
   }
@@ -250,6 +377,52 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     });
   }
 
+  async getPreviewFindSnapshot(
+    params: ApiParams<'getPreviewFindSnapshot'>
+  ): ReturnType<OnlyPreviewApi['getPreviewFindSnapshot']> {
+    return await runOperation(async () =>
+      onlyPreviewPreviewRegionService.findSnapshot(params?.hostToken)
+    );
+  }
+
+  async submitPreviewFind(
+    params: ApiParams<'submitPreviewFind'>
+  ): ReturnType<OnlyPreviewApi['submitPreviewFind']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewFindIntent(params);
+      onlyPreviewPreviewRegionService.submitFind(request.hostToken, {
+        selectionRevision: request.selectionRevision,
+        surface: request.surface,
+        query: request.query,
+        caseSensitive: request.caseSensitive,
+        direction: request.direction,
+        findNext: request.findNext
+      });
+    });
+  }
+
+  async closePreviewFind(
+    params: ApiParams<'closePreviewFind'>
+  ): ReturnType<OnlyPreviewApi['closePreviewFind']> {
+    return await runOperation(async () => {
+      onlyPreviewPreviewRegionService.closeFind(params?.hostToken);
+      onlyPreviewPreviewRegionService.focusActiveContent(params?.hostToken);
+    });
+  }
+
+  async reportPreviewFindResult(
+    params: ApiParams<'reportPreviewFindResult'>
+  ): ReturnType<OnlyPreviewApi['reportPreviewFindResult']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewFindResultRequest(params);
+      onlyPreviewPreviewRegionService.reportVueFindResult(
+        request.hostToken,
+        request.previewRuntimeToken,
+        request.result
+      );
+    });
+  }
+
   async minimizeWindow(
     params: ApiParams<'minimizeWindow'>
   ): ReturnType<OnlyPreviewApi['minimizeWindow']> {
@@ -277,31 +450,83 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
   ): ReturnType<OnlyPreviewApi['showFileContextMenu']> {
     return await runOperation(async () => {
       const window = onlyPreviewWindowHelper.getStandaloneWindow(params?.hostToken);
-      const file = await onlyPreviewWorkspaceRegistry.resolveFile(params?.hostToken, params);
+      const item = await onlyPreviewWorkspaceRegistry.resolveProjectItem(params?.hostToken, params);
       const request: OnlyPreviewHostRequest & OnlyPreviewFileRef = {
-        hostToken: file.host.hostToken,
-        workspaceId: file.workspace.workspaceId,
-        relativePath: file.relativePath
+        hostToken: item.host.hostToken,
+        workspaceId: item.workspace.workspaceId,
+        relativePath: item.relativePath
       };
       const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
-      Menu.buildFromTemplate([
-        {
+      const template: MenuItemConstructorOptions[] = [];
+      if (item.nodeKind === 'file') {
+        template.push({
           id: 'onlypreview-preview',
           label: labels.preview,
           click: () => void this.selectStandaloneFile(request)
-        },
-        { type: 'separator' },
-        {
+        });
+        template.push({ type: 'separator' });
+        template.push({
           id: 'onlypreview-open-externally',
           label: labels.openExternally,
           click: () => void this.openExternally(request)
+        });
+      }
+      template.push({
+        id: 'onlypreview-reveal-in-folder',
+        label: labels.revealInFolder,
+        click: () => void this.revealInFolder(request)
+      });
+      template.push(
+        { type: 'separator' },
+        {
+          id: 'onlypreview-copy-item',
+          label: item.nodeKind === 'file' ? labels.copyFile : labels.copyFolder,
+          accelerator: 'CommandOrControl+C',
+          click: () => void copyOnlyPreviewProjectItemFromUi(window, request, 'item')
         },
         {
-          id: 'onlypreview-reveal-in-folder',
-          label: labels.revealInFolder,
-          click: () => void this.revealInFolder(request)
+          id: 'onlypreview-copy-path',
+          label: labels.copyPath,
+          accelerator: 'CommandOrControl+Shift+C',
+          click: () => void copyOnlyPreviewProjectItemFromUi(window, request, 'absolute-path')
+        },
+        {
+          id: 'onlypreview-copy-relative-path',
+          label: labels.copyRelativePath,
+          click: () => void copyOnlyPreviewProjectItemFromUi(window, request, 'relative-path')
+        },
+        {
+          id: 'onlypreview-copy-name',
+          label: labels.copyName,
+          accelerator: 'CommandOrControl+Alt+C',
+          click: () => void copyOnlyPreviewProjectItemFromUi(window, request, 'name')
         }
-      ]).popup({ window });
+      );
+      if (item.nodeKind === 'file') {
+        template.push(
+          { type: 'separator' },
+          {
+            id: 'onlypreview-delete',
+            label: labels.delete,
+            click: () => void deleteOnlyPreviewFileFromMenu(window, request)
+          }
+        );
+      }
+      Menu.buildFromTemplate(template).popup({ window });
+    });
+  }
+
+  async copyProjectItem(
+    params: ApiParams<'copyProjectItem'>
+  ): ReturnType<OnlyPreviewApi['copyProjectItem']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewProjectItemCopyRequest(params);
+      const window = onlyPreviewWindowHelper.getStandaloneWindow(request.hostToken);
+      await copyOnlyPreviewProjectItemFromUi(
+        window,
+        request,
+        request.copyKind
+      );
     });
   }
 
@@ -319,8 +544,8 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     params: ApiParams<'revealInFolder'>
   ): ReturnType<OnlyPreviewApi['revealInFolder']> {
     return await runOperation(async () => {
-      const file = await onlyPreviewWorkspaceRegistry.resolveFile(params?.hostToken, params);
-      shell.showItemInFolder(file.realPath);
+      const item = await onlyPreviewWorkspaceRegistry.resolveProjectItem(params?.hostToken, params);
+      shell.showItemInFolder(item.realPath);
     });
   }
 

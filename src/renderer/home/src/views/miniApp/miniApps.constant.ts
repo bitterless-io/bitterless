@@ -32,8 +32,6 @@ export const createMiniApps = (
     icon: todoIcon,
     action: openTodo,
   },
-  /*
-  // Temporarily hidden: remove this block comment to restore the Maestro Mini App entry.
   {
     id: 'maestro',
     name: i18n.miniApp.maestro.name,
@@ -41,7 +39,6 @@ export const createMiniApps = (
     icon: maestroIcon,
     action: openMaestro,
   },
-  */
   {
     id: 'coin',
     name: i18n.miniApp.coin.name,

@@ -587,7 +587,41 @@ const handleTreeKeydown = (event: KeyboardEvent): void => {
   void focusTreePath(onlyPreviewShellStore.moveTreeFocus(event.key));
 };
 
+const handleProjectItemCopyShortcut = (event: KeyboardEvent): boolean => {
+  if (event.defaultPrevented || event.repeat || event.isComposing || event.key.toLowerCase() !== 'c') {
+    return false;
+  }
+  const primaryModifier = isMac
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+  if (!primaryModifier) return false;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return false;
+  if (
+    target.matches('input, textarea, select, [contenteditable="true"], [role="textbox"]') ||
+    !target.matches(
+      'button[name="onlypreview__treeRow"], button[name="onlypreview__projectSearchResult"]'
+    )
+  ) {
+    return false;
+  }
+  const relativePath = target.dataset.relativePath;
+  if (!relativePath) return false;
+  const copyKind = event.shiftKey
+    ? event.altKey
+      ? null
+      : 'absolute-path'
+    : event.altKey
+      ? 'name'
+      : 'item';
+  if (!copyKind) return false;
+  event.preventDefault();
+  void onlyPreviewShellStore.copyProjectItem(relativePath, copyKind);
+  return true;
+};
+
 const handleShellKeydown = (event: KeyboardEvent): void => {
+  if (handleProjectItemCopyShortcut(event)) return;
   if (event.altKey && event.code === 'Digit1') {
     event.preventDefault();
     focusProjectTree();

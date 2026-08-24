@@ -13,10 +13,12 @@ const DEFAULT_SETTINGS: CoachSettings = {
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   'ai-crms': 'qwen3.7-plus',
-  'openai-codex': 'gpt-5.6-luna'
+  'openai-codex': 'gpt-5.6-luna',
+  local: 'claude-sonnet'
 }
 
 const OPENAI_CODEX_MODELS = ['gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'] as const
+const LOCAL_CLAUDE_MODELS = ['claude-sonnet', 'claude-opus', 'claude-haiku'] as const
 
 export class CoachSettingsService {
   private readonly file: string
@@ -73,7 +75,9 @@ export function isDefaultStartUrl(url?: string): boolean {
 function normalizeLlmModel(model: string, fallbackModel: string): string {
   const trimmed = model.trim()
   if (OPENAI_CODEX_MODELS.some((item) => item === trimmed)) return trimmed
+  if (LOCAL_CLAUDE_MODELS.some((item) => item === trimmed)) return trimmed
   if (OPENAI_CODEX_MODELS.some((item) => item === fallbackModel)) return fallbackModel
+  if (LOCAL_CLAUDE_MODELS.some((item) => item === fallbackModel)) return fallbackModel
   if (model.trim().toLowerCase().startsWith('claude-')) return fallbackModel
   return trimmed || fallbackModel
 }
@@ -82,6 +86,7 @@ function normalizeLlmProvider(provider: string): string {
   const trimmed = provider.trim().toLowerCase()
   if (trimmed === 'ai-crms' || trimmed === 'aicrms' || trimmed === 'ai crms' || trimmed === 'acms') return 'ai-crms'
   if (trimmed === 'openai-codex' || trimmed === 'codex' || trimmed === 'openai') return 'openai-codex'
+  if (trimmed === 'local' || trimmed === 'bitterless' || trimmed === 'bitterless-local') return 'local'
   // Claude is still supported in the runtime, but the Maestro selector is hidden for now.
   if (trimmed === 'anthropic' || trimmed === 'claude' || trimmed === 'cloud' || trimmed === 'claude-code') return 'openai-codex'
   return DEFAULT_SETTINGS.llmProvider

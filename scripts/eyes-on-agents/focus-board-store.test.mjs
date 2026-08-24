@@ -24,7 +24,6 @@ const emitterPlugin = {
           export const eyesOnAgentsEmitter = {
             getSnapshot: () => harness().getSnapshot(),
             openThread: (params) => harness().openThread(params),
-            previewThread: (params) => harness().previewThread(params),
             setThreadUnread: (params) => harness().setThreadUnread(params)
           };
           export const subscribeEyesOnAgentsChanges = () => undefined;
@@ -40,7 +39,7 @@ const createThread = ({
   title,
   provider = 'codex',
   desktopSessionId = null,
-  canPreviewTranscript = false,
+  canCopySessionPath = false,
   domainId = 1,
   cwd = null,
   projectName = null,
@@ -56,7 +55,7 @@ const createThread = ({
   threadId,
   archiveState: 'active',
   desktopSessionId,
-  canPreviewTranscript,
+  canCopySessionPath,
   domainId,
   title,
   cwd,
@@ -143,16 +142,12 @@ test('Focus board store contract', async (context) => {
     let currentSnapshot = createSnapshot([]);
     let openSnapshot = currentSnapshot;
     const openedThreadIds = [];
-    const previewedThreadIds = [];
     const readStateCalls = [];
     globalThis.__eyesOnAgentsFocusBoardHarness = {
       getSnapshot: async () => currentSnapshot,
       openThread: async ({ sessionKey: openedSessionKey }) => {
         openedThreadIds.push(openedSessionKey);
         return { snapshot: openSnapshot };
-      },
-      previewThread: async ({ sessionKey: previewedSessionKey }) => {
-        previewedThreadIds.push(previewedSessionKey);
       },
       setThreadUnread: async (params) => {
         readStateCalls.push(params);
@@ -175,7 +170,6 @@ test('Focus board store contract', async (context) => {
       currentSnapshot = snapshot;
       openSnapshot = snapshot;
       openedThreadIds.length = 0;
-      previewedThreadIds.length = 0;
       readStateCalls.length = 0;
     };
     const threadIds = (threads) => threads.map((thread) => thread.threadId);
@@ -682,7 +676,7 @@ test('Focus board store contract', async (context) => {
         threadId: 'claude-cli',
         title: 'Shared Claude task',
         provider: 'claude',
-        canPreviewTranscript: true,
+        canCopySessionPath: true,
       });
       resetStore(createSnapshot([codex, claudeCli]));
       store.titleQuery = 'shared';

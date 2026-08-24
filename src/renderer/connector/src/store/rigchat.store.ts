@@ -6,7 +6,7 @@ import {
   type RigchatLoginDetail,
   type RigchatMessageDetail,
   type RigchatErrorDetail,
-} from '../../../../preload/connector/connector.preload.type'
+} from '@shared/connector/connector.contract'
 import type { RigchatMessageItem } from './rigchat.store.type'
 
 class RigchatStore {

@@ -31,6 +31,7 @@
         }"
         type="button"
         role="listitem"
+        :data-relative-path="row.result.relativePath"
         :title="row.result.relativePath"
         @click="onlyPreviewProjectSearchStore.selectResult(row.result)"
         @contextmenu.prevent.stop="

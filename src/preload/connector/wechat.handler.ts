@@ -4,8 +4,11 @@ import { join } from 'path';
 import { XpcPreloadHandler, createXpcPreloadEmitter } from 'electron-xpc/preload';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import { Rigchat } from '@preload/base/rigchat';
-import type { WechatStoreHandler } from '@renderer/home/src/views/connector/wechat/wechat.store';
-import type { RigchatOwnerVerifiedDetail } from '@preload/connector/connector.preload.type';
+import type {
+  RigchatOwnerVerifiedDetail,
+  WechatConnectorRendererApi,
+  WechatConnectorRuntimeApi,
+} from '@shared/connector/connector.contract';
 
 const settingEmitter = createXpcPreloadEmitter<SettingDao>('SettingDao') as SettingDao;
 
@@ -16,7 +19,9 @@ interface RigchatSettingValue {
   session: any;
 }
 
-const wechatEmitter = createXpcPreloadEmitter<WechatStoreHandler>('WechatStoreHandler') as WechatStoreHandler;
+const wechatEmitter = createXpcPreloadEmitter<WechatConnectorRendererApi>(
+  'WechatStoreHandler'
+) as WechatConnectorRendererApi;
 
 const MIME_EXT: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -190,7 +195,7 @@ const restoreSession = async (): Promise<void> => {
   }
 };
 
-export class WechatHandler extends XpcPreloadHandler {
+export class WechatHandler extends XpcPreloadHandler implements WechatConnectorRuntimeApi {
   async init(): Promise<void> {
     console.log('[wechat] init called by renderer');
     if (!isInitialized) {

@@ -14,6 +14,18 @@ const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]): 
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 };
 
+const hasRequiredAndOptionalKeys = (
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[]
+): boolean => {
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) &&
+    Object.keys(value).every((key) => allowed.has(key))
+  );
+};
+
 export const isOnlyPreviewPresentationNudge = (value: unknown): value is { hostId: string } =>
   isRecord(value) &&
   hasExactKeys(value, ['hostId']) &&
@@ -36,25 +48,92 @@ const isFileRef = (value: unknown): value is OnlyPreviewFileRef => {
   );
 };
 
+const DESCRIPTOR_ERROR_CODES = new Set([
+  'TEXT_TOO_LARGE',
+  'SIGNATURE_MISMATCH',
+  'UNSUPPORTED_CODEC',
+  'OOXML_ENCRYPTED',
+  'IMAGE_EMPTY',
+  'MEDIA_EMPTY'
+]);
+
+const isDescriptorError = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, ['code', 'message']) &&
+  typeof value.code === 'string' &&
+  DESCRIPTOR_ERROR_CODES.has(value.code) &&
+  typeof value.message === 'string' &&
+  value.message.length <= 1_024 &&
+  !value.message.includes('\0');
+
+const isNormalizedRelativePath = (value: unknown): value is string => {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 16_384 ||
+    value.startsWith('/') ||
+    value.startsWith('\\') ||
+    /^[a-zA-Z]:/u.test(value) ||
+    value.includes('\\') ||
+    value.includes('\0')
+  ) {
+    return false;
+  }
+  return value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+};
+
 const isDescriptor = (value: unknown): value is OnlyPreviewDescriptor => {
   if (!isRecord(value)) return false;
+  if (
+    !hasRequiredAndOptionalKeys(
+      value,
+      [
+        'workspaceId',
+        'relativePath',
+        'name',
+        'extension',
+        'kind',
+        'mimeType',
+        'language',
+        'size',
+        'modifiedAt'
+      ],
+      ['assetUrl', 'unsupportedCategory', 'previewError']
+    )
+  ) {
+    return false;
+  }
+  const hasValidUnsupportedCategory =
+    value.unsupportedCategory === undefined ||
+    (value.kind === 'unsupported' &&
+      (value.unsupportedCategory === 'image-format' ||
+        value.unsupportedCategory === 'video-container'));
   return (
     typeof value.workspaceId === 'string' &&
-    typeof value.relativePath === 'string' &&
+    isNormalizedRelativePath(value.relativePath) &&
     typeof value.name === 'string' &&
-    typeof value.displayPath === 'string' &&
+    value.name.length > 0 &&
+    value.name === value.relativePath.split('/').at(-1) &&
     typeof value.extension === 'string' &&
     (value.kind === 'text' ||
       value.kind === 'pdf' ||
       value.kind === 'image' ||
       value.kind === 'audio' ||
       value.kind === 'video' ||
+      value.kind === 'sheet' ||
+      value.kind === 'document' ||
       value.kind === 'unsupported') &&
     typeof value.mimeType === 'string' &&
     typeof value.language === 'string' &&
     Number.isSafeInteger(value.size) &&
     (value.size as number) >= 0 &&
-    Number.isFinite(value.modifiedAt)
+    Number.isFinite(value.modifiedAt) &&
+    (value.assetUrl === undefined ||
+      (typeof value.assetUrl === 'string' &&
+        value.assetUrl.length <= 16_384 &&
+        !value.assetUrl.includes('\0'))) &&
+    (value.previewError === undefined || isDescriptorError(value.previewError)) &&
+    hasValidUnsupportedCategory
   );
 };
 
@@ -94,6 +173,8 @@ export const isOnlyPreviewPresentation = (
       value.adapterId === 'image' ||
       value.adapterId === 'audio' ||
       value.adapterId === 'video' ||
+      value.adapterId === 'xlsx-grid' ||
+      value.adapterId === 'docx-dom' ||
       value.adapterId === 'unsupported') &&
     (value.status === 'empty' ||
       value.status === 'loading' ||

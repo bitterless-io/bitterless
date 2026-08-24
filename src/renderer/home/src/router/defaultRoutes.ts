@@ -4,7 +4,7 @@ import Layout from '@/views/layout/Layout.vue';
 import Login from '@/views/login/Login.vue';
 
 const isDev = import.meta.env.VITE_ENV === 'dev';
-const defaultHomePath = isDev ? '/chat' : '/mini-app';
+const defaultHomePath = '/chat';
 
 const baseRoutes: RouteRecordRaw[] = [
   {
@@ -13,30 +13,6 @@ const baseRoutes: RouteRecordRaw[] = [
     component: Chat,
     meta: {
       icon: 'chat.png'
-    }
-  },
-  {
-    path: 'mini-app',
-    name: 'miniApp',
-    component: () => import('@/views/miniApp/MiniApp.vue'),
-    meta: {
-      icon: 'mini-app.png'
-    }
-  },
-  {
-    path: 'connector',
-    name: 'connector',
-    component: () => import('@/views/connector/Connector.vue'),
-    meta: {
-      icon: 'connector.png'
-    }
-  },
-  {
-    path: 'setting',
-    name: 'setting',
-    component: () => import('@/views/setting/Setting.vue'),
-    meta: {
-      icon: 'setting.png'
     }
   }
 ];

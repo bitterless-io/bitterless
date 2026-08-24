@@ -1,0 +1,26 @@
+{
+  "model": "claude-opus",
+  "stream": true,
+  "instructions": "Inspect evidence before answering.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [{ "type": "input_text", "text": "Read the project manifest." }]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "read_file",
+      "description": "Read one local file.",
+      "parameters": {
+        "type": "object",
+        "properties": { "path": { "type": "string" } },
+        "required": ["path"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "prompt_cache_key": "conversation-tool-1"
+}

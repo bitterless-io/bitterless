@@ -5,21 +5,13 @@ import { IconX } from '@tabler/icons-vue'
 import { xpcRenderer } from 'electron-xpc/renderer'
 import type { WorkbenchPane } from '@maestro-shared/coach.api'
 import { isWorkbenchPane, workbenchPanes, workbenchStore as store } from './workbench.store'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import './WorkbenchApp.less'
 
 const router = useRouter()
 const route = useRoute()
 
-const labels: Record<WorkbenchPane, string> = {
-  recording: 'Capture',
-  skills: 'Skills',
-  integrations: 'Integrations',
-  injections: 'Injections',
-  tools: 'Tools',
-  models: 'Models',
-  about: 'About',
-  log: 'Log'
-}
+const paneLabel = (pane: WorkbenchPane): string => i18nHelper.maestroWorkbench.panes[pane]
 
 const activePane = computed<WorkbenchPane>(() => {
   const name = String(route.name || '').toLowerCase()
@@ -80,11 +72,11 @@ onUnmounted(() => {
     <div class="workbench-app__shell">
       <header class="workbench-app__header">
         <div class="workbench-app__titlebar">
-          <h1 class="workbench-app__title">Maestro Workbench</h1>
+          <h1 class="workbench-app__title">{{ i18nHelper.maestroWorkbench.title }}</h1>
           <button
             class="workbench-app__close"
-            title="Close Workbench"
-            aria-label="Close Workbench"
+            :title="i18nHelper.maestroWorkbench.close"
+            :aria-label="i18nHelper.maestroWorkbench.close"
             type="button"
             @click="store.close()"
           >
@@ -100,7 +92,7 @@ onUnmounted(() => {
             :class="{ 'workbench-app__tab--active': activePane === pane }"
             @click="setPane(pane)"
           >
-            {{ labels[pane] }}
+            {{ paneLabel(pane) }}
             <span
               class="workbench-app__tab-indicator"
             ></span>

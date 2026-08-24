@@ -1,235 +1,16 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { after, test } from 'node:test';
-import { build } from 'esbuild';
-import { JSDOM } from 'jsdom';
-import { createSSRApp } from 'vue';
-import { renderToString } from '@vue/server-renderer';
-import { parse } from '@vue/compiler-sfc';
-
-const projectRoot = resolve(dirname(new URL(import.meta.url).pathname), '..', '..');
-const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-onlypreview-rendering-'));
-
-const rendererStoreHarnessPlugin = {
-  name: 'onlypreview-renderer-store-harness',
-  setup(buildContext) {
-    buildContext.onResolve({ filter: /^electron-xpc\/renderer$/ }, () => ({
-      path: 'electron-xpc-renderer',
-      namespace: 'onlypreview-renderer-harness'
-    }));
-    buildContext.onResolve({ filter: /onlyPreviewClient$/ }, ({ importer }) =>
-      importer.endsWith('onlyPreviewPreview.store.ts')
-        ? { path: 'onlypreview-client', namespace: 'onlypreview-renderer-harness' }
-        : null
-    );
-    buildContext.onResolve({ filter: /onlyPreviewEnv\.bridge$/ }, ({ importer }) =>
-      importer.endsWith('onlyPreviewPreview.store.ts')
-        ? { path: 'onlypreview-env', namespace: 'onlypreview-renderer-harness' }
-        : null
-    );
-    buildContext.onLoad({ filter: /.*/, namespace: 'onlypreview-renderer-harness' }, ({ path }) => {
-      if (path === 'electron-xpc-renderer') {
-        return {
-          loader: 'js',
-          contents: `
-              const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
-              export const xpcRenderer = {
-                broadcast: (...args) => harness().broadcasts.push(args),
-                subscribe: (eventName, callback) => harness().subscriptions.set(eventName, callback)
-              };
-              export const createXpcRendererEmitter = () => ({});
-            `
-        };
-      }
-      if (path === 'onlypreview-env') {
-        return {
-          loader: 'js',
-          contents: `
-              export const onlyPreviewEnv = {
-                hostToken: 'host-token-for-tests',
-                hostId: 'host-for-tests',
-                previewRuntimeToken: 'preview-runtime-token-for-tests'
-              };
-            `
-        };
-      }
-      return {
-        loader: 'js',
-        contents: `
-            const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
-            const success = (value) => ({ ok: true, value });
-            export const onlyPreviewClient = {
-              getVuePreviewPresentation: async () => success(harness().presentation),
-              getSettings: async () => success(harness().settings),
-              readText: async (request) => {
-                harness().readText.push(request);
-                throw new Error('unsupported adapters must not read text');
-              },
-              reportPreviewReset: async (request) => {
-                harness().resets.push(request);
-                return success(undefined);
-              },
-              reportPreviewReady: async (request) => {
-                const snapshot = harness().captureReady ? harness().captureReady() : null;
-                harness().ready.push({ request, snapshot });
-                return success(undefined);
-              },
-              reportPreviewError: async (request) => {
-                harness().errors.push(request);
-                return success(undefined);
-              }
-            };
-          `
-      };
-    });
-  }
-};
-
-await build({
-  entryPoints: {
-    characterCount: join(
-      projectRoot,
-      'src/renderer/onlypreview/preview/src/onlyPreviewCharacterCount.service.ts'
-    ),
-    characterCountGate: join(
-      projectRoot,
-      'src/renderer/onlypreview/common/onlyPreviewCharacterCountGate.service.ts'
-    ),
-    markdown: join(
-      projectRoot,
-      'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
-    ),
-    previewStore: join(
-      projectRoot,
-      'src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts'
-    )
-  },
-  outdir: buildRoot,
-  outExtension: { '.js': '.mjs' },
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node22',
-  sourcemap: 'inline',
-  tsconfig: join(projectRoot, 'tsconfig.web.json'),
-  plugins: [rendererStoreHarnessPlugin]
-});
-
-const characterCount = await import(pathToFileURL(join(buildRoot, 'characterCount.mjs')).href);
-const characterCountGate = await import(
-  pathToFileURL(join(buildRoot, 'characterCountGate.mjs')).href
-);
-const markdown = await import(pathToFileURL(join(buildRoot, 'markdown.mjs')).href);
-const previewSurfaceSource = readFileSync(
-  join(
-    projectRoot,
-    'src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'
-  ),
-  'utf8'
-);
-const previewSurfaceTemplate = parse(previewSurfaceSource).descriptor.template?.content;
-
-assert.ok(previewSurfaceTemplate, 'PreviewSurface must keep an executable Vue template');
-
-after(() => rmSync(buildRoot, { recursive: true, force: true }));
-
-const render = (source, sourceSize = Buffer.byteLength(source)) => {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>');
-  return {
-    dom,
-    result: markdown.renderOnlyPreviewMarkdown(source, sourceSize, dom.window)
-  };
-};
-
-const officeDescriptor = (extension, kind) => ({
-  workspaceId: 'workspace-generation-for-tests',
-  relativePath: `fixtures/example${extension}`,
-  name: `example${extension}`,
-  displayPath: `/fixtures/example${extension}`,
-  extension,
-  kind,
-  mimeType: 'application/octet-stream',
-  language: '',
-  size: 4096,
-  modifiedAt: 1_700_000_000_000
-});
-
-const officePresentation = (descriptor, selectionRevision) => ({
-  hostId: 'host-for-tests',
-  workspaceId: descriptor.workspaceId,
-  selectionRevision,
-  surface: 'vue',
-  adapterId: 'unsupported',
-  status: 'loading',
-  fileRef: {
-    workspaceId: descriptor.workspaceId,
-    relativePath: descriptor.relativePath
-  },
-  descriptor,
-  error: null,
-  selectedTextAvailable: false
-});
-
-const createRendererStoreHarness = (presentation) => ({
-  presentation,
-  settings: {
-    theme: 'light',
-    editorFontSize: 13,
-    wordWrap: false,
-    showHiddenFiles: true,
-    openFilesWithSingleClick: true
-  },
-  broadcasts: [],
-  subscriptions: new Map(),
-  captureReady: null,
-  readText: [],
-  resets: [],
-  ready: [],
-  errors: []
-});
-
-const renderPreviewSurface = async (store) => {
-  const app = createSSRApp({
-    template: previewSurfaceTemplate,
-    setup: () => ({
-      onlyPreviewPreviewStore: store,
-      onlyPreviewI18n: {
-        preview: {
-          failedTitle: 'Preview failed',
-          unsupportedTitle: 'Unsupported preview',
-          unsupportedBody: 'Metadata only',
-          type: 'Type',
-          size: 'Size',
-          modified: 'Modified',
-          emptyTitle: 'No selection',
-          emptyBody: 'Choose a file',
-          loading: 'Loading'
-        }
-      },
-      isMarkdown: false,
-      selectionPreviewKey: 'selection',
-      imageAlt: '',
-      previewLimitMessage: '',
-      formatOnlyPreviewBytes: (size) => `${size} bytes`,
-      formatOnlyPreviewDate: (modifiedAt) => `date:${modifiedAt}`
-    })
-  });
-  for (const componentName of [
-    'IconAlertTriangle',
-    'IconFileSearch',
-    'IconFileUnknown',
-    'IconMusic',
-    'MarkdownPreview',
-    'MonacoTextPreview'
-  ]) {
-    app.component(componentName, { template: '<span></span>' });
-  }
-  return await renderToString(app);
-};
+import { test } from 'node:test';
+import {
+  buildRoot,
+  createRendererStoreHarness,
+  officeDescriptor,
+  officePresentation,
+  previewSurfaceSource,
+  render,
+  renderPreviewSurface
+} from './onlyPreviewRenderingTest.helper.mjs';
 
 test('Markdown keeps semantic reading structure and strips every attribute', () => {
   const source = `# Heading
@@ -350,250 +131,234 @@ test('raw HTML is intentionally absent from the Vue rendering bundle', () => {
   assert.doesNotMatch(previewSurfaceSource, /HtmlPreview|v-html=.*html/i);
 });
 
-test('unsupported Office adapters render metadata instead of the generic empty state', async () => {
+test('direct unsupported and typed renderer failures share one truthful metadata surface', async () => {
   const cases = [
-    ['.xlsx', 'sheet'],
-    ['.xlsm', 'sheet'],
-    ['.docx', 'document']
-  ];
-
-  for (const [extension, kind] of cases) {
-    const descriptor = officeDescriptor(extension, kind);
-    const html = await renderPreviewSurface({
-      errorMessage: '',
-      presentationError: '',
+    {
+      id: 'unsupported',
+      extension: '.bin',
+      kind: 'unsupported',
+      adapterId: 'unsupported',
       errorCode: null,
-      descriptor,
-      descriptorType: extension.slice(1).toUpperCase(),
-      textContent: null,
-      showsUnsupportedMetadata: true,
-      loading: false,
-      settings: {},
-      selectionReportingRevision: '1'
-    });
-
-    assert.match(html, /name="onlypreview__unsupportedPreview"/, extension);
-    assert.doesNotMatch(html, /name="onlypreview__previewEmpty"/, extension);
-    assert.match(html, new RegExp(extension.slice(1).toUpperCase()), extension);
-    assert.match(html, /4096 bytes/, extension);
-    assert.match(html, /date:1700000000000/, extension);
-  }
-});
-
-test('unsupported Office adapters become ready only as a rendered metadata fallback', async () => {
-  const cases = [
-    ['.xlsx', 'sheet'],
-    ['.xlsm', 'sheet'],
-    ['.docx', 'document']
+      reason: 'This file type is not rendered in Bitterless. You can open it with its system app.'
+    },
+    {
+      id: 'unsupported-image',
+      extension: '.heic',
+      kind: 'unsupported',
+      adapterId: 'unsupported',
+      unsupportedCategory: 'image-format',
+      errorCode: null,
+      reason:
+        'This image format is recognized but has no built-in decoder. Open it with its system app.'
+    },
+    {
+      id: 'unsupported-video',
+      extension: '.mkv',
+      kind: 'unsupported',
+      adapterId: 'unsupported',
+      unsupportedCategory: 'video-container',
+      errorCode: null,
+      reason:
+        'This media container is recognized but has no built-in player. Open it with its system app.'
+    },
+    {
+      id: 'image-read',
+      extension: '.png',
+      kind: 'image',
+      adapterId: 'image',
+      errorCode: 'IMAGE_READ_FAILED',
+      reason: 'The image data stream could not be read completely.'
+    },
+    {
+      id: 'image-decode',
+      extension: '.png',
+      kind: 'image',
+      adapterId: 'image',
+      errorCode: 'IMAGE_DECODE_FAILED',
+      reason: 'Chromium could not decode this image.'
+    },
+    {
+      id: 'image-empty',
+      extension: '.png',
+      kind: 'image',
+      adapterId: 'unsupported',
+      errorCode: 'IMAGE_EMPTY',
+      reason: 'This image file is empty.'
+    },
+    {
+      id: 'media-read',
+      extension: '.mp3',
+      kind: 'audio',
+      adapterId: 'audio',
+      errorCode: 'MEDIA_READ_FAILED',
+      reason: 'The media data stream could not be opened.'
+    },
+    {
+      id: 'media-decode',
+      extension: '.mp3',
+      kind: 'audio',
+      adapterId: 'audio',
+      errorCode: 'MEDIA_DECODE_FAILED',
+      reason: 'Chromium could not decode this media stream.'
+    },
+    {
+      id: 'media-source',
+      extension: '.mp4',
+      kind: 'video',
+      adapterId: 'video',
+      errorCode: 'MEDIA_SOURCE_UNSUPPORTED',
+      reason: 'Chromium does not support this media source or codec.'
+    },
+    {
+      id: 'media-empty',
+      extension: '.mp4',
+      kind: 'video',
+      adapterId: 'unsupported',
+      errorCode: 'MEDIA_EMPTY',
+      reason: 'This media file is empty.'
+    },
+    {
+      id: 'document-parse',
+      extension: '.docx',
+      kind: 'document',
+      adapterId: 'docx-dom',
+      errorCode: 'DOCUMENT_PARSE_FAILED',
+      reason: 'The document could not be parsed.'
+    },
+    {
+      id: 'document-empty',
+      extension: '.docx',
+      kind: 'document',
+      adapterId: 'docx-dom',
+      errorCode: 'DOCUMENT_EMPTY',
+      reason: 'This document has no content to preview.'
+    },
+    {
+      id: 'document-sanitize',
+      extension: '.docx',
+      kind: 'document',
+      adapterId: 'docx-dom',
+      errorCode: 'DOCUMENT_SANITIZE_FAILED',
+      reason: 'The document output did not pass the preview safety checks.'
+    },
+    {
+      id: 'document-timeout',
+      extension: '.docx',
+      kind: 'document',
+      adapterId: 'docx-dom',
+      errorCode: 'DOCUMENT_RENDER_TIMEOUT',
+      reason: 'Document preview took too long and was stopped.'
+    },
+    {
+      id: 'sheet-parse',
+      extension: '.xlsx',
+      kind: 'sheet',
+      adapterId: 'xlsx-grid',
+      errorCode: 'SHEET_PARSE_FAILED',
+      reason: 'The workbook could not be parsed.'
+    },
+    {
+      id: 'sheet-empty',
+      extension: '.xlsx',
+      kind: 'sheet',
+      adapterId: 'xlsx-grid',
+      errorCode: 'SHEET_EMPTY',
+      reason: 'This workbook has no cells to preview.'
+    },
+    {
+      id: 'sheet-timeout',
+      extension: '.xlsx',
+      kind: 'sheet',
+      adapterId: 'xlsx-grid',
+      errorCode: 'SHEET_RENDER_TIMEOUT',
+      reason: 'Workbook preview took too long and was stopped.'
+    },
+    {
+      id: 'archive-limit',
+      extension: '.xlsx',
+      kind: 'sheet',
+      adapterId: 'xlsx-grid',
+      errorCode: 'OOXML_ARCHIVE_LIMIT',
+      reason: 'This Office file expands beyond the safe preview limits.'
+    },
+    {
+      id: 'archive-encrypted',
+      extension: '.docx',
+      kind: 'document',
+      adapterId: 'unsupported',
+      errorCode: 'OOXML_ENCRYPTED',
+      reason: 'Encrypted Office files cannot be previewed.'
+    },
+    {
+      id: 'archive-invalid',
+      extension: '.docx',
+      kind: 'document',
+      adapterId: 'docx-dom',
+      errorCode: 'OOXML_ARCHIVE_INVALID',
+      reason: 'This Office package is damaged or has an unsupported ZIP structure.'
+    },
+    {
+      id: 'signature',
+      extension: '.png',
+      kind: 'image',
+      adapterId: 'unsupported',
+      errorCode: 'SIGNATURE_MISMATCH',
+      reason: 'The file contents do not match its extension.'
+    },
+    {
+      id: 'size',
+      extension: '.md',
+      kind: 'text',
+      adapterId: 'unsupported',
+      errorCode: 'TEXT_TOO_LARGE',
+      reason: 'This file is larger than its preview limit.'
+    },
+    {
+      id: 'unsupported-codec',
+      extension: '.mp4',
+      kind: 'video',
+      adapterId: 'unsupported',
+      errorCode: 'OPERATION_FAILED',
+      reason: 'OnlyPreview could not complete this action.'
+    }
   ];
 
-  for (const [index, [extension, kind]] of cases.entries()) {
-    const descriptor = officeDescriptor(extension, kind);
-    const presentation = officePresentation(descriptor, index + 1);
+  for (const [index, fixture] of cases.entries()) {
+    const descriptor = {
+      ...officeDescriptor(fixture.extension, fixture.kind),
+      ...(fixture.unsupportedCategory ? { unsupportedCategory: fixture.unsupportedCategory } : {})
+    };
+    const presentation = {
+      ...officePresentation(descriptor, 800 + index, fixture.adapterId),
+      ...(fixture.errorCode
+        ? {
+            status: 'unavailable',
+            error: { code: fixture.errorCode, message: 'Main detail is not renderer copy.' }
+          }
+        : {})
+    };
     const harness = createRendererStoreHarness(presentation);
     globalThis.__onlyPreviewRendererStoreHarness = harness;
-    const previewStoreRuntime = await import(
-      `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?office=${extension.slice(1)}`
+    const runtime = await import(
+      `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?metadata=${fixture.id}`
     );
-    const store = previewStoreRuntime.onlyPreviewPreviewStore;
-    harness.captureReady = () => ({
-      descriptorKind: store.descriptor?.kind,
-      loading: store.loading,
-      showsUnsupportedMetadata: store.showsUnsupportedMetadata
-    });
+    const store = runtime.onlyPreviewPreviewStore;
 
     await store.initialize();
+    const html = await renderPreviewSurface(store);
 
-    assert.equal(store.descriptor?.kind, kind, extension);
-    assert.equal(store.showsUnsupportedMetadata, true, extension);
-    assert.equal(store.loading, false, extension);
-    assert.equal(harness.readText.length, 0, extension);
-    assert.equal(harness.errors.length, 0, extension);
-    assert.deepEqual(
-      harness.ready.map(({ request }) => request.selectionRevision),
-      [presentation.selectionRevision],
-      extension
+    assert.equal((html.match(/name="onlypreview__previewMetadata"/gu) ?? []).length, 1, fixture.id);
+    assert.match(html, new RegExp(`example${fixture.extension.replace('.', '\\.')}`, 'u'));
+    assert.match(html, new RegExp(fixture.extension.slice(1).toUpperCase(), 'u'));
+    assert.match(html, /4096 bytes/u);
+    assert.match(html, /date:1700000000000/u);
+    assert.match(html, new RegExp(fixture.reason.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+    assert.doesNotMatch(
+      html,
+      /<button|FileActions|onlypreview__openExternally|onlypreview__reveal/u
     );
-    assert.deepEqual(
-      harness.ready[0]?.snapshot,
-      {
-        descriptorKind: kind,
-        loading: false,
-        showsUnsupportedMetadata: true
-      },
-      extension
-    );
+    assert.equal(store.previewMetadata?.name, `example${fixture.extension}`);
+    assert.equal(store.previewMetadata?.variant, fixture.errorCode ? 'error' : 'unsupported');
+    store.dispose();
   }
-});
-
-test('character count uses grapheme clusters and sums every non-empty selection', () => {
-  assert.equal(characterCount.countOnlyPreviewGraphemes(''), 0);
-  assert.equal(characterCount.countOnlyPreviewGraphemes('ASCII'), 5);
-  assert.equal(characterCount.countOnlyPreviewGraphemes('中文'), 2);
-  assert.equal(characterCount.countOnlyPreviewGraphemes('e\u0301'), 1);
-  assert.equal(characterCount.countOnlyPreviewGraphemes('👨‍👩‍👧‍👦'), 1);
-  assert.equal(characterCount.countOnlyPreviewGraphemes(' \n\t'), 3);
-  assert.equal(
-    characterCount.countOnlyPreviewSelectionTexts(['A', '', '中文', 'e\u0301', '👨‍👩‍👧‍👦']),
-    5
-  );
-});
-
-test('character count falls back to Unicode code points only without Segmenter', () => {
-  assert.equal(characterCount.countOnlyPreviewGraphemes('e\u0301', null), 2);
-  assert.equal(characterCount.countOnlyPreviewGraphemes('👨‍👩‍👧‍👦', null), 7);
-  assert.equal(characterCount.countOnlyPreviewSelectionTexts(['界', '😀'], null), 2);
-});
-
-test('DOM selection counts only when both endpoints remain inside the preview body', () => {
-  const dom = new JSDOM(
-    '<!doctype html><html><body><article id="preview"><span>hello 世界</span></article><p id="outside">outside</p></body></html>'
-  );
-  const document = dom.window.document;
-  const preview = document.querySelector('#preview');
-  const insideText = preview.querySelector('span').firstChild;
-  const outsideText = document.querySelector('#outside').firstChild;
-  const selection = dom.window.getSelection();
-
-  const insideRange = document.createRange();
-  insideRange.setStart(insideText, 0);
-  insideRange.setEnd(insideText, 8);
-  selection.removeAllRanges();
-  selection.addRange(insideRange);
-  assert.equal(characterCount.countOnlyPreviewDomSelection(preview, selection), 8);
-
-  const outsideRange = document.createRange();
-  outsideRange.setStart(insideText, 0);
-  outsideRange.setEnd(outsideText, 3);
-  selection.removeAllRanges();
-  selection.addRange(outsideRange);
-  assert.equal(characterCount.countOnlyPreviewDomSelection(preview, selection), 0);
-
-  selection.collapse(insideText, 2);
-  assert.equal(characterCount.countOnlyPreviewDomSelection(preview, selection), 0);
-});
-
-test('character-count gates reject deferred old reports until the current source is ready', () => {
-  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
-  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
-
-  assert.equal(sourceGate.beginTransition('revision-a'), true);
-  assert.equal(hostGate.beginTransition('revision-a'), true);
-  assert.equal(sourceGate.arm('revision-a'), true);
-  assert.equal(hostGate.acceptReady('revision-a'), true);
-  assert.equal(hostGate.resume('revision-a'), true);
-  assert.equal(sourceGate.canReport('revision-a', 7), true);
-  assert.equal(hostGate.canAcceptCount(7), true);
-
-  assert.equal(hostGate.beginTransition('revision-b'), true);
-  assert.equal(hostGate.canAcceptCount(0), true, 'old zero may clear but never arms');
-  assert.equal(hostGate.canAcceptCount(7), false, 'old nonzero is blocked during restore');
-  assert.equal(sourceGate.beginTransition('revision-b'), true);
-  assert.equal(sourceGate.canReport('revision-a', 7), false);
-  assert.equal(sourceGate.canReport('revision-a', 0), false);
-
-  assert.equal(sourceGate.arm('revision-b'), true);
-  assert.equal(hostGate.acceptReady('revision-b'), true);
-  assert.equal(hostGate.canAcceptCount(9), false, 'ready waits for Shell restore completion');
-  assert.equal(hostGate.canBufferCount(9), true, 'first current selection can wait for Shell');
-  assert.equal(hostGate.resume('revision-b'), true);
-  assert.equal(sourceGate.canReport('revision-b', 9), true);
-  assert.equal(hostGate.canAcceptCount(9), true);
-});
-
-test('opaque revisions reject rapid stale readiness and resynchronize either renderer', () => {
-  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
-  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
-
-  assert.equal(hostGate.beginTransition('revision-b'), true);
-  assert.equal(sourceGate.beginTransition('revision-b'), true);
-  assert.equal(hostGate.beginTransition('revision-c'), true);
-  assert.equal(sourceGate.beginTransition('revision-c'), true);
-  assert.equal(sourceGate.arm('revision-b'), false);
-  assert.equal(hostGate.acceptReady('revision-b'), false);
-  assert.equal(hostGate.resume('revision-b'), false);
-  assert.equal(sourceGate.arm('revision-c'), true);
-  assert.equal(hostGate.acceptReady('revision-c'), true);
-  assert.equal(hostGate.resume('revision-c'), true);
-  assert.equal(hostGate.canAcceptCount(12), true);
-
-  const reloadedSource = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
-  assert.equal(hostGate.isSuspended(), false);
-  assert.equal(
-    hostGate.beginTransition('revision-d'),
-    true,
-    'a live host rotates on Preview reload'
-  );
-  assert.equal(hostGate.resume('revision-d'), true);
-  assert.equal(reloadedSource.beginTransition(hostGate.revisionForSync()), true);
-  assert.equal(reloadedSource.arm('revision-d'), true);
-  assert.equal(hostGate.acceptReady('revision-d'), true);
-
-  const reloadedHost = new characterCountGate.OnlyPreviewCharacterCountHostGate();
-  assert.equal(reloadedHost.beginTransition('revision-e'), true);
-  assert.equal(reloadedSource.beginTransition('revision-e'), true);
-  assert.equal(reloadedSource.arm('revision-e'), true);
-  assert.equal(reloadedHost.acceptReady('revision-e'), true);
-  assert.equal(reloadedHost.resume('revision-e'), true);
-  assert.equal(reloadedHost.canAcceptCount(4), true);
-});
-
-test('a local pending revision invalidates an older selection restore before Main responds', () => {
-  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
-  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
-
-  assert.equal(hostGate.beginTransition('event-b'), true);
-  assert.equal(sourceGate.beginTransition('event-b'), true);
-  assert.equal(sourceGate.arm('event-b'), true);
-  assert.equal(hostGate.acceptReady('event-b'), true);
-
-  assert.equal(
-    hostGate.beginTransition('pending-c'),
-    true,
-    'local C click rotates without broadcast'
-  );
-  assert.equal(hostGate.resume('event-b'), false, 'B finally cannot re-arm after the C click');
-  assert.equal(hostGate.acceptReady('event-b'), false);
-  assert.equal(hostGate.canAcceptCount(8), false);
-  assert.equal(sourceGate.canReport('event-b', 8), true, 'Preview remains B until Main confirms C');
-
-  assert.equal(hostGate.beginTransition('event-c'), true);
-  assert.equal(sourceGate.beginTransition('event-c'), true);
-  assert.equal(sourceGate.arm('event-c'), true);
-  assert.equal(hostGate.acceptReady('event-c'), true);
-  assert.equal(hostGate.resume('event-c'), true);
-  assert.equal(hostGate.canAcceptCount(11), true);
-
-  assert.equal(hostGate.beginTransition('pending-d'), true);
-  assert.equal(hostGate.resume('event-c'), false);
-  assert.equal(
-    hostGate.beginTransition('recovery-c'),
-    true,
-    'failed D gets a fresh recovery fence'
-  );
-  assert.equal(sourceGate.beginTransition('recovery-c'), true);
-  assert.equal(sourceGate.arm('recovery-c'), true);
-  assert.equal(hostGate.acceptReady('recovery-c'), true);
-  assert.equal(hostGate.resume('recovery-c'), true);
-});
-
-test('a native refresh transition reloads Preview before accepting its next count', () => {
-  const sourceGate = new characterCountGate.OnlyPreviewCharacterCountSourceGate();
-  const hostGate = new characterCountGate.OnlyPreviewCharacterCountHostGate();
-
-  assert.equal(hostGate.beginTransition('before-refresh'), true);
-  assert.equal(sourceGate.beginTransition('before-refresh'), true);
-  assert.equal(sourceGate.arm('before-refresh'), true);
-  assert.equal(hostGate.acceptReady('before-refresh'), true);
-  assert.equal(hostGate.resume('before-refresh'), true);
-
-  assert.equal(hostGate.beginTransition('native-refresh'), true);
-  assert.equal(hostGate.canAcceptCount(6), false);
-  assert.equal(sourceGate.beginTransition('native-refresh'), true);
-  assert.equal(sourceGate.canReport('before-refresh', 6), false);
-  assert.equal(sourceGate.arm('native-refresh'), true);
-  assert.equal(hostGate.acceptReady('native-refresh'), true);
-  assert.equal(hostGate.canBufferCount(7), true);
-  assert.equal(hostGate.resume('native-refresh'), true);
-  assert.equal(hostGate.canAcceptCount(7), true);
 });

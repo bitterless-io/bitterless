@@ -1,0 +1,21 @@
+{
+  "model": "claude-sonnet",
+  "stream": true,
+  "instructions": "Answer concisely and use tools only when required.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        { "type": "input_text", "text": "Say hello." },
+        {
+          "type": "input_image",
+          "detail": "high",
+          "image_url": "data:image/png;base64,NOT_FORWARDED"
+        }
+      ]
+    }
+  ],
+  "tools": [{ "type": "web_search_preview" }],
+  "prompt_cache_key": "conversation-text-1"
+}

@@ -91,6 +91,8 @@ feedback and respects reduced-motion preferences.
 - `tests/onlypreview/onlyPreviewCore.test.mjs`
 - `tests/onlypreview/onlyPreviewRendering.test.mjs`
 - `tests/onlypreview/onlyPreviewSearchShell.test.mjs`
+- `tests/onlypreview/onlyPreviewSearchShellUi.test.mjs` (Task 025 split)
+- `tests/onlypreview/onlyPreviewSearchShellTest.helper.mjs` (Task 025 split)
 - `tests/onlypreview/onlyPreviewSearchWindowIntegration.test.mjs`
 - `tests/onlypreview/searchBootstrap.runtime.entry.ts`
 - `tests/onlypreview/onlyPreviewPreviewRegion.test.mjs` (new)
@@ -98,6 +100,9 @@ feedback and respects reduced-motion preferences.
 - `tests/onlypreview/fixtures/createOnlyPreviewFixtures.ts`
 - `tests/onlypreview/fixtures/onlyPreviewApp.fixture.ts`
 - `tests/onlypreview/specs/onlyPreview.spec.ts`
+- `tests/onlypreview/specs/onlyPreviewPreview.spec.ts` (Task 025 split)
+- `tests/onlypreview/specs/onlyPreviewActions.spec.ts` (Task 025 split)
+- `tests/onlypreview/specs/onlyPreviewTest.helper.ts` (Task 025 split)
 - `tests/onlypreview/specs/onlyPreviewSearch.spec.ts`
 - `docs/features/onlypreview.md`
 - `docs/plan/analysis/onlypreview.md`
@@ -108,6 +113,7 @@ feedback and respects reduced-motion preferences.
 - `docs/plan/tasks/onlypreview-docx-render-021.md`
 - `docs/plan/tasks/onlypreview-media-truthful-state-022.md`
 - `docs/plan/tasks/onlypreview-preview-guards-023.md`
+- `docs/plan/tasks/onlypreview-dual-preview-region-024.md`
 
 Do not modify or revert unrelated owner working-tree changes, especially EyesOnAgents, Submodules,
 Codex/model-provider sources, `package.json`, or `yarn.lock`. Keep the existing
@@ -244,5 +250,10 @@ app-owned Vue view; the Chrome view has no renderer bundle or preload.
   the non-mutating Electron Vite source build, and `git diff --check`: **passed**.
 - `yarn typecheck:web` still reports the pre-existing non-OnlyPreview DingTalk/Feishu/Wechat,
   Poker, Home/Connector/Maestro, and nullable-path baseline errors; it reports no OnlyPreview error.
+- Task 025 keeps the Region at 798 lines after extracting its existing raw-view/find ownership,
+  explicitly whitelists descriptors for both public and runtime-bound Vue snapshots, and keeps
+  `OnlyPreviewWorkspace.displayPath` in Shell only. Search Shell tests and the dormant Electron spec
+  source are split by responsibility with all assertions discoverable; `FileActions` remains only in
+  the Shell toolbar. The combined OnlyPreview suite passes 318/318 with no skip/only/todo.
 - Electron/Playwright E2E and the real application were not run. Ral retains final visual/runtime
   acceptance for toolbar geometry, live HTML/PDF behavior, refresh, crash recovery, and find.

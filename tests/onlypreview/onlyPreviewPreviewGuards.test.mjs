@@ -20,7 +20,8 @@ await build({
   format: 'esm',
   target: 'node22',
   sourcemap: 'inline',
-  tsconfig: join(projectRoot, 'tsconfig.node.json')
+  tsconfig: join(projectRoot, 'tsconfig.node.json'),
+  alias: { electron: join(projectRoot, 'tests/onlypreview/fixtures/electron.stub.mjs') }
 });
 
 const runtime = await import(pathToFileURL(bundlePath).href);
@@ -173,6 +174,8 @@ test('extension and exact basename routing never promotes unknown bytes or demot
     bytes: Buffer.from('readable text')
   });
   assert.equal((await service.describe(unknown.file)).kind, 'unsupported');
+  assert.equal('displayPath' in (await service.describe(unknown.file)), false);
+  assert.doesNotMatch(JSON.stringify(await service.describe(unknown.file)), /\/workspace\//u);
   assert.equal(unknown.bodyReadCount(), 0);
 
   const renamedZip = createMetadataFile({
@@ -182,6 +185,107 @@ test('extension and exact basename routing never promotes unknown bytes or demot
   });
   assert.equal((await service.describe(renamedZip.file)).kind, 'text');
   assert.equal(renamedZip.bodyReadCount(), 0);
+});
+
+test('media catalogs are exact and recognized unsupported formats never issue decoder work', async () => {
+  const supported = {
+    image: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.ico', '.svg'],
+    audio: ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac'],
+    video: ['.mp4', '.webm', '.ogv', '.mov', '.m4v']
+  };
+  for (const [kind, extensions] of Object.entries(supported)) {
+    for (const extension of extensions) {
+      assert.equal(runtime.classifyOnlyPreviewExtension(`fixture${extension}`), kind, extension);
+    }
+  }
+
+  const workspaces = { assertOpenedFileCurrent: async () => undefined };
+  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  for (const [category, extensions] of [
+    ['image-format', ['.heic', '.heif', '.tif', '.tiff', '.raw']],
+    ['video-container', ['.mkv', '.avi', '.wmv', '.flv']]
+  ]) {
+    for (const extension of extensions) {
+      const candidate = createMetadataFile({
+        relativePath: `fixture${extension.toUpperCase()}`,
+        size: 16,
+        bytes: Buffer.alloc(16, 0xff)
+      });
+      const descriptor = await service.describe(candidate.file);
+      assert.equal(descriptor.kind, 'unsupported', extension);
+      assert.equal(descriptor.unsupportedCategory, category, extension);
+      assert.equal(descriptor.assetUrl, undefined, extension);
+      assert.equal(candidate.bodyReadCount(), 0, extension);
+    }
+  }
+
+  for (const relativePath of ['fixture.heicx', 'fixture.raw2', 'fixture.mkvs', 'fixture.bin']) {
+    const candidate = createMetadataFile({ relativePath, size: 4, bytes: Buffer.alloc(4) });
+    const descriptor = await service.describe(candidate.file);
+    assert.equal(descriptor.kind, 'unsupported', relativePath);
+    assert.equal(descriptor.unsupportedCategory, undefined, relativePath);
+    assert.equal(candidate.bodyReadCount(), 0, relativePath);
+  }
+});
+
+test('reviewed SVG, AAC, and QuickTime signatures stay broad enough without accepting malformed atoms', async () => {
+  const workspaces = { assertOpenedFileCurrent: async () => undefined };
+  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  const fixtures = [
+    [
+      'commented.svg',
+      Buffer.from(
+        '\uFEFF <?xml version="1.0"?>\n<!-- generated -->\n<!DOCTYPE svg [<!ENTITY x "ok">]>\n<svg viewBox="0 0 1 1">'
+      )
+    ],
+    ['adif.aac', Buffer.from('ADIFfixture')],
+    ...['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip'].map((atomType) => {
+      const bytes = Buffer.alloc(16);
+      bytes.writeUInt32BE(16, 0);
+      bytes.write(atomType, 4, 4, 'ascii');
+      return [`${atomType}.mov`, bytes];
+    })
+  ];
+  for (const [relativePath, bytes] of fixtures) {
+    const candidate = createMetadataFile({ relativePath, size: bytes.length, bytes });
+    assert.equal((await service.describe(candidate.file)).previewError, undefined, relativePath);
+  }
+
+  const malformedAtom = Buffer.alloc(16);
+  malformedAtom.writeUInt32BE(4, 0);
+  malformedAtom.write('moov', 4, 4, 'ascii');
+  const malformed = createMetadataFile({
+    relativePath: 'malformed.mov',
+    size: malformedAtom.length,
+    bytes: malformedAtom
+  });
+  assert.equal((await service.describe(malformed.file)).previewError?.code, 'SIGNATURE_MISMATCH');
+
+  const truncatedPng = createMetadataFile({
+    relativePath: 'truncated.png',
+    size: 8,
+    bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  });
+  assert.equal(
+    (await service.describe(truncatedPng.file)).previewError,
+    undefined,
+    'a valid header is admitted for the renderer decoder to classify the truncated payload'
+  );
+});
+
+test('empty supported image and media are classified before signature reads', async () => {
+  const workspaces = { assertOpenedFileCurrent: async () => undefined };
+  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  for (const [relativePath, errorCode] of [
+    ['empty.png', 'IMAGE_EMPTY'],
+    ['empty.mp3', 'MEDIA_EMPTY'],
+    ['empty.mp4', 'MEDIA_EMPTY']
+  ]) {
+    const candidate = createMetadataFile({ relativePath, size: 0 });
+    const descriptor = await service.describe(candidate.file);
+    assert.equal(descriptor.previewError?.code, errorCode, relativePath);
+    assert.equal(candidate.bodyReadCount(), 0, relativePath);
+  }
 });
 
 test('size-first metadata gates read zero body bytes at adapter limit plus one', async () => {

@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
 import type { OnlyPreviewBounds } from '@shared/onlypreview/onlyPreview.types';
 import {
+  ONLY_PREVIEW_FIND_FOCUS_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT
 } from '@shared/onlypreview/onlyPreview.types';
@@ -49,7 +50,9 @@ type OnlyPreviewNativeCommand =
   | 'open-settings'
   | 'refresh'
   | 'focus-project'
-  | 'focus-search';
+  | 'focus-search'
+  | 'find-in-file'
+  | 'close-find-in-file';
 
 interface OnlyPreviewNativeCommandPayload {
   hostToken: string;
@@ -116,7 +119,20 @@ const isProjectSearchShortcut = (input: Input): boolean => {
     input.type !== 'keyDown' ||
     input.isAutoRepeat ||
     input.key.toLowerCase() !== 'f' ||
-    !input.shift ||
+    input.shift === input.alt ||
+    !isCommandModifier(input)
+  ) {
+    return false;
+  }
+  return process.platform === 'darwin' ? !input.control : !input.meta;
+};
+
+const isCurrentFileFindShortcut = (input: Input): boolean => {
+  if (
+    input.type !== 'keyDown' ||
+    input.isAutoRepeat ||
+    input.key.toLowerCase() !== 'f' ||
+    input.shift ||
     input.alt ||
     !isCommandModifier(input)
   ) {
@@ -216,6 +232,25 @@ export class OnlyPreviewWindowHelper {
       const command = this.resolveNativeCommand(host, input);
       if (!command) return;
       event.preventDefault();
+      if (command === 'find-in-file') {
+        const opened = onlyPreviewPreviewRegionService.openFind(host.hostToken);
+        if (
+          opened &&
+          host.kind === 'standalone' &&
+          host.hostToken === this.standaloneHost?.hostToken &&
+          this.shellView &&
+          !this.shellView.webContents.isDestroyed()
+        ) {
+          this.shellView.webContents.focus();
+        }
+        xpcMain.broadcast(ONLY_PREVIEW_FIND_FOCUS_EVENT, { hostId: host.hostId });
+        return;
+      }
+      if (command === 'close-find-in-file') {
+        onlyPreviewPreviewRegionService.closeFind(host.hostToken);
+        onlyPreviewPreviewRegionService.focusActiveContent(host.hostToken);
+        return;
+      }
       if (command === 'focus-project' || command === 'focus-search') {
         if (
           host.kind === 'standalone' &&
@@ -706,6 +741,20 @@ export class OnlyPreviewWindowHelper {
       return 'focus-project';
     }
     if (isProjectSearchShortcut(input)) return 'focus-search';
+    if (isCurrentFileFindShortcut(input)) return 'find-in-file';
+    if (
+      input.type === 'keyDown' &&
+      !input.isAutoRepeat &&
+      input.key === 'Escape' &&
+      !input.shift &&
+      !input.alt &&
+      !input.control &&
+      !input.meta &&
+      this.standaloneHost?.hostToken === host.hostToken &&
+      onlyPreviewPreviewRegionService.isFindOpen(host.hostToken)
+    ) {
+      return 'close-find-in-file';
+    }
     if (input.type === 'keyDown' && key === 'f5') return 'refresh';
     if (input.type !== 'keyDown' || !isCommandModifier(input)) return null;
     if (key === 'o') return 'choose-folder';

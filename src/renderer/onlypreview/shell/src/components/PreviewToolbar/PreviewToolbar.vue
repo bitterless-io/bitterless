@@ -10,6 +10,15 @@
         {{ relativePath }}
       </span>
     </div>
+    <FindBar v-if="onlyPreviewFindStore.open" />
+    <span
+      v-else-if="onlyPreviewFindStore.feedback"
+      name="onlypreview__findFeedback"
+      class="onlypreview-preview-toolbar__find-feedback"
+      role="status"
+    >
+      {{ onlyPreviewFindStore.feedback }}
+    </span>
     <div
       v-if="presentation?.fileRef"
       name="onlypreview__previewToolbarTrailing"
@@ -31,6 +40,8 @@
 import { computed } from 'vue';
 import { onlyPreviewShellStore } from '../../onlyPreviewShell.store';
 import FileActions from '../FileActions/FileActions.vue';
+import FindBar from '../FindBar/FindBar.vue';
+import { onlyPreviewFindStore } from '../../onlyPreviewFind.store';
 
 const presentation = computed(() => onlyPreviewShellStore.previewPresentation);
 const relativePath = computed(

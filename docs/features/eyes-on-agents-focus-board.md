@@ -61,13 +61,12 @@ fallback, so restoring or finishing the removal stays a local decision.
   [task 056](../plan/tasks/eyes-on-agents-focus-full-width-056.md). The 1120 × 720 default is
   unchanged. At that width the menu-bar identity shrinks and ellipsizes so the connection, Refresh,
   bridge, and pin controls stay reachable.
-- The column surface follows window activation: the pale orange attention tint
-  (`--eyes-column-focus`) while the EyesOnAgents window is active, the neutral `--eyes-column` grey
-  while it is not. The state is renderer-local (`focus`/`blur` on `window`, seeded from
-  `document.hasFocus()`) and exposed as one modifier class on the renderer root; an Omni-hosted cell
-  stays warm because an embedded cell can sit blurred while its host window is active. Header
-  treatment, 9px body padding, and card spacing are unchanged.
-- The board keeps its 12px padding, so the window right of the column is empty canvas.
+- The column paints no surface and carries no padding: white cards sit straight on the board canvas.
+  The 8px inset lives on the board region (`.eyes-on-agents__main`), and the column keeps an 8px gap
+  between its header and the scrolling list. Window-activation tinting was retired with the surface
+  it colored.
+- Text actions (`Read all`, the card overflow trigger) use `theme.ts` arcoblue-5 as ink and gain an
+  arcoblue-2 surface on hover; the search field is a plain white input.
 
 ## Membership
 
@@ -186,15 +185,17 @@ an active title filter shows the title-search text, otherwise the Focus empty te
 The card has one status slot and one menu:
 
 - **Title-row status slot** — a fixed 16×18px box right of the title. It shows the working spinner
-  while the row is active, the unread red dot when a terminal row is unread, and nothing otherwise.
-  Spinner and dot are mutually exclusive there, so the card never grows a second status region and an
-  active row never shows the dot.
+  while the row is active, and the unread red dot for any **non-active** unread row — terminal or
+  `unknown`. Spinner and dot are mutually exclusive there, so the card never grows a second status
+  region and an active row never shows the dot. Covering `unknown` is deliberate: such a row is
+  promoted to the unread tier, so it must be able to explain its own position.
 - **Overflow menu** (`…`, always present):
   1. **Open in Codex** / **Open in Claude** — named for the row's provider, with a quiet
      `(double click)` / `（双击）` hint, because double-click and `Enter` do the same thing. Omitted for
      a Claude row with no trusted Desktop route.
   2. **Mark as read** / **Mark as unread** — labelled from the row's stored unread flag.
-  3. **Preview transcript** — Claude rows with a canonical JSONL.
+  3. **Copy session path** — copies the session JSONL's absolute path to the clipboard, for Claude
+     rows with a known transcript. Codex rows have no discovered session file, so the item is absent.
 - There is no icon-only Open button. Double-click, `Enter`, and the menu item all run the same
   `openThread` path, so read acknowledgement, `last_opened_*` evidence, and the on-Open status sync
   are unchanged.

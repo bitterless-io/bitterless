@@ -151,15 +151,14 @@ const stubsPlugin = {
 };
 
 const createStore = () => {
-  const calls = { open: [], preview: [], readState: [] };
+  const calls = { open: [], readState: [], copyPath: [] };
   return {
     calls,
     busyAction: null,
     openingSessionKeys: new Set(),
-    previewingSessionKeys: new Set(),
     openThread: async (sessionKey) => calls.open.push(sessionKey),
-    previewThread: async (sessionKey) => calls.preview.push(sessionKey),
     setThreadUnread: async (sessionKey, isUnread) => calls.readState.push([sessionKey, isUnread]),
+    copySessionPath: async (sessionKey) => calls.copyPath.push(sessionKey),
   };
 };
 
@@ -175,7 +174,7 @@ const createThread = (overrides = {}) => ({
   isUnread: false,
   lastActivityAt: '2026-08-18T01:59:00.000Z',
   lastCompletedAt: null,
-  canPreviewTranscript: true,
+  canCopySessionPath: true,
   domainId: 1,
   ...overrides,
 });
@@ -228,7 +227,7 @@ try {
     return more;
   };
   const activeDropdown = () => [...document.body.querySelectorAll('.arco-dropdown')]
-    .find((element) => /Preview transcript|Mark as (read|unread)|Open in/.test(
+    .find((element) => /Copy session path|Mark as (read|unread)|Open in/.test(
       element.textContent ?? '',
     ));
   const optionTexts = (dropdown) => [...dropdown.querySelectorAll('.arco-dropdown-option')]
@@ -277,7 +276,7 @@ try {
     }
   });
 
-  await test('a routeless Claude row keeps unread and Preview without an open path', async () => {
+  await test('a routeless Claude row keeps unread and its session path without an open path', async () => {
     const document = await render(createThread({ isUnread: true }));
     const card = document.querySelector('[name="eyesOnAgents__threadCard"]');
     const more = document.querySelector('button.thread-card__more-control');
@@ -297,10 +296,15 @@ try {
     const cardStyles = read(
       'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less',
     );
-    assert.match(cardSource, /v-if="canPreviewTranscript"[\s\S]*?handlePreview/);
     assert.match(
       cardSource,
-      /const canPreviewTranscript = computed\(\(\) => props\.thread\.provider === 'claude'\s*&& props\.thread\.canPreviewTranscript\);/,
+      /v-if="thread\.canCopySessionPath"[\s\S]*?handleCopySessionPath/,
+      'the copy item is gated on the snapshot capability',
+    );
+    assert.doesNotMatch(
+      cardSource,
+      /previewThread|previewTranscript|previewingSessionKeys/,
+      'transcript preview is gone from the card',
     );
     assert.match(cardSource, /const handleOpen[\s\S]*?if \(!canOpenThread\.value\) return;/);
     assert.match(cardSource, /const handleDoubleClick[\s\S]*?await handleOpen\(\);/);
@@ -317,7 +321,7 @@ try {
   });
 
   await test('the read-state toggle is offered on every card and reports the stored flag', async () => {
-    const unreadRow = createThread({ isUnread: true, canPreviewTranscript: false });
+    const unreadRow = createThread({ isUnread: true, canCopySessionPath: false });
     let mounted = await mount(unreadRow);
     try {
       await openMore(mounted.host);
@@ -336,7 +340,7 @@ try {
       document.body.innerHTML = '';
     }
 
-    const readRow = createThread({ canPreviewTranscript: false });
+    const readRow = createThread({ canCopySessionPath: false });
     mounted = await mount(readRow);
     try {
       await openMore(mounted.host);
@@ -357,7 +361,7 @@ try {
     const workingRow = createThread({
       runtimeState: 'working',
       isUnread: true,
-      canPreviewTranscript: false,
+      canCopySessionPath: false,
     });
     mounted = await mount(workingRow);
     try {
@@ -389,12 +393,12 @@ try {
       assert.ok(dropdown, 'CLI-only More must open its Arco Dropdown');
       assert.deepEqual(
         optionTexts(dropdown),
-        ['Mark as read', 'Preview transcript'],
+        ['Mark as read', 'Copy session path'],
         'a routeless Claude row offers no open item',
       );
       assert.deepEqual(mounted.store.calls.open, [], 'More must not bubble into card Open');
-      await clickOption(dropdown, /Preview transcript/);
-      assert.deepEqual(mounted.store.calls.preview, [cliThread.sessionKey]);
+      await clickOption(dropdown, /Copy session path/);
+      assert.deepEqual(mounted.store.calls.copyPath, [cliThread.sessionKey]);
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';
@@ -410,7 +414,7 @@ try {
       assert.ok(dropdown);
       assert.deepEqual(
         optionTexts(dropdown),
-        ['Open in Claude (double click)', 'Mark as unread', 'Preview transcript'],
+        ['Open in Claude (double click)', 'Mark as unread', 'Copy session path'],
         'the open item leads, names Claude, and discloses the gesture',
       );
       await clickOption(dropdown, /Open in Claude/);
@@ -424,7 +428,7 @@ try {
       sessionKey: 'codex:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       threadId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       provider: 'codex',
-      canPreviewTranscript: false,
+      canCopySessionPath: false,
     });
     mounted = await mount(codexThread);
     try {
@@ -434,7 +438,7 @@ try {
       assert.deepEqual(
         optionTexts(dropdown),
         ['Open in Codex (double click)', 'Mark as unread'],
-        'a Codex row names Codex and never offers a transcript preview',
+        'a Codex row names Codex and exposes no session file path',
       );
       await clickOption(dropdown, /Open in Codex/);
       assert.deepEqual(mounted.store.calls.open, [codexThread.sessionKey]);
@@ -476,6 +480,18 @@ try {
       );
       assert.equal(rendered.querySelector('.thread-card__status[role="status"]'), null);
     }
+
+    const unknownUnread = await render(createThread({
+      runtimeState: 'unknown',
+      isUnread: true,
+      desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    }));
+    assert.equal(
+      unknownUnread.querySelectorAll('.thread-card__unread-dot').length,
+      1,
+      'an authority-lost unread row must explain why it sits in the unread tier',
+    );
+    assert.equal(unknownUnread.querySelector('.thread-card__status[role="status"]'), null);
 
     for (const runtimeState of ['working', 'waiting_approval', 'waiting_input']) {
       const rendered = await render(createThread({

@@ -1,7 +1,6 @@
 import { reactive } from 'vue';
 import moment from 'moment';
 import { XpcRendererHandler, createXpcRendererEmitter } from 'electron-xpc/renderer';
-import type { WechatHandler } from '@preload/connector/wechat.handler';
 import { settingEmitter } from '@/emitter/setting.emitter';
 import type {
   RigchatQrcodeDetail,
@@ -10,11 +9,13 @@ import type {
   RigchatContactResolvedDetail,
   RigchatOwnerVerifiedDetail,
   RigchatErrorDetail,
-} from '@preload/connector/connector.preload.type';
+  WechatConnectorRendererApi,
+  WechatConnectorRuntimeApi,
+} from '@shared/connector/connector.contract';
 
-const wechatPreloadEmitter = createXpcRendererEmitter<WechatHandler>(
+const wechatPreloadEmitter = createXpcRendererEmitter<WechatConnectorRuntimeApi>(
   'WechatHandler'
-) as WechatHandler;
+) as WechatConnectorRuntimeApi;
 
 class WechatStore {
   drawerVisible = false;
@@ -126,7 +127,7 @@ const startVerifyCodePolling = (): void => {
   _verifyCodeTimer = setInterval(fetch, 20000);
 };
 
-export class WechatStoreHandler extends XpcRendererHandler {
+export class WechatStoreHandler extends XpcRendererHandler implements WechatConnectorRendererApi {
   async onQrcode(params: RigchatQrcodeDetail): Promise<void> {
     wechatStore.qrcodeUrl = params.qrcodeUrl;
     wechatStore.loggedIn = false;

@@ -409,7 +409,11 @@ export class OmniWindowHelper {
       title: 'Omni Browser',
       show: false,
       ...(process.platform === 'darwin'
-        ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 8 } }
+        ? {
+            acceptFirstMouse: true,
+            titleBarStyle: 'hiddenInset',
+            trafficLightPosition: { x: 12, y: 8 },
+          }
         : { frame: false }),
     };
 

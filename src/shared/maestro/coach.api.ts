@@ -138,8 +138,8 @@ export interface CoachXpcContract {
   // Right-click a tab → native context menu (built + popped in the main process, so it
   // renders above the operation view).
   showTabMenu(params: { id: string }): Promise<void>
-  // Sign in to an LLM provider through the pi SDK's in-process OAuth flow (no `pi` CLI).
-  // Codex supports 'browser' and 'device_code'; Claude/Anthropic supports 'browser' only.
+  // Sign in to a selectable LLM provider. Main rejects hidden/unknown provider IDs.
+  // Codex supports 'browser' and 'device_code'; Local account login lives in Configuration.
   loginLlm(params: { provider: string; method: LlmLoginMethod }): Promise<LlmConfig>
   // Back-compat wrapper for older renderer code.
   loginCodex(params: { method: string }): Promise<LlmConfig>
@@ -219,7 +219,19 @@ export interface BrowserRequestReplayResult {
 }
 
 export type TabKind = 'ai-crms' | 'browser'
-export type WorkbenchPane = 'recording' | 'skills' | 'integrations' | 'injections' | 'tools' | 'models' | 'about' | 'log'
+export type WorkbenchPane =
+  | 'recording'
+  | 'skills'
+  | 'integrations'
+  | 'injections'
+  | 'tools'
+  | 'models'
+  | 'configuration'
+  | 'apps'
+  | 'connectors'
+  | 'settings'
+  | 'about'
+  | 'log'
 // Approval history persists the original scope id; the user-facing label is Maestro.
 export type HostToolScope = 'cowork' | 'trainer'
 export type HostToolCategory = 'observe' | 'act' | 'api' | 'capture' | 'skill' | 'integration' | 'workspace' | 'file' | 'tab' | 'training'

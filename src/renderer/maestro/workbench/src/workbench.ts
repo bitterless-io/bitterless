@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import ArcoVue from '@arco-design/web-vue'
 import '@arco-design/web-vue/dist/arco.css'
 import '../../common/style.css'
 import { i18n } from '@renderer/common/i18n/i18n.helper'
@@ -10,7 +11,7 @@ const bootstrap = async (): Promise<void> => {
     import('./WorkbenchApp.vue'),
     import('./workbench.router')
   ])
-  createApp(WorkbenchApp).use(workbenchRouter).use(i18n).mount('#app')
+  createApp(WorkbenchApp).use(ArcoVue).use(workbenchRouter).use(i18n).mount('#app')
 }
 
 void bootstrap()

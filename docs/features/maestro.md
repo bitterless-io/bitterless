@@ -7,11 +7,15 @@ Upstream baseline: `projects/micromeet-cowork` commit
 
 ## Purpose
 
-The runtime originally migrated from Micromeet Cowork remains integrated as the Bitterless
-**Maestro** Mini App, but its authenticated Home card and launch action are temporarily hidden.
-The runtime, window graph, packaged resources, and persisted data stay intact for later reopening.
-When the entry is restored, clicking **Open** creates one independent top-level window, and
-subsequent clicks focus that same instance.
+The runtime originally migrated from Micromeet Cowork is now the authenticated Bitterless
+**primary window**. Home remains alive as a hidden authentication/bootstrap shell; after session
+activation prepares Maestro successfully, Main hides Home and presents the singleton Maestro
+window. Dock activation, tray Open, and a second application launch return to Maestro while that
+session is active. Logout or invalidation destroys authenticated windows and returns to Home login.
+
+Maestro also remains visible in the Workbench Apps catalog. Its Open action focuses the same
+singleton rather than creating another window graph. Runtime state, packaged resources, and
+persisted data remain intact across a normal close/reopen cycle.
 
 This is a runtime migration, not a visual rewrite. Maestro's existing browser, chat, agent, capture,
 Workbench, skill, file, integration, and model behavior stays intact unless this document assigns a
@@ -24,10 +28,10 @@ Maestro is not a Vue route or one renderer. The embedded unit is its complete El
 ```text
 ┌──────────────────── Bitterless process ────────────────────────────────┐
 │                                                                        │
-│  Home renderer / Mini Apps                                             │
-│       │ Open                                                           │
+│  Home renderer (login, token, bootstrap; hidden after activation)      │
+│       │ AuthHandler.activateSession                                    │
 │       ▼                                                                │
-│  MaestroWindowHandler (singleton/focus/auth cleanup)                  │
+│  MaestroWindowHandler (authenticated primary singleton)               │
 │       │                                                                │
 │       ├── hidden Maestro SQLite BrowserWindow + isolated preload      │
 │       │       └── config/tabs/chat/session/filter/injection DAOs       │
@@ -36,7 +40,10 @@ Maestro is not a Vue route or one renderer. The embedded unit is its complete El
 │             ├── Home renderer (tabs, address bar, capture controls)    │
 │             ├── operation WebContentsViews (unprivileged web pages)    │
 │             ├── Control WebContentsView (Maestro chat)                │
-│             └── Workbench WebContentsView (overlay)                    │
+│             └── Workbench WebContentsView                              │
+│                   ├── native Maestro panes                             │
+│                   ├── Apps / Connectors / Settings                     │
+│                   └── Configuration (Claude accounts + Local model)    │
 │                                                                        │
 │  Bitterless owns app/update/menu/quit/signing/installer lifecycle      │
 └────────────────────────────────────────────────────────────────────────┘
@@ -64,13 +71,14 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 
 | Event | Required behavior |
 |---|---|
-| Mini Apps renders | Do not render the Maestro card or Home launch action while the entry is dormant. |
-| First Open | Boot the hidden Maestro database, then show the Maestro window only after required renderers are ready. |
+| Bitterless startup | Create Home as the visible login/bootstrap shell. |
+| Session activation | Boot the hidden Maestro database, show Maestro only after required renderers are ready, then hide Home. |
+| Mini Apps renders | Render the localized Maestro card in Workbench Apps; Open focuses the current singleton. |
 | Repeated Open | Restore/focus the existing Maestro window; never create a second graph. |
-| Window close | Stop or preserve work safely without quitting Bitterless; a later Open must produce a usable Maestro window. |
-| Bitterless auth invalidation/logout | Destroy or lock the Maestro graph so authenticated content is not left visible. |
+| Window close | Stop or preserve work safely without quitting Bitterless; Dock/tray/second-instance activation recreates Maestro for the active session. |
+| Bitterless auth invalidation/logout | Destroy the Maestro graph and authenticated secondary windows, then show Home login. |
 | Bitterless quit/update install | Stop Maestro schedulers/capture/agents and destroy Maestro windows before process exit. |
-| Main app remains open | Closing Maestro must not close Todo, Omni Browser, or Bitterless Home. |
+| Home remains alive | Home retains the customer token, Todo readiness handshake, and login recovery state without exposing its old authenticated navigation. |
 
 Maestro keeps its large working size (`1360x900`) and never permits a window below `800x600`.
 Window geometry follows the shared [top-level window state contract](window-state-persistence.md);
@@ -104,12 +112,19 @@ the legacy Cowork `cowork-main` entry is imported once when the unified Maestro 
   inspection, replay, JSON/HAR export, curated evidence persistence, Preview, and Ingest.
 - Skills browse/detail/import/export/open/delete/train/replay, domain injections, integration targets,
   mappings, dry-run/apply/readiness flows, app-open schedules, host tools, models, About, and Log.
+- `Apps`, `Connectors`, and `Settings` embed the former Home surfaces inside Workbench. Home owns
+  customer authentication and Todo readiness through a bounded metadata/command bridge; it never
+  copies its token or browser storage into Maestro's Chromium partition.
+- `Configuration` owns metadata-only Claude subscription accounts, isolated Claude CLI login,
+  routing enablement/status, and the fixed `Local` provider/model/effort controls. It exposes only
+  `http://127.0.0.1:8741/v1`; no API key or configurable remote endpoint is accepted.
 - Bundled Micromeet CLI invocation and credential synchronization remain available to integration
   flows in packaged builds.
 
 Current upstream limitations are parity, not migration defects:
 
-- Connector is a visible placeholder, not a completed connector inbox.
+- Connectors retain their existing management UI and runtime behavior; a unified connector inbox is
+  still outside this migration.
 - Voice scribe audio over five minutes remains unsupported.
 
 ## Host substitutions
@@ -138,6 +153,8 @@ default renderer session.
 | Skills, API profiles, traces, attachments, artifacts, demo data | Same legacy-compatible data root. |
 | Browser cookies/storage/cache | Legacy-compatible `persist:bitterless-cowork` partition. |
 | Pi auth/model files | Maestro data root; never Bitterless chat model files. |
+| Claude subscription account metadata | Main-owned `userData/claude-subscription`; renderer never receives profile paths or credentials. |
+| Local provider route | Fixed loopback `127.0.0.1:8741`; Pi receives no bearer header and no remote URL override. |
 | Window and pane preferences | Legacy-compatible Maestro keys/files. |
 | CLI shim/credential envelope | existing `~/.micromeet` contract, initialized idempotently. |
 
@@ -168,9 +185,13 @@ unavailable in packaged builds.
   Maestro may install its Undici dispatcher only for the lifetime of the Maestro runtime; teardown
   restores the previous dispatcher only when Maestro still owns the global slot. While Maestro is
   open, other Bitterless main-process Undici traffic follows that same explicit proxy setting.
-- CLI credentials use a random local key protected with restrictive filesystem permissions and an
+- Bundled Micromeet CLI credentials use a random local key protected with restrictive filesystem
+  permissions and an
   authenticated encryption envelope shared by the embedded runtime and bundled CLI. They must not
   be decryptable from a public constant plus the account email.
+- Claude subscription credentials remain owned by the unmodified Claude CLI and the operating
+  system credential store. Bitterless persists only account metadata and managed profile paths; it
+  never extracts, encrypts, exposes, or injects Claude.ai tokens.
 - SQLite boot failure rejects `openMaestroWindow()` with an explicit error and leaves Bitterless usable.
 - Maestro uses Electron `safeStorage`/the operating-system keychain only in a packaged
   `VITE_MODE=release` runtime. Every unpackaged `VITE_MODE=debug` profile, including
@@ -192,7 +213,8 @@ unavailable in packaged builds.
 ├───────────────────────────────────────────────┬────────────────────────┤
 │ operation web page                            │ Control / Maestro chat │
 │                                               │ (collapsible)          │
-│ Workbench replaces this region when visible   │                        │
+│ Workbench replaces this region when visible:                           │
+│ Capture … Models · Configuration · Apps · Connectors · Settings        │
 └───────────────────────────────────────────────┴────────────────────────┘
 ```
 
@@ -203,7 +225,11 @@ change and must not block runtime parity.
 
 ## Verification contract
 
-Automated gates:
+For the current consolidation delivery, Ral owns runtime and automated verification. The source
+handoff intentionally does not run tests, type checks, lint, builds, Electron, Claude CLI, browser,
+or network probes.
+
+Automated gates for Ral to run:
 
 - `git diff --check`
 - `yarn typecheck:node`

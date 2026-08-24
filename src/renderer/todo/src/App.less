@@ -36,13 +36,11 @@
 }
 
 .todo-app__board--detail-open .todo-app__board-scroll {
-  padding-right: calc(320px + 12px);
+  overflow-x: auto;
 }
 
-@media (max-width: 680px) {
-  .todo-app__board--detail-open .todo-app__board-scroll {
-    padding-right: 12px;
-  }
+.todo-app__board--detail-open .todo-app__board-draggable {
+  margin-right: 320px;
 }
 
 @media (max-width: 323px) {
