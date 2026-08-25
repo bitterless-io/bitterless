@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { Button, Message, Notification, Spin, Trigger } from '@arco-design/web-vue'
-import { IconBrandWhatsapp, IconLogin2, IconPlayerPlay, IconSparkle2 } from '@tabler/icons-vue'
+import { IconBrandWhatsapp, IconLogin2, IconPlayerPlay, IconSparkle2, IconX } from '@tabler/icons-vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import type {
   AgentActivityStep,
   AgentThinkingState,
@@ -200,6 +201,12 @@ const loginActiveProvider = async (): Promise<void> => {
 const configureLocalProvider = async (): Promise<void> => {
   await coach.setWorkbenchVisible({ visible: true })
   xpcRenderer.broadcast('coach/workbench-pane', { pane: 'configuration' })
+}
+
+// The Home renderer owns sidebar geometry. Ask its layout store to collapse the placeholder;
+// main stays out of this renderer-to-renderer UI preference.
+const closePanel = (): void => {
+  xpcRenderer.broadcast('coach/sidebar-close', { ts: Date.now() })
 }
 
 const openDemo = async (): Promise<void> => {
@@ -484,6 +491,16 @@ onMounted(async () => {
               </div>
             </template>
           </Trigger>
+          <button
+            name="control__header__close"
+            type="button"
+            class="control-app__close"
+            :title="i18nHelper.menuBar.maestro.hidePanel"
+            :aria-label="i18nHelper.menuBar.maestro.hidePanel"
+            @click="closePanel"
+          >
+            <IconX :size="14" stroke="2" />
+          </button>
         </div>
       </div>
 

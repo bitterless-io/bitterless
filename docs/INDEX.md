@@ -15,6 +15,9 @@ design document.
 - [Maestro startup host flash and MenuBar](issues/maestro-startup-host-flash-and-menubar.md) -
   implemented; owner verification pending: keep authenticated Home hidden until ready Maestro and
   derive 44px chrome from Omni Browser.
+- [Maestro Cowork MenuBar control parity](issues/maestro-cowork-menubar-controls-outdated.md) -
+  implemented; owner verification pending: compact 36px chrome, current controls, and a bundled
+  local Home fixed tab.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
@@ -189,6 +192,9 @@ The two OnlyPreview designs are closed at the documented non-E2E implementation 
 - [Translator remains translating after successful Codex login](issues/translator-runtime-stall-and-missing-log.md) -
   implemented; owner verification pending: every translation preparation stage is deadline-bound
   and sanitized execution evidence persists outside the shared application log.
+- [Translator provider failure detail missing from production logs](issues/translator-provider-error-log-detail-missing.md) -
+  implemented; owner verification pending: transport fallback and typed terminal evidence remain
+  independently diagnosable without persisting provider text or response bodies.
 - [Settings notification test](issues/settings-notification-test.md) - implemented; owner
   verification pending: a top-level Notification module immediately above Log exposes one
   XPC-backed `notification test` action.
@@ -205,6 +211,10 @@ The two OnlyPreview designs are closed at the documented non-E2E implementation 
   root cause found 2026-08-20: a succeeded login never returned because the IPv6 callback
   companion's `server.close()` waited on a browser socket forever. Teardown now forces connections
   shut behind a deadline.
+- [Codex network requests bypass the local proxy](issues/codex-network-bypasses-local-proxy.md) -
+  implemented; owner verification pending: strict Clash TUN routing plus an explicit profile-local
+  Bitterless proxy protect OAuth token exchange and model requests while keeping both localhost
+  callback families direct.
 - [Connected Codex account is not identified](issues/codex-connected-account-not-identified.md) -
   open: no surface names which ChatGPT account Bitterless is signed into, so a Bitterless-vs-CLI
   account difference is invisible.

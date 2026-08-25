@@ -173,6 +173,11 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   async startCapture(params?: { mode?: CaptureMode } & Partial<CaptureOptions>): Promise<CaptureState> {
     if (params?.mode) this.captureMode = params.mode
     if (params) await this.setCaptureOptions(params)
+    const active = this._state.getOperationTabs().find((tab) => tab.id === this._state.getActiveOperationTabId())
+    if (active && active.kind !== 'browser') {
+      this.emitTrace({ kind: 'info', msg: `capture unavailable on ${active.kind} tab`, ts: Date.now() })
+      return this.getCaptureState()
+    }
     if (this.capturing) await this.discardActiveCaptureForRestart()
     const target = this.currentCaptureTarget()
     if (!target?.capture) return this.getCaptureState()
@@ -201,7 +206,7 @@ export class CaptureService extends CommonService<CaptureServiceState> {
     this.capturing = false
     this.captureStartedAt = 0
     const target = this.captureTargetTab()
-    await target?.capture?.stopRecording({ keepRuntime: target.kind === 'ai-crms' })
+    await target?.capture?.stopRecording()
     this.captureTargetTabId = null
     if (this.traceStream) {
       this.traceStream.end()
@@ -215,7 +220,7 @@ export class CaptureService extends CommonService<CaptureServiceState> {
 
   private async discardActiveCaptureForRestart(): Promise<void> {
     const target = this.captureTargetTab()
-    await target?.capture?.stopRecording({ keepRuntime: target.kind === 'ai-crms' }).catch((err) => {
+    await target?.capture?.stopRecording().catch((err) => {
       this.emitTrace({ kind: 'error', msg: 'capture restart cleanup: ' + (err as Error).message, ts: Date.now() })
     })
     if (this.traceStream) {
@@ -255,7 +260,7 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   }
 
   private isCapturableTab(tab: OperationTab | undefined): tab is OperationTab {
-    return !!tab && tab.debuggerEnabled && !!tab.capture && !!tab.view && !tab.view.webContents.isDestroyed()
+    return !!tab && tab.kind === 'browser' && tab.debuggerEnabled && !!tab.capture && !!tab.view && !tab.view.webContents.isDestroyed()
   }
 
   private captureTargetTab(): OperationTab | undefined {
@@ -265,6 +270,7 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   currentCaptureTarget(): OperationTab | undefined {
     const tabs = this._state.getOperationTabs()
     const active = tabs.find((tab) => tab.id === this._state.getActiveOperationTabId())
+    if (active && active.kind !== 'browser') return undefined
     if (active && !active.debuggerEnabled) return undefined
     if (this.isCapturableTab(active)) return active
     const existing = this.captureTargetTab()
@@ -275,9 +281,14 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   }
 
   async switchCaptureTarget(next: OperationTab): Promise<void> {
-    if (!this.capturing || !this.isCapturableTab(next) || this.captureTargetTabId === next.id) return
+    if (!this.capturing) return
+    if (next.kind !== 'browser') {
+      await this.stopCapture()
+      return
+    }
+    if (!this.isCapturableTab(next) || this.captureTargetTabId === next.id) return
     const prev = this.captureTargetTab()
-    if (prev && prev.id !== next.id) await prev.capture?.stopRecording({ keepRuntime: prev.kind === 'ai-crms' })
+    if (prev && prev.id !== next.id) await prev.capture?.stopRecording()
     this.captureTargetTabId = next.id
     await next.capture?.startRecording()
   }

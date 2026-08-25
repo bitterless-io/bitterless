@@ -8,6 +8,7 @@ import * as piCodingAgent from '@earendil-works/pi-coding-agent';
 import { streamSimple as streamOpenAiCodexSimple } from '@earendil-works/pi-ai/api/openai-codex-responses';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import ts from 'typescript';
+import { sanitizeDiagnostic } from '../../src/shared/diagnostics/diagnostic.service.ts';
 
 const nodeRequire = createRequire(import.meta.url);
 const runtimeSource = readFileSync(
@@ -40,7 +41,11 @@ const loadRuntime = () => {
     'exports',
     `${transpiled.outputText}\n//# sourceURL=codexRuntime.service.ts`
   );
-  execute(nodeRequire, loadedModule, loadedModule.exports);
+  const runtimeRequire = (specifier) =>
+    specifier === '@shared/diagnostics/diagnostic.service'
+      ? { sanitizeDiagnostic }
+      : nodeRequire(specifier);
+  execute(runtimeRequire, loadedModule, loadedModule.exports);
   return loadedModule.exports;
 };
 

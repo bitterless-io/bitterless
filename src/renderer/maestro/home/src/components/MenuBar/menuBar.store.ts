@@ -44,7 +44,7 @@ class MenuBarState {
     xpcRenderer.subscribe('coach/tabs', (payload) => {
       const tabs = (payload.params as TabInfo[]) || []
       const active = tabs.find((tab) => tab.active)
-      if (active) this.url = stripScheme(active.url || '')
+      if (active) this.url = stripScheme(active.displayUrl || active.url || '')
     })
     xpcRenderer.subscribe('coach/load-progress', (payload) => {
       const p = payload.params as LoadProgress | undefined
@@ -60,7 +60,7 @@ class MenuBarState {
     // (also covers a coach/nav broadcast that may have fired before we subscribed).
     const tabs = await coach.getTabs()
     const active = tabs.find((t) => t.active)
-    this.url = stripScheme(active?.url || '')
+    this.url = stripScheme(active?.displayUrl || active?.url || '')
   }
 
   async go(): Promise<void> {

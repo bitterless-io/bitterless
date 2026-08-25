@@ -4,6 +4,7 @@ Status: Current delivery contract
 
 Upstream baseline: `projects/micromeet-cowork` commit
 `689832d39e4b78f2717d5beedbe1c1c3f8db7f71` (2026-07-14).
+Current MenuBar/control and fixed-local-tab parity reference: Cowork `dev/next` commit `19b0621`.
 
 ## Purpose
 
@@ -89,10 +90,11 @@ the legacy Cowork `cowork-main` entry is imported once when the unified Maestro 
 
 ### Browser shell
 
-- Pinned AI-CRMS tab, ordinary web tabs, title/favicon/progress, add/activate/reorder/duplicate/close,
+- Pinned local Bitterless Home tab, ordinary web tabs, title/favicon/progress,
+  add/activate/reorder/duplicate/close,
   address navigation, history, reload, popup interception, and native context menus.
-- Per-tab debugger attachment, warm-tab LRU management, tab persistence, sidebar collapse, and
-  Workbench overlay.
+- Ordinary-browser per-tab debugger attachment, warm-tab LRU management, browser-tab persistence,
+  sidebar collapse, and Workbench overlay.
 - Operation pages remain unprivileged and are automated through Chrome DevTools Protocol.
 
 ### Maestro chat and agents
@@ -179,7 +181,14 @@ unavailable in packaged builds.
 
 ## Security and errors
 
-- The AI-CRMS document-start auth bridge attaches only to the pinned trusted AI-CRMS host.
+- The pinned Home tab loads only the dedicated bundled/local Maestro Home-content renderer with an
+  XPC-only preload in the Maestro partition. Its visible address is `bitterless://home`; it never
+  exposes or navigates to the real dev/file target, and ordinary website tabs never receive its
+  preload.
+- AI-CRMS authentication uses one closable, non-persisted, non-recordable login tab with no preload.
+  Main confines it to the trusted AI-CRMS host and accepts login/logout bindings only from that
+  trusted main frame. Closing, cooling, auth cleanup, and native-window shutdown invalidate pending
+  preparation and detach the auth bridge before detaching its debugger and closing the view.
 - Workspace/file tools retain root-boundary checks, size limits, explicit permissions, and approval
   policy. No credential value is written into the Bitterless repository or log output.
 - Proxy credentials are never logged. When the user explicitly supplies an HTTP(S)/ALL proxy,
@@ -208,9 +217,9 @@ unavailable in packaged builds.
 
 ```text
 ┌──────────────────────────── Maestro window ────────────────────────────┐
-│ tab strip                                                              │
+│ tab strip · tabs · new tab                         recording status    │
 ├────────────────────────────────────────────────────────────────────────┤
-│ back forward reload | address | debugger capture sidebar workbench     │
+│ back forward reload | address | snapshot? | Control | Workbench | update│
 ├───────────────────────────────────────────────┬────────────────────────┤
 │ operation web page                            │ Control / Maestro chat │
 │                                               │ (collapsible)          │
@@ -220,9 +229,8 @@ unavailable in packaged builds.
 ```
 
 Home, Control, and Workbench retain the upstream loading, empty, busy, error, and constrained states.
-The Mini App card itself follows Bitterless theme and `en`/`zh` i18n rules. The migrated Maestro UI
-keeps its current upstream English copy during parity migration; localization is a separate product
-change and must not block runtime parity.
+The Mini App card and migrated Maestro shell controls follow Bitterless theme and shared `en`/`zh`
+i18n rules; the fixed Home-tab label also follows the active renderer language.
 
 ### Startup visibility and MenuBar geometry
 
@@ -235,20 +243,41 @@ Maestro's localized Home renderer reports a post-mount render tick to Main. The 
 be shown only after that fence and the existing operation, Control, and Workbench readiness chain.
 
 ```text
-┌──────────────────────── Maestro 44px tab strip ────────────────────────┐
-│ macOS ● ● ●   pinned tab · browser tabs · +                drag space │
+┌──────────────────────── Maestro 36px tab strip ────────────────────────┐
+│ macOS ● ● ●   pinned tab · browser tabs · +       recording status    │
 ├──────────────────────── address/actions 48px ──────────────────────────┤
-│ navigation · address · debugger · capture · Workbench · update        │
+│ navigation · address · snapshot? · Control · Workbench · update       │
 ├────────────────────────────────────────────────────────────────────────┤
 │ operation surface                                      │ Maestro Chat │
 └────────────────────────────────────────────────────────┴──────────────┘
 ```
 
-The top strip derives from Omni Browser's 32px Royal Blue MenuBar and is exactly 12px taller:
-44px, `#4e5882`, with a `#3d4666` bottom divider. On macOS the native controls use
-`trafficLightPosition: { x: 12, y: 14 }` and content clears the same 78px traffic-light gutter.
-The address row remains 48px, so total top chrome is 92px. DOM-measured placeholders remain the
-only owner of operation and Control native-view bounds.
+The top strip keeps Omni Browser's Royal Blue visual treatment at `#4e5882`, with a `#3d4666`
+bottom divider, while using the follow-up compact 36px geometry. Tabs and tab-row wrappers are 28px.
+On macOS the native controls use `trafficLightPosition: { x: 12, y: 10 }` and content clears the same
+78px traffic-light gutter. The address row remains 48px, so total top chrome is 84px. DOM-measured
+placeholders remain the only owner of operation and Control native-view bounds.
+
+The visible action rules follow the current compatible Cowork implementation. Debugger remains a
+per-tab capability but has no MenuBar button. Recording start/stop remains agent-owned; the tab row
+reserves a non-interactive status slot that is empty while idle and shows a red pulsing dot while
+recording. Snapshot stays conditional on recording. Control uses outline/filled Sparkles,
+Workbench uses outline/filled Settings, and both express active state with blue color only. The
+Control header can broadcast `coach/sidebar-close`; Home subscribes once, persists the closed state,
+and the Sparkles action remains the reopen path. The chat composer does not duplicate the Skills
+entry; the Settings Workbench toggle remains the visible route to that pane.
+
+The fixed first tab is a local `home` tab rather than the legacy remote `ai-crms` tab. Its dedicated
+renderer mounts Bitterless Home's existing Chat and MessageSearch content with the required visual,
+Markdown, and language bootstrap, but not either window shell, router/login, side rail, or singleton
+Home subscribers. It is pinned, address-locked, non-recordable, confined to the local entry, and
+displays `bitterless://home` rather than a dev-server URL or packaged file path. AI-CRMS
+provider/login code is not allowed to navigate or replace this fixed tab.
+
+This focused parity pass deliberately excludes Cowork's forked CRMS renderer, AI-CRMS avatar/profile
+UI, generic mini-app page-type menus, update-progress protocol, and loading/crash tab-state
+expansion. Maestro's localized updater, Demo controls, Control chat, Local provider, and browser
+tabs remain authoritative.
 
 ## Verification contract
 

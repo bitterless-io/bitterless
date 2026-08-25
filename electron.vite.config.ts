@@ -446,6 +446,7 @@ export default defineConfig({
           omniCellContent: resolve('src/preload/omni/omniCellContent.preload.ts'),
           trench: resolve('src/preload/trench/trench.preload.ts'),
           maestroCoach: resolve('src/preload/maestro/coach.preload.ts'),
+          maestroLocalHome: resolve('src/preload/maestro/localHome.preload.ts'),
           maestroWorkbench: resolve('src/preload/maestro/workbench.preload.ts'),
           maestroSqlite: resolve('src/preload/maestro/sqlite.preload.ts')
         },
@@ -495,6 +496,7 @@ export default defineConfig({
           'omni/omniWindow': resolve('src/renderer/omni/omniWindow/index.html'),
           coin: resolve('src/renderer/coin/index.html'),
           maestroHome: resolve('src/renderer/maestro/home/index.html'),
+          maestroLocalHome: resolve('src/renderer/maestro/localHome/index.html'),
           maestroControl: resolve('src/renderer/maestro/control/index.html'),
           maestroWorkbench: resolve('src/renderer/maestro/workbench/index.html'),
           maestroSqlite: resolve('src/renderer/maestro/sqlite/index.html')

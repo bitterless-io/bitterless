@@ -1,4 +1,4 @@
-// Persisted browser tabs (the home tab strip). The pinned AI-CRMS home tab is always synthesized
+// Persisted browser tabs (the home tab strip). The pinned bundled Home tab is always synthesized
 // at boot and is NOT stored here — only the user's additional (non-pinned) tabs persist, so they
 // reopen on the next launch. Reached from MAIN via createXpcMainEmitter<TabsApi>('TabsDao').
 export interface SavedTab {

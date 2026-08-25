@@ -24,7 +24,11 @@ import {
 } from '@main/modelProvider/modelProvider.service';
 import type { CodexRuntimeService } from '@main/codex/codexRuntime.service';
 import { CodexRuntimeAuthRequiredError, CodexRuntimeError } from '@main/codex/codexRuntime.service';
-import type { TranslatorLogger } from '@main/logging/translatorLog.service';
+import {
+  resolveTranslatorLogPosition,
+  type TranslatorLogPosition,
+  type TranslatorLogger
+} from '@main/logging/translatorLog.service';
 
 const TRANSLATOR_TIMEOUT_MS = 60_000;
 const TRANSLATOR_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -143,15 +147,15 @@ const waitForAbortable = async <T>(
 };
 
 const errorCause = (error: unknown): string => {
-  if (error instanceof TranslatorServiceError) return `translator-${error.code}`;
-  if (error instanceof CodexRuntimeAuthRequiredError) return `codex-auth-${error.reason}`;
-  if (error instanceof CodexRuntimeError) return `codex-${error.code}`;
-  if (error instanceof ModelProviderServiceError) return `provider-${error.code}`;
-  if (error instanceof TranslatorOperationCancelledError) return 'operation-cancelled';
-  if (error instanceof TypeError) return 'type-error';
-  if (error instanceof RangeError) return 'range-error';
-  if (error instanceof Error) return 'unclassified-error';
-  return 'non-error-rejection';
+  if (error instanceof TranslatorServiceError) return 'translator';
+  if (error instanceof CodexRuntimeAuthRequiredError) return 'codex-auth';
+  if (error instanceof CodexRuntimeError) return 'codex';
+  if (error instanceof ModelProviderServiceError) return 'model-provider';
+  if (error instanceof TranslatorOperationCancelledError) return 'cancelled';
+  if (error instanceof TypeError) return 'type';
+  if (error instanceof RangeError) return 'range';
+  if (error instanceof Error) return 'error';
+  return 'rejection';
 };
 
 const runtimeErrorCode = (error: CodexRuntimeError): TranslatorErrorCode => {
@@ -207,23 +211,37 @@ export class TranslatorService {
     this.active.set(input.clientId, current);
     const attempt = (this.attempt += 1);
     const startedAt = this.now();
-    let activeStage = 'accepted';
+    let activePosition: TranslatorLogPosition = { stage: 'accepted' };
     let terminalRecorded = false;
     const writeLog = (
       level: 'info' | 'warn' | 'error',
-      stage: string,
-      options: { errorCode?: TranslatorErrorCode; cause?: string } = {}
+      position: TranslatorLogPosition,
+      options: {
+        errorCode?: TranslatorErrorCode;
+        cause?: string;
+        diagnostic?: CodexRuntimeError['diagnostic'];
+        lastPosition?: TranslatorLogPosition;
+      } = {}
     ): void => {
       try {
         this.logger.write({
           level,
           attempt,
-          stage,
+          stage: position.stage,
+          ...(position.phase ? { phase: position.phase } : {}),
+          ...(options.lastPosition
+            ? {
+                lastStage: options.lastPosition.stage,
+                ...(options.lastPosition.phase ? { lastPhase: options.lastPosition.phase } : {})
+              }
+            : {}),
           elapsedMs: this.now() - startedAt,
-          ...(stage === 'accepted'
+          ...(position.stage === 'accepted'
             ? { sourceCodePoints: Array.from(input.sourceText).length }
             : {}),
-          ...options
+          ...(options.errorCode ? { errorCode: options.errorCode } : {}),
+          ...(options.cause ? { cause: options.cause } : {}),
+          ...(options.diagnostic ? { diagnostic: options.diagnostic } : {})
         });
       } catch {
         // Diagnostics are isolated from the translation result contract.
@@ -231,19 +249,27 @@ export class TranslatorService {
     };
     const recordStage = (stage: string): void => {
       if (terminalRecorded) return;
-      activeStage = stage;
-      writeLog('info', stage);
+      activePosition = resolveTranslatorLogPosition(stage);
+      writeLog('info', activePosition);
     };
     const recordTerminal = (
       stage: 'cancelled' | 'completed' | 'failed' | 'timeout',
-      options: { errorCode?: TranslatorErrorCode; cause?: string } = {}
+      options: {
+        errorCode?: TranslatorErrorCode;
+        cause?: string;
+        diagnostic?: CodexRuntimeError['diagnostic'];
+      } = {}
     ): void => {
       if (terminalRecorded) return;
       terminalRecorded = true;
-      writeLog(stage === 'completed' ? 'info' : stage === 'cancelled' ? 'warn' : 'error', stage, {
-        ...options,
-        ...(options.cause ? { cause: `${activeStage}-${options.cause}` } : {})
-      });
+      writeLog(
+        stage === 'completed' ? 'info' : stage === 'cancelled' ? 'warn' : 'error',
+        resolveTranslatorLogPosition(stage),
+        {
+          ...options,
+          lastPosition: activePosition
+        }
+      );
     };
     const awaitStage = async <T>(stage: string, operation: () => Promise<T>): Promise<T> => {
       recordStage(`${stage}-started`);
@@ -258,7 +284,10 @@ export class TranslatorService {
     const failed = (code: TranslatorErrorCode, cause: unknown): TranslatorTranslateResult => {
       recordTerminal(code === 'timeout' ? 'timeout' : 'failed', {
         errorCode: code,
-        cause: errorCause(cause)
+        cause: errorCause(cause),
+        ...(cause instanceof CodexRuntimeError && cause.diagnostic
+          ? { diagnostic: cause.diagnostic }
+          : {})
       });
       return this.failed(input, code);
     };
@@ -267,7 +296,7 @@ export class TranslatorService {
       current.controller.abort();
     }, this.timeoutMs);
     let providerEpoch = -1;
-    writeLog('info', 'accepted');
+    writeLog('info', resolveTranslatorLogPosition('accepted'));
 
     try {
       const context = await awaitStage('provider-context', () =>

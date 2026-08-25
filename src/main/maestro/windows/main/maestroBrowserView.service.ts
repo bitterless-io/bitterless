@@ -4,9 +4,16 @@ import { is } from '@electron-toolkit/utils'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
 import { randomUUID } from 'crypto'
 import { injectable } from 'inversify'
+import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { CommonService } from '@maestro-shared/iocHelper/ioc.helper'
 import { DebuggerCapture } from '@maestro-main/capture/debuggerCapture'
 import { chromeIdentity } from '@maestro-main/capture/chromeIdentity'
+import {
+  AI_CRMS_AUTH_HOST,
+  authBridge,
+  isTrustedAiCrmsAuthUrl
+} from '@maestro-main/auth/authBridge'
 import { ReplayEngine } from '@maestro-main/drive/replayEngine'
 import { normalizeUrl } from '@maestro-main/settings/coachSettings.service'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
@@ -21,6 +28,10 @@ import type {
   TabInfo,
   ViewRect
 } from '@maestro-shared/coach.api'
+import {
+  MAESTRO_AI_CRMS_LOGIN_DISPLAY_URL,
+  MAESTRO_LOCAL_HOME_DISPLAY_URL
+} from '@maestro-shared/coach.api'
 import type { InjectBtnApi, InjectBtnEntry, InjectBtnInput } from '@maestro-shared/injectBtn.api'
 import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
@@ -32,24 +43,29 @@ export const shouldOpenOperationDevTools = (): boolean => {
   return process.env.COACH_DEVTOOLS === '1'
 }
 
-export const AI_CRMS_URL = 'http://crms.micromeet.ai/'
-export const AI_CRMS_LOGIN_URL = 'http://crms.micromeet.ai/?mrgn=ID#/login'
+export const AI_CRMS_LOGIN_URL = `http://${AI_CRMS_AUTH_HOST}/?mrgn=ID#/login`
 const AI_CRMS_TITLE = 'AI-CRMS'
-const AI_CRMS_HOST = new URL(AI_CRMS_URL).hostname.toLowerCase()
 const AI_CRMS_FAVICON = ''
+const LOCAL_HOME_TITLE = 'Home'
+const LOCAL_HOME_FAVICON = ''
 const ATTACH_BEFORE_NAVIGATE_TIMEOUT_MS = 3000
 const INJECTED_BUTTON_ROOT_ID = '__bitterless_maestro_button_root__'
 const injectBtnStore = createXpcMainEmitter<InjectBtnApi>('InjectBtnDao')
 
 const isWorkbenchInternalUrl = (url: string): boolean => /^micromeet:\/\/workbench(?:[/?#].*)?$/i.test(url.trim())
 
-const isAiCrmsUrl = (url: string): boolean => {
-  try {
-    const parsed = new URL(url)
-    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname.toLowerCase() === AI_CRMS_HOST
-  } catch {
-    return false
+interface LocalHomeEntry {
+  url: string
+  file?: string
+}
+
+const localHomeEntry = (): LocalHomeEntry => {
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    const base = process.env['ELECTRON_RENDERER_URL'].replace(/\/$/, '')
+    return { url: `${base}/maestro/localHome/index.html` }
   }
+  const file = join(__dirname, '../renderer/maestro/localHome/index.html')
+  return { url: pathToFileURL(file).toString(), file }
 }
 
 const hostnameOf = (url: string): string => {
@@ -110,8 +126,14 @@ export interface OperationTab {
   kind: TabKind
   view: WebContentsView | null
   capture: DebuggerCapture | null
+  /** Internal debugger owner for the trusted AI-CRMS auth bridge; never exposed to agent tools. */
+  bridgeCapture?: DebuggerCapture | null
   replay: ReplayEngine | null
   attachReady?: Promise<void>
+  preparationReady?: Promise<void>
+  coolingReady?: Promise<void>
+  cooling?: boolean
+  closeReady?: Promise<void>
   url: string
   title: string
   favicon: string
@@ -155,28 +177,46 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   private prewarming = false
   private creatingTab = false
   private injectedButtonNonces = new Map<string, string>()
+  private authBridgeOwner: WebContents | null = null
+  private authBridgeCleanup: Promise<void> = Promise.resolve()
+  private aiCrmsPreparation: Promise<void> = Promise.resolve()
+  private lifecycleEpoch = 0
+  private shuttingDown = false
 
   createPinnedHomeTab(): WebContentsView {
-    const slot = this.buildViewSlot()
+    const view = this.buildPinnedHomeView()
+    const entry = localHomeEntry()
     const first: OperationTab = {
       id: `tab-${++this.tabSeq}`,
-      kind: 'ai-crms',
-      view: slot.view,
-      capture: slot.capture,
-      replay: slot.replay,
-      url: AI_CRMS_URL,
-      title: AI_CRMS_TITLE,
-      favicon: AI_CRMS_FAVICON,
-      debuggerEnabled: true,
+      kind: 'home',
+      view,
+      capture: null,
+      replay: null,
+      url: entry.url,
+      title: LOCAL_HOME_TITLE,
+      favicon: LOCAL_HOME_FAVICON,
+      debuggerEnabled: false,
       pinned: true,
       lastActive: Date.now()
     }
     this.tabs.push(first)
     this.activeTabId = first.id
-    this._state.operationView = slot.view
-    this._state.capture = slot.capture
-    this._state.replayEngine = slot.replay
-    return slot.view
+    this._state.operationView = view
+    this._state.capture = null
+    this._state.replayEngine = null
+    return view
+  }
+
+  async loadPinnedHomeTab(): Promise<void> {
+    const tab = this.tabs.find((item) => item.kind === 'home' && item.pinned)
+    const wc = tab?.view?.webContents
+    if (!tab || !wc || wc.isDestroyed()) throw new Error('Bundled Home view is unavailable.')
+    const entry = localHomeEntry()
+    tab.url = entry.url
+    if (entry.file) await wc.loadFile(entry.file)
+    else await wc.loadURL(entry.url)
+    this.sendTabNav(tab, true)
+    this.broadcastTabs()
   }
 
   async openStartupTabIfNeeded(): Promise<void> {
@@ -194,7 +234,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   async navigate(params: { url: string }): Promise<void> {
     if (!this._state.operationView) return
     const active = this.tabs.find((tab) => tab.id === this.activeTabId)
-    if (active?.pinned) return
+    if (active?.kind !== 'browser') return
     if (isWorkbenchInternalUrl(params.url || '')) return
     const target = normalizeUrl(params.url)
     if (!target) return
@@ -204,14 +244,23 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   async reload(): Promise<void> {
-    const wc = this._state.operationView?.webContents
-    if (!wc || wc.isDestroyed()) return
+    const active = this.getActiveTab()
+    if (!active) return
+    if (active.kind === 'ai-crms') {
+      await this.queueAiCrmsPreparation(active, { targetUrl: active.url, reload: true })
+      return
+    }
+    const wc = active.view?.webContents
+    if (!wc || wc.isDestroyed()) {
+      await this.warmAndLoad(active)
+      return
+    }
     wc.reload()
   }
 
   async goBack(): Promise<void> {
     const active = this.getActiveTab()
-    if (this.isPinnedAiCrmsTab(active)) return
+    if (!active || active.kind !== 'browser') return
     const wc = this._state.operationView?.webContents
     if (!wc || wc.isDestroyed() || !wc.navigationHistory.canGoBack()) return
     wc.navigationHistory.goBack()
@@ -219,7 +268,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   async goForward(): Promise<void> {
     const active = this.getActiveTab()
-    if (this.isPinnedAiCrmsTab(active)) return
+    if (!active || active.kind !== 'browser') return
     const wc = this._state.operationView?.webContents
     if (!wc || wc.isDestroyed() || !wc.navigationHistory.canGoForward()) return
     wc.navigationHistory.goForward()
@@ -228,6 +277,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   async setTabDebugger(params: { id: string; enabled: boolean }): Promise<TabInfo[]> {
     const tab = this.tabs.find((item) => item.id === params.id)
     if (!tab) return await this.getTabs()
+    if (tab.kind !== 'browser') return await this.getTabs()
     const enabled = Boolean(params.enabled)
     if (tab.debuggerEnabled !== enabled) {
       if (!enabled && this._state.capturing && this._state.captureTargetTabId === tab.id) {
@@ -252,6 +302,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   openOperationDevTools(): void {
     if (!shouldOpenOperationDevTools()) return
+    if (this.getActiveTab()?.kind !== 'browser') return
     const wc = this._state.operationView?.webContents
     if (!wc || wc.isDestroyed() || wc.isDevToolsOpened()) return
     try {
@@ -308,6 +359,29 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return tab
   }
 
+  private async addAiCrmsLoginTab(): Promise<OperationTab> {
+    // This is intentionally a fresh normal slot, not the pre-warmed spare: a never-navigated
+    // webContents needs an about:blank render process before DebuggerCapture can attach reliably.
+    const slot = this.buildViewSlot()
+    const tab: OperationTab = {
+      id: `tab-${++this.tabSeq}`,
+      kind: 'ai-crms',
+      view: slot.view,
+      capture: null,
+      bridgeCapture: slot.capture,
+      replay: null,
+      url: AI_CRMS_LOGIN_URL,
+      title: AI_CRMS_TITLE,
+      favicon: AI_CRMS_FAVICON,
+      debuggerEnabled: false,
+      pinned: false,
+      lastActive: Date.now()
+    }
+    this.tabs.push(tab)
+    await this.enforceWarmCap([tab.id])
+    return tab
+  }
+
   private buildViewSlot(): ViewSlot {
     const view = new WebContentsView({ webPreferences: { partition: MAESTRO_PARTITION } })
     view.setBackgroundColor('#d9ecff')
@@ -328,6 +402,23 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return { view, capture, replay }
   }
 
+  private buildPinnedHomeView(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: join(__dirname, '../preload/maestroLocalHome.js'),
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: MAESTRO_PARTITION
+      }
+    })
+    view.setBackgroundColor('#f4f6ff')
+    this._state.browserWindow?.contentView.addChildView(view, 0)
+    view.setVisible(false)
+    this.attachViewListeners(view)
+    return view
+  }
+
   private ownerOf(view: WebContentsView): OperationTab | undefined {
     return this.tabs.find((tab) => tab.view === view)
   }
@@ -340,20 +431,141 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return this.activeTabId ? this.tabs.find((tab) => tab.id === this.activeTabId) : undefined
   }
 
-  private isPinnedAiCrmsTab(tab?: OperationTab): boolean {
-    return Boolean(tab?.pinned && tab.kind === 'ai-crms')
+  private isPinnedHomeTab(tab?: OperationTab): boolean {
+    return Boolean(tab?.pinned && tab.kind === 'home')
   }
 
-  private isAllowedPinnedAiCrmsNavigation(url: string, wc: WebContents): boolean {
-    if (isAiCrmsUrl(url)) return true
-    return url === 'about:blank' && !wc.getURL()
+  private isAllowedPinnedHomeNavigation(tab: OperationTab, url: string): boolean {
+    const withoutHash = (value: string): string => value.replace(/#.*$/, '')
+    return withoutHash(url) === withoutHash(tab.url)
   }
 
-  private preventPinnedAiCrmsDomainEscape(tab: OperationTab | undefined, wc: WebContents, url: string): boolean {
-    if (!this.isPinnedAiCrmsTab(tab)) return false
-    if (this.isAllowedPinnedAiCrmsNavigation(url, wc)) return false
-    this._state.emitTrace({ kind: 'info', msg: `blocked AI-CRMS navigation · ${url}`, ts: Date.now() })
+  private preventPinnedHomeEscape(tab: OperationTab | undefined, url: string): boolean {
+    if (!tab || !this.isPinnedHomeTab(tab)) return false
+    if (this.isAllowedPinnedHomeNavigation(tab, url)) return false
+    this._state.emitTrace({ kind: 'info', msg: `blocked bundled Home navigation · ${url}`, ts: Date.now() })
     return true
+  }
+
+  private preventAiCrmsEscape(tab: OperationTab | undefined, url: string, openInBrowser: boolean): boolean {
+    if (tab?.kind !== 'ai-crms' || isTrustedAiCrmsAuthUrl(url)) return false
+    if (url === 'about:blank' && !tab.view?.webContents.getURL()) return false
+    this._state.emitTrace({ kind: 'info', msg: `blocked AI-CRMS login navigation · ${url}`, ts: Date.now() })
+    if (openInBrowser && /^https?:\/\//i.test(url)) {
+      queueMicrotask(() => void this.openTabWithUrl(url))
+    }
+    return true
+  }
+
+  private isLiveTabView(tab: OperationTab, view: WebContentsView, epoch = this.lifecycleEpoch): boolean {
+    return (
+      this.lifecycleEpoch === epoch &&
+      !tab.cooling &&
+      this.tabs.includes(tab) &&
+      tab.view === view &&
+      !view.webContents.isDestroyed()
+    )
+  }
+
+  private detachAuthBridgeForView(wc: WebContents | undefined): Promise<void> {
+    if (!wc) return this.authBridgeCleanup
+    return this.detachAuthBridge(wc)
+  }
+
+  async detachAuthBridge(owner?: WebContents): Promise<void> {
+    const target = owner ?? this.authBridgeOwner ?? undefined
+    if (!owner || this.authBridgeOwner === owner) this.authBridgeOwner = null
+    const cleanup = this.authBridgeCleanup
+      .catch(() => undefined)
+      .then(() => authBridge.detach(target))
+      .catch((err) => {
+        this._state.emitTrace({ kind: 'error', msg: 'auth bridge detach: ' + (err as Error).message, ts: Date.now() })
+      })
+    this.authBridgeCleanup = cleanup
+    await cleanup
+  }
+
+  async quiesceAuthBridge(): Promise<void> {
+    this.shuttingDown = true
+    this.lifecycleEpoch += 1
+    const authTabs = this.tabs.filter((tab) => tab.kind === 'ai-crms')
+    for (const tab of authTabs) await this.coolTab(tab)
+    await this.aiCrmsPreparation.catch(() => undefined)
+    await this.detachAuthBridge()
+  }
+
+  private queueAiCrmsPreparation(
+    tab: OperationTab,
+    options: { targetUrl: string; reload?: boolean }
+  ): Promise<void> {
+    if (this.shuttingDown) return Promise.reject(new Error('Maestro window is shutting down.'))
+    if (tab.cooling) return Promise.reject(new Error('AI-CRMS login tab is cooling down.'))
+    const run = this.aiCrmsPreparation
+      .catch(() => undefined)
+      .then(() => this.prepareAiCrmsTab(tab, options))
+    this.aiCrmsPreparation = run.catch(() => undefined)
+    tab.preparationReady = run
+    void run.then(
+      () => {
+        if (tab.preparationReady === run) tab.preparationReady = undefined
+      },
+      () => {
+        if (tab.preparationReady === run) tab.preparationReady = undefined
+      }
+    )
+    return run
+  }
+
+  private async prepareAiCrmsTab(
+    tab: OperationTab,
+    options: { targetUrl: string; reload?: boolean }
+  ): Promise<void> {
+    if (this.shuttingDown) throw new Error('Maestro window is shutting down.')
+    if (tab.cooling) throw new Error('AI-CRMS login tab is cooling down.')
+    if (tab.kind !== 'ai-crms') throw new Error('AI-CRMS bridge requires the dedicated login tab.')
+    const epoch = this.lifecycleEpoch
+    if (!this.tabs.includes(tab)) throw new Error('AI-CRMS login tab is closed.')
+    const targetUrl = isTrustedAiCrmsAuthUrl(options.targetUrl) ? options.targetUrl : AI_CRMS_LOGIN_URL
+    await this.ensureWarm(tab)
+    const view = tab.view
+    const capture = tab.bridgeCapture
+    if (!view || !capture || view.webContents.isDestroyed()) {
+      throw new Error('AI-CRMS login view is unavailable.')
+    }
+    const wc = view.webContents
+    if (!this.isLiveTabView(tab, view, epoch)) throw new Error('AI-CRMS login tab closed before preparation.')
+    const bridgeReady =
+      this.authBridgeOwner === wc &&
+      capture.isAttached() &&
+      authBridge.isAttached(wc) &&
+      isTrustedAiCrmsAuthUrl(wc.getURL())
+
+    if (!bridgeReady) {
+      await this.detachAuthBridge()
+      if (!this.isLiveTabView(tab, view, epoch)) throw new Error('AI-CRMS login tab closed before debugger attach.')
+
+      // A fresh WebContents has no renderer process and DebuggerCapture.attach() can otherwise
+      // hang. Bootstrap the process first, then wait for the real attach with no timeout fallback.
+      await wc.loadURL('about:blank')
+      if (!this.isLiveTabView(tab, view, epoch)) throw new Error('AI-CRMS login tab closed during bootstrap.')
+      tab.attachReady = capture.attach()
+      await tab.attachReady
+      if (!capture.isAttached()) throw new Error('AI-CRMS login debugger did not attach.')
+      if (!this.isLiveTabView(tab, view, epoch)) throw new Error('AI-CRMS login tab closed before auth bridge attach.')
+
+      await authBridge.attach(wc)
+      if (
+        !authBridge.isAttached(wc) ||
+        !this.isLiveTabView(tab, view, epoch)
+      ) {
+        await this.detachAuthBridge(wc)
+        throw new Error('AI-CRMS auth bridge was detached before navigation.')
+      }
+      this.authBridgeOwner = wc
+    }
+
+    tab.url = targetUrl
+    if (options.reload || wc.getURL() !== targetUrl) await wc.loadURL(targetUrl)
   }
 
   async prewarmSpare(): Promise<void> {
@@ -371,7 +583,31 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   private async ensureWarm(tab: OperationTab): Promise<void> {
+    if (tab.cooling) throw new Error('Tab is cooling down.')
     if (tab.view && !tab.view.webContents.isDestroyed()) return
+    if (tab.kind === 'home') {
+      const entry = localHomeEntry()
+      tab.url = entry.url
+      tab.view = this.buildPinnedHomeView()
+      tab.capture = null
+      tab.replay = null
+      tab.attachReady = undefined
+      tab.debuggerEnabled = false
+      tab.lastActive = Date.now()
+      return
+    }
+    if (tab.kind === 'ai-crms') {
+      const slot = this.buildViewSlot()
+      tab.view = slot.view
+      tab.capture = null
+      tab.bridgeCapture = slot.capture
+      tab.replay = null
+      tab.attachReady = undefined
+      tab.debuggerEnabled = false
+      tab.lastActive = Date.now()
+      await this.enforceWarmCap([tab.id])
+      return
+    }
     let slot = this.spareSlot
     if (slot) {
       this.spareSlot = null
@@ -388,10 +624,14 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (!tab.debuggerEnabled) tab.capture.suspend()
     tab.lastActive = Date.now()
     void this.prewarmSpare()
-    this.enforceWarmCap()
+    await this.enforceWarmCap()
   }
 
   async warmAndLoad(tab: OperationTab): Promise<void> {
+    if (tab.kind === 'ai-crms') {
+      await this.queueAiCrmsPreparation(tab, { targetUrl: tab.url })
+      return
+    }
     const wasCold = !tab.view || tab.view.webContents.isDestroyed()
     await this.ensureWarm(tab)
     const wc = tab.view?.webContents
@@ -406,32 +646,71 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     }
   }
 
-  private coolTab(tab: OperationTab): void {
+  private coolTab(tab: OperationTab): Promise<void> {
+    if (tab.coolingReady) return tab.coolingReady
+    const cooling = this.performCoolTab(tab)
+    tab.coolingReady = cooling
+    void cooling.then(
+      () => {
+        if (tab.coolingReady === cooling) tab.coolingReady = undefined
+      },
+      () => {
+        if (tab.coolingReady === cooling) tab.coolingReady = undefined
+      }
+    )
+    return cooling
+  }
+
+  private async performCoolTab(tab: OperationTab): Promise<void> {
+    tab.cooling = true
+    const view = tab.view
+    const capture = tab.capture
+    const bridgeCapture = tab.bridgeCapture
+    const preparationReady = tab.preparationReady
+
+    // Make the old slot non-live before the first await. A queued AI-CRMS preparation can then
+    // neither pass its next ownership fence nor reattach the singleton bridge during teardown.
+    tab.view = null
+    tab.capture = null
+    tab.bridgeCapture = null
+    tab.replay = null
+    tab.attachReady = undefined
+    tab.preparationReady = undefined
+
+    const wc = view?.webContents
+    await this.detachAuthBridgeForView(wc)
+    bridgeCapture?.suspend()
+    await preparationReady?.catch(() => undefined)
+    await this.detachAuthBridgeForView(wc)
     try {
-      tab.capture?.detach()
+      capture?.detach()
+      bridgeCapture?.detach()
     } catch {
       // Already detached.
     }
-    if (tab.view) {
-      this._state.browserWindow?.contentView.removeChildView(tab.view)
+    if (view) {
       try {
-        tab.view.webContents.close()
+        this._state.browserWindow?.contentView.removeChildView(view)
+      } catch {
+        // The parent window may already have released the child view.
+      }
+      try {
+        view.webContents.close()
       } catch {
         // Best effort.
       }
     }
-    tab.view = null
-    tab.capture = null
-    tab.replay = null
+    tab.cooling = false
   }
 
-  private enforceWarmCap(): void {
+  private async enforceWarmCap(extraProtectedIds: string[] = []): Promise<void> {
     const warm = this.tabs.filter((tab) => tab.view && !tab.view.webContents.isDestroyed())
     if (warm.length <= this.MAX_WARM) return
     const protectedIds = new Set<string>([
       ...(this.activeTabId ? [this.activeTabId] : []),
       ...(this._state.captureTargetTabId ? [this._state.captureTargetTabId] : []),
-      ...this._state.tabsOpenedThisTurn.map((tab) => tab.id)
+      ...this._state.tabsOpenedThisTurn.map((tab) => tab.id),
+      ...extraProtectedIds
     ])
     const evictable = warm
       .filter((tab) => !tab.pinned && !protectedIds.has(tab.id))
@@ -439,7 +718,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     let over = warm.length - this.MAX_WARM
     for (const tab of evictable) {
       if (over <= 0) break
-      this.coolTab(tab)
+      await this.coolTab(tab)
       over -= 1
     }
   }
@@ -454,30 +733,46 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   private attachViewListeners(view: WebContentsView): void {
     const wc = view.webContents
-    wc.on('will-navigate', (event, url) => {
-      if (this.preventPinnedAiCrmsDomainEscape(this.ownerOf(view), wc, url)) event.preventDefault()
+    wc.on('will-frame-navigate', (event) => {
+      if (!event.isMainFrame) return
+      if (this.preventAiCrmsEscape(this.ownerOf(view), event.url, true)) event.preventDefault()
     })
-    wc.on('will-redirect', (event, url) => {
-      if (this.preventPinnedAiCrmsDomainEscape(this.ownerOf(view), wc, url)) event.preventDefault()
+    wc.on('will-navigate', (event) => {
+      const tab = this.ownerOf(view)
+      if (tab?.kind === 'ai-crms') return
+      if (this.preventPinnedHomeEscape(tab, event.url)) event.preventDefault()
+    })
+    wc.on('will-redirect', (event) => {
+      const tab = this.ownerOf(view)
+      if (event.isMainFrame && this.preventAiCrmsEscape(tab, event.url, true)) {
+        event.preventDefault()
+        return
+      }
+      if (event.isMainFrame && this.preventPinnedHomeEscape(tab, event.url)) event.preventDefault()
     })
     wc.on('did-navigate', (_event, url) => {
       const tab = this.ownerOf(view)
       if (!tab || url === 'about:blank') return
-      tab.url = url
-      if (this.activeTabId === tab.id || this._state.captureTargetTabId === tab.id) this.sendNav(url, true)
+      if (tab.kind === 'ai-crms' && !isTrustedAiCrmsAuthUrl(url)) {
+        void this.detachAuthBridgeForView(tab.view?.webContents)
+        return
+      }
+      if (tab.kind !== 'home') tab.url = url
+      if (this.activeTabId === tab.id || this._state.captureTargetTabId === tab.id) this.sendTabNav(tab, true)
       this.broadcastTabs()
     })
-    wc.on('did-navigate-in-page', (_event, url) => {
+    wc.on('did-navigate-in-page', (event, url) => {
       const tab = this.ownerOf(view)
-      if (!tab) return
-      tab.url = url
-      if (this.activeTabId === tab.id || this._state.captureTargetTabId === tab.id) this.sendNav(url, false)
+      if (!tab || !event.isMainFrame) return
+      if (tab.kind === 'ai-crms' && !isTrustedAiCrmsAuthUrl(url)) return
+      if (tab.kind !== 'home') tab.url = url
+      if (this.activeTabId === tab.id || this._state.captureTargetTabId === tab.id) this.sendTabNav(tab, false)
       this.broadcastTabs()
     })
     wc.on('page-title-updated', (_event, title) => {
       const tab = this.ownerOf(view)
       if (!tab) return
-      if (!tab.pinned) {
+      if (tab.kind === 'browser') {
         tab.title = title
         if (this.activeTabId === tab.id) this.sendTitle(title)
       }
@@ -485,7 +780,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     })
     wc.on('page-favicon-updated', (_event, favicons) => {
       const tab = this.ownerOf(view)
-      if (!tab || tab.pinned) return
+      if (!tab || tab.kind !== 'browser') return
       if (Array.isArray(favicons) && favicons[0]) {
         tab.favicon = favicons[0]
         this.broadcastTabs()
@@ -499,10 +794,19 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     })
     wc.on('did-finish-load', () => {
       const tab = this.ownerOf(view)
-      if (tab) void this.injectStoredButtonForTab(tab)
+      if (tab?.kind === 'browser') void this.injectStoredButtonForTab(tab)
     })
     wc.setWindowOpenHandler((details) => {
       if (this.handleInjectedButtonOpen(details.url)) return { action: 'deny' }
+      const tab = this.ownerOf(view)
+      if (tab?.kind === 'ai-crms' && isTrustedAiCrmsAuthUrl(details.url)) {
+        queueMicrotask(() => {
+          void this.queueAiCrmsPreparation(tab, { targetUrl: details.url }).catch((err) => {
+            this._state.emitTrace({ kind: 'error', msg: 'AI-CRMS popup: ' + (err as Error).message, ts: Date.now() })
+          })
+        })
+        return { action: 'deny' }
+      }
       if (/^https?:\/\//i.test(details.url)) {
         const url = details.url
         queueMicrotask(() => void this.openTabWithUrl(url))
@@ -519,6 +823,16 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.broadcastNavState()
   }
 
+  private displayUrl(tab: OperationTab): string {
+    if (tab.kind === 'home') return MAESTRO_LOCAL_HOME_DISPLAY_URL
+    if (tab.kind === 'ai-crms') return MAESTRO_AI_CRMS_LOGIN_DISPLAY_URL
+    return tab.url
+  }
+
+  private sendTabNav(tab: OperationTab, resetTitle = false): void {
+    this.sendNav(this.displayUrl(tab), resetTitle)
+  }
+
   private sendTitle(title: string): void {
     xpcMain.broadcast('coach/title', String(title || ''))
   }
@@ -527,7 +841,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const active = this.getActiveTab()
     const wc = this._state.operationView?.webContents
     const live = wc && !wc.isDestroyed() ? wc : null
-    const historyLocked = this.isPinnedAiCrmsTab(active)
+    const historyLocked = active?.kind !== 'browser'
     xpcMain.broadcast('coach/nav-state', {
       canGoBack: !historyLocked && live ? live.navigationHistory.canGoBack() : false,
       canGoForward: !historyLocked && live ? live.navigationHistory.canGoForward() : false
@@ -541,7 +855,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (index < 0) return
     const tab = this.tabs[index]
     const canClose = !tab.pinned && this.tabs.length > 1
-    const canDuplicate = !tab.pinned && Boolean(tab.url)
+    const canDuplicate = tab.kind === 'browser' && !tab.pinned && Boolean(tab.url)
     const otherClosable = this.tabs.some((item) => item.id !== tab.id && !item.pinned)
     const rightClosable = this.tabs.slice(index + 1).some((item) => !item.pinned)
     const menu = Menu.buildFromTemplate([
@@ -550,8 +864,13 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       {
         label: 'Reload',
         click: () => {
-          if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.reload()
-          else void this.warmAndLoad(tab)
+          if (tab.kind === 'ai-crms') {
+            void this.queueAiCrmsPreparation(tab, { targetUrl: tab.url, reload: true })
+          } else if (tab.view && !tab.view.webContents.isDestroyed()) {
+            tab.view.webContents.reload()
+          } else {
+            void this.warmAndLoad(tab)
+          }
         }
       },
       { label: 'Duplicate', enabled: canDuplicate, click: () => void this.openTabWithUrl(tab.url) },
@@ -582,7 +901,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const win = this._state.browserWindow
     if (!win) return
     const nav = wc.navigationHistory
-    const historyLocked = this.isPinnedAiCrmsTab(this.ownerOfWebContents(wc))
+    const owner = this.ownerOfWebContents(wc)
+    const historyLocked = owner?.kind !== 'browser'
     const sections: MenuItemConstructorOptions[][] = [
       [
         { label: 'Back', enabled: !historyLocked && nav.canGoBack(), click: () => void this.goBack() },
@@ -615,7 +935,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     } else if (params.selectionText) {
       sections.push([{ label: 'Copy', click: () => wc.copy() }])
     }
-    if (is.dev) {
+    if (is.dev && owner?.kind === 'browser') {
       sections.push([{ label: 'Inspect', click: () => wc.inspectElement(params.x, params.y) }])
     }
     const template: MenuItemConstructorOptions[] = []
@@ -626,7 +946,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     Menu.buildFromTemplate(template).popup({ window: win })
   }
 
-  private claimSpareTab(meta: { url?: string; title?: string; favicon?: string }): OperationTab {
+  private async claimSpareTab(meta: { url?: string; title?: string; favicon?: string }): Promise<OperationTab> {
     let slot = this.spareSlot
     this.spareSlot = null
     if (!slot || slot.view.webContents.isDestroyed()) {
@@ -651,12 +971,12 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     }
     this.tabs.push(tab)
     void this.prewarmSpare()
-    this.enforceWarmCap()
+    await this.enforceWarmCap([tab.id])
     return tab
   }
 
   private async openTabWithUrl(url: string): Promise<OperationTab> {
-    const tab = this.claimSpareTab({ url })
+    const tab = await this.claimSpareTab({ url })
     this._state.tabsOpenedThisTurn.push({
       id: tab.id,
       kind: tab.kind,
@@ -686,7 +1006,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (this.creatingTab) return
     this.creatingTab = true
     try {
-      const tab = this.claimSpareTab({})
+      const tab = await this.claimSpareTab({})
       await this.activateTab({ id: tab.id })
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: 'new tab: ' + (err as Error).message, ts: Date.now() })
@@ -706,7 +1026,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       return
     }
     if (isWorkbenchInternalUrl(url)) return
-    const tab = this.claimSpareTab({ url })
+    const tab = await this.claimSpareTab({ url })
     await this.activateTab({ id: tab.id })
     const wc = tab.view?.webContents
     if (wc && !wc.isDestroyed()) {
@@ -719,20 +1039,16 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   async openAiCrmsLoginTab(): Promise<void> {
-    const tab = this.tabs.find((item) => item.kind === 'ai-crms' && item.pinned) || this.tabs[0]
-    if (!tab) return
-    await this.activateTab({ id: tab.id })
-    const wc = tab.view?.webContents
-    tab.url = AI_CRMS_LOGIN_URL
-    this._state.currentUrl = AI_CRMS_LOGIN_URL
-    this.broadcastTabs()
-    xpcMain.broadcast('coach/nav', AI_CRMS_LOGIN_URL)
-    if (wc && !wc.isDestroyed()) {
-      await wc.loadURL(AI_CRMS_LOGIN_URL).catch((err) => {
-        if (!wc.isDestroyed()) {
-          this._state.emitTrace({ kind: 'error', msg: 'AI-CRMS login: ' + (err as Error).message, ts: Date.now() })
-        }
-      })
+    // Reuse the single trusted auth tab. It stays closable/non-pinned, never receives a preload,
+    // and is deliberately absent from browser persistence, capture, replay, and Workbench domains.
+    let tab = this.tabs.find((item) => item.kind === 'ai-crms')
+    if (!tab) tab = await this.addAiCrmsLoginTab()
+    try {
+      await this.queueAiCrmsPreparation(tab, { targetUrl: AI_CRMS_LOGIN_URL, reload: true })
+      await this.activateTab({ id: tab.id })
+    } catch (err) {
+      await this.closeTab({ id: tab.id })
+      throw err
     }
   }
 
@@ -751,7 +1067,14 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   async activateTab(params: { id: string }): Promise<void> {
     const tab = this.tabs.find((item) => item.id === params.id)
     if (!tab) return
-    if (this.activeTabId === tab.id) {
+    if (this.activeTabId === tab.id && tab.view && !tab.view.webContents.isDestroyed()) {
+      if (tab.kind === 'ai-crms') {
+        try {
+          await this.queueAiCrmsPreparation(tab, { targetUrl: tab.url })
+        } catch (err) {
+          this._state.emitTrace({ kind: 'error', msg: 'activate AI-CRMS: ' + (err as Error).message, ts: Date.now() })
+        }
+      }
       tab.lastActive = Date.now()
       this.broadcastTabs()
       return
@@ -769,6 +1092,16 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       }
       needsLoad = Boolean(tab.url) && tab.view.webContents.getURL() !== tab.url
     }
+    if (tab.kind === 'ai-crms') {
+      try {
+        await this.queueAiCrmsPreparation(tab, { targetUrl: tab.url })
+        needsLoad = false
+      } catch (err) {
+        this._state.emitTrace({ kind: 'error', msg: 'activate AI-CRMS: ' + (err as Error).message, ts: Date.now() })
+        this.broadcastTabs()
+        return
+      }
+    }
     const previous = this.tabs.find((item) => item.id === this.activeTabId)
     if (previous && previous.id !== tab.id && previous.view && !previous.view.webContents.isDestroyed()) {
       previous.view.setVisible(false)
@@ -777,9 +1110,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     tab.lastActive = Date.now()
     this._state.operationView = tab.view
     await this._state.switchCaptureTarget(tab)
-    this._state.capture = tab.capture
-    this._state.replayEngine = tab.replay
-    this._state.currentUrl = tab.url || this._state.currentUrl
+    this._state.capture = tab.kind === 'browser' ? tab.capture : null
+    this._state.replayEngine = tab.kind === 'browser' ? tab.replay : null
+    this._state.currentUrl = this.displayUrl(tab) || this._state.currentUrl
     if (tab.view && !tab.view.webContents.isDestroyed()) {
       tab.view.setVisible(true)
       if (this._state.opBounds) this.applyBounds(tab.view, this._state.opBounds)
@@ -795,7 +1128,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
           })
       }
     }
-    xpcMain.broadcast('coach/nav', tab.url || '')
+    xpcMain.broadcast('coach/nav', this.displayUrl(tab))
     xpcMain.broadcast('coach/title', tab.title || '')
     this.broadcastNavState()
     this.broadcastTabs()
@@ -819,27 +1152,27 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   async closeTab(params: { id: string }): Promise<void> {
     if (this.tabs.length <= 1) return
-    const index = this.tabs.findIndex((tab) => tab.id === params.id)
-    if (index < 0) return
-    const tab = this.tabs[index]
+    const tab = this.tabs.find((item) => item.id === params.id)
+    if (!tab) return
     if (tab.pinned) return
-    const wasActive = this.activeTabId === tab.id
+    if (tab.closeReady) return await tab.closeReady
+    const closing = this.performCloseTab(tab)
+    tab.closeReady = closing
+    try {
+      await closing
+    } finally {
+      if (tab.closeReady === closing) tab.closeReady = undefined
+    }
+  }
+
+  private async performCloseTab(tab: OperationTab): Promise<void> {
     if (this._state.capturing && this._state.captureTargetTabId === tab.id) {
       await this._state.stopCapture()
     }
-    try {
-      tab.capture?.detach()
-    } catch {
-      // Already detached.
-    }
-    if (tab.view) {
-      this._state.browserWindow?.contentView.removeChildView(tab.view)
-      try {
-        tab.view.webContents.close()
-      } catch {
-        // Best effort.
-      }
-    }
+    await this.coolTab(tab)
+    const index = this.tabs.indexOf(tab)
+    if (index < 0) return
+    const wasActive = this.activeTabId === tab.id
     this.tabs.splice(index, 1)
     if (wasActive) {
       const next = this.tabs[index] || this.tabs[this.tabs.length - 1]
@@ -859,16 +1192,18 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   private tabInfo(tab: OperationTab): TabInfo {
+    const url = this.displayUrl(tab)
     return {
       id: tab.id,
       kind: tab.kind,
       title: tab.title,
-      url: tab.url,
+      url,
+      ...(tab.kind !== 'browser' ? { displayUrl: url } : {}),
       active: tab.id === this.activeTabId,
       pinned: tab.pinned,
       favicon: tab.favicon,
       debuggerEnabled: tab.debuggerEnabled,
-      debuggerAttached: Boolean(tab.capture?.isAttached())
+      debuggerAttached: tab.kind === 'browser' && Boolean(tab.capture?.isAttached())
     }
   }
 
@@ -878,6 +1213,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   async toolInjectButton(skillsJson: string, domainArg: string): Promise<string> {
     const active = this.getActiveTab()
+    if (active?.kind !== 'browser') return 'ERROR: open a normal browser tab before injecting a button.'
     const wc = active?.view?.webContents
     const pageDomain = hostFromUrl(wc && !wc.isDestroyed() ? wc.getURL() : active?.url || this._state.currentUrl)
     const domain = normalizeInjectedButtonDomain(domainArg) || pageDomain
@@ -907,6 +1243,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   async toolRemoveInjectedButton(domainArg: string): Promise<string> {
     const active = this.getActiveTab()
+    if (active?.kind !== 'browser' && !normalizeInjectedButtonDomain(domainArg)) {
+      return 'ERROR: open a normal browser tab or pass a domain.'
+    }
     const wc = active?.view?.webContents
     const pageDomain = hostFromUrl(wc && !wc.isDestroyed() ? wc.getURL() : active?.url || this._state.currentUrl)
     const domain = normalizeInjectedButtonDomain(domainArg) || pageDomain
@@ -931,6 +1270,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     domain: string,
     entries: InjectBtnEntry[]
   ): Promise<{ ok: boolean; error?: string }> {
+    if (tab.kind !== 'browser') return { ok: false, error: 'button injection requires a normal browser tab' }
     const wc = tab.view?.webContents
     if (!wc || wc.isDestroyed()) return { ok: false, error: 'tab webContents is not ready' }
     const liveDomain = hostFromUrl(wc.getURL() || tab.url)
@@ -951,6 +1291,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   private async removeInjectedButtonFromTabs(domain: string): Promise<number> {
     let count = 0
     for (const tab of this.tabs) {
+      if (tab.kind !== 'browser') continue
       const wc = tab.view?.webContents
       if (!wc || wc.isDestroyed()) continue
       const liveDomain = hostFromUrl(wc.getURL() || tab.url)
@@ -983,9 +1324,14 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   reset(): void {
+    // Controller shutdown awaits this path before reset. The fire-and-track fallback also makes a
+    // direct reset invalidate the singleton bridge synchronously before any WebContents closes.
+    this.lifecycleEpoch += 1
+    void this.detachAuthBridge()
     for (const tab of this.tabs) {
       try {
         tab.capture?.detach()
+        tab.bridgeCapture?.detach()
       } catch {
         // Already detached or destroyed.
       }
@@ -1018,6 +1364,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.creatingTab = false
     this.startupTabOpened = false
     this.tabSeq = 0
+    this.shuttingDown = false
   }
 }
 

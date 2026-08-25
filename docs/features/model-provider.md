@@ -105,6 +105,34 @@ successful provider request. Watch suppression always schedules a trailing recon
 ordinary token-file refresh advances the credential epoch only when the effective auth state
 changes; a healthy `ready` to `ready` refresh therefore cannot cancel the final Translator result.
 
+## Codex Network Proxy
+
+Embedded Codex login and model execution may use a profile-local proxy file at
+`<userData>/cowork/pi/settings.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "httpProxy": "http://127.0.0.1:7897"
+}
+```
+
+The file accepts only an explicit `http:` or `https:` loopback URL with a valid port and no
+credentials, path, query, or fragment. Bitterless installs the matching Undici dispatcher before
+loading either embedded Pi module, so OAuth token exchange and authenticated model requests use
+the same route. `127.0.0.1`, `localhost`, and `::1` are always excluded from proxying so the OAuth
+callback remains local. Bitterless does not mutate proxy environment variables.
+
+The Undici global remains one stable routing dispatcher. OpenAI and ChatGPT destinations select the
+Codex proxy; while Maestro holds its optional environment-proxy lease, that proxy is used only for
+other destinations. Starting or ending either subsystem never replaces the other's active route,
+so concurrent Translator/Codex and Maestro traffic cannot race over a process-global scalar.
+
+Missing configuration preserves the host's existing/default route. A present but unreadable,
+malformed, or invalid file fails closed for Codex operations and records a sanitized configuration
+failure. Configuration is loaded once for the process and changes take effect after application
+restart. Provider persistence, XPC, auth state, and credential invalidation remain unchanged.
+
 ## Credential Invalidation
 
 A real provider response containing a deterministic authentication signal (`401`, unauthorized,

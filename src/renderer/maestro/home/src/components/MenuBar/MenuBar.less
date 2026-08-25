@@ -2,14 +2,14 @@
   position: relative;
   z-index: 10;
   display: flex;
-  height: 92px;
+  height: 84px;
   flex-shrink: 0;
   flex-direction: column;
 }
 
 .maestro-menu-bar__tabs {
   display: flex;
-  height: 44px;
+  height: 36px;
   flex-shrink: 0;
   align-items: flex-end;
   border-bottom: 1px solid #3d4666;
@@ -35,7 +35,7 @@
 .maestro-menu-bar__tab {
   position: relative;
   display: flex;
-  height: 36px;
+  height: 28px;
   align-items: center;
   gap: 6px;
   overflow: hidden;
@@ -88,11 +88,13 @@
 .maestro-menu-bar__tab-close:hover { background: rgba(78, 88, 130, 0.14); color: currentColor; }
 .maestro-menu-bar__tab--idle .maestro-menu-bar__tab-close:hover { background: rgba(255, 255, 255, 0.18); color: #ffffff; }
 
-.maestro-menu-bar__tab-divider-wrap { display: flex; height: 36px; flex-shrink: 0; align-items: center; align-self: flex-end; padding: 0 2px; }
+.maestro-menu-bar__tab-divider-wrap { display: flex; height: 28px; flex-shrink: 0; align-items: center; align-self: flex-end; padding: 0 2px; }
 .maestro-menu-bar__tab-divider { width: 1px; height: 20px; background: rgba(255, 255, 255, 0.28); }
-.maestro-menu-bar__new-tab-wrap { display: flex; height: 36px; flex-shrink: 0; align-items: center; align-self: flex-end; padding-left: 6px; }
+.maestro-menu-bar__new-tab-wrap { display: flex; height: 28px; flex-shrink: 0; align-items: center; align-self: flex-end; padding-left: 6px; }
 .maestro-menu-bar__new-tab { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; border: 0; border-radius: 999px; background: transparent; color: rgba(255, 255, 255, 0.84); font-size: 16px; -webkit-app-region: no-drag; }
 .maestro-menu-bar__new-tab:hover { background: rgba(255, 255, 255, 0.16); color: #ffffff; }
+.maestro-menu-bar__capture-status { display: flex; width: 28px; height: 28px; flex-shrink: 0; align-items: center; justify-content: center; align-self: flex-end; margin-left: auto; }
+.maestro-menu-bar__capture-status-icon { color: #ef4444; animation: maestroMenuPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 .maestro-menu-bar__tab-close:focus-visible,
 .maestro-menu-bar__new-tab:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.88); outline-offset: -2px; }
 .maestro-menu-bar__tab--active .maestro-menu-bar__tab-close:focus-visible { outline-color: #4e5882; }
@@ -112,8 +114,7 @@
 .maestro-menu-bar__navigation { display: flex; flex-shrink: 0; align-items: center; gap: 2px; border-radius: 10px; background: rgba(0, 0, 0, 0.05); padding: 2px; }
 
 .maestro-menu-bar__nav-button,
-.maestro-menu-bar__snapshot,
-.maestro-menu-bar__capture {
+.maestro-menu-bar__snapshot {
   display: flex;
   width: 32px;
   height: 32px;
@@ -130,20 +131,15 @@
 }
 
 .maestro-menu-bar__nav-button:hover,
-.maestro-menu-bar__capture:hover { background: rgba(0, 0, 0, 0.1); color: #1f2937; }
+.maestro-menu-bar__snapshot:hover { background: rgba(0, 0, 0, 0.1); color: #1f2937; }
 .maestro-menu-bar__nav-button:active,
-.maestro-menu-bar__snapshot:active,
-.maestro-menu-bar__capture:active { transform: scale(0.95); background: rgba(0, 0, 0, 0.15); }
+.maestro-menu-bar__snapshot:active { transform: scale(0.95); background: rgba(0, 0, 0, 0.15); }
 .maestro-menu-bar__nav-button:disabled,
-.maestro-menu-bar__snapshot:disabled,
-.maestro-menu-bar__capture:disabled { cursor: not-allowed; color: #d1d5db; transform: none; }
+.maestro-menu-bar__snapshot:disabled { cursor: not-allowed; color: #d1d5db; transform: none; }
 .maestro-menu-bar__nav-button:disabled:hover,
 .maestro-menu-bar__snapshot:disabled:hover { background: transparent; }
-.maestro-menu-bar__nav-button--debugger-off { background: #fffbeb; color: #b45309; }
-.maestro-menu-bar__nav-button--debugger-off:hover { background: #fef3c7; color: #92400e; }
-.maestro-menu-bar__nav-button--detached { color: #9ca3af; }
 .maestro-menu-bar__nav-button--active,
-.maestro-menu-bar__nav-button--active:hover { background: #ffffff; color: #165dff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+.maestro-menu-bar__nav-button--active:hover { color: #165dff; }
 
 .maestro-menu-bar__address {
   min-width: 160px;
@@ -167,10 +163,7 @@
 .maestro-menu-bar__snapshot { color: #165dff; }
 .maestro-menu-bar__snapshot:hover { background: rgba(22, 93, 255, 0.1); }
 .maestro-menu-bar__snapshot:active { background: rgba(22, 93, 255, 0.15); }
-.maestro-menu-bar__snapshot--busy,
-.maestro-menu-bar__capture-icon--recording { animation: maestroMenuPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-.maestro-menu-bar__capture-icon { color: #9ca3af; }
-.maestro-menu-bar__capture-icon--recording { color: #ef4444; }
+.maestro-menu-bar__snapshot--busy { animation: maestroMenuPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 
 .maestro-menu-bar__update {
   position: relative;
@@ -212,5 +205,5 @@
 @media (prefers-reduced-motion: reduce) {
   .maestro-menu-bar__update::after { animation: none; opacity: 0; }
   .maestro-menu-bar__snapshot--busy,
-  .maestro-menu-bar__capture-icon--recording { animation: none; }
+  .maestro-menu-bar__capture-status-icon { animation: none; }
 }

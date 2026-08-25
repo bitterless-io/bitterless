@@ -17,7 +17,6 @@ import {
   interceptionRuleSummary,
   type NetworkInterceptionRule
 } from '@maestro-main/capture/networkInterception'
-import { authBridge } from '@maestro-main/auth/authBridge'
 import type { PiToolSpec } from '@maestro-main/agent/BaseAgent'
 import { MaestroAgent } from '@maestro-main/agent/MaestroAgent'
 import { CoachAgent } from '@maestro-main/agent/CoachAgent'
@@ -54,7 +53,6 @@ import {
   type MaestroWorkbenchViewServiceState
 } from './maestroWorkbenchView.service'
 import {
-  AI_CRMS_URL,
   MaestroBrowserViewService,
   type MaestroBrowserViewServiceState,
   type OperationTab
@@ -76,6 +74,7 @@ import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
 import type { LlmStoredTarget } from '@maestro-main/llm/llmModels'
 import {
   DEFAULT_COACH_START_URL,
+  MAESTRO_LOCAL_HOME_DISPLAY_URL,
   MAESTRO_HOME_READY_TOKEN_QUERY
 } from '@maestro-shared/coach.api'
 import type {
@@ -151,9 +150,9 @@ import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
 
 // Initial geometry used for the very first frame, before the home renderer reports
-// the real placeholder rects (see setViewBounds). The 44px tab strip plus the unchanged
-// 48px address row total 92px; renderer measurements remain authoritative thereafter.
-const TOOLBAR_H = 92
+// the real placeholder rects (see setViewBounds). The 36px tab strip plus the unchanged
+// 48px address row total 84px; renderer measurements remain authoritative thereafter.
+const TOOLBAR_H = 84
 const SIDEBAR_W = 480
 
 @injectable()
@@ -334,15 +333,14 @@ class MaestroWindowController
       emit: (event) => this.handleIntegrationSchedulerEvent(event),
       runRecordedSiteDryRun: (target) => this.runIntegrationRecordedSiteDryRun({ targetId: target.id })
     })
-    this.currentUrl = AI_CRMS_URL
+    this.currentUrl = MAESTRO_LOCAL_HOME_DISPLAY_URL
 
     this.resetWindowScopedViews()
     const homeMountedReady = this.createHomeRendererReadyFence()
     const win = super.create()
 
-    // First tab = the pinned AI-CRMS home (leftmost, non-closable, fixed title/favicon). It is
-    // ALWAYS warm: build a view slot + assemble the tab directly (CDP attaches via the
-    // initialReady chain below). operationView/capture/replayEngine always track the active tab.
+    // First tab = bundled Bitterless Home (leftmost, non-closable, fixed title/favicon). It owns a
+    // dedicated XPC-only preload and never participates in debugger/capture/replay.
     const operationView = this.browserView.createPinnedHomeTab()
     const homeReady = Promise.all([this.rendererReady, homeMountedReady])
       .then(() => undefined)
@@ -351,65 +349,26 @@ class MaestroWindowController
         throw err
       })
     const workbenchReady = this.workbenchView.create()
-    // Stay HIDDEN until AI-CRMS has loaded (revealed in the initialReady chain below). Until then
-    // the white Layout placeholder shows in the operation area, so the boot never flashes the
-    // view's black pre-paint surface.
+    // Stay hidden until the local entry has painted. The white Layout placeholder covers the
+    // operation area during this short load and prevents a pre-paint flash.
 
     const controlReady = this.controlView.create()
 
     this.layout()
     win.on('resize', () => this.layout())
 
-    // about:blank bootstrap — INTERNAL, never seen by the user: the operation view stays HIDDEN
-    // behind the home loading splash until AI-CRMS paints (the .finally below), and about:blank is
-    // ignored in did-navigate so it never reaches the address bar. It's required because a fresh,
-    // never-navigated webContents has no render process — capture.attach()'s CDP commands would
-    // HANG on it (which blanked the view + froze navigate). Loading about:blank gives it a render
-    // process for attach + a live document for the auth bridge to register its document-start
-    // session injection on, BEFORE AI-CRMS loads.
-    this.initialReady = operationView.webContents
-      .loadURL('about:blank')
-      .catch((err) => this.emit({ kind: 'error', msg: 'bootstrap blank: ' + err.message, ts: Date.now() }))
-      .then(() => this.capture?.attach())
+    this.initialReady = this.browserView
+      .loadPinnedHomeTab()
       .catch((err) => {
-        this.emit({ kind: 'error', msg: 'attach: ' + err.message, ts: Date.now() })
+        this.emit({ kind: 'error', msg: 'bundled Home load: ' + (err as Error).message, ts: Date.now() })
+        throw err
       })
-      .then(async () => {
-        // Auth bridge: on the pinned ai-crms tab, piggyback the (capture-attached) debugger
-        // to inject `isMicromeetAgentBrowser` + the shared session and register the
-        // `__micromeetAuth` page→main token bridge. Runs before AI_CRMS_URL loads so the
-        // restore value is present at document-start. Scoped to the pinned ai-crms tab.
-        const authWc = this.operationView?.webContents
-        if (authWc && !authWc.isDestroyed()) {
-          await authBridge
-            .attach(authWc)
-            .catch((err) => this.emit({ kind: 'error', msg: 'auth bridge: ' + (err as Error).message, ts: Date.now() }))
+      .finally(() => {
+        if (this.operationView === operationView && !operationView.webContents.isDestroyed()) {
+          operationView.setVisible(true)
         }
       })
-      .then(() => {
-        // DevTools auto-open is OPT-IN (COACH_DEVTOOLS=1), OFF by default. With DevTools attached
-        // to a page, Chromium disables its compositing fast-path and full-repaints on same-document
-        // re-renders (ai-crms's region `replaceState`, the password/code login toggle) → a white
-        // "flash" the packaged build and Chrome (no DevTools) never show. Must run AFTER
-        // capture.attach() — debugger.attach() throws if DevTools is already attached.
-        this.browserView.openOperationDevTools()
-      })
-      .then(() => undefined)
-    this.initialReady = this.initialReady.then(async () => {
-      const view = this.operationView
-      if (!view || view.webContents.isDestroyed()) return
-      await view.webContents
-        .loadURL(AI_CRMS_URL)
-        .catch((err) => this.emit({ kind: 'error', msg: 'initial load: ' + err.message, ts: Date.now() }))
-        .finally(() => {
-          // Reveal the operation view now that AI-CRMS has loaded — the white placeholder covered
-          // the boot, so this is a clean white→page reveal with no black pre-paint flash. Guard on
-          // it still being the active view (the user may have switched tabs mid-load; activateTab
-          // owns visibility then).
-          if (this.operationView === view && !view.webContents.isDestroyed()) view.setVisible(true)
-        })
-      await this.browserView.openStartupTabIfNeeded()
-    })
+      .then(() => this.browserView.openStartupTabIfNeeded())
     const operationReady = this.initialReady
     this.initialReady = Promise.all([homeReady, controlReady, workbenchReady, operationReady]).then(() => undefined)
     // Pre-warm one spare view so warming a tab (new open / switching to a cold tab) is instant.
@@ -562,11 +521,13 @@ class MaestroWindowController
 
   async findRecordedSiteTab(target: IntegrationTarget): Promise<OperationTab | undefined> {
     const expected = normalizeRecordedSiteHost(target.source.domain || target.source.startUrl)
-    const active = this.getActiveTab()
+    const current = this.getActiveTab()
+    const active = current?.kind === 'browser' ? current : undefined
     const activeHost = normalizeRecordedSiteHost(active?.view?.webContents.getURL() || active?.url || this.currentUrl)
     let tab = active && recordedSiteHostMatches(activeHost, expected) ? active : undefined
     if (!tab) {
       tab = this.tabs.find((item) => {
+        if (item.kind !== 'browser') return false
         const wc = item.view?.webContents
         const host = normalizeRecordedSiteHost(wc && !wc.isDestroyed() ? wc.getURL() : item.url)
         return recordedSiteHostMatches(host, expected)
@@ -1657,9 +1618,9 @@ class MaestroWindowController
     await this.agentService.shutdown()
 
     this.demo?.stop()
+    await this.browserView.quiesceAuthBridge()
     await this.captureService.shutdown()
     this.resetWindowScopedViews()
-    await authBridge.detach()
     this.invalidateHomeRendererReadyFence()
     super.destroy()
 

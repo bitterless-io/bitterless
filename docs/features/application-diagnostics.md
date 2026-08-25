@@ -84,12 +84,21 @@ are excluded. Existing `console.*` calls keep working. Codex login logs lifecycl
 sanitized error names/messages, but never query strings, authorization codes, access tokens,
 refresh tokens, or credential values.
 
+Codex proxy setup uses the `codex-proxy` scope. A successful setup may expose only the fixed source,
+`http`/`https` scheme, loopback host class, and port. A failure may expose only a fixed stage and
+sanitized error name/message. Raw proxy URLs, credentials, headers, response bodies, and arbitrary
+configuration values are forbidden.
+
 Translator additionally owns a separate Main-written `translator/translator.log`. It uses the same
 profile isolation, UTC NDJSON formatting, sanitizer, and 5 MB rotation policy as `main.log`, but
 contains only translation execution lifecycle and sanitized translation failures. Shared Codex
 status and login/logout lifecycle never enters this dedicated file. For debug profiles the file is
 under `<userData>/logs/translator/translator.log`; packaged profiles place the `translator/`
-directory below Electron's profile log root.
+directory below Electron's profile log root. Translator lifecycle fields use fixed short stage and
+phase values so application opaque-token redaction cannot erase them. A failed translation may add
+only the accepted provider-diagnostic fields documented by the Translator feature contract; raw
+errors, request/response payloads, headers, identifiers, and authentication material remain
+forbidden.
 
 ## Diagnostics Contract
 

@@ -9,6 +9,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-model-provider-'));
 const entryPoints = [
   resolve(projectRoot, 'tests/coin/unit/codexCredential.service.test.ts'),
+  resolve(projectRoot, 'tests/modelProvider/codexProxy.service.test.ts'),
   resolve(projectRoot, 'tests/modelProvider/modelProviderCancelConnect.test.ts'),
 ];
 

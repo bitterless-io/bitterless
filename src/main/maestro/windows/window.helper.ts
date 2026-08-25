@@ -55,13 +55,13 @@ export abstract class WindowHelper {
       autoHideMenuBar: true,
       width: 1360,
       height: 900,
-      // The 92px chrome + operation/control split needs room; clamp the floor so the layout
+      // The 84px chrome + operation/control split needs room; clamp the floor so the layout
       // never collapses (also clamps any restored geometry saved smaller than this).
       minWidth: 800,
       minHeight: 600,
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
-      // Omni's x position, with y centered in Maestro's 44px tab strip.
-      trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 14 } : undefined,
+      // Omni's x position, with y centered in Maestro's compact 36px tab strip.
+      trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 10 } : undefined,
       ...this.windowOptions,
       ...(restored?.bounds ?? {}),
       webPreferences: {

@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
+import type { SimpleStreamOptions } from '@earendil-works/pi-ai';
 import type { ModelProviderInvalidationReason } from '@shared/modelProvider/modelProvider.contract';
+import { sanitizeDiagnostic } from '@shared/diagnostics/diagnostic.service';
 
 export const CODEX_RUNTIME_PROVIDER = 'openai-codex' as const;
 export const CODEX_RUNTIME_MODELS = [
@@ -92,6 +94,17 @@ export interface CodexRuntimePiMessage {
   stopReason?: string;
   content?: string | Array<{ type?: string; text?: string }>;
   errorMessage?: string;
+  diagnostics?: CodexRuntimePiDiagnostic[];
+}
+
+export interface CodexRuntimePiDiagnostic {
+  type?: string;
+  error?: {
+    name?: unknown;
+    message?: unknown;
+    code?: unknown;
+  };
+  details?: Record<string, unknown>;
 }
 
 export interface CodexRuntimePiSessionEvent {
@@ -110,6 +123,7 @@ export type CodexRuntimePiOnPayload = (payload: unknown, model: unknown) => unkn
 
 export interface CodexRuntimePiAgent {
   onPayload?: CodexRuntimePiOnPayload;
+  onResponse?: SimpleStreamOptions['onResponse'];
 }
 
 export interface CodexRuntimePiSession {
@@ -158,8 +172,41 @@ export interface CodexRuntimeDependencies {
   loadPiModule(): Promise<CodexRuntimePiModule>;
 }
 
+export type CodexRuntimeDiagnosticCategory =
+  | 'auth'
+  | 'http'
+  | 'provider'
+  | 'provider-unknown'
+  | 'rate-limit'
+  | 'response'
+  | 'runtime'
+  | 'timeout'
+  | 'transport';
+
+export type CodexRuntimeDiagnosticTransport = 'auto' | 'sse' | 'ws' | 'ws-cache';
+export type CodexRuntimeDiagnosticProviderPhase = 'after-stream' | 'before-stream';
+
+export interface CodexRuntimeDiagnosticEvidence {
+  category: CodexRuntimeDiagnosticCategory;
+  configuredTransport?: CodexRuntimeDiagnosticTransport;
+  fallbackTransport?: CodexRuntimeDiagnosticTransport;
+  providerPhase?: CodexRuntimeDiagnosticProviderPhase;
+  httpStatus?: number;
+  errorName?: string;
+  errorCode?: string;
+  detail?: string;
+}
+
+export interface CodexRuntimeDiagnosticSummary {
+  transportDiagnostic?: CodexRuntimeDiagnosticEvidence;
+  terminalDiagnostic?: CodexRuntimeDiagnosticEvidence;
+}
+
 export class CodexRuntimeError extends Error {
-  constructor(readonly code: CodexRuntimeErrorCode) {
+  constructor(
+    readonly code: CodexRuntimeErrorCode,
+    readonly diagnostic?: CodexRuntimeDiagnosticSummary
+  ) {
     super(code);
     this.name = 'CodexRuntimeError';
   }
@@ -318,6 +365,172 @@ const throwIfAuthRequired = (value: unknown): void => {
   if (reason) throw new CodexRuntimeAuthRequiredError(reason);
 };
 
+const PROVIDER_ERROR_CODE_ALIASES: Record<string, string> = {
+  websocket_connection_limit_reached: 'ws-limit',
+  und_err_connect_timeout: 'connect-timeout',
+  und_err_headers_timeout: 'headers-timeout',
+  und_err_socket: 'socket-error'
+};
+
+const readDiagnosticField = (
+  record: Record<string, unknown> | undefined,
+  field: string
+): unknown => {
+  if (!record) return undefined;
+  try {
+    return record[field];
+  } catch {
+    return undefined;
+  }
+};
+
+const diagnosticStatus = (value: unknown): number | undefined => {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined;
+};
+
+const diagnosticIdentifier = (value: unknown): string | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value).slice(0, 12);
+  if (typeof value !== 'string') return undefined;
+  const candidate = value.trim();
+  if (!candidate || candidate.length > 64 || !/^[A-Za-z][A-Za-z0-9_.:-]*$/.test(candidate)) {
+    return undefined;
+  }
+  const alias = PROVIDER_ERROR_CODE_ALIASES[candidate.toLowerCase()];
+  if (alias) return alias;
+  if (candidate.length >= 24) return undefined;
+  const sanitized = sanitizeDiagnostic(candidate, 32);
+  return sanitized && sanitized !== '***' ? sanitized : undefined;
+};
+
+const transportValue = (value: unknown): CodexRuntimeDiagnosticTransport | undefined => {
+  const transports: Record<string, CodexRuntimeDiagnosticTransport> = {
+    auto: 'auto',
+    sse: 'sse',
+    websocket: 'ws',
+    'websocket-cached': 'ws-cache'
+  };
+  return typeof value === 'string' ? transports[value] : undefined;
+};
+
+const providerPhaseValue = (
+  value: unknown
+): CodexRuntimeDiagnosticProviderPhase | undefined => {
+  if (value === 'before_message_stream_start') return 'before-stream';
+  if (value === 'after_message_stream_start') return 'after-stream';
+  return undefined;
+};
+
+const categoryFromHttpStatus = (
+  status: number
+): CodexRuntimeDiagnosticCategory | undefined => {
+  if (status === 401) return 'auth';
+  if (status === 429) return 'rate-limit';
+  if (status === 408 || status === 504) return 'timeout';
+  return status >= 400 ? 'http' : undefined;
+};
+
+const categoryFromStructuralCode = (
+  code: string | undefined
+): CodexRuntimeDiagnosticCategory => {
+  if (code === 'ETIMEDOUT' || code === 'connect-timeout' || code === 'headers-timeout') {
+    return 'timeout';
+  }
+  if (
+    code &&
+    ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'socket-error'].includes(code)
+  ) {
+    return 'transport';
+  }
+  return 'provider-unknown';
+};
+
+const canonicalProviderDetail = (category: CodexRuntimeDiagnosticCategory): string => {
+  const details: Record<CodexRuntimeDiagnosticCategory, string> = {
+    auth: 'authentication rejected',
+    http: 'http request rejected',
+    provider: 'provider request rejected',
+    'provider-unknown': 'provider request failed',
+    'rate-limit': 'rate limit exceeded',
+    response: 'provider response invalid',
+    runtime: 'runtime request failed',
+    timeout: 'provider request timed out',
+    transport: 'provider transport failed'
+  };
+  return sanitizeDiagnostic(details[category], 64);
+};
+
+const summarizeTerminalStatus = (
+  status: number | undefined
+): CodexRuntimeDiagnosticEvidence => {
+  const category = status
+    ? (categoryFromHttpStatus(status) ?? 'provider-unknown')
+    : 'provider-unknown';
+  return {
+    category,
+    ...(status ? { httpStatus: status } : {}),
+    detail: canonicalProviderDetail(category)
+  };
+};
+
+const summarizeCaughtProviderError = (
+  value: unknown,
+  observedStatus: number | undefined
+): CodexRuntimeDiagnosticEvidence => {
+  if (!(value instanceof Error)) return summarizeTerminalStatus(observedStatus);
+  const record = value as unknown as Record<string, unknown>;
+  const status =
+    observedStatus ??
+    diagnosticStatus(readDiagnosticField(record, 'status')) ??
+    diagnosticStatus(readDiagnosticField(record, 'statusCode'));
+  const errorName = diagnosticIdentifier(readDiagnosticField(record, 'name'));
+  const errorCode = diagnosticIdentifier(readDiagnosticField(record, 'code'));
+  const category =
+    (status ? categoryFromHttpStatus(status) : undefined) ??
+    categoryFromStructuralCode(errorCode);
+  return {
+    category,
+    ...(status ? { httpStatus: status } : {}),
+    ...(errorName ? { errorName } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    detail: canonicalProviderDetail(category)
+  };
+};
+
+const summarizePiTransportDiagnostic = (
+  diagnostic: CodexRuntimePiDiagnostic
+): CodexRuntimeDiagnosticEvidence | undefined => {
+  if (diagnostic.type !== 'provider_transport_failure') return undefined;
+  const error = diagnostic.error;
+  const errorRecord = error as Record<string, unknown> | undefined;
+  const details = diagnostic.details;
+  const configuredTransport = transportValue(readDiagnosticField(details, 'configuredTransport'));
+  const fallbackTransport = transportValue(readDiagnosticField(details, 'fallbackTransport'));
+  const providerPhase = providerPhaseValue(readDiagnosticField(details, 'phase'));
+  const errorName = diagnosticIdentifier(readDiagnosticField(errorRecord, 'name'));
+  const errorCode = diagnosticIdentifier(readDiagnosticField(errorRecord, 'code'));
+  return {
+    category: 'transport',
+    ...(configuredTransport ? { configuredTransport } : {}),
+    ...(fallbackTransport ? { fallbackTransport } : {}),
+    ...(providerPhase ? { providerPhase } : {}),
+    ...(errorName ? { errorName } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    detail: canonicalProviderDetail('transport')
+  };
+};
+
+const summarizePiMessageTransportDiagnostic = (
+  message: CodexRuntimePiMessage | undefined
+): CodexRuntimeDiagnosticEvidence | undefined => {
+  if (!Array.isArray(message?.diagnostics)) return undefined;
+  return message.diagnostics.reduce<CodexRuntimeDiagnosticEvidence | undefined>(
+    (summary, diagnostic) => summarizePiTransportDiagnostic(diagnostic) ?? summary,
+    undefined
+  );
+};
+
 interface BoundedMessageText {
   text: string;
   exceeded: boolean;
@@ -432,6 +645,32 @@ const enableReasoningNone = (session: CodexRuntimePiSession): (() => void) => {
   } catch (error) {
     if (error instanceof CodexRuntimeError) throw error;
     throw new CodexRuntimeError('runtime-unavailable');
+  }
+};
+
+const observeProviderResponseStatus = (
+  session: CodexRuntimePiSession,
+  observe: (status: number) => void
+): (() => void) => {
+  try {
+    const agent = session.agent;
+    if (!agent) return () => undefined;
+    const onResponse = agent.onResponse;
+    const observedOnResponse: NonNullable<SimpleStreamOptions['onResponse']> = async (
+      response,
+      model
+    ) => {
+      const status = diagnosticStatus(response.status);
+      if (status) observe(status);
+      if (onResponse) await onResponse.call(agent, response, model);
+    };
+    agent.onResponse = observedOnResponse;
+    if (agent.onResponse !== observedOnResponse) return () => undefined;
+    return () => {
+      if (agent.onResponse === observedOnResponse) agent.onResponse = onResponse;
+    };
+  } catch {
+    return () => undefined;
   }
 };
 
@@ -697,6 +936,10 @@ export class CodexRuntimeService {
     let finalText = '';
     let stopReason = '';
     let providerError = false;
+    let transportDiagnostic: CodexRuntimeDiagnosticEvidence | undefined;
+    let observedProviderStatus: number | undefined;
+    // Process-local only: free-form Pi text may classify existing auth/runtime failures, but it
+    // must never feed the persisted Translator diagnostic summary.
     const providerErrorDetails: string[] = [];
     let providerErrorDetailsLength = 0;
     let outputLimit = false;
@@ -704,6 +947,7 @@ export class CodexRuntimeService {
     let abortRequested = false;
     let assertFastServiceTierApplied = (): void => undefined;
     let assertReasoningNoneApplied = (): void => undefined;
+    let restoreProviderResponseObserver = (): void => undefined;
 
     const abortSession = (): void => {
       if (abortRequested) return;
@@ -740,6 +984,16 @@ export class CodexRuntimeService {
       providerErrorDetails.push(bounded);
       providerErrorDetailsLength += bounded.length + 1;
     };
+    const observeProviderDiagnostic = (message: CodexRuntimePiMessage | undefined): void => {
+      transportDiagnostic =
+        summarizePiMessageTransportDiagnostic(message) ?? transportDiagnostic;
+    };
+    const providerDiagnosticSummary = (
+      terminal: CodexRuntimeDiagnosticEvidence
+    ): CodexRuntimeDiagnosticSummary => ({
+      ...(transportDiagnostic ? { transportDiagnostic } : {}),
+      terminalDiagnostic: terminal
+    });
 
     try {
       session = await waitForSession(creation, input.signal);
@@ -754,6 +1008,9 @@ export class CodexRuntimeService {
       if (thinkingLevel === 'off') {
         assertReasoningNoneApplied = enableReasoningNone(session);
       }
+      restoreProviderResponseObserver = observeProviderResponseStatus(session, (status) => {
+        observedProviderStatus = status;
+      });
 
       unsubscribe = session.subscribe((event) => {
         if (event.type?.startsWith('tool_execution_')) {
@@ -768,6 +1025,7 @@ export class CodexRuntimeService {
           }
           if (inner?.type === 'done' || inner?.type === 'error') {
             const message = inner.message ?? inner.error;
+            observeProviderDiagnostic(message);
             toolViolation = toolViolation || hasToolContent(message);
             if (toolViolation) abortSession();
             acceptFinalMessage(message);
@@ -781,6 +1039,7 @@ export class CodexRuntimeService {
           }
         }
         if (event.type === 'message_end' && event.message?.role === 'assistant') {
+          observeProviderDiagnostic(event.message);
           toolViolation = toolViolation || hasToolContent(event.message);
           if (toolViolation) abortSession();
           acceptFinalMessage(event.message);
@@ -809,11 +1068,23 @@ export class CodexRuntimeService {
         ) {
           throw new CodexRuntimeError('runtime-unavailable');
         }
-        throw new CodexRuntimeError('provider-error');
+        throw new CodexRuntimeError(
+          'provider-error',
+          providerDiagnosticSummary(summarizeTerminalStatus(observedProviderStatus))
+        );
       }
 
       const text = finalText || streamed;
-      if (!text) throw new CodexRuntimeError('provider-error');
+      if (!text) {
+        throw new CodexRuntimeError(
+          'provider-error',
+          providerDiagnosticSummary({
+            category: 'response',
+            ...(observedProviderStatus ? { httpStatus: observedProviderStatus } : {}),
+            detail: canonicalProviderDetail('response')
+          })
+        );
+      }
       return {
         provider: CODEX_RUNTIME_PROVIDER,
         model: input.model,
@@ -826,8 +1097,12 @@ export class CodexRuntimeService {
       if (toolViolation) throw new CodexRuntimeError('tool-violation');
       if (outputLimit) throw new CodexRuntimeError('output-limit');
       throwIfAuthRequired(error);
-      throw new CodexRuntimeError('provider-error');
+      throw new CodexRuntimeError(
+        'provider-error',
+        providerDiagnosticSummary(summarizeCaughtProviderError(error, observedProviderStatus))
+      );
     } finally {
+      restoreProviderResponseObserver();
       unsubscribe?.();
       session?.dispose();
     }

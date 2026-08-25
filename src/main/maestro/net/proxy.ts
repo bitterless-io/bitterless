@@ -1,8 +1,7 @@
-import { EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher, type Dispatcher } from 'undici'
+import { acquireMaestroProxyLease } from '@main/networking/outboundHttpDispatcher.service'
+import { EnvHttpProxyAgent } from 'undici'
 
 let maestroDispatcher: EnvHttpProxyAgent | null = null
-let previousDispatcher: Dispatcher | null = null
-let activeLeases = 0
 
 const hasExplicitProxyEnvironment = (): boolean =>
   Boolean(
@@ -14,32 +13,26 @@ const hasExplicitProxyEnvironment = (): boolean =>
       process.env.all_proxy
   )
 
+const createMaestroProxyDispatcher = (): EnvHttpProxyAgent => {
+  const allProxy = process.env.all_proxy || process.env.ALL_PROXY
+  if (!allProxy) return new EnvHttpProxyAgent()
+
+  const httpProxy = process.env.http_proxy || process.env.HTTP_PROXY || allProxy
+  const httpsProxy = process.env.https_proxy || process.env.HTTPS_PROXY || httpProxy
+  return new EnvHttpProxyAgent({ httpProxy, httpsProxy })
+}
+
 /**
- * While Maestro is open, route main-process undici traffic through the user's
- * explicit proxy environment. The previous host dispatcher is restored after
- * Maestro agents and windows have drained and shut down.
+ * While Maestro is open, route non-Codex main-process Undici traffic through
+ * the user's explicit proxy environment. The shared routing dispatcher owns
+ * lease counting and remains installed throughout Codex and Maestro activity.
  */
 export const acquireMaestroProxyDispatcher = (): (() => void) => {
   if (!hasExplicitProxyEnvironment()) return () => undefined
 
-  if (activeLeases === 0) {
-    previousDispatcher = getGlobalDispatcher()
-    maestroDispatcher ??= new EnvHttpProxyAgent()
-    setGlobalDispatcher(maestroDispatcher)
+  if (!maestroDispatcher) {
+    maestroDispatcher = createMaestroProxyDispatcher()
     console.log('[coach] outbound HTTP proxy active while Maestro is open')
   }
-  activeLeases += 1
-
-  let released = false
-  return (): void => {
-    if (released) return
-    released = true
-    activeLeases = Math.max(0, activeLeases - 1)
-    if (activeLeases !== 0) return
-
-    if (maestroDispatcher && previousDispatcher && getGlobalDispatcher() === maestroDispatcher) {
-      setGlobalDispatcher(previousDispatcher)
-    }
-    previousDispatcher = null
-  }
+  return acquireMaestroProxyLease(maestroDispatcher)
 }

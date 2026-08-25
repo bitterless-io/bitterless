@@ -5,6 +5,8 @@ import type { InjectBtnEntry } from './injectBtn.api'
 
 export const DEFAULT_COACH_START_URL = 'https://example.com'
 export const MAESTRO_HOME_READY_TOKEN_QUERY = 'maestroReadyToken'
+export const MAESTRO_LOCAL_HOME_DISPLAY_URL = 'bitterless://home'
+export const MAESTRO_AI_CRMS_LOGIN_DISPLAY_URL = 'bitterless://ai-crms-login'
 
 export interface HomeRendererReadyParams {
   token: string
@@ -24,7 +26,7 @@ export interface CoachXpcContract {
   navigate(params: { url: string }): Promise<void>
   // Reload the active tab's page (works on the pinned home tab too — it reloads, not navigates).
   reload(): Promise<void>
-  // History navigation of the active tab (no-ops when unavailable or when the pinned AI-CRMS tab
+  // History navigation of the active tab (no-ops when unavailable or when the pinned Home tab
   // is active).
   goBack(): Promise<void>
   goForward(): Promise<void>
@@ -143,7 +145,7 @@ export interface CoachXpcContract {
   closeTab(params: { id: string }): Promise<void>
   getTabs(): Promise<TabInfo[]>
   // Restore persisted tabs the home renderer read from the sqlite store (renderer-driven
-  // persistence): main recreates them as cold tabs after the pinned crms tab. Idempotent.
+  // persistence): main recreates them as cold tabs after the pinned Home tab. Idempotent.
   restoreTabs(params: { tabs: SavedTab[] }): Promise<void>
   // Right-click a tab → native context menu (built + popped in the main process, so it
   // renders above the operation view).
@@ -228,7 +230,7 @@ export interface BrowserRequestReplayResult {
   auth?: { header: string; source: string; key?: string; applied: boolean }[]
 }
 
-export type TabKind = 'ai-crms' | 'browser'
+export type TabKind = 'home' | 'ai-crms' | 'browser'
 export type WorkbenchPane =
   | 'recording'
   | 'skills'
@@ -584,9 +586,12 @@ export interface TabInfo {
   id: string
   kind: TabKind
   title: string
+  /** Main-owned real targets (such as the bundled Home file URL) are never exposed here. */
   url: string
+  /** Stable renderer-facing URL for first-party local tabs. */
+  displayUrl?: string
   active: boolean
-  /** Pinned tabs (e.g. the AI-CRMS home tab) can't be closed and keep a fixed title/favicon. */
+  /** Pinned tabs (e.g. the bundled Home tab) can't be closed and keep a fixed title/favicon. */
   pinned: boolean
   /** Favicon URL for the tab chip ('' = none). */
   favicon: string

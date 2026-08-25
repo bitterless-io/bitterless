@@ -156,6 +156,16 @@ class MaestroWindowHandler extends XpcMainHandler {
       this.assertAuthReady()
 
       const window = maestroWindowHelper.create()
+      let nativeCloseCleanupStarted = false
+      window.on('close', (event) => {
+        event.preventDefault()
+        if (nativeCloseCleanupStarted) return
+        nativeCloseCleanupStarted = true
+        void this.destroyMaestroRuntime().catch((err) => {
+          nativeCloseCleanupStarted = false
+          console.error('[maestro] native close cleanup failed:', err)
+        })
+      })
       window.once('closed', () => {
         void this.destroyMaestroRuntime()
       })

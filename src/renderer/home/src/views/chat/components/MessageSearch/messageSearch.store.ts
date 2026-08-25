@@ -1,5 +1,4 @@
 import { reactive } from 'vue';
-import router from '@/router';
 import { messageEmitter } from '@/emitter/message.emitter';
 import { sessionStore } from '../../store/session.store';
 import { messageStore } from '../../store/message.store';
@@ -89,8 +88,14 @@ const scrollToMessageCenter = (messageId: string): void => {
 };
 
 export const handleMessageClick = async (msg: MessageRow): Promise<void> => {
-  if (router.currentRoute.value.name !== 'chat') {
-    await router.push({ name: 'chat' });
+  // Maestro's bundled local Home mounts Chat directly and deliberately has no router/login shell.
+  // Keep the full Home behavior, but load its router only on the non-Maestro click path so the
+  // local entry never imports the router/auth graph as a side effect of rendering MessageSearch.
+  if (document.documentElement.dataset.bitterlessSurface !== 'maestro-local-home') {
+    const { default: router } = await import('@/router');
+    if (router.currentRoute.value.name !== 'chat') {
+      await router.push({ name: 'chat' });
+    }
   }
 
   sessionStore.currentSessionId = msg.session_id;

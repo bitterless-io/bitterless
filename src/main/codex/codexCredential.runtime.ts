@@ -4,10 +4,13 @@ import {
   CodexCredentialService,
   type PiAuthModule,
 } from './codexCredential.service';
-import { codexAuthPath, codexModelsPath } from './codexPaths';
+import { codexAuthPath, codexModelsPath, codexSettingsPath } from './codexPaths';
+import { ensureCodexProxyDispatcher } from './codexProxy.service';
 
-const loadPiAuthModule = async (): Promise<PiAuthModule> =>
-  (await import('@earendil-works/pi-coding-agent')) as unknown as PiAuthModule;
+const loadPiAuthModule = async (): Promise<PiAuthModule> => {
+  await ensureCodexProxyDispatcher(codexSettingsPath(app.getPath('userData')));
+  return (await import('@earendil-works/pi-coding-agent')) as unknown as PiAuthModule;
+};
 
 export const codexCredentialService = new CodexCredentialService({
   authPath: () => codexAuthPath(app.getPath('userData')),

@@ -10,9 +10,9 @@ const tabsDao = createXpcRendererEmitter<TabsApi>('TabsDao') as TabsApi
 
 // Last-activated tab, persisted in THIS renderer's localStorage so boot reopens it. Tabs get fresh
 // ids each launch, so the key is a stable identity: fixed tab kind for built-ins, else the URL
-// (non-pinned tabs are restored by URL). Missing / no match → default to AI-CRMS.
+// (non-pinned tabs are restored by URL). Missing / no match → default to bundled Home.
 const LAST_ACTIVE_KEY = 'coach.lastActiveTab'
-const tabKey = (t: TabInfo): string => (t.kind === 'ai-crms' ? t.kind : t.url)
+const tabKey = (t: TabInfo): string => (t.kind === 'home' ? t.kind : t.url)
 
 // A tab worth persisting / restoring across launches: a real remote http(s) page. Ephemeral local
 // servers — notably the Demo (http://127.0.0.1:<random-port>/booking, which is GONE next launch) —
@@ -34,8 +34,8 @@ const isPersistableUrl = (url: string): boolean => {
  * operation view). This store mirrors that list, drives switching/closing via XPC, AND persists
  * the (non-pinned) strip to the sqlite store so it reopens next launch.
  *
- * `activeLocked` is true when the active tab is pinned — the MenuBar uses it to disable the
- * address bar, since fixed tabs aren't navigated via the URL bar.
+ * `activeLocked` is true for first-party fixed-purpose tabs — the MenuBar uses it to disable the
+ * address bar because only ordinary browser tabs accept arbitrary navigation.
  */
 class TabStoreState {
   tabs: TabInfo[] = []
@@ -56,9 +56,9 @@ class TabStoreState {
     return this.tabs.find((t) => t.active)
   }
 
-  /** Active tab is pinned → the address bar is read-only. */
+  /** Non-browser tabs have a fixed address and cannot accept arbitrary navigation. */
   get activeLocked(): boolean {
-    return Boolean(this.activeTab?.pinned)
+    return Boolean(this.activeTab && this.activeTab.kind !== 'browser')
   }
 
   async init(): Promise<void> {
@@ -71,8 +71,8 @@ class TabStoreState {
         const active = this.tabs.find((t) => t.active)
         if (active) {
           // A demo/localhost tab is never persisted, so don't make it the restore target either —
-          // record 'ai-crms' so the next launch falls back to the fixed home tab.
-          const key = active.pinned || isPersistableUrl(active.url) ? tabKey(active) : 'ai-crms'
+          // Record Home so the next launch falls back to the fixed local tab.
+          const key = active.pinned || isPersistableUrl(active.url) ? tabKey(active) : 'home'
           localStorage.setItem(LAST_ACTIVE_KEY, key)
         }
         this.persistSoon()
@@ -83,7 +83,7 @@ class TabStoreState {
       void this.openInNewTab(String(payload.params || ''))
     })
     // Restore the persisted strip: read from sqlite, then ask main to recreate them as cold tabs
-    // (main warms each lazily on first activation). The pinned crms tab stays the active one.
+    // (main warms each lazily on first activation). The pinned Home tab stays active.
     // Drop any non-persistable entries on read too — a dead demo/localhost tab saved by an older
     // build must not be restored; the next persistSoon then rewrites the cache without it.
     const saved = (await tabsDao.listAll().catch(() => [] as SavedTab[])).filter((t) => isPersistableUrl(t.url))
@@ -95,16 +95,19 @@ class TabStoreState {
   }
 
   // On boot, activate the last-activated tab (from localStorage) and load its page. Main defaults
-  // the AI-CRMS tab to active; built-ins activate by kind, restored browser tabs by URL.
+  // the bundled Home tab to active; built-ins activate by kind, restored browser tabs by URL.
   private async restoreLastActive(): Promise<void> {
-    const key = localStorage.getItem(LAST_ACTIVE_KEY)
-    if (!key || key === 'ai-crms') return
+    const savedKey = localStorage.getItem(LAST_ACTIVE_KEY)
+    // Migrate the pre-local-Home fixed-tab sentinel without reviving a remote AI-CRMS tab.
+    const key = savedKey === 'ai-crms' ? 'home' : savedKey
+    if (savedKey === 'ai-crms') localStorage.setItem(LAST_ACTIVE_KEY, 'home')
+    if (!key || key === 'home') return
     if (key === 'workbench') {
-      localStorage.setItem(LAST_ACTIVE_KEY, 'ai-crms')
+      localStorage.setItem(LAST_ACTIVE_KEY, 'home')
       return
     }
     // Only ever re-activate a real persisted tab — never a demo/localhost one (固化兜底: anything
-    // unclean leaves the fixed AI-CRMS tab active).
+    // unclean leaves the fixed Home tab active).
     const target = this.tabs.find((t) => t.kind === 'browser' && t.url === key && isPersistableUrl(t.url))
     if (target && !target.active) await coach.activateTab({ id: target.id })
   }

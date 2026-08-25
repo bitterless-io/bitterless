@@ -3,15 +3,18 @@ import { Message } from '@arco-design/web-vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import type { CaptureOptions, CoachXpcContract } from '@maestro-shared/coach.api'
 
-// Capture control, surfaced in the home header as a Chrome-DevTools-style record dot.
+// Capture state, surfaced in the tab strip as a read-only recording indicator.
 // Main owns capture and broadcasts coach/capture-started + coach/capture-stopped; this store mirrors
-// them so the dot reflects capture state no matter who toggled it.
+// them so the indicator reflects capture state no matter which agent-owned flow toggled it.
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
 class CaptureStore {
   recording = false
   snapshotting = false
   recordActions = true
+  // Starting capture includes a writer handshake and multiple CDP round trips. Keep the retained
+  // programmatic toggle capability single-flight so concurrent callers cannot restart a new trace.
+  toggling = false
 
   init(): void {
     xpcRenderer.subscribe('coach/capture-started', () => {
@@ -30,8 +33,14 @@ class CaptureStore {
   // Toggle capture. Main echoes the new state back via the broadcast above (→ all renderers),
   // and the call's return value sets it immediately for snappy feedback.
   async toggle(): Promise<void> {
-    const result = this.recording ? await coach.stopCapture() : await coach.startCapture({})
-    this.recording = result.capturing
+    if (this.toggling) return
+    this.toggling = true
+    try {
+      const result = this.recording ? await coach.stopCapture() : await coach.startCapture({})
+      this.recording = result.capturing
+    } finally {
+      this.toggling = false
+    }
   }
 
   async snapshot(): Promise<void> {

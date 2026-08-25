@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { IconFolder, IconFolderOpen, IconListDetails, IconLoader2, IconMicrophone, IconPaperclip, IconPlayerPause, IconPlayerStop, IconPlus, IconRefresh, IconSend2, IconSparkles, IconX } from '@tabler/icons-vue'
+import { IconFolder, IconFolderOpen, IconListDetails, IconLoader2, IconMicrophone, IconPaperclip, IconPlayerPause, IconPlayerStop, IconPlus, IconRefresh, IconSend2, IconX } from '@tabler/icons-vue'
 import { fileIcon } from './fileIcon'
 import { Button, Drawer, Message, Modal, Tooltip } from '@arco-design/web-vue'
-import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
+import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import type { AgentReply } from '@maestro-shared/coach.api'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
@@ -370,11 +370,6 @@ function onComposerKeydown(event: KeyboardEvent): void {
   void send()
 }
 
-async function openSkills(): Promise<void> {
-  await coach.setWorkbenchVisible({ visible: true })
-  xpcRenderer.broadcast('coach/workbench-pane', { pane: 'skills' })
-}
-
 async function chooseWorkspace(): Promise<void> {
   if (props.session.busy || props.session.archivedAt) return
   await messageStore.chooseWorkspace(props.session.id)
@@ -528,15 +523,8 @@ function setHistoryContainer(el: HTMLElement | null): void {
       </div>
       <div class="chat-panel__composer-footer">
         <div class="chat-panel__composer-tools">
-          <IconBtn
-            class="chat-panel__tool-button"
-            name="maestro__composer__skills"
-            title="Skills"
-            aria-label="Skills"
-            @click="openSkills"
-          >
-            <IconSparkles class="chat-panel__button-icon" :size="15" stroke="1.8" />
-          </IconBtn>
+          <!-- The duplicate Skills shortcut is intentionally hidden. The Workbench Skills pane
+               and its internal coach/workbench-pane broadcast remain available in Workbench. -->
           <!-- File attach — bottom-left. Opens a multi-select file picker. -->
           <IconBtn
             v-if="session.allowFiles"

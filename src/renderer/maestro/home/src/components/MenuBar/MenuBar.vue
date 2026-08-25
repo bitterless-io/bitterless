@@ -9,12 +9,11 @@ import {
 } from '@arco-design/web-vue/es/icon'
 import {
   IconCameraSpark,
-  IconBug,
-  IconBugOff,
   IconCircleFilled,
-  IconLayoutSidebarRight,
-  IconLayoutSidebarRightFilled,
-  IconTools
+  IconSettings,
+  IconSettingsFilled,
+  IconSparkles,
+  IconSparklesFilled
 } from '@tabler/icons-vue'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import type { TabInfo } from '@maestro-shared/coach.api'
@@ -29,25 +28,26 @@ import './MenuBar.less'
 // Shared style for the address-bar icon buttons: borderless,
 // transparent, highlight on hover, soft scale-down on press; muted + no hover when disabled.
 const navBtn = 'maestro-menu-bar__nav-button'
-// Bundled AI-CRMS favicon (downloaded from https://mcu.micromeet.ai/favicon.ico). Vite
-// inlines it (<4KB) into the build, so the pinned tab's icon shows offline / with no fetch.
-import crmsFavicon from '@maestro-renderer/common/assets/icons/crms-favicon.png'
+// The fixed Home tab is a bundled renderer, so its icon must be bundled too.
+import appLogo from '@maestro-renderer/common/assets/icons/app-logo.png'
 
 onMounted(() => {
   menuBarStore.init()
   tabStore.init()
   updateStore.init()
   captureStore.init()
+  layoutStore.init()
   void workbenchStore.init()
 })
 
-// Tab label: page <title> when known, else the URL host, else "New Tab".
-function tabLabel(tab: { title: string; url: string }): string {
+// Tab label: page <title> when known, else the URL host, else the localized new-tab label.
+function tabLabel(tab: TabInfo): string {
+  if (tab.kind === 'home') return i18nHelper.menuBar.maestro.homeTab
   if (tab.title?.trim()) return tab.title.trim()
   try {
-    return new URL(tab.url).host || 'New Tab'
+    return new URL(tab.url).host || i18nHelper.menuBar.maestro.newTab
   } catch {
-    return tab.url?.trim() || 'New Tab'
+    return tab.url?.trim() || i18nHelper.menuBar.maestro.newTab
   }
 }
 
@@ -57,10 +57,10 @@ const failedFavicons = reactive(new Set<string>())
 function markFaviconFailed(url: string): void {
   if (url) failedFavicons.add(url)
 }
-// Icon to show: the AI-CRMS tab's bundled icon, else the page favicon (if it loaded),
+// Icon to show: the fixed local Home tab's bundled icon, else the page favicon (if it loaded),
 // else '' — meaning the template renders the default Arco icon.
 function tabIconSrc(tab: TabInfo): string {
-  if (tab.kind === 'ai-crms') return crmsFavicon
+  if (tab.kind === 'home') return appLogo
   if (tab.favicon && !failedFavicons.has(tab.favicon)) return tab.favicon
   return ''
 }
@@ -81,7 +81,7 @@ function unlockTabWidths(): void {
 // Tab chip classes. Fixed system tabs get persistent treatments so they never read as ordinary,
 // closable browser tabs.
 function tabClass(tab: TabInfo): string {
-  if (tab.kind === 'ai-crms') {
+  if (tab.kind === 'home') {
     return tab.active
       ? 'maestro-menu-bar__tab--pinned-active'
       : 'maestro-menu-bar__tab--pinned'
@@ -92,24 +92,17 @@ function tabClass(tab: TabInfo): string {
 }
 
 function fixedTabClass(tab: TabInfo): string {
-  if (tab.kind === 'ai-crms') return 'maestro-menu-bar__tab--pinned-size'
+  if (tab.kind === 'home') return 'maestro-menu-bar__tab--pinned-size'
   return 'maestro-menu-bar__tab--browser-size'
-}
-
-function debuggerTitle(tab?: TabInfo): string {
-  if (!tab) return 'Debugger unavailable'
-  if (!tab.debuggerEnabled) return 'Debugger off for this tab — click to attach'
-  if (!tab.debuggerAttached) return 'Debugger on — attaching'
-  return 'Debugger attached — click to detach'
 }
 </script>
 
 <template>
-  <!-- 92px top chrome = an Omni-derived 44px tab strip + the existing 48px address bar. The renderer-driven
+  <!-- 84px top chrome = an Omni-derived 36px tab strip + the existing 48px address bar. The renderer-driven
        layout measures the body placeholders below this, so the native operation/
-       control views sit at y=92 automatically. -->
+       control views sit at y=84 automatically. -->
   <div class="maestro-menu-bar">
-    <!-- Tab strip (44px). One chip per open operation-view tab; new tabs appear when a
+    <!-- Tab strip (36px). One chip per open operation-view tab; new tabs appear when a
          page opens a new window. Click to switch, × to close. On macOS the left gutter
          clears the native traffic lights (hiddenInset). -->
     <div
@@ -155,13 +148,14 @@ function debuggerTitle(tab?: TabInfo): string {
             }}</span>
             <!-- Close × (closable tabs only). Absolutely positioned so it never widens the tab
                  — a compressed tab keeps showing its favicon. Visible on hover, or always on
-                 the active tab. The pinned AI-CRMS home tab is non-closable, so it has none. -->
+                 the active tab. The pinned local Home tab is non-closable, so it has none. -->
             <button
               v-if="!tab.pinned && tabStore.tabs.length > 1"
               class="maestro-menu-bar__tab-close"
               :class="{ 'maestro-menu-bar__tab-close--active': tab.active }"
               draggable="false"
-              title="Close tab"
+              :title="i18nHelper.menuBar.maestro.closeTab"
+              :aria-label="i18nHelper.menuBar.maestro.closeTab"
               type="button"
               @click.stop="onCloseClick($event, tab.id)"
               @dragstart.stop.prevent
@@ -183,12 +177,28 @@ function debuggerTitle(tab?: TabInfo): string {
       <div class="maestro-menu-bar__new-tab-wrap">
         <button
           class="maestro-menu-bar__new-tab"
-          title="New tab"
+          :title="i18nHelper.menuBar.maestro.newTab"
+          :aria-label="i18nHelper.menuBar.maestro.newTab"
           type="button"
           @click="tabStore.newTab()"
         >
           <IconPlus />
         </button>
+      </div>
+      <!-- Agent-owned recording status. The fixed slot remains in the draggable tab strip so
+           recording state cannot move the new-tab button. It is deliberately not interactive. -->
+      <div
+        name="menubar__capture__status"
+        class="maestro-menu-bar__capture-status"
+        role="status"
+        :title="captureStore.recording ? i18nHelper.menuBar.maestro.recording : undefined"
+        :aria-label="captureStore.recording ? i18nHelper.menuBar.maestro.recording : undefined"
+      >
+        <IconCircleFilled
+          v-if="captureStore.recording"
+          class="maestro-menu-bar__capture-status-icon"
+          :size="14"
+        />
       </div>
     </div>
 
@@ -197,13 +207,14 @@ function debuggerTitle(tab?: TabInfo): string {
       class="maestro-menu-bar__address-row"
     >
       <!-- Back / Forward / Reload, grouped in a subtle segmented cluster (data-slot="nav"). Back &
-           Forward disable when there's no history that way; the pinned AI-CRMS tab also disables
-           history nav so it cannot expose the internal about:blank bootstrap page. -->
+           Forward disable when there's no history that way; the pinned Home tab also disables
+           history nav because its bundled local entry is fixed. -->
       <div data-slot="nav" class="maestro-menu-bar__navigation">
         <button
           :class="navBtn"
           :disabled="!menuBarStore.canGoBack"
-          title="Back"
+          :title="i18nHelper.menuBar.maestro.back"
+          :aria-label="i18nHelper.menuBar.maestro.back"
           type="button"
           @click="menuBarStore.back()"
         >
@@ -212,53 +223,39 @@ function debuggerTitle(tab?: TabInfo): string {
         <button
           :class="navBtn"
           :disabled="!menuBarStore.canGoForward"
-          title="Forward"
+          :title="i18nHelper.menuBar.maestro.forward"
+          :aria-label="i18nHelper.menuBar.maestro.forward"
           type="button"
           @click="menuBarStore.forward()"
         >
           <IconArrowRight />
         </button>
-        <button :class="navBtn" title="Reload" type="button" @click="menuBarStore.reload()">
+        <button
+          :class="navBtn"
+          :title="i18nHelper.menuBar.maestro.reload"
+          :aria-label="i18nHelper.menuBar.maestro.reload"
+          type="button"
+          @click="menuBarStore.reload()"
+        >
           <IconRefresh />
         </button>
       </div>
-      <!-- Address bar is read-only on the pinned home tab (AI-CRMS): it isn't meant to be
-           navigated away from via the URL bar (the main process enforces this too). The
-           scheme is hidden — a schemeless entry loads over http:// (http→https redirects
-           are followed); a pasted http(s):// URL keeps its scheme. -->
+      <!-- First-party fixed-purpose tabs expose a stable display address but cannot be
+           navigated away from their trusted entry; ordinary browser tabs keep the normal
+           schemeless/pasted-address behavior. -->
       <input
         v-model="menuBarStore.url"
         :disabled="tabStore.activeLocked"
-        :title="tabStore.activeLocked ? 'Pinned tab — locked' : ''"
+        :title="tabStore.activeLocked ? i18nHelper.menuBar.maestro.fixedAddressLocked : ''"
         class="maestro-menu-bar__address"
-        placeholder="Enter address"
+        :placeholder="i18nHelper.menuBar.maestro.addressPlaceholder"
         @keydown.enter="menuBarStore.go()"
       />
 
       <!-- Trailing actions (data-slot="actions"): a hairline divider sets the cluster off from the
-           address field, then the capture toggle, sidebar toggle, and the conditional Update pill. -->
+           address field, then Snapshot, panel, Workbench, and the conditional Update pill. -->
       <div data-slot="actions" class="maestro-menu-bar__actions">
         <div class="maestro-menu-bar__actions-divider" aria-hidden="true"></div>
-
-        <!-- Debugger toggle — per active tab. Default ON; turn OFF before sensitive external
-             logins, then turn it back ON to restore capture / snapshot / replay. -->
-        <button
-          :class="[
-            navBtn,
-            !tabStore.activeTab?.debuggerEnabled
-              ? 'maestro-menu-bar__nav-button--debugger-off'
-              : !tabStore.activeTab?.debuggerAttached
-                ? 'maestro-menu-bar__nav-button--detached'
-                : ''
-          ]"
-          :disabled="!tabStore.activeTab || tabStore.debuggerToggling"
-          :title="debuggerTitle(tabStore.activeTab)"
-          type="button"
-          @click="tabStore.toggleActiveDebugger()"
-        >
-          <IconBug v-if="tabStore.activeTab?.debuggerEnabled" :size="18" stroke="1.8" />
-          <IconBugOff v-else :size="18" stroke="1.8" />
-        </button>
 
         <!-- Snapshot — only while capturing. Captures the current page into the capture trace. -->
         <button
@@ -266,51 +263,36 @@ function debuggerTitle(tab?: TabInfo): string {
           class="maestro-menu-bar__snapshot"
           :class="{ 'maestro-menu-bar__snapshot--busy': captureStore.snapshotting }"
           :disabled="captureStore.snapshotting"
-          title="Capture page snapshot"
+          :title="i18nHelper.menuBar.maestro.captureSnapshot"
+          :aria-label="i18nHelper.menuBar.maestro.captureSnapshot"
           type="button"
           @click="captureStore.snapshot()"
         >
           <IconCameraSpark :size="18" stroke="1.8" />
         </button>
 
-        <!-- Capture toggle — ALWAYS visible. Grey idle (click to start), red + pulse while capturing
-             (click to stop). Synced with the control panel record dot via the capture broadcasts. -->
-        <button
-          class="maestro-menu-bar__capture"
-          :disabled="!tabStore.activeTab?.debuggerEnabled"
-          :title="
-            !tabStore.activeTab?.debuggerEnabled
-              ? 'Turn Debugger on before capture'
-              : captureStore.recording
-                ? 'Stop capture'
-                : 'Capture your actions for the Agent to learn from'
-          "
-          type="button"
-          @click="captureStore.toggle()"
-        >
-          <IconCircleFilled class="maestro-menu-bar__capture-icon" :class="{ 'maestro-menu-bar__capture-icon--recording': captureStore.recording }" :size="14" />
-        </button>
-
         <!-- Sidebar (right control/AI panel) toggle — collapses the panel and reflows the operation
-             view to full width (see layout.store.ts + Layout.vue). Filled icon = panel shown. -->
+             view to full width (see layout.store.ts + Layout.vue). Filled sparkles = panel shown. -->
         <button
-          :class="navBtn"
-          :title="layoutStore.sidebarOpen ? 'Hide panel' : 'Show panel'"
+          :class="[navBtn, { 'maestro-menu-bar__nav-button--active': layoutStore.sidebarOpen }]"
+          :aria-pressed="layoutStore.sidebarOpen"
+          :title="layoutStore.sidebarOpen ? i18nHelper.menuBar.maestro.hidePanel : i18nHelper.menuBar.maestro.showPanel"
           type="button"
           @click="layoutStore.toggleSidebar()"
         >
-          <IconLayoutSidebarRightFilled v-if="layoutStore.sidebarOpen" :size="18" stroke="1.8" />
-          <IconLayoutSidebarRight v-else :size="18" stroke="1.8" />
+          <IconSparklesFilled v-if="layoutStore.sidebarOpen" :size="18" stroke="1.8" />
+          <IconSparkles v-else :size="18" stroke="1.8" />
         </button>
 
         <button
           :class="[navBtn, { 'maestro-menu-bar__nav-button--active': workbenchStore.visible }]"
           :aria-pressed="workbenchStore.visible"
-          :title="workbenchStore.visible ? 'Hide Workbench' : 'Show Workbench'"
+          :title="workbenchStore.visible ? i18nHelper.menuBar.maestro.hideWorkbench : i18nHelper.menuBar.maestro.showWorkbench"
           type="button"
           @click="workbenchStore.toggle()"
         >
-          <IconTools :size="18" stroke="1.8" />
+          <IconSettingsFilled v-if="workbenchStore.visible" :size="18" stroke="1.8" />
+          <IconSettings v-else :size="18" stroke="1.8" />
         </button>
 
         <!-- Update button — at the address bar's trailing edge. The compact label stays unchanged
@@ -323,11 +305,11 @@ function debuggerTitle(tab?: TabInfo): string {
           :title="
             updateStore.downloading
               ? updateStore.info
-                ? `Downloading ${updateStore.info.version}`
-                : 'Updating'
+                ? i18nHelper.menuBar.maestro.downloadingVersion.replace('{version}', updateStore.info.version)
+                : i18nHelper.menuBar.maestro.updating
               : updateStore.info
-                ? `Update to ${updateStore.info.version}`
-                : 'Update'
+                ? i18nHelper.menuBar.updateToVersion.replace('{version}', updateStore.info.version)
+                : i18nHelper.menuBar.maestro.update
           "
           type="button"
           @click="updateStore.install()"

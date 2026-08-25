@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CodexRuntimeAuthRequiredError,
   CodexRuntimeError,
   CodexRuntimeService,
   type CodexRuntimePiModule,
@@ -506,4 +507,274 @@ test('fixed-target preparation disables model network and skips registry refresh
   assert.equal(result.text, '{"ok":true}');
   assert.equal(createOptions.allowModelNetwork, false);
   assert.equal(refreshCalls, 0);
+});
+
+test('carries allowlisted Pi transport and final provider diagnostics without raw fields', async () => {
+  let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
+  let upstreamResponseStatus = 0;
+  const upstreamOnResponse = async (response: {
+    status: number;
+    headers: Record<string, string>;
+  }) => {
+    upstreamResponseStatus = response.status;
+  };
+  const agent = {
+    onResponse: upstreamOnResponse,
+  };
+  const session: CodexRuntimePiSession = {
+    agent,
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
+    thinkingLevel: 'low',
+    subscribe: (value) => {
+      listener = value;
+      return () => undefined;
+    },
+    prompt: async () => {
+      await agent.onResponse({ status: 429, headers: { 'x-private-id': 'response-secret' } });
+      listener({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'error',
+          reason: 'error',
+          error: {
+            role: 'assistant',
+            stopReason: 'error',
+            errorMessage:
+              'HTTP 503 FetchError code=ECONNRESET rate limit timeout websocket SSE tenant Acme private source',
+            diagnostics: [
+              {
+                type: 'provider_transport_failure',
+                error: {
+                  name: 'WebSocketError',
+                  code: 'websocket_connection_limit_reached',
+                  message: 'WebSocket connection failed with token=provider-secret-value',
+                },
+                details: {
+                  configuredTransport: 'auto',
+                  fallbackTransport: 'sse',
+                  phase: 'before_message_stream_start',
+                  requestBytes: 987654,
+                  eventsEmitted: false,
+                },
+              },
+            ],
+          },
+        },
+      });
+    },
+    abort: async () => undefined,
+    dispose: () => undefined,
+  };
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => createPi(session, () => undefined),
+  });
+
+  await assert.rejects(
+    runtime.run({
+      model: 'gpt-5.6-luna',
+      effort: 'low',
+      systemPrompt: 'Return strict JSON.',
+      prompt: '{"sourceText":"private source"}',
+      maxOutputBytes: 1024,
+      signal: new AbortController().signal,
+    }),
+    (error) => {
+      assert.ok(error instanceof CodexRuntimeError);
+      assert.equal(error.code, 'provider-error');
+      assert.deepEqual(error.diagnostic, {
+        transportDiagnostic: {
+          category: 'transport',
+          configuredTransport: 'auto',
+          fallbackTransport: 'sse',
+          providerPhase: 'before-stream',
+          errorName: 'WebSocketError',
+          errorCode: 'ws-limit',
+          detail: 'provider transport failed',
+        },
+        terminalDiagnostic: {
+          category: 'rate-limit',
+          httpStatus: 429,
+          detail: 'rate limit exceeded',
+        },
+      });
+      assert.equal(Object.hasOwn(error.diagnostic ?? {}, 'requestBytes'), false);
+      const serialized = JSON.stringify(error.diagnostic);
+      assert.equal(serialized.includes('requestBytes'), false);
+      assert.equal(serialized.includes('provider-secret-value'), false);
+      assert.equal(serialized.includes('private source'), false);
+      assert.equal(serialized.includes('response-secret'), false);
+      assert.equal(error.diagnostic?.transportDiagnostic?.errorName, 'WebSocketError');
+      assert.equal(error.diagnostic?.terminalDiagnostic?.errorName, undefined);
+      assert.equal(error.diagnostic?.terminalDiagnostic?.errorCode, undefined);
+      return true;
+    },
+  );
+  assert.equal(upstreamResponseStatus, 429);
+  assert.equal(agent.onResponse, upstreamOnResponse);
+});
+
+test('never carries JSON, HTML, or plaintext provider bodies into diagnostic detail', async () => {
+  const bodies = [
+    '{"maintenance":"HTTP 429 FetchError code=ECONNRESET rate limit timeout websocket SSE tenant Acme private source"}',
+    '<html><body>HTTP 429 FetchError code=ECONNRESET rate limit timeout websocket SSE tenant Acme private source</body></html>',
+    'HTTP 429 FetchError code=ECONNRESET rate limit timeout websocket SSE tenant Acme private source',
+  ];
+
+  for (const body of bodies) {
+    let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
+    const session: CodexRuntimePiSession = {
+      model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
+      thinkingLevel: 'low',
+      subscribe: (value) => {
+        listener = value;
+        return () => undefined;
+      },
+      prompt: async () => {
+        listener({
+          type: 'message_end',
+          message: { role: 'assistant', stopReason: 'error', errorMessage: body },
+        });
+      },
+      abort: async () => undefined,
+      dispose: () => undefined,
+    };
+    const runtime = new CodexRuntimeService({
+      authPath: () => '/private/auth.json',
+      modelsPath: () => '/private/models.json',
+      loadPiModule: async () => createPi(session, () => undefined),
+    });
+
+    await assert.rejects(
+      runtime.run({
+        model: 'gpt-5.6-luna',
+        effort: 'low',
+        systemPrompt: 'Return strict JSON.',
+        prompt: '{"sourceText":"private source"}',
+        maxOutputBytes: 1024,
+        signal: new AbortController().signal,
+      }),
+      (error) => {
+        assert.ok(error instanceof CodexRuntimeError);
+        assert.deepEqual(error.diagnostic, {
+          terminalDiagnostic: {
+            category: 'provider-unknown',
+            detail: 'provider request failed',
+          },
+        });
+        const serialized = JSON.stringify(error.diagnostic);
+        assert.equal(serialized.includes('Acme'), false);
+        assert.equal(serialized.includes('private source'), false);
+        assert.equal(serialized.includes('<html>'), false);
+        assert.equal(serialized.includes('maintenance'), false);
+        return true;
+      },
+    );
+  }
+});
+
+test('summarizes only structural fields from a caught Error object', async () => {
+  const thrown = Object.assign(
+    new Error('HTTP 429 WebSocketError code=ETIMEDOUT rate limit tenant Acme private source'),
+    {
+      name: 'FetchError',
+      code: 'ECONNRESET',
+      status: 503,
+      body: '{"sourceText":"private source","access_token":"secret"}',
+    },
+  );
+  const session: CodexRuntimePiSession = {
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
+    thinkingLevel: 'low',
+    subscribe: () => () => undefined,
+    prompt: async () => {
+      throw thrown;
+    },
+    abort: async () => undefined,
+    dispose: () => undefined,
+  };
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => createPi(session, () => undefined),
+  });
+
+  await assert.rejects(
+    runtime.run({
+      model: 'gpt-5.6-luna',
+      effort: 'low',
+      systemPrompt: 'Return strict JSON.',
+      prompt: '{"sourceText":"private source"}',
+      maxOutputBytes: 1024,
+      signal: new AbortController().signal,
+    }),
+    (error) => {
+      assert.ok(error instanceof CodexRuntimeError);
+      assert.deepEqual(error.diagnostic, {
+        terminalDiagnostic: {
+          category: 'http',
+          httpStatus: 503,
+          errorName: 'FetchError',
+          errorCode: 'ECONNRESET',
+          detail: 'http request rejected',
+        },
+      });
+      const serialized = JSON.stringify(error.diagnostic);
+      assert.equal(serialized.includes('private source'), false);
+      assert.equal(serialized.includes('secret'), false);
+      return true;
+    },
+  );
+});
+
+test('keeps auth invalidation classification ahead of log-only provider diagnostics', async () => {
+  let listener: Parameters<CodexRuntimePiSession['subscribe']>[0] = () => undefined;
+  const session: CodexRuntimePiSession = {
+    model: { provider: 'openai-codex', id: 'gpt-5.6-luna' },
+    thinkingLevel: 'low',
+    subscribe: (value) => {
+      listener = value;
+      return () => undefined;
+    },
+    prompt: async () => {
+      listener({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: '401 invalid token',
+          diagnostics: [
+            {
+              type: 'provider_transport_failure',
+              error: { name: 'WebSocketError', message: 'connection failed' },
+              details: { configuredTransport: 'auto', fallbackTransport: 'sse' },
+            },
+          ],
+        },
+      });
+    },
+    abort: async () => undefined,
+    dispose: () => undefined,
+  };
+  const runtime = new CodexRuntimeService({
+    authPath: () => '/private/auth.json',
+    modelsPath: () => '/private/models.json',
+    loadPiModule: async () => createPi(session, () => undefined),
+  });
+
+  await assert.rejects(
+    runtime.run({
+      model: 'gpt-5.6-luna',
+      effort: 'low',
+      systemPrompt: 'Return strict JSON.',
+      prompt: '{"sourceText":"hi"}',
+      maxOutputBytes: 1024,
+      signal: new AbortController().signal,
+    }),
+    (error) =>
+      error instanceof CodexRuntimeAuthRequiredError &&
+      error.reason === 'invalid-token' &&
+      error.diagnostic === undefined,
+  );
 });

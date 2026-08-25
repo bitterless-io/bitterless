@@ -63,9 +63,13 @@ controller exposes only the narrow XPC and tool facades required by existing cal
 
 - XPC methods, parameter/return shapes, and broadcast channel names remain unchanged.
 - Startup order remains: create the top-level window, attach all child views, load the pinned
-  AI-CRMS tab and renderers, then reveal the window.
-- The pinned AI-CRMS tab, warm/cold tab cap, debugger attachment, capture-target switching,
-  workbench overlay, tab persistence, and close/shutdown cleanup retain their current behavior.
+  bundled Home tab and first-party renderers, then reveal the window after the readiness fence.
+- The pinned local Home tab is non-recordable and non-debuggable. AI-CRMS authentication uses a
+  separate closable, non-persisted login tab whose auth bridge is detached before its debugger/view
+  on tab eviction, tab close, authentication cleanup, and native-window shutdown.
+- The warm/cold browser-tab cap, ordinary-tab debugger attachment, capture-target switching,
+  workbench overlay, browser-tab persistence, and remaining close/shutdown behavior stay owned by
+  their extracted services.
 - Existing source guards must follow moved code; no guard may continue reading a retired path and
   silently stop asserting its subject.
 

@@ -208,14 +208,32 @@ directory rather than mixing it into `main.log`. The file is UTC NDJSON and rota
 
 Each accepted request receives a process-local numeric attempt number. The log records bounded
 lifecycle stages for provider context, Pi module load, fixed-target preparation, session creation,
-prompt execution, output validation, completion, cancellation, timeout, and failure. Records may
-contain the fixed provider/model/effort/tier, source code-point count, elapsed milliseconds, public
-error code, and a sanitized internal cause.
+prompt execution, output validation, completion, cancellation, timeout, and failure. Stage name and
+phase are separate allowlisted fields so the global opaque-token sanitizer cannot turn fixed stage
+identifiers into `***`. Terminal records also retain the last non-terminal stage and phase.
+
+Provider failures cross the shared Codex runtime boundary with a log-only diagnostic summary. The
+summary is an allowlist of bounded fields: failure category, configured/fallback transport, provider
+phase, directly observed HTTP status when present, typed error name/code when present, and a fixed
+canonical detail. Transport fallback and the terminal provider failure are separate summaries, so a
+Codex WebSocket failure followed by SSE fallback never mixes its error fields with the final SSE or
+provider failure. The detailed summaries are consumed only by the Translator logger; the renderer
+still receives the existing public `provider-error` contract and never receives provider
+diagnostics.
+
+Records may additionally contain the fixed provider/model/effort/tier, source code-point count, and
+elapsed milliseconds. Provider diagnostics are captured at the point Pi emits the assistant error
+or throws, before the shared runtime reduces the public result to `provider-error`.
 
 The dedicated log never records source text, translated text, prompts, model output, client or
-request IDs, OAuth URLs/codes, tokens, credentials, headers, or raw provider objects. Shared Codex
-status checks, Login, callback, credential promotion, logout, and invalidation lifecycle are not
-written to the Translator log; they retain their existing application diagnostics.
+request IDs, request byte counts, OAuth URLs/codes, tokens, credentials, headers, response bodies,
+or raw provider/error objects. Provider `errorMessage`, `Error.message`, and other free-form text
+may participate in the existing in-process authentication classification but cannot drive any
+persisted provider field. Persisted status comes only from the runtime response callback; typed
+transport diagnostics and structural error fields are allowlisted without reading response text.
+Every field passes through the shared application sanitizer again at the file boundary. Shared
+Codex status checks, Login, callback, credential promotion, logout, and invalidation lifecycle are
+not written to the Translator log; they retain their existing application diagnostics.
 
 | Runtime               | Translator log                                                        |
 | --------------------- | --------------------------------------------------------------------- |

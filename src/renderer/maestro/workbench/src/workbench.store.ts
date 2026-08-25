@@ -1098,7 +1098,7 @@ class WorkbenchStoreState {
   private async seedDomain(): Promise<void> {
     const tabs = await coach.getTabs()
     const active = tabs.find((tab) => tab.active)
-    const target = active || tabs.find((tab) => tab.kind === 'browser') || tabs.find((tab) => tab.kind === 'ai-crms')
+    const target = active?.kind === 'browser' ? active : tabs.find((tab) => tab.kind === 'browser')
     this.currentDomain = hostnameOf(target?.url || '')
     this.selectedDomain = this.currentDomain
   }

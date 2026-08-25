@@ -146,6 +146,22 @@
 
 .control-app__toolbar-actions { min-width: 0; gap: 6px; }
 .control-app__demo-button { gap: 6px; }
+.control-app__close {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #9ca3af;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+.control-app__close:hover { background: rgba(0, 0, 0, 0.05); color: #374151; }
+.control-app__close:active { transform: scale(0.94); }
+.control-app__close:focus-visible { outline: 2px solid rgba(22, 93, 255, 0.55); outline-offset: 1px; }
 
 .control-app__popup {
   border-radius: 8px;
