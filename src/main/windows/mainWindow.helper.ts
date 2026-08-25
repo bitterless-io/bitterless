@@ -20,6 +20,7 @@ interface MainWindowCreateOptions {
 class MainWindowHelper extends WindowHelper {
   protected preloadFile = 'home.js';
   protected rendererPath = 'home/index.html';
+  protected showOnReady = false;
   protected windowStateKey = 'main' as const;
   protected deferInitialWindowStateSave = true;
   protected windowOptions: Partial<BrowserWindowConstructorOptions> = {

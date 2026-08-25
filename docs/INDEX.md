@@ -12,6 +12,9 @@ design document.
   Micromeet Cowork runtime.
 - [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
   services with unchanged XPC and runtime behavior.
+- [Maestro startup host flash and MenuBar](issues/maestro-startup-host-flash-and-menubar.md) -
+  implemented; owner verification pending: keep authenticated Home hidden until ready Maestro and
+  derive 44px chrome from Omni Browser.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet

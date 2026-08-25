@@ -24,6 +24,45 @@ const todoistSyncSessionClient = createBoundedTodoXpcClient(
   createXpcMainEmitter<TodoistSyncSessionApi>('TodoistSyncSessionHandler'),
   'TodoistSyncSessionHandler',
 );
+const AUTH_SQLITE_LOAD_TIMEOUT_MS = 10_000;
+
+const waitForCoreSqliteWindowLoad = (window: BrowserWindow): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const webContents = window.webContents;
+    let settled = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      webContents.removeListener('did-finish-load', onLoaded);
+      webContents.removeListener('did-fail-load', onFailed);
+      webContents.removeListener('destroyed', onDestroyed);
+    };
+    const settle = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onLoaded = (): void => settle();
+    const onFailed = (_event: Electron.Event, code: number, description: string): void => {
+      settle(new Error(`[AuthHandler] Core SQLite window failed to load: ${code} ${description}`));
+    };
+    const onDestroyed = (): void => {
+      settle(new Error('[AuthHandler] Core SQLite window was destroyed before loading'));
+    };
+
+    if (window.isDestroyed() || webContents.isDestroyed()) {
+      onDestroyed();
+      return;
+    }
+    webContents.once('did-finish-load', onLoaded);
+    webContents.once('did-fail-load', onFailed);
+    webContents.once('destroyed', onDestroyed);
+    timeoutHandle = setTimeout(() => {
+      settle(new Error('[AuthHandler] Core SQLite window load timed out after 10 seconds'));
+    }, AUTH_SQLITE_LOAD_TIMEOUT_MS);
+  });
 
 class AuthHandler extends XpcMainHandler implements AuthSessionApi {
   private deactivationPromise: Promise<void> | null = null;
@@ -33,22 +72,31 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
   async activateSession(): Promise<void> {
     this.sessionShouldBeActive = true;
     const generation = ++this.sessionActivationGeneration;
-    const deactivationPromise = this.deactivationPromise;
-    if (deactivationPromise) {
-      await deactivationPromise.catch((err) => {
-        console.warn('[AuthHandler] Previous session teardown failed:', err);
-      });
+    try {
+      const deactivationPromise = this.deactivationPromise;
+      if (deactivationPromise) {
+        await deactivationPromise.catch((err) => {
+          console.warn('[AuthHandler] Previous session teardown failed:', err);
+        });
+      }
+      if (this._stopStaleActivation(generation)) return;
+      await this._ensureSqliteWindow();
+      if (this._stopStaleActivation(generation)) return;
+      await resumeEyesOnAgentsAfterAuth();
+      if (this._stopStaleActivation(generation)) return;
+      await maestroWindowHandler.prepareForAuthenticatedSession();
+      if (this._stopStaleActivation(generation)) return;
+      await coinWindowHandler.prepareForAuthenticatedSession();
+      if (this._stopStaleActivation(generation)) return;
+      await this._showAuthenticatedPrimaryWindow(generation);
+    } catch (err) {
+      if (!this._stopStaleActivation(generation)) mainWindowHelper.show();
+      throw err;
     }
-    if (this._stopStaleActivation(generation)) return;
-    await this._ensureSqliteWindow();
-    if (this._stopStaleActivation(generation)) return;
-    await resumeEyesOnAgentsAfterAuth();
-    if (this._stopStaleActivation(generation)) return;
-    await maestroWindowHandler.prepareForAuthenticatedSession();
-    if (this._stopStaleActivation(generation)) return;
-    await coinWindowHandler.prepareForAuthenticatedSession();
-    if (this._stopStaleActivation(generation)) return;
-    await this._showAuthenticatedPrimaryWindow(generation);
+  }
+
+  async showHomeWindow(): Promise<void> {
+    mainWindowHelper.show();
   }
 
   async showPrimaryWindow(): Promise<void> {
@@ -57,7 +105,13 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
       return;
     }
 
-    await this._showAuthenticatedPrimaryWindow(this.sessionActivationGeneration);
+    const generation = this.sessionActivationGeneration;
+    try {
+      await this._showAuthenticatedPrimaryWindow(generation);
+    } catch (err) {
+      if (!this._stopStaleActivation(generation)) mainWindowHelper.show();
+      throw err;
+    }
   }
 
   async deactivateSession(): Promise<void> {
@@ -108,10 +162,7 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
     if (current && !current.isDestroyed()) return;
 
     const sqliteWindow = sqliteWindowHelper.create();
-    await new Promise<void>((resolve) => {
-      sqliteWindow.webContents.once('did-finish-load', resolve);
-      sqliteWindow.webContents.once('did-fail-load', () => resolve());
-    });
+    await waitForCoreSqliteWindowLoad(sqliteWindow);
   }
 
   private _stopStaleActivation(generation: number): boolean {
@@ -119,12 +170,7 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
   }
 
   private async _showAuthenticatedPrimaryWindow(generation: number): Promise<void> {
-    try {
-      await maestroWindowHandler.openMaestroWindow();
-    } catch (err) {
-      if (!this._stopStaleActivation(generation)) mainWindowHelper.show();
-      throw err;
-    }
+    await maestroWindowHandler.openMaestroWindow();
     if (this._stopStaleActivation(generation)) return;
     mainWindowHelper.hide();
   }

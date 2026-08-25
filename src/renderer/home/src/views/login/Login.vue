@@ -4,6 +4,7 @@ import { isNavigationFailure, useRoute, useRouter } from 'vue-router';
 import { Message } from '@arco-design/web-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { authStore, customerNeedsPasswordSetup } from '@/stores/auth/auth.store';
+import { authEmitter } from '@/emitter/auth.emitter';
 
 type LoginMode = 'password' | 'otp';
 type LoginStep = 'login' | 'set-password';
@@ -156,6 +157,7 @@ const onDiscardPersistedSession = async (): Promise<void> => {
 };
 
 onMounted(async () => {
+  await authEmitter.showHomeWindow();
   await restorePersistedSession();
 });
 

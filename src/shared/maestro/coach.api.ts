@@ -4,11 +4,21 @@ import type { CaptureRule } from './captureFilter.api'
 import type { InjectBtnEntry } from './injectBtn.api'
 
 export const DEFAULT_COACH_START_URL = 'https://example.com'
+export const MAESTRO_HOME_READY_TOKEN_QUERY = 'maestroReadyToken'
+
+export interface HomeRendererReadyParams {
+  token: string
+}
+
+export interface HomeRendererReadyResult {
+  accepted: boolean
+}
 
 // The type-safe XPC contract exposed by CoachXpcHandler in the main process.
 // Handler methods intentionally accept at most one object parameter, matching
 // electron-xpc's handler/emitter pattern.
 export interface CoachXpcContract {
+  homeRendererReady(params: HomeRendererReadyParams): Promise<HomeRendererReadyResult>
   getSettings(): Promise<CoachSettings>
   saveSettings(params: Partial<CoachSettings>): Promise<CoachSettings>
   navigate(params: { url: string }): Promise<void>

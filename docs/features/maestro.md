@@ -71,8 +71,9 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 
 | Event | Required behavior |
 |---|---|
-| Bitterless startup | Create Home as the visible login/bootstrap shell. |
-| Session activation | Boot the hidden Maestro database, show Maestro only after required renderers are ready, then hide Home. |
+| Bitterless startup without a valid persisted session | Create and explicitly show Home as the login/recovery shell. |
+| Bitterless startup with a valid persisted session | Create Home as a hidden auth/bootstrap host; the first automatically shown window is fully ready Maestro. |
+| Session activation | Boot the hidden Maestro database, wait for localized Home mount plus required operation/Control/Workbench readiness, show Maestro, then keep Home hidden. |
 | Mini Apps renders | Render the localized Maestro card in Workbench Apps; Open focuses the current singleton. |
 | Repeated Open | Restore/focus the existing Maestro window; never create a second graph. |
 | Window close | Stop or preserve work safely without quitting Bitterless; Dock/tray/second-instance activation recreates Maestro for the active session. |
@@ -222,6 +223,32 @@ Home, Control, and Workbench retain the upstream loading, empty, busy, error, an
 The Mini App card itself follows Bitterless theme and `en`/`zh` i18n rules. The migrated Maestro UI
 keeps its current upstream English copy during parity migration; localization is a separate product
 change and must not block runtime parity.
+
+### Startup visibility and MenuBar geometry
+
+For a persisted authenticated session, Home's BrowserWindow is created but does not inherit the
+shared `ready-to-show` auto-reveal. Home is shown explicitly only when the public Login route mounts
+or the authenticated-primary boot path fails. Maestro startup is bounded; a timeout destroys its
+partial window graph and returns to Home instead of leaving the application with no visible window.
+
+Maestro's localized Home renderer reports a post-mount render tick to Main. The primary window may
+be shown only after that fence and the existing operation, Control, and Workbench readiness chain.
+
+```text
+┌──────────────────────── Maestro 44px tab strip ────────────────────────┐
+│ macOS ● ● ●   pinned tab · browser tabs · +                drag space │
+├──────────────────────── address/actions 48px ──────────────────────────┤
+│ navigation · address · debugger · capture · Workbench · update        │
+├────────────────────────────────────────────────────────────────────────┤
+│ operation surface                                      │ Maestro Chat │
+└────────────────────────────────────────────────────────┴──────────────┘
+```
+
+The top strip derives from Omni Browser's 32px Royal Blue MenuBar and is exactly 12px taller:
+44px, `#4e5882`, with a `#3d4666` bottom divider. On macOS the native controls use
+`trafficLightPosition: { x: 12, y: 14 }` and content clears the same 78px traffic-light gutter.
+The address row remains 48px, so total top chrome is 92px. DOM-measured placeholders remain the
+only owner of operation and Control native-view bounds.
 
 ## Verification contract
 

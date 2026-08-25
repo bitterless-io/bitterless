@@ -25,6 +25,8 @@ import type {
   HostApprovalExportResult,
   HostToolCatalogResult,
   HostApprovalHistoryResult,
+  HomeRendererReadyParams,
+  HomeRendererReadyResult,
   HostToolPolicyMode,
   HostToolPolicyResult,
   HostToolScope,
@@ -70,6 +72,10 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { CaptureMode } from '@maestro-shared/trace.types'
 
 export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract {
+  async homeRendererReady(params: HomeRendererReadyParams): Promise<HomeRendererReadyResult> {
+    return maestroWindowHelper.markHomeRendererReady(params)
+  }
+
   async getSettings(): Promise<CoachSettings> {
     return await maestroWindowHelper.getSettings()
   }

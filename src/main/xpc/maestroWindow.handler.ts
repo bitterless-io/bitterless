@@ -17,6 +17,20 @@ import type { SessionApi } from '@maestro-shared/session.api'
 const sqliteBoot = createXpcMainEmitter<SqliteBootApi>('SqliteBootDao')
 const maestroSession = createXpcMainEmitter<SessionApi>('MaestroSessionDao')
 const authInvalidationMarker = (): string => join(maestroDataRoot(), '.auth-invalidated')
+const SQLITE_READY_TIMEOUT_MS = 10_000
+const MAESTRO_READY_TIMEOUT_MS = 30_000
+
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+  try {
+    return await Promise.race([operation, timeout])
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+  }
+}
 
 const persistAuthInvalidation = (): void => {
   const root = maestroDataRoot()
@@ -28,22 +42,42 @@ const clearAuthInvalidation = (): void => {
   rmSync(authInvalidationMarker(), { force: true })
 }
 
-const waitForWindowLoad = (window: BrowserWindow): Promise<void> =>
+const waitForWindowLoad = (window: BrowserWindow, timeoutMs: number): Promise<void> =>
   new Promise((resolve, reject) => {
+    const webContents = window.webContents
+    let settled = false
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
     const cleanup = (): void => {
-      window.webContents.removeListener('did-finish-load', onLoaded)
-      window.webContents.removeListener('did-fail-load', onFailed)
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+      webContents.removeListener('did-finish-load', onLoaded)
+      webContents.removeListener('did-fail-load', onFailed)
+      webContents.removeListener('destroyed', onDestroyed)
     }
-    const onLoaded = (): void => {
+    const settle = (error?: Error): void => {
+      if (settled) return
+      settled = true
       cleanup()
-      resolve()
+      if (error) reject(error)
+      else resolve()
     }
+    const onLoaded = (): void => settle()
     const onFailed = (_event: Electron.Event, code: number, description: string): void => {
-      cleanup()
-      reject(new Error(`[maestro sqlite] hidden window failed to load: ${code} ${description}`))
+      settle(new Error(`[maestro sqlite] hidden window failed to load: ${code} ${description}`))
     }
-    window.webContents.once('did-finish-load', onLoaded)
-    window.webContents.once('did-fail-load', onFailed)
+    const onDestroyed = (): void => {
+      settle(new Error('[maestro sqlite] hidden window was destroyed before loading'))
+    }
+
+    if (window.isDestroyed() || webContents.isDestroyed()) {
+      onDestroyed()
+      return
+    }
+    webContents.once('did-finish-load', onLoaded)
+    webContents.once('did-fail-load', onFailed)
+    webContents.once('destroyed', onDestroyed)
+    timeoutHandle = setTimeout(() => {
+      settle(new Error('[maestro sqlite] hidden window load timed out after 10 seconds'))
+    }, timeoutMs)
   })
 
 class MaestroWindowHandler extends XpcMainHandler {
@@ -60,6 +94,12 @@ class MaestroWindowHandler extends XpcMainHandler {
     await this.cleanupPromise
     if (this.isAuthInvalidated()) await this.runAuthCleanup()
     this.assertAuthReady()
+    if (this.bootPromise) {
+      await this.bootPromise
+      this.assertAuthReady()
+      maestroWindowHelper.show()
+      return
+    }
     const current = maestroWindowHelper.browserWindow
     if (current && !current.isDestroyed()) {
       maestroWindowHelper.show()
@@ -119,7 +159,11 @@ class MaestroWindowHandler extends XpcMainHandler {
       window.once('closed', () => {
         void this.destroyMaestroRuntime()
       })
-      await maestroWindowHelper.whenReady()
+      await withTimeout(
+        maestroWindowHelper.whenReady(),
+        MAESTRO_READY_TIMEOUT_MS,
+        '[maestro] primary window readiness timed out after 30 seconds'
+      )
       if (window.isDestroyed()) throw new Error('[maestro] window closed before startup completed')
       this.assertAuthReady()
     } catch (err) {
@@ -135,9 +179,13 @@ class MaestroWindowHandler extends XpcMainHandler {
       let sqliteWindow = maestroSqliteWindowHelper.browserWindow
       if (!sqliteWindow || sqliteWindow.isDestroyed()) {
         sqliteWindow = maestroSqliteWindowHelper.create()
-        await waitForWindowLoad(sqliteWindow)
+        await waitForWindowLoad(sqliteWindow, SQLITE_READY_TIMEOUT_MS)
       }
-      const result = await sqliteBoot.ready()
+      const result = await withTimeout(
+        sqliteBoot.ready(),
+        SQLITE_READY_TIMEOUT_MS,
+        '[maestro sqlite] preload readiness timed out after 10 seconds'
+      )
       if (!result?.ok) {
         throw new Error(result?.error || '[maestro sqlite] hidden preload did not become ready')
       }

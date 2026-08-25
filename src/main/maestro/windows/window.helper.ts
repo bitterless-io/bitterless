@@ -23,6 +23,8 @@ export abstract class WindowHelper {
   protected windowOptions: Partial<BrowserWindowConstructorOptions> = {}
   /** Show on ready-to-show. Hidden helper windows (e.g. the sqlite DB host) set false. */
   protected showOnReady = true
+  /** Query values delivered only to this helper's first-party renderer entry. */
+  protected rendererQuery: Record<string, string> | undefined
   /** Resolves only after the first-party renderer finished loading; rejects on did-fail-load. */
   protected rendererReady: Promise<void> = Promise.resolve()
   /**
@@ -53,13 +55,13 @@ export abstract class WindowHelper {
       autoHideMenuBar: true,
       width: 1360,
       height: 900,
-      // The 96px chrome + operation/control split needs room; clamp the floor so the layout
+      // The 92px chrome + operation/control split needs room; clamp the floor so the layout
       // never collapses (also clamps any restored geometry saved smaller than this).
       minWidth: 800,
       minHeight: 600,
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
-      // y=11: centered in the 48px MenuBar header (~18px light block ⇒ 15), nudged up 4px.
-      trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 13 } : undefined,
+      // Omni's x position, with y centered in Maestro's 44px tab strip.
+      trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 14 } : undefined,
       ...this.windowOptions,
       ...(restored?.bounds ?? {}),
       webPreferences: {
@@ -101,9 +103,16 @@ export abstract class WindowHelper {
     })
 
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      this.rendererReady = win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/${this.rendererPath}`)
+      const rendererUrl = new URL(`${process.env['ELECTRON_RENDERER_URL']}/${this.rendererPath}`)
+      for (const [key, value] of Object.entries(this.rendererQuery ?? {})) {
+        rendererUrl.searchParams.set(key, value)
+      }
+      this.rendererReady = win.loadURL(rendererUrl.toString())
     } else {
-      this.rendererReady = win.loadFile(join(__dirname, `../renderer/${this.rendererPath}`))
+      const rendererFile = join(__dirname, `../renderer/${this.rendererPath}`)
+      this.rendererReady = this.rendererQuery
+        ? win.loadFile(rendererFile, { query: this.rendererQuery })
+        : win.loadFile(rendererFile)
     }
 
     return win

@@ -3,6 +3,7 @@ import type { MessageBoxOptions } from 'electron'
 import { xpcMain } from 'electron-xpc/main'
 import { join } from 'path'
 import { readFileSync } from 'fs'
+import { randomUUID } from 'crypto'
 import { inject, injectable } from 'inversify'
 import { WindowHelper } from '../window.helper'
 import { DebuggerCapture } from '@maestro-main/capture/debuggerCapture'
@@ -73,7 +74,10 @@ import {
 } from '@maestro-main/integration/recordedSite/rowMapping'
 import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
 import type { LlmStoredTarget } from '@maestro-main/llm/llmModels'
-import { DEFAULT_COACH_START_URL } from '@maestro-shared/coach.api'
+import {
+  DEFAULT_COACH_START_URL,
+  MAESTRO_HOME_READY_TOKEN_QUERY
+} from '@maestro-shared/coach.api'
 import type {
   AgentConversationContext,
   AgentActivityStep,
@@ -99,6 +103,8 @@ import type {
   HostApprovalEvent,
   HostApprovalExportResult,
   HostApprovalHistoryResult,
+  HomeRendererReadyParams,
+  HomeRendererReadyResult,
   IntegrationMigrationRunRequest,
   IntegrationMigrationTargetRequest,
   IntegrationMappingDeleteRequest,
@@ -145,9 +151,9 @@ import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
 
 // Initial geometry used for the very first frame, before the home renderer reports
-// the real placeholder rects (see setViewBounds). Header height matches Layout.vue's
-// h-12 (48px); the renderer's measured bounds are authoritative thereafter.
-const TOOLBAR_H = 96
+// the real placeholder rects (see setViewBounds). The 44px tab strip plus the unchanged
+// 48px address row total 92px; renderer measurements remain authoritative thereafter.
+const TOOLBAR_H = 92
 const SIDEBAR_W = 480
 
 @injectable()
@@ -214,6 +220,9 @@ class MaestroWindowController
   opBounds: ViewRect | null = null
   currentUrl = DEFAULT_COACH_START_URL
   private initialReady: Promise<void> = Promise.resolve()
+  private homeRendererReady: Promise<void> = Promise.resolve()
+  private resolveHomeRendererReady: (() => void) | null = null
+  private homeRendererReadyToken: string | null = null
   private skillRegistry: SkillRegistryService | null = null
   private skillGenerator: SkillGeneratorService | null = null
   private llmApplied = false
@@ -284,6 +293,38 @@ class MaestroWindowController
     this.tabsOpenedThisTurn = []
   }
 
+  private createHomeRendererReadyFence(): Promise<void> {
+    const token = randomUUID()
+    this.homeRendererReadyToken = token
+    this.rendererQuery = { [MAESTRO_HOME_READY_TOKEN_QUERY]: token }
+    this.homeRendererReady = new Promise<void>((resolve) => {
+      this.resolveHomeRendererReady = resolve
+    })
+    return this.homeRendererReady
+  }
+
+  private invalidateHomeRendererReadyFence(): void {
+    this.homeRendererReadyToken = null
+    this.resolveHomeRendererReady = null
+    this.rendererQuery = undefined
+    this.homeRendererReady = Promise.resolve()
+  }
+
+  markHomeRendererReady(params: HomeRendererReadyParams): HomeRendererReadyResult {
+    const window = this.browserWindow
+    if (
+      !window ||
+      window.isDestroyed() ||
+      !this.homeRendererReadyToken ||
+      params.token !== this.homeRendererReadyToken
+    ) {
+      return { accepted: false }
+    }
+    this.resolveHomeRendererReady?.()
+    this.resolveHomeRendererReady = null
+    return { accepted: true }
+  }
+
   create(): BrowserWindow {
     this.agentService.activate()
     this.ensureServices()
@@ -296,16 +337,19 @@ class MaestroWindowController
     this.currentUrl = AI_CRMS_URL
 
     this.resetWindowScopedViews()
+    const homeMountedReady = this.createHomeRendererReadyFence()
     const win = super.create()
 
     // First tab = the pinned AI-CRMS home (leftmost, non-closable, fixed title/favicon). It is
     // ALWAYS warm: build a view slot + assemble the tab directly (CDP attaches via the
     // initialReady chain below). operationView/capture/replayEngine always track the active tab.
     const operationView = this.browserView.createPinnedHomeTab()
-    const homeReady = this.rendererReady.catch((err) => {
-      this.emit({ kind: 'error', msg: 'home load: ' + (err as Error).message, ts: Date.now() })
-      throw err
-    })
+    const homeReady = Promise.all([this.rendererReady, homeMountedReady])
+      .then(() => undefined)
+      .catch((err) => {
+        this.emit({ kind: 'error', msg: 'home load: ' + (err as Error).message, ts: Date.now() })
+        throw err
+      })
     const workbenchReady = this.workbenchView.create()
     // Stay HIDDEN until AI-CRMS has loaded (revealed in the initialReady chain below). Until then
     // the white Layout placeholder shows in the operation area, so the boot never flashes the
@@ -1616,6 +1660,7 @@ class MaestroWindowController
     await this.captureService.shutdown()
     this.resetWindowScopedViews()
     await authBridge.detach()
+    this.invalidateHomeRendererReadyFence()
     super.destroy()
 
     this.initialReady = Promise.resolve()

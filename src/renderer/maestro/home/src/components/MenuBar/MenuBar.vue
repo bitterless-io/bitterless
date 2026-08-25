@@ -105,11 +105,11 @@ function debuggerTitle(tab?: TabInfo): string {
 </script>
 
 <template>
-  <!-- 96px top chrome = a 48px tab strip + a 48px address bar. The renderer-driven
+  <!-- 92px top chrome = an Omni-derived 44px tab strip + the existing 48px address bar. The renderer-driven
        layout measures the body placeholders below this, so the native operation/
-       control views sit at y=96 automatically. -->
+       control views sit at y=92 automatically. -->
   <div class="maestro-menu-bar">
-    <!-- Tab strip (48px). One chip per open operation-view tab; new tabs appear when a
+    <!-- Tab strip (44px). One chip per open operation-view tab; new tabs appear when a
          page opens a new window. Click to switch, × to close. On macOS the left gutter
          clears the native traffic lights (hiddenInset). -->
     <div
