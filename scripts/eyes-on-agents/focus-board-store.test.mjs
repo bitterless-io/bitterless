@@ -167,6 +167,8 @@ test('Focus board store contract', async (context) => {
       store.snapshot = snapshot;
       store.titleDraft = '';
       store.titleQuery = '';
+      store.threadSearchVisible = false;
+      store.threadSearchSelectedSessionKey = null;
       currentSnapshot = snapshot;
       openSnapshot = snapshot;
       openedThreadIds.length = 0;
@@ -174,7 +176,7 @@ test('Focus board store contract', async (context) => {
     };
     const threadIds = (threads) => threads.map((thread) => thread.threadId);
     const focusIds = () => threadIds(store.focusThreads);
-    const filteredIds = () => threadIds(store.filteredFocusThreads);
+    const searchIds = () => threadIds(store.threadSearchResults);
 
     await context.test('Focus lists every visible thread, including read ones', () => {
       const working = createThread({
@@ -198,12 +200,11 @@ test('Focus board store contract', async (context) => {
       });
       resetStore(createSnapshot([read, unread, working]));
 
-      assert.deepEqual(focusIds(), ['working', 'unread', 'read']);
-      assert.deepEqual(filteredIds(), ['working', 'unread', 'read']);
-      assert.deepEqual(threadIds(store.readableFocusThreads), ['unread']);
+      assert.deepEqual(focusIds(), ['unread', 'working', 'read']);
+      assert.deepEqual(searchIds(), [], 'an empty modal query renders no result cards');
     });
 
-    await context.test('Read all stays limited to terminal unread rows', () => {
+    await context.test('the renderer no longer exposes bulk Read all state or actions', () => {
       const threads = [
         createThread({
           threadId: 'terminal-unread',
@@ -228,11 +229,9 @@ test('Focus board store contract', async (context) => {
       ];
       resetStore(createSnapshot(threads));
 
-      assert.deepEqual(
-        threadIds(store.readableFocusThreads).sort(),
-        ['terminal-unread'],
-      );
       assert.equal(store.focusThreads.length, 4);
+      assert.equal(store.readableFocusThreads, undefined);
+      assert.equal(store.markAllRead, undefined);
     });
 
     await context.test(
@@ -253,11 +252,11 @@ test('Focus board store contract', async (context) => {
             lastActivityAt: '2026-07-30T03:00:00.000Z',
           }),
           createThread({
-            threadId: 'working',
-            title: 'Task working',
+            threadId: 'working-old',
+            title: 'Task working old',
             runtimeState: 'working',
-            statusObservedAt: '2026-07-30T06:00:00.000Z',
-            lastActivityAt: '2026-07-30T12:00:00.000Z',
+            statusObservedAt: '2026-07-30T05:00:00.000Z',
+            lastActivityAt: '2026-07-30T13:00:00.000Z',
           }),
           createThread({
             threadId: 'approval-old',
@@ -286,6 +285,14 @@ test('Focus board store contract', async (context) => {
             lastActivityAt: '2026-07-30T04:00:00.000Z',
           }),
           createThread({
+            threadId: 'working-latent-unread',
+            title: 'Task working latent unread',
+            runtimeState: 'working',
+            isUnread: true,
+            statusObservedAt: '2026-07-30T06:00:00.000Z',
+            lastActivityAt: '2026-07-30T01:00:00.000Z',
+          }),
+          createThread({
             threadId: 'approval-new',
             title: 'Task approval new',
             runtimeState: 'waiting_approval',
@@ -305,9 +312,10 @@ test('Focus board store contract', async (context) => {
           'approval-new',
           'approval-old',
           'input',
-          'working',
           'unread-new',
           'unread-old',
+          'working-latent-unread',
+          'working-old',
           'ordinary-activity',
           'ordinary-completion',
           'ordinary-old',
@@ -315,7 +323,7 @@ test('Focus board store contract', async (context) => {
         assert.deepEqual(focusIds(), expected);
 
         store.titleQuery = 'task';
-        assert.deepEqual(filteredIds(), expected, 'filtering must not reorder Focus');
+        assert.deepEqual(searchIds(), expected, 'searching must not reorder Focus');
       },
     );
 
@@ -400,30 +408,30 @@ test('Focus board store contract', async (context) => {
       },
     );
 
-    await context.test('an empty, cleared, or separator-only query is not a filter', () => {
+    await context.test('empty, cleared, and separator-only modal queries show no results', () => {
       const thread = createThread({ threadId: 'ops', title: 'ops-git' });
       const other = createThread({ threadId: 'other', title: 'release notes' });
       resetStore(createSnapshot([thread, other]));
 
-      assert.equal(store.isTitleFiltered, false);
-      assert.deepEqual(filteredIds().sort(), ['ops', 'other']);
+      assert.equal(store.hasThreadSearchQueryTokens, false);
+      assert.deepEqual(searchIds(), []);
 
       store.titleQuery = 'ops';
-      assert.equal(store.isTitleFiltered, true);
-      assert.deepEqual(filteredIds(), ['ops']);
+      assert.equal(store.hasThreadSearchQueryTokens, true);
+      assert.deepEqual(searchIds(), ['ops']);
 
       store.titleQuery = '';
-      assert.equal(store.isTitleFiltered, false);
-      assert.deepEqual(filteredIds().sort(), ['ops', 'other']);
+      assert.equal(store.hasThreadSearchQueryTokens, false);
+      assert.deepEqual(searchIds(), []);
 
       store.titleQuery = '  - _ . / \\ : | \t  ';
-      assert.equal(store.isTitleFiltered, false);
-      assert.deepEqual(filteredIds().sort(), ['ops', 'other']);
+      assert.equal(store.hasThreadSearchQueryTokens, false);
+      assert.deepEqual(searchIds(), []);
 
       store.titleQuery = 'ops';
       store.clearTitleQuery();
       assert.equal(store.titleQuery, '');
-      assert.deepEqual(filteredIds().sort(), ['ops', 'other']);
+      assert.deepEqual(searchIds(), []);
     });
 
     await context.test('token matching ignores order and mixed supported separators', () => {
@@ -446,11 +454,11 @@ test('Focus board store contract', async (context) => {
 
       for (const query of ['ops git', 'git ops', '  ops   git  ', 'ops-_. /\\:|git']) {
         store.titleQuery = query;
-        assert.deepEqual(filteredIds(), ['ops-git', 'git-ops']);
+        assert.deepEqual(searchIds(), ['ops-git', 'git-ops']);
       }
 
       store.titleQuery = 'ready deploy release';
-      assert.deepEqual(filteredIds(), ['mixed-title']);
+      assert.deepEqual(searchIds(), ['mixed-title']);
     });
 
     await context.test('NFKC, locale case folding, and partial tokens remain convenient', () => {
@@ -467,10 +475,10 @@ test('Focus board store contract', async (context) => {
       resetStore(createSnapshot([fullwidth, ascii]));
 
       store.titleQuery = 'ｏｐ　ＧＩ';
-      assert.deepEqual(filteredIds(), ['ascii', 'fullwidth']);
+      assert.deepEqual(searchIds(), ['ascii', 'fullwidth']);
 
       store.titleQuery = 'ops missing';
-      assert.deepEqual(filteredIds(), []);
+      assert.deepEqual(searchIds(), []);
     });
 
     await context.test('matching reads title only and rejects unmatched tokens', () => {
@@ -503,10 +511,10 @@ test('Focus board store contract', async (context) => {
       ]));
 
       store.titleQuery = 'ops git';
-      assert.deepEqual(filteredIds(), ['title-match']);
+      assert.deepEqual(searchIds(), ['title-match']);
 
       store.titleQuery = 'ops missing';
-      assert.deepEqual(filteredIds(), []);
+      assert.deepEqual(searchIds(), []);
     });
 
     await context.test('the store keeps no Project selection state', () => {
@@ -530,11 +538,12 @@ test('Focus board store contract', async (context) => {
           `${member} must be gone with the retired Project filter`,
         );
       }
-      assert.deepEqual(filteredIds(), ['overmind-task']);
+      store.titleQuery = 'ops';
+      assert.deepEqual(searchIds(), ['overmind-task']);
 
       store.titleQuery = 'overmind';
       assert.deepEqual(
-        filteredIds(),
+        searchIds(),
         [],
         'a Project name must never satisfy the title filter',
       );
@@ -566,12 +575,12 @@ test('Focus board store contract', async (context) => {
 
         assert.equal(scheduled, 3, 'each keystroke asks the scheduler to run');
         assert.equal(store.titleDraft, 'ops git');
-        assert.equal(store.titleQuery, '', 'typing must not filter before a commit');
-        assert.deepEqual(filteredIds(), ['ops-git', 'release']);
+        assert.equal(store.titleQuery, '', 'typing must not update results before a commit');
+        assert.deepEqual(searchIds(), []);
 
         store.commitTitleQuery();
         assert.equal(store.titleQuery, 'ops git', 'the trailing commit uses the newest draft');
-        assert.deepEqual(filteredIds(), ['ops-git']);
+        assert.deepEqual(searchIds(), ['ops-git']);
 
         const repeats = scheduled;
         store.setTitleDraft('ops git');
@@ -582,9 +591,9 @@ test('Focus board store contract', async (context) => {
         assert.equal(store.titleQuery, '');
         store.commitTitleQuery();
         assert.deepEqual(
-          filteredIds(),
-          ['ops-git', 'release'],
-          'a late trailing commit after a close can only re-apply the empty query',
+          searchIds(),
+          [],
+          'a late trailing commit after close can only re-apply the empty query',
         );
       },
     );
@@ -596,7 +605,7 @@ test('Focus board store contract', async (context) => {
 
       store.setTitleDraft('ops');
       assert.equal(store.titleQuery, 'ops');
-      assert.deepEqual(filteredIds(), ['ops']);
+      assert.deepEqual(searchIds(), ['ops']);
     });
 
     await context.test('sorting and tokenizing are memoized instead of recomputed', async () => {
@@ -624,13 +633,13 @@ test('Focus board store contract', async (context) => {
       assert.deepEqual(threadIds(second), ['working', 'idle']);
 
       store.setTitleDraft('ops');
-      assert.deepEqual(filteredIds(), ['working']);
+      assert.deepEqual(searchIds(), ['working']);
 
       const idleRow = store.snapshot.threads.find((row) => row.threadId === 'idle');
       idleRow.title = 'renamed release';
       store.setTitleDraft('renamed');
       assert.deepEqual(
-        filteredIds(),
+        searchIds(),
         ['idle'],
         'a changed title must invalidate its cached tokens',
       );
@@ -658,36 +667,123 @@ test('Focus board store contract', async (context) => {
 
       await store.setThreadUnread(sessionKey('unread-row'), false);
       assert.deepEqual(readStateCalls, [{ sessionKey: sessionKey('unread-row'), isUnread: false }]);
-      assert.deepEqual(threadIds(store.readableFocusThreads), [], 'the row is acknowledged');
+      assert.equal(
+        store.threads.find((thread) => thread.threadId === 'unread-row').isUnread,
+        false,
+        'the row is acknowledged',
+      );
 
       await store.setThreadUnread(sessionKey('read-row'), true);
       assert.deepEqual(readStateCalls[1], { sessionKey: sessionKey('read-row'), isUnread: true });
-      assert.deepEqual(
-        threadIds(store.readableFocusThreads),
-        ['read-row'],
-        'a re-flagged terminal row becomes Read all eligible again'
+      assert.equal(
+        store.threads.find((thread) => thread.threadId === 'read-row').isUnread,
+        true,
+        'a re-flagged terminal row remains available to per-card controls',
       );
       assert.deepEqual(focusIds(), ['read-row', 'unread-row'], 'and it moves into the unread tier');
     });
 
-    await context.test('a filtered card keeps the established Open contract', async () => {
-      const codex = createThread({ threadId: 'codex-open', title: 'Shared Codex task' });
-      const claudeCli = createThread({
-        threadId: 'claude-cli',
-        title: 'Shared Claude task',
-        provider: 'claude',
-        canCopySessionPath: true,
+    await context.test('modal selection uses session keys, wraps, and reconciles snapshots', async () => {
+      const first = createThread({
+        threadId: 'same-id',
+        title: 'Shared first task',
+        provider: 'codex',
+        lastActivityAt: '2026-07-30T03:00:00.000Z',
       });
-      resetStore(createSnapshot([codex, claudeCli]));
-      store.titleQuery = 'shared';
-      assert.deepEqual(filteredIds().sort(), ['claude-cli', 'codex-open']);
+      const second = createThread({
+        threadId: 'same-id',
+        title: 'Shared second task',
+        provider: 'claude',
+        desktopSessionId: 'desktop-same-id',
+        lastActivityAt: '2026-07-30T02:00:00.000Z',
+      });
+      const third = createThread({
+        threadId: 'third',
+        title: 'Shared third task',
+        lastActivityAt: '2026-07-30T01:00:00.000Z',
+      });
+      resetStore(createSnapshot([third, second, first]));
 
-      await store.openThread(sessionKey('claude-cli', 'claude'));
-      assert.deepEqual(openedThreadIds, [], 'a CLI-only Claude row still refuses to open');
+      store.openThreadSearch();
+      assert.equal(store.threadSearchVisible, true);
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
 
-      await store.openThread(sessionKey('codex-open'));
-      assert.deepEqual(openedThreadIds, [sessionKey('codex-open')]);
-      assert.equal(store.titleQuery, 'shared', 'opening a card preserves the active filter');
+      store.setTitleDraft('shared');
+      assert.deepEqual(searchIds(), ['same-id', 'same-id', 'third']);
+      assert.equal(store.threadSearchSelectedSessionKey, first.sessionKey);
+
+      store.moveThreadSearchSelection(-1);
+      assert.equal(store.threadSearchSelectedSessionKey, third.sessionKey, 'Up wraps to the end');
+      store.moveThreadSearchSelection(1);
+      assert.equal(store.threadSearchSelectedSessionKey, first.sessionKey, 'Down wraps to the start');
+      store.selectThreadSearchResult(second.sessionKey);
+      assert.equal(
+        store.threadSearchSelectedSessionKey,
+        second.sessionKey,
+        'provider-qualified keys distinguish duplicate provider thread IDs',
+      );
+
+      currentSnapshot = createSnapshot([second, third, first]);
+      await store.loadSnapshot(true);
+      assert.equal(
+        store.threadSearchSelectedSessionKey,
+        second.sessionKey,
+        'a snapshot keeps a selected session key that still matches',
+      );
+
+      currentSnapshot = createSnapshot([third, first]);
+      await store.loadSnapshot(true);
+      assert.equal(
+        store.threadSearchSelectedSessionKey,
+        first.sessionKey,
+        'a removed selection falls back to the first current result',
+      );
+
+      store.toggleThreadSearch();
+      assert.equal(store.threadSearchVisible, false);
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+    });
+
+    await context.test('Arrow and Enter flush the newest draft before navigation or Open', async () => {
+      const codex = createThread({
+        threadId: 'codex-open',
+        title: 'Ops task',
+        lastActivityAt: '2026-07-30T02:00:00.000Z',
+      });
+      const release = createThread({
+        threadId: 'release-open',
+        title: 'Release task',
+        lastActivityAt: '2026-07-30T01:00:00.000Z',
+      });
+      resetStore(createSnapshot([release, codex]));
+      store.openThreadSearch();
+      let scheduled = 0;
+      store.configureTitleQueryScheduler(() => {
+        scheduled += 1;
+      });
+
+      store.setTitleDraft('release');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+      store.moveThreadSearchSelection(1);
+      assert.equal(store.titleQuery, 'release');
+      assert.equal(store.threadSearchSelectedSessionKey, release.sessionKey);
+
+      store.setTitleDraft('ops');
+      assert.equal(store.titleQuery, 'release', 'the configured throttle still holds the draft');
+      await store.openSelectedThreadSearchResult();
+      assert.equal(store.titleQuery, 'ops', 'Enter commits the latest draft synchronously');
+      assert.deepEqual(openedThreadIds, [codex.sessionKey]);
+      assert.equal(store.threadSearchSelectedSessionKey, codex.sessionKey);
+      assert.equal(store.threadSearchVisible, true, 'Open keeps the modal available');
+      assert.equal(scheduled, 2);
+
+      store.closeThreadSearch();
+      assert.equal(store.threadSearchVisible, false);
+      assert.deepEqual(searchIds(), []);
     });
   } finally {
     delete globalThis.__eyesOnAgentsFocusBoardHarness;

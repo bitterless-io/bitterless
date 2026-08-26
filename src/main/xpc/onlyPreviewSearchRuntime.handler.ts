@@ -4,13 +4,25 @@ import {
   OnlyPreviewContractError,
   onlyPreviewFailure
 } from '@shared/onlypreview/onlyPreview.contract';
+import {
+  parseOnlyPreviewBrowseDirectoryRequest,
+  parseOnlyPreviewGlobalSearchPreviewRequest,
+  parseOnlyPreviewSearchCancelRequest,
+  parseOnlyPreviewSearchInitializeRequest,
+  parseOnlyPreviewSearchPrioritizeFileRequest,
+  parseOnlyPreviewSearchRequest,
+  parseOnlyPreviewSearchShutdownRequest
+} from '@shared/onlypreview/onlyPreviewSearch.contract';
 import type { OnlyPreviewResult } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewSearchBootstrap } from '@shared/onlypreview/onlyPreviewSearchBootstrap.types';
 import type {
   OnlyPreviewBrowseDirectoryRequest,
   OnlyPreviewBrowseListing,
+  OnlyPreviewGlobalSearchPreview,
+  OnlyPreviewGlobalSearchPreviewRequest,
   OnlyPreviewSearchCancelRequest,
   OnlyPreviewSearchInitializeRequest,
+  OnlyPreviewSearchPrioritizeFileRequest,
   OnlyPreviewSearchRequest,
   OnlyPreviewSearchResponse,
   OnlyPreviewSearchRuntimeApi,
@@ -23,6 +35,8 @@ import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPrevie
 const CONTROL_TIMEOUT_MS = 10 * 60_000;
 const SEARCH_TIMEOUT_MS = 60_000;
 const CANCEL_TIMEOUT_MS = 5_000;
+const PRIORITY_TIMEOUT_MS = 60_000;
+const PREVIEW_TIMEOUT_MS = 30_000;
 
 const failedRuntimeResult = (error: unknown): OnlyPreviewResult<never> =>
   onlyPreviewFailure(
@@ -41,15 +55,21 @@ export class OnlyPreviewSearchRuntimeHandler
   async initialize(
     params: OnlyPreviewSearchInitializeRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>> {
-    const hostToken = params?.hostToken ?? '';
     try {
-      const searchToken = fileSearchRuntimeRelayService.bootstrapTokenForHost(hostToken);
+      const request = parseOnlyPreviewSearchInitializeRequest(params);
+      const searchToken = fileSearchRuntimeRelayService.bootstrapTokenForHost(request.hostToken);
       const bootstrap = onlyPreviewSearchBootstrapRegistry.resolve(
         searchToken,
-        params?.workspaceId,
+        request.workspaceId,
         app.getPath('userData')
       );
-      return await this._call(hostToken, 'initialize', params, CONTROL_TIMEOUT_MS, bootstrap);
+      return await this._call(
+        request.hostToken,
+        'initialize',
+        request,
+        CONTROL_TIMEOUT_MS,
+        bootstrap
+      );
     } catch (error) {
       return failedRuntimeResult(error);
     }
@@ -58,32 +78,87 @@ export class OnlyPreviewSearchRuntimeHandler
   async refresh(
     params: OnlyPreviewSearchInitializeRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>> {
-    return await this._call(params?.hostToken ?? '', 'refresh', params, CONTROL_TIMEOUT_MS);
+    try {
+      const request = parseOnlyPreviewSearchInitializeRequest(params);
+      return await this._call(request.hostToken, 'refresh', request, CONTROL_TIMEOUT_MS);
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
+  }
+
+  async prioritizeFile(
+    params: OnlyPreviewSearchPrioritizeFileRequest
+  ): Promise<OnlyPreviewResult<void>> {
+    try {
+      const request = parseOnlyPreviewSearchPrioritizeFileRequest(params);
+      return await this._call(request.hostToken, 'prioritizeFile', request, PRIORITY_TIMEOUT_MS);
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
   }
 
   async browseDirectory(
     params: OnlyPreviewBrowseDirectoryRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewBrowseListing>> {
-    return await this._call(params?.hostToken ?? '', 'browseDirectory', params, CONTROL_TIMEOUT_MS);
+    try {
+      const request = parseOnlyPreviewBrowseDirectoryRequest(params);
+      return await this._call(request.hostToken, 'browseDirectory', request, CONTROL_TIMEOUT_MS);
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
   }
 
   async search(
     params: OnlyPreviewSearchRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchResponse>> {
-    return await this._call(params?.hostToken ?? '', 'search', params, SEARCH_TIMEOUT_MS);
+    try {
+      const request = parseOnlyPreviewSearchRequest(params);
+      return await this._call(request.hostToken, 'search', request, SEARCH_TIMEOUT_MS);
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
+  }
+
+  async preview(
+    params: OnlyPreviewGlobalSearchPreviewRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchPreview>> {
+    try {
+      const request = parseOnlyPreviewGlobalSearchPreviewRequest(params);
+      return await this._call(request.hostToken, 'preview', request, PREVIEW_TIMEOUT_MS);
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
   }
 
   async cancel(params: OnlyPreviewSearchCancelRequest): Promise<OnlyPreviewResult<void>> {
-    return await this._call(params?.hostToken ?? '', 'cancel', params, CANCEL_TIMEOUT_MS);
+    try {
+      const request = parseOnlyPreviewSearchCancelRequest(params);
+      return await this._call(request.hostToken, 'cancel', request, CANCEL_TIMEOUT_MS);
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
   }
 
   async shutdown(params: OnlyPreviewSearchShutdownRequest): Promise<OnlyPreviewResult<void>> {
-    return await this._call(params?.hostToken ?? '', 'shutdown', params, CONTROL_TIMEOUT_MS);
+    try {
+      const request = parseOnlyPreviewSearchShutdownRequest(params);
+      return await this._call(request.hostToken, 'shutdown', request, CONTROL_TIMEOUT_MS);
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
   }
 
   private async _call<T>(
     hostToken: string,
-    method: 'initialize' | 'refresh' | 'browseDirectory' | 'search' | 'cancel' | 'shutdown',
+    method:
+      | 'initialize'
+      | 'refresh'
+      | 'prioritizeFile'
+      | 'browseDirectory'
+      | 'search'
+      | 'preview'
+      | 'cancel'
+      | 'shutdown',
     params: unknown,
     timeoutMs: number,
     bootstrap?: OnlyPreviewSearchBootstrap

@@ -18,6 +18,7 @@ export const ONLY_PREVIEW_ADAPTERS = {
   'chromium-pdf': { surface: 'chrome', find: { mode: 'webcontents-find' } },
   'xlsx-grid': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'sheet' } },
   'docx-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
+  'drawio-viewer': { surface: 'vue', find: { mode: 'none' } },
   image: { surface: 'vue', find: { mode: 'none' } },
   audio: { surface: 'vue', find: { mode: 'none' } },
   video: { surface: 'vue', find: { mode: 'none' } },

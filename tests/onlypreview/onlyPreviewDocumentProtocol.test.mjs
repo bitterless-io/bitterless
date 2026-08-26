@@ -702,8 +702,8 @@ test('document and PDF byte ceilings are enforced at issue and response time', (
   const registry = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
   const assets = source('src/main/onlypreview/onlyPreviewAsset.registry.ts');
 
-  assert.match(types, /ONLY_PREVIEW_MAX_HTML_BYTES = 1024 \* 1024/);
-  assert.match(types, /ONLY_PREVIEW_MAX_PDF_BYTES = 100 \* 1024 \* 1024/);
+  assert.match(types, /'html-page': 1024 \* 1024/);
+  assert.match(types, /'chromium-pdf': 100 \* 1024 \* 1024/);
   assert.match(types, /ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES = 25 \* 1024 \* 1024/);
   assert.match(types, /ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES = 100 \* 1024 \* 1024/);
   assert.match(registry, /file\.size > ONLY_PREVIEW_MAX_HTML_BYTES/);

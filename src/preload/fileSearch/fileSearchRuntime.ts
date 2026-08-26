@@ -7,8 +7,10 @@ import type { OnlyPreviewResult } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewSearchBootstrap } from '@shared/onlypreview/onlyPreviewSearchBootstrap.types';
 import {
   parseOnlyPreviewBrowseDirectoryRequest,
+  parseOnlyPreviewGlobalSearchPreviewRequest,
   parseOnlyPreviewSearchCancelRequest,
   parseOnlyPreviewSearchInitializeRequest,
+  parseOnlyPreviewSearchPrioritizeFileRequest,
   parseOnlyPreviewSearchRequest,
   parseOnlyPreviewSearchShutdownRequest
 } from '@shared/onlypreview/onlyPreviewSearch.contract';
@@ -20,8 +22,11 @@ import {
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
   type OnlyPreviewBrowseDirectoryRequest,
   type OnlyPreviewBrowseListing,
+  type OnlyPreviewGlobalSearchPreview,
+  type OnlyPreviewGlobalSearchPreviewRequest,
   type OnlyPreviewSearchCancelRequest,
   type OnlyPreviewSearchInitializeRequest,
+  type OnlyPreviewSearchPrioritizeFileRequest,
   type OnlyPreviewSearchRequest,
   type OnlyPreviewSearchResponse,
   type OnlyPreviewSearchRuntimeApi,
@@ -131,11 +136,7 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
         } catch {
           // A failed recovery probe is fatal and follows the normal cleanup path below.
         }
-        if (
-          this.active === active &&
-          this.sessionId === sessionId &&
-          hasActiveSearchIndex
-        ) {
+        if (this.active === active && this.sessionId === sessionId && hasActiveSearchIndex) {
           throw error;
         }
         if (this.active === active) this.active = null;
@@ -158,6 +159,16 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
     });
   }
 
+  async prioritizeFile(
+    params: OnlyPreviewSearchPrioritizeFileRequest
+  ): Promise<OnlyPreviewResult<void>> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewSearchPrioritizeFileRequest(params);
+      const active = this._requireActiveRequest(request);
+      await active.coordinator.prioritizeFile(request);
+    });
+  }
+
   async browseDirectory(
     params: OnlyPreviewBrowseDirectoryRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewBrowseListing>> {
@@ -175,6 +186,16 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
       const request = parseOnlyPreviewSearchRequest(params);
       const active = this._requireActiveRequest(request);
       return await active.coordinator.search(request);
+    });
+  }
+
+  async preview(
+    params: OnlyPreviewGlobalSearchPreviewRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchPreview>> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewGlobalSearchPreviewRequest(params);
+      const active = this._requireActiveRequest(request);
+      return await active.coordinator.preview(request);
     });
   }
 

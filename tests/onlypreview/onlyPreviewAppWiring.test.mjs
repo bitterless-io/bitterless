@@ -169,12 +169,15 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     'getPreviewFindSnapshot',
     'submitPreviewFind',
     'closePreviewFind',
+    'restoreGlobalSearchFocus',
     'reportPreviewFindResult',
     'minimizeWindow',
     'toggleMaximizeWindow',
     'closeWindow',
     'showFileContextMenu',
     'copyProjectItem',
+    'showProjectRootContextMenu',
+    'copyProjectRoot',
     'openExternally',
     'revealInFolder',
     'getSettings',
@@ -464,6 +467,14 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
     types,
     /copyProjectItem\(params: OnlyPreviewProjectItemCopyRequest\): Promise<OnlyPreviewResult<void>>/
   );
+  assert.match(
+    types,
+    /showProjectRootContextMenu\([\s\S]*params: OnlyPreviewProjectRootRequest[\s\S]*Promise<OnlyPreviewResult<void>>/
+  );
+  assert.match(
+    types,
+    /copyProjectRoot\(params: OnlyPreviewProjectRootCopyRequest\): Promise<OnlyPreviewResult<void>>/
+  );
   assert.doesNotMatch(types, /OnlyPreviewTargetKind|chooseTarget/);
   assert.doesNotMatch(handler, /parseTargetKind|chooseTarget/);
   assert.doesNotMatch(shellStore, /chooseTarget|chooseFile/);
@@ -486,7 +497,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(shellApp, /:disabled="!onlyPreviewShellStore\.selectedEntry"/);
   assert.match(
     shellStore,
-    /async locateSelectedFile\(\): Promise<string> \{[\s\S]*this\.clearSearch\(\)[\s\S]*this\.expandSelectedParents\(\)[\s\S]*await this\.loadSelectedParentListings\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
+    /async locateSelectedFile\(\): Promise<string> \{[\s\S]*this\.expandSelectedParents\(\)[\s\S]*await this\.loadSelectedParentListings\(\)[\s\S]*this\.focusedRelativePath = this\.selectedEntry\.relativePath/
   );
   assert.match(shellApp, /scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\)/);
   assert.match(shellApp, /item\.focus\(center \? \{ preventScroll: true \} : undefined\)/);
@@ -504,7 +515,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.doesNotMatch(shellStore, /clipboard|absolutePath/);
   const menuBody = handler.slice(
     handler.indexOf('async showFileContextMenu('),
-    handler.indexOf('async openExternally(')
+    handler.indexOf('async copyProjectItem(')
   );
   const deleteBody = handler.slice(
     handler.indexOf('const deleteOnlyPreviewFileFromMenu = async ('),
@@ -513,6 +524,14 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   const copyBody = handler.slice(
     handler.indexOf('const copyOnlyPreviewProjectItemFromUi = async ('),
     handler.indexOf('const deleteOnlyPreviewFileFromMenu = async (')
+  );
+  const rootMenuBody = handler.slice(
+    handler.indexOf('async showProjectRootContextMenu('),
+    handler.indexOf('async copyProjectRoot(')
+  );
+  const rootCopyBody = handler.slice(
+    handler.indexOf('async copyProjectRoot('),
+    handler.indexOf('async openExternally(')
   );
   assert.match(
     menuBody,
@@ -580,11 +599,22 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   );
   const publicCopyBody = handler.slice(
     handler.indexOf('async copyProjectItem('),
-    handler.indexOf('async openExternally(')
+    handler.indexOf('async showProjectRootContextMenu(')
   );
   assert.match(publicCopyBody, /parseOnlyPreviewProjectItemCopyRequest\(params\)/);
   assert.match(publicCopyBody, /await copyOnlyPreviewProjectItemFromUi\(/);
   assert.doesNotMatch(publicCopyBody, /return .*Path|realPath/);
+  assert.match(
+    rootMenuBody,
+    /parseOnlyPreviewProjectRootRequest\(params\)[\s\S]*resolveProjectRoot\([\s\S]*request\.hostToken,[\s\S]*request\.workspaceId[\s\S]*\)/
+  );
+  assert.match(
+    rootMenuBody,
+    /onlypreview-reveal-project-root[\s\S]*onlypreview-copy-project-root[\s\S]*onlypreview-copy-project-root-path[\s\S]*onlypreview-copy-project-root-relative-path[\s\S]*onlypreview-copy-project-root-name/
+  );
+  assert.doesNotMatch(rootMenuBody, /onlypreview-delete|deleteOnlyPreviewFileFromMenu/);
+  assert.match(rootCopyBody, /parseOnlyPreviewProjectRootCopyRequest\(params\)/);
+  assert.match(rootCopyBody, /copyOnlyPreviewProjectRootFromUi\(window, request, request\.copyKind\)/);
   assert.match(
     deleteBody,
     /resolveProjectItem\(request\.hostToken, request\)[\s\S]*file\.nodeKind !== 'file'[\s\S]*dialog\.showMessageBox\(window/

@@ -2,13 +2,9 @@ import type { FileHandle } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import {
-  ONLY_PREVIEW_MAX_DOCUMENT_BYTES,
-  ONLY_PREVIEW_MAX_HTML_BYTES,
-  ONLY_PREVIEW_MAX_IMAGE_BYTES,
   ONLY_PREVIEW_MAX_MARKDOWN_BYTES,
-  ONLY_PREVIEW_MAX_PDF_BYTES,
-  ONLY_PREVIEW_MAX_SHEET_BYTES,
   ONLY_PREVIEW_MAX_TEXT_BYTES,
+  getOnlyPreviewFileSizeLimit,
   type OnlyPreviewDescriptor,
   type OnlyPreviewKind,
   type OnlyPreviewPreviewAdapterId,
@@ -42,6 +38,7 @@ const TEXT_EXTENSIONS = new Set([
   '.ini',
   '.java',
   '.js',
+  '.cjs',
   '.json',
   '.json5',
   '.jsx',
@@ -117,8 +114,10 @@ const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.ogv', '.mov', '.m4v']);
 const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['.heic', '.heif', '.tif', '.tiff', '.raw']);
 const UNSUPPORTED_VIDEO_EXTENSIONS = new Set(['.mkv', '.avi', '.wmv', '.flv']);
+const UNSUPPORTED_DOCUMENT_EXTENSIONS = new Set(['.doc']);
 const SHEET_EXTENSIONS = new Set(['.xlsx', '.xlsm']);
 const DOCUMENT_EXTENSIONS = new Set(['.docx']);
+const DIAGRAM_EXTENSIONS = new Set(['.drawio']);
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -144,7 +143,8 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.m4v': 'video/x-m4v',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
-  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.drawio': 'application/vnd.jgraph.mxfile'
 };
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
@@ -161,6 +161,7 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.html': 'html',
   '.java': 'java',
   '.js': 'javascript',
+  '.cjs': 'javascript',
   '.json': 'json',
   '.json5': 'json',
   '.jsx': 'javascript',
@@ -208,7 +209,15 @@ export const classifyOnlyPreviewExtension = (relativePath: string): OnlyPreviewK
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
   if (SHEET_EXTENSIONS.has(extension)) return 'sheet';
   if (DOCUMENT_EXTENSIONS.has(extension)) return 'document';
-  return 'unsupported';
+  if (DIAGRAM_EXTENSIONS.has(extension)) return 'diagram';
+  if (
+    UNSUPPORTED_IMAGE_EXTENSIONS.has(extension) ||
+    UNSUPPORTED_VIDEO_EXTENSIONS.has(extension) ||
+    UNSUPPORTED_DOCUMENT_EXTENSIONS.has(extension)
+  ) {
+    return 'unsupported';
+  }
+  return 'text';
 };
 
 const startsWithBytes = (buffer: Uint8Array, expected: readonly number[]): boolean =>
@@ -359,18 +368,24 @@ const decodeOnlyPreviewText = (
   return { text: new TextDecoder('utf-8').decode(payload), encoding: 'utf-8' };
 };
 
-const byteLimitForDescriptor = (relativePath: string, kind: OnlyPreviewKind): number | null => {
+const adapterForClassification = (
+  relativePath: string,
+  kind: OnlyPreviewKind
+): OnlyPreviewPreviewAdapterId => {
   const extension = extensionOf(relativePath);
   if (kind === 'text') {
-    if (extension === '.md') return ONLY_PREVIEW_MAX_MARKDOWN_BYTES;
-    if (extension === '.html' || extension === '.htm') return ONLY_PREVIEW_MAX_HTML_BYTES;
-    return ONLY_PREVIEW_MAX_TEXT_BYTES;
+    if (extension === '.md') return 'markdown-dom';
+    if (extension === '.html' || extension === '.htm') return 'html-page';
+    return 'monaco';
   }
-  if (kind === 'pdf') return ONLY_PREVIEW_MAX_PDF_BYTES;
-  if (kind === 'image') return ONLY_PREVIEW_MAX_IMAGE_BYTES;
-  if (kind === 'sheet') return ONLY_PREVIEW_MAX_SHEET_BYTES;
-  if (kind === 'document') return ONLY_PREVIEW_MAX_DOCUMENT_BYTES;
-  return null;
+  if (kind === 'pdf') return 'chromium-pdf';
+  if (kind === 'image') return 'image';
+  if (kind === 'audio') return 'audio';
+  if (kind === 'video') return 'video';
+  if (kind === 'sheet') return 'xlsx-grid';
+  if (kind === 'document') return 'docx-dom';
+  if (kind === 'diagram') return 'drawio-viewer';
+  return 'unsupported';
 };
 
 const textAdapterFor = (
@@ -407,7 +422,8 @@ export class OnlyPreviewClassifierService {
       descriptor.unsupportedCategory = 'video-container';
     }
 
-    const byteLimit = byteLimitForDescriptor(file.relativePath, kind);
+    const adapterId = adapterForClassification(file.relativePath, kind);
+    const byteLimit = adapterId === 'unsupported' ? null : getOnlyPreviewFileSizeLimit(adapterId);
     if (byteLimit !== null && file.size > byteLimit) {
       descriptor.previewError = {
         code: 'TEXT_TOO_LARGE',
@@ -430,6 +446,14 @@ export class OnlyPreviewClassifierService {
       };
       return descriptor;
     }
+    if (file.size === 0 && kind === 'diagram') {
+      descriptor.previewError = {
+        code: 'DIAGRAM_EMPTY',
+        message: 'The selected diagram is empty.'
+      };
+      return descriptor;
+    }
+    if (kind === 'diagram') return descriptor;
 
     const sample = await readBounded(file.fileHandle, signatureBytesFor(extension));
     await this.workspaces.assertOpenedFileCurrent(file);
@@ -471,13 +495,7 @@ export class OnlyPreviewClassifierService {
         `Text preview is limited to ${byteLimit} bytes.`
       );
     }
-    const buffer = await readBounded(file.fileHandle, byteLimit + 1);
-    if (buffer.length > byteLimit) {
-      throw new OnlyPreviewContractError(
-        'TEXT_TOO_LARGE',
-        `Text preview is limited to ${byteLimit} bytes.`
-      );
-    }
+    const buffer = await readBounded(file.fileHandle, byteLimit);
     await this.workspaces.assertOpenedFileCurrent(file);
     const decoded = decodeOnlyPreviewText(buffer);
     return {

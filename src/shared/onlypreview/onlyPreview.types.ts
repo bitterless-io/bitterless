@@ -1,13 +1,6 @@
 export const ONLY_PREVIEW_SCHEME = 'bitterless-preview' as const;
 export const ONLY_PREVIEW_MAX_INDEX_ENTRIES = 20_000;
 export const ONLY_PREVIEW_MAX_INDEX_DEPTH = 32;
-export const ONLY_PREVIEW_MAX_TEXT_BYTES = 8 * 1024 * 1024;
-export const ONLY_PREVIEW_MAX_MARKDOWN_BYTES = 1024 * 1024;
-export const ONLY_PREVIEW_MAX_HTML_BYTES = 1024 * 1024;
-export const ONLY_PREVIEW_MAX_PDF_BYTES = 100 * 1024 * 1024;
-export const ONLY_PREVIEW_MAX_IMAGE_BYTES = 100 * 1024 * 1024;
-export const ONLY_PREVIEW_MAX_SHEET_BYTES = 25 * 1024 * 1024;
-export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES = 25 * 1024 * 1024;
 export const ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES = 100 * 1024 * 1024;
 export const ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH = 16_384;
@@ -23,6 +16,7 @@ export type OnlyPreviewKind =
   | 'video'
   | 'sheet'
   | 'document'
+  | 'diagram'
   | 'unsupported';
 export type OnlyPreviewTextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
 export type OnlyPreviewPreviewSurface = 'chrome' | 'vue';
@@ -33,6 +27,7 @@ export type OnlyPreviewPreviewAdapterId =
   | 'chromium-pdf'
   | 'xlsx-grid'
   | 'docx-dom'
+  | 'drawio-viewer'
   | 'image'
   | 'audio'
   | 'video'
@@ -129,6 +124,10 @@ export type OnlyPreviewErrorCode =
   | 'DOCUMENT_EMPTY'
   | 'DOCUMENT_SANITIZE_FAILED'
   | 'DOCUMENT_RENDER_TIMEOUT'
+  | 'DIAGRAM_PARSE_FAILED'
+  | 'DIAGRAM_EMPTY'
+  | 'DIAGRAM_LIMIT'
+  | 'DIAGRAM_RENDER_TIMEOUT'
   | 'IMAGE_EMPTY'
   | 'IMAGE_READ_FAILED'
   | 'IMAGE_DECODE_FAILED'
@@ -169,12 +168,29 @@ export interface OnlyPreviewFileRef {
   relativePath: string;
 }
 
-export type OnlyPreviewProjectItemCopyKind = 'item' | 'absolute-path' | 'name';
+export type OnlyPreviewProjectItemCopyKind =
+  | 'item'
+  | 'absolute-path'
+  | 'relative-path'
+  | 'name';
 
 export interface OnlyPreviewProjectItemCopyRequest
-  extends OnlyPreviewHostRequest,
-    OnlyPreviewFileRef {
+  extends OnlyPreviewHostRequest, OnlyPreviewFileRef {
   copyKind: OnlyPreviewProjectItemCopyKind;
+}
+
+export interface OnlyPreviewProjectRootRequest extends OnlyPreviewHostRequest {
+  workspaceId: string;
+}
+
+export interface OnlyPreviewProjectRootCopyRequest extends OnlyPreviewProjectRootRequest {
+  copyKind: OnlyPreviewProjectItemCopyKind;
+}
+
+export type OnlyPreviewGlobalSearchFocusOrigin = 'shell' | 'vue' | 'chrome';
+
+export interface OnlyPreviewGlobalSearchFocusRequest extends OnlyPreviewHostRequest {
+  mode: 'opener' | 'preview' | 'discard';
 }
 
 export interface OnlyPreviewIndexEntry {
@@ -202,10 +218,50 @@ export interface OnlyPreviewDescriptorError {
     | 'SIGNATURE_MISMATCH'
     | 'UNSUPPORTED_CODEC'
     | 'OOXML_ENCRYPTED'
+    | 'DIAGRAM_EMPTY'
     | 'IMAGE_EMPTY'
     | 'MEDIA_EMPTY';
   message: string;
 }
+
+export const ONLY_PREVIEW_DEFAULT_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
+
+export const ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES = {
+  monaco: 8 * 1024 * 1024,
+  'markdown-dom': 1024 * 1024,
+  'html-page': 1024 * 1024,
+  'chromium-pdf': 100 * 1024 * 1024,
+  'xlsx-grid': 25 * 1024 * 1024,
+  'docx-dom': 25 * 1024 * 1024,
+  'drawio-viewer': 20 * 1024 * 1024,
+  image: 100 * 1024 * 1024,
+  audio: null,
+  video: null
+} as const satisfies Partial<Record<OnlyPreviewPreviewAdapterId, number | null>>;
+
+export const getOnlyPreviewFileSizeLimit = (
+  adapterId: OnlyPreviewPreviewAdapterId
+): number | null => {
+  if (Object.prototype.hasOwnProperty.call(ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES, adapterId)) {
+    return ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES[
+      adapterId as keyof typeof ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES
+    ];
+  }
+  return ONLY_PREVIEW_DEFAULT_FILE_SIZE_LIMIT_BYTES;
+};
+
+// Compatibility names keep format-local validators readable while all admission and asset
+// issuance use getOnlyPreviewFileSizeLimit(), the single policy source of truth.
+export const ONLY_PREVIEW_MAX_TEXT_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES.monaco;
+export const ONLY_PREVIEW_MAX_MARKDOWN_BYTES =
+  ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['markdown-dom'];
+export const ONLY_PREVIEW_MAX_HTML_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['html-page'];
+export const ONLY_PREVIEW_MAX_PDF_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['chromium-pdf'];
+export const ONLY_PREVIEW_MAX_IMAGE_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES.image;
+export const ONLY_PREVIEW_MAX_SHEET_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['xlsx-grid'];
+export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['docx-dom'];
+export const ONLY_PREVIEW_MAX_DIAGRAM_BYTES =
+  ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['drawio-viewer'];
 
 export interface OnlyPreviewDescriptor {
   workspaceId: string;
@@ -315,6 +371,10 @@ export const ONLY_PREVIEW_FIND_STATE_EVENT = 'onlypreview/findState' as const;
 export const ONLY_PREVIEW_FIND_FOCUS_EVENT = 'onlypreview/findFocus' as const;
 export const ONLY_PREVIEW_FIND_COMMAND_EVENT = 'onlypreview/findCommand' as const;
 
+export interface OnlyPreviewFocusSearchEvent extends OnlyPreviewHostEvent {
+  origin: OnlyPreviewGlobalSearchFocusOrigin;
+}
+
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
   chooseFolder(
@@ -344,6 +404,9 @@ export interface OnlyPreviewApi {
   ): Promise<OnlyPreviewResult<OnlyPreviewFindSnapshot>>;
   submitPreviewFind(params: OnlyPreviewFindIntent): Promise<OnlyPreviewResult<void>>;
   closePreviewFind(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  restoreGlobalSearchFocus(
+    params: OnlyPreviewGlobalSearchFocusRequest
+  ): Promise<OnlyPreviewResult<boolean>>;
   reportPreviewFindResult(params: OnlyPreviewFindResultRequest): Promise<OnlyPreviewResult<void>>;
   minimizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   toggleMaximizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
@@ -351,7 +414,11 @@ export interface OnlyPreviewApi {
   showFileContextMenu(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;
+  showProjectRootContextMenu(
+    params: OnlyPreviewProjectRootRequest
+  ): Promise<OnlyPreviewResult<void>>;
   copyProjectItem(params: OnlyPreviewProjectItemCopyRequest): Promise<OnlyPreviewResult<void>>;
+  copyProjectRoot(params: OnlyPreviewProjectRootCopyRequest): Promise<OnlyPreviewResult<void>>;
   openExternally(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;

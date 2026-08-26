@@ -507,12 +507,15 @@ test('permission failures map to the focused PATH_PERMISSION_DENIED envelope', a
 
 test('classifier uses exact extension routing, tolerant text decoding, signatures, and byte caps', async () => {
   assert.equal(runtime.classifyOnlyPreviewExtension('README.md'), 'text');
+  assert.equal(runtime.classifyOnlyPreviewExtension('module.CJS'), 'text');
   assert.equal(runtime.classifyOnlyPreviewExtension('photo.PNG'), 'image');
   assert.equal(runtime.classifyOnlyPreviewExtension('movie.webm'), 'video');
   assert.equal(runtime.classifyOnlyPreviewExtension('workbook.XLSX'), 'sheet');
   assert.equal(runtime.classifyOnlyPreviewExtension('macros.xlsm'), 'sheet');
   assert.equal(runtime.classifyOnlyPreviewExtension('document.DOCX'), 'document');
-  assert.equal(runtime.classifyOnlyPreviewExtension('archive.bin'), 'unsupported');
+  assert.equal(runtime.classifyOnlyPreviewExtension('archive.bin'), 'text');
+  assert.equal(runtime.classifyOnlyPreviewExtension('AGENTS.md.bak'), 'text');
+  assert.equal(runtime.classifyOnlyPreviewExtension('legacy.doc'), 'unsupported');
 
   await withTempDirectory('onlypreview-classifier-', async (root) => {
     const { hosts, workspaces } = createRegistries();
@@ -537,7 +540,24 @@ test('classifier uses exact extension routing, tolerant text decoding, signature
 
     write(join(root, 'plain.unknown'), 'readable text');
     const inferred = await describe('plain.unknown');
-    assert.equal(inferred.kind, 'unsupported');
+    assert.equal(inferred.kind, 'text');
+    assert.equal(inferred.language, 'plaintext');
+    assert.equal((await readText('plain.unknown')).text, 'readable text');
+
+    write(join(root, 'AGENTS.md.bak'), '# backup instructions');
+    const compound = await describe('AGENTS.md.bak');
+    assert.equal(compound.kind, 'text');
+    assert.equal(compound.language, 'plaintext');
+    assert.equal((await readText('AGENTS.md.bak')).text, '# backup instructions');
+
+    write(join(root, 'module.CJS'), "module.exports = { preview: 'commonjs' };\n");
+    const commonJs = await describe('module.CJS');
+    assert.equal(commonJs.kind, 'text');
+    assert.equal(commonJs.language, 'javascript');
+    assert.equal(
+      (await readText('module.CJS', 'monaco')).text,
+      "module.exports = { preview: 'commonjs' };\n"
+    );
 
     write(join(root, 'notes.markdown'), 'source markdown');
     const markdownSource = await describe('notes.markdown');

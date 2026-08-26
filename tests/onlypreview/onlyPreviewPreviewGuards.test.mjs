@@ -6,7 +6,11 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import { build } from 'esbuild';
-import { classifySearchMediaType } from '../../src/preload/onlypreview/search/core/classification.mjs';
+import {
+  classifySearchMediaType,
+  readClassifiedSearchContent
+} from '../../src/preload/onlypreview/search/core/classification.mjs';
+import { MAX_TEXT_BYTES } from '../../src/preload/onlypreview/search/core/constants.mjs';
 
 const projectRoot = resolve(dirname(new URL(import.meta.url).pathname), '..', '..');
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-onlypreview-guards-'));
@@ -74,7 +78,7 @@ const createMetadataFile = ({ relativePath, size, bytes = Buffer.alloc(0) }) => 
   };
 };
 
-test('extension and exact basename routing never promotes unknown bytes or demotes known text', async () => {
+test('extension-first routing preserves known adapters and defaults remaining files to plaintext', async () => {
   const textExtensions = [
     '.c',
     '.cc',
@@ -94,6 +98,7 @@ test('extension and exact basename routing never promotes unknown bytes or demot
     '.ini',
     '.java',
     '.js',
+    '.cjs',
     '.json',
     '.json5',
     '.jsx',
@@ -159,12 +164,25 @@ test('extension and exact basename routing never promotes unknown bytes or demot
     assert.equal(runtime.classifyOnlyPreviewExtension(relativePath), 'text', relativePath);
     assert.equal(classifySearchMediaType(relativePath), 'text', relativePath);
   }
-  for (const relativePath of ['Dockerfiles', 'README-copy', '.gitmodule', 'makefile.bak']) {
-    assert.equal(runtime.classifyOnlyPreviewExtension(relativePath), 'unsupported', relativePath);
-    assert.equal(classifySearchMediaType(relativePath), 'unknown', relativePath);
+  for (const relativePath of [
+    'Dockerfiles',
+    'README-copy',
+    '.gitmodule',
+    'makefile.bak',
+    'AGENTS.md.bak',
+    'plain.unknown',
+    'extensionless'
+  ]) {
+    assert.equal(runtime.classifyOnlyPreviewExtension(relativePath), 'text', relativePath);
+    assert.equal(classifySearchMediaType(relativePath), 'text', relativePath);
   }
-  assert.equal(runtime.classifyOnlyPreviewExtension('archive.zip'), 'unsupported');
-  assert.equal(runtime.classifyOnlyPreviewExtension('plain.unknown'), 'unsupported');
+  assert.equal(runtime.classifyOnlyPreviewExtension('archive.zip'), 'text');
+  assert.equal(runtime.classifyOnlyPreviewExtension('architecture.drawio'), 'diagram');
+  assert.equal(classifySearchMediaType('architecture.drawio'), 'unknown');
+  assert.equal(runtime.classifyOnlyPreviewExtension('legacy.DOC'), 'unsupported');
+  assert.equal(classifySearchMediaType('legacy.DOC'), 'unknown');
+  assert.equal(runtime.classifyOnlyPreviewExtension('module.CJS'), 'text');
+  assert.equal(classifySearchMediaType('module.CJS'), 'text');
 
   const workspaces = { assertOpenedFileCurrent: async () => undefined };
   const service = new runtime.OnlyPreviewClassifierService(workspaces);
@@ -173,10 +191,14 @@ test('extension and exact basename routing never promotes unknown bytes or demot
     size: 12,
     bytes: Buffer.from('readable text')
   });
-  assert.equal((await service.describe(unknown.file)).kind, 'unsupported');
-  assert.equal('displayPath' in (await service.describe(unknown.file)), false);
-  assert.doesNotMatch(JSON.stringify(await service.describe(unknown.file)), /\/workspace\//u);
+  const unknownDescriptor = await service.describe(unknown.file);
+  assert.equal(unknownDescriptor.kind, 'text');
+  assert.equal(unknownDescriptor.language, 'plaintext');
+  assert.equal(unknownDescriptor.mimeType, 'text/plain; charset=utf-8');
+  assert.equal('displayPath' in unknownDescriptor, false);
+  assert.doesNotMatch(JSON.stringify(unknownDescriptor), /\/workspace\//u);
   assert.equal(unknown.bodyReadCount(), 0);
+  assert.equal((await service.readText(unknown.file, 'monaco')).text, 'readable text');
 
   const renamedZip = createMetadataFile({
     relativePath: 'archive.js',
@@ -219,10 +241,19 @@ test('media catalogs are exact and recognized unsupported formats never issue de
     }
   }
 
+  const legacyDocument = createMetadataFile({
+    relativePath: 'legacy.doc',
+    size: 4,
+    bytes: Buffer.alloc(4)
+  });
+  assert.equal((await service.describe(legacyDocument.file)).kind, 'unsupported');
+  assert.equal(legacyDocument.bodyReadCount(), 0);
+
   for (const relativePath of ['fixture.heicx', 'fixture.raw2', 'fixture.mkvs', 'fixture.bin']) {
     const candidate = createMetadataFile({ relativePath, size: 4, bytes: Buffer.alloc(4) });
     const descriptor = await service.describe(candidate.file);
-    assert.equal(descriptor.kind, 'unsupported', relativePath);
+    assert.equal(descriptor.kind, 'text', relativePath);
+    assert.equal(descriptor.language, 'plaintext', relativePath);
     assert.equal(descriptor.unsupportedCategory, undefined, relativePath);
     assert.equal(candidate.bodyReadCount(), 0, relativePath);
   }
@@ -279,7 +310,8 @@ test('empty supported image and media are classified before signature reads', as
   for (const [relativePath, errorCode] of [
     ['empty.png', 'IMAGE_EMPTY'],
     ['empty.mp3', 'MEDIA_EMPTY'],
-    ['empty.mp4', 'MEDIA_EMPTY']
+    ['empty.mp4', 'MEDIA_EMPTY'],
+    ['empty.drawio', 'DIAGRAM_EMPTY']
   ]) {
     const candidate = createMetadataFile({ relativePath, size: 0 });
     const descriptor = await service.describe(candidate.file);
@@ -293,12 +325,14 @@ test('size-first metadata gates read zero body bytes at adapter limit plus one',
   const service = new runtime.OnlyPreviewClassifierService(workspaces);
   for (const fixture of [
     ['huge.vue', 1024 ** 3],
+    ['huge.unknown', runtime.ONLY_PREVIEW_MAX_TEXT_BYTES + 1],
     ['notes.md', runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES + 1],
     ['page.html', runtime.ONLY_PREVIEW_MAX_HTML_BYTES + 1],
     ['photo.png', runtime.ONLY_PREVIEW_MAX_IMAGE_BYTES + 1],
     ['manual.pdf', runtime.ONLY_PREVIEW_MAX_PDF_BYTES + 1],
     ['book.xlsx', runtime.ONLY_PREVIEW_MAX_SHEET_BYTES + 1],
-    ['document.docx', runtime.ONLY_PREVIEW_MAX_DOCUMENT_BYTES + 1]
+    ['document.docx', runtime.ONLY_PREVIEW_MAX_DOCUMENT_BYTES + 1],
+    ['diagram.drawio', runtime.ONLY_PREVIEW_MAX_DIAGRAM_BYTES + 1]
   ]) {
     const candidate = createMetadataFile({ relativePath: fixture[0], size: fixture[1] });
     const descriptor = await service.describe(candidate.file);
@@ -312,6 +346,89 @@ test('size-first metadata gates read zero body bytes at adapter limit plus one',
   });
   assert.equal((await service.describe(markdownSource.file)).previewError, undefined);
   assert.equal(markdownSource.bodyReadCount(), 0);
+
+  assert.equal(runtime.ONLY_PREVIEW_DEFAULT_FILE_SIZE_LIMIT_BYTES, 10 * 1024 * 1024);
+  assert.equal(runtime.getOnlyPreviewFileSizeLimit('unsupported'), 10 * 1024 * 1024);
+  assert.equal(runtime.getOnlyPreviewFileSizeLimit('drawio-viewer'), 20 * 1024 * 1024);
+  const largeDiagram = createMetadataFile({
+    relativePath: 'large.drawio',
+    size: 11 * 1024 * 1024
+  });
+  assert.equal((await service.describe(largeDiagram.file)).previewError, undefined);
+  assert.equal(largeDiagram.bodyReadCount(), 0);
+});
+
+test('unknown search text uses the 1 MiB size-first admission gate without body sniffing', async () => {
+  const openedStat = (size) => ({
+    dev: 1,
+    ino: 2,
+    size,
+    mtimeMs: 3,
+    isFile: () => true
+  });
+  const createHandle = (bytes, stat) => {
+    let readCount = 0;
+    let highestRequestedOffset = 0;
+    return {
+      handle: {
+        read: async (target, offset, length, position) => {
+          readCount += 1;
+          highestRequestedOffset = Math.max(highestRequestedOffset, position + length);
+          const available = Math.max(0, Math.min(length, bytes.length - position));
+          if (available > 0) bytes.copy(target, offset, position, position + available);
+          return { bytesRead: available, buffer: target };
+        },
+        stat: async () => stat
+      },
+      readCount: () => readCount,
+      highestRequestedOffset: () => highestRequestedOffset
+    };
+  };
+
+  const exactStat = openedStat(MAX_TEXT_BYTES);
+  const exact = createHandle(Buffer.alloc(MAX_TEXT_BYTES, 0x61), exactStat);
+  const exactResult = await readClassifiedSearchContent({
+    handle: exact.handle,
+    relativePath: 'AGENTS.md.bak',
+    openedStat: exactStat
+  });
+  assert.equal(exactResult.mediaType, 'text');
+  assert.equal(exactResult.contentIndexed, true);
+  assert.equal(exactResult.originalContent.length, MAX_TEXT_BYTES);
+  assert.ok(exact.readCount() > 0);
+  assert.equal(exact.highestRequestedOffset(), MAX_TEXT_BYTES);
+
+  const tooLargeStat = openedStat(MAX_TEXT_BYTES + 1);
+  const tooLarge = createHandle(Buffer.alloc(0), tooLargeStat);
+  assert.deepEqual(
+    await readClassifiedSearchContent({
+      handle: tooLarge.handle,
+      relativePath: 'large.arbitrary',
+      openedStat: tooLargeStat
+    }),
+    {
+      mediaType: 'text',
+      contentIndexed: false,
+      originalContent: ''
+    }
+  );
+  assert.equal(tooLarge.readCount(), 0);
+
+  const packageStat = openedStat(4);
+  const packageFile = createHandle(Buffer.from([0x50, 0x4b, 0x03, 0x04]), packageStat);
+  assert.deepEqual(
+    await readClassifiedSearchContent({
+      handle: packageFile.handle,
+      relativePath: 'workbook.xlsx',
+      openedStat: packageStat
+    }),
+    {
+      mediaType: 'unknown',
+      contentIndexed: false,
+      originalContent: ''
+    }
+  );
+  assert.equal(packageFile.readCount(), 0);
 });
 
 test('bounded text reads accept exact caps and decode malformed UTF/NUL and odd UTF-16 tails', async () => {
@@ -415,7 +532,8 @@ test('non-text signatures stay mandatory and asset capabilities require exact re
       runtime.ONLY_PREVIEW_MAX_DOCUMENT_BYTES,
       Buffer.from([0x50, 0x4b, 0x03, 0x04]),
       'document'
-    ]
+    ],
+    ['exact.drawio', runtime.ONLY_PREVIEW_MAX_DIAGRAM_BYTES, Buffer.alloc(0), 'diagram']
   ]) {
     const candidate = createMetadataFile({ relativePath, size, bytes });
     const descriptor = await service.describe(candidate.file);

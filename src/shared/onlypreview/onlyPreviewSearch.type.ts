@@ -1,10 +1,14 @@
 import type {
   OnlyPreviewIndex,
   OnlyPreviewIndexEntry,
+  OnlyPreviewKind,
   OnlyPreviewResult
 } from './onlyPreview.types';
 
 export const ONLY_PREVIEW_SEARCH_MAX_RESULTS = 500;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_SECTION_MAX_RESULTS = 250;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_PREVIEW_MAX_TEXT_BYTES = 256 * 1024;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_PREVIEW_MAX_DIRECTORY_ENTRIES = 200;
 export const ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS = 50;
 export const ONLY_PREVIEW_SEARCH_MAX_BATCH_DELAY_MS = 16;
 export const ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT = 'onlypreview/search-snapshot' as const;
@@ -30,6 +34,31 @@ export interface OnlyPreviewSearchResult {
   mediaType: OnlyPreviewSearchMediaType;
   contentMatch: OnlyPreviewSearchContentMatch | null;
 }
+
+export interface OnlyPreviewGlobalSearchFileResult {
+  section: 'files';
+  resultToken: string;
+  name: string;
+  relativePath: string;
+  parentRelativePath: string;
+  nodeKind: 'file' | 'directory';
+  previewHint: OnlyPreviewKind;
+  mediaType: OnlyPreviewSearchMediaType;
+}
+
+export interface OnlyPreviewGlobalSearchContentResult {
+  section: 'contents';
+  resultToken: string;
+  fileName: string;
+  relativePath: string;
+  parentRelativePath: string;
+  mediaType: 'text';
+  contentMatch: OnlyPreviewSearchContentMatch;
+}
+
+export type OnlyPreviewGlobalSearchResult =
+  | OnlyPreviewGlobalSearchFileResult
+  | OnlyPreviewGlobalSearchContentResult;
 
 export interface OnlyPreviewSearchMemory {
   measurementComplete: boolean;
@@ -103,6 +132,13 @@ export interface OnlyPreviewSearchInitializeRequest {
 
 export type OnlyPreviewSearchRefreshRequest = OnlyPreviewSearchInitializeRequest;
 
+export interface OnlyPreviewSearchPrioritizeFileRequest {
+  hostToken: string;
+  workspaceId: string;
+  generation: number;
+  relativePath: string;
+}
+
 export interface OnlyPreviewBrowseDirectoryRequest {
   hostToken: string;
   workspaceId: string;
@@ -128,15 +164,18 @@ export interface OnlyPreviewSearchResponse {
   workspaceId: string;
   generation: number;
   requestId: string;
-  results: OnlyPreviewSearchResult[];
-  truncated: boolean;
+  files: OnlyPreviewGlobalSearchFileResult[];
+  contents: OnlyPreviewGlobalSearchContentResult[];
+  filesTruncated: boolean;
+  contentsTruncated: boolean;
 }
 
 export interface OnlyPreviewSearchBatch {
   workspaceId: string;
   generation: number;
   requestId: string;
-  results: OnlyPreviewSearchResult[];
+  files: OnlyPreviewGlobalSearchFileResult[];
+  contents: OnlyPreviewGlobalSearchContentResult[];
 }
 
 export interface OnlyPreviewSearchBatchEvent {
@@ -162,6 +201,45 @@ export interface OnlyPreviewSearchCancelRequest {
   requestId: string;
 }
 
+export interface OnlyPreviewGlobalSearchPreviewRequest {
+  hostToken: string;
+  workspaceId: string;
+  generation: number;
+  requestId: string;
+  resultToken: string;
+}
+
+export type OnlyPreviewGlobalSearchPreview =
+  | {
+      kind: 'text';
+      adapter: 'plain' | 'markdown' | 'html-static';
+      name: string;
+      text: string;
+      truncated: boolean;
+    }
+  | {
+      kind: 'directory';
+      name: string;
+      entries: OnlyPreviewBrowseEntry[];
+      truncated: boolean;
+    }
+  | {
+      kind: 'context';
+      name: string;
+      before: string;
+      match: string;
+      after: string;
+      truncated: boolean;
+    }
+  | {
+      kind: 'info';
+      name: string;
+      previewHint: OnlyPreviewKind;
+      mediaType: OnlyPreviewSearchMediaType;
+      size: number;
+      modifiedAt: number;
+    };
+
 export interface OnlyPreviewSearchShutdownRequest {
   hostToken: string;
 }
@@ -173,10 +251,14 @@ export interface OnlyPreviewSearchRuntimeHandler {
   refresh(
     params: OnlyPreviewSearchRefreshRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>>;
+  prioritizeFile(params: OnlyPreviewSearchPrioritizeFileRequest): Promise<OnlyPreviewResult<void>>;
   browseDirectory(
     params: OnlyPreviewBrowseDirectoryRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewBrowseListing>>;
   search(params: OnlyPreviewSearchRequest): Promise<OnlyPreviewResult<OnlyPreviewSearchResponse>>;
+  preview(
+    params: OnlyPreviewGlobalSearchPreviewRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchPreview>>;
   cancel(params: OnlyPreviewSearchCancelRequest): Promise<OnlyPreviewResult<void>>;
   shutdown(params: OnlyPreviewSearchShutdownRequest): Promise<OnlyPreviewResult<void>>;
 }

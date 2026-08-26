@@ -8,12 +8,15 @@ import type {
   OnlyPreviewFindResult,
   OnlyPreviewFindResultRequest,
   OnlyPreviewFileRef,
+  OnlyPreviewGlobalSearchFocusRequest,
   OnlyPreviewResult,
   OnlyPreviewPreviewErrorRequest,
   OnlyPreviewPreviewReadyRequest,
   OnlyPreviewPreviewRuntimeRequest,
   OnlyPreviewPreviewRevisionRequest,
   OnlyPreviewProjectItemCopyRequest,
+  OnlyPreviewProjectRootCopyRequest,
+  OnlyPreviewProjectRootRequest,
   OnlyPreviewTextReadRequest,
   OnlyPreviewSettings
 } from './onlyPreview.types';
@@ -169,6 +172,7 @@ export const parseOnlyPreviewProjectItemCopyRequest = (
   if (
     record.copyKind !== 'item' &&
     record.copyKind !== 'absolute-path' &&
+    record.copyKind !== 'relative-path' &&
     record.copyKind !== 'name'
   ) {
     throw new OnlyPreviewContractError('INVALID_INPUT', 'Project item copy kind is invalid.');
@@ -177,6 +181,53 @@ export const parseOnlyPreviewProjectItemCopyRequest = (
     hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
     ...parseOnlyPreviewFileRef(record),
     copyKind: record.copyKind
+  };
+};
+
+export const parseOnlyPreviewProjectRootRequest = (
+  value: unknown
+): OnlyPreviewProjectRootRequest => {
+  const record = expectRecord(value, 'Project root request');
+  expectExactKeys(record, ['hostToken', 'workspaceId']);
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability')
+  };
+};
+
+export const parseOnlyPreviewProjectRootCopyRequest = (
+  value: unknown
+): OnlyPreviewProjectRootCopyRequest => {
+  const record = expectRecord(value, 'Project root copy request');
+  expectExactKeys(record, ['hostToken', 'workspaceId', 'copyKind']);
+  if (
+    record.copyKind !== 'item' &&
+    record.copyKind !== 'absolute-path' &&
+    record.copyKind !== 'relative-path' &&
+    record.copyKind !== 'name'
+  ) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Project root copy kind is invalid.');
+  }
+  return {
+    ...parseOnlyPreviewProjectRootRequest({
+      hostToken: record.hostToken,
+      workspaceId: record.workspaceId
+    }),
+    copyKind: record.copyKind
+  };
+};
+
+export const parseOnlyPreviewGlobalSearchFocusRequest = (
+  value: unknown
+): OnlyPreviewGlobalSearchFocusRequest => {
+  const record = expectRecord(value, 'Global Search focus request');
+  expectExactKeys(record, ['hostToken', 'mode']);
+  if (record.mode !== 'opener' && record.mode !== 'preview' && record.mode !== 'discard') {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Global Search focus mode is invalid.');
+  }
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    mode: record.mode
   };
 };
 
@@ -421,6 +472,10 @@ export const parseOnlyPreviewPreviewErrorRequest = (
     'DOCUMENT_EMPTY',
     'DOCUMENT_SANITIZE_FAILED',
     'DOCUMENT_RENDER_TIMEOUT',
+    'DIAGRAM_PARSE_FAILED',
+    'DIAGRAM_EMPTY',
+    'DIAGRAM_LIMIT',
+    'DIAGRAM_RENDER_TIMEOUT',
     'IMAGE_EMPTY',
     'IMAGE_READ_FAILED',
     'IMAGE_DECODE_FAILED',

@@ -1,8 +1,10 @@
 import {
   ONLY_PREVIEW_SEARCH_MAX_RESULTS,
   type OnlyPreviewBrowseDirectoryRequest,
+  type OnlyPreviewGlobalSearchPreviewRequest,
   type OnlyPreviewSearchCancelRequest,
   type OnlyPreviewSearchInitializeRequest,
+  type OnlyPreviewSearchPrioritizeFileRequest,
   type OnlyPreviewSearchRequest,
   type OnlyPreviewSearchScope,
   type OnlyPreviewSearchShutdownRequest
@@ -92,6 +94,23 @@ export const parseOnlyPreviewBrowseDirectoryRequest = (
   };
 };
 
+export const parseOnlyPreviewSearchPrioritizeFileRequest = (
+  value: unknown
+): OnlyPreviewSearchPrioritizeFileRequest => {
+  const record = expectRecord(value, 'Search priority request');
+  expectExactKeys(
+    record,
+    ['generation', 'hostToken', 'relativePath', 'workspaceId'],
+    'Search priority request'
+  );
+  return {
+    hostToken: expectToken(record.hostToken, 'Host capability'),
+    workspaceId: expectToken(record.workspaceId, 'Workspace capability'),
+    generation: expectGeneration(record.generation),
+    relativePath: normalizeOnlyPreviewRelativePath(record.relativePath)
+  };
+};
+
 export const parseOnlyPreviewSearchRequest = (value: unknown): OnlyPreviewSearchRequest => {
   const record = expectRecord(value, 'Search request');
   expectExactKeys(
@@ -128,6 +147,24 @@ export const parseOnlyPreviewSearchCancelRequest = (
   return {
     hostToken: expectToken(record.hostToken, 'Host capability'),
     requestId: expectToken(record.requestId, 'Search request ID')
+  };
+};
+
+export const parseOnlyPreviewGlobalSearchPreviewRequest = (
+  value: unknown
+): OnlyPreviewGlobalSearchPreviewRequest => {
+  const record = expectRecord(value, 'Global search preview request');
+  expectExactKeys(
+    record,
+    ['generation', 'hostToken', 'requestId', 'resultToken', 'workspaceId'],
+    'Global search preview request'
+  );
+  return {
+    hostToken: expectToken(record.hostToken, 'Host capability'),
+    workspaceId: expectToken(record.workspaceId, 'Workspace capability'),
+    generation: expectGeneration(record.generation),
+    requestId: expectToken(record.requestId, 'Search request ID'),
+    resultToken: expectToken(record.resultToken, 'Search result capability')
   };
 };
 

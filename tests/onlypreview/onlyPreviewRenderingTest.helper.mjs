@@ -338,6 +338,7 @@ export const createRendererStoreHarness = (presentation) => ({
   documentLoads: [],
   documentDisposals: 0,
   documentContent: null,
+  drawioContent: null,
   imageSessions: [],
   imageLoads: [],
   imageDisposals: 0,
@@ -410,6 +411,14 @@ export const renderPreviewSurface = async (store) => {
       reportingRevision: { type: String, required: true }
     },
     template: '<section name="onlypreview__documentPreview"></section>'
+  });
+  // eslint-disable-next-line vue/one-component-per-file
+  app.component('DrawioPreview', {
+    props: {
+      content: { type: Object, required: true },
+      reportingRevision: { type: String, required: true }
+    },
+    template: '<section name="onlypreview__drawioPreview"></section>'
   });
   // eslint-disable-next-line vue/one-component-per-file
   app.component('ImagePreview', {

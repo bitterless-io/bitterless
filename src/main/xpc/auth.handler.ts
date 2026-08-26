@@ -90,28 +90,24 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
       if (this._stopStaleActivation(generation)) return;
       await this._showAuthenticatedPrimaryWindow(generation);
     } catch (err) {
-      if (!this._stopStaleActivation(generation)) mainWindowHelper.show();
+      if (!this._stopStaleActivation(generation)) {
+        await this._showMaestroPrimaryWindow().catch((recoveryError) => {
+          console.warn(
+            '[AuthHandler] Failed to keep Maestro visible after activation failure:',
+            recoveryError,
+          );
+        });
+      }
       throw err;
     }
   }
 
   async showHomeWindow(): Promise<void> {
-    mainWindowHelper.show();
+    await this._showMaestroPrimaryWindow();
   }
 
   async showPrimaryWindow(): Promise<void> {
-    if (!this.sessionShouldBeActive) {
-      mainWindowHelper.show();
-      return;
-    }
-
-    const generation = this.sessionActivationGeneration;
-    try {
-      await this._showAuthenticatedPrimaryWindow(generation);
-    } catch (err) {
-      if (!this._stopStaleActivation(generation)) mainWindowHelper.show();
-      throw err;
-    }
+    await this._showMaestroPrimaryWindow();
   }
 
   async deactivateSession(): Promise<void> {
@@ -169,18 +165,23 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
     return generation !== this.sessionActivationGeneration || !this.sessionShouldBeActive;
   }
 
+  private async _showMaestroPrimaryWindow(): Promise<void> {
+    try {
+      await maestroWindowHandler.openMaestroWindow();
+    } finally {
+      mainWindowHelper.hide();
+    }
+  }
+
   private async _showAuthenticatedPrimaryWindow(generation: number): Promise<void> {
-    await maestroWindowHandler.openMaestroWindow();
     if (this._stopStaleActivation(generation)) return;
-    mainWindowHelper.hide();
+    await this._showMaestroPrimaryWindow();
   }
 
   private async _deactivateSession(): Promise<void> {
     await this._closeSecondaryWindows();
-    const mainWindow = await this._ensureMainWindow();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindowHelper.show();
-    }
+    await this._ensureMainWindow();
+    await this._showMaestroPrimaryWindow();
   }
 
   private async _closeSecondaryWindows(): Promise<void> {

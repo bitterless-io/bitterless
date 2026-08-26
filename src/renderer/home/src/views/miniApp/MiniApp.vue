@@ -39,7 +39,7 @@
 import { computed, ref } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import { todoWindowEmitter } from '@/emitter/todoWindow.emitter';
+import { homeShellBridge } from '@renderer/common/homeShellBridge.client';
 import { omniWindowEmitter } from '@/emitter/omniWindow.emitter';
 import { maestroWindowEmitter } from '@/emitter/maestroWindow.emitter';
 import { coinWindowEmitter } from '@/emitter/coinWindow.emitter';
@@ -47,14 +47,12 @@ import { eyesOnAgentsWindowEmitter } from '@/emitter/eyesOnAgentsWindow.emitter'
 import { submodulesWindowEmitter } from '@/emitter/submodulesWindow.emitter';
 import { onlyPreviewEmitter } from '@/emitter/onlyPreview.emitter';
 import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
-import { authStore } from '@/stores/auth/auth.store';
 import { createMiniApps, type MiniApp } from './miniApps.constant';
 
 const openingAppIds = ref(new Set<string>());
 
 const openTodo = async () => {
-  await authStore.ensureTodoistSyncReady();
-  await todoWindowEmitter.openTodoWindow();
+  await homeShellBridge.openTodo();
 };
 
 const openOmniBrowser = async () => {

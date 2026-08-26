@@ -22,9 +22,9 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
   assert.match(surface, /descriptor\.extension === '\.md'/);
   assert.doesNotMatch(surface, /descriptor\.extension === '\.mdx'/);
   assert.doesNotMatch(surface, /descriptor\.extension === '\.markdown'/);
-  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
-  assert.match(region, /descriptor\.extension === '\.md'[\s\S]*adapterId: 'markdown-dom'/);
-  assert.doesNotMatch(region, /descriptor\.extension === '\.mdx'/);
+  const previewAdapter = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
+  assert.match(previewAdapter, /descriptor\.extension === '\.md'[\s\S]*adapterId: 'markdown-dom'/);
+  assert.doesNotMatch(previewAdapter, /descriptor\.extension === '\.mdx'/);
 
   const markdownService = source(
     'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'
@@ -259,12 +259,13 @@ test('image and native media adapters keep renderer-owned lifecycle and no text/
   assert.match(mediaService, /code === 1[\s\S]*code === 2[\s\S]*code === 3[\s\S]*code === 4/);
 
   const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
-  assert.match(region, /adapterId === 'audio' \|\| adapterId === 'video'/);
+  assert.match(region, /adapter\.adapterId === 'audio' \|\| adapter\.adapterId === 'video'/);
   assert.match(region, /\? 'selection'[\s\S]*: 'ttl'/);
   assert.match(region, /this\.presentation\.status !== 'loading'/);
-  const adapterTextGate = region.slice(
-    region.indexOf('const adapterProvidesSelectedText'),
-    region.indexOf('const adapterUsesOneShotAsset')
+  const adapterSource = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
+  const adapterTextGate = adapterSource.slice(
+    adapterSource.indexOf('onlyPreviewAdapterProvidesSelectedText'),
+    adapterSource.indexOf('onlyPreviewAdapterUsesOneShotAsset')
   );
   assert.doesNotMatch(adapterTextGate, /image|audio|video/);
 
@@ -277,7 +278,7 @@ test('image and native media adapters keep renderer-owned lifecycle and no text/
 
 test('deep Project rows stay complete while HTML routes to the isolated Chrome surface', () => {
   const sharedTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
-  assert.match(sharedTypes, /export const ONLY_PREVIEW_MAX_HTML_BYTES = 1024 \* 1024;/);
+  assert.match(sharedTypes, /'html-page': 1024 \* 1024/);
 
   const classifier = source('src/main/onlypreview/onlyPreviewClassifier.service.ts');
   const textExtensions = classifier.match(
@@ -301,7 +302,8 @@ test('deep Project rows stay complete while HTML routes to the isolated Chrome s
   );
   const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
   const viewService = source('src/main/onlypreview/views/onlyPreviewPreviewView.service.ts');
-  assert.match(region, /adapterId:\s*'html-page'/);
+  const previewAdapter = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
+  assert.match(previewAdapter, /adapterId:\s*'html-page'/);
   assert.match(region, /onlyPreviewDocumentRegistry\.issue\(opened, revision\)/);
   assert.match(viewService, /installOnlyPreviewSessionProtocol/);
   assert.match(viewService, /setProxy\(/);
@@ -385,7 +387,7 @@ test('deep Project rows stay complete while HTML routes to the isolated Chrome s
   assert.match(source('src/renderer/onlypreview/preview/index.html'), /frame-src 'none'/);
 });
 
-test('OnlyPreview shell shows the current folder identity without a duplicate path slash', () => {
+test('OnlyPreview shell keeps folder identity in the title and synthetic Project root row', () => {
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
   const menuIdentity = shellApp.slice(
     shellApp.indexOf('name="onlypreview__identity"'),
@@ -409,8 +411,9 @@ test('OnlyPreview shell shows the current folder identity without a duplicate pa
   );
   assert.match(
     projectHeader,
-    /onlyPreviewShellStore\.workspace\?\.rootName \|\| onlyPreviewI18n\.project\.label/
+    /\{\{ onlyPreviewI18n\.project\.label \}\}/
   );
+  assert.match(projectHeader, /\{\{ row\.entry\.name \}\}/);
 
   const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
   assert.doesNotMatch(shellStyle, /\.onlypreview-shell__location-divider/);

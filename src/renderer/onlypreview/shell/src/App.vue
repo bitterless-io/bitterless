@@ -106,17 +106,9 @@
           <span
             name="onlypreview__projectTitle"
             class="onlypreview-shell__project-title"
-            :title="
-              onlyPreviewProjectSearchStore.active
-                ? onlyPreviewI18n.project.projectSearchTitle
-                : onlyPreviewShellStore.workspace?.displayPath || onlyPreviewI18n.project.label
-            "
+            :title="onlyPreviewShellStore.workspace?.displayPath || onlyPreviewI18n.project.label"
           >
-            {{
-              onlyPreviewProjectSearchStore.active
-                ? onlyPreviewI18n.project.projectSearchTitle
-                : onlyPreviewShellStore.workspace?.rootName || onlyPreviewI18n.project.label
-            }}
+            {{ onlyPreviewI18n.project.label }}
           </span>
           <a-button
             name="onlypreview__locateCurrentFile"
@@ -132,83 +124,6 @@
           </a-button>
         </div>
 
-        <label name="onlypreview__search" class="onlypreview-shell__search">
-          <IconSearch :size="14" aria-hidden="true" />
-          <input
-            ref="searchInputRef"
-            :value="
-              onlyPreviewProjectSearchStore.active
-                ? onlyPreviewProjectSearchStore.query
-                : onlyPreviewShellStore.searchQuery
-            "
-            type="search"
-            autocomplete="off"
-            :aria-label="
-              onlyPreviewProjectSearchStore.active
-                ? onlyPreviewI18n.project.projectSearchLabel
-                : onlyPreviewI18n.project.searchLabel
-            "
-            :placeholder="
-              onlyPreviewProjectSearchStore.active
-                ? onlyPreviewI18n.project.projectSearchPlaceholder
-                : onlyPreviewI18n.project.searchPlaceholder
-            "
-            @input="handleSearchInput"
-            @compositionstart="handleSearchCompositionStart"
-            @compositionend="handleSearchCompositionEnd"
-            @keydown.esc.prevent="handleSearchEscape"
-          />
-          <button
-            v-if="
-              onlyPreviewProjectSearchStore.active
-                ? onlyPreviewProjectSearchStore.query
-                : onlyPreviewShellStore.searchQuery
-            "
-            class="onlypreview-shell__search-clear"
-            type="button"
-            :aria-label="onlyPreviewI18n.project.clearSearch"
-            @click="clearActiveSearch"
-          >
-            <IconX :size="13" aria-hidden="true" />
-          </button>
-        </label>
-
-        <div
-          v-if="onlyPreviewProjectSearchStore.active && onlyPreviewShellStore.workspace"
-          name="onlypreview__projectSearchScope"
-          class="onlypreview-shell__project-search-scope"
-        >
-          <label
-            name="onlypreview__projectSearchScopeControl"
-            class="onlypreview-shell__scope-control"
-          >
-            <span class="onlypreview-shell__scope-label">
-              {{ onlyPreviewI18n.project.projectSearchScope }}
-            </span>
-            <select
-              name="onlypreview__projectSearchScopeSelect"
-              class="onlypreview-shell__scope-select"
-              :value="onlyPreviewProjectSearchStore.scopeKind"
-              :aria-label="onlyPreviewI18n.project.projectSearchScopeLabel"
-              @change="handleProjectSearchScopeChange"
-            >
-              <option value="directory">
-                {{ onlyPreviewI18n.project.projectSearchInDirectory }}
-              </option>
-              <option value="project">
-                {{ onlyPreviewI18n.project.projectSearchInProject }}
-              </option>
-            </select>
-          </label>
-          <span
-            name="onlypreview__projectSearchScopeTarget"
-            class="onlypreview-shell__scope-target"
-            :title="projectSearchScopeTarget"
-          >
-            {{ projectSearchScopeTarget }}
-          </span>
-        </div>
-
         <div
           v-if="onlyPreviewShellStore.errorMessage"
           name="onlypreview__indexError"
@@ -219,12 +134,8 @@
           <span>{{ onlyPreviewShellStore.errorMessage }}</span>
         </div>
 
-        <ProjectSearchResults
-          v-if="onlyPreviewProjectSearchStore.active && onlyPreviewShellStore.workspace"
-        />
-
         <div
-          v-else-if="!onlyPreviewShellStore.workspace"
+          v-if="!onlyPreviewShellStore.workspace"
           name="onlypreview__projectEmpty"
           class="onlypreview-shell__project-empty"
         >
@@ -308,11 +219,7 @@
           name="onlypreview__noResults"
           class="onlypreview-shell__no-results"
         >
-          {{
-            onlyPreviewShellStore.searchQuery.trim()
-              ? onlyPreviewI18n.project.noResults
-              : onlyPreviewI18n.project.emptyProject
-          }}
+          {{ onlyPreviewI18n.project.emptyProject }}
         </div>
 
         <div
@@ -360,7 +267,9 @@
         "
       ></div>
 
-      <section name="onlypreview__previewRegion" class="onlypreview-shell__preview-region">
+      <GlobalSearchWorkspace v-if="onlyPreviewGlobalSearchStore.active" />
+
+      <section v-else name="onlypreview__previewRegion" class="onlypreview-shell__preview-region">
         <PreviewToolbar />
         <div
           ref="previewHostRef"
@@ -420,37 +329,28 @@ import {
   IconMaximize,
   IconMinus,
   IconRobot,
-  IconSearch,
   IconSettings,
   IconX
 } from '@tabler/icons-vue';
 import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onlyPreviewFormat';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
-import ProjectSearchResults from './components/ProjectSearchResults/ProjectSearchResults.vue';
+import GlobalSearchWorkspace from './components/GlobalSearch/GlobalSearchWorkspace.vue';
 import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
-import { onlyPreviewProjectSearchStore } from './onlyPreviewProjectSearch.store';
+import { onlyPreviewGlobalSearchStore } from './onlyPreviewGlobalSearch.store';
+import { restoreOnlyPreviewGlobalSearchFocus } from './onlyPreviewGlobalSearchFocus.client';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
 const previewHostRef = ref<HTMLElement | null>(null);
-const searchInputRef = ref<HTMLInputElement | null>(null);
 const treeRef = ref<HTMLElement | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let resizeFrame = 0;
-let lastShiftAt = 0;
+let globalSearchFocusGeneration = 0;
+let globalSearchShellOpener: HTMLElement | null = null;
 const isMac = onlyPreviewEnv.platform === 'darwin';
 const isWindows = onlyPreviewEnv.platform === 'win32';
 
 const treeFocusRelativePath = computed(() => onlyPreviewShellStore.treeFocusRelativePath);
-const projectSearchScopeTarget = computed(
-  () =>
-    (onlyPreviewProjectSearchStore.scopeKind === 'directory'
-      ? onlyPreviewProjectSearchStore.directoryLabel
-      : onlyPreviewShellStore.workspace?.rootName) ||
-    onlyPreviewShellStore.workspace?.rootName ||
-    onlyPreviewI18n.project.label
-);
-
 const indexProgressStyle = computed(() =>
   onlyPreviewShellStore.indexProgress?.phase === 'indexing'
     ? { transform: `scaleX(${onlyPreviewShellStore.indexProgressRatio})` }
@@ -473,6 +373,10 @@ const reportPreviewBounds = (): void => {
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => {
     resizeFrame = 0;
+    if (onlyPreviewGlobalSearchStore.active) {
+      void onlyPreviewShellStore.reportPreviewBounds({ x: 0, y: 0, width: 0, height: 0 });
+      return;
+    }
     const bounds = previewHostRef.value?.getBoundingClientRect();
     if (!bounds) return;
     void onlyPreviewShellStore.reportPreviewBounds({
@@ -481,6 +385,19 @@ const reportPreviewBounds = (): void => {
       width: bounds.width,
       height: bounds.height
     });
+  });
+};
+
+const restorePreviewBounds = async (): Promise<void> => {
+  if (resizeFrame) cancelAnimationFrame(resizeFrame);
+  resizeFrame = 0;
+  const bounds = previewHostRef.value?.getBoundingClientRect();
+  if (!bounds) return;
+  await onlyPreviewShellStore.reportPreviewBounds({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height
   });
 };
 
@@ -506,60 +423,19 @@ const startProjectResize = (event: PointerEvent): void => {
   target.addEventListener('pointercancel', stop);
 };
 
-const handleSearchInput = (event: Event): void => {
-  const value = (event.target as HTMLInputElement).value;
-  if (onlyPreviewProjectSearchStore.active) {
-    onlyPreviewProjectSearchStore.setQuery(value);
-    return;
-  }
-  onlyPreviewShellStore.setSearchQuery(value);
-};
-
-const handleSearchCompositionStart = (): void => {
-  onlyPreviewProjectSearchStore.beginComposition();
-};
-
-const handleSearchCompositionEnd = (event: CompositionEvent): void => {
-  onlyPreviewProjectSearchStore.endComposition((event.target as HTMLInputElement).value);
-};
-
-const handleSearchEscape = (): void => {
-  if (onlyPreviewProjectSearchStore.active) {
-    onlyPreviewProjectSearchStore.exit();
-    return;
-  }
-  onlyPreviewShellStore.clearSearch();
-};
-
-const clearActiveSearch = (): void => {
-  if (onlyPreviewProjectSearchStore.active) {
-    onlyPreviewProjectSearchStore.clear();
-    return;
-  }
-  onlyPreviewShellStore.clearSearch();
-};
-
-const handleProjectSearchScopeChange = (event: Event): void => {
-  const scopeKind = (event.target as HTMLSelectElement).value;
-  if (scopeKind === 'directory' || scopeKind === 'project') {
-    onlyPreviewProjectSearchStore.setScopeKind(scopeKind);
-  }
-};
-
-const focusTreePath = async (relativePath: string, center = false): Promise<void> => {
-  if (!relativePath) return;
+const focusTreePath = async (relativePath: string, center = false): Promise<boolean> => {
   await nextTick();
   const items = treeRef.value?.querySelectorAll<HTMLElement>('[role="treeitem"]') || [];
   for (const item of items) {
     if (item.dataset.relativePath !== relativePath) continue;
     if (center) item.scrollIntoView({ block: 'center', inline: 'nearest' });
     item.focus(center ? { preventScroll: true } : undefined);
-    return;
+    return true;
   }
+  return false;
 };
 
 const focusProjectTree = (): void => {
-  onlyPreviewProjectSearchStore.exit();
   void focusTreePath(onlyPreviewShellStore.focusTree());
 };
 
@@ -599,14 +475,12 @@ const handleProjectItemCopyShortcut = (event: KeyboardEvent): boolean => {
   if (!(target instanceof HTMLElement)) return false;
   if (
     target.matches('input, textarea, select, [contenteditable="true"], [role="textbox"]') ||
-    !target.matches(
-      'button[name="onlypreview__treeRow"], button[name="onlypreview__projectSearchResult"]'
-    )
+    !target.matches('button[name="onlypreview__treeRow"]')
   ) {
     return false;
   }
   const relativePath = target.dataset.relativePath;
-  if (!relativePath) return false;
+  if (relativePath === undefined) return false;
   const copyKind = event.shiftKey
     ? event.altKey
       ? null
@@ -627,36 +501,65 @@ const handleShellKeydown = (event: KeyboardEvent): void => {
     focusProjectTree();
     return;
   }
-  if (event.key !== 'Shift' || event.repeat) return;
-  const now = performance.now();
-  if (now - lastShiftAt < 450) {
-    event.preventDefault();
-    onlyPreviewProjectSearchStore.exit();
-    void nextTick(() => searchInputRef.value?.focus());
-    lastShiftAt = 0;
-    return;
-  }
-  lastShiftAt = now;
 };
 
 onMounted(() => {
   void onlyPreviewShellStore.initialize();
-  if (previewHostRef.value) {
-    resizeObserver = new ResizeObserver(reportPreviewBounds);
-    resizeObserver.observe(previewHostRef.value);
-    reportPreviewBounds();
-  }
 });
 
 watch(() => onlyPreviewShellStore.focusProjectRevision, focusProjectTree);
 
 watch(
-  () => onlyPreviewShellStore.focusSearchRevision,
-  () => void nextTick(() => searchInputRef.value?.focus())
+  () => onlyPreviewGlobalSearchStore.active,
+  (active) => {
+    const generation = ++globalSearchFocusGeneration;
+    if (active) {
+      globalSearchShellOpener =
+        onlyPreviewGlobalSearchStore.openerOrigin === 'shell' &&
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+    }
+    void nextTick(async () => {
+      if (generation !== globalSearchFocusGeneration) return;
+      if (active) {
+        reportPreviewBounds();
+        return;
+      }
+      await restorePreviewBounds();
+      if (generation !== globalSearchFocusGeneration) return;
+      if (!onlyPreviewGlobalSearchStore.restoreFocusOnExit) {
+        await restoreOnlyPreviewGlobalSearchFocus('discard');
+        return;
+      }
+      if (await restoreOnlyPreviewGlobalSearchFocus('opener')) return;
+      const opener = globalSearchShellOpener;
+      globalSearchShellOpener = null;
+      if (opener?.isConnected) {
+        opener.focus();
+        return;
+      }
+      if (await focusTreePath(onlyPreviewShellStore.focusTree())) return;
+      await restoreOnlyPreviewGlobalSearchFocus('preview');
+    });
+  },
+  { flush: 'sync' }
+);
+
+watch(
+  previewHostRef,
+  (host) => {
+    resizeObserver?.disconnect();
+    if (!host) return;
+    resizeObserver ||= new ResizeObserver(reportPreviewBounds);
+    resizeObserver.observe(host);
+    reportPreviewBounds();
+  },
+  { flush: 'post' }
 );
 
 onBeforeUnmount(() => {
-  onlyPreviewProjectSearchStore.shutdown();
+  onlyPreviewGlobalSearchStore.shutdown();
   resizeObserver?.disconnect();
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
 });

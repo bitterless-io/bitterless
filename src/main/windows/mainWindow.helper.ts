@@ -25,6 +25,7 @@ class MainWindowHelper extends WindowHelper {
   protected deferInitialWindowStateSave = true;
   protected windowOptions: Partial<BrowserWindowConstructorOptions> = {
     title: 'BitterLess',
+    skipTaskbar: true,
     width: 1200,
     height: 800,
     minWidth: 800,
@@ -55,12 +56,19 @@ class MainWindowHelper extends WindowHelper {
       is.dev ? process.env.ELECTRON_RENDERER_URL : undefined,
     ).home;
     return super.create((window) => {
+      window.on('show', () => {
+        if (!window.isDestroyed()) window.hide();
+      });
       const fenceNavigation = (event: Electron.Event, targetUrl: string): void => {
         if (!matchesSnipingRendererTarget(targetUrl, expectedHomeUrl)) event.preventDefault();
       };
       window.webContents.on('will-navigate', fenceNavigation);
       window.webContents.on('will-redirect', fenceNavigation);
     });
+  }
+
+  override show(): void {
+    this.hide();
   }
 
   async hydratePersistedLayout(): Promise<void> {

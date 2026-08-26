@@ -40,7 +40,7 @@ provider brand-color panels because each would add height or compete with workin
 │  EyesOnAgents            ● Connections [↻ Refresh] [Bridge] [Settings]      │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │ [ ⌕ Search titles (⌘F)                                  ] [Read all]  │ │
+│  │                                                                  [⌕]  │ │
 │  │ API pagination refactor                                    ◌           │ │
 │  │ now                                                       [⌂][…]       │ │
 │  │ Fix migrations                                             ◌           │ │
@@ -97,39 +97,46 @@ later SessionEnd cannot erase completion attention.
 
 ## Focus search
 
-`Cmd+F` on macOS and `Ctrl+F` on Windows activate the Focus column's own title filter. There is no
-search modal, no separate result list, and no second search surface:
+The Focus header contains one right-aligned Search button. It and `Cmd+F` on macOS or `Ctrl+F` on
+Windows open the same contained modal; using the shortcut again closes it:
 
 ```text
-┌───────────────────────────────────────────┐
-│ [ ⌕ ops git________________ ] [Read all]  │  Cmd+F focuses this input
-│ ops-git sync failures                 ●   │  matched card, normal card behavior
-│ 12m                            [⌂][…]    │
-└───────────────────────────────────────────┘
+┌ Search threads ─────────────────────────────────────────┐
+│ [ ⌕ ops git________________________________________ × ] │  fixed input
+│ ╔ ◉ ops-git sync failures                         ● ═╗ │
+│ ║ latest question                                  ║ │  selected normal card
+│ ║ 12m                                      [⌂][…] ║ │
+│ ╚═══════════════════════════════════════════════════╝ │
+│ ┌ ◉ another normal ThreadCard ─────────────────────┐ │
+│ └───────────────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────┘
 ```
 
 The query is normalized (`NFKC`), lowercased, and split into tokens on whitespace plus `-`, `_`,
 `.`, `/`, `\`, `:`, and `|`; the same split is applied to `thread.title`. Every query token must be
 contained in some title token, and order does not matter, so `ops git` and `git ops` both match
-`ops-git`. An empty, whitespace-only, or separator-only query is not a filter and the complete list
-remains visible. Only `thread.title` is matched — never thread ID, `cwd`, Project name, prompt, or
-response content — and a thread with no resolved title never matches a non-empty query.
+`ops-git`. An empty, whitespace-only, or separator-only query renders no cards and a start-typing
+prompt. Only `thread.title` is matched — never thread ID, `cwd`, Project name, prompt, or response
+content — and a thread with no resolved title never matches a non-empty query.
 
-Filtering narrows the real card list, so a matched row keeps its provider mark, working loader,
-question echo, relative time, folder tooltip, overflow menu, unread dot, and card-level
-keyboard focus. The title filter is the only narrowing control on this board.
+Results directly render the existing `ThreadCard`, so provider mark, working loader, question echo,
+relative time, folder tooltip, overflow menu, unread dot, and card accessibility stay identical to
+the board. Search never narrows the Focus list behind the modal.
 
 | input | behavior |
 |---|---|
-| `Cmd+F` / `Ctrl+F` | suppress native page Find and focus the header input; repeating just refocuses |
-| typing | update the draft immediately; a leading-plus-trailing 120ms throttle publishes it to the list, and the trailing run always uses the newest keystroke |
-| clear icon | when text is present, clear draft and query immediately and keep focus in the input |
-| `Escape` in the input | clear the query and keep focus in the input |
+| Search or shortcut while closed | suppress native page Find, open a clean modal, and focus its input |
+| shortcut while open | close and clear the modal |
+| typing | update the draft immediately; a leading-plus-trailing 120ms throttle publishes it to the result list |
+| Up / Down | synchronously commit the latest draft, wrap selection, and scroll it into view |
+| Enter | synchronously commit the latest draft and open the selected provider-qualified session; modal stays open |
+| click | select a result without stealing input focus; existing card controls retain their behavior |
+| Escape, Close, or mask | close and clear query plus selection |
 
-The input is never hidden, so no state can leave an invisible filter behind. Its native clear icon,
-`Escape`, and unmount clear draft and query together; the interactive clear paths keep input focus.
-The border and focused state reuse the native Arco treatment already used by the Submodules search
-input, with no EyesOnAgents-only outline or custom clear glyph.
+Selection is retained by `sessionKey` through snapshot updates and falls back to the first match if
+that key disappears. The popup is anchored inside `.eyes-on-agents__main`; the input stays fixed and
+only results scroll. The whole modal is viewport-bounded. One restrained Royal Blue ring/surface
+marks the selection without inventing a second card design.
 
 ## Header behavior
 
@@ -253,7 +260,7 @@ card to one neutral line and leaves no directory, receipt, setup guide, or plugi
 ```
 
 The folded state adds no separator, border, shadow, or extra status row. Existing Claude cards are
-removed from Focus and its Project/title filters in one snapshot update;
+removed from Focus and modal search results in one snapshot update;
 their persisted annotations return when the provider is enabled. The switch remains available when
 the saved preference is invalid so it can replace the value. The existing plugin removal control is
 labelled **Remove plugin**, avoiding ambiguity with the provider switch.
@@ -316,48 +323,23 @@ latest-question data; activation and manual Refresh retain full inventory reconc
 
 ## Focus column
 
-The Focus header *is* the search row: an always-visible input that takes the remaining width, then
-`Read all`. There is no target glyph, no `Focus` heading, no search toggle, and no close control, so
-the filter costs no interaction before use. The title is a non-editable heading: there is no inline edit, content-measuring input,
-overflow menu, Delete action, drag handle, or reorder affordance anywhere in the header. No thread or
-filtered-result count is rendered there.
-
-`Read all` trails the input, is always present to keep the header stable, and is disabled when no
-completed unread attention item can be cleared. While its mutation is in flight it shows the existing mini-button
-loading treatment and is disabled with the other foreground board actions.
+The Focus header has one right-aligned, icon-only Search button. There is no `Focus` heading,
+persistent input, visible **Read all**, count, inline edit, overflow menu, Delete action, drag handle,
+or reorder affordance. The Search tooltip includes the platform shortcut and its accessible label
+remains plain Search.
 
 Focus paints nothing at all: no surface, no radius, no padding of its own. Hierarchy comes from the
 canvas → white card contrast alone, so the header needs no divider and the column needs no border,
-top rule, or shadow. Text actions take their ink from `theme.ts` arcoblue-5 and show an arcoblue-2
-surface on hover — a text button must react with a surface, not only a color shift — and the search
-field reads as a plain white input.
+top rule, or shadow. The Search control takes its ink from `theme.ts` arcoblue-5 and shows an
+arcoblue-2 surface on hover; the modal field reads as a plain white input.
 
 The scrollable column body has no top padding, so the first thread begins directly below the header
 region. It retains 9px horizontal and bottom padding for
 column-edge spacing.
 
-`Cmd+F` / `Ctrl+F` focuses that input and nothing else; a second press refocuses. The placeholder
-names the platform's own shortcut — `Search titles (⌘F)` on macOS, `Search titles (Ctrl+F)` on
-Windows — and the accessible label stays the plain search label. Arco's native clear icon appears
-only while text is present; it and `Escape` clear the query and keep focus there. Its token matching,
-clear, and Escape contract is defined in
-[Focus search](#focus-search). The row and its controls use quiet background contrast, mini sizing,
-and the same native border/focus treatment as the Submodules search input.
-
-There is no Project filter. The title filter is the column's only narrowing control, so the empty
-state has two cases: an active title filter shows the title-search text, otherwise the Focus empty
-text. Main-side Project metadata is still resolved and stored; nothing renders it.
-
-The Focus header's `Read all` is a compact text action with the same transparent, borderless header
-treatment. Clicking it clears the persisted unread marker for every currently visible unread
-thread in a confirmed terminal state — `idle`, `failed`, or `ended` — in one SQLite mutation. The
-same snapshot removes each corresponding red Open dot in place; because Focus now lists every
-visible thread, an acknowledged row stays on the board without its dot instead of leaving. Working,
-waiting, and `unknown` rows are deliberately not acknowledged: they retain the
-latent unread marker that makes a later idle transition visible even if its terminal event is
-missed. The action is enabled only while such a terminal unread row exists, never opens Codex or
-changes `last_opened_*`, and a later accepted active or terminal observation may set a cleared
-thread unread again.
+`Cmd+F` / `Ctrl+F` toggles the modal defined in [Focus search](#focus-search). There is no Project
+filter and no board narrowing state. Main-side Project metadata and the bulk-read mutation remain
+stored/reachable below the renderer; neither is exposed in this header.
 
 Thread cards are not draggable and there is no drop target: Domain assignment has no UI. Stored
 `domain_id` values keep their last value and are never rewritten from this surface.
@@ -412,7 +394,7 @@ Every openable card participates in card-level keyboard focus; the menu's open i
 observation read after the fixed deep link is accepted. Codex uses `codex://threads/<uuid>`. A
 Claude row with a unique `desktopSessionId` uses
 `claude://claude.ai/epitaxy/<desktopSessionId>`. Claude rows without that trusted Desktop route are
-Main-private inventory and do not render in Focus or its title filter. A
+Main-private inventory and do not render in Focus or modal search results. A
 visible Claude card's More menu exposes **Copy session path** when a canonical JSONL exists.
 Selecting or copying a path never marks read.
 
@@ -440,12 +422,12 @@ Thread order is intentionally not separately persisted.
 ## Focus ordering
 
 Focus lists every visible thread — not only attention items — and orders them with the same
-comparator it always used. Expanding membership must not change ordering:
+stable comparator, with visible completed attention promoted ahead of background work:
 
 1. waiting for approval;
 2. waiting for user input;
-3. working;
-4. newly completed unread;
+3. visible unread dot (`idle`, `failed`, `ended`, or `unknown` + unread);
+4. working, even when its unread bit is latent;
 5. newest current-state entry within the same active group;
 6. newest activity within the same non-active group;
 7. provider-qualified session key ascending as the stable final tie-breaker.
@@ -457,9 +439,9 @@ reply-only metadata update may not.
 
 Opening any card records deep-link evidence only after the deep link succeeds, and acknowledges
 unread only for a confirmed terminal card. An acknowledged card drops out of the unread rank and
-sorts among ordinary threads by activity; it stays on the board. A working,
-waiting, or `unknown` card keeps its active rank and its latent unread marker
-until its state actually resolves.
+sorts among ordinary threads by activity; it stays on the board. Waiting rows remain highest.
+Working stays below visible red-dot rows and keeps its latent unread marker until its state actually
+resolves. An unread `unknown` row shows its dot and belongs to the visible unread tier.
 
 ## States
 
@@ -481,9 +463,10 @@ until its state actually resolves.
 | latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
 | latest question pending | one muted localized pending line; no spinner or false claim that a request is running |
 | latest question unavailable/default-off | no question line and no additional card height |
-| empty query | placeholder names the platform shortcut; the full list remains |
-| search query has no matches | title-search-specific empty text appears inside the column |
-| `Cmd+F` pressed again | the input regains focus and the query is preserved |
+| search closed | complete board plus one Search button |
+| search open, empty query | focused modal input plus start-typing prompt; no result cards |
+| search query has no matches | modal-specific no-results text; board unchanged behind it |
+| `Cmd+F` pressed again | modal closes and clears transient query/selection |
 | App Server error | neutral/error banner with retry; header Refresh remains available and persisted states are not rewritten |
 | bridge absent | App Server remains usable; Desktop coverage note appears in connection panel |
 | any Codex bridge state | aggregate status sentence, **Check status**, and the default-off latest-question Switch remain visible; other rows are state-specific |
@@ -516,8 +499,8 @@ until its state actually resolves.
   Refresh, bridge, and pin controls stay visible and reachable.
 - A long thread list scrolls inside the column body, so the board itself never scrolls vertically.
 - Dialogs and connection panels remain within the viewport and own their vertical scrolling.
-- The Focus filter row is a plain search input over the real card list, so filtered results keep
-  normal card semantics and card-level keyboard focus.
+- Modal results are real thread cards with a visible selected state; keyboard navigation remains in
+  the fixed search input and card controls keep their established semantics.
 - The only card-level animation is the working loader; it becomes static under reduced-motion.
 
 ## Component boundary
@@ -530,10 +513,13 @@ EyesOnAgentsApp
   ├─ ConnectionPanel
   │    ├─ CodexConnectionSection
   │    └─ ClaudeConnectionSection
-  └─ AgentBoard
-       └─ FocusColumn (every visible thread)
-            ├─ header search input + Read all
-            └─ ThreadCard × N
+  ├─ AgentBoard
+  │    └─ FocusColumn (every visible thread)
+  │         ├─ header Search button
+  │         └─ ThreadCard × N
+  └─ ThreadSearch modal
+       ├─ fixed search input
+       └─ selected ThreadCard × N
 ```
 
 Components may follow Todo's interaction pattern, but they must not import Todo-private stores or

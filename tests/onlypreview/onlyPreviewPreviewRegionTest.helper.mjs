@@ -217,9 +217,11 @@ const descriptorFor = (relativePath, kind, assetUrl) => {
             ? 'audio/mpeg'
             : kind === 'video'
               ? 'video/mp4'
-              : extension === '.html'
-                ? 'text/html; charset=utf-8'
-                : 'text/plain; charset=utf-8',
+              : kind === 'diagram'
+                ? 'application/vnd.jgraph.mxfile'
+                : extension === '.html'
+                  ? 'text/html; charset=utf-8'
+                  : 'text/plain; charset=utf-8',
     size: 3,
     modifiedAt: 1,
     language: kind === 'text' ? 'markdown' : '',
@@ -379,6 +381,7 @@ const findSpecs = {
   'chromium-pdf': { surface: 'chrome', find: { mode: 'webcontents-find' } },
   'xlsx-grid': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'sheet' } },
   'docx-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
+  'drawio-viewer': { surface: 'vue', find: { mode: 'none' } },
   image: { surface: 'vue', find: { mode: 'none' } },
   audio: { surface: 'vue', find: { mode: 'none' } },
   video: { surface: 'vue', find: { mode: 'none' } },
@@ -402,6 +405,11 @@ const viewModule = loadTypeScriptModule(
       }
     }
   }
+);
+
+const previewAdapterModule = loadTypeScriptModule(
+  'src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts',
+  {}
 );
 
 const regionModule = loadTypeScriptModule(
@@ -440,10 +448,16 @@ const regionModule = loadTypeScriptModule(
       })
     },
     '@shared/onlypreview/onlyPreview.types': {
-      ONLY_PREVIEW_MAX_DOCUMENT_BYTES: 25 * 1024 * 1024,
-      ONLY_PREVIEW_MAX_IMAGE_BYTES: 100 * 1024 * 1024,
-      ONLY_PREVIEW_MAX_PDF_BYTES: 100 * 1024 * 1024,
-      ONLY_PREVIEW_MAX_SHEET_BYTES: 25 * 1024 * 1024,
+      getOnlyPreviewFileSizeLimit: (adapterId) =>
+        ({
+          'chromium-pdf': 100 * 1024 * 1024,
+          'xlsx-grid': 25 * 1024 * 1024,
+          'docx-dom': 25 * 1024 * 1024,
+          'drawio-viewer': 20 * 1024 * 1024,
+          image: 100 * 1024 * 1024,
+          audio: null,
+          video: null
+        })[adapterId] ?? 10 * 1024 * 1024,
       ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT: 'onlypreview/previewPresentation'
     },
     '@shared/onlypreview/onlyPreviewFind.registry': {
@@ -471,6 +485,7 @@ const regionModule = loadTypeScriptModule(
       onlyPreviewWorkspaceRegistry: workspaceRegistry
     },
     './onlyPreviewFind.service': { OnlyPreviewFindService: FakeFindService },
+    './onlyPreviewPreviewAdapter.service': previewAdapterModule,
     './onlyPreviewPreviewView.service': viewModule
   }
 );

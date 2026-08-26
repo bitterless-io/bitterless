@@ -4,193 +4,114 @@ import type {
 } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewTreeRow } from './onlyPreviewShell.type';
 
-const EMPTY_ONLY_PREVIEW_REVEAL_ROOTS: ReadonlySet<string> = new Set();
-
 export const getOnlyPreviewParentPath = (relativePath: string): string => {
   const separator = relativePath.lastIndexOf('/');
   return separator < 0 ? '' : relativePath.slice(0, separator);
 };
 
-export const hasOnlyPreviewRevealAncestor = (
-  relativePath: string,
-  revealRoots: ReadonlySet<string>
-): boolean => {
-  let current = getOnlyPreviewParentPath(relativePath);
-  while (current) {
-    if (revealRoots.has(current)) return true;
-    current = getOnlyPreviewParentPath(current);
-  }
-  return false;
-};
-
-export const buildOnlyPreviewTreeRows = (
-  index: OnlyPreviewIndex | null,
-  rawQuery: string,
-  expandedPaths: ReadonlySet<string>,
-  visiblePathSnapshot?: ReadonlySet<string>,
-  revealRoots: ReadonlySet<string> = EMPTY_ONLY_PREVIEW_REVEAL_ROOTS
+const buildOnlyPreviewChildRows = (
+  index: OnlyPreviewIndex,
+  expandedPaths: ReadonlySet<string>
 ): OnlyPreviewTreeRow[] => {
-  if (!index) return [];
   const entriesByParent = new Map<string, OnlyPreviewIndexEntry[]>();
   for (const entry of index.entries) {
     const siblings = entriesByParent.get(entry.parentRelativePath) || [];
     siblings.push(entry);
     entriesByParent.set(entry.parentRelativePath, siblings);
   }
-
   const rows: OnlyPreviewTreeRow[] = [];
   const visit = (parent: string, depth: number): void => {
-    const children = entriesByParent.get(parent) || [];
-    for (const entry of children) {
-      const hasChildren = entry.nodeKind === 'directory';
+    for (const entry of entriesByParent.get(parent) || []) {
       const expanded = expandedPaths.has(entry.relativePath);
-      rows.push({ entry, depth, expanded, hasChildren });
-      if (entry.nodeKind === 'directory' && expanded) {
-        visit(entry.relativePath, depth + 1);
-      }
+      rows.push({
+        entry,
+        depth,
+        expanded,
+        hasChildren: entry.nodeKind === 'directory'
+      });
+      if (entry.nodeKind === 'directory' && expanded) visit(entry.relativePath, depth + 1);
     }
   };
-  visit('', 0);
-  const query = rawQuery.trim().normalize('NFKC').toLocaleLowerCase();
-  if (!query) return rows;
-  const visibleRows = visiblePathSnapshot
-    ? rows.filter((row) => visiblePathSnapshot.has(row.entry.relativePath))
-    : rows;
-
-  const included = new Set<string>();
-  for (const row of visibleRows) {
-    if (!row.entry.name.normalize('NFKC').toLocaleLowerCase().includes(query)) continue;
-    let current = row.entry.relativePath;
-    while (current) {
-      included.add(current);
-      current = getOnlyPreviewParentPath(current);
-    }
-  }
-  return rows.filter(
-    (row) => {
-      const relativePath = row.entry.relativePath;
-      return (
-        ((!visiblePathSnapshot || visiblePathSnapshot.has(relativePath)) &&
-          included.has(relativePath)) ||
-        (revealRoots.size > 0 && hasOnlyPreviewRevealAncestor(relativePath, revealRoots))
-      );
-    }
-  );
+  visit('', 1);
+  return rows;
 };
 
-export const snapshotOnlyPreviewVisiblePaths = (
+export const buildOnlyPreviewRootedTreeRows = (
   index: OnlyPreviewIndex | null,
+  rootName: string,
   expandedPaths: ReadonlySet<string>
-): ReadonlySet<string> =>
-  new Set(buildOnlyPreviewTreeRows(index, '', expandedPaths).map((row) => row.entry.relativePath));
+): OnlyPreviewTreeRow[] => {
+  if (!index || !rootName) return [];
+  const expanded = expandedPaths.has('');
+  const rootEntry: OnlyPreviewIndexEntry = {
+    relativePath: '',
+    parentRelativePath: '',
+    name: rootName,
+    nodeKind: 'directory',
+    size: 0,
+    modifiedAt: 0,
+    previewHint: 'unsupported',
+    mediaType: 'unknown',
+    isText: false
+  };
+  return [
+    { entry: rootEntry, depth: 0, expanded, hasChildren: true },
+    ...(expanded ? buildOnlyPreviewChildRows(index, expandedPaths) : [])
+  ];
+};
 
-export class OnlyPreviewTreeFilter {
-  private expandedPathSnapshot: ReadonlySet<string> | undefined;
-  private visiblePathSnapshot: ReadonlySet<string> | undefined;
-  private readonly revealRoots = new Set<string>();
-  private readonly revealRootsByAncestor = new Map<string, Set<string>>();
-  private workspaceId = '';
+export type OnlyPreviewTreeNavigationKey =
+  | 'ArrowDown'
+  | 'ArrowUp'
+  | 'ArrowLeft'
+  | 'ArrowRight'
+  | 'Home'
+  | 'End';
 
-  begin(index: OnlyPreviewIndex | null, expandedPaths: ReadonlySet<string>): void {
-    if (this.expandedPathSnapshot) return;
-    this.capture(index, expandedPaths);
+export const moveOnlyPreviewTreeFocus = (
+  rows: readonly OnlyPreviewTreeRow[],
+  currentPath: string,
+  key: OnlyPreviewTreeNavigationKey
+): { relativePath: string; toggleDirectory?: string } => {
+  if (!rows.length) return { relativePath: '' };
+  const currentIndex = Math.max(
+    0,
+    rows.findIndex((row) => row.entry.relativePath === currentPath)
+  );
+  const current = rows[currentIndex];
+  if (key === 'ArrowDown') {
+    return { relativePath: rows[Math.min(rows.length - 1, currentIndex + 1)].entry.relativePath };
   }
-
-  private capture(index: OnlyPreviewIndex | null, expandedPaths: ReadonlySet<string>): void {
-    this.clearRevealRoots();
-    this.expandedPathSnapshot = new Set(expandedPaths);
-    this.visiblePathSnapshot = snapshotOnlyPreviewVisiblePaths(index, expandedPaths);
-    this.workspaceId = index?.workspaceId || '';
+  if (key === 'ArrowUp') {
+    return { relativePath: rows[Math.max(0, currentIndex - 1)].entry.relativePath };
   }
-
-  end(expandedPaths: Set<string>): void {
-    this.clearRevealRoots();
-    if (!this.expandedPathSnapshot) return;
-    expandedPaths.clear();
-    for (const relativePath of this.expandedPathSnapshot) expandedPaths.add(relativePath);
-    this.expandedPathSnapshot = undefined;
-    this.visiblePathSnapshot = undefined;
-    this.workspaceId = '';
-  }
-
-  transition(
-    index: OnlyPreviewIndex | null,
-    expandedPaths: Set<string>,
-    previousQuery: string,
-    nextQuery: string
-  ): void {
-    const wasActive = !!previousQuery.trim();
-    const isActive = !!nextQuery.trim();
-    if (!wasActive && isActive) this.begin(index, expandedPaths);
-    else if (wasActive && !isActive) this.end(expandedPaths);
-    else if (isActive && previousQuery !== nextQuery) this.clearRevealRoots();
-  }
-
-  clearRevealRoots(): void {
-    this.revealRoots.clear();
-    this.revealRootsByAncestor.clear();
-  }
-
-  toggleDirectory(query: string, relativePath: string, expandedPaths: Set<string>): boolean {
-    if (query.trim()) {
-      if (!this.revealRoots.has(relativePath)) {
-        this.addRevealRoot(relativePath);
-        expandedPaths.add(relativePath);
-        return true;
-      }
-      this.collapseDirectory(relativePath, expandedPaths);
-      return false;
+  if (key === 'Home') return { relativePath: rows[0].entry.relativePath };
+  if (key === 'End') return { relativePath: rows.at(-1)?.entry.relativePath || '' };
+  if (key === 'ArrowRight' && current.entry.nodeKind === 'directory') {
+    if (current.hasChildren && !current.expanded) {
+      return {
+        relativePath: current.entry.relativePath,
+        toggleDirectory: current.entry.relativePath
+      };
     }
-    if (expandedPaths.has(relativePath)) {
-      expandedPaths.delete(relativePath);
-      return false;
-    }
-    expandedPaths.add(relativePath);
-    return true;
-  }
-
-  collapseDirectory(relativePath: string, expandedPaths: Set<string>): void {
-    expandedPaths.delete(relativePath);
-    const descendants = [...(this.revealRootsByAncestor.get(relativePath) || [])];
-    for (const revealRoot of descendants) {
-      this.revealRoots.delete(revealRoot);
-      let current = revealRoot;
-      while (current) {
-        const indexed = this.revealRootsByAncestor.get(current);
-        indexed?.delete(revealRoot);
-        if (indexed?.size === 0) this.revealRootsByAncestor.delete(current);
-        current = getOnlyPreviewParentPath(current);
-      }
+    const firstChild = rows[currentIndex + 1];
+    if (firstChild && firstChild.depth > current.depth) {
+      return { relativePath: firstChild.entry.relativePath };
     }
   }
-
-  private addRevealRoot(relativePath: string): void {
-    this.revealRoots.add(relativePath);
-    let current = relativePath;
-    while (current) {
-      const indexed = this.revealRootsByAncestor.get(current) || new Set<string>();
-      indexed.add(relativePath);
-      this.revealRootsByAncestor.set(current, indexed);
-      current = getOnlyPreviewParentPath(current);
+  if (key === 'ArrowLeft') {
+    if (current.entry.nodeKind === 'directory' && current.expanded) {
+      return {
+        relativePath: current.entry.relativePath,
+        toggleDirectory: current.entry.relativePath
+      };
+    }
+    if (current.entry.relativePath !== '') {
+      const parent = rows.find(
+        (row) => row.entry.relativePath === current.entry.parentRelativePath
+      );
+      if (parent) return { relativePath: parent.entry.relativePath };
     }
   }
-
-  rows(
-    index: OnlyPreviewIndex | null,
-    query: string,
-    expandedPaths: ReadonlySet<string>
-  ): OnlyPreviewTreeRow[] {
-    if (query.trim() && index && index.workspaceId !== this.workspaceId) {
-      this.capture(index, expandedPaths);
-    }
-    return buildOnlyPreviewTreeRows(
-      index,
-      query,
-      expandedPaths,
-      this.visiblePathSnapshot,
-      this.revealRoots
-    );
-  }
-}
-
-export const onlyPreviewTreeFilter = new OnlyPreviewTreeFilter();
+  return { relativePath: current.entry.relativePath };
+};

@@ -599,6 +599,8 @@ export interface TabInfo {
   debuggerEnabled: boolean
   /** Live CDP attachment state. Can lag briefly while a new tab is warming. */
   debuggerAttached: boolean
+  /** Page load in flight; the tab chip shows a spinner until stop/failure/teardown/watchdog. */
+  loading: boolean
 }
 
 // A window-content-relative rectangle (DIP), as read from a placeholder element's
@@ -608,13 +610,6 @@ export interface ViewRect {
   y: number
   width: number
   height: number
-}
-
-// Broadcast on 'coach/load-progress' from the operation view's load events; the
-// header progress bar animates a simulated bar between start (true) and stop (false).
-export interface LoadProgress {
-  loading: boolean
-  ts: number
 }
 
 export interface CoachSettings {

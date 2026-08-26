@@ -18,6 +18,11 @@ import {
   ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT,
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT
 } from '@shared/onlypreview/onlyPreviewSearch.type';
+import {
+  isOnlyPreviewGlobalSearchBatch,
+  isOnlyPreviewGlobalSearchPreview,
+  isOnlyPreviewGlobalSearchResponse
+} from './fileSearchGlobalResult.validator';
 export type FileSearchRuntimeClient = FileSearchRuntimePrivateApi;
 
 interface PendingCall {
@@ -30,6 +35,7 @@ interface PendingExpectation {
   generation: number | null;
   requestId: string | null;
   directoryToken: string | null;
+  resultToken: string | null;
   maxResults: number | null;
 }
 
@@ -261,6 +267,7 @@ export class FileSearchRuntimeRelayService {
       generation: this._isGeneration(record.generation) ? record.generation : null,
       requestId: this._isBoundedToken(record.requestId) ? record.requestId : null,
       directoryToken: this._isBoundedToken(record.directoryToken) ? record.directoryToken : null,
+      resultToken: this._isBoundedToken(record.resultToken) ? record.resultToken : null,
       maxResults:
         Number.isSafeInteger(record.maxResults) &&
         (record.maxResults as number) >= 0 &&
@@ -274,7 +281,11 @@ export class FileSearchRuntimeRelayService {
     if (!this._isRecord(value)) return false;
     if (value.ok === false) return this._isFailureResult(value);
     if (value.ok !== true || !this._hasExactKeys(value, ['ok', 'value'])) return false;
-    if (expectation.method === 'cancel' || expectation.method === 'shutdown') {
+    if (
+      expectation.method === 'prioritizeFile' ||
+      expectation.method === 'cancel' ||
+      expectation.method === 'shutdown'
+    ) {
       return value.value === undefined;
     }
     if (expectation.workspaceId === null || expectation.generation === null) return false;
@@ -291,6 +302,9 @@ export class FileSearchRuntimeRelayService {
           expectation.directoryToken
         )
       );
+    }
+    if (expectation.method === 'preview') {
+      return expectation.resultToken !== null && isOnlyPreviewGlobalSearchPreview(value.value);
     }
     return (
       expectation.requestId !== null &&
@@ -316,33 +330,11 @@ export class FileSearchRuntimeRelayService {
   }
 
   private _isSearchResponse(value: unknown, expectation: PendingExpectation): boolean {
-    if (
-      !this._isRecord(value) ||
-      !this._hasExactKeys(value, [
-        'generation',
-        'requestId',
-        'results',
-        'truncated',
-        'workspaceId'
-      ]) ||
-      value.workspaceId !== expectation.workspaceId ||
-      value.generation !== expectation.generation ||
-      value.requestId !== expectation.requestId ||
-      typeof value.truncated !== 'boolean' ||
-      expectation.maxResults === null
-    ) {
-      return false;
-    }
-    return this._isSearchResultArray(value.results, expectation.maxResults);
+    return isOnlyPreviewGlobalSearchResponse(value, expectation);
   }
 
   private _isSearchBatch(active: ActiveRuntime, value: Record<string, unknown>): boolean {
-    if (
-      !this._hasExactKeys(value, ['generation', 'requestId', 'results', 'workspaceId']) ||
-      !this._isBoundedToken(value.requestId)
-    ) {
-      return false;
-    }
+    if (!this._isBoundedToken(value.requestId)) return false;
     const matchingSearch = [...active.pending.values()].find(
       ({ expectation }) =>
         expectation.method === 'search' &&
@@ -351,12 +343,10 @@ export class FileSearchRuntimeRelayService {
         expectation.requestId === value.requestId
     );
     if (!matchingSearch) return false;
-    return this._isSearchResultArray(
-      value.results,
-      Math.min(
-        ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS,
-        matchingSearch.expectation.maxResults ?? ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS
-      )
+    return isOnlyPreviewGlobalSearchBatch(
+      value,
+      matchingSearch.expectation,
+      Math.min(ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS, matchingSearch.expectation.maxResults ?? 0)
     );
   }
 

@@ -18,6 +18,50 @@ body,
 
 .maestro-local-home {
   flex: 1;
+  overflow: hidden;
+  background: #fff;
+}
+
+.maestro-local-home__body {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.maestro-local-home__rail {
+  height: 100%;
+  border-right: 1px solid rgb(229 231 235);
+  background: #fff;
+}
+
+.maestro-local-home__content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
   flex-direction: column;
-  background: var(--bl-royalblue-50);
+  background: #fff;
+}
+
+.maestro-local-home-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.maestro-local-home-menu__items {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.maestro-local-home-menu__item:focus-visible {
+  outline: 2px solid var(--bl-royalblue-500);
+  outline-offset: -2px;
 }

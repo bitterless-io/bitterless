@@ -9,4 +9,5 @@ export * from '../../src/main/onlypreview/onlyPreviewClassifier.service';
 export * from '../../src/main/onlypreview/onlyPreviewIndex.service';
 export * from '../../src/main/onlypreview/onlyPreviewOpenRouter.service';
 export * from '../../src/main/onlypreview/onlyPreviewWindowBounds.service';
+export * from '../../src/main/onlypreview/onlyPreviewGlobalSearchFocus.service';
 export * from '../../src/main/onlypreview/onlyPreviewRecentDirectory.service';

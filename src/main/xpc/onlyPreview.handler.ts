@@ -16,11 +16,14 @@ import {
   parseOnlyPreviewFileRef,
   parseOnlyPreviewFindIntent,
   parseOnlyPreviewFindResultRequest,
+  parseOnlyPreviewGlobalSearchFocusRequest,
   parseOnlyPreviewPreviewErrorRequest,
   parseOnlyPreviewPreviewReadyRequest,
   parseOnlyPreviewPreviewRuntimeRequest,
   parseOnlyPreviewPreviewRevisionRequest,
   parseOnlyPreviewProjectItemCopyRequest,
+  parseOnlyPreviewProjectRootCopyRequest,
+  parseOnlyPreviewProjectRootRequest,
   parseOnlyPreviewTextReadRequest
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
@@ -47,6 +50,7 @@ import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.reg
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
 import { onlyPreviewSelectionCoordinator } from '@main/onlypreview/onlyPreviewSelectionCoordinator.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
+import { onlyPreviewGlobalSearchFocusService } from '@main/onlypreview/onlyPreviewGlobalSearchFocus.service';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { i18nHelper } from '@main/i18n/i18n.helper';
 import { registerOnlyPreviewExplicitTarget } from '@main/onlypreview/onlyPreviewExplicitTarget.registry';
@@ -126,6 +130,22 @@ const copyOnlyPreviewProjectItemFromUi = async (
       request
     );
     await onlyPreviewClipboardService.copyProjectItem(item, copyKind);
+  } catch {
+    await showOnlyPreviewCopyFailure(window).catch(() => undefined);
+  }
+};
+
+const copyOnlyPreviewProjectRootFromUi = async (
+  window: BaseWindow,
+  request: { hostToken: string; workspaceId: string },
+  copyKind: OnlyPreviewClipboardCopyKind
+): Promise<void> => {
+  try {
+    const root = await onlyPreviewWorkspaceRegistry.resolveProjectRoot(
+      request.hostToken,
+      request.workspaceId
+    );
+    await onlyPreviewClipboardService.copyProjectItem(root, copyKind);
   } catch {
     await showOnlyPreviewCopyFailure(window).catch(() => undefined);
   }
@@ -410,6 +430,22 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     });
   }
 
+  async restoreGlobalSearchFocus(
+    params: ApiParams<'restoreGlobalSearchFocus'>
+  ): ReturnType<OnlyPreviewApi['restoreGlobalSearchFocus']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewGlobalSearchFocusRequest(params);
+      onlyPreviewHostRegistry.require(request.hostToken, ['content']);
+      if (request.mode === 'opener') {
+        return onlyPreviewGlobalSearchFocusService.restoreOpener(request.hostToken);
+      }
+      onlyPreviewGlobalSearchFocusService.clear(request.hostToken);
+      if (request.mode === 'discard') return false;
+      onlyPreviewPreviewRegionService.focusActiveContent(request.hostToken);
+      return true;
+    });
+  }
+
   async reportPreviewFindResult(
     params: ApiParams<'reportPreviewFindResult'>
   ): ReturnType<OnlyPreviewApi['reportPreviewFindResult']> {
@@ -527,6 +563,62 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
         request,
         request.copyKind
       );
+    });
+  }
+
+  async showProjectRootContextMenu(
+    params: ApiParams<'showProjectRootContextMenu'>
+  ): ReturnType<OnlyPreviewApi['showProjectRootContextMenu']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewProjectRootRequest(params);
+      const window = onlyPreviewWindowHelper.getStandaloneWindow(request.hostToken);
+      const root = await onlyPreviewWorkspaceRegistry.resolveProjectRoot(
+        request.hostToken,
+        request.workspaceId
+      );
+      const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
+      const template: MenuItemConstructorOptions[] = [
+        {
+          id: 'onlypreview-reveal-project-root',
+          label: labels.revealInFolder,
+          click: () => shell.showItemInFolder(root.realPath)
+        },
+        { type: 'separator' },
+        {
+          id: 'onlypreview-copy-project-root',
+          label: labels.copyFolder,
+          accelerator: 'CommandOrControl+C',
+          click: () => void copyOnlyPreviewProjectRootFromUi(window, request, 'item')
+        },
+        {
+          id: 'onlypreview-copy-project-root-path',
+          label: labels.copyPath,
+          accelerator: 'CommandOrControl+Shift+C',
+          click: () => void copyOnlyPreviewProjectRootFromUi(window, request, 'absolute-path')
+        },
+        {
+          id: 'onlypreview-copy-project-root-relative-path',
+          label: labels.copyRelativePath,
+          click: () => void copyOnlyPreviewProjectRootFromUi(window, request, 'relative-path')
+        },
+        {
+          id: 'onlypreview-copy-project-root-name',
+          label: labels.copyName,
+          accelerator: 'CommandOrControl+Alt+C',
+          click: () => void copyOnlyPreviewProjectRootFromUi(window, request, 'name')
+        }
+      ];
+      Menu.buildFromTemplate(template).popup({ window });
+    });
+  }
+
+  async copyProjectRoot(
+    params: ApiParams<'copyProjectRoot'>
+  ): ReturnType<OnlyPreviewApi['copyProjectRoot']> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewProjectRootCopyRequest(params);
+      const window = onlyPreviewWindowHelper.getStandaloneWindow(request.hostToken);
+      await copyOnlyPreviewProjectRootFromUi(window, request, request.copyKind);
     });
   }
 

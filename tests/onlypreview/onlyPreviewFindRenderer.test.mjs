@@ -448,6 +448,9 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
   const toolbar = source(
     'src/renderer/onlypreview/shell/src/components/PreviewToolbar/PreviewToolbar.vue'
   );
+  const globalSearchWorkspace = source(
+    'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.vue'
+  );
   const app = source('src/renderer/onlypreview/shell/src/App.vue');
   const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
   const findService = source('src/main/onlypreview/views/onlyPreviewFind.service.ts');
@@ -471,8 +474,8 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
   assert.match(toolbarStyles, /@container \(max-width:\s*520px\)/);
   assert.match(toolbarStyles, /@container \(max-width:\s*440px\)/);
 
-  assert.match(app, /onlyPreviewProjectSearchStore\.active/);
-  assert.match(app, /ref="searchInputRef"/);
+  assert.match(app, /onlyPreviewGlobalSearchStore\.active/);
+  assert.match(globalSearchWorkspace, /ref="inputRef"/);
   assert.match(previewStore, /ONLY_PREVIEW_FIND_STATE_EVENT/);
   assert.match(previewStore, /nativeFindSuppressesSelection/);
   assert.match(previewStore, /presentation\.adapterId === 'markdown-dom'/);
@@ -490,19 +493,19 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
     windowHelper,
     /const isCurrentFileFindShortcut[\s\S]*?input\.shift[\s\S]*?isCommandModifier/
   );
-  assert.match(windowHelper, /if \(isProjectSearchShortcut\(input\)\) return 'focus-search'/);
+  assert.match(windowHelper, /if \(isGlobalSearchShortcut\(input\)\) return 'focus-search'/);
   assert.match(windowHelper, /if \(isCurrentFileFindShortcut\(input\)\) return 'find-in-file'/);
   assert.match(windowHelper, /createView\(host, 'shell'\)/);
   assert.match(windowHelper, /createView\(host, 'preview', previewRuntimeToken\)/);
   assert.match(windowHelper, /bindChromeShortcuts: \(webContents\)/);
 });
 
-test('Main shortcut predicates route exactly one Project Search secondary modifier', () => {
+test('Main shortcut predicates reserve Shift+CommandOrControl+F for Global Search', () => {
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   for (const platform of ['darwin', 'win32']) {
-    const projectSearch = loadShortcutPredicate(
+    const globalSearch = loadShortcutPredicate(
       windowHelper,
-      'isProjectSearchShortcut',
+      'isGlobalSearchShortcut',
       platform
     );
     const currentFileFind = loadShortcutPredicate(
@@ -511,19 +514,19 @@ test('Main shortcut predicates route exactly one Project Search secondary modifi
       platform
     );
 
-    assert.equal(projectSearch(shortcutInput(platform, { shift: true })), true);
-    assert.equal(projectSearch(shortcutInput(platform, { alt: true })), true);
-    assert.equal(projectSearch(shortcutInput(platform)), false);
-    assert.equal(projectSearch(shortcutInput(platform, { shift: true, alt: true })), false);
-    assert.equal(projectSearch(shortcutInput(platform, { isAutoRepeat: true, alt: true })), false);
-    assert.equal(projectSearch(shortcutInput(platform, { type: 'keyUp', alt: true })), false);
-    assert.equal(projectSearch(shortcutInput(platform, { key: 'g', alt: true })), false);
+    assert.equal(globalSearch(shortcutInput(platform, { shift: true })), true);
+    assert.equal(globalSearch(shortcutInput(platform, { alt: true })), false);
+    assert.equal(globalSearch(shortcutInput(platform)), false);
+    assert.equal(globalSearch(shortcutInput(platform, { shift: true, alt: true })), false);
+    assert.equal(globalSearch(shortcutInput(platform, { isAutoRepeat: true, shift: true })), false);
+    assert.equal(globalSearch(shortcutInput(platform, { type: 'keyUp', shift: true })), false);
+    assert.equal(globalSearch(shortcutInput(platform, { key: 'g', shift: true })), false);
     assert.equal(
-      projectSearch(shortcutInput(platform, { control: false, meta: false, alt: true })),
+      globalSearch(shortcutInput(platform, { control: false, meta: false, shift: true })),
       false
     );
     assert.equal(
-      projectSearch(shortcutInput(platform, { control: true, meta: true, alt: true })),
+      globalSearch(shortcutInput(platform, { control: true, meta: true, shift: true })),
       false
     );
 
@@ -538,7 +541,7 @@ test('Main shortcut predicates route exactly one Project Search secondary modifi
   );
   assert.match(
     resolveCommandBody,
-    /isProjectSearchShortcut\(input\)[\s\S]*return 'focus-search'[\s\S]*isCurrentFileFindShortcut\(input\)[\s\S]*return 'find-in-file'/
+    /isGlobalSearchShortcut\(input\)[\s\S]*return 'focus-search'[\s\S]*isCurrentFileFindShortcut\(input\)[\s\S]*return 'find-in-file'/
   );
   const shortcutBindingBody = windowHelper.slice(
     windowHelper.indexOf('bindNativeShortcuts('),
@@ -550,6 +553,11 @@ test('Main shortcut predicates route exactly one Project Search secondary modifi
   );
   assert.match(
     shortcutBindingBody,
-    /command === 'focus-project' \|\| command === 'focus-search'[\s\S]*this\.shellView\.webContents\.focus\(\)[\s\S]*ONLY_PREVIEW_FOCUS_SEARCH_EVENT/
+    /command === 'focus-search'[\s\S]*closeFind\(host\.hostToken\)[\s\S]*onlyPreviewGlobalSearchFocusService\.capture\(host\.hostToken, origin, webContents\)[\s\S]*this\.shellView\.webContents\.focus\(\)[\s\S]*ONLY_PREVIEW_FOCUS_SEARCH_EVENT[\s\S]*\{ hostId: host\.hostId, origin \}/
   );
+  const globalSearchBranch = shortcutBindingBody.slice(
+    shortcutBindingBody.indexOf("if (command === 'focus-search')"),
+    shortcutBindingBody.indexOf("if (command === 'focus-project')")
+  );
+  assert.doesNotMatch(globalSearchBranch, /focusActiveContent/);
 });

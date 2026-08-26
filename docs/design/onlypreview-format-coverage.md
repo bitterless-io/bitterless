@@ -9,7 +9,9 @@ XLSX/XLSM 为 `implemented; owner verification pending`（已通过独立复核�
 媒体真话态为 `implemented; owner verification pending`（独立复核已通过，等待 Ral 真实图片/音视频
 视觉与运行时验证）；025 设计收口的
 [completion audit](../plan/reviews/onlypreview-design-completion-025-1.md) 已 **PASS**，当前为
-`implemented; owner verification pending` ·
+`implemented; owner verification pending`；032 Draw.io 的
+[independent review 3](../plan/reviews/onlypreview-drawio-readonly-032-3.md) 已 **PASS**，等待 Ral
+运行时/视觉验证 ·
 开题 2026-08-18 · Ral 于 2026-08-20 指定本文
 已定内容为持续交付目标 · 未定且非阻塞的结论仍以 [#pending-questions](#pending-questions--待定项) 为准。**
 
@@ -37,6 +39,7 @@ Performance 与 `docx-preview` / ExcelJS 官方文档，见 [#1](#1--读取与�
 | G5 解析隔离      | Main 不做整包缓冲或 Office 解析；preload 不承担计算；XLSX 可终止、DOCX 被隔离在 `vuePreviewView` | ⚠ 020/021 均已通过独立复核并等待 Ral 真实文件验证 → [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证) |
 | G6 文本输入有界  | 文本类后缀先选 adapter，再按大小限制 Preview 与正文索引；限额内允许乱码，不做内容拒绝            | ✅ 023 已实施 → [#8.1](#81--文本候选按后缀与大小准入-已定-2026-08-20-已实施)                                                           |
 | G7 格式路由      | HTML/PDF 进入 `chromePreviewView`；需要代码或组件处理的格式进入 `vuePreviewView`                 | ✅ 024 已实施 → [姊妹文档 #7](onlypreview-preview-merge-find.md#dual-preview-region)                                                   |
+| G8 Draw.io       | `.drawio` 先交付本地只读预览、缩放/分页；不加载远端服务、iframe、图片资源或完整编辑器            | ✅ 032 已实施并通过独立复核，等待 Ral 验证；图元文字搜索后置 → [#9](#9--drawio-已定-2026-08-26-已实施)                               |
 
 覆盖面不是唯一目标。**能渲染的高保真渲染，不能渲染的说清楚为什么并给出外部打开**，比半坏的渲染更有用。
 
@@ -56,7 +59,8 @@ Main protocol：校验 token / host / workspace / path → async createReadStrea
         │    └─ PDF  → Chromium 内置 PDF viewer
         └─ vuePreviewView fetch(assetUrl) → ArrayBuffer
              ├─ XLSX/XLSM → transferable ArrayBuffer → disposable Web Worker → ExcelJS → cell model
-             └─ DOCX      → docx-preview detached DOM → sanitize → mount
+             ├─ DOCX      → docx-preview detached DOM → sanitize → mount
+             └─ Draw.io   → disposable XML preflight Worker → local pinned viewer → owned DOM mount
 ```
 
 024 已用 `onlyPreviewAsset.registry.ts#createOnlyPreviewFileResponse()` 把 `FileHandle.createReadStream()`
@@ -66,15 +70,22 @@ Main 仍负责安全授权与异步流创建，但不执行同步整文件读取
 实施并通过独立复核；DOCX parser 已由 021 实施，当前状态为
 `implemented; owner verification pending`，独立复核已通过，等待 Ral 真实 DOCX 视觉/运行时验证。
 
-| 层              | 改动                                                                                                                                         |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Main classifier | 新增扩展名集合与 MIME，新增 `kind`：`sheet`、`document`（`slides` 视 PQ-B）                                                                  |
-| Main 资产注册   | 保持 capability token + 相对路径 + async stream；不得 `readFile()` 整包或调用 Office parser                                                  |
-| preload         | 只启动最小 capability / XPC bridge；不得导入解析引擎、接收整包 bytes 或生成 DOM                                                              |
-| Chrome 直出单元 | `chromePreviewView` 不加载 renderer bundle 或 preload，只导航到 Main containment protocol；仅用于 HTML/PDF                                   |
-| XLSX 执行单元   | `vuePreviewView` 异步取得 `ArrayBuffer` 后以 transfer list 零拷贝交给无 Node 权限的 disposable Web Worker；切文件 `terminate()` worker       |
-| DOCX 执行单元   | Worker 可先做 ZIP metadata / 展开量预检；`docx-preview` 需要 DOM，最终解析渲染留在 `vuePreviewView`，先输出到 detached container，清洗后挂载 |
-| 能力/权限边界   | renderer / worker 都拿不到绝对路径、Node、文件写入；只有不可复用的 asset URL                                                                 |
+| 层               | 改动                                                                                                                                         |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Main classifier  | 扩展名集合与 MIME 增加 `kind`：`diagram` / adapter `drawio-viewer`；`slides` 仍视 PQ-B                                                       |
+| Main 资产注册    | 保持 capability token + 相对路径 + async stream；不得 `readFile()` 整包或调用 Office parser                                                  |
+| preload          | 只启动最小 capability / XPC bridge；不得导入解析引擎、接收整包 bytes 或生成 DOM                                                              |
+| Chrome 直出单元  | `chromePreviewView` 不加载 renderer bundle 或 preload，只导航到 Main containment protocol；仅用于 HTML/PDF                                   |
+| XLSX 执行单元    | `vuePreviewView` 异步取得 `ArrayBuffer` 后以 transfer list 零拷贝交给无 Node 权限的 disposable Web Worker；切文件 `terminate()` worker       |
+| DOCX 执行单元    | Worker 可先做 ZIP metadata / 展开量预检；`docx-preview` 需要 DOM，最终解析渲染留在 `vuePreviewView`，先输出到 detached container，清洗后挂载 |
+| Draw.io 执行单元 | `vuePreviewView` 把 bytes transfer 给 disposable Worker 做 XML/压缩页预检；通过后才加载本地 viewer 并直接挂入 owned DOM，不用 iframe         |
+| 能力/权限边界    | renderer / worker 都拿不到绝对路径、Node、文件写入；只有不可复用的 asset URL                                                                 |
+
+文件大小上限由一个 app-owned、穷举 adapter 配置字典统一决定，默认值为 10MiB；只有经过设计与资源
+验收的格式才能覆盖默认值，例如 Monaco 8MiB、Markdown/HTML 1MiB、Office 25MiB、Draw.io 20MiB、
+PDF/图片 100MiB。音视频是显式的 streaming 例外：不做产品字节上限，但仍把 capability 的有限
+`maxBytes` 固定为选中时验证到的文件大小。新增 adapter 没有配置时必须回落到 10MiB，不能散落新增
+常量或暗中继承另一个格式的限制。
 
 大小校验不能只发生在 classifier 或 token 签发前。文件可能在检查后、protocol 真正开流前增长，因此每个
 asset / document capability 必须至少绑定：
@@ -100,7 +111,8 @@ media 资源最多 25MiB；同一 selection revision 的所有相对资源累计
 handle / containment / stream hard limit，任何一项超限只令该资源失败，不扩大到工作区外或无界读取。
 若后续要放宽某类媒体，应修改集中常量和验收 fixture，不能把 `maxBytes` 留空。
 
-集中上限进一步冻结为：PDF 与单个图片各 100MiB；XLSX/XLSM/DOCX 各 25MiB；音频/视频保持 Range
+集中字典进一步冻结为：默认 10MiB；Monaco 8MiB；Markdown/HTML 各 1MiB；Draw.io 20MiB；PDF 与
+单个图片各 100MiB；XLSX/XLSM/DOCX 各 25MiB；音频/视频保持 Range
 流式读取，不设额外产品大小拒绝，但 capability 的有限 `maxBytes` 必须等于选中时 verified file size，
 文件增长、替换或 revision 变化立即撤销。所有 buffered/parser 格式则取
 `min(verifiedSize, formatHardCap)`。
@@ -302,9 +314,12 @@ Monaco/Markdown。020 已把 ExcelJS 隔离到 disposable Worker 的独立动态
 021 已将 docx-preview 隔离到预检后才加载的独立动态 chunk，同样未进入 Preview 首帧，因为任一次预览
 只用得上一个重引擎。
 
-决定：**为 `vuePreviewView` 的格式引擎开一个记录在案的动态 `import()` 例外**，仅限
+决定：**为 `vuePreviewView` 的格式组件和引擎开一个记录在案的动态 `import()` 例外**，仅限
 `src/renderer/onlypreview/preview/src/` 下明确承担格式引擎装载的 service、Worker 与 component
-（Monaco component、ExcelJS Worker、docx-preview document service）；`pdf.js` 不再属于目标 bundle。
+（Monaco/Markdown/Office/image/media/Draw.io component、ExcelJS Worker、docx-preview document
+service、Draw.io viewer loader）；`pdf.js` 不再属于目标 bundle。所有格式组件都由当前 adapter 通过
+`defineAsyncComponent()` / 动态 `import()` 按需加载；Draw.io 的 4MiB 级 viewer runtime 还必须在
+文件与 Worker 预检通过后才装载，不能因为创建 `vuePreviewView` 或预览其他格式进入首帧。
 这与 bitterless「静态顶层 import，函数内禁止动态 import」的通用规则冲突，因此在此
 显式留档：Vite 只能通过动态 import 做 code-split，没有例外就只能全量 eager 装载。规则的其余部分
 （业务代码、store、service）不变。
@@ -314,13 +329,13 @@ Monaco/Markdown。020 已把 ExcelJS 隔离到 disposable Worker 的独立动态
 来源：Ral 2026-08-18「注意要能依据不同的文件后缀进行渲染，而且防止出现视频文件改成 txt 结尾也去渲染
 导致的性能问题」。
 
-### 现状：023 已实施按后缀与大小准入的文本闸门链
+### 现状：023 的大小闸门由 035 扩展为未知文件文本兜底
 
 | 步  | 机制       | 实码                                                                                              | 对"视频改名 `.txt`"的效果                                                      |
 | --- | ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 1   | 扩展名路由 | `classifyOnlyPreviewExtension()`：显式文本扩展名/精确 basename 与非文本扩展名集合                 | `.txt` → `text`；未知后缀 → `unsupported`                                      |
+| 1   | 扩展名路由 | `classifyOnlyPreviewExtension()`：已知专用/显式不支持集合优先，其余普通文件进入文本兜底         | `.txt` → `text`；未知/无后缀/复合后缀 → `text` + `plaintext`                   |
 | 2   | 大小上限   | opened handle 的 metadata 先检查：Monaco 8MiB、Markdown/HTML 1MiB                                 | 500MiB 日志改名 `.txt` → `TEXT_TOO_LARGE`，正文 0 byte，不创建 model           |
-| 3   | 有界读取   | 文本 `limit + 1` chunk read + tolerant UTF-8 / BOM UTF-16 decode + 读后 identity/size/mtime fence | 限额内 mp4/ZIP 改名 `.txt` 可显示乱码；增长/替换丢弃 revision，不返回截断正文  |
+| 3   | 有界读取   | 文本最多精确 `limit` chunk read + tolerant UTF-8 / BOM UTF-16 decode + 读后 identity/size/mtime fence | 限额内 mp4/ZIP 改名或未知后缀可显示乱码；增长/替换丢弃 revision，不返回截断正文 |
 | 4   | 非文本签名 | `matchesSignature()`：PDF/image/audio/video/OOXML 最小签名                                        | 后缀与内容不符 → `SIGNATURE_MISMATCH`，Region 不签发 asset/document capability |
 
 1GiB `.vue` 现在直接由 opened-file size 拒绝，正文读取为 0，不解码也不创建 Monaco model；它仍保留
@@ -346,15 +361,16 @@ extension / known filename → candidate adapter
 
 | 内容路径                                   | byte hard limit | 限额内                                                                                         | 超限后仍可用               |
 | ------------------------------------------ | --------------: | ---------------------------------------------------------------------------------------------- | -------------------------- |
-| Monaco 源码 / 普通文本（含 `.js`、`.vue`） |            8MiB | 宽容解码；非法序列可显示为 `U+FFFD`，不返回 `BINARY_TEXT` / `INVALID_ENCODING`                 | 目录列举与文件名搜索       |
+| Monaco 源码 / 普通文本（含已知源码与所有剩余未知/复合/无后缀文件） |            8MiB | 宽容解码；已知扩展用语言映射，其余用 `plaintext`；非法序列可显示为 `U+FFFD`                  | 目录列举与文件名搜索       |
 | Markdown / HTML                            |            1MiB | 按扩展名进入既定 renderer；Markdown 仍经 DOMPurify，HTML 仍受 sandbox / CSP / 无 Node 权限约束 | 同上                       |
-| Project Search 正文索引                    |            1MiB | 文本类后缀按宽容解码结果写 SQLite chunks / FTS；二进制改名可能产生垃圾命中，这是已接受代价     | 文件 metadata 与文件名搜索 |
+| Global Search 正文索引                     |            1MiB | 文本兜底按宽容解码结果写 SQLite chunks / FTS；小型二进制可能产生垃圾命中，这是已接受代价       | 文件 metadata 与 Files 结果 |
 
 具体结果：
 
-| 输入                  | Preview                                            | 当前文件 Find      | Project Search                        |
+| 输入                  | Preview                                            | 当前文件 Find      | Global Search                         |
 | --------------------- | -------------------------------------------------- | ------------------ | ------------------------------------- |
 | 512KiB ZIP 政名 `.js` | Monaco 显示乱码，不执行                            | 可查找解码后的字符 | 可能索引乱码                          |
+| 512KiB ZIP 保留 `.zip` | Monaco `plaintext` 显示乱码，不执行                | 可查找解码后的字符 | 可能索引乱码                          |
 | 2MiB ZIP 政名 `.js`   | 同上                                               | 同上               | 超过 1MiB，只保留 filename / metadata |
 | 1GiB 文件命名 `.vue`  | `TEXT_TOO_LARGE`，正文 0 byte，不创建 Monaco model | unavailable        | 只保留 filename / metadata            |
 
@@ -362,32 +378,34 @@ extension / known filename → candidate adapter
 
 | 维度   | 验收边界                                                                                                                              |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| 故障域 | 乱码、解码替代字符和偶发垃圾命中只属于该文件；不得让 Preview host、Project Search、索引 generation 或其他文件进入 failed / pending    |
+| 故障域 | 乱码、解码替代字符和偶发垃圾命中只属于该文件；不得让 Preview host、Global Search、索引 generation 或其他文件进入 failed / pending     |
 | 资源   | Preview 8MiB、Markdown/HTML 与正文索引 1MiB 的硬顶不变；读取、解码、SQLite chunk 数和 Monaco model 生命周期都有界，切文件立即 dispose |
 | 编辑器 | Monaco 开启 large-file optimization，并按大小/单行长度限制 tokenization 与超长行渲染；这些限制只看规模，不重新引入内容嗅探            |
 | UI     | 不为乱码弹 modal、toast 或自动重试；内容区正常显示可得到的字符，文件操作和切换保持可用                                                |
-| 执行   | `.js` / `.vue` 等永不执行；Markdown 仍 sanitize；HTML 仍只在既定 sandbox content 中执行，不能获得 Node / Electron / filesystem 能力   |
+| 执行   | `.js` / `.mjs` / `.cjs` / `.vue` 等永不执行；Markdown 仍 sanitize；HTML 仍只在既定 sandbox content 中执行，不能获得 Node / Electron / filesystem 能力   |
 | 搜索   | 垃圾字符只有真实匹配 query 时才可形成该文件的结果；不得触发逐次全文 fallback、阻塞索引 promotion 或清空上一版 active index            |
 
 | 不变量        | 决定                                                                                                                                                                        |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 分类          | 扩展名或已知无扩展文件名选择 adapter；未知后缀默认 unsupported。未来若需要可另设显式「按文本打开」，不恢复自动 head sniff                                                   |
-| 大小          | 用安全打开 handle 的 `fstat` 先判上限；实际读取仍硬顶 `limit + 1`，防 stat 后增长。禁止先整包 `readFile()` 再量大小                                                         |
+| 分类          | 扩展名选择 adapter：PDF/图片/媒体/Office/Draw.io 与显式不支持格式优先；其余普通文件一律进入 inert `plaintext` 兜底，不做自动 head sniff                                       |
+| 大小          | 用安全打开 handle 的 `fstat` 先判上限；实际读取最多精确 `limit`，随后重验 identity/size/mtime 防 stat 后增长。禁止先整包 `readFile()` 再量大小                                  |
 | 解码          | 文本路径使用宽容解码，解码失败不改变分类；乱码只进入 inert text / sanitizer / sandbox，不成为 Node、Electron 或 filesystem 权限                                             |
-| 执行          | `.js` / `.vue` / `.css` 等源码在 Monaco 只展示，不编译、不执行；`.html` 的脚本执行边界仍以姊妹文档 #7.3 为准                                                                |
+| 执行          | `.js` / `.mjs` / `.cjs` / `.vue` / `.css` 等源码在 Monaco 只展示，不编译、不执行；`.html` 的脚本执行边界仍以姊妹文档 #7.3 为准                                                                |
 | 非文本 parser | PDF、图片、媒体、OOXML 仍保留签名、ZIP preflight 与解析上限；本次裁决只取消文本 adapter 的内容嗅探/拒绝，不能把错误 bytes 交给 Chromium PDF viewer、ExcelJS 或 docx-preview |
 | revision      | 读取与结果仍绑定同一 opened handle、host、selection revision；文件变化或读取超过上限时丢弃旧结果                                                                            |
 
-「已知无扩展文件名」是以下 exact case-insensitive basename 集合，不由实现者自行扩张：`Dockerfile`、
+以下 exact case-insensitive basename 集合仍提供已知语言提示，但不再决定能否作为文本打开：`Dockerfile`、
 `Containerfile`、`Makefile`、`Rakefile`、`Gemfile`、`Procfile`、`README`、`LICENSE`、`NOTICE`、
 `CHANGELOG`、`AUTHORS`、`CODEOWNERS`、`.gitignore`、`.gitattributes`、`.gitmodules`、`.dockerignore`、
 `.editorconfig`、`.npmrc`、`.yarnrc`、`.prettierrc`、`.eslintrc`、`.stylelintrc`、`.babelrc`。其中敏感
-文件仍可显式预览，但 Project Search 正文资格继续受敏感文件 filename-only 规则约束。
+文件仍可显式预览，但 Global Search 正文资格继续受敏感文件 filename-only 规则约束。
 
-回归合同至少覆盖：512KiB ZIP 政名 `.js` 能以乱码进入 Monaco且不报错/不卡住索引、同文件改名
-`.zip` 不进文本 adapter、1MiB / 8MiB 精确边界、稀疏 1GiB `.vue` 正文 0 byte、stat 后增长、切换后
+回归合同至少覆盖：`.cjs` 与 `.js` 同样进入 Monaco、使用 JavaScript language、进入 Global
+Search 正文资格并出现在系统文件关联清单；512KiB ZIP 无论改名 `.js` 或保留 `.zip` 都能以
+inert 乱码进入 Monaco且不报错/不卡住索引；`AGENTS.md.bak` 使用 `plaintext`；1MiB / 8MiB
+精确边界、稀疏 1GiB `.vue` 正文 0 byte、stat 后增长、切换后
 model 释放，以及 Markdown sanitizer / HTML sandbox 不因宽容解码而放宽。023 已删除独立 head sample
-与二进制/严格编码拒绝，并以 Main/Project Search parity matrix、exact cap、增长/替换行为测试锁定该合同。
+与二进制/严格编码拒绝，并以 Main/Global Search parity matrix、exact cap、增长/替换行为测试锁定该合同。
 
 ### 本轮必须补齐的闸门
 
@@ -404,20 +422,87 @@ model 释放，以及 Markdown sanitizer / HTML sandbox 不因宽容解码而放
 G7 是这次顺带查出的既有性能缺口。023/024 已共同收口 PDF 直出、100MiB 与流期增长/替换边界；
 同一 guard 任务也已覆盖图片 100MiB、Office 25MiB、文本 size-first 与音视频 verified-size Range。
 
+## #9 · `.drawio` `已定 2026-08-26` `已实施`
+
+`.drawio` 是需要解释 XML 模型后再绘制的结构化格式，不是 Chromium 原生可直接展示的文档。因此新增
+`drawio-viewer` adapter，路由到 **`vuePreviewView`**。Vue 的 `DrawioPreview` 组件负责 loading/error、
+页面与缩放控件及销毁；实际绘图使用固定版本、本地随包分发的 diagrams.net 官方只读 viewer。
+**不引入完整 draw.io 编辑器，不在运行时加载 `viewer.diagrams.net` 或 `embed.diagrams.net`，也不依赖
+非官方 Vue wrapper。**
+
+阶段裁决：Ral 2026-08-26「好，参考他们的桌面端实现只读渲染先」，并补充「vuepreview 按需加载渲染
+组件进行渲染哦」。因此 032 只交付标准 `.drawio` 的只读渲染、页面/图层/缩放与真话失败态；当前文件
+Find 先注册 `none`，图元文字模型搜索与定位高亮在只读渲染稳定后单列任务，不能把当前可见 DOM 的
+`findInPage()` 冒充完整图搜索。
+
+### #9.1 · 无 iframe 的本地 DOM 挂载 `已定 2026-08-26` `已实施`
+
+决策者裁决：Ral 2026-08-26「我不想用 iframe 不可以么」。结论是 **可以，且本方案不使用 iframe**。
+官方 HTML viewer 本来就支持把 XML 配置放进普通 HTML 元素的 `data-mxgraph`，由 viewer runtime 直接在
+当前 document 中渲染；iframe 是另一种独立的嵌入选项，并非只读 viewer 的前提：
+[HTML viewer](https://www.drawio.com/docs/manual/export/embed-html/)、
+[viewer-static source](https://github.com/jgraph/drawio/blob/dev/src/main/webapp/js/viewer-static.min.js)。
+
+draw.io Desktop 也不是把主编辑器放进 iframe。官方源码显示它把 `jgraph/drawio` 作为 Git submodule，
+Electron `BrowserWindow` 直接 `loadURL(file://.../drawio/src/main/webapp/index.html)`；preload/IPC 负责本地
+文件能力，窗口开启 `webSecurity` 与 `contextIsolation`，并以 CSP 和请求拦截限制资源：
+[desktop submodule](https://github.com/jgraph/drawio-desktop/blob/dev/.gitmodules)、
+[desktop Electron main](https://github.com/jgraph/drawio-desktop/blob/dev/src/main/electron.js)。它证明 draw.io
+runtime 可以作为 Electron WebContents 的顶层 DOM 应用运行；但 Desktop 携带的是完整编辑器，不适合直接
+复制到只读 Preview。
+
+更贴近本阶段的是 draw.io Desktop 的 macOS Quick Look：其 `quicklook-preview.html` 读取文件文字，给
+普通 `.mxgraph` 节点设置 `data-mxgraph`，然后调用 `GraphViewer.processElements()`；构建脚本把
+`viewer-static.min.js` 一起复制进 sandboxed Preview Extension，不走远端脚本。032 pin 当前 Desktop
+submodule 对应的 drawio commit `85a95c9066d8db7e90a2a2aa25f1179945d08ab6`，viewer SHA-256 为
+`2fabaaa3e28d5f80f943285a2ce19c22cf870857203255f1e0347ef93693a297`，并保留上游 Apache-2.0
+许可。commit 或 hash 不符必须使资产审计失败，不能静默换成 `dev` 最新文件。
+
+Bitterless 采用更小的对应结构：`vuePreviewView` 已是独立 sandboxed WebContents
+（`sandbox: true`、`contextIsolation: true`、`nodeIntegration: false`），所以无需再套 iframe。
+`DrawioPreview.vue` 给 viewer 一个专用 mount element，首次打开 `.drawio` 时动态装载本地 runtime；
+切换 selection/revision 时销毁 graph 实例、移除 viewer 生成的 DOM/监听器并清空 mount element。
+
+```text
+.drawio extension → adapter size dictionary (20MiB override; 10MiB default) → revision-bound asset
+    → 按需加载 DrawioPreview component → disposable Worker 预检 XML/压缩页
+        ├─ 超出 32MiB expanded / 128 pages / 20,000 cells / 10s：真话拒绝，不装载 viewer
+        ├─ 任何 embedded/external raster/SVG/data/blob/image shape/source：DIAGRAM_LIMIT
+        └─ 通过：动态装载本地 viewer → 专用 DOM mount 只读渲染
+                └─ 本阶段 Find = none；完整 label model 搜索后置
+```
+
+| 项       | 合同                                                                                                                                                                                                                                                                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 路由     | `.drawio` → `vuePreviewView` / `drawio-viewer`；它既不是 `chromePreviewView` 原生格式，也不是普通 text adapter                                                                                                                                                                                                                                                            |
+| 按需加载 | `PreviewSurface` 对所有格式组件使用 async component；只有 `drawio-viewer` adapter 加载 `DrawioPreview` chunk，且只有 Worker 预检通过后加载本地 viewer 资产                                                                                                                                                                                                                |
+| 引擎     | 本地固定版本的官方只读 viewer，独立资产；Vue wrapper 不复制 draw.io 渲染逻辑，**不用 iframe**，只管理专用 mount element 与 graph 生命周期                                                                                                                                                                                                                                 |
+| DOM 边界 | viewer 只允许写入组件拥有的 mount element；每次 render 前后做基线检查，若产生 document 级残留 listener/style/global state，则重建整个 `vuePreviewView`，不让污染进入下一个格式                                                                                                                                                                                            |
+| 网络     | viewer session 默认离线；阻断外部字体、链接导航、新窗口和下载。首期所有图片资源在预检阶段已拒绝，不进入 viewer。外链只允许交回 Shell 后按既有外部打开策略处理                                                                                                                                                                                                             |
+| 安全     | `.drawio` 仍是非文本 parser 格式：扩展名先路由，集中字典给它 20MiB 文件上限（默认仍为 10MiB），再以 fixed-chunk outer XML、base64、DEFLATE、percent/UTF-8 与 XML scanner 做流式预检；拒绝 DOCTYPE/ENTITY，限制 32MiB 展开量、128 页、20,000 cells，并以 `DIAGRAM_LIMIT` 拒绝 embedded/external raster/SVG/data/blob、image shape/source、`mxImage`/`image` 等全部图片内容 |
+| 性能     | Main 只签发 revision-bound bounded asset；Worker 在 10 秒内完成预检；30 秒 Main watchdog 可销毁阻塞的 Vue view。超限/超时/切文件终止 Worker，并销毁 graph/清空 mount                                                                                                                                                                                                      |
+| 查找     | **032 注册 `none`**。`findInPage()` 只能看到当前已绘制 DOM，覆盖不了未显示页面/图层；后续必须搜索 bounded cell label model，再按 cell id 定位并高亮                                                                                                                                                                                                                       |
+| 首期范围 | 无图片资源的标准 `.drawio` XML 只读预览、页面、图层、缩放；PNG/SVG 内嵌 draw.io XML 继续按普通图片显示；`.drawio` 内任何图片资源均以 `DIAGRAM_LIMIT` 真话拒绝，不做缺失资源降级                                                                                                                                                                                           |
+
+主要 tradeoff：无 iframe 省掉一层 document/消息桥，但 viewer 与 Vue 共用同一个 renderer document；因此
+必须验收全局污染与 teardown。若固定版本 viewer 无法做到可靠清理，fallback 是重建现有 `vuePreviewView`
+WebContents，而不是重新引入 iframe。
+
 ## #pending-questions · 待定项
 
-| id       | 项                                                     | 所在                                       | 类型   | 阻塞性         | 倾向 / 拍板需要什么输入                                                                                                                     | 状态                                                                                                                      |
-| -------- | ------------------------------------------------------ | ------------------------------------------ | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **PQ-A** | `.xls` / `.ppt`（97–2003 二进制）是否进入内置 renderer | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 可后置         | **倾向不渲染**：SheetJS 只能解决 `.xls`，`.ppt` 仍无同等级方案；tradeoff 是依赖系统应用。拍板需要 Ral 明确这两种格式是否值得分别增加引擎    | **待定**；原问题中的 `.doc` 已拆入 PQ-D 并拍板，本行继续保留未决的 `.xls` / `.ppt`                                        |
-| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 不阻塞 020/021 | **倾向先不做**，或只做"按幻灯片分块的文本+图片大纲"低保真；浏览器端没有成熟的 pptx 渲染库（`pptxgenjs` 是生成端）                           | 待定                                                                                                                      |
-| **PQ-C** | HEIC / HEIF / TIFF 是否需要 Main 侧转码后预览？        | [#5](#5--图片与音视频-已定-2026-08-18)     | 待拍板 | 不阻塞 022     | **倾向本轮不做**，先给真话不支持态；HEIC 在 macOS 相册/iPhone 照片里常见，若要做则单列一轮（Main 侧 `sips`/`sharp` 转码 + 缓存 + 失效策略） | 待定                                                                                                                      |
-| **PQ-D** | 旧 `.doc` 是否进入内置 renderer                        | [#4.1](#41--旧-doc-本轮不做-未实施)        | 待拍板 | 可后置         | 原倾向不渲染；tradeoff 是不能在 Bitterless 内看旧 Word 文件。拍板需要 Ral 选择内置转换或系统应用打开                                        | **本轮不做 · 未实施**（Ral 2026-08-20）：明确 unsupported + 系统应用打开；连带收口 021 的 `.doc` 范围，不再等待旧格式决策 |
+| id       | 项                                                     | 所在                                       | 类型   | 阻塞性         | 倾向 / 拍板需要什么输入                                                                                                                     | 状态                                                                                                                                    |
+| -------- | ------------------------------------------------------ | ------------------------------------------ | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **PQ-A** | `.xls` / `.ppt`（97–2003 二进制）是否进入内置 renderer | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 可后置         | **倾向不渲染**：SheetJS 只能解决 `.xls`，`.ppt` 仍无同等级方案；tradeoff 是依赖系统应用。拍板需要 Ral 明确这两种格式是否值得分别增加引擎    | **待定**；原问题中的 `.doc` 已拆入 PQ-D 并拍板，本行继续保留未决的 `.xls` / `.ppt`                                                      |
+| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 不阻塞 020/021 | **倾向先不做**，或只做"按幻灯片分块的文本+图片大纲"低保真；浏览器端没有成熟的 pptx 渲染库（`pptxgenjs` 是生成端）                           | 待定                                                                                                                                    |
+| **PQ-C** | HEIC / HEIF / TIFF 是否需要 Main 侧转码后预览？        | [#5](#5--图片与音视频-已定-2026-08-18)     | 待拍板 | 不阻塞 022     | **倾向本轮不做**，先给真话不支持态；HEIC 在 macOS 相册/iPhone 照片里常见，若要做则单列一轮（Main 侧 `sips`/`sharp` 转码 + 缓存 + 失效策略） | 待定                                                                                                                                    |
+| **PQ-D** | 旧 `.doc` 是否进入内置 renderer                        | [#4.1](#41--旧-doc-本轮不做-未实施)        | 待拍板 | 可后置         | 原倾向不渲染；tradeoff 是不能在 Bitterless 内看旧 Word 文件。拍板需要 Ral 选择内置转换或系统应用打开                                        | **本轮不做 · 未实施**（Ral 2026-08-20）：明确 unsupported + 系统应用打开；连带收口 021 的 `.doc` 范围，不再等待旧格式决策               |
+| **PQ-E** | `.drawio` 是否按本地官方只读 viewer 方案进入实现       | [#9](#9--drawio-已定-2026-08-26-已实施)    | 待拍板 | 可后置         | `vuePreviewView` async component + 本地 viewer 直接 DOM mount；不用 iframe、完整 editor或在线服务；首期只读，Find 后置                      | **已定 2026-08-26 · 已实施**：032 已通过独立复核，等待 Ral 运行时/视觉验证；首期拒绝图片资源，图元 Find 继续后置                         |
 
-收敛记账：账本 4 行 · 已解 1 行 · 待拍板 3 行 · 未解的 `阻塞定案` **0 条**。本轮把原 PQ-A 保留给
+收敛记账：账本 5 行 · 已解 2 行 · 待拍板 3 行 · 未解的 `阻塞定案` **0 条**。本轮把原 PQ-A 保留给
 未决的 `.xls` / `.ppt`，并把已解 `.doc` 拆为 PQ-D，阻塞数未增加；`.xlsx` 已由 020 实施并通过独立
 复核，当前等待 Ral 手测；`.docx` 已由 021 实施并通过独立复核，等待 Ral 真实 DOCX 视觉/运行时
-验证。#8.1 是文本准入合同细化，不新增待定项或阻塞项；
-被否的严格文本验证方案留在 [#rejected](#rejected--已否留档)，共 1 块。
+验证。#8.1 是文本准入合同细化；#9/PQ-E 已由 032 实施首期只读渲染与按需组件加载，图元 Find 后置且
+不阻塞首期；被否方案留在 [#rejected](#rejected--已否留档)，共 2 块。
 
 ## #rejected · 已否留档
 
@@ -431,6 +516,17 @@ G7 是这次顺带查出的既有性能缺口。023/024 已共同收口 PDF 直�
 | 否决理由     | Ral 接受异常改名文件显示乱码，只要求不产生困扰；严格识别增加两套执行边界的容器/编码策略与测试成本，却不改善正常后缀文件体验。最终安全边界改为大小硬顶、inert Monaco、sanitizer/sandbox 和故障域隔离                                                                                                          |
 | 已接受代价   | 小二进制改名 `.js/.vue` 会显示乱码；1MiB 内可能进入正文索引并产生该文件的垃圾命中。它不得导致执行、卡顿、弹窗、索引失败或跨文件状态污染                                                                                                                                                                      |
 | 复议触发条件 | 有真实 fixture 证明在现有大小硬顶与 renderer 隔离下，乱码文件仍造成 Preview/索引 crash、持续卡顿、权限逃逸或跨文件污染；仅“显示难看”不构成复议理由                                                                                                                                                           |
+
+### Draw.io viewer iframe `已否 2026-08-26`
+
+| 项           | 留档                                                                                                                                                     |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 所属决策章   | [#9.1](#91--无-iframe-的本地-dom-挂载-已定-2026-08-26-已实施)                                                                                            |
+| 原方案       | `DrawioPreview.vue` 内创建隔离 iframe，在 iframe document 中装载本地官方只读 viewer，通过消息桥传 XML、查找与 cell 定位结果                              |
+| 原依据       | iframe 可隔离 viewer 的全局脚本、样式和 DOM；完整 editor 的官方 embed mode 也采用 iframe + `postMessage`                                                 |
+| 否决理由     | Ral 明确不希望使用 iframe；现有 `vuePreviewView` 已经是 sandboxed 独立 WebContents，可承担进程/权限故障域，额外 iframe 不是只读 viewer 的必要条件        |
+| 已接受代价   | viewer 与 Vue 共用 document，必须实现 graph/DOM/listener teardown 并验证无跨格式污染；清理不可信时允许重建整个 `vuePreviewView`                          |
+| 复议触发条件 | 固定版本 viewer 的 document-global 行为无法被可靠清理，且重建 `vuePreviewView` 导致不可接受的切换延迟或状态丢失；只有实测满足这两个条件才重新讨论 iframe |
 
 ---
 

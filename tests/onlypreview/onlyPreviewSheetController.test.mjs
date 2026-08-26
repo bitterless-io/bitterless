@@ -71,6 +71,10 @@ test('SheetPreview has no parameterized error event or parent-forwarded stale re
 
   assert.doesNotMatch(component, /error:\s*\[/);
   assert.doesNotMatch(component, /emit\(['"]error['"]/);
-  assert.doesNotMatch(surface, /<SheetPreview[\s\S]*?@error=/);
+  const sheetBranch = surface.slice(
+    surface.indexOf('<SheetPreview'),
+    surface.indexOf('/>', surface.indexOf('<SheetPreview'))
+  );
+  assert.doesNotMatch(sheetBranch, /@error=/);
   assert.match(controller, /reportSurfaceError\(this\.reportingRevision,/);
 });

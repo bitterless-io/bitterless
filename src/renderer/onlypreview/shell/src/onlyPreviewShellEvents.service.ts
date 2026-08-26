@@ -12,7 +12,9 @@ import {
   ONLY_PREVIEW_SETTINGS_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewCharacterCountEvent,
-  type OnlyPreviewCharacterCountRevisionEvent
+  type OnlyPreviewCharacterCountRevisionEvent,
+  type OnlyPreviewFocusSearchEvent,
+  type OnlyPreviewGlobalSearchFocusOrigin
 } from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_BROWSE_LISTING_EVENT,
@@ -39,7 +41,7 @@ interface OnlyPreviewShellEventHandlers {
   searchSnapshot: (snapshot: OnlyPreviewSearchSnapshot) => void;
   settingsChanged: () => void;
   focusProject: () => void;
-  focusSearch: () => void;
+  focusSearch: (origin: OnlyPreviewGlobalSearchFocusOrigin) => void;
   findState: () => void;
   focusFind: () => void;
 }
@@ -48,6 +50,15 @@ const isHostEvent = (value: unknown): value is { hostId: string } =>
   !!value &&
   typeof value === 'object' &&
   typeof (value as Record<string, unknown>).hostId === 'string';
+
+const isFocusSearchEvent = (value: unknown): value is OnlyPreviewFocusSearchEvent => {
+  if (!isHostEvent(value)) return false;
+  const event = value as Record<string, unknown>;
+  return (
+    Reflect.ownKeys(event).length === 2 &&
+    (event.origin === 'shell' || event.origin === 'vue' || event.origin === 'chrome')
+  );
+};
 
 const isCharacterCountEvent = (value: unknown): value is OnlyPreviewCharacterCountEvent => {
   if (!value || typeof value !== 'object') return false;
@@ -129,7 +140,7 @@ export const subscribeOnlyPreviewShellEvents = (
     if (isHostEvent(params) && isCurrentHost(params)) handlers.focusProject();
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_SEARCH_EVENT, ({ params }) => {
-    if (isHostEvent(params) && isCurrentHost(params)) handlers.focusSearch();
+    if (isFocusSearchEvent(params) && isCurrentHost(params)) handlers.focusSearch(params.origin);
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_FIND_STATE_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.findState();

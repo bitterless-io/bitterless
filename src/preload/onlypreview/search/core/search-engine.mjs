@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, realpath, rename, rm } from 'node:fs/promises';
+import { mkdir, realpath, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { backup } from 'node:sqlite';
 
-import { MAX_WATCH_CHANGE_PATHS, ONE_GIB_BYTES, TWO_GIB_BYTES } from './constants.mjs';
+import { ONE_GIB_BYTES, TWO_GIB_BYTES } from './constants.mjs';
 import { SEARCH_ENGINE_IDENTITY, OnlyPreviewSqliteIndex } from './sqlite-index.mjs';
 import {
   countWorkspaceSearchEntries,
@@ -12,38 +12,18 @@ import {
   readSingleWorkspaceFile
 } from './traversal.mjs';
 import { createOnlyPreviewBrowseIndex } from './browse-index.mjs';
-import {
-  WORKSPACE_CONFIG_RELATIVE_PATH,
-  loadOnlyPreviewWorkspaceConfig,
-  pathIsWithin
-} from './workspace-config.mjs';
+import { createOnlyPreviewSelectedFilePriorityLane } from './selected-file-priority-lane.mjs';
+import { createOnlyPreviewGlobalSearchSession } from './global-search-session.mjs';
+import { executeOnlyPreviewGlobalSearch } from './global-search-executor.mjs';
+import { previewOnlyPreviewGlobalSearchResult } from './global-search-preview.mjs';
+import { loadOnlyPreviewWorkspaceConfig, pathIsWithin } from './workspace-config.mjs';
 import { createWorkspaceWatchController } from './watch-controller.mjs';
+import {
+  createOnlyPreviewSearchWatchReconciler,
+  sortOnlyPreviewTreeEntries
+} from './watch-reconciler.mjs';
 
 const engineHash = createHash('sha256').update(SEARCH_ENGINE_IDENTITY).digest('hex');
-
-const normalizedRelativePath = (value) =>
-  String(value ?? '')
-    .replaceAll('\\', '/')
-    .replace(/^\.\//u, '')
-    .replace(/^\/+|\/+$/gu, '');
-
-const normalizedWatchRelativePath = (value) => {
-  if (
-    typeof value !== 'string' ||
-    !value ||
-    value.length > 16_384 ||
-    value.includes('\0') ||
-    value.startsWith('/') ||
-    value.startsWith('\\') ||
-    /^[a-zA-Z]:/u.test(value)
-  )
-    return undefined;
-  const normalized = value.replaceAll('\\', '/');
-  if (normalized.split('/').some((segment) => !segment || segment === '.' || segment === '..')) {
-    return undefined;
-  }
-  return normalized;
-};
 
 const prospectiveRealPath = async (candidatePath) => {
   const missingSegments = [];
@@ -77,93 +57,6 @@ const closeIndex = (index) => {
   } catch {
     // Closing is idempotent at the engine boundary even though node:sqlite close is not.
   }
-};
-
-const requireSearchScope = (scope, treeEntries, hasBrowseDirectory = () => false) => {
-  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
-    throw new TypeError('Invalid search scope');
-  }
-  if (scope.kind === 'project') {
-    if (Object.keys(scope).length !== 1) throw new TypeError('Invalid search scope');
-    return { kind: 'project' };
-  }
-  if (
-    scope.kind !== 'directory' ||
-    Object.keys(scope).sort().join(',') !== 'kind,relativePath' ||
-    typeof scope.relativePath !== 'string' ||
-    scope.relativePath.length > 16_384 ||
-    scope.relativePath.includes('\0') ||
-    scope.relativePath.startsWith('/') ||
-    scope.relativePath.includes('\\') ||
-    /^[a-zA-Z]:/u.test(scope.relativePath) ||
-    scope.relativePath
-      .split('/')
-      .some(
-        (segment) => (!segment && scope.relativePath !== '') || segment === '.' || segment === '..'
-      )
-  ) {
-    throw new TypeError('Invalid search scope');
-  }
-  if (
-    scope.relativePath &&
-    !treeEntries.some(
-      (entry) => entry.nodeKind === 'directory' && entry.relativePath === scope.relativePath
-    ) &&
-    !hasBrowseDirectory(scope.relativePath)
-  ) {
-    throw new TypeError('Search directory scope does not exist');
-  }
-  return { kind: 'directory', relativePath: scope.relativePath };
-};
-
-const toTreeFileEntry = (entry) => ({
-  relativePath: entry.relativePath,
-  parentRelativePath:
-    normalizedRelativePath(dirname(entry.relativePath)) === '.'
-      ? ''
-      : normalizedRelativePath(dirname(entry.relativePath)),
-  name: basename(entry.relativePath),
-  nodeKind: 'file',
-  size: entry.size,
-  modifiedAt: entry.modifiedMs,
-  previewHint: entry.previewHint,
-  mediaType: entry.mediaType,
-  isText: entry.mediaType === 'text'
-});
-
-const toTreeDirectoryEntry = ({ relativePath, modifiedMs }) => ({
-  relativePath,
-  parentRelativePath:
-    normalizedRelativePath(dirname(relativePath)) === '.'
-      ? ''
-      : normalizedRelativePath(dirname(relativePath)),
-  name: basename(relativePath),
-  nodeKind: 'directory',
-  size: 0,
-  modifiedAt: modifiedMs,
-  previewHint: 'unsupported',
-  mediaType: 'unknown',
-  isText: false
-});
-
-const sortTreeEntries = (entries) => {
-  const collator = new Intl.Collator('und', { numeric: true, sensitivity: 'base' });
-  return [...entries].sort((left, right) => {
-    const leftSegments = left.relativePath.split('/');
-    const rightSegments = right.relativePath.split('/');
-    const length = Math.min(leftSegments.length, rightSegments.length);
-    for (let index = 0; index < length; index += 1) {
-      if (leftSegments[index] === rightSegments[index]) continue;
-      const leftIsParent = index === leftSegments.length - 1 && left.nodeKind === 'directory';
-      const rightIsParent = index === rightSegments.length - 1 && right.nodeKind === 'directory';
-      if (leftIsParent !== rightIsParent) return leftIsParent ? -1 : 1;
-      return (
-        collator.compare(leftSegments[index], rightSegments[index]) ||
-        leftSegments[index].localeCompare(rightSegments[index], 'und')
-      );
-    }
-    return leftSegments.length - rightSegments.length;
-  });
 };
 
 const estimateTreeMetadataBytes = (entries) =>
@@ -222,7 +115,15 @@ export class OnlyPreviewSearchEngine {
     this.onProgress = onProgress;
     this.onSnapshot = onSnapshot;
     this.onWatchCommit = onWatchCommit;
-    this.readWorkspaceFile = readWorkspaceFile;
+    this.selectedFilePriority = createOnlyPreviewSelectedFilePriorityLane({
+      readWorkspaceFile,
+      resolveContext: () => this
+    });
+    this.watchReconciler = createOnlyPreviewSearchWatchReconciler({
+      readWorkspaceFile,
+      resolveContext: () => this
+    });
+    this.globalSearchSession = createOnlyPreviewGlobalSearchSession();
     this.state = 'building';
     this.treeEntries = [];
     this.maxDepthReached = false;
@@ -248,6 +149,16 @@ export class OnlyPreviewSearchEngine {
     this.buildEpoch += 1;
   }
 
+  supersedePriority({ workspaceId, generation, relativePath }) {
+    this.requireWorkspace(workspaceId, generation);
+    this.globalSearchSession.revoke();
+    return this.selectedFilePriority.supersede({ workspaceId, generation, relativePath });
+  }
+
+  async prioritizeFile(priority) {
+    await this.selectedFilePriority.prioritizeFile(priority);
+  }
+
   requireWorkspace(workspaceId, generation) {
     if (!this.browseIndex || workspaceId !== this.workspaceId || generation !== this.generation) {
       throw new TypeError('Search workspace generation is stale');
@@ -255,6 +166,7 @@ export class OnlyPreviewSearchEngine {
   }
 
   async initialize({ workspaceId, generation, rootPath, databasePath }) {
+    this.globalSearchSession.revoke();
     const build = this.enqueue(
       async () =>
         await this.initializeInternal({
@@ -313,9 +225,9 @@ export class OnlyPreviewSearchEngine {
     this.state = canReconcile ? 'reconciling' : 'building';
     this.treeEntries = [];
     try {
-      await this.emitRootBrowseListing();
       const buildRevision = ++this.buildRevision;
       const buildEpoch = ++this.buildEpoch;
+      await this.emitRootBrowseListing();
       this.emitBuildProgress({ buildRevision, phase: 'counting' });
       await this.emitSnapshot();
       const total = await countWorkspaceSearchEntries({
@@ -331,6 +243,7 @@ export class OnlyPreviewSearchEngine {
         total,
         buildEpoch
       });
+      this.selectedFilePriority.revoke();
       this.state = 'ready';
       await this.emitSnapshot();
       if (this.watchNeedsFullReconcile) {
@@ -339,6 +252,7 @@ export class OnlyPreviewSearchEngine {
       }
       return await this.snapshot();
     } catch (error) {
+      this.selectedFilePriority.revoke();
       if (this.index) {
         this.state = 'ready';
         await this.emitSnapshot().catch(() => undefined);
@@ -373,7 +287,7 @@ export class OnlyPreviewSearchEngine {
       const promotedCandidate = candidate;
       candidate = undefined;
       await this.promoteCandidate(promotedCandidate, candidatePath, seedIndex);
-      this.treeEntries = sortTreeEntries(candidateTreeEntries.entries);
+      this.treeEntries = sortOnlyPreviewTreeEntries(candidateTreeEntries.entries);
       this.maxDepthReached = candidateTreeEntries.maxDepthReached;
     } finally {
       closeIndex(candidate);
@@ -425,6 +339,8 @@ export class OnlyPreviewSearchEngine {
   }
 
   async promoteCandidate(candidate, candidatePath, seedIndex) {
+    this.selectedFilePriority.revoke();
+    this.globalSearchSession.revoke();
     let resolvePromotion = () => undefined;
     this.promotionPromise = new Promise((resolvePromotionValue) => {
       resolvePromotion = resolvePromotionValue;
@@ -465,6 +381,7 @@ export class OnlyPreviewSearchEngine {
 
   async refresh({ workspaceId, generation }) {
     this.requireWorkspace(workspaceId, generation);
+    this.globalSearchSession.revoke();
     if (this.refreshPromise) return await this.refreshPromise;
     const build = this.enqueue(async () => await this.refreshInternal());
     this.currentBuildPromise = build;
@@ -485,11 +402,12 @@ export class OnlyPreviewSearchEngine {
     this.searchPolicy = createTraversalPolicy(nextConfig);
     this.identity = { ...this.identity, configHash: nextConfig.hash };
     try {
+      this.selectedFilePriority.revoke();
       this.state = configChanged ? 'building' : 'reconciling';
       this.browseIndex.reset();
-      await this.emitRootBrowseListing();
       const buildRevision = ++this.buildRevision;
       const buildEpoch = ++this.buildEpoch;
+      await this.emitRootBrowseListing();
       this.emitBuildProgress({ buildRevision, phase: 'counting' });
       await this.emitSnapshot();
       const total = await countWorkspaceSearchEntries({
@@ -507,6 +425,7 @@ export class OnlyPreviewSearchEngine {
         total,
         buildEpoch
       });
+      this.selectedFilePriority.revoke();
       this.state = 'ready';
       await this.emitSnapshot();
       if (this.watchNeedsFullReconcile) {
@@ -515,6 +434,7 @@ export class OnlyPreviewSearchEngine {
       }
       return await this.snapshot();
     } catch (error) {
+      this.selectedFilePriority.revoke();
       this.config = previousConfig;
       this.searchPolicy = previousSearchPolicy;
       this.identity = previousIdentity;
@@ -537,317 +457,45 @@ export class OnlyPreviewSearchEngine {
     query,
     maxResults,
     scope,
-    cancelBuffer,
     isCancelled,
     onResult
   }) {
     this.requireWorkspace(workspaceId, generation);
-    return await this.searchInternal({
+    return await executeOnlyPreviewGlobalSearch(this, {
       workspaceId,
       generation,
       requestId,
       query,
       maxResults,
       scope,
-      cancelBuffer,
-      isCancelled,
+      isCancelled: typeof isCancelled === 'function' ? isCancelled : () => false,
       onResult
     });
   }
 
-  async searchInternal({
-    workspaceId,
-    generation,
-    requestId,
-    query,
-    maxResults,
-    scope,
-    cancelBuffer,
-    isCancelled: cancellationRequested,
-    onResult
-  }) {
+  revokeSearch(requestId) {
+    this.globalSearchSession.revoke(requestId);
+  }
+
+  async preview({ workspaceId, generation, requestId, resultToken, isCancelled }) {
     this.requireWorkspace(workspaceId, generation);
-    const isCancelled =
-      typeof cancellationRequested === 'function'
-        ? cancellationRequested
-        : () =>
-            typeof SharedArrayBuffer !== 'undefined' &&
-            cancelBuffer instanceof SharedArrayBuffer &&
-            Atomics.load(new Int32Array(cancelBuffer), 0) !== 0;
-    const validatedScope = requireSearchScope(
-      scope,
-      this.treeEntries,
-      (relativePath) => this.browseIndex?.hasDirectory(relativePath) === true
-    );
-    if (this.promotionPromise) await this.promotionPromise;
-    let targetIndex = this.index;
-    if (!targetIndex && validatedScope.kind === 'directory') {
-      return await this.searchDirectoryWithoutActiveIndex({
-        workspaceId,
-        generation,
-        requestId,
-        query,
-        maxResults,
-        scope: validatedScope,
-        isCancelled,
-        onResult
-      });
-    }
-    if (!targetIndex) {
-      const build = this.currentBuildPromise;
-      if (!build) throw new TypeError('Search index is not ready');
-      while (this.currentBuildPromise === build) {
-        if (isCancelled()) throw cancelledError();
-        await nextTurn();
-      }
-      await build;
-      if (this.promotionPromise) await this.promotionPromise;
-      targetIndex = this.index;
-    }
-    if (!targetIndex) throw new TypeError('Search index is not ready');
-    this.activeQueryCount += 1;
-    let outcome;
-    try {
-      outcome = await targetIndex.search(query, {
-        maxResults,
-        scope: validatedScope,
-        isCancelled,
-        onResult
-      });
-    } finally {
-      this.activeQueryCount -= 1;
-    }
-    if (outcome.cancelled) throw cancelledError();
-    return {
+    const authority = this.globalSearchSession.resolve({
       workspaceId,
       generation,
       requestId,
-      results: outcome.results,
-      truncated: outcome.truncated
-    };
+      resultToken
+    });
+    return await previewOnlyPreviewGlobalSearchResult({
+      authority,
+      rootPath: this.rootPath,
+      searchPolicy: this.searchPolicy,
+      isCancelled
+    });
   }
 
-  async searchDirectoryWithoutActiveIndex({
-    workspaceId,
-    generation,
-    requestId,
-    query,
-    maxResults,
-    scope,
-    isCancelled,
-    onResult
-  }) {
-    const scopedIndex = new OnlyPreviewSqliteIndex(':memory:');
-    try {
-      const traversal = await createWorkspaceTraversal({
-        rootPath: this.rootPath,
-        config: this.config,
-        collectTreeEntries: false,
-        scopeRelativePath: scope.relativePath,
-        isCancelled
-      });
-      await scopedIndex.rebuild(traversal.entries, this.identity);
-      if (isCancelled()) throw cancelledError();
-      const outcome = await scopedIndex.search(query, {
-        maxResults,
-        scope,
-        isCancelled,
-        onResult
-      });
-      if (outcome.cancelled) throw cancelledError();
-      return {
-        workspaceId,
-        generation,
-        requestId,
-        results: outcome.results,
-        truncated: outcome.truncated
-      };
-    } finally {
-      closeIndex(scopedIndex);
-    }
-  }
-
-  async applyWatchChangesInternal({ full, paths, renamePaths = [] }) {
-    if (!this.index) return;
-    if (this.state !== 'ready') {
-      this.watchNeedsFullReconcile = true;
-      return;
-    }
-    if (
-      full ||
-      paths.length > MAX_WATCH_CHANGE_PATHS ||
-      paths.some((path) => normalizedRelativePath(path) === WORKSPACE_CONFIG_RELATIVE_PATH)
-    ) {
-      await this.refreshInternal();
-      this.emitWatchCommit({ full: true, paths: [] });
-      return;
-    }
-    let requiresFullReconcile = false;
-    const committedPaths = new Set();
-    const renamePathSet = new Set(renamePaths);
-    for (const pathValue of paths) {
-      const relativePath = normalizedWatchRelativePath(pathValue);
-      if (!relativePath) {
-        requiresFullReconcile = true;
-        continue;
-      }
-      committedPaths.add(relativePath);
-      const renameHint = renamePathSet.has(relativePath);
-      const previousTreeEntry = renameHint
-        ? this.treeEntries.find((entry) => entry.relativePath === relativePath)
-        : undefined;
-      const absolutePath = resolve(this.rootPath, ...relativePath.split('/'));
-      if (!pathIsWithin(this.rootPath, absolutePath)) {
-        requiresFullReconcile = true;
-        continue;
-      }
-      try {
-        const canonicalPath = await realpath(absolutePath);
-        if (canonicalPath !== absolutePath || !pathIsWithin(this.rootPath, canonicalPath)) {
-          requiresFullReconcile = true;
-          continue;
-        }
-        const currentStat = await lstat(absolutePath);
-        if ((await realpath(absolutePath)) !== canonicalPath) {
-          requiresFullReconcile = true;
-          continue;
-        }
-        if (currentStat.isDirectory()) {
-          if (
-            this.searchPolicy.isExcludedDirectoryPath(relativePath) &&
-            !this.searchPolicy.canTraverseExcludedDirectoryPath(relativePath)
-          ) {
-            this.removeTreePath(relativePath);
-            this.index.delete(relativePath);
-          } else {
-            requiresFullReconcile = true;
-          }
-        } else if (currentStat.isSymbolicLink()) {
-          this.index.delete(relativePath);
-          if (this.searchPolicy.isExcludedFilePath(relativePath)) {
-            this.removeTreePath(relativePath);
-          } else {
-            requiresFullReconcile = true;
-          }
-        } else if (currentStat.isFile()) {
-          if (renameHint && previousTreeEntry?.nodeKind !== 'file') {
-            requiresFullReconcile = true;
-            continue;
-          }
-          const searchExcluded = this.searchPolicy.isExcludedFilePath(relativePath);
-          if (searchExcluded) {
-            this.index.delete(relativePath);
-            this.removeTreePath(relativePath);
-          } else {
-            const entry = await this.readWorkspaceFile({
-              rootPath: this.rootPath,
-              relativePath
-            });
-            if (entry) {
-              this.index.upsert(entry);
-              this.upsertTreeEntry(toTreeFileEntry(entry));
-            } else requiresFullReconcile = true;
-          }
-          if (!searchExcluded && !(await this.refreshParentDirectoryTreeEntry(relativePath))) {
-            requiresFullReconcile = true;
-          }
-        } else requiresFullReconcile = true;
-      } catch (error) {
-        if (error?.code === 'ENOENT') {
-          if (renameHint) requiresFullReconcile = true;
-          this.removeTreePath(relativePath);
-          this.index.delete(relativePath);
-          if (
-            !this.searchPolicy.isPhysicallyExcludedPath(relativePath) &&
-            !(await this.refreshParentDirectoryTreeEntry(relativePath))
-          ) {
-            requiresFullReconcile = true;
-          }
-        } else requiresFullReconcile = true;
-      }
-    }
-    if (requiresFullReconcile) {
-      await this.refreshInternal();
-      this.emitWatchCommit({ full: true, paths: [] });
-    } else {
-      await this.emitSnapshot();
-      await this.emitBrowseListingsForChangedPaths([...committedPaths]);
-      this.emitWatchCommit({ full: false, paths: [...committedPaths] });
-    }
-  }
-
-  emitWatchCommit({ full, paths }) {
-    if (!this.workspaceId || !Number.isSafeInteger(this.generation)) return;
-    const uniquePaths = [...new Set(paths)];
-    const boundedFull =
-      full ||
-      uniquePaths.length > MAX_WATCH_CHANGE_PATHS ||
-      uniquePaths.some((path) => normalizedWatchRelativePath(path) !== path);
-    const commit = {
-      workspaceId: this.workspaceId,
-      generation: this.generation,
-      revision: ++this.watchCommitRevision,
-      full: boundedFull,
-      changedRelativePaths: boundedFull ? [] : uniquePaths
-    };
-    try {
-      this.onWatchCommit?.(commit);
-    } catch {
-      // Delivery failure cannot roll back an already committed index transaction.
-    }
-  }
-
-  upsertTreeEntry(entry) {
-    const index = this.treeEntries.findIndex(
-      ({ relativePath }) => relativePath === entry.relativePath
-    );
-    if (index >= 0) this.treeEntries[index] = entry;
-    else this.treeEntries.push(entry);
-    this.treeEntries = sortTreeEntries(this.treeEntries);
-  }
-
-  async refreshParentDirectoryTreeEntry(relativePath) {
-    const parentRelativePath = normalizedRelativePath(dirname(relativePath));
-    if (!parentRelativePath || parentRelativePath === '.') return true;
-    const existingParent = this.treeEntries.find(
-      (entry) => entry.relativePath === parentRelativePath
-    );
-    if (existingParent?.nodeKind !== 'directory') return false;
-    const absolutePath = resolve(this.rootPath, ...parentRelativePath.split('/'));
-    if (!pathIsWithin(this.rootPath, absolutePath)) return false;
-    try {
-      const canonicalPath = await realpath(absolutePath);
-      if (canonicalPath !== absolutePath || !pathIsWithin(this.rootPath, canonicalPath)) {
-        return false;
-      }
-      const currentStat = await lstat(absolutePath);
-      if (
-        !currentStat.isDirectory() ||
-        currentStat.isSymbolicLink() ||
-        (await realpath(absolutePath)) !== canonicalPath
-      ) {
-        return false;
-      }
-      this.upsertTreeEntry(
-        toTreeDirectoryEntry({
-          relativePath: parentRelativePath,
-          modifiedMs: Math.trunc(currentStat.mtimeMs)
-        })
-      );
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  removeTreePath(relativePath) {
-    this.treeEntries = this.treeEntries.filter(
-      (entry) =>
-        entry.relativePath !== relativePath && !entry.relativePath.startsWith(`${relativePath}/`)
-    );
-    for (const indexedPath of [...(this.index?.filenameTier.records.keys() ?? [])]) {
-      if (indexedPath.startsWith(`${relativePath}/`)) this.index.delete(indexedPath);
-    }
+  async applyWatchChangesInternal(change) {
+    this.globalSearchSession.revoke();
+    await this.watchReconciler.apply(change);
   }
 
   async memory() {
@@ -934,30 +582,6 @@ export class OnlyPreviewSearchEngine {
     }
   }
 
-  async emitBrowseListingsForChangedPaths(relativePaths) {
-    if (!this.workspaceId || !Number.isSafeInteger(this.generation) || !this.browseIndex) return;
-    const parentPaths = new Set(
-      relativePaths.map((relativePath) => {
-        const parent = normalizedRelativePath(dirname(relativePath));
-        return parent === '.' ? '' : parent;
-      })
-    );
-    for (const relativePath of parentPaths) {
-      const directoryToken = this.browseIndex.directoryTokenForListedPath(relativePath);
-      if (!directoryToken) continue;
-      try {
-        const listing = await this.browseIndex.list({
-          workspaceId: this.workspaceId,
-          generation: this.generation,
-          directoryToken
-        });
-        this.onBrowseListing?.(listing);
-      } catch {
-        // A concurrent rename/delete will be represented by the next watch batch.
-      }
-    }
-  }
-
   async shutdown() {
     this.cancelBuild();
     return await this.enqueue(async () => await this.shutdownInternal());
@@ -965,6 +589,8 @@ export class OnlyPreviewSearchEngine {
 
   async shutdownInternal() {
     this.buildEpoch += 1;
+    this.selectedFilePriority.revoke();
+    this.globalSearchSession.revoke();
     this.watchRevision += 1;
     const watchController = this.watchController;
     this.watchController = undefined;

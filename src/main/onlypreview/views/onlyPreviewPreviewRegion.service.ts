@@ -7,11 +7,8 @@ import {
   toOnlyPreviewErrorPayload
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
-  ONLY_PREVIEW_MAX_IMAGE_BYTES,
-  ONLY_PREVIEW_MAX_DOCUMENT_BYTES,
-  ONLY_PREVIEW_MAX_PDF_BYTES,
-  ONLY_PREVIEW_MAX_SHEET_BYTES,
   ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
+  getOnlyPreviewFileSizeLimit,
   type OnlyPreviewDescriptor,
   type OnlyPreviewErrorCode,
   type OnlyPreviewFileRef,
@@ -19,7 +16,6 @@ import {
   type OnlyPreviewFindIntent,
   type OnlyPreviewFindResult,
   type OnlyPreviewFindSnapshot,
-  type OnlyPreviewPreviewAdapterId,
   type OnlyPreviewPreviewPresentation,
   type OnlyPreviewPreviewSurface,
   type OnlyPreviewTextContent,
@@ -34,83 +30,20 @@ import { onlyPreviewWorkspaceRegistry } from '@main/onlypreview/onlyPreviewWorks
 import { getOnlyPreviewAdapterSpec } from '@shared/onlypreview/onlyPreviewFind.registry';
 import { OnlyPreviewFindService } from './onlyPreviewFind.service';
 import {
+  ONLY_PREVIEW_DIAGRAM_REBUILD_ERRORS,
+  ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS,
+  createEmptyOnlyPreviewPresentation,
+  getOnlyPreviewDescriptorAdapter,
+  getOnlyPreviewDescriptorErrorPayload,
+  onlyPreviewAdapterProvidesSelectedText,
+  onlyPreviewAdapterUsesOneShotAsset,
+  onlyPreviewAdapterUsesVueAsset
+} from './onlyPreviewPreviewAdapter.service';
+import {
   OnlyPreviewPreviewViewService,
   presentationAllowsRendererError,
   type OnlyPreviewPreviewRegionRuntime
 } from './onlyPreviewPreviewView.service';
-
-const DOCUMENT_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
-  'DOCUMENT_PARSE_FAILED',
-  'DOCUMENT_SANITIZE_FAILED',
-  'DOCUMENT_RENDER_TIMEOUT'
-]);
-
-const emptyPresentation = (
-  hostId: string,
-  selectionRevision: number
-): OnlyPreviewPreviewPresentation => ({
-  hostId,
-  workspaceId: null,
-  selectionRevision,
-  surface: 'vue',
-  adapterId: 'unsupported',
-  status: 'empty',
-  fileRef: null,
-  descriptor: null,
-  error: null,
-  selectedTextAvailable: false
-});
-
-const adapterForDescriptor = (
-  descriptor: OnlyPreviewDescriptor
-): { surface: OnlyPreviewPreviewSurface; adapterId: OnlyPreviewPreviewAdapterId } => {
-  if (descriptor.previewError) return { surface: 'vue', adapterId: 'unsupported' };
-  if (descriptor.extension === '.html' || descriptor.extension === '.htm') {
-    return { surface: 'chrome', adapterId: 'html-page' };
-  }
-  if (descriptor.kind === 'pdf') {
-    return { surface: 'chrome', adapterId: 'chromium-pdf' };
-  }
-  if (descriptor.kind === 'text') {
-    return descriptor.extension === '.md'
-      ? { surface: 'vue', adapterId: 'markdown-dom' }
-      : { surface: 'vue', adapterId: 'monaco' };
-  }
-  if (descriptor.kind === 'sheet') return { surface: 'vue', adapterId: 'xlsx-grid' };
-  if (descriptor.kind === 'document') return { surface: 'vue', adapterId: 'docx-dom' };
-  if (descriptor.kind === 'image') return { surface: 'vue', adapterId: 'image' };
-  if (descriptor.kind === 'audio') return { surface: 'vue', adapterId: 'audio' };
-  if (descriptor.kind === 'video') return { surface: 'vue', adapterId: 'video' };
-  return { surface: 'vue', adapterId: 'unsupported' };
-};
-
-const adapterProvidesSelectedText = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
-  adapterId === 'monaco' || adapterId === 'markdown-dom' || adapterId === 'docx-dom';
-
-const adapterUsesOneShotAsset = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
-  adapterId === 'image' || adapterId === 'xlsx-grid' || adapterId === 'docx-dom';
-
-const adapterUsesVueAsset = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
-  adapterUsesOneShotAsset(adapterId) || adapterId === 'audio' || adapterId === 'video';
-
-const effectiveDescriptorErrorCode = (
-  descriptor: OnlyPreviewDescriptor | null
-): OnlyPreviewErrorCode | null => {
-  const errorCode = descriptor?.previewError?.code;
-  if (!errorCode) return null;
-  return errorCode === 'UNSUPPORTED_CODEC' ? 'OPERATION_FAILED' : errorCode;
-};
-
-const descriptorErrorPayload = (
-  descriptor: OnlyPreviewDescriptor
-): OnlyPreviewPreviewPresentation['error'] => {
-  const errorCode = effectiveDescriptorErrorCode(descriptor);
-  if (!descriptor.previewError || !errorCode) return null;
-  return {
-    code: errorCode,
-    message: descriptor.previewError.message
-  };
-};
 
 export class OnlyPreviewPreviewRegionService {
   private readonly findService = new OnlyPreviewFindService();
@@ -120,6 +53,12 @@ export class OnlyPreviewPreviewRegionService {
     getDocumentLoadingRevision: () =>
       this.activePreviewSurface === 'vue' &&
       this.presentation.adapterId === 'docx-dom' &&
+      this.presentation.status === 'loading'
+        ? this.selectionRevision
+        : null,
+    getDiagramLoadingRevision: () =>
+      this.activePreviewSurface === 'vue' &&
+      this.presentation.adapterId === 'drawio-viewer' &&
       this.presentation.status === 'loading'
         ? this.selectionRevision
         : null,
@@ -148,7 +87,7 @@ export class OnlyPreviewPreviewRegionService {
     inode: bigint;
     modifiedTimeNanoseconds: bigint;
   } | null = null;
-  private presentation: OnlyPreviewPreviewPresentation = emptyPresentation('', 0);
+  private presentation: OnlyPreviewPreviewPresentation = createEmptyOnlyPreviewPresentation('', 0);
 
   start(runtime: OnlyPreviewPreviewRegionRuntime): void {
     this.destroy();
@@ -156,7 +95,10 @@ export class OnlyPreviewPreviewRegionService {
     this.viewService.start(runtime);
     this.activePreviewSurface = 'vue';
     this.vueResetAcknowledgedRevision = null;
-    this.presentation = emptyPresentation(runtime.host.hostId, this.selectionRevision);
+    this.presentation = createEmptyOnlyPreviewPresentation(
+      runtime.host.hostId,
+      this.selectionRevision
+    );
     this.findService.reset(this.presentation);
   }
 
@@ -188,7 +130,7 @@ export class OnlyPreviewPreviewRegionService {
       }
       await onlyPreviewWorkspaceRegistry.assertOpenedFileCurrent(opened);
       if (!this.isCurrent(runtime, revision)) return;
-      const adapter = adapterForDescriptor(descriptor);
+      const adapter = getOnlyPreviewDescriptorAdapter(descriptor);
       let navigationUrl: string | null = null;
       let assetIssued = false;
       if (adapter.adapterId === 'html-page') {
@@ -199,28 +141,41 @@ export class OnlyPreviewPreviewRegionService {
         }
         descriptor = { ...descriptor, assetUrl: navigationUrl };
       } else if (adapter.adapterId === 'chromium-pdf') {
+        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
         navigationUrl = onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
           selectionRevision: revision,
-          maxBytes: Math.min(opened.size, ONLY_PREVIEW_MAX_PDF_BYTES),
+          maxBytes: Math.min(opened.size, maxBytes ?? opened.size),
           delivery: 'network'
         });
         assetIssued = true;
         descriptor = { ...descriptor, assetUrl: navigationUrl };
       } else if (adapter.adapterId === 'xlsx-grid') {
+        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
         descriptor = {
           ...descriptor,
           assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
             selectionRevision: revision,
-            maxBytes: Math.min(opened.size, ONLY_PREVIEW_MAX_SHEET_BYTES)
+            maxBytes: Math.min(opened.size, maxBytes ?? opened.size)
           })
         };
         assetIssued = true;
       } else if (adapter.adapterId === 'docx-dom') {
+        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
         descriptor = {
           ...descriptor,
           assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
             selectionRevision: revision,
-            maxBytes: Math.min(opened.size, ONLY_PREVIEW_MAX_DOCUMENT_BYTES)
+            maxBytes: Math.min(opened.size, maxBytes ?? opened.size)
+          })
+        };
+        assetIssued = true;
+      } else if (adapter.adapterId === 'drawio-viewer') {
+        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
+        descriptor = {
+          ...descriptor,
+          assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
+            selectionRevision: revision,
+            maxBytes: Math.min(opened.size, maxBytes ?? opened.size)
           })
         };
         assetIssued = true;
@@ -229,10 +184,8 @@ export class OnlyPreviewPreviewRegionService {
         adapter.adapterId === 'audio' ||
         adapter.adapterId === 'video'
       ) {
-        const maxBytes =
-          adapter.adapterId === 'image'
-            ? Math.min(opened.size, ONLY_PREVIEW_MAX_IMAGE_BYTES)
-            : opened.size;
+        const adapterLimit = getOnlyPreviewFileSizeLimit(adapter.adapterId);
+        const maxBytes = Math.min(opened.size, adapterLimit ?? opened.size);
         descriptor = {
           ...descriptor,
           assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
@@ -279,8 +232,8 @@ export class OnlyPreviewPreviewRegionService {
         status: 'loading',
         fileRef,
         descriptor,
-        error: descriptorErrorPayload(descriptor),
-        selectedTextAvailable: adapterProvidesSelectedText(adapter.adapterId)
+        error: getOnlyPreviewDescriptorErrorPayload(descriptor),
+        selectedTextAvailable: onlyPreviewAdapterProvidesSelectedText(adapter.adapterId)
       };
       this.publishPresentation();
       this.viewService.armDocumentWatchdogIfEligible();
@@ -350,7 +303,7 @@ export class OnlyPreviewPreviewRegionService {
     this.beginTransition(null);
     this.activePreviewSurface = 'vue';
     this.presentation = {
-      ...emptyPresentation(runtime.host.hostId, this.selectionRevision),
+      ...createEmptyOnlyPreviewPresentation(runtime.host.hostId, this.selectionRevision),
       workspaceId
     };
     this.publishPresentation();
@@ -487,13 +440,13 @@ export class OnlyPreviewPreviewRegionService {
     }
     this.readyFindCoverage = findCoverage ?? { kind: 'complete' };
     this.viewService.clearDocumentWatchdog();
-    if (adapterUsesOneShotAsset(this.presentation.adapterId)) {
+    if (onlyPreviewAdapterUsesOneShotAsset(this.presentation.adapterId)) {
       onlyPreviewAssetRegistry.revokeSelection(hostToken, selectionRevision);
     }
     const descriptor = this.presentation.descriptor
       ? { ...this.presentation.descriptor }
       : this.presentation.descriptor;
-    if (descriptor && adapterUsesOneShotAsset(this.presentation.adapterId)) {
+    if (descriptor && onlyPreviewAdapterUsesOneShotAsset(this.presentation.adapterId)) {
       delete descriptor.assetUrl;
     }
     this.presentation = { ...this.presentation, descriptor, status: 'ready', error: null };
@@ -519,8 +472,10 @@ export class OnlyPreviewPreviewRegionService {
     if (
       runtime &&
       view &&
-      this.presentation.adapterId === 'docx-dom' &&
-      DOCUMENT_REBUILD_ERRORS.has(errorCode)
+      ((this.presentation.adapterId === 'docx-dom' &&
+        ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS.has(errorCode)) ||
+        (this.presentation.adapterId === 'drawio-viewer' &&
+          ONLY_PREVIEW_DIAGRAM_REBUILD_ERRORS.has(errorCode)))
     ) {
       this.viewService.clearDocumentWatchdog();
       this.viewService.invalidateVuePreviewView(
@@ -536,7 +491,7 @@ export class OnlyPreviewPreviewRegionService {
     const descriptor = this.presentation.descriptor
       ? { ...this.presentation.descriptor }
       : this.presentation.descriptor;
-    if (descriptor && adapterUsesVueAsset(this.presentation.adapterId)) {
+    if (descriptor && onlyPreviewAdapterUsesVueAsset(this.presentation.adapterId)) {
       delete descriptor.assetUrl;
     }
     this.presentation = {
@@ -571,7 +526,10 @@ export class OnlyPreviewPreviewRegionService {
     this.runtime = null;
     this.activePreviewSurface = null;
     if (runtime) {
-      this.presentation = emptyPresentation(runtime.host.hostId, this.selectionRevision);
+      this.presentation = createEmptyOnlyPreviewPresentation(
+        runtime.host.hostId,
+        this.selectionRevision
+      );
     }
   }
 
@@ -580,8 +538,9 @@ export class OnlyPreviewPreviewRegionService {
     if (!runtime) throw new Error('OnlyPreview Preview Region is not running.');
     const pendingDocumentView =
       this.activePreviewSurface === 'vue' &&
-      this.presentation.adapterId === 'docx-dom' &&
-      this.presentation.status === 'loading'
+      (this.presentation.adapterId === 'docx-dom' ||
+        this.presentation.adapterId === 'drawio-viewer') &&
+      (this.presentation.status === 'loading' || this.presentation.adapterId === 'drawio-viewer')
         ? this.viewService.getVuePreviewView()
         : null;
     this.findService.beginTransition();
@@ -600,7 +559,7 @@ export class OnlyPreviewPreviewRegionService {
     this.vueResetAcknowledgedRevision = null;
     this.activeFileIdentity = null;
     this.presentation = {
-      ...emptyPresentation(runtime.host.hostId, this.selectionRevision),
+      ...createEmptyOnlyPreviewPresentation(runtime.host.hostId, this.selectionRevision),
       workspaceId: fileRef?.workspaceId ?? null,
       status: fileRef ? 'loading' : 'empty',
       fileRef
@@ -632,7 +591,7 @@ export class OnlyPreviewPreviewRegionService {
     const descriptor = this.presentation.descriptor
       ? { ...this.presentation.descriptor }
       : this.presentation.descriptor;
-    if (descriptor && adapterUsesVueAsset(this.presentation.adapterId)) {
+    if (descriptor && onlyPreviewAdapterUsesVueAsset(this.presentation.adapterId)) {
       delete descriptor.assetUrl;
     }
     this.presentation = {

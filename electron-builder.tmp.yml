@@ -89,6 +89,7 @@ fileAssociations:
       - html
       - java
       - js
+      - cjs
       - json5
       - jsx
       - less

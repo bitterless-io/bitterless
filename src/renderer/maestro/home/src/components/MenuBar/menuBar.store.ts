@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
-import type { CoachXpcContract, LoadProgress, TabInfo } from '@maestro-shared/coach.api'
+import type { CoachXpcContract, TabInfo } from '@maestro-shared/coach.api'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
@@ -12,8 +12,7 @@ function stripScheme(url: string): string {
 }
 
 /**
- * Controller for the MenuBar — the app's 48px top chrome. It owns the address bar
- * and the simulated page-load progress.
+ * Controller for the MenuBar — the app's 48px top chrome. It owns the address bar.
  *
  * Platform note: on macOS the window is titleBarStyle 'hiddenInset', so the native
  * traffic lights overlap the bar's top-left and we reserve a left gutter for them.
@@ -26,13 +25,9 @@ class MenuBarState {
   url = ''
   /** Active page <title>; empty until the page reports one (tab falls back to URL host). */
   title = ''
-  /** 0–100; the bar is visible while `loading` and animates a simulated trickle. */
-  progress = 0
-  loading = false
   /** History availability of the active tab → enables/disables the back/forward buttons. */
   canGoBack = false
   canGoForward = false
-  private trickle = 0
 
   async init(): Promise<void> {
     xpcRenderer.subscribe('coach/nav', (payload) => {
@@ -45,11 +40,6 @@ class MenuBarState {
       const tabs = (payload.params as TabInfo[]) || []
       const active = tabs.find((tab) => tab.active)
       if (active) this.url = stripScheme(active.displayUrl || active.url || '')
-    })
-    xpcRenderer.subscribe('coach/load-progress', (payload) => {
-      const p = payload.params as LoadProgress | undefined
-      if (p?.loading) this.startBar()
-      else this.finishBar()
     })
     xpcRenderer.subscribe('coach/nav-state', (payload) => {
       const s = payload.params as { canGoBack?: boolean; canGoForward?: boolean } | undefined
@@ -78,29 +68,6 @@ class MenuBarState {
 
   async forward(): Promise<void> {
     await coach.goForward()
-  }
-
-  // Electron has no real load percentage: trickle toward 90% and only complete on stop.
-  private startBar(): void {
-    this.loading = true
-    this.progress = 8
-    if (this.trickle) clearInterval(this.trickle)
-    this.trickle = window.setInterval(() => {
-      const remaining = 90 - this.progress
-      if (remaining > 0) this.progress += Math.max(0.4, remaining * 0.1)
-    }, 300)
-  }
-
-  private finishBar(): void {
-    if (this.trickle) {
-      clearInterval(this.trickle)
-      this.trickle = 0
-    }
-    this.progress = 100
-    window.setTimeout(() => {
-      this.loading = false
-      this.progress = 0
-    }, 300)
   }
 }
 

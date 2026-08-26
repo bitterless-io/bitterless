@@ -21,6 +21,7 @@ interface OnlyPreviewPreviewViewCallbacks {
   getActiveSurface: () => OnlyPreviewPreviewSurface | null;
   canAttachVue: () => boolean;
   getDocumentLoadingRevision: () => number | null;
+  getDiagramLoadingRevision?: () => number | null;
   isCurrent: (runtime: OnlyPreviewPreviewRegionRuntime, revision: number) => boolean;
   bindFindWebContents: (
     surface: OnlyPreviewPreviewSurface,
@@ -127,6 +128,16 @@ const DOCUMENT_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'DOCUMENT_RENDER_TIMEOUT',
   'OPERATION_FAILED'
 ]);
+const DIAGRAM_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  'INVALID_INPUT',
+  'TEXT_TOO_LARGE',
+  'DIAGRAM_PARSE_FAILED',
+  'DIAGRAM_EMPTY',
+  'DIAGRAM_LIMIT',
+  'DIAGRAM_RENDER_TIMEOUT',
+  'OPERATION_FAILED',
+  'PROTOCOL_ERROR'
+]);
 
 const effectiveDescriptorErrorCode = (
   presentation: OnlyPreviewPreviewPresentation
@@ -149,6 +160,8 @@ export const presentationAllowsRendererError = (
       return SHEET_RENDER_ERRORS.has(errorCode);
     case 'docx-dom':
       return DOCUMENT_RENDER_ERRORS.has(errorCode);
+    case 'drawio-viewer':
+      return DIAGRAM_RENDER_ERRORS.has(errorCode);
     case 'image':
       return IMAGE_RENDER_ERRORS.has(errorCode);
     case 'audio':
@@ -329,7 +342,9 @@ export class OnlyPreviewPreviewViewService {
     const runtime = this.runtime;
     const view = this.vuePreviewView;
     const runtimeToken = this.vueRuntimeToken;
-    const revision = this.callbacks.getDocumentLoadingRevision();
+    const documentRevision = this.callbacks.getDocumentLoadingRevision();
+    const diagramRevision = this.callbacks.getDiagramLoadingRevision?.() ?? null;
+    const revision = diagramRevision ?? documentRevision;
     if (!runtime || !view || !runtimeToken || view.webContents.isDestroyed() || revision === null) {
       return;
     }
@@ -344,22 +359,27 @@ export class OnlyPreviewPreviewViewService {
     this.clearDocumentWatchdog();
     const timer = setTimeout(() => {
       const watchdog = this.documentWatchdog;
+      const activeDiagramRevision = this.callbacks.getDiagramLoadingRevision?.() ?? null;
+      const activeDocumentRevision = this.callbacks.getDocumentLoadingRevision();
       if (
         !watchdog ||
         watchdog.timer !== timer ||
         watchdog.runtime !== this.runtime ||
         watchdog.view !== this.vuePreviewView ||
         watchdog.runtimeToken !== this.vueRuntimeToken ||
-        watchdog.revision !== this.callbacks.getDocumentLoadingRevision()
+        watchdog.revision !== (activeDiagramRevision ?? activeDocumentRevision)
       ) {
         return;
       }
       this.documentWatchdog = null;
+      const isDiagram = watchdog.revision === activeDiagramRevision;
       this.invalidateVuePreviewView(
         watchdog.view,
         new OnlyPreviewContractError(
-          'DOCUMENT_RENDER_TIMEOUT',
-          'Document preview exceeded its rendering deadline.'
+          isDiagram ? 'DIAGRAM_RENDER_TIMEOUT' : 'DOCUMENT_RENDER_TIMEOUT',
+          isDiagram
+            ? 'Draw.io preview exceeded its rendering deadline.'
+            : 'Document preview exceeded its rendering deadline.'
         ),
         true
       );

@@ -130,7 +130,7 @@ exclude:
   });
 });
 
-test('search text eligibility is exact, size-first, tolerant, and uses no body read for metadata-only files', async () => {
+test('search text eligibility defaults remaining files to text and stays size-first and tolerant', async () => {
   for (const relativePath of [
     'src/App.vue',
     'notes.markdown',
@@ -141,7 +141,8 @@ test('search text eligibility is exact, size-first, tolerant, and uses no body r
   ]) {
     assert.equal(classifySearchMediaType(relativePath), 'text', relativePath);
   }
-  assert.equal(classifySearchMediaType('plain.unknown'), 'unknown');
+  assert.equal(classifySearchMediaType('plain.unknown'), 'text');
+  assert.equal(classifySearchMediaType('AGENTS.md.bak'), 'text');
 
   const createHandle = (bytes, { postSize = bytes.length } = {}) => {
     let readCount = 0;
@@ -173,8 +174,8 @@ test('search text eligibility is exact, size-first, tolerant, and uses no body r
   };
 
   for (const [relativePath, size] of [
-    ['plain.unknown', 12],
-    ['archive.zip', 12],
+    ['workbook.xlsx', 12],
+    ['image.png', 12],
     ['huge.vue', 1024 ** 3],
     ['.env.production', 12]
   ]) {
@@ -187,6 +188,19 @@ test('search text eligibility is exact, size-first, tolerant, and uses no body r
     });
     assert.equal(result.contentIndexed, false, relativePath);
     assert.equal(fixture.readCount(), 0, relativePath);
+  }
+
+  for (const relativePath of ['plain.unknown', 'archive.zip', 'AGENTS.md.bak']) {
+    const fixture = createHandle(Buffer.from('fallback text'));
+    const result = await readClassifiedSearchContent({
+      handle: fixture.handle,
+      relativePath,
+      openedStat: fixture.openedStat
+    });
+    assert.equal(result.mediaType, 'text', relativePath);
+    assert.equal(result.contentIndexed, true, relativePath);
+    assert.equal(result.originalContent, 'fallback text', relativePath);
+    assert.ok(fixture.readCount() > 0, relativePath);
   }
 
   const renamedZipBytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0xc3, 0x28]);
@@ -207,9 +221,11 @@ test('search text eligibility is exact, size-first, tolerant, and uses no body r
     relativePath: 'archive.zip',
     openedStat: sameBytesZip.openedStat
   });
-  assert.equal(sameBytesZipResult.mediaType, 'unknown');
-  assert.equal(sameBytesZipResult.contentIndexed, false);
-  assert.equal(sameBytesZip.readCount(), 0);
+  assert.equal(sameBytesZipResult.mediaType, 'text');
+  assert.equal(sameBytesZipResult.contentIndexed, true);
+  assert.equal(sameBytesZipResult.originalContent.includes('\0'), true);
+  assert.match(sameBytesZipResult.originalContent, /\uFFFD/u);
+  assert.ok(sameBytesZip.readCount() > 0);
 
   const oddUtf16 = createHandle(Buffer.from([0xff, 0xfe, 0x68, 0x00, 0x69]));
   assert.equal(

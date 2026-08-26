@@ -54,7 +54,10 @@
       </div>
       <div class="setting__content">
         <ProxySetting v-if="settingNavStore.activeTab === 'proxy'" />
-        <GeneralSetting v-if="settingNavStore.activeTab === 'general'" />
+        <GeneralSetting
+          v-if="settingNavStore.activeTab === 'general'"
+          :show-chat-menu-control="showChatMenuControl"
+        />
         <LLMSetting v-if="settingNavStore.activeTab === 'llm'" />
         <SystemPromptSetting v-if="settingNavStore.activeTab === 'systemPrompt'" />
         <NotificationSetting v-if="settingNavStore.activeTab === 'notification'" />
@@ -66,6 +69,7 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import LLMSetting from './components/LLMSetting/LLMSetting.vue';
 import SystemPromptSetting from './components/SystemPromptSetting/SystemPromptSetting.vue';
 import ProxySetting from './components/ProxySetting/ProxySetting.vue';
@@ -79,6 +83,12 @@ import { loadSystemPromptSetting } from './components/SystemPromptSetting/system
 import type { SettingTab } from '@shared/setting/settingNavigation.contract';
 import { settingNavStore } from './store/settingNav.store';
 
+withDefaults(defineProps<{
+  showChatMenuControl?: boolean;
+}>(), {
+  showChatMenuControl: true,
+});
+
 const onNavClick = (key: SettingTab): void => {
   settingNavStore.select(key);
   if (key === 'proxy') {
@@ -87,6 +97,12 @@ const onNavClick = (key: SettingTab): void => {
     loadSystemPromptSetting();
   }
 };
+
+onMounted(() => {
+  if (settingNavStore.activeTab === 'proxy') {
+    void loadProxySetting();
+  }
+});
 </script>
 
 <style lang="less">

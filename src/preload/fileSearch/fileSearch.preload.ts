@@ -14,8 +14,10 @@ import {
 } from '@shared/onlypreview/fileSearchRuntime.types';
 import type {
   OnlyPreviewBrowseDirectoryRequest,
+  OnlyPreviewGlobalSearchPreviewRequest,
   OnlyPreviewSearchCancelRequest,
   OnlyPreviewSearchInitializeRequest,
+  OnlyPreviewSearchPrioritizeFileRequest,
   OnlyPreviewSearchRequest,
   OnlyPreviewSearchShutdownRequest
 } from '@shared/onlypreview/onlyPreviewSearch.type';
@@ -112,6 +114,11 @@ export class FileSearchRuntime extends XpcPreloadHandler implements FileSearchRu
     return await runtime.refresh(value.request);
   }
 
+  async prioritizeFile(params: FileSearchRuntimeRequest<OnlyPreviewSearchPrioritizeFileRequest>) {
+    const value = requireRuntimeRequest<OnlyPreviewSearchPrioritizeFileRequest>(params);
+    return await runtime.prioritizeFile(value.request);
+  }
+
   async browseDirectory(params: FileSearchRuntimeRequest<OnlyPreviewBrowseDirectoryRequest>) {
     const value = requireRuntimeRequest<OnlyPreviewBrowseDirectoryRequest>(params);
     return await runtime.browseDirectory(value.request);
@@ -120,6 +127,11 @@ export class FileSearchRuntime extends XpcPreloadHandler implements FileSearchRu
   async search(params: FileSearchRuntimeRequest<OnlyPreviewSearchRequest>) {
     const value = requireRuntimeRequest<OnlyPreviewSearchRequest>(params);
     return await runtime.search(value.request);
+  }
+
+  async preview(params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchPreviewRequest>) {
+    const value = requireRuntimeRequest<OnlyPreviewGlobalSearchPreviewRequest>(params);
+    return await runtime.preview(value.request);
   }
 
   async cancel(params: FileSearchRuntimeRequest<OnlyPreviewSearchCancelRequest>) {

@@ -35,12 +35,13 @@ assert(browserView.includes('debuggerEnabled: true'), 'new tabs should default d
 assert(browserView.includes('async setTabDebugger(params: { id: string; enabled: boolean }): Promise<TabInfo[]>'), 'browser view service should implement setTabDebugger')
 assert(browserView.includes('tab.capture.suspend()'), 'turning debugger off should suspend capture')
 assert(browserView.includes('tab.attachReady = tab.capture.resume()') && browserView.includes('await tab.attachReady'), 'turning debugger on should resume capture and await attachment')
-const tabInfoMatch = browserView.match(
-  /private tabInfo\(tab: OperationTab\): TabInfo \{([\s\S]*?)\n  \}\n\n  private broadcastLoading/
-)
-assert(tabInfoMatch, 'browser view service should keep a bounded tabInfo broadcast mapper')
+const tabInfoStart = browserView.indexOf('private tabInfo(tab: OperationTab): TabInfo {')
+assert(tabInfoStart >= 0, 'browser view service should keep a bounded tabInfo broadcast mapper')
+const tabInfoEnd = browserView.indexOf('private setTabLoading', tabInfoStart)
+assert(tabInfoEnd > tabInfoStart, 'tabInfo mapper should end before the loading lifecycle method')
+const tabInfoSource = browserView.slice(tabInfoStart, tabInfoEnd)
 assert(
-  (tabInfoMatch?.[1] || '').includes('debuggerAttached: Boolean(tab.capture?.isAttached())'),
+  tabInfoSource.includes("debuggerAttached: tab.kind === 'browser' && Boolean(tab.capture?.isAttached())"),
   'tabInfo broadcasts should include live debugger attachment state'
 )
 assert(!/welladjust/i.test(browserView), 'debugger toggle should stay manual, with no WellAdjust-specific auto rule')

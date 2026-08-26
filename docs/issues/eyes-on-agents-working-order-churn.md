@@ -20,9 +20,9 @@ timestamps inherit SQLite input order, which is itself activity-based.
 
 ## Resolution contract
 
-- Keep the existing attention ranks:
-  `waiting_approval`, `waiting_input`, `working`, unread, then ordinary tasks. All active ranks
-  remain above non-active tasks.
+- Use these attention ranks: `waiting_approval`, `waiting_input`, visible unread dot, `working`, then
+  ordinary tasks. The visible-dot rank means unread `idle`, `failed`, `ended`, or `unknown`; a
+  working row's latent unread bit remains in the working rank.
 - Within one active rank, sort by persisted `statusObservedAt` descending. For an active task this
   is the time it entered its current working/waiting state; title, question, reply, and
   `lastActivityAt` refreshes do not change it.
@@ -39,4 +39,6 @@ timestamps inherit SQLite input order, which is itself activity-based.
   rather than UI presentation order.
 
 Delivery:
-[eyes-on-agents-working-start-order-035](../plan/tasks/eyes-on-agents-working-start-order-035.md)
+[eyes-on-agents-working-start-order-035](../plan/tasks/eyes-on-agents-working-start-order-035.md),
+with the tier precedence updated by
+[eyes-on-agents-unread-before-working-order-068](../plan/tasks/eyes-on-agents-unread-before-working-order-068.md).

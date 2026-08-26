@@ -45,6 +45,11 @@ const searchDirectorySegments = (relativePath, isDirectory) => {
   return segments;
 };
 
+export const isWorkspaceSearchPathWithinDepth = (
+  relativePath,
+  { isDirectory = false } = {}
+) => searchDirectorySegments(relativePath, isDirectory).length < MAX_INDEX_DEPTH;
+
 export const createTraversalPolicy = ({ rules = [] } = {}) => {
   const isCoreExcluded = (relativePath, isDirectory) =>
     searchDirectorySegments(relativePath, isDirectory).some(
@@ -258,8 +263,9 @@ export const createWorkspaceTraversal = async ({
             onTreeEntry?.(treeEntry);
             statistics.directoryCount += 1;
           }
-          if (depth >= MAX_INDEX_DEPTH) statistics.maxDepthReached = true;
-          else childDirectories.push(directoryRealPath);
+          if (!isWorkspaceSearchPathWithinDepth(relativePath, { isDirectory: true })) {
+            statistics.maxDepthReached = true;
+          } else childDirectories.push(directoryRealPath);
           continue;
         }
         if (!child.isFile()) continue;

@@ -95,6 +95,25 @@ test('search and browse requests keep strict relative capability shapes', () => 
       (error) => error?.code === 'INVALID_INPUT'
     );
   }
+
+  const priority = {
+    hostToken: 'host-token',
+    workspaceId: 'workspace-token',
+    generation: 1,
+    relativePath: 'docs/readme.md'
+  };
+  assert.deepEqual(runtime.parseOnlyPreviewSearchPrioritizeFileRequest(priority), priority);
+  for (const invalid of [
+    { ...priority, relativePath: '/absolute.md' },
+    { ...priority, relativePath: '../outside.md' },
+    { ...priority, relativePath: 'docs\\readme.md' },
+    { ...priority, absolutePath: '/private/workspace/docs/readme.md' }
+  ]) {
+    assert.throws(
+      () => runtime.parseOnlyPreviewSearchPrioritizeFileRequest(invalid),
+      (error) => error?.code === 'INVALID_INPUT'
+    );
+  }
 });
 
 test('search bootstrap remains Main-private and host/workspace bound', async () => {
@@ -134,6 +153,7 @@ test('official graph owns search in top-level hidden preload over capability-bou
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const fileSearchWindow = source('src/main/fileSearch/fileSearchWindow.service.ts');
   const relay = source('src/main/fileSearch/fileSearchRuntimeRelay.service.ts');
+  const globalResultValidator = source('src/main/fileSearch/fileSearchGlobalResult.validator.ts');
   const eventHandler = source('src/main/fileSearch/fileSearchRuntimeEvent.handler.ts');
   const runtimePreload = source('src/preload/fileSearch/fileSearch.preload.ts');
   const runtimeTypes = source('src/shared/onlypreview/fileSearchRuntime.types.ts');
@@ -147,6 +167,15 @@ test('official graph owns search in top-level hidden preload over capability-bou
   const vite = source('electron.vite.config.ts');
   const logPolicy = source('src/main/logging/logPolicy.service.ts');
   const hiddenHtml = source('src/renderer/fileSearch/index.html');
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const priorityService = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewSelectedFilePriority.service.ts'
+  );
+  const priorityLane = source(
+    'src/preload/onlypreview/search/core/selected-file-priority-lane.mjs'
+  );
+  const searchEngine = source('src/preload/onlypreview/search/core/search-engine.mjs');
+  const watchReconciler = source('src/preload/onlypreview/search/core/watch-reconciler.mjs');
 
   assert.match(windowHelper, /await fileSearchWindowService\.start\(\{/);
   assert.match(windowHelper, /fileSearchWindowService\.stop\(\)/);
@@ -190,6 +219,9 @@ test('official graph owns search in top-level hidden preload over capability-bou
   assert.match(runtimePreload, /runtime\.initialize\(params\.request, params\.bootstrap\)/);
   assert.doesNotMatch(runtimePreload, /parentPort|utilityProcess|contextBridge/);
   assert.match(coordinator, /createLatestSingleFlight/);
+  assert.match(coordinator, /priorityScheduler/);
+  assert.match(coordinator, /await waitForLatestPriority\(\)/);
+  assert.match(coordinator, /latestPriority = operation\.catch\(\(\) => undefined\)/);
   assert.doesNotMatch(coordinator, /beginBlock|suspend/);
 
   assert.match(relay, /active\.client\[method\]\(runtimeParams as never\)/);
@@ -201,6 +233,26 @@ test('official graph owns search in top-level hidden preload over capability-bou
   assert.doesNotMatch(runtimeTypes, /FILE_SEARCH_RUNTIME_EVENT_HANDLER\s*=/);
   assert.match(publicHandler, /onlyPreviewSearchBootstrapRegistry\.resolve\(/);
   assert.doesNotMatch(publicHandler, /readdir|readFile|node:sqlite|database\.exec/);
+  assert.match(publicHandler, /parseOnlyPreviewSearchPrioritizeFileRequest\(params\)/);
+  assert.match(publicHandler, /parseOnlyPreviewGlobalSearchPreviewRequest\(params\)/);
+  assert.doesNotMatch(
+    `${publicHandler}\n${relay}\n${globalResultValidator}`,
+    /node:fs|node:sqlite|readFile|readdir|opendir|lstat|realpath/
+  );
+
+  assert.match(shellStore, /await onlyPreviewClient\.selectStandaloneFile\(/);
+  assert.match(shellStore, /dispatchOnlyPreviewSelectedFilePriority\(/);
+  assert.match(priorityService, /void onlyPreviewSearchClient[\s\S]*\.prioritizeFile\(/);
+  assert.match(priorityLane, /isWorkspaceSearchPathWithinDepth\(relativePath/);
+  assert.match(searchEngine, /createOnlyPreviewSearchWatchReconciler\(\{/);
+  assert.match(searchEngine, /await this\.watchReconciler\.apply\(change\)/);
+  assert.doesNotMatch(searchEngine, /async emitBrowseListingsForChangedPaths\(/);
+  assert.match(
+    watchReconciler,
+    /async emitBrowseListingsForChangedPaths\(context, relativePaths\)/
+  );
+  assert.match(watchReconciler, /await context\.refreshInternal\(\)/);
+  assert.match(watchReconciler, /await context\.emitSnapshot\(\)/);
 
   assert.doesNotMatch(visiblePreload, /fileSearch|searchToken|rootPath|databasePath/);
   assert.doesNotMatch(contentPreload, /fileSearch|searchToken|rootPath|databasePath/);

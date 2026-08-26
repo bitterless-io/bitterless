@@ -625,14 +625,19 @@ export const zh: typeof en = {
       markUnread: '标为未读',
       copySessionPath: '复制会话路径',
       more: '更多操作',
-      readAll: '全部已读',
       searchTitles: '搜索任务标题',
       searchTitlesMac: '搜索标题（⌘F）',
       searchTitlesWindows: '搜索标题（Ctrl+F）'
     },
+    search: {
+      title: '搜索任务',
+      placeholder: '搜索任务标题…',
+      results: '任务搜索结果',
+      startTyping: '输入任务标题开始搜索',
+      empty: '没有匹配此搜索的任务标题'
+    },
     board: {
       emptyFocus: '现在没有需要关注的任务',
-      emptyTitleSearch: '没有匹配此搜索的任务标题',
       emptyTitle: '还没有 Agent 任务',
       emptyBody: '连接 Codex 或刷新本机 Claude 会话后即可开始观测。',
       loading: '正在加载观测面板'

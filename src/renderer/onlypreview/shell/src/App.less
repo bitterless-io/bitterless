@@ -166,8 +166,7 @@ select {
 }
 
 .onlypreview-shell__tree-row:focus-visible,
-.onlypreview-shell__resize-handle:focus-visible,
-.onlypreview-shell__search:focus-within {
+.onlypreview-shell__resize-handle:focus-visible {
   outline: 2px solid var(--onlypreview-focus);
   outline-offset: -2px;
 }
@@ -232,105 +231,6 @@ select {
 .onlypreview-shell__project-action.arco-btn:focus-visible {
   outline: 2px solid var(--onlypreview-focus);
   outline-offset: -2px;
-}
-
-.onlypreview-shell__search {
-  height: 30px;
-  flex: 0 0 30px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 8px 7px;
-  padding: 0 7px;
-  border: 1px solid var(--onlypreview-divider);
-  border-radius: 5px;
-  background: var(--onlypreview-surface);
-  color: var(--onlypreview-muted);
-}
-
-.onlypreview-shell__search input {
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--onlypreview-ink);
-  font-size: 12px;
-}
-
-.onlypreview-shell__search input::-webkit-search-cancel-button {
-  display: none;
-}
-
-.onlypreview-shell__search-clear {
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--onlypreview-muted);
-  cursor: pointer;
-}
-
-.onlypreview-shell__project-search-scope {
-  height: 25px;
-  flex: 0 0 25px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: -2px 8px 7px;
-  overflow: hidden;
-}
-
-.onlypreview-shell__scope-control {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.onlypreview-shell__scope-label {
-  color: var(--onlypreview-muted);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.onlypreview-shell__scope-select {
-  height: 23px;
-  max-width: 105px;
-  padding: 0 4px;
-  border: 1px solid #cfd3e2;
-  border-radius: 4px;
-  outline: 0;
-  background: var(--onlypreview-royal-soft);
-  color: #394263;
-  font-size: 10px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.onlypreview-shell__scope-select:hover {
-  border-color: var(--onlypreview-focus);
-}
-
-.onlypreview-shell__scope-select:focus-visible {
-  outline: 2px solid var(--onlypreview-focus);
-  outline-offset: 1px;
-}
-
-.onlypreview-shell__scope-target {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  color: var(--onlypreview-muted);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .onlypreview-shell__tree {

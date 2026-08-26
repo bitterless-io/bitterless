@@ -25,7 +25,6 @@ import {
 import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
 import { maestroWindowHandler } from './xpc/maestroWindow.handler';
-import { authHandler } from './xpc/auth.handler';
 import { eyesOnAgentsWindowHandler } from './xpc/eyesOnAgentsWindow.handler';
 import { submodulesWindowHandler } from './xpc/submodulesWindow.handler';
 import { todoWindowHandler } from './xpc/todoWindow.handler';
@@ -526,8 +525,11 @@ const startGui = async (): Promise<void> => {
         await trenchIoWindowService.start();
       });
     },
-    createHome: () => {
+    createHome: async () => {
       mainWindowHelper.create({ canCreate: () => !isShutdownStarted });
+      await maestroWindowHandler.openMaestroWindow().catch((err: unknown) => {
+        console.warn('[app] Failed to open Maestro during startup:', err);
+      });
     },
     refreshMcpShim: async () => {
       await runDiagnosedStartupStage('mcp-shim', async () => {
@@ -538,14 +540,14 @@ const startGui = async (): Promise<void> => {
       await runDiagnosedStartupStage('tray', () => {
         trayHelper.init({
           show: () => {
-            void authHandler.showPrimaryWindow().catch((err: unknown) => {
-              console.warn('[app] Failed to show the primary window from tray:', err);
+            void maestroWindowHandler.openMaestroWindow().catch((err: unknown) => {
+              console.warn('[app] Failed to show Maestro from tray:', err);
             });
           },
         });
         app.on('activate', () => {
-          void authHandler.showPrimaryWindow().catch((err: unknown) => {
-            console.warn('[app] Failed to show the primary window on activation:', err);
+          void maestroWindowHandler.openMaestroWindow().catch((err: unknown) => {
+            console.warn('[app] Failed to show Maestro on activation:', err);
           });
         });
       });
@@ -622,8 +624,8 @@ if (isLegacyCodingAgentHookHelperMode) {
     if (targets.length) {
       for (const target of targets) onlyPreviewOpenQueue.enqueue(target);
     } else {
-      void authHandler.showPrimaryWindow().catch((err: unknown) => {
-        console.warn('[app] Failed to show the primary window for second instance:', err);
+      void maestroWindowHandler.openMaestroWindow().catch((err: unknown) => {
+        console.warn('[app] Failed to show Maestro for second instance:', err);
       });
     }
   });

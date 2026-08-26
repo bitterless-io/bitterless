@@ -43,12 +43,20 @@ export const shouldOpenOperationDevTools = (): boolean => {
   return process.env.COACH_DEVTOOLS === '1'
 }
 
+export const shouldOpenPinnedHomeDevTools = (): boolean => {
+  if (import.meta.env.VITE_MODE !== 'debug') return false
+  return process.env.BITTERLESS_E2E !== '1'
+}
+
 export const AI_CRMS_LOGIN_URL = `http://${AI_CRMS_AUTH_HOST}/?mrgn=ID#/login`
 const AI_CRMS_TITLE = 'AI-CRMS'
 const AI_CRMS_FAVICON = ''
 const LOCAL_HOME_TITLE = 'Home'
 const LOCAL_HOME_FAVICON = ''
 const ATTACH_BEFORE_NAVIGATE_TIMEOUT_MS = 3000
+// Chromium may keep a page "loading" for a stalled subresource or never emit a stop event when
+// its renderer dies. The tab spinner is only a status hint, so always settle it after this cap.
+const LOAD_WATCHDOG_MS = 30_000
 const INJECTED_BUTTON_ROOT_ID = '__bitterless_maestro_button_root__'
 const injectBtnStore = createXpcMainEmitter<InjectBtnApi>('InjectBtnDao')
 
@@ -140,6 +148,10 @@ export interface OperationTab {
   debuggerEnabled: boolean
   pinned: boolean
   lastActive: number
+  /** Page load in flight; projected to the tab chip instead of a global progress bar. */
+  loading: boolean
+  /** Hard cap for a missing did-stop-loading event. Cleared whenever the view loses ownership. */
+  loadWatchdog: ReturnType<typeof setTimeout> | null
 }
 
 export interface MaestroBrowserViewServiceState {
@@ -197,7 +209,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       favicon: LOCAL_HOME_FAVICON,
       debuggerEnabled: false,
       pinned: true,
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      loading: false,
+      loadWatchdog: null
     }
     this.tabs.push(first)
     this.activeTabId = first.id
@@ -353,7 +367,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       favicon: meta.favicon || '',
       debuggerEnabled: true,
       pinned: false,
-      lastActive: 0
+      lastActive: 0,
+      loading: false,
+      loadWatchdog: null
     }
     this.tabs.push(tab)
     return tab
@@ -375,7 +391,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       favicon: AI_CRMS_FAVICON,
       debuggerEnabled: false,
       pinned: false,
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      loading: false,
+      loadWatchdog: null
     }
     this.tabs.push(tab)
     await this.enforceWarmCap([tab.id])
@@ -433,6 +451,18 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   private isPinnedHomeTab(tab?: OperationTab): boolean {
     return Boolean(tab?.pinned && tab.kind === 'home')
+  }
+
+  private openPinnedHomeDevTools(tab: OperationTab | undefined, view: WebContentsView | null): void {
+    if (!shouldOpenPinnedHomeDevTools()) return
+    if (!tab || !view || !this.isPinnedHomeTab(tab) || !this.isLiveTabView(tab, view)) return
+    const wc = view.webContents
+    if (wc.isDevToolsOpened()) return
+    try {
+      wc.openDevTools({ mode: 'detach', activate: false })
+    } catch (err) {
+      this._state.emitTrace({ kind: 'error', msg: 'Home devtools: ' + (err as Error).message, ts: Date.now() })
+    }
   }
 
   private isAllowedPinnedHomeNavigation(tab: OperationTab, url: string): boolean {
@@ -668,6 +698,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const bridgeCapture = tab.bridgeCapture
     const preparationReady = tab.preparationReady
 
+    // The old view cannot promise a stop event after this point. Settle before detaching ownership.
+    this.setTabLoading(tab, false)
+
     // Make the old slot non-live before the first await. A queued AI-CRMS preparation can then
     // neither pass its next ownership fence nor reattach the singleton bridge during teardown.
     tab.view = null
@@ -787,13 +820,25 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       }
     })
     wc.on('did-start-loading', () => {
-      if (this.ownerOf(view)?.id === this.activeTabId) this.broadcastLoading(true)
+      const tab = this.ownerOf(view)
+      if (tab) this.setTabLoading(tab, true)
     })
     wc.on('did-stop-loading', () => {
-      if (this.ownerOf(view)?.id === this.activeTabId) this.broadcastLoading(false)
+      const tab = this.ownerOf(view)
+      if (tab) this.setTabLoading(tab, false)
+    })
+    wc.on('did-fail-load', (_event, _errorCode, _errorDescription, _validatedUrl, isMainFrame) => {
+      if (!isMainFrame) return
+      const tab = this.ownerOf(view)
+      if (tab) this.setTabLoading(tab, false)
+    })
+    wc.on('render-process-gone', () => {
+      const tab = this.ownerOf(view)
+      if (tab) this.setTabLoading(tab, false)
     })
     wc.on('did-finish-load', () => {
       const tab = this.ownerOf(view)
+      if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, view)
       if (tab?.kind === 'browser') void this.injectStoredButtonForTab(tab)
     })
     wc.setWindowOpenHandler((details) => {
@@ -967,7 +1012,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       favicon: meta.favicon || '',
       debuggerEnabled: true,
       pinned: false,
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      loading: false,
+      loadWatchdog: null
     }
     this.tabs.push(tab)
     void this.prewarmSpare()
@@ -986,7 +1033,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       pinned: false,
       favicon: '',
       debuggerEnabled: tab.debuggerEnabled,
-      debuggerAttached: Boolean(tab.capture?.isAttached())
+      debuggerAttached: Boolean(tab.capture?.isAttached()),
+      loading: tab.loading
     })
     this._state.broadcastActivity('tab', `opened tab · ${hostnameOf(url) || url}`)
     await this.activateTab({ id: tab.id })
@@ -1068,6 +1116,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const tab = this.tabs.find((item) => item.id === params.id)
     if (!tab) return
     if (this.activeTabId === tab.id && tab.view && !tab.view.webContents.isDestroyed()) {
+      if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, tab.view)
       if (tab.kind === 'ai-crms') {
         try {
           await this.queueAiCrmsPreparation(tab, { targetUrl: tab.url })
@@ -1115,6 +1164,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this._state.currentUrl = this.displayUrl(tab) || this._state.currentUrl
     if (tab.view && !tab.view.webContents.isDestroyed()) {
       tab.view.setVisible(true)
+      if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, tab.view)
       if (this._state.opBounds) this.applyBounds(tab.view, this._state.opBounds)
       else this._state.layout()
       if (needsLoad) {
@@ -1166,6 +1216,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   private async performCloseTab(tab: OperationTab): Promise<void> {
+    // Closing can wait on capture teardown; never leave a watchdog armed during that interval.
+    this.setTabLoading(tab, false)
     if (this._state.capturing && this._state.captureTargetTabId === tab.id) {
       await this._state.stopCapture()
     }
@@ -1203,12 +1255,32 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       pinned: tab.pinned,
       favicon: tab.favicon,
       debuggerEnabled: tab.debuggerEnabled,
-      debuggerAttached: tab.kind === 'browser' && Boolean(tab.capture?.isAttached())
+      debuggerAttached: tab.kind === 'browser' && Boolean(tab.capture?.isAttached()),
+      loading: tab.loading
     }
   }
 
-  private broadcastLoading(loading: boolean): void {
-    xpcMain.broadcast('coach/load-progress', { loading, ts: Date.now() })
+  /**
+   * The only writer of a tab's visible loading state. Starting always rearms the watchdog, while
+   * redirects that keep the boolean true avoid redundant tab-list broadcasts.
+   */
+  private setTabLoading(tab: OperationTab, loading: boolean): void {
+    if (tab.loadWatchdog) {
+      clearTimeout(tab.loadWatchdog)
+      tab.loadWatchdog = null
+    }
+    if (loading) {
+      tab.loadWatchdog = setTimeout(() => {
+        tab.loadWatchdog = null
+        if (!tab.loading) return
+        tab.loading = false
+        console.warn(`[maestro] load watchdog settled tab ${tab.id}`)
+        this.broadcastTabs()
+      }, LOAD_WATCHDOG_MS)
+    }
+    if (tab.loading === loading) return
+    tab.loading = loading
+    this.broadcastTabs()
   }
 
   async toolInjectButton(skillsJson: string, domainArg: string): Promise<string> {
@@ -1329,6 +1401,10 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.lifecycleEpoch += 1
     void this.detachAuthBridge()
     for (const tab of this.tabs) {
+      if (tab.loadWatchdog) {
+        clearTimeout(tab.loadWatchdog)
+        tab.loadWatchdog = null
+      }
       try {
         tab.capture?.detach()
         tab.bridgeCapture?.detach()

@@ -4,7 +4,7 @@ Status: Implemented; owner runtime and visual verification pending
 
 Date: 2026-08-17
 
-Verified: 2026-08-17 (through task 040 non-Electron checks; runtime owner verification pending)
+Verified: 2026-08-26 (through task 067 non-Electron checks; runtime owner verification pending)
 
 ## Decision
 
@@ -31,18 +31,17 @@ by [EyesOnAgents Claude Observation](../features/eyes-on-agents-claude-observati
 - Put every newly discovered thread into the system `Uncategorized` Domain, which remains the
   storage fallback and is never presented in the UI.
 - Show every visible thread in the single Focus column, ordered by attention: waiting for approval,
-  waiting for input, working, unread, then everything else.
-- Derive current Git Project metadata from `cwd` and filter Focus by Project without
+  waiting for input, visible unread dot, working, then everything else.
+- Derive and persist current Git Project metadata from `cwd` without exposing a Project filter or
   changing stored Domain assignment.
-- Narrow the same Focus list through a renderer-memory `Cmd+F` / `Ctrl+F` token title filter that
-  composes with the Project filter.
+- Search visible thread titles in a renderer-memory `Cmd+F` / `Ctrl+F` modal whose results reuse
+  normal cards without narrowing the Focus board.
 - Play the supplied completion tone and send one localized system notification when a newly
   accepted successful turn enters the same idle/unread state as the Open red dot.
 - Persist the stored Domain value and the last thread opened through EyesOnAgents across restarts.
 - Persist unread explicitly: every observed running state or terminal event sets unread; a
-  successful Open from EyesOnAgents, an explicit per-thread **Mark as read**, or Focus `Read all`
-  clears attention until activity is observed again. An explicit **Mark as unread** re-flags one
-  thread.
+  successful Open from EyesOnAgents or explicit per-thread **Mark as read** clears attention until
+  activity is observed again. The retained bulk-read mutation remains unexposed by this renderer.
 - Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
   activated again.
 - Hide archived Codex threads and restore unarchived threads without losing their Domain or local
@@ -243,7 +242,7 @@ page, processes the hot page first, then one cold page in the cycle
 
 Candidate order is deterministic recency:
 `COALESCE(last_activity_at, updated_at) DESC`, then `updated_at DESC`, then `thread_id ASC`.
-Project/title filters, Domain membership, Focus membership, and renderer attention ordering do not
+The renderer search query, Domain membership, Focus membership, and attention ordering do not
 alter coverage. A reduced page count resets the cold cursor to page 2. Cancellation or repository
 failure does not advance it; individual malformed or failed rows are skipped so one row cannot
 starve the rest of the cold sweep.
@@ -415,8 +414,8 @@ removed later; the renderer simply never calls them and never renders a Domain.
 | `created_at`, `updated_at` | lifecycle timestamps |
 
 `Uncategorized` is inserted idempotently during SQLite bootstrap with `is_system = true` and kept
-as the internal fallback assignment. The renderer labels its fixed projection `All`; neither All
-nor Focus is stored as a separate table row.
+as the internal fallback assignment. The renderer's fixed projection is Focus; neither the retired
+All view nor Focus is stored as a separate table row.
 
 ### `eyes_on_agents_thread`
 
@@ -440,7 +439,7 @@ nor Focus is stored as a separate table row.
 | `last_completed_at` | most recent observed terminal time |
 | `last_opened_turn_id` | terminal/active turn seen when opened through EyesOnAgents |
 | `last_opened_at` | successful Codex deep-link open time |
-| `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open or Focus `Read all` clears it for confirmed terminal rows only |
+| `is_unread` | persistent Bitterless attention marker; active/terminal observations set it, successful Open or explicit per-thread Mark as read clears it; the retained terminal-only bulk clear is unexposed |
 | `status_source` | provider-scoped App Server, Hook, Agent View, or discovery authority |
 | `status_observed_at` | freshness boundary for runtime evidence |
 | `last_activity_at` | sort/display timestamp from reliable metadata or events |
@@ -472,7 +471,7 @@ so old sessions do not flood Focus as unread.
 
 Deleting a custom Domain soft-deletes it and moves all of its threads to `Uncategorized` in one
 transaction. The system Domain cannot be renamed or deleted, and the affected threads remain
-visible in the renderer's All projection throughout the change.
+visible in the complete Focus projection throughout the change.
 
 ## Project source metadata
 
@@ -483,24 +482,26 @@ preserves the last known value. A `.git` directory and a bounded `gitdir:` file 
 worktree, so nested repositories, submodules, and linked worktrees use their nearest root.
 
 Project is a source dimension, not classification. It never creates a Domain and never changes
-`domain_id`. The renderer filters the Focus column by `All`, `No project`, or an exact
-`project_key`; its options and counts use every visible thread, regardless of stored Domain
-assignment. See
-[EyesOnAgents Project Filter](../features/eyes-on-agents-project-filter.md) for the complete contract.
+`domain_id`. Main still resolves and stores it, but the renderer Project filter, options, counts,
+and selection state are retired. See
+[EyesOnAgents Project Filter](../features/eyes-on-agents-project-filter.md) for that retained-storage,
+retired-UI contract.
 
-Focus also has a renderer-session title query, reached by its Search toggle or `Cmd+F` / `Ctrl+F`,
-which suppresses Chromium's native page Find. Query and title text are normalized with Unicode
+EyesOnAgents has a renderer-session search modal, reached by the Focus Search button or `Cmd+F` /
+`Ctrl+F`, which suppresses Chromium's native page Find. Repeating the shortcut while the modal is
+open closes it. Query and title text are normalized with Unicode
 NFKC and locale-aware lowercase, then split on whitespace, hyphen, underscore, period, forward
 slash, backslash, colon, and vertical bar. A title matches only when every query token is a
 substring of at least one title token; token order does not matter. An empty, cleared, or
-separator-only query is not a filter and leaves the complete list visible.
+separator-only query renders no result cards and a quiet start-typing state.
 
 The query never reads raw source snapshots or conversation content, never matches thread ID, cwd,
 Project, Domain, prompt, response, or `payload_json`, and never changes persisted thread or Domain
-state. It composes with the Project filter: a card must satisfy both. Query text and row visibility
-remain in renderer memory, and no search-specific XPC, SQLite, App Server request, or polling loop
-exists. Filtering narrows the real card list, so matched rows keep the established `openThread`
-path and every normal card affordance.
+state. Query text, provider-qualified selection, and result visibility remain in renderer memory,
+and no search-specific XPC, SQLite, App Server request, or polling loop exists. The Focus board
+remains complete behind the modal. Results directly reuse `ThreadCard`; Up/Down wrap selection and
+Enter commits the newest draft before using the established `openThread(sessionKey)` path. Opening
+keeps the modal available for another lookup.
 
 ## Runtime state
 
@@ -583,29 +584,28 @@ Both acknowledgement paths share one positive terminal allowlist — `idle`, `fa
   Open nor disturb the `COALESCE(last_activity_at, updated_at)` refresh ordering. Observation stays
   authoritative — a later accepted Hook or App Server event may overwrite a manual value, which is
   what keeps "unread" meaning observed-and-unacknowledged. On an active or `unknown` row the flag is
-  latent until the row settles, matching `Read all`.
-- Focus `Read all` clears `is_unread` for every non-archived unread terminal row belonging to the
+  latent until the row settles.
+- The retained, renderer-unexposed bulk-read mutation clears `is_unread` for every non-archived unread terminal row belonging to the
   Main-provided visible-provider allowlist in one repository mutation. It is not filtered by
-  renderer DOM, current scroll position, Project, or title filter, it does not deep-link to
-  Codex, and it never changes runtime evidence or `last_opened_*`. When Claude is paused the
-  allowlist is Codex-only, so hidden Claude attention is preserved. The renderer enables the action
-  from the same allowlist.
+  renderer DOM, current scroll position, Project, or search query, it does not deep-link to Codex,
+  and it never changes runtime evidence or `last_opened_*`. When Claude is paused the allowlist is
+  Codex-only, so hidden Claude attention is preserved. EyesOnAgents exposes no bulk-clear control.
 
-Acknowledged terminal rows leave Focus. A newer lifecycle observation committed after either
-mutation may set a cleared thread unread again, preserving newer activity. Metadata polling cannot
-do so.
+Acknowledged terminal rows lose the unread rank and dot but remain in the complete Focus board. A
+newer lifecycle observation committed after either mutation may set a cleared thread unread again,
+preserving newer activity. Metadata polling cannot do so.
 
 `last_opened_*` changes only after `shell.openExternal(codex://threads/<id>)` resolves successfully.
 Selecting a card, moving it, or opening the same thread directly inside Codex does not mark it read.
 This means "unread" precisely means "attention observed by EyesOnAgents and not yet acknowledged by
-a successful Open or eligible Focus `Read all`". Bitterless cannot observe arbitrary manual
+a successful Open or explicit per-thread acknowledgement". Bitterless cannot observe arbitrary manual
 navigation inside Codex Desktop.
 
 A `Stop` Hook proves only that the turn stopped; it is not a read receipt and contains no supported
 signal that Codex still has this thread selected, frontmost, or viewed. App Server likewise exposes
 no documented selected-thread or read event. Consequently, if the user remains in Codex and reads
 the answer as it completes, EyesOnAgents conservatively keeps the completion unread until Open
-succeeds from EyesOnAgents or the user explicitly selects `Read all`. Completion must never
+succeeds from EyesOnAgents or the user explicitly marks that thread read. Completion must never
 auto-clear unread.
 
 Codex Hook delivery may miss a manual interruption. EyesOnAgents does not add a `paused` state, scan
@@ -625,7 +625,7 @@ identity plus SQLite compare-and-set provides the freshness fence. The completed
 a delayed active event for that same turn, while a different turn ID may start normally. Missing
 identity or completion time is a no-op. SQLite repeats those guards against the current row so a
 delayed request cannot terminate a newer turn. Reconciliation clears active state but sets unread:
-the task remains in Focus as newly finished until Open or `Read all`, and a later prompt restores
+the task remains unread until Open or explicit per-thread acknowledgement, and a later prompt restores
 working through `UserPromptSubmit`.
 
 ### Missed working recovery

@@ -20,7 +20,11 @@
       </div>
     </div>
 
-    <div name="general-setting__experimental" class="general-setting__section">
+    <div
+      v-if="showChatMenuControl"
+      name="general-setting__experimental"
+      class="general-setting__section"
+    >
       <h4 class="general-setting__section-title">{{ i18nHelper.setting.general.experimental.label }}</h4>
       <div name="general-setting__show-chat-menu" class="general-setting__control">
         <div class="general-setting__control-copy">
@@ -65,6 +69,12 @@
 import { onMounted } from 'vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { generalSettingStore } from './generalSetting.store';
+
+withDefaults(defineProps<{
+  showChatMenuControl?: boolean;
+}>(), {
+  showChatMenuControl: true,
+});
 
 onMounted(async () => {
   await generalSettingStore.loadSettings();

@@ -12,9 +12,6 @@ const applyInvalidation = async (params: AuthInvalidationPayload): Promise<void>
   const currentRoute = router.currentRoute.value;
 
   authStore.clearLocalSession();
-  void authEmitter.deactivateSession().catch((err) => {
-    console.warn('[auth.subscriber] Failed to deactivate invalidated session:', err);
-  });
 
   if (currentRoute.name !== 'login') {
     Message.warning(params.reason || '登录已失效，请重新登录');
@@ -26,6 +23,10 @@ const applyInvalidation = async (params: AuthInvalidationPayload): Promise<void>
       query: currentRoute.name === 'login' ? {} : { redirect: currentRoute.fullPath }
     })
     .catch(() => undefined);
+
+  void authEmitter.deactivateSession().catch((err) => {
+    console.warn('[auth.subscriber] Failed to deactivate invalidated session:', err);
+  });
 };
 
 export const initAuthSubscriber = (): void => {

@@ -4,7 +4,7 @@ import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import MenuBar from '../../components/MenuBar/MenuBar.vue'
 import { layoutStore } from '../../store/layout.store'
-import appLogo from '@maestro-renderer/common/assets/icons/app-logo.png'
+import bitterlessIcon from '@maestro-renderer/common/assets/icons/bitterless-icon.png'
 import './Layout.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -67,7 +67,7 @@ onBeforeUnmount(() => {
              (coachWindow.helper defers setVisible), so this centered loader shows in the meantime
              and is covered the instant the page paints — no blank/black area, no about:blank hop. -->
         <div class="maestro-layout__splash">
-          <img :src="appLogo" alt="" class="maestro-layout__logo" />
+          <img :src="bitterlessIcon" alt="" class="maestro-layout__logo" />
         </div>
       </div>
       <!-- Control panel: width → 0 when the sidebar is toggled off. The width TRANSITION eases

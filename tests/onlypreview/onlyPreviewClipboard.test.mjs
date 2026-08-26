@@ -135,15 +135,20 @@ test('filesystem item copy admits only one helper process while text writes rema
   await first;
 });
 
-test('renderer copy intent accepts only the three shortcut-safe void projections', () => {
+test('renderer copy intent accepts only the four shortcut-safe void projections', () => {
   const request = {
     hostToken: 'host-token-clipboard',
     workspaceId: 'workspace-clipboard',
     relativePath: 'docs/a.txt',
     copyKind: 'absolute-path'
   };
-  assert.deepEqual(runtime.parseOnlyPreviewProjectItemCopyRequest(request), request);
-  for (const copyKind of ['relative-path', 'delete', '', null]) {
+  for (const copyKind of ['item', 'absolute-path', 'relative-path', 'name']) {
+    assert.deepEqual(runtime.parseOnlyPreviewProjectItemCopyRequest({ ...request, copyKind }), {
+      ...request,
+      copyKind
+    });
+  }
+  for (const copyKind of ['delete', '', null]) {
     assert.throws(
       () => runtime.parseOnlyPreviewProjectItemCopyRequest({ ...request, copyKind }),
       expectOnlyPreviewError('INVALID_INPUT')

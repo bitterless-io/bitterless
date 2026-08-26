@@ -18,6 +18,21 @@ design document.
 - [Maestro Cowork MenuBar control parity](issues/maestro-cowork-menubar-controls-outdated.md) -
   implemented; owner verification pending: compact 36px chrome, current controls, and a bundled
   local Home fixed tab.
+- [Maestro per-tab page loading](issues/maestro-global-page-load-progress.md) - implemented;
+  owner verification pending:
+  replace the global simulated progress bar with favicon-slot loading icons and a 30-second
+  Main-process watchdog.
+- [Maestro fixed Home workspace](issues/maestro-local-home-still-shows-chat.md) - implemented;
+  owner verification pending: replace the duplicate Chat surface with Mini Apps and Connector on
+  the familiar 56px rail, hide its Settings button, use Bitterless artwork for Home/New-tab
+  branding, and keep fixed-Home DevTools available in debug runtimes.
+- [Maestro Cmd+Q reveals hidden Home](issues/maestro-quit-reveals-hidden-home.md) - implemented;
+  owner verification pending: resolve dialog ownership across visible BaseWindows and never parent
+  quit confirmation to the hidden legacy Home runtime; [review 1](plan/reviews/maestro-quit-dialog-parent-009-1.md)
+  passed.
+- [Maestro hot reload reveals legacy Home](issues/maestro-hot-reload-reveals-legacy-home.md) -
+  implemented; owner verification pending: Maestro is the sole visible primary across startup,
+  HMR, activation, logout, and invalidation; legacy Home is a hidden-only compatibility runtime.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
@@ -49,7 +64,7 @@ design document.
   300–480px Focus/Domain columns capped at 80vh, and a detail panel that overlays with panel-width
   horizontal reveal instead of squeezing the board.
 - [EyesOnAgents Focus-only board](features/eyes-on-agents-focus-board.md) - one full-width Focus
-  column listing every visible thread, retired Domain and Project UI, and an always-visible title filter.
+  column listing every visible thread, retired Domain and Project UI, and a keyboard-first search modal.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
   Project metadata; its renderer filter is retired and only resolution/storage remains.
 - [EyesOnAgents Codex observation](features/eyes-on-agents-codex-observation.md) - global Hook
@@ -135,8 +150,8 @@ design document.
   a container-anchored Arco drawer inherits no z-index, so the board painted over it.
 - [A restarted working thread stays pinned with no visible reason](issues/eyes-on-agents-restart-unknown-pinned.md) - diagnosed; repair pending owner choice:
   after a restart the row is `unknown` + unread, which promotes it to the unread tier while neither the spinner nor the dot renders for it.
-- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - modal surface superseded by the Focus filter:
-  separator-insensitive title matching now narrows the Focus column itself.
+- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - restored as a
+  keyboard-selected modal whose results reuse the complete normal thread card.
 
 ## Design system
 
@@ -150,12 +165,19 @@ design document.
   Shell-hosted Preview toolbar plus mutually exclusive `chromePreviewView` / `vuePreviewView`,
   active-surface `Cmd+F` routing, and per-format find capabilities.
 - [OnlyPreview preview format coverage](design/onlypreview-format-coverage.md) - per-format engine
-  matrix for Chromium-direct HTML/PDF and Vue-rendered code/Markdown/Office/image/media, fidelity
-  ceilings, truthful metadata failure states, and the Vue preview-engine dynamic-import exception.
+  matrix for Chromium-direct HTML/PDF and Vue-rendered code/Markdown/Office/Draw.io/image/media,
+  fidelity ceilings, truthful metadata failure states, adapter size policy, lazy Vue components,
+  and `.cjs` parity with `.js` across Monaco, Project Search, and file associations.
+- [OnlyPreview Global Search and result preview](design/onlypreview-global-search.md) - remove the
+  Project-side search field, group global results into Files/Contents, render bounded lazy result
+  previews in the right workspace, and make the workspace root the first Project tree row.
 
-The two OnlyPreview designs are closed at the documented non-E2E implementation level after the
+The pre-Draw.io OnlyPreview designs were closed at the documented non-E2E implementation level after the
 [Task 025 completion audit PASS](plan/reviews/onlypreview-design-completion-025-1.md). Their ledger is
-`implemented; owner verification pending`; only Ral's real-app/runtime/visual verification remains.
+`implemented; owner verification pending`; task 032 extends that contract with an implemented
+no-iframe Draw.io viewer and adapter-driven Vue component loading. Its
+[final independent review 3](plan/reviews/onlypreview-drawio-readonly-032-3.md) passed after both
+earlier review rounds were remediated; Ral's runtime/visual verification remains pending.
 
 ## Delivery
 
@@ -291,19 +313,19 @@ The two OnlyPreview designs are closed at the documented non-E2E implementation 
   neither polling nor `Refresh` repairs it; content-free newest-turn metadata now restores `working`
   under a distinct `app_server_turn` source.
 - [EyesOnAgents active Focus and read semantics](issues/eyes-on-agents-active-focus-read-semantics.md) - implemented; owner verification pending:
-  a still-working thread must not leave Focus after Open or `Read all`; Focus is `active runtime OR
-  unread`, and both acknowledgement paths clear unread only for confirmed terminal rows.
+  a still-working thread must retain active attention after Open; runtime attention and read
+  acknowledgement remain separate facts.
 - [EyesOnAgents completed unknown task stays in Focus after Open](issues/eyes-on-agents-completed-unknown-stuck-focus.md) - implemented; owner verification pending:
   valid newest-turn terminal evidence now settles a stale `unknown + unread` row, and Open performs
   that sync before its final acknowledgement.
 - [EyesOnAgents working cards reorder during replies](issues/eyes-on-agents-working-order-churn.md) - implemented; owner verification pending:
-  active presentation now follows current-state entry time plus an immutable tie-breaker rather
-  than message-driven activity.
+  visible unread-dot sessions precede working, while active rows still use current-state entry time
+  plus an immutable tie-breaker rather than message-driven activity.
 - [EyesOnAgents completion alert](issues/eyes-on-agents-completion-alert.md) - fixed and runtime verified:
   each newly accepted successful completion should play the supplied tone and send one localized
   native notification without duplicate alerts from Hook, App Server, or polling races.
-- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - modal surface superseded by the Focus filter:
-  `Cmd+F` now activates the Focus column's own token title filter instead of a separate result list.
+- [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - restored by task 067:
+  `Cmd+F` toggles a separate card-result modal without narrowing the Focus board.
 - [EyesOnAgents App Server frame overflow](issues/eyes-on-agents-app-server-frame-overflow.md) - implemented; owner verification pending:
   opted-in latest-question recovery must not aggregate ten complete turns into a frame that kills
   the managed Codex App Server connection.

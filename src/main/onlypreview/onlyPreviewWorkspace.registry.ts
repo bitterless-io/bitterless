@@ -260,6 +260,46 @@ export class OnlyPreviewWorkspaceRegistry {
     };
   }
 
+  async resolveProjectRoot(
+    hostToken: unknown,
+    workspaceId: unknown
+  ): Promise<ResolvedOnlyPreviewProjectItem & { name: string }> {
+    const host = this.hosts.require(hostToken, ['content']);
+    const workspace = this.requireWorkspace(host.hostToken, workspaceId);
+    let currentRootRealPath: string;
+    let rootPathStat: Awaited<ReturnType<typeof lstat>>;
+    let rootStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      rootPathStat = await lstat(workspace.rootRealPath);
+      currentRootRealPath = await realpath(workspace.rootRealPath);
+      rootStat = await stat(workspace.rootRealPath);
+    } catch (error) {
+      throwOnlyPreviewPathAccessError(error, 'The project root is no longer available.');
+    }
+    if (rootPathStat.isSymbolicLink() || currentRootRealPath !== workspace.rootRealPath) {
+      throw new OnlyPreviewContractError(
+        'PATH_OUTSIDE_WORKSPACE',
+        'The project root identity changed outside its workspace.'
+      );
+    }
+    if (!rootStat.isDirectory()) {
+      throw new OnlyPreviewContractError(
+        'PATH_NOT_REGULAR_FILE',
+        'The project root is no longer a directory.'
+      );
+    }
+    return {
+      host,
+      workspace,
+      relativePath: '',
+      realPath: workspace.rootRealPath,
+      size: 0,
+      modifiedAt: rootStat.mtimeMs,
+      nodeKind: 'directory',
+      name: workspace.rootName
+    };
+  }
+
   async resolveFile(hostToken: unknown, value: unknown): Promise<ResolvedOnlyPreviewFile> {
     const item = await this.resolveProjectItem(hostToken, value);
     if (item.nodeKind !== 'file') {

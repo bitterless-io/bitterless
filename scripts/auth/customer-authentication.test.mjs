@@ -283,18 +283,13 @@ test('login, authenticated layout, and initial Home view use the entry bundle', 
   );
   assert.match(routes, /path: 'chat',\n    name: 'chat',\n    component: Chat,/);
   assert.match(routes, /path: '\/login',\n    name: 'login',\n    component: Login,/);
-  assert.match(routes, /const defaultHomePath = isDev \? '\/chat' : '\/mini-app'/);
+  assert.match(routes, /const defaultHomePath = '\/chat'/);
   assert.match(routes, /path: '\/',\n    component: Layout,\n    redirect: defaultHomePath,/);
 
-  for (const view of [
-    'miniApp/MiniApp',
-    'connector/Connector',
-    'setting/Setting',
-    'debug/Debug',
-    'plugins/pluginTest/PluginTest',
-  ]) {
+  for (const view of ['debug/Debug', 'plugins/pluginTest/PluginTest']) {
     assert.match(routes, new RegExp(`component: \\(\\) => import\\('@/views/${view}\\.vue'\\)`));
   }
+  assert.doesNotMatch(routes, /miniApp\/MiniApp|connector\/Connector|setting\/Setting/);
 });
 
 test('production auth consistently uses the released Shanghai endpoint', () => {
@@ -567,13 +562,15 @@ test('Home observes browser-safe Core SQLite registrations before loading App an
 test('both Home Todo entry points await readiness before creating Todo content', () => {
   const embedded = read('src/renderer/home/src/views/todo/Todo.vue');
   const miniApp = read('src/renderer/home/src/views/miniApp/MiniApp.vue');
+  const homeShellBridge = read('src/renderer/home/src/xpc/homeShellBridge.handler.ts');
   assert.ok(
     embedded.indexOf('await authStore.ensureTodoistSyncReady()') <
       embedded.indexOf('await todoWindowEmitter.showTodoView()'),
   );
+  assert.match(miniApp, /await homeShellBridge\.openTodo\(\)/);
   assert.ok(
-    miniApp.indexOf('await authStore.ensureTodoistSyncReady()') <
-      miniApp.indexOf('await todoWindowEmitter.openTodoWindow()'),
+    homeShellBridge.indexOf('await authStore.ensureTodoistSyncReady()') <
+      homeShellBridge.indexOf('await todoWindowEmitter.openTodoWindow()'),
   );
   assert.match(embedded, /if \(!mounted\) await todoWindowEmitter\.hideTodoView\(\)/);
   assert.match(embedded, /if \(mounted\) Message\.error\(i18nHelper\.todo\.runtimeUnavailable\)/);
@@ -618,6 +615,8 @@ test('manual logout clears locally, navigates, and launches Main teardown withou
   const settings = read(
     'src/renderer/home/src/views/setting/components/GeneralSetting/generalSetting.store.ts'
   );
+  const homeShellClient = read('src/renderer/common/homeShellBridge.client.ts');
+  const homeShellHandler = read('src/renderer/home/src/xpc/homeShellBridge.handler.ts');
   const emitter = read('src/renderer/home/src/emitter/auth.emitter.ts');
   const handler = read('src/main/xpc/auth.handler.ts');
   const logout = store.match(/  async logout\(\): Promise<void> \{[\s\S]*?\n  \}/);
@@ -628,7 +627,7 @@ test('manual logout clears locally, navigates, and launches Main teardown withou
     /  private async _deactivateSession\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async _closeSecondaryWindows)/
   );
   const staleActivation = handler.match(
-    /  private _stopStaleActivation\(generation: number\): boolean \{[\s\S]*?\n  \}(?=\n\n  private async _deactivateSession)/
+    /  private _stopStaleActivation\(generation: number\): boolean \{[\s\S]*?\n  \}/
   );
 
   assert.ok(logout, 'Missing renderer logout flow');
@@ -640,12 +639,22 @@ test('manual logout clears locally, navigates, and launches Main teardown withou
     'local session must clear before remote cleanup is launched'
   );
   assert.match(logout[0], /\(\) => authEmitter\.deactivateSession\(\)/);
-  assert.match(logout[0], /scheduleBestEffort\(\(\) => settleBestEffort\(cleanup\)/);
-  assert.doesNotMatch(logout[0], /await settleBestEffort/);
-  assert.match(settings, /const cleanupPromise = authStore\.logout\(\)/);
-  assert.match(settings, /await router\.replace\(\{ name: 'login' \}\)/);
-  assert.match(emitter, /import type \{ AuthHandler \} from '@main\/xpc\/auth\.handler'/);
-  assert.match(emitter, /createXpcRendererEmitter<AuthHandler>\('AuthHandler'\)/);
+  assert.match(logout[0], /scheduleBestEffort\(async \(\) => \{/);
+  assert.match(logout[0], /await settleBestEffort\(\[[\s\S]*cleanup/);
+  assert.ok(
+    logout[0].indexOf('scheduleBestEffort') < logout[0].indexOf('await settleBestEffort'),
+    'Main teardown and remote cleanup must settle only inside the deferred operation'
+  );
+  assert.match(settings, /await homeShellBridge\.logout\(\)/);
+  assert.match(homeShellHandler, /const cleanup = authStore\.prepareExternalLogout\(\)/);
+  assert.match(homeShellHandler, /await router\.replace\(\{ name: 'login' \}\)/);
+  assert.ok(
+    homeShellClient.indexOf('homeShellEmitter.prepareLogout()') <
+      homeShellClient.indexOf('authSessionEmitter.deactivateSession()'),
+    'Home must enter Login before Main resets auth-scoped runtimes during teardown'
+  );
+  assert.match(emitter, /import type \{ AuthSessionApi \} from '@shared\/auth\/auth\.type'/);
+  assert.match(emitter, /createXpcRendererEmitter<AuthSessionApi>\('AuthHandler'\)/);
   assert.match(teardown[0], /await this\._closeSecondaryWindows\(\)/);
   assert.doesNotMatch(`${deactivate[0]}\n${teardown[0]}`, /xpcMain\.broadcast|auth\/invalidated/);
   assert.match(handler, /private deactivationPromise: Promise<void> \| null = null/);

@@ -12,6 +12,7 @@ export type OnlyPreviewClipboardCopyKind =
 export interface OnlyPreviewClipboardItem {
   realPath: string;
   relativePath: string;
+  name?: string;
 }
 
 export interface OnlyPreviewClipboardCommand {
@@ -130,8 +131,8 @@ const projectClipboardText = (
   copyKind: Exclude<OnlyPreviewClipboardCopyKind, 'item'>
 ): string => {
   if (copyKind === 'absolute-path') return item.realPath;
-  if (copyKind === 'relative-path') return item.relativePath;
-  return item.relativePath.split('/').at(-1) || item.relativePath;
+  if (copyKind === 'relative-path') return item.relativePath || '.';
+  return item.name || item.relativePath.split('/').at(-1) || item.relativePath;
 };
 
 export class OnlyPreviewClipboardService {

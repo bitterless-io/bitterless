@@ -1,5 +1,16 @@
-import { dialog, BrowserWindow } from 'electron';
+import { BaseWindow, dialog, type MessageBoxOptions, type MessageBoxReturnValue } from 'electron';
 import { i18nHelper } from '../i18n/i18n.helper';
+import { selectDialogParent } from './dialogParent.service';
+
+const resolveDialogParent = (): BaseWindow | null =>
+  selectDialogParent(BaseWindow.getFocusedWindow(), BaseWindow.getAllWindows());
+
+const showMessageBoxWithResolvedParent = async (
+  options: MessageBoxOptions
+): Promise<MessageBoxReturnValue> => {
+  const owner = resolveDialogParent();
+  return owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options);
+};
 
 class DialogHelper {
   async showKeychainAccessDeniedDialog(): Promise<void> {
@@ -14,15 +25,12 @@ class DialogHelper {
       cancelId: 0,
     };
 
-    const focusedWindow = BrowserWindow.getFocusedWindow();
-    await dialog.showMessageBox(focusedWindow || BrowserWindow.getAllWindows()[0], options);
+    await showMessageBoxWithResolvedParent(options);
   }
 
   async showQuitConfirmDialog(): Promise<boolean> {
     const messages = i18nHelper.getMessages();
     const platform = process.platform;
-    
-    const focusedWindow = BrowserWindow.getFocusedWindow();
     
     const options = {
       type: 'question' as const,
@@ -35,7 +43,7 @@ class DialogHelper {
       cancelId: platform === 'darwin' ? 0 : 1,
     };
     
-    const result = await dialog.showMessageBox(focusedWindow || BrowserWindow.getAllWindows()[0], options);
+    const result = await showMessageBoxWithResolvedParent(options);
     
     return platform === 'darwin' ? result.response === 1 : result.response === 0;
   }

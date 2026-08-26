@@ -10,6 +10,7 @@ import {
 import {
   IconCameraSpark,
   IconCircleFilled,
+  IconLoader2,
   IconSettings,
   IconSettingsFilled,
   IconSparkles,
@@ -29,7 +30,7 @@ import './MenuBar.less'
 // transparent, highlight on hover, soft scale-down on press; muted + no hover when disabled.
 const navBtn = 'maestro-menu-bar__nav-button'
 // The fixed Home tab is a bundled renderer, so its icon must be bundled too.
-import appLogo from '@maestro-renderer/common/assets/icons/app-logo.png'
+import bitterlessIcon from '@maestro-renderer/common/assets/icons/bitterless-icon.png'
 
 onMounted(() => {
   menuBarStore.init()
@@ -60,7 +61,7 @@ function markFaviconFailed(url: string): void {
 // Icon to show: the fixed local Home tab's bundled icon, else the page favicon (if it loaded),
 // else '' — meaning the template renders the default Arco icon.
 function tabIconSrc(tab: TabInfo): string {
-  if (tab.kind === 'home') return appLogo
+  if (tab.kind === 'home') return bitterlessIcon
   if (tab.favicon && !failedFavicons.has(tab.favicon)) return tab.favicon
   return ''
 }
@@ -133,10 +134,16 @@ function fixedTabClass(tab: TabInfo): string {
             @drop.prevent="tabStore.finishDrag()"
             @dragend="tabStore.finishDrag()"
           >
-            <!-- The favicon is ALWAYS shown full-size (shrink-0) — only the title text
-                 compresses. Falls back to a default Arco globe icon when there's no favicon. -->
+            <!-- The favicon slot is ALWAYS 16px — only the title text compresses. Loading swaps
+                 the icon in place, so the chip never reflows. -->
+            <IconLoader2
+              v-if="tab.loading"
+              :size="16"
+              class="maestro-menu-bar__loading-icon"
+              aria-hidden="true"
+            />
             <img
-              v-if="tabIconSrc(tab)"
+              v-else-if="tabIconSrc(tab)"
               :src="tabIconSrc(tab)"
               alt=""
               class="maestro-menu-bar__favicon"
@@ -316,14 +323,6 @@ function fixedTabClass(tab: TabInfo): string {
         >
           <span class="maestro-menu-bar__update-label">{{ i18nHelper.menuBar.restartToUpdate }}</span>
         </button>
-      </div>
-
-      <!-- Simulated page-load progress, pinned to the bar's bottom edge. -->
-      <div class="maestro-menu-bar__progress-track">
-        <div
-          class="maestro-menu-bar__progress"
-          :style="{ width: menuBarStore.progress + '%', opacity: menuBarStore.loading ? 1 : 0 }"
-        ></div>
       </div>
     </header>
   </div>

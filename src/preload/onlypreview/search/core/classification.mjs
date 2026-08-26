@@ -24,6 +24,7 @@ const TEXT_EXTENSIONS = new Set([
   '.ini',
   '.java',
   '.js',
+  '.cjs',
   '.json',
   '.json5',
   '.jsx',
@@ -94,6 +95,22 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.ogv', '.mov', '.m4v']);
+const METADATA_ONLY_EXTENSIONS = new Set([
+  '.xlsx',
+  '.xlsm',
+  '.docx',
+  '.drawio',
+  '.doc',
+  '.heic',
+  '.heif',
+  '.tif',
+  '.tiff',
+  '.raw',
+  '.mkv',
+  '.avi',
+  '.wmv',
+  '.flv'
+]);
 
 const extensionOf = (relativePath) => {
   const fileName = filenameFromPath(relativePath).toLocaleLowerCase('und');
@@ -117,7 +134,8 @@ export const classifySearchMediaType = (relativePath) => {
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
-  return 'unknown';
+  if (METADATA_ONLY_EXTENSIONS.has(extension)) return 'unknown';
+  return 'text';
 };
 
 export const mediaTypeToPreviewHint = (mediaType) =>
@@ -178,8 +196,7 @@ export const readClassifiedSearchContent = async ({ handle, relativePath, opened
   ) {
     return metadataOnly(mediaType);
   }
-  const buffer = await readBoundedFromHandle(handle, MAX_TEXT_BYTES + 1);
-  if (buffer.length > MAX_TEXT_BYTES) return metadataOnly(mediaType, true);
+  const buffer = await readBoundedFromHandle(handle, MAX_TEXT_BYTES);
   const afterStat = await handle.stat();
   if (!sameOpenedIdentity(openedStat, afterStat)) return metadataOnly(mediaType, true);
   return {

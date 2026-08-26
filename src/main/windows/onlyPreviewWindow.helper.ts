@@ -11,7 +11,10 @@ import {
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
-import type { OnlyPreviewBounds } from '@shared/onlypreview/onlyPreview.types';
+import type {
+  OnlyPreviewBounds,
+  OnlyPreviewGlobalSearchFocusOrigin
+} from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_FIND_FOCUS_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
@@ -27,6 +30,7 @@ import { resolveOnlyPreviewSettingsBounds } from '@main/onlypreview/onlyPreviewW
 import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPreviewSearchBootstrap.registry';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
+import { onlyPreviewGlobalSearchFocusService } from '@main/onlypreview/onlyPreviewGlobalSearchFocus.service';
 import {
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
   type OnlyPreviewSearchWatchCommitEvent
@@ -114,18 +118,22 @@ const configureNavigationFence = (
 const isCommandModifier = (input: Input): boolean =>
   process.platform === 'darwin' ? input.meta : input.control;
 
-const isProjectSearchShortcut = (input: Input): boolean => {
+const isGlobalSearchShortcut = (input: Input): boolean => {
   if (
     input.type !== 'keyDown' ||
     input.isAutoRepeat ||
     input.key.toLowerCase() !== 'f' ||
-    input.shift === input.alt ||
+    !input.shift ||
+    input.alt ||
     !isCommandModifier(input)
   ) {
     return false;
   }
   return process.platform === 'darwin' ? !input.control : !input.meta;
 };
+
+const isHiddenPreviewBounds = (value: OnlyPreviewBounds): boolean =>
+  value.x === 0 && value.y === 0 && value.width === 0 && value.height === 0;
 
 const isCurrentFileFindShortcut = (input: Input): boolean => {
   if (
@@ -227,7 +235,11 @@ export class OnlyPreviewWindowHelper {
     this.commandHandler = handler;
   }
 
-  bindNativeShortcuts(webContents: Electron.WebContents, host: OnlyPreviewHostCapability): void {
+  bindNativeShortcuts(
+    webContents: Electron.WebContents,
+    host: OnlyPreviewHostCapability,
+    origin: OnlyPreviewGlobalSearchFocusOrigin
+  ): void {
     webContents.on('before-input-event', (event, input) => {
       const command = this.resolveNativeCommand(host, input);
       if (!command) return;
@@ -251,7 +263,9 @@ export class OnlyPreviewWindowHelper {
         onlyPreviewPreviewRegionService.focusActiveContent(host.hostToken);
         return;
       }
-      if (command === 'focus-project' || command === 'focus-search') {
+      if (command === 'focus-search') {
+        onlyPreviewPreviewRegionService.closeFind(host.hostToken);
+        onlyPreviewGlobalSearchFocusService.capture(host.hostToken, origin, webContents);
         if (
           host.kind === 'standalone' &&
           host.hostToken === this.standaloneHost?.hostToken &&
@@ -260,12 +274,19 @@ export class OnlyPreviewWindowHelper {
         ) {
           this.shellView.webContents.focus();
         }
-        xpcMain.broadcast(
-          command === 'focus-project'
-            ? ONLY_PREVIEW_FOCUS_PROJECT_EVENT
-            : ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
-          { hostId: host.hostId }
-        );
+        xpcMain.broadcast(ONLY_PREVIEW_FOCUS_SEARCH_EVENT, { hostId: host.hostId, origin });
+        return;
+      }
+      if (command === 'focus-project') {
+        if (
+          host.kind === 'standalone' &&
+          host.hostToken === this.standaloneHost?.hostToken &&
+          this.shellView &&
+          !this.shellView.webContents.isDestroyed()
+        ) {
+          this.shellView.webContents.focus();
+        }
+        xpcMain.broadcast(ONLY_PREVIEW_FOCUS_PROJECT_EVENT, { hostId: host.hostId });
       } else {
         this.commandHandler?.({ hostToken: host.hostToken, command });
       }
@@ -338,7 +359,9 @@ export class OnlyPreviewWindowHelper {
     const [contentWidth, contentHeight] = window.getContentSize();
     onlyPreviewPreviewRegionService.updateBounds(
       host.hostToken,
-      clampPreviewBounds(value, contentWidth, contentHeight)
+      isHiddenPreviewBounds(value)
+        ? { x: 0, y: 0, width: 0, height: 0 }
+        : clampPreviewBounds(value, contentWidth, contentHeight)
     );
   }
 
@@ -522,6 +545,7 @@ export class OnlyPreviewWindowHelper {
       onlyPreviewSearchBootstrapRegistry.revoke(this.searchBootstrapToken);
     }
     this.searchBootstrapToken = null;
+    onlyPreviewGlobalSearchFocusService.clear(this.standaloneHost?.hostToken);
     if (this.standaloneHost) onlyPreviewHostRegistry.revoke(this.standaloneHost.hostToken);
     this.standaloneHost = null;
   }
@@ -624,7 +648,7 @@ export class OnlyPreviewWindowHelper {
         this.createView(host, 'preview', previewRuntimeToken),
       loadVuePreviewView: async (view) => await this.loadView(view, 'preview'),
       bindChromeShortcuts: (webContents) => {
-        this.bindNativeShortcuts(webContents, host);
+        this.bindNativeShortcuts(webContents, host, 'chrome');
         bindOnlyPreviewDevToolsShortcut(webContents);
       }
     });
@@ -651,7 +675,9 @@ export class OnlyPreviewWindowHelper {
       if (currentBounds) {
         onlyPreviewPreviewRegionService.updateBounds(
           host.hostToken,
-          clampPreviewBounds(currentBounds, width, height)
+          isHiddenPreviewBounds(currentBounds)
+            ? { x: 0, y: 0, width: 0, height: 0 }
+            : clampPreviewBounds(currentBounds, width, height)
         );
       }
     });
@@ -708,7 +734,7 @@ export class OnlyPreviewWindowHelper {
       }
     });
     configureNavigationFence(view.webContents, target.url, mode === 'shell');
-    this.bindNativeShortcuts(view.webContents, host);
+    this.bindNativeShortcuts(view.webContents, host, mode === 'shell' ? 'shell' : 'vue');
     bindOnlyPreviewDevToolsShortcut(view.webContents);
     return view;
   }
@@ -740,7 +766,7 @@ export class OnlyPreviewWindowHelper {
     ) {
       return 'focus-project';
     }
-    if (isProjectSearchShortcut(input)) return 'focus-search';
+    if (isGlobalSearchShortcut(input)) return 'focus-search';
     if (isCurrentFileFindShortcut(input)) return 'find-in-file';
     if (
       input.type === 'keyDown' &&

@@ -1,19 +1,16 @@
 # EyesOnAgents Global Title Search
 
-Status: modal surface superseded; token matching retained inside the Focus filter
+Status: restored with full-card results by task 067; owner verification pending
 
-The modal below was delivered by tasks 031–033 and then retired by
-[eyes-on-agents-focus-search-consolidation-055](../plan/tasks/eyes-on-agents-focus-search-consolidation-055.md).
-Its durable outcome — `Cmd+F` reaching a separator-insensitive title search over every visible
-thread — now lives in the single Focus column's own filter row, so the modal, its result rows, and
-its keyboard selection contract no longer exist. Current behavior:
-[Focus-only board](../features/eyes-on-agents-focus-board.md). The record below is historical.
+Tasks 031–033 first delivered this modal, task 055 retired it into a permanent Focus filter, and
+[eyes-on-agents-search-modal-067](../plan/tasks/eyes-on-agents-search-modal-067.md) restores it as
+the only search surface. Token matching is retained, but search no longer narrows the board and
+results now reuse the complete normal thread card rather than a reduced row.
 
 ## Need
 
-The existing title filter belongs only to the All column and is composed with its Project filter.
-EyesOnAgents also needs a window-wide, keyboard-first task finder that can open any visible Codex
-thread without navigating to a particular column:
+EyesOnAgents needs a temporary, keyboard-first task finder across every provider-visible thread,
+without narrowing the complete Focus board or permanently occupying its header:
 
 ```text
 Cmd+F / Ctrl+F
@@ -26,18 +23,20 @@ Cmd+F / Ctrl+F
 └─────────────────────────────────────────────┘
 
 query: "ops git"
-┌ Search tasks ───────────────────────────────┐
-│ [ ops git_______________________________ ] │
-├─────────────────────────────────────────────┤
-│ > ops-git                                   │
-│   git_ops release                           │
-└─────────────────────────────────────────────┘
+┌ Search tasks ─────────────────────────────────────┐
+│ [ ops git______________________________________ ] │
+├───────────────────────────────────────────────────┤
+│ ╔ ◉ ops-git sync failures                    ● ═╗ │
+│ ║ latest question                              ║ │
+│ ║ 12m                                  [⌂][…] ║ │
+│ ╚═══════════════════════════════════════════════╝ │
+└───────────────────────────────────────────────────┘
 ```
 
 ## Resolution contract
 
 - `Cmd+F` on macOS and `Ctrl+F` on Windows open one EyesOnAgents search modal and suppress
-  Chromium's native page Find. Repeating the shortcut while it is open focuses the input.
+  Chromium's native page Find. Repeating the shortcut while it is open closes the modal.
 - The input is focused when the modal opens. The input remains fixed above a separately scrolling
   result list.
 - The complete modal stays between 200px and 80% of the current viewport height. Long results
@@ -52,24 +51,26 @@ query: "ops git"
   match `ops-git`.
 - Matching reads `thread.title` only; thread ID, cwd, Project, Domain, prompt, response, and raw
   snapshots are excluded.
-- Open/clear keeps selection empty. A meaningful query with matches selects the first result.
-  Up/Down move within the current result bounds, and selection is retained by thread ID while
-  background snapshots or Open acknowledgement reorder the list. If the selected thread
-  disappears, selection falls back to the first current match.
-- Each result uses two compact lines. The first line contains only the thread title. The second
-  line contains its custom Domain title at the left and runtime state at the right.
-- The system `uncategorized` storage fallback is not a user classification and therefore displays
-  `-` as the Domain. A missing Domain row, a stale `domain_id`, or a blank resolved title also
-  displays `-`.
-- Enter and clicking a row invoke the existing `openThread(threadId)` path. Opening does not close
-  the modal or clear its query, so repeated task lookup remains available.
+- A meaningful query with matches selects the first result. Up/Down wrap through the current
+  results, and selection is retained by provider-qualified session key while background snapshots
+  or Open acknowledgement reorder the list. If the selected thread disappears, selection falls
+  back to the first current match. Arrow and Enter first commit the latest input draft, so the
+  throttled matcher cannot navigate or open stale results.
+- Each result renders the existing complete `ThreadCard`; provider, runtime/loading, unread state,
+  latest question, time, folder, Open, and overflow actions stay identical to the board.
+- A single click selects a card. Enter and the card's existing Open affordances invoke the existing
+  `openThread(sessionKey)` path. Opening does not close the modal or clear its query, so repeated
+  task lookup remains available.
 - Escape closes the modal and clears its renderer-only query and selection. No search state is
   persisted and no XPC, SQLite, App Server, or polling behavior is added.
-- The existing All-column Project/title filters remain independent and unchanged.
+- The Focus board stays complete behind the modal. Its header contains only one Search button;
+  there is no permanent title input or visible **Read all** action.
 
 Delivery:
 [eyes-on-agents-global-title-search-031](../plan/tasks/eyes-on-agents-global-title-search-031.md),
 superseded for empty-query and matching semantics by
 [eyes-on-agents-token-title-search-032](../plan/tasks/eyes-on-agents-token-title-search-032.md),
 with result metadata refined by
-[eyes-on-agents-search-result-domain-033](../plan/tasks/eyes-on-agents-search-result-domain-033.md).
+[eyes-on-agents-search-result-domain-033](../plan/tasks/eyes-on-agents-search-result-domain-033.md),
+and restored with the current full-card contract by
+[eyes-on-agents-search-modal-067](../plan/tasks/eyes-on-agents-search-modal-067.md).

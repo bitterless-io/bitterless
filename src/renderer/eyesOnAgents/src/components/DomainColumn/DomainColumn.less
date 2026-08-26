@@ -16,7 +16,7 @@
 .agent-domain__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   background: transparent;
   user-select: none;
@@ -27,38 +27,24 @@
   color: #68708a;
 }
 
-.agent-domain__read-all.arco-btn:focus-visible {
+.agent-domain__search.arco-btn:focus-visible {
   outline: 2px solid var(--eyes-focus-ring);
   outline-offset: 1px;
 }
 
-.agent-domain__read-all.arco-btn {
-  min-width: 0;
-  height: 22px;
-  padding: 0 6px;
+.agent-domain__search.arco-btn {
+  width: 26px;
+  height: 24px;
+  padding: 0;
   border: 0;
   color: var(--eyes-accent);
   background: transparent;
   box-shadow: none;
-  font-size: 11px;
-  line-height: 22px;
 }
 
-.agent-domain__read-all.arco-btn:hover {
+.agent-domain__search.arco-btn:hover {
   color: var(--eyes-primary-deep);
   background: var(--eyes-hover-surface);
-}
-
-.agent-domain__read-all.arco-btn.arco-btn-disabled {
-  color: oklch(0.65 0.02 265);
-  background: transparent;
-}
-
-.agent-domain__search-input.arco-input-wrapper {
-  min-width: 0;
-  flex: 1 1 auto;
-  color: oklch(0.36 0.025 265);
-  background: var(--eyes-item);
 }
 
 .agent-domain__body {

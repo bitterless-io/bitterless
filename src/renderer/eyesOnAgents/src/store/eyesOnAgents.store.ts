@@ -5,17 +5,21 @@ import type {
   EyesOnAgentsSessionKey,
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
-import { isEyesOnAgentsTerminal } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 import {
   eyesOnAgentsEmitter,
   subscribeEyesOnAgentsChanges,
 } from '../emitter/eyesOnAgents.emitter';
 
+const isActiveRuntimeState = (thread: EyesOnAgentsThread): boolean =>
+  thread.runtimeState === 'working'
+  || thread.runtimeState === 'waiting_approval'
+  || thread.runtimeState === 'waiting_input';
+
 const attentionRank = (thread: EyesOnAgentsThread): number => {
   if (thread.runtimeState === 'waiting_approval') return 0;
   if (thread.runtimeState === 'waiting_input') return 1;
-  if (thread.runtimeState === 'working') return 2;
-  if (thread.isUnread) return 3;
+  if (thread.isUnread && !isActiveRuntimeState(thread)) return 2;
+  if (thread.runtimeState === 'working') return 3;
   return 4;
 };
 
@@ -25,11 +29,8 @@ const parsedTimestamp = (value: string | null): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const presentationTimestamp = (
-  thread: EyesOnAgentsThread,
-  rank: number,
-): number => {
-  if (rank <= 2) return parsedTimestamp(thread.statusObservedAt);
+const presentationTimestamp = (thread: EyesOnAgentsThread): number => {
+  if (isActiveRuntimeState(thread)) return parsedTimestamp(thread.statusObservedAt);
   return parsedTimestamp(thread.lastActivityAt ?? thread.lastCompletedAt);
 };
 
@@ -39,8 +40,7 @@ const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
     const rightRank = attentionRank(right);
     const attention = leftRank - rightRank;
     if (attention !== 0) return attention;
-    const timestamp = presentationTimestamp(right, rightRank)
-      - presentationTimestamp(left, leftRank);
+    const timestamp = presentationTimestamp(right) - presentationTimestamp(left);
     if (timestamp !== 0) return timestamp;
     if (left.sessionKey === right.sessionKey) return 0;
     return left.sessionKey < right.sessionKey ? -1 : 1;
@@ -95,6 +95,8 @@ class EyesOnAgentsState {
   openingSessionKeys = new Set<string>();
   titleDraft = '';
   titleQuery = '';
+  threadSearchVisible = false;
+  threadSearchSelectedSessionKey: EyesOnAgentsSessionKey | null = null;
   private titleQueryScheduler: (() => void) | null = null;
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
@@ -112,16 +114,10 @@ class EyesOnAgentsState {
     return sortedSnapshotThreads(this.snapshot, this.threads);
   }
 
-  get readableFocusThreads(): EyesOnAgentsThread[] {
-    return this.threads.filter(
-      (thread) => thread.isUnread && isEyesOnAgentsTerminal(thread.runtimeState),
-    );
-  }
-
-  get filteredFocusThreads(): EyesOnAgentsThread[] {
+  get threadSearchResults(): EyesOnAgentsThread[] {
     const threads = this.focusThreads;
     const queryTokens = tokenizeThreadTitle(this.titleQuery);
-    if (queryTokens.length === 0) return threads;
+    if (queryTokens.length === 0) return [];
     return threads.filter((thread) => {
       if (thread.title === null) return false;
       const titleTokens = threadTitleTokens(thread);
@@ -130,7 +126,7 @@ class EyesOnAgentsState {
     });
   }
 
-  get isTitleFiltered(): boolean {
+  get hasThreadSearchQueryTokens(): boolean {
     return tokenizeThreadTitle(this.titleQuery).length > 0;
   }
 
@@ -172,13 +168,66 @@ class EyesOnAgentsState {
   // Reads the current draft instead of a captured value, so a trailing run always
   // publishes the newest input and no earlier keystroke can land after it.
   commitTitleQuery(): void {
-    if (this.titleQuery === this.titleDraft) return;
-    this.titleQuery = this.titleDraft;
+    if (this.titleQuery !== this.titleDraft) this.titleQuery = this.titleDraft;
+    this.reconcileThreadSearchSelection();
   }
 
   clearTitleQuery(): void {
     this.titleDraft = '';
     this.titleQuery = '';
+    this.reconcileThreadSearchSelection();
+  }
+
+  openThreadSearch(): void {
+    if (this.threadSearchVisible) return;
+    this.titleDraft = '';
+    this.titleQuery = '';
+    this.threadSearchSelectedSessionKey = null;
+    this.threadSearchVisible = true;
+  }
+
+  closeThreadSearch(): void {
+    this.threadSearchVisible = false;
+    this.titleDraft = '';
+    this.titleQuery = '';
+    this.threadSearchSelectedSessionKey = null;
+  }
+
+  toggleThreadSearch(): void {
+    if (this.threadSearchVisible) {
+      this.closeThreadSearch();
+      return;
+    }
+    this.openThreadSearch();
+  }
+
+  selectThreadSearchResult(sessionKey: EyesOnAgentsSessionKey): void {
+    this.commitTitleQuery();
+    if (!this.threadSearchResults.some((thread) => thread.sessionKey === sessionKey)) return;
+    this.threadSearchSelectedSessionKey = sessionKey;
+  }
+
+  moveThreadSearchSelection(delta: -1 | 1): void {
+    this.commitTitleQuery();
+    const results = this.threadSearchResults;
+    if (results.length === 0) {
+      this.threadSearchSelectedSessionKey = null;
+      return;
+    }
+
+    const selectedIndex = results.findIndex(
+      (thread) => thread.sessionKey === this.threadSearchSelectedSessionKey,
+    );
+    const currentIndex = selectedIndex < 0 ? 0 : selectedIndex;
+    const nextIndex = (currentIndex + delta + results.length) % results.length;
+    this.threadSearchSelectedSessionKey = results[nextIndex]?.sessionKey ?? null;
+  }
+
+  async openSelectedThreadSearchResult(): Promise<void> {
+    this.commitTitleQuery();
+    const sessionKey = this.threadSearchSelectedSessionKey;
+    if (!sessionKey) return;
+    await this.openThread(sessionKey);
   }
 
   async loadSnapshot(quiet = false): Promise<void> {
@@ -353,11 +402,6 @@ class EyesOnAgentsState {
     );
   }
 
-  async markAllRead(): Promise<void> {
-    if (this.readableFocusThreads.length === 0) return;
-    await this.runSnapshotAction('focus-read-all', () => eyesOnAgentsEmitter.markAllRead());
-  }
-
   clearActionError(): void {
     this.actionError = null;
   }
@@ -468,6 +512,17 @@ class EyesOnAgentsState {
     this.highestClaudeProviderRevision = claudeProviderRevision;
     this.snapshot = snapshot;
     this.loadError = null;
+    this.reconcileThreadSearchSelection();
+  }
+
+  private reconcileThreadSearchSelection(): void {
+    if (!this.threadSearchVisible) return;
+    const results = this.threadSearchResults;
+    if (
+      this.threadSearchSelectedSessionKey
+      && results.some((thread) => thread.sessionKey === this.threadSearchSelectedSessionKey)
+    ) return;
+    this.threadSearchSelectedSessionKey = results[0]?.sessionKey ?? null;
   }
 
   private errorMessage(error: unknown): string {

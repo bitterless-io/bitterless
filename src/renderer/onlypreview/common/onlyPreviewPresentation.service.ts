@@ -53,6 +53,7 @@ const DESCRIPTOR_ERROR_CODES = new Set([
   'SIGNATURE_MISMATCH',
   'UNSUPPORTED_CODEC',
   'OOXML_ENCRYPTED',
+  'DIAGRAM_EMPTY',
   'IMAGE_EMPTY',
   'MEDIA_EMPTY'
 ]);
@@ -122,6 +123,7 @@ const isDescriptor = (value: unknown): value is OnlyPreviewDescriptor => {
       value.kind === 'video' ||
       value.kind === 'sheet' ||
       value.kind === 'document' ||
+      value.kind === 'diagram' ||
       value.kind === 'unsupported') &&
     typeof value.mimeType === 'string' &&
     typeof value.language === 'string' &&
@@ -175,6 +177,7 @@ export const isOnlyPreviewPresentation = (
       value.adapterId === 'video' ||
       value.adapterId === 'xlsx-grid' ||
       value.adapterId === 'docx-dom' ||
+      value.adapterId === 'drawio-viewer' ||
       value.adapterId === 'unsupported') &&
     (value.status === 'empty' ||
       value.status === 'loading' ||

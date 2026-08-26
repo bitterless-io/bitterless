@@ -132,7 +132,7 @@ test('window sources delegate dual Preview isolation and preserve generic Omni r
   );
   assert.match(
     createViewBody,
-    /this\.bindNativeShortcuts\(view\.webContents, host\);[\s\S]*bindOnlyPreviewDevToolsShortcut\(view\.webContents\)/
+    /this\.bindNativeShortcuts\(view\.webContents, host, mode === 'shell' \? 'shell' : 'vue'\);[\s\S]*bindOnlyPreviewDevToolsShortcut\(view\.webContents\)/
   );
   assert.doesNotMatch(createViewBody, /openDevTools\(/);
   const standaloneStartup = standalone.slice(
@@ -413,11 +413,8 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
     /handleTreeDoubleClick[\s\S]*entry\.nodeKind !== 'file'[\s\S]*openFilesWithSingleClick/
   );
   assert.match(shellStore, /if \(entry\.nodeKind !== 'file'\) return/);
-  assert.match(shellApp, /:aria-label="onlyPreviewI18n\.project\.clearSearch"/);
-  assert.match(
-    shellApp,
-    /searchQuery\.trim\(\)[\s\S]*project\.noResults[\s\S]*project\.emptyProject/
-  );
+  assert.doesNotMatch(shellApp, /name="onlypreview__search"|ProjectSearchResults/);
+  assert.match(shellApp, /<GlobalSearchWorkspace v-if="onlyPreviewGlobalSearchStore\.active"/);
   assert.match(shellApp, /role="status"[\s\S]*aria-live="polite"/);
 
   const settingsApp = source('src/renderer/onlypreview/settings/src/App.vue');
@@ -438,10 +435,10 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(monaco, /domReadOnly:\s*true/);
   assert.match(monaco, /editor\.create/);
 
-  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+  const adapter = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
   const viewService = source('src/main/onlypreview/views/onlyPreviewPreviewView.service.ts');
-  assert.match(region, /descriptor\.kind === 'pdf'/);
-  assert.match(region, /adapterId:\s*'chromium-pdf'/);
+  assert.match(adapter, /descriptor\.kind === 'pdf'/);
+  assert.match(adapter, /adapterId:\s*'chromium-pdf'/);
   assert.match(viewService, /plugins:\s*true/);
   assert.doesNotMatch(
     source('src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'),

@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const root = join(projectRoot, 'src')
-const controllerSource = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
 const browserViewSource = readFileSync(join(root, 'main/maestro/windows/main/maestroBrowserView.service.ts'), 'utf8')
 const controlViewSource = readFileSync(join(root, 'main/maestro/windows/main/maestroControlView.service.ts'), 'utf8')
 const workbenchViewSource = readFileSync(join(root, 'main/maestro/windows/main/maestroWorkbenchView.service.ts'), 'utf8')
@@ -38,17 +37,9 @@ const devToolsGates = {
   window: loadDevToolsGate(windowHelperSource, 'shouldOpenDevTools'),
   control: loadDevToolsGate(controlViewSource, 'shouldOpenControlDevTools'),
   workbench: loadDevToolsGate(workbenchViewSource, 'shouldOpenWorkbenchDevTools'),
-  operation: loadDevToolsGate(browserViewSource, 'shouldOpenOperationDevTools')
+  operation: loadDevToolsGate(browserViewSource, 'shouldOpenOperationDevTools'),
+  pinnedHome: loadDevToolsGate(browserViewSource, 'shouldOpenPinnedHomeDevTools')
 }
-
-const controllerCreateMatch = controllerSource.match(
-  /create\(\): BrowserWindow \{([\s\S]*?)\n  \}\n\n  async whenReady/
-)
-assert(controllerCreateMatch, 'controller should keep a bounded create flow')
-assert(
-  (controllerCreateMatch?.[1] || '').includes('this.browserView.openOperationDevTools()'),
-  'controller startup should invoke the extracted operation-page devtools flow'
-)
 
 for (const [name, source] of Object.entries({
   window: windowHelperSource,
@@ -157,6 +148,10 @@ for (const profile of ['debug_dev', 'debug_prod']) {
     }),
     `${profile} should allow the operation DevTools opt-in`
   )
+  assert(
+    devToolsGates.pinnedHome({ viteMode: 'debug' }),
+    `${profile} should automatically allow fixed Home DevTools`
+  )
 }
 
 for (const [gateName, gate] of Object.entries(devToolsGates)) {
@@ -172,6 +167,51 @@ for (const [gateName, gate] of Object.entries(devToolsGates)) {
 assert(
   browserViewSource.includes('new DebuggerCapture(') && browserViewSource.includes('tab.capture.resume()'),
   'capture-owned debugger behavior must remain independent from DevTools UI policy'
+)
+const pinnedHomeDevToolsMatch = browserViewSource.match(
+  /private openPinnedHomeDevTools\(tab: OperationTab \| undefined, view: WebContentsView \| null\): void \{([\s\S]*?)\n  \}\n\n  private isAllowedPinnedHomeNavigation/
+)
+assert(pinnedHomeDevToolsMatch, 'browser view service should keep a bounded fixed Home DevTools opener')
+const pinnedHomeDevToolsBody = pinnedHomeDevToolsMatch?.[1] || ''
+assert(
+  pinnedHomeDevToolsBody.includes('if (!shouldOpenPinnedHomeDevTools()) return'),
+  'fixed Home opener should enforce its compiled-mode policy'
+)
+assert(
+  /!tab \|\| !view \|\| !this\.isPinnedHomeTab\(tab\) \|\| !this\.isLiveTabView\(tab, view\)/.test(
+    pinnedHomeDevToolsBody
+  ),
+  'fixed Home opener should reject missing, non-Home, destroyed, or stale views'
+)
+assert(
+  pinnedHomeDevToolsBody.includes('if (wc.isDevToolsOpened()) return'),
+  'fixed Home opener should not duplicate an existing DevTools window'
+)
+assert(
+  /wc\.openDevTools\(\{\s*mode: 'detach',\s*activate: false\s*\}\)/.test(pinnedHomeDevToolsBody),
+  'fixed Home DevTools should open detached without stealing focus'
+)
+assert(
+  pinnedHomeDevToolsBody.includes("this._state.emitTrace({ kind: 'error', msg: 'Home devtools: '"),
+  'fixed Home DevTools failures should use the Maestro trace surface'
+)
+const finishLoadMatch = browserViewSource.match(
+  /wc\.on\('did-finish-load', \(\) => \{([\s\S]*?)\n    \}\)/
+)
+assert(finishLoadMatch, 'browser view service should keep a did-finish-load listener')
+assert(
+  (finishLoadMatch?.[1] || '').includes('if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, view)'),
+  'each fixed Home load should run the idempotent DevTools opener'
+)
+const activateTabMatch = browserViewSource.match(
+  /async activateTab\(params: \{ id: string \}\): Promise<void> \{([\s\S]*?)\n  \}\n\n  async reorderTabs/
+)
+assert(activateTabMatch, 'browser view service should keep a bounded activateTab flow')
+const activateTabBody = activateTabMatch?.[1] || ''
+assert(
+  (activateTabBody.match(/if \(this\.isPinnedHomeTab\(tab\)\) this\.openPinnedHomeDevTools\(tab, tab\.view\)/g) || [])
+    .length === 2,
+  'fixed Home re-selection and activation should both run the idempotent DevTools opener'
 )
 const ensureAgentsMatch = agentServiceSource.match(
   /ensureAgents\(\): MaestroAgentInstances \{([\s\S]*?)\n  \}\n\n  applyLlmTarget/

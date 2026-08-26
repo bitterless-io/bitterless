@@ -24,10 +24,11 @@ import {
 } from './normalization.mjs';
 import { clampSearchResultLimit, createOnlyPreviewSearchResult } from './search-contract.mjs';
 import { configureSearchDatabase, createBuildStateStore } from './sqlite-schema.mjs';
+import { searchOnlyPreviewIndexedContents } from './sqlite-content-search.mjs';
 import { createBackgroundWorkSlicer } from './work-slicer.mjs';
 
 export const SEARCH_ENGINE_IDENTITY =
-  'onlypreview-contentless-full-v7:short-nonascii:tree-search-boundary:4:tolerant-extension-size';
+  'onlypreview-contentless-full-v8:short-nonascii:grouped-global-search:tolerant-extension-size';
 
 const ftsPhrase = (query) => `"${query.replaceAll('"', '""')}"`;
 
@@ -532,6 +533,14 @@ export class OnlyPreviewSqliteIndex {
     for (const fileId of fileIds) this.insertTargetFile.run(fileId);
   }
 
+  metadata(relativePath) {
+    return this.filenameTier.get(relativePath);
+  }
+
+  scopePlan(scope) {
+    return createScopePlan(scope);
+  }
+
   candidateIterator(normalizedQuery, scopePlan, { restricted = false } = {}) {
     const length = [...normalizedQuery].length;
     if (length > 64) return { engine: 'exact-file-fallback', rows: undefined };
@@ -752,6 +761,10 @@ export class OnlyPreviewSqliteIndex {
       titleMatchCount,
       selectedTextTitleCount: selectedTextTitleRecords.length
     };
+  }
+
+  async searchContents(queryValue, options = {}) {
+    return await searchOnlyPreviewIndexedContents(this, queryValue, options);
   }
 
   async diskBytes() {

@@ -33,6 +33,8 @@ import {
   OnlyPreviewDocumentSession,
   type OnlyPreviewDocumentRender
 } from './onlyPreviewDocument.service';
+import type { OnlyPreviewDrawioContent } from './onlyPreviewDrawio.service';
+import { OnlyPreviewDrawioSelectionStore } from './onlyPreviewDrawioSelection.store';
 import { OnlyPreviewImageSession, type OnlyPreviewImageRender } from './onlyPreviewImage.service';
 import { OnlyPreviewMediaSession } from './onlyPreviewMedia.service';
 import { OnlyPreviewSheetSession } from './onlyPreviewSheet.service';
@@ -68,6 +70,7 @@ class OnlyPreviewPreviewStore {
   sheetManifest: OnlyPreviewSheetManifest | null = null;
   documentSession: OnlyPreviewDocumentSession | null = null;
   documentContent: OnlyPreviewDocumentRender | null = null;
+  drawioContent: OnlyPreviewDrawioContent | null = null;
   imageSession: OnlyPreviewImageSession | null = null;
   imageContent: OnlyPreviewImageRender | null = null;
   mediaSession: OnlyPreviewMediaSession | null = null;
@@ -90,6 +93,7 @@ class OnlyPreviewPreviewStore {
   private nativeFindSuppressesSelection = false;
   private descriptorErrorActive = false;
   private readonly characterCountGate = new OnlyPreviewCharacterCountSourceGate();
+  private readonly drawioSelection = markRaw(new OnlyPreviewDrawioSelectionStore());
 
   get descriptorType(): string {
     const descriptor = this.descriptor;
@@ -543,6 +547,29 @@ class OnlyPreviewPreviewStore {
         this.documentContent = markRaw(content);
         await nextTick();
         return;
+      } else if (presentation.adapterId === 'drawio-viewer') {
+        const assetUrl = presentation.descriptor?.assetUrl;
+        if (presentation.descriptor?.kind !== 'diagram' || !assetUrl) {
+          throw new OnlyPreviewContractError(
+            'INVALID_INPUT',
+            'Draw.io preview is missing its revision-bound asset.'
+          );
+        }
+        const attempt = this.drawioSelection.start(
+          onlyPreviewEnv.hostId!,
+          revision,
+          assetUrl,
+          presentation.descriptor.size
+        );
+        const content = await attempt.result;
+        if (!this.isCurrent(generation, revision)) {
+          this.drawioSelection.cancel(attempt);
+          return;
+        }
+        if (!this.drawioSelection.accept(attempt)) return;
+        this.drawioContent = markRaw(content);
+        await nextTick();
+        return;
       } else if (presentation.adapterId === 'image') {
         const assetUrl = presentation.descriptor?.assetUrl;
         if (presentation.descriptor?.kind !== 'image' || !assetUrl) {
@@ -749,6 +776,8 @@ class OnlyPreviewPreviewStore {
   private disposeContentSessions(): void {
     this.disposeSheetSession();
     this.disposeDocumentSession();
+    this.drawioSelection.dispose();
+    this.drawioContent = null;
     this.disposeImageSession();
     this.disposeMediaSession();
   }

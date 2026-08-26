@@ -638,14 +638,19 @@ export const en = {
       markUnread: 'Mark as unread',
       copySessionPath: 'Copy session path',
       more: 'More actions',
-      readAll: 'Read all',
       searchTitles: 'Search thread titles',
       searchTitlesMac: 'Search titles (⌘F)',
       searchTitlesWindows: 'Search titles (Ctrl+F)'
     },
+    search: {
+      title: 'Search threads',
+      placeholder: 'Search thread titles…',
+      results: 'Thread search results',
+      startTyping: 'Type a thread title to start searching',
+      empty: 'No thread titles match this search'
+    },
     board: {
       emptyFocus: 'Nothing needs attention',
-      emptyTitleSearch: 'No thread titles match this search',
       emptyTitle: 'No agent tasks yet',
       emptyBody: 'Connect Codex or refresh local Claude sessions to start monitoring.',
       loading: 'Loading observation board'

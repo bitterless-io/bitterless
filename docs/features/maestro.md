@@ -39,6 +39,7 @@ Maestro is not a Vue route or one renderer. The embedded unit is its complete El
 │       │                                                                │
 │       └── Maestro BrowserWindow                                       │
 │             ├── Home renderer (tabs, address bar, capture controls)    │
+│             ├── fixed local Home (Mini Apps / Connector / Settings)    │
 │             ├── operation WebContentsViews (unprivileged web pages)    │
 │             ├── Control WebContentsView (Maestro chat)                │
 │             └── Workbench WebContentsView                              │
@@ -72,15 +73,16 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 
 | Event | Required behavior |
 |---|---|
-| Bitterless startup without a valid persisted session | Create and explicitly show Home as the login/recovery shell. |
-| Bitterless startup with a valid persisted session | Create Home as a hidden auth/bootstrap host; the first automatically shown window is fully ready Maestro. |
+| Bitterless startup, with or without a valid persisted session | Create Home only as a hidden compatibility/auth host; open fully ready Maestro as the sole visible primary window. |
+| Development hot reload or Main restart | Recreate/focus Maestro; never reveal the legacy Home `BrowserWindow`. |
 | Session activation | Boot the hidden Maestro database, wait for localized Home mount plus required operation/Control/Workbench readiness, show Maestro, then keep Home hidden. |
 | Mini Apps renders | Render the localized Maestro card in Workbench Apps; Open focuses the current singleton. |
 | Repeated Open | Restore/focus the existing Maestro window; never create a second graph. |
 | Window close | Stop or preserve work safely without quitting Bitterless; Dock/tray/second-instance activation recreates Maestro for the active session. |
-| Bitterless auth invalidation/logout | Destroy the Maestro graph and authenticated secondary windows, then show Home login. |
+| Bitterless auth invalidation/logout | Destroy authenticated secondary runtimes, then recreate/focus Maestro; legacy Home remains hidden. |
 | Bitterless quit/update install | Stop Maestro schedulers/capture/agents and destroy Maestro windows before process exit. |
-| Home remains alive | Home retains the customer token, Todo readiness handshake, and login recovery state without exposing its old authenticated navigation. |
+| `Cmd+Q` quit confirmation | Parent the dialog to the focused visible `BaseWindow`; never select or reveal hidden Home. If no visible owner exists, use an unparented app-modal dialog. |
+| Home remains alive | Home retains compatibility customer-token, Todo-readiness, and renderer/XPC responsibilities without ever becoming a visible native window. |
 
 Maestro keeps its large working size (`1360x900`) and never permits a window below `800x600`.
 Window geometry follows the shared [top-level window state contract](window-state-persistence.md);
@@ -258,6 +260,24 @@ On macOS the native controls use `trafficLightPosition: { x: 12, y: 10 }` and co
 78px traffic-light gutter. The address row remains 48px, so total top chrome is 84px. DOM-measured
 placeholders remain the only owner of operation and Control native-view bounds.
 
+### Per-tab page loading indicator
+
+Maestro follows Cowork's per-tab loading model. The old simulated 2px progress bar is absent.
+Each Main-owned tab carries transient `loading` state that is projected through the authoritative
+tab snapshot; while true, a 16px loader replaces that tab's favicon without moving its title or
+close control.
+
+```text
+idle      [ favicon  title                         × ]
+loading   [ loader   title                         × ]
+settled   [ favicon  title                         × ]
+```
+
+Loading events update the owning tab even when it is not active. Stop, main-frame failure,
+renderer exit, view teardown, and reset clear the state. Every start rearms a Main-process
+30-second watchdog; expiry ends only the visual hint and logs a warning. Loading is not persisted,
+and no timer may outlive its tab or window.
+
 The visible action rules follow the current compatible Cowork implementation. Debugger remains a
 per-tab capability but has no MenuBar button. Recording start/stop remains agent-owned; the tab row
 reserves a non-interactive status slot that is empty while idle and shows a red pulsing dot while
@@ -268,11 +288,27 @@ and the Sparkles action remains the reopen path. The chat composer does not dupl
 entry; the Settings Workbench toggle remains the visible route to that pane.
 
 The fixed first tab is a local `home` tab rather than the legacy remote `ai-crms` tab. Its dedicated
-renderer mounts Bitterless Home's existing Chat and MessageSearch content with the required visual,
-Markdown, and language bootstrap, but not either window shell, router/login, side rail, or singleton
-Home subscribers. It is pinned, address-locked, non-recordable, confined to the local entry, and
-displays `bitterless://home` rather than a dev-server URL or packaged file path. AI-CRMS
-provider/login code is not allowed to navigate or replace this fixed tab.
+renderer opens Mini Apps by default and presents the existing 56px Home rail with only Mini Apps
+and Connector visible; the local Settings route remains registered without a rail button. A local
+no-auth router mounts only the existing Mini App and Settings pages; the Connector rail action opens
+the existing Workbench Connector pane so its
+preload and renderer remain the single runtime/handler owner. Chat, MessageSearch, the normal Home
+router/login shell, MenuBar, update polling, and Home singleton subscribers are absent. Todo
+delegates to the hidden Home shell for authenticated readiness, and this no-Chat surface hides the
+legacy Chat-menu setting. The fixed view keeps an XPC-only preload, is pinned, address-locked,
+non-recordable, confined to the local entry, and displays `bitterless://home` rather than a
+dev-server URL or packaged file path. AI-CRMS provider/login code is not allowed to navigate or
+replace this fixed tab.
+
+The pinned Home tab favicon and the centered blank New-tab splash use one bundled Bitterless icon
+derived from the canonical `build/icon.png` artwork. They do not reuse Maestro's blue `M` app logo;
+arbitrary web tabs retain their page favicon or the existing generic fallback.
+
+In a compiled debug runtime, the fixed Home view automatically opens one detached DevTools window
+after its renderer finishes loading. The same guard runs when Home is reloaded or reactivated and
+opens DevTools only when that view does not already have one, without stealing focus. Release and
+E2E runtimes never auto-open fixed-Home DevTools; ordinary browser-tab debugging and the other
+Maestro renderer DevTools policies remain independent.
 
 This focused parity pass deliberately excludes Cowork's forked CRMS renderer, AI-CRMS avatar/profile
 UI, generic mini-app page-type menus, update-progress protocol, and loading/crash tab-state

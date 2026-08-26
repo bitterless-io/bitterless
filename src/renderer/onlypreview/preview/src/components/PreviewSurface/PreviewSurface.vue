@@ -118,6 +118,16 @@
         "
       />
 
+      <DrawioPreview
+        v-else-if="
+          onlyPreviewPreviewStore.descriptor?.kind === 'diagram' &&
+          onlyPreviewPreviewStore.drawioContent
+        "
+        :key="selectionPreviewKey"
+        :content="onlyPreviewPreviewStore.drawioContent"
+        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
+      />
+
       <ImagePreview
         v-else-if="
           onlyPreviewPreviewStore.descriptor?.kind === 'image' &&
@@ -170,7 +180,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, defineAsyncComponent } from 'vue';
 import { IconAlertTriangle, IconFileSearch, IconFileUnknown } from '@tabler/icons-vue';
 import {
   formatOnlyPreviewBytes,
@@ -179,12 +189,20 @@ import {
 } from '../../../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
-import DocumentPreview from '../DocumentPreview/DocumentPreview.vue';
-import ImagePreview from '../ImagePreview/ImagePreview.vue';
-import MarkdownPreview from '../MarkdownPreview/MarkdownPreview.vue';
-import MediaPreview from '../MediaPreview/MediaPreview.vue';
-import MonacoTextPreview from '../MonacoTextPreview/MonacoTextPreview.vue';
-import SheetPreview from '../SheetPreview/SheetPreview.vue';
+
+const MarkdownPreview = defineAsyncComponent(
+  () => import('../MarkdownPreview/MarkdownPreview.vue')
+);
+const MonacoTextPreview = defineAsyncComponent(
+  () => import('../MonacoTextPreview/MonacoTextPreview.vue')
+);
+const DocumentPreview = defineAsyncComponent(
+  () => import('../DocumentPreview/DocumentPreview.vue')
+);
+const SheetPreview = defineAsyncComponent(() => import('../SheetPreview/SheetPreview.vue'));
+const DrawioPreview = defineAsyncComponent(() => import('../DrawioPreview/DrawioPreview.vue'));
+const ImagePreview = defineAsyncComponent(() => import('../ImagePreview/ImagePreview.vue'));
+const MediaPreview = defineAsyncComponent(() => import('../MediaPreview/MediaPreview.vue'));
 
 const isMarkdown = computed(() => {
   const descriptor = onlyPreviewPreviewStore.descriptor;
@@ -219,6 +237,7 @@ const previewLimitMessage = computed(() => {
   if (descriptor?.kind === 'sheet' || descriptor?.kind === 'document') {
     return onlyPreviewI18n.preview.officeLimit;
   }
+  if (descriptor?.kind === 'diagram') return onlyPreviewI18n.preview.diagramLimit;
   return onlyPreviewI18n.preview.textLimit;
 });
 </script>
