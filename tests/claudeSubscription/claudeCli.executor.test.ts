@@ -21,7 +21,8 @@ import {
   ClaudeRequestAbortedError,
   ClaudeSubscriptionRequiredError,
   ClaudeTimeoutError,
-  ClaudeUsageLimitError
+  ClaudeUsageLimitError,
+  isClaudeRoutingFailure
 } from '../../src/main/claudeSubscription/claudeSubscription.errors';
 import {
   buildClaudeBridgePayload,
@@ -244,6 +245,49 @@ test('executes final and available tool decisions through an isolated fake CLI',
   await assert.rejects(
     executor('malformed').execute(await executionRequest()),
     ClaudeDecisionError
+  );
+});
+
+test('quota state comes from the CLI stream, not from the diagnostic text', async () => {
+  // Execution must stream: `rate_limit_event` is emitted in no other output format,
+  // and `--verbose` is mandatory for `stream-json` under `--print`.
+  const argv = buildClaudeExecutionArguments('sonnet', 'low', '/tmp/system-prompt.txt');
+  assert.equal(argv[argv.indexOf('--output-format') + 1], 'stream-json');
+  assert.ok(argv.includes('--verbose'));
+  assert.ok(!argv.includes('json'), 'the single-object output format carries no quota signal');
+
+  // Success path: NDJSON parses, and the observed state is exposed to callers.
+  const final = await executor('final').execute(await executionRequest());
+  assert.deepEqual(final.decision, { action: 'final', text: 'hello from fake Claude' });
+  assert.deepEqual(final.rateLimit, {
+    status: 'allowed',
+    resetsAt: 1999999999,
+    rateLimitType: 'five_hour'
+  });
+
+  // A 429 whose text matches the legacy pattern while Anthropic still reports
+  // `allowed` must not be treated as exhaustion — this is what cooled down
+  // accounts that had quota left.
+  await assert.rejects(
+    executor('rate-limit-allowed').execute(await executionRequest()),
+    (error) => {
+      assert.ok(
+        !(error instanceof ClaudeUsageLimitError),
+        'must not be classified as a usage limit'
+      );
+      assert.equal(isClaudeRoutingFailure(error), false, 'must not trigger cooldown or failover');
+      return true;
+    }
+  );
+
+  // A real stop uses the reported reset, in preference to the timestamp in the text.
+  await assert.rejects(
+    executor('rate-limit-exceeded').execute(await executionRequest()),
+    (error: unknown) => {
+      assert.ok(error instanceof ClaudeUsageLimitError);
+      assert.equal(error.resetAt, 1999999999 * 1000);
+      return true;
+    }
   );
 });
 

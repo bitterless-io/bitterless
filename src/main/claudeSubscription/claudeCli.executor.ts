@@ -38,9 +38,21 @@ export interface ClaudeExecutionRequest {
   context: ClaudeAccountExecutionContext;
 }
 
+/**
+ * Anthropic's own rate-limit state, forwarded by the CLI as a stream event.
+ * Authoritative where the diagnostic text is only a guess.
+ */
+export interface ClaudeRateLimitInfo {
+  status: string;
+  resetsAt?: number;
+  rateLimitType?: string;
+  isUsingOverage?: boolean;
+}
+
 export interface ClaudeExecutionResult {
   decision: ClaudeDecision;
   rawUsage: ClaudeUsageEnvelope;
+  rateLimit?: ClaudeRateLimitInfo;
 }
 
 export interface ClaudeExecutor {
@@ -141,8 +153,14 @@ export const buildClaudeExecutionArguments = (
   '--no-session-persistence',
   '--system-prompt-file',
   systemPromptPath,
+  // Streaming, not because anything consumes deltas, but because `rate_limit_event`
+  // — Anthropic's own quota state — is only emitted in this format. `--verbose` is
+  // not optional: under `--print`, `stream-json` is refused without it.
+  // `--include-partial-messages` is deliberately omitted; it more than doubles the
+  // output and only adds token deltas nothing here reads.
   '--output-format',
-  'json',
+  'stream-json',
+  '--verbose',
   '--json-schema',
   JSON.stringify(CLAUDE_DECISION_SCHEMA)
 ];
@@ -479,21 +497,57 @@ const usageEnvelope = (value: Record<string, unknown>): ClaudeUsageEnvelope => (
   ...(isObject(value.modelUsage) ? { modelUsage: value.modelUsage } : {})
 });
 
+const parseRateLimitInfo = (value: unknown): ClaudeRateLimitInfo | undefined => {
+  if (!isObject(value) || typeof value.status !== 'string') return undefined;
+  return {
+    status: value.status,
+    ...(typeof value.resetsAt === 'number' ? { resetsAt: value.resetsAt } : {}),
+    ...(typeof value.rateLimitType === 'string' ? { rateLimitType: value.rateLimitType } : {}),
+    ...(typeof value.isUsingOverage === 'boolean' ? { isUsingOverage: value.isUsingOverage } : {})
+  };
+};
+
+/**
+ * Stdout is NDJSON: one JSON object per line, terminated by a single `result`
+ * event that carries the same envelope the old `--output-format json` produced.
+ * Unparsable lines are skipped rather than fatal — a diagnostic banner on stdout
+ * must not destroy an otherwise complete result.
+ */
+const readClaudeStream = (
+  stdout: string
+): { envelope?: Record<string, unknown>; rateLimit?: ClaudeRateLimitInfo } => {
+  let envelope: Record<string, unknown> | undefined;
+  let rateLimit: ClaudeRateLimitInfo | undefined;
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!isObject(event)) continue;
+    if (event.type === 'result') envelope = event;
+    else if (event.type === 'rate_limit_event') {
+      rateLimit = parseRateLimitInfo(event.rate_limit_info) ?? rateLimit;
+    }
+  }
+  return { ...(envelope ? { envelope } : {}), ...(rateLimit ? { rateLimit } : {}) };
+};
+
 export const parseClaudeExecutionResult = (
   processResult: ClaudeProcessResult,
   availableTools: readonly ClaudeNormalizedCodexTool[]
 ): ClaudeExecutionResult => {
-  let envelope: unknown;
-  try {
-    envelope = JSON.parse(processResult.stdout.trim());
-  } catch {
+  const { envelope, rateLimit } = readClaudeStream(processResult.stdout);
+  if (!envelope) {
     throwClassifiedExecutionError(
       `${processResult.stdout}\n${processResult.stderr}`,
-      processResult.exitCode
+      processResult.exitCode,
+      undefined,
+      rateLimit
     );
-  }
-  if (!isObject(envelope)) {
-    throw new ClaudeDecisionError('Claude CLI returned an invalid result envelope.');
   }
 
   const diagnostic = [
@@ -502,7 +556,7 @@ export const parseClaudeExecutionResult = (
     processResult.stderr
   ].join('\n');
   if (envelope.is_error === true || processResult.exitCode !== 0) {
-    throwClassifiedExecutionError(diagnostic, processResult.exitCode, envelope);
+    throwClassifiedExecutionError(diagnostic, processResult.exitCode, envelope, rateLimit);
   }
 
   let decisionValue = envelope.structured_output;
@@ -511,16 +565,32 @@ export const parseClaudeExecutionResult = (
   }
   return {
     decision: validateClaudeDecision(decisionValue, availableTools),
-    rawUsage: usageEnvelope(envelope)
+    rawUsage: usageEnvelope(envelope),
+    ...(rateLimit ? { rateLimit } : {})
   };
 };
 
 const throwClassifiedExecutionError = (
   diagnostic: string,
   exitCode: number | null,
-  envelope?: Record<string, unknown>
+  envelope?: Record<string, unknown>,
+  rateLimit?: ClaudeRateLimitInfo
 ): never => {
-  if (
+  // Anthropic's own state outranks the text. `rate_limit_error` is the error code
+  // for several conditions that are not quota exhaustion, so trusting the text
+  // alone cooled down accounts that still had quota; when the event says
+  // `allowed`, this failure is definitively not a usage limit.
+  if (rateLimit) {
+    if (rateLimit.status !== 'allowed') {
+      throw new ClaudeUsageLimitError(
+        'The Claude subscription account has reached its usage limit.',
+        typeof rateLimit.resetsAt === 'number'
+          ? rateLimit.resetsAt * 1000
+          : extractResetAt(envelope, diagnostic)
+      );
+    }
+  } else if (
+    // Fallback only: no event observed, so the text is all there is.
     /usage[ _-]?limit|out of usage credits|hit (?:your|the) limit|rate_limit_error|resets? at/iu.test(
       diagnostic
     )

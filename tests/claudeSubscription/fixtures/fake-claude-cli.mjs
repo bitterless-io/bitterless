@@ -16,6 +16,25 @@ const write = (value, exitCode = 0) => {
   process.exitCode = exitCode;
 };
 
+/**
+ * Execution runs use `--output-format stream-json`, so stdout is NDJSON ending in
+ * a `result` event — not the single object `auth status --json` returns. The
+ * fixture mirrors that exactly; a fixture shaped unlike the real CLI is how a
+ * whole-request failure stayed invisible before.
+ */
+const writeResult = (value, exitCode = 0, rateLimitInfo) => {
+  process.stdout.write(
+    `${JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fixture' })}\n`
+  );
+  if (rateLimitInfo) {
+    process.stdout.write(
+      `${JSON.stringify({ type: 'rate_limit_event', rate_limit_info: rateLimitInfo })}\n`
+    );
+  }
+  process.stdout.write(`${JSON.stringify({ type: 'result', ...value })}\n`);
+  process.exitCode = exitCode;
+};
+
 const authIndex = process.argv.indexOf('auth');
 const isAuthStatus = authIndex > 0 && process.argv[authIndex + 1] === 'status';
 const isAuthLogout = authIndex > 0 && process.argv[authIndex + 1] === 'logout';
@@ -97,7 +116,7 @@ if (isAuthLogout) {
       process.argv[settingSourcesIndex + 1] === '' &&
       settingsIndex > 0 &&
       process.argv[settingsIndex + 1] === '{"apiKeyHelper":null}';
-    write({
+    writeResult({
       is_error: false,
       structured_output: {
         action: 'final',
@@ -106,7 +125,7 @@ if (isAuthLogout) {
       usage: { input_tokens: 1, output_tokens: 1 }
     });
   } else if (mode === 'tool') {
-    write({
+    writeResult({
       is_error: false,
       structured_output: {
         action: 'tool_call',
@@ -117,7 +136,7 @@ if (isAuthLogout) {
     });
   } else if (mode === 'selected-tool') {
     const selected = payload.available_tools[0];
-    write({
+    writeResult({
       is_error: false,
       structured_output: {
         action: 'tool_call',
@@ -128,7 +147,7 @@ if (isAuthLogout) {
     });
   } else if (mode === 'effort') {
     const effortIndex = process.argv.indexOf('--effort');
-    write({
+    writeResult({
       is_error: false,
       structured_output: {
         action: 'final',
@@ -137,7 +156,7 @@ if (isAuthLogout) {
     });
   } else if (mode === 'failover') {
     if (process.env.CLAUDE_CONFIG_DIR?.includes('000000000001')) {
-      write(
+      writeResult(
         {
           is_error: true,
           subtype: 'rate_limit_error',
@@ -147,14 +166,14 @@ if (isAuthLogout) {
         1
       );
     } else {
-      write({
+      writeResult({
         is_error: false,
         structured_output: { action: 'final', text: 'failover-ok' },
         usage: { input_tokens: 1, output_tokens: 1 }
       });
     }
   } else if (mode === 'usage-limit') {
-    write(
+    writeResult(
       {
         is_error: true,
         subtype: 'rate_limit_error',
@@ -163,8 +182,33 @@ if (isAuthLogout) {
       },
       1
     );
+  } else if (mode === 'rate-limit-allowed') {
+    // The diagnostic matches the legacy usage-limit pattern, but Anthropic says the
+    // account still has quota. Trusting the text here is what cooled healthy accounts.
+    writeResult(
+      {
+        is_error: true,
+        subtype: 'rate_limit_error',
+        result: 'API Error: 429 rate_limit_error'
+      },
+      1,
+      { status: 'allowed', resetsAt: 1999999999, rateLimitType: 'five_hour' }
+    );
+  } else if (mode === 'rate-limit-exceeded') {
+    // The authoritative reset must win over the (deliberately different) timestamp
+    // sitting in the error text.
+    writeResult(
+      {
+        is_error: true,
+        subtype: 'rate_limit_error',
+        reset_at: 1111111111000,
+        result: 'Usage limit reached; resets at 2005-03-18T01:58:31Z'
+      },
+      1,
+      { status: 'exceeded', resetsAt: 1999999999, rateLimitType: 'seven_day' }
+    );
   } else if (mode === 'authentication') {
-    write(
+    writeResult(
       {
         is_error: true,
         subtype: 'authentication_error',
@@ -174,19 +218,23 @@ if (isAuthLogout) {
       1
     );
   } else if (mode === 'malformed') {
-    write({
+    writeResult({
       is_error: false,
       structured_output: { action: 'tool_call', tool_name: 'missing', arguments: '[]' }
     });
   } else {
-    write({
-      is_error: false,
-      structured_output: { action: 'final', text: 'hello from fake Claude' },
-      usage: { input_tokens: 7, cache_read_input_tokens: 2, output_tokens: 3 },
-      modelUsage: {
-        sonnet: { inputTokens: 100, cacheReadInputTokens: 50, outputTokens: 20 }
+    writeResult(
+      {
+        is_error: false,
+        structured_output: { action: 'final', text: 'hello from fake Claude' },
+        usage: { input_tokens: 7, cache_read_input_tokens: 2, output_tokens: 3 },
+        modelUsage: {
+          sonnet: { inputTokens: 100, cacheReadInputTokens: 50, outputTokens: 20 }
+        },
+        payloadSeen: Boolean(payload)
       },
-      payloadSeen: Boolean(payload)
-    });
+      0,
+      { status: 'allowed', resetsAt: 1999999999, rateLimitType: 'five_hour' }
+    );
   }
 }
