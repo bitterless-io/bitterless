@@ -335,6 +335,10 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
   owner verification pending: the running tile now keeps the bundle-default size without a PNG override.
 - [Desktop automatic-update polling stalls](issues/desktop-auto-update-polling-stalls.md) - fixed;
   owner verification pending: metadata disagreement now releases the shared check so later polls retry.
+- [Claude subscription decision schema rejected](issues/claude-subscription-decision-schema-rejected.md) -
+  fixed; owner verification pending: the `--json-schema` decision contract used a top-level `oneOf`,
+  which the API rejects as a tool `input_schema`, so every subscription inference failed with a 400
+  before reaching the model. Flattened to an enum `action`; the per-variant rule stays in validation.
 - [Desktop update-ready state lost after renderer rebuild](issues/desktop-auto-update-ready-state-replay.md) - fixed;
   owner verification pending: Main retains ready state and recreated Home or Maestro renderers replay it safely.
 - [Desktop helper Dock and Home startup](issues/desktop-helper-dock-and-home-startup.md) - active:

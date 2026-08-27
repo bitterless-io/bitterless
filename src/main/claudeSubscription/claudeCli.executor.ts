@@ -54,27 +54,28 @@ export const CLAUDE_ISOLATED_SETTINGS = {
   apiKeyHelper: null
 } as const;
 
+/**
+ * `--json-schema` becomes a tool `input_schema` on the wire, so it is bound by
+ * Anthropic's tool-schema restrictions rather than by plain JSON Schema. A
+ * top-level `oneOf` is rejected outright with
+ * `400 … input_schema does not support oneOf, allOf, or anyOf at the top level`,
+ * which failed every request before the model was ever reached.
+ *
+ * The variants are therefore flattened into one object with an enum `action`.
+ * Nothing is lost: `validateClaudeDecision` already enforces the per-variant
+ * required fields and rejects cross-variant contamination, independently of this
+ * schema — see docs/issues/claude-subscription-decision-schema-rejected.md.
+ */
 export const CLAUDE_DECISION_SCHEMA = {
   type: 'object',
-  oneOf: [
-    {
-      properties: {
-        action: { const: 'final' },
-        text: { type: 'string' }
-      },
-      required: ['action', 'text'],
-      additionalProperties: false
-    },
-    {
-      properties: {
-        action: { const: 'tool_call' },
-        tool_name: { type: 'string' },
-        arguments: { type: 'string' }
-      },
-      required: ['action', 'tool_name', 'arguments'],
-      additionalProperties: false
-    }
-  ]
+  properties: {
+    action: { type: 'string', enum: ['final', 'tool_call'] },
+    text: { type: 'string' },
+    tool_name: { type: 'string' },
+    arguments: { type: 'string' }
+  },
+  required: ['action'],
+  additionalProperties: false
 } as const;
 
 const CLAUDE_SYSTEM_PROMPT = `You are the reasoning model inside OpenAI Codex.
@@ -569,6 +570,18 @@ const extractResetAt = (
   return undefined;
 };
 
+/**
+ * Since the schema flattened both variants into one object, a structured-output
+ * model may echo the unused variant's fields as empty strings. Those carry no
+ * decision and are ignored; a *populated* foreign field means the decision is
+ * genuinely ambiguous and is still rejected.
+ */
+const hasForeignField = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
+  Object.entries(value).some(([key, entry]) => {
+    if (allowed.includes(key)) return false;
+    return entry !== undefined && entry !== null && entry !== '';
+  });
+
 export const validateClaudeDecision = (
   value: unknown,
   availableTools: readonly ClaudeNormalizedCodexTool[]
@@ -579,7 +592,7 @@ export const validateClaudeDecision = (
     if (typeof value.text !== 'string') {
       throw new ClaudeDecisionError('Claude final decisions require text.');
     }
-    if (Object.keys(value).some((key) => key !== 'action' && key !== 'text')) {
+    if (hasForeignField(value, ['action', 'text'])) {
       throw new ClaudeDecisionError('Claude final decisions contain unsupported fields.');
     }
     return { action: 'final', text: value.text };
@@ -597,9 +610,7 @@ export const validateClaudeDecision = (
   if (typeof value.arguments !== 'string') {
     throw new ClaudeDecisionError('Claude tool arguments must be a JSON string.');
   }
-  if (
-    Object.keys(value).some((key) => key !== 'action' && key !== 'tool_name' && key !== 'arguments')
-  ) {
+  if (hasForeignField(value, ['action', 'tool_name', 'arguments'])) {
     throw new ClaudeDecisionError('Claude tool decisions contain unsupported fields.');
   }
 

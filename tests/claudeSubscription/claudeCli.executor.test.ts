@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CLAUDE_DECISION_SCHEMA,
   CLAUDE_ISOLATED_SETTINGS,
   ClaudeCliExecutor,
   assertClaudeSubscriptionPreflight,
@@ -242,6 +243,49 @@ test('executes final and available tool decisions through an isolated fake CLI',
   );
   await assert.rejects(
     executor('malformed').execute(await executionRequest()),
+    ClaudeDecisionError
+  );
+});
+
+test('the decision schema stays within Anthropic tool-schema limits', async () => {
+  // `--json-schema` is sent as a tool `input_schema`, which rejects a top-level
+  // combinator with `400 … does not support oneOf, allOf, or anyOf at the top
+  // level`. That failed every request before the model was reached.
+  // See docs/issues/claude-subscription-decision-schema-rejected.md.
+  const schema = CLAUDE_DECISION_SCHEMA as Record<string, unknown>;
+  for (const combinator of ['oneOf', 'allOf', 'anyOf']) {
+    assert.equal(schema[combinator], undefined, `top-level ${combinator} is rejected by the API`);
+  }
+  assert.equal(schema.type, 'object');
+  assert.deepEqual(
+    (schema.properties as Record<string, { enum?: readonly string[] }>).action.enum,
+    ['final', 'tool_call']
+  );
+
+  // Flattening moved the per-variant rule entirely into validation, so both
+  // directions have to hold there.
+  const request = await executionRequest();
+  const tools = request.payload.available_tools;
+
+  assert.deepEqual(validateClaudeDecision({ action: 'final', text: 'ok' }, tools), {
+    action: 'final',
+    text: 'ok'
+  });
+
+  // A structured-output model may echo the unused variant's fields as empty
+  // strings now that the schema declares all four. That is not a decision.
+  assert.deepEqual(
+    validateClaudeDecision({ action: 'final', text: 'ok', tool_name: '', arguments: '' }, tools),
+    { action: 'final', text: 'ok' }
+  );
+
+  // A populated foreign field is genuinely ambiguous and must still be refused.
+  assert.throws(
+    () => validateClaudeDecision({ action: 'final', text: 'ok', tool_name: 'read_file' }, tools),
+    ClaudeDecisionError
+  );
+  assert.throws(
+    () => validateClaudeDecision({ action: 'tool_call', arguments: '{}' }, tools),
     ClaudeDecisionError
   );
 });
