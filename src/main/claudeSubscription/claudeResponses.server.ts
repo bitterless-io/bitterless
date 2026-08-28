@@ -47,7 +47,13 @@ export class ClaudeResponsesRuntime {
     let priorUsageFailure: ClaudeUsageLimitError | undefined;
     let priorAuthenticationFailure: Error | undefined;
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Every iteration either returns, rethrows a non-routing error, or adds exactly
+    // one account to `excluded` — and `lease()` refuses excluded accounts — so the
+    // loop is bounded by the size of the pool and ends with
+    // ClaudeNoEligibleAccountError once every account has been tried. A previous
+    // hard cap of two attempts meant a third, idle, fully-quota'd account was never
+    // reached: the pool behaved as if it had two members.
+    for (;;) {
       let lease;
       try {
         lease = await this.router.lease(request.prompt_cache_key, excluded);
@@ -57,6 +63,13 @@ export class ClaudeResponsesRuntime {
           if (priorAuthenticationFailure) throw priorAuthenticationFailure;
         }
         throw error;
+      }
+
+      if (excluded.has(lease.accountId)) {
+        // The bound above depends on `lease()` honouring `excluded`. If it ever
+        // does not, stop rather than spin, and report it as exhaustion.
+        lease.release();
+        break;
       }
 
       try {
@@ -91,7 +104,6 @@ export class ClaudeResponsesRuntime {
             // The router already applied its process-local login state.
           }
         }
-        if (attempt === 1) throw error;
       } finally {
         lease.release();
       }

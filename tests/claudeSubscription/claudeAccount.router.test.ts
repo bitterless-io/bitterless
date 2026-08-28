@@ -274,13 +274,54 @@ test('runtime never retries malformed, cancelled, timeout-like, or generic failu
   }
 });
 
-test('runtime performs at most one retry even when more accounts exist', async () => {
+// This replaces a test that asserted the runtime retried at most once. That was
+// the defect written down as intent: with three accounts it stopped after two, so
+// an idle third account with full quota was never reached. See
+// docs/issues/claude-subscription-failover-stops-after-two-accounts.md.
+test('runtime tries every eligible account before failing', async () => {
   const source = new FakeClaudeAccountSource(['account-a', 'account-b', 'account-c']);
   const executor = new FunctionExecutor(async () => {
     throw new ClaudeUsageLimitError('limited');
   });
   const runtime = new ClaudeResponsesRuntime(new ClaudeAccountRouter(source), executor);
   await assert.rejects(runtime.execute(request()), ClaudeUsageLimitError);
-  assert.equal(executor.calls, 2);
-  assert.equal(source.cooldownMarks.length, 2);
+  assert.equal(executor.calls, 3, 'every account is attempted once');
+  assert.equal(source.cooldownMarks.length, 3);
+  assert.deepEqual(
+    [...new Set(source.cooldownMarks.map((mark) => mark.accountId))].sort(),
+    ['account-a', 'account-b', 'account-c'],
+    'each account is attempted exactly once, not one of them repeatedly'
+  );
+});
+
+test('runtime reaches a healthy account behind two exhausted ones', async () => {
+  const source = new FakeClaudeAccountSource(['account-a', 'account-b', 'account-c']);
+  const executor = new FunctionExecutor(async () => {
+    if (executor.calls < 3) throw new ClaudeUsageLimitError('limited');
+    return {
+      decision: { action: 'final', text: 'third account answered' },
+      rawUsage: { usage: { input_tokens: 1, output_tokens: 1 } }
+    };
+  });
+  const runtime = new ClaudeResponsesRuntime(new ClaudeAccountRouter(source), executor);
+  const response = await runtime.execute(request());
+  const message = response.output[0];
+  assert.equal(message.type, 'message');
+  assert.equal(
+    message.type === 'message' ? message.content[0]?.text : undefined,
+    'third account answered'
+  );
+  assert.equal(executor.calls, 3);
+  assert.equal(source.cooldownMarks.length, 2, 'only the two exhausted accounts are cooled');
+});
+
+test('a non-routing failure does not consume a second account', async () => {
+  const source = new FakeClaudeAccountSource(['account-a', 'account-b', 'account-c']);
+  const executor = new FunctionExecutor(async () => {
+    throw new ClaudeDecisionError('malformed decision');
+  });
+  const runtime = new ClaudeResponsesRuntime(new ClaudeAccountRouter(source), executor);
+  await assert.rejects(runtime.execute(request()), ClaudeDecisionError);
+  assert.equal(executor.calls, 1, 'a broken request must not be retried elsewhere');
+  assert.equal(source.cooldownMarks.length, 0);
 });
