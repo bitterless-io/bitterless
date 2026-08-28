@@ -52,6 +52,14 @@ only new input is an integer, validated as an integer.
 | A slot number is unique across accounts | Two accounts sharing a directory would share a credential |
 | Directories keep mode `0700`, must be plain directories, and must not be symlinks | Unchanged from the accepted design |
 
+## Slot allocation must also read the disk
+
+`#nextFreeSlot` consults the registry **and** the filesystem. The registry alone is not enough: the
+owner creates and logs into `~/.claude<N>` directories by hand, and those are invisible to it. With
+an empty registry it would have allocated slot 2 — an existing, logged-in account — and the login
+flow would have overwritten that credential, then deleted the whole directory if verification
+failed. Creation must never land on an existing directory; adoption is the path for those.
+
 ## Adoption
 
 Because slots are now ordinary, inspectable directories, a slot the owner has already logged in
@@ -62,6 +70,48 @@ not open a browser, and does not touch the credential.
 
 This is what makes the move useful rather than cosmetic: without it, moving the directory only
 changes where Bitterless creates a slot it still has to log in itself.
+
+**A failed adoption must leave the directory alone.** The authorization flow logs out and deletes on
+failure because it created the directory; adoption did not, and an owner's working account has to
+survive a failed attempt to register it.
+
+## Configurable port
+
+The endpoint port is owner-configurable, defaulting to **12841**. It is stored in
+`<userData>/claude-subscription/settings.json` (`{version, port}`), beside the registry rather than
+inside it: it is not account state, and a malformed settings file must not make the accounts
+unreadable. An absent or out-of-range value falls back to the default instead of failing startup.
+
+The server takes its port at construction, so a change applies on the next service start rather than
+tearing down a listener that may be mid-request. Two consequences follow, and both are handled:
+
+- The Codex profile snippet is **generated from the live port** (`buildClaudeSubscriptionCodexProfile`)
+  rather than being a constant. A hard-coded snippet would quietly point Codex at the wrong port.
+- `localClaudeProvider` builds its base URL per call instead of exporting a frozen constant.
+
+## End-to-end verification
+
+Run 2026-08-28 against the production classes — repository, router, `ClaudeCliExecutor`,
+`ClaudeCliAccountAuth`, `ClaudeResponsesRuntime`, `ClaudeResponsesServer` — assembled outside
+Electron, with a temporary registry so no real `userData` or `~/.claude*` directory was written:
+
+```
+repository.serverPort() = 12841
+adoptable slots  [{"slot":2,"initialized":true},{"slot":3,"initialized":false}, …]
+verify           loggedIn:true, claude.ai, firstParty, team
+listening        http://127.0.0.1:12841
+POST /v1/responses → HTTP 200
+  events   response.created, output_item.added, content_part.added, output_text.delta,
+           output_text.done, content_part.done, output_item.done, response.completed, [DONE]
+  usage    {"input_tokens":2,"output_tokens":79,"total_tokens":81}
+  text     "Anthropic built me."   (4142 ms)
+```
+
+This is the first time the chain has been exercised end to end. What it does **not** cover: the
+Electron/XPC layer, the Workbench UI, and multi-account failover — the machine has one usable
+account, so routing was single-account throughout.
+
+Harness: `tmp/claude-sub-e2e/` in the overmind workspace (scratch; not part of this repository).
 
 ## Registry
 

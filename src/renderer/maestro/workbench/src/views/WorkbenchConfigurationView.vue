@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Button, Empty, Input, Message, Modal, Option, Select, Switch } from '@arco-design/web-vue'
+import {
+  Button,
+  Empty,
+  Input,
+  InputNumber,
+  Message,
+  Modal,
+  Option,
+  Select,
+  Switch,
+} from '@arco-design/web-vue'
 import {
   IconArrowRight,
   IconCheck,
@@ -10,6 +20,7 @@ import {
   IconRouter,
   IconTrash,
 } from '@tabler/icons-vue'
+import { CLAUDE_SUBSCRIPTION_DEFAULT_PORT } from '@shared/claudeSubscription/claudeSubscription.contract'
 import type { ClaudeSubscriptionAccountView } from '@shared/claudeSubscription/claudeSubscription.contract'
 import type { LlmEffort } from '@maestro-shared/coach.api'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
@@ -42,8 +53,25 @@ const localEfforts = computed(() => localModel.value?.efforts || [])
 const localReady = computed(() => Boolean(localGroup.value?.ready))
 const endpoint = computed(() => {
   const server = snapshot.value?.server
-  return server ? `http://${server.host}:${server.port}/v1` : 'http://127.0.0.1:8741/v1'
+  return server
+    ? `http://${server.host}:${server.port}/v1`
+    : `http://127.0.0.1:${CLAUDE_SUBSCRIPTION_DEFAULT_PORT}/v1`
 })
+
+const portDraft = ref<number | undefined>(undefined)
+watch(
+  () => snapshot.value?.server.port,
+  (port) => {
+    if (typeof port === 'number' && portDraft.value === undefined) portDraft.value = port
+  },
+  { immediate: true },
+)
+
+const applyPort = async (): Promise<void> => {
+  const port = Number(portDraft.value)
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) return
+  await claude.setServerPort(port)
+}
 const flow = computed(() => snapshot.value?.authFlow)
 
 watch(
@@ -156,6 +184,28 @@ onBeforeUnmount(() => {
         <div>
           <span class="workbench-configuration__route__eyebrow">Local Responses</span>
           <code>{{ endpoint }}</code>
+          <div name="configuration__endpoint__port" class="workbench-configuration__port">
+            <span>{{ copy.serverPort }}</span>
+            <InputNumber
+              v-model="portDraft"
+              name="configuration__endpoint__port-input"
+              size="mini"
+              :min="1024"
+              :max="65535"
+              :disabled="Boolean(claude.actionKey)"
+              hide-button
+            />
+            <Button
+              name="configuration__endpoint__port-apply"
+              size="mini"
+              :loading="claude.actionKey === 'set-port'"
+              :disabled="Boolean(claude.actionKey) || portDraft === snapshot?.server.port"
+              @click="applyPort"
+            >
+              {{ copy.applyPort }}
+            </Button>
+            <em>{{ copy.serverPortHint }}</em>
+          </div>
         </div>
       </div>
       <IconArrowRight :size="18" class="workbench-configuration__route__arrow" />
