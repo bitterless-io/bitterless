@@ -37,13 +37,14 @@ class FunctionExecutor implements ClaudeExecutor {
   }
 }
 
-const request = () =>
-  parseClaudeResponsesRequest({
-    model: 'claude-sonnet',
-    stream: true,
-    input: 'Say hello.',
-    prompt_cache_key: 'thread-a'
-  });
+const requestBody = () => ({
+  model: 'claude-sonnet',
+  stream: true,
+  input: 'Say hello.',
+  prompt_cache_key: 'thread-a'
+});
+
+const request = () => parseClaudeResponsesRequest(requestBody());
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -272,6 +273,70 @@ test('runtime never retries malformed, cancelled, timeout-like, or generic failu
     assert.equal(source.cooldownMarks.length, 0);
     assert.equal(source.loginMarks.length, 0);
   }
+});
+
+// The CLI rewrites .claude.json in its CLAUDE_CONFIG_DIR on every run, so two
+// children sharing a directory corrupt it. See
+// docs/issues/claude-subscription-concurrent-requests-share-one-config-dir.md.
+test('one account never serves two requests at once', async () => {
+  const source = new FakeClaudeAccountSource(['account-a']);
+  let inFlight = 0;
+  let peakInFlight = 0;
+  const release = createDeferred<void>();
+  const executor = new FunctionExecutor(async () => {
+    inFlight += 1;
+    peakInFlight = Math.max(peakInFlight, inFlight);
+    // Hold the first call open long enough that a truly concurrent second call
+    // would overlap it; without serialisation `peakInFlight` reaches 2 here.
+    if (executor.calls === 1) await release.promise;
+    inFlight -= 1;
+    return {
+      decision: { action: 'final', text: 'ok' },
+      rawUsage: { usage: { input_tokens: 1, output_tokens: 1 } }
+    };
+  });
+  const runtime = new ClaudeResponsesRuntime(new ClaudeAccountRouter(source), executor);
+
+  const first = runtime.execute(request());
+  const second = runtime.execute(request());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(inFlight, 1, 'the second request must be queued, not running');
+
+  release.resolve();
+  await Promise.all([first, second]);
+  assert.equal(executor.calls, 2);
+  assert.equal(peakInFlight, 1, 'the two requests never overlapped');
+});
+
+test('two accounts still serve two requests in parallel', async () => {
+  const source = new FakeClaudeAccountSource(['account-a', 'account-b']);
+  let inFlight = 0;
+  let peakInFlight = 0;
+  const release = createDeferred<void>();
+  const executor = new FunctionExecutor(async () => {
+    inFlight += 1;
+    peakInFlight = Math.max(peakInFlight, inFlight);
+    await release.promise;
+    inFlight -= 1;
+    return {
+      decision: { action: 'final', text: 'ok' },
+      rawUsage: { usage: { input_tokens: 1, output_tokens: 1 } }
+    };
+  });
+  const runtime = new ClaudeResponsesRuntime(new ClaudeAccountRouter(source), executor);
+
+  // Distinct cache keys: a shared key would bind both requests to one account and
+  // measure stickiness rather than parallelism.
+  const both = Promise.all([
+    runtime.execute(
+      parseClaudeResponsesRequest({ ...requestBody(), prompt_cache_key: 'thread-a' })
+    ),
+    runtime.execute(parseClaudeResponsesRequest({ ...requestBody(), prompt_cache_key: 'thread-b' }))
+  ]);
+  await new Promise((resolve) => setImmediate(resolve));
+  release.resolve();
+  await both;
+  assert.equal(peakInFlight, 2, 'serialising is per account, not across the pool');
 });
 
 // This replaces a test that asserted the runtime retried at most once. That was

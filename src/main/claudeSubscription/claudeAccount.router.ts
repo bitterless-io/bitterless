@@ -42,6 +42,9 @@ export class ClaudeAccountRouter {
     { deadline: number; timer: NodeJS.Timeout }
   >();
   readonly #needsLogin = new Set<ClaudeAccountId>();
+  // Woken when any account's active count reaches zero, so a request queued behind
+  // a fully busy pool can re-run selection instead of polling.
+  #releaseWaiters: Array<() => void> = [];
   #roundRobinCursor = 0;
 
   constructor(source: ClaudeAccountSource, options: ClaudeAccountRouterOptions = {}) {
@@ -65,11 +68,25 @@ export class ClaudeAccountRouter {
       );
       if (eligible.length === 0) throw new ClaudeNoEligibleAccountError();
 
+      // One CLI child per config directory. The CLI rewrites `.claude.json` on
+      // every run, so two children sharing a directory race on it — observed
+      // 2026-08-26 truncating a 50KB config to a fresh-install stub. Busy accounts
+      // are therefore not merely deprioritised, they are not selectable.
+      const idle = eligible.filter((account) => this.activeRequests(account.id) === 0);
+      if (idle.length === 0) {
+        // Every eligible account is serving a request. Wait for one to finish and
+        // re-run selection from scratch, so eligibility, maintenance, cooldown and
+        // context validity are re-evaluated rather than carried across the wait.
+        await this.#waitForRelease();
+        continue;
+      }
+
       const stickyId = cacheKey ? this.#sticky.get(cacheKey) : undefined;
-      const stickyAccount = stickyId
-        ? eligible.find((account) => account.id === stickyId)
-        : undefined;
-      const selected = stickyAccount ?? this.#selectLeastActive(eligible);
+      // A busy sticky account loses its binding for this request: prompt-cache
+      // locality is an optimisation, and serialisation is correctness. The binding
+      // survives, so the next request on this key returns to it once free.
+      const stickyAccount = stickyId ? idle.find((account) => account.id === stickyId) : undefined;
+      const selected = stickyAccount ?? this.#selectLeastActive(idle);
 
       try {
         const context = await this.#source.getExecutionContext(selected.id);
@@ -96,6 +113,14 @@ export class ClaudeAccountRouter {
         // cannot enter the check-to-grant gap.
         if (this.#isUnderMaintenance(selected.id)) {
           excluded.add(selected.id);
+          continue;
+        }
+        // Idleness is re-checked here, not only at selection: the awaits above are
+        // exactly the window in which a concurrent lease could have taken this
+        // account after it was filtered as idle. Waiting rather than excluding,
+        // because the account is healthy — it is merely busy.
+        if (this.activeRequests(selected.id) > 0) {
+          await this.#waitForRelease();
           continue;
         }
         this.#active.set(selected.id, this.activeRequests(selected.id) + 1);
@@ -251,10 +276,31 @@ export class ClaudeAccountRouter {
     return this.#maintenanceCount(accountId) > 0;
   }
 
+  #waitForRelease(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.#releaseWaiters.push(resolve);
+    });
+  }
+
+  /**
+   * Wakes every waiter rather than one: each re-runs the full selection, and which
+   * of them should proceed depends on eligibility that may have changed while they
+   * waited. Handing the slot to a single pre-chosen waiter would decide that on
+   * stale state.
+   */
+  #notifyReleased(): void {
+    if (this.#releaseWaiters.length === 0) return;
+    const waiters = this.#releaseWaiters;
+    this.#releaseWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
   #decrementActive(accountId: ClaudeAccountId): void {
     const remaining = Math.max(0, this.activeRequests(accountId) - 1);
-    if (remaining === 0) this.#active.delete(accountId);
-    else this.#active.set(accountId, remaining);
+    if (remaining === 0) {
+      this.#active.delete(accountId);
+      this.#notifyReleased();
+    } else this.#active.set(accountId, remaining);
     this.#notifyStateChanged();
   }
 
@@ -285,18 +331,21 @@ export class ClaudeAccountRouter {
     if (existing) clearTimeout(existing.timer);
 
     const remaining = Math.max(1, deadline - this.#now());
-    const timer = setTimeout(() => {
-      const current = this.#cooldownExpiryTimers.get(accountId);
-      if (!current || current.timer !== timer) return;
-      this.#cooldownExpiryTimers.delete(accountId);
-      if (deadline > this.#now()) {
-        this.#scheduleCooldownExpiry(accountId, deadline);
-        return;
-      }
-      const local = this.#cooldowns.get(accountId) ?? 0;
-      if (local > 0 && local <= this.#now()) this.#cooldowns.delete(accountId);
-      this.#notifyStateChanged();
-    }, Math.min(remaining, 2_147_483_647));
+    const timer = setTimeout(
+      () => {
+        const current = this.#cooldownExpiryTimers.get(accountId);
+        if (!current || current.timer !== timer) return;
+        this.#cooldownExpiryTimers.delete(accountId);
+        if (deadline > this.#now()) {
+          this.#scheduleCooldownExpiry(accountId, deadline);
+          return;
+        }
+        const local = this.#cooldowns.get(accountId) ?? 0;
+        if (local > 0 && local <= this.#now()) this.#cooldowns.delete(accountId);
+        this.#notifyStateChanged();
+      },
+      Math.min(remaining, 2_147_483_647)
+    );
     timer.unref?.();
     this.#cooldownExpiryTimers.set(accountId, { deadline, timer });
   }
