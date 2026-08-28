@@ -72,6 +72,15 @@ const addAccount = async (): Promise<void> => {
   if (await claude.addAccount(label)) newAccountLabel.value = ''
 }
 
+const adopt = async (slot: number): Promise<void> => {
+  const label = newAccountLabel.value.trim() || `${copy.value.account} ${slot}`
+  if (await claude.adoptAccount(slot, label)) newAccountLabel.value = ''
+}
+
+const adoptSlotLabel = (slot: { slot: number; initialized: boolean }): string =>
+  copy.value.adoptSlot.replace('{slot}', String(slot.slot)) +
+  (slot.initialized ? '' : ` · ${copy.value.adoptNotSignedIn}`)
+
 const reconnect = async (): Promise<void> => {
   const account = selectedAccount.value
   if (account) await claude.reconnectAccount(account.id, account.label)
@@ -126,7 +135,7 @@ const setLocalEffort = async (value: unknown): Promise<void> => {
 }
 
 onMounted(async () => {
-  await Promise.all([claude.init(), workbench.refreshLlmConfig()])
+  await Promise.all([claude.init(), workbench.refreshLlmConfig(), claude.loadAdoptableSlots()])
 })
 
 onBeforeUnmount(() => {
@@ -190,6 +199,37 @@ onBeforeUnmount(() => {
               <template #icon><IconPlugConnected :size="15" /></template>
               {{ copy.addAccount }}
             </Button>
+          </div>
+        </div>
+
+        <div
+          v-if="claude.adoptableSlots.length"
+          name="configuration__adoptable"
+          class="workbench-configuration__adoptable"
+        >
+          <div class="workbench-configuration__adoptable__head">
+            <strong>{{ copy.adoptTitle }}</strong>
+            <span>{{ copy.adoptHint }}</span>
+          </div>
+          <div class="workbench-configuration__adoptable__list">
+            <div
+              v-for="slot in claude.adoptableSlots"
+              :key="slot.slot"
+              name="configuration__adoptable__row"
+              class="workbench-configuration__adoptable__row"
+            >
+              <code>~/.claude{{ slot.slot }}</code>
+              <span>{{ adoptSlotLabel(slot) }}</span>
+              <Button
+                name="configuration__adoptable__adopt"
+                size="mini"
+                :loading="claude.actionKey === `adopt:${slot.slot}`"
+                :disabled="Boolean(flow || claude.actionKey)"
+                @click="adopt(slot.slot)"
+              >
+                {{ copy.adopt }}
+              </Button>
+            </div>
           </div>
         </div>
 

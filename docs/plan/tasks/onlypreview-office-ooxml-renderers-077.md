@@ -1,7 +1,7 @@
 ---
 id: onlypreview-office-ooxml-renderers-077
 scope: Unify XLSX/XLSM, DOCX and PPTX VuePreview rendering on bounded @silurus/ooxml viewers with persistent search highlighting
-status: in progress
+status: implemented; owner verification pending
 depends-on:
   - onlypreview-xlsx-grid-020
   - onlypreview-docx-render-021
@@ -79,8 +79,8 @@ historical delivery evidence stays unchanged.
 
 - Main only classifies, bounds, and signs the selected file. Fetch and OOXML work remain in the
   sandboxed Vue renderer / its workers.
-- Each format keeps a 25 MiB compressed-file override and the existing preflight limits: 5,000
-  entries, 128 MiB per entry, 200 MiB total inflated bytes, 200:1 ratio, and 10-second preflight.
+- Each format keeps a 25 MiB compressed-file override and a conservative preflight envelope: 5,000
+  entries, 64 MiB per entry, 128 MiB total inflated bytes, 200:1 ratio, and 10-second preflight.
   Extend required-part validation with `ppt/presentation.xml` for PPTX.
 - Pass the same explicit archive limits into all three viewer constructors. The pinned 0.83.0
   viewer keeps its built-in decoded-image guards; it does not expose raster/decode options that
@@ -160,3 +160,23 @@ historical delivery evidence stays unchanged.
   resulting chunk graph and Office WASM/worker assets.
 - Do not launch Electron, Playwright, packaged smoke, or E2E. Ral performs live fidelity and Find
   acceptance.
+
+## Delivery
+
+- `.xlsx` / `.xlsm`, `.docx`, and `.pptx` now use the exact pinned `@silurus/ooxml@0.83.0`
+  `xlsx`, `docx`, and `pptx` subpaths. The three viewers retain model-backed Find/highlight and
+  load only after the selected Office format passes the disposable preflight Worker.
+- Viewer `onError`, Find deadlines, selection teardown, and Main's Vue rebuild path fail closed.
+  Legacy `.doc` / `.xls` / `.ppt` are explicit unsupported metadata-only files rather than text.
+- Admission is capped at 25 MiB compressed, 5,000 entries, 64 MiB per inflated entry, 128 MiB
+  aggregate inflation, 200:1 ratio, and ten seconds; the same archive limits reach every viewer.
+- Focused non-Electron tests passed (149/149 in the final implementation batch; independent review
+  round 2 repeated 128/128), package audit passed 18/18, Node typecheck and production build passed,
+  and `git diff --check` passed. The built Preview bootstrap is 1,325 bytes and contains no OOXML
+  engine; XLSX/DOCX/PPTX emitted separate lazy chunks, parser WASM, render workers, and the separate
+  preflight Worker.
+- Web typecheck remains blocked only by pre-existing Poker, old Home, Maestro, connector, and
+  path-helper diagnostics; no Task 077 file is reported. Electron/Playwright/E2E was not run by
+  request. Independent [round 2 review](../reviews/onlypreview-office-ooxml-renderers-077-2.md)
+  passed with no remaining P1/P2/P3; Ral's live fidelity, scrolling, Find/highlight, and minimum-
+  device acceptance remain.

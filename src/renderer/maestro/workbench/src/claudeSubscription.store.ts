@@ -4,6 +4,7 @@ import {
   CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT,
   type ClaudeAccountId,
   type ClaudeSubscriptionActionResult,
+  type ClaudeSubscriptionAdoptableSlot,
   type ClaudeSubscriptionApi,
   type ClaudeSubscriptionSnapshot,
 } from '@shared/claudeSubscription/claudeSubscription.contract'
@@ -22,6 +23,8 @@ class ClaudeSubscriptionStore {
   loading = false
   actionKey = ''
   errorCode = ''
+  /** ~/.claude<N> directories present on disk but not yet registered. */
+  adoptableSlots: ClaudeSubscriptionAdoptableSlot[] = []
   initialized = false
   private operationGeneration = 0
 
@@ -60,6 +63,26 @@ class ClaudeSubscriptionStore {
     return await this.runAction('authorize:new', () =>
       claudeSubscription.startAuthorization({ label: label.trim() })
     )
+  }
+
+  async loadAdoptableSlots(): Promise<void> {
+    try {
+      this.adoptableSlots = await claudeSubscription.listAdoptableSlots()
+    } catch {
+      this.adoptableSlots = []
+    }
+  }
+
+  /**
+   * Registers a slot that is already logged in. No browser and no re-login: the
+   * credential exists, so this only verifies and records it.
+   */
+  async adoptAccount(slot: number, label: string): Promise<boolean> {
+    const ok = await this.runAction(`adopt:${slot}`, () =>
+      claudeSubscription.adoptAccount({ slot, label: label.trim() }),
+    )
+    await this.loadAdoptableSlots()
+    return ok
   }
 
   async reconnectAccount(accountId: ClaudeAccountId, label: string): Promise<boolean> {

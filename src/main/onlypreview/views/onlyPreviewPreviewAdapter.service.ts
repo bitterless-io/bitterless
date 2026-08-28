@@ -12,6 +12,12 @@ export const ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorC
   'DOCUMENT_RENDER_TIMEOUT'
 ]);
 
+export const ONLY_PREVIEW_SHEET_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  'SHEET_PARSE_FAILED',
+  'SHEET_EMPTY',
+  'SHEET_RENDER_TIMEOUT'
+]);
+
 export const ONLY_PREVIEW_PRESENTATION_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'PRESENTATION_PARSE_FAILED',
   'PRESENTATION_EMPTY',

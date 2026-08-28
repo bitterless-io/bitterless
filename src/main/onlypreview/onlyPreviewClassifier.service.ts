@@ -114,7 +114,7 @@ const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.ogv', '.mov', '.m4v']);
 const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['.heic', '.heif', '.tif', '.tiff', '.raw']);
 const UNSUPPORTED_VIDEO_EXTENSIONS = new Set(['.mkv', '.avi', '.wmv', '.flv']);
-const UNSUPPORTED_DOCUMENT_EXTENSIONS = new Set(['.doc']);
+const UNSUPPORTED_LEGACY_OFFICE_EXTENSIONS = new Set(['.doc', '.xls', '.ppt']);
 const SHEET_EXTENSIONS = new Set(['.xlsx', '.xlsm']);
 const DOCUMENT_EXTENSIONS = new Set(['.docx']);
 const PRESENTATION_EXTENSIONS = new Set(['.pptx']);
@@ -216,7 +216,7 @@ export const classifyOnlyPreviewExtension = (relativePath: string): OnlyPreviewK
   if (
     UNSUPPORTED_IMAGE_EXTENSIONS.has(extension) ||
     UNSUPPORTED_VIDEO_EXTENSIONS.has(extension) ||
-    UNSUPPORTED_DOCUMENT_EXTENSIONS.has(extension)
+    UNSUPPORTED_LEGACY_OFFICE_EXTENSIONS.has(extension)
   ) {
     return 'unsupported';
   }

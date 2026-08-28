@@ -130,8 +130,24 @@
           class="onlypreview-shell__inline-error"
           role="alert"
         >
-          <IconAlertTriangle :size="15" aria-hidden="true" />
-          <span>{{ onlyPreviewShellStore.errorMessage }}</span>
+          <IconAlertTriangle
+            class="onlypreview-shell__inline-error-icon"
+            :size="15"
+            aria-hidden="true"
+          />
+          <span class="onlypreview-shell__inline-error-message">
+            {{ onlyPreviewShellStore.errorMessage }}
+          </span>
+          <button
+            name="onlypreview__dismissIndexError"
+            class="onlypreview-shell__inline-error-dismiss"
+            type="button"
+            :title="onlyPreviewI18n.project.dismissError"
+            :aria-label="onlyPreviewI18n.project.dismissError"
+            @click="onlyPreviewShellStore.dismissError()"
+          >
+            <IconX :size="14" aria-hidden="true" />
+          </button>
         </div>
 
         <div

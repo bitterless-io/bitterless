@@ -33,6 +33,7 @@ import {
   ONLY_PREVIEW_DIAGRAM_REBUILD_ERRORS,
   ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS,
   ONLY_PREVIEW_PRESENTATION_REBUILD_ERRORS,
+  ONLY_PREVIEW_SHEET_REBUILD_ERRORS,
   createEmptyOnlyPreviewPresentation,
   getOnlyPreviewDescriptorAdapter,
   getOnlyPreviewDescriptorErrorPayload,
@@ -488,8 +489,10 @@ export class OnlyPreviewPreviewRegionService {
     if (
       runtime &&
       view &&
-      ((this.presentation.adapterId === 'ooxml-docx' &&
-        ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS.has(errorCode)) ||
+      ((this.presentation.adapterId === 'ooxml-xlsx' &&
+        ONLY_PREVIEW_SHEET_REBUILD_ERRORS.has(errorCode)) ||
+        (this.presentation.adapterId === 'ooxml-docx' &&
+          ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS.has(errorCode)) ||
         (this.presentation.adapterId === 'ooxml-pptx' &&
           ONLY_PREVIEW_PRESENTATION_REBUILD_ERRORS.has(errorCode)) ||
         (this.presentation.adapterId === 'drawio-viewer' &&

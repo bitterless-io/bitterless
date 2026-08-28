@@ -517,6 +517,8 @@ test('classifier uses exact extension routing, tolerant text decoding, signature
   assert.equal(runtime.classifyOnlyPreviewExtension('archive.bin'), 'text');
   assert.equal(runtime.classifyOnlyPreviewExtension('AGENTS.md.bak'), 'text');
   assert.equal(runtime.classifyOnlyPreviewExtension('legacy.doc'), 'unsupported');
+  assert.equal(runtime.classifyOnlyPreviewExtension('legacy.xls'), 'unsupported');
+  assert.equal(runtime.classifyOnlyPreviewExtension('legacy.ppt'), 'unsupported');
 
   await withTempDirectory('onlypreview-classifier-', async (root) => {
     const { hosts, workspaces } = createRegistries();

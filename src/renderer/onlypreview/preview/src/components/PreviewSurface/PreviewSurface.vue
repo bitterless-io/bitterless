@@ -29,6 +29,32 @@
         >
           {{ previewLimitMessage }}
         </p>
+        <div
+          v-if="onlyPreviewPreviewStore.currentRef"
+          name="onlypreview__previewMetadataActions"
+          class="onlypreview-preview__state-actions"
+        >
+          <a-button
+            name="onlypreview__previewOpenExternally"
+            class="onlypreview-preview__state-action"
+            type="primary"
+            size="small"
+            :loading="onlyPreviewPreviewStore.openingExternally"
+            :disabled="onlyPreviewPreviewStore.openingExternally"
+            @click="onlyPreviewPreviewStore.openExternally()"
+          >
+            <IconExternalLink :size="15" aria-hidden="true" />
+            {{ onlyPreviewI18n.preview.openExternally }}
+          </a-button>
+          <p
+            v-if="onlyPreviewPreviewStore.openExternallyError"
+            name="onlypreview__previewOpenExternallyError"
+            class="onlypreview-preview__state-action-error"
+            role="alert"
+          >
+            {{ onlyPreviewPreviewStore.openExternallyError }}
+          </p>
+        </div>
         <dl class="onlypreview-preview__metadata">
           <div>
             <dt>{{ onlyPreviewI18n.preview.type }}</dt>
@@ -172,7 +198,12 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent } from 'vue';
-import { IconAlertTriangle, IconFileSearch, IconFileUnknown } from '@tabler/icons-vue';
+import {
+  IconAlertTriangle,
+  IconExternalLink,
+  IconFileSearch,
+  IconFileUnknown
+} from '@tabler/icons-vue';
 import {
   formatOnlyPreviewBytes,
   formatOnlyPreviewDate,

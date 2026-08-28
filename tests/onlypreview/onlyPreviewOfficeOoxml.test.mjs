@@ -74,6 +74,32 @@ const makeZipBytes = () => new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
 
 const tick = () => new Promise((resolveTick) => setImmediate(resolveTick));
 
+const withFakeTimers = async (operation) => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const timers = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    const timer = { active: true, args, callback, delay };
+    timers.push(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = (timer) => {
+    if (timer && typeof timer === 'object') timer.active = false;
+  };
+  try {
+    return await operation(timers);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+};
+
+const fireTimer = (timer) => {
+  assert.equal(timer.active, true);
+  timer.active = false;
+  timer.callback(...timer.args);
+};
+
 const deferred = () => {
   let resolvePromise;
   let rejectPromise;
@@ -214,8 +240,8 @@ for (const kind of ['xlsx', 'docx', 'pptx']) {
     assert.equal(construction.viewerOptions.enableHyperlinks, false);
     assert.deepEqual(construction.viewerOptions.resourceLimits, {
       maxArchiveEntries: 5_000,
-      maxArchiveEntryBytes: 128 * 1024 * 1024,
-      maxTotalInflatedBytes: 200 * 1024 * 1024
+      maxArchiveEntryBytes: 64 * 1024 * 1024,
+      maxTotalInflatedBytes: 128 * 1024 * 1024
     });
     assert.notEqual(
       construction.viewerOptions.findHighlightColors.match,
@@ -319,13 +345,92 @@ test('Office viewer failures are typed per format and notify Main at most once',
       (error) => error?.code === expectedCode
     );
     await assert.rejects(
-      session.execute(command({ findRevision: 2 })),
-      (error) => error?.code === expectedCode
+      async () => await session.execute(command({ findRevision: 2 }))
     );
     assert.deepEqual(runtimeErrors, [expectedCode]);
     assert.ok(events.clearFind >= 2);
     session.dispose();
   }
+});
+
+for (const [kind, expectedCode] of [
+  ['xlsx', 'SHEET_PARSE_FAILED'],
+  ['docx', 'DOCUMENT_PARSE_FAILED'],
+  ['pptx', 'PRESENTATION_PARSE_FAILED']
+]) {
+  test(`${kind} viewer onError terminates the mounted session exactly once`, async () => {
+    const { container, events, runtimeErrors, session } = createHarness(kind);
+    await session.mount(container);
+    const onError = events.viewerConstructions[0].viewerOptions.onError;
+    assert.equal(typeof onError, 'function');
+    const clearsBeforeFailure = events.clearFind;
+
+    onError(new Error('late viewer worker failure'));
+    onError(new Error('duplicate late viewer worker failure'));
+    await tick();
+
+    assert.deepEqual(runtimeErrors, [expectedCode]);
+    assert.ok(events.clearFind > clearsBeforeFailure);
+    assert.equal(events.destroy, 1);
+    assert.equal(events.replaceChildren, 1);
+    await assert.rejects(async () => await session.execute(command()));
+
+    onError(new Error('post-disposal viewer failure'));
+    session.dispose();
+    assert.deepEqual(runtimeErrors, [expectedCode]);
+    assert.equal(events.destroy, 1);
+    assert.equal(events.replaceChildren, 1);
+  });
+}
+
+test('a superseded Find deadline terminates its session without clearing replacement highlights', async () => {
+  const staleFindGate = deferred();
+  const stale = createHarness('pptx', { findGate: staleFindGate });
+  await stale.session.mount(stale.container);
+
+  await withFakeTimers(async (timers) => {
+    const staleFind = stale.session.execute(command({ query: 'A' }));
+    await tick();
+    const deadline = timers.find((timer) => timer.active && timer.delay === 10_000);
+    assert.ok(deadline, 'the real Find deadline must be armed');
+
+    const supersedingFind = stale.session.execute(
+      command({ findRevision: 2, query: 'B' })
+    );
+    const staleFailure = assert.rejects(
+      staleFind,
+      (error) => error?.code === 'PRESENTATION_RENDER_TIMEOUT'
+    );
+    const supersedingFailure = assert.rejects(supersedingFind);
+    fireTimer(deadline);
+
+    await staleFailure;
+    await supersedingFailure;
+    assert.deepEqual(stale.runtimeErrors, ['PRESENTATION_RENDER_TIMEOUT']);
+    assert.equal(stale.events.destroy, 1);
+    assert.equal(stale.events.replaceChildren, 1);
+
+    const replacement = createHarness('pptx');
+    await replacement.session.mount(replacement.container);
+    assert.deepEqual(await replacement.session.execute(command({ query: 'B' })), {
+      activeMatchOrdinal: 1,
+      matches: 3,
+      finalUpdate: true,
+      coverage: { kind: 'complete' }
+    });
+    const replacementClears = replacement.events.clearFind;
+
+    staleFindGate.resolve([{ matchIndex: 0 }]);
+    await tick();
+    await tick();
+    assert.equal(
+      replacement.events.clearFind,
+      replacementClears,
+      'the late stale viewer must not clear the replacement viewer highlights'
+    );
+    assert.equal(stale.events.destroy, 1);
+    replacement.session.dispose();
+  });
 });
 
 test('Office admission rejects a mismatched signature before Worker or engine construction', async () => {

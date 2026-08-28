@@ -72,6 +72,8 @@ class OnlyPreviewPreviewStore {
   errorCode: OnlyPreviewErrorCode | null = null;
   errorMessage = '';
   presentationError = '';
+  openingExternally = false;
+  openExternallyError = '';
   selectionReportingRevision = '';
   private initialized = false;
   private generation = 0;
@@ -84,6 +86,7 @@ class OnlyPreviewPreviewStore {
   private findSnapshot: OnlyPreviewFindSnapshot | null = null;
   private nativeFindSuppressesSelection = false;
   private descriptorErrorActive = false;
+  private openExternallyGeneration = 0;
   private readonly characterCountGate = new OnlyPreviewCharacterCountSourceGate();
   private readonly drawioSelection = markRaw(new OnlyPreviewDrawioSelectionStore());
 
@@ -190,9 +193,7 @@ class OnlyPreviewPreviewStore {
       !this.characterCountGate.isCurrent(reportingRevision) ||
       !Number.isSafeInteger(selectionRevision) ||
       !this.presentation ||
-      !['ooxml-xlsx', 'ooxml-docx', 'ooxml-pptx'].includes(
-        this.presentation.adapterId
-      ) ||
+      !['ooxml-xlsx', 'ooxml-docx', 'ooxml-pptx'].includes(this.presentation.adapterId) ||
       !this.officeSession ||
       this.errorCode !== null
     ) {
@@ -222,10 +223,40 @@ class OnlyPreviewPreviewStore {
     this.generation += 1;
     this.presentationFetchGeneration += 1;
     this.findSnapshotFetchGeneration += 1;
+    this.resetOpenExternallyAction();
     this.findSnapshot = null;
     this.nativeFindSuppressesSelection = false;
     this.disposeContentSessions();
     onlyPreviewFindAdapterBridge.clear();
+  }
+
+  async openExternally(): Promise<void> {
+    const hostToken = onlyPreviewEnv.hostToken;
+    const fileRef = this.currentRef ? { ...this.currentRef } : null;
+    if (!hostToken || !fileRef || this.openingExternally) return;
+
+    const generation = ++this.openExternallyGeneration;
+    this.openingExternally = true;
+    this.openExternallyError = '';
+    try {
+      unwrapOnlyPreviewResult(
+        await onlyPreviewClient.openExternally({
+          hostToken,
+          ...fileRef
+        })
+      );
+    } catch (error) {
+      if (!this.isCurrentOpenExternallyAction(generation, fileRef)) return;
+      const failure = toRendererError(error);
+      this.openExternallyError =
+        failure.code === 'OPERATION_FAILED'
+          ? onlyPreviewI18n.preview.openExternallyFailed
+          : failure.message;
+    } finally {
+      if (this.isCurrentOpenExternallyAction(generation, fileRef)) {
+        this.openingExternally = false;
+      }
+    }
   }
 
   reportCharacterCount(characterCount: number, reportingRevision: string): void {
@@ -345,6 +376,7 @@ class OnlyPreviewPreviewStore {
 
     if (presentation.surface !== 'vue') {
       this.generation += 1;
+      this.resetOpenExternallyAction();
       this.disposeContentSessions();
       this.resetAcknowledgedRevision = -1;
       this.descriptor = null;
@@ -408,6 +440,7 @@ class OnlyPreviewPreviewStore {
 
   private beginSelection(presentation: OnlyPreviewPreviewPresentation): void {
     this.generation += 1;
+    this.resetOpenExternallyAction();
     this.disposeContentSessions();
     this.presentation = presentation;
     this.applyFindSelectionSuppression();
@@ -500,8 +533,7 @@ class OnlyPreviewPreviewStore {
                   : 'pptx',
             assetUrl,
             expectedSize: presentation.descriptor.size,
-            onRuntimeError: (errorCode) =>
-              this.reportSurfaceError(String(revision), errorCode)
+            onRuntimeError: (errorCode) => this.reportSurfaceError(String(revision), errorCode)
           })
         );
         this.officeSession = session;
@@ -600,6 +632,21 @@ class OnlyPreviewPreviewStore {
       this.presentation?.selectionRevision === revision &&
       this.presentation.surface === 'vue'
     );
+  }
+
+  private isCurrentOpenExternallyAction(generation: number, fileRef: OnlyPreviewFileRef): boolean {
+    const currentRef = this.currentRef;
+    return (
+      generation === this.openExternallyGeneration &&
+      currentRef?.workspaceId === fileRef.workspaceId &&
+      currentRef.relativePath === fileRef.relativePath
+    );
+  }
+
+  private resetOpenExternallyAction(): void {
+    this.openExternallyGeneration += 1;
+    this.openingExternally = false;
+    this.openExternallyError = '';
   }
 
   private async acknowledgeReset(

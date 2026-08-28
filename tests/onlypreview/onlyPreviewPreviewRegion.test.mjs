@@ -412,7 +412,7 @@ test('image/media errors remove dead capabilities, demote ready, and reject late
   }
 });
 
-test('XLSX stays on Vue, exposes one bounded private asset, and clears it on ready or error', async () => {
+test('XLSX stays on Vue, exposes one bounded private asset, and rebuilds Vue on renderer failure', async () => {
   const { service } = createHarness();
   service.updateBounds(host.hostToken, bounds);
   const vue = state.vueViews[0];
@@ -441,16 +441,27 @@ test('XLSX stays on Vue, exposes one bounded private asset, and clears it on rea
     vue.previewRuntimeToken,
     'SHEET_PARSE_FAILED'
   );
-  snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+  snapshot = service.snapshot(host.hostToken);
   assert.equal(snapshot.status, 'unavailable');
+  assert.equal(snapshot.error.code, 'SHEET_PARSE_FAILED');
   assert.equal(snapshot.descriptor.assetUrl, undefined);
+  assert.equal(vue.webContents.destroyed, true);
+  assert.equal(state.vueViews.length, 2);
+  assert.throws(
+    () => service.snapshotForVue(host.hostToken, vue.previewRuntimeToken),
+    (error) => error.code === 'HOST_ROLE_DENIED'
+  );
 
   await service.present(host.hostToken, fileRef('workbook.xlsx'));
   snapshot = service.snapshot(host.hostToken);
-  acknowledgeCurrentVue(service);
+  const replacementVue = acknowledgeCurrentVue(service);
   assert.throws(
     () =>
-      service.reportVueReady(host.hostToken, snapshot.selectionRevision, vue.previewRuntimeToken),
+      service.reportVueReady(
+        host.hostToken,
+        snapshot.selectionRevision,
+        replacementVue.previewRuntimeToken
+      ),
     (error) => error.code === 'INVALID_INPUT'
   );
   assert.throws(
@@ -458,7 +469,7 @@ test('XLSX stays on Vue, exposes one bounded private asset, and clears it on rea
       service.reportVueReady(
         host.hostToken,
         snapshot.selectionRevision,
-        vue.previewRuntimeToken,
+        replacementVue.previewRuntimeToken,
         { kind: 'complete' },
         'monaco'
       ),
@@ -467,11 +478,11 @@ test('XLSX stays on Vue, exposes one bounded private asset, and clears it on rea
   service.reportVueReady(
     host.hostToken,
     snapshot.selectionRevision,
-    vue.previewRuntimeToken,
+    replacementVue.previewRuntimeToken,
     { kind: 'complete' },
     'office'
   );
-  snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
+  snapshot = service.snapshotForVue(host.hostToken, replacementVue.previewRuntimeToken);
   assert.equal(snapshot.status, 'ready');
   assert.equal(snapshot.descriptor.assetUrl, undefined);
   assert.ok(state.assetRevocations >= 2);

@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  readdir,
   rename as renameFile,
   rm,
   writeFile
@@ -220,10 +221,74 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     if (!UUID_PATTERN.test(id) || this.#accounts.some((account) => account.id === id)) {
       throw new Error('Could not create a unique Claude account identity.');
     }
-    const identity = this.#expectedIdentity(id, this.#nextFreeSlot());
+    const identity = this.#expectedIdentity(id, await this.#nextFreeSlot());
     await mkdir(identity.anthropicConfigDirectory, { recursive: true, mode: 0o700 });
     await chmod(identity.configDirectory, 0o700);
     await chmod(identity.anthropicConfigDirectory, 0o700);
+    await this.#assertIdentity(identity);
+    return identity;
+  }
+
+  /**
+   * Slots that exist on disk but are not registered — a directory the owner logged
+   * in from a terminal is exactly this. Reported so the UI can offer adoption
+   * instead of asking for a login that already happened.
+   */
+  async listAdoptableSlots(): Promise<Array<{ slot: number; initialized: boolean }>> {
+    this.#assertInitialized();
+    const registered = new Set(this.#accounts.map((account) => account.slot));
+    const found: Array<{ slot: number; initialized: boolean }> = [];
+    let entries: string[];
+    try {
+      entries = await readdir(this.#homeDirectory);
+    } catch {
+      return found;
+    }
+    for (const entry of entries) {
+      const match = new RegExp(`^\\${SLOT_DIRECTORY_PREFIX}(\\d+)$`, 'u').exec(entry);
+      if (!match) continue;
+      const slot = Number(match[1]);
+      if (!isValidSlot(slot) || registered.has(slot)) continue;
+      try {
+        const directory = this.#slotDirectory(slot);
+        if (!(await lstat(directory)).isDirectory()) continue;
+        // `.claude.json` is the CLI's own marker that this directory has been used;
+        // its absence means the slot was created but never logged in.
+        const initialized = await lstat(path.join(directory, '.claude.json'))
+          .then(() => true)
+          .catch(() => false);
+        found.push({ slot, initialized });
+      } catch {
+        continue;
+      }
+    }
+    return found.sort((a, b) => a.slot - b.slot);
+  }
+
+  /**
+   * Builds the identity for a slot that already exists, without creating or
+   * touching a credential. The caller must verify the slot is authenticated before
+   * persisting it — adoption never assumes a directory's contents are valid.
+   */
+  async adoptIdentity(slot: number): Promise<ClaudeAccountIdentity> {
+    this.#assertInitialized();
+    if (!isValidSlot(slot)) {
+      throw new Error('Claude account slot must be an integer of at least 2.');
+    }
+    if (this.#accounts.some((account) => account.slot === slot)) {
+      throw new Error('That Claude account slot is already registered.');
+    }
+    if (!(await this.#slotDirectoryExists(slot))) {
+      throw new Error('That Claude account slot directory does not exist.');
+    }
+    const id = this.#createId();
+    if (!UUID_PATTERN.test(id) || this.#accounts.some((account) => account.id === id)) {
+      throw new Error('Could not create a unique Claude account identity.');
+    }
+    const identity = this.#expectedIdentity(id, slot);
+    // The CLI does not require its Anthropic subdirectory to pre-exist, but the
+    // isolated environment names it, so create it rather than failing adoption.
+    await mkdir(identity.anthropicConfigDirectory, { recursive: true, mode: 0o700 });
     await this.#assertIdentity(identity);
     return identity;
   }
@@ -475,12 +540,34 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     return path.join(this.#homeDirectory, `${SLOT_DIRECTORY_PREFIX}${slot}`).normalize('NFC');
   }
 
-  /** Lowest slot not already held by a registered account. */
-  #nextFreeSlot(): number {
-    const taken = new Set(this.#accounts.map((account) => account.slot));
+  /**
+   * Lowest slot that is neither registered nor already present on disk.
+   *
+   * The on-disk check is not redundant with the registry: the owner creates and
+   * logs into `~/.claude<N>` directories by hand, and those are invisible here.
+   * Allocating one of them would point a fresh login at an existing account —
+   * overwriting its credential, and deleting the whole directory if verification
+   * then failed. Adoption is the path for an existing directory; creation must
+   * never land on one.
+   */
+  async #nextFreeSlot(): Promise<number> {
+    const registered = new Set(this.#accounts.map((account) => account.slot));
     let slot = MINIMUM_SLOT;
-    while (taken.has(slot)) slot += 1;
-    return slot;
+    for (;;) {
+      if (!registered.has(slot) && !(await this.#slotDirectoryExists(slot))) return slot;
+      slot += 1;
+    }
+  }
+
+  async #slotDirectoryExists(slot: number): Promise<boolean> {
+    try {
+      await lstat(this.#slotDirectory(slot));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      // An unreadable entry is still an entry: refuse to claim it.
+      return true;
+    }
   }
 
   async #assertIdentity(identity: ClaudeAccountIdentity): Promise<void> {

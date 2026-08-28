@@ -63,12 +63,10 @@ import {
   type OnlyPreviewTreeNavigationKey
 } from './onlyPreviewTree.service';
 
-const errorMessage = (error: unknown): string => {
-  if (error instanceof OnlyPreviewContractError) {
-    return getOnlyPreviewErrorMessage(error.code);
-  }
-  return onlyPreviewI18n.errors.OPERATION_FAILED;
-};
+const errorMessage = (error: unknown): string =>
+  error instanceof OnlyPreviewContractError
+    ? getOnlyPreviewErrorMessage(error.code)
+    : onlyPreviewI18n.errors.OPERATION_FAILED;
 export class OnlyPreviewShellStore {
   private readonly diagnostics: OnlyPreviewSearchDiagnostics;
   constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
@@ -182,6 +180,9 @@ export class OnlyPreviewShellStore {
   async refresh(): Promise<void> {
     if (!this.workspace) return;
     await this.refreshIndex();
+  }
+  dismissError(): void {
+    this.errorMessage = '';
   }
   async openSettings(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
@@ -794,5 +795,4 @@ export class OnlyPreviewShellStore {
     onlyPreviewGlobalSearchShellClient.report(this.getGlobalSearchContext());
   }
 }
-
 export const onlyPreviewShellStore = reactive<OnlyPreviewShellStore>(new OnlyPreviewShellStore());

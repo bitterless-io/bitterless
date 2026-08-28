@@ -102,6 +102,8 @@ const METADATA_ONLY_EXTENSIONS = new Set([
   '.pptx',
   '.drawio',
   '.doc',
+  '.xls',
+  '.ppt',
   '.heic',
   '.heif',
   '.tif',

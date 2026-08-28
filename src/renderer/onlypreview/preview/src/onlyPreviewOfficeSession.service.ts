@@ -151,6 +151,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
   private disposed = false;
   private mountStarted = false;
   private runtimeErrorReported = false;
+  private viewerErrorQueued = false;
   private findGeneration = 0;
   private findQueue: Promise<void> = Promise.resolve();
   private lastQuery = '';
@@ -241,7 +242,8 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
       showZoomSlider: false,
       workerTimeoutMs: VIEWER_WORKER_TIMEOUT_MS,
       resourceLimits: OOXML_RESOURCE_LIMITS,
-      findHighlightColors: FIND_HIGHLIGHT_COLORS
+      findHighlightColors: FIND_HIGHLIGHT_COLORS,
+      onError: () => this.handleViewerRuntimeError()
     });
     this.viewer = viewer;
     await viewer.load(bytes);
@@ -267,7 +269,8 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
       resourceLimits: OOXML_RESOURCE_LIMITS,
       background: '#f2f3f7',
       pageShadow: '0 4px 18px rgb(30 36 58 / 14%)',
-      findHighlightColors: FIND_HIGHLIGHT_COLORS
+      findHighlightColors: FIND_HIGHLIGHT_COLORS,
+      onError: () => this.handleViewerRuntimeError()
     });
     this.viewer = viewer;
     await viewer.load(bytes);
@@ -294,7 +297,8 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
       resourceLimits: OOXML_RESOURCE_LIMITS,
       background: '#f2f3f7',
       pageShadow: '0 4px 18px rgb(30 36 58 / 14%)',
-      findHighlightColors: FIND_HIGHLIGHT_COLORS
+      findHighlightColors: FIND_HIGHLIGHT_COLORS,
+      onError: () => this.handleViewerRuntimeError()
     });
     this.viewer = viewer;
     await viewer.load(bytes);
@@ -311,12 +315,14 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
   ): Promise<OnlyPreviewContentFindAdapterResult> {
     if (!this.isFindCurrent(generation)) throw new StaleOfficeFindError();
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
     const operation = this.executeOoxmlFind(command, generation);
     try {
       return await Promise.race([
         operation,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
+            timedOut = true;
             reject(
               new OnlyPreviewContractError(
                 timeoutErrorForKind(this.options.kind),
@@ -327,16 +333,19 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
         })
       ]);
     } catch (error) {
-      if (error instanceof StaleOfficeFindError || !this.isFindCurrent(generation)) throw error;
-      const failure =
-        error instanceof OnlyPreviewContractError
+      if (error instanceof StaleOfficeFindError) throw error;
+      const failure = timedOut
+        ? new OnlyPreviewContractError(
+            timeoutErrorForKind(this.options.kind),
+            'Office Find exceeded its deadline.'
+          )
+        : error instanceof OnlyPreviewContractError
           ? error
           : new OnlyPreviewContractError(
               parseErrorForKind(this.options.kind),
               'Office Find failed.'
             );
-      this.clear();
-      this.reportRuntimeError(failure.code);
+      if (!this.disposed) this.failClosed(failure.code);
       throw failure;
     } finally {
       if (timer !== null) clearTimeout(timer);
@@ -438,7 +447,6 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     this.worker = worker;
     return new Promise<ArrayBuffer>((resolve, reject) => {
       let settled = false;
-      let timer: ReturnType<typeof setTimeout>;
       const finish = (value: { bytes?: ArrayBuffer; error?: OnlyPreviewContractError }): void => {
         if (settled) return;
         settled = true;
@@ -449,7 +457,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
         if (value.error) reject(value.error);
         else resolve(value.bytes!);
       };
-      timer = setTimeout(() => {
+      const timer = setTimeout(() => {
         finish({
           error: new OnlyPreviewContractError(
             timeoutErrorForKind(this.options.kind),
@@ -514,9 +522,26 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     throw new StaleOfficeFindError();
   }
 
-  private reportRuntimeError(errorCode: OnlyPreviewErrorCode): void {
+  private handleViewerRuntimeError(): void {
+    if (this.runtimeErrorReported || this.disposed) return;
+    if (!this.viewer) {
+      if (this.viewerErrorQueued) return;
+      this.viewerErrorQueued = true;
+      queueMicrotask(() => {
+        this.viewerErrorQueued = false;
+        if (this.viewer && !this.disposed) {
+          this.failClosed(parseErrorForKind(this.options.kind));
+        }
+      });
+      return;
+    }
+    this.failClosed(parseErrorForKind(this.options.kind));
+  }
+
+  private failClosed(errorCode: OnlyPreviewErrorCode): void {
     if (this.runtimeErrorReported || this.disposed) return;
     this.runtimeErrorReported = true;
+    this.dispose();
     this.options.onRuntimeError?.(errorCode);
   }
 

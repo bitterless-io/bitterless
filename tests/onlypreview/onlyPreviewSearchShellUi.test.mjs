@@ -20,8 +20,14 @@ test('Shell always reports live bounds and Main shares them with Preview and Glo
   const app = source('src/renderer/onlypreview/shell/src/App.vue');
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
 
-  assert.doesNotMatch(app, /onlyPreviewGlobalSearchStore|restorePreviewBounds|\{ x: 0, y: 0, width: 0, height: 0 \}/);
-  assert.match(app, /getBoundingClientRect\(\)[\s\S]*reportPreviewBounds\(\{[\s\S]*x: bounds\.x[\s\S]*height: bounds\.height/);
+  assert.doesNotMatch(
+    app,
+    /onlyPreviewGlobalSearchStore|restorePreviewBounds|\{ x: 0, y: 0, width: 0, height: 0 \}/
+  );
+  assert.match(
+    app,
+    /getBoundingClientRect\(\)[\s\S]*reportPreviewBounds\(\{[\s\S]*x: bounds\.x[\s\S]*height: bounds\.height/
+  );
   assert.match(app, /watch\([\s\S]*previewHostRef[\s\S]*resizeObserver\.observe\(host\)/);
   assert.doesNotMatch(windowHelper, /isHiddenPreviewBounds/);
   assert.match(
@@ -67,6 +73,37 @@ test('Project tree keeps row ARIA ownership while its directory arrow toggles on
     /\.onlypreview-shell__tree-chevron-hit:hover \{[\s\S]*background: var\(--onlypreview-royal-soft\);/
   );
   assert.match(style, /\.onlypreview-shell__tree-chevron \{[\s\S]*flex: 0 0 13px;/);
+});
+
+test('Project errors are dismissible and Project tree typography increases by one step', () => {
+  const app = source('src/renderer/onlypreview/shell/src/App.vue');
+  const style = source('src/renderer/onlypreview/shell/src/App.less');
+  const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  const store = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const errorStart = app.indexOf('name="onlypreview__indexError"');
+  const errorMarkup = app.slice(errorStart, app.indexOf('</div>', errorStart));
+  const treeRow = style.slice(
+    style.indexOf('.onlypreview-shell__tree-row {'),
+    style.indexOf('.onlypreview-shell__tree-row:hover')
+  );
+
+  assert.ok(errorStart >= 0);
+  assert.match(errorMarkup, /role="alert"/);
+  assert.match(
+    errorMarkup,
+    /name="onlypreview__dismissIndexError"[\s\S]*type="button"[\s\S]*:aria-label="onlyPreviewI18n\.project\.dismissError"[\s\S]*@click="onlyPreviewShellStore\.dismissError\(\)"/
+  );
+  assert.match(i18n, /dismissError:\s*'Dismiss Project error'/);
+  assert.match(i18n, /dismissError:\s*'关闭项目错误提示'/);
+  assert.match(store, /dismissError\(\): void \{\s*this\.errorMessage = '';\s*\}/);
+  assert.match(
+    style,
+    /\.onlypreview-shell__inline-error-dismiss \{[\s\S]*width:\s*22px;[\s\S]*cursor:\s*pointer;/
+  );
+  assert.match(style, /\.onlypreview-shell__inline-error-dismiss:focus-visible \{/);
+  assert.match(treeRow, /height:\s*27px/);
+  assert.match(treeRow, /font-size:\s*13px/);
+  assert.match(treeRow, /font-weight:\s*500/);
 });
 
 test('Global Search UI keeps parallel ledgers, bounded split, keyboard controls, and responsive motion rules', () => {

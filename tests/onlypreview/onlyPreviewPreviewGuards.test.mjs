@@ -181,8 +181,10 @@ test('extension-first routing preserves known adapters and defaults remaining fi
   assert.equal(classifySearchMediaType('architecture.drawio'), 'unknown');
   assert.equal(runtime.classifyOnlyPreviewExtension('slides.PPTX'), 'presentation');
   assert.equal(classifySearchMediaType('slides.PPTX'), 'unknown');
-  assert.equal(runtime.classifyOnlyPreviewExtension('legacy.DOC'), 'unsupported');
-  assert.equal(classifySearchMediaType('legacy.DOC'), 'unknown');
+  for (const relativePath of ['legacy.DOC', 'legacy.XLS', 'legacy.PPT']) {
+    assert.equal(runtime.classifyOnlyPreviewExtension(relativePath), 'unsupported', relativePath);
+    assert.equal(classifySearchMediaType(relativePath), 'unknown', relativePath);
+  }
   assert.equal(runtime.classifyOnlyPreviewExtension('module.CJS'), 'text');
   assert.equal(classifySearchMediaType('module.CJS'), 'text');
 
@@ -243,13 +245,15 @@ test('media catalogs are exact and recognized unsupported formats never issue de
     }
   }
 
-  const legacyDocument = createMetadataFile({
-    relativePath: 'legacy.doc',
-    size: 4,
-    bytes: Buffer.alloc(4)
-  });
-  assert.equal((await service.describe(legacyDocument.file)).kind, 'unsupported');
-  assert.equal(legacyDocument.bodyReadCount(), 0);
+  for (const relativePath of ['legacy.doc', 'legacy.xls', 'legacy.ppt']) {
+    const legacyOfficeFile = createMetadataFile({
+      relativePath,
+      size: 4,
+      bytes: Buffer.alloc(4)
+    });
+    assert.equal((await service.describe(legacyOfficeFile.file)).kind, 'unsupported', relativePath);
+    assert.equal(legacyOfficeFile.bodyReadCount(), 0, relativePath);
+  }
 
   for (const relativePath of ['fixture.heicx', 'fixture.raw2', 'fixture.mkvs', 'fixture.bin']) {
     const candidate = createMetadataFile({ relativePath, size: 4, bytes: Buffer.alloc(4) });

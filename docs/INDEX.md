@@ -172,9 +172,15 @@ design document.
   fidelity ceilings, truthful metadata failure states, adapter size policy, lazy Vue components,
   and `.cjs` parity with `.js` across Monaco, Project Search, and file associations.
 - [OnlyPreview Office OOXML renderers](plan/tasks/onlypreview-office-ooxml-renderers-077.md) -
-  in-progress unification of XLSX/XLSM, DOCX, and PPTX on pinned, per-format lazy
+  implemented unification of XLSX/XLSM, DOCX, and PPTX on pinned, per-format lazy
   `@silurus/ooxml` viewers with bounded worker-mode rendering and complete model-backed
   search/highlight.
+- [OnlyPreview unsupported default-app action](plan/tasks/onlypreview-unsupported-default-app-078.md) -
+  implemented in-page, capability-scoped recovery for every file-backed metadata failure state
+  while Main remains the sole owner of real-path resolution and system opening.
+- [OnlyPreview Project error dismissal and tree typography](plan/tasks/onlypreview-project-error-dismiss-tree-typography-079.md) -
+  implemented localized dismissal for Project errors plus 13px/500 Project tree entry names with
+  unchanged row geometry and interactions; owner verification remains pending.
 - [OnlyPreview Global Search and result preview](design/onlypreview-global-search.md) - remove the
   Project-side search field, place Contents and Files in parallel result columns above one bounded
   lazy file-content Preview, make the workspace root the first Project tree row, fence visible rows

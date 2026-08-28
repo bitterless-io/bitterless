@@ -5,6 +5,7 @@ import {
   CLAUDE_SUBSCRIPTION_PORT,
   CLAUDE_SUBSCRIPTION_SNAPSHOT_SCHEMA,
   type ClaudeSubscriptionAccountIdInput,
+  type ClaudeSubscriptionAdoptAccountInput,
   type ClaudeSubscriptionActionResult,
   type ClaudeSubscriptionCopyResult,
   type ClaudeSubscriptionFlowIdInput,
@@ -121,6 +122,15 @@ export const claudeSubscriptionCopyResultSchema = z.discriminatedUnion('ok', [
     .strict()
 ]);
 
+export const claudeSubscriptionAdoptAccountInputSchema = z
+  .object({
+    // Mirrors MINIMUM_SLOT in the repository: slot 1 is ~/.claude, which an
+    // interactive CLI session owns and which therefore cannot be pooled.
+    slot: z.number().int().min(2).max(9999),
+    label: claudeSubscriptionLabelSchema
+  })
+  .strict();
+
 export const claudeSubscriptionStartAuthInputSchema = z
   .object({
     label: claudeSubscriptionLabelSchema,
@@ -173,6 +183,11 @@ export const parseClaudeSubscriptionActionResult = (
 
 export const parseClaudeSubscriptionCopyResult = (value: unknown): ClaudeSubscriptionCopyResult =>
   claudeSubscriptionCopyResultSchema.parse(value) as ClaudeSubscriptionCopyResult;
+
+export const parseClaudeSubscriptionAdoptAccountInput = (
+  value: unknown
+): ClaudeSubscriptionAdoptAccountInput =>
+  claudeSubscriptionAdoptAccountInputSchema.parse(value) as ClaudeSubscriptionAdoptAccountInput;
 
 export const parseClaudeSubscriptionStartAuthInput = (
   value: unknown

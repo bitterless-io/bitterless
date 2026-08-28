@@ -157,7 +157,8 @@ const rendererStoreHarnessPlugin = {
             const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
             const success = (value) => ({ ok: true, value });
             export const onlyPreviewClient = {
-              getVuePreviewPresentation: async () => success(harness().presentation),
+              getVuePreviewPresentation: async () =>
+                harness().presentationResult || success(harness().presentation),
               getSettings: async () => success(harness().settings),
               getPreviewFindSnapshot: async () => success(harness().findSnapshot),
               readText: async (request) => {
@@ -177,6 +178,11 @@ const rendererStoreHarnessPlugin = {
                 harness().errors.push(request);
                 if (harness().reportErrorPromise) return harness().reportErrorPromise;
                 return success(undefined);
+              },
+              openExternally: async (request) => {
+                harness().openExternally.push(request);
+                if (harness().openExternallyPromise) return harness().openExternallyPromise;
+                return harness().openExternallyResult || success(undefined);
               }
             };
           `
@@ -296,11 +302,15 @@ export const createRendererStoreHarness = (presentation) => ({
   broadcasts: [],
   subscriptions: new Map(),
   captureReady: null,
+  presentationResult: null,
   readText: [],
   resets: [],
   ready: [],
   errors: [],
   reportErrorPromise: null,
+  openExternally: [],
+  openExternallyPromise: null,
+  openExternallyResult: null,
   officeSessions: [],
   officeMounts: [],
   officeClears: 0,
@@ -331,6 +341,8 @@ export const renderPreviewSurface = async (store) => {
           unsupportedBody: 'Metadata only',
           unsupportedImageBody: 'Unsupported image',
           unsupportedVideoBody: 'Unsupported video',
+          openExternally: 'Open in default app',
+          openExternallyFailed: 'Could not open this file in its default app.',
           type: 'Type',
           size: 'Size',
           modified: 'Modified',
@@ -350,6 +362,7 @@ export const renderPreviewSurface = async (store) => {
   });
   for (const componentName of [
     'IconAlertTriangle',
+    'IconExternalLink',
     'IconFileSearch',
     'IconFileUnknown',
     'MarkdownPreview',
@@ -358,6 +371,8 @@ export const renderPreviewSurface = async (store) => {
     // eslint-disable-next-line vue/one-component-per-file
     app.component(componentName, { template: '<span></span>' });
   }
+  // eslint-disable-next-line vue/one-component-per-file
+  app.component('AButton', { template: '<button><slot /></button>' });
   // eslint-disable-next-line vue/one-component-per-file
   app.component('OfficePreview', {
     props: {

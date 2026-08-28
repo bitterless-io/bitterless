@@ -12,7 +12,7 @@ XLSX/XLSM 为 `implemented; owner verification pending`（已通过独立复核�
 `implemented; owner verification pending`；032 Draw.io 的
 [independent review 3](../plan/reviews/onlypreview-drawio-readonly-032-3.md) 已 **PASS**，等待 Ral
 运行时/视觉验证 ·
-077 正在以一个精确 pin、按格式动态加载的 `@silurus/ooxml` adapter 取代 020/021 的旧 renderer，并新增
+077 已以一个精确 pin、按格式动态加载的 `@silurus/ooxml` adapter 取代 020/021 的旧 renderer，并新增
 PPTX；三种 Office viewer 共享 worker mode、资源闸门和 model-backed Find/highlight ·
 开题 2026-08-18 · Ral 于 2026-08-20 指定本文
 已定内容为持续交付目标 · 未定且非阻塞的结论仍以 [#pending-questions](#pending-questions--待定项) 为准。**
@@ -38,8 +38,8 @@ Performance、历史 `docx-preview` / ExcelJS 与当前 `@silurus/ooxml` 官方�
 | G2 文档          | `.docx` 打开即见接近 Word 的分页版式，而不是纯文本                                               | ⚠ 021 `implemented; owner verification pending` → [#3](#3--docx-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)                 |
 | G3 图片 / 音视频 | 能解码的直接看/直接播；不能解码的显示明确原因                                                    | ⚠ 022 `implemented; owner verification pending` → [#5](#5--图片与音视频-已定-2026-08-18)                                               |
 | G4 不吹保真      | 每种格式写明保真上限与不做项，界面不假装渲染成功                                                 | ⚠ 020/021/022 已实施各自 bounded/typed truth，均已通过独立复核并等待 Ral 验证 → [#6](#6--保真上限与真话状态-已定-2026-08-18)           |
-| G5 解析隔离      | Main 不做整包缓冲或 Office 解析；preload 不承担计算；OOXML 解析/布局/绘制使用 worker mode             | ⚠ 077 正在统一 XLSX/XLSM、DOCX、PPTX → [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)              |
-| G9 演示文稿      | `.pptx` 打开即见虚拟化 slide list，并可跨未挂载 slide 查找、高亮与前后导航                           | ⚠ 077 in progress                                                                                                                |
+| G5 解析隔离      | Main 不做整包缓冲或 Office 解析；preload 不承担计算；OOXML 解析/布局/绘制使用 worker mode             | ⚠ 077 已实施并通过独立复核，等待 Ral 验证 → [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)       |
+| G9 演示文稿      | `.pptx` 打开即见虚拟化 slide list，并可跨未挂载 slide 查找、高亮与前后导航                           | ⚠ 077 已实施并通过独立复核，等待 Ral 验证                                                                                         |
 | G6 文本输入有界  | 文本类后缀先选 adapter，再按大小限制 Preview 与正文索引；限额内允许乱码，不做内容拒绝            | ✅ 023 已实施 → [#8.1](#81--文本候选按后缀与大小准入-已定-2026-08-20-已实施)                                                           |
 | G7 格式路由      | HTML/PDF 进入 `chromePreviewView`；需要代码或组件处理的格式进入 `vuePreviewView`                 | ✅ 024 已实施 → [姊妹文档 #7](onlypreview-preview-merge-find.md#dual-preview-region)                                                   |
 | G8 Draw.io       | `.drawio` 先交付本地只读预览、缩放/分页；不加载远端服务、iframe、图片资源或完整编辑器            | ✅ 032 已实施并通过独立复核，等待 Ral 验证；图元文字搜索后置 → [#9](#9--drawio-已定-2026-08-26-已实施)                               |
@@ -238,7 +238,8 @@ Ral 2026-08-20：「如果你说的是旧格式 .doc 而不是 .docx：建议暂
 `unsupported` 真话态，并保留现有「用系统默认应用打开」。未来若复议，必须单独评估受控转换器、临时
 文件生命周期、字体与分页漂移，不能伪装成 docx-preview 的扩展名支持。
 
-`.xls` / `.ppt`（Office 97–2003 二进制）仍见 [PQ-A](#pending-questions--待定项)。`.pptx` 已由
+`.xls` / `.ppt`（Office 97–2003 二进制）当前同样明确显示 `unsupported`、不读取正文且保留系统应用打开；
+未来是否另加内置 renderer 仍见 [PQ-A](#pending-questions--待定项)。`.pptx` 已由
 [077](../plan/tasks/onlypreview-office-ooxml-renderers-077.md) 定为 `@silurus/ooxml/pptx`，不再属于待定项。
 
 ## #5 · 图片与音视频 `已定 2026-08-18`
@@ -312,9 +313,11 @@ PDF、DOCX 超过各自 byte hard limit
 静默截断、把解析异常显示成「空文件」。
 
 直接 unsupported 与所有 typed unavailable/error 共用同一份 compact metadata presentation：文件名、
-类型或扩展名、大小、修改时间；其上保留具体 localized reason。系统打开/Reveal 仍由 Shell toolbar 的
-唯一 FileActions 提供，Vue 内容态不复制操作按钮。该规则同样覆盖图片/媒体 decoder error、Office
-parser/OOXML error、signature/empty/size error，而不只覆盖 classifier 直接落入 unsupported 的路径。
+类型或扩展名、大小、修改时间；其上保留具体 localized reason。每个有当前文件引用的 metadata failure
+都在内容态提供一个主操作 **Open in default app**；Reveal 与完整 FileActions 仍只属于 Shell toolbar。
+[Task 078](../plan/tasks/onlypreview-unsupported-default-app-078.md) 仅取代 025 的旧操作落位决定，不改变
+relative-only metadata 合同。该规则同样覆盖图片/媒体 decoder error、Office parser/OOXML error、
+signature/empty/size error，而不只覆盖 classifier 直接落入 unsupported 的路径。
 
 媒体终态进一步要求 Main 的单向状态门：exact image/media `ready` 只允许把 `loading` 推到 `ready`；
 同 revision 的 runtime error 可把 `loading` 或 `ready` 推到 `unavailable`。错误之后迟到的 load/canplay
@@ -506,7 +509,7 @@ WebContents，而不是重新引入 iframe。
 | id       | 项                                                     | 所在                                       | 类型   | 阻塞性         | 倾向 / 拍板需要什么输入                                                                                                                     | 状态                                                                                                                                    |
 | -------- | ------------------------------------------------------ | ------------------------------------------ | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | **PQ-A** | `.xls` / `.ppt`（97–2003 二进制）是否进入内置 renderer | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 可后置         | **倾向不渲染**：SheetJS 只能解决 `.xls`，`.ppt` 仍无同等级方案；tradeoff 是依赖系统应用。拍板需要 Ral 明确这两种格式是否值得分别增加引擎    | **待定**；原问题中的 `.doc` 已拆入 PQ-D 并拍板，本行继续保留未决的 `.xls` / `.ppt`                                                      |
-| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 已拍板 | —              | 使用 `@silurus/ooxml/pptx` 的虚拟化只读 slide viewer，接受非 PowerPoint 像素/动画级保真                                                | **已定 2026-08-28 · 077 实施中**                                                                                                      |
+| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 已拍板 | —              | 使用 `@silurus/ooxml/pptx` 的虚拟化只读 slide viewer，接受非 PowerPoint 像素/动画级保真                                                | **已定 2026-08-28 · 077 已实施并通过独立复核，等待 Ral 验证**                                                                           |
 | **PQ-C** | HEIC / HEIF / TIFF 是否需要 Main 侧转码后预览？        | [#5](#5--图片与音视频-已定-2026-08-18)     | 待拍板 | 不阻塞 022     | **倾向本轮不做**，先给真话不支持态；HEIC 在 macOS 相册/iPhone 照片里常见，若要做则单列一轮（Main 侧 `sips`/`sharp` 转码 + 缓存 + 失效策略） | 待定                                                                                                                                    |
 | **PQ-D** | 旧 `.doc` 是否进入内置 renderer                        | [#4.1](#41--旧-doc-本轮不做-未实施)        | 待拍板 | 可后置         | 原倾向不渲染；tradeoff 是不能在 Bitterless 内看旧 Word 文件。拍板需要 Ral 选择内置转换或系统应用打开                                        | **本轮不做 · 未实施**（Ral 2026-08-20）：明确 unsupported + 系统应用打开；连带收口 021 的 `.doc` 范围，不再等待旧格式决策               |
 | **PQ-E** | `.drawio` 是否按本地官方只读 viewer 方案进入实现       | [#9](#9--drawio-已定-2026-08-26-已实施)    | 待拍板 | 可后置         | `vuePreviewView` async component + 本地 viewer 直接 DOM mount；不用 iframe、完整 editor或在线服务；首期只读，Find 后置                      | **已定 2026-08-26 · 已实施**：032 已通过独立复核，等待 Ral 运行时/视觉验证；首期拒绝图片资源，图元 Find 继续后置                         |

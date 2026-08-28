@@ -4,6 +4,7 @@ import { app, clipboard } from 'electron';
 import { xpcMain } from 'electron-xpc/main';
 import type {
   ClaudeSubscriptionActionResult,
+  ClaudeSubscriptionAdoptableSlot,
   ClaudeSubscriptionCopyResult,
   ClaudeSubscriptionSnapshot
 } from '@shared/claudeSubscription/claudeSubscription.contract';
@@ -156,6 +157,14 @@ export class ClaudeSubscriptionMainRuntime {
 
   async setAccountEnabled(value: unknown): Promise<ClaudeSubscriptionActionResult> {
     return await (await this.#service()).setAccountEnabled(value);
+  }
+
+  async adoptAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {
+    return await (await this.#service()).adoptAccount(value);
+  }
+
+  async listAdoptableSlots(): Promise<ClaudeSubscriptionAdoptableSlot[]> {
+    return await (await this.#service()).listAdoptableSlots();
   }
 
   async testAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {

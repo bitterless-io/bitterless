@@ -1,6 +1,7 @@
 import { XpcMainHandler } from 'electron-xpc/main';
 import type {
   ClaudeSubscriptionActionResult,
+  ClaudeSubscriptionAdoptableSlot,
   ClaudeSubscriptionApi,
   ClaudeSubscriptionCopyResult,
   ClaudeSubscriptionSnapshot
@@ -52,6 +53,18 @@ export class ClaudeSubscriptionHandler extends XpcMainHandler implements ClaudeS
 
   async setAccountEnabled(value: unknown): Promise<ClaudeSubscriptionActionResult> {
     return await parseActionBoundary(claudeSubscriptionRuntime.setAccountEnabled(value));
+  }
+
+  async adoptAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {
+    return await parseActionBoundary(claudeSubscriptionRuntime.adoptAccount(value));
+  }
+
+  async listAdoptableSlots(): Promise<ClaudeSubscriptionAdoptableSlot[]> {
+    try {
+      return await claudeSubscriptionRuntime.listAdoptableSlots();
+    } catch {
+      throw unavailableBoundaryError();
+    }
   }
 
   async testAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {

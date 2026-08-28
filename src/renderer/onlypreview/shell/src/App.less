@@ -271,6 +271,8 @@ select {
   border-radius: 4px;
   background: transparent;
   color: var(--onlypreview-ink);
+  font-size: 13px;
+  font-weight: 500;
   text-align: left;
   cursor: default;
 }
@@ -349,7 +351,7 @@ select {
 }
 
 .onlypreview-shell__tree-icon--search-excluded-directory {
-  color: #C2410C;
+  color: #c2410c;
 }
 
 .onlypreview-shell__tree-name {
@@ -368,6 +370,44 @@ select {
   color: var(--onlypreview-danger);
   background: #fff6f6;
   line-height: 1.4;
+}
+
+.onlypreview-shell__inline-error-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.onlypreview-shell__inline-error-message {
+  min-width: 0;
+  flex: 1;
+}
+
+.onlypreview-shell__inline-error-dismiss {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -3px -3px -3px auto;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  color: currentcolor;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.onlypreview-shell__inline-error-dismiss:hover {
+  background: #f7dddd;
+  opacity: 1;
+}
+
+.onlypreview-shell__inline-error-dismiss:focus-visible {
+  outline: 2px solid currentcolor;
+  outline-offset: -2px;
+  opacity: 1;
 }
 
 .onlypreview-shell__project-empty,

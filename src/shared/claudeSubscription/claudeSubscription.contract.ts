@@ -140,6 +140,23 @@ export interface ClaudeSubscriptionStartAuthInput {
   accountId?: ClaudeAccountId;
 }
 
+/**
+ * Registers a `~/.claude<slot>` directory the owner already logged in from a
+ * terminal. No PTY, no browser, no credential is written — only verified and
+ * recorded.
+ */
+export interface ClaudeSubscriptionAdoptAccountInput {
+  slot: number;
+  label: string;
+}
+
+/** A slot present on disk but not yet registered. */
+export interface ClaudeSubscriptionAdoptableSlot {
+  slot: number;
+  /** The CLI has been run in this directory at least once. */
+  initialized: boolean;
+}
+
 export interface ClaudeSubscriptionSubmitAuthCodeInput {
   flowId: string;
   code: string;
@@ -165,6 +182,8 @@ export interface ClaudeSubscriptionSetAccountEnabledInput {
 
 export interface ClaudeSubscriptionApi {
   getSnapshot(): Promise<ClaudeSubscriptionSnapshot>;
+  adoptAccount(value: unknown): Promise<ClaudeSubscriptionActionResult>;
+  listAdoptableSlots(): Promise<ClaudeSubscriptionAdoptableSlot[]>;
   startAuthorization(
     input: ClaudeSubscriptionStartAuthInput
   ): Promise<ClaudeSubscriptionActionResult>;

@@ -686,8 +686,8 @@ test('checks the monotonic ten-second preflight deadline inside structure loops'
 
 test('enforces input, entry-count, expansion, and compression-ratio limits', async () => {
   assert.equal(runtime.ONLY_PREVIEW_OOXML_MAX_ARCHIVE_BYTES, 25 * 1024 * 1024);
-  assert.equal(runtime.ONLY_PREVIEW_OOXML_MAX_ENTRY_UNCOMPRESSED_BYTES, 128 * 1024 * 1024);
-  assert.equal(runtime.ONLY_PREVIEW_OOXML_MAX_TOTAL_UNCOMPRESSED_BYTES, 200 * 1024 * 1024);
+  assert.equal(runtime.ONLY_PREVIEW_OOXML_MAX_ENTRY_UNCOMPRESSED_BYTES, 64 * 1024 * 1024);
+  assert.equal(runtime.ONLY_PREVIEW_OOXML_MAX_TOTAL_UNCOMPRESSED_BYTES, 128 * 1024 * 1024);
   assert.equal(runtime.ONLY_PREVIEW_OOXML_MAX_COMPRESSION_RATIO, 200);
   await expectCode(
     Buffer.alloc(runtime.ONLY_PREVIEW_OOXML_MAX_ARCHIVE_BYTES + 1),

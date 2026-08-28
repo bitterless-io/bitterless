@@ -2,6 +2,7 @@ import type {
   ClaudeAccountId,
   ClaudeBridgePayload,
   ClaudeSubscriptionActionResult,
+  ClaudeSubscriptionAdoptableSlot,
   ClaudeSubscriptionAuthFlowView,
   ClaudeSubscriptionCopyResult,
   ClaudeSubscriptionOperationError,
@@ -17,6 +18,7 @@ import {
 } from '@shared/claudeSubscription/claudeSubscription.contract';
 import {
   parseClaudeSubscriptionAccountIdInput,
+  parseClaudeSubscriptionAdoptAccountInput,
   parseClaudeSubscriptionActionResult,
   parseClaudeSubscriptionCopyResult,
   parseClaudeSubscriptionFlowIdInput,
@@ -399,6 +401,67 @@ export class ClaudeSubscriptionService {
       maintenance.release();
       settleLifecycle();
     }
+  }
+
+  /**
+   * Registers a slot the owner already logged in from a terminal.
+   *
+   * This is the tail of the authorization flow without its head: verification and
+   * persistence, but no PTY and no browser, because the login already happened.
+   *
+   * Unlike `startAuthorization`, a failure here must **not** log out or delete the
+   * directory. The flow cleans up after itself because it created the directory;
+   * adoption did not, and an owner's working account must survive a failed attempt
+   * to register it.
+   */
+  async adoptAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {
+    let input;
+    try {
+      input = parseClaudeSubscriptionAdoptAccountInput(value);
+    } catch {
+      return await this.#failure(operationError('invalid_input', false));
+    }
+    if (!this.#acceptingActions) {
+      return await this.#failure(operationError('runtime_unavailable', true));
+    }
+    const authCli = this.#authCli;
+    if (!authCli) return await this.#failure(operationError('runtime_unavailable', true));
+
+    const settleLifecycle = this.#beginLifecycleOperation();
+    try {
+      await this.#ensureInitialized();
+      if (!this.#acceptingActions) {
+        return await this.#failure(operationError('runtime_unavailable', true));
+      }
+      if (!this.#repository.isolatedCredentialStorageAvailable()) {
+        return await this.#failure(operationError('runtime_unavailable', true));
+      }
+      const identity = await this.#repository.adoptIdentity(input.slot);
+      const status = await authCli.verify({
+        configDirectory: identity.configDirectory,
+        secureStorageConfigDirectory: identity.secureStorageConfigDirectory,
+        anthropicConfigDirectory: identity.anthropicConfigDirectory
+      });
+      const account = await this.#repository.saveAccount(identity, input.label, {
+        ...(status.email ? { email: status.email } : {}),
+        subscriptionType: status.subscriptionType
+      });
+      this.#router.markReady(account.id);
+      return await this.#success();
+    } catch (error) {
+      return await this.#failure(mapOperationError(error));
+    } finally {
+      try {
+        await this.#publishSnapshot().catch(() => undefined);
+      } finally {
+        settleLifecycle();
+      }
+    }
+  }
+
+  async listAdoptableSlots(): Promise<ClaudeSubscriptionAdoptableSlot[]> {
+    await this.#ensureInitialized();
+    return await this.#repository.listAdoptableSlots();
   }
 
   async testAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {

@@ -6,6 +6,7 @@ import { test } from 'node:test';
 
 import {
   classifySearchMediaType,
+  mediaTypeToPreviewHint,
   readClassifiedSearchContent
 } from '../../src/preload/onlypreview/search/core/classification.mjs';
 import { MAX_TEXT_BYTES } from '../../src/preload/onlypreview/search/core/constants.mjs';
@@ -143,6 +144,10 @@ test('search text eligibility defaults remaining files to text and stays size-fi
   }
   assert.equal(classifySearchMediaType('plain.unknown'), 'text');
   assert.equal(classifySearchMediaType('AGENTS.md.bak'), 'text');
+  for (const relativePath of ['legacy.doc', 'legacy.xls', 'legacy.ppt']) {
+    assert.equal(classifySearchMediaType(relativePath), 'unknown', relativePath);
+    assert.equal(mediaTypeToPreviewHint('unknown', relativePath), 'unsupported', relativePath);
+  }
 
   const createHandle = (bytes, { postSize = bytes.length } = {}) => {
     let readCount = 0;
@@ -175,6 +180,9 @@ test('search text eligibility defaults remaining files to text and stays size-fi
 
   for (const [relativePath, size] of [
     ['workbook.xlsx', 12],
+    ['legacy.doc', 12],
+    ['legacy.xls', 12],
+    ['legacy.ppt', 12],
     ['image.png', 12],
     ['huge.vue', 1024 ** 3],
     ['.env.production', 12]

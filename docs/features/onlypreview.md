@@ -1,7 +1,7 @@
 # OnlyPreview Sub-Application
 
-Status: Accepted; tasks 032–048, 072, 073, and 076 implemented through independent review; Office
-OOXML unification task 077 in progress; owner verification pending
+Status: Accepted; tasks 032–048, 072, 073, 076, 077, and 078 implemented; owner verification
+pending
 
 ## Purpose And Boundary
 
@@ -130,14 +130,14 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 
 ## Renderer Entries
 
-| Entry                  | Preload                 | Host mode    | Responsibility                                                                                 |
-| ---------------------- | ----------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
-| `onlypreview/shell`    | `onlypreview.js`        | `shell`      | MenuBar, tree/search, Preview toolbar/actions, status, and inner content-host bounds           |
+| Entry                  | Preload                 | Host mode    | Responsibility                                                                                      |
+| ---------------------- | ----------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
+| `onlypreview/shell`    | `onlypreview.js`        | `shell`      | MenuBar, tree/search, Preview toolbar/actions, status, and inner content-host bounds                |
 | `onlypreview/preview`  | `onlypreviewContent.js` | `preview`    | Vue-only Monaco/Markdown/XLSX/DOCX/PPTX/Draw.io/image/audio/video/unsupported/loading/error surface |
-| raw Chromium view      | none                    | none         | disposable contained HTML or built-in PDF viewer; no first-party renderer entry or host token  |
-| `onlypreview/settings` | `onlypreview.js`        | `settings`   | app-specific settings form                                                                     |
-| `onlypreview/guide`    | `onlypreview.js`        | `guide`      | one-copy MCP and portable Preview-skill setup                                                  |
-| `fileSearch`           | `fileSearch.js`         | `background` | invisible page whose trusted Node-context preload owns browse/index/search/watch               |
+| raw Chromium view      | none                    | none         | disposable contained HTML or built-in PDF viewer; no first-party renderer entry or host token       |
+| `onlypreview/settings` | `onlypreview.js`        | `settings`   | app-specific settings form                                                                          |
+| `onlypreview/guide`    | `onlypreview.js`        | `guide`      | one-copy MCP and portable Preview-skill setup                                                       |
+| `fileSearch`           | `fileSearch.js`         | `background` | invisible page whose trusted Node-context preload owns browse/index/search/watch                    |
 
 Both visible preloads import `electron-xpc/preload` and expose only immutable mode/platform context plus the
 Main-issued content host through `contextBridge`. Main creates and pre-registers one unguessable
@@ -1162,11 +1162,16 @@ format, large-directory resource, locator, and file-association verification in 
   latter uses the user-facing message “Bitterless does not have permission to read this file or
   folder.” without referring to a removed visible Refresh action.
 - **Too large:** show file metadata and the 8 MiB text limit; do not show partial text.
-- **Unsupported:** show metadata plus Open externally and Reveal in folder.
+- **Unsupported:** show metadata plus a primary in-page Open in default app action; Reveal in folder
+  remains in the Shell toolbar.
 - **Typed Preview failure:** direct unsupported plus image/media/Office/parser/signature/empty/size
   unavailable states reuse the same compact content metadata block: file name, localized type or
-  extension, size, and modified time. The exact failure reason stays above it. Native Open/Reveal
-  actions remain only in the Shell toolbar; the content surface never mounts a second FileActions.
+  extension, size, and modified time. The exact failure reason stays above it. Every file-backed
+  metadata failure state mounts one primary Open in default app recovery action, while Reveal and
+  the complete native `FileActions` group remain only in the Shell toolbar.
+  [Task 078](../plan/tasks/onlypreview-unsupported-default-app-078.md) supersedes only Task 025's
+  earlier content-surface action-placement decision; its unified relative-only metadata contract
+  remains authoritative.
   [Task 025's completion audit](../plan/reviews/onlypreview-design-completion-025-1.md) recorded
   **PASS** for this relative-only descriptor and unified metadata contract. Both OnlyPreview designs
   are therefore closed at the documented non-E2E implementation level; the ledger is

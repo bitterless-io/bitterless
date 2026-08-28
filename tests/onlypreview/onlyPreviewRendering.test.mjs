@@ -139,7 +139,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       kind: 'unsupported',
       adapterId: 'unsupported',
       errorCode: null,
-      reason: 'This file type is not rendered in Bitterless. You can open it with its system app.'
+      reason: 'This file type is not rendered in Bitterless. You can open it with its default app.'
     },
     {
       id: 'unsupported-image',
@@ -149,7 +149,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       unsupportedCategory: 'image-format',
       errorCode: null,
       reason:
-        'This image format is recognized but has no built-in decoder. Open it with its system app.'
+        'This image format is recognized but has no built-in decoder. Open it with its default app.'
     },
     {
       id: 'unsupported-video',
@@ -159,7 +159,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       unsupportedCategory: 'video-container',
       errorCode: null,
       reason:
-        'This media container is recognized but has no built-in player. Open it with its system app.'
+        'This media container is recognized but has no built-in player. Open it with its default app.'
     },
     {
       id: 'image-read',
@@ -377,12 +377,142 @@ test('direct unsupported and typed renderer failures share one truthful metadata
     assert.match(html, /4096 bytes/u);
     assert.match(html, /date:1700000000000/u);
     assert.match(html, new RegExp(fixture.reason.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-    assert.doesNotMatch(
-      html,
-      /<button|FileActions|onlypreview__openExternally|onlypreview__reveal/u
+    assert.equal(
+      (html.match(/name="onlypreview__previewOpenExternally"/gu) ?? []).length,
+      1,
+      fixture.id
     );
+    assert.equal((html.match(/<button/gu) ?? []).length, 1, fixture.id);
+    assert.match(html, /Open in default app/u);
+    assert.doesNotMatch(html, /FileActions|onlypreview__reveal|\/Users\//u);
     assert.equal(store.previewMetadata?.name, `example${fixture.extension}`);
     assert.equal(store.previewMetadata?.variant, fixture.errorCode ? 'error' : 'unsupported');
     store.dispose();
   }
+});
+
+test('metadata recovery opens exactly the current capability-scoped file reference', async () => {
+  const descriptor = officeDescriptor('.bin', 'unsupported');
+  const presentation = officePresentation(descriptor, 1_001, 'unsupported');
+  const harness = createRendererStoreHarness(presentation);
+  globalThis.__onlyPreviewRendererStoreHarness = harness;
+  const runtime = await import(
+    `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?open-externally=exact-ref`
+  );
+  const store = runtime.onlyPreviewPreviewStore;
+
+  await store.initialize();
+  await store.openExternally();
+
+  assert.deepEqual(harness.openExternally, [
+    {
+      hostToken: 'host-token-for-tests',
+      workspaceId: descriptor.workspaceId,
+      relativePath: descriptor.relativePath
+    }
+  ]);
+  assert.equal(Object.keys(harness.openExternally[0]).length, 3);
+  assert.equal(store.openingExternally, false);
+  assert.equal(store.openExternallyError, '');
+
+  harness.openExternallyResult = {
+    ok: false,
+    error: { code: 'OPERATION_FAILED', message: 'Main process detail must remain private.' }
+  };
+  await store.openExternally();
+  assert.equal(store.openExternallyError, 'Could not open this file in its default app.');
+  const html = await renderPreviewSurface(store);
+  assert.match(html, /name="onlypreview__previewOpenExternallyError"/u);
+  assert.match(html, /Could not open this file in its default app\./u);
+  assert.doesNotMatch(html, /Main process detail must remain private/u);
+  store.dispose();
+});
+
+test('metadata recovery prevents duplicate opens and fences a late failure after selection change', async () => {
+  const descriptorA = officeDescriptor('.bin', 'unsupported');
+  const presentationA = officePresentation(descriptorA, 1_101, 'unsupported');
+  const harness = createRendererStoreHarness(presentationA);
+  let settleOpen;
+  harness.openExternallyPromise = new Promise((resolve) => {
+    settleOpen = resolve;
+  });
+  globalThis.__onlyPreviewRendererStoreHarness = harness;
+  const runtime = await import(
+    `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?open-externally=selection-fence`
+  );
+  const store = runtime.onlyPreviewPreviewStore;
+
+  await store.initialize();
+  const firstOpen = store.openExternally();
+  await store.openExternally();
+  assert.equal(harness.openExternally.length, 1);
+  assert.equal(store.openingExternally, true);
+
+  const descriptorB = {
+    ...officeDescriptor('.dat', 'unsupported'),
+    relativePath: 'fixtures/second.dat',
+    name: 'second.dat'
+  };
+  harness.presentation = officePresentation(descriptorB, 1_102, 'unsupported');
+  harness.subscriptions.get('onlypreview/previewPresentation')?.({
+    params: { hostId: 'host-for-tests' }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(store.currentRef, {
+    workspaceId: descriptorB.workspaceId,
+    relativePath: descriptorB.relativePath
+  });
+  assert.equal(store.openingExternally, false);
+  assert.equal(store.openExternallyError, '');
+
+  settleOpen({
+    ok: false,
+    error: { code: 'OPERATION_FAILED', message: 'Late failure for the previous file.' }
+  });
+  await firstOpen;
+  assert.equal(store.openExternallyError, '');
+  assert.equal(store.openingExternally, false);
+  store.dispose();
+});
+
+test('non-file generic errors and ordinary preview states do not render the recovery action', async () => {
+  const genericPresentation = officePresentation(
+    officeDescriptor('.bin', 'unsupported'),
+    1_201,
+    'unsupported'
+  );
+  const genericHarness = createRendererStoreHarness(genericPresentation);
+  genericHarness.presentationResult = {
+    ok: false,
+    error: { code: 'OPERATION_FAILED', message: 'Presentation lookup failed.' }
+  };
+  globalThis.__onlyPreviewRendererStoreHarness = genericHarness;
+  const genericRuntime = await import(
+    `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?open-externally=generic-error`
+  );
+  const genericStore = genericRuntime.onlyPreviewPreviewStore;
+  await genericStore.initialize();
+  const genericHtml = await renderPreviewSurface(genericStore);
+  assert.match(genericHtml, /name="onlypreview__previewError"/u);
+  assert.doesNotMatch(genericHtml, /onlypreview__previewOpenExternally/u);
+  genericStore.dispose();
+
+  const readyDescriptor = {
+    ...officeDescriptor('.png', 'image'),
+    assetUrl: 'onlypreview-file://host-for-tests/asset.png'
+  };
+  const readyHarness = createRendererStoreHarness(
+    officePresentation(readyDescriptor, 1_202, 'image')
+  );
+  globalThis.__onlyPreviewRendererStoreHarness = readyHarness;
+  const readyRuntime = await import(
+    `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?open-externally=ready-preview`
+  );
+  const readyStore = readyRuntime.onlyPreviewPreviewStore;
+  await readyStore.initialize();
+  const readyHtml = await renderPreviewSurface(readyStore);
+  assert.match(readyHtml, /name="onlypreview__imagePreview"/u);
+  assert.doesNotMatch(readyHtml, /onlypreview__previewOpenExternally/u);
+  readyStore.dispose();
 });
