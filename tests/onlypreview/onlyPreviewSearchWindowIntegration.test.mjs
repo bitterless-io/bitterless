@@ -227,6 +227,9 @@ test('official graph owns search in top-level hidden preload over capability-bou
   assert.match(relay, /active\.client\[method\]\(runtimeParams as never\)/);
   assert.match(relay, /message\.capability !== active\.capability/);
   assert.match(relay, /this\._isResponseResult\(result, expectation\)/);
+  for (const validatorSource of [relay, globalResultValidator]) {
+    assert.match(validatorSource, /PREVIEW_HINTS = new Set\(\[[\s\S]*'presentation'/);
+  }
   assert.match(eventHandler, /extends XpcMainHandler/);
   assert.match(eventHandler, /fileSearchRuntimeEventHandlerName\(capability\)/);
   assert.doesNotMatch(runtimeTypes, /FILE_SEARCH_RUNTIME_HANDLER\s*=/);
@@ -251,7 +254,7 @@ test('official graph owns search in top-level hidden preload over capability-bou
     watchReconciler,
     /async emitBrowseListingsForChangedPaths\(context, relativePaths\)/
   );
-  assert.match(watchReconciler, /await context\.refreshInternal\(\)/);
+  assert.match(watchReconciler, /await context\.refreshFromWatchInternal\(\)/);
   assert.match(watchReconciler, /await context\.emitSnapshot\(\)/);
 
   assert.doesNotMatch(visiblePreload, /fileSearch|searchToken|rootPath|databasePath/);

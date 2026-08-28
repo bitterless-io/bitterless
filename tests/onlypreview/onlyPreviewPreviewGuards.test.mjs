@@ -179,6 +179,8 @@ test('extension-first routing preserves known adapters and defaults remaining fi
   assert.equal(runtime.classifyOnlyPreviewExtension('archive.zip'), 'text');
   assert.equal(runtime.classifyOnlyPreviewExtension('architecture.drawio'), 'diagram');
   assert.equal(classifySearchMediaType('architecture.drawio'), 'unknown');
+  assert.equal(runtime.classifyOnlyPreviewExtension('slides.PPTX'), 'presentation');
+  assert.equal(classifySearchMediaType('slides.PPTX'), 'unknown');
   assert.equal(runtime.classifyOnlyPreviewExtension('legacy.DOC'), 'unsupported');
   assert.equal(classifySearchMediaType('legacy.DOC'), 'unknown');
   assert.equal(runtime.classifyOnlyPreviewExtension('module.CJS'), 'text');
@@ -332,6 +334,7 @@ test('size-first metadata gates read zero body bytes at adapter limit plus one',
     ['manual.pdf', runtime.ONLY_PREVIEW_MAX_PDF_BYTES + 1],
     ['book.xlsx', runtime.ONLY_PREVIEW_MAX_SHEET_BYTES + 1],
     ['document.docx', runtime.ONLY_PREVIEW_MAX_DOCUMENT_BYTES + 1],
+    ['slides.pptx', runtime.ONLY_PREVIEW_MAX_PRESENTATION_BYTES + 1],
     ['diagram.drawio', runtime.ONLY_PREVIEW_MAX_DIAGRAM_BYTES + 1]
   ]) {
     const candidate = createMetadataFile({ relativePath: fixture[0], size: fixture[1] });
@@ -503,7 +506,8 @@ test('non-text signatures stay mandatory and asset capabilities require exact re
     ['fake.png', Buffer.from('not png'), 'image'],
     ['fake.mp4', Buffer.from('not video'), 'video'],
     ['fake.xlsx', Buffer.from('not zip'), 'sheet'],
-    ['fake.docx', Buffer.from('not zip'), 'document']
+    ['fake.docx', Buffer.from('not zip'), 'document'],
+    ['fake.pptx', Buffer.from('not zip'), 'presentation']
   ]) {
     const candidate = createMetadataFile({ relativePath, size: bytes.length, bytes });
     const descriptor = await service.describe(candidate.file);
@@ -532,6 +536,12 @@ test('non-text signatures stay mandatory and asset capabilities require exact re
       runtime.ONLY_PREVIEW_MAX_DOCUMENT_BYTES,
       Buffer.from([0x50, 0x4b, 0x03, 0x04]),
       'document'
+    ],
+    [
+      'exact.pptx',
+      runtime.ONLY_PREVIEW_MAX_PRESENTATION_BYTES,
+      Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+      'presentation'
     ],
     ['exact.drawio', runtime.ONLY_PREVIEW_MAX_DIAGRAM_BYTES, Buffer.alloc(0), 'diagram']
   ]) {

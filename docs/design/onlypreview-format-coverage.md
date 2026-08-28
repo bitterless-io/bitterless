@@ -120,8 +120,9 @@ handle / containment / stream hard limit，任何一项超限只令该资源失�
 文件增长、替换或 revision 变化立即撤销。所有 buffered/parser 格式则取
 `min(verifiedSize, formatHardCap)`。
 
-Web Worker 提供线程隔离与可终止性，**不是独立进程或 OOM 隔离**。077 仍以硬 archive/raster/decode
-上限约束峰值内存，生产 build 必须证明三个动态 subpath 的 WASM/worker 资源能从本地协议加载；允许
+Web Worker 提供线程隔离与可终止性，**不是独立进程或 OOM 隔离**。077 显式传入硬 archive limits，
+并依赖固定 `@silurus/ooxml@0.83.0` 的内建 decoded-image guards 约束峰值内存；该版本没有公开可传入的
+raster/decode options。生产 build 必须证明三个动态 subpath 的 WASM/worker 资源能从本地协议加载；允许
 `vuePreviewView` `fetch()` 后 transfer `ArrayBuffer`，但不允许退回 Main / preload 解析。
 
 ### 077 当前 Office 覆盖（取代 #2/#3 的 renderer 与 Find 结论）

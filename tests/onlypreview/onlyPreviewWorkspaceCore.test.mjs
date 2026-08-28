@@ -513,6 +513,7 @@ test('classifier uses exact extension routing, tolerant text decoding, signature
   assert.equal(runtime.classifyOnlyPreviewExtension('workbook.XLSX'), 'sheet');
   assert.equal(runtime.classifyOnlyPreviewExtension('macros.xlsm'), 'sheet');
   assert.equal(runtime.classifyOnlyPreviewExtension('document.DOCX'), 'document');
+  assert.equal(runtime.classifyOnlyPreviewExtension('slides.PPTX'), 'presentation');
   assert.equal(runtime.classifyOnlyPreviewExtension('archive.bin'), 'text');
   assert.equal(runtime.classifyOnlyPreviewExtension('AGENTS.md.bak'), 'text');
   assert.equal(runtime.classifyOnlyPreviewExtension('legacy.doc'), 'unsupported');
@@ -591,6 +592,11 @@ test('classifier uses exact extension routing, tolerant text decoding, signature
 
     write(join(root, 'document.docx'), Buffer.from([0x50, 0x4b, 0x03, 0x04]));
     assert.equal((await describe('document.docx')).previewError, undefined);
+
+    write(join(root, 'slides.pptx'), Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    const slides = await describe('slides.pptx');
+    assert.equal(slides.kind, 'presentation');
+    assert.equal(slides.previewError, undefined);
 
     write(
       join(root, 'protected.docx'),

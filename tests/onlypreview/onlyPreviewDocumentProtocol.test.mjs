@@ -688,11 +688,11 @@ test('stream delivery stays the default and keeps the byte-counting guard', () =
   // ceilings, which are load-bearing for OOXML and image/media admission.
   const pdfIssue = region.slice(
     region.indexOf("adapter.adapterId === 'chromium-pdf'"),
-    region.indexOf("adapter.adapterId === 'xlsx-grid'")
+    region.indexOf("adapter.adapterId === 'ooxml-xlsx'")
   );
   assert.match(pdfIssue, /delivery: 'network'/);
   assert.doesNotMatch(
-    region.slice(region.indexOf("adapter.adapterId === 'xlsx-grid'")),
+    region.slice(region.indexOf("adapter.adapterId === 'ooxml-xlsx'")),
     /delivery: 'network'/
   );
 });

@@ -707,8 +707,10 @@ runtime/UI path; packaged release startup remains untested.
   After the one-shot Worker returns the exact transferred bytes, Vue dynamically imports only the
   selected pinned `@silurus/ooxml@0.83.0` subpath and creates `XlsxViewer`, `DocxScrollViewer`, or
   `PptxScrollViewer` in `mode: 'worker'`. Main and preload never import or execute an Office parser.
-- The common Office adapter disables Google Fonts and hyperlinks, passes explicit archive/raster/
-  decode limits, and destroys the exact viewer on replacement, failure, timeout, or unmount.
+- The common Office adapter disables Google Fonts and hyperlinks, passes explicit archive limits,
+  relies on pinned 0.83.0's built-in decoded-image guards, and destroys the exact viewer on
+  replacement, failure, timeout, or unmount. The library exposes no app-configurable raster/decode
+  options, so Bitterless does not claim to pass them.
   Legacy `.xls`, `.doc`, and `.ppt` remain unsupported. XLSM is read-only and macros are never
   executed. XLSX generally presents saved formula results, with the documented upstream exception
   that `TODAY()` and `NOW()` are evaluated against the current clock; no Excel-perfect calculation,

@@ -109,6 +109,21 @@ test('relay validators require strict independent Files and Contents sections', 
     ),
     false
   );
+
+  const presentationFile = {
+    ...file(),
+    name: 'slides.pptx',
+    relativePath: 'src/slides.pptx',
+    previewHint: 'presentation',
+    mediaType: 'unknown'
+  };
+  assert.equal(
+    runtime.isOnlyPreviewGlobalSearchResponse(
+      { ...response, files: [presentationFile], contents: [] },
+      expectation
+    ),
+    true
+  );
 });
 
 test('preview variants are bounded and never carry authority paths', () => {

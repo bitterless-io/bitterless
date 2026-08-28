@@ -421,7 +421,7 @@ test('XLSX stays on Vue, exposes one bounded private asset, and clears it on rea
 
   let snapshot = service.snapshot(host.hostToken);
   assert.equal(snapshot.surface, 'vue');
-  assert.equal(snapshot.adapterId, 'xlsx-grid');
+  assert.equal(snapshot.adapterId, 'ooxml-xlsx');
   assert.equal(snapshot.descriptor.assetUrl, undefined);
   assert.equal(
     service
@@ -469,7 +469,7 @@ test('XLSX stays on Vue, exposes one bounded private asset, and clears it on rea
     snapshot.selectionRevision,
     vue.previewRuntimeToken,
     { kind: 'complete' },
-    'sheet'
+    'office'
   );
   snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
   assert.equal(snapshot.status, 'ready');
@@ -501,7 +501,7 @@ test('Monaco readiness proves the exact registered content adapter before becomi
         snapshot.selectionRevision,
         vue.previewRuntimeToken,
         { kind: 'complete' },
-        'sheet'
+        'office'
       ),
     (error) => error.code === 'INVALID_INPUT'
   );
@@ -525,7 +525,7 @@ test('DOCX stays on Vue, exposes one bounded private asset, and publishes ready 
 
     let snapshot = service.snapshot(host.hostToken);
     assert.equal(snapshot.surface, 'vue');
-    assert.equal(snapshot.adapterId, 'docx-dom');
+    assert.equal(snapshot.adapterId, 'ooxml-docx');
     assert.equal(snapshot.selectedTextAvailable, true);
     assert.equal(snapshot.descriptor.assetUrl, undefined);
     assert.equal(
@@ -541,7 +541,13 @@ test('DOCX stays on Vue, exposes one bounded private asset, and publishes ready 
     assert.equal(timers.filter((timer) => timer.delay === 30_000).length, 1);
 
     acknowledgeCurrentVue(service);
-    service.reportVueReady(host.hostToken, snapshot.selectionRevision, vue.previewRuntimeToken);
+    service.reportVueReady(
+      host.hostToken,
+      snapshot.selectionRevision,
+      vue.previewRuntimeToken,
+      { kind: 'complete' },
+      'office'
+    );
     snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
     assert.equal(snapshot.status, 'ready');
     assert.equal(snapshot.descriptor.assetUrl, undefined);
@@ -567,7 +573,7 @@ test('DOCX Main watchdog rebuilds an unresponsive Vue renderer without waiting f
 
     const snapshot = service.snapshot(host.hostToken);
     assert.equal(snapshot.selectionRevision, 2);
-    assert.equal(snapshot.adapterId, 'docx-dom');
+    assert.equal(snapshot.adapterId, 'ooxml-docx');
     assert.equal(snapshot.status, 'unavailable');
     assert.equal(snapshot.error.code, 'DOCUMENT_RENDER_TIMEOUT');
     assert.equal(snapshot.descriptor.assetUrl, undefined);
@@ -690,7 +696,7 @@ test('a sheet asset issued before a stale identity check is revoked by its exact
   );
 });
 
-test('canonical presentation validation accepts the sheet and xlsx-grid contract', () => {
+test('canonical presentation validation accepts the sheet and ooxml-xlsx contract', () => {
   const descriptor = descriptorFor('workbook.xlsx', 'sheet');
   assert.equal(
     presentationModule.isOnlyPreviewPresentation({
@@ -698,7 +704,7 @@ test('canonical presentation validation accepts the sheet and xlsx-grid contract
       workspaceId: 'workspace-id-1234',
       selectionRevision: 1,
       surface: 'vue',
-      adapterId: 'xlsx-grid',
+      adapterId: 'ooxml-xlsx',
       status: 'loading',
       fileRef: { workspaceId: 'workspace-id-1234', relativePath: 'workbook.xlsx' },
       descriptor: { ...descriptor, workspaceId: 'workspace-id-1234' },
@@ -709,7 +715,7 @@ test('canonical presentation validation accepts the sheet and xlsx-grid contract
   );
 });
 
-test('canonical presentation validation accepts the document and docx-dom contract', () => {
+test('canonical presentation validation accepts the document and ooxml-docx contract', () => {
   const descriptor = descriptorFor('document.docx', 'document');
   assert.equal(
     presentationModule.isOnlyPreviewPresentation({
@@ -717,9 +723,28 @@ test('canonical presentation validation accepts the document and docx-dom contra
       workspaceId: 'workspace-id-1234',
       selectionRevision: 1,
       surface: 'vue',
-      adapterId: 'docx-dom',
+      adapterId: 'ooxml-docx',
       status: 'loading',
       fileRef: { workspaceId: 'workspace-id-1234', relativePath: 'document.docx' },
+      descriptor: { ...descriptor, workspaceId: 'workspace-id-1234' },
+      error: null,
+      selectedTextAvailable: true
+    }),
+    true
+  );
+});
+
+test('canonical presentation validation accepts the presentation and ooxml-pptx contract', () => {
+  const descriptor = descriptorFor('slides.pptx', 'presentation');
+  assert.equal(
+    presentationModule.isOnlyPreviewPresentation({
+      hostId: 'host-id',
+      workspaceId: 'workspace-id-1234',
+      selectionRevision: 1,
+      surface: 'vue',
+      adapterId: 'ooxml-pptx',
+      status: 'loading',
+      fileRef: { workspaceId: 'workspace-id-1234', relativePath: 'slides.pptx' },
       descriptor: { ...descriptor, workspaceId: 'workspace-id-1234' },
       error: null,
       selectedTextAvailable: true

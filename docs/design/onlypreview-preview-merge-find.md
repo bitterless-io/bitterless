@@ -253,9 +253,10 @@ renderer-local ExcelJS adapter 与 021 的 `docx-preview` DOM adapter 保留为�
 `implemented; owner verification pending`，当前等待 Ral 真实图片/音视频视觉与运行时验证。
 
 077 的共同 capability 合同为：exact 25MiB asset 先 transfer 到 one-shot module Worker，复用纯
-OOXML preflight并由 adapter 施加 10 秒 hard timeout；通过后才按 `kind` 动态加载
+OOXML preflight，并由 adapter 施加 10 秒 hard timeout；通过后才按 `kind` 动态加载
 `@silurus/ooxml/xlsx`、`/docx` 或 `/pptx`。三种 viewer 都使用 worker mode、禁用 Google Fonts 与
-hyperlinks，并拿到显式 archive/raster/decode limits。Main 对每个 Office loading revision 保留一个不续期
+hyperlinks，并拿到显式 archive limits；固定的 0.83.0 版本同时保留其内建 decoded-image guards，但不
+伪称应用传入了库未公开的 raster/decode options。Main 对每个 Office loading revision 保留一个不续期
 的 30 秒外部 watchdog；selection/runtime/view/generation 围栏拒绝旧 load/find completion。只有当前
 viewer load 完成并已挂载时才报告 ready；切换、失败、超时和 unmount 必须 clear Find、destroy viewer，
 并终止 preflight/fetch。当前文件查找全部通过 viewer 的 `findText/findNext/findPrev/clearFind`，不再把

@@ -82,8 +82,10 @@ historical delivery evidence stays unchanged.
 - Each format keeps a 25 MiB compressed-file override and the existing preflight limits: 5,000
   entries, 128 MiB per entry, 200 MiB total inflated bytes, 200:1 ratio, and 10-second preflight.
   Extend required-part validation with `ppt/presentation.xml` for PPTX.
-- Pass the same explicit archive, raster and decode limits into all three viewer constructors;
-  the app's stricter one-shot preflight remains authoritative before a dynamic import.
+- Pass the same explicit archive limits into all three viewer constructors. The pinned 0.83.0
+  viewer keeps its built-in decoded-image guards; it does not expose raster/decode options that
+  Bitterless can configure. The app's stricter one-shot preflight remains authoritative before a
+  dynamic import.
 - `@silurus/ooxml` runs DOCX/XLSX/PPTX parsing, layout and Canvas paint in `mode: 'worker'`,
   disables Google Fonts, external hyperlinks, comments, optional Math/3D/region-map/chart-ex
   renderers, and receives the app's explicit archive resource policy. XLSM macros are never
