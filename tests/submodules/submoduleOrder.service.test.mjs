@@ -8,7 +8,10 @@ import {
   submoduleDisplayName
 } from '../../src/shared/submodules/submodules.type.ts';
 
-const entry = (path, { configuredBranch = 'main', branch = 'main', changedAt = null } = {}) => ({
+const entry = (
+  path,
+  { configuredBranch = 'main', branch = 'main', changedAt = null, children = [] } = {}
+) => ({
   name: path,
   path,
   absolutePath: `/root/${path}`,
@@ -18,7 +21,8 @@ const entry = (path, { configuredBranch = 'main', branch = 'main', changedAt = n
   commit: 'abc1234',
   state: branch ? 'ok' : 'detached',
   errorCode: null,
-  changedAt
+  changedAt,
+  children
 });
 
 const paths = (entries) => entries.map((item) => item.path);
@@ -156,4 +160,45 @@ test('the local mirrors agree with the shared display name and mismatch helpers'
   const [first] = orderSubmodules([deep, shallow], { showDiffOnTop: false, sortMode: 'name' });
   const expected = submoduleDisplayName(shallow) < submoduleDisplayName(deep) ? shallow : deep;
   assert.equal(first.path, expected.path);
+});
+
+test('children are ordered by the same rules, inside their own parent', () => {
+  const nested = entry('projects/governance', {
+    children: [
+      entry('projects/zulu-child'),
+      entry('projects/drifted-child', { branch: 'dev/next' }),
+      entry('projects/alpha-child')
+    ]
+  });
+  const [ordered] = orderSubmodules([nested], createDefaultSubmodulesViewSettings());
+
+  assert.deepEqual(paths(ordered.children), [
+    'projects/drifted-child',
+    'projects/alpha-child',
+    'projects/zulu-child'
+  ]);
+  // A drifted child never lifts its parent: grouping is applied inside each level only.
+  const withClean = orderSubmodules([entry('aaa/aaa-clean'), nested], {
+    showDiffOnTop: true,
+    sortMode: 'name'
+  });
+  assert.equal(withClean[0].path, 'aaa/aaa-clean');
+});
+
+test('ordering children leaves the source entries untouched', () => {
+  const children = [entry('projects/b-child'), entry('projects/a-child')];
+  const parent = entry('projects/parent', { children });
+  orderSubmodules([parent], createDefaultSubmodulesViewSettings());
+  assert.deepEqual(paths(parent.children), ['projects/b-child', 'projects/a-child']);
+});
+
+test('update-time order applies to children as well', () => {
+  const parent = entry('projects/parent', {
+    children: [
+      entry('projects/older', { changedAt: 1_000 }),
+      entry('projects/newest', { changedAt: 9_000 })
+    ]
+  });
+  const [ordered] = orderSubmodules([parent], { showDiffOnTop: false, sortMode: 'updated' });
+  assert.deepEqual(paths(ordered.children), ['projects/newest', 'projects/older']);
 });

@@ -96,17 +96,21 @@ export class OnlyPreviewGlobalSearchSession {
     return authority;
   }
 
-  revoke(requestId) {
-    if (requestId !== undefined && requestId !== this.requestId) return;
-    this.workspaceId = undefined;
-    this.generation = undefined;
-    this.requestId = undefined;
+  revokeResults() {
     this.resultsByToken = new Map();
     this.tokenByResultKey = new Map();
     this.resultCountBySection = new Map([
       ['files', 0],
       ['contents', 0]
     ]);
+  }
+
+  revoke(requestId) {
+    if (requestId !== undefined && requestId !== this.requestId) return;
+    this.workspaceId = undefined;
+    this.generation = undefined;
+    this.requestId = undefined;
+    this.revokeResults();
   }
 }
 

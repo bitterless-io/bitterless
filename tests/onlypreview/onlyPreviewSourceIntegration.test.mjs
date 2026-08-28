@@ -5,15 +5,21 @@ import { source } from './onlyPreviewCoreTest.helper.mjs';
 
 test('window sources delegate dual Preview isolation and preserve generic Omni renderer cleanup', () => {
   const standalone = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  const rendererTarget = source(
+    'src/main/onlypreview/views/onlyPreviewRendererTarget.service.ts'
+  );
+  const globalSearchWindow = source(
+    'src/main/onlypreview/views/onlyPreviewGlobalSearchWindow.service.ts'
+  );
   assert.match(standalone, /new BaseWindow\(/);
   assert.equal((standalone.match(/new WebContentsView\(/g) ?? []).length, 1);
   assert.match(standalone, /sandbox:\s*true/);
   assert.match(standalone, /contextIsolation:\s*true/);
   assert.match(standalone, /nodeIntegration:\s*false/);
   assert.match(standalone, /webSecurity:\s*true/);
-  assert.match(standalone, /url === expectedUrl/);
-  assert.match(standalone, /setWindowOpenHandler[\s\S]*action:\s*'deny'/);
-  assert.match(standalone, /webContents\.on\('will-redirect',\s*fenceNavigation\)/);
+  assert.match(rendererTarget, /url === expectedUrl/);
+  assert.match(rendererTarget, /setWindowOpenHandler[\s\S]*action:\s*'deny'/);
+  assert.match(rendererTarget, /webContents\.on\('will-redirect',\s*fenceNavigation\)/);
   assert.match(standalone, /MIN_SIDEBAR_WIDTH\s*=\s*180/);
   assert.match(standalone, /RESIZE_HANDLE_WIDTH\s*=\s*5/);
   assert.match(standalone, /MENU_BAR_HEIGHT\s*=\s*32/);
@@ -33,8 +39,10 @@ test('window sources delegate dual Preview isolation and preserve generic Omni r
   assert.match(standalone, /mode === 'preview'[\s\S]*onlypreviewContent\.js[\s\S]*onlypreview\.js/);
   assert.match(
     standalone,
-    /configureNavigationFence\(view\.webContents, target\.url, mode === 'shell'\)/
+    /configureOnlyPreviewNavigationFence\(view\.webContents, target\.url, mode === 'shell'\)/
   );
+  assert.match(rendererTarget, /allowExternalHttp = true[\s\S]*shell\.openExternal/);
+  assert.match(globalSearchWindow, /createView: runtime\.createView[\s\S]*loadView: runtime\.loadView/);
   assert.match(
     standalone,
     /loadVuePreviewView: async \(view\) => await this\.loadView\(view, 'preview'\)[\s\S]*await this\.loadView\(shellView, 'shell'\)/
@@ -132,7 +140,7 @@ test('window sources delegate dual Preview isolation and preserve generic Omni r
   );
   assert.match(
     createViewBody,
-    /this\.bindNativeShortcuts\(view\.webContents, host, mode === 'shell' \? 'shell' : 'vue'\);[\s\S]*bindOnlyPreviewDevToolsShortcut\(view\.webContents\)/
+    /this\.bindNativeShortcuts\([\s\S]*mode === 'shell' \? 'shell' : mode === 'preview' \? 'vue' : 'search'[\s\S]*bindOnlyPreviewDevToolsShortcut\(view\.webContents\)/
   );
   assert.doesNotMatch(createViewBody, /openDevTools\(/);
   const standaloneStartup = standalone.slice(
@@ -330,7 +338,7 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
     preloadConfig,
     /fileSearch:\s*resolve\('src\/preload\/fileSearch\/fileSearch\.preload\.ts'\)/
   );
-  for (const renderer of ['shell', 'preview', 'settings', 'guide']) {
+  for (const renderer of ['shell', 'preview', 'globalSearch', 'settings', 'guide']) {
     assert.match(vite, new RegExp(`'onlypreview/${renderer}'`));
   }
   assert.match(vite, /fileSearch:\s*resolve\('src\/renderer\/fileSearch\/index\.html'\)/);
@@ -386,6 +394,7 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
 test('renderers keep empty state distinct from index failure and PDF/Monaco runtime contracts explicit', () => {
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const globalSearchApp = source('src/renderer/onlypreview/globalSearch/src/App.vue');
   assert.match(shellApp, /empty|emptyState|empty-state/i);
   assert.match(shellStore, /error/);
   assert.doesNotMatch(shellApp, />\s*INDEX_FAILED\s*</);
@@ -407,7 +416,18 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(shellStore, /get treeFocusRelativePath\(\): string/);
   assert.match(shellStore, /moveTreeFocus\(/);
   assert.match(shellStore, /handleTreeClick\(entry:[\s\S]*if \(clickCount > 1\) return/);
-  assert.match(shellStore, /activateEntry\(entry, clickCount === 0\)/);
+  assert.match(
+    shellApp,
+    /@click="onlyPreviewShellStore\.handleTreeClick\(row\.entry, \$event\.detail\)"/
+  );
+  assert.match(
+    shellApp,
+    /<span[\s\S]*name="onlypreview__treeChevron"[\s\S]*@click\.stop="onlyPreviewShellStore\.handleTreeClick\(row\.entry, \$event\.detail, true\)"[\s\S]*@dblclick\.prevent\.stop[\s\S]*<IconChevronRight/
+  );
+  assert.match(
+    shellStore,
+    /handleTreeClick\(entry:[\s\S]*toggleDirectory = false[\s\S]*clickCount > 1[\s\S]*activateEntry\(entry, clickCount === 0 \|\| toggleDirectory, toggleDirectory\)/
+  );
   assert.match(
     shellStore,
     /handleTreeDoubleClick[\s\S]*entry\.nodeKind === 'file'[\s\S]*openFilesWithSingleClick[\s\S]*activateEntry\(entry, true, true\)/
@@ -436,7 +456,8 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   );
   assert.match(shellStore, /if \(entry\.nodeKind !== 'file'\) return/);
   assert.doesNotMatch(shellApp, /name="onlypreview__search"|ProjectSearchResults/);
-  assert.match(shellApp, /<GlobalSearchWorkspace v-if="onlyPreviewGlobalSearchStore\.active"/);
+  assert.doesNotMatch(shellApp, /GlobalSearchWorkspace|onlyPreviewGlobalSearchStore/);
+  assert.match(globalSearchApp, /<GlobalSearchWorkspace \/>/);
   assert.match(shellApp, /role="status"[\s\S]*aria-live="polite"/);
 
   const settingsApp = source('src/renderer/onlypreview/settings/src/App.vue');

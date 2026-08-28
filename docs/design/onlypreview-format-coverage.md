@@ -12,6 +12,8 @@ XLSX/XLSM 为 `implemented; owner verification pending`（已通过独立复核�
 `implemented; owner verification pending`；032 Draw.io 的
 [independent review 3](../plan/reviews/onlypreview-drawio-readonly-032-3.md) 已 **PASS**，等待 Ral
 运行时/视觉验证 ·
+077 正在以一个精确 pin、按格式动态加载的 `@silurus/ooxml` adapter 取代 020/021 的旧 renderer，并新增
+PPTX；三种 Office viewer 共享 worker mode、资源闸门和 model-backed Find/highlight ·
 开题 2026-08-18 · Ral 于 2026-08-20 指定本文
 已定内容为持续交付目标 · 未定且非阻塞的结论仍以 [#pending-questions](#pending-questions--待定项) 为准。**
 
@@ -19,7 +21,7 @@ XLSX/XLSM 为 `implemented; owner verification pending`（已通过独立复核�
 `src/main/onlypreview/onlyPreviewProtocol.service.ts`、
 `src/main/onlypreview/onlyPreviewAsset.registry.ts`、
 `src/renderer/onlypreview/preview/src/components/`、`package.json`；外部依据：Electron Process Model /
-Performance 与 `docx-preview` / ExcelJS 官方文档，见 [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)、
+Performance、历史 `docx-preview` / ExcelJS 与当前 `@silurus/ooxml` 官方文档，见 [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)、
 [#2](#2--xlsx--xlsm-已定-2026-08-20-已通过独立复核等待-ral-手测)、
 [#3](#3--docx-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)。
 
@@ -36,7 +38,8 @@ Performance 与 `docx-preview` / ExcelJS 官方文档，见 [#1](#1--读取与�
 | G2 文档          | `.docx` 打开即见接近 Word 的分页版式，而不是纯文本                                               | ⚠ 021 `implemented; owner verification pending` → [#3](#3--docx-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)                 |
 | G3 图片 / 音视频 | 能解码的直接看/直接播；不能解码的显示明确原因                                                    | ⚠ 022 `implemented; owner verification pending` → [#5](#5--图片与音视频-已定-2026-08-18)                                               |
 | G4 不吹保真      | 每种格式写明保真上限与不做项，界面不假装渲染成功                                                 | ⚠ 020/021/022 已实施各自 bounded/typed truth，均已通过独立复核并等待 Ral 验证 → [#6](#6--保真上限与真话状态-已定-2026-08-18)           |
-| G5 解析隔离      | Main 不做整包缓冲或 Office 解析；preload 不承担计算；XLSX 可终止、DOCX 被隔离在 `vuePreviewView` | ⚠ 020/021 均已通过独立复核并等待 Ral 真实文件验证 → [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证) |
+| G5 解析隔离      | Main 不做整包缓冲或 Office 解析；preload 不承担计算；OOXML 解析/布局/绘制使用 worker mode             | ⚠ 077 正在统一 XLSX/XLSM、DOCX、PPTX → [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)              |
+| G9 演示文稿      | `.pptx` 打开即见虚拟化 slide list，并可跨未挂载 slide 查找、高亮与前后导航                           | ⚠ 077 in progress                                                                                                                |
 | G6 文本输入有界  | 文本类后缀先选 adapter，再按大小限制 Preview 与正文索引；限额内允许乱码，不做内容拒绝            | ✅ 023 已实施 → [#8.1](#81--文本候选按后缀与大小准入-已定-2026-08-20-已实施)                                                           |
 | G7 格式路由      | HTML/PDF 进入 `chromePreviewView`；需要代码或组件处理的格式进入 `vuePreviewView`                 | ✅ 024 已实施 → [姊妹文档 #7](onlypreview-preview-merge-find.md#dual-preview-region)                                                   |
 | G8 Draw.io       | `.drawio` 先交付本地只读预览、缩放/分页；不加载远端服务、iframe、图片资源或完整编辑器            | ✅ 032 已实施并通过独立复核，等待 Ral 验证；图元文字搜索后置 → [#9](#9--drawio-已定-2026-08-26-已实施)                               |
@@ -50,7 +53,7 @@ Ral 2026-08-20：「解析加载最好是异步用 preload 解析加载不要占
 [Process Model](https://www.electronjs.org/docs/latest/tutorial/process-model) 明确 preload 运行在所附着的
 renderer process；它不是后台线程。CPU 密集工作应按 Electron
 [Performance](https://www.electronjs.org/docs/latest/tutorial/performance) 建议交给 Web Worker 或独立
-renderer。把 ExcelJS / docx-preview 塞进 preload 既不能隔离卡顿，又扩大特权代码与文件内容的接触面。
+renderer。把 Office 解析引擎塞进 preload 既不能隔离卡顿，又扩大特权代码与文件内容的接触面。
 
 ```text
 Main protocol：校验 token / host / workspace / path → async createReadStream（不整包缓冲、不解析）
@@ -58,8 +61,9 @@ Main protocol：校验 token / host / workspace / path → async createReadStrea
         │    ├─ HTML → document-scoped stream + contained relative JS/CSS/images
         │    └─ PDF  → Chromium 内置 PDF viewer
         └─ vuePreviewView fetch(assetUrl) → ArrayBuffer
-             ├─ XLSX/XLSM → transferable ArrayBuffer → disposable Web Worker → ExcelJS → cell model
-             ├─ DOCX      → docx-preview detached DOM → sanitize → mount
+             ├─ XLSX/XLSM → transferable ArrayBuffer → preflight Worker → lazy XlsxViewer(worker)
+             ├─ DOCX      → transferable ArrayBuffer → preflight Worker → lazy DocxScrollViewer(worker)
+             ├─ PPTX      → transferable ArrayBuffer → preflight Worker → lazy PptxScrollViewer(worker)
              └─ Draw.io   → disposable XML preflight Worker → local pinned viewer → owned DOM mount
 ```
 
@@ -72,12 +76,11 @@ Main 仍负责安全授权与异步流创建，但不执行同步整文件读取
 
 | 层               | 改动                                                                                                                                         |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Main classifier  | 扩展名集合与 MIME 增加 `kind`：`diagram` / adapter `drawio-viewer`；`slides` 仍视 PQ-B                                                       |
+| Main classifier  | `.xlsx`/`.xlsm` → `sheet`，`.docx` → `document`，`.pptx` → `presentation`；adapter 分别为 `ooxml-xlsx` / `ooxml-docx` / `ooxml-pptx` |
 | Main 资产注册    | 保持 capability token + 相对路径 + async stream；不得 `readFile()` 整包或调用 Office parser                                                  |
 | preload          | 只启动最小 capability / XPC bridge；不得导入解析引擎、接收整包 bytes 或生成 DOM                                                              |
 | Chrome 直出单元  | `chromePreviewView` 不加载 renderer bundle 或 preload，只导航到 Main containment protocol；仅用于 HTML/PDF                                   |
-| XLSX 执行单元    | `vuePreviewView` 异步取得 `ArrayBuffer` 后以 transfer list 零拷贝交给无 Node 权限的 disposable Web Worker；切文件 `terminate()` worker       |
-| DOCX 执行单元    | Worker 可先做 ZIP metadata / 展开量预检；`docx-preview` 需要 DOM，最终解析渲染留在 `vuePreviewView`，先输出到 detached container，清洗后挂载 |
+| Office 执行单元  | `vuePreviewView` 异步取得 `ArrayBuffer`，先 transfer 给 disposable Worker 预检；通过后只动态加载当前 `@silurus/ooxml` subpath，并用 `mode: 'worker'` 解析/布局/绘制；切文件 destroy viewer、terminate preflight |
 | Draw.io 执行单元 | `vuePreviewView` 把 bytes transfer 给 disposable Worker 做 XML/压缩页预检；通过后才加载本地 viewer 并直接挂入 owned DOM，不用 iframe         |
 | 能力/权限边界    | renderer / worker 都拿不到绝对路径、Node、文件写入；只有不可复用的 asset URL                                                                 |
 
@@ -112,16 +115,25 @@ handle / containment / stream hard limit，任何一项超限只令该资源失�
 若后续要放宽某类媒体，应修改集中常量和验收 fixture，不能把 `maxBytes` 留空。
 
 集中字典进一步冻结为：默认 10MiB；Monaco 8MiB；Markdown/HTML 各 1MiB；Draw.io 20MiB；PDF 与
-单个图片各 100MiB；XLSX/XLSM/DOCX 各 25MiB；音频/视频保持 Range
+单个图片各 100MiB；XLSX/XLSM/DOCX/PPTX 各 25MiB；音频/视频保持 Range
 流式读取，不设额外产品大小拒绝，但 capability 的有限 `maxBytes` 必须等于选中时 verified file size，
 文件增长、替换或 revision 变化立即撤销。所有 buffered/parser 格式则取
 `min(verifiedSize, formatHardCap)`。
 
-Web Worker 提供线程隔离与可终止性，**不是独立进程或 OOM 隔离**。ExcelJS 官方未承诺 Worker 运行合同，
-所以 020 验收必须包含真实 module Worker 解析 fixture 与生产 build；若 Worker 不能直接 fetch custom scheme，
-允许 `vuePreviewView` `fetch()` 后 transfer `ArrayBuffer`，但不允许退回 Main / preload 解析。
+Web Worker 提供线程隔离与可终止性，**不是独立进程或 OOM 隔离**。077 仍以硬 archive/raster/decode
+上限约束峰值内存，生产 build 必须证明三个动态 subpath 的 WASM/worker 资源能从本地协议加载；允许
+`vuePreviewView` `fetch()` 后 transfer `ArrayBuffer`，但不允许退回 Main / preload 解析。
 
-## #2 · `.xlsx` / `.xlsm` `已定 2026-08-20` `已通过独立复核，等待 Ral 手测`
+### 077 当前 Office 覆盖（取代 #2/#3 的 renderer 与 Find 结论）
+
+Task [077](../plan/tasks/onlypreview-office-ooxml-renderers-077.md) 保留 #2/#3 的扩展名、25MiB、签名、
+OOXML preflight 与旧二进制 unsupported 边界，但取代其引擎和查找实现：XLSX/XLSM 使用
+`@silurus/ooxml/xlsx`，DOCX 使用 `/docx`，PPTX 使用 `/pptx`；三个 viewer 都以 worker mode 运行，
+禁用远端字体/超链接，并共享同一个 `office` content adapter。`findText()` 负责完整模型与所有命中
+高亮，`findNext()` / `findPrev()` 负责活动命中和跨 sheet/page/slide 导航，`clearFind()` 绑定查询、文件与
+viewer 生命周期。#2/#3 以下保留为 020/021 历史决策与交付证据，不再描述当前 renderer。
+
+## #2 · `.xlsx` / `.xlsm` `历史 020，renderer 已被 077 取代`
 
 决策者裁决：Ral 2026-08-20「XLSX/XLSM：exceljs 解析工作簿，自研只读虚拟表格渲染」。
 
@@ -192,7 +204,7 @@ ExcelJS 官方只在 Node 端提供 streaming reader / writer，浏览器构建�
 
 `.csv` 继续走 Monaco 文本预览，不进网格 —— 它是文本文件，Monaco 的行列定位与查找对它更有用。
 
-## #3 · `.docx` `已定 2026-08-20` `已通过独立复核，等待 Ral 真实 DOCX 验证`
+## #3 · `.docx` `历史 021，renderer/find 已被 077 取代`
 
 [独立复核 round 2](../plan/reviews/onlypreview-docx-render-021-2.md) 已记录 **PASS**；当前账本为
 `implemented; owner verification pending`，剩余闸门仅是 Ral 的真实 DOCX 视觉/运行时验证。
@@ -225,8 +237,8 @@ Ral 2026-08-20：「如果你说的是旧格式 .doc 而不是 .docx：建议暂
 `unsupported` 真话态，并保留现有「用系统默认应用打开」。未来若复议，必须单独评估受控转换器、临时
 文件生命周期、字体与分页漂移，不能伪装成 docx-preview 的扩展名支持。
 
-`.xls` / `.ppt`（Office 97–2003 二进制）仍见 [PQ-A](#pending-questions--待定项)，`.pptx` 见
-[PQ-B](#pending-questions--待定项)；本轮 `.doc` 裁决不替它们暗中拍板。
+`.xls` / `.ppt`（Office 97–2003 二进制）仍见 [PQ-A](#pending-questions--待定项)。`.pptx` 已由
+[077](../plan/tasks/onlypreview-office-ooxml-renderers-077.md) 定为 `@silurus/ooxml/pptx`，不再属于待定项。
 
 ## #5 · 图片与音视频 `已定 2026-08-18`
 
@@ -310,14 +322,14 @@ parser/OOXML error、signature/empty/size error，而不只覆盖 classifier 直
 ## #7 · 引擎装载与包体 `已定 2026-08-18`
 
 024 已删除 Vue 内的 `unpdf/pdfjs` 活跃 renderer，PDF 由 Chromium 直出；`vuePreviewView` 仍使用
-Monaco/Markdown。020 已把 ExcelJS 隔离到 disposable Worker 的独立动态 chunk，未进入 Preview 首帧；
-021 已将 docx-preview 隔离到预检后才加载的独立动态 chunk，同样未进入 Preview 首帧，因为任一次预览
-只用得上一个重引擎。
+Monaco/Markdown。077 在一次 Office 预检成功后只动态 import 当前
+`@silurus/ooxml/{xlsx,docx,pptx}` subpath；引擎、WASM 与 viewer worker 都不得进入 Preview 首帧，
+因为任一次预览只用得上一个重引擎。
 
 决定：**为 `vuePreviewView` 的格式组件和引擎开一个记录在案的动态 `import()` 例外**，仅限
 `src/renderer/onlypreview/preview/src/` 下明确承担格式引擎装载的 service、Worker 与 component
-（Monaco/Markdown/Office/image/media/Draw.io component、ExcelJS Worker、docx-preview document
-service、Draw.io viewer loader）；`pdf.js` 不再属于目标 bundle。所有格式组件都由当前 adapter 通过
+（Monaco/Markdown/Office/image/media/Draw.io component、OOXML preflight/viewer service、Draw.io
+viewer loader）；`pdf.js` 不再属于目标 bundle。所有格式组件都由当前 adapter 通过
 `defineAsyncComponent()` / 动态 `import()` 按需加载；Draw.io 的 4MiB 级 viewer runtime 还必须在
 文件与 Worker 预检通过后才装载，不能因为创建 `vuePreviewView` 或预览其他格式进入首帧。
 这与 bitterless「静态顶层 import，函数内禁止动态 import」的通用规则冲突，因此在此
@@ -391,7 +403,7 @@ extension / known filename → candidate adapter
 | 大小          | 用安全打开 handle 的 `fstat` 先判上限；实际读取最多精确 `limit`，随后重验 identity/size/mtime 防 stat 后增长。禁止先整包 `readFile()` 再量大小                                  |
 | 解码          | 文本路径使用宽容解码，解码失败不改变分类；乱码只进入 inert text / sanitizer / sandbox，不成为 Node、Electron 或 filesystem 权限                                             |
 | 执行          | `.js` / `.mjs` / `.cjs` / `.vue` / `.css` 等源码在 Monaco 只展示，不编译、不执行；`.html` 的脚本执行边界仍以姊妹文档 #7.3 为准                                                                |
-| 非文本 parser | PDF、图片、媒体、OOXML 仍保留签名、ZIP preflight 与解析上限；本次裁决只取消文本 adapter 的内容嗅探/拒绝，不能把错误 bytes 交给 Chromium PDF viewer、ExcelJS 或 docx-preview |
+| 非文本 parser | PDF、图片、媒体、OOXML 仍保留签名、ZIP preflight 与解析上限；本次裁决只取消文本 adapter 的内容嗅探/拒绝，不能把错误 bytes 交给 Chromium PDF viewer 或 `@silurus/ooxml` viewer |
 | revision      | 读取与结果仍绑定同一 opened handle、host、selection revision；文件变化或读取超过上限时丢弃旧结果                                                                            |
 
 以下 exact case-insensitive basename 集合仍提供已知语言提示，但不再决定能否作为文本打开：`Dockerfile`、
@@ -411,11 +423,11 @@ model 释放，以及 Markdown sanitizer / HTML sandbox 不因宽容解码而放
 
 | id     | 闸门                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 归属任务                                                                                               | 理由                                                                                                                                |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **G1** | OOXML zip 魔数：`.xlsx`/`.xlsm`/`.docx` 必须以 `50 4B 03 04`（`PK\x03\x04`）开头，否则 `SIGNATURE_MISMATCH` 且不签发 `assetUrl`                                                                                                                                                                                                                                                                                                                        | [020](../plan/tasks/onlypreview-xlsx-grid-020.md)、[021](../plan/tasks/onlypreview-docx-render-021.md) | 伪装文件不得进入 exceljs / docx-preview                                                                                             |
-| **G2** | 装载前大小硬顶：新增 `ONLY_PREVIEW_MAX_SHEET_BYTES` 与 `ONLY_PREVIEW_MAX_DOCUMENT_BYTES`（各 25MiB）；超限 → "超过预览上限"真话态 + 外部打开，**不解析**                                                                                                                                                                                                                                                                                               | 020、021                                                                                               | exceljs 与 docx-preview 都把整包读进内存再展开，没有硬顶等于把渲染进程交给文件大小                                                  |
-| **G3** | 顺序不可颠倒：**扩展名 → 签名/大小闸门 → 才动态 `import()` 引擎**。伪装或超限文件不得触发引擎装载                                                                                                                                                                                                                                                                                                                                                      | 020、021                                                                                               | 否则一个改名文件就白拉一个 MiB 级 chunk 并进入解析                                                                                  |
-| **G4** | 引擎加载前在 Worker 校验 ZIP exact closure、entries ≤ 5,000、declared/actual uncompressed sum ≤ 200MiB、single entry ≤128MiB、单项/汇总 ratio ≤200:1；逐 entry bounded stream 验 actual length + CRC32，双 engine namespace key 均安全唯一，并拒绝 encrypted / multi-disk / Zip64 / duplicate / overlap / traversal / malformed package。XLSX 另在 ExcelJS 前限制 merge records ≤100,000、expanded merge cells ≤500,000；超限立即 terminate 并落真话态 | 020 已实现；021 复用通用 preflight                                                                     | ExcelJS / docx-preview 都不会替宿主提供这组上限；只信 declared metadata 或把 bytes 直接交给引擎时，25MiB OOXML 仍可实际展开到 GB 级 |
-| **G5** | 渲染侧纵深校验：`fetch` 得到 `ArrayBuffer` 后先核前 4 字节与长度，再交引擎。主进程闸门是权威，这一层是防御深度                                                                                                                                                                                                                                                                                                                                         | 020、021、[023](../plan/tasks/onlypreview-preview-guards-023.md)                                       | 单点闸门失效时不至于直接打死渲染进程                                                                                                |
+| **G1** | OOXML zip 魔数：`.xlsx`/`.xlsm`/`.docx`/`.pptx` 必须以 `50 4B 03 04`（`PK\x03\x04`）开头，否则 `SIGNATURE_MISMATCH` 且不签发 `assetUrl`                                                                                                                                                                                                                                                                                                                 | [077](../plan/tasks/onlypreview-office-ooxml-renderers-077.md)                                 | 伪装文件不得进入 OOXML viewer                                                                                                     |
+| **G2** | 装载前大小硬顶：Office adapter 均为 25MiB；超限 → "超过预览上限"真话态 + 外部打开，**不解析**                                                                                                                                                                                                                                                                                                                                                     | 077                                                                                             | viewer 会把整包读入并展开，没有硬顶等于把渲染进程交给文件大小                                                                    |
+| **G3** | 顺序不可颠倒：**扩展名 → 签名/大小闸门 → OOXML Worker preflight → 才动态 `import()` 当前 subpath**。伪装或超限文件不得触发引擎装载                                                                                                                                                                                                                                                                                                                   | 077                                                                                             | 否则一个改名文件就白拉一个 MiB 级 chunk 并进入解析                                                                                  |
+| **G4** | 引擎加载前在 Worker 校验 ZIP exact closure、entries ≤ 5,000、declared/actual uncompressed sum ≤ 200MiB、single entry ≤128MiB、单项/汇总 ratio ≤200:1；逐 entry bounded stream 验 actual length + CRC32，namespace key 安全唯一，并拒绝 encrypted / multi-disk / Zip64 / duplicate / overlap / traversal / malformed package；三种格式还各自要求 workbook/document/presentation 根 part | 077                                                                                             | 只信 declared metadata 或把 bytes 直接交给 viewer 时，25MiB OOXML 仍可实际展开到 GB 级                                              |
+| **G5** | 渲染侧纵深校验：`fetch` 得到 `ArrayBuffer` 后先核前 4 字节与长度，再交 Worker/引擎。主进程闸门是权威，这一层是防御深度                                                                                                                                                                                                                                                                                                                                | 077、[023](../plan/tasks/onlypreview-preview-guards-023.md)                                     | 单点闸门失效时不至于直接打死渲染进程                                                                                                |
 | **G6** | `SIGNATURE_MISMATCH` 的界面文案明确说"后缀与内容不符"，而不是笼统失败                                                                                                                                                                                                                                                                                                                                                                                  | 023                                                                                                    | 用户需要知道是改名而不是文件坏了                                                                                                    |
 | **G7** | PDF 100MiB 字节上限 + `chromePreviewView` 导航前/开流时闸门                                                                                                                                                                                                                                                                                                                                                                                            | 023/024 已实施                                                                                         | 签发 exact asset URL 前与 response stream/EOF 重验 100MiB 上限，再交 Chromium 内置 PDF viewer                                       |
 
@@ -493,12 +505,12 @@ WebContents，而不是重新引入 iframe。
 | id       | 项                                                     | 所在                                       | 类型   | 阻塞性         | 倾向 / 拍板需要什么输入                                                                                                                     | 状态                                                                                                                                    |
 | -------- | ------------------------------------------------------ | ------------------------------------------ | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | **PQ-A** | `.xls` / `.ppt`（97–2003 二进制）是否进入内置 renderer | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 可后置         | **倾向不渲染**：SheetJS 只能解决 `.xls`，`.ppt` 仍无同等级方案；tradeoff 是依赖系统应用。拍板需要 Ral 明确这两种格式是否值得分别增加引擎    | **待定**；原问题中的 `.doc` 已拆入 PQ-D 并拍板，本行继续保留未决的 `.xls` / `.ppt`                                                      |
-| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 不阻塞 020/021 | **倾向先不做**，或只做"按幻灯片分块的文本+图片大纲"低保真；浏览器端没有成熟的 pptx 渲染库（`pptxgenjs` 是生成端）                           | 待定                                                                                                                                    |
+| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 已拍板 | —              | 使用 `@silurus/ooxml/pptx` 的虚拟化只读 slide viewer，接受非 PowerPoint 像素/动画级保真                                                | **已定 2026-08-28 · 077 实施中**                                                                                                      |
 | **PQ-C** | HEIC / HEIF / TIFF 是否需要 Main 侧转码后预览？        | [#5](#5--图片与音视频-已定-2026-08-18)     | 待拍板 | 不阻塞 022     | **倾向本轮不做**，先给真话不支持态；HEIC 在 macOS 相册/iPhone 照片里常见，若要做则单列一轮（Main 侧 `sips`/`sharp` 转码 + 缓存 + 失效策略） | 待定                                                                                                                                    |
 | **PQ-D** | 旧 `.doc` 是否进入内置 renderer                        | [#4.1](#41--旧-doc-本轮不做-未实施)        | 待拍板 | 可后置         | 原倾向不渲染；tradeoff 是不能在 Bitterless 内看旧 Word 文件。拍板需要 Ral 选择内置转换或系统应用打开                                        | **本轮不做 · 未实施**（Ral 2026-08-20）：明确 unsupported + 系统应用打开；连带收口 021 的 `.doc` 范围，不再等待旧格式决策               |
 | **PQ-E** | `.drawio` 是否按本地官方只读 viewer 方案进入实现       | [#9](#9--drawio-已定-2026-08-26-已实施)    | 待拍板 | 可后置         | `vuePreviewView` async component + 本地 viewer 直接 DOM mount；不用 iframe、完整 editor或在线服务；首期只读，Find 后置                      | **已定 2026-08-26 · 已实施**：032 已通过独立复核，等待 Ral 运行时/视觉验证；首期拒绝图片资源，图元 Find 继续后置                         |
 
-收敛记账：账本 5 行 · 已解 2 行 · 待拍板 3 行 · 未解的 `阻塞定案` **0 条**。本轮把原 PQ-A 保留给
+收敛记账：账本 5 行 · 已解 3 行 · 待拍板 2 行 · 未解的 `阻塞定案` **0 条**。本轮把原 PQ-A 保留给
 未决的 `.xls` / `.ppt`，并把已解 `.doc` 拆为 PQ-D，阻塞数未增加；`.xlsx` 已由 020 实施并通过独立
 复核，当前等待 Ral 手测；`.docx` 已由 021 实施并通过独立复核，等待 Ral 真实 DOCX 视觉/运行时
 验证。#8.1 是文本准入合同细化；#9/PQ-E 已由 032 实施首期只读渲染与按需组件加载，图元 Find 后置且

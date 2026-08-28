@@ -1,11 +1,13 @@
 import { xpcRenderer } from 'electron-xpc/renderer';
+import { normalizeOnlyPreviewRelativePath } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT,
   ONLY_PREVIEW_CHARACTER_COUNT_READY_EVENT,
   ONLY_PREVIEW_FIND_FOCUS_EVENT,
   ONLY_PREVIEW_FIND_STATE_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
-  ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
+  ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT,
+  ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT,
   ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
@@ -13,8 +15,8 @@ import {
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewCharacterCountEvent,
   type OnlyPreviewCharacterCountRevisionEvent,
-  type OnlyPreviewFocusSearchEvent,
-  type OnlyPreviewGlobalSearchFocusOrigin
+  type OnlyPreviewGlobalSearchDirectoryRevealAction,
+  type OnlyPreviewGlobalSearchVisibilityEvent
 } from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_BROWSE_LISTING_EVENT,
@@ -28,6 +30,7 @@ import { isOnlyPreviewBrowseListingEvent } from './onlyPreviewBrowseListing.serv
 import { isOnlyPreviewPresentationNudge } from '../../common/onlyPreviewPresentation.service';
 import { isOnlyPreviewSearchProgressEvent } from './onlyPreviewSearchProgress.service';
 import { isOnlyPreviewSearchSnapshotEvent } from './onlyPreviewSearchSnapshot.service';
+import { onlyPreviewGlobalSearchVisibilityStore } from './onlyPreviewGlobalSearchVisibility.store';
 
 interface OnlyPreviewShellEventHandlers {
   workspaceChanged: () => void;
@@ -41,7 +44,7 @@ interface OnlyPreviewShellEventHandlers {
   searchSnapshot: (snapshot: OnlyPreviewSearchSnapshot) => void;
   settingsChanged: () => void;
   focusProject: () => void;
-  focusSearch: (origin: OnlyPreviewGlobalSearchFocusOrigin) => void;
+  revealGlobalSearchDirectory: (action: OnlyPreviewGlobalSearchDirectoryRevealAction) => void;
   findState: () => void;
   focusFind: () => void;
 }
@@ -51,12 +54,42 @@ const isHostEvent = (value: unknown): value is { hostId: string } =>
   typeof value === 'object' &&
   typeof (value as Record<string, unknown>).hostId === 'string';
 
-const isFocusSearchEvent = (value: unknown): value is OnlyPreviewFocusSearchEvent => {
+const isGlobalSearchDirectoryRevealAction = (
+  value: unknown
+): value is OnlyPreviewGlobalSearchDirectoryRevealAction => {
   if (!isHostEvent(value)) return false;
   const event = value as Record<string, unknown>;
+  const shapeMatches =
+    Reflect.ownKeys(event).length === 5 &&
+    typeof event.actionId === 'string' &&
+    event.actionId.length >= 16 &&
+    event.actionId.length <= 256 &&
+    typeof event.workspaceId === 'string' &&
+    event.workspaceId.length >= 16 &&
+    event.workspaceId.length <= 256 &&
+    Number.isSafeInteger(event.generation) &&
+    (event.generation as number) >= 0 &&
+    typeof event.relativePath === 'string';
+  if (!shapeMatches) return false;
+  try {
+    normalizeOnlyPreviewRelativePath(event.relativePath, { allowEmpty: true });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const isGlobalSearchVisibilityEvent = (
+  value: unknown
+): value is OnlyPreviewGlobalSearchVisibilityEvent => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
   return (
-    Reflect.ownKeys(event).length === 2 &&
-    (event.origin === 'shell' || event.origin === 'vue' || event.origin === 'chrome')
+    Reflect.ownKeys(event).length === 3 &&
+    typeof event.hostId === 'string' &&
+    Number.isSafeInteger(event.revision) &&
+    (event.revision as number) >= 0 &&
+    typeof event.active === 'boolean'
   );
 };
 
@@ -96,6 +129,7 @@ export const subscribeOnlyPreviewShellEvents = (
 ): void => {
   if (!hostId) return;
   const isCurrentHost = (value: { hostId: string }): boolean => value.hostId === hostId;
+  let globalSearchVisibilityRevision = -1;
   xpcRenderer.subscribe(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.workspaceChanged();
   });
@@ -139,8 +173,17 @@ export const subscribeOnlyPreviewShellEvents = (
   xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_PROJECT_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.focusProject();
   });
-  xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_SEARCH_EVENT, ({ params }) => {
-    if (isFocusSearchEvent(params) && isCurrentHost(params)) handlers.focusSearch(params.origin);
+  xpcRenderer.subscribe(ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT, ({ params }) => {
+    if (isGlobalSearchVisibilityEvent(params) && isCurrentHost(params)) {
+      if (params.revision < globalSearchVisibilityRevision) return;
+      globalSearchVisibilityRevision = params.revision;
+      onlyPreviewGlobalSearchVisibilityStore.setActive(params.active);
+    }
+  });
+  xpcRenderer.subscribe(ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT, ({ params }) => {
+    if (isGlobalSearchDirectoryRevealAction(params) && isCurrentHost(params)) {
+      handlers.revealGlobalSearchDirectory(params);
+    }
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_FIND_STATE_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.findState();

@@ -31,12 +31,21 @@ const byUpdated = (left: SubmoduleEntry, right: SubmoduleEntry): number => {
   return rightAt - leftAt;
 };
 
+/**
+ * Both levels are ordered by the same rules, each within its own parent: a drifted child leads its
+ * siblings but never lifts its parent above another top-level row, so the tree keeps its shape.
+ */
 export const orderSubmodules = (
   entries: readonly SubmoduleEntry[],
   settings: SubmodulesViewSettings
 ): SubmoduleEntry[] => {
   const compare = settings.sortMode === 'updated' ? byUpdated : byName;
-  return [...entries].sort((left, right) => {
+  const ordered = entries.map((entry) =>
+    entry.children.length
+      ? { ...entry, children: orderSubmodules(entry.children, settings) }
+      : entry
+  );
+  return ordered.sort((left, right) => {
     if (settings.showDiffOnTop) {
       const leftMismatch = isMismatched(left);
       const rightMismatch = isMismatched(right);

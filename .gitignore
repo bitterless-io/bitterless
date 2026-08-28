@@ -34,3 +34,6 @@ packages/micromeet-cli/release/
 
 # Playwright CLI session dumps (page snapshots / screenshots / console logs)
 .playwright-cli/
+
+# Indexing benchmark corpora and reports
+tmp

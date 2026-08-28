@@ -10,6 +10,29 @@
 /* No hover tint: owner decision 2026-08-20. The row carries state through the branch tag and the
    line-2 warnings only, and the action button keeps its own hover fill. */
 
+/* Second level: 12px of indent on top of the row's own 12px padding. */
+.submodule-row--nested {
+  padding-left: 24px;
+}
+
+/* The chevron and its placeholder are the same width, so first-level names align whether or not a
+   row declares submodules of its own. */
+.submodule-row__toggle.icon-btn.arco-btn {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+}
+
+.submodule-row__toggle-spacer {
+  flex: 0 0 auto;
+  width: 18px;
+}
+
+.submodule-row__chevron--open {
+  transform: rotate(90deg);
+}
+
 .submodule-row--missing,
 .submodule-row--error {
   background: oklch(97% 0.02 30);

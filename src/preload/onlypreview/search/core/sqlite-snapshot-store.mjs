@@ -1,6 +1,7 @@
 import { dirname } from 'node:path';
 
 import { mediaTypeToPreviewHint } from './classification.mjs';
+import { sortOnlyPreviewTreeEntries } from './tree-entries.mjs';
 
 const filenameRecordFromRow = (row) => ({
   id: Number(row.id),
@@ -24,10 +25,51 @@ const filenameRecordToTreeEntry = (record) => {
     nodeKind: 'file',
     size: record.size,
     modifiedAt: record.modifiedMs,
-    previewHint: mediaTypeToPreviewHint(record.mediaType),
+    previewHint: mediaTypeToPreviewHint(record.mediaType, record.relativePath),
     mediaType: record.mediaType,
     isText: record.mediaType === 'text'
   };
+};
+
+const provisionalDirectoryEntry = (relativePath) => {
+  const parent = dirname(relativePath).replaceAll('\\', '/');
+  return {
+    relativePath,
+    parentRelativePath: parent === '.' ? '' : parent,
+    name: relativePath.slice(relativePath.lastIndexOf('/') + 1),
+    nodeKind: 'directory',
+    size: 0,
+    modifiedAt: 0,
+    previewHint: 'unsupported',
+    mediaType: 'unknown',
+    isText: false
+  };
+};
+
+const treeEntryIsEligible = (entry, searchPolicy) => {
+  if (!searchPolicy) return true;
+  return entry.nodeKind === 'directory'
+    ? !searchPolicy.isExcludedDirectoryPath(entry.relativePath)
+    : !searchPolicy.isExcludedFilePath(entry.relativePath);
+};
+
+const provisionalTreeFromFiles = (records, searchPolicy) => {
+  const directories = new Map();
+  const files = [];
+  for (const record of records) {
+    const fileEntry = filenameRecordToTreeEntry(record);
+    if (!treeEntryIsEligible(fileEntry, searchPolicy)) continue;
+    files.push(fileEntry);
+    let parent = dirname(record.relativePath).replaceAll('\\', '/');
+    while (parent && parent !== '.') {
+      const entry = provisionalDirectoryEntry(parent);
+      if (treeEntryIsEligible(entry, searchPolicy) && !directories.has(parent)) {
+        directories.set(parent, entry);
+      }
+      parent = dirname(parent).replaceAll('\\', '/');
+    }
+  }
+  return sortOnlyPreviewTreeEntries([...directories.values(), ...files]);
 };
 
 const runTreeEntry = (statement, entry) =>
@@ -99,7 +141,7 @@ export class OnlyPreviewSqliteSnapshotStore {
     this.filenameTier.applyBatch({ upserts, deletePaths: [...new Set(deletePaths)] });
   }
 
-  readTreeSnapshot() {
+  readTreeSnapshot({ searchPolicy } = {}) {
     const buildState = this.buildState.read();
     const treeState = this.selectIndexMeta.get('tree_state')?.value ?? 'missing';
     const treeBuildId = this.selectIndexMeta.get('tree_build_id')?.value ?? '';
@@ -110,13 +152,15 @@ export class OnlyPreviewSqliteSnapshotStore {
       treeState === 'ready' &&
       treeBuildId === buildState.buildId &&
       (maxDepthMarker === '0' || maxDepthMarker === '1');
-    const entries = this.filenameTier
-      .visible()
-      .filter(({ inProject }) => inProject)
-      .map(filenameRecordToTreeEntry);
+    const committedFiles = this.filenameTier.visible().filter(({ inProject }) => inProject);
+    const entries = treeMetadataReady
+      ? committedFiles.map(filenameRecordToTreeEntry).filter((entry) =>
+          treeEntryIsEligible(entry, searchPolicy)
+        )
+      : provisionalTreeFromFiles(committedFiles, searchPolicy);
     if (treeMetadataReady) {
       for (const row of this.selectSearchTree.iterate()) {
-        entries.push({
+        const entry = {
           relativePath: row.relative_path,
           parentRelativePath: row.parent_relative_path,
           name: row.name,
@@ -126,7 +170,8 @@ export class OnlyPreviewSqliteSnapshotStore {
           previewHint: row.preview_hint,
           mediaType: row.media_type,
           isText: row.is_text === 1
-        });
+        };
+        if (treeEntryIsEligible(entry, searchPolicy)) entries.push(entry);
       }
     }
     return {

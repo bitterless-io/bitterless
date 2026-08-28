@@ -10,7 +10,8 @@
 设计收口的 [completion audit](../plan/reviews/onlypreview-design-completion-025-1.md) 已 **PASS**，当前为
 `implemented; owner verification pending`；032 Draw.io 本地只读 viewer 与 Vue 格式组件按需加载已实施，
 已通过 [independent review 3](../plan/reviews/onlypreview-drawio-readonly-032-3.md)，等待 Ral
-运行时/视觉验证，首期查找能力明确为 `none` · 开题
+运行时/视觉验证，首期查找能力明确为 `none`；077 正在把 XLSX/XLSM、DOCX、PPTX 统一到按格式动态
+加载的 `@silurus/ooxml` viewer，并把三者统一登记为带完整 model 高亮的 `office` content adapter · 开题
 2026-08-18 · Ral 于 2026-08-20 指定本文已定内容为持续交付目标 · 未定且非阻塞的结论仍以
 [#pending-questions](#pending-questions--待定项) 为准。**
 
@@ -242,29 +243,23 @@ renderer。内容区域任一时刻只 attach / 显示上述两个 view 中的�
 capability/reset acknowledgement，以及离线 raw HTML/PDF 的 bounded protocol；019 已实施唯一 Find
 Bar、Main-owned `findRevision`、native/content adapter 路由和 stale-result 清理，当前为
 `implemented; owner verification pending`；
-[独立复核 round 2](../plan/reviews/onlypreview-find-in-file-019-2.md) 已记录 **PASS**。020 已实现
-renderer-local XLSX adapter，021 DOCX 已实施并
-通过 [独立复核 round 2](../plan/reviews/onlypreview-docx-render-021-2.md)，当前等待 Ral 真实 DOCX
-视觉/运行时验证；媒体/额外 guard 分别由 022/023 延伸。022 的
+[独立复核 round 2](../plan/reviews/onlypreview-find-in-file-019-2.md) 已记录 **PASS**。020 的
+renderer-local ExcelJS adapter 与 021 的 `docx-preview` DOM adapter 保留为历史交付记录；077 正在以
+三个按需加载的 `@silurus/ooxml` viewer 取代它们并新增 PPTX，同时把三种 Office 格式统一接入
+`office` content adapter。媒体/额外 guard 分别由 022/023 延伸。022 的
 [独立复核 round 1](../plan/reviews/onlypreview-media-truthful-state-022-1.md) 曾因 renderer error family
 授权过宽记录 **BLOCKED**，修复后
 [独立复核 round 2](../plan/reviews/onlypreview-media-truthful-state-022-2.md) 已记录 **PASS**；其账本为
 `implemented; owner verification pending`，当前等待 Ral 真实图片/音视频视觉与运行时验证。
 
-021 的 DOCX capability 合同进一步冻结为：exact 25MiB asset 先 transfer 到 one-shot module Worker，
-复用纯 OOXML preflight 并由 adapter 施加 10 秒 hard timeout；通过后才动态加载
-`docx-preview@0.4.0`。`renderAsync()` 只写 detached body/style，使用固定关闭 altChunk/修订/批注、
-开启页眉页脚、忽略内嵌字体、`useBase64URL: false`、关闭 experimental/debug 的 options。专用
-DOM/CSS allowlist 必须在 mount 前完整扫描输出并登记所有 verified embedded blob URL；普通切换和
-stale completion 正常 revoke，而 engine rejection、无法取得完整输出或 timeout 由 Main 销毁并重建
-exact Vue view。Main 在 DOCX loading 且 view/runtime token 建立时一次性 arm 30 秒外部 watchdog，
-reset/resize 不续期，旧 timer 受 revision/runtime/view fence 约束。若 selection 在 render pending
-期间离开 DOCX，Main 立即关闭 exact 旧 Vue view 并旋转 runtime；只有 post-ready 切换才允许串行清理后
-复用 view。`renderAsync()` 没有
-`AbortSignal`，不得把 fenced stale result 描述成取消了 library call。文档 only 在 sanitized current
-DOM 实际 mount + `nextTick` 后报告 ready；失败使用 `DOCUMENT_PARSE_FAILED`、`DOCUMENT_EMPTY`、
-`DOCUMENT_SANITIZE_FAILED` 或 `DOCUMENT_RENDER_TIMEOUT`。019 只在该 exact ready 状态上启用
-`findInPage()`。
+077 的共同 capability 合同为：exact 25MiB asset 先 transfer 到 one-shot module Worker，复用纯
+OOXML preflight并由 adapter 施加 10 秒 hard timeout；通过后才按 `kind` 动态加载
+`@silurus/ooxml/xlsx`、`/docx` 或 `/pptx`。三种 viewer 都使用 worker mode、禁用 Google Fonts 与
+hyperlinks，并拿到显式 archive/raster/decode limits。Main 对每个 Office loading revision 保留一个不续期
+的 30 秒外部 watchdog；selection/runtime/view/generation 围栏拒绝旧 load/find completion。只有当前
+viewer load 完成并已挂载时才报告 ready；切换、失败、超时和 unmount 必须 clear Find、destroy viewer，
+并终止 preflight/fetch。当前文件查找全部通过 viewer 的 `findText/findNext/findPrev/clearFind`，不再把
+DOCX 交给 `findInPage()`。
 
 ### #7.1 · Electron 能力边界 `已定 2026-08-20`
 
@@ -323,8 +318,9 @@ view 的 bounds 放到 toolbar 下方，所以 native view 不会盖住输入框
 | `.pdf`                        | `chromePreviewView` | Chromium 内置 PDF viewer                                   | `chromePreviewView.webContents.findInPage()`  |
 | 源码 / 普通文本 / CSV         | `vuePreviewView`    | Monaco                                                     | `model.findMatches()` adapter                 |
 | Markdown                      | `vuePreviewView`    | Markdown → DOMPurify → DOM                                 | `vuePreviewView.webContents.findInPage()`     |
-| DOCX                          | `vuePreviewView`    | `docx-preview` → detached DOM → 清洗 → mount               | `vuePreviewView.webContents.findInPage()`     |
-| XLSX / XLSM                   | `vuePreviewView`    | ExcelJS Worker model + 自研只读虚拟网格                    | sheet model adapter，跨 sheet 定位并高亮 cell |
+| DOCX                          | `vuePreviewView`    | lazy `@silurus/ooxml/docx` `DocxScrollViewer`              | Office model adapter，跨虚拟 page 定位并高亮  |
+| XLSX / XLSM                   | `vuePreviewView`    | lazy `@silurus/ooxml/xlsx` `XlsxViewer`                    | Office model adapter，跨 sheet 定位并高亮 cell |
+| PPTX                          | `vuePreviewView`    | lazy `@silurus/ooxml/pptx` `PptxScrollViewer`              | Office model adapter，跨虚拟 slide 定位并高亮 |
 | `.drawio`                     | `vuePreviewView`    | async `DrawioPreview` + 预检后加载本地官方只读 viewer      | `none`；完整 cell label 搜索后置              |
 | 图片                          | `vuePreviewView`    | 图片组件：适应窗口、放大、缩小、重置；放大后可拖动查看     | `none`                                        |
 | 音频 / 视频                   | `vuePreviewView`    | `<audio controls>` / `<video controls>` 播放器组件；不转码 | `none`                                        |
@@ -371,7 +367,7 @@ dead player。`chromePreviewView`
 | host ref      | Shell 的 bounds ref / `ResizeObserver` 必须放在 toolbar **下方的 inner content host**，不能放在包含 toolbar 的 wrapper，否则 native view 会覆盖输入框                                                                                                                      |
 | 首帧          | active content 在收到 Shell 首个有效 host bounds 前不得 attach / visible；不能沿用当前从 `y=32` 开始的临时 bounds，否则启动时会短暂盖住 toolbar                                                                                                                            |
 | z-order       | Main 保存唯一 `activePreviewSurface`；旧 view 完成 stop-find / teardown / detach 后才能 attach 新 view，绝不把两个 view 同时叠在相同 bounds                                                                                                                                |
-| 快捷键 / 焦点 | Main 从 Shell、`chromePreviewView`、`vuePreviewView` 的 `before-input-event` 统一截获 `Cmd/Ctrl+F`，先 focus `ShellView.webContents` 再聚焦 toolbar input；关闭 / `Esc` 后恢复当前 active content。`Shift+Cmd/Ctrl+F` 打开 Shell 的 Global Search；旧 `Option/Alt+Cmd/Ctrl+F` 别名由任务 037 移除 |
+| 快捷键 / 焦点 | Main 从 Shell、`chromePreviewView`、`vuePreviewView` 的 `before-input-event` 统一截获 `Cmd/Ctrl+F`，先 focus `ShellView.webContents` 再聚焦 toolbar input；关闭 / `Esc` 后恢复当前 active content。`Shift+Cmd/Ctrl+F` 打开独立但非顶层窗口的 Global Search `WebContentsView`；它与 Preview 同 bounds 并保持在 PDF/HTML/Vue surface 上方。旧 `Option/Alt+Cmd/Ctrl+F` 别名由任务 037 移除 |
 | renderer 崩溃 | active capability 立即变 `unavailable`，Shell toolbar 保持可用；Main 清理崩溃 view 并转到可重建的 Vue 真话错误态 / retry，不因单个 Preview renderer 崩溃关闭整个窗口；旧 ready/find 结果仍受 host + selection + surface revision 围栏                                      |
 
 ```text
@@ -381,8 +377,9 @@ ShellView Preview toolbar：Find Bar 输入、上一处/下一处、n/m、大小
     ↓ typed host + selection revision
 Main：按 current surface + adapter 路由
     ├─ chromePreviewView HTML/PDF       → webContents.findInPage()
-    ├─ vuePreviewView Markdown/DOCX DOM → webContents.findInPage()
-    ├─ vuePreviewView Monaco/XLSX model → capability-bound content adapter
+    ├─ vuePreviewView Markdown          → webContents.findInPage()
+    ├─ vuePreviewView Monaco            → capability-bound content adapter
+    ├─ vuePreviewView XLSX/DOCX/PPTX    → OOXML office content adapter
     └─ Draw.io / image / audio / video → unavailable，不打开 Find Bar
     ↓
 统一结果 envelope：{ hostId, selectionRevision, surface, findRevision,
@@ -499,8 +496,8 @@ Ral 2026-08-20 追问：「搜索触发要不要用白名单机制，例如 js�
 
 | `findMode`         | 格式                                                                                                               | engine                                                                                       | 行为                                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `webcontents-find` | `chromePreviewView` 的 HTML / PDF；`vuePreviewView` 的 Markdown / DOCX DOM                                         | Main 对 registry 指定且当前 active 的 view `webContents` 调 `findInPage()`                   | 直接复用 Chromium 的匹配、滚动与高亮；扫描型 PDF 没有文字层时如实返回 0，OCR 另议                                 |
-| `content-adapter`  | Monaco 文本/代码/CSV、XLSX 虚拟网格                                                                                | Monaco 直接查 model；sheet adapter 把 query 转给 Worker 持有的 bounded workbook search model | 查所有已接纳且未必挂 DOM 的内容，不受虚拟 viewport 限制；统一回传当前项与总数，XLSX 额外回传 sheet / row / column |
+| `webcontents-find` | `chromePreviewView` 的 HTML / PDF；`vuePreviewView` 的 Markdown                                                    | Main 对 registry 指定且当前 active 的 view `webContents` 调 `findInPage()`                   | 直接复用 Chromium 的匹配、滚动与高亮；扫描型 PDF 没有文字层时如实返回 0，OCR 另议                                 |
+| `content-adapter`  | Monaco 文本/代码/CSV；XLSX/XLSM、DOCX、PPTX                                                                       | Monaco 直接查 model；Office adapter 委托当前 OOXML viewer 的完整模型 API                     | 查所有已接纳且未必挂 DOM 的内容；Office 保留所有命中高亮和一个活动高亮，并跨 sheet/page/slide 导航              |
 | `none`             | Draw.io 首期、image / audio / video / unsupported、超过大小上限，以及未通过非文本格式签名或 parser 的损坏/加密内容 | 无                                                                                           | 不激活 Find Bar，不制造假的 `0/0` 搜索结果；Draw.io 完整 cell label 搜索后置                                      |
 
 Ral 2026-08-20 继续确认：「文件是否可搜索怎么配置也放到方案里了么」。配置放在 app-owned、TypeScript
@@ -512,8 +509,9 @@ type PreviewAdapterId =
   | 'markdown-dom'
   | 'html-page'
   | 'chromium-pdf'
-  | 'xlsx-grid'
-  | 'docx-dom'
+  | 'ooxml-xlsx'
+  | 'ooxml-docx'
+  | 'ooxml-pptx'
   | 'drawio-viewer'
   | 'image'
   | 'audio'
@@ -524,7 +522,7 @@ type PreviewSurface = 'chrome' | 'vue';
 
 type PreviewFindCapability =
   | { mode: 'webcontents-find' }
-  | { mode: 'content-adapter'; adapter: 'monaco' | 'sheet' }
+  | { mode: 'content-adapter'; adapter: 'monaco' | 'office' }
   | { mode: 'none' };
 
 type PreviewAdapterSpec = {
@@ -537,8 +535,9 @@ const PREVIEW_ADAPTERS: Record<PreviewAdapterId, PreviewAdapterSpec> = {
   'markdown-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
   'html-page': { surface: 'chrome', find: { mode: 'webcontents-find' } },
   'chromium-pdf': { surface: 'chrome', find: { mode: 'webcontents-find' } },
-  'xlsx-grid': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'sheet' } },
-  'docx-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
+  'ooxml-xlsx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
+  'ooxml-docx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
+  'ooxml-pptx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
   image: { surface: 'vue', find: { mode: 'none' } },
   audio: { surface: 'vue', find: { mode: 'none' } },
   video: { surface: 'vue', find: { mode: 'none' } },
@@ -616,12 +615,12 @@ type ProjectSearchContentCapability = 'content' | 'filename-only' | 'none';
 ```
 
 raw HTML 与 Chromium PDF 不挂 preload：由 Main 的 exact-navigation fence + `did-finish-load` 把 registry
-中的 Chrome `webcontents-find` 翻为 ready。Markdown / DOCX / Monaco / XLSX 等 app-owned 页面则在内容实际
+中的 Chrome `webcontents-find` 翻为 ready。Markdown / Monaco / XLSX / DOCX / PPTX 等 app-owned 页面则在内容实际
 挂载后通过 capability-bound typed XPC 报 ready；Main 只接受当前 host + selection revision + surface，
-不把 `webContentsId` 暴露给 renderer。XLSX 的 `sheet` adapter 是 `vuePreviewView` 内的薄协调层，完整 workbook
-model 留在 Worker。只有文件已通过 byte / ZIP / uncompressed-size 硬闸门、随后超过 row/cell model cap
-时，capability 才能 `ready + coverage.partial`；硬闸门失败必须 `unavailable`。Shell 的计数至少显示
-`n/m · 部分`，不能把 partial matches 呈现为完整总数。
+不把 `webContentsId` 暴露给 renderer。Office 的 `office` adapter 是 `vuePreviewView` 内的薄协调层，完整
+workbook/document/deck model 留在当前 `@silurus/ooxml` viewer。只有 byte / ZIP /
+uncompressed-size 硬闸门与 viewer load 都成功时，Office capability 才能声明 `ready + complete`；硬闸门
+或渲染失败必须 `unavailable`。
 
 Draw.io phase one 与 image/audio/video 永远不发布文字能力：transition 时只广播一次 `0` 以清掉前一份文本的状态，组件本身
 不 arm 或上报 character count。它们的 `ready` 只允许 Main 把 exact `loading` 推到 `ready`；同 revision
@@ -654,7 +653,9 @@ refetch Main snapshot。native 结果额外绑定 exact WebContents identity/gen
 content adapter command 绑定 exact adapter/revision/runtime，结果不会携带 runtime token 到 Shell。Monaco
 对完整 8MiB accepted model 做 literal count，但不物化全量 Range；当前项通过 Monaco model 的
 next/previous API 取得 original-model Range，只保留一个 active decoration，避免 Unicode case-fold
-扩展后的偏移错位。XLSX 搜索继续使用 Worker accepted model，并只在 model cap 时声明 partial。不得复用
+扩展后的偏移错位。Office 搜索调用当前 viewer 的 `findText()`、`findNext()`、`findPrev()` 与
+`clearFind()`：新查询保留全部命中高亮并立即激活一个命中，之后前后导航由 viewer 跨
+sheet/page/slide 循环；文件/查询/Find 生命周期变化会清理旧高亮。不得复用
 2026-08-18 的单 Preview renderer 编排。
 
 <a id="main-preview-owner"></a>

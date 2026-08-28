@@ -16,7 +16,6 @@ import {
   parseOnlyPreviewFileRef,
   parseOnlyPreviewFindIntent,
   parseOnlyPreviewFindResultRequest,
-  parseOnlyPreviewGlobalSearchFocusRequest,
   parseOnlyPreviewPreviewErrorRequest,
   parseOnlyPreviewPreviewReadyRequest,
   parseOnlyPreviewPreviewRuntimeRequest,
@@ -50,7 +49,7 @@ import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.reg
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
 import { onlyPreviewSelectionCoordinator } from '@main/onlypreview/onlyPreviewSelectionCoordinator.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
-import { onlyPreviewGlobalSearchFocusService } from '@main/onlypreview/onlyPreviewGlobalSearchFocus.service';
+import { onlyPreviewGlobalSearchXpcService } from '@main/onlypreview/views/onlyPreviewGlobalSearchXpc.service';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { i18nHelper } from '@main/i18n/i18n.helper';
 import { registerOnlyPreviewExplicitTarget } from '@main/onlypreview/onlyPreviewExplicitTarget.registry';
@@ -430,20 +429,40 @@ class OnlyPreviewHandler extends XpcMainHandler implements OnlyPreviewApi {
     });
   }
 
-  async restoreGlobalSearchFocus(
-    params: ApiParams<'restoreGlobalSearchFocus'>
-  ): ReturnType<OnlyPreviewApi['restoreGlobalSearchFocus']> {
-    return await runOperation(async () => {
-      const request = parseOnlyPreviewGlobalSearchFocusRequest(params);
-      onlyPreviewHostRegistry.require(request.hostToken, ['content']);
-      if (request.mode === 'opener') {
-        return onlyPreviewGlobalSearchFocusService.restoreOpener(request.hostToken);
-      }
-      onlyPreviewGlobalSearchFocusService.clear(request.hostToken);
-      if (request.mode === 'discard') return false;
-      onlyPreviewPreviewRegionService.focusActiveContent(request.hostToken);
-      return true;
-    });
+  async reportGlobalSearchContext(
+    params: ApiParams<'reportGlobalSearchContext'>
+  ): ReturnType<OnlyPreviewApi['reportGlobalSearchContext']> {
+    return await runOperation(async () => onlyPreviewGlobalSearchXpcService.reportContext(params));
+  }
+
+  async getGlobalSearchContext(
+    params: ApiParams<'getGlobalSearchContext'>
+  ): ReturnType<OnlyPreviewApi['getGlobalSearchContext']> {
+    return await runOperation(async () =>
+      onlyPreviewGlobalSearchXpcService.getContext(params?.hostToken)
+    );
+  }
+
+  async revealGlobalSearchDirectory(
+    params: ApiParams<'revealGlobalSearchDirectory'>
+  ): ReturnType<OnlyPreviewApi['revealGlobalSearchDirectory']> {
+    return await runOperation(async () =>
+      await onlyPreviewGlobalSearchXpcService.revealDirectory(params)
+    );
+  }
+
+  async reportGlobalSearchDirectoryReveal(
+    params: ApiParams<'reportGlobalSearchDirectoryReveal'>
+  ): ReturnType<OnlyPreviewApi['reportGlobalSearchDirectoryReveal']> {
+    return await runOperation(async () =>
+      onlyPreviewGlobalSearchXpcService.completeDirectoryReveal(params)
+    );
+  }
+
+  async closeGlobalSearch(
+    params: ApiParams<'closeGlobalSearch'>
+  ): ReturnType<OnlyPreviewApi['closeGlobalSearch']> {
+    return await runOperation(async () => onlyPreviewGlobalSearchXpcService.close(params));
   }
 
   async reportPreviewFindResult(

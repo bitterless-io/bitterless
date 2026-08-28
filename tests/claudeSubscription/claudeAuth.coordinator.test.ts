@@ -188,6 +188,9 @@ const createFixture = async (
   const ids = [...ACCOUNT_IDS];
   const repository = new ClaudeAccountRepository({
     rootDirectory,
+    // Slots live under the home directory and removal deletes them, so tests
+    // must never resolve a real one.
+    homeDirectory: path.join(rootDirectory, 'home'),
     isolatedCredentialStorageAvailable: options.isolatedCredentialStorageAvailable ?? true,
     createId: () => ids.shift() ?? ACCOUNT_IDS[2]!
   });
@@ -258,7 +261,8 @@ test('uses all isolated directories, gates one manual code, verifies, then saves
     assert.equal(identity, null, 'a provisional identity must not enter the registry');
     const context = fixture.ptyFactory.options[0]?.context;
     assert.ok(context);
-    assert.equal(context.configDirectory.endsWith('/profile'), true);
+    // Slots are ~/.claude<N>; see docs/features/claude-subscription-account-slots.md.
+    assert.match(context.configDirectory, /\/\.claude[2-9]\d*$/u);
     assert.equal(context.secureStorageConfigDirectory, context.configDirectory);
     assert.equal(context.anthropicConfigDirectory, path.join(context.configDirectory, 'anthropic'));
 

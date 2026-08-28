@@ -171,6 +171,20 @@ const fileResult = (resultToken) => ({
   mediaType: 'text'
 });
 
+const contentResult = {
+  section: 'contents',
+  resultToken: 'content-visible-order',
+  fileName: 'README.md',
+  relativePath: 'docs/README.md',
+  parentRelativePath: 'docs',
+  mediaType: 'text',
+  contentMatch: {
+    snippetText: 'before needle after',
+    highlightStart: 7,
+    highlightLength: 6
+  }
+};
+
 const directoryResult = {
   section: 'files',
   resultToken: 'directory-result-token',
@@ -342,18 +356,18 @@ test('explicit Project selection updates Current directory and only re-runs dire
   store.configureScheduler(() => {
     scheduled += 1;
   });
+  const directorySearchCount = searchCalls.length;
   context.currentDirectoryRelativePath = 'projects/bitterless';
   store.syncCurrentDirectory(context);
-  assert.equal(scheduled, 1);
-  assert.equal(cancelCalls.at(-1).requestId, searchCalls.at(-1).requestId);
-  await store.dispatchLatest();
+  assert.equal(scheduled, 0);
+  assert.equal(searchCalls.length, directorySearchCount + 1);
+  assert.equal(cancelCalls.at(-1).requestId, searchCalls.at(-2).requestId);
   assert.deepEqual(searchCalls.at(-1).scope, {
     kind: 'directory',
     relativePath: 'projects/bitterless'
   });
 
   store.setScopeKind('project');
-  await store.dispatchLatest();
   assert.deepEqual(searchCalls.at(-1).scope, { kind: 'project' });
 
   const projectScheduleCount = scheduled;
@@ -366,7 +380,6 @@ test('explicit Project selection updates Current directory and only re-runs dire
   assert.equal(cancelCalls.length, projectCancelCount);
 
   store.setScopeKind('directory');
-  await store.dispatchLatest();
   assert.deepEqual(searchCalls.at(-1).scope, {
     kind: 'directory',
     relativePath: 'docs'
@@ -456,6 +469,208 @@ test('superseded Shell search emits exactly one cancelled terminal', async () =>
     recorded.events.filter(({ event }) => event === 'shell-terminal').map(({ outcome }) => outcome),
     ['cancelled']
   );
+});
+
+test('query identity changes synchronously retire accepted prefix rows and fence stale replies', async () => {
+  const firstResponse = deferred();
+  const prefixContentResult = {
+    ...contentResult,
+    resultToken: 'ag-prefix-content',
+    contentMatch: { snippetText: 'ag', highlightStart: 0, highlightLength: 2 }
+  };
+  const context = {
+    workspaceId: 'workspace-query-identity',
+    generation: 16,
+    ready: true,
+    rootName: 'bitterless',
+    currentDirectoryRelativePath: 'docs'
+  };
+  globalThis.__globalSearchResponder = async () => await firstResponse.promise;
+  globalThis.__globalPreviewResponder = async () => ({
+    ok: true,
+    value: {
+      kind: 'text',
+      adapter: 'plain',
+      name: 'ag.txt',
+      text: 'ag',
+      truncated: false
+    }
+  });
+
+  let scheduled = 0;
+  store.exit();
+  store.configure(
+    () => context,
+    async () => true
+  );
+  store.configureScheduler(() => {
+    scheduled += 1;
+  });
+  store.enter();
+  store.setQuery('ag');
+  const firstDispatch = store.dispatchLatest();
+  await Promise.resolve();
+  const firstRequest = searchCalls.at(-1);
+  subscriptions.get('onlypreview/search-batch')({
+    params: {
+      hostId: 'host-global-search',
+      batch: {
+        workspaceId: context.workspaceId,
+        generation: context.generation,
+        requestId: firstRequest.requestId,
+        files: [fileResult('ag-prefix-result')],
+        contents: [prefixContentResult]
+      }
+    }
+  });
+  await new Promise((resolveFlush) => setImmediate(resolveFlush));
+  assert.equal(store.files.length, 1);
+  assert.equal(store.contents.length, 1);
+  assert.equal(store.selectedResult.resultToken, 'ag-prefix-content');
+  assert.equal(store.preview.text, 'ag');
+
+  const scheduledBeforeReplacement = scheduled;
+  store.setQuery('agent-runtime');
+  assert.equal(store.query, 'agent-runtime');
+  assert.deepEqual(store.files, []);
+  assert.deepEqual(store.contents, []);
+  assert.equal(store.selectedResult, null);
+  assert.equal(store.preview, null);
+  assert.equal(store.filesTruncated, false);
+  assert.equal(store.contentsTruncated, false);
+  assert.equal(store.error, '');
+  assert.equal(store.pending, true);
+  assert.equal(scheduled, scheduledBeforeReplacement + 1);
+  assert.equal(cancelCalls.at(-1).requestId, firstRequest.requestId);
+
+  firstResponse.resolve({
+    ok: true,
+    value: {
+      workspaceId: context.workspaceId,
+      generation: context.generation,
+      requestId: firstRequest.requestId,
+      files: [fileResult('stale-ag-terminal')],
+      contents: [{ ...prefixContentResult, resultToken: 'stale-ag-content' }],
+      filesTruncated: true,
+      contentsTruncated: true
+    }
+  });
+  await firstDispatch;
+  assert.deepEqual(store.files, []);
+  assert.deepEqual(store.contents, []);
+  assert.equal(store.selectedResult, null);
+  assert.equal(store.preview, null);
+  store.configureScheduler(() => undefined);
+});
+
+test('scope identity changes immediately dispatch both directions without the typing scheduler', async () => {
+  const projectResponse = deferred();
+  const directoryResponse = deferred();
+  let directoryDispatchCount = 0;
+  const context = {
+    workspaceId: 'workspace-scope-identity',
+    generation: 17,
+    ready: true,
+    rootName: 'bitterless',
+    currentDirectoryRelativePath: 'docs'
+  };
+  globalThis.__globalSearchResponder = async (request) => {
+    if (request.scope.kind === 'project') return await projectResponse.promise;
+    directoryDispatchCount += 1;
+    if (directoryDispatchCount > 1) return await directoryResponse.promise;
+    return {
+      ok: true,
+      value: {
+        workspaceId: context.workspaceId,
+        generation: context.generation,
+        requestId: request.requestId,
+        files: [fileResult('initial-directory-result')],
+        contents: [],
+        filesTruncated: false,
+        contentsTruncated: false
+      }
+    };
+  };
+  globalThis.__globalPreviewResponder = async () => ({
+    ok: true,
+    value: {
+      kind: 'text',
+      adapter: 'plain',
+      name: 'README.md',
+      text: 'needle',
+      truncated: false
+    }
+  });
+
+  store.exit();
+  store.configure(
+    () => context,
+    async () => true
+  );
+  store.configureScheduler(() => undefined);
+  store.enter();
+  store.setQuery('needle');
+  await store.dispatchLatest();
+  assert.equal(store.files.length, 1);
+
+  let scheduled = 0;
+  store.configureScheduler(() => {
+    scheduled += 1;
+  });
+  const callsBeforeScopeChanges = searchCalls.length;
+  store.setScopeKind('project');
+  assert.equal(searchCalls.length, callsBeforeScopeChanges + 1);
+  assert.deepEqual(searchCalls.at(-1).scope, { kind: 'project' });
+  assert.deepEqual(store.files, []);
+  assert.equal(store.pending, true);
+
+  store.setScopeKind('directory');
+  assert.equal(searchCalls.length, callsBeforeScopeChanges + 2);
+  assert.deepEqual(searchCalls.at(-1).scope, {
+    kind: 'directory',
+    relativePath: 'docs'
+  });
+  assert.equal(scheduled, 0);
+
+  const projectRequest = searchCalls.at(-2);
+  projectResponse.resolve({
+    ok: true,
+    value: {
+      workspaceId: context.workspaceId,
+      generation: context.generation,
+      requestId: projectRequest.requestId,
+      files: [fileResult('stale-project-result')],
+      contents: [],
+      filesTruncated: false,
+      contentsTruncated: false
+    }
+  });
+  await new Promise((resolveFlush) => setImmediate(resolveFlush));
+  assert.deepEqual(store.files, []);
+
+  const directoryRequest = searchCalls.at(-1);
+  directoryResponse.resolve({
+    ok: true,
+    value: {
+      workspaceId: context.workspaceId,
+      generation: context.generation,
+      requestId: directoryRequest.requestId,
+      files: [fileResult('fresh-directory-result')],
+      contents: [],
+      filesTruncated: false,
+      contentsTruncated: false
+    }
+  });
+  await new Promise((resolveFlush) => setImmediate(resolveFlush));
+  assert.equal(store.files[0].resultToken, 'fresh-directory-result');
+
+  store.setQuery('');
+  const callsBeforeEmptyScopeChanges = searchCalls.length;
+  store.setScopeKind('project');
+  store.setScopeKind('directory');
+  assert.equal(searchCalls.length, callsBeforeEmptyScopeChanges);
+  assert.equal(scheduled, 0);
+  store.configureScheduler(() => undefined);
 });
 
 test('directory open publishes one centered Project focus intent only after reveal succeeds', async () => {
@@ -566,15 +781,99 @@ test('every fresh Global Search entry expands Files and Contents and keeps the o
   assert.equal(store.previewPercent, 61);
 });
 
-test('Shell, Vue, and Chrome entries keep the first Escape for clear and the second for close', () => {
+test('linear selection follows Contents then Files and each collapsed pane remains independent', async () => {
+  const context = {
+    workspaceId: 'workspace-visible-order',
+    generation: 15,
+    ready: true,
+    rootName: 'bitterless',
+    currentDirectoryRelativePath: 'docs'
+  };
+  globalThis.__globalSearchResponder = async (request) => ({
+    ok: true,
+    value: {
+      workspaceId: context.workspaceId,
+      generation: context.generation,
+      requestId: request.requestId,
+      files: [fileResult('file-visible-order')],
+      contents: [contentResult],
+      filesTruncated: false,
+      contentsTruncated: false
+    }
+  });
+  globalThis.__globalPreviewResponder = async () => ({
+    ok: true,
+    value: {
+      kind: 'text',
+      adapter: 'markdown',
+      name: 'README.md',
+      text: '# File head\nneedle after',
+      truncated: false
+    }
+  });
+
+  store.exit();
+  store.configure(() => context, async () => true);
+  store.configureScheduler(() => undefined);
+  store.enter();
+  store.setQuery('needle');
+  await store.dispatchLatest();
+
+  assert.deepEqual(
+    store.visibleResults.map(({ resultToken }) => resultToken),
+    ['content-visible-order', 'file-visible-order']
+  );
+  assert.equal(store.selectedResult.resultToken, 'content-visible-order');
+  store.moveSelection(1);
+  assert.equal(store.selectedResult.resultToken, 'file-visible-order');
+
+  store.toggleGroup('contents', false);
+  assert.deepEqual(
+    store.visibleResults.map(({ resultToken }) => resultToken),
+    ['file-visible-order']
+  );
+  assert.equal(store.filesCollapsed, false);
+
+  store.toggleGroup('contents', true);
+  store.toggleGroup('files', false);
+  assert.deepEqual(
+    store.visibleResults.map(({ resultToken }) => resultToken),
+    ['content-visible-order']
+  );
+  assert.equal(store.contentsCollapsed, false);
+});
+
+test('Shell, Vue, and Chrome entries keep the first Escape for clear and the second for close', async () => {
   for (const origin of ['shell', 'vue', 'chrome']) {
     store.exit();
     store.enter(origin);
     store.setQuery('needle');
-    store.handleEscape();
+    await store.handleEscape();
     assert.equal(store.active, true);
     assert.equal(store.query, '');
-    store.handleEscape();
+    await store.handleEscape();
     assert.equal(store.active, false);
   }
+});
+
+test('body-gutter dismiss and empty-query Escape share the opener close path', async () => {
+  const closeModes = [];
+  store.exit();
+  store.configure(
+    () => null,
+    async () => true,
+    async (mode) => closeModes.push(mode)
+  );
+
+  store.enter('chrome');
+  await store.dismiss();
+  assert.deepEqual(closeModes, ['opener']);
+  assert.equal(store.active, false);
+  assert.equal(store.restoreFocusOnExit, false);
+
+  store.enter('vue');
+  await store.handleEscape();
+  assert.deepEqual(closeModes, ['opener', 'opener']);
+  assert.equal(store.active, false);
+  assert.equal(store.restoreFocusOnExit, false);
 });

@@ -451,6 +451,7 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
   const globalSearchWorkspace = source(
     'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.vue'
   );
+  const globalSearchApp = source('src/renderer/onlypreview/globalSearch/src/App.vue');
   const app = source('src/renderer/onlypreview/shell/src/App.vue');
   const previewStore = source('src/renderer/onlypreview/preview/src/onlyPreviewPreview.store.ts');
   const findService = source('src/main/onlypreview/views/onlyPreviewFind.service.ts');
@@ -474,12 +475,15 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
   assert.match(toolbarStyles, /@container \(max-width:\s*520px\)/);
   assert.match(toolbarStyles, /@container \(max-width:\s*440px\)/);
 
-  assert.match(app, /onlyPreviewGlobalSearchStore\.active/);
+  assert.doesNotMatch(app, /onlyPreviewGlobalSearchStore|GlobalSearchWorkspace/);
+  assert.match(globalSearchApp, /<GlobalSearchWorkspace \/>/);
   assert.match(globalSearchWorkspace, /ref="inputRef"/);
   assert.match(previewStore, /ONLY_PREVIEW_FIND_STATE_EVENT/);
   assert.match(previewStore, /nativeFindSuppressesSelection/);
   assert.match(previewStore, /presentation\.adapterId === 'markdown-dom'/);
-  assert.match(previewStore, /presentation\.adapterId === 'docx-dom'/);
+  assert.doesNotMatch(previewStore, /presentation\.adapterId === 'docx-dom'/);
+  assert.match(previewStore, /\['ooxml-xlsx', 'ooxml-docx', 'ooxml-pptx'\]\.includes/);
+  assert.match(previewStore, /reportReady\(selectionRevision, \{ kind: 'complete' \}, 'office'\)/);
   assert.match(previewStore, /broadcastCharacterCount\(0\)/);
   assert.doesNotMatch(findService, /activateSelection/);
   assert.doesNotMatch(monacoFind, /setSelection\s*\(/);
@@ -497,6 +501,7 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
   assert.match(windowHelper, /if \(isCurrentFileFindShortcut\(input\)\) return 'find-in-file'/);
   assert.match(windowHelper, /createView\(host, 'shell'\)/);
   assert.match(windowHelper, /createView\(host, 'preview', previewRuntimeToken\)/);
+  assert.match(windowHelper, /createView\(host, 'globalSearch'\)/);
   assert.match(windowHelper, /bindChromeShortcuts: \(webContents\)/);
 });
 
@@ -553,11 +558,11 @@ test('Main shortcut predicates reserve Shift+CommandOrControl+F for Global Searc
   );
   assert.match(
     shortcutBindingBody,
-    /command === 'focus-search'[\s\S]*closeFind\(host\.hostToken\)[\s\S]*onlyPreviewGlobalSearchFocusService\.capture\(host\.hostToken, origin, webContents\)[\s\S]*this\.shellView\.webContents\.focus\(\)[\s\S]*ONLY_PREVIEW_FOCUS_SEARCH_EVENT[\s\S]*\{ hostId: host\.hostId, origin \}/
+    /command === 'focus-search'[\s\S]*closeFind\(host\.hostToken\)[\s\S]*onlyPreviewGlobalSearchWindowService\.open\(host, origin, webContents\)/
   );
   const globalSearchBranch = shortcutBindingBody.slice(
     shortcutBindingBody.indexOf("if (command === 'focus-search')"),
     shortcutBindingBody.indexOf("if (command === 'focus-project')")
   );
-  assert.doesNotMatch(globalSearchBranch, /focusActiveContent/);
+  assert.doesNotMatch(globalSearchBranch, /focusActiveContent|shellView\.webContents\.focus|xpcMain\.broadcast/);
 });

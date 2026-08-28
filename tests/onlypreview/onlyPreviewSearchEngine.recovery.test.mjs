@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -135,7 +135,20 @@ test('schema 7 upgrades additively and warms files and Contents before rebuildin
   await withTempDirectory(async (temp) => {
     const rootPath = join(temp, 'workspace');
     const databasePath = join(temp, 'cache', 'search.sqlite');
-    await write(join(rootPath, 'legacy-folder', 'legacy-file.txt'), 'legacy searchable body');
+    await write(
+      join(rootPath, '.bitterless', 'preview-config.yml'),
+      "version: 1\nexclude:\n  - legacy/**\n  - '!legacy/legacy-folder/**'\n"
+    );
+    await write(
+      join(rootPath, 'legacy', 'legacy-folder', 'legacy-file.txt'),
+      'legacy searchable body'
+    );
+    await write(
+      join(rootPath, 'legacy', 'legacy-folder', 'legacy-deleted', 'legacy-deleted.txt'),
+      'legacy deleted searchable body'
+    );
+    await mkdir(join(rootPath, 'empty-folder-only'));
+    await symlink('legacy/legacy-folder/legacy-file.txt', join(rootPath, 'legacy-link'));
     const seededEngine = createOnlyPreviewSearchEngine();
     await seededEngine.initialize({
       workspaceId: 'seed-workspace',
@@ -144,6 +157,10 @@ test('schema 7 upgrades additively and warms files and Contents before rebuildin
       databasePath
     });
     await seededEngine.shutdown();
+    await rm(join(rootPath, 'legacy', 'legacy-folder', 'legacy-deleted'), {
+      recursive: true,
+      force: true
+    });
 
     const legacy = new DatabaseSync(databasePath);
     const beforeCounts = {
@@ -190,7 +207,21 @@ test('schema 7 upgrades additively and warms files and Contents before rebuildin
     assert.equal(migratedTree.treeMetadataReady, false);
     assert.deepEqual(
       migratedTree.entries.map(({ relativePath, nodeKind }) => [relativePath, nodeKind]),
-      [['legacy-folder/legacy-file.txt', 'file']]
+      [
+        ['legacy', 'directory'],
+        ['legacy/legacy-folder', 'directory'],
+        ['legacy/legacy-folder/legacy-deleted', 'directory'],
+        ['legacy/legacy-folder/legacy-deleted/legacy-deleted.txt', 'file'],
+        ['legacy/legacy-folder/legacy-file.txt', 'file']
+      ]
+    );
+    assert.equal(
+      migratedTree.entries.some(({ relativePath }) => relativePath === 'empty-folder-only'),
+      false
+    );
+    assert.equal(
+      migratedTree.entries.some(({ relativePath }) => relativePath === 'legacy-link'),
+      false
     );
     assert.equal(
       (
@@ -225,7 +256,15 @@ test('schema 7 upgrades additively and warms files and Contents before rebuildin
       assert.equal(engine.treeMetadataReady, false);
       assert.equal(
         engine.treeEntries.some(({ nodeKind }) => nodeKind === 'directory'),
+        true
+      );
+      assert.equal(
+        engine.treeEntries.some(({ relativePath }) => relativePath === 'legacy'),
         false
+      );
+      assert.equal(
+        engine.treeEntries.some(({ relativePath }) => relativePath === 'legacy/legacy-folder'),
+        true
       );
       const firstWarmFiles = deferred();
       const firstWarmContents = deferred();
@@ -254,24 +293,45 @@ test('schema 7 upgrades additively and warms files and Contents before rebuildin
       assert.equal(
         warmResults.some(
           ({ section, relativePath }) =>
-            section === 'files' && relativePath === 'legacy-folder/legacy-file.txt'
+            section === 'files' && relativePath === 'legacy/legacy-folder'
         ),
         true
       );
       assert.equal(
         warmResults.some(
           ({ section, relativePath }) =>
-            section === 'contents' && relativePath === 'legacy-folder/legacy-file.txt'
+            section === 'files' && relativePath === 'legacy'
+        ),
+        false
+      );
+      assert.equal(
+        warmResults.some(
+          ({ section, relativePath }) =>
+            section === 'contents' && relativePath === 'legacy/legacy-folder/legacy-file.txt'
         ),
         true
       );
+      const deletedDirectoryToken = warmResults.find(
+        ({ section, relativePath }) =>
+          section === 'files' && relativePath === 'legacy/legacy-folder/legacy-deleted'
+      )?.resultToken;
+      assert.equal(typeof deletedDirectoryToken, 'string');
       allowPromotion.resolve();
       await initialize;
       const terminal = await searching;
       assert.deepEqual(terminal.files.map(({ relativePath }) => relativePath), [
-        'legacy-folder',
-        'legacy-folder/legacy-file.txt'
+        'legacy/legacy-folder',
+        'legacy/legacy-folder/legacy-file.txt'
       ]);
+      await assert.rejects(() =>
+        engine.preview({
+          workspaceId: 'workspace',
+          generation: 2,
+          requestId: 'migrated-warm-search',
+          resultToken: deletedDirectoryToken,
+          isCancelled: () => false
+        })
+      );
     } finally {
       allowPromotion.resolve();
       await Promise.allSettled([initialize, searching].filter(Boolean));
@@ -285,7 +345,7 @@ test('schema 7 upgrades additively and warms files and Contents before rebuildin
         .readTreeSnapshot()
         .entries.some(
           ({ relativePath, nodeKind }) =>
-            relativePath === 'legacy-folder' && nodeKind === 'directory'
+            relativePath === 'legacy/legacy-folder' && nodeKind === 'directory'
         ),
       true
     );
@@ -297,7 +357,10 @@ test('schema 7 upgrades additively and warms files and Contents before rebuildin
     const failedClosedTree = mismatched.readTreeSnapshot();
     assert.equal(failedClosedTree.treeMetadataReady, false);
     assert.equal(
-      failedClosedTree.entries.every(({ nodeKind }) => nodeKind === 'file'),
+      failedClosedTree.entries.some(
+        ({ relativePath, nodeKind }) =>
+          relativePath === 'legacy/legacy-folder' && nodeKind === 'directory'
+      ),
       true
     );
     const buildId = mismatched.buildState.read().buildId;
@@ -462,6 +525,68 @@ test('candidate failure and cancellation preserve the active index and remove ar
   });
 });
 
+test('initialization reclaims only exact interrupted artifacts for its database basename', async () => {
+  await withTempDirectory(async (temp) => {
+    const rootPath = join(temp, 'workspace');
+    const cachePath = join(temp, 'cache');
+    const databasePath = join(cachePath, 'search.sqlite');
+    await write(join(rootPath, 'active.txt'), 'preserved active search value');
+    const seededEngine = createOnlyPreviewSearchEngine();
+    await seededEngine.initialize({
+      workspaceId: 'seed-workspace',
+      generation: 1,
+      rootPath,
+      databasePath
+    });
+    await seededEngine.shutdown();
+
+    const candidateId = '11111111-2222-4333-8444-555555555555';
+    const previousId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const reclaimed = [
+      `search.sqlite.candidate-${candidateId}`,
+      `search.sqlite.candidate-${candidateId}-wal`,
+      `search.sqlite.candidate-${candidateId}-shm`,
+      `search.sqlite.previous-${previousId}`,
+      `search.sqlite.previous-${previousId}-wal`,
+      `search.sqlite.previous-${previousId}-shm`
+    ];
+    const preserved = [
+      `other.sqlite.candidate-${candidateId}`,
+      `other.sqlite.candidate-${candidateId}-wal`,
+      `search.sqlite.candidate-not-a-uuid`,
+      `search.sqlite.previous-${previousId}.extra`
+    ];
+    for (const name of [...reclaimed, ...preserved]) {
+      await write(join(cachePath, name), 'artifact sentinel');
+    }
+
+    const engine = createOnlyPreviewSearchEngine();
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 2,
+      rootPath,
+      databasePath
+    });
+    const remaining = new Set(await readdir(cachePath));
+    for (const name of reclaimed) assert.equal(remaining.has(name), false, name);
+    for (const name of preserved) assert.equal(remaining.has(name), true, name);
+    assert.equal(
+      (
+        await engine.search({
+          workspaceId: 'workspace',
+          generation: 2,
+          requestId: 'artifact-active-index',
+          query: 'preserved active search value',
+          maxResults: 10,
+          scope: { kind: 'project' }
+        })
+      ).contents.length,
+      1
+    );
+    await engine.shutdown();
+  });
+});
+
 test('bounded watch invalidates before mutation failure and restores a matching tree marker on success', async () => {
   await withTempDirectory(async (temp) => {
     const rootPath = join(temp, 'workspace');
@@ -494,7 +619,12 @@ test('bounded watch invalidates before mutation failure and restores a matching 
     );
     assert.equal(engine.index.readTreeSnapshot().treeMetadataReady, false);
     assert.equal(engine.treeMetadataReady, false);
-    assert.equal(engine.treeEntries.every(({ nodeKind }) => nodeKind === 'file'), true);
+    assert.equal(
+      engine.treeEntries.some(
+        ({ relativePath, nodeKind }) => relativePath === 'folder' && nodeKind === 'directory'
+      ),
+      true
+    );
     assert.equal(
       (
         await engine.search({

@@ -290,7 +290,7 @@ export class OnlyPreviewFindService {
       return { ...identity, state: 'unavailable', reason: unavailableReason(presentation) };
     }
     const coverage =
-      presentation.adapterId === 'xlsx-grid' ? this.readyCoverage : COMPLETE_COVERAGE;
+      spec.find.mode === 'content-adapter' ? this.readyCoverage : COMPLETE_COVERAGE;
     if (!coverage) return { ...identity, state: 'pending' };
     return {
       ...identity,

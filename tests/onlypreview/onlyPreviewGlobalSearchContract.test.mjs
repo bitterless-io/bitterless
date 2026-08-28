@@ -144,4 +144,15 @@ test('preview variants are bounded and never carry authority paths', () => {
     }),
     false
   );
+  assert.equal(
+    runtime.isOnlyPreviewGlobalSearchPreview({
+      kind: 'context',
+      name: 'readme.md',
+      before: 'before ',
+      match: 'needle',
+      after: ' after',
+      truncated: false
+    }),
+    false
+  );
 });

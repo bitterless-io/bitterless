@@ -123,6 +123,7 @@ const isDescriptor = (value: unknown): value is OnlyPreviewDescriptor => {
       value.kind === 'video' ||
       value.kind === 'sheet' ||
       value.kind === 'document' ||
+      value.kind === 'presentation' ||
       value.kind === 'diagram' ||
       value.kind === 'unsupported') &&
     typeof value.mimeType === 'string' &&
@@ -175,8 +176,9 @@ export const isOnlyPreviewPresentation = (
       value.adapterId === 'image' ||
       value.adapterId === 'audio' ||
       value.adapterId === 'video' ||
-      value.adapterId === 'xlsx-grid' ||
-      value.adapterId === 'docx-dom' ||
+      value.adapterId === 'ooxml-xlsx' ||
+      value.adapterId === 'ooxml-docx' ||
+      value.adapterId === 'ooxml-pptx' ||
       value.adapterId === 'drawio-viewer' ||
       value.adapterId === 'unsupported') &&
     (value.status === 'empty' ||

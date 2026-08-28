@@ -35,6 +35,9 @@ design document.
   HMR, activation, logout, and invalidation; legacy Home is a hidden-only compatibility runtime.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
+- [OnlyPreview indexing benchmark](features/onlypreview-indexing-benchmark.md) - `tests/indexing/`
+  measures open directory -> first Global Search over a deterministic corpus, in process and without
+  Electron, and guards the machine-independent invariants under `node --test`.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
   registry, hidden encrypted SQLite, and one global INDEX.
 - [BL Trench INDEX layout](features/trench-index-layout.md) - count-free INDEX navigation, Add CA,
@@ -89,9 +92,9 @@ design document.
   inside Omni with thinking disabled, one exact 60-second deadline, strict Zod output, and a
   dedicated sanitized translation log.
 - [Submodules mini app](features/submodules.md) - one watched directory, `.gitmodules`-derived
-  inventory, live per-submodule branch state, differ-first ordering by name or update time with a
-  per-view `Cmd+F` search, locate a submodule inside the running WebStorm, and one renderer hosted by
-  both the standalone window and an Omni cell.
+  two-level inventory with expandable nested submodules, live per-submodule branch state, differ-first
+  ordering by name or update time with a per-view `Cmd+F` search, locate a submodule inside the
+  running WebStorm, and one renderer hosted by both the standalone window and an Omni cell.
 - [Submodules Open spawns a second WebStorm window](issues/submodules-open-spawns-second-webstorm-window.md) -
   fixed; owner verification pending: the workspace root is the only project argument and the submodule
   is revealed through a file inside it.
@@ -168,13 +171,27 @@ design document.
   matrix for Chromium-direct HTML/PDF and Vue-rendered code/Markdown/Office/Draw.io/image/media,
   fidelity ceilings, truthful metadata failure states, adapter size policy, lazy Vue components,
   and `.cjs` parity with `.js` across Monaco, Project Search, and file associations.
+- [OnlyPreview Office OOXML renderers](plan/tasks/onlypreview-office-ooxml-renderers-077.md) -
+  in-progress unification of XLSX/XLSM, DOCX, and PPTX on pinned, per-format lazy
+  `@silurus/ooxml` viewers with bounded worker-mode rendering and complete model-backed
+  search/highlight.
 - [OnlyPreview Global Search and result preview](design/onlypreview-global-search.md) - remove the
-  Project-side search field, group global results into Files/Contents, render bounded lazy result
-  previews in the right workspace, and make the workspace root the first Project tree row.
+  Project-side search field, place Contents and Files in parallel result columns above one bounded
+  lazy file-content Preview, make the workspace root the first Project tree row, fence visible rows
+  by the exact current literal query, immediately rerun non-empty queries when Contents scope
+  changes, and float the complete rounded workspace inside a transparent Search view with a 24px
+  body gutter.
+- [Global Search bottom Preview shows match context instead of the file](issues/onlypreview-global-search-context-preview-wrong.md) -
+  implemented pending owner verification: preserve the Contents row snippet while replacing its
+  enlarged context panel with the same bounded VuePreview-style file-head rendering used by Files;
+  [task 073 review 1](plan/reviews/onlypreview-global-search-file-content-preview-073-1.md) passed
+  with no finding.
 - [OnlyPreview directory selection and Global Search file scope](issues/onlypreview-directory-selection-and-global-file-scope.md) -
-  implemented pending owner verification: single-click Current directory selection, double-click
-  expansion, project-wide file/directory names, directory-scoped Contents, and a deliberately
-  plaintext disposable file-search SQLite index.
+  tasks 038 and 072 implemented pending owner verification: single-click Current directory
+  selection, double-click row-body expansion, one-click arrow disclosure, project-wide
+  file/directory names, directory-scoped Contents, and a deliberately plaintext disposable
+  file-search SQLite index; [task 072 review 1](plan/reviews/onlypreview-tree-disclosure-toggle-072-1.md)
+  passed with no finding.
 - [OnlyPreview Search-exclusion Project markers](issues/onlypreview-search-exclusion-tree-markers.md) -
   implemented pending owner verification: pale-orange rows for excluded files, directories, and
   descendants, with solid accent-orange excluded folder icons and no extra filesystem I/O;
@@ -191,6 +208,26 @@ design document.
   [independent review 2](plan/reviews/onlypreview-warm-search-before-reconcile-042-2.md) passed, as
   did the diagnostic timeline's
   [independent review 3](plan/reviews/onlypreview-search-startup-diagnostics-041-3.md).
+- [OnlyPreview cold folder search and PDF overlay ordering](issues/onlypreview-cold-folder-search-and-native-search-overlay.md) -
+  implemented pending owner verification: task
+  [043](plan/tasks/onlypreview-cold-folders-native-search-overlay-043.md) derives provisional warm
+  directory ancestors, bounds watcher/cache recovery, and moves Search into a dedicated topmost
+  `WebContentsView`; [independent review 10](plan/reviews/onlypreview-cold-folders-native-search-overlay-043-10.md)
+  passed with no P1/P2/P3 finding.
+- [OnlyPreview Files section rescans every tree entry on every query](issues/onlypreview-files-section-per-query-rescan.md) -
+  proposed: the Files group is answered by a scope-blind in-memory rescan costing 1.5us per tree entry
+  per query - about 200ms on a 130,000-entry workspace - while the normalised name it recomputes is
+  already stored in `files.normalized_title`. Task
+  [071](plan/tasks/onlypreview-files-section-sql-lookup-071.md) is blocked on one product decision:
+  does the Files group stay project-wide.
+- [OnlyPreview indexing plan comparison and evaluation](design/onlypreview-indexing-plan-evaluation.md) -
+  four indexing designs behind one interface, ten evaluation dimensions with the first four as gates,
+  a 39-gate lifecycle battery that was mutation-tested, and the measured ranking.
+- [OnlyPreview indexing throughput](design/onlypreview-indexing-throughput.md) - measured
+  open-directory-to-first-search cost: a 6000-file project takes 24.1s cold and 2.4s on every later
+  launch, 30% of the warm path is the redundant count plus candidate copy, and the cold build is
+  chunking, FTS trigram insert, commit frequency, and work-slicer pauses. Ranks seven repairs and
+  concludes that a `worker_threads` pool (4.8x) replaces the case for a Rust chunker (6.0x).
 
 The pre-Draw.io OnlyPreview designs were closed at the documented non-E2E implementation level after the
 [Task 025 completion audit PASS](plan/reviews/onlypreview-design-completion-025-1.md). Their ledger is

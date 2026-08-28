@@ -5,6 +5,13 @@ import { statSync, writeFileSync } from 'node:fs';
 
 const mode = process.argv[2] ?? 'final';
 
+/**
+ * Accounts live in `~/.claude<N>` slots allocated from 2 up, so "the first account"
+ * is the lowest slot. This used to match the account UUID inside the path; slots
+ * carry no UUID.
+ */
+const isFirstSlot = () => process.env.CLAUDE_CONFIG_DIR?.endsWith('.claude2') === true;
+
 const readStdin = async () => {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -44,7 +51,7 @@ if (isAuthLogout) {
 } else if (
   isAuthStatus &&
   (mode === 'preflight-hang' ||
-    (mode === 'preflight-hang-first' && process.env.CLAUDE_CONFIG_DIR?.includes('000000000001')))
+    (mode === 'preflight-hang-first' && isFirstSlot()))
 ) {
   process.stdin.resume();
   setInterval(() => undefined, 10_000);
@@ -155,7 +162,7 @@ if (isAuthLogout) {
       }
     });
   } else if (mode === 'failover') {
-    if (process.env.CLAUDE_CONFIG_DIR?.includes('000000000001')) {
+    if (isFirstSlot()) {
       writeResult(
         {
           is_error: true,

@@ -2,6 +2,10 @@ import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 
 import { BACKGROUND_BUILD_TRANSACTION_FILES, MAX_WATCH_CHANGE_PATHS } from './constants.mjs';
+import {
+  compareOnlyPreviewTreeEntries,
+  sortOnlyPreviewTreeEntries
+} from './tree-entries.mjs';
 import { isWorkspaceSearchPathWithinDepth } from './traversal.mjs';
 import {
   WORKSPACE_CONFIG_RELATIVE_PATH,
@@ -42,6 +46,10 @@ const pathHasAncestorIn = (relativePath, ancestors) => {
   return false;
 };
 
+const pathIsDefinitelyPhysicallyExcluded = (searchPolicy, relativePath) =>
+  searchPolicy.isPhysicallyExcludedPath(relativePath) &&
+  searchPolicy.canTraverseExcludedDirectoryPath?.(relativePath) !== true;
+
 const toTreeFileEntry = (entry) => ({
   relativePath: entry.relativePath,
   parentRelativePath:
@@ -72,27 +80,7 @@ const toTreeDirectoryEntry = ({ relativePath, modifiedMs }) => ({
   isText: false
 });
 
-const treeEntryCollator = new Intl.Collator('und', { numeric: true, sensitivity: 'base' });
-
-const compareOnlyPreviewTreeEntries = (left, right) => {
-  const leftSegments = left.relativePath.split('/');
-  const rightSegments = right.relativePath.split('/');
-  const length = Math.min(leftSegments.length, rightSegments.length);
-  for (let index = 0; index < length; index += 1) {
-    if (leftSegments[index] === rightSegments[index]) continue;
-    const leftIsParent = index === leftSegments.length - 1 && left.nodeKind === 'directory';
-    const rightIsParent = index === rightSegments.length - 1 && right.nodeKind === 'directory';
-    if (leftIsParent !== rightIsParent) return leftIsParent ? -1 : 1;
-    return (
-      treeEntryCollator.compare(leftSegments[index], rightSegments[index]) ||
-      leftSegments[index].localeCompare(rightSegments[index], 'und')
-    );
-  }
-  return leftSegments.length - rightSegments.length;
-};
-
-export const sortOnlyPreviewTreeEntries = (entries) =>
-  [...entries].sort(compareOnlyPreviewTreeEntries);
+export { sortOnlyPreviewTreeEntries } from './tree-entries.mjs';
 
 export const mergeOnlyPreviewTreeEntries = (leftEntries, rightEntries) => {
   const merged = [];
@@ -136,9 +124,38 @@ class OnlyPreviewSearchWatchReconciler {
 
   async apply({ full, paths, renamePaths = [] }) {
     const context = this.resolveContext();
-    if (!context.index) return;
+    const normalizedPaths = [];
+    const physicallyExcludedPaths = [];
+    let requiresFullReconcile = full === true;
+    for (const pathValue of paths) {
+      const relativePath = normalizedWatchRelativePath(pathValue);
+      if (!relativePath || relativePath === WORKSPACE_CONFIG_RELATIVE_PATH) {
+        requiresFullReconcile = true;
+        continue;
+      }
+      if (pathIsDefinitelyPhysicallyExcluded(context.searchPolicy, relativePath)) {
+        physicallyExcludedPaths.push(relativePath);
+        continue;
+      }
+      if (!isWorkspaceSearchPathWithinDepth(relativePath)) {
+        requiresFullReconcile = true;
+        continue;
+      }
+      normalizedPaths.push(relativePath);
+    }
+    if (physicallyExcludedPaths.length > 0) {
+      await this.commitPhysicallyExcludedPaths(context, physicallyExcludedPaths);
+    }
+    if (!context.index) {
+      if (requiresFullReconcile || normalizedPaths.length > 0) {
+        context.watchNeedsFullReconcile = true;
+      }
+      return;
+    }
     if (context.state !== 'ready') {
-      context.watchNeedsFullReconcile = true;
+      if (requiresFullReconcile || normalizedPaths.length > 0) {
+        context.watchNeedsFullReconcile = true;
+      }
       return;
     }
     if (!context.treeMetadataReady) {
@@ -146,25 +163,14 @@ class OnlyPreviewSearchWatchReconciler {
       this.emitWatchCommit(context, { full: true, paths: [] });
       return;
     }
-    if (full || paths.length > MAX_WATCH_CHANGE_PATHS) {
+    if (requiresFullReconcile || normalizedPaths.length > MAX_WATCH_CHANGE_PATHS) {
       await context.refreshFromWatchInternal();
       this.emitWatchCommit(context, { full: true, paths: [] });
       return;
     }
-    const normalizedPaths = [];
+    if (normalizedPaths.length === 0) return;
     const neededTreePaths = new Set();
-    for (const pathValue of paths) {
-      const relativePath = normalizedWatchRelativePath(pathValue);
-      if (
-        !relativePath ||
-        relativePath === WORKSPACE_CONFIG_RELATIVE_PATH ||
-        !isWorkspaceSearchPathWithinDepth(relativePath)
-      ) {
-        await context.refreshFromWatchInternal();
-        this.emitWatchCommit(context, { full: true, paths: [] });
-        return;
-      }
-      normalizedPaths.push(relativePath);
+    for (const relativePath of normalizedPaths) {
       neededTreePaths.add(relativePath);
       const parent = normalizedRelativePath(dirname(relativePath));
       if (parent && parent !== '.') neededTreePaths.add(parent);
@@ -181,9 +187,9 @@ class OnlyPreviewSearchWatchReconciler {
       return;
     }
     const committedPaths = new Set();
-    const renamePathSet = new Set(renamePaths);
+    const renamePathSet = new Set(renamePaths.map(normalizedWatchRelativePath).filter(Boolean));
     const mutations = [];
-    let requiresFullReconcile = false;
+    requiresFullReconcile = false;
     for (const relativePath of normalizedPaths) {
       committedPaths.add(relativePath);
       const renameHint = renamePathSet.has(relativePath);
@@ -370,7 +376,9 @@ class OnlyPreviewSearchWatchReconciler {
       } catch (error) {
         try {
           context.index.hydrateFilenameTier();
-          const safeTree = context.index.readTreeSnapshot();
+          const safeTree = context.index.readTreeSnapshot({
+            searchPolicy: context.activeSearchPolicy ?? context.searchPolicy
+          });
           context.treeEntries = sortOnlyPreviewTreeEntries(safeTree.entries);
           context.maxDepthReached = safeTree.maxDepthReached;
           context.treeMetadataReady = safeTree.treeMetadataReady;
@@ -392,6 +400,17 @@ class OnlyPreviewSearchWatchReconciler {
       await context.emitSnapshot();
       await this.emitBrowseListingsForChangedPaths(context, [...committedPaths]);
       this.emitWatchCommit(context, { full: false, paths: [...committedPaths] });
+    }
+  }
+
+  async commitPhysicallyExcludedPaths(context, relativePaths) {
+    const uniquePaths = [...new Set(relativePaths)];
+    await this.emitBrowseListingsForChangedPaths(context, uniquePaths);
+    for (let offset = 0; offset < uniquePaths.length; offset += MAX_WATCH_CHANGE_PATHS) {
+      this.emitWatchCommit(context, {
+        full: false,
+        paths: uniquePaths.slice(offset, offset + MAX_WATCH_CHANGE_PATHS)
+      });
     }
   }
 

@@ -12,6 +12,12 @@ export const ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorC
   'DOCUMENT_RENDER_TIMEOUT'
 ]);
 
+export const ONLY_PREVIEW_PRESENTATION_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  'PRESENTATION_PARSE_FAILED',
+  'PRESENTATION_EMPTY',
+  'PRESENTATION_RENDER_TIMEOUT'
+]);
+
 export const ONLY_PREVIEW_DIAGRAM_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'DIAGRAM_PARSE_FAILED',
   'DIAGRAM_LIMIT',
@@ -47,8 +53,9 @@ export const getOnlyPreviewDescriptorAdapter = (
       ? { surface: 'vue', adapterId: 'markdown-dom' }
       : { surface: 'vue', adapterId: 'monaco' };
   }
-  if (descriptor.kind === 'sheet') return { surface: 'vue', adapterId: 'xlsx-grid' };
-  if (descriptor.kind === 'document') return { surface: 'vue', adapterId: 'docx-dom' };
+  if (descriptor.kind === 'sheet') return { surface: 'vue', adapterId: 'ooxml-xlsx' };
+  if (descriptor.kind === 'document') return { surface: 'vue', adapterId: 'ooxml-docx' };
+  if (descriptor.kind === 'presentation') return { surface: 'vue', adapterId: 'ooxml-pptx' };
   if (descriptor.kind === 'diagram') return { surface: 'vue', adapterId: 'drawio-viewer' };
   if (descriptor.kind === 'image') return { surface: 'vue', adapterId: 'image' };
   if (descriptor.kind === 'audio') return { surface: 'vue', adapterId: 'audio' };
@@ -58,14 +65,19 @@ export const getOnlyPreviewDescriptorAdapter = (
 
 export const onlyPreviewAdapterProvidesSelectedText = (
   adapterId: OnlyPreviewPreviewAdapterId
-): boolean => adapterId === 'monaco' || adapterId === 'markdown-dom' || adapterId === 'docx-dom';
+): boolean =>
+  adapterId === 'monaco' ||
+  adapterId === 'markdown-dom' ||
+  adapterId === 'ooxml-docx' ||
+  adapterId === 'ooxml-pptx';
 
 export const onlyPreviewAdapterUsesOneShotAsset = (
   adapterId: OnlyPreviewPreviewAdapterId
 ): boolean =>
   adapterId === 'image' ||
-  adapterId === 'xlsx-grid' ||
-  adapterId === 'docx-dom' ||
+  adapterId === 'ooxml-xlsx' ||
+  adapterId === 'ooxml-docx' ||
+  adapterId === 'ooxml-pptx' ||
   adapterId === 'drawio-viewer';
 
 export const onlyPreviewAdapterUsesVueAsset = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>

@@ -8,7 +8,11 @@ import type {
   OnlyPreviewFindResult,
   OnlyPreviewFindResultRequest,
   OnlyPreviewFileRef,
-  OnlyPreviewGlobalSearchFocusRequest,
+  OnlyPreviewGlobalSearchContextReportRequest,
+  OnlyPreviewGlobalSearchContextSnapshot,
+  OnlyPreviewGlobalSearchCloseRequest,
+  OnlyPreviewGlobalSearchDirectoryRevealCompletion,
+  OnlyPreviewGlobalSearchDirectoryRevealRequest,
   OnlyPreviewResult,
   OnlyPreviewPreviewErrorRequest,
   OnlyPreviewPreviewReadyRequest,
@@ -217,17 +221,127 @@ export const parseOnlyPreviewProjectRootCopyRequest = (
   };
 };
 
-export const parseOnlyPreviewGlobalSearchFocusRequest = (
+export const parseOnlyPreviewGlobalSearchCloseRequest = (
   value: unknown
-): OnlyPreviewGlobalSearchFocusRequest => {
-  const record = expectRecord(value, 'Global Search focus request');
+): OnlyPreviewGlobalSearchCloseRequest => {
+  const record = expectRecord(value, 'Global Search close request');
   expectExactKeys(record, ['hostToken', 'mode']);
-  if (record.mode !== 'opener' && record.mode !== 'preview' && record.mode !== 'discard') {
-    throw new OnlyPreviewContractError('INVALID_INPUT', 'Global Search focus mode is invalid.');
+  if (
+    record.mode !== 'opener' &&
+    record.mode !== 'project' &&
+    record.mode !== 'preview' &&
+    record.mode !== 'discard'
+  ) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Global Search close mode is invalid.');
   }
   return {
     hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
     mode: record.mode
+  };
+};
+
+const expectBoundedDisplayText = (value: unknown, label: string): string => {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 1_024 ||
+    value.includes('\0')
+  ) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', `${label} is invalid.`);
+  }
+  return value;
+};
+
+export const parseOnlyPreviewGlobalSearchContextSnapshot = (
+  value: unknown
+): OnlyPreviewGlobalSearchContextSnapshot => {
+  const record = expectRecord(value, 'Global Search context snapshot');
+  expectExactKeys(record, ['revision', 'active', 'workspace']);
+  const revision = expectNonNegativeSafeInteger(record.revision, 'Global Search context revision');
+  if (typeof record.active !== 'boolean') {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Global Search visibility is invalid.');
+  }
+  if (record.workspace === null) return { revision, active: record.active, workspace: null };
+  const workspace = expectRecord(record.workspace, 'Global Search workspace context');
+  expectExactKeys(workspace, [
+    'workspaceId',
+    'generation',
+    'ready',
+    'rootName',
+    'currentDirectoryRelativePath'
+  ]);
+  if (typeof workspace.ready !== 'boolean') {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Global Search readiness is invalid.');
+  }
+  return {
+    revision,
+    active: record.active,
+    workspace: {
+      workspaceId: expectBoundedToken(workspace.workspaceId, 'Workspace capability'),
+      generation: expectNonNegativeSafeInteger(
+        workspace.generation,
+        'Global Search workspace generation'
+      ),
+      ready: workspace.ready,
+      rootName: expectBoundedDisplayText(workspace.rootName, 'Global Search root name'),
+      currentDirectoryRelativePath: normalizeOnlyPreviewRelativePath(
+        workspace.currentDirectoryRelativePath,
+        { allowEmpty: true }
+      )
+    }
+  };
+};
+
+export const parseOnlyPreviewGlobalSearchContextReportRequest = (
+  value: unknown
+): OnlyPreviewGlobalSearchContextReportRequest => {
+  const record = expectRecord(value, 'Global Search context report');
+  expectExactKeys(record, ['hostToken', 'workspace']);
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    workspace: parseOnlyPreviewGlobalSearchContextSnapshot({
+      revision: 0,
+      active: false,
+      workspace: record.workspace
+    }).workspace
+  };
+};
+
+export const parseOnlyPreviewGlobalSearchDirectoryRevealRequest = (
+  value: unknown
+): OnlyPreviewGlobalSearchDirectoryRevealRequest => {
+  const record = expectRecord(value, 'Global Search directory reveal request');
+  expectExactKeys(record, ['hostToken', 'workspaceId', 'generation', 'relativePath']);
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability'),
+    generation: expectNonNegativeSafeInteger(record.generation, 'Workspace generation'),
+    relativePath: normalizeOnlyPreviewRelativePath(record.relativePath, { allowEmpty: true })
+  };
+};
+
+export const parseOnlyPreviewGlobalSearchDirectoryRevealCompletion = (
+  value: unknown
+): OnlyPreviewGlobalSearchDirectoryRevealCompletion => {
+  const record = expectRecord(value, 'Global Search directory reveal completion');
+  expectExactKeys(record, [
+    'hostToken',
+    'actionId',
+    'workspaceId',
+    'generation',
+    'relativePath',
+    'succeeded'
+  ]);
+  if (typeof record.succeeded !== 'boolean') {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Directory reveal outcome is invalid.');
+  }
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    actionId: expectBoundedToken(record.actionId, 'Directory reveal action'),
+    workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability'),
+    generation: expectNonNegativeSafeInteger(record.generation, 'Workspace generation'),
+    relativePath: normalizeOnlyPreviewRelativePath(record.relativePath, { allowEmpty: true }),
+    succeeded: record.succeeded
   };
 };
 
@@ -332,7 +446,7 @@ export const parseOnlyPreviewPreviewReadyRequest = (
   if (
     record.findAdapter !== undefined &&
     record.findAdapter !== 'monaco' &&
-    record.findAdapter !== 'sheet'
+    record.findAdapter !== 'office'
   ) {
     throw new OnlyPreviewContractError('INVALID_INPUT', 'Preview find adapter is invalid.');
   }
@@ -343,7 +457,7 @@ export const parseOnlyPreviewPreviewReadyRequest = (
       : { findCoverage: parseOnlyPreviewFindCoverage(record.findCoverage) }),
     ...(record.findAdapter === undefined
       ? {}
-      : { findAdapter: record.findAdapter as 'monaco' | 'sheet' })
+      : { findAdapter: record.findAdapter as 'monaco' | 'office' })
   };
 };
 
@@ -472,6 +586,9 @@ export const parseOnlyPreviewPreviewErrorRequest = (
     'DOCUMENT_EMPTY',
     'DOCUMENT_SANITIZE_FAILED',
     'DOCUMENT_RENDER_TIMEOUT',
+    'PRESENTATION_PARSE_FAILED',
+    'PRESENTATION_EMPTY',
+    'PRESENTATION_RENDER_TIMEOUT',
     'DIAGRAM_PARSE_FAILED',
     'DIAGRAM_EMPTY',
     'DIAGRAM_LIMIT',

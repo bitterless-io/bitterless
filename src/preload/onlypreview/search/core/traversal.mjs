@@ -93,7 +93,8 @@ const createTreeEntry = ({ relativePath, stat, nodeKind, mediaType }) => ({
   nodeKind,
   size: nodeKind === 'file' ? stat.size : 0,
   modifiedAt: Math.trunc(stat.mtimeMs ?? 0),
-  previewHint: nodeKind === 'file' ? mediaTypeToPreviewHint(mediaType) : 'unsupported',
+  previewHint:
+    nodeKind === 'file' ? mediaTypeToPreviewHint(mediaType, relativePath) : 'unsupported',
   mediaType: nodeKind === 'file' ? mediaType : 'unknown',
   isText: nodeKind === 'file' && mediaType === 'text'
 });
@@ -450,7 +451,7 @@ export const readSingleWorkspaceFile = async ({ rootPath, relativePath, raceHook
       mediaType,
       contentIndexed: false,
       originalContent: '',
-      previewHint: mediaTypeToPreviewHint(mediaType),
+      previewHint: mediaTypeToPreviewHint(mediaType, relativePath),
       changed: true
     };
   }
@@ -480,7 +481,7 @@ export const readSingleWorkspaceFile = async ({ rootPath, relativePath, raceHook
       mediaType,
       contentIndexed: acceptedContent && classified.contentIndexed,
       originalContent: acceptedContent ? classified.originalContent : '',
-      previewHint: mediaTypeToPreviewHint(mediaType),
+      previewHint: mediaTypeToPreviewHint(mediaType, relativePath),
       ...(!acceptedContent ? { changed: true } : {})
     };
   } finally {
@@ -490,5 +491,5 @@ export const readSingleWorkspaceFile = async ({ rootPath, relativePath, raceHook
 
 export const classifyTreePathWithoutIo = (relativePath) => {
   const mediaType = classifySearchMediaType(relativePath);
-  return { mediaType, previewHint: mediaTypeToPreviewHint(mediaType) };
+  return { mediaType, previewHint: mediaTypeToPreviewHint(mediaType, relativePath) };
 };

@@ -9,10 +9,14 @@ One Bitterless Mini App that opens a directory, reads every Git submodule declar
    a native directory dialog owned by Main and persisted in Core SQLite (`setting` table,
    `key = submodules_workspace`, `sub_key = root`), so reopening the window restores the same
    directory without asking again.
-2. **Submodule inventory comes from `.gitmodules`.** The mini app never runs `git`. Main reads
-   `<root>/.gitmodules`, then for each declared submodule resolves its Git directory
+2. **Submodule inventory comes from `.gitmodules`, two levels deep.** The mini app never runs `git`.
+   Main reads `<root>/.gitmodules`, then for each declared submodule resolves its Git directory
    (`<submodule>/.git` directory, or the `gitdir:` pointer file a registered submodule uses) and
-   reads `HEAD` plus the referenced loose or packed ref.
+   reads `HEAD` plus the referenced loose or packed ref. A submodule that declares its own
+   `.gitmodules` (`micromeet-knowledge-governance` declares seven, `pet-service` one) contributes its
+   children as `entry.children`, read **exactly one level down** — a child always carries an empty
+   `children`, so a deep chain costs nothing. Each nesting parent adds a non-recursive watch on its
+   working-copy root (its own `.gitmodules`) and every child is watched like a top-level row.
 3. **Every entry reports one state:**
    - `ok` — HEAD points at a branch.
    - `detached` — HEAD points at a raw commit.
@@ -56,6 +60,9 @@ One Bitterless Mini App that opens a directory, reads every Git submodule declar
      its accessible name, and the dropdown sizes itself to the option text instead of being clipped
      to the 132px trigger.
 
+   Both levels are ordered by the same rules, each **within its own parent**: a drifted child leads
+   its siblings but never lifts its parent above another top-level row, so the tree keeps its shape.
+
    Main sorts once and publishes the ordered list. The **search box is renderer-only** and never
    persisted: it is a lookup, not a setting. It matches like the EyesOnAgents title filter — NFKC
    normalized, case-folded, split on whitespace/`-`/`_`/`.`/`/`/`\`/`:`/`|`, and every query token
@@ -65,6 +72,12 @@ One Bitterless Mini App that opens a directory, reads every Git submodule declar
    `Ctrl+F` all focus the box** on either platform (the renderer has no find-in-page of its own).
    The handler matches on `event.code === 'KeyF'` first, because macOS `Option+F` reports
    `event.key === 'ƒ'`. `Esc` clears the box and keeps focus.
+
+   Searching spans both levels and always renders what it found: a matched **parent** shows its whole
+   subtree, a matched **child** keeps its parent as context and lists only the matching children, and
+   either way the subtree is rendered whatever the collapsed state was — hiding a hit behind a
+   chevron would make the search look broken. Expansion itself is per-view runtime state (a set of
+   absolute paths), so it survives snapshots but not a restart, and it is never persisted.
 8. **"Recently changed" is Git state, not a working-tree walk.** `changedAt` is the newest mtime among
    five paths per submodule: the directory entry, `HEAD`, `index`, `packed-refs`, and the `refs` tree.
    Commit, checkout, branch switch, fetch, `add`, and any `status` that refreshes the index all move
@@ -160,6 +173,7 @@ each Omni cell — is a pure view over that single runtime.
 | Scanner | `src/main/submodules/submoduleScanner.service.ts` |
 | Watcher | `src/main/submodules/submoduleWatcher.service.ts` |
 | Row order | `src/main/submodules/submoduleOrder.service.ts` |
+| Search and tree | `src/renderer/submodules/src/services/submoduleTree.service.ts` |
 | IDE reveal anchor | `src/main/submodules/ideReveal.service.ts` |
 | Runtime | `src/main/submodules/submodulesRuntime.service.ts` |
 | XPC handler | `src/main/xpc/submodules.handler.ts` |
@@ -179,13 +193,16 @@ watched: the search box takes the free width and the sort selector keeps a fixed
 window still fits both. The gear in the menu bar opens the settings popover holding **Show differ on
 top**. One row per submodule, ordered as contract #7 describes. Every row is exactly two lines:
 
-- **Line 1** — left: the submodule's own directory name. Right: branch tag, short commit, and the
+- **Line 1** — left: the expand/collapse chevron (only on a row that declares submodules; every other
+  first-level row reserves its 18px so names stay aligned) then the submodule's own directory name.
+  Right: branch tag, short commit, and the
   Open action as an icon-only [`IconBtn`](../../src/renderer/common/components/IconBtn/IconBtn.vue)
   (no `WebStorm` label, hover fill, 26px in this list).
 - **Line 2** — left: the declared relative path. Right: every warning — the
   `differs from .gitmodules` mismatch and the entry error.
 
-Because `.gitmodules` section names are path-shaped (`projects/bitterless`), the relative path belongs
+A second-level row is indented **12px** on top of the row's own 12px padding, carries no chevron of
+its own, and is otherwise the same two-line row. Because `.gitmodules` section names are path-shaped (`projects/bitterless`), the relative path belongs
 to line 2 alone and is never repeated in the title. A row carries no border in any state and no state
 dot, and it does not react to hover (owner decision 2026-08-20) — state is already carried by the
 branch tag and the line-2 warnings, so the only row-level state affordance is the `missing`/`error`
@@ -199,14 +216,21 @@ background, while hover feedback belongs to the action button alone:
 ├────────────────────────────────────────────────────────────────────────┤
 │ [🔍 Search (⌘F)                           ]        [ Name        ▾]   │  controls row
 ├────────────────────────────────────────────────────────────────────────┤
-│ micromeet-mono                              [ main ]  9f8e7d6     [↗]  │  differ first
-│ projects/micromeet-mono                       ⚠ differs from .gitmodules│
+│   micromeet-mono                            [ main ]  9f8e7d6     [↗]  │  differ first
+│   projects/micromeet-mono                     ⚠ differs from .gitmodules│
 │                                                                        │
-│ bitterless                               [ dev/next ]  a1b2c3d    [↗]  │
-│ projects/bitterless                                                    │
+│ ▾ micromeet-knowledge-governance          [ main ]  4d5e6f7      [↗]  │  has children
+│   projects/micromeet-knowledge-governance                              │
+│     gov-exec                              [ main ]  1a2b3c4      [↗]  │  ← indented 12px
+│     projects/gov-exec                                                  │
+│     feishu-bot                            [ main ]  5f6a7b8      [↗]  │
+│     projects/feishu-bot                                                │
 │                                                                        │
-│ rig                                      [ detached ]  a7c1e4b    [↗]  │
-│ projects/rig                                                           │
+│ ▸ pet-service                             [ main ]  8c9d0e1      [↗]  │  collapsed
+│   projects/pet-service                                                 │
+│                                                                        │
+│   bitterless                             [ dev/next ]  a1b2c3d    [↗]  │
+│   projects/bitterless                                                  │
 └────────────────────────────────────────────────────────────────────────┘
 
         gear popover

@@ -29,17 +29,12 @@ import {
   isOnlyPreviewPresentationNudge,
   sameOnlyPreviewSelection
 } from '../../common/onlyPreviewPresentation.service';
-import {
-  OnlyPreviewDocumentSession,
-  type OnlyPreviewDocumentRender
-} from './onlyPreviewDocument.service';
 import type { OnlyPreviewDrawioContent } from './onlyPreviewDrawio.service';
 import { OnlyPreviewDrawioSelectionStore } from './onlyPreviewDrawioSelection.store';
 import { OnlyPreviewImageSession, type OnlyPreviewImageRender } from './onlyPreviewImage.service';
 import { OnlyPreviewMediaSession } from './onlyPreviewMedia.service';
-import { OnlyPreviewSheetSession } from './onlyPreviewSheet.service';
-import type { OnlyPreviewSheetManifest } from './workers/onlyPreviewSheetWorker.contract';
 import { onlyPreviewFindAdapterBridge } from './onlyPreviewFindAdapter.service';
+import { OnlyPreviewOfficeSession } from './onlyPreviewOfficeSession.service';
 
 const toRendererError = (error: unknown): { code: OnlyPreviewErrorCode; message: string } => {
   const contractError = error instanceof OnlyPreviewContractError ? error : null;
@@ -66,10 +61,7 @@ class OnlyPreviewPreviewStore {
   currentRef: OnlyPreviewFileRef | null = null;
   descriptor: OnlyPreviewDescriptor | null = null;
   textContent: OnlyPreviewTextContent | null = null;
-  sheetSession: OnlyPreviewSheetSession | null = null;
-  sheetManifest: OnlyPreviewSheetManifest | null = null;
-  documentSession: OnlyPreviewDocumentSession | null = null;
-  documentContent: OnlyPreviewDocumentRender | null = null;
+  officeSession: OnlyPreviewOfficeSession | null = null;
   drawioContent: OnlyPreviewDrawioContent | null = null;
   imageSession: OnlyPreviewImageSession | null = null;
   imageContent: OnlyPreviewImageRender | null = null;
@@ -192,20 +184,23 @@ class OnlyPreviewPreviewStore {
     void this.reportError(selectionRevision, errorCode);
   }
 
-  reportSheetReady(reportingRevision: string): void {
+  reportOfficeReady(reportingRevision: string): void {
     const selectionRevision = Number(reportingRevision);
     if (
       !this.characterCountGate.isCurrent(reportingRevision) ||
       !Number.isSafeInteger(selectionRevision) ||
-      this.presentation?.adapterId !== 'xlsx-grid' ||
-      !this.sheetManifest ||
+      !this.presentation ||
+      !['ooxml-xlsx', 'ooxml-docx', 'ooxml-pptx'].includes(
+        this.presentation.adapterId
+      ) ||
+      !this.officeSession ||
       this.errorCode !== null
     ) {
       return;
     }
     this.loadedRevision = selectionRevision;
     this.loading = false;
-    void this.reportReady(selectionRevision, this.sheetManifest.coverage, 'sheet');
+    void this.reportReady(selectionRevision, { kind: 'complete' }, 'office');
   }
 
   reportMonacoReady(reportingRevision: string): void {
@@ -221,23 +216,6 @@ class OnlyPreviewPreviewStore {
     this.loadedRevision = selectionRevision;
     this.loading = false;
     void this.reportReady(selectionRevision, { kind: 'complete' }, 'monaco');
-  }
-
-  reportDocumentReady(reportingRevision: string): void {
-    const selectionRevision = Number(reportingRevision);
-    if (
-      !this.characterCountGate.isCurrent(reportingRevision) ||
-      !Number.isSafeInteger(selectionRevision) ||
-      this.presentation?.adapterId !== 'docx-dom' ||
-      !this.documentSession ||
-      !this.documentContent ||
-      this.errorCode !== null
-    ) {
-      return;
-    }
-    this.loadedRevision = selectionRevision;
-    this.loading = false;
-    void this.reportReady(selectionRevision);
   }
 
   dispose(): void {
@@ -316,7 +294,7 @@ class OnlyPreviewPreviewStore {
       presentation?.surface === 'vue' &&
       snapshot.state.selectionRevision === presentation.selectionRevision &&
       snapshot.state.surface === presentation.surface &&
-      (presentation.adapterId === 'markdown-dom' || presentation.adapterId === 'docx-dom');
+      presentation.adapterId === 'markdown-dom';
     if (suppressesSelection === this.nativeFindSuppressesSelection) return;
     this.nativeFindSuppressesSelection = suppressesSelection;
     this.broadcastCharacterCount(0);
@@ -492,59 +470,41 @@ class OnlyPreviewPreviewStore {
           );
         }
         this.textContent = textContent;
-      } else if (presentation.adapterId === 'xlsx-grid') {
+      } else if (
+        presentation.adapterId === 'ooxml-xlsx' ||
+        presentation.adapterId === 'ooxml-docx' ||
+        presentation.adapterId === 'ooxml-pptx'
+      ) {
         const assetUrl = presentation.descriptor?.assetUrl;
-        if (presentation.descriptor?.kind !== 'sheet' || !assetUrl) {
+        const expectedKind =
+          presentation.adapterId === 'ooxml-xlsx'
+            ? 'sheet'
+            : presentation.adapterId === 'ooxml-docx'
+              ? 'document'
+              : 'presentation';
+        if (presentation.descriptor?.kind !== expectedKind || !assetUrl) {
           throw new OnlyPreviewContractError(
             'INVALID_INPUT',
-            'Workbook preview is missing its revision-bound asset.'
+            'Office preview is missing its revision-bound asset.'
           );
         }
         const session = markRaw(
-          new OnlyPreviewSheetSession({
+          new OnlyPreviewOfficeSession({
             hostId: onlyPreviewEnv.hostId!,
             selectionRevision: revision,
-            onUnexpectedTerminal: (error) => {
-              this.handleUnexpectedSheetTerminal(
-                session,
-                generation,
-                revision,
-                reportingRevision,
-                error
-              );
-            }
+            kind:
+              presentation.adapterId === 'ooxml-xlsx'
+                ? 'xlsx'
+                : presentation.adapterId === 'ooxml-docx'
+                  ? 'docx'
+                  : 'pptx',
+            assetUrl,
+            expectedSize: presentation.descriptor.size,
+            onRuntimeError: (errorCode) =>
+              this.reportSurfaceError(String(revision), errorCode)
           })
         );
-        this.sheetSession = session;
-        const manifest = await session.load(assetUrl, presentation.descriptor.size);
-        if (!this.isCurrent(generation, revision)) {
-          session.dispose();
-          return;
-        }
-        this.sheetManifest = manifest;
-        await nextTick();
-        return;
-      } else if (presentation.adapterId === 'docx-dom') {
-        const assetUrl = presentation.descriptor?.assetUrl;
-        if (presentation.descriptor?.kind !== 'document' || !assetUrl) {
-          throw new OnlyPreviewContractError(
-            'INVALID_INPUT',
-            'Document preview is missing its revision-bound asset.'
-          );
-        }
-        const session = markRaw(
-          new OnlyPreviewDocumentSession({
-            hostId: onlyPreviewEnv.hostId!,
-            selectionRevision: revision
-          })
-        );
-        this.documentSession = session;
-        const content = await session.load(assetUrl, presentation.descriptor.size, document);
-        if (!this.isCurrent(generation, revision)) {
-          session.dispose();
-          return;
-        }
-        this.documentContent = markRaw(content);
+        this.officeSession = session;
         await nextTick();
         return;
       } else if (presentation.adapterId === 'drawio-viewer') {
@@ -642,37 +602,6 @@ class OnlyPreviewPreviewStore {
     );
   }
 
-  private handleUnexpectedSheetTerminal(
-    session: OnlyPreviewSheetSession,
-    generation: number,
-    selectionRevision: number,
-    reportingRevision: string,
-    error: OnlyPreviewContractError
-  ): void {
-    if (
-      this.sheetSession !== session ||
-      !this.isCurrent(generation, selectionRevision) ||
-      this.presentation?.adapterId !== 'xlsx-grid' ||
-      this.selectionReportingRevision !== reportingRevision ||
-      !this.characterCountGate.isCurrent(reportingRevision)
-    ) {
-      return;
-    }
-
-    this.characterCountGate.disarm(reportingRevision);
-    this.generation += 1;
-    this.sheetSession = null;
-    this.sheetManifest = null;
-    this.loadedRevision = -1;
-    this.loading = false;
-    const failure = toRendererError(error);
-    this.errorCode = failure.code;
-    this.errorMessage = failure.message;
-    this.presentationError = '';
-    this.descriptorErrorActive = true;
-    void this.reportError(selectionRevision, failure.code);
-  }
-
   private async acknowledgeReset(
     selectionRevision: number,
     fetchGeneration: number
@@ -712,7 +641,7 @@ class OnlyPreviewPreviewStore {
   private async reportReady(
     selectionRevision: number,
     findCoverage?: OnlyPreviewFindCoverage,
-    findAdapter?: 'monaco' | 'sheet'
+    findAdapter?: 'monaco' | 'office'
   ): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     const previewRuntimeToken = onlyPreviewEnv.previewRuntimeToken;
@@ -749,16 +678,9 @@ class OnlyPreviewPreviewStore {
     });
   }
 
-  private disposeSheetSession(): void {
-    this.sheetSession?.dispose();
-    this.sheetSession = null;
-    this.sheetManifest = null;
-  }
-
-  private disposeDocumentSession(): void {
-    this.documentSession?.dispose();
-    this.documentSession = null;
-    this.documentContent = null;
+  private disposeOfficeSession(): void {
+    this.officeSession?.dispose();
+    this.officeSession = null;
   }
 
   private disposeImageSession(): void {
@@ -774,8 +696,7 @@ class OnlyPreviewPreviewStore {
   }
 
   private disposeContentSessions(): void {
-    this.disposeSheetSession();
-    this.disposeDocumentSession();
+    this.disposeOfficeSession();
     this.drawioSelection.dispose();
     this.drawioContent = null;
     this.disposeImageSession();

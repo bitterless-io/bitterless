@@ -799,6 +799,8 @@ export const zh: typeof en = {
       searchShortcutMac: '搜索 (⌘F)',
       searchShortcutWin: '搜索 (Alt+F)',
       clearSearch: '清空搜索',
+      expandChildren: '展开 {count} 个子模块',
+      collapseChildren: '收起 {count} 个子模块',
       minimize: '最小化',
       maximize: '最大化',
       close: '关闭'

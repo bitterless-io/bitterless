@@ -117,6 +117,7 @@ const UNSUPPORTED_VIDEO_EXTENSIONS = new Set(['.mkv', '.avi', '.wmv', '.flv']);
 const UNSUPPORTED_DOCUMENT_EXTENSIONS = new Set(['.doc']);
 const SHEET_EXTENSIONS = new Set(['.xlsx', '.xlsm']);
 const DOCUMENT_EXTENSIONS = new Set(['.docx']);
+const PRESENTATION_EXTENSIONS = new Set(['.pptx']);
 const DIAGRAM_EXTENSIONS = new Set(['.drawio']);
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -144,6 +145,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   '.drawio': 'application/vnd.jgraph.mxfile'
 };
 
@@ -209,6 +211,7 @@ export const classifyOnlyPreviewExtension = (relativePath: string): OnlyPreviewK
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
   if (SHEET_EXTENSIONS.has(extension)) return 'sheet';
   if (DOCUMENT_EXTENSIONS.has(extension)) return 'document';
+  if (PRESENTATION_EXTENSIONS.has(extension)) return 'presentation';
   if (DIAGRAM_EXTENSIONS.has(extension)) return 'diagram';
   if (
     UNSUPPORTED_IMAGE_EXTENSIONS.has(extension) ||
@@ -324,7 +327,11 @@ const matchesSignature = (extension: string, sample: Uint8Array): boolean => {
     return asciiAt(sample, 4, 4) === 'ftyp';
   }
   if (extension === '.webm') return startsWithBytes(sample, [0x1a, 0x45, 0xdf, 0xa3]);
-  if (SHEET_EXTENSIONS.has(extension) || DOCUMENT_EXTENSIONS.has(extension)) {
+  if (
+    SHEET_EXTENSIONS.has(extension) ||
+    DOCUMENT_EXTENSIONS.has(extension) ||
+    PRESENTATION_EXTENSIONS.has(extension)
+  ) {
     return startsWithBytes(sample, [0x50, 0x4b, 0x03, 0x04]);
   }
   return false;
@@ -382,8 +389,9 @@ const adapterForClassification = (
   if (kind === 'image') return 'image';
   if (kind === 'audio') return 'audio';
   if (kind === 'video') return 'video';
-  if (kind === 'sheet') return 'xlsx-grid';
-  if (kind === 'document') return 'docx-dom';
+  if (kind === 'sheet') return 'ooxml-xlsx';
+  if (kind === 'document') return 'ooxml-docx';
+  if (kind === 'presentation') return 'ooxml-pptx';
   if (kind === 'diagram') return 'drawio-viewer';
   return 'unsupported';
 };
@@ -457,7 +465,10 @@ export class OnlyPreviewClassifierService {
 
     const sample = await readBounded(file.fileHandle, signatureBytesFor(extension));
     await this.workspaces.assertOpenedFileCurrent(file);
-    if ((kind === 'sheet' || kind === 'document') && isCompoundFileSignature(sample)) {
+    if (
+      (kind === 'sheet' || kind === 'document' || kind === 'presentation') &&
+      isCompoundFileSignature(sample)
+    ) {
       descriptor.previewError = {
         code: 'OOXML_ENCRYPTED',
         message: 'Password-protected Office files are not supported.'

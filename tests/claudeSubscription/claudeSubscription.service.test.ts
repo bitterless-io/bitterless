@@ -261,6 +261,9 @@ const createFixture = async (): Promise<ServiceFixture> => {
   const ids = [ACCOUNT_ID, SECOND_ACCOUNT_ID, NEW_ACCOUNT_ID];
   const repository = new ClaudeAccountRepository({
     rootDirectory,
+    // Slots live under the home directory and removal deletes them, so tests
+    // must never resolve a real one.
+    homeDirectory: path.join(rootDirectory, 'home'),
     isolatedCredentialStorageAvailable: true,
     createId: () => ids.shift() ?? NEW_ACCOUNT_ID
   });
@@ -729,6 +732,9 @@ test('corrupt local state degrades to a fixed metadata-only snapshot', async () 
   });
   const repository = new ClaudeAccountRepository({
     rootDirectory,
+    // Slots live under the home directory and removal deletes them, so tests
+    // must never resolve a real one.
+    homeDirectory: path.join(rootDirectory, 'home'),
     isolatedCredentialStorageAvailable: true,
     createId: () => ACCOUNT_ID
   });

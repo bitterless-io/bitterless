@@ -1,6 +1,7 @@
 # OnlyPreview Sub-Application
 
-Status: Accepted; tasks 032–037 implemented through independent review, owner verification pending
+Status: Accepted; tasks 032–048, 072, 073, and 076 implemented through independent review; Office
+OOXML unification task 077 in progress; owner verification pending
 
 ## Purpose And Boundary
 
@@ -8,8 +9,8 @@ OnlyPreview is Bitterless's read-only local-file workbench. Its visible picker o
 the user navigates a complete demand-loaded project tree on the left, and the selected file is
 previewed on the right without leaving Bitterless. Main-owned operating-system file-open routes may
 still target an individual file and derive its containing workspace. The current delivery covers
-source code, text, PDF, XLSX/XLSM workbooks, DOCX documents, Draw.io diagrams, image, audio, and
-video files used in development and ordinary desktop work.
+source code, text, PDF, XLSX/XLSM workbooks, DOCX documents, PPTX presentations, Draw.io diagrams,
+image, audio, and video files used in development and ordinary desktop work.
 
 OnlyPreview owns local file discovery, a persistent incremental search index, preview
 classification, read-only rendering, its app-specific preferences, and the standalone window
@@ -47,10 +48,10 @@ implementation contract inside Bitterless and contains no private user data.
 | Last canonical directory persistence and restore ordering                                        | Main OnlyPreview recent-directory service + Core SQLite `setting` table |
 | Exact media/PDF assets and contained HTML documents                                              | Main asset/document registries + session-scoped `bitterless-preview://` |
 | Rooted Project tree, Global Search, Preview toolbar/actions/Find Bar, status, inner bounds       | OnlyPreview Shell renderer                                              |
-| Monaco/Markdown/XLSX/DOCX/Draw.io/image/audio/video/unsupported presentation                     | app-owned Vue Preview surface                                           |
+| Monaco/Markdown/XLSX/DOCX/PPTX/Draw.io/image/audio/video/unsupported presentation                | app-owned Vue Preview surface                                           |
 | Executable contained HTML and Chromium PDF presentation                                          | disposable raw Chromium Preview surface                                 |
 | Monaco model/editor lifecycle and Vue readiness observations                                     | Vue Preview surface, fenced by Main revision/runtime token              |
-| Monaco/XLSX current-file find execution and active-match highlight                               | Vue Preview model adapters, fenced by Main command/runtime revision     |
+| Monaco/OOXML current-file find execution and active/all-match highlight                          | Vue Preview model adapters, fenced by Main command/runtime revision     |
 | Preferences                                                                                      | Main handler backed by `SettingDao`                                     |
 | Window geometry                                                                                  | existing `windowStateService`                                           |
 | Portable agent skill, setup Guide, and read-only agent open                                      | OnlyPreview skill service + local MCP bridge                            |
@@ -95,13 +96,14 @@ Main capability/XPC supervisor ── private typed XPC ── hidden fileSearch
   validates/clamps the rectangle to begin at or below y=75 (32px MenuBar + 43px toolbar), and does
   not create, load, or attach a content view before the first valid bounds arrive.
 - Main's Preview Region owns one monotonically increasing selection revision and attaches exactly
-  one content view: the app-owned Vue surface for code/Markdown/XLSX/DOCX/Draw.io/image/media/fallback states,
+  one content view: the app-owned Vue surface for code/Markdown/XLSX/DOCX/PPTX/Draw.io/image/media/fallback states,
   or a fresh raw Chromium surface for HTML/PDF. A transition first revokes old authority and detaches the
   old surface; resize cannot reattach it while the next descriptor is pending.
 - One Shell-owned Find Bar serves Shell, Vue, and raw Chromium shortcut entry. Main owns the only
-  accepted `findRevision`: HTML/PDF/Markdown/DOCX use the active view's `findInPage()`, Monaco uses
-  its complete accepted model with one active decoration, and XLSX uses the Worker accepted model
-  with truthful partial coverage only after a model cap. Draw.io phase one, image/audio/video, and
+  accepted `findRevision`: HTML/PDF/Markdown use the active view's `findInPage()`, Monaco uses its
+  complete accepted model with one active decoration, and XLSX/XLSM/DOCX/PPTX use the active
+  `@silurus/ooxml` viewer's complete model with all matches highlighted plus a distinct active
+  match. Draw.io phase one, image/audio/video, and
   unsupported expose no text capability and do not open a fake session.
 - File identity, type, and native file actions stay in the Shell toolbar even when classification,
   loading, or a content renderer fails. Presentation events carry only `{ hostId }` as an untrusted
@@ -131,7 +133,7 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 | Entry                  | Preload                 | Host mode    | Responsibility                                                                                 |
 | ---------------------- | ----------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
 | `onlypreview/shell`    | `onlypreview.js`        | `shell`      | MenuBar, tree/search, Preview toolbar/actions, status, and inner content-host bounds           |
-| `onlypreview/preview`  | `onlypreviewContent.js` | `preview`    | Vue-only Monaco/Markdown/XLSX/DOCX/Draw.io/image/audio/video/unsupported/loading/error surface |
+| `onlypreview/preview`  | `onlypreviewContent.js` | `preview`    | Vue-only Monaco/Markdown/XLSX/DOCX/PPTX/Draw.io/image/audio/video/unsupported/loading/error surface |
 | raw Chromium view      | none                    | none         | disposable contained HTML or built-in PDF viewer; no first-party renderer entry or host token  |
 | `onlypreview/settings` | `onlypreview.js`        | `settings`   | app-specific settings form                                                                     |
 | `onlypreview/guide`    | `onlypreview.js`        | `guide`      | one-copy MCP and portable Preview-skill setup                                                  |
@@ -371,21 +373,21 @@ delta, and about 1.412GB of SQLite disk footprint. Those prototype numbers guide
 do not prove the current product scope UI, local-filter semantics, background-renderer XPC relay,
 or selected-Preview refresh. Disk footprint is not RAM and is never summed into runtime memory.
 
-| Constraint                             | Product value                                                                                                                                            |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Maximum visible Global Search results  | 250 Files plus 250 Contents rows                                                                                                                          |
-| Global Search traversal depth          | 32; complete demand-loaded directory browsing is independent and has no global depth cap                                                                 |
-| Directory-name tier                    | rooted file + directory metadata; Global Search Files matches eligible names without opening bodies                                                       |
-| Search SQLite encryption               | none; persistent Contents index is completely unencrypted, disposable, and rebuilt from workspace files                                                  |
-| Global Search hidden policy            | every result below any dot-prefixed directory is physically absent; root dotfiles remain eligible unless separately excluded                             |
-| Global Search fixed exclusions         | `.git`, `node_modules`, `dist`, `build`, `out`, `output`, `.next`, `coverage`, `.cache`, `.turbo` at any depth; immutable against `!`                    |
-| Workspace config                       | flat version-1 ordered `exclude` globs in `.bitterless/preview-config.yml`                                                                               |
-| Symlink policy                         | leaf only, never recurse or index target content                                                                                                         |
-| Project tree/directory-preview sort     | directories first, then natural case-insensitive name order                                                                                              |
-| Global Search Files sort                | stable global partition: all matching folders first, then matching files; cap after partition                                                            |
-| Search normalization                   | NFKC plus established case policy, followed by original-text literal verification                                                                        |
-| Watch reconcile                        | 400ms trailing per changed path; overflow/error/missing filename triggers full reconcile                                                                 |
-| Runtime memory                         | strictly above 1GiB advisory; strictly above 2GiB sets `performanceAccepted=false` and `stop=false` without invalidating the recorded artifact or method |
+| Constraint                            | Product value                                                                                                                                            |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Maximum visible Global Search results | 250 Files plus 250 Contents rows                                                                                                                         |
+| Global Search traversal depth         | 32; complete demand-loaded directory browsing is independent and has no global depth cap                                                                 |
+| Directory-name tier                   | rooted file + directory metadata; Global Search Files matches eligible names without opening bodies                                                      |
+| Search SQLite encryption              | none; persistent Contents index is completely unencrypted, disposable, and rebuilt from workspace files                                                  |
+| Global Search hidden policy           | every result below any dot-prefixed directory is physically absent; root dotfiles remain eligible unless separately excluded                             |
+| Global Search fixed exclusions        | `.git`, `node_modules`, `dist`, `build`, `out`, `output`, `.next`, `coverage`, `.cache`, `.turbo` at any depth; immutable against `!`                    |
+| Workspace config                      | flat version-1 ordered `exclude` globs in `.bitterless/preview-config.yml`                                                                               |
+| Symlink policy                        | leaf only, never recurse or index target content                                                                                                         |
+| Project tree/directory-preview sort   | directories first, then natural case-insensitive name order                                                                                              |
+| Global Search Files sort              | stable global partition: all matching folders first, then matching files; cap after partition                                                            |
+| Search normalization                  | NFKC plus established case policy, followed by original-text literal verification                                                                        |
+| Watch reconcile                       | 400ms trailing per changed path; overflow/error/missing filename triggers full reconcile                                                                 |
+| Runtime memory                        | strictly above 1GiB advisory; strictly above 2GiB sets `performanceAccepted=false` and `stop=false` without invalidating the recorded artifact or method |
 
 Traversal starts in the dedicated hidden `fileSearch` preload on first open and advances in bounded elapsed-time
 slices, yielding between batches. It emits metadata into the directory-name tier independently of
@@ -459,7 +461,9 @@ The grouped result, opaque `resultToken`, and selected-result preview contracts 
 in [OnlyPreview Global Search and result preview](../design/onlypreview-global-search.md). The
 hidden preload retains only the latest request's bounded token map. Main validates and relays a
 preview request; it never reads the filesystem. Text heads cap at 256KiB, directories at 200 direct
-children, content context is reverified and bounded, and non-text results are metadata-only.
+children, and non-text results are metadata-only. Files and Contents selections for the same text
+file use the same bounded file-head preview; only the Contents result row retains the verified
+match snippet. The bottom pane never enlarges or jumps to that match.
 
 Snippet boundaries use Unicode graphemes and original text. Include at most 16 graphemes before
 and after while capping normal snippets at 48 graphemes. If the verified match itself exceeds 48,
@@ -488,7 +492,7 @@ During an active initial build or full reconcile, the hidden file-search preload
 `workspaceId`, `generation`, and opaque `buildRevision`; Main shape-validates and relays only the
 attached current generation without doing search I/O. Shell accepts only its current revision,
 rejects regressing or inconsistent counts, clamps the determinate ratio to `0..1`, and clears the
-  rail when that build settles, fails, or is superseded. The event contains no path, filename, file
+rail when that build settles, fails, or is superseded. The event contains no path, filename, file
 content, setting, or absolute filesystem metadata.
 
 The same hidden runtime emits a separate fixed-stage timing timeline under application-log scope
@@ -617,19 +621,20 @@ runtime/UI path; packaged release startup remains untested.
 
 ## Preview Classification And Rendering
 
-| Kind              | MVP inputs                                                                              | Surface / renderer                                                                                                           |
-| ----------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Kind              | MVP inputs                                                                                                                                                    | Surface / renderer                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `text`            | known source/config/prose/log extensions (including `.js` / `.mjs` / `.cjs`) plus every remaining regular file after specialized/explicit-unsupported routing | Vue: Monaco `vs`, `readOnly`, `domReadOnly`, selectable text, known syntax map or `plaintext`, find                          |
-| `text` / Markdown | `.md`                                                                                   | Vue: centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.markdown` and `.mdx` remain Monaco |
-| `html`            | `.html`, `.htm`                                                                         | raw Chromium: executable entry document plus contained relative JS/CSS/image/font/media resources                            |
-| `pdf`             | `.pdf` with matching signature                                                          | raw Chromium: built-in PDF viewer over one exact revision-bound bounded asset                                                |
-| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                               | Vue: bounded Blob + off-DOM decode, then an accessible fit/zoom/reset/pan viewer                                             |
-| `audio`           | MP3, WAV, OGG, M4A, AAC, FLAC; actual codec support remains Chromium-owned              | Vue: HEAD preflight, then `<audio controls preload="metadata">`, no autoplay                                                 |
-| `video`           | MP4, WebM, OGV, MOV, M4V; actual codec support remains Chromium-owned                   | Vue: HEAD preflight, then `<video controls preload="metadata">`, no autoplay                                                 |
-| `sheet`           | `.xlsx`, `.xlsm` with bounded OOXML ZIP structure                                       | Vue: disposable ExcelJS Worker + self-owned read-only virtual workbook grid                                                  |
-| `document`        | `.docx` with bounded OOXML ZIP structure                                                | Vue: one-shot preflight Worker + dynamically loaded `docx-preview@0.4.0` + sanitized Word-like paginated DOM                 |
-| `diagram`         | `.drawio` with bounded XML/compressed-page structure                                    | Vue: one-shot preflight Worker + locally pinned official viewer mounted directly into an owned DOM element                   |
-| `unsupported`     | exact recognized HEIC/HEIF/TIF/TIFF/RAW, MKV/AVI/WMV/FLV, and legacy `.doc`             | Vue: typed image/media/document unsupported reason; system actions remain in the Shell toolbar                               |
+| `text` / Markdown | `.md`                                                                                                                                                         | Vue: centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.markdown` and `.mdx` remain Monaco |
+| `html`            | `.html`, `.htm`                                                                                                                                               | raw Chromium: executable entry document plus contained relative JS/CSS/image/font/media resources                            |
+| `pdf`             | `.pdf` with matching signature                                                                                                                                | raw Chromium: built-in PDF viewer over one exact revision-bound bounded asset                                                |
+| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                                                                                                     | Vue: bounded Blob + off-DOM decode, then an accessible fit/zoom/reset/pan viewer                                             |
+| `audio`           | MP3, WAV, OGG, M4A, AAC, FLAC; actual codec support remains Chromium-owned                                                                                    | Vue: HEAD preflight, then `<audio controls preload="metadata">`, no autoplay                                                 |
+| `video`           | MP4, WebM, OGV, MOV, M4V; actual codec support remains Chromium-owned                                                                                         | Vue: HEAD preflight, then `<video controls preload="metadata">`, no autoplay                                                 |
+| `sheet`           | `.xlsx`, `.xlsm` with bounded OOXML ZIP structure                                                                                                             | Vue: one-shot preflight Worker + lazy `@silurus/ooxml/xlsx` `XlsxViewer`                                                     |
+| `document`        | `.docx` with bounded OOXML ZIP structure                                                                                                                      | Vue: one-shot preflight Worker + lazy `@silurus/ooxml/docx` `DocxScrollViewer`                                               |
+| `presentation`    | `.pptx` with bounded OOXML ZIP structure                                                                                                                      | Vue: one-shot preflight Worker + lazy `@silurus/ooxml/pptx` `PptxScrollViewer`                                               |
+| `diagram`         | `.drawio` with bounded XML/compressed-page structure                                                                                                          | Vue: one-shot preflight Worker + locally pinned official viewer mounted directly into an owned DOM element                   |
+| `unsupported`     | exact recognized HEIC/HEIF/TIF/TIFF/RAW, MKV/AVI/WMV/FLV, and legacy `.doc`                                                                                   | Vue: typed image/media/document unsupported reason; system actions remain in the Shell toolbar                               |
 
 - File admission uses one shared typed adapter-size policy, not scattered format constants. The
   fallback is 10MiB. Existing overrides remain Monaco 8MiB, Markdown/HTML 1MiB, Office 25MiB,
@@ -638,7 +643,8 @@ runtime/UI path; packaged release startup remains untested.
   and asset issuance consume the same helper so they cannot drift.
 - Every Vue format component is selected with an async component/dynamic import from the current
   adapter. Opening one format does not load the components for the others. Heavy engines keep a
-  second lazy boundary: ExcelJS/docx-preview load only after their current preflight, and the pinned
+  second lazy boundary: the selected `@silurus/ooxml` format subpath loads only after its current
+  preflight, and the pinned
   Draw.io viewer runtime loads only after the current diagram Worker preflight succeeds.
 - Text reads are complete-or-error with an 8 MiB maximum. Metadata rejects a file above the limit
   before body I/O; an admitted read requests at most exactly 8 MiB from the verified handle, then
@@ -696,53 +702,23 @@ runtime/UI path; packaged release startup remains untested.
   when both endpoints remain inside the preview body. Raw Chromium HTML/PDF has no preload and
   therefore clears/hides this metadata. Whitespace and line breaks count. Empty,
   outside, stale, loading, error, file-change, and unmount states report zero and hide the label.
-- XLSX/XLSM admission is extension → 25MiB/signature gate → reusable OOXML preflight → dynamic
-  ExcelJS import in one disposable module Worker. The preflight proves exact ZIP record closure,
-  validates actual STORE/DEFLATE expansion length and CRC32 under 5,000-entry, 128MiB single-entry,
-  200MiB aggregate, and 200:1 ratio caps, rejects unsafe/duplicate canonical and workbook-engine
-  paths, and blocks more than 100,000 merge records or 500,000 expanded merge cells before ExcelJS.
-  A bounded model accepts at most 64 sheets, 100,000 row coordinates and 512 column coordinates per
-  sheet, 500,000 non-empty cells, 500,000 explicit dimensions, 1,048,576 formatted UTF-16 code
-  units per cell, and 16,777,216 across the workbook. Only those model caps may produce truthful
-  `sheet-model-cap` partial coverage; ZIP/parser/timeout failures are unavailable. The renderer
-  runtime-validates every Worker manifest/layout/viewport/search response, limits one viewport
-  request to 50,000 row-column coordinates, and terminally rejects malformed messages.
-- Viewport merge responses must cover more than one cell, use unique masters, remain non-overlapping,
-  and keep their aggregate intersection work within the requested viewport area. Once a manifest is
-  ready, an unexpected terminal session event clears Store/Main ready truth only through exact
-  session/generation/selection/reporting fences; normal disposal and initial load failure are silent.
-- The workbook UI has sheet tabs, sticky headers, row/column dimensions, intersecting merged-cell
-  masters, horizontal left/center/right and vertical top/middle/bottom alignment, wrap/number/date/
-  percent/currency/font/fill rendering, and viewport-sized DOM. Horizontal `fill` and `justify` are
-  rejected until bounded visible semantics exist. Display and cross-sheet literal search use the
-  same accepted formatted strings. ExcelJS `Date` values are converted back to workbook-epoch
-  serials before formatting so 1900 serials 59/60/61 and 1904 dates keep display/search parity;
-  formula cells expose only cached results. Macros, formula evaluation/recalculation, charts, pivots, conditional
-  formatting, comments, data validation, sparklines, floating images, and Shell Find integration
-  were not part of task 020; task 019 now consumes its accepted search model.
-- DOCX task 021 is `implemented; owner verification pending` after
-  [independent review round 2](../plan/reviews/onlypreview-docx-render-021-2.md) recorded **PASS**;
-  Ral owns the remaining real DOCX visual/runtime verification. Admission is extension →
-  25MiB/signature gate → reusable pure OOXML preflight in a one-shot
-  module Worker with a 10-second hard adapter timeout → dynamic `docx-preview@0.4.0` import. Only
-  preflight success may call stable `renderAsync()` into detached body/style containers, with
-  altChunk/changes/comments disabled, fonts ignored with system fallback, headers/footers enabled,
-  `useBase64URL: false`, and experimental/debug disabled. A dedicated DOM/CSS allowlist rejects
-  active/navigational markup, unsafe attributes, remote/file/custom URLs, `@import`, and every
-  unverified `url()`; CSP is not a substitute for that sanitizer. The complete detached output and
-  every verified embedded-image blob URL are scanned and registered before current DOM mount.
-- `renderAsync()` has no `AbortSignal`. Ordinary file changes serially reset the adapter, terminate
-  fetch/preflight work and immediately settle the old preflight promise, reject stale output by
-  exact runtime/host/selection revision, and revoke all known blobs. Leaving a still-loading DOCX
-  closes the exact old Vue view and rotates its runtime before the new revision; a post-ready switch
-  may reuse the view after serial cleanup. Main independently arms one 30-second watchdog when a
-  DOCX is loading and the exact
-  Vue view/runtime token exists, including first view creation after bounds; reset and resize never
-  extend it. Engine rejection, incomplete/unverifiable output, sanitizer failure, and timeout do not
-  attach partial DOM; failure paths that may orphan renderer-owned blob URLs destroy and recreate
-  the exact Vue view. Ready is reported only after sanitized current DOM is mounted and `nextTick`
-  completes. Task 019 now consumes that readiness for `webContents.findInPage()`; 021 itself did not
-  add a Find Bar.
+- Task 077 supersedes the historical Task 020 ExcelJS/self-owned-grid and Task 021
+  `docx-preview` renderer paths while preserving their 25MiB/signature/OOXML preflight boundary.
+  After the one-shot Worker returns the exact transferred bytes, Vue dynamically imports only the
+  selected pinned `@silurus/ooxml@0.83.0` subpath and creates `XlsxViewer`, `DocxScrollViewer`, or
+  `PptxScrollViewer` in `mode: 'worker'`. Main and preload never import or execute an Office parser.
+- The common Office adapter disables Google Fonts and hyperlinks, passes explicit archive/raster/
+  decode limits, and destroys the exact viewer on replacement, failure, timeout, or unmount.
+  Legacy `.xls`, `.doc`, and `.ppt` remain unsupported. XLSM is read-only and macros are never
+  executed. XLSX generally presents saved formula results, with the documented upstream exception
+  that `TODAY()` and `NOW()` are evaluated against the current clock; no Excel-perfect calculation,
+  Word-perfect pagination, or PowerPoint-perfect animation/fidelity is promised.
+- The same Office content adapter owns current-file Find for all three viewers. A new query calls
+  `findText(query, { caseSensitive })`, then `findNext()` or `findPrev()` to activate and navigate
+  one result; subsequent navigation wraps through the viewer model. `findText()` keeps all matches
+  highlighted and the active match distinct across sheets and virtualized DOCX pages/PPTX slides.
+  Empty query, Find close, file/revision replacement, load failure, and teardown call `clearFind()`;
+  generation fences reject late search results from a previous query or viewer.
 - Task 032 routes only `.drawio` to `diagram` / `drawio-viewer`. It pins the official draw.io
   `viewer-static.min.js` from commit `85a95c9066d8db7e90a2a2aa25f1179945d08ab6` and its Apache-2.0
   license by SHA-256, loads neither at runtime from the network, and mounts the viewer directly into
@@ -983,7 +959,7 @@ Shift+Cmd/Ctrl+F:
 ├ CONTENTS ──────────────────────────────────────────────────────┤
 │ …before [matched text] after…        src/components/FileTree.vue│
 ├ RESULT PREVIEW ────────────────────────────────────────────────┤
-│ selected result head / match context / direct children / info │
+│ selected file head / direct children / file information      │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1024,9 +1000,9 @@ Shift+Cmd/Ctrl+F:
   updates that directory even while search is open. Files and Contents are separate collapsible
   groups; keyboard or pointer
   selection updates the bounded bottom result preview. Markdown and static sanitized HTML use lazy
-  adapters, ordinary text stays plain, directories show direct children, and non-text results show
-  file information only. The exact layout, token, preview, and open-vs-select behavior is defined in
-  the Global Search design.
+  adapters, ordinary text stays plain, directories show direct children with 13px semibold names,
+  and non-text results show file information only. The exact layout, token, preview, and
+  open-vs-select behavior is defined in the Global Search design.
 - Global Search indexing, pending, empty, no-match, error, and memory-advisory states use the
   existing quiet Project/status treatment; they do not add cards, indexed totals, verbose limit
   explanations, or a second visual theme.
@@ -1064,34 +1040,35 @@ Shift+Cmd/Ctrl+F:
 
 ## Interaction Contract
 
-| Input                                         | Scope                                        | Behavior                                                                                                               |
-| --------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `Alt+1`                                       | Shell                                        | focus Project tree                                                                                                     |
-| `Shift+Cmd/Ctrl+F`                            | Shell or Preview                             | open Global Search in the right workspace at the current explicit directory and focus its input                        |
-| Contents scope selector                       | Global Search                                | switch Contents between the live Current directory and Project; Files remains project-wide                             |
-| `ArrowUp` / `ArrowDown`                       | Global Search                                | move across visible Files and Contents result rows and refresh the bottom preview                                      |
-| click / `Enter`                               | Global Search result                         | select the row and show its bounded preview without changing the main Preview selection                                |
-| double click / `Cmd/Ctrl+Enter`               | Global Search result                         | open a file, or expand/select/center-focus a directory in Project; close only after success                             |
-| `Space`                                       | selected file in tree                        | preview selected file                                                                                                  |
-| single click                                  | tree                                         | select the row; preview a file only when enabled; update live Current directory without toggling a directory            |
-| double click                                  | tree                                         | preview a file or keep a directory selected while toggling its expansion                                               |
-| crosshair                                     | Project header                               | reveal and focus the currently previewed file in the tree                                                              |
-| right click                                   | Project file/directory row                   | open the type-specific Main-owned native reveal/copy/file-action menu at the pointer                                   |
-| `Cmd/Ctrl+C`                                  | focused Project item, outside text controls  | copy the file or folder as a pasteable native filesystem item                                                          |
-| `Shift+Cmd/Ctrl+C`                            | focused Project item, outside text controls  | copy its canonical absolute path as plain text                                                                         |
-| `Option/Alt+Cmd/Ctrl+C`                       | focused Project item, outside text controls  | copy its basename as plain text                                                                                        |
-| Robot                                         | MenuBar                                      | open or focus the parented `Copy the skill to your agent` Guide                                                        |
-| copy card                                     | Guide                                        | copy one complete English MCP-plus-skill setup instruction                                                             |
-| `Cmd/Ctrl+O`                                  | Shell or Preview                             | Open Folder                                                                                                            |
-| `Cmd+,` or `Ctrl+Alt+S`                       | Shell or Preview                             | open Setting window                                                                                                    |
-| `F5` or `Cmd/Ctrl+R`                          | Shell or Preview                             | reconcile the background file-search index and refresh selected preview                                                |
-| `F12`                                         | Shell or Preview, debug profile              | toggle detached DevTools for the view that received the shortcut                                                       |
-| `Cmd+Option+I` or `Ctrl+Shift+I`              | Shell or Preview, debug profile              | toggle detached DevTools for the view that received the shortcut                                                       |
-| `Cmd/Ctrl+F`                                  | Shell, Vue Preview, or raw Chromium          | focus the one Shell Find Bar for the current file; never invoke Global Search or Monaco's own find widget              |
-| drag/select text                              | Monaco or Markdown                           | show the selected grapheme count in the bottom status rail; hide it when selection collapses or leaves preview content |
-| `Esc`                                         | Find Bar / Global Search / Setting           | clear current-file find and restore content focus / clear query then close Global Search / close Setting without save  |
-| double click                                  | non-action MenuBar surface                   | toggle maximize/restore                                                                                                |
-| minimize / maximize / close                   | Windows MenuBar controls                     | control the current standalone `BaseWindow` through Main                                                               |
+| Input                            | Scope                                       | Behavior                                                                                                                |
+| -------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `Alt+1`                          | Shell                                       | focus Project tree                                                                                                      |
+| `Shift+Cmd/Ctrl+F`               | Shell or Preview                            | open Global Search in the right workspace at the current explicit directory and focus its input                         |
+| Contents scope selector          | Global Search                               | switch Contents between the live Current directory and Project; Files remains project-wide                              |
+| `ArrowUp` / `ArrowDown`          | Global Search                               | move across visible Files and Contents result rows and refresh the bottom preview                                       |
+| click / `Enter`                  | Global Search result                        | select the row and show its bounded file-content preview from the beginning without changing the main Preview selection |
+| double click / `Cmd/Ctrl+Enter`  | Global Search result                        | open a file, or expand/select/center-focus a directory in Project; close only after success                             |
+| `Space`                          | selected file in tree                       | preview selected file                                                                                                   |
+| single click                     | tree row outside directory arrow            | select the row; preview a file only when enabled; update live Current directory without toggling a directory            |
+| double click                     | tree row outside directory arrow            | preview a file or keep a directory selected while toggling its expansion exactly once                                   |
+| single click                     | directory arrow hit target                  | select/focus that directory as Current directory and toggle its expansion exactly once                                  |
+| crosshair                        | Project header                              | reveal and focus the currently previewed file in the tree                                                               |
+| right click                      | Project file/directory row                  | open the type-specific Main-owned native reveal/copy/file-action menu at the pointer                                    |
+| `Cmd/Ctrl+C`                     | focused Project item, outside text controls | copy the file or folder as a pasteable native filesystem item                                                           |
+| `Shift+Cmd/Ctrl+C`               | focused Project item, outside text controls | copy its canonical absolute path as plain text                                                                          |
+| `Option/Alt+Cmd/Ctrl+C`          | focused Project item, outside text controls | copy its basename as plain text                                                                                         |
+| Robot                            | MenuBar                                     | open or focus the parented `Copy the skill to your agent` Guide                                                         |
+| copy card                        | Guide                                       | copy one complete English MCP-plus-skill setup instruction                                                              |
+| `Cmd/Ctrl+O`                     | Shell or Preview                            | Open Folder                                                                                                             |
+| `Cmd+,` or `Ctrl+Alt+S`          | Shell or Preview                            | open Setting window                                                                                                     |
+| `F5` or `Cmd/Ctrl+R`             | Shell or Preview                            | reconcile the background file-search index and refresh selected preview                                                 |
+| `F12`                            | Shell or Preview, debug profile             | toggle detached DevTools for the view that received the shortcut                                                        |
+| `Cmd+Option+I` or `Ctrl+Shift+I` | Shell or Preview, debug profile             | toggle detached DevTools for the view that received the shortcut                                                        |
+| `Cmd/Ctrl+F`                     | Shell, Vue Preview, or raw Chromium         | focus the one Shell Find Bar for the current file; never invoke Global Search or Monaco's own find widget               |
+| drag/select text                 | Monaco or Markdown                          | show the selected grapheme count in the bottom status rail; hide it when selection collapses or leaves preview content  |
+| `Esc`                            | Find Bar / Global Search / Setting          | clear current-file find and restore content focus / clear query then close Global Search / close Setting without save   |
+| double click                     | non-action MenuBar surface                  | toggle maximize/restore                                                                                                 |
+| minimize / maximize / close      | Windows MenuBar controls                    | control the current standalone `BaseWindow` through Main                                                                |
 
 Window-wide shortcuts use `before-input-event` on OnlyPreview webContents so they remain available
 when Monaco has focus. Only matched commands prevent default; Monaco retains selection, copy, and
@@ -1337,12 +1314,13 @@ them.
   fencing, forged presentation nudges, public/private URL disclosure, canonical-entry symlink
   containment, same-size replacement, real growth/replacement during streaming, and consumer-body
   abort on revocation.
-- DOCX unit/source tests additionally cover real `docx-preview@0.4.0` render output, required OOXML
-  parts and preflight-before-import, ArrayBuffer transfer and the 10-second Worker timeout, malicious
-  detached DOM/CSS/resources, complete blob registration/revocation, engine rejection/empty/
-  sanitizer typed errors, actual SFC mount/readiness with no partial DOM, and Main's 30-second
-  no-reset-ack watchdog/rebuild plus revision/runtime/view fencing. Production build audit proves the
-  engine remains outside the initial Vue chunk.
+- Office unit/source tests cover all three adapter IDs and extensions, each format's required OOXML
+  part, preflight-before-import, ArrayBuffer transfer, the 10-second Worker timeout, the three exact
+  dynamic subpath imports/viewer constructors, explicit worker/offline/resource options, typed
+  parse/empty/render-timeout failures, lifecycle destruction, current runtime/revision fencing, and
+  `findText` plus next/previous/clear with persistent all-match/active highlighting. Production
+  build audit proves the engine and per-format WASM/worker assets remain outside the initial Vue
+  chunk.
 - Current-file find behavior/source tests cover the exhaustive registry, exact parsers, pending
   queue and one-time ready dispatch, native Electron option mapping, requestId plus WebContents
   generation/selection/find-revision fences, destroyed/throw failures, exact content-adapter ready

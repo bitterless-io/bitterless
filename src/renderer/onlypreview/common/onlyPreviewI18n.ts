@@ -32,6 +32,7 @@ const en = {
   },
   globalSearch: {
     label: 'Global Search',
+    dismiss: 'Close Global Search',
     placeholder: 'Search files and contents…',
     inputLabel: 'Search project files and contents',
     clear: 'Clear Global Search',
@@ -167,6 +168,9 @@ const en = {
     DOCUMENT_EMPTY: 'This document has no content to preview.',
     DOCUMENT_SANITIZE_FAILED: 'The document output did not pass the preview safety checks.',
     DOCUMENT_RENDER_TIMEOUT: 'Document preview took too long and was stopped.',
+    PRESENTATION_PARSE_FAILED: 'The presentation could not be parsed.',
+    PRESENTATION_EMPTY: 'The presentation has no slides to preview.',
+    PRESENTATION_RENDER_TIMEOUT: 'Presentation preview took too long and was stopped.',
     DIAGRAM_PARSE_FAILED: 'The Draw.io diagram could not be parsed.',
     DIAGRAM_EMPTY: 'This Draw.io diagram has no content to preview.',
     DIAGRAM_LIMIT:
@@ -218,6 +222,7 @@ const zh: Localized<typeof en> = {
   },
   globalSearch: {
     label: '全局搜索',
+    dismiss: '关闭全局搜索',
     placeholder: '搜索文件名和内容…',
     inputLabel: '搜索项目文件名和内容',
     clear: '清除全局搜索',
@@ -347,6 +352,9 @@ const zh: Localized<typeof en> = {
     DOCUMENT_EMPTY: '此文档没有可预览的内容。',
     DOCUMENT_SANITIZE_FAILED: '文档输出未通过预览安全检查。',
     DOCUMENT_RENDER_TIMEOUT: '文档预览耗时过长，已停止。',
+    PRESENTATION_PARSE_FAILED: '无法解析此演示文稿。',
+    PRESENTATION_EMPTY: '此演示文稿没有可预览的幻灯片。',
+    PRESENTATION_RENDER_TIMEOUT: '演示文稿预览耗时过长，已停止。',
     DIAGRAM_PARSE_FAILED: '无法解析此 Draw.io 图表。',
     DIAGRAM_EMPTY: '此 Draw.io 图表没有可预览的内容。',
     DIAGRAM_LIMIT: '此 Draw.io 图表超过安全结构上限，或包含本阶段禁止的图片资源。',

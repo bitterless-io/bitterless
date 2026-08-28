@@ -379,8 +379,9 @@ const findSpecs = {
   'markdown-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
   'html-page': { surface: 'chrome', find: { mode: 'webcontents-find' } },
   'chromium-pdf': { surface: 'chrome', find: { mode: 'webcontents-find' } },
-  'xlsx-grid': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'sheet' } },
-  'docx-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
+  'ooxml-xlsx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
+  'ooxml-docx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
+  'ooxml-pptx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
   'drawio-viewer': { surface: 'vue', find: { mode: 'none' } },
   image: { surface: 'vue', find: { mode: 'none' } },
   audio: { surface: 'vue', find: { mode: 'none' } },
@@ -451,8 +452,9 @@ const regionModule = loadTypeScriptModule(
       getOnlyPreviewFileSizeLimit: (adapterId) =>
         ({
           'chromium-pdf': 100 * 1024 * 1024,
-          'xlsx-grid': 25 * 1024 * 1024,
-          'docx-dom': 25 * 1024 * 1024,
+          'ooxml-xlsx': 25 * 1024 * 1024,
+          'ooxml-docx': 25 * 1024 * 1024,
+          'ooxml-pptx': 25 * 1024 * 1024,
           'drawio-viewer': 20 * 1024 * 1024,
           image: 100 * 1024 * 1024,
           audio: null,

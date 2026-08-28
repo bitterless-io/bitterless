@@ -95,7 +95,9 @@ test('line one carries name plus branch and action, line two carries path plus w
 test('Open in WebStorm is an icon-only IconBtn that keeps its accessible name', () => {
   const row = read('src/renderer/submodules/src/components/SubmoduleRow/SubmoduleRow.vue');
   assert.match(row, /import IconBtn from '@renderer\/common\/components\/IconBtn\/IconBtn\.vue';/);
-  const button = row.slice(row.indexOf('<IconBtn'), row.indexOf('</IconBtn>'));
+  // The row now opens with the expand/collapse chevron, so the Open action is located by its name.
+  const openStart = row.lastIndexOf('<IconBtn', row.indexOf('submodules__row__openInWebStorm'));
+  const button = row.slice(openStart, row.indexOf('</IconBtn>', openStart));
   assert.match(button, /:title="i18nHelper\.submodules\.actions\.openInWebStorm"/);
   assert.match(button, /:aria-label="i18nHelper\.submodules\.actions\.openInWebStorm"/);
   assert.match(button, /<IconExternalLink :size="16" \/>/);

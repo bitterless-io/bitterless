@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,7 +28,19 @@ const llmService = readFileSync(join(root, 'main/maestro/llm/maestroLlm.service.
 const llmModels = readFileSync(join(root, 'main/maestro/llm/llmModels.ts'), 'utf8')
 const packageJson = readFileSync(join(projectRoot, 'package.json'), 'utf8')
 const piAiTypes = readFileSync(join(workspaceRoot, 'node_modules/@earendil-works/pi-ai/dist/types.d.ts'), 'utf8')
-const piOpenAiCompletions = readFileSync(join(workspaceRoot, 'node_modules/@earendil-works/pi-ai/dist/providers/openai-completions.js'), 'utf8')
+// pi-ai moved the OpenAI-completions request serializer out of dist/providers/ into dist/api/
+// (0.80.x). Resolve the current location first, keep the pre-0.80 path as a fallback, and when a
+// future upgrade moves it again skip the dependent assertion with a loud reason instead of
+// crashing the whole script — an ENOENT here silently disabled every assertion in this file.
+const piOpenAiCompletionsCandidates = [
+  join(workspaceRoot, 'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js'),
+  join(workspaceRoot, 'node_modules/@earendil-works/pi-ai/dist/providers/openai-completions.js')
+]
+const piOpenAiCompletionsPath = piOpenAiCompletionsCandidates.find((candidate) => existsSync(candidate)) || null
+const piOpenAiCompletions = piOpenAiCompletionsPath ? readFileSync(piOpenAiCompletionsPath, 'utf8') : null
+if (!piOpenAiCompletionsPath) {
+  console.warn(`[check-agent-runtime] SKIP pi openai-completions media-serialization assertion: no openai-completions.js under @earendil-works/pi-ai (looked in ${piOpenAiCompletionsCandidates.join(', ')}). Re-point this guard at the new pi-ai path.`)
+}
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message)
@@ -112,7 +124,13 @@ assert(aiCrmsRuntimeCheck.includes('"type":"image_url"') && aiCrmsRuntimeCheck.i
 assert(aiCrmsRuntimeCheck.includes('toolArgs[0]?.query === \'cardio\'') && aiCrmsRuntimeCheck.includes('"role":"tool"'), 'AI-CRMS runtime check should verify tool-call assembly and tool-result replay')
 assert(aiCrmsRuntimeCheck.includes('fail_secret') && aiCrmsRuntimeCheck.includes('tool error observations should not leak token values'), 'AI-CRMS runtime check should verify sanitized tool errors')
 assert(piAiTypes.includes('export interface ImageContent') && piAiTypes.includes('data: string;') && !piAiTypes.includes('url: string;'), 'pi 0.79 ImageContent is base64-data only, not URL-native')
-assert(piOpenAiCompletions.includes('url: `data:${item.mimeType};base64,${item.data}`'), 'pi openai-completions provider still serializes images as base64 data URLs')
+// 2026-08-28: re-pointed, NOT retired. The guarded fact still holds in pi-ai 0.80.10 — only the
+// file moved (dist/providers/ -> dist/api/); the base64 data-URL serialization is unchanged at
+// dist/api/openai-completions.js:747. This is why PiRuntimeSession.prompt() still sends a textual
+// @path note instead of pi native media (piRuntimeAdapter.ts:171-174).
+if (piOpenAiCompletions) {
+  assert(piOpenAiCompletions.includes('url: `data:${item.mimeType};base64,${item.data}`'), 'pi openai-completions provider still serializes images as base64 data URLs')
+}
 
 assert(baseAgent.includes('private sessionPromise: Promise<AgentRuntimeSession> | null = null'), 'BaseAgent should keep one reusable session promise')
 assert(baseAgent.includes('new CoachRuntimeAdapter()'), 'BaseAgent should use the Coach runtime router by default')

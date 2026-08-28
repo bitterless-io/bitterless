@@ -7,15 +7,19 @@ import { ClaudeAccountRepository } from '../../src/main/claudeSubscription/claud
 
 const createRepository = async (available = true) => {
   const rootDirectory = await mkdtemp(path.join(os.tmpdir(), 'bitterless-claude-account-test-'));
+  // Slots derive from the home directory, so tests inject a temporary one rather
+  // than creating ~/.claude<N> on the machine running them.
+  const homeDirectory = await mkdtemp(path.join(os.tmpdir(), 'bitterless-claude-home-test-'));
   let sequence = 1;
   const repository = new ClaudeAccountRepository({
     rootDirectory,
+    homeDirectory,
     isolatedCredentialStorageAvailable: available,
     now: () => new Date('2026-08-24T08:00:00.000Z'),
     createId: () => `00000000-0000-4000-8000-${String(sequence++).padStart(12, '0')}`
   });
   await repository.initialize();
-  return { repository, rootDirectory };
+  return { repository, rootDirectory, homeDirectory };
 };
 
 const metadata = {
@@ -23,8 +27,8 @@ const metadata = {
   subscriptionType: 'max' as const
 };
 
-test('persists only registry v2 account metadata and exact isolated paths', async () => {
-  const { repository, rootDirectory } = await createRepository();
+test('persists only registry v3 account metadata and exact slot paths', async () => {
+  const { repository, rootDirectory, homeDirectory } = await createRepository();
   try {
     const identity = await repository.createIdentity();
     const account = await repository.saveAccount(identity, 'Personal Max', metadata);
@@ -39,16 +43,17 @@ test('persists only registry v2 account metadata and exact isolated paths', asyn
     assert.equal((await stat(registryPath)).mode & 0o777, 0o600);
     assert.equal((await stat(identity.configDirectory)).mode & 0o777, 0o700);
     assert.equal((await stat(identity.anthropicConfigDirectory)).mode & 0o777, 0o700);
-    assert.equal(
-      identity.configDirectory,
-      path.join(rootDirectory, 'accounts', identity.id, 'profile')
-    );
+    // Slots start at 2: ~/.claude is the interactive CLI's directory and is never
+    // poolable. See docs/features/claude-subscription-account-slots.md.
+    assert.equal(identity.slot, 2);
+    assert.equal(identity.configDirectory, path.join(homeDirectory, '.claude2'));
     assert.equal(identity.secureStorageConfigDirectory, identity.configDirectory);
     assert.equal(
       identity.anthropicConfigDirectory,
       path.join(identity.configDirectory, 'anthropic')
     );
-    assert.equal(registry.version, 2);
+    assert.equal(registry.version, 3);
+    assert.equal(registry.accounts[0]?.slot, 2);
     assert.equal(registry.accounts[0]?.subscriptionType, 'max');
     assert.equal(registry.accounts[0]?.email, 'ral@example.com');
     assert.doesNotMatch(registryText, /encryptedToken|oauthToken|refreshToken|sk-ant-oat/iu);
@@ -150,6 +155,9 @@ test('fails closed on legacy token-bearing registries without reading credential
     );
     const repository = new ClaudeAccountRepository({
       rootDirectory,
+      // Slots live under the home directory and removal deletes them, so tests
+      // must never resolve a real one.
+      homeDirectory: path.join(rootDirectory, 'home'),
       isolatedCredentialStorageAvailable: true
     });
     await assert.rejects(repository.initialize(), /Unsupported Claude subscription account registry/u);

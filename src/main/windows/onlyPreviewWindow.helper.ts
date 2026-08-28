@@ -4,12 +4,10 @@ import {
   BrowserWindow,
   screen,
   WebContentsView,
-  shell,
   type Input,
   type Rectangle
 } from 'electron';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
 import type {
   OnlyPreviewBounds,
@@ -17,8 +15,7 @@ import type {
 } from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_FIND_FOCUS_EVENT,
-  ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
-  ONLY_PREVIEW_FOCUS_SEARCH_EVENT
+  ONLY_PREVIEW_FOCUS_PROJECT_EVENT
 } from '@shared/onlypreview/onlyPreview.types';
 import { xpcMain } from 'electron-xpc/main';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
@@ -31,6 +28,13 @@ import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPrevie
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
 import { onlyPreviewGlobalSearchFocusService } from '@main/onlypreview/onlyPreviewGlobalSearchFocus.service';
+import { onlyPreviewGlobalSearchWindowService } from '@main/onlypreview/views/onlyPreviewGlobalSearchWindow.service';
+import {
+  configureOnlyPreviewNavigationFence,
+  getOnlyPreviewRendererArguments,
+  getOnlyPreviewRendererTarget,
+  type OnlyPreviewRendererMode
+} from '@main/onlypreview/views/onlyPreviewRendererTarget.service';
 import {
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
   type OnlyPreviewSearchWatchCommitEvent
@@ -52,7 +56,7 @@ const MENU_BAR_HEIGHT = 32;
 const PREVIEW_TOOLBAR_HEIGHT = 43;
 const STATUS_HEIGHT = 25;
 
-type OnlyPreviewRendererMode = 'shell' | 'preview' | 'settings' | 'guide';
+type OnlyPreviewShortcutOrigin = OnlyPreviewGlobalSearchFocusOrigin | 'search';
 type OnlyPreviewNativeCommand =
   | 'choose-folder'
   | 'open-settings'
@@ -67,31 +71,6 @@ interface OnlyPreviewNativeCommandPayload {
   command: OnlyPreviewNativeCommand;
 }
 
-const rendererTarget = (mode: OnlyPreviewRendererMode): { filePath: string; url: string } => {
-  const rendererPath = `onlypreview/${mode}/index.html`;
-  const filePath = join(__dirname, `../renderer/${rendererPath}`);
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    return {
-      filePath,
-      url: `${process.env['ELECTRON_RENDERER_URL'].replace(/\/+$/, '')}/${rendererPath}`
-    };
-  }
-  return { filePath, url: pathToFileURL(filePath).href };
-};
-
-const additionalArguments = (
-  host: OnlyPreviewHostCapability,
-  mode: OnlyPreviewRendererMode,
-  previewRuntimeToken?: string
-): string[] => {
-  return [
-    `--onlypreview-host-token=${host.hostToken}`,
-    `--onlypreview-host-id=${host.hostId}`,
-    `--onlypreview-mode=${mode}`,
-    ...(previewRuntimeToken ? [`--onlypreview-runtime-token=${previewRuntimeToken}`] : [])
-  ];
-};
-
 const closeView = (view: WebContentsView | null): void => {
   if (!view || view.webContents.isDestroyed()) return;
   try {
@@ -99,24 +78,6 @@ const closeView = (view: WebContentsView | null): void => {
   } catch {
     // The owning BaseWindow may already have destroyed this view.
   }
-};
-
-const configureNavigationFence = (
-  webContents: Electron.WebContents,
-  expectedUrl: string,
-  allowExternalHttp = true
-): void => {
-  webContents.setWindowOpenHandler(({ url }) => {
-    if (allowExternalHttp && /^https?:\/\//i.test(url)) void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  const fenceNavigation = (event: Electron.Event, url: string): void => {
-    if (url === expectedUrl) return;
-    event.preventDefault();
-    if (allowExternalHttp && /^https?:\/\//i.test(url)) void shell.openExternal(url);
-  };
-  webContents.on('will-navigate', fenceNavigation);
-  webContents.on('will-redirect', fenceNavigation);
 };
 
 const isCommandModifier = (input: Input): boolean =>
@@ -135,9 +96,6 @@ const isGlobalSearchShortcut = (input: Input): boolean => {
   }
   return process.platform === 'darwin' ? !input.control : !input.meta;
 };
-
-const isHiddenPreviewBounds = (value: OnlyPreviewBounds): boolean =>
-  value.x === 0 && value.y === 0 && value.width === 0 && value.height === 0;
 
 const isCurrentFileFindShortcut = (input: Input): boolean => {
   if (
@@ -247,13 +205,14 @@ export class OnlyPreviewWindowHelper {
   bindNativeShortcuts(
     webContents: Electron.WebContents,
     host: OnlyPreviewHostCapability,
-    origin: OnlyPreviewGlobalSearchFocusOrigin
+    origin: OnlyPreviewShortcutOrigin
   ): void {
     webContents.on('before-input-event', (event, input) => {
       const command = this.resolveNativeCommand(host, input);
       if (!command) return;
       event.preventDefault();
       if (command === 'find-in-file') {
+        onlyPreviewGlobalSearchWindowService.closeForFind(host.hostToken);
         const opened = onlyPreviewPreviewRegionService.openFind(host.hostToken);
         if (
           opened &&
@@ -274,16 +233,7 @@ export class OnlyPreviewWindowHelper {
       }
       if (command === 'focus-search') {
         onlyPreviewPreviewRegionService.closeFind(host.hostToken);
-        onlyPreviewGlobalSearchFocusService.capture(host.hostToken, origin, webContents);
-        if (
-          host.kind === 'standalone' &&
-          host.hostToken === this.standaloneHost?.hostToken &&
-          this.shellView &&
-          !this.shellView.webContents.isDestroyed()
-        ) {
-          this.shellView.webContents.focus();
-        }
-        xpcMain.broadcast(ONLY_PREVIEW_FOCUS_SEARCH_EVENT, { hostId: host.hostId, origin });
+        onlyPreviewGlobalSearchWindowService.open(host, origin, webContents);
         return;
       }
       if (command === 'focus-project') {
@@ -382,12 +332,9 @@ export class OnlyPreviewWindowHelper {
       throw new Error(`OnlyPreview host ${host.hostId} has no active preview surface.`);
     }
     const [contentWidth, contentHeight] = window.getContentSize();
-    onlyPreviewPreviewRegionService.updateBounds(
-      host.hostToken,
-      isHiddenPreviewBounds(value)
-        ? { x: 0, y: 0, width: 0, height: 0 }
-        : clampPreviewBounds(value, contentWidth, contentHeight)
-    );
+    const bounds = clampPreviewBounds(value, contentWidth, contentHeight);
+    onlyPreviewPreviewRegionService.updateBounds(host.hostToken, bounds);
+    onlyPreviewGlobalSearchWindowService.updateBounds(host.hostToken, bounds);
   }
 
   async openSettings(sourceHostToken: string): Promise<void> {
@@ -406,7 +353,7 @@ export class OnlyPreviewWindowHelper {
     const width = restored?.bounds.width ?? MIN_WIDTH;
     const height = restored?.bounds.height ?? MIN_HEIGHT;
     const bounds = settingsBoundsForParent(parentWindow.getBounds(), width, height);
-    const target = rendererTarget('settings');
+    const target = getOnlyPreviewRendererTarget('settings', __dirname);
     const window = new BrowserWindow({
       title: 'OnlyPreview Settings',
       ...bounds,
@@ -421,12 +368,12 @@ export class OnlyPreviewWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: additionalArguments(host, 'settings')
+        additionalArguments: getOnlyPreviewRendererArguments(host, 'settings')
       }
     });
     this.settingsWindow = window;
     this.settingsWindowState = windowStateService.register('onlypreview-settings', window);
-    configureNavigationFence(window.webContents, target.url);
+    configureOnlyPreviewNavigationFence(window.webContents, target.url);
     window.once('ready-to-show', () => {
       if (this.settingsWindow !== window) return;
       window.setBounds(settingsBoundsForParent(parentWindow.getBounds(), ...window.getSize()));
@@ -469,7 +416,7 @@ export class OnlyPreviewWindowHelper {
     const width = restored?.bounds.width ?? MIN_WIDTH;
     const height = restored?.bounds.height ?? MIN_HEIGHT;
     const bounds = settingsBoundsForParent(parentWindow.getBounds(), width, height);
-    const target = rendererTarget('guide');
+    const target = getOnlyPreviewRendererTarget('guide', __dirname);
     const window = new BrowserWindow({
       title: 'Copy the skill to your agent',
       ...bounds,
@@ -485,12 +432,12 @@ export class OnlyPreviewWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: additionalArguments(host, 'guide')
+        additionalArguments: getOnlyPreviewRendererArguments(host, 'guide')
       }
     });
     this.agentSkillGuideWindow = window;
     this.agentSkillGuideWindowState = windowStateService.register('onlypreview-guide', window);
-    configureNavigationFence(window.webContents, target.url, false);
+    configureOnlyPreviewNavigationFence(window.webContents, target.url, false);
     window.once('ready-to-show', () => {
       if (this.agentSkillGuideWindow !== window) return;
       window.setBounds(settingsBoundsForParent(parentWindow.getBounds(), ...window.getSize()));
@@ -552,6 +499,7 @@ export class OnlyPreviewWindowHelper {
     this.destroyAgentSkillGuide();
     const window = this.baseWindow;
     const shellView = this.shellView;
+    onlyPreviewGlobalSearchWindowService.destroy();
     onlyPreviewPreviewRegionService.destroy();
     this.baseWindow = null;
     this.shellView = null;
@@ -674,6 +622,14 @@ export class OnlyPreviewWindowHelper {
     this.shellView = shellView;
     window.contentView.addChildView(shellView);
     this.applyInitialBounds();
+    onlyPreviewGlobalSearchWindowService.start({
+      window,
+      host,
+      shellView,
+      isCurrent: () => this.shellView === shellView && this.baseWindow === window,
+      createView: () => this.createView(host, 'globalSearch'),
+      loadView: async (view) => await this.loadView(view, 'globalSearch')
+    });
     onlyPreviewPreviewRegionService.start({
       window,
       host,
@@ -683,7 +639,9 @@ export class OnlyPreviewWindowHelper {
       bindChromeShortcuts: (webContents) => {
         this.bindNativeShortcuts(webContents, host, 'chrome');
         bindOnlyPreviewDevToolsShortcut(webContents);
-      }
+      },
+      onActiveViewAttached: () =>
+        onlyPreviewGlobalSearchWindowService.raiseAfterPreviewAttach(host.hostToken)
     });
 
     // A dead view closes the whole standalone window, which otherwise looks like the window simply
@@ -706,12 +664,9 @@ export class OnlyPreviewWindowHelper {
       shellView.setBounds({ x: 0, y: 0, width, height });
       const currentBounds = onlyPreviewPreviewRegionService.getBounds();
       if (currentBounds) {
-        onlyPreviewPreviewRegionService.updateBounds(
-          host.hostToken,
-          isHiddenPreviewBounds(currentBounds)
-            ? { x: 0, y: 0, width: 0, height: 0 }
-            : clampPreviewBounds(currentBounds, width, height)
-        );
+        const bounds = clampPreviewBounds(currentBounds, width, height);
+        onlyPreviewPreviewRegionService.updateBounds(host.hostToken, bounds);
+        onlyPreviewGlobalSearchWindowService.updateBounds(host.hostToken, bounds);
       }
     });
     window.once('closed' as any, () => {
@@ -722,6 +677,7 @@ export class OnlyPreviewWindowHelper {
       this.shellView = null;
       this.baseWindowState = null;
       fileSearchWindowService.stop();
+      onlyPreviewGlobalSearchWindowService.destroy();
       onlyPreviewPreviewRegionService.destroy();
       closeView(shellView);
       if (this.searchBootstrapToken === searchBootstrap.searchToken) {
@@ -754,10 +710,10 @@ export class OnlyPreviewWindowHelper {
 
   private createView(
     host: OnlyPreviewHostCapability,
-    mode: 'shell' | 'preview',
+    mode: 'shell' | 'preview' | 'globalSearch',
     previewRuntimeToken?: string
   ): WebContentsView {
-    const target = rendererTarget(mode);
+    const target = getOnlyPreviewRendererTarget(mode, __dirname);
     const view = new WebContentsView({
       webPreferences: {
         preload: join(
@@ -768,17 +724,25 @@ export class OnlyPreviewWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: additionalArguments(host, mode, previewRuntimeToken)
+        additionalArguments: getOnlyPreviewRendererArguments(host, mode, previewRuntimeToken)
       }
     });
-    configureNavigationFence(view.webContents, target.url, mode === 'shell');
-    this.bindNativeShortcuts(view.webContents, host, mode === 'shell' ? 'shell' : 'vue');
+    if (mode === 'globalSearch') view.setBackgroundColor('#00000000');
+    configureOnlyPreviewNavigationFence(view.webContents, target.url, mode === 'shell');
+    this.bindNativeShortcuts(
+      view.webContents,
+      host,
+      mode === 'shell' ? 'shell' : mode === 'preview' ? 'vue' : 'search'
+    );
     bindOnlyPreviewDevToolsShortcut(view.webContents);
     return view;
   }
 
-  private async loadView(view: WebContentsView, mode: 'shell' | 'preview'): Promise<void> {
-    const target = rendererTarget(mode);
+  private async loadView(
+    view: WebContentsView,
+    mode: 'shell' | 'preview' | 'globalSearch'
+  ): Promise<void> {
+    const target = getOnlyPreviewRendererTarget(mode, __dirname);
     await (is.dev && process.env['ELECTRON_RENDERER_URL']
       ? view.webContents.loadURL(target.url)
       : view.webContents.loadFile(target.filePath));

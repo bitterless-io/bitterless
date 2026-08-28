@@ -186,13 +186,20 @@
             @dblclick.prevent="onlyPreviewShellStore.handleTreeDoubleClick(row.entry)"
             @contextmenu.prevent.stop="onlyPreviewShellStore.showFileContextMenu(row.entry)"
           >
-            <IconChevronRight
+            <span
               v-if="row.entry.nodeKind === 'directory'"
-              class="onlypreview-shell__tree-chevron"
-              :class="{ 'onlypreview-shell__tree-chevron--expanded': row.expanded }"
-              :size="13"
+              name="onlypreview__treeChevron"
+              class="onlypreview-shell__tree-chevron-hit"
               aria-hidden="true"
-            />
+              @click.stop="onlyPreviewShellStore.handleTreeClick(row.entry, $event.detail, true)"
+              @dblclick.prevent.stop
+            >
+              <IconChevronRight
+                class="onlypreview-shell__tree-chevron"
+                :class="{ 'onlypreview-shell__tree-chevron--expanded': row.expanded }"
+                :size="13"
+              />
+            </span>
             <span v-else class="onlypreview-shell__tree-spacer" aria-hidden="true"></span>
             <IconFolderOpen
               v-if="row.entry.nodeKind === 'directory' && row.expanded"
@@ -276,9 +283,7 @@
         "
       ></div>
 
-      <GlobalSearchWorkspace v-if="onlyPreviewGlobalSearchStore.active" />
-
-      <section v-else name="onlypreview__previewRegion" class="onlypreview-shell__preview-region">
+      <section name="onlypreview__previewRegion" class="onlypreview-shell__preview-region">
         <PreviewToolbar />
         <div
           ref="previewHostRef"
@@ -320,6 +325,16 @@
         {{ formatOnlyPreviewBytes(onlyPreviewShellStore.selectedEntry.size) }}
       </span>
     </footer>
+
+    <button
+      v-if="onlyPreviewGlobalSearchVisibilityStore.active"
+      name="onlypreview__globalSearchScrim"
+      class="onlypreview-shell__global-search-scrim"
+      type="button"
+      tabindex="-1"
+      :aria-label="onlyPreviewI18n.globalSearch.dismiss"
+      @click="dismissOnlyPreviewGlobalSearch"
+    ></button>
   </div>
 </template>
 
@@ -344,18 +359,15 @@ import {
 import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onlyPreviewFormat';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
-import GlobalSearchWorkspace from './components/GlobalSearch/GlobalSearchWorkspace.vue';
 import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
-import { onlyPreviewGlobalSearchStore } from './onlyPreviewGlobalSearch.store';
-import { restoreOnlyPreviewGlobalSearchFocus } from './onlyPreviewGlobalSearchFocus.client';
+import { dismissOnlyPreviewGlobalSearch } from './onlyPreviewGlobalSearchDismiss.service';
+import { onlyPreviewGlobalSearchVisibilityStore } from './onlyPreviewGlobalSearchVisibility.store';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
 const previewHostRef = ref<HTMLElement | null>(null);
 const treeRef = ref<HTMLElement | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let resizeFrame = 0;
-let globalSearchFocusGeneration = 0;
-let globalSearchShellOpener: HTMLElement | null = null;
 const isMac = onlyPreviewEnv.platform === 'darwin';
 const isWindows = onlyPreviewEnv.platform === 'win32';
 
@@ -382,10 +394,6 @@ const reportPreviewBounds = (): void => {
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => {
     resizeFrame = 0;
-    if (onlyPreviewGlobalSearchStore.active) {
-      void onlyPreviewShellStore.reportPreviewBounds({ x: 0, y: 0, width: 0, height: 0 });
-      return;
-    }
     const bounds = previewHostRef.value?.getBoundingClientRect();
     if (!bounds) return;
     void onlyPreviewShellStore.reportPreviewBounds({
@@ -394,19 +402,6 @@ const reportPreviewBounds = (): void => {
       width: bounds.width,
       height: bounds.height
     });
-  });
-};
-
-const restorePreviewBounds = async (): Promise<void> => {
-  if (resizeFrame) cancelAnimationFrame(resizeFrame);
-  resizeFrame = 0;
-  const bounds = previewHostRef.value?.getBoundingClientRect();
-  if (!bounds) return;
-  await onlyPreviewShellStore.reportPreviewBounds({
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.width,
-    height: bounds.height
   });
 };
 
@@ -473,12 +468,15 @@ const handleTreeKeydown = (event: KeyboardEvent): void => {
 };
 
 const handleProjectItemCopyShortcut = (event: KeyboardEvent): boolean => {
-  if (event.defaultPrevented || event.repeat || event.isComposing || event.key.toLowerCase() !== 'c') {
+  if (
+    event.defaultPrevented ||
+    event.repeat ||
+    event.isComposing ||
+    event.key.toLowerCase() !== 'c'
+  ) {
     return false;
   }
-  const primaryModifier = isMac
-    ? event.metaKey && !event.ctrlKey
-    : event.ctrlKey && !event.metaKey;
+  const primaryModifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!primaryModifier) return false;
   const target = event.target;
   if (!(target instanceof HTMLElement)) return false;
@@ -519,49 +517,8 @@ onMounted(() => {
 watch(() => onlyPreviewShellStore.focusProjectRevision, focusProjectTree);
 
 watch(
-  () => onlyPreviewGlobalSearchStore.active,
-  (active) => {
-    const generation = ++globalSearchFocusGeneration;
-    const centeredProjectPath = active
-      ? null
-      : onlyPreviewGlobalSearchStore.consumeCenteredProjectPath();
-    if (active) {
-      globalSearchShellOpener =
-        onlyPreviewGlobalSearchStore.openerOrigin === 'shell' &&
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null;
-    }
-    void nextTick(async () => {
-      if (generation !== globalSearchFocusGeneration) return;
-      if (active) {
-        reportPreviewBounds();
-        return;
-      }
-      await restorePreviewBounds();
-      if (generation !== globalSearchFocusGeneration) return;
-      if (centeredProjectPath !== null) {
-        globalSearchShellOpener = null;
-        await restoreOnlyPreviewGlobalSearchFocus('discard');
-        await focusTreePath(centeredProjectPath, true);
-        return;
-      }
-      if (!onlyPreviewGlobalSearchStore.restoreFocusOnExit) {
-        await restoreOnlyPreviewGlobalSearchFocus('discard');
-        return;
-      }
-      if (await restoreOnlyPreviewGlobalSearchFocus('opener')) return;
-      const opener = globalSearchShellOpener;
-      globalSearchShellOpener = null;
-      if (opener?.isConnected) {
-        opener.focus();
-        return;
-      }
-      if (await focusTreePath(onlyPreviewShellStore.focusTree())) return;
-      await restoreOnlyPreviewGlobalSearchFocus('preview');
-    });
-  },
-  { flush: 'sync' }
+  () => onlyPreviewShellStore.centerProjectRevision,
+  () => void focusTreePath(onlyPreviewShellStore.centerProjectRelativePath, true)
 );
 
 watch(
@@ -577,7 +534,6 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  onlyPreviewGlobalSearchStore.shutdown();
   resizeObserver?.disconnect();
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
 });

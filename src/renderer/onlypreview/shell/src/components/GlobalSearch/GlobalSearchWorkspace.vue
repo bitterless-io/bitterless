@@ -3,7 +3,9 @@
     ref="workspaceRef"
     name="onlypreview__globalSearch"
     class="onlypreview-global-search"
-    :style="{ '--onlypreview-search-preview-height': `${onlyPreviewGlobalSearchStore.previewPercent}%` }"
+    :style="{
+      '--onlypreview-search-preview-height': `${onlyPreviewGlobalSearchStore.previewPercent}%`
+    }"
     :aria-label="onlyPreviewI18n.globalSearch.label"
     @keydown.capture="handleWorkspaceKeydown"
   >
@@ -61,45 +63,55 @@
       class="onlypreview-global-search__results"
       :aria-busy="onlyPreviewGlobalSearchStore.pending"
     >
-      <div v-if="!onlyPreviewShellStore.workspace" class="onlypreview-global-search__state">
+      <div v-if="!globalSearchContext" class="onlypreview-global-search__state">
         <IconFolderPlus :size="24" aria-hidden="true" />
         <strong>{{ onlyPreviewI18n.globalSearch.openFolder }}</strong>
       </div>
 
       <template v-else>
-        <SearchGroupHeader section="files" />
-        <SearchResultRow
-          v-for="result in onlyPreviewGlobalSearchStore.filesCollapsed
-            ? []
-            : onlyPreviewGlobalSearchStore.files"
-          :key="`files:${result.resultToken}`"
-          :result="result"
-          @focus-result="focusResult"
-        />
-        <p
-          v-if="showFilesEmpty"
-          name="onlypreview__globalSearchFilesEmpty"
-          class="onlypreview-global-search__empty-line"
+        <section
+          name="onlypreview__globalSearchContentsPane"
+          class="onlypreview-global-search__results-pane onlypreview-global-search__results-pane--contents"
         >
-          {{ onlyPreviewI18n.globalSearch.noFiles }}
-        </p>
+          <SearchGroupHeader section="contents" />
+          <SearchResultRow
+            v-for="result in onlyPreviewGlobalSearchStore.contentsCollapsed
+              ? []
+              : onlyPreviewGlobalSearchStore.contents"
+            :key="`contents:${result.resultToken}`"
+            :result="result"
+            @focus-result="focusResult"
+          />
+          <p
+            v-if="showContentsEmpty"
+            name="onlypreview__globalSearchContentsEmpty"
+            class="onlypreview-global-search__empty-line"
+          >
+            {{ onlyPreviewI18n.globalSearch.noContents }}
+          </p>
+        </section>
 
-        <SearchGroupHeader section="contents" />
-        <SearchResultRow
-          v-for="result in onlyPreviewGlobalSearchStore.contentsCollapsed
-            ? []
-            : onlyPreviewGlobalSearchStore.contents"
-          :key="`contents:${result.resultToken}`"
-          :result="result"
-          @focus-result="focusResult"
-        />
-        <p
-          v-if="showContentsEmpty"
-          name="onlypreview__globalSearchContentsEmpty"
-          class="onlypreview-global-search__empty-line"
+        <section
+          name="onlypreview__globalSearchFilesPane"
+          class="onlypreview-global-search__results-pane onlypreview-global-search__results-pane--files"
         >
-          {{ onlyPreviewI18n.globalSearch.noContents }}
-        </p>
+          <SearchGroupHeader section="files" />
+          <SearchResultRow
+            v-for="result in onlyPreviewGlobalSearchStore.filesCollapsed
+              ? []
+              : onlyPreviewGlobalSearchStore.files"
+            :key="`files:${result.resultToken}`"
+            :result="result"
+            @focus-result="focusResult"
+          />
+          <p
+            v-if="showFilesEmpty"
+            name="onlypreview__globalSearchFilesEmpty"
+            class="onlypreview-global-search__empty-line"
+          >
+            {{ onlyPreviewI18n.globalSearch.noFiles }}
+          </p>
+        </section>
 
         <p
           v-if="onlyPreviewGlobalSearchStore.pending"
@@ -158,19 +170,19 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { IconExternalLink, IconFolderPlus, IconSearch, IconX } from '@tabler/icons-vue';
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { onlyPreviewGlobalSearchStore } from '../../onlyPreviewGlobalSearch.store';
-import { onlyPreviewShellStore } from '../../onlyPreviewShell.store';
 import GlobalSearchPreview from '../GlobalSearchPreview/GlobalSearchPreview.vue';
 import SearchGroupHeader from './SearchGroupHeader.vue';
 import SearchResultRow from './SearchResultRow.vue';
 
 const inputRef = ref<HTMLInputElement | null>(null);
 const workspaceRef = ref<HTMLElement | null>(null);
+const globalSearchContext = computed(() => onlyPreviewGlobalSearchStore.getContext());
 
 const scopeTarget = computed(() =>
   onlyPreviewGlobalSearchStore.scopeKind === 'project'
-    ? onlyPreviewShellStore.workspace?.rootName || onlyPreviewI18n.project.label
+    ? globalSearchContext.value?.rootName || onlyPreviewI18n.project.label
     : onlyPreviewGlobalSearchStore.directoryLabel ||
-      onlyPreviewShellStore.workspace?.rootName ||
+      globalSearchContext.value?.rootName ||
       onlyPreviewI18n.project.label
 );
 const showFilesEmpty = computed(
@@ -225,7 +237,7 @@ const moveResultFocus = (offset: -1 | 1): void => {
 const handleWorkspaceKeydown = (event: KeyboardEvent): void => {
   if (event.key === 'Escape') {
     event.preventDefault();
-    onlyPreviewGlobalSearchStore.handleEscape();
+    void onlyPreviewGlobalSearchStore.handleEscape();
     return;
   }
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

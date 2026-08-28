@@ -1,6 +1,24 @@
 <template>
-  <div name="submodules__row" class="submodule-row" :class="`submodule-row--${entry.state}`">
+  <div
+    name="submodules__row"
+    class="submodule-row"
+    :class="[`submodule-row--${entry.state}`, { 'submodule-row--nested': nested }]"
+  >
     <div name="submodules__row__primary" class="submodule-row__line">
+      <IconBtn
+        v-if="expandable"
+        name="submodules__row__toggleChildren"
+        class="submodule-row__toggle"
+        :title="toggleLabel"
+        :aria-label="toggleLabel"
+        :aria-expanded="expanded"
+        @click="$emit('toggle', entry)"
+      >
+        <IconChevronRight :size="14" :class="{ 'submodule-row__chevron--open': expanded }" />
+      </IconBtn>
+      <!-- Every top-level row reserves the control's width, so names stay on one vertical line. -->
+      <span v-else-if="!nested" class="submodule-row__toggle-spacer" aria-hidden="true" />
+
       <span class="submodule-row__name">{{ displayName }}</span>
 
       <div name="submodules__row__branch" class="submodule-row__branch">
@@ -48,7 +66,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { IconAlertTriangle, IconExternalLink, IconGitBranch } from '@tabler/icons-vue';
+import {
+  IconAlertTriangle,
+  IconChevronRight,
+  IconExternalLink,
+  IconGitBranch
+} from '@tabler/icons-vue';
 import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import {
@@ -58,9 +81,29 @@ import {
 } from '@shared/submodules/submodules.type';
 import { describeBranch, describeEntryError } from '../../services/submoduleMessage.service';
 
-const props = defineProps<{ entry: SubmoduleEntry; loading: boolean }>();
+const props = withDefaults(
+  defineProps<{
+    entry: SubmoduleEntry;
+    loading: boolean;
+    /** A second-level row: indented, and never a parent itself — the tree stops at two levels. */
+    nested?: boolean;
+    expandable?: boolean;
+    expanded?: boolean;
+  }>(),
+  { nested: false, expandable: false, expanded: false }
+);
 
-defineEmits<{ (event: 'open', entry: SubmoduleEntry): void }>();
+defineEmits<{
+  (event: 'open', entry: SubmoduleEntry): void;
+  (event: 'toggle', entry: SubmoduleEntry): void;
+}>();
+
+const toggleLabel = computed(() =>
+  (props.expanded
+    ? i18nHelper.submodules.actions.collapseChildren
+    : i18nHelper.submodules.actions.expandChildren
+  ).replace('{count}', String(props.entry.children.length))
+);
 
 const displayName = computed(() => submoduleDisplayName(props.entry));
 const branchLabel = computed(() => describeBranch(props.entry));

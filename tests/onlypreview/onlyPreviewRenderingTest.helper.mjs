@@ -31,14 +31,9 @@ const rendererStoreHarnessPlugin = {
         ? { path: 'onlypreview-env', namespace: 'onlypreview-renderer-harness' }
         : null
     );
-    buildContext.onResolve({ filter: /onlyPreviewSheet\.service$/ }, ({ importer }) =>
+    buildContext.onResolve({ filter: /onlyPreviewOfficeSession\.service$/ }, ({ importer }) =>
       importer.endsWith('onlyPreviewPreview.store.ts')
-        ? { path: 'onlypreview-sheet', namespace: 'onlypreview-renderer-harness' }
-        : null
-    );
-    buildContext.onResolve({ filter: /onlyPreviewDocument\.service$/ }, ({ importer }) =>
-      importer.endsWith('onlyPreviewPreview.store.ts')
-        ? { path: 'onlypreview-document', namespace: 'onlypreview-renderer-harness' }
+        ? { path: 'onlypreview-office', namespace: 'onlypreview-renderer-harness' }
         : null
     );
     buildContext.onResolve({ filter: /onlyPreviewImage\.service$/ }, ({ importer }) =>
@@ -82,50 +77,25 @@ const rendererStoreHarnessPlugin = {
             `
         };
       }
-      if (path === 'onlypreview-sheet') {
-        return {
-          loader: 'js',
-          resolveDir: projectRoot,
-          contents: `
-              import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
-              const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
-              export class OnlyPreviewSheetSession {
-                constructor(options) {
-                  this.options = options;
-                  harness().sheetSessions.push(this);
-                }
-                async load(assetUrl, expectedSize) {
-                  harness().sheetLoads.push({ assetUrl, expectedSize });
-                  return harness().sheetManifest;
-                }
-                dispose() {
-                  harness().sheetDisposals += 1;
-                }
-                emitUnexpectedTerminal(errorCode) {
-                  this.options.onUnexpectedTerminal?.(
-                    new OnlyPreviewContractError(errorCode, 'Workbook session failed.')
-                  );
-                }
-              }
-            `
-        };
-      }
-      if (path === 'onlypreview-document') {
+      if (path === 'onlypreview-office') {
         return {
           loader: 'js',
           contents: `
               const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
-              export class OnlyPreviewDocumentSession {
+              export class OnlyPreviewOfficeSession {
                 constructor(options) {
                   this.options = options;
-                  harness().documentSessions.push(this);
+                  this.supportsTextSelection = options.kind !== 'xlsx';
+                  harness().officeSessions.push(this);
                 }
-                async load(assetUrl, expectedSize, ownerDocument) {
-                  harness().documentLoads.push({ assetUrl, expectedSize, ownerDocument });
-                  return harness().documentContent;
+                async mount(container) {
+                  harness().officeMounts.push({ container, options: this.options });
+                }
+                clear() {
+                  harness().officeClears += 1;
                 }
                 dispose() {
-                  harness().documentDisposals += 1;
+                  harness().officeDisposals += 1;
                 }
               }
             `
@@ -331,13 +301,10 @@ export const createRendererStoreHarness = (presentation) => ({
   ready: [],
   errors: [],
   reportErrorPromise: null,
-  sheetSessions: [],
-  sheetLoads: [],
-  sheetDisposals: 0,
-  documentSessions: [],
-  documentLoads: [],
-  documentDisposals: 0,
-  documentContent: null,
+  officeSessions: [],
+  officeMounts: [],
+  officeClears: 0,
+  officeDisposals: 0,
   drawioContent: null,
   imageSessions: [],
   imageLoads: [],
@@ -349,12 +316,7 @@ export const createRendererStoreHarness = (presentation) => ({
   },
   mediaSessions: [],
   mediaPrepares: [],
-  mediaDisposals: 0,
-  sheetManifest: {
-    sheets: [{ id: 0, name: 'Sheet 1', rowCount: 1, columnCount: 1 }],
-    acceptedCells: 1,
-    coverage: { kind: 'complete' }
-  }
+  mediaDisposals: 0
 });
 
 export const renderPreviewSurface = async (store) => {
@@ -397,20 +359,12 @@ export const renderPreviewSurface = async (store) => {
     app.component(componentName, { template: '<span></span>' });
   }
   // eslint-disable-next-line vue/one-component-per-file
-  app.component('SheetPreview', {
+  app.component('OfficePreview', {
     props: {
       session: { type: Object, required: true },
-      manifest: { type: Object, required: true }
-    },
-    template: '<section name="onlypreview__sheetPreview"></section>'
-  });
-  // eslint-disable-next-line vue/one-component-per-file
-  app.component('DocumentPreview', {
-    props: {
-      content: { type: Object, required: true },
       reportingRevision: { type: String, required: true }
     },
-    template: '<section name="onlypreview__documentPreview"></section>'
+    template: '<section name="onlypreview__officePreview"></section>'
   });
   // eslint-disable-next-line vue/one-component-per-file
   app.component('DrawioPreview', {

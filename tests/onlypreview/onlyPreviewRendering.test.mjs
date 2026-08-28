@@ -221,7 +221,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'document-parse',
       extension: '.docx',
       kind: 'document',
-      adapterId: 'docx-dom',
+      adapterId: 'ooxml-docx',
       errorCode: 'DOCUMENT_PARSE_FAILED',
       reason: 'The document could not be parsed.'
     },
@@ -229,7 +229,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'document-empty',
       extension: '.docx',
       kind: 'document',
-      adapterId: 'docx-dom',
+      adapterId: 'ooxml-docx',
       errorCode: 'DOCUMENT_EMPTY',
       reason: 'This document has no content to preview.'
     },
@@ -237,7 +237,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'document-sanitize',
       extension: '.docx',
       kind: 'document',
-      adapterId: 'docx-dom',
+      adapterId: 'ooxml-docx',
       errorCode: 'DOCUMENT_SANITIZE_FAILED',
       reason: 'The document output did not pass the preview safety checks.'
     },
@@ -245,7 +245,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'document-timeout',
       extension: '.docx',
       kind: 'document',
-      adapterId: 'docx-dom',
+      adapterId: 'ooxml-docx',
       errorCode: 'DOCUMENT_RENDER_TIMEOUT',
       reason: 'Document preview took too long and was stopped.'
     },
@@ -253,7 +253,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'sheet-parse',
       extension: '.xlsx',
       kind: 'sheet',
-      adapterId: 'xlsx-grid',
+      adapterId: 'ooxml-xlsx',
       errorCode: 'SHEET_PARSE_FAILED',
       reason: 'The workbook could not be parsed.'
     },
@@ -261,7 +261,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'sheet-empty',
       extension: '.xlsx',
       kind: 'sheet',
-      adapterId: 'xlsx-grid',
+      adapterId: 'ooxml-xlsx',
       errorCode: 'SHEET_EMPTY',
       reason: 'This workbook has no cells to preview.'
     },
@@ -269,7 +269,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'sheet-timeout',
       extension: '.xlsx',
       kind: 'sheet',
-      adapterId: 'xlsx-grid',
+      adapterId: 'ooxml-xlsx',
       errorCode: 'SHEET_RENDER_TIMEOUT',
       reason: 'Workbook preview took too long and was stopped.'
     },
@@ -277,7 +277,7 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'archive-limit',
       extension: '.xlsx',
       kind: 'sheet',
-      adapterId: 'xlsx-grid',
+      adapterId: 'ooxml-xlsx',
       errorCode: 'OOXML_ARCHIVE_LIMIT',
       reason: 'This Office file expands beyond the safe preview limits.'
     },
@@ -293,9 +293,33 @@ test('direct unsupported and typed renderer failures share one truthful metadata
       id: 'archive-invalid',
       extension: '.docx',
       kind: 'document',
-      adapterId: 'docx-dom',
+      adapterId: 'ooxml-docx',
       errorCode: 'OOXML_ARCHIVE_INVALID',
       reason: 'This Office package is damaged or has an unsupported ZIP structure.'
+    },
+    {
+      id: 'presentation-parse',
+      extension: '.pptx',
+      kind: 'presentation',
+      adapterId: 'ooxml-pptx',
+      errorCode: 'PRESENTATION_PARSE_FAILED',
+      reason: 'The presentation could not be parsed.'
+    },
+    {
+      id: 'presentation-empty',
+      extension: '.pptx',
+      kind: 'presentation',
+      adapterId: 'ooxml-pptx',
+      errorCode: 'PRESENTATION_EMPTY',
+      reason: 'The presentation has no slides to preview.'
+    },
+    {
+      id: 'presentation-timeout',
+      extension: '.pptx',
+      kind: 'presentation',
+      adapterId: 'ooxml-pptx',
+      errorCode: 'PRESENTATION_RENDER_TIMEOUT',
+      reason: 'Presentation preview took too long and was stopped.'
     },
     {
       id: 'signature',

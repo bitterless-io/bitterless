@@ -3,7 +3,6 @@ import { xpcRenderer } from 'electron-xpc/renderer';
 import {
   SUBMODULES_SNAPSHOT_EVENT,
   createEmptySubmodulesSnapshot,
-  submoduleDisplayName,
   type SubmoduleEntry,
   type SubmodulesSnapshot,
   type SubmodulesSortMode,
@@ -11,13 +10,14 @@ import {
 } from '@shared/submodules/submodules.type';
 import { submodulesEmitter, submodulesSystemEmitter } from '../emitter/submodules.emitter';
 import { describeOpenError, describeScanError } from '../services/submoduleMessage.service';
+import {
+  countEntries,
+  countTreeRows,
+  filterSubmoduleTree,
+  searchTokens,
+  type SubmoduleTreeRow
+} from '../services/submoduleTree.service';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-
-/** Same shape as the EyesOnAgents title filter: NFKC, case-folded, split on path/word separators. */
-const SEARCH_SEPARATOR_PATTERN = /[\s\-_./\\:|]+/u;
-
-const searchTokens = (value: string): string[] =>
-  value.normalize('NFKC').toLocaleLowerCase().split(SEARCH_SEPARATOR_PATTERN).filter(Boolean);
 
 class SubmodulesState {
   snapshot: SubmodulesSnapshot = createEmptySubmodulesSnapshot();
@@ -27,6 +27,8 @@ class SubmodulesState {
   actionError: string | null = null;
   /** Live filter over the visible rows. Deliberately not persisted: it is a lookup, not a setting. */
   search = '';
+  /** Absolute paths of the expanded parents. View state, so it survives snapshots but not restarts. */
+  expandedPaths = new Set<string>();
 
   /** Main-ordered rows: mismatch-first when enabled, then by name or by newest change. */
   get entries(): SubmoduleEntry[] {
@@ -38,16 +40,25 @@ class SubmodulesState {
   }
 
   /**
-   * Every query token must appear in the row's name or declared path. Ordering is Main's, so the
-   * filter only removes rows — a 30-row list needs no throttling.
+   * The two-level list as rendered: search decides which rows survive, expansion decides which
+   * children are shown. Ordering is Main's, so this only removes and nests — a 40-row list needs no
+   * throttling.
    */
-  get visibleEntries(): SubmoduleEntry[] {
-    const tokens = searchTokens(this.search);
-    if (!tokens.length) return this.entries;
-    return this.entries.filter((entry) => {
-      const haystack = searchTokens(`${submoduleDisplayName(entry)} ${entry.path}`);
-      return tokens.every((token) => haystack.some((part) => part.includes(token)));
+  get visibleTree(): SubmoduleTreeRow[] {
+    return filterSubmoduleTree(this.entries, {
+      query: this.search,
+      expandedPaths: this.expandedPaths
     });
+  }
+
+  /** Rows on screen, parents and children alike. */
+  get visibleCount(): number {
+    return countTreeRows(this.visibleTree);
+  }
+
+  /** Every declared submodule, both levels. */
+  get totalCount(): number {
+    return countEntries(this.entries);
   }
 
   get isSearching(): boolean {
@@ -151,6 +162,14 @@ class SubmodulesState {
 
   clearSearch(): void {
     this.search = '';
+  }
+
+  toggleExpanded(entry: SubmoduleEntry): void {
+    if (this.expandedPaths.has(entry.absolutePath)) {
+      this.expandedPaths.delete(entry.absolutePath);
+      return;
+    }
+    this.expandedPaths.add(entry.absolutePath);
   }
 
   async setShowDiffOnTop(showDiffOnTop: boolean): Promise<void> {

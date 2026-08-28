@@ -8,7 +8,7 @@ export const ONLY_PREVIEW_OOXML_MAX_MERGE_TAG_BYTES = 4 * 1024;
 export const ONLY_PREVIEW_OOXML_MAX_MERGE_RANGES = 100_000;
 export const ONLY_PREVIEW_OOXML_MAX_MERGED_CELLS = 500_000;
 
-export type OnlyPreviewOoxmlPackageKind = 'xlsx' | 'docx';
+export type OnlyPreviewOoxmlPackageKind = 'xlsx' | 'docx' | 'pptx';
 
 export type OnlyPreviewOoxmlPreflightErrorCode =
   | 'OOXML_ARCHIVE_LIMIT'

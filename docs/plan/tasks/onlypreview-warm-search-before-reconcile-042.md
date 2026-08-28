@@ -82,14 +82,14 @@ the bottleneck; the reusable active index is unnecessarily hidden until freshnes
   candidate policy or identity.
 - Persist eligible non-file Global Search tree entries, maximum traversal depth, and a tree-ready
   build marker bound to the same committed SQLite build. Ordinary files continue to hydrate from
-  the existing filename tier. Empty directories and symlinks remain truthful; no path-derived fake
-  directory is allowed.
+  the existing filename tier. Task 043 later permits provisional ancestors proven by committed file
+  paths only while this certified tier is missing; empty directories and symlinks remain truthful.
 - Upgrade a valid schema-7 database additively to schema 8. Preserve `files`, chunks, postings, FTS,
-  and build identity. Because a migrated database has no valid persisted tree marker, it may
-  immediately warm-return ordinary file names and Contents, but it must withhold folders/symlinks
-  until the first successful reconcile commits the tree tier. The migration must discard any
-  pre-existing `search_tree` rows and `tree_*` metadata even when a malformed or downgraded cache
-  happens to contain them.
+  and build identity. This task originally withheld folders/symlinks until the first successful
+  reconcile; task 043 supersedes only that cold-upgrade behavior by permitting provisional non-empty
+  directory ancestors derived from committed eligible file paths. Symlinks and empty directories
+  still require the certified tree tier. The migration must discard any pre-existing `search_tree`
+  rows and `tree_*` metadata even when a malformed or downgraded cache happens to contain them.
 - A missing, mismatched, or invalid tree-ready marker fails closed to file/Contents-only warm
   results. It never invalidates an otherwise reusable content index and never publishes false empty
   folder authority. `tree_max_depth_reached` is part of that compound marker and accepts only the

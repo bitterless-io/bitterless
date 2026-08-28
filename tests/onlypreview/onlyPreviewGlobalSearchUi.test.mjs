@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { runtime, source } from './onlyPreviewCoreTest.helper.mjs';
 
-test('result preview variants are lazy and active HTML cannot retain active content', () => {
+test('result preview uses lazy Vue Preview-style file surfaces and inert HTML', () => {
   const host = source(
     'src/renderer/onlypreview/shell/src/components/GlobalSearchPreview/GlobalSearchPreview.vue'
+  );
+  const style = source(
+    'src/renderer/onlypreview/shell/src/components/GlobalSearchPreview/GlobalSearchPreview.less'
   );
   const sanitizer = source(
     'src/renderer/onlypreview/shell/src/components/GlobalSearchPreview/onlyPreviewStaticHtml.service.ts'
@@ -13,10 +16,11 @@ test('result preview variants are lazy and active HTML cannot retain active cont
     'src/renderer/onlypreview/shell/src/components/GlobalSearchPreview/RichSearchPreview.vue'
   );
 
-  assert.equal((host.match(/defineAsyncComponent\(/g) || []).length, 6);
-  for (const variant of ['plain', 'markdown', 'html-static', 'directory', 'context', 'info']) {
+  assert.equal((host.match(/defineAsyncComponent\(/g) || []).length, 5);
+  for (const variant of ['plain', 'markdown', 'html-static', 'directory', 'info']) {
     assert.match(host, new RegExp(`['"]?${variant.replace('-', '\\-')}['"]?`));
   }
+  assert.doesNotMatch(host + rich + style, /ContextSearchPreview|globalSearchContextPreview/);
   assert.doesNotMatch(host + rich, /<iframe|srcdoc/);
   assert.match(sanitizer, /ALLOWED_ATTR:\s*\[\]/);
   assert.match(sanitizer, /FORBID_TAGS/);
@@ -25,16 +29,37 @@ test('result preview variants are lazy and active HTML cannot retain active cont
   }
   assert.match(rich, /renderOnlyPreviewMarkdown/);
   assert.match(rich, /sanitizeOnlyPreviewStaticHtml/);
+  assert.match(rich, /onlypreview-markdown__document/);
+  assert.match(
+    style,
+    /@import '\.\.\/\.\.\/\.\.\/\.\.\/preview\/src\/components\/MarkdownPreview\/MarkdownPreview\.less'/
+  );
+  assert.match(
+    style,
+    /\.onlypreview-search-preview__plain\s*\{[\s\S]*font-size:\s*13px;[\s\S]*line-height:\s*1\.55;[\s\S]*white-space:\s*pre;/
+  );
+  assert.match(style, /\.onlypreview-search-preview__plain\s*\{[\s\S]*background:\s*#fff;/);
 });
 
-test('Files and Contents rows expose title, relative directory, snippet, and explicit open', () => {
+test('directory Preview entries use 13px semibold typography', () => {
+  const style = source(
+    'src/renderer/onlypreview/shell/src/components/GlobalSearchPreview/GlobalSearchPreview.less'
+  );
+
+  assert.match(
+    style,
+    /\.onlypreview-search-preview__directory-entry\s*\{[\s\S]*?font-size:\s*13px;[\s\S]*?font-weight:\s*600;[\s\S]*?\}/
+  );
+});
+
+test('Contents and Files rows expose title, relative directory, snippet, and explicit open', () => {
   const workspace = source(
     'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.vue'
   );
   const row = source(
     'src/renderer/onlypreview/shell/src/components/GlobalSearch/SearchResultRow.vue'
   );
-  assert.ok(workspace.indexOf('section="files"') < workspace.indexOf('section="contents"'));
+  assert.ok(workspace.indexOf('section="contents"') < workspace.indexOf('section="files"'));
   assert.match(row, /name="onlypreview__globalSearchResultTitle"/);
   assert.match(row, /result\.parentRelativePath \|\| '\.'/);
   assert.match(row, /splitOnlyPreviewContentMatch/);
@@ -46,7 +71,43 @@ test('Files and Contents rows expose title, relative directory, snippet, and exp
   assert.match(row, /@keydown\.enter\.exact\.prevent="select"/);
 });
 
-test('Project selection is the only live Current directory sync path and folder reveal centers once', () => {
+test('Global Search renders equal Contents-left and Files-right independent result panes', () => {
+  const workspace = source(
+    'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.vue'
+  );
+  const style = source(
+    'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.less'
+  );
+  const contentsPane = workspace.indexOf('name="onlypreview__globalSearchContentsPane"');
+  const filesPane = workspace.indexOf('name="onlypreview__globalSearchFilesPane"');
+  const pending = workspace.indexOf('name="onlypreview__globalSearchPending"');
+  const split = workspace.indexOf('name="onlypreview__globalSearchSplit"');
+  const preview = workspace.indexOf('name="onlypreview__globalSearchPreviewPane"');
+
+  assert.ok(contentsPane > -1 && contentsPane < filesPane);
+  assert.ok(workspace.indexOf('section="contents"', contentsPane) < filesPane);
+  assert.ok(workspace.indexOf('section="files"', filesPane) < pending);
+  assert.ok(pending < split && split < preview);
+  assert.match(
+    style,
+    /\.onlypreview-global-search__results\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\);[\s\S]*?overflow:\s*hidden;/
+  );
+  assert.match(
+    style,
+    /\.onlypreview-global-search__results-pane\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*auto;/
+  );
+  assert.match(
+    style,
+    /\.onlypreview-global-search__results-pane--files\s*\{[\s\S]*?border-left:\s*1px solid var\(--onlypreview-divider\);/
+  );
+  assert.match(style, /\.onlypreview-global-search__status\s*\{[\s\S]*?grid-column:\s*1 \/ -1;/);
+  assert.match(
+    style,
+    /\.onlypreview-global-search__state\s*\{[\s\S]*?grid-column:\s*1 \/ -1;[\s\S]*?grid-row:\s*1 \/ -1;/
+  );
+});
+
+test('Project selection owns Current directory and native folder reveal centers after success', () => {
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
   const activateEntry = shellStore.slice(
     shellStore.indexOf('private async activateEntry'),
@@ -62,16 +123,21 @@ test('Project selection is the only live Current directory sync path and folder 
   );
   assert.match(
     activateEntry,
-    /this\.treeSelectedRelativePath = entry\.relativePath[\s\S]*syncCurrentDirectory/
+    /this\.treeSelectedRelativePath = entry\.relativePath[\s\S]*reportGlobalSearchContext\(\)/
   );
   assert.doesNotMatch(focusOnly, /syncCurrentDirectory/);
   assert.doesNotMatch(moveFocus, /syncCurrentDirectory/);
 
   const app = source('src/renderer/onlypreview/shell/src/App.vue');
+  const shellReveal = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchShell.service.ts'
+  );
   assert.match(
     app,
-    /consumeCenteredProjectPath\(\)[\s\S]*restoreOnlyPreviewGlobalSearchFocus\('discard'\)[\s\S]*focusTreePath\(centeredProjectPath, true\)/
+    /onlyPreviewShellStore\.centerProjectRevision[\s\S]*focusTreePath\(onlyPreviewShellStore\.centerProjectRelativePath, true\)/
   );
+  assert.match(shellReveal, /if \(succeeded\) options\.onRevealed\(action\.relativePath\)/);
+  assert.match(shellReveal, /completeDirectoryReveal\(action, succeeded\)/);
 });
 
 test('native shortcuts reserve only Shift+Cmd/Ctrl+F for Global Search', () => {
@@ -87,29 +153,37 @@ test('native shortcuts reserve only Shift+Cmd/Ctrl+F for Global Search', () => {
   assert.match(helper, /if \(isCurrentFileFindShortcut\(input\)\) return 'find-in-file'/);
 });
 
-test('Find to Global Search closes Find without hidden Preview focus for every shortcut origin', () => {
+test('Find to Global Search closes Find and delegates native overlay focus for every origin', () => {
   const helper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  const windowService = source(
+    'src/main/onlypreview/views/onlyPreviewGlobalSearchWindow.service.ts'
+  );
+  const viewService = source(
+    'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts'
+  );
   const focusBranch = helper.slice(
     helper.indexOf("if (command === 'focus-search')"),
     helper.indexOf("if (command === 'focus-project')")
   );
-  assert.ok(focusBranch.indexOf('closeFind(host.hostToken)') < focusBranch.indexOf('.capture('));
-  assert.ok(focusBranch.indexOf('.capture(') < focusBranch.indexOf('shellView.webContents.focus()'));
   assert.ok(
-    focusBranch.indexOf('shellView.webContents.focus()') <
-      focusBranch.indexOf('ONLY_PREVIEW_FOCUS_SEARCH_EVENT')
+    focusBranch.indexOf('closeFind(host.hostToken)') <
+      focusBranch.indexOf('onlyPreviewGlobalSearchWindowService.open(host, origin, webContents)')
   );
+  assert.doesNotMatch(focusBranch, /shellView\.webContents\.focus|\.capture\(|xpcMain\.broadcast/);
   assert.doesNotMatch(focusBranch, /focusActiveContent/);
   assert.match(helper, /bindNativeShortcuts\(webContents, host, 'chrome'\)/);
   assert.match(
     helper,
-    /bindNativeShortcuts\(view\.webContents, host, mode === 'shell' \? 'shell' : 'vue'\)/
+    /mode === 'shell' \? 'shell' : mode === 'preview' \? 'vue' : 'search'/
   );
+  assert.match(windowService, /if \(origin !== 'search'\)[\s\S]*\.capture\(host\.hostToken, origin, opener\)/);
+  assert.match(windowService, /origin === 'search' \? 'shell' : origin/);
+  assert.match(viewService, /view\.webContents\.focus\(\)[\s\S]*ONLY_PREVIEW_FOCUS_SEARCH_EVENT/);
   const shellEvents = source(
     'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
   );
-  assert.match(shellEvents, /event\.origin === 'shell'[\s\S]*event\.origin === 'vue'[\s\S]*event\.origin === 'chrome'/);
-  assert.match(shellEvents, /handlers\.focusSearch\(params\.origin\)/);
+  assert.doesNotMatch(shellEvents, /focusSearch|ONLY_PREVIEW_FOCUS_SEARCH_EVENT/);
+  assert.match(shellEvents, /ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT/);
 
   const workspace = source(
     'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.vue'
@@ -152,6 +226,179 @@ test('Global Search focus service restores exact Vue or Chrome openers and rejec
   service.capture('host', 'vue', view('wrong-host'));
   assert.equal(service.restoreOpener('other-host'), false);
   assert.deepEqual(focused, ['vue', 'chrome']);
+});
+
+test('native Global Search pulls context, nudges by revision, and closes to the selected surface', () => {
+  const client = source(
+    'src/renderer/onlypreview/globalSearch/src/onlyPreviewGlobalSearchHost.client.ts'
+  );
+  const app = source('src/renderer/onlypreview/globalSearch/src/main.ts');
+
+  assert.match(
+    client,
+    /ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT[\s\S]*refreshContext\(onContext, onVisibility\)[\s\S]*await this\.refreshContext\(onContext, onVisibility\)/
+  );
+  assert.match(
+    client,
+    /ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT[\s\S]*acceptVisibility\(params, onVisibility\)/
+  );
+  assert.match(client, /if \(snapshot\.revision < this\.snapshot\.revision\) return/);
+  assert.match(client, /if \(event\.revision < this\.snapshot\.revision\) return/);
+  assert.match(
+    client,
+    /result\.nodeKind === 'directory'[\s\S]*revealGlobalSearchDirectory[\s\S]*if \(!revealed\) return false[\s\S]*mode: 'project'/
+  );
+  assert.match(
+    client,
+    /selectStandaloneFile[\s\S]*closeGlobalSearch\(\{ hostToken, mode: 'preview' \}\)/
+  );
+  assert.match(
+    app,
+    /await onlyPreviewGlobalSearchHostClient\.initialize[\s\S]*if \(active\)[\s\S]*onlyPreviewGlobalSearchStore\.enter\(\)[\s\S]*onlyPreviewGlobalSearchStore\.exit\(false\)/
+  );
+  assert.doesNotMatch(app, /\n\s*onlyPreviewGlobalSearchStore\.enter\(\);/);
+});
+
+test('Global Search alone renders as one inset transparent floating surface', () => {
+  const helper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  const app = source('src/renderer/onlypreview/globalSearch/src/App.vue');
+  const canvasStyle = source('src/renderer/onlypreview/globalSearch/src/App.less');
+  const workspaceStyle = source(
+    'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.less'
+  );
+  const createView = helper.slice(
+    helper.indexOf('private createView('),
+    helper.indexOf('private async loadView(')
+  );
+  const workspaceStart = workspaceStyle.indexOf('.onlypreview-global-search {');
+  const workspace = workspaceStyle.slice(
+    workspaceStart,
+    workspaceStyle.indexOf('\n}', workspaceStart) + 2
+  );
+
+  assert.equal((helper.match(/setBackgroundColor\(/g) ?? []).length, 1);
+  assert.match(
+    createView,
+    /if \(mode === 'globalSearch'\) view\.setBackgroundColor\('#00000000'\);/
+  );
+  assert.match(canvasStyle, /html,\s*\nbody,\s*\n#app\s*\{[\s\S]*?background:\s*transparent;/);
+  assert.match(canvasStyle, /html,\s*\nbody\s*\{[\s\S]*?overflow:\s*hidden;/);
+  assert.match(canvasStyle, /body\s*\{[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*24px;/);
+  assert.match(canvasStyle, /#app\s*\{[\s\S]*?overflow:\s*visible;/);
+  assert.match(workspace, /overflow:\s*hidden;/);
+  assert.match(workspace, /border-radius:\s*14px;/);
+  assert.match(workspace, /background:\s*var\(--onlypreview-canvas\);/);
+  assert.match(
+    workspace,
+    /box-shadow:\s*\n\s*0 12px 24px -12px rgb\(37 40 58 \/ 36%\),\s*\n\s*0 3px 8px rgb\(37 40 58 \/ 16%\);/
+  );
+  assert.equal((workspace.match(/rgb\(/g) ?? []).length, 2);
+  assert.doesNotMatch(workspace, /(?:backdrop-)?filter\s*:/);
+
+  assert.match(app, /if \(event\.target !== document\.body\) return;/);
+  assert.match(
+    app,
+    /event\.preventDefault\(\);[\s\S]*event\.stopImmediatePropagation\(\);[\s\S]*onlyPreviewGlobalSearchStore\.dismiss\(\)/
+  );
+  assert.match(
+    app,
+    /onMounted\(\(\) => document\.body\.addEventListener\('click', dismissFromBodyGutter\)\)/
+  );
+  assert.match(
+    app,
+    /onUnmounted\(\(\) => document\.body\.removeEventListener\('click', dismissFromBodyGutter\)\)/
+  );
+});
+
+test('Global Search context snapshot carries exact versioned visibility state', () => {
+  const snapshot = {
+    revision: 7,
+    active: true,
+    workspace: {
+      workspaceId: 'workspace-global-search-000000',
+      generation: 3,
+      ready: true,
+      rootName: 'bitterless',
+      currentDirectoryRelativePath: 'src'
+    }
+  };
+  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchContextSnapshot(snapshot), snapshot);
+  for (const invalid of [
+    { ...snapshot, active: 'true' },
+    { revision: snapshot.revision, workspace: snapshot.workspace },
+    { ...snapshot, extra: false }
+  ]) {
+    assert.throws(
+      () => runtime.parseOnlyPreviewGlobalSearchContextSnapshot(invalid),
+      (error) => error.code === 'INVALID_INPUT'
+    );
+  }
+});
+
+test('native Global Search visibility drives one lightweight click-to-dismiss Shell scrim', () => {
+  const shared = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const viewService = source(
+    'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts'
+  );
+  const shellEvents = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
+  );
+  const visibilityStore = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchVisibility.store.ts'
+  );
+  const shellClient = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchShell.client.ts'
+  );
+  const dismissService = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchDismiss.service.ts'
+  );
+  const app = source('src/renderer/onlypreview/shell/src/App.vue');
+  const style = source('src/renderer/onlypreview/shell/src/App.less');
+
+  assert.match(shared, /ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT/);
+  assert.match(
+    shared,
+    /OnlyPreviewGlobalSearchVisibilityEvent[\s\S]*revision: number[\s\S]*active: boolean/
+  );
+  assert.match(
+    viewService,
+    /reportContext[\s\S]*broadcastVisibility\(runtime\)[\s\S]*show\([\s\S]*broadcastVisibility\(runtime\)/
+  );
+  assert.match(viewService, /close\([\s\S]*setActive\(false\)[\s\S]*broadcastVisibility\(runtime\)/);
+  assert.match(
+    shellEvents,
+    /Reflect\.ownKeys\(event\)\.length === 3[\s\S]*typeof event\.hostId === 'string'[\s\S]*Number\.isSafeInteger\(event\.revision\)[\s\S]*typeof event\.active === 'boolean'/
+  );
+  assert.match(
+    shellEvents,
+    /ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT[\s\S]*isCurrentHost\(params\)[\s\S]*onlyPreviewGlobalSearchVisibilityStore\.setActive\(params\.active\)/
+  );
+  assert.match(shellEvents, /params\.revision < globalSearchVisibilityRevision/);
+  assert.match(visibilityStore, /active = false/);
+  assert.match(
+    shellClient,
+    /dismiss\(\)[\s\S]*closeGlobalSearch\(\{ hostToken, mode: 'opener' \}\)/
+  );
+  assert.match(app, /v-if="onlyPreviewGlobalSearchVisibilityStore\.active"/);
+  assert.match(app, /name="onlypreview__globalSearchScrim"/);
+  assert.match(app, /@click="dismissOnlyPreviewGlobalSearch"/);
+  assert.match(
+    dismissService,
+    /dismissOnlyPreviewGlobalSearch[\s\S]*await onlyPreviewGlobalSearchShellClient\.dismiss\(\)[\s\S]*OPERATION_FAILED/
+  );
+  assert.doesNotMatch(app, /closeGlobalSearch|OPERATION_FAILED/);
+
+  const scrimStart = style.indexOf('.onlypreview-shell__global-search-scrim');
+  const scrim = style.slice(scrimStart, style.indexOf('}', scrimStart) + 1);
+  assert.match(scrim, /position: absolute/);
+  assert.match(scrim, /inset: 0/);
+  assert.match(scrim, /z-index: 40/);
+  assert.match(scrim, /background:\s*transparent;/);
+  assert.match(scrim, /-webkit-app-region: no-drag/);
+  assert.doesNotMatch(
+    scrim,
+    /rgba?\s*\(|hsla?\s*\(|#[0-9a-f]{4,8}|color-mix|gradient|opacity\s*:|(?:backdrop-)?filter\s*:|animation(?:-[\w-]+)?\s*:|transition(?:-[\w-]+)?\s*:/i
+  );
 });
 
 test('removed Project Search style and catalog surface does not remain', () => {

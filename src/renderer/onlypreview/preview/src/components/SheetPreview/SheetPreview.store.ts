@@ -88,7 +88,7 @@ export class OnlyPreviewSheetPreviewStoreController {
     const selectionRevision = Number(this.reportingRevision);
     if (Number.isSafeInteger(selectionRevision) && selectionRevision >= 0) {
       this.unregisterFindAdapter = onlyPreviewFindAdapterBridge.register(
-        'sheet',
+        'office',
         selectionRevision,
         {
           execute: async (command) => {

@@ -21,6 +21,10 @@ test('result preview is token-only, bounded, typed, and revoked by the next quer
   writeFileSync(join(rootPath, 'preview-page.htm'), '<b>needle</b>');
   writeFileSync(join(rootPath, 'preview-manual.pdf'), Buffer.from('%PDF fake needle'));
   writeFileSync(join(rootPath, 'preview-large.txt'), `needle\n${'x'.repeat(300 * 1024)}`);
+  writeFileSync(
+    join(rootPath, 'deep-match.md'),
+    `# File head\n${'x'.repeat(270 * 1024)}\nbeyondheadneedle`
+  );
   writeFileSync(join(rootPath, 'preview-too-large.txt'), 'x'.repeat(1024 * 1024 + 1));
   mkdirSync(join(rootPath, 'preview-directory'));
   for (let index = 0; index < 205; index += 1) {
@@ -69,9 +73,12 @@ test('result preview is token-only, bounded, typed, and revoked by the next quer
     const content = response.contents.find(
       ({ relativePath }) => relativePath === 'preview-readme.md'
     );
-    const context = await preview(content);
-    assert.equal(context.kind, 'context');
-    assert.equal(context.match.toLocaleLowerCase('und'), 'preview');
+    const fileHead = await preview(findFile(response, 'preview-readme.md'));
+    const contentHead = await preview(content);
+    assert.deepEqual(contentHead, fileHead);
+    assert.equal(contentHead.kind, 'text');
+    assert.equal(contentHead.adapter, 'markdown');
+    assert.equal(contentHead.text, '# Preview\nneedle');
 
     await assert.rejects(() =>
       engine.preview({
@@ -82,6 +89,33 @@ test('result preview is token-only, bounded, typed, and revoked by the next quer
         isCancelled: () => false
       })
     );
+    const deepResponse = await engine.search({
+      workspaceId: 'workspace',
+      generation: 3,
+      requestId: 'deep-preview-request',
+      query: 'beyondheadneedle',
+      maxResults: 500,
+      scope: { kind: 'project' },
+      isCancelled: () => false
+    });
+    const deepContent = deepResponse.contents.find(
+      ({ relativePath }) => relativePath === 'deep-match.md'
+    );
+    assert.match(deepContent.contentMatch.snippetText, /beyondheadneedle/i);
+    const deepHead = await engine.preview({
+      workspaceId: 'workspace',
+      generation: 3,
+      requestId: 'deep-preview-request',
+      resultToken: deepContent.resultToken,
+      isCancelled: () => false
+    });
+    assert.equal(deepHead.kind, 'text');
+    assert.equal(deepHead.adapter, 'markdown');
+    assert.equal(deepHead.truncated, true);
+    assert.match(deepHead.text, /^# File head\n/);
+    assert.doesNotMatch(deepHead.text, /beyondheadneedle/i);
+    assert.ok(Buffer.byteLength(deepHead.text) <= 256 * 1024);
+
     const replacement = await engine.search({
       workspaceId: 'workspace',
       generation: 3,

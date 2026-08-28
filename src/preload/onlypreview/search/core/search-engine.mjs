@@ -18,6 +18,7 @@ import { createOnlyPreviewGlobalSearchSession } from './global-search-session.mj
 import { createOnlyPreviewSearchDiagnostics } from '../../../../shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
 import { executeOnlyPreviewGlobalSearch } from './global-search-executor.mjs';
 import { previewOnlyPreviewGlobalSearchResult } from './global-search-preview.mjs';
+import { reclaimInterruptedSqliteArtifacts } from './sqlite-artifacts.mjs';
 import { loadOnlyPreviewWorkspaceConfig, pathIsWithin } from './workspace-config.mjs';
 import { createWorkspaceWatchController } from './watch-controller.mjs';
 import {
@@ -265,6 +266,7 @@ export class OnlyPreviewSearchEngine {
       throw new TypeError('Search database must stay outside the workspace');
     }
     await mkdir(dirname(databaseRealPath), { recursive: true });
+    await reclaimInterruptedSqliteArtifacts(databaseRealPath);
     this.workspaceId = workspaceId;
     this.generation = generation;
     this.watchCommitRevision = 0;
@@ -294,7 +296,7 @@ export class OnlyPreviewSearchEngine {
     this.activeSearchPolicy = hasActiveIndex ? this.searchPolicy : undefined;
     this.activeIdentity = hasActiveIndex ? this.identity : undefined;
     const seedTree = hasActiveIndex
-      ? seedIndex.readTreeSnapshot()
+      ? seedIndex.readTreeSnapshot({ searchPolicy: this.searchPolicy })
       : { entries: [], maxDepthReached: false, treeMetadataReady: false };
     const watchRevision = ++this.watchRevision;
     this.watchController = createWorkspaceWatchController({
@@ -491,7 +493,7 @@ export class OnlyPreviewSearchEngine {
       await rename(candidatePath, this.databasePath);
       installedCandidate = true;
       promotedIndex = new OnlyPreviewSqliteIndex(this.databasePath);
-      const promotedTree = promotedIndex.readTreeSnapshot();
+      const promotedTree = promotedIndex.readTreeSnapshot({ searchPolicy: this.searchPolicy });
       if (!promotedTree.treeMetadataReady) {
         throw new TypeError('Promoted Search tree snapshot is not ready');
       }
@@ -525,7 +527,9 @@ export class OnlyPreviewSearchEngine {
       if (hadActiveIndex && restoredPrevious) {
         try {
           this.index = new OnlyPreviewSqliteIndex(this.databasePath);
-          const recoveredTree = this.index.readTreeSnapshot();
+          const recoveredTree = this.index.readTreeSnapshot({
+            searchPolicy: previousActiveSearchPolicy ?? this.searchPolicy
+          });
           this.treeEntries = sortOnlyPreviewTreeEntries(recoveredTree.entries);
           this.maxDepthReached = recoveredTree.maxDepthReached;
           this.treeMetadataReady = recoveredTree.treeMetadataReady;
@@ -552,6 +556,7 @@ export class OnlyPreviewSearchEngine {
 
   async refresh({ workspaceId, generation }) {
     this.requireWorkspace(workspaceId, generation);
+    this.globalSearchSession.revokeResults();
     if (this.refreshPromise) return await this.refreshPromise;
     const build = this.enqueue(async () => await this.refreshInternal());
     this.currentBuildPromise = build;

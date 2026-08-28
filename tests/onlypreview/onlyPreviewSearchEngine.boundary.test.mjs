@@ -41,6 +41,14 @@ const write = async (path, content) => {
 const delay = async (milliseconds) =>
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((resolveValue) => {
+    resolve = resolveValue;
+  });
+  return { promise, resolve };
+};
+
 const search = async (engine, query, requestId = query) => {
   const response = await engine.search({
     workspaceId: 'workspace',
@@ -320,6 +328,98 @@ test('watch uses 400ms trailing updates and falls back when recursive watch is u
   });
 });
 
+test('watch reattaches with capped backoff and does not latch fallback builds while one is slow', async () => {
+  const emitter = new EventEmitter();
+  emitter.close = () => undefined;
+  const slowReconcile = deferred();
+  const reconciles = [];
+  let attachAttempts = 0;
+  let watchListener;
+  const controller = createWorkspaceWatchController({
+    rootPath: '/virtual/workspace',
+    fallbackIntervalMs: 5,
+    retryBaseMs: 10,
+    retryMaxMs: 20,
+    watchFactory: (_rootPath, _options, listener) => {
+      attachAttempts += 1;
+      if (attachAttempts < 3) throw new Error('recursive watch temporarily unavailable');
+      watchListener = listener;
+      return emitter;
+    },
+    onReconcile: async (change) => {
+      reconciles.push(change);
+      if (reconciles.length === 1) await slowReconcile.promise;
+    }
+  });
+
+  assert.equal(controller.mode(), 'fallback-reconcile');
+  const reattachDeadline = Date.now() + 500;
+  while (controller.mode() !== 'watch' && Date.now() < reattachDeadline) await delay(5);
+  assert.equal(controller.mode(), 'watch');
+  assert.equal(attachAttempts, 3);
+  assert.equal(reconciles.length, 1);
+  assert.equal(reconciles[0].full, true);
+  await delay(50);
+  assert.equal(reconciles.length, 1, 'fallback ticks must not queue behind a slow full build');
+
+  slowReconcile.resolve();
+  await controller.flushNow();
+  await controller.flushNow();
+  assert.equal(reconciles.length, 2);
+  assert.equal(reconciles[1].full, true, 'reattach must reconcile the post-fallback watch gap');
+  await delay(30);
+  assert.equal(reconciles.length, 2, 'successful reattach must not queue a third full build');
+  watchListener('change', 'visible.txt');
+  await controller.flushNow();
+  assert.deepEqual(reconciles.at(-1), { full: false, paths: ['visible.txt'] });
+  await controller.close();
+});
+
+test('watch failure during an active full build schedules exactly one post-reattach recovery', async () => {
+  const firstWatcher = new EventEmitter();
+  firstWatcher.close = () => undefined;
+  const replacementWatcher = new EventEmitter();
+  replacementWatcher.close = () => undefined;
+  const releaseInitialFull = deferred();
+  const reconciles = [];
+  let attachAttempts = 0;
+  const controller = createWorkspaceWatchController({
+    rootPath: '/virtual/workspace',
+    fallbackIntervalMs: 10,
+    retryBaseMs: 5,
+    retryMaxMs: 5,
+    watchFactory: () => {
+      attachAttempts += 1;
+      return attachAttempts === 1 ? firstWatcher : replacementWatcher;
+    },
+    onReconcile: async (change) => {
+      reconciles.push(change);
+      if (reconciles.length === 1) await releaseInitialFull.promise;
+    }
+  });
+
+  controller.requestFullReconcile();
+  const initialFlush = controller.flushNow();
+  const startedDeadline = Date.now() + 200;
+  while (reconciles.length === 0 && Date.now() < startedDeadline) await delay(2);
+  assert.equal(reconciles.length, 1);
+  firstWatcher.emit('error', new Error('watch failed during traversal'));
+  const reattachDeadline = Date.now() + 200;
+  while (controller.mode() !== 'watch' && Date.now() < reattachDeadline) await delay(2);
+  assert.equal(controller.mode(), 'watch');
+
+  releaseInitialFull.resolve();
+  await initialFlush;
+  await controller.flushNow();
+  assert.deepEqual(
+    reconciles.map(({ full }) => full),
+    [true, true]
+  );
+  await delay(30);
+  assert.equal(reconciles.length, 2);
+  await controller.close();
+});
+
 test('watch CRUD, rename, and config transitions converge Search projection and SQLite', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
@@ -353,6 +453,10 @@ test('watch CRUD, rename, and config transitions converge Search projection and 
     await write(join(root, 'excluded/drop.txt'), 'shared watch token excluded');
     await write(join(root, '.hidden/private.txt'), 'shared watch token hidden');
     await write(join(root, 'node_modules/pkg/module.txt'), 'shared watch token module');
+    const excludedBurst = Array.from(
+      { length: MAX_WATCH_CHANGE_PATHS + 40 },
+      (_, index) => `node_modules/pkg/cache-${index}.js`
+    );
     await applyWatch(engine, {
       full: false,
       paths: [
@@ -360,11 +464,19 @@ test('watch CRUD, rename, and config transitions converge Search projection and 
         'visible.txt',
         'excluded/drop.txt',
         '.hidden/private.txt',
-        'node_modules/pkg/module.txt'
+        'node_modules/pkg/module.txt',
+        'dist/bundle.txt',
+        'build/cache/output.js',
+        'output/report.txt',
+        ...excludedBurst
       ]
     });
-    assert.equal(commits.at(-1).full, true);
-    assert.deepEqual(watchReads, []);
+    assert.equal(commits.every(({ full }) => full === false), true);
+    assert.equal(
+      commits.some(({ changedRelativePaths }) => changedRelativePaths.includes('visible.txt')),
+      true
+    );
+    assert.deepEqual(watchReads, ['visible.txt']);
     assert.equal(
       engine.treeEntries.some(({ relativePath }) => relativePath === 'excluded'),
       false
@@ -503,18 +615,24 @@ test('watch refreshes a loaded excluded browse directory without admitting it to
     browseListings.length = 0;
     await mkdir(join(root, '.hidden/new-folder'));
     await applyWatch(engine, { full: false, paths: ['.hidden/new-folder'] });
-    assert.equal(commits.at(-1).full, true);
+    assert.equal(commits.at(-1).full, false);
     assert.equal(browseListings.length, 1);
+    assert.equal(browseListings[0].relativePath, '.hidden');
     assert.deepEqual(
       browseListings[0].entries.map(({ name }) => name),
-      ['.hidden']
+      ['new-folder', 'new.txt']
     );
 
     browseListings.length = 0;
     await rm(join(root, '.hidden/new-folder'), { recursive: true, force: true });
     await applyWatch(engine, { full: false, paths: ['.hidden/new-folder'] });
     assert.equal(commits.at(-1).full, false);
-    assert.equal(browseListings.length, 0);
+    assert.equal(browseListings.length, 1);
+    assert.equal(browseListings[0].relativePath, '.hidden');
+    assert.deepEqual(
+      browseListings[0].entries.map(({ name }) => name),
+      ['new.txt']
+    );
     await engine.shutdown();
   });
 });

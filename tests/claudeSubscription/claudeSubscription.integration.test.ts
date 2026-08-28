@@ -22,6 +22,9 @@ const createRepository = async (rootDirectory: string, accountCount: number) => 
   let idIndex = 0;
   const repository = new ClaudeAccountRepository({
     rootDirectory,
+    // Slots live under the home directory and removal deletes them, so tests
+    // must never resolve a real one.
+    homeDirectory: path.join(rootDirectory, 'home'),
     isolatedCredentialStorageAvailable: true,
     createId: () => accountIds[idIndex++] ?? accountIds[0]
   });

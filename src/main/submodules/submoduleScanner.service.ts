@@ -189,10 +189,37 @@ const readChangedAt = (absolutePath: string, gitDirectory: string | null): numbe
   return newestMtime(probes);
 };
 
-const describeSubmodule = (rootPath: string, section: GitmodulesSection): SubmoduleEntry => {
+/**
+ * A submodule can declare submodules of its own (`micromeet-knowledge-governance` declares seven).
+ * They are read exactly one level deep: `nested` marks that recursion has already happened, so a
+ * child never scans grandchildren and a deep chain costs nothing.
+ */
+const readChildren = (absolutePath: string): SubmoduleEntry[] => {
+  const gitmodulesPath = join(absolutePath, '.gitmodules');
+  if (!isFile(gitmodulesPath)) return [];
+  const content = readTextFile(gitmodulesPath);
+  if (content === null) return [];
+  try {
+    return parseGitmodules(content)
+      .map((section) => describeSubmodule(absolutePath, section, true))
+      .sort((left, right) => left.path.localeCompare(right.path));
+  } catch {
+    // An unreadable nested inventory leaves the parent row intact instead of failing the whole scan.
+    return [];
+  }
+};
+
+const describeSubmodule = (
+  rootPath: string,
+  section: GitmodulesSection,
+  nested = false
+): SubmoduleEntry => {
   const declaredPath = section.path as string;
   const absolutePath = resolve(rootPath, declaredPath);
-  const base: Omit<SubmoduleEntry, 'state' | 'branch' | 'commit' | 'errorCode' | 'changedAt'> = {
+  const base: Omit<
+    SubmoduleEntry,
+    'state' | 'branch' | 'commit' | 'errorCode' | 'changedAt' | 'children'
+  > = {
     name: section.name,
     path: declaredPath,
     absolutePath,
@@ -207,12 +234,14 @@ const describeSubmodule = (rootPath: string, section: GitmodulesSection): Submod
       branch: null,
       commit: null,
       errorCode: null,
-      changedAt: null
+      changedAt: null,
+      children: []
     };
   }
 
   const gitDirectory = resolveGitDirectory(absolutePath);
   const changedAt = readChangedAt(absolutePath, gitDirectory);
+  const children = nested ? [] : readChildren(absolutePath);
   if (!gitDirectory) {
     const hasGitEntry = existsSync(join(absolutePath, '.git'));
     return {
@@ -221,7 +250,8 @@ const describeSubmodule = (rootPath: string, section: GitmodulesSection): Submod
       branch: null,
       commit: null,
       errorCode: hasGitEntry ? 'gitdir-unreadable' : null,
-      changedAt
+      changedAt,
+      children
     };
   }
 
@@ -233,7 +263,8 @@ const describeSubmodule = (rootPath: string, section: GitmodulesSection): Submod
       branch: null,
       commit: null,
       errorCode: head.errorCode,
-      changedAt
+      changedAt,
+      children
     };
   }
   return {
@@ -242,7 +273,8 @@ const describeSubmodule = (rootPath: string, section: GitmodulesSection): Submod
     branch: head.branch,
     commit: shortCommit(head.commit),
     errorCode: null,
-    changedAt
+    changedAt,
+    children
   };
 };
 
@@ -278,33 +310,43 @@ export const scanSubmodules = (rootPath: string): SubmodulesSnapshot => {
   }
 };
 
+const collectEntryWatchTargets = (entry: SubmoduleEntry, targets: SubmoduleWatchTarget[]): void => {
+  if (entry.state === 'missing') return;
+  const gitDirectory = resolveGitDirectory(entry.absolutePath);
+  if (!gitDirectory) {
+    // An uninitialized submodule becomes interesting the moment its `.git` entry appears.
+    if (isDirectory(entry.absolutePath)) {
+      targets.push({ path: entry.absolutePath, recursive: false });
+    }
+    return;
+  }
+  targets.push({ path: gitDirectory, recursive: false });
+
+  const commonDirectory = resolveCommonDirectory(gitDirectory);
+  for (const directory of new Set([gitDirectory, commonDirectory])) {
+    const refsPath = join(directory, 'refs');
+    if (isDirectory(refsPath)) targets.push({ path: refsPath, recursive: true });
+  }
+
+  // A parent of nested submodules also gets its working-copy root watched — non-recursively, so only
+  // its own `.gitmodules` and other top-level entries fire — and every child is watched like a
+  // top-level row. Only the two nesting parents in this workspace pay for it.
+  if (!entry.children.length) return;
+  targets.push({ path: entry.absolutePath, recursive: false });
+  for (const child of entry.children) collectEntryWatchTargets(child, targets);
+};
+
 /**
  * Watch targets for one snapshot: the root (so `.gitmodules` edits are seen), every submodule Git
- * directory (HEAD, packed-refs), and every refs tree (nested branch names such as `dev/next`).
+ * directory (HEAD, packed-refs), every refs tree (nested branch names such as `dev/next`), and the
+ * same set for each nested submodule one level down.
  */
 export const collectWatchTargets = (snapshot: SubmodulesSnapshot): SubmoduleWatchTarget[] => {
   const targets: SubmoduleWatchTarget[] = [];
   if (!snapshot.rootPath) return targets;
   targets.push({ path: snapshot.rootPath, recursive: false });
 
-  for (const entry of snapshot.entries) {
-    if (entry.state === 'missing') continue;
-    const gitDirectory = resolveGitDirectory(entry.absolutePath);
-    if (!gitDirectory) {
-      // An uninitialized submodule becomes interesting the moment its `.git` entry appears.
-      if (isDirectory(entry.absolutePath)) {
-        targets.push({ path: entry.absolutePath, recursive: false });
-      }
-      continue;
-    }
-    targets.push({ path: gitDirectory, recursive: false });
-
-    const commonDirectory = resolveCommonDirectory(gitDirectory);
-    for (const directory of new Set([gitDirectory, commonDirectory])) {
-      const refsPath = join(directory, 'refs');
-      if (isDirectory(refsPath)) targets.push({ path: refsPath, recursive: true });
-    }
-  }
+  for (const entry of snapshot.entries) collectEntryWatchTargets(entry, targets);
 
   const seen = new Set<string>();
   return targets.filter((target) => {

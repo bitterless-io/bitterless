@@ -70,7 +70,8 @@ const CP437_HIGH_CHARACTERS =
 
 const REQUIRED_PARTS: Record<OnlyPreviewOoxmlPackageKind, readonly string[]> = {
   xlsx: ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml'],
-  docx: ['[Content_Types].xml', '_rels/.rels', 'word/document.xml']
+  docx: ['[Content_Types].xml', '_rels/.rels', 'word/document.xml'],
+  pptx: ['[Content_Types].xml', '_rels/.rels', 'ppt/presentation.xml']
 };
 
 const invalid = (message: string): never => {
@@ -652,7 +653,9 @@ export const preflightOnlyPreviewOoxml = async (
   };
   assertWithinDeadline();
 
-  if (kind !== 'xlsx' && kind !== 'docx') invalid('OOXML package kind is not supported');
+  if (kind !== 'xlsx' && kind !== 'docx' && kind !== 'pptx') {
+    invalid('OOXML package kind is not supported');
+  }
   if (buffer.byteLength > ONLY_PREVIEW_OOXML_MAX_ARCHIVE_BYTES) {
     limit('OOXML archive exceeds the input-size limit');
   }

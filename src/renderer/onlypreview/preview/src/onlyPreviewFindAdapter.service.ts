@@ -20,7 +20,7 @@ export interface OnlyPreviewContentFindAdapter {
 }
 
 interface RegisteredAdapter {
-  adapterId: 'monaco' | 'sheet';
+  adapterId: 'monaco' | 'office';
   selectionRevision: number;
   adapter: OnlyPreviewContentFindAdapter;
 }
@@ -56,7 +56,7 @@ const isFindCommand = (value: unknown): value is OnlyPreviewFindCommand => {
     typeof command.caseSensitive === 'boolean' &&
     (command.direction === 'forward' || command.direction === 'backward') &&
     typeof command.findNext === 'boolean' &&
-    (command.adapter === 'monaco' || command.adapter === 'sheet')
+    (command.adapter === 'monaco' || command.adapter === 'office')
   );
 };
 

@@ -13,6 +13,9 @@ export const createWorkspaceWatchController = ({
   retryBaseMs = 1_000,
   retryMaxMs = 30_000
 }) => {
+  const normalizedFallbackIntervalMs = Number.isFinite(fallbackIntervalMs)
+    ? Math.max(1, fallbackIntervalMs)
+    : 30_000;
   const normalizedRetryBaseMs = Math.min(
     MAX_RECONCILE_RETRY_MS,
     Number.isFinite(retryBaseMs) ? Math.max(1, retryBaseMs) : 1_000
@@ -27,58 +30,89 @@ export const createWorkspaceWatchController = ({
   const pendingRenamePaths = new Set();
   let fullReconcile = false;
   let retryFullReconcile = false;
-  let timer;
-  let retryTimer;
-  let retryAttempt = 0;
+  let trailingTimer;
+  let reconcileRetryTimer;
+  let watcherRetryTimer;
+  let fallbackTimer;
+  let watcherRetryAttempt = 0;
+  let reconcileRetryAttempt = 0;
+  let fallbackEligible = false;
+  let recoveryReconcileNeeded = false;
   let closed = false;
   let running = Promise.resolve();
   let reconcileRunning = false;
   let watcher;
-  let fallbackTimer;
 
   const clearTrailingTimer = () => {
-    clearTimeout(timer);
-    timer = undefined;
+    clearTimeout(trailingTimer);
+    trailingTimer = undefined;
   };
 
-  const clearRetryTimer = () => {
-    clearTimeout(retryTimer);
-    retryTimer = undefined;
+  const clearReconcileRetryTimer = () => {
+    clearTimeout(reconcileRetryTimer);
+    reconcileRetryTimer = undefined;
+  };
+
+  const clearWatcherRetryTimer = () => {
+    clearTimeout(watcherRetryTimer);
+    watcherRetryTimer = undefined;
+  };
+
+  const clearFallbackTimer = () => {
+    clearTimeout(fallbackTimer);
+    fallbackTimer = undefined;
   };
 
   const reportError = (error) => {
     try {
       onError?.(error);
     } catch {
-      // Error reporting must not break the retry latch.
+      // Error reporting must not break watcher or reconcile recovery.
     }
   };
 
   const schedule = () => {
     if (closed || retryFullReconcile) return;
     clearTrailingTimer();
-    timer = setTimeout(flush, WATCH_TRAILING_MS);
+    trailingTimer = setTimeout(flush, WATCH_TRAILING_MS);
+    trailingTimer.unref?.();
   };
 
-  const scheduleRetry = () => {
-    if (closed || retryTimer) return;
+  const scheduleReconcileRetry = () => {
+    if (closed || reconcileRetryTimer) return;
     const delayMs = Math.min(
       normalizedRetryMaxMs,
-      normalizedRetryBaseMs * 2 ** Math.min(retryAttempt, 30)
+      normalizedRetryBaseMs * 2 ** Math.min(reconcileRetryAttempt, 30)
     );
-    retryAttempt = Math.min(retryAttempt + 1, 30);
-    retryTimer = setTimeout(() => {
-      retryTimer = undefined;
+    reconcileRetryAttempt = Math.min(reconcileRetryAttempt + 1, 30);
+    reconcileRetryTimer = setTimeout(() => {
+      reconcileRetryTimer = undefined;
       flush();
     }, delayMs);
-    retryTimer.unref?.();
+    reconcileRetryTimer.unref?.();
+  };
+
+  const scheduleFallback = () => {
+    if (closed || watcher || fallbackTimer || !fallbackEligible) return;
+    fallbackTimer = setTimeout(() => {
+      fallbackTimer = undefined;
+      if (closed || watcher || !fallbackEligible) return;
+      if (reconcileRunning || (retryFullReconcile && reconcileRetryTimer)) {
+        running.finally(() => scheduleFallback());
+        return;
+      }
+      fallbackEligible = false;
+      fullReconcile = true;
+      flush();
+    }, normalizedFallbackIntervalMs);
+    fallbackTimer.unref?.();
   };
 
   const flush = ({ force = false } = {}) => {
     if (closed || reconcileRunning) return;
-    if (retryFullReconcile && retryTimer && !force) return;
+    if (retryFullReconcile && reconcileRetryTimer && !force) return;
     clearTrailingTimer();
-    if (force) clearRetryTimer();
+    if (force) clearReconcileRetryTimer();
     const paths = [...pendingPaths];
     const renamePaths = [...pendingRenamePaths].filter((path) => pendingPaths.has(path));
     const full = fullReconcile || retryFullReconcile;
@@ -94,60 +128,92 @@ export const createWorkspaceWatchController = ({
         () => {
           if (!full) return;
           retryFullReconcile = false;
-          retryAttempt = 0;
-          clearRetryTimer();
+          reconcileRetryAttempt = 0;
+          clearReconcileRetryTimer();
         },
         (error) => {
           reportError(error);
           if (closed) return;
           retryFullReconcile = true;
           clearTrailingTimer();
-          scheduleRetry();
+          scheduleReconcileRetry();
         }
       )
       .finally(() => {
         reconcileRunning = false;
         if (closed) return;
         if (retryFullReconcile) {
-          scheduleRetry();
+          scheduleReconcileRetry();
         } else if (fullReconcile || pendingPaths.size > 0) {
           schedule();
         }
+        scheduleFallback();
       });
   };
 
-  const startFallback = () => {
-    if (fallbackTimer || closed) return;
-    fallbackTimer = setInterval(() => {
-      fullReconcile = true;
-      flush();
-    }, fallbackIntervalMs);
-    fallbackTimer.unref?.();
+  const scheduleWatcherRetry = () => {
+    if (closed || watcher || watcherRetryTimer) return;
+    const delayMs = Math.min(
+      normalizedRetryMaxMs,
+      normalizedRetryBaseMs * 2 ** Math.min(watcherRetryAttempt, 30)
+    );
+    watcherRetryAttempt = Math.min(watcherRetryAttempt + 1, 30);
+    watcherRetryTimer = setTimeout(() => {
+      watcherRetryTimer = undefined;
+      attachWatcher();
+    }, delayMs);
+    watcherRetryTimer.unref?.();
   };
 
-  try {
-    watcher = watchFactory(rootPath, { recursive: true }, (eventType, filename) => {
-      if (filename === null) {
-        fullReconcile = true;
-      } else {
-        const relativePath = String(filename).replaceAll('\\', '/');
-        pendingPaths.add(relativePath);
-        if (eventType === 'rename') pendingRenamePaths.add(relativePath);
-      }
-      schedule();
-    });
-    watcher.on('error', (error) => {
-      fullReconcile = true;
-      reportError(error);
-      watcher?.close();
+  const markWatcherUnavailable = (error, failedWatcher) => {
+    if (failedWatcher && watcher !== failedWatcher) return;
+    if (failedWatcher) {
       watcher = undefined;
-      startFallback();
-      schedule();
-    });
-  } catch (error) {
+      failedWatcher.close?.();
+    }
     reportError(error);
-    startFallback();
-  }
+    fallbackEligible = true;
+    recoveryReconcileNeeded = true;
+    scheduleFallback();
+    scheduleWatcherRetry();
+  };
+
+  const attachWatcher = () => {
+    if (closed || watcher) return;
+    let attachedWatcher;
+    try {
+      attachedWatcher = watchFactory(rootPath, { recursive: true }, (eventType, filename) => {
+        if (closed || (attachedWatcher && watcher !== attachedWatcher)) return;
+        if (filename === null) {
+          fullReconcile = true;
+        } else {
+          const relativePath = String(filename).replaceAll('\\', '/');
+          pendingPaths.add(relativePath);
+          if (eventType === 'rename') pendingRenamePaths.add(relativePath);
+        }
+        schedule();
+      });
+      if (!attachedWatcher || typeof attachedWatcher.on !== 'function') {
+        throw new TypeError('Recursive watch did not return an event source');
+      }
+      watcher = attachedWatcher;
+      attachedWatcher.on('error', (error) => markWatcherUnavailable(error, attachedWatcher));
+      watcherRetryAttempt = 0;
+      clearWatcherRetryTimer();
+      clearFallbackTimer();
+      fallbackEligible = false;
+      if (recoveryReconcileNeeded) {
+        recoveryReconcileNeeded = false;
+        fullReconcile = true;
+        schedule();
+      }
+    } catch (error) {
+      attachedWatcher?.close?.();
+      markWatcherUnavailable(error);
+    }
+  };
+
+  attachWatcher();
 
   return {
     requestFullReconcile() {
@@ -162,11 +228,16 @@ export const createWorkspaceWatchController = ({
     async close({ drain = true } = {}) {
       closed = true;
       clearTrailingTimer();
-      clearRetryTimer();
-      clearInterval(fallbackTimer);
-      watcher?.close();
+      clearReconcileRetryTimer();
+      clearWatcherRetryTimer();
+      clearFallbackTimer();
+      const activeWatcher = watcher;
+      watcher = undefined;
+      activeWatcher?.close?.();
       if (drain) await running;
       retryFullReconcile = false;
+      fallbackEligible = false;
+      recoveryReconcileNeeded = false;
     },
     mode() {
       return watcher ? 'watch' : 'fallback-reconcile';

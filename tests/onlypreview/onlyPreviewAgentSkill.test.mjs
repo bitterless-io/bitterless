@@ -258,7 +258,7 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
   assert.match(types, /interface OnlyPreviewAgentSkillGuideInfo \{[\s\S]*serverName: string;[\s\S]*skillVersionCode: string;[\s\S]*instruction: string;/);
   assert.match(
     preloadType,
-    /'shell' \| 'preview' \| 'settings' \| 'guide'/
+    /'shell' \| 'preview' \| 'globalSearch' \| 'settings' \| 'guide'/
   );
   assert.match(envPreload, /value === 'guide'/);
   assert.doesNotMatch(preload, /clipboard|writeText|openAgentSkillGuide|getAgentSkillGuideInfo/);
@@ -293,7 +293,10 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
   assert.match(guideOpen, /windowStateService\.resolve\('onlypreview-guide'\)/);
   assert.match(guideOpen, /restored\?\.bounds\.width[\s\S]*restored\?\.bounds\.height/);
   assert.doesNotMatch(guideOpen, /restored\.bounds\.(?:x|y)/);
-  assert.match(guideOpen, /configureNavigationFence\(window\.webContents, target\.url, false\)/);
+  assert.match(
+    guideOpen,
+    /configureOnlyPreviewNavigationFence\(window\.webContents, target\.url, false\)/
+  );
   assert.doesNotMatch(guideOpen, /modal:\s*true|frame:\s*false|bindNativeShortcuts|bindOnlyPreviewDevToolsShortcut/);
   assert.match(windowHelper, /destroyAgentSkillGuide\(\): void \{[\s\S]*flushAndDispose\(\)[\s\S]*revoke/);
 

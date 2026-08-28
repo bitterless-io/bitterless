@@ -32,6 +32,7 @@ import { OnlyPreviewFindService } from './onlyPreviewFind.service';
 import {
   ONLY_PREVIEW_DIAGRAM_REBUILD_ERRORS,
   ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS,
+  ONLY_PREVIEW_PRESENTATION_REBUILD_ERRORS,
   createEmptyOnlyPreviewPresentation,
   getOnlyPreviewDescriptorAdapter,
   getOnlyPreviewDescriptorErrorPayload,
@@ -52,10 +53,30 @@ export class OnlyPreviewPreviewRegionService {
     canAttachVue: () => this.vueResetAcknowledgedRevision === this.selectionRevision,
     getDocumentLoadingRevision: () =>
       this.activePreviewSurface === 'vue' &&
-      this.presentation.adapterId === 'docx-dom' &&
+      (this.presentation.adapterId === 'ooxml-xlsx' ||
+        this.presentation.adapterId === 'ooxml-docx' ||
+        this.presentation.adapterId === 'ooxml-pptx') &&
       this.presentation.status === 'loading'
         ? this.selectionRevision
         : null,
+    getDocumentLoadingError: () => {
+      if (this.presentation.adapterId === 'ooxml-xlsx') {
+        return new OnlyPreviewContractError(
+          'SHEET_RENDER_TIMEOUT',
+          'Workbook preview exceeded its rendering deadline.'
+        );
+      }
+      if (this.presentation.adapterId === 'ooxml-pptx') {
+        return new OnlyPreviewContractError(
+          'PRESENTATION_RENDER_TIMEOUT',
+          'Presentation preview exceeded its rendering deadline.'
+        );
+      }
+      return new OnlyPreviewContractError(
+        'DOCUMENT_RENDER_TIMEOUT',
+        'Document preview exceeded its rendering deadline.'
+      );
+    },
     getDiagramLoadingRevision: () =>
       this.activePreviewSurface === 'vue' &&
       this.presentation.adapterId === 'drawio-viewer' &&
@@ -71,7 +92,8 @@ export class OnlyPreviewPreviewRegionService {
       this.handleVueUnavailable(runtime, error, recreate),
     onChromeReady: (runtime, view, revision) => this.handleChromeReady(runtime, view, revision),
     onChromeUnavailable: (runtime, view, revision, error) =>
-      this.markChromeUnavailable(runtime, view, revision, error)
+      this.markChromeUnavailable(runtime, view, revision, error),
+    onActiveViewAttached: () => this.runtime?.onActiveViewAttached?.()
   });
   private runtime: OnlyPreviewPreviewRegionRuntime | null = null;
   private selectionRevision = 0;
@@ -149,17 +171,11 @@ export class OnlyPreviewPreviewRegionService {
         });
         assetIssued = true;
         descriptor = { ...descriptor, assetUrl: navigationUrl };
-      } else if (adapter.adapterId === 'xlsx-grid') {
-        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
-        descriptor = {
-          ...descriptor,
-          assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
-            selectionRevision: revision,
-            maxBytes: Math.min(opened.size, maxBytes ?? opened.size)
-          })
-        };
-        assetIssued = true;
-      } else if (adapter.adapterId === 'docx-dom') {
+      } else if (
+        adapter.adapterId === 'ooxml-xlsx' ||
+        adapter.adapterId === 'ooxml-docx' ||
+        adapter.adapterId === 'ooxml-pptx'
+      ) {
         const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
         descriptor = {
           ...descriptor,
@@ -345,9 +361,9 @@ export class OnlyPreviewPreviewRegionService {
     return this.findService.isOpen();
   }
 
-  focusActiveContent(hostToken: string): void {
+  focusActiveContent(hostToken: string): boolean {
     this.requireRuntime(hostToken);
-    this.viewService.focusActiveContent();
+    return this.viewService.focusActiveContent();
   }
 
   async readText(
@@ -412,23 +428,23 @@ export class OnlyPreviewPreviewRegionService {
     selectionRevision: number,
     previewRuntimeToken: string,
     findCoverage?: OnlyPreviewFindCoverage,
-    findAdapter?: 'monaco' | 'sheet'
+    findAdapter?: 'monaco' | 'office'
   ): void {
     this.requireCurrentVueRevision(hostToken, selectionRevision, previewRuntimeToken);
     if (this.presentation.status !== 'loading') return;
-    if (this.presentation.adapterId === 'xlsx-grid' && !findCoverage) {
-      throw new OnlyPreviewContractError(
-        'INVALID_INPUT',
-        'Workbook Preview readiness requires its accepted model coverage.'
-      );
-    }
-    if (this.presentation.adapterId !== 'xlsx-grid' && findCoverage?.kind === 'partial') {
-      throw new OnlyPreviewContractError(
-        'INVALID_INPUT',
-        'Partial find coverage belongs only to a workbook Preview.'
-      );
-    }
     const expectedFind = getOnlyPreviewAdapterSpec(this.presentation.adapterId).find;
+    if (expectedFind.mode === 'content-adapter' && !findCoverage) {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'Content-backed Preview readiness requires its accepted model coverage.'
+      );
+    }
+    if (findCoverage?.kind === 'partial') {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'The current renderer must report complete Find coverage.'
+      );
+    }
     if (
       (expectedFind.mode === 'content-adapter' && findAdapter !== expectedFind.adapter) ||
       (expectedFind.mode !== 'content-adapter' && findAdapter !== undefined)
@@ -472,8 +488,10 @@ export class OnlyPreviewPreviewRegionService {
     if (
       runtime &&
       view &&
-      ((this.presentation.adapterId === 'docx-dom' &&
+      ((this.presentation.adapterId === 'ooxml-docx' &&
         ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS.has(errorCode)) ||
+        (this.presentation.adapterId === 'ooxml-pptx' &&
+          ONLY_PREVIEW_PRESENTATION_REBUILD_ERRORS.has(errorCode)) ||
         (this.presentation.adapterId === 'drawio-viewer' &&
           ONLY_PREVIEW_DIAGRAM_REBUILD_ERRORS.has(errorCode)))
     ) {
@@ -538,7 +556,9 @@ export class OnlyPreviewPreviewRegionService {
     if (!runtime) throw new Error('OnlyPreview Preview Region is not running.');
     const pendingDocumentView =
       this.activePreviewSurface === 'vue' &&
-      (this.presentation.adapterId === 'docx-dom' ||
+      (this.presentation.adapterId === 'ooxml-xlsx' ||
+        this.presentation.adapterId === 'ooxml-docx' ||
+        this.presentation.adapterId === 'ooxml-pptx' ||
         this.presentation.adapterId === 'drawio-viewer') &&
       (this.presentation.status === 'loading' || this.presentation.adapterId === 'drawio-viewer')
         ? this.viewService.getVuePreviewView()

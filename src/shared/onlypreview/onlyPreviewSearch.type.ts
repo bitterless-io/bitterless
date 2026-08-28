@@ -229,14 +229,6 @@ export type OnlyPreviewGlobalSearchPreview =
       truncated: boolean;
     }
   | {
-      kind: 'context';
-      name: string;
-      before: string;
-      match: string;
-      after: string;
-      truncated: boolean;
-    }
-  | {
       kind: 'info';
       name: string;
       previewHint: OnlyPreviewKind;

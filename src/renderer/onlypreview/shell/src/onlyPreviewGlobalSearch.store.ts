@@ -25,20 +25,16 @@ import {
   sameGlobalSearchResult
 } from './onlyPreviewGlobalSearchResult.service';
 import type { OnlyPreviewGlobalSearchFocusOrigin } from '@shared/onlypreview/onlyPreview.types';
+import type { OnlyPreviewGlobalSearchWorkspaceContext } from '@shared/onlypreview/onlyPreview.types';
 import {
   createOnlyPreviewSearchDiagnostics,
   type OnlyPreviewSearchDiagnostics
 } from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
 
-export interface OnlyPreviewGlobalSearchContext {
-  workspaceId: string;
-  generation: number;
-  ready: boolean;
-  rootName: string;
-  currentDirectoryRelativePath: string;
-}
+export type OnlyPreviewGlobalSearchContext = OnlyPreviewGlobalSearchWorkspaceContext;
 
 type OpenResult = (result: OnlyPreviewGlobalSearchResult) => Promise<boolean>;
+type CloseSearch = (mode: 'opener' | 'project' | 'preview' | 'discard') => Promise<void>;
 
 const errorMessage = (error: unknown): string =>
   error instanceof OnlyPreviewContractError
@@ -63,6 +59,7 @@ const isWatchEvent = (value: unknown): value is OnlyPreviewSearchWatchCommitEven
 
 class OnlyPreviewGlobalSearchStore {
   active = false;
+  context: OnlyPreviewGlobalSearchContext | null = null;
   query = '';
   scopeKind: OnlyPreviewSearchScope['kind'] = 'directory';
   directoryRelativePath = '';
@@ -91,6 +88,7 @@ class OnlyPreviewGlobalSearchStore {
   private subscribed = false;
   private resolveContext: (() => OnlyPreviewGlobalSearchContext | null) | null = null;
   private openResult: OpenResult | null = null;
+  private closeSearch: CloseSearch | null = null;
   private scheduleSearch: (() => void) | null = null;
   private centeredProjectPathOnExit: string | null = null;
   private diagnostics = createOnlyPreviewSearchDiagnostics();
@@ -103,14 +101,41 @@ class OnlyPreviewGlobalSearchStore {
 
   get visibleResults(): OnlyPreviewGlobalSearchResult[] {
     return [
-      ...(this.filesCollapsed ? [] : this.files),
-      ...(this.contentsCollapsed ? [] : this.contents)
+      ...(this.contentsCollapsed ? [] : this.contents),
+      ...(this.filesCollapsed ? [] : this.files)
     ];
   }
 
-  configure(resolveContext: () => OnlyPreviewGlobalSearchContext | null, open: OpenResult): void {
+  getContext(): OnlyPreviewGlobalSearchContext | null {
+    return this.context ?? this.resolveContext?.() ?? null;
+  }
+
+  setContext(context: OnlyPreviewGlobalSearchContext | null): void {
+    const previous = this.context;
+    const workspaceChanged =
+      previous?.workspaceId !== context?.workspaceId ||
+      previous?.generation !== context?.generation;
+    this.context = context ? { ...context } : null;
+    if (workspaceChanged) {
+      this.inputRevision += 1;
+      this.dispatchedRevision = -1;
+      this.cancelRequest();
+      this.clearResults();
+      this.captureDirectoryScope(this.context);
+    } else {
+      this.syncCurrentDirectory(this.context);
+    }
+    this.resumeForAvailableRuntime();
+  }
+
+  configure(
+    resolveContext: () => OnlyPreviewGlobalSearchContext | null,
+    open: OpenResult,
+    close: CloseSearch = async () => undefined
+  ): void {
     this.resolveContext = resolveContext;
     this.openResult = open;
+    this.closeSearch = close;
   }
 
   configureScheduler(schedule: () => void): void {
@@ -168,30 +193,31 @@ class OnlyPreviewGlobalSearchStore {
 
   resetForWorkspace(): void {
     this.exit();
+    this.context = null;
     this.dispatchedRevision = -1;
   }
 
   setQuery(value: string): void {
     if (value === this.query) return;
     this.query = value;
-    this.inputRevision += 1;
-    this.error = '';
-    this.cancelRequest(false);
-    if (!value.trim()) {
-      this.clearResults();
-      return;
-    }
-    this.pending = true;
-    if (!this.composing) this.scheduleSearch?.();
+    this.restartForSearchIdentityChange(false);
   }
 
   clear(): void {
     this.setQuery('');
   }
 
-  handleEscape(): void {
-    if (this.query) this.clear();
-    else this.exit();
+  async dismiss(): Promise<void> {
+    await this.closeSearch?.('opener');
+    this.exit(false);
+  }
+
+  async handleEscape(): Promise<void> {
+    if (this.query) {
+      this.clear();
+      return;
+    }
+    await this.dismiss();
   }
 
   beginComposition(): void {
@@ -206,7 +232,8 @@ class OnlyPreviewGlobalSearchStore {
     this.composing = false;
     if (value !== this.query) {
       this.query = value;
-      this.inputRevision += 1;
+      this.restartForSearchIdentityChange(false);
+      return;
     }
     this.cancelRequest(false);
     if (!value.trim()) {
@@ -220,12 +247,7 @@ class OnlyPreviewGlobalSearchStore {
   setScopeKind(kind: OnlyPreviewSearchScope['kind']): void {
     if (!this.active || kind === this.scopeKind) return;
     this.scopeKind = kind;
-    this.inputRevision += 1;
-    this.cancelRequest(false);
-    if (this.query.trim()) {
-      this.pending = true;
-      this.scheduleSearch?.();
-    }
+    this.restartForSearchIdentityChange(true);
   }
 
   syncCurrentDirectory(context: OnlyPreviewGlobalSearchContext | null): void {
@@ -235,10 +257,7 @@ class OnlyPreviewGlobalSearchStore {
     this.directoryRelativePath = relativePath;
     this.directoryLabel = relativePath || context.rootName;
     if (!pathChanged || this.scopeKind !== 'directory' || !this.query.trim()) return;
-    this.inputRevision += 1;
-    this.cancelRequest(false);
-    this.pending = true;
-    this.scheduleSearch?.();
+    this.restartForSearchIdentityChange(true);
   }
 
   toggleGroup(section: 'files' | 'contents', expanded?: boolean): void {
@@ -379,9 +398,7 @@ class OnlyPreviewGlobalSearchStore {
   }
 
   shutdown(): void {
-    const hostToken = onlyPreviewEnv.hostToken;
-    this.exit();
-    if (hostToken) void onlyPreviewSearchClient.shutdown({ hostToken }).catch(() => undefined);
+    this.exit(false);
   }
 
   private async fetchPreview(
@@ -539,6 +556,20 @@ class OnlyPreviewGlobalSearchStore {
     this.previewError = '';
     this.previewPending = false;
     this.pending = false;
+  }
+
+  private restartForSearchIdentityChange(dispatchImmediately: boolean): void {
+    this.inputRevision += 1;
+    this.cancelRequest(false);
+    this.clearResults();
+    if (!this.query.trim()) return;
+    this.pending = true;
+    if (this.composing) return;
+    if (dispatchImmediately) {
+      void this.dispatchLatest();
+    } else {
+      this.scheduleSearch?.();
+    }
   }
 
   private captureDirectoryScope(context: OnlyPreviewGlobalSearchContext | null): void {

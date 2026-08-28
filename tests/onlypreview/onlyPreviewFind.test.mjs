@@ -62,23 +62,25 @@ test('find registry is exhaustive and maps every preview adapter to one truthful
   assert.deepEqual(Object.keys(registry.ONLY_PREVIEW_ADAPTERS).sort(), [
     'audio',
     'chromium-pdf',
-    'docx-dom',
     'drawio-viewer',
     'html-page',
     'image',
     'markdown-dom',
     'monaco',
+    'ooxml-docx',
+    'ooxml-pptx',
+    'ooxml-xlsx',
     'unsupported',
-    'video',
-    'xlsx-grid'
+    'video'
   ]);
   assert.deepEqual(registry.ONLY_PREVIEW_ADAPTERS, {
     monaco: { surface: 'vue', find: { mode: 'content-adapter', adapter: 'monaco' } },
     'markdown-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
     'html-page': { surface: 'chrome', find: { mode: 'webcontents-find' } },
     'chromium-pdf': { surface: 'chrome', find: { mode: 'webcontents-find' } },
-    'xlsx-grid': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'sheet' } },
-    'docx-dom': { surface: 'vue', find: { mode: 'webcontents-find' } },
+    'ooxml-xlsx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
+    'ooxml-docx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
+    'ooxml-pptx': { surface: 'vue', find: { mode: 'content-adapter', adapter: 'office' } },
     'drawio-viewer': { surface: 'vue', find: { mode: 'none' } },
     image: { surface: 'vue', find: { mode: 'none' } },
     audio: { surface: 'vue', find: { mode: 'none' } },
@@ -115,7 +117,7 @@ test('find IPC parsers enforce exact shapes, bounded values, valid coverage, and
     previewRuntimeToken,
     selectionRevision: 3,
     findCoverage: partialCoverage,
-    findAdapter: 'sheet'
+    findAdapter: 'office'
   };
   assert.deepEqual(contract.parseOnlyPreviewPreviewReadyRequest(readyRequest), readyRequest);
   assert.throws(
@@ -271,7 +273,7 @@ test('Main keeps a query pending and dispatches it exactly once when the same se
   assert.equal(service.snapshot().query, 'needle');
 
   const ready = presentation({ adapterId: 'monaco' });
-  service.syncPresentation(ready);
+  service.syncPresentation(ready, { kind: 'complete' });
   assert.equal(service.snapshot().state.state, 'ready');
   assert.deepEqual(commandsFrom(broadcasts), [
     {
@@ -287,7 +289,7 @@ test('Main keeps a query pending and dispatches it exactly once when the same se
     }
   ]);
 
-  service.syncPresentation(ready);
+  service.syncPresentation(ready, { kind: 'complete' });
   assert.equal(commandsFrom(broadcasts).length, 1);
 });
 
@@ -536,7 +538,7 @@ test('Main rejects changed navigation intents, reports native failures truthfull
   assert.equal(unsupported.service.snapshot().open, false);
 });
 
-test('Main clears native selection without activating it and validates content-adapter coverage', () => {
+test('Main clears native selection without activating it and validates Office adapter coverage', () => {
   const native = createFindServiceHarness();
   const contents = new FakeWebContents([4]);
   native.service.bindWebContents('chrome', contents, 7);
@@ -556,19 +558,14 @@ test('Main clears native selection without activating it and validates content-a
   assert.ok(contents.stopCalls.length >= 1);
   assert.deepEqual(new Set(contents.stopCalls), new Set(['clearSelection']));
 
-  const sheet = createFindServiceHarness();
-  const partialCoverage = {
-    kind: 'partial',
-    reason: 'sheet-model-cap',
-    acceptedSheets: 3,
-    acceptedCells: 30_000
-  };
-  const sheetPresentation = presentation({ adapterId: 'xlsx-grid', selectionRevision: 11 });
-  sheet.service.reset(sheetPresentation);
-  assert.equal(sheet.service.snapshot().state.state, 'pending');
-  sheet.service.syncPresentation(sheetPresentation, partialCoverage);
-  assert.equal(sheet.service.open(), true);
-  sheet.service.submit({
+  const office = createFindServiceHarness();
+  const completeCoverage = { kind: 'complete' };
+  const officePresentation = presentation({ adapterId: 'ooxml-xlsx', selectionRevision: 11 });
+  office.service.reset(officePresentation);
+  assert.equal(office.service.snapshot().state.state, 'pending');
+  office.service.syncPresentation(officePresentation, completeCoverage);
+  assert.equal(office.service.open(), true);
+  office.service.submit({
     selectionRevision: 11,
     surface: 'vue',
     query: 'invoice',
@@ -576,12 +573,12 @@ test('Main clears native selection without activating it and validates content-a
     direction: 'forward',
     findNext: true
   });
-  const [command] = commandsFrom(sheet.broadcasts);
-  assert.equal(command.adapter, 'sheet');
+  const [command] = commandsFrom(office.broadcasts);
+  assert.equal(command.adapter, 'office');
   assert.equal(command.findRevision, 1);
   assert.throws(
     () =>
-      sheet.service.reportContentResult({
+      office.service.reportContentResult({
         hostId,
         selectionRevision: 11,
         surface: 'vue',
@@ -589,13 +586,13 @@ test('Main clears native selection without activating it and validates content-a
         activeMatchOrdinal: 1,
         matches: 2,
         finalUpdate: true,
-        coverage: partialCoverage
+        coverage: completeCoverage
       }),
     { code: 'INVALID_INPUT' }
   );
   assert.throws(
     () =>
-      sheet.service.reportContentResult({
+      office.service.reportContentResult({
         hostId,
         selectionRevision: 11,
         surface: 'vue',
@@ -603,11 +600,16 @@ test('Main clears native selection without activating it and validates content-a
         activeMatchOrdinal: 1,
         matches: 2,
         finalUpdate: true,
-        coverage: { kind: 'complete' }
+        coverage: {
+          kind: 'partial',
+          reason: 'sheet-model-cap',
+          acceptedSheets: 3,
+          acceptedCells: 30_000
+        }
       }),
     { code: 'INVALID_INPUT' }
   );
-  sheet.service.reportContentResult({
+  office.service.reportContentResult({
     hostId,
     selectionRevision: 11,
     surface: 'vue',
@@ -615,9 +617,9 @@ test('Main clears native selection without activating it and validates content-a
     activeMatchOrdinal: 1,
     matches: 2,
     finalUpdate: true,
-    coverage: partialCoverage
+    coverage: completeCoverage
   });
-  assert.deepEqual(sheet.service.snapshot().result?.coverage, partialCoverage);
+  assert.deepEqual(office.service.snapshot().result?.coverage, completeCoverage);
 });
 
 test('content adapter bridge executes only the exact registered adapter and reports its coverage', async () => {
@@ -649,7 +651,7 @@ test('content adapter bridge executes only the exact registered adapter and repo
   const executions = [];
   const clears = [];
   bridge.initialize();
-  bridge.register('sheet', 9, {
+  bridge.register('office', 9, {
     execute: async (command) => {
       executions.push(command);
       return {
@@ -657,10 +659,7 @@ test('content adapter bridge executes only the exact registered adapter and repo
         matches: 4,
         finalUpdate: true,
         coverage: {
-          kind: 'partial',
-          reason: 'sheet-model-cap',
-          acceptedSheets: 2,
-          acceptedCells: 100
+          kind: 'complete'
         }
       };
     },
@@ -684,7 +683,7 @@ test('content adapter bridge executes only the exact registered adapter and repo
   await tick();
   assert.equal(executions.length, 0, 'a wrong adapter command must not cross the registry fence');
 
-  onCommand({ params: { ...command, adapter: 'sheet' } });
+  onCommand({ params: { ...command, adapter: 'office' } });
   await tick();
   await tick();
   assert.equal(executions.length, 1);
@@ -701,20 +700,17 @@ test('content adapter bridge executes only the exact registered adapter and repo
         matches: 4,
         finalUpdate: true,
         coverage: {
-          kind: 'partial',
-          reason: 'sheet-model-cap',
-          acceptedSheets: 2,
-          acceptedCells: 100
+          kind: 'complete'
         }
       }
     }
   ]);
 
-  onCommand({ params: { ...command, findRevision: 4, adapter: 'sheet' } });
+  onCommand({ params: { ...command, findRevision: 4, adapter: 'office' } });
   await tick();
   assert.equal(executions.length, 1, 'an older adapter command must not replace live highlights');
 
-  onCommand({ params: { ...command, findRevision: 6, adapter: 'sheet', query: '' } });
+  onCommand({ params: { ...command, findRevision: 6, adapter: 'office', query: '' } });
   await tick();
   await tick();
   assert.equal(clears.length, 1);

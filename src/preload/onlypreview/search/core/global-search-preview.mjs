@@ -17,7 +17,6 @@ export const GLOBAL_SEARCH_PREVIEW_TEXT_BYTES = 256 * 1024;
 export const GLOBAL_SEARCH_PREVIEW_DIRECTORY_ENTRIES = 200;
 
 const naturalCollator = new Intl.Collator('und', { numeric: true, sensitivity: 'base' });
-const graphemeSegmenter = new Intl.Segmenter('und', { granularity: 'grapheme' });
 
 const numeric = (value) => (typeof value === 'bigint' ? Number(value) : value);
 
@@ -208,7 +207,8 @@ const browseDirectoryPreview = async ({ rootPath, authority, isCancelled }) => {
       nodeKind,
       size: nodeKind === 'file' ? numeric(stat.size) : 0,
       modifiedAt: Math.trunc(numeric(stat.mtimeMs)),
-      previewHint: nodeKind === 'file' ? mediaTypeToPreviewHint(mediaType) : 'unsupported',
+      previewHint:
+        nodeKind === 'file' ? mediaTypeToPreviewHint(mediaType, relativePath) : 'unsupported',
       mediaType,
       isText: nodeKind === 'file' && mediaType === 'text',
       directoryToken: null
@@ -219,31 +219,6 @@ const browseDirectoryPreview = async ({ rootPath, authority, isCancelled }) => {
     name: authority.name,
     entries,
     truncated: acceptedCount > GLOBAL_SEARCH_PREVIEW_DIRECTORY_ENTRIES
-  };
-};
-
-const contextPreview = async ({ rootPath, authority, isCancelled }) => {
-  const buffer = await readStableFileBuffer({
-    rootPath,
-    authority,
-    byteLimit: MAX_TEXT_BYTES,
-    isCancelled
-  });
-  if (!decodeSearchText(buffer).includes(authority.contentMatch.snippetText)) {
-    throw new TypeError('Search result context changed');
-  }
-  const graphemes = [...graphemeSegmenter.segment(authority.contentMatch.snippetText)].map(
-    ({ segment }) => segment
-  );
-  const start = authority.contentMatch.highlightStart;
-  const end = start + authority.contentMatch.highlightLength;
-  return {
-    kind: 'context',
-    name: authority.name,
-    before: graphemes.slice(0, start).join(''),
-    match: graphemes.slice(start, end).join(''),
-    after: graphemes.slice(end).join(''),
-    truncated: authority.size > Buffer.byteLength(authority.contentMatch.snippetText)
   };
 };
 
@@ -260,9 +235,6 @@ export const previewOnlyPreviewGlobalSearchResult = async ({
     })
   ) {
     throw new TypeError('Preview result is no longer eligible');
-  }
-  if (authority.result.section === 'contents') {
-    return await contextPreview({ rootPath, authority, isCancelled });
   }
   if (authority.nodeKind === 'directory') {
     return await browseDirectoryPreview({ rootPath, authority, isCancelled });

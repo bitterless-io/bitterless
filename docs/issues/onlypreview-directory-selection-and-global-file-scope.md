@@ -1,6 +1,6 @@
 # OnlyPreview directory selection and Global Search file scope
 
-Status: implemented; owner verification pending
+Status: tasks 038 and 072 implemented; owner verification pending
 
 ## Problem
 
@@ -24,9 +24,10 @@ current directory, even though the Files group is the project-wide filename/dire
 
 ```text
 Project tree
-  single click directory -> select it as Current directory
-  double click directory -> keep it selected + toggle expansion
-  file selection         -> Current directory is its parent
+  single click directory row body -> select it as Current directory
+  double click directory row body -> keep it selected + toggle expansion once
+  single click directory arrow    -> select it as Current directory + toggle expansion once
+  file selection                  -> Current directory is its parent
 
 Global Search
   Files    -> always search project-wide file + directory metadata
@@ -41,7 +42,11 @@ contents as text, or start a second full traversal for every query.
 ## Acceptance
 
 - A directory has a visible and ARIA selected state after one click without expanding/collapsing.
-- Double-clicking a directory keeps it selected and changes its expansion state.
+- Double-clicking a directory row outside its arrow keeps it selected and changes its expansion
+  state exactly once.
+- Single-clicking a directory arrow selects/focuses that directory and changes its expansion state
+  exactly once. The arrow consumes its click and double-click events, so a rapid double click cannot
+  toggle twice or reach the row's double-click handler.
 - Opening Global Search captures the explicit Current directory, not incidental roving focus.
 - Files finds `network` anywhere in the project while Contents remains fenced to Current directory.
 - During the first index build, the authoritative project-wide Files result waits for the existing
@@ -57,3 +62,9 @@ then requested live directory rebinding while Global Search is already open; tha
 tracked by
 [onlypreview-global-search-concurrency-and-directory-ux](onlypreview-global-search-concurrency-and-directory-ux.md)
 without rewriting task 038's completed history.
+
+Task [onlypreview-tree-disclosure-toggle-072](../plan/tasks/onlypreview-tree-disclosure-toggle-072.md)
+adds the narrow arrow-hit-target exception without changing task 038's completed selection model,
+Global Search scope, or keyboard contract. Its
+[first independent review](../plan/reviews/onlypreview-tree-disclosure-toggle-072-1.md) passed with
+no finding.

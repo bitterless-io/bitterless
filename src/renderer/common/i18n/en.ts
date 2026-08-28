@@ -813,6 +813,8 @@ export const en = {
       searchShortcutMac: 'Search (⌘F)',
       searchShortcutWin: 'Search (Alt+F)',
       clearSearch: 'Clear search',
+      expandChildren: 'Show {count} nested submodules',
+      collapseChildren: 'Hide {count} nested submodules',
       minimize: 'Minimize',
       maximize: 'Maximize',
       close: 'Close'

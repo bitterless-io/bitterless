@@ -18,6 +18,12 @@ import type {
 
 export interface StoredClaudeSubscriptionAccount {
   id: ClaudeAccountId;
+  /**
+   * Selects `~/.claude<slot>`. The whole of the untrusted input is this integer:
+   * the directories are still derived from it, never read from the record, so a
+   * tampered registry cannot redirect where the CLI writes a credential.
+   */
+  slot: number;
   label: string;
   email?: string;
   subscriptionType: ClaudeSubscriptionType;
@@ -32,6 +38,7 @@ export interface StoredClaudeSubscriptionAccount {
 
 export interface ClaudeAccountIdentity {
   id: ClaudeAccountId;
+  slot: number;
   configDirectory: string;
   secureStorageConfigDirectory: string;
   anthropicConfigDirectory: string;
@@ -65,7 +72,7 @@ export interface ClaudeAccountSource {
 }
 
 interface ClaudeAccountRegistry {
-  version: 2;
+  version: 3;
   accounts: StoredClaudeSubscriptionAccount[];
 }
 
@@ -74,20 +81,38 @@ export interface ClaudeAccountRepositoryOptions {
   isolatedCredentialStorageAvailable: boolean;
   now?: () => Date;
   createId?: () => string;
+  /**
+   * Required, never defaulted. Slots resolve to `<homeDirectory>/.claude<N>`, and
+   * account removal deletes that directory outright — so a construction site that
+   * forgot to pass one would delete real slots. Making it required turns that
+   * mistake into a compile error instead of data loss; it cost `~/.claude2` its
+   * config once (2026-08-28) when this was optional and defaulted to `homedir()`.
+   */
+  homeDirectory: string;
 }
 
 const REGISTRY_FILE = 'accounts.json';
-const ACCOUNT_DIRECTORY = 'accounts';
-const ACCOUNT_PROFILE_DIRECTORY = 'profile';
 const ANTHROPIC_DIRECTORY = 'anthropic';
+const REGISTRY_VERSION = 3;
+const SLOT_DIRECTORY_PREFIX = '.claude';
+/**
+ * Slot 1 would be `~/.claude`, the directory an interactive `claude` session uses.
+ * Bitterless serialises its own children per account but cannot serialise against
+ * an external CLI process, so that directory can never be made safe to pool.
+ */
+const MINIMUM_SLOT = 2;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const REGISTRY_KEYS = ['accounts', 'version'] as const;
+
+const isValidSlot = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= MINIMUM_SLOT;
 const ACCOUNT_KEYS = [
   'anthropicConfigDirectory',
   'configDirectory',
   'createdAt',
   'enabled',
+  'slot',
   'id',
   'label',
   'partition',
@@ -121,6 +146,7 @@ const isStoredAccount = (value: unknown): value is StoredClaudeSubscriptionAccou
       value.subscriptionType === 'max' ||
       value.subscriptionType === 'team' ||
       value.subscriptionType === 'enterprise') &&
+    isValidSlot(value.slot) &&
     typeof value.configDirectory === 'string' &&
     typeof value.secureStorageConfigDirectory === 'string' &&
     typeof value.anthropicConfigDirectory === 'string' &&
@@ -135,24 +161,24 @@ const parseRegistry = (value: unknown): ClaudeAccountRegistry => {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, REGISTRY_KEYS) ||
-    value.version !== 2 ||
+    value.version !== REGISTRY_VERSION ||
     !Array.isArray(value.accounts) ||
     !value.accounts.every(isStoredAccount)
   ) {
     throw new Error('Unsupported Claude subscription account registry.');
   }
-  return { version: 2, accounts: value.accounts };
+  return { version: REGISTRY_VERSION, accounts: value.accounts };
 };
 
 const normalizeAbsolutePath = (value: string): string => path.resolve(value).normalize('NFC');
 
 export class ClaudeAccountRepository implements ClaudeAccountSource {
   readonly #rootDirectory: string;
-  readonly #accountsDirectory: string;
   readonly #registryPath: string;
   readonly #isolatedCredentialStorageAvailable: boolean;
   readonly #now: () => Date;
   readonly #createId: () => string;
+  readonly #homeDirectory: string;
   readonly #cooldowns = new Map<ClaudeAccountId, number>();
   readonly #needsLogin = new Set<ClaudeAccountId>();
   #accounts: StoredClaudeSubscriptionAccount[] = [];
@@ -161,8 +187,8 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
 
   constructor(options: ClaudeAccountRepositoryOptions) {
     this.#rootDirectory = normalizeAbsolutePath(options.rootDirectory);
-    this.#accountsDirectory = path.join(this.#rootDirectory, ACCOUNT_DIRECTORY);
     this.#registryPath = path.join(this.#rootDirectory, REGISTRY_FILE);
+    this.#homeDirectory = normalizeAbsolutePath(options.homeDirectory);
     this.#isolatedCredentialStorageAvailable = options.isolatedCredentialStorageAvailable;
     this.#now = options.now ?? (() => new Date());
     this.#createId = options.createId ?? randomUUID;
@@ -173,9 +199,6 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     await mkdir(this.#rootDirectory, { recursive: true, mode: 0o700 });
     await chmod(this.#rootDirectory, 0o700);
     await this.#assertPlainDirectory(this.#rootDirectory);
-    await mkdir(this.#accountsDirectory, { recursive: true, mode: 0o700 });
-    await chmod(this.#accountsDirectory, 0o700);
-    await this.#assertPlainDirectory(this.#accountsDirectory);
     try {
       const registry = parseRegistry(JSON.parse(await readFile(this.#registryPath, 'utf8')));
       for (const account of registry.accounts) this.#assertStoredAccountPaths(account);
@@ -197,9 +220,8 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     if (!UUID_PATTERN.test(id) || this.#accounts.some((account) => account.id === id)) {
       throw new Error('Could not create a unique Claude account identity.');
     }
-    const identity = this.#expectedIdentity(id);
+    const identity = this.#expectedIdentity(id, this.#nextFreeSlot());
     await mkdir(identity.anthropicConfigDirectory, { recursive: true, mode: 0o700 });
-    await chmod(this.#accountDirectory(id), 0o700);
     await chmod(identity.configDirectory, 0o700);
     await chmod(identity.anthropicConfigDirectory, 0o700);
     await this.#assertIdentity(identity);
@@ -218,7 +240,7 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     if (this.#accounts.some((account) => account.id === identity.id)) {
       throw new Error('A persisted Claude account identity cannot be discarded directly.');
     }
-    await rm(this.#accountDirectory(identity.id), { recursive: true, force: true });
+    await rm(identity.configDirectory, { recursive: true, force: true });
   }
 
   async saveAccount(
@@ -274,13 +296,14 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
   async remove(accountId: ClaudeAccountId): Promise<void> {
     await this.#serializeMutation(async () => {
       this.#assertInitialized();
+      const removed = this.#accounts.find((account) => account.id === accountId);
       const next = this.#accounts.filter((account) => account.id !== accountId);
-      if (next.length === this.#accounts.length) throw new Error('Claude account was not found.');
+      if (!removed) throw new Error('Claude account was not found.');
       await this.#persist(next);
       this.#accounts = next;
       this.#needsLogin.delete(accountId);
       this.#cooldowns.delete(accountId);
-      await rm(this.#accountDirectory(accountId), { recursive: true, force: true });
+      await rm(this.#slotDirectory(removed.slot), { recursive: true, force: true });
     });
   }
 
@@ -400,7 +423,7 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
       this.#rootDirectory,
       `${REGISTRY_FILE}.tmp-${process.pid}-${randomUUID()}`
     );
-    const registry: ClaudeAccountRegistry = { version: 2, accounts };
+    const registry: ClaudeAccountRegistry = { version: REGISTRY_VERSION, accounts };
     try {
       await writeFile(temporaryPath, `${JSON.stringify(registry, null, 2)}\n`, {
         encoding: 'utf8',
@@ -414,13 +437,14 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     }
   }
 
-  #expectedIdentity(accountId: ClaudeAccountId): ClaudeAccountIdentity {
-    const configDirectory = path.join(
-      this.#accountDirectory(accountId),
-      ACCOUNT_PROFILE_DIRECTORY
-    ).normalize('NFC');
+  #expectedIdentity(accountId: ClaudeAccountId, slot: number): ClaudeAccountIdentity {
+    if (!isValidSlot(slot)) {
+      throw new Error('Claude account slot must be an integer of at least 2.');
+    }
+    const configDirectory = this.#slotDirectory(slot);
     return {
       id: accountId,
+      slot,
       configDirectory,
       secureStorageConfigDirectory: configDirectory,
       anthropicConfigDirectory: path.join(configDirectory, ANTHROPIC_DIRECTORY).normalize('NFC'),
@@ -431,6 +455,7 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
   #identityFromAccount(account: StoredClaudeSubscriptionAccount): ClaudeAccountIdentity {
     return {
       id: account.id,
+      slot: account.slot,
       configDirectory: account.configDirectory,
       secureStorageConfigDirectory: account.secureStorageConfigDirectory,
       anthropicConfigDirectory: account.anthropicConfigDirectory,
@@ -446,12 +471,20 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     };
   }
 
-  #accountDirectory(accountId: ClaudeAccountId): string {
-    return path.join(this.#accountsDirectory, accountId).normalize('NFC');
+  #slotDirectory(slot: number): string {
+    return path.join(this.#homeDirectory, `${SLOT_DIRECTORY_PREFIX}${slot}`).normalize('NFC');
+  }
+
+  /** Lowest slot not already held by a registered account. */
+  #nextFreeSlot(): number {
+    const taken = new Set(this.#accounts.map((account) => account.slot));
+    let slot = MINIMUM_SLOT;
+    while (taken.has(slot)) slot += 1;
+    return slot;
   }
 
   async #assertIdentity(identity: ClaudeAccountIdentity): Promise<void> {
-    const expected = this.#expectedIdentity(identity.id);
+    const expected = this.#expectedIdentity(identity.id, identity.slot);
     if (
       identity.configDirectory !== expected.configDirectory ||
       identity.secureStorageConfigDirectory !== expected.secureStorageConfigDirectory ||
@@ -460,13 +493,12 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     ) {
       throw new Error('Claude account paths must remain inside the managed account root.');
     }
-    await this.#assertPlainDirectory(this.#accountDirectory(identity.id));
     await this.#assertPlainDirectory(identity.configDirectory);
     await this.#assertPlainDirectory(identity.anthropicConfigDirectory);
   }
 
   #assertStoredAccountPaths(account: StoredClaudeSubscriptionAccount): void {
-    const expected = this.#expectedIdentity(account.id);
+    const expected = this.#expectedIdentity(account.id, account.slot);
     if (
       account.configDirectory !== expected.configDirectory ||
       account.secureStorageConfigDirectory !== expected.secureStorageConfigDirectory ||
@@ -479,7 +511,6 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
 
   async #assertStoredAccountDirectories(account: StoredClaudeSubscriptionAccount): Promise<void> {
     this.#assertStoredAccountPaths(account);
-    await this.#assertPlainDirectory(this.#accountDirectory(account.id));
     await this.#assertPlainDirectory(account.configDirectory);
     await this.#assertPlainDirectory(account.anthropicConfigDirectory);
   }

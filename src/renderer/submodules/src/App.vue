@@ -87,7 +87,7 @@
       </div>
 
       <div
-        v-else-if="!submodulesStore.visibleEntries.length"
+        v-else-if="!submodulesStore.visibleTree.length"
         name="submodules__noMatches"
         class="submodules__center-state"
       >
@@ -98,13 +98,24 @@
       </div>
 
       <div v-else name="submodules__list" class="submodules__list">
-        <SubmoduleRow
-          v-for="entry in submodulesStore.visibleEntries"
-          :key="entry.path"
-          :entry="entry"
-          :loading="submodulesStore.openingPath === entry.absolutePath"
-          @open="handleOpen"
-        />
+        <template v-for="row in submodulesStore.visibleTree" :key="row.entry.absolutePath">
+          <SubmoduleRow
+            :entry="row.entry"
+            :loading="submodulesStore.openingPath === row.entry.absolutePath"
+            :expandable="row.expandable"
+            :expanded="row.expanded"
+            @open="handleOpen"
+            @toggle="submodulesStore.toggleExpanded($event)"
+          />
+          <SubmoduleRow
+            v-for="child in row.children"
+            :key="child.absolutePath"
+            :entry="child"
+            :loading="submodulesStore.openingPath === child.absolutePath"
+            nested
+            @open="handleOpen"
+          />
+        </template>
       </div>
     </main>
   </div>
@@ -126,13 +137,14 @@ interface ListControlsInstance {
 
 const listControlsRef = ref<ListControlsInstance | null>(null);
 
-// While a search is active the count states what is on screen, so a filtered list never looks wrong.
+// Both levels are counted, and while a search is active the count states what is on screen, so a
+// filtered list never looks wrong.
 const countLabel = computed(() =>
   i18nHelper.submodules.count.replace(
     '{count}',
     submodulesStore.isSearching
-      ? `${submodulesStore.visibleEntries.length}/${submodulesStore.entries.length}`
-      : String(submodulesStore.entries.length)
+      ? `${submodulesStore.visibleCount}/${submodulesStore.totalCount}`
+      : String(submodulesStore.totalCount)
   )
 );
 

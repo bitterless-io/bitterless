@@ -283,6 +283,12 @@ const onlyPreviewHtmlSecurityPlugin = {
       if (html.toLowerCase().indexOf('<meta charset=') >= 1024) {
         throw new Error(`OnlyPreview ${mode} charset declaration is outside the first 1024 bytes`);
       }
+      if (mode === 'preview' && !head.includes("'wasm-unsafe-eval'")) {
+        throw new Error('OnlyPreview preview CSP must authorize same-origin OOXML WASM');
+      }
+      if (mode !== 'preview' && head.includes("'wasm-unsafe-eval'")) {
+        throw new Error(`OnlyPreview ${mode} must not inherit the OOXML WASM capability`);
+      }
       if (html.includes('"./monacoeditorwork/')) {
         throw new Error(`OnlyPreview ${mode} contains a nested broken Monaco worker path`);
       }
@@ -487,6 +493,9 @@ export default defineConfig({
           submodules: resolve('src/renderer/submodules/index.html'),
           'onlypreview/shell': resolve('src/renderer/onlypreview/shell/index.html'),
           'onlypreview/preview': resolve('src/renderer/onlypreview/preview/index.html'),
+          'onlypreview/globalSearch': resolve(
+            'src/renderer/onlypreview/globalSearch/index.html'
+          ),
           'onlypreview/settings': resolve('src/renderer/onlypreview/settings/index.html'),
           'onlypreview/guide': resolve('src/renderer/onlypreview/guide/index.html'),
           fileSearch: resolve('src/renderer/fileSearch/index.html'),
@@ -504,6 +513,7 @@ export default defineConfig({
       }
     },
     optimizeDeps: {
+      exclude: ['@silurus/ooxml'],
       esbuildOptions: {
         tsconfigRaw: {
           compilerOptions: {

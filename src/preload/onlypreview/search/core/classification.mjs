@@ -99,6 +99,7 @@ const METADATA_ONLY_EXTENSIONS = new Set([
   '.xlsx',
   '.xlsm',
   '.docx',
+  '.pptx',
   '.drawio',
   '.doc',
   '.heic',
@@ -138,8 +139,15 @@ export const classifySearchMediaType = (relativePath) => {
   return 'text';
 };
 
-export const mediaTypeToPreviewHint = (mediaType) =>
-  mediaType === 'unknown' ? 'unsupported' : mediaType;
+export const mediaTypeToPreviewHint = (mediaType, relativePath = '') => {
+  if (mediaType !== 'unknown') return mediaType;
+  const extension = extensionOf(relativePath);
+  if (extension === '.xlsx' || extension === '.xlsm') return 'sheet';
+  if (extension === '.docx') return 'document';
+  if (extension === '.pptx') return 'presentation';
+  if (extension === '.drawio') return 'diagram';
+  return 'unsupported';
+};
 
 const startsWithBytes = (buffer, expected) =>
   buffer.length >= expected.length && expected.every((byte, index) => buffer[index] === byte);

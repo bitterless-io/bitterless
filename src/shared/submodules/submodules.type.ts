@@ -50,6 +50,11 @@ export interface SubmoduleEntry {
    * recursive working-tree scan: see `docs/features/submodules.md`.
    */
   changedAt: number | null;
+  /**
+   * Submodules this submodule declares in its own `.gitmodules`, read one level deep only: a child
+   * always carries an empty array. Two levels is the documented depth of the view.
+   */
+  children: SubmoduleEntry[];
 }
 
 /** `name` — ASCII by directory name. `updated` — newest `changedAt` first. */

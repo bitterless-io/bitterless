@@ -30,7 +30,18 @@ const MEMORY_KEYS = [
   'runtimeTwoGiBLimitExceeded'
 ] as const;
 const NODE_KINDS = new Set(['file', 'directory', 'symlink']);
-const PREVIEW_HINTS = new Set(['text', 'pdf', 'image', 'audio', 'video', 'unsupported']);
+const PREVIEW_HINTS = new Set([
+  'text',
+  'pdf',
+  'image',
+  'audio',
+  'video',
+  'sheet',
+  'document',
+  'presentation',
+  'diagram',
+  'unsupported'
+]);
 const MEDIA_TYPES = new Set(['text', 'image', 'audio', 'video', 'pdf', 'unknown']);
 const INDEX_STATES = new Set(['building', 'reconciling', 'ready']);
 const MEMORY_NUMBER_KEYS = [

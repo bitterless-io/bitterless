@@ -183,6 +183,13 @@ const docxEntries = (extra = []) => [
   ...extra
 ];
 
+const pptxEntries = (extra = []) => [
+  { name: '[Content_Types].xml' },
+  { name: '_rels/.rels' },
+  { name: 'ppt/presentation.xml' },
+  ...extra
+];
+
 const worksheetEntry = (data, options = {}) => ({
   name: 'xl/worksheets/sheet1.xml',
   data,
@@ -204,7 +211,7 @@ const expectCode = async (fixture, code, kind = 'xlsx', options) => {
   );
 };
 
-test('accepts exact STORE/DEFLATE XLSX and DOCX archives plus empty directories', async () => {
+test('accepts exact STORE/DEFLATE XLSX, DOCX, and PPTX archives plus empty directories', async () => {
   const sheetData = Buffer.from('OnlyPreview sheet payload');
   const xlsx = buildZip(
     xlsxEntries([
@@ -245,6 +252,19 @@ test('accepts exact STORE/DEFLATE XLSX and DOCX archives plus empty directories'
     ])
   );
   assert.equal((await preflight(docx, 'docx')).entries.length, 4);
+
+  const pptx = buildZip(
+    pptxEntries([
+      {
+        name: 'ppt/slides/slide1.xml',
+        method: 8,
+        uncompressedData: Buffer.from('presentation')
+      }
+    ])
+  );
+  const pptxResult = await preflight(pptx, 'pptx');
+  assert.equal(pptxResult.kind, 'pptx');
+  assert.equal(pptxResult.entries.length, 4);
 });
 
 test('accepts the directory and ZIP structure emitted by the installed ExcelJS engine', async () => {
@@ -282,6 +302,15 @@ test('requires the exact package parts for each OOXML kind', async () => {
     ]),
     'OOXML_ARCHIVE_INVALID',
     'docx'
+  );
+  await expectCode(
+    buildZip([
+      { name: '[Content_Types].xml' },
+      { name: '_rels/.rels' },
+      { name: 'word/document.xml' }
+    ]),
+    'OOXML_ARCHIVE_INVALID',
+    'pptx'
   );
 });
 

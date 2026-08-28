@@ -15,12 +15,14 @@ export interface OnlyPreviewPreviewRegionRuntime {
   createVuePreviewView: (previewRuntimeToken: string) => WebContentsView;
   loadVuePreviewView: (view: WebContentsView) => Promise<void>;
   bindChromeShortcuts: (webContents: Electron.WebContents) => void;
+  onActiveViewAttached?: () => void;
 }
 
 interface OnlyPreviewPreviewViewCallbacks {
   getActiveSurface: () => OnlyPreviewPreviewSurface | null;
   canAttachVue: () => boolean;
   getDocumentLoadingRevision: () => number | null;
+  getDocumentLoadingError?: () => OnlyPreviewContractError;
   getDiagramLoadingRevision?: () => number | null;
   isCurrent: (runtime: OnlyPreviewPreviewRegionRuntime, revision: number) => boolean;
   bindFindWebContents: (
@@ -48,6 +50,7 @@ interface OnlyPreviewPreviewViewCallbacks {
     revision: number,
     error: unknown
   ) => void;
+  onActiveViewAttached: () => void;
 }
 
 interface PendingChromeMount {
@@ -128,6 +131,18 @@ const DOCUMENT_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'DOCUMENT_RENDER_TIMEOUT',
   'OPERATION_FAILED'
 ]);
+const PRESENTATION_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  'INVALID_INPUT',
+  'TEXT_TOO_LARGE',
+  'SIGNATURE_MISMATCH',
+  'OOXML_ARCHIVE_LIMIT',
+  'OOXML_ENCRYPTED',
+  'OOXML_ARCHIVE_INVALID',
+  'PRESENTATION_PARSE_FAILED',
+  'PRESENTATION_EMPTY',
+  'PRESENTATION_RENDER_TIMEOUT',
+  'OPERATION_FAILED'
+]);
 const DIAGRAM_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'INVALID_INPUT',
   'TEXT_TOO_LARGE',
@@ -156,10 +171,12 @@ export const presentationAllowsRendererError = (
     case 'monaco':
     case 'markdown-dom':
       return TEXT_RENDER_ERRORS.has(errorCode);
-    case 'xlsx-grid':
+    case 'ooxml-xlsx':
       return SHEET_RENDER_ERRORS.has(errorCode);
-    case 'docx-dom':
+    case 'ooxml-docx':
       return DOCUMENT_RENDER_ERRORS.has(errorCode);
+    case 'ooxml-pptx':
+      return PRESENTATION_RENDER_ERRORS.has(errorCode);
     case 'drawio-viewer':
       return DIAGRAM_RENDER_ERRORS.has(errorCode);
     case 'image':
@@ -265,11 +282,12 @@ export class OnlyPreviewPreviewViewService {
     this.armDocumentWatchdogIfEligible();
   }
 
-  focusActiveContent(): void {
+  focusActiveContent(): boolean {
     const view =
       this.callbacks.getActiveSurface() === 'chrome' ? this.chromePreviewView : this.vuePreviewView;
-    if (!view || view.webContents.isDestroyed()) return;
+    if (!view || view.webContents.isDestroyed()) return false;
     view.webContents.focus();
+    return true;
   }
 
   ensureVuePreviewView(): WebContentsView | null {
@@ -373,16 +391,17 @@ export class OnlyPreviewPreviewViewService {
       }
       this.documentWatchdog = null;
       const isDiagram = watchdog.revision === activeDiagramRevision;
-      this.invalidateVuePreviewView(
-        watchdog.view,
-        new OnlyPreviewContractError(
-          isDiagram ? 'DIAGRAM_RENDER_TIMEOUT' : 'DOCUMENT_RENDER_TIMEOUT',
-          isDiagram
-            ? 'Draw.io preview exceeded its rendering deadline.'
-            : 'Document preview exceeded its rendering deadline.'
-        ),
-        true
-      );
+      const timeoutError = isDiagram
+        ? new OnlyPreviewContractError(
+            'DIAGRAM_RENDER_TIMEOUT',
+            'Draw.io preview exceeded its rendering deadline.'
+          )
+        : (this.callbacks.getDocumentLoadingError?.() ??
+          new OnlyPreviewContractError(
+            'DOCUMENT_RENDER_TIMEOUT',
+            'Document preview exceeded its rendering deadline.'
+          ));
+      this.invalidateVuePreviewView(watchdog.view, timeoutError, true);
     }, 30_000);
     this.documentWatchdog = { runtime, view, runtimeToken, revision, timer };
   }
@@ -404,6 +423,7 @@ export class OnlyPreviewPreviewViewService {
       this.detachActiveView();
       runtime.window.contentView.addChildView(view);
       this.attachedView = view;
+      this.callbacks.onActiveViewAttached();
     }
     view.setBounds({ ...this.contentBounds });
   }

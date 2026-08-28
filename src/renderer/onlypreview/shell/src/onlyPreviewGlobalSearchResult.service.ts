@@ -17,6 +17,7 @@ const previewHints = new Set([
   'video',
   'sheet',
   'document',
+  'presentation',
   'diagram',
   'unsupported'
 ]);

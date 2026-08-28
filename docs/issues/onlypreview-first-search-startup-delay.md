@@ -50,9 +50,9 @@ execution.
   snapshot and terminal-replace rows and result tokens.
 - Persist committed directory/symlink metadata and maximum traversal depth beside the SQLite
   content build so subsequent launches can return complete folder results before reconciliation.
-  A legacy schema-7 index upgrades additively: it preserves files, chunks, and FTS, returns file and
-  Contents seed results immediately, then gains complete folder startup results after one successful
-  reconcile.
+  A legacy schema-7 index upgrades additively: it preserves files, chunks, and FTS. Task 043 also
+  derives provisional non-empty folder ancestors from those committed file paths immediately;
+  certified empty-directory/symlink coverage still arrives after one successful reconcile.
 - Acquire each query through a reader lease that captures one consistent index/tree pair. Promotion
   closes the writer gate, waits for active readers, atomically swaps snapshots, then permits the
   fresh terminal rerun; candidate rows are never searchable.

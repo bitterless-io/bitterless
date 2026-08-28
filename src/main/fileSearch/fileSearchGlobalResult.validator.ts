@@ -20,6 +20,7 @@ const PREVIEW_HINTS = new Set([
   'video',
   'sheet',
   'document',
+  'presentation',
   'diagram',
   'unsupported'
 ]);
@@ -258,17 +259,6 @@ export const isOnlyPreviewGlobalSearchPreview = (value: unknown): boolean => {
       value.entries.length <= ONLY_PREVIEW_GLOBAL_SEARCH_PREVIEW_MAX_DIRECTORY_ENTRIES &&
       Reflect.ownKeys(value.entries).length === value.entries.length + 1 &&
       value.entries.every(browseEntry) &&
-      typeof value.truncated === 'boolean'
-    );
-  }
-  if (value.kind === 'context') {
-    return (
-      exactKeys(value, ['after', 'before', 'kind', 'match', 'name', 'truncated']) &&
-      boundedString(value.before, 65_536) &&
-      boundedString(value.match, 65_536) &&
-      value.match.length > 0 &&
-      boundedString(value.after, 65_536) &&
-      value.before.length + value.match.length + value.after.length <= 65_536 &&
       typeof value.truncated === 'boolean'
     );
   }

@@ -40,7 +40,8 @@ const createBrowseEntry = ({ relativePath, stat, nodeKind, directoryToken, searc
     nodeKind,
     size: nodeKind === 'file' ? numericStatValue(stat.size) : 0,
     modifiedAt: Math.trunc(numericStatValue(stat.mtimeMs ?? 0)),
-    previewHint: nodeKind === 'file' ? mediaTypeToPreviewHint(mediaType) : 'unsupported',
+    previewHint:
+      nodeKind === 'file' ? mediaTypeToPreviewHint(mediaType, relativePath) : 'unsupported',
     mediaType,
     isText: nodeKind === 'file' && mediaType === 'text',
     directoryToken,

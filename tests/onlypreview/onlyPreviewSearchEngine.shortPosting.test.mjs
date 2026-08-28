@@ -86,6 +86,32 @@ test('direct literal projection preserves exact NFKC and grapheme snippet contra
   }
 });
 
+test('SQLite content search keeps a punctuated query as one exact literal', async () => {
+  const index = new OnlyPreviewSqliteIndex(':memory:');
+  await index.rebuild(
+    [
+      entry('a-exact.txt', 'before agent-runtime after'),
+      entry('b-prefix.txt', 'before ag after'),
+      entry('c-agent.txt', 'before agent after'),
+      entry('d-separated.txt', 'before agent and runtime after')
+    ],
+    identity
+  );
+
+  const response = await index.searchContents('agent-runtime', {
+    scope: { kind: 'project' }
+  });
+  assert.equal(response.engine, 'fts5-trigram');
+  assert.deepEqual(
+    response.results.map(({ relativePath }) => relativePath),
+    ['a-exact.txt']
+  );
+  assert.equal(response.results[0].contentMatch.highlightLength, 13);
+  assert.equal(highlightedText(response.results[0].contentMatch), 'agent-runtime');
+
+  index.close();
+});
+
 test('non-ASCII short postings keep exact results, scope, order, and truncation', async () => {
   const index = new OnlyPreviewSqliteIndex(':memory:');
   const fixtures = [

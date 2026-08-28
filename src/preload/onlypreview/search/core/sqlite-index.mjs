@@ -209,8 +209,8 @@ export class OnlyPreviewSqliteIndex {
     return this.buildState.isReusable(identity);
   }
 
-  readTreeSnapshot() {
-    return this.snapshotStore.readTreeSnapshot();
+  readTreeSnapshot(options) {
+    return this.snapshotStore.readTreeSnapshot(options);
   }
 
   invalidateTreeSnapshot() {

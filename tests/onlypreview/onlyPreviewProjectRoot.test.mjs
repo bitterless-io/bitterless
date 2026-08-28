@@ -79,14 +79,18 @@ test('root relative/name copies are explicit and root menu source has no delete 
   assert.doesNotMatch(rootMenu, /delete|destructive/i);
 });
 
-test('Global Search focus restoration accepts only an exact host and focus mode', () => {
+test('Global Search close accepts only an exact host and surface mode', () => {
   const request = { hostToken: 'host-token-global-focus', mode: 'opener' };
-  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchFocusRequest(request), request);
-  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchFocusRequest({ ...request, mode: 'preview' }), {
+  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchCloseRequest(request), request);
+  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchCloseRequest({ ...request, mode: 'project' }), {
+    ...request,
+    mode: 'project'
+  });
+  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchCloseRequest({ ...request, mode: 'preview' }), {
     ...request,
     mode: 'preview'
   });
-  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchFocusRequest({ ...request, mode: 'discard' }), {
+  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchCloseRequest({ ...request, mode: 'discard' }), {
     ...request,
     mode: 'discard'
   });
@@ -96,7 +100,7 @@ test('Global Search focus restoration accepts only an exact host and focus mode'
     { ...request, extra: true }
   ]) {
     assert.throws(
-      () => runtime.parseOnlyPreviewGlobalSearchFocusRequest(invalid),
+      () => runtime.parseOnlyPreviewGlobalSearchCloseRequest(invalid),
       expectOnlyPreviewError('INVALID_INPUT')
     );
   }

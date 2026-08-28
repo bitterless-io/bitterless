@@ -85,36 +85,27 @@
         "
       />
 
-      <DocumentPreview
+      <OfficePreview
         v-else-if="
-          onlyPreviewPreviewStore.descriptor?.kind === 'document' &&
-          onlyPreviewPreviewStore.documentSession &&
-          onlyPreviewPreviewStore.documentContent
+          (onlyPreviewPreviewStore.descriptor?.kind === 'sheet' ||
+            onlyPreviewPreviewStore.descriptor?.kind === 'document' ||
+            onlyPreviewPreviewStore.descriptor?.kind === 'presentation') &&
+          onlyPreviewPreviewStore.officeSession
         "
         :key="selectionPreviewKey"
-        :content="onlyPreviewPreviewStore.documentContent"
+        :session="onlyPreviewPreviewStore.officeSession"
         :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
         @ready="
-          onlyPreviewPreviewStore.reportDocumentReady(
+          onlyPreviewPreviewStore.reportOfficeReady(
             onlyPreviewPreviewStore.selectionReportingRevision
           )
         "
-      />
-
-      <SheetPreview
-        v-else-if="
-          onlyPreviewPreviewStore.descriptor?.kind === 'sheet' &&
-          onlyPreviewPreviewStore.sheetSession &&
-          onlyPreviewPreviewStore.sheetManifest
-        "
-        :key="selectionPreviewKey"
-        :session="onlyPreviewPreviewStore.sheetSession"
-        :manifest="onlyPreviewPreviewStore.sheetManifest"
-        :reporting-revision="onlyPreviewPreviewStore.selectionReportingRevision"
-        @ready="
-          onlyPreviewPreviewStore.reportSheetReady(
-            onlyPreviewPreviewStore.selectionReportingRevision
-          )
+        @error="
+          (errorCode) =>
+            onlyPreviewPreviewStore.reportSurfaceError(
+              onlyPreviewPreviewStore.selectionReportingRevision,
+              errorCode
+            )
         "
       />
 
@@ -196,10 +187,7 @@ const MarkdownPreview = defineAsyncComponent(
 const MonacoTextPreview = defineAsyncComponent(
   () => import('../MonacoTextPreview/MonacoTextPreview.vue')
 );
-const DocumentPreview = defineAsyncComponent(
-  () => import('../DocumentPreview/DocumentPreview.vue')
-);
-const SheetPreview = defineAsyncComponent(() => import('../SheetPreview/SheetPreview.vue'));
+const OfficePreview = defineAsyncComponent(() => import('../OfficePreview/OfficePreview.vue'));
 const DrawioPreview = defineAsyncComponent(() => import('../DrawioPreview/DrawioPreview.vue'));
 const ImagePreview = defineAsyncComponent(() => import('../ImagePreview/ImagePreview.vue'));
 const MediaPreview = defineAsyncComponent(() => import('../MediaPreview/MediaPreview.vue'));
@@ -234,7 +222,11 @@ const previewLimitMessage = computed(() => {
   if (descriptor?.kind === 'pdf' || descriptor?.kind === 'image') {
     return onlyPreviewI18n.preview.imagePdfLimit;
   }
-  if (descriptor?.kind === 'sheet' || descriptor?.kind === 'document') {
+  if (
+    descriptor?.kind === 'sheet' ||
+    descriptor?.kind === 'document' ||
+    descriptor?.kind === 'presentation'
+  ) {
     return onlyPreviewI18n.preview.officeLimit;
   }
   if (descriptor?.kind === 'diagram') return onlyPreviewI18n.preview.diagramLimit;

@@ -63,9 +63,18 @@ const isBrowseEntry = (value: unknown, parentPath: string): value is OnlyPreview
     !['file', 'directory', 'symlink'].includes(String(value.nodeKind)) ||
     !isNonnegativeFiniteNumber(value.size) ||
     !isNonnegativeFiniteNumber(value.modifiedAt) ||
-    !['text', 'pdf', 'image', 'audio', 'video', 'unsupported'].includes(
-      String(value.previewHint)
-    ) ||
+    ![
+      'text',
+      'pdf',
+      'image',
+      'audio',
+      'video',
+      'sheet',
+      'document',
+      'presentation',
+      'diagram',
+      'unsupported'
+    ].includes(String(value.previewHint)) ||
     !['text', 'image', 'audio', 'video', 'pdf', 'unknown'].includes(String(value.mediaType)) ||
     typeof value.isText !== 'boolean' ||
     typeof value.searchExcluded !== 'boolean'
@@ -95,7 +104,11 @@ const isBrowseEntry = (value: unknown, parentPath: string): value is OnlyPreview
       value.searchExcluded === false
     );
   }
-  const expectedMediaType = value.previewHint === 'unsupported' ? 'unknown' : value.previewHint;
+  const expectedMediaType = ['text', 'pdf', 'image', 'audio', 'video'].includes(
+    String(value.previewHint)
+  )
+    ? value.previewHint
+    : 'unknown';
   return value.mediaType === expectedMediaType && value.isText === (value.mediaType === 'text');
 };
 

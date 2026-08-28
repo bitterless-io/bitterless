@@ -64,25 +64,55 @@ test('Cmd+F, Alt+F and Ctrl+F all focus the search box, and the listener is remo
 });
 
 test('the search filter is tokenized, NFKC-normalized and case-folded like the EyesOnAgents one', () => {
-  const store = read('src/renderer/submodules/src/store/submodules.store.ts');
+  const service = read('src/renderer/submodules/src/services/submoduleTree.service.ts');
 
-  const tokenizer = store.slice(
-    store.indexOf('const searchTokens'),
-    store.indexOf('class Submodules')
+  const tokenizer = service.slice(
+    service.indexOf('export const searchTokens'),
+    service.indexOf('const rowLabel')
   );
   assert.match(tokenizer, /normalize\('NFKC'\)/);
   assert.match(tokenizer, /toLocaleLowerCase\(\)/);
   assert.match(tokenizer, /split\(SEARCH_SEPARATOR_PATTERN\)/);
 
-  const visible = store.slice(
-    store.indexOf('get visibleEntries'),
-    store.indexOf('get isSearching')
-  );
   // Every query token must be found, and the haystack is the displayed name plus the declared path.
-  assert.match(visible, /tokens\.every\(/);
-  assert.match(visible, /submoduleDisplayName\(entry\)[^\n]*entry\.path/);
-  // The search must never be persisted: it is a lookup, not a stored control.
-  assert.doesNotMatch(store, /sub_key[\s\S]*search/i);
+  const matcher = service.slice(
+    service.indexOf('const matches'),
+    service.indexOf('export const filterSubmoduleTree')
+  );
+  assert.match(matcher, /tokens\.every\(/);
+  assert.match(matcher, /rowLabel\(entry\)[^\n]*entry\.path/);
+
+  // The search and the expanded set must never be persisted: they are view state, not settings.
+  const store = read('src/renderer/submodules/src/store/submodules.store.ts');
+  assert.doesNotMatch(store, /sub_key[\s\S]*(search|expanded)/i);
+});
+
+test('the tree is two levels: nested rows are indented 12px and never expandable themselves', () => {
+  const app = read('src/renderer/submodules/src/App.vue');
+  const row = read('src/renderer/submodules/src/components/SubmoduleRow/SubmoduleRow.vue');
+  const style = read('src/renderer/submodules/src/components/SubmoduleRow/SubmoduleRow.less');
+  const shared = read('src/shared/submodules/submodules.type.ts');
+
+  // Children render from the row's own `children`, with `nested` set and no toggle handler — the
+  // second level is the last one.
+  assert.match(app, /v-for="child in row\.children"/);
+  assert.match(app, /nested\n\s+@open="handleOpen"/);
+  assert.match(app, /@toggle="submodulesStore\.toggleExpanded\(\$event\)"/);
+
+  assert.match(row, /name="submodules__row__toggleChildren"/);
+  assert.match(row, /:aria-expanded="expanded"/);
+  assert.match(row, /'submodule-row--nested': nested/);
+
+  // 12px of indent on top of the row's own 12px padding.
+  assert.match(style, /\.submodule-row--nested \{\s*padding-left: 24px;/);
+  // Rows without children keep the control's width so first-level names stay aligned.
+  assert.match(row, /submodule-row__toggle-spacer/);
+
+  assert.match(shared, /children: SubmoduleEntry\[\];/);
+  const scanner = read('src/main/submodules/submoduleScanner.service.ts');
+  // One level only: a child is described with `nested` true and never scans grandchildren.
+  assert.match(scanner, /const children = nested \? \[\] : readChildren\(absolutePath\)/);
+  assert.match(scanner, /describeSubmodule\(absolutePath, section, true\)/);
 });
 
 test('both controls are persisted through the runtime and travel in the snapshot', () => {
@@ -123,7 +153,7 @@ test('the settings switch lives behind the menu-bar gear and defaults to on', ()
 test('the list renders the filtered rows and offers a way out of an empty result', () => {
   const app = read('src/renderer/submodules/src/App.vue');
 
-  assert.match(app, /v-for="entry in submodulesStore\.visibleEntries"/);
+  assert.match(app, /v-for="row in submodulesStore\.visibleTree"/);
   assert.match(app, /name="submodules__noMatches"/);
   assert.match(app, /i18nHelper\.submodules\.empty\.noMatches/);
   assert.match(app, /submodulesStore\.clearSearch\(\)/);
@@ -141,6 +171,8 @@ test('every new key exists in both languages', () => {
     'searchShortcutMac:',
     'searchShortcutWin:',
     'clearSearch:',
+    'expandChildren:',
+    'collapseChildren:',
     'noMatches:',
     'settingsFailed:'
   ]) {

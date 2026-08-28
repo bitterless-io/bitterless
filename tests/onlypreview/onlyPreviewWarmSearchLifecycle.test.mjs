@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -31,6 +32,18 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+test('snapshot search reuses the hydrated tree without a per-query full-tree copy', () => {
+  const executorSource = readFileSync(
+    new URL(
+      '../../src/preload/onlypreview/search/core/global-search-executor.mjs',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  assert.match(executorSource, /entries: lease\.treeEntries/u);
+  assert.doesNotMatch(executorSource, /lease\.treeEntries\s*\.filter/u);
+});
 
 test('warm startup rows terminal-replace offline add delete and rename with fresh tokens', async () => {
   const workspace = createWorkspace();
@@ -756,4 +769,3 @@ test('priority plus normal batches retain exact independent 250 Files and Conten
     rmSync(workspace.base, { recursive: true, force: true });
   }
 });
-

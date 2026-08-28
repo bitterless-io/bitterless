@@ -570,7 +570,17 @@ export const parseClaudeExecutionResult = (
   };
 };
 
-const throwClassifiedExecutionError = (
+/**
+ * The type annotation on the binding (rather than only on the arrow) is what lets
+ * the compiler treat a call as unreachable-after, so callers narrow correctly
+ * instead of carrying a possibly-undefined value past a guard that always throws.
+ */
+const throwClassifiedExecutionError: (
+  diagnostic: string,
+  exitCode: number | null,
+  envelope?: Record<string, unknown>,
+  rateLimit?: ClaudeRateLimitInfo
+) => never = (
   diagnostic: string,
   exitCode: number | null,
   envelope?: Record<string, unknown>,

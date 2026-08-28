@@ -2,7 +2,7 @@
   <!-- eslint-disable vue/no-v-html -- both branches use zero-attribute allowlists. -->
   <article
     name="onlypreview__globalSearchRichPreview"
-    class="onlypreview-search-preview__rich"
+    class="onlypreview-markdown__document onlypreview-search-preview__rich"
     v-html="safeHtml"
   ></article>
   <!-- eslint-enable vue/no-v-html -->

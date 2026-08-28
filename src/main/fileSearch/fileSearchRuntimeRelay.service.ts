@@ -88,7 +88,18 @@ const ONLY_PREVIEW_ERROR_CODES = new Set([
 ]);
 const INDEX_STATES = new Set(['building', 'reconciling', 'ready']);
 const NODE_KINDS = new Set(['file', 'directory', 'symlink']);
-const PREVIEW_HINTS = new Set(['text', 'pdf', 'image', 'audio', 'video', 'unsupported']);
+const PREVIEW_HINTS = new Set([
+  'text',
+  'pdf',
+  'image',
+  'audio',
+  'video',
+  'sheet',
+  'document',
+  'presentation',
+  'diagram',
+  'unsupported'
+]);
 const SEARCH_MEDIA_TYPES = new Set(['text', 'image', 'audio', 'video', 'pdf', 'unknown']);
 const MEMORY_NUMBER_KEYS = [
   'processRssBytes',

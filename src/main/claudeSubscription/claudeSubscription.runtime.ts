@@ -46,6 +46,7 @@ const createDefaultClaudeSubscriptionService = async (): Promise<ClaudeSubscript
     : null;
   const repository = new ClaudeAccountRepository({
     rootDirectory: path.join(app.getPath('userData'), 'claude-subscription'),
+    homeDirectory: app.getPath('home'),
     isolatedCredentialStorageAvailable: claudeExecutable !== null
   });
   let service: ClaudeSubscriptionService | null = null;

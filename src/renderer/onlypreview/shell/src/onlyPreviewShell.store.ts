@@ -6,6 +6,8 @@ import {
 import {
   type OnlyPreviewBounds,
   type OnlyPreviewFileRef,
+  type OnlyPreviewGlobalSearchDirectoryRevealAction,
+  type OnlyPreviewGlobalSearchWorkspaceContext,
   type OnlyPreviewHostRequest,
   type OnlyPreviewIndex,
   type OnlyPreviewIndexEntry,
@@ -17,7 +19,6 @@ import {
 } from '@shared/onlypreview/onlyPreview.types';
 import {
   type OnlyPreviewBrowseListing,
-  type OnlyPreviewGlobalSearchResult,
   type OnlyPreviewSearchBuildProgress,
   type OnlyPreviewSearchSnapshot
 } from '@shared/onlypreview/onlyPreviewSearch.type';
@@ -26,14 +27,11 @@ import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { OnlyPreviewCharacterCountHostGate } from '../../common/onlyPreviewCharacterCountGate.service';
 import { sameOnlyPreviewSelection } from '../../common/onlyPreviewPresentation.service';
-import {
-  onlyPreviewGlobalSearchStore,
-  type OnlyPreviewGlobalSearchContext
-} from './onlyPreviewGlobalSearch.store';
 import type { OnlyPreviewTreeRow } from './onlyPreviewShell.type';
 import { onlyPreviewSearchClient } from './onlyPreviewSearch.client';
 import { dispatchOnlyPreviewSelectedFilePriority } from './onlyPreviewSelectedFilePriority.service';
-import { revealOnlyPreviewGlobalSearchDirectory } from './onlyPreviewGlobalSearchTree.service';
+import { onlyPreviewGlobalSearchShellClient } from './onlyPreviewGlobalSearchShell.client';
+import { handleOnlyPreviewGlobalSearchDirectoryReveal } from './onlyPreviewGlobalSearchShell.service';
 import {
   copyOnlyPreviewProjectRoot,
   showOnlyPreviewProjectRootContextMenu
@@ -71,10 +69,8 @@ const errorMessage = (error: unknown): string => {
   }
   return onlyPreviewI18n.errors.OPERATION_FAILED;
 };
-
 export class OnlyPreviewShellStore {
   private readonly diagnostics: OnlyPreviewSearchDiagnostics;
-
   constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
     this.diagnostics = diagnostics;
   }
@@ -93,6 +89,8 @@ export class OnlyPreviewShellStore {
   targetLoading = false;
   errorMessage = '';
   focusProjectRevision = 0;
+  centerProjectRevision = 0;
+  centerProjectRelativePath = '';
   private initialized = false;
   private restoreGeneration = 0;
   private workspaceGeneration = 0;
@@ -103,7 +101,6 @@ export class OnlyPreviewShellStore {
   private indexProgressState: OnlyPreviewSearchProgressState = createOnlyPreviewSearchProgressState();
   private readonly characterCountGate = new OnlyPreviewCharacterCountHostGate();
   private pendingCharacterCount = 0;
-
   get visibleRows(): OnlyPreviewTreeRow[] {
     return buildOnlyPreviewRootedTreeRows(this.index, this.workspace?.rootName || '', this.expandedPaths, this.browseProjection.searchExcludedPaths);
   }
@@ -145,6 +142,7 @@ export class OnlyPreviewShellStore {
     let outcome: 'success' | 'failure' = 'failure';
     try {
       this.subscribe();
+      this.reportGlobalSearchContext();
       if (!onlyPreviewEnv.hostToken || !onlyPreviewEnv.hostId) {
         this.errorMessage = onlyPreviewI18n.errors.HOST_NOT_FOUND;
         return;
@@ -218,16 +216,12 @@ export class OnlyPreviewShellStore {
     if (!hostToken) return;
     await this.runWindowCommand(() => onlyPreviewClient.closeWindow({ hostToken }));
   }
-  getGlobalSearchContext(): OnlyPreviewGlobalSearchContext | null {
+  getGlobalSearchContext(): OnlyPreviewGlobalSearchWorkspaceContext | null {
     const workspace = this.workspace;
     if (!workspace) return null;
-    return {
-      workspaceId: workspace.workspaceId,
-      generation: this.searchWorkspaceGeneration,
-      ready: this.projectionReady,
-      rootName: workspace.rootName,
-      currentDirectoryRelativePath: this.currentDirectoryRelativePath
-    };
+    return { workspaceId: workspace.workspaceId, generation: this.searchWorkspaceGeneration,
+      ready: this.projectionReady, rootName: workspace.rootName,
+      currentDirectoryRelativePath: this.currentDirectoryRelativePath };
   }
   setFocusedPath(relativePath: string): void {
     this.focusedRelativePath = relativePath;
@@ -292,9 +286,9 @@ export class OnlyPreviewShellStore {
     this.focusedRelativePath = movement.relativePath;
     return movement.relativePath;
   }
-  handleTreeClick(entry: OnlyPreviewIndexEntry, clickCount: number): void {
+  handleTreeClick(entry: OnlyPreviewIndexEntry, clickCount: number, toggleDirectory = false): void {
     if (clickCount > 1) return;
-    void this.activateEntry(entry, clickCount === 0);
+    void this.activateEntry(entry, clickCount === 0 || toggleDirectory, toggleDirectory);
   }
   handleTreeDoubleClick(entry: OnlyPreviewIndexEntry): void {
     if (entry.nodeKind === 'file' && this.settings?.openFilesWithSingleClick) return;
@@ -314,12 +308,10 @@ export class OnlyPreviewShellStore {
     this.expandedPaths.add(relativePath);
     void this.loadDirectory(relativePath);
   }
-
   setProjectWidth(value: number): void {
     const maxWidth = Math.max(180, Math.min(480, window.innerWidth - 320));
     this.projectWidth = Math.round(Math.min(maxWidth, Math.max(180, value)));
   }
-
   async reportPreviewBounds(bounds: OnlyPreviewBounds): Promise<void> {
     if (!onlyPreviewEnv.hostToken) return;
     try {
@@ -333,9 +325,7 @@ export class OnlyPreviewShellStore {
       this.errorMessage = errorMessage(error);
     }
   }
-
   private subscribe(): void {
-    onlyPreviewGlobalSearchStore.subscribe();
     subscribeOnlyPreviewShellEvents(onlyPreviewEnv.hostId, {
       workspaceChanged: () => {
         void this.restoreWorkspace();
@@ -374,14 +364,13 @@ export class OnlyPreviewShellStore {
       focusProject: () => {
         this.focusProjectRevision += 1;
       },
-      focusSearch: (origin) => {
-        onlyPreviewGlobalSearchStore.enter(origin);
+      revealGlobalSearchDirectory: (action) => {
+        void this.handleGlobalSearchDirectoryReveal(action);
       },
       findState: () => void this.syncFindState(),
       focusFind: () => void this.handleFocusFind()
     });
   }
-
   private nativeFindSuppressesCharacterCount(): boolean {
     const presentation = this.previewPresentation;
     const state = onlyPreviewFindStore.state;
@@ -392,27 +381,22 @@ export class OnlyPreviewShellStore {
       state.selectionRevision === presentation.selectionRevision &&
       state.surface === presentation.surface &&
       presentation.surface === 'vue' &&
-      (presentation.adapterId === 'markdown-dom' || presentation.adapterId === 'docx-dom')
+      presentation.adapterId === 'markdown-dom'
     );
   }
-
   private clearNativeFindSelectionCount(): void {
     if (!this.nativeFindSuppressesCharacterCount()) return;
     this.selectedCharacterCount = 0;
     this.pendingCharacterCount = 0;
   }
-
   private async syncFindState(): Promise<void> {
     await onlyPreviewFindStore.sync();
     this.clearNativeFindSelectionCount();
   }
-
   private async handleFocusFind(): Promise<void> {
-    onlyPreviewGlobalSearchStore.exit(false);
     await onlyPreviewFindStore.handleFocusRequest();
     this.clearNativeFindSelectionCount();
   }
-
   private applySearchProgress(progress: OnlyPreviewSearchBuildProgress): void {
     const workspace = this.workspace;
     if (!workspace) return;
@@ -452,7 +436,6 @@ export class OnlyPreviewShellStore {
         this.workspaceGeneration += 1;
         this.selectionGeneration += 1;
         this.searchWorkspaceGeneration += 1;
-        onlyPreviewGlobalSearchStore.resetForWorkspace();
         this.workspace = null;
         this.clearBrowseProjection();
         this.indexLoading = false;
@@ -461,6 +444,7 @@ export class OnlyPreviewShellStore {
         this.treeSelectedRelativePath = null;
         this.focusedRelativePath = '';
         this.selectedCharacterCount = 0;
+        this.reportGlobalSearchContext();
         return;
       }
       await this.applyWorkspace(workspace);
@@ -473,7 +457,6 @@ export class OnlyPreviewShellStore {
     const generation = ++this.workspaceGeneration;
     this.selectionGeneration += 1;
     this.searchWorkspaceGeneration += 1;
-    onlyPreviewGlobalSearchStore.resetForWorkspace();
     this.workspace = workspace;
     this.clearBrowseProjection();
     this.expandedPaths.add('');
@@ -483,6 +466,7 @@ export class OnlyPreviewShellStore {
     this.treeSelectedRelativePath = this.selectedRelativePath || null;
     this.focusedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
+    this.reportGlobalSearchContext();
     await this.initializeIndex();
     if (
       generation !== this.workspaceGeneration ||
@@ -512,6 +496,7 @@ export class OnlyPreviewShellStore {
       this.focusedRelativePath = this.selectedRelativePath;
       this.expandSelectedParents();
       await this.loadSelectedParentListings();
+      this.reportGlobalSearchContext();
     } catch (error) {
       if (generation === this.restoreGeneration) this.errorMessage = errorMessage(error);
     }
@@ -584,7 +569,7 @@ export class OnlyPreviewShellStore {
     this.indexLoading = snapshot.state !== 'ready';
     if (snapshot.state !== 'ready') return;
     this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
-    onlyPreviewGlobalSearchStore.resumeForAvailableRuntime();
+    this.reportGlobalSearchContext();
     this.expandSelectedParents();
     await this.loadSelectedParentListings();
   }
@@ -598,7 +583,7 @@ export class OnlyPreviewShellStore {
       void this.loadSelectedParentListings();
     }
     if (listing.relativePath === '') {
-      onlyPreviewGlobalSearchStore.resumeForAvailableRuntime();
+      this.reportGlobalSearchContext();
     }
     return result.loaded;
   }
@@ -653,6 +638,7 @@ export class OnlyPreviewShellStore {
       this.expandedPaths.add('');
       this.expandSelectedParents();
     }
+    this.reportGlobalSearchContext();
     return result.loaded;
   }
 
@@ -674,7 +660,7 @@ export class OnlyPreviewShellStore {
   private async activateEntry(entry: OnlyPreviewIndexEntry, force: boolean, toggleDirectory = false): Promise<void> {
     this.focusedRelativePath = entry.relativePath;
     this.treeSelectedRelativePath = entry.relativePath;
-    onlyPreviewGlobalSearchStore.syncCurrentDirectory(this.getGlobalSearchContext());
+    this.reportGlobalSearchContext();
     if (entry.nodeKind === 'directory') {
       if (toggleDirectory) this.toggleDirectory(entry.relativePath);
       return;
@@ -683,31 +669,25 @@ export class OnlyPreviewShellStore {
     if (!force && !this.settings?.openFilesWithSingleClick) return;
     await this.selectFile(entry.relativePath);
   }
-  async openGlobalSearchResult(result: OnlyPreviewGlobalSearchResult): Promise<boolean> {
-    if (result.section === 'files' && result.nodeKind === 'directory') {
-      return await this.revealGlobalSearchDirectory(result.relativePath);
-    }
-    await this.selectFile(result.relativePath);
-    if (this.selectedRelativePath !== result.relativePath) return false;
-    await this.loadSelectedParentListings();
-    this.focusedRelativePath = result.relativePath;
-    return true;
-  }
-
-  private async revealGlobalSearchDirectory(relativePath: string): Promise<boolean> {
-    const context = this.browseProjectionContext();
-    if (!context) return false;
-    const revealed = await revealOnlyPreviewGlobalSearchDirectory({
-      relativePath,
-      projection: this.browseProjection,
-      context,
-      expandedPaths: this.expandedPaths,
-      applyResult: (result) => void this.commitBrowseProjectionResult(result, context)
+  async handleGlobalSearchDirectoryReveal(
+    action: OnlyPreviewGlobalSearchDirectoryRevealAction
+  ): Promise<void> {
+    const context = this.getGlobalSearchContext();
+    const browseContext = this.browseProjectionContext();
+    await handleOnlyPreviewGlobalSearchDirectoryReveal({
+      action, workspaceId: context?.workspaceId ?? null, generation: context?.generation ?? null,
+      projection: this.browseProjection, browseContext, expandedPaths: this.expandedPaths,
+      applyResult: (result) => {
+        if (browseContext) this.commitBrowseProjectionResult(result, browseContext);
+      },
+      onRevealed: (relativePath) => {
+        this.treeSelectedRelativePath = relativePath;
+        this.focusedRelativePath = relativePath;
+        this.centerProjectRelativePath = relativePath;
+        this.centerProjectRevision += 1;
+        this.reportGlobalSearchContext();
+      }
     });
-    if (!revealed) return false;
-    this.treeSelectedRelativePath = relativePath;
-    this.focusedRelativePath = relativePath;
-    return true;
   }
 
   private async selectFile(relativePath: string): Promise<void> {
@@ -721,6 +701,7 @@ export class OnlyPreviewShellStore {
     this.focusedRelativePath = relativePath;
     this.selectedRelativePath = relativePath;
     this.expandSelectedParents();
+    this.reportGlobalSearchContext();
     try {
       unwrapOnlyPreviewResult(
         await onlyPreviewClient.selectStandaloneFile({
@@ -808,10 +789,10 @@ export class OnlyPreviewShellStore {
       this.previewActionError = errorMessage(error);
     }
   }
+
+  private reportGlobalSearchContext(): void {
+    onlyPreviewGlobalSearchShellClient.report(this.getGlobalSearchContext());
+  }
 }
 
 export const onlyPreviewShellStore = reactive<OnlyPreviewShellStore>(new OnlyPreviewShellStore());
-
-onlyPreviewGlobalSearchStore.configure(() => onlyPreviewShellStore.getGlobalSearchContext(), (result) =>
-  onlyPreviewShellStore.openGlobalSearchResult(result)
-);

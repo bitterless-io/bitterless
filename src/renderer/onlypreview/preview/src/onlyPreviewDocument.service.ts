@@ -83,7 +83,9 @@ const defaultWorkerFactory = (): DocumentWorkerLike =>
     name: 'onlypreview-document-preflight'
   });
 
-const defaultModuleLoader = async (): Promise<DocxPreviewModule> => await import('docx-preview');
+const defaultModuleLoader = async (): Promise<DocxPreviewModule> => {
+  throw new Error('The retired docx-preview renderer is unavailable.');
+};
 
 const hasZipSignature = (bytes: ArrayBuffer): boolean => {
   if (bytes.byteLength < 4) return false;

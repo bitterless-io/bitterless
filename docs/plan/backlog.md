@@ -20,3 +20,6 @@ Non-blocking review findings are recorded here after task verification.
   existing file-size debt from 951 to 1,015 lines.
 - Move the task 048 profile-registry/coexistence harness out of `claude-hook.test.mjs`; the focused
   coverage expanded that file from 789 to 931 lines and crossed the 800-line review limit.
+- Split `tests/onlypreview/onlyPreviewGlobalSearchShell.test.mjs` before the next Global Search
+  feature adds cases. Task 048's focused opener-dismiss regression is bounded, but the shared test
+  file now has 880 lines and exceeds the TS-1 800-line limit.

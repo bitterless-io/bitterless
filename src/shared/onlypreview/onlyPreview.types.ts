@@ -16,6 +16,7 @@ export type OnlyPreviewKind =
   | 'video'
   | 'sheet'
   | 'document'
+  | 'presentation'
   | 'diagram'
   | 'unsupported';
 export type OnlyPreviewTextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
@@ -25,8 +26,9 @@ export type OnlyPreviewPreviewAdapterId =
   | 'markdown-dom'
   | 'html-page'
   | 'chromium-pdf'
-  | 'xlsx-grid'
-  | 'docx-dom'
+  | 'ooxml-xlsx'
+  | 'ooxml-docx'
+  | 'ooxml-pptx'
   | 'drawio-viewer'
   | 'image'
   | 'audio'
@@ -51,7 +53,7 @@ export type OnlyPreviewFindCoverage =
 
 export type OnlyPreviewFindCapability =
   | { mode: 'webcontents-find' }
-  | { mode: 'content-adapter'; adapter: 'monaco' | 'sheet' };
+  | { mode: 'content-adapter'; adapter: 'monaco' | 'office' };
 
 interface OnlyPreviewFindStateBase extends OnlyPreviewHostEvent {
   selectionRevision: number;
@@ -98,7 +100,7 @@ export interface OnlyPreviewFindIntent extends OnlyPreviewHostRequest {
 export interface OnlyPreviewFindCommand extends Omit<OnlyPreviewFindIntent, 'hostToken'> {
   hostId: string;
   findRevision: number;
-  adapter: 'monaco' | 'sheet';
+  adapter: 'monaco' | 'office';
 }
 
 export type OnlyPreviewErrorCode =
@@ -124,6 +126,9 @@ export type OnlyPreviewErrorCode =
   | 'DOCUMENT_EMPTY'
   | 'DOCUMENT_SANITIZE_FAILED'
   | 'DOCUMENT_RENDER_TIMEOUT'
+  | 'PRESENTATION_PARSE_FAILED'
+  | 'PRESENTATION_EMPTY'
+  | 'PRESENTATION_RENDER_TIMEOUT'
   | 'DIAGRAM_PARSE_FAILED'
   | 'DIAGRAM_EMPTY'
   | 'DIAGRAM_LIMIT'
@@ -168,11 +173,7 @@ export interface OnlyPreviewFileRef {
   relativePath: string;
 }
 
-export type OnlyPreviewProjectItemCopyKind =
-  | 'item'
-  | 'absolute-path'
-  | 'relative-path'
-  | 'name';
+export type OnlyPreviewProjectItemCopyKind = 'item' | 'absolute-path' | 'relative-path' | 'name';
 
 export interface OnlyPreviewProjectItemCopyRequest
   extends OnlyPreviewHostRequest, OnlyPreviewFileRef {
@@ -189,8 +190,52 @@ export interface OnlyPreviewProjectRootCopyRequest extends OnlyPreviewProjectRoo
 
 export type OnlyPreviewGlobalSearchFocusOrigin = 'shell' | 'vue' | 'chrome';
 
-export interface OnlyPreviewGlobalSearchFocusRequest extends OnlyPreviewHostRequest {
-  mode: 'opener' | 'preview' | 'discard';
+export interface OnlyPreviewGlobalSearchCloseRequest extends OnlyPreviewHostRequest {
+  mode: 'opener' | 'project' | 'preview' | 'discard';
+}
+
+export interface OnlyPreviewGlobalSearchWorkspaceContext {
+  workspaceId: string;
+  generation: number;
+  ready: boolean;
+  rootName: string;
+  currentDirectoryRelativePath: string;
+}
+
+export interface OnlyPreviewGlobalSearchContextSnapshot {
+  revision: number;
+  active: boolean;
+  workspace: OnlyPreviewGlobalSearchWorkspaceContext | null;
+}
+
+export interface OnlyPreviewGlobalSearchContextReportRequest extends OnlyPreviewHostRequest {
+  workspace: OnlyPreviewGlobalSearchWorkspaceContext | null;
+}
+
+export interface OnlyPreviewGlobalSearchVisibilityEvent extends OnlyPreviewHostEvent {
+  revision: number;
+  active: boolean;
+}
+
+export interface OnlyPreviewGlobalSearchDirectoryRevealRequest extends OnlyPreviewHostRequest {
+  workspaceId: string;
+  generation: number;
+  relativePath: string;
+}
+
+export interface OnlyPreviewGlobalSearchDirectoryRevealAction extends OnlyPreviewHostEvent {
+  actionId: string;
+  workspaceId: string;
+  generation: number;
+  relativePath: string;
+}
+
+export interface OnlyPreviewGlobalSearchDirectoryRevealCompletion extends OnlyPreviewHostRequest {
+  actionId: string;
+  workspaceId: string;
+  generation: number;
+  relativePath: string;
+  succeeded: boolean;
 }
 
 export interface OnlyPreviewIndexEntry {
@@ -231,8 +276,9 @@ export const ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES = {
   'markdown-dom': 1024 * 1024,
   'html-page': 1024 * 1024,
   'chromium-pdf': 100 * 1024 * 1024,
-  'xlsx-grid': 25 * 1024 * 1024,
-  'docx-dom': 25 * 1024 * 1024,
+  'ooxml-xlsx': 25 * 1024 * 1024,
+  'ooxml-docx': 25 * 1024 * 1024,
+  'ooxml-pptx': 25 * 1024 * 1024,
   'drawio-viewer': 20 * 1024 * 1024,
   image: 100 * 1024 * 1024,
   audio: null,
@@ -258,8 +304,11 @@ export const ONLY_PREVIEW_MAX_MARKDOWN_BYTES =
 export const ONLY_PREVIEW_MAX_HTML_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['html-page'];
 export const ONLY_PREVIEW_MAX_PDF_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['chromium-pdf'];
 export const ONLY_PREVIEW_MAX_IMAGE_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES.image;
-export const ONLY_PREVIEW_MAX_SHEET_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['xlsx-grid'];
-export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['docx-dom'];
+export const ONLY_PREVIEW_MAX_SHEET_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-xlsx'];
+export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES =
+  ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-docx'];
+export const ONLY_PREVIEW_MAX_PRESENTATION_BYTES =
+  ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-pptx'];
 export const ONLY_PREVIEW_MAX_DIAGRAM_BYTES =
   ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['drawio-viewer'];
 
@@ -333,7 +382,7 @@ export interface OnlyPreviewPreviewRevisionRequest extends OnlyPreviewPreviewRun
 
 export interface OnlyPreviewPreviewReadyRequest extends OnlyPreviewPreviewRevisionRequest {
   findCoverage?: OnlyPreviewFindCoverage;
-  findAdapter?: 'monaco' | 'sheet';
+  findAdapter?: 'monaco' | 'office';
 }
 
 export interface OnlyPreviewFindResultRequest extends OnlyPreviewPreviewRuntimeRequest {
@@ -362,6 +411,12 @@ export const ONLY_PREVIEW_SELECTION_CHANGED_EVENT = 'onlypreview/selectionChange
 export const ONLY_PREVIEW_REFRESH_EVENT = 'onlypreview/refresh' as const;
 export const ONLY_PREVIEW_FOCUS_PROJECT_EVENT = 'onlypreview/focusProject' as const;
 export const ONLY_PREVIEW_FOCUS_SEARCH_EVENT = 'onlypreview/focusSearch' as const;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT =
+  'onlypreview/globalSearchContextChanged' as const;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT =
+  'onlypreview/globalSearchVisibility' as const;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT =
+  'onlypreview/globalSearchRevealDirectory' as const;
 export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT =
   'onlypreview/characterCountChanged' as const;
@@ -404,8 +459,20 @@ export interface OnlyPreviewApi {
   ): Promise<OnlyPreviewResult<OnlyPreviewFindSnapshot>>;
   submitPreviewFind(params: OnlyPreviewFindIntent): Promise<OnlyPreviewResult<void>>;
   closePreviewFind(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
-  restoreGlobalSearchFocus(
-    params: OnlyPreviewGlobalSearchFocusRequest
+  reportGlobalSearchContext(
+    params: OnlyPreviewGlobalSearchContextReportRequest
+  ): Promise<OnlyPreviewResult<void>>;
+  getGlobalSearchContext(
+    params: OnlyPreviewHostRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchContextSnapshot>>;
+  revealGlobalSearchDirectory(
+    params: OnlyPreviewGlobalSearchDirectoryRevealRequest
+  ): Promise<OnlyPreviewResult<boolean>>;
+  reportGlobalSearchDirectoryReveal(
+    params: OnlyPreviewGlobalSearchDirectoryRevealCompletion
+  ): Promise<OnlyPreviewResult<void>>;
+  closeGlobalSearch(
+    params: OnlyPreviewGlobalSearchCloseRequest
   ): Promise<OnlyPreviewResult<boolean>>;
   reportPreviewFindResult(params: OnlyPreviewFindResultRequest): Promise<OnlyPreviewResult<void>>;
   minimizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;

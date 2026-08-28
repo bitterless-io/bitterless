@@ -37,14 +37,15 @@ const previewComponents: Record<string, Component> = {
   markdown: defineAsyncComponent(() => import('./RichSearchPreview.vue')),
   'html-static': defineAsyncComponent(() => import('./RichSearchPreview.vue')),
   directory: defineAsyncComponent(() => import('./DirectorySearchPreview.vue')),
-  context: defineAsyncComponent(() => import('./ContextSearchPreview.vue')),
   info: defineAsyncComponent(() => import('./InfoSearchPreview.vue'))
 };
 
 const previewComponent = computed(() => {
   const preview = onlyPreviewGlobalSearchStore.preview;
   if (!preview) return null;
-  return preview.kind === 'text' ? previewComponents[preview.adapter] : previewComponents[preview.kind];
+  return preview.kind === 'text'
+    ? previewComponents[preview.adapter]
+    : previewComponents[preview.kind];
 });
 </script>
 

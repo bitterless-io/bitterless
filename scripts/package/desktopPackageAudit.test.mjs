@@ -484,6 +484,7 @@ test('dependency classification keeps external runtime roots and bundles selecte
     '@electron-toolkit/preload',
     '@qdrant/js-client-rest',
     '@rig-lib/semaphore',
+    '@silurus/ooxml',
     '@tabler/icons-vue',
     '@vueuse/core',
     'adm-zip',
