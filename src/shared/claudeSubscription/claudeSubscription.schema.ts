@@ -2,10 +2,12 @@ import { z } from 'zod';
 import {
   CLAUDE_SUBSCRIPTION_HOST,
   CLAUDE_SUBSCRIPTION_OPERATION_ERROR_CODES,
-  CLAUDE_SUBSCRIPTION_PORT,
+  CLAUDE_SUBSCRIPTION_MAX_PORT,
+  CLAUDE_SUBSCRIPTION_MIN_PORT,
   CLAUDE_SUBSCRIPTION_SNAPSHOT_SCHEMA,
   type ClaudeSubscriptionAccountIdInput,
   type ClaudeSubscriptionAdoptAccountInput,
+  type ClaudeSubscriptionSetServerPortInput,
   type ClaudeSubscriptionActionResult,
   type ClaudeSubscriptionCopyResult,
   type ClaudeSubscriptionFlowIdInput,
@@ -70,7 +72,7 @@ export const claudeSubscriptionServerViewSchema = z
   .object({
     state: z.enum(['starting', 'ready', 'attention', 'stopped']),
     host: z.literal(CLAUDE_SUBSCRIPTION_HOST),
-    port: z.literal(CLAUDE_SUBSCRIPTION_PORT)
+    port: z.number().int().min(CLAUDE_SUBSCRIPTION_MIN_PORT).max(CLAUDE_SUBSCRIPTION_MAX_PORT)
   })
   .strict();
 
@@ -121,6 +123,12 @@ export const claudeSubscriptionCopyResultSchema = z.discriminatedUnion('ok', [
     })
     .strict()
 ]);
+
+export const claudeSubscriptionSetServerPortInputSchema = z
+  .object({
+    port: z.number().int().min(CLAUDE_SUBSCRIPTION_MIN_PORT).max(CLAUDE_SUBSCRIPTION_MAX_PORT)
+  })
+  .strict();
 
 export const claudeSubscriptionAdoptAccountInputSchema = z
   .object({
@@ -183,6 +191,11 @@ export const parseClaudeSubscriptionActionResult = (
 
 export const parseClaudeSubscriptionCopyResult = (value: unknown): ClaudeSubscriptionCopyResult =>
   claudeSubscriptionCopyResultSchema.parse(value) as ClaudeSubscriptionCopyResult;
+
+export const parseClaudeSubscriptionSetServerPortInput = (
+  value: unknown
+): ClaudeSubscriptionSetServerPortInput =>
+  claudeSubscriptionSetServerPortInputSchema.parse(value) as ClaudeSubscriptionSetServerPortInput;
 
 export const parseClaudeSubscriptionAdoptAccountInput = (
   value: unknown

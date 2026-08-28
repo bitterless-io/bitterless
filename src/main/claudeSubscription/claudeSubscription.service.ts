@@ -11,9 +11,9 @@ import type {
   ClaudeSubscriptionSnapshot
 } from '@shared/claudeSubscription/claudeSubscription.contract';
 import {
-  CLAUDE_SUBSCRIPTION_CODEX_PROFILE,
+  buildClaudeSubscriptionCodexProfile,
+  CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
   CLAUDE_SUBSCRIPTION_HOST,
-  CLAUDE_SUBSCRIPTION_PORT,
   CLAUDE_SUBSCRIPTION_SNAPSHOT_SCHEMA
 } from '@shared/claudeSubscription/claudeSubscription.contract';
 import {
@@ -62,7 +62,7 @@ export interface ClaudeSubscriptionServiceOptions {
 
 export class ClaudeSubscriptionStartupError extends Error {
   constructor() {
-    super('Claude subscription endpoint could not start on 127.0.0.1:8741.');
+    super('Claude subscription endpoint could not start on its configured loopback port.');
     this.name = 'ClaudeSubscriptionStartupError';
   }
 }
@@ -576,7 +576,7 @@ export class ClaudeSubscriptionService {
       });
     }
     try {
-      this.#writeClipboard(CLAUDE_SUBSCRIPTION_CODEX_PROFILE);
+      this.#writeClipboard(buildClaudeSubscriptionCodexProfile(this.#repository.serverPort()));
       return parseClaudeSubscriptionCopyResult({ ok: true });
     } catch {
       return parseClaudeSubscriptionCopyResult({
@@ -797,10 +797,18 @@ export class ClaudeSubscriptionService {
       server: {
         state: capture.serverState,
         host: CLAUDE_SUBSCRIPTION_HOST,
-        port: CLAUDE_SUBSCRIPTION_PORT
+        port: this.#repository.serverPort()
       },
       authFlow: capture.authFlow
     });
+  }
+
+  #serverPortOrDefault(): number {
+    try {
+      return this.#repository.serverPort();
+    } catch {
+      return CLAUDE_SUBSCRIPTION_DEFAULT_PORT;
+    }
   }
 
   #createDegradedSnapshot(
@@ -818,7 +826,9 @@ export class ClaudeSubscriptionService {
       server: {
         state: serverState,
         host: CLAUDE_SUBSCRIPTION_HOST,
-        port: CLAUDE_SUBSCRIPTION_PORT
+        // Degraded snapshots can precede initialization, so the configured port
+        // may not be readable yet; the default keeps the shape valid.
+        port: this.#serverPortOrDefault()
       },
       authFlow: null
     });

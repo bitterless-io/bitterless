@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  CLAUDE_SUBSCRIPTION_CODEX_PROFILE,
+  buildClaudeSubscriptionCodexProfile,
   parseClaudeSubscriptionSnapshot,
   type ClaudeSubscriptionActionResult,
   type ClaudeSubscriptionCopyResult,
@@ -424,7 +424,7 @@ test('stop fences every action, awaits a deferred logout/removal, and start reop
     assert.equal((await fixture.service.testAccount({ accountId: second.id })).ok, true);
     assert.equal(fixture.executor.calls.length, 1);
     assert.deepEqual(await fixture.service.copyCodexProfile(), { ok: true });
-    assert.deepEqual(fixture.clipboardWrites, [CLAUDE_SUBSCRIPTION_CODEX_PROFILE]);
+    assert.deepEqual(fixture.clipboardWrites, [buildClaudeSubscriptionCodexProfile(CLAUDE_SUBSCRIPTION_DEFAULT_PORT)]);
   } finally {
     logoutGate.resolve();
     await cleanup(fixture);

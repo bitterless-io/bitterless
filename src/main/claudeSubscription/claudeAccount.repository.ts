@@ -10,6 +10,11 @@ import {
   writeFile
 } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
+  CLAUDE_SUBSCRIPTION_MAX_PORT,
+  CLAUDE_SUBSCRIPTION_MIN_PORT
+} from '@shared/claudeSubscription/claudeSubscription.contract';
 import type {
   ClaudeAccountId,
   ClaudeSubscriptionAccountStatus,
@@ -93,6 +98,7 @@ export interface ClaudeAccountRepositoryOptions {
 }
 
 const REGISTRY_FILE = 'accounts.json';
+const SETTINGS_FILE = 'settings.json';
 const ANTHROPIC_DIRECTORY = 'anthropic';
 const REGISTRY_VERSION = 3;
 const SLOT_DIRECTORY_PREFIX = '.claude';
@@ -184,6 +190,7 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
   readonly #needsLogin = new Set<ClaudeAccountId>();
   #accounts: StoredClaudeSubscriptionAccount[] = [];
   #mutationQueue: Promise<void> = Promise.resolve();
+  #serverPort = CLAUDE_SUBSCRIPTION_DEFAULT_PORT;
   #initialized = false;
 
   constructor(options: ClaudeAccountRepositoryOptions) {
@@ -208,11 +215,65 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    this.#serverPort = await this.#loadServerPort();
     this.#initialized = true;
   }
 
   isolatedCredentialStorageAvailable(): boolean {
     return this.#isolatedCredentialStorageAvailable;
+  }
+
+  /**
+   * The configured loopback port, or the default when none has been chosen.
+   * Kept beside the registry rather than in the registry: it is not account state,
+   * and a malformed settings file must not make the accounts unreadable.
+   */
+  serverPort(): number {
+    return this.#serverPort;
+  }
+
+  async setServerPort(port: number): Promise<void> {
+    this.#assertInitialized();
+    if (
+      !Number.isSafeInteger(port) ||
+      port < CLAUDE_SUBSCRIPTION_MIN_PORT ||
+      port > CLAUDE_SUBSCRIPTION_MAX_PORT
+    ) {
+      throw new Error('Claude subscription port is out of range.');
+    }
+    await this.#serializeMutation(async () => {
+      const settingsPath = path.join(this.#rootDirectory, SETTINGS_FILE);
+      const temporaryPath = path.join(
+        this.#rootDirectory,
+        `${SETTINGS_FILE}.tmp-${process.pid}-${randomUUID()}`
+      );
+      await writeFile(temporaryPath, JSON.stringify({ version: 1, port }, null, 2), {
+        mode: 0o600
+      });
+      await renameFile(temporaryPath, settingsPath);
+      this.#serverPort = port;
+    });
+  }
+
+  async #loadServerPort(): Promise<number> {
+    try {
+      const value: unknown = JSON.parse(
+        await readFile(path.join(this.#rootDirectory, SETTINGS_FILE), 'utf8')
+      );
+      if (
+        isRecord(value) &&
+        typeof value.port === 'number' &&
+        Number.isSafeInteger(value.port) &&
+        value.port >= CLAUDE_SUBSCRIPTION_MIN_PORT &&
+        value.port <= CLAUDE_SUBSCRIPTION_MAX_PORT
+      ) {
+        return value.port;
+      }
+    } catch {
+      // Absent or unreadable settings fall back to the default rather than failing
+      // startup: a bad port must not make the pool unusable.
+    }
+    return CLAUDE_SUBSCRIPTION_DEFAULT_PORT;
   }
 
   async createIdentity(): Promise<ClaudeAccountIdentity> {

@@ -1,7 +1,7 @@
 import {
   CLAUDE_SUBSCRIPTION_HOST,
   CLAUDE_SUBSCRIPTION_MODELS,
-  CLAUDE_SUBSCRIPTION_PORT,
+  CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
 } from '@shared/claudeSubscription/claudeSubscription.contract'
 import type { LlmCompressionPrefs } from './llmModels'
 import {
@@ -35,13 +35,15 @@ const LOCAL_MODEL_NAMES: Record<keyof typeof CLAUDE_SUBSCRIPTION_MODELS, string>
   'claude-haiku': 'Claude Haiku',
 }
 
-export const LOCAL_CLAUDE_BASE_URL =
-  `http://${CLAUDE_SUBSCRIPTION_HOST}:${CLAUDE_SUBSCRIPTION_PORT}/v1` as const
+/** The port is owner-configurable, so the URL is built per call, never frozen. */
+export const localClaudeBaseUrl = (port: number = CLAUDE_SUBSCRIPTION_DEFAULT_PORT): string =>
+  `http://${CLAUDE_SUBSCRIPTION_HOST}:${port}/v1`
 
 export const buildLocalClaudePiProviderConfig = (
   compressionPrefs: LlmCompressionPrefs,
+  port: number = CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
 ): LocalClaudePiProviderConfig => ({
-  baseUrl: LOCAL_CLAUDE_BASE_URL,
+  baseUrl: localClaudeBaseUrl(port),
   api: 'openai-responses',
   // Pi requires configured auth before it will construct a custom-provider session. The local
   // server ignores credentials; authHeader:false prevents this sentinel from being transmitted.

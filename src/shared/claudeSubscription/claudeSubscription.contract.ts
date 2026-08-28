@@ -1,20 +1,33 @@
 export const CLAUDE_SUBSCRIPTION_HOST = '127.0.0.1' as const;
-export const CLAUDE_SUBSCRIPTION_PORT = 8741 as const;
+/**
+ * Default only. The active port is owner-configurable and lives in the snapshot;
+ * anything that builds a URL must read it from there rather than from this
+ * constant, which is merely where a fresh install starts.
+ */
+export const CLAUDE_SUBSCRIPTION_DEFAULT_PORT = 12841;
+export const CLAUDE_SUBSCRIPTION_MIN_PORT = 1024;
+export const CLAUDE_SUBSCRIPTION_MAX_PORT = 65535;
 export const CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT =
   'claude-subscription/snapshot-changed' as const;
 
-export const CLAUDE_SUBSCRIPTION_CODEX_PROFILE = `model = "claude-sonnet"
+/**
+ * Built from the live port so a copied snippet always matches the running server.
+ * A hard-coded snippet silently pointed Codex at the wrong port once the port
+ * became configurable.
+ */
+export const buildClaudeSubscriptionCodexProfile = (port: number): string =>
+  `model = "claude-sonnet"
 model_provider = "bitterless_claude"
 
 [model_providers.bitterless_claude]
 name = "Bitterless Claude Subscription"
-base_url = "http://127.0.0.1:8741/v1"
+base_url = "http://${CLAUDE_SUBSCRIPTION_HOST}:${port}/v1"
 wire_api = "responses"
 requires_openai_auth = false
 request_max_retries = 0
 stream_max_retries = 0
 stream_idle_timeout_ms = 900000
-` as const;
+`;
 
 export const CLAUDE_SUBSCRIPTION_MODELS = {
   'claude-sonnet': 'sonnet',
@@ -56,7 +69,7 @@ export type ClaudeSubscriptionServerState = 'starting' | 'ready' | 'attention' |
 export interface ClaudeSubscriptionServerView {
   state: ClaudeSubscriptionServerState;
   host: typeof CLAUDE_SUBSCRIPTION_HOST;
-  port: typeof CLAUDE_SUBSCRIPTION_PORT;
+  port: number;
 }
 
 export type ClaudeSubscriptionAuthFlowStatus =
@@ -145,6 +158,11 @@ export interface ClaudeSubscriptionStartAuthInput {
  * terminal. No PTY, no browser, no credential is written — only verified and
  * recorded.
  */
+/** Changes the loopback port the Responses endpoint listens on. */
+export interface ClaudeSubscriptionSetServerPortInput {
+  port: number;
+}
+
 export interface ClaudeSubscriptionAdoptAccountInput {
   slot: number;
   label: string;
@@ -183,6 +201,7 @@ export interface ClaudeSubscriptionSetAccountEnabledInput {
 export interface ClaudeSubscriptionApi {
   getSnapshot(): Promise<ClaudeSubscriptionSnapshot>;
   adoptAccount(value: unknown): Promise<ClaudeSubscriptionActionResult>;
+  setServerPort(value: unknown): Promise<ClaudeSubscriptionActionResult>;
   listAdoptableSlots(): Promise<ClaudeSubscriptionAdoptableSlot[]>;
   startAuthorization(
     input: ClaudeSubscriptionStartAuthInput

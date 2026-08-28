@@ -2,7 +2,7 @@ import http, { type IncomingMessage, type Server, type ServerResponse } from 'no
 import type { AddressInfo } from 'node:net';
 import {
   CLAUDE_SUBSCRIPTION_HOST,
-  CLAUDE_SUBSCRIPTION_PORT,
+  CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
   type ClaudeAccountId,
   type ClaudeCompletedResponse,
   type ClaudeResponsesRequest
@@ -146,7 +146,7 @@ export class ClaudeResponsesServer {
     private readonly runtime: ClaudeResponsesRuntime,
     options: ClaudeResponsesServerOptions = {}
   ) {
-    this.#port = options.port ?? CLAUDE_SUBSCRIPTION_PORT;
+    this.#port = options.port ?? CLAUDE_SUBSCRIPTION_DEFAULT_PORT;
     this.#maxBodyBytes = options.maxBodyBytes ?? 32 * 1024 * 1024;
     if (!Number.isInteger(this.#port) || this.#port < 0 || this.#port > 65_535) {
       throw new Error('Claude Responses server port is invalid.');
