@@ -1,4 +1,4 @@
-export const SEARCH_SCHEMA_VERSION = 7;
+export const SEARCH_SCHEMA_VERSION = 8;
 export const SEARCH_STATE_SCHEMA_VERSION = 1;
 export const MAX_INDEX_DEPTH = 32;
 export const MAX_TEXT_BYTES = 1024 * 1024;

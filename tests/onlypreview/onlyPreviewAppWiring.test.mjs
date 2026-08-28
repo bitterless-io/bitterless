@@ -438,6 +438,63 @@ test('file-search browse and progress stay capability-scoped while the Project r
   assert.match(i18n, /indexProgressLabel:\s*'正在建立项目搜索索引'/);
 });
 
+test('Project browse exclusion markers stay listing-only and survive the Renderer projection', () => {
+  const searchTypes = source('src/shared/onlypreview/onlyPreviewSearch.type.ts');
+  const indexTypes = source('src/shared/onlypreview/onlyPreview.types.ts');
+  const browseIndex = source('src/preload/onlypreview/search/core/browse-index.mjs');
+  const relay = source('src/main/fileSearch/fileSearchRuntimeRelay.service.ts');
+  const rendererValidator = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewBrowseListing.service.ts'
+  );
+  const browseProjection = source(
+    'src/renderer/onlypreview/shell/src/onlyPreviewBrowseProjection.service.ts'
+  );
+  const treeTypes = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.type.ts');
+  const tree = source('src/renderer/onlypreview/shell/src/onlyPreviewTree.service.ts');
+
+  const browseEntryType = searchTypes.slice(
+    searchTypes.indexOf('export interface OnlyPreviewBrowseEntry'),
+    searchTypes.indexOf('export interface OnlyPreviewDirectoryPreviewEntry')
+  );
+  assert.match(browseEntryType, /directoryToken: string \| null/);
+  assert.match(browseEntryType, /searchExcluded: boolean/);
+  const directoryPreviewEntryType = searchTypes.slice(
+    searchTypes.indexOf('export interface OnlyPreviewDirectoryPreviewEntry'),
+    searchTypes.indexOf('export interface OnlyPreviewBrowseListing')
+  );
+  assert.doesNotMatch(directoryPreviewEntryType, /searchExcluded/);
+  assert.doesNotMatch(indexTypes, /searchExcluded/);
+
+  assert.match(browseIndex, /const \{ relativePath, ancestorBlocked \} = capability/);
+  assert.match(
+    browseIndex,
+    /ancestorBlocked \|\|[\s\S]*directlyExcluded &&[\s\S]*!this\.searchPolicy\.canTraverseExcludedDirectoryPath\(childRelativePath\)/
+  );
+  assert.match(browseIndex, /this\.pathByToken\.set\(token, \{ relativePath, ancestorBlocked \}\)/);
+
+  assert.match(relay, /withDirectoryToken \? \['directoryToken', 'searchExcluded'\] : \[\]/);
+  assert.match(relay, /withDirectoryToken && typeof value\.searchExcluded !== 'boolean'/);
+  assert.match(
+    rendererValidator,
+    /'directoryToken',\s*'searchExcluded'[\s\S]*typeof value\.searchExcluded !== 'boolean'/
+  );
+  assert.match(
+    rendererValidator,
+    /value\.nodeKind === 'symlink'[\s\S]*value\.searchExcluded === false/
+  );
+  assert.match(browseProjection, /private readonly excludedPaths = new Set<string>\(\)/);
+  assert.match(
+    browseProjection,
+    /if \(entry\.searchExcluded\) this\.excludedPaths\.add\(entry\.relativePath\)[\s\S]*entries\.push\(toIndexEntry\(entry\)\)/
+  );
+  assert.match(treeTypes, /searchExcluded: boolean/);
+  assert.match(tree, /searchExcluded: searchExcludedPaths\.has\(entry\.relativePath\)/);
+  assert.match(
+    tree,
+    /depth: 0,[\s\S]*hasChildren: true,[\s\S]*searchExcluded: false/
+  );
+});
+
 test('OnlyPreview folder-first chrome, current-file locator, and native file menu stay capability scoped', () => {
   const types = source('src/shared/onlypreview/onlyPreview.types.ts');
   const handler = source('src/main/xpc/onlyPreview.handler.ts');

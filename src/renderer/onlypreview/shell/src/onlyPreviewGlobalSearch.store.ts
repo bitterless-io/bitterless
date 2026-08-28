@@ -24,17 +24,18 @@ import {
   sameGlobalSearchPath,
   sameGlobalSearchResult
 } from './onlyPreviewGlobalSearchResult.service';
-import { getOnlyPreviewParentPath } from './onlyPreviewTree.service';
 import type { OnlyPreviewGlobalSearchFocusOrigin } from '@shared/onlypreview/onlyPreview.types';
+import {
+  createOnlyPreviewSearchDiagnostics,
+  type OnlyPreviewSearchDiagnostics
+} from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
 
 export interface OnlyPreviewGlobalSearchContext {
   workspaceId: string;
   generation: number;
   ready: boolean;
   rootName: string;
-  focusedRelativePath: string;
-  focusedNodeKind: 'file' | 'directory' | 'symlink' | null;
-  selectedRelativePath: string;
+  currentDirectoryRelativePath: string;
 }
 
 type OpenResult = (result: OnlyPreviewGlobalSearchResult) => Promise<boolean>;
@@ -91,6 +92,14 @@ class OnlyPreviewGlobalSearchStore {
   private resolveContext: (() => OnlyPreviewGlobalSearchContext | null) | null = null;
   private openResult: OpenResult | null = null;
   private scheduleSearch: (() => void) | null = null;
+  private centeredProjectPathOnExit: string | null = null;
+  private diagnostics = createOnlyPreviewSearchDiagnostics();
+  private diagnosticSearch: {
+    tag: string;
+    startedAt: number;
+    firstSections: Set<'files' | 'contents'>;
+    terminal: boolean;
+  } | null = null;
 
   get visibleResults(): OnlyPreviewGlobalSearchResult[] {
     return [
@@ -106,6 +115,10 @@ class OnlyPreviewGlobalSearchStore {
 
   configureScheduler(schedule: () => void): void {
     this.scheduleSearch = schedule;
+  }
+
+  configureDiagnostics(diagnostics: OnlyPreviewSearchDiagnostics): void {
+    this.diagnostics = diagnostics;
   }
 
   subscribe(): void {
@@ -129,6 +142,7 @@ class OnlyPreviewGlobalSearchStore {
   enter(origin: OnlyPreviewGlobalSearchFocusOrigin = 'shell'): void {
     const context = this.resolveContext?.() ?? null;
     if (!this.active) {
+      this.centeredProjectPathOnExit = null;
       this.captureDirectoryScope(context);
       this.filesCollapsed = false;
       this.contentsCollapsed = false;
@@ -139,8 +153,11 @@ class OnlyPreviewGlobalSearchStore {
     this.focusRevision += 1;
   }
 
-  exit(restoreFocus = true): void {
-    if (this.active) this.restoreFocusOnExit = restoreFocus;
+  exit(restoreFocus = true, centeredProjectPath: string | null = null): void {
+    if (this.active) {
+      this.restoreFocusOnExit = restoreFocus;
+      this.centeredProjectPathOnExit = centeredProjectPath;
+    }
     this.active = false;
     this.query = '';
     this.inputRevision += 1;
@@ -211,6 +228,19 @@ class OnlyPreviewGlobalSearchStore {
     }
   }
 
+  syncCurrentDirectory(context: OnlyPreviewGlobalSearchContext | null): void {
+    if (!this.active || !context) return;
+    const relativePath = context.currentDirectoryRelativePath;
+    const pathChanged = relativePath !== this.directoryRelativePath;
+    this.directoryRelativePath = relativePath;
+    this.directoryLabel = relativePath || context.rootName;
+    if (!pathChanged || this.scopeKind !== 'directory' || !this.query.trim()) return;
+    this.inputRevision += 1;
+    this.cancelRequest(false);
+    this.pending = true;
+    this.scheduleSearch?.();
+  }
+
   toggleGroup(section: 'files' | 'contents', expanded?: boolean): void {
     const collapsed = expanded === undefined ? undefined : !expanded;
     if (section === 'files') {
@@ -253,7 +283,18 @@ class OnlyPreviewGlobalSearchStore {
   async openSelected(): Promise<void> {
     const result = this.selectedResult;
     if (!result || !this.openResult) return;
-    if (await this.openResult(result)) this.exit();
+    if (!(await this.openResult(result))) return;
+    if (result.section === 'files' && result.nodeKind === 'directory') {
+      this.exit(false, result.relativePath);
+      return;
+    }
+    this.exit();
+  }
+
+  consumeCenteredProjectPath(): string | null {
+    const relativePath = this.centeredProjectPathOnExit;
+    this.centeredProjectPathOnExit = null;
+    return relativePath;
   }
 
   setPreviewPercent(value: number): void {
@@ -280,6 +321,16 @@ class OnlyPreviewGlobalSearchStore {
     this.cancelRequest(false);
     const requestId = crypto.randomUUID();
     this.requestId = requestId;
+    this.diagnosticSearch = {
+      tag: this.diagnostics.nextTag('s'),
+      startedAt: this.diagnostics.now(),
+      firstSections: new Set(),
+      terminal: false
+    };
+    this.diagnostics.emit('shell-dispatch', {
+      tag: this.diagnosticSearch.tag,
+      generation: context.generation
+    });
     this.pending = true;
     this.error = '';
     const scope: OnlyPreviewSearchScope =
@@ -304,8 +355,12 @@ class OnlyPreviewGlobalSearchStore {
       this.filesTruncated = response.filesTruncated;
       this.contentsTruncated = response.contentsTruncated;
       this.reconcileSelection();
+      this.emitDiagnosticTerminal('success');
     } catch (error) {
-      if (this.isCurrent(context, requestId, revision)) this.error = errorMessage(error);
+      if (this.isCurrent(context, requestId, revision)) {
+        this.error = errorMessage(error);
+        this.emitDiagnosticTerminal('failure');
+      }
     } finally {
       if (this.isCurrent(context, requestId, revision)) this.pending = false;
     }
@@ -377,6 +432,8 @@ class OnlyPreviewGlobalSearchStore {
     }
     for (const result of batch.files) replaceGlobalSearchResult(this.files, result);
     for (const result of batch.contents) replaceGlobalSearchResult(this.contents, result);
+    this.emitDiagnosticFirstBatch('files', batch.files.length);
+    this.emitDiagnosticFirstBatch('contents', batch.contents.length);
     this.files = this.files.slice(0, ONLY_PREVIEW_GLOBAL_SEARCH_SECTION_MAX_RESULTS);
     this.contents = this.contents.slice(0, ONLY_PREVIEW_GLOBAL_SEARCH_SECTION_MAX_RESULTS);
     this.reconcileSelection();
@@ -390,18 +447,6 @@ class OnlyPreviewGlobalSearchStore {
       !context ||
       context.workspaceId !== commit.workspaceId ||
       context.generation !== commit.generation
-    ) {
-      return;
-    }
-    if (
-      !commit.full &&
-      this.scopeKind === 'directory' &&
-      this.directoryRelativePath &&
-      !commit.changedRelativePaths.some(
-        (path) =>
-          path === this.directoryRelativePath ||
-          path.startsWith(`${this.directoryRelativePath}/`)
-      )
     ) {
       return;
     }
@@ -447,6 +492,7 @@ class OnlyPreviewGlobalSearchStore {
 
   private cancelRequest(clearPending = true): void {
     const requestId = this.requestId;
+    if (requestId) this.emitDiagnosticTerminal('cancelled');
     this.requestId = null;
     this.previewRevision += 1;
     this.previewPending = false;
@@ -455,6 +501,31 @@ class OnlyPreviewGlobalSearchStore {
     if (requestId && hostToken) {
       void onlyPreviewSearchClient.cancel({ hostToken, requestId }).catch(() => undefined);
     }
+  }
+
+  private emitDiagnosticFirstBatch(section: 'files' | 'contents', count: number): void {
+    const search = this.diagnosticSearch;
+    if (!search || count === 0 || search.firstSections.has(section)) return;
+    search.firstSections.add(section);
+    this.diagnostics.emit('shell-first-batch', {
+      tag: search.tag,
+      section,
+      count,
+      elapsedMs: this.diagnostics.elapsed(search.startedAt)
+    });
+  }
+
+  private emitDiagnosticTerminal(outcome: 'success' | 'failure' | 'cancelled'): void {
+    const search = this.diagnosticSearch;
+    if (!search || search.terminal) return;
+    search.terminal = true;
+    this.diagnostics.emit('shell-terminal', {
+      tag: search.tag,
+      outcome,
+      filesCount: this.files.length,
+      contentsCount: this.contents.length,
+      elapsedMs: this.diagnostics.elapsed(search.startedAt)
+    });
   }
 
   private clearResults(): void {
@@ -471,13 +542,7 @@ class OnlyPreviewGlobalSearchStore {
   }
 
   private captureDirectoryScope(context: OnlyPreviewGlobalSearchContext | null): void {
-    let relativePath = '';
-    if (context?.focusedNodeKind === 'directory') relativePath = context.focusedRelativePath;
-    else if (context?.focusedNodeKind === 'file') {
-      relativePath = getOnlyPreviewParentPath(context.focusedRelativePath);
-    } else if (context?.selectedRelativePath) {
-      relativePath = getOnlyPreviewParentPath(context.selectedRelativePath);
-    }
+    const relativePath = context?.currentDirectoryRelativePath || '';
     this.scopeKind = 'directory';
     this.directoryRelativePath = relativePath;
     this.directoryLabel = relativePath || context?.rootName || '';

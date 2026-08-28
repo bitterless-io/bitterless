@@ -12,15 +12,26 @@ export const revealOnlyPreviewGlobalSearchDirectory = async (params: {
   applyResult: (result: OnlyPreviewBrowseProjectionResult) => void;
 }): Promise<boolean> => {
   const { relativePath, projection, context, expandedPaths, applyResult } = params;
-  expandedPaths.add('');
   const parents = await projection.loadSelectedParentListings(
     `${relativePath}/_scope`,
     context,
     expandedPaths
   );
   applyResult(parents);
-  expandedPaths.add(relativePath);
+  if (!parents.loaded) return false;
   const directory = await projection.loadDirectory(relativePath, context, expandedPaths);
   applyResult(directory);
-  return directory.index?.entries.some((entry) => entry.relativePath === relativePath) === true;
+  if (
+    !directory.loaded ||
+    directory.index?.entries.some((entry) => entry.relativePath === relativePath) !== true
+  ) {
+    return false;
+  }
+  expandedPaths.add('');
+  let expandedPath = '';
+  for (const segment of relativePath.split('/')) {
+    expandedPath = expandedPath ? `${expandedPath}/${segment}` : segment;
+    expandedPaths.add(expandedPath);
+  }
+  return true;
 };

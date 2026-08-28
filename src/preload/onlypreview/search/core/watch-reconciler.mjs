@@ -1,7 +1,8 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 
-import { MAX_WATCH_CHANGE_PATHS } from './constants.mjs';
+import { BACKGROUND_BUILD_TRANSACTION_FILES, MAX_WATCH_CHANGE_PATHS } from './constants.mjs';
+import { isWorkspaceSearchPathWithinDepth } from './traversal.mjs';
 import {
   WORKSPACE_CONFIG_RELATIVE_PATH,
   pathIsWithin
@@ -29,6 +30,16 @@ const normalizedWatchRelativePath = (value) => {
     return undefined;
   }
   return normalized;
+};
+
+const pathHasAncestorIn = (relativePath, ancestors) => {
+  let candidate = relativePath;
+  while (candidate) {
+    if (ancestors.has(candidate)) return true;
+    const separator = candidate.lastIndexOf('/');
+    candidate = separator < 0 ? '' : candidate.slice(0, separator);
+  }
+  return false;
 };
 
 const toTreeFileEntry = (entry) => ({
@@ -61,24 +72,60 @@ const toTreeDirectoryEntry = ({ relativePath, modifiedMs }) => ({
   isText: false
 });
 
-export const sortOnlyPreviewTreeEntries = (entries) => {
-  const collator = new Intl.Collator('und', { numeric: true, sensitivity: 'base' });
-  return [...entries].sort((left, right) => {
-    const leftSegments = left.relativePath.split('/');
-    const rightSegments = right.relativePath.split('/');
-    const length = Math.min(leftSegments.length, rightSegments.length);
-    for (let index = 0; index < length; index += 1) {
-      if (leftSegments[index] === rightSegments[index]) continue;
-      const leftIsParent = index === leftSegments.length - 1 && left.nodeKind === 'directory';
-      const rightIsParent = index === rightSegments.length - 1 && right.nodeKind === 'directory';
-      if (leftIsParent !== rightIsParent) return leftIsParent ? -1 : 1;
-      return (
-        collator.compare(leftSegments[index], rightSegments[index]) ||
-        leftSegments[index].localeCompare(rightSegments[index], 'und')
-      );
+const treeEntryCollator = new Intl.Collator('und', { numeric: true, sensitivity: 'base' });
+
+const compareOnlyPreviewTreeEntries = (left, right) => {
+  const leftSegments = left.relativePath.split('/');
+  const rightSegments = right.relativePath.split('/');
+  const length = Math.min(leftSegments.length, rightSegments.length);
+  for (let index = 0; index < length; index += 1) {
+    if (leftSegments[index] === rightSegments[index]) continue;
+    const leftIsParent = index === leftSegments.length - 1 && left.nodeKind === 'directory';
+    const rightIsParent = index === rightSegments.length - 1 && right.nodeKind === 'directory';
+    if (leftIsParent !== rightIsParent) return leftIsParent ? -1 : 1;
+    return (
+      treeEntryCollator.compare(leftSegments[index], rightSegments[index]) ||
+      leftSegments[index].localeCompare(rightSegments[index], 'und')
+    );
+  }
+  return leftSegments.length - rightSegments.length;
+};
+
+export const sortOnlyPreviewTreeEntries = (entries) =>
+  [...entries].sort(compareOnlyPreviewTreeEntries);
+
+export const mergeOnlyPreviewTreeEntries = (leftEntries, rightEntries) => {
+  const merged = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < leftEntries.length && rightIndex < rightEntries.length) {
+    if (compareOnlyPreviewTreeEntries(leftEntries[leftIndex], rightEntries[rightIndex]) <= 0) {
+      merged.push(leftEntries[leftIndex]);
+      leftIndex += 1;
+    } else {
+      merged.push(rightEntries[rightIndex]);
+      rightIndex += 1;
     }
-    return leftSegments.length - rightSegments.length;
-  });
+  }
+  while (leftIndex < leftEntries.length) {
+    merged.push(leftEntries[leftIndex]);
+    leftIndex += 1;
+  }
+  while (rightIndex < rightEntries.length) {
+    merged.push(rightEntries[rightIndex]);
+    rightIndex += 1;
+  }
+  return merged;
+};
+
+export const selectOnlyPreviewTreeEntries = (entries, neededPaths) => {
+  const selected = new Map();
+  for (const entry of entries) {
+    if (!neededPaths.has(entry.relativePath)) continue;
+    const previous = selected.get(entry.relativePath);
+    if (!previous || entry.nodeKind !== 'file') selected.set(entry.relativePath, entry);
+  }
+  return selected;
 };
 
 class OnlyPreviewSearchWatchReconciler {
@@ -94,106 +141,254 @@ class OnlyPreviewSearchWatchReconciler {
       context.watchNeedsFullReconcile = true;
       return;
     }
-    if (
-      full ||
-      paths.length > MAX_WATCH_CHANGE_PATHS ||
-      paths.some((path) => normalizedRelativePath(path) === WORKSPACE_CONFIG_RELATIVE_PATH)
-    ) {
-      await context.refreshInternal();
+    if (!context.treeMetadataReady) {
+      await context.refreshFromWatchInternal();
       this.emitWatchCommit(context, { full: true, paths: [] });
       return;
     }
-    let requiresFullReconcile = false;
-    const committedPaths = new Set();
-    const renamePathSet = new Set(renamePaths);
+    if (full || paths.length > MAX_WATCH_CHANGE_PATHS) {
+      await context.refreshFromWatchInternal();
+      this.emitWatchCommit(context, { full: true, paths: [] });
+      return;
+    }
+    const normalizedPaths = [];
+    const neededTreePaths = new Set();
     for (const pathValue of paths) {
       const relativePath = normalizedWatchRelativePath(pathValue);
-      if (!relativePath) {
-        requiresFullReconcile = true;
-        continue;
+      if (
+        !relativePath ||
+        relativePath === WORKSPACE_CONFIG_RELATIVE_PATH ||
+        !isWorkspaceSearchPathWithinDepth(relativePath)
+      ) {
+        await context.refreshFromWatchInternal();
+        this.emitWatchCommit(context, { full: true, paths: [] });
+        return;
       }
+      normalizedPaths.push(relativePath);
+      neededTreePaths.add(relativePath);
+      const parent = normalizedRelativePath(dirname(relativePath));
+      if (parent && parent !== '.') neededTreePaths.add(parent);
+    }
+    const treeByPath = selectOnlyPreviewTreeEntries(context.treeEntries, neededTreePaths);
+    if (
+      normalizedPaths.some((relativePath) => {
+        const entry = treeByPath.get(relativePath);
+        return entry !== undefined && entry.nodeKind !== 'file';
+      })
+    ) {
+      await context.refreshFromWatchInternal();
+      this.emitWatchCommit(context, { full: true, paths: [] });
+      return;
+    }
+    const committedPaths = new Set();
+    const renamePathSet = new Set(renamePaths);
+    const mutations = [];
+    let requiresFullReconcile = false;
+    for (const relativePath of normalizedPaths) {
       committedPaths.add(relativePath);
       const renameHint = renamePathSet.has(relativePath);
-      const previousTreeEntry = renameHint
-        ? context.treeEntries.find((entry) => entry.relativePath === relativePath)
-        : undefined;
+      const previousTreeEntry = treeByPath.get(relativePath);
+      const replacesNonFile = previousTreeEntry?.nodeKind !== undefined &&
+        previousTreeEntry.nodeKind !== 'file';
       const absolutePath = resolve(context.rootPath, ...relativePath.split('/'));
       if (!pathIsWithin(context.rootPath, absolutePath)) {
         requiresFullReconcile = true;
-        continue;
+        break;
       }
       try {
         const canonicalPath = await realpath(absolutePath);
         if (canonicalPath !== absolutePath || !pathIsWithin(context.rootPath, canonicalPath)) {
           requiresFullReconcile = true;
-          continue;
+          break;
         }
         const currentStat = await lstat(absolutePath);
         if ((await realpath(absolutePath)) !== canonicalPath) {
           requiresFullReconcile = true;
-          continue;
+          break;
         }
         if (currentStat.isDirectory()) {
-          if (
-            context.searchPolicy.isExcludedDirectoryPath(relativePath) &&
-            !context.searchPolicy.canTraverseExcludedDirectoryPath(relativePath)
-          ) {
-            this.removeTreePath(context, relativePath);
-            context.index.delete(relativePath);
-          } else {
-            requiresFullReconcile = true;
-          }
+          requiresFullReconcile = true;
         } else if (currentStat.isSymbolicLink()) {
-          context.index.delete(relativePath);
           if (context.searchPolicy.isExcludedFilePath(relativePath)) {
-            this.removeTreePath(context, relativePath);
+            const parent = context.searchPolicy.isPhysicallyExcludedPath(relativePath)
+              ? { valid: true, entry: undefined }
+              : await this.readParentDirectoryTreeEntry(context, treeByPath, relativePath);
+            if (!parent.valid) {
+              requiresFullReconcile = true;
+              break;
+            }
+            mutations.push({ kind: 'remove', relativePath, parentEntry: parent.entry });
           } else {
             requiresFullReconcile = true;
           }
         } else if (currentStat.isFile()) {
-          if (renameHint && previousTreeEntry?.nodeKind !== 'file') {
+          if (replacesNonFile) {
             requiresFullReconcile = true;
-            continue;
+            break;
           }
           const searchExcluded = context.searchPolicy.isExcludedFilePath(relativePath);
           if (searchExcluded) {
-            context.index.delete(relativePath);
-            this.removeTreePath(context, relativePath);
+            const parent = context.searchPolicy.isPhysicallyExcludedPath(relativePath)
+              ? { valid: true, entry: undefined }
+              : await this.readParentDirectoryTreeEntry(context, treeByPath, relativePath);
+            if (!parent.valid) {
+              requiresFullReconcile = true;
+              break;
+            }
+            mutations.push({ kind: 'remove', relativePath, parentEntry: parent.entry });
           } else {
-            const entry = await this.readWorkspaceFile({
-              rootPath: context.rootPath,
+            const parent = await this.readParentDirectoryTreeEntry(
+              context,
+              treeByPath,
               relativePath
-            });
-            if (entry) {
-              context.index.upsert(entry);
-              this.upsertTreeEntry(context, toTreeFileEntry(entry));
-            } else requiresFullReconcile = true;
-          }
-          if (
-            !searchExcluded &&
-            !(await this.refreshParentDirectoryTreeEntry(context, relativePath))
-          ) {
-            requiresFullReconcile = true;
+            );
+            if (!parent.valid) {
+              requiresFullReconcile = true;
+              break;
+            }
+            mutations.push({ kind: 'upsert', relativePath, parentEntry: parent.entry });
           }
         } else requiresFullReconcile = true;
       } catch (error) {
         if (error?.code === 'ENOENT') {
-          if (renameHint) requiresFullReconcile = true;
-          this.removeTreePath(context, relativePath);
-          context.index.delete(relativePath);
-          if (
-            !context.searchPolicy.isPhysicallyExcludedPath(relativePath) &&
-            !(await this.refreshParentDirectoryTreeEntry(context, relativePath))
-          ) {
+          if (renameHint || replacesNonFile) {
             requiresFullReconcile = true;
+            break;
           }
+          const parent = context.searchPolicy.isPhysicallyExcludedPath(relativePath)
+            ? { valid: true, entry: undefined }
+            : await this.readParentDirectoryTreeEntry(context, treeByPath, relativePath);
+          if (!parent.valid) {
+            requiresFullReconcile = true;
+            break;
+          }
+          mutations.push({
+            kind: 'remove',
+            relativePath,
+            parentEntry: parent.entry
+          });
         } else requiresFullReconcile = true;
       }
+      if (requiresFullReconcile) break;
     }
     if (requiresFullReconcile) {
-      await context.refreshInternal();
+      await context.refreshFromWatchInternal();
       this.emitWatchCommit(context, { full: true, paths: [] });
     } else {
+      const writer = await context.acquireSearchSnapshotWriter();
+      let commitNeedsFullReconcile = false;
+      try {
+        context.globalSearchSession.revoke();
+        context.index.invalidateTreeSnapshot();
+        const removedPaths = new Set(
+          mutations
+            .filter(({ kind }) => kind === 'remove')
+            .map(({ relativePath }) => relativePath)
+        );
+        const treeReplacementPaths = new Set([
+          ...removedPaths,
+          ...mutations
+            .filter(({ kind }) => kind === 'upsert')
+            .map(({ relativePath }) => relativePath)
+        ]);
+        const replacementEntries = new Map();
+        const treeUpserts = new Map();
+        for (
+          let offset = 0;
+          offset < mutations.length;
+          offset += BACKGROUND_BUILD_TRANSACTION_FILES
+        ) {
+          const batch = mutations.slice(offset, offset + BACKGROUND_BUILD_TRANSACTION_FILES);
+          const preparedUpserts = [];
+          for (const mutation of batch) {
+            if (mutation.kind !== 'upsert') continue;
+            const entry = await this.readWorkspaceFile({
+              rootPath: context.rootPath,
+              relativePath: mutation.relativePath
+            });
+            if (!entry) {
+              throw Object.assign(new TypeError('Watch file changed during incremental commit'), {
+                code: 'WATCH_RECONCILE_REQUIRED'
+              });
+            }
+            preparedUpserts.push({ mutation, entry, treeEntry: toTreeFileEntry(entry) });
+          }
+          const deletedIndexedPaths = [];
+          context.index.runMutation(() => {
+            for (const mutation of batch) {
+              if (
+                mutation.kind === 'remove' &&
+                context.index.delete(mutation.relativePath, {
+                  syncFilenameTier: false,
+                  withinTransaction: true
+                })
+              ) {
+                deletedIndexedPaths.push(mutation.relativePath);
+              }
+            }
+            for (const prepared of preparedUpserts) {
+              context.index.upsert(prepared.entry, {
+                syncFilenameTier: false,
+                withinTransaction: true
+              });
+            }
+          });
+          context.index.applyFilenameTierMutations({
+            upsertPaths: preparedUpserts.map(({ mutation }) => mutation.relativePath),
+            deletePaths: deletedIndexedPaths
+          });
+          for (const prepared of preparedUpserts) {
+            replacementEntries.set(prepared.treeEntry.relativePath, prepared.treeEntry);
+          }
+        }
+        for (const mutation of mutations) {
+          if (
+            mutation.parentEntry &&
+            !pathHasAncestorIn(mutation.parentEntry.relativePath, treeReplacementPaths)
+          ) {
+            replacementEntries.set(mutation.parentEntry.relativePath, mutation.parentEntry);
+            treeUpserts.set(mutation.parentEntry.relativePath, mutation.parentEntry);
+          }
+        }
+        const replacementPaths = new Set(replacementEntries.keys());
+        const retainedTreeEntries = context.treeEntries.filter(
+          ({ relativePath }) =>
+            !replacementPaths.has(relativePath) &&
+            !pathHasAncestorIn(relativePath, removedPaths)
+        );
+        const nextTreeEntries = mergeOnlyPreviewTreeEntries(
+          retainedTreeEntries,
+          sortOnlyPreviewTreeEntries(replacementEntries.values())
+        );
+        const committedTree = context.index.applyTreeSnapshotMutations({
+          upserts: [...treeUpserts.values()],
+          removedPaths: treeReplacementPaths,
+          maxDepthReached: context.maxDepthReached
+        });
+        context.treeEntries = nextTreeEntries;
+        context.treeMetadataReady = committedTree.treeMetadataReady;
+      } catch (error) {
+        try {
+          context.index.hydrateFilenameTier();
+          const safeTree = context.index.readTreeSnapshot();
+          context.treeEntries = sortOnlyPreviewTreeEntries(safeTree.entries);
+          context.maxDepthReached = safeTree.maxDepthReached;
+          context.treeMetadataReady = safeTree.treeMetadataReady;
+        } catch {
+          context.treeEntries = [];
+          context.maxDepthReached = false;
+          context.treeMetadataReady = false;
+        }
+        if (error?.code === 'WATCH_RECONCILE_REQUIRED') commitNeedsFullReconcile = true;
+        else throw error;
+      } finally {
+        writer.release();
+      }
+      if (commitNeedsFullReconcile) {
+        await context.refreshFromWatchInternal();
+        this.emitWatchCommit(context, { full: true, paths: [] });
+        return;
+      }
       await context.emitSnapshot();
       await this.emitBrowseListingsForChangedPaths(context, [...committedPaths]);
       this.emitWatchCommit(context, { full: false, paths: [...committedPaths] });
@@ -221,28 +416,19 @@ class OnlyPreviewSearchWatchReconciler {
     }
   }
 
-  upsertTreeEntry(context, entry) {
-    const index = context.treeEntries.findIndex(
-      ({ relativePath }) => relativePath === entry.relativePath
-    );
-    if (index >= 0) context.treeEntries[index] = entry;
-    else context.treeEntries.push(entry);
-    context.treeEntries = sortOnlyPreviewTreeEntries(context.treeEntries);
-  }
-
-  async refreshParentDirectoryTreeEntry(context, relativePath) {
+  async readParentDirectoryTreeEntry(context, treeByPath, relativePath) {
     const parentRelativePath = normalizedRelativePath(dirname(relativePath));
-    if (!parentRelativePath || parentRelativePath === '.') return true;
-    const existingParent = context.treeEntries.find(
-      (entry) => entry.relativePath === parentRelativePath
-    );
-    if (existingParent?.nodeKind !== 'directory') return false;
+    if (!parentRelativePath || parentRelativePath === '.') {
+      return { valid: true, entry: undefined };
+    }
+    const existingParent = treeByPath.get(parentRelativePath);
+    if (existingParent?.nodeKind !== 'directory') return { valid: false, entry: undefined };
     const absolutePath = resolve(context.rootPath, ...parentRelativePath.split('/'));
-    if (!pathIsWithin(context.rootPath, absolutePath)) return false;
+    if (!pathIsWithin(context.rootPath, absolutePath)) return { valid: false, entry: undefined };
     try {
       const canonicalPath = await realpath(absolutePath);
       if (canonicalPath !== absolutePath || !pathIsWithin(context.rootPath, canonicalPath)) {
-        return false;
+        return { valid: false, entry: undefined };
       }
       const currentStat = await lstat(absolutePath);
       if (
@@ -250,28 +436,17 @@ class OnlyPreviewSearchWatchReconciler {
         currentStat.isSymbolicLink() ||
         (await realpath(absolutePath)) !== canonicalPath
       ) {
-        return false;
+        return { valid: false, entry: undefined };
       }
-      this.upsertTreeEntry(
-        context,
-        toTreeDirectoryEntry({
+      return {
+        valid: true,
+        entry: toTreeDirectoryEntry({
           relativePath: parentRelativePath,
           modifiedMs: Math.trunc(currentStat.mtimeMs)
         })
-      );
-      return true;
+      };
     } catch {
-      return false;
-    }
-  }
-
-  removeTreePath(context, relativePath) {
-    context.treeEntries = context.treeEntries.filter(
-      (entry) =>
-        entry.relativePath !== relativePath && !entry.relativePath.startsWith(`${relativePath}/`)
-    );
-    for (const indexedPath of [...(context.index?.filenameTier.records.keys() ?? [])]) {
-      if (indexedPath.startsWith(`${relativePath}/`)) context.index.delete(indexedPath);
+      return { valid: false, entry: undefined };
     }
   }
 

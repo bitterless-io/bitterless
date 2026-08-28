@@ -153,13 +153,16 @@ an older result direction is never presented as a prediction for new text.
 ## Realtime Request Contract
 
 1. Every normal input event, IME completion, and paste updates the latest source revision.
-2. Translation is throttled to a `1_000 ms` interval with both leading and trailing execution.
-3. The trailing call always reads the newest complete input, so the final edit is translated even
-   when typing stops inside the throttle window.
+2. Translation uses a trailing-only `1_000 ms` debounce. Every real source edit re-arms the single
+   pending call, so translation starts after input has settled rather than submitting intermediate
+   fixed-window values.
+3. The trailing call reads the newest complete source and revision when it executes, so the final
+   edit is always dispatched.
 4. Empty input clears the result and cancels active work.
 5. A newer request aborts the older request from the same Translator cell. Renderer revision
    fencing also ignores late responses. Different cells keep independent client IDs.
-6. Identical source text is not submitted twice.
+6. The same source revision is not submitted twice. Editing away and back to identical text creates
+   a newer revision and must be submitted because any result from the older revision is fenced out.
 7. Source input is bounded to 1,000 Unicode code points in both renderer and Main; Main also keeps
    a 2,000 UTF-16-unit hard bound (twice the code-point bound) so surrogate-pair input cannot
    bypass the contract. The bound is deliberately short: one request stays inside the 60-second
@@ -271,7 +274,7 @@ Omni selects translator
   -> translator preload + renderer
   -> shared provider snapshot
      -> unavailable: shared Login action
-     -> ready: 1s leading/trailing scheduler
+     -> ready: 1s trailing-only debounce scheduler
   -> TranslatorHandler -> TranslatorService
   -> CodexRuntimeService(openai-codex, gpt-5.5, low target, thinking off,
                          reasoning none, fast -> priority)

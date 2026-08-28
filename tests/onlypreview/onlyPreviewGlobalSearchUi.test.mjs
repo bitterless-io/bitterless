@@ -38,9 +38,40 @@ test('Files and Contents rows expose title, relative directory, snippet, and exp
   assert.match(row, /name="onlypreview__globalSearchResultTitle"/);
   assert.match(row, /result\.parentRelativePath \|\| '\.'/);
   assert.match(row, /splitOnlyPreviewContentMatch/);
+  assert.match(row, /getOnlyPreviewGlobalSearchDisplayType/);
+  assert.match(row, /\{\{ displayType \}\}/);
+  assert.doesNotMatch(row, /\{\{ result\.mediaType \}\}/);
   assert.match(row, /@click="select"/);
   assert.match(row, /@dblclick\.prevent="open"/);
   assert.match(row, /@keydown\.enter\.exact\.prevent="select"/);
+});
+
+test('Project selection is the only live Current directory sync path and folder reveal centers once', () => {
+  const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const activateEntry = shellStore.slice(
+    shellStore.indexOf('private async activateEntry'),
+    shellStore.indexOf('async openGlobalSearchResult')
+  );
+  const focusOnly = shellStore.slice(
+    shellStore.indexOf('setFocusedPath'),
+    shellStore.indexOf('async locateSelectedFile')
+  );
+  const moveFocus = shellStore.slice(
+    shellStore.indexOf('moveTreeFocus'),
+    shellStore.indexOf('handleTreeClick')
+  );
+  assert.match(
+    activateEntry,
+    /this\.treeSelectedRelativePath = entry\.relativePath[\s\S]*syncCurrentDirectory/
+  );
+  assert.doesNotMatch(focusOnly, /syncCurrentDirectory/);
+  assert.doesNotMatch(moveFocus, /syncCurrentDirectory/);
+
+  const app = source('src/renderer/onlypreview/shell/src/App.vue');
+  assert.match(
+    app,
+    /consumeCenteredProjectPath\(\)[\s\S]*restoreOnlyPreviewGlobalSearchFocus\('discard'\)[\s\S]*focusTreePath\(centeredProjectPath, true\)/
+  );
 });
 
 test('native shortcuts reserve only Shift+Cmd/Ctrl+F for Global Search', () => {

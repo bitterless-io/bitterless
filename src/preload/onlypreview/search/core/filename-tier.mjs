@@ -12,6 +12,30 @@ const recordBytes = (record) =>
   64 + 2 * (record.relativePath.length + record.fileName.length +
     record.normalizedPath.length + record.normalizedTitle.length + record.mediaType.length);
 
+const mergeSortedRecords = (leftRecords, rightRecords) => {
+  const merged = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < leftRecords.length && rightIndex < rightRecords.length) {
+    if (compareRecords(leftRecords[leftIndex], rightRecords[rightIndex]) <= 0) {
+      merged.push(leftRecords[leftIndex]);
+      leftIndex += 1;
+    } else {
+      merged.push(rightRecords[rightIndex]);
+      rightIndex += 1;
+    }
+  }
+  while (leftIndex < leftRecords.length) {
+    merged.push(leftRecords[leftIndex]);
+    leftIndex += 1;
+  }
+  while (rightIndex < rightRecords.length) {
+    merged.push(rightRecords[rightIndex]);
+    rightIndex += 1;
+  }
+  return merged;
+};
+
 export const hasHiddenDirectory = (relativePath) => {
   const segments = relativePath.replaceAll('\\', '/').split('/');
   segments.pop();
@@ -65,14 +89,40 @@ export class FilenameTier {
     this.sortedVisibleRecords.sort(compareRecords);
   }
 
+  applyBatch({ upserts = [], deletePaths = [] }) {
+    const upsertsByPath = new Map(upserts.map((record) => [record.relativePath, record]));
+    const affectedPaths = new Set([...deletePaths, ...upsertsByPath.keys()]);
+    if (affectedPaths.size === 0) return;
+
+    for (const relativePath of affectedPaths) {
+      const previous = this.records.get(relativePath);
+      if (previous) this.estimatedBytes -= recordBytes(previous);
+      this.records.delete(relativePath);
+    }
+    for (const record of upsertsByPath.values()) {
+      this.records.set(record.relativePath, record);
+      this.estimatedBytes += recordBytes(record);
+    }
+
+    const retainedVisibleRecords = this.sortedVisibleRecords.filter(
+      (record) => !affectedPaths.has(record.relativePath)
+    );
+    const insertedVisibleRecords = [...upsertsByPath.values()]
+      .filter((record) => !hasHiddenDirectory(record.relativePath))
+      .sort(compareRecords);
+    this.sortedVisibleRecords = mergeSortedRecords(
+      retainedVisibleRecords,
+      insertedVisibleRecords
+    );
+    this.estimatedBytes = Math.max(0, this.estimatedBytes);
+  }
+
   upsert(record) {
-    this.records.set(record.relativePath, record);
-    this.rebuild();
+    this.applyBatch({ upserts: [record] });
   }
 
   delete(relativePath) {
-    this.records.delete(relativePath);
-    this.rebuild();
+    this.applyBatch({ deletePaths: [relativePath] });
   }
 
   get(relativePath) {

@@ -52,6 +52,9 @@ const search = (engine, requestId, query, onResult) =>
     onResult
   });
 
+const responsePaths = (response) =>
+  [...response.files, ...response.contents].map(({ relativePath }) => relativePath);
+
 test('a complete selected-file lane publishes early without exposing candidate rows', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
@@ -90,25 +93,13 @@ test('a complete selected-file lane publishes early without exposing candidate r
     assert.deepEqual(priorityBatches, ['late-a.txt']);
     assert.equal(prioritySettled, false);
 
-    const candidateBatches = [];
-    let candidateSettled = false;
-    const candidateSearch = search(engine, 'candidate', 'candidate private needle', (result) => {
-      candidateBatches.push(result.relativePath);
-    }).finally(() => {
-      candidateSettled = true;
-    });
-    await new Promise((resolveTurn) => setImmediate(resolveTurn));
-    assert.deepEqual(candidateBatches, [], 'private candidate rows must not stream before promotion');
-    assert.equal(candidateSettled, false);
+    assert.equal(engine.index, undefined, 'private first-build candidate must not become searchable');
 
     promotion.release();
     await initialize;
+    assert.deepEqual(responsePaths(await prioritySearch), ['late-a.txt']);
     assert.deepEqual(
-      (await prioritySearch).results.map(({ relativePath }) => relativePath),
-      ['late-a.txt']
-    );
-    assert.deepEqual(
-      (await candidateSearch).results.map(({ relativePath }) => relativePath),
+      responsePaths(await search(engine, 'candidate', 'candidate private needle')),
       ['late-b.txt']
     );
     assert.equal(
@@ -162,7 +153,7 @@ test('selected-file admission rejects paths beyond the shared traversal depth be
 
     promotion.release();
     await initialize;
-    assert.deepEqual((await pendingSearch).results, []);
+    assert.deepEqual(responsePaths(await pendingSearch), []);
     await engine.shutdown();
   });
 });
@@ -300,6 +291,7 @@ test('an active index remains terminal authority and duplicate priority paths st
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     await write(join(root, 'selected.txt'), 'stable selected needle');
+    await write(join(root, 'other.txt'), 'independent priority value');
     const engine = createOnlyPreviewSearchEngine();
     await engine.initialize({
       workspaceId: 'workspace',
@@ -321,18 +313,32 @@ test('an active index remains terminal authority and duplicate priority paths st
     });
     await engine.prioritizeFile(priority);
     const streamed = [];
-    const response = await search(engine, 'active', 'stable selected needle', (result) => {
+    const firstWarmResult = deferred();
+    let searchSettled = false;
+    const searching = search(engine, 'active', 'stable selected needle', (result) => {
       streamed.push(result.relativePath);
+      firstWarmResult.resolve();
+    }).finally(() => {
+      searchSettled = true;
     });
+    await firstWarmResult.promise;
     assert.deepEqual(streamed, ['selected.txt']);
-    assert.deepEqual(response.results.map(({ relativePath }) => relativePath), ['selected.txt']);
+    assert.equal(searchSettled, false, 'warm rows must not terminalize before promotion');
     assert.ok(
       engine.selectedFilePriority.lane,
       'active-index search must not expose or promote candidate state'
     );
+    const replacementPriority = engine.supersedePriority({
+      workspaceId: 'workspace',
+      generation: 1,
+      relativePath: 'other.txt'
+    });
+    await engine.prioritizeFile(replacementPriority);
+    assert.equal(searchSettled, false, 'priority supersede must not revoke Global Search');
 
     promotion.release();
     await refresh;
+    assert.deepEqual(responsePaths(await searching), ['selected.txt']);
     assert.equal(engine.selectedFilePriority.lane, undefined);
     await engine.shutdown();
   });

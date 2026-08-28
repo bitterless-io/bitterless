@@ -31,7 +31,7 @@ const compareBrowseEntries = (left, right) => {
   );
 };
 
-const createBrowseEntry = ({ relativePath, stat, nodeKind, directoryToken }) => {
+const createBrowseEntry = ({ relativePath, stat, nodeKind, directoryToken, searchExcluded }) => {
   const mediaType = nodeKind === 'file' ? classifySearchMediaType(relativePath) : 'unknown';
   return {
     relativePath,
@@ -43,18 +43,28 @@ const createBrowseEntry = ({ relativePath, stat, nodeKind, directoryToken }) => 
     previewHint: nodeKind === 'file' ? mediaTypeToPreviewHint(mediaType) : 'unsupported',
     mediaType,
     isText: nodeKind === 'file' && mediaType === 'text',
-    directoryToken
+    directoryToken,
+    searchExcluded
   };
 };
 
 export class OnlyPreviewBrowseIndex {
-  constructor(rootPath, { raceHook } = {}) {
+  constructor(rootPath, { raceHook, searchPolicy } = {}) {
     if (!isAbsolute(rootPath)) throw new TypeError('Browse workspace root must be absolute');
     if (raceHook !== undefined && typeof raceHook !== 'function') {
       throw new TypeError('Browse race hook must be a function');
     }
+    if (
+      !searchPolicy ||
+      typeof searchPolicy.isExcludedFilePath !== 'function' ||
+      typeof searchPolicy.isExcludedDirectoryPath !== 'function' ||
+      typeof searchPolicy.canTraverseExcludedDirectoryPath !== 'function'
+    ) {
+      throw new TypeError('Browse search policy is required');
+    }
     this.rootPath = rootPath;
     this.raceHook = raceHook;
+    this.searchPolicy = searchPolicy;
     this.pathByToken = new Map();
     this.tokenByPath = new Map();
     this.listedPaths = new Set();
@@ -68,6 +78,18 @@ export class OnlyPreviewBrowseIndex {
     this.rootDirectoryToken = this.issueDirectoryToken('');
   }
 
+  setSearchPolicy(searchPolicy) {
+    if (
+      !searchPolicy ||
+      typeof searchPolicy.isExcludedFilePath !== 'function' ||
+      typeof searchPolicy.isExcludedDirectoryPath !== 'function' ||
+      typeof searchPolicy.canTraverseExcludedDirectoryPath !== 'function'
+    ) {
+      throw new TypeError('Browse search policy is required');
+    }
+    this.searchPolicy = searchPolicy;
+  }
+
   async rootListing({ workspaceId, generation }) {
     return await this.list({
       workspaceId,
@@ -77,8 +99,9 @@ export class OnlyPreviewBrowseIndex {
   }
 
   async list({ workspaceId, generation, directoryToken }) {
-    const relativePath = this.pathByToken.get(directoryToken);
-    if (relativePath === undefined) throw new TypeError('Browse directory capability is stale');
+    const capability = this.pathByToken.get(directoryToken);
+    if (capability === undefined) throw new TypeError('Browse directory capability is stale');
+    const { relativePath, ancestorBlocked } = capability;
     const absolutePath = relativePath
       ? resolve(this.rootPath, ...relativePath.split('/'))
       : this.rootPath;
@@ -97,6 +120,7 @@ export class OnlyPreviewBrowseIndex {
     await this.assertDirectoryIdentity(absolutePath, directoryIdentity);
 
     const entries = [];
+    const blockedDescendantsByPath = new Map();
     for (const childName of children) {
       await this.assertDirectoryIdentity(absolutePath, directoryIdentity);
       const childRelativePath = relativePath ? `${relativePath}/${childName}` : childName;
@@ -120,19 +144,28 @@ export class OnlyPreviewBrowseIndex {
             relativePath: childRelativePath,
             stat: childStat,
             nodeKind: 'symlink',
-            directoryToken: null
+            directoryToken: null,
+            searchExcluded: false
           })
         );
         continue;
       }
       if (nodeKind === 'directory') {
+        const directlyExcluded = this.searchPolicy.isExcludedDirectoryPath(childRelativePath);
         entries.push(
           createBrowseEntry({
             relativePath: childRelativePath,
             stat: childStat,
             nodeKind: 'directory',
-            directoryToken: null
+            directoryToken: null,
+            searchExcluded: ancestorBlocked || directlyExcluded
           })
+        );
+        blockedDescendantsByPath.set(
+          childRelativePath,
+          ancestorBlocked ||
+            (directlyExcluded &&
+              !this.searchPolicy.canTraverseExcludedDirectoryPath(childRelativePath))
         );
         continue;
       }
@@ -142,7 +175,9 @@ export class OnlyPreviewBrowseIndex {
           relativePath: childRelativePath,
           stat: childStat,
           nodeKind: 'file',
-          directoryToken: null
+          directoryToken: null,
+          searchExcluded:
+            ancestorBlocked || this.searchPolicy.isExcludedFilePath(childRelativePath)
         })
       );
     }
@@ -150,7 +185,10 @@ export class OnlyPreviewBrowseIndex {
     entries.sort(compareBrowseEntries);
     for (const entry of entries) {
       if (entry.nodeKind === 'directory') {
-        entry.directoryToken = this.issueDirectoryToken(entry.relativePath);
+        entry.directoryToken = this.issueDirectoryToken(
+          entry.relativePath,
+          blockedDescendantsByPath.get(entry.relativePath) === true
+        );
       }
     }
     this.listedPaths.add(relativePath);
@@ -230,12 +268,12 @@ export class OnlyPreviewBrowseIndex {
     return this.listedPaths.has(relativePath) ? this.tokenByPath.get(relativePath) : undefined;
   }
 
-  issueDirectoryToken(relativePath) {
+  issueDirectoryToken(relativePath, ancestorBlocked = false) {
     const existing = this.tokenByPath.get(relativePath);
     if (existing) return existing;
     const token = randomUUID();
     this.tokenByPath.set(relativePath, token);
-    this.pathByToken.set(token, relativePath);
+    this.pathByToken.set(token, { relativePath, ancestorBlocked });
     return token;
   }
 }

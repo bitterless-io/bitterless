@@ -50,7 +50,7 @@ test('store guards retry and force-submits through the existing lifecycle', () =
   );
   assert.match(
     storeSource,
-    /this\.lastSubmittedSource = sourceText;\s*this\.translating = true;\s*this\.error = null;/
+    /this\.lastSubmittedRevision = sourceRevision;\s*this\.translating = true;\s*this\.error = null;/
   );
   assert.ok(
     storeSource.indexOf('this.translation = result.translation;') <
@@ -93,7 +93,7 @@ test('blank source cannot retry and clearing source resets active translation st
   );
   assert.match(
     blankBranch,
-    /^\s*this\.translation = '';\s*this\.lastSubmittedSource = null;\s*void this\.cancelActiveRequest\(\);\s*return;\s*$/
+    /^\s*this\.translation = '';\s*this\.lastSubmittedRevision = null;\s*void this\.cancelActiveRequest\(\);\s*return;\s*$/
   );
   assert.doesNotMatch(blankBranch, /translateLatest/);
 });

@@ -1,6 +1,6 @@
 # OnlyPreview Global Search And Result Preview
 
-Status: Accepted; implementation tasks 035–037 complete through independent review; owner verification pending
+Status: Accepted; implementation tasks 035–040 complete through independent review; owner verification pending
 
 ## Purpose
 
@@ -9,8 +9,9 @@ replaces the former Project-sidebar filter/search UI, separates filename/directo
 file-content matches, and gives every selected result a bounded preview below the result list.
 
 The Project sidebar returns to one job: browse the current root. Its first row is the root directory
-itself. The focused directory, including that root row, is the default Global Search scope; the
-search workspace can explicitly switch to the whole project.
+itself. The explicitly selected directory, including that root row, is the default Contents scope;
+the search workspace can explicitly switch Contents to the whole project. Files always searches
+project-wide file and directory names.
 
 ## Visual Direction
 
@@ -41,7 +42,7 @@ the prior content bounds and selected-file Preview without reloading it.
 ```text
 ┌──────────── PROJECT ───────────┬────────────── GLOBAL SEARCH ──────────────┐
 │ ▾ bitterless                  │ [ Search files and contents…           × ] │
-│   ▾ src                       │ Scope  [ Current directory ▾ ]  src/main │
+│   ▾ src                       │ Contents [ Current directory ▾ ] src/main │
 │     …                         ├───────────────────────────────────────────┤
 │                               │ FILES                                     │
 │                               │  classifier.ts             src/main/...   │
@@ -56,7 +57,9 @@ the prior content bounds and selected-file Preview without reloading it.
 ```
 
 - Search input and scope stay fixed at the top.
-- The result ledger owns upper-region scrolling. Files always precedes Contents; an empty group
+- The result ledger owns upper-region scrolling. Files always precedes Contents. Inside Files, all
+  matching folders precede all matching files while each partition keeps its stable natural order;
+  an empty group
   remains as a quiet heading plus one direct empty line only after the request settles.
 - A horizontal separator divides results from the bottom preview. Default preview height is 38% of
   the search work area, keyboard/resizable within 25–70%, and restored only for the current window.
@@ -79,14 +82,25 @@ The Project tree renders one Shell-owned synthetic root row before the loaded ro
   into the search index. Its children are the existing root browse listing.
 - It starts expanded on a newly opened/restored workspace. Collapsing it hides loaded descendants
   without discarding browse tokens or expansion state below it.
-- Focus/click on a directory records that directory as the current search anchor. Focus/click on a
-  file records its parent. If the tree has no explicit focus, use the selected Preview file's
-  parent, then root.
-- The removed Project text field cannot change this anchor. Search-result selection also cannot
-  change it. Each Global Search entry captures one stable directory anchor; reopening the search
-  captures the latest tree/Preview context.
+- One click on a directory selects it as Current directory without changing expansion. Double click
+  keeps it selected and toggles expansion. Selecting a file records its parent as Current directory.
+  Roving focus alone does not change Current directory; if no explicit tree selection exists, use
+  the selected Preview file's parent, then root.
+- The removed Project text field, roving tree focus, and search-result selection cannot change the
+  directory anchor. Explicit Project-tree selection can: while Global Search is open, selecting a
+  directory updates Current directory to that directory, and selecting a file updates it to the
+  file's parent. Current-directory Contents supersedes its active request; Project-scoped Contents
+  records the latest directory for a later switch without issuing an equivalent search.
 - Root context actions retain directory parity: Reveal, Copy Folder, Copy Path, Copy Relative Path
   (`.`), and Copy Name. Root never exposes Delete.
+- Search-excluded files and directories remain browseable but use a pale-orange row background.
+  Excluded directory icons use solid accent orange in both open and closed states; excluded files
+  keep the ordinary file icon. The background persists across hover and selection, with the Royal
+  selection rail retaining the selected state. Each opaque directory token carries whether its
+  descendants are physically blocked, so an exact directory-only exclusion still marks loaded
+  children without a Renderer path scan. A directory kept traversable for an ordered `!`
+  re-inclusion does not force that re-included descendant orange. The synthetic root and symlinks
+  are not given this marker.
 
 ## Search Result Contract
 
@@ -136,11 +150,20 @@ interface OnlyPreviewGlobalSearchResponse {
   relative parent; the row includes one grapheme-safe verified snippet.
 - A file may appear once in Files and once in Contents because the sections answer different
   questions. Exact-path deduplication occurs only inside each section.
-- Both sections use the captured directory scope by default and the same hidden/fixed/config/depth
-  policy. Switching to Project cancels/supersedes the request but does not recapture the anchor.
+- Files always uses Project scope over the existing file/directory metadata tier. Its complete
+  matches are stable-partitioned as directories then files before the 250-row cap and token issue.
+  Contents uses the live explicit directory by default and switches to Project through the
+  selector. Both sections retain
+  the same hidden/fixed/config/depth policy. Switching Contents scope cancels/supersedes the request
+  but does not derive an anchor from result selection.
+- After the existing priority, promotion, and first-build readiness gates, the authoritative Files
+  metadata branch and Contents SQLite branch start cooperatively. Either section may publish first;
+  the terminal response waits for both. Cancellation or branch failure drains both branches before
+  active-index ownership is released.
 - During first build, the latest manually opened eligible file may publish a complete early Files
-  and/or Contents row. The request remains pending; the authoritative terminal response replaces
-  each section after complete scoped traversal or candidate promotion.
+  and/or Contents row, and scoped Contents may stream from its bounded traversal. The request
+  remains pending until the existing project candidate supplies complete Files metadata; the
+  authoritative terminal response then replaces both sections without a duplicate project walk.
 - The hidden preload keeps only the latest request's bounded `{ resultToken → exact result }` map.
   Query change, cancellation, workspace/generation change, refresh, promotion/failure, and shutdown
   revoke old result tokens.
@@ -183,14 +206,15 @@ type OnlyPreviewGlobalSearchPreview =
 
 | Input | Behavior |
 | --- | --- |
-| `Shift+Cmd/Ctrl+F` | open Global Search, capture the current directory anchor, focus/select query |
+| `Shift+Cmd/Ctrl+F` | open Global Search at the current explicit directory and focus/select query |
 | type / IME | 120ms latest-only global query; composition text never dispatches early |
 | `Up` / `Down` | move one row across Files then Contents and load its bottom preview |
 | `Left` / `Right` on group heading | collapse/expand only that group; both begin expanded |
 | click or `Enter` | select the row and show its bottom preview, without changing main Preview |
 | double-click or `Cmd/Ctrl+Enter` on file | open it in the main Preview, close Global Search |
-| double-click or `Cmd/Ctrl+Enter` on directory | focus/reveal it in Project, close Global Search |
-| scope selector | switch between captured Current directory and Project |
+| explicit Project-tree file/directory selection | update the live Current directory; rerun only directory-scoped Contents |
+| double-click or `Cmd/Ctrl+Enter` on directory | expand its full ancestry and target, select and center-focus it in Project, then close Global Search |
+| Contents scope selector | switch Contents between live Current directory and Project; Files remains project-wide |
 | drag/keyboard separator | resize result/preview split within 25–70% |
 | `Esc` | first clear a non-empty query; second close Global Search and restore prior Preview bounds |
 
@@ -207,11 +231,30 @@ Project row, otherwise the main Preview.
   duplicate indexing explanation.
 - Files, Contents, and preview each have distinct empty/error states. A failure in one preview does
   not turn the search request into an error.
+- Files and Contents share one request fence but execute as cooperative sibling branches in the
+  hidden preload. A reusable committed snapshot is searched immediately while startup reconciliation
+  builds a private candidate. After promotion, the same request reruns against the fresh snapshot
+  and its terminal response replaces warm rows and result tokens. No second traversal, XPC request,
+  renderer, worker, or SQLite connection is created; both siblings must settle before each reader
+  lease is released.
+- Each reader lease captures one matching SQLite/tree pair. Promotion raises a writer gate before
+  waiting for active readers, swaps only after they drain, and then admits the fresh terminal phase.
+  Schema-8 persisted non-file tree metadata is build-bound and fail-closed; a legacy/missing marker
+  permits only ordinary-file and Contents warm batches, never fabricated folder rows.
+- A bounded watch performs one metadata-only preflight, then reads and commits eligible file bodies
+  in ten-file chunks while the tree marker remains invalid. The 512-path ceiling therefore retains
+  at most ten bounded bodies at once and does not create one transaction per changed file; failure
+  leaves the marker invalid until a full reconcile proves completeness.
 - Search remains one-active/one-latest and time-sliced. Filename traversal never opens file bodies;
   content reads keep the 1MiB cap; result preview adds at most one 256KiB text buffer or one
   200-entry directory listing. Supersession releases the prior buffer/list immediately.
 - The Shell stores at most 500 result rows and one preview payload. No click can create a persistent
   collection, parallel full-file reads, or recursive directory scan.
+- `[onlypreview-search]` diagnostics measure each process locally: Shell dispatch to first accepted
+  batch/terminal, Main XPC call duration, and hidden-runtime SQLite open, count, candidate,
+  reconcile, promotion, warm-snapshot availability, initial-tree-metadata wait, first
+  Files/Contents result, and terminal time. Timings are never subtracted across process clocks.
+  Logging is bounded and behavior-neutral.
 
 ## Required Verification
 
@@ -220,8 +263,12 @@ Project row, otherwise the main Preview.
 - Security tests: forged/stale token/path/generation rejection, no absolute path, no Main I/O,
   over-depth/excluded/symlink/no-I/O, 256KiB and 200-child bounds, static HTML sanitization.
 - Renderer tests: shortcut separation from `Cmd/Ctrl+F`, Project input removal, root row/keyboard/
-  context actions, stable scope anchor, group order/navigation, async component selection, preview
+  context actions, explicit live scope synchronization, folder-first Files order, nested directory
+  reveal/focus, `folder` display type, group navigation, async component selection, preview
   race cancellation, Esc restore, reduced-motion and 800px layout source contract.
+- Diagnostics tests: fake monotonic time, fixed stage ordering, first-per-section once, terminal
+  cancellation/failure, event-count bounds, and exclusion of query, result text, paths, identities,
+  tokens, and raw errors.
 - Non-E2E gates: focused Node tests, node/web typechecks as applicable, i18n, scoped lint/format,
   debug build, and `git diff --check`. Ral owns real-app visual, keyboard, large-project, and resource
   acceptance; Electron/Playwright is not run unless he asks.

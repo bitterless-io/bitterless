@@ -168,7 +168,7 @@ export class OnlyPreviewSelectedFilePriorityLane {
   async searchGlobal(query, { maxResults, scope, isCancelled }) {
     const context = this.resolveContext();
     const lane = isBuilding(context?.state) ? this.lane : undefined;
-    if (!lane || !isGlobalSearchPathInScope(lane.relativePath, scope)) {
+    if (!lane) {
       return { cancelled: false, files: [], contents: [] };
     }
     lane.queryCount += 1;
@@ -176,6 +176,9 @@ export class OnlyPreviewSelectedFilePriorityLane {
       const files = normalizeSearchText(lane.entry.name).includes(normalizeSearchText(query))
         ? [createGlobalSearchFileAuthority(lane.entry)]
         : [];
+      if (!isGlobalSearchPathInScope(lane.relativePath, scope)) {
+        return { cancelled: false, files, contents: [] };
+      }
       const outcome = await lane.index.searchContents(query, {
         maxResults,
         scope,

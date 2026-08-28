@@ -37,6 +37,10 @@ import {
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import '@main/xpc/onlyPreviewSearchRuntime.handler';
 import { windowStateService, type WindowStateController } from './windowState.service';
+import {
+  createOnlyPreviewSearchDiagnostics,
+  type OnlyPreviewSearchDiagnostics
+} from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
 
 const DEFAULT_WIDTH = 1180;
 const DEFAULT_HEIGHT = 760;
@@ -230,6 +234,11 @@ export class OnlyPreviewWindowHelper {
   private settingsWindowState: WindowStateController | null = null;
   private agentSkillGuideWindowState: WindowStateController | null = null;
   private commandHandler: ((payload: OnlyPreviewNativeCommandPayload) => void) | null = null;
+  private readonly diagnostics: OnlyPreviewSearchDiagnostics;
+
+  constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
+    this.diagnostics = diagnostics;
+  }
 
   setCommandHandler(handler: (payload: OnlyPreviewNativeCommandPayload) => void): void {
     this.commandHandler = handler;
@@ -312,10 +321,26 @@ export class OnlyPreviewWindowHelper {
     this.destroyStandalone();
     const host = onlyPreviewHostRegistry.issue('standalone', 'content');
     this.standaloneHost = host;
+    const diagnostic = { tag: this.diagnostics.nextTag('v'), startedAt: this.diagnostics.now() };
+    this.diagnostics.emit('visible-window', {
+      tag: diagnostic.tag,
+      phase: 'start',
+      elapsedMs: 0
+    });
     try {
-      await this.createStandaloneWindow(host);
+      await this.createStandaloneWindow(host, diagnostic);
+      this.diagnostics.emit('visible-window-terminal', {
+        tag: diagnostic.tag,
+        outcome: 'success',
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+      });
       return host;
     } catch (error) {
+      this.diagnostics.emit('visible-window-terminal', {
+        tag: diagnostic.tag,
+        outcome: 'failure',
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+      });
       this.destroyStandalone();
       throw error;
     }
@@ -596,7 +621,10 @@ export class OnlyPreviewWindowHelper {
     return window;
   }
 
-  private async createStandaloneWindow(host: OnlyPreviewHostCapability): Promise<void> {
+  private async createStandaloneWindow(
+    host: OnlyPreviewHostCapability,
+    diagnostic: { tag: string; startedAt: number }
+  ): Promise<void> {
     const restored = windowStateService.resolve('onlypreview');
     const window = new BaseWindow({
       title: 'OnlyPreview',
@@ -633,6 +661,11 @@ export class OnlyPreviewWindowHelper {
         console.warn(`[OnlyPreview] ${reason} Closing the standalone window.`);
         this.destroyStandalone();
       }
+    });
+    this.diagnostics.emit('visible-window', {
+      tag: diagnostic.tag,
+      phase: 'runtime-ready',
+      elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
     });
     if (this.baseWindow !== window || this.standaloneHost?.hostToken !== host.hostToken) {
       throw new Error('OnlyPreview file-search runtime startup was superseded.');
@@ -699,6 +732,11 @@ export class OnlyPreviewWindowHelper {
       onlyPreviewHostRegistry.revoke(host.hostToken);
     });
     await this.loadView(shellView, 'shell');
+    this.diagnostics.emit('visible-window', {
+      tag: diagnostic.tag,
+      phase: 'renderer-loaded',
+      elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+    });
     const previewView = onlyPreviewPreviewRegionService.getVuePreviewView();
     if (
       !shouldAutoOpenOnlyPreviewDevTools() ||

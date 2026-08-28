@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 
 import {
+  MAX_INDEX_DEPTH,
   MAX_WATCH_CHANGE_PATHS,
   ONE_GIB_BYTES,
   TWO_GIB_BYTES
@@ -40,8 +41,8 @@ const write = async (path, content) => {
 const delay = async (milliseconds) =>
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const search = async (engine, query, requestId = query) =>
-  await engine.search({
+const search = async (engine, query, requestId = query) => {
+  const response = await engine.search({
     workspaceId: 'workspace',
     generation: 1,
     requestId,
@@ -50,6 +51,8 @@ const search = async (engine, query, requestId = query) =>
     scope: { kind: 'project' },
     cancelBuffer: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
   });
+  return { ...response, results: [...response.files, ...response.contents] };
+};
 
 const indexedPaths = (engine) =>
   engine.index.database
@@ -59,6 +62,30 @@ const indexedPaths = (engine) =>
 
 const applyWatch = async (engine, change) =>
   await engine.enqueue(async () => await engine.applyWatchChangesInternal(change));
+
+test('bounded watch promotes paths beyond the shared index depth to full reconcile', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    const commits = [];
+    await mkdir(root);
+    const engine = createOnlyPreviewSearchEngine({ onWatchCommit: (commit) => commits.push(commit) });
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await engine.watchController.close({ drain: false });
+    engine.watchController = undefined;
+    engine.watchRevision += 1;
+    const relativePath = `${Array.from({ length: MAX_INDEX_DEPTH }, (_, index) => `d${index}`).join('/')}/too-deep.txt`;
+    await write(join(root, relativePath), 'too deep');
+    await applyWatch(engine, { full: false, paths: [relativePath] });
+    assert.equal(commits.at(-1).full, true);
+    assert.equal(engine.index.filenameTier.get(relativePath), undefined);
+    await engine.shutdown();
+  });
+});
 
 const execFileAsync = promisify(execFile);
 
@@ -152,7 +179,7 @@ test('Utility browse listings stay complete while the Search projection applies 
     const root = join(temp, 'workspace');
     await write(
       join(root, '.bitterless/preview-config.yml'),
-      ['version: 1', 'exclude:', '  - excluded/**', ''].join('\n')
+      ['version: 1', 'exclude:', '  - excluded', ''].join('\n')
     );
     await write(join(root, 'visible.txt'), 'visible body token');
     await write(join(root, 'excluded/drop.txt'), 'excluded body token');
@@ -176,6 +203,33 @@ test('Utility browse listings stay complete while the Search projection applies 
       browseListings[0].entries.map(({ name }) => name),
       ['.bitterless', '.hidden', 'dist', 'excluded', 'node_modules', 'output', 'visible.txt']
     );
+    assert.deepEqual(
+      Object.fromEntries(
+        browseListings[0].entries.map(({ relativePath, searchExcluded }) => [
+          relativePath,
+          searchExcluded
+        ])
+      ),
+      {
+        '.bitterless': true,
+        '.hidden': true,
+        dist: true,
+        excluded: true,
+        node_modules: true,
+        output: true,
+        'visible.txt': false
+      }
+    );
+    const excludedDirectory = browseListings[0].entries.find(
+      ({ relativePath }) => relativePath === 'excluded'
+    );
+    const excludedListing = await engine.browseDirectory({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: excludedDirectory.directoryToken
+    });
+    assert.equal(excludedListing.entries[0].relativePath, 'excluded/drop.txt');
+    assert.equal(excludedListing.entries[0].searchExcluded, true);
 
     const searchProjectionPaths = new Set(
       snapshot.index.entries.map(({ relativePath }) => relativePath)
@@ -277,11 +331,13 @@ test('watch CRUD, rename, and config transitions converge Search projection and 
     await write(join(root, 'node_modules/pkg/module.txt'), 'module old');
     await write(join(root, 'rename-old.txt'), 'rename body');
     const watchReads = [];
+    const commits = [];
     const engine = createOnlyPreviewSearchEngine({
       readWorkspaceFile: async (params) => {
         watchReads.push(params.relativePath);
         return await readSingleWorkspaceFile(params);
-      }
+      },
+      onWatchCommit: (commit) => commits.push(commit)
     });
     await engine.initialize({
       workspaceId: 'workspace',
@@ -300,13 +356,25 @@ test('watch CRUD, rename, and config transitions converge Search projection and 
     await applyWatch(engine, {
       full: false,
       paths: [
+        'excluded',
         'visible.txt',
         'excluded/drop.txt',
         '.hidden/private.txt',
         'node_modules/pkg/module.txt'
       ]
     });
-    assert.deepEqual(watchReads, ['visible.txt']);
+    assert.equal(commits.at(-1).full, true);
+    assert.deepEqual(watchReads, []);
+    assert.equal(
+      engine.treeEntries.some(({ relativePath }) => relativePath === 'excluded'),
+      false
+    );
+    assert.equal(
+      engine.index.database
+        .prepare("SELECT count(*) AS count FROM search_tree WHERE relative_path = 'excluded'")
+        .get().count,
+      0
+    );
     assert.deepEqual(
       (await search(engine, 'shared watch token')).results.map(({ relativePath }) => relativePath),
       ['visible.txt']
@@ -383,6 +451,7 @@ test('watch refreshes a loaded excluded browse directory without admitting it to
       initialHiddenListing.entries.map(({ name }) => name),
       ['old.txt']
     );
+    assert.equal(initialHiddenListing.entries[0].searchExcluded, true);
     browseListings.length = 0;
 
     await write(join(root, '.hidden/new.txt'), 'new browse-only value');
@@ -394,6 +463,10 @@ test('watch refreshes a loaded excluded browse directory without admitting it to
     assert.deepEqual(
       browseListings[0].entries.map(({ name }) => name),
       ['new.txt', 'old.txt']
+    );
+    assert.equal(
+      browseListings[0].entries.every(({ searchExcluded }) => searchExcluded),
+      true
     );
     assert.equal(
       engine.treeEntries.some(({ relativePath }) => relativePath.startsWith('.hidden')),
@@ -412,6 +485,10 @@ test('watch refreshes a loaded excluded browse directory without admitting it to
       browseListings[0].entries.find(({ name }) => name === 'new.txt').size,
       Buffer.byteLength(updatedContent)
     );
+    assert.equal(
+      browseListings[0].entries.find(({ name }) => name === 'new.txt').searchExcluded,
+      true
+    );
 
     browseListings.length = 0;
     await unlink(join(root, '.hidden/old.txt'));
@@ -426,22 +503,72 @@ test('watch refreshes a loaded excluded browse directory without admitting it to
     browseListings.length = 0;
     await mkdir(join(root, '.hidden/new-folder'));
     await applyWatch(engine, { full: false, paths: ['.hidden/new-folder'] });
-    assert.equal(commits.at(-1).full, false);
+    assert.equal(commits.at(-1).full, true);
     assert.equal(browseListings.length, 1);
     assert.deepEqual(
       browseListings[0].entries.map(({ name }) => name),
-      ['new-folder', 'new.txt']
+      ['.hidden']
     );
 
     browseListings.length = 0;
     await rm(join(root, '.hidden/new-folder'), { recursive: true, force: true });
     await applyWatch(engine, { full: false, paths: ['.hidden/new-folder'] });
     assert.equal(commits.at(-1).full, false);
-    assert.equal(browseListings.length, 1);
-    assert.deepEqual(
-      browseListings[0].entries.map(({ name }) => name),
-      ['new.txt']
+    assert.equal(browseListings.length, 0);
+    await engine.shutdown();
+  });
+});
+
+test('failed config refresh restores the active browse policy and replaces candidate markers', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    const configPath = join(root, '.bitterless/preview-config.yml');
+    await write(configPath, 'version: 1\nexclude: []\n');
+    await write(join(root, 'configured/keep.txt'), 'active policy content');
+    const browseListings = [];
+    const engine = createOnlyPreviewSearchEngine({
+      onBrowseListing: (listing) => browseListings.push(listing)
+    });
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await engine.watchController.close({ drain: false });
+    engine.watchController = undefined;
+    engine.watchRevision += 1;
+
+    browseListings.length = 0;
+    engine.buildAndPromoteCandidate = async () => {
+      throw new Error('forced candidate failure');
+    };
+    await write(configPath, 'version: 1\nexclude:\n  - configured/**\n');
+    await assert.rejects(
+      engine.refresh({ workspaceId: 'workspace', generation: 1 }),
+      /forced candidate failure/u
     );
+
+    assert.equal(browseListings.length, 2);
+    const candidateRoot = browseListings[0];
+    const restoredRoot = browseListings[1];
+    assert.notEqual(candidateRoot.directoryToken, restoredRoot.directoryToken);
+    assert.equal(
+      candidateRoot.entries.find(({ relativePath }) => relativePath === 'configured')
+        .searchExcluded,
+      true
+    );
+    const restoredDirectory = restoredRoot.entries.find(
+      ({ relativePath }) => relativePath === 'configured'
+    );
+    assert.equal(restoredDirectory.searchExcluded, false);
+    const restoredListing = await engine.browseDirectory({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: restoredDirectory.directoryToken
+    });
+    assert.equal(restoredListing.entries[0].searchExcluded, false);
+    assert.equal(engine.searchPolicy.isExcludedFilePath('configured/keep.txt'), false);
     await engine.shutdown();
   });
 });
@@ -490,270 +617,4 @@ test('nested file create and delete keep parent metadata identical to fresh trav
     assert.equal((await search(engine, 'nested create token')).results.length, 0);
     await engine.shutdown();
   });
-});
-
-test('a child-only hint fully reconciles when its parent changed from file to directory', async () => {
-  await withTempDirectory(async (temp) => {
-    const root = join(temp, 'workspace');
-    const parentPath = join(root, 'parent.txt');
-    const relativeChildPath = 'parent.txt/child.txt';
-    const commits = [];
-    await write(parentPath, 'stale parent body token');
-    const engine = createOnlyPreviewSearchEngine({
-      onWatchCommit: (commit) => commits.push(commit)
-    });
-    await engine.initialize({
-      workspaceId: 'workspace',
-      generation: 1,
-      rootPath: root,
-      databasePath: join(temp, 'cache', 'search.sqlite')
-    });
-    await engine.watchController.close({ drain: false });
-    engine.watchController = undefined;
-    engine.watchRevision += 1;
-    assert.equal((await search(engine, 'stale parent body token')).results.length, 1);
-
-    await unlink(parentPath);
-    await write(join(root, relativeChildPath), 'replacement child body');
-    await applyWatch(engine, { full: false, paths: [relativeChildPath] });
-
-    assert.equal(commits.at(-1).full, true);
-    assert.equal(indexedPaths(engine).includes('parent.txt'), false);
-    assert.equal(indexedPaths(engine).includes(relativeChildPath), true);
-    assert.equal((await search(engine, 'stale parent body token')).results.length, 0);
-    assert.equal((await search(engine, 'parent.txt')).results.length, 0);
-    assert.equal(
-      engine.treeEntries.some(
-        (entry) => entry.relativePath === 'parent.txt' && entry.nodeKind === 'directory'
-      ),
-      true
-    );
-    await engine.shutdown();
-  });
-});
-
-test(
-  'watch fully reconciles when an indexed regular file becomes a FIFO',
-  { skip: process.platform === 'win32' },
-  async () => {
-    await withTempDirectory(async (temp) => {
-      const root = join(temp, 'workspace');
-      const relativePath = 'changing-kind.txt';
-      const absolutePath = join(root, relativePath);
-      const commits = [];
-      await write(absolutePath, 'stale special-file token');
-      const engine = createOnlyPreviewSearchEngine({
-        onWatchCommit: (commit) => commits.push(commit)
-      });
-      await engine.initialize({
-        workspaceId: 'workspace',
-        generation: 1,
-        rootPath: root,
-        databasePath: join(temp, 'cache', 'search.sqlite')
-      });
-      await engine.watchController.close({ drain: false });
-      engine.watchController = undefined;
-      engine.watchRevision += 1;
-      assert.equal((await search(engine, 'stale special-file token')).results.length, 1);
-
-      await unlink(absolutePath);
-      await execFileAsync('mkfifo', [absolutePath]);
-      await applyWatch(engine, { full: false, paths: [relativePath] });
-
-      assert.equal(indexedPaths(engine).includes(relativePath), false);
-      assert.equal(
-        engine.treeEntries.some(({ relativePath: treePath }) => treePath === relativePath),
-        false
-      );
-      assert.equal((await search(engine, 'stale special-file token')).results.length, 0);
-      assert.equal(commits.at(-1).full, true);
-      await engine.shutdown();
-    });
-  }
-);
-
-test('rename watch hints retain path context for authoritative engine classification', async () => {
-  const emitter = new EventEmitter();
-  emitter.close = () => undefined;
-  let listener;
-  const changes = [];
-  const controller = createWorkspaceWatchController({
-    rootPath: '/virtual/workspace',
-    watchFactory: (_rootPath, _options, callback) => {
-      listener = callback;
-      return emitter;
-    },
-    onReconcile: async (change) => changes.push(change)
-  });
-  listener('rename', 'renamed.txt');
-  await controller.flushNow();
-  assert.deepEqual(changes, [
-    { full: false, paths: ['renamed.txt'], renamePaths: ['renamed.txt'] }
-  ]);
-  await controller.close();
-});
-
-test('rename hints update a stable file incrementally but reconcile an actual rename', async () => {
-  await withTempDirectory(async (temp) => {
-    const root = join(temp, 'workspace');
-    const originalPath = join(root, 'original.txt');
-    const renamedPath = join(root, 'renamed.txt');
-    const commits = [];
-    await write(originalPath, 'original value');
-    const engine = createOnlyPreviewSearchEngine({
-      onWatchCommit: (commit) => commits.push(commit)
-    });
-    await engine.initialize({
-      workspaceId: 'workspace',
-      generation: 1,
-      rootPath: root,
-      databasePath: join(temp, 'cache', 'search.sqlite')
-    });
-    await engine.watchController.close({ drain: false });
-    engine.watchController = undefined;
-    engine.watchRevision += 1;
-
-    await write(originalPath, 'updated in place');
-    await applyWatch(engine, {
-      full: false,
-      paths: ['original.txt'],
-      renamePaths: ['original.txt']
-    });
-    assert.deepEqual(commits.at(-1), {
-      workspaceId: 'workspace',
-      generation: 1,
-      revision: 1,
-      full: false,
-      changedRelativePaths: ['original.txt']
-    });
-    assert.equal((await search(engine, 'updated in place')).results.length, 1);
-
-    await rename(originalPath, renamedPath);
-    await applyWatch(engine, {
-      full: false,
-      paths: ['original.txt', 'renamed.txt'],
-      renamePaths: ['original.txt', 'renamed.txt']
-    });
-    assert.equal(commits.at(-1).full, true);
-    assert.equal((await search(engine, 'updated in place')).results[0].relativePath, 'renamed.txt');
-    await engine.shutdown();
-  });
-});
-
-test('an oversized watch burst reconciles Search projection and SQLite before individual paths', async () => {
-  await withTempDirectory(async (temp) => {
-    const root = join(temp, 'workspace');
-    await write(join(root, 'burst.txt'), 'old burst value');
-    const watchReads = [];
-    const commits = [];
-    const engine = createOnlyPreviewSearchEngine({
-      readWorkspaceFile: async (params) => {
-        watchReads.push(params.relativePath);
-        return await readSingleWorkspaceFile(params);
-      },
-      onWatchCommit: (commit) => commits.push(commit)
-    });
-    await engine.initialize({
-      workspaceId: 'workspace',
-      generation: 1,
-      rootPath: root,
-      databasePath: join(temp, 'cache', 'search.sqlite')
-    });
-    await engine.watchController.close({ drain: false });
-    engine.watchController = undefined;
-    engine.watchRevision += 1;
-    await write(join(root, 'burst.txt'), 'new burst searchable value');
-    await applyWatch(engine, {
-      full: false,
-      paths: Array.from({ length: MAX_WATCH_CHANGE_PATHS + 1 }, (_, index) => `hint-${index}.txt`)
-    });
-    assert.deepEqual(watchReads, []);
-    assert.equal((await search(engine, 'new burst searchable value')).results.length, 1);
-    assert.deepEqual(commits.at(-1), {
-      workspaceId: 'workspace',
-      generation: 1,
-      revision: 1,
-      full: true,
-      changedRelativePaths: []
-    });
-    await engine.shutdown();
-  });
-});
-
-test('watch metadata rejects a path whose parent symlink escapes the workspace', async () => {
-  await withTempDirectory(async (temp) => {
-    const root = join(temp, 'workspace');
-    const outside = join(temp, 'outside');
-    await write(join(root, 'visible.txt'), 'visible');
-    await write(join(outside, 'secret.txt'), 'external metadata must stay absent');
-    const watchReads = [];
-    const engine = createOnlyPreviewSearchEngine({
-      readWorkspaceFile: async (params) => {
-        watchReads.push(params.relativePath);
-        return await readSingleWorkspaceFile(params);
-      }
-    });
-    await engine.initialize({
-      workspaceId: 'workspace',
-      generation: 1,
-      rootPath: root,
-      databasePath: join(temp, 'cache', 'search.sqlite')
-    });
-    await engine.watchController.close({ drain: false });
-    engine.watchController = undefined;
-    engine.watchRevision += 1;
-    await symlink(outside, join(root, 'linked'));
-    await applyWatch(engine, { full: false, paths: ['linked/secret.txt'] });
-    assert.deepEqual(watchReads, []);
-    assert.equal(indexedPaths(engine).includes('linked/secret.txt'), false);
-    assert.equal(
-      engine.treeEntries.some(({ relativePath }) => relativePath === 'linked/secret.txt'),
-      false
-    );
-    assert.ok(
-      engine.treeEntries.some(
-        ({ relativePath, nodeKind }) => relativePath === 'linked' && nodeKind === 'symlink'
-      )
-    );
-    await engine.shutdown();
-  });
-});
-
-test('tree and disk estimates never participate in runtime memory thresholds', () => {
-  const base = {
-    measurementComplete: true,
-    processRssBytes: ONE_GIB_BYTES,
-    workerHeapUsedBytes: 1,
-    workerExternalBytes: 1,
-    filenameTierEstimatedBytes: 1,
-    treeMetadataEntryCount: 1,
-    treeMetadataEstimatedBytes: TWO_GIB_BYTES + 100,
-    diskIndexBytes: TWO_GIB_BYTES + 100
-  };
-  assert.deepEqual(assessOnlyPreviewSearchMemory(base), {
-    ...base,
-    runtimeOneGiBWarning: false,
-    runtimeTwoGiBLimitExceeded: false
-  });
-  assert.equal(
-    assessOnlyPreviewSearchMemory({
-      ...base,
-      workerHeapUsedBytes: ONE_GIB_BYTES + 1
-    }).runtimeOneGiBWarning,
-    true
-  );
-  assert.equal(
-    assessOnlyPreviewSearchMemory({
-      ...base,
-      processRssBytes: TWO_GIB_BYTES
-    }).runtimeTwoGiBLimitExceeded,
-    false
-  );
-  assert.equal(
-    assessOnlyPreviewSearchMemory({
-      ...base,
-      processRssBytes: TWO_GIB_BYTES + 1
-    }).runtimeTwoGiBLimitExceeded,
-    true
-  );
 });

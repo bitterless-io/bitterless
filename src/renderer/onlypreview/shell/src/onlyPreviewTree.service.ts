@@ -9,9 +9,43 @@ export const getOnlyPreviewParentPath = (relativePath: string): string => {
   return separator < 0 ? '' : relativePath.slice(0, separator);
 };
 
+export const resolveOnlyPreviewCurrentDirectory = (
+  index: OnlyPreviewIndex | null,
+  treeSelectedRelativePath: string | null,
+  previewSelectedRelativePath: string
+): string => {
+  if (treeSelectedRelativePath === '') return '';
+  if (treeSelectedRelativePath !== null) {
+    const selectedEntry = index?.entries.find(
+      (entry) => entry.relativePath === treeSelectedRelativePath
+    );
+    if (selectedEntry?.nodeKind === 'directory') return treeSelectedRelativePath;
+    if (selectedEntry) return getOnlyPreviewParentPath(treeSelectedRelativePath);
+  }
+  return getOnlyPreviewParentPath(previewSelectedRelativePath);
+};
+
+export const resolveOnlyPreviewTreeFocusPath = (
+  rows: readonly OnlyPreviewTreeRow[],
+  focusedRelativePath: string,
+  selectedRelativePath: string | null
+): string => {
+  if (rows.some((row) => row.entry.relativePath === focusedRelativePath)) {
+    return focusedRelativePath;
+  }
+  if (
+    selectedRelativePath !== null &&
+    rows.some((row) => row.entry.relativePath === selectedRelativePath)
+  ) {
+    return selectedRelativePath;
+  }
+  return rows[0]?.entry.relativePath || '';
+};
+
 const buildOnlyPreviewChildRows = (
   index: OnlyPreviewIndex,
-  expandedPaths: ReadonlySet<string>
+  expandedPaths: ReadonlySet<string>,
+  searchExcludedPaths: ReadonlySet<string>
 ): OnlyPreviewTreeRow[] => {
   const entriesByParent = new Map<string, OnlyPreviewIndexEntry[]>();
   for (const entry of index.entries) {
@@ -27,7 +61,8 @@ const buildOnlyPreviewChildRows = (
         entry,
         depth,
         expanded,
-        hasChildren: entry.nodeKind === 'directory'
+        hasChildren: entry.nodeKind === 'directory',
+        searchExcluded: searchExcludedPaths.has(entry.relativePath)
       });
       if (entry.nodeKind === 'directory' && expanded) visit(entry.relativePath, depth + 1);
     }
@@ -39,7 +74,8 @@ const buildOnlyPreviewChildRows = (
 export const buildOnlyPreviewRootedTreeRows = (
   index: OnlyPreviewIndex | null,
   rootName: string,
-  expandedPaths: ReadonlySet<string>
+  expandedPaths: ReadonlySet<string>,
+  searchExcludedPaths: ReadonlySet<string> = new Set()
 ): OnlyPreviewTreeRow[] => {
   if (!index || !rootName) return [];
   const expanded = expandedPaths.has('');
@@ -55,8 +91,8 @@ export const buildOnlyPreviewRootedTreeRows = (
     isText: false
   };
   return [
-    { entry: rootEntry, depth: 0, expanded, hasChildren: true },
-    ...(expanded ? buildOnlyPreviewChildRows(index, expandedPaths) : [])
+    { entry: rootEntry, depth: 0, expanded, hasChildren: true, searchExcluded: false },
+    ...(expanded ? buildOnlyPreviewChildRows(index, expandedPaths, searchExcludedPaths) : [])
   ];
 };
 

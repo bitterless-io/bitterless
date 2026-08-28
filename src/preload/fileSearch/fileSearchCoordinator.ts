@@ -14,6 +14,7 @@ import type {
 import { createOnlyPreviewSearchEngine } from '@preload/onlypreview/search/core/search-engine.mjs';
 import { createSearchResultBatcher } from '@preload/onlypreview/search/core/result-batcher.mjs';
 import { createLatestSingleFlight } from '@preload/onlypreview/search/core/single-flight.mjs';
+import type { OnlyPreviewSearchDiagnostics } from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
 
 interface SearchValue {
   workspaceId: string;
@@ -59,6 +60,7 @@ export interface OnlyPreviewSearchCoordinator {
 }
 
 export interface CreateOnlyPreviewSearchCoordinatorOptions {
+  diagnostics?: OnlyPreviewSearchDiagnostics;
   createEngine?: typeof createOnlyPreviewSearchEngine;
   onBrowseListing?(listing: OnlyPreviewBrowseListing): void;
   onProgress?(progress: OnlyPreviewSearchBuildProgress): void;
@@ -80,7 +82,8 @@ export const createFileSearchCoordinator = (
     onBrowseListing: options.onBrowseListing,
     onProgress: options.onProgress,
     onSnapshot: options.onSnapshot,
-    onWatchCommit: options.onWatchCommit
+    onWatchCommit: options.onWatchCommit,
+    diagnostics: options.diagnostics
   });
   let shuttingDown = false;
   let latestPriority = Promise.resolve();
@@ -157,7 +160,6 @@ export const createFileSearchCoordinator = (
   return {
     initialize: async (value) => await engine.initialize(value),
     refresh: async (value) => {
-      searchScheduler.cancelWhere(() => true);
       previewScheduler.cancelWhere(() => true);
       return await engine.refresh(value);
     },

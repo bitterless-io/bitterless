@@ -54,8 +54,11 @@ export const searchOnlyPreviewGlobalFiles = async ({
 }) => {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery || maxResults <= 0) return { authorities: [], truncated: false };
-  const authorities = [];
-  let truncated = false;
+  await new Promise((resolveTurn) => setImmediate(resolveTurn));
+  if (isCancelled()) return { authorities: [], truncated: false, cancelled: true };
+  const directoryAuthorities = [];
+  const fileAuthorities = [];
+  let matchCount = 0;
   let visited = 0;
   let sliceStartedAt = performance.now();
   for (const entry of entries) {
@@ -72,13 +75,17 @@ export const searchOnlyPreviewGlobalFiles = async ({
     ) {
       continue;
     }
-    if (authorities.length < maxResults) authorities.push(createGlobalSearchFileAuthority(entry));
-    else {
-      truncated = true;
-      break;
+    matchCount += 1;
+    const partition = entry.nodeKind === 'directory' ? directoryAuthorities : fileAuthorities;
+    if (partition.length < maxResults) {
+      partition.push(createGlobalSearchFileAuthority(entry));
     }
   }
-  return { authorities, truncated, cancelled: false };
+  return {
+    authorities: [...directoryAuthorities, ...fileAuthorities].slice(0, maxResults),
+    truncated: matchCount > maxResults,
+    cancelled: false
+  };
 };
 
 export const isGlobalSearchPathInScope = inScope;

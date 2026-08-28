@@ -9,6 +9,10 @@ import type {
   FileSearchRuntimePrivateApi
 } from '@shared/onlypreview/fileSearchRuntime.types';
 import {
+  createOnlyPreviewSearchDiagnostics,
+  type OnlyPreviewSearchDiagnostics
+} from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
+import {
   ONLY_PREVIEW_BROWSE_LISTING_EVENT,
   ONLY_PREVIEW_SEARCH_BATCH_EVENT,
   ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS,
@@ -99,6 +103,11 @@ const searchSnippetSegmenter = new Intl.Segmenter('und', { granularity: 'graphem
 
 export class FileSearchRuntimeRelayService {
   private active: ActiveRuntime | null = null;
+  private readonly diagnostics: OnlyPreviewSearchDiagnostics;
+
+  constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
+    this.diagnostics = diagnostics;
+  }
 
   attach(params: {
     hostToken: string;
@@ -136,23 +145,33 @@ export class FileSearchRuntimeRelayService {
     timeoutMs: number,
     bootstrap?: OnlyPreviewSearchBootstrap
   ): Promise<unknown> {
-    const active = this.active;
-    if (!active) throw runtimeStoppedError();
-    if (active.hostToken !== hostToken) {
-      throw new OnlyPreviewContractError(
-        'HOST_ROLE_DENIED',
-        'OnlyPreview search request does not belong to the active file-search runtime.'
-      );
+    const diagnosticMethod = method === 'initialize' || method === 'search' ? method : null;
+    const diagnostic = diagnosticMethod
+      ? { tag: this.diagnostics.nextTag('x'), startedAt: this.diagnostics.now() }
+      : null;
+    if (diagnostic && diagnosticMethod) {
+      this.diagnostics.emit('xpc-start', { tag: diagnostic.tag, method: diagnosticMethod });
     }
-    const expectation = this._createPendingExpectation(method, params);
-    if (method === 'initialize') {
-      active.workspaceId = expectation.workspaceId;
-      active.generation = expectation.generation;
-    }
-    const pending = { expectation };
-    active.pending.add(pending);
+    let active: ActiveRuntime | null = null;
+    let pending: PendingCall | null = null;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let outcome: 'success' | 'failure' = 'failure';
     try {
+      active = this.active;
+      if (!active) throw runtimeStoppedError();
+      if (active.hostToken !== hostToken) {
+        throw new OnlyPreviewContractError(
+          'HOST_ROLE_DENIED',
+          'OnlyPreview search request does not belong to the active file-search runtime.'
+        );
+      }
+      const expectation = this._createPendingExpectation(method, params);
+      if (method === 'initialize') {
+        active.workspaceId = expectation.workspaceId;
+        active.generation = expectation.generation;
+      }
+      pending = { expectation };
+      active.pending.add(pending);
       const runtimeParams =
         method === 'initialize'
           ? { capability: active.capability, request: params, bootstrap }
@@ -171,10 +190,19 @@ export class FileSearchRuntimeRelayService {
         })
       ]);
       if (!this._isResponseResult(result, expectation)) throw invalidRuntimeResponseError();
+      outcome = 'success';
       return result;
     } finally {
       if (timeout) clearTimeout(timeout);
-      active.pending.delete(pending);
+      if (active && pending) active.pending.delete(pending);
+      if (diagnostic && diagnosticMethod) {
+        this.diagnostics.emit('xpc-terminal', {
+          tag: diagnostic.tag,
+          method: diagnosticMethod,
+          outcome,
+          elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+        });
+      }
     }
   }
 
@@ -564,7 +592,7 @@ export class FileSearchRuntimeRelayService {
   } {
     if (!this._isRecord(value)) return false;
     const keys = [
-      ...(withDirectoryToken ? ['directoryToken'] : []),
+      ...(withDirectoryToken ? ['directoryToken', 'searchExcluded'] : []),
       'isText',
       'mediaType',
       'modifiedAt',
@@ -590,7 +618,8 @@ export class FileSearchRuntimeRelayService {
       !PREVIEW_HINTS.has(value.previewHint) ||
       typeof value.mediaType !== 'string' ||
       !SEARCH_MEDIA_TYPES.has(value.mediaType) ||
-      typeof value.isText !== 'boolean'
+      typeof value.isText !== 'boolean' ||
+      (withDirectoryToken && typeof value.searchExcluded !== 'boolean')
     ) {
       return false;
     }
@@ -603,7 +632,8 @@ export class FileSearchRuntimeRelayService {
         value.size === 0 &&
         value.previewHint === 'unsupported' &&
         value.mediaType === 'unknown' &&
-        value.isText === false
+        value.isText === false &&
+        (!withDirectoryToken || value.nodeKind !== 'symlink' || value.searchExcluded === false)
       );
     }
     const expectedMediaType = value.previewHint === 'unsupported' ? 'unknown' : value.previewHint;

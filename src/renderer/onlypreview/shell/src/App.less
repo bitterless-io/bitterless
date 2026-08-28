@@ -282,6 +282,19 @@ select {
   color: #303858;
 }
 
+.onlypreview-shell__tree-row--search-excluded {
+  background: #fff4e8;
+}
+
+.onlypreview-shell__tree-row--search-excluded:hover {
+  background: #ffead3;
+}
+
+.onlypreview-shell__tree-row--search-excluded.onlypreview-shell__tree-row--selected {
+  background: #f9dfc2;
+  color: #303858;
+}
+
 .onlypreview-shell__tree-row--selected::after {
   content: '';
   width: 3px;
@@ -314,6 +327,10 @@ select {
 .onlypreview-shell__tree-icon {
   flex: 0 0 auto;
   color: #707897;
+}
+
+.onlypreview-shell__tree-icon--search-excluded-directory {
+  color: #C2410C;
 }
 
 .onlypreview-shell__tree-name {

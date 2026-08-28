@@ -26,7 +26,7 @@
         <span name="onlypreview__globalSearchResultTitle" class="onlypreview-global-search__result-title">
           {{ title }}
         </span>
-        <span class="onlypreview-global-search__result-media">{{ result.mediaType }}</span>
+        <span class="onlypreview-global-search__result-media">{{ displayType }}</span>
       </span>
       <span
         name="onlypreview__globalSearchResultDirectory"
@@ -49,6 +49,7 @@ import { IconFile, IconFolder } from '@tabler/icons-vue';
 import type { OnlyPreviewGlobalSearchResult } from '@shared/onlypreview/onlyPreviewSearch.type';
 import { onlyPreviewGlobalSearchStore } from '../../onlyPreviewGlobalSearch.store';
 import {
+  getOnlyPreviewGlobalSearchDisplayType,
   sameGlobalSearchResult,
   splitOnlyPreviewContentMatch
 } from '../../onlyPreviewGlobalSearchResult.service';
@@ -63,6 +64,7 @@ const selected = computed(
 const title = computed(() =>
   props.result.section === 'files' ? props.result.name : props.result.fileName
 );
+const displayType = computed(() => getOnlyPreviewGlobalSearchDisplayType(props.result));
 const snippet = computed(() =>
   props.result.section === 'contents'
     ? splitOnlyPreviewContentMatch(props.result.contentMatch)

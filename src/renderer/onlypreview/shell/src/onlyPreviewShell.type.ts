@@ -5,4 +5,5 @@ export interface OnlyPreviewTreeRow {
   depth: number;
   expanded: boolean;
   hasChildren: boolean;
+  searchExcluded: boolean;
 }

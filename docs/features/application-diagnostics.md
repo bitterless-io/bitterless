@@ -100,6 +100,14 @@ only the accepted provider-diagnostic fields documented by the Translator featur
 errors, request/response payloads, headers, identifiers, and authentication material remain
 forbidden.
 
+OnlyPreview startup and search timing uses the existing `main.log`, not a dedicated file. Every
+record begins with `[onlypreview-search]`, producing `scope=onlypreview-search`; `proc` distinguishes
+Main, the hidden `renderer:fileSearch`, and `renderer:onlypreviewShell`. Fixed events cover Preview
+window/runtime readiness, SQLite reuse/open, count/candidate/reconcile/promotion, search gates,
+first Files/Contents visibility, terminal response, XPC duration, and Shell acceptance. Events are
+small aggregate strings and never contain queries, snippets, bodies, names, paths, workspace or
+configuration identity, credentials/capabilities/tokens, or raw error objects.
+
 ## Diagnostics Contract
 
 Renderer calls a Main-owned XPC handler:

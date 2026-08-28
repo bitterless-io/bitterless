@@ -13,6 +13,7 @@ const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-file-search-relay-'));
 const bundlePath = join(buildRoot, 'runtime.mjs');
 const preloadBundlePath = join(buildRoot, 'fileSearch.preload.cjs');
 const coordinatorBundlePath = join(buildRoot, 'fileSearchCoordinator.mjs');
+const shellChainBundlePath = join(buildRoot, 'shellChain.mjs');
 const loadModule = createRequire(import.meta.url);
 
 await build({
@@ -38,6 +39,46 @@ await build({
             contents: `export const createFileSearchCoordinator = () => {
               throw new Error('Runtime behavior tests must inject a coordinator.');
             };`
+          })
+        );
+      }
+    }
+  ]
+});
+
+await build({
+  stdin: {
+    contents: `
+      export { OnlyPreviewBrowseProjectionService } from './src/renderer/onlypreview/shell/src/onlyPreviewBrowseProjection.service';
+      export { onlyPreviewGlobalSearchStore } from './src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearch.store';
+    `,
+    resolveDir: projectRoot,
+    sourcefile: 'shell-chain.entry.ts',
+    loader: 'ts'
+  },
+  outfile: shellChainBundlePath,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node22',
+  tsconfig: join(projectRoot, 'tsconfig.web.json'),
+  plugins: [
+    {
+      name: 'shell-xpc-stub',
+      setup(buildContext) {
+        buildContext.onResolve({ filter: /^electron-xpc\/renderer$/ }, () => ({
+          path: 'shell-xpc',
+          namespace: 'shell-chain-test'
+        }));
+        buildContext.onLoad(
+          { filter: /^shell-xpc$/, namespace: 'shell-chain-test' },
+          () => ({
+            contents: `
+              export const xpcRenderer = {
+                subscribe: (name, callback) => globalThis.__shellSubscriptions.set(name, callback)
+              };
+              export const createXpcRendererEmitter = () => globalThis.__shellSearchClient;
+            `
           })
         );
       }
@@ -115,6 +156,10 @@ await build({
 
 const runtime = await import(pathToFileURL(bundlePath).href);
 const coordinatorRuntime = await import(pathToFileURL(coordinatorBundlePath).href);
+globalThis.window = { onlyPreviewEnv: { hostId: 'host-id', hostToken: 'host-token' } };
+globalThis.__shellSubscriptions = new Map();
+globalThis.__shellSearchClient = {};
+const shellChainRuntime = await import(pathToFileURL(shellChainBundlePath).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
@@ -150,6 +195,18 @@ const snapshot = {
     runtimeTwoGiBLimitExceeded: false
   }
 };
+const browseEntry = {
+  ...entry,
+  directoryToken: null,
+  searchExcluded: false
+};
+const browseListing = {
+  workspaceId,
+  generation,
+  directoryToken: 'docs-directory-capability',
+  relativePath: 'docs',
+  entries: [browseEntry]
+};
 const fileSearchResult = {
   section: 'files',
   resultToken: 'file-result-token',
@@ -169,6 +226,146 @@ const searchResult = {
   mediaType: 'text',
   contentMatch: { snippetText: 'A👨‍👩‍👧‍👦B', highlightStart: 1, highlightLength: 1 }
 };
+
+test('root projection and a streamed search batch render while initialize terminals remain pending', async () => {
+  let releaseInitialize;
+  let releaseSearch;
+  const initializeGate = new Promise((resolveValue) => {
+    releaseInitialize = resolveValue;
+  });
+  const searchGate = new Promise((resolveValue) => {
+    releaseSearch = resolveValue;
+  });
+  let initializeSettled = false;
+  let searchSettled = false;
+  const projection = new shellChainRuntime.OnlyPreviewBrowseProjectionService();
+  const expandedPaths = new Set(['']);
+  const store = shellChainRuntime.onlyPreviewGlobalSearchStore;
+  store.resetForWorkspace();
+  store.configure(
+    () => ({
+      workspaceId,
+      generation,
+      ready: projection.ready,
+      rootName: 'workspace',
+      currentDirectoryRelativePath: ''
+    }),
+    async () => true
+  );
+  store.configureScheduler(() => void store.dispatchLatest());
+  store.subscribe();
+  store.enter();
+  store.setQuery('readme');
+  let relay;
+  const registration = {
+    emit: (name, event) => {
+      relay.publish({ capability, eventName: name, value: event });
+    }
+  };
+  let searchStarted = false;
+  const fileSearchRuntime = new runtime.FileSearchRuntime(registration, (options) =>
+    coordinatorRuntime.createFileSearchCoordinator({
+      ...options,
+      createEngine: (engineOptions) => ({
+        initialize: async () => {
+          engineOptions.onBrowseListing({
+            ...browseListing,
+            relativePath: '',
+            directoryToken: 'root-directory-capability',
+            entries: [
+              {
+                ...browseEntry,
+                relativePath: 'docs',
+                parentRelativePath: '',
+                name: 'docs',
+                nodeKind: 'directory',
+                directoryToken: 'docs-directory-capability',
+                size: 0,
+                previewHint: 'unsupported',
+                mediaType: 'unknown',
+                isText: false
+              }
+            ]
+          });
+          await initializeGate;
+          return snapshot;
+        },
+        search: async (request) => {
+          searchStarted = true;
+          request.onResult(fileSearchResult);
+          await searchGate;
+          return {
+            workspaceId,
+            generation,
+            requestId: request.requestId,
+            files: [fileSearchResult],
+            contents: [],
+            filesTruncated: false,
+            contentsTruncated: false
+          };
+        },
+        revokeSearch: () => undefined,
+        shutdown: async () => undefined
+      })
+    })
+  );
+  relay = new runtime.FileSearchRuntimeRelayService();
+  const runtimeClient = Object.fromEntries(
+    ['initialize', 'refresh', 'prioritizeFile', 'browseDirectory', 'search', 'preview', 'cancel', 'shutdown'].map(
+      (method) => [
+        method,
+        ({ request, bootstrap }) => fileSearchRuntime[method](request, bootstrap)
+      ]
+    )
+  );
+  relay.attach({
+    hostToken: 'host-token',
+    hostId: 'host-id',
+    bootstrapToken: 'bootstrap-token',
+    capability,
+    client: runtimeClient,
+    broadcast: (name, params) => {
+      if (name === 'onlypreview/browse-listing') {
+        projection.applyListing(
+          params.listing,
+          { hostToken: 'host-token', workspaceId, generation },
+          expandedPaths
+        );
+        store.resumeForAvailableRuntime();
+      }
+      globalThis.__shellSubscriptions.get(name)?.({ params });
+    }
+  });
+  globalThis.__shellSearchClient.search = (params) =>
+    relay.call('host-token', 'search', params, 5_000);
+  globalThis.__shellSearchClient.cancel = (params) =>
+    relay.call('host-token', 'cancel', params, 5_000);
+  const initializing = relay
+    .call(
+      'host-token',
+      'initialize',
+      { hostToken: 'host-token', workspaceId, generation },
+      5_000,
+      runtimeBootstrap
+    )
+    .finally(() => {
+      initializeSettled = true;
+    });
+  await new Promise((resolveValue) => setImmediate(resolveValue));
+  assert.equal(projection.ready, true);
+  assert.equal(initializeSettled, false);
+  assert.equal(searchStarted, true);
+  await new Promise((resolveValue) => setTimeout(resolveValue, 25));
+  assert.deepEqual(store.files.map(({ relativePath }) => relativePath), ['docs/readme.md']);
+  assert.equal(initializeSettled, false);
+  searchSettled = !store.pending;
+  assert.equal(searchSettled, false);
+  releaseSearch();
+  releaseInitialize();
+  await initializing;
+  while (store.pending) await new Promise((resolveValue) => setImmediate(resolveValue));
+  await fileSearchRuntime.dispose();
+});
 
 test('file-search XPC channel names are capability-bound in both directions', () => {
   const otherCapability = 'b'.repeat(43);
@@ -492,421 +689,4 @@ test('a failed priority operation cannot poison the coordinator search barrier',
   assert.deepEqual(response.contents, [searchResult]);
   await coordinator.shutdown();
   assert.equal(shutdownCount, 1);
-});
-
-test('a queued replacement search revokes the active result session immediately', async () => {
-  const revocations = [];
-  let markFirstStarted = () => undefined;
-  const firstStarted = new Promise((resolveValue) => {
-    markFirstStarted = resolveValue;
-  });
-  const coordinator = coordinatorRuntime.createFileSearchCoordinator({
-    createEngine: () => ({
-      search: async (request) => {
-        if (request.requestId === 'active-search') {
-          markFirstStarted();
-          while (!request.isCancelled()) {
-            await new Promise((resolveValue) => setImmediate(resolveValue));
-          }
-          throw Object.assign(new Error('Search cancelled.'), { code: 'CANCELLED' });
-        }
-        return {
-          workspaceId: request.workspaceId,
-          generation: request.generation,
-          requestId: request.requestId,
-          files: [fileSearchResult],
-          contents: [searchResult],
-          filesTruncated: false,
-          contentsTruncated: false
-        };
-      },
-      revokeSearch: (requestId) => revocations.push(requestId),
-      shutdown: async () => undefined
-    })
-  });
-  const first = coordinator
-    .search({
-      workspaceId,
-      generation,
-      requestId: 'active-search',
-      query: 'first',
-      maxResults: 10,
-      scope: { kind: 'project' }
-    })
-    .then(
-      () => null,
-      (error) => error
-    );
-  await firstStarted;
-
-  const replacement = coordinator.search({
-    workspaceId,
-    generation,
-    requestId: 'pending-search',
-    query: 'second',
-    maxResults: 10,
-    scope: { kind: 'project' }
-  });
-  assert.deepEqual(revocations, [undefined, undefined]);
-  assert.equal((await first)?.code, 'CANCELLED');
-  assert.equal((await replacement).requestId, 'pending-search');
-
-  await coordinator.cancel({ requestId: 'active-search' });
-  assert.deepEqual(revocations, [undefined, undefined, 'active-search']);
-  await coordinator.shutdown();
-});
-
-class FakeFileSearchClient {
-  calls = [];
-  pending = [];
-
-  ready(params) {
-    this.calls.push({ method: 'ready', params });
-    return Promise.resolve({ ok: true });
-  }
-
-  initialize(params) {
-    return this.defer('initialize', params);
-  }
-
-  refresh(params) {
-    return this.defer('refresh', params);
-  }
-
-  prioritizeFile(params) {
-    return this.defer('prioritizeFile', params);
-  }
-
-  browseDirectory(params) {
-    return this.defer('browseDirectory', params);
-  }
-
-  search(params) {
-    return this.defer('search', params);
-  }
-
-  preview(params) {
-    return this.defer('preview', params);
-  }
-
-  cancel(params) {
-    return this.defer('cancel', params);
-  }
-
-  shutdown(params) {
-    return this.defer('shutdown', params);
-  }
-
-  defer(method, params) {
-    this.calls.push({ method, params });
-    return new Promise((resolveValue) => this.pending.push({ method, resolve: resolveValue }));
-  }
-
-  respond(method, value) {
-    const index = this.pending.findIndex((pending) => pending.method === method);
-    assert.notEqual(index, -1, `missing pending ${method}`);
-    this.pending.splice(index, 1)[0].resolve(value);
-  }
-}
-
-const createHarness = () => {
-  const client = new FakeFileSearchClient();
-  const broadcasts = [];
-  const relay = new runtime.FileSearchRuntimeRelayService();
-  relay.attach({
-    hostToken: 'host-token',
-    hostId: 'bound-host-id',
-    bootstrapToken: 'main-private-bootstrap-token',
-    capability,
-    client,
-    broadcast: (eventName, params) => broadcasts.push({ eventName, params })
-  });
-  return { broadcasts, client, relay };
-};
-
-test('file-search XPC relay privately enriches calls and rejects pending work on detach', async () => {
-  const { client, relay } = createHarness();
-  const bootstrap = {
-    workspaceId,
-    rootPath: '/private/workspace',
-    databasePath: '/private/cache/search.sqlite'
-  };
-  const initialize = relay.call(
-    'host-token',
-    'initialize',
-    { hostToken: 'host-token', workspaceId, generation },
-    5_000,
-    bootstrap
-  );
-  assert.deepEqual(client.calls[0], {
-    method: 'initialize',
-    params: {
-      capability,
-      request: { hostToken: 'host-token', workspaceId, generation },
-      bootstrap
-    }
-  });
-  assert.equal(JSON.stringify(client.calls[0]).includes('main-private-bootstrap-token'), false);
-  client.respond('initialize', { ok: true, value: snapshot });
-  assert.deepEqual(await initialize, { ok: true, value: snapshot });
-  assert.equal(relay.bootstrapTokenForHost('host-token'), 'main-private-bootstrap-token');
-
-  const priorityRequest = {
-    hostToken: 'host-token',
-    workspaceId,
-    generation,
-    relativePath: 'docs/readme.md'
-  };
-  const priority = relay.call('host-token', 'prioritizeFile', priorityRequest, 5_000);
-  assert.deepEqual(client.calls.at(-1), {
-    method: 'prioritizeFile',
-    params: { capability, request: priorityRequest }
-  });
-  client.respond('prioritizeFile', { ok: true, value: undefined });
-  assert.deepEqual(await priority, { ok: true, value: undefined });
-
-  const searchRequest = {
-    hostToken: 'host-token',
-    workspaceId,
-    generation,
-    requestId: 'search-1',
-    query: 'needle',
-    maxResults: 10,
-    scope: { kind: 'project' }
-  };
-  const search = relay.call('host-token', 'search', searchRequest, 5_000);
-  const cancel = relay.call(
-    'host-token',
-    'cancel',
-    { hostToken: 'host-token', requestId: 'search-1' },
-    5_000
-  );
-  assert.deepEqual(
-    client.calls.slice(-2).map(({ method }) => method),
-    ['search', 'cancel'],
-    'cancel is an independent XPC request while search remains active'
-  );
-  client.respond('cancel', { ok: true, value: undefined });
-  assert.deepEqual(await cancel, { ok: true, value: undefined });
-  relay.detach();
-  await assert.rejects(search, /stopped unexpectedly/u);
-  await assert.rejects(
-    relay.call('host-token', 'search', searchRequest, 5_000),
-    /stopped unexpectedly/u
-  );
-});
-
-test('file-search XPC event path capability-binds and deeply validates public relay values', async () => {
-  const { broadcasts, client, relay } = createHarness();
-  const initialize = relay.call(
-    'host-token',
-    'initialize',
-    { hostToken: 'host-token', workspaceId, generation },
-    5_000
-  );
-
-  assert.throws(
-    () =>
-      relay.publish({
-        capability: 'b'.repeat(43),
-        eventName: 'onlypreview/search-snapshot',
-        value: { snapshot }
-      }),
-    (error) => error?.code === 'HOST_ROLE_DENIED'
-  );
-  assert.deepEqual(
-    relay.publish({
-      capability,
-      eventName: 'onlypreview/search-snapshot',
-      value: { snapshot }
-    }),
-    { ok: true }
-  );
-  for (const invalid of [
-    { ...snapshot, absolutePath: '/private/workspace' },
-    { ...snapshot, generation: generation - 1 },
-    { ...snapshot, index: { ...snapshot.index, entries: [{ ...entry, unexpected: true }] } },
-    { ...snapshot, memory: { ...snapshot.memory, processRssBytes: Number.POSITIVE_INFINITY } }
-  ]) {
-    relay.publish({
-      capability,
-      eventName: 'onlypreview/search-snapshot',
-      value: { snapshot: invalid }
-    });
-  }
-
-  client.respond('initialize', { ok: true, value: snapshot });
-  await initialize;
-  const request = {
-    hostToken: 'host-token',
-    workspaceId,
-    generation,
-    requestId: 'search-current',
-    query: 'needle',
-    maxResults: 2,
-    scope: { kind: 'project' }
-  };
-  const search = relay.call('host-token', 'search', request, 5_000);
-  relay.publish({
-    capability,
-    eventName: 'onlypreview/search-batch',
-    value: {
-      batch: {
-        workspaceId,
-        generation,
-        requestId: request.requestId,
-        files: [fileSearchResult],
-        contents: [searchResult]
-      }
-    }
-  });
-  relay.publish({
-    capability,
-    eventName: 'onlypreview/search-batch',
-    value: {
-      batch: {
-        workspaceId,
-        generation,
-        requestId: request.requestId,
-        files: [],
-        contents: [{ ...searchResult, relativePath: '/private/readme.md' }]
-      }
-    }
-  });
-  assert.deepEqual(
-    broadcasts.map(({ eventName }) => eventName),
-    ['onlypreview/search-snapshot', 'onlypreview/search-batch']
-  );
-  assert.equal(JSON.stringify(broadcasts).includes('/private/'), false);
-
-  client.respond('search', {
-    ok: true,
-    value: {
-      workspaceId,
-      generation,
-      requestId: request.requestId,
-      files: [fileSearchResult],
-      contents: [searchResult],
-      filesTruncated: false,
-      contentsTruncated: false
-    }
-  });
-  assert.equal((await search).ok, true);
-
-  const previewRequest = {
-    hostToken: 'host-token',
-    workspaceId,
-    generation,
-    requestId: request.requestId,
-    resultToken: fileSearchResult.resultToken
-  };
-  const preview = relay.call('host-token', 'preview', previewRequest, 5_000);
-  client.respond('preview', {
-    ok: true,
-    value: {
-      kind: 'info',
-      name: 'readme.md',
-      previewHint: 'text',
-      mediaType: 'text',
-      size: 10,
-      modifiedAt: 1
-    }
-  });
-  assert.equal((await preview).ok, true);
-
-  const malformedPreview = relay.call('host-token', 'preview', previewRequest, 5_000);
-  client.respond('preview', {
-    ok: true,
-    value: {
-      kind: 'info',
-      name: 'readme.md',
-      previewHint: 'text',
-      mediaType: 'text',
-      size: 10,
-      modifiedAt: 1,
-      absolutePath: '/private/readme.md'
-    }
-  });
-  await assert.rejects(malformedPreview, (error) => error?.code === 'PROTOCOL_ERROR');
-  relay.detach();
-});
-
-test('file-search XPC relay rejects malformed responses and enforces timeout', async () => {
-  const { client, relay } = createHarness();
-  const malformed = relay.call(
-    'host-token',
-    'cancel',
-    { hostToken: 'host-token', requestId: 'cancel-invalid' },
-    5_000
-  );
-  client.respond('cancel', { ok: true, value: null });
-  await assert.rejects(malformed, (error) => error?.code === 'PROTOCOL_ERROR');
-
-  await assert.rejects(
-    relay.call('host-token', 'cancel', { hostToken: 'host-token', requestId: 'cancel-timeout' }, 5),
-    /timed out/u
-  );
-  relay.detach();
-});
-
-test('file-search lifecycle fence accepts only its exact target and fails once', () => {
-  const failures = [];
-  const fence = new runtime.FileSearchLifecycleFence(
-    'file:///app/out/renderer/fileSearch/index.html',
-    (message) => failures.push(message)
-  );
-  assert.equal(fence.acceptNavigation('file:///app/out/renderer/fileSearch/index.html'), true);
-  assert.equal(
-    fence.acceptNavigation('file:///app/out/renderer/fileSearch/index.html?unexpected=1'),
-    false
-  );
-  fence.fail('second failure');
-  assert.deepEqual(failures, ['File-search renderer attempted an unexpected navigation.']);
-
-  const stoppedFailures = [];
-  const stopped = new runtime.FileSearchLifecycleFence(
-    'https://renderer/fileSearch/index.html',
-    (message) => stoppedFailures.push(message)
-  );
-  stopped.stop();
-  assert.equal(stopped.acceptNavigation('https://renderer/fileSearch/index.html'), false);
-  assert.deepEqual(stoppedFailures, []);
-});
-
-test('file-search readiness retries an unregistered XPC target within one bounded startup deadline', async () => {
-  let readyCalls = 0;
-  await runtime.waitForFileSearchRuntimeReady({
-    runtimeClient: {
-      ready: async () => {
-        readyCalls += 1;
-        return readyCalls === 1 ? null : { ok: true };
-      }
-    },
-    capability,
-    instanceId: '123e4567-e89b-42d3-a456-426614174000',
-    stopped: new Promise(() => undefined),
-    timeoutMs: 100
-  });
-  assert.equal(readyCalls, 2);
-
-  await assert.rejects(
-    runtime.waitForFileSearchRuntimeReady({
-      runtimeClient: { ready: async () => ({ ok: false, error: 'invalid runtime' }) },
-      capability,
-      instanceId: '123e4567-e89b-42d3-a456-426614174000',
-      stopped: new Promise(() => undefined),
-      timeoutMs: 100
-    }),
-    /invalid runtime/u
-  );
-  await assert.rejects(
-    runtime.waitForFileSearchRuntimeReady({
-      runtimeClient: { ready: async () => null },
-      capability,
-      instanceId: '123e4567-e89b-42d3-a456-426614174000',
-      stopped: Promise.resolve(),
-      timeoutMs: 100
-    }),
-    /stopped during startup/u
-  );
 });

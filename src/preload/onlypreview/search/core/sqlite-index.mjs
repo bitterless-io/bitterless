@@ -12,7 +12,6 @@ import {
 import {
   FilenameTier,
   hasHiddenDirectory,
-  hasHiddenPathSegment,
   prepareFilenameRecord
 } from './filename-tier.mjs';
 import {
@@ -24,6 +23,8 @@ import {
 } from './normalization.mjs';
 import { clampSearchResultLimit, createOnlyPreviewSearchResult } from './search-contract.mjs';
 import { configureSearchDatabase, createBuildStateStore } from './sqlite-schema.mjs';
+import { OnlyPreviewSqliteSnapshotStore } from './sqlite-snapshot-store.mjs';
+import { SQLITE_SCOPE_SQL, createSqliteScopePlan } from './sqlite-search-scope.mjs';
 import { searchOnlyPreviewIndexedContents } from './sqlite-content-search.mjs';
 import { createBackgroundWorkSlicer } from './work-slicer.mjs';
 
@@ -38,47 +39,9 @@ const candidateColumns = `
   f.relative_path, f.file_name, f.media_type
 `;
 
-const SCOPE_SQL = Object.freeze({
-  project: 'f.in_project = 1',
-  'visible-directory': 'f.in_project = 1 AND f.relative_path >= ? AND f.relative_path < ?',
-  'hidden-directory': 'f.in_project = 1 AND f.relative_path >= ? AND f.relative_path < ?'
-});
-
-const createScopePlan = (scope) => {
-  const keys =
-    scope && typeof scope === 'object' && !Array.isArray(scope)
-      ? Object.keys(scope).sort().join(',')
-      : '';
-  if (scope?.kind === 'project' && keys === 'kind') {
-    return { key: 'project', params: [] };
-  }
-  if (
-    scope?.kind !== 'directory' ||
-    keys !== 'kind,relativePath' ||
-    typeof scope.relativePath !== 'string' ||
-    scope.relativePath.length > 16_384 ||
-    scope.relativePath.startsWith('/') ||
-    scope.relativePath.includes('\\') ||
-    /^[a-zA-Z]:/u.test(scope.relativePath) ||
-    scope.relativePath.includes('\0') ||
-    scope.relativePath
-      .split('/')
-      .some(
-        (segment) => (!segment && scope.relativePath !== '') || segment === '.' || segment === '..'
-      )
-  ) {
-    throw new TypeError('Invalid search scope');
-  }
-  if (scope.relativePath === '') return { key: 'project', params: [] };
-  return {
-    key: hasHiddenPathSegment(scope.relativePath) ? 'hidden-directory' : 'visible-directory',
-    params: [`${scope.relativePath}/`, `${scope.relativePath}0`]
-  };
-};
-
 const createScopedStatements = (database, sql) =>
   Object.fromEntries(
-    Object.entries(SCOPE_SQL).map(([key, clause]) => [key, database.prepare(sql(clause))])
+    Object.entries(SQLITE_SCOPE_SQL).map(([key, clause]) => [key, database.prepare(sql(clause))])
   );
 
 const prepareEntry = (entry) => ({
@@ -106,11 +69,25 @@ export class OnlyPreviewSqliteIndex {
   constructor(databasePath) {
     this.databasePath = databasePath;
     this.database = new DatabaseSync(databasePath);
-    this.schema = configureSearchDatabase(this.database);
-    this.buildState = createBuildStateStore(this.database);
-    this.filenameTier = new FilenameTier();
-    this.prepareStatements();
-    this.hydrateFilenameTier();
+    try {
+      this.schema = configureSearchDatabase(this.database);
+      this.buildState = createBuildStateStore(this.database);
+      this.filenameTier = new FilenameTier();
+      this.prepareStatements();
+      this.snapshotStore = new OnlyPreviewSqliteSnapshotStore({
+        database: this.database,
+        buildState: this.buildState,
+        filenameTier: this.filenameTier
+      });
+      this.hydrateFilenameTier();
+    } catch (error) {
+      try {
+        this.database.close();
+      } catch {
+        // Preserve the configuration or hydration failure that made the handle unusable.
+      }
+      throw error;
+    }
   }
 
   prepareStatements() {
@@ -119,11 +96,6 @@ export class OnlyPreviewSqliteIndex {
       CREATE TEMP TABLE IF NOT EXISTS search_target_files (
         file_id INTEGER PRIMARY KEY
       ) WITHOUT ROWID;
-    `);
-    this.selectAllFiles = database.prepare(`
-      SELECT id, relative_path, file_name, normalized_path, normalized_title,
-             media_type, content_indexed, in_project, size, modified_ms
-      FROM files ORDER BY relative_path
     `);
     this.selectFileByPath = database.prepare('SELECT * FROM files WHERE relative_path = ?');
     this.insertFile = database.prepare(`
@@ -226,26 +198,35 @@ export class OnlyPreviewSqliteIndex {
   }
 
   hydrateFilenameTier() {
-    const records = [];
-    for (const row of this.selectAllFiles.iterate()) {
-      records.push({
-        id: Number(row.id),
-        relativePath: row.relative_path,
-        fileName: row.file_name,
-        normalizedPath: row.normalized_path,
-        normalizedTitle: row.normalized_title,
-        mediaType: row.media_type,
-        contentIndexed: row.content_indexed === 1,
-        inProject: row.in_project === 1,
-        size: Number(row.size),
-        modifiedMs: Number(row.modified_ms)
-      });
-    }
-    this.filenameTier.replace(records);
+    this.snapshotStore.hydrateFilenameTier();
+  }
+
+  applyFilenameTierMutations({ upsertPaths, deletePaths }) {
+    this.snapshotStore.applyFilenameTierMutations({ upsertPaths, deletePaths });
   }
 
   isReusable(identity) {
     return this.buildState.isReusable(identity);
+  }
+
+  readTreeSnapshot() {
+    return this.snapshotStore.readTreeSnapshot();
+  }
+
+  invalidateTreeSnapshot() {
+    this.snapshotStore.invalidateTreeSnapshot();
+  }
+
+  replaceTreeSnapshot(entries, maxDepthReached) {
+    return this.snapshotStore.replaceTreeSnapshot(entries, maxDepthReached);
+  }
+
+  applyTreeSnapshotMutations({ upserts, removedPaths, maxDepthReached }) {
+    return this.snapshotStore.applyTreeSnapshotMutations({
+      upserts,
+      removedPaths,
+      maxDepthReached
+    });
   }
 
   canReconcile(identity) {
@@ -382,22 +363,30 @@ export class OnlyPreviewSqliteIndex {
     return { fileCount, contentFileCount, chunkCount, buildId };
   }
 
-  upsert(entry, { syncFilenameTier = true } = {}) {
+  runMutation(operation, withinTransaction = false) {
+    if (withinTransaction) return operation();
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const result = operation();
+      this.database.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  upsert(entry, { syncFilenameTier = true, withinTransaction = false } = {}) {
     const prepared = prepareEntry(entry);
     const nextChunks = prepared.contentIndexed
       ? splitContentDefinedChunks(prepared.originalContent)
       : [];
     const existing = this.selectFileByPath.get(prepared.relativePath);
     if (!existing) {
-      let inserted;
-      this.database.exec('BEGIN IMMEDIATE');
-      try {
-        inserted = this.insertPrepared(prepared, nextChunks);
-        this.database.exec('COMMIT');
-      } catch (error) {
-        this.database.exec('ROLLBACK');
-        throw error;
-      }
+      const inserted = this.runMutation(
+        () => this.insertPrepared(prepared, nextChunks),
+        withinTransaction
+      );
       if (syncFilenameTier) this.filenameTier.upsert(inserted.record);
       return { insertedChunkCount: nextChunks.length, retainedChunkCount: 0 };
     }
@@ -423,8 +412,7 @@ export class OnlyPreviewSqliteIndex {
       retained.set(nextChunks.length - 1 - offset, previous.at(-1 - offset));
     }
     const retainedIds = new Set([...retained.values()].map((row) => Number(row.id)));
-    this.database.exec('BEGIN IMMEDIATE');
-    try {
+    this.runMutation(() => {
       this.updateFile.run(
         prepared.fileName,
         prepared.normalizedPath,
@@ -464,11 +452,7 @@ export class OnlyPreviewSqliteIndex {
           this.replaceChunkIndex(Number(row.id), chunk.normalizedSearchableText);
         }
       }
-      this.database.exec('COMMIT');
-    } catch (error) {
-      this.database.exec('ROLLBACK');
-      throw error;
-    }
+    }, withinTransaction);
     if (syncFilenameTier) {
       this.filenameTier.upsert(prepareFilenameRecord(prepared, fileId));
     }
@@ -481,22 +465,17 @@ export class OnlyPreviewSqliteIndex {
     };
   }
 
-  delete(relativePath, { syncFilenameTier = true } = {}) {
+  delete(relativePath, { syncFilenameTier = true, withinTransaction = false } = {}) {
     const existing = this.selectFileByPath.get(relativePath);
     if (!existing) return false;
     const fileId = Number(existing.id);
-    this.database.exec('BEGIN IMMEDIATE');
-    try {
+    this.runMutation(() => {
       for (const row of this.selectChunksByFile.iterate(fileId)) {
         this.removeChunkIndex(Number(row.id));
       }
       this.database.prepare('DELETE FROM chunks WHERE file_id = ?').run(fileId);
       this.deleteFileStatement.run(fileId);
-      this.database.exec('COMMIT');
-    } catch (error) {
-      this.database.exec('ROLLBACK');
-      throw error;
-    }
+    }, withinTransaction);
     if (syncFilenameTier) this.filenameTier.delete(relativePath);
     return true;
   }
@@ -506,22 +485,47 @@ export class OnlyPreviewSqliteIndex {
     this.buildState.start({ ...identity, state: 'reconciling', buildId });
     const seen = new Set();
     let changed = 0;
+    let changedBatch = [];
+    const commitChangedBatch = () => {
+      if (changedBatch.length === 0) return;
+      this.runMutation(() => {
+        for (const entry of changedBatch) {
+          this.upsert(entry, { syncFilenameTier: false, withinTransaction: true });
+        }
+      });
+      changed += changedBatch.length;
+      changedBatch = [];
+    };
     for await (const entry of entries) {
       seen.add(entry.relativePath);
-      if (!entry.unchanged) {
-        this.upsert(entry, { syncFilenameTier: false });
-        changed += 1;
-      }
+      if (!entry.unchanged) changedBatch.push(entry);
+      if (changedBatch.length >= BACKGROUND_BUILD_TRANSACTION_FILES) commitChangedBatch();
       if (seen.size % 50 === 0) onBatch?.({ fileCount: seen.size, changedFileCount: changed });
       await workSlicer.checkpoint();
     }
+    commitChangedBatch();
     let deleted = 0;
+    let deleteBatch = [];
+    const commitDeleteBatch = () => {
+      if (deleteBatch.length === 0) return;
+      this.runMutation(() => {
+        for (const relativePath of deleteBatch) {
+          this.delete(relativePath, { syncFilenameTier: false, withinTransaction: true });
+        }
+      });
+      deleted += deleteBatch.length;
+      deleteBatch = [];
+    };
     for (const relativePath of [...this.filenameTier.records.keys()]) {
       if (!seen.has(relativePath)) {
-        this.delete(relativePath, { syncFilenameTier: false });
-        deleted += 1;
+        deleteBatch.push(relativePath);
+        if (deleteBatch.length >= BACKGROUND_BUILD_TRANSACTION_FILES) {
+          commitDeleteBatch();
+          await workSlicer.checkpoint();
+        }
       }
     }
+    commitDeleteBatch();
     this.database.exec('PRAGMA optimize');
     this.hydrateFilenameTier();
     this.buildState.markReady({ ...identity, buildId });
@@ -538,7 +542,7 @@ export class OnlyPreviewSqliteIndex {
   }
 
   scopePlan(scope) {
-    return createScopePlan(scope);
+    return createSqliteScopePlan(scope);
   }
 
   candidateIterator(normalizedQuery, scopePlan, { restricted = false } = {}) {
@@ -631,7 +635,7 @@ export class OnlyPreviewSqliteIndex {
   ) {
     const normalizedQuery = normalizeSearchText(queryValue);
     const cap = clampSearchResultLimit(maxResults);
-    const scopePlan = createScopePlan(scope);
+    const scopePlan = createSqliteScopePlan(scope);
     if (!normalizedQuery || cap === 0) return { results: [], truncated: false, cancelled: false };
     const selected = new Map();
     const selectedTitleRecords = new Map();

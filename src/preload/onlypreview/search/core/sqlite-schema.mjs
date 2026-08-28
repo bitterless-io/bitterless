@@ -1,6 +1,6 @@
 import { SEARCH_SCHEMA_VERSION, SEARCH_STATE_SCHEMA_VERSION } from './constants.mjs';
 
-const REQUIRED_SCHEMA_OBJECTS = [
+const CONTENT_SCHEMA_OBJECTS = [
   'files',
   'files_project_path',
   'chunks',
@@ -8,6 +8,32 @@ const REQUIRED_SCHEMA_OBJECTS = [
   'cjk_postings',
   'index_meta',
 ];
+const REQUIRED_SCHEMA_OBJECTS = [...CONTENT_SCHEMA_OBJECTS, 'search_tree'];
+const SEARCH_TREE_COLUMNS = Object.freeze([
+  ['relative_path', 'TEXT', 1, 1],
+  ['parent_relative_path', 'TEXT', 1, 0],
+  ['name', 'TEXT', 1, 0],
+  ['node_kind', 'TEXT', 1, 0],
+  ['size', 'INTEGER', 1, 0],
+  ['modified_ms', 'INTEGER', 1, 0],
+  ['preview_hint', 'TEXT', 1, 0],
+  ['media_type', 'TEXT', 1, 0],
+  ['is_text', 'INTEGER', 1, 0]
+]);
+
+const CREATE_SEARCH_TREE_SQL = `
+  CREATE TABLE IF NOT EXISTS search_tree (
+    relative_path TEXT PRIMARY KEY,
+    parent_relative_path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    node_kind TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    modified_ms INTEGER NOT NULL,
+    preview_hint TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    is_text INTEGER NOT NULL
+  ) WITHOUT ROWID;
+`;
 
 const CREATE_SCHEMA_SQL = `
   CREATE TABLE files (
@@ -51,6 +77,7 @@ const CREATE_SCHEMA_SQL = `
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   ) WITHOUT ROWID;
+  ${CREATE_SEARCH_TREE_SQL}
 `;
 
 const readSchemaTables = (database) => {
@@ -59,6 +86,25 @@ const readSchemaTables = (database) => {
     `SELECT name, sql FROM sqlite_master WHERE name IN (${placeholders})`,
   ).all(...REQUIRED_SCHEMA_OBJECTS);
   return new Map(rows.map((row) => [row.name, row.sql ?? '']));
+};
+
+const hasUsableSearchTreeSchema = (database, tables) => {
+  const sql = tables.get('search_tree') ?? '';
+  if (!/without\s+rowid/iu.test(sql)) return false;
+  const columns = database.prepare("PRAGMA table_info('search_tree')").all();
+  return (
+    columns.length === SEARCH_TREE_COLUMNS.length &&
+    columns.every((column, index) => {
+      const expected = SEARCH_TREE_COLUMNS[index];
+      return (
+        column.name === expected[0] &&
+        String(column.type).toUpperCase() === expected[1] &&
+        Number(column.notnull) === expected[2] &&
+        Number(column.pk) === expected[3] &&
+        column.dflt_value === null
+      );
+    })
+  );
 };
 
 export const configureSearchDatabase = (database) => {
@@ -73,10 +119,29 @@ export const configureSearchDatabase = (database) => {
   const previousVersion = Number(database.prepare('PRAGMA user_version').get().user_version);
   const tables = readSchemaTables(database);
   const ftsSql = tables.get('chunk_fts') ?? '';
-  const current = previousVersion === SEARCH_SCHEMA_VERSION &&
-    REQUIRED_SCHEMA_OBJECTS.every((name) => tables.has(name)) &&
+  const contentSchemaValid = CONTENT_SCHEMA_OBJECTS.every((name) => tables.has(name)) &&
     /content\s*=\s*''/iu.test(ftsSql) && /contentless_delete\s*=\s*1/iu.test(ftsSql);
-  if (!current) {
+  const current =
+    previousVersion === SEARCH_SCHEMA_VERSION &&
+    contentSchemaValid &&
+    hasUsableSearchTreeSchema(database, tables);
+  const additiveUpgrade = previousVersion === 7 && contentSchemaValid;
+  if (additiveUpgrade) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      database.exec(`
+        DROP TABLE IF EXISTS search_tree;
+        ${CREATE_SEARCH_TREE_SQL}
+        DELETE FROM index_meta WHERE key LIKE 'tree_%';
+        PRAGMA user_version = ${SEARCH_SCHEMA_VERSION};
+        COMMIT;
+      `);
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  if (!current && !additiveUpgrade) {
     database.exec('BEGIN IMMEDIATE');
     try {
       database.exec(`
@@ -85,6 +150,7 @@ export const configureSearchDatabase = (database) => {
         DROP TABLE IF EXISTS chunks;
         DROP TABLE IF EXISTS files;
         DROP TABLE IF EXISTS index_meta;
+        DROP TABLE IF EXISTS search_tree;
         ${CREATE_SCHEMA_SQL}
         PRAGMA user_version = ${SEARCH_SCHEMA_VERSION};
         COMMIT;
@@ -94,7 +160,11 @@ export const configureSearchDatabase = (database) => {
       throw error;
     }
   }
-  return { previousVersion, schemaVersion: SEARCH_SCHEMA_VERSION, rebuilt: !current };
+  return {
+    previousVersion,
+    schemaVersion: SEARCH_SCHEMA_VERSION,
+    rebuilt: !current && !additiveUpgrade
+  };
 };
 
 export const createBuildStateStore = (database) => {

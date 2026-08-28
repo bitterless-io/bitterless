@@ -13,7 +13,7 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
 | Host/workspace capability registry     | Main-created views + native-dialog/OS absolute path                                | host-bound opaque workspace + relative refs                                                                                                                                 | Node fs/path, UUID                                                               | host isolation/revocation/containment tests                                                       |
 | Recent-directory service               | canonical workspace root + Core SQLite lifecycle                                   | latest directory candidate, per-host restore, fresh workspace capability                                                                                                    | `SettingDao`, workspace/host registries                                          | latch/CAS/single-flight/order tests                                                               |
 | Search bootstrap capability            | attached host + opaque workspace                                                   | private root/database paths injected only into hidden file-search preload initialization                                                                                    | host/workspace registries, user-data path                                        | token/revocation/no-visible-renderer-path tests                                                   |
-| Background file-search renderer        | private root/database paths, browse/query/config/watch/result-preview events       | complete demand-loaded directory listings, exclude-independent tree-name tier, excluded v7 SQLite content tier, grouped Files/Contents results, bounded result previews, aggregate progress/telemetry | hidden BrowserWindow, trusted Node preload, XPC, `node:sqlite`, YAML, filesystem | lifecycle/XPC/browse/dual-corpus/schema/query/token/preview/watch/progress/cancel/memory/recovery tests |
+| Background file-search renderer        | private root/database paths, browse/query/config/watch/result-preview events       | complete demand-loaded directory listings, exclude-independent tree-name tier, excluded v7 SQLite content tier, grouped Files/Contents results, bounded result previews, aggregate progress/telemetry, privacy-safe startup/index/search timing | hidden BrowserWindow, trusted Node preload, XPC, `node:sqlite`, YAML, filesystem | lifecycle/XPC/browse/dual-corpus/schema/query/token/preview/watch/progress/cancel/memory/recovery/diagnostics tests |
 | File descriptor/text/clipboard service | authorized relative Project item ref                                               | typed descriptor/text, native item/text clipboard write, one identity-checked permanent unlink, or explicit error                                                           | workspace registry, Electron clipboard, bounded OS helper, Node fs               | signature/binary/encoding/size/copy/delete tests                                                  |
 | Asset/document protocols               | authorized descriptor + Main selection revision                                    | exact asset streams or canonical-entry-contained HTML resources                                                                                                             | Electron protocol, Node streams, asset/document registries                       | identity/range/containment/revoke tests                                                           |
 | Open router                            | macOS event or Windows argv                                                        | serialized standalone-open request                                                                                                                                          | app lifecycle, window handler                                                    | argv/early queue tests                                                                            |
@@ -114,8 +114,9 @@ standalone multi-`WebContentsView` window, app-specific Setting window, and OS f
     bounded latest-file priority lane in that preload. The lane reuses the full search admission
     guards, may emit its complete one-file match before the terminal authoritative result, and is
     revoked by a newer selection, generation/build replacement, promotion, failure, or shutdown.
-22. Entering Global Search captures a stable Current directory anchor and sends a strict relative
-    directory scope by default; the Shell selector can switch the same query to Project. The Project
+22. Entering Global Search starts from the explicit Current directory and sends a strict relative
+    directory scope by default; explicit Project-tree selection updates it live while roving focus
+    and result selection remain inert. The Shell selector can switch the same query to Project. The Project
     pane has no filter and retains its synthetic-rooted browse tree while search occupies the right
     workspace. Files and Contents remain separate groups. Selecting a row requests only its opaque
     latest-request result token and updates the bounded bottom preview; explicit open/reveal is a
@@ -413,6 +414,34 @@ locally pinned viewer, a 20MiB adapter override over the shared 10MiB default, b
 Worker preflight, and adapter-driven Vue component loading. Full OnlyPreview tests pass 360/360;
 Electron/Playwright and the real app remain intentionally unrun for Ral's runtime/visual check.
 
+`onlypreview-search-startup-diagnostics-041` instruments the current first-search startup delay
+without changing behavior. Source tracing establishes the blocking mechanism: every initialization
+clears generation-local tree metadata and performs count plus candidate reconciliation/promotion,
+while grouped Global Search waits for that metadata before its authoritative Files/Contents
+branches. Fixed `[onlypreview-search]` events will identify whether SQLite hydration, count, backup,
+traversal/reconcile, promotion, XPC, or Shell commit dominates on Ral's current corpus; no query,
+path, identity, token, or file content is logged. Production success/failure/cancellation paths and
+the full visible Preview-to-Shell timeline passed
+[independent review 3](../reviews/onlypreview-search-startup-diagnostics-041-3.md); live timing
+acceptance remains with Ral.
+
+Ral's live sample resolves that diagnostic question: dispatch-to-hidden-runtime was about 5ms,
+SQLite reuse/hydration 1.203s, count 9.07s, candidate backup 12.09s, reconcile 16.94s, promotion
+0.714s, and the first query waited 33.024s at `initial-tree`; after release, Contents completed in
+0.665s and Files in 0.817s. `onlypreview-warm-search-before-reconcile-042` therefore changes the
+readiness model to stale-while-revalidate. A reusable committed snapshot serves cooperative warm
+Files/Contents batches immediately; successful promotion reacquires a fresh snapshot and
+terminal-replaces results/tokens. Schema 8 additively persists build-bound non-file Search-tree
+metadata, while reader/writer leases prevent mixed or closed snapshots. True first build remains
+fail-closed and the hidden candidate is never searchable. Maximum bounded watch work now performs
+one metadata preflight and ten-file body/transaction chunks; the combined regression updates 512
+files over 130,000 retained tree rows while holding at most ten 1MiB bodies and using 52
+transactions. The actual non-Electron Shell -> Main relay -> hidden runtime chain receives a warm
+batch before initialize/reconcile terminals. The final 86/86 focused aggregate, both typechecks,
+production build, module-size audit, and diff check passed, and
+[independent review 2](../reviews/onlypreview-warm-search-before-reconcile-042-2.md) recorded
+**PASS**. Ral retains live large-project startup acceptance.
+
 ## Main Risks And Decisions
 
 | Risk                                                                          | Decision                                                                                                                                                                                                                           |
@@ -441,7 +470,8 @@ Electron/Playwright and the real app remain intentionally unrun for Ral's runtim
 | XPC routes a visible renderer to the privileged search handler                | every private file-search request/event requires a Main-held capability and exact host/workspace/generation shape before path access or public relay                                                                               |
 | Watch events are lost, spoofed, or update only the index                      | 400ms trailing background-preload commit → private fenced XPC event → Main validation/host binding → matching selected-file Region transition and new authoritative revision                                                       |
 | Project browsing is obscured by search                                        | keep the synthetic-rooted Project tree visible and place Global Search in the right workspace; set only the native Preview content view to zero bounds while active                                                               |
-| Global Search scope drifts with result selection                              | capture one relative directory before results render; default Current directory and switch explicitly to Project; selection never mutates the anchor                                                                             |
+| Global Search scope drifts or ignores explicit Project selection              | derive one live Current directory from explicit tree selection; focus/result selection stays inert; directory scope supersedes the request while Project scope only records the latest anchor                                      |
+| Files delays Contents or intermixes file/folder order                         | start both authoritative branches cooperatively after readiness gates, drain both before releasing the index, and stable-partition folders before files prior to the Files cap                                                     |
 | A stale result preview reads or presents the wrong path                        | latest-request opaque result tokens, host/workspace/generation ownership, bounded token registry, pre/post-read identity checks, and stale response fences                                                                         |
 | Result preview allocates unbounded memory                                      | 256KiB text-head, 200 direct-child, bounded context and 250+250 result caps; non-text remains metadata-only and adapters load on demand                                                                                            |
 | Tree visibility and Global Search exclusions accidentally share policy        | keep an exclude-independent metadata/name tier for the ordinary tree; apply hidden/fixed/config policy only to the separate file/content search tier before body reads                                                           |

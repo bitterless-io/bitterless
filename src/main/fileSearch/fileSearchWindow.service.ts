@@ -11,6 +11,10 @@ import { fileSearchRuntimeRelayService } from './fileSearchRuntimeRelay.service'
 import { FileSearchLifecycleFence } from './fileSearchLifecycleFence.service';
 import { waitForFileSearchRuntimeReady } from './fileSearchRuntimeReady.service';
 import { registerFileSearchRuntimeEventHandler } from './fileSearchRuntimeEvent.handler';
+import {
+  createOnlyPreviewSearchDiagnostics,
+  type OnlyPreviewSearchDiagnostics
+} from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
 
 const rendererTarget = (): { filePath: string; url: string } => {
   const rendererPath = 'fileSearch/index.html';
@@ -28,6 +32,10 @@ export class FileSearchWindowService {
   private window: BrowserWindow | null = null;
   private lifecycleId = 0;
 
+  constructor(
+    private readonly diagnostics: OnlyPreviewSearchDiagnostics = createOnlyPreviewSearchDiagnostics()
+  ) {}
+
   async start(params: {
     host: OnlyPreviewHostCapability;
     bootstrapToken: string;
@@ -35,6 +43,12 @@ export class FileSearchWindowService {
     onUnexpectedExit(reason: string): void;
   }): Promise<void> {
     this.stop();
+    const diagnostic = { tag: this.diagnostics.nextTag('w'), startedAt: this.diagnostics.now() };
+    this.diagnostics.emit('runtime-window', {
+      tag: diagnostic.tag,
+      phase: 'start',
+      elapsedMs: 0
+    });
     const lifecycleId = ++this.lifecycleId;
     const capability = randomBytes(32).toString('base64url');
     const instanceId = randomUUID();
@@ -96,6 +110,11 @@ export class FileSearchWindowService {
     try {
       if (is.dev && process.env.ELECTRON_RENDERER_URL) await window.loadURL(target.url);
       else await window.loadFile(target.filePath);
+      this.diagnostics.emit('runtime-window', {
+        tag: diagnostic.tag,
+        phase: 'renderer-loaded',
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+      });
       if (this.window !== window || this.lifecycleId !== lifecycleId || window.isDestroyed()) {
         throw new Error('File-search renderer startup was superseded.');
       }
@@ -104,6 +123,11 @@ export class FileSearchWindowService {
         capability,
         instanceId,
         stopped
+      });
+      this.diagnostics.emit('runtime-window', {
+        tag: diagnostic.tag,
+        phase: 'preload-ready',
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
       });
       if (this.window !== window || this.lifecycleId !== lifecycleId || window.isDestroyed()) {
         throw new Error('File-search renderer startup was superseded.');
@@ -116,8 +140,23 @@ export class FileSearchWindowService {
         client: runtimeClient,
         broadcast: params.broadcast
       });
+      this.diagnostics.emit('runtime-window', {
+        tag: diagnostic.tag,
+        phase: 'relay-attached',
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+      });
+      this.diagnostics.emit('runtime-window-terminal', {
+        tag: diagnostic.tag,
+        outcome: 'success',
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+      });
       window.once('closed', () => lifecycleFence.stop());
     } catch (error) {
+      this.diagnostics.emit('runtime-window-terminal', {
+        tag: diagnostic.tag,
+        outcome: 'failure',
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+      });
       if (this.window === window) this.stop();
       throw error;
     }

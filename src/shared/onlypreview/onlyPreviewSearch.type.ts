@@ -109,6 +109,11 @@ export interface OnlyPreviewSearchProgressEvent {
 
 export interface OnlyPreviewBrowseEntry extends OnlyPreviewIndexEntry {
   directoryToken: string | null;
+  searchExcluded: boolean;
+}
+
+export interface OnlyPreviewDirectoryPreviewEntry extends OnlyPreviewIndexEntry {
+  directoryToken: null;
 }
 
 export interface OnlyPreviewBrowseListing {
@@ -220,7 +225,7 @@ export type OnlyPreviewGlobalSearchPreview =
   | {
       kind: 'directory';
       name: string;
-      entries: OnlyPreviewBrowseEntry[];
+      entries: OnlyPreviewDirectoryPreviewEntry[];
       truncated: boolean;
     }
   | {

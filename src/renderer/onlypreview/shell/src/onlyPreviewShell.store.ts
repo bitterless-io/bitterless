@@ -53,9 +53,15 @@ import {
 import { subscribeOnlyPreviewShellEvents } from './onlyPreviewShellEvents.service';
 import { onlyPreviewFindStore } from './onlyPreviewFind.store';
 import {
+  createOnlyPreviewSearchDiagnostics,
+  type OnlyPreviewSearchDiagnostics
+} from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
+import {
   buildOnlyPreviewRootedTreeRows,
   getOnlyPreviewParentPath,
   moveOnlyPreviewTreeFocus,
+  resolveOnlyPreviewCurrentDirectory,
+  resolveOnlyPreviewTreeFocusPath,
   type OnlyPreviewTreeNavigationKey
 } from './onlyPreviewTree.service';
 
@@ -66,11 +72,17 @@ const errorMessage = (error: unknown): string => {
   return onlyPreviewI18n.errors.OPERATION_FAILED;
 };
 
-class OnlyPreviewShellStore {
+export class OnlyPreviewShellStore {
+  private readonly diagnostics: OnlyPreviewSearchDiagnostics;
+
+  constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
+    this.diagnostics = diagnostics;
+  }
   workspace: OnlyPreviewWorkspace | null = null;
   index: OnlyPreviewIndex | null = null;
   settings: OnlyPreviewSettings | null = null;
   selectedRelativePath = '';
+  treeSelectedRelativePath: string | null = null;
   selectedCharacterCount = 0;
   previewPresentation: OnlyPreviewPreviewPresentation | null = null;
   previewActionError = '';
@@ -93,7 +105,7 @@ class OnlyPreviewShellStore {
   private pendingCharacterCount = 0;
 
   get visibleRows(): OnlyPreviewTreeRow[] {
-    return buildOnlyPreviewRootedTreeRows(this.index, this.workspace?.rootName || '', this.expandedPaths);
+    return buildOnlyPreviewRootedTreeRows(this.index, this.workspace?.rootName || '', this.expandedPaths, this.browseProjection.searchExcludedPaths);
   }
   get projectionReady(): boolean {
     return this.browseProjection.ready;
@@ -110,6 +122,9 @@ class OnlyPreviewShellStore {
   get selectedEntry(): OnlyPreviewIndexEntry | null {
     return this.index?.entries.find((entry) => entry.relativePath === this.selectedRelativePath) || null;
   }
+  get currentDirectoryRelativePath(): string {
+    return resolveOnlyPreviewCurrentDirectory(this.index, this.treeSelectedRelativePath, this.selectedRelativePath);
+  }
   get previewFileRef(): OnlyPreviewPreviewPresentation['fileRef'] {
     return this.previewPresentation?.fileRef || null;
   }
@@ -117,30 +132,37 @@ class OnlyPreviewShellStore {
     return this.previewPresentation?.selectedTextAvailable === true;
   }
   get treeFocusRelativePath(): string {
-    const rows = this.visibleRows;
-    if (rows.some((row) => row.entry.relativePath === this.focusedRelativePath)) {
-      return this.focusedRelativePath;
-    }
-    if (rows.some((row) => row.entry.relativePath === this.selectedRelativePath)) {
-      return this.selectedRelativePath;
-    }
-    return rows[0]?.entry.relativePath || '';
+    return resolveOnlyPreviewTreeFocusPath(
+      this.visibleRows,
+      this.focusedRelativePath,
+      this.treeSelectedRelativePath
+    );
   }
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    const diagnostic = { tag: this.diagnostics.nextTag('h'), startedAt: this.diagnostics.now() };
     this.initialized = true;
-    this.subscribe();
-    if (!onlyPreviewEnv.hostToken || !onlyPreviewEnv.hostId) {
-      this.errorMessage = onlyPreviewI18n.errors.HOST_NOT_FOUND;
-      return;
+    let outcome: 'success' | 'failure' = 'failure';
+    try {
+      this.subscribe();
+      if (!onlyPreviewEnv.hostToken || !onlyPreviewEnv.hostId) {
+        this.errorMessage = onlyPreviewI18n.errors.HOST_NOT_FOUND;
+        return;
+      }
+      await Promise.all([
+        this.refreshSettings(),
+        this.restoreWorkspace(),
+        this.syncPreviewPresentation(),
+        onlyPreviewFindStore.initialize()
+      ]);
+      outcome = 'success';
+    } finally {
+      this.diagnostics.emit('shell-initialized', {
+        tag: diagnostic.tag,
+        outcome,
+        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+      });
     }
-
-    await Promise.all([
-      this.refreshSettings(),
-      this.restoreWorkspace(),
-      this.syncPreviewPresentation(),
-      onlyPreviewFindStore.initialize()
-    ]);
   }
   async chooseFolder(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
@@ -199,18 +221,12 @@ class OnlyPreviewShellStore {
   getGlobalSearchContext(): OnlyPreviewGlobalSearchContext | null {
     const workspace = this.workspace;
     if (!workspace) return null;
-    const focusedEntry = this.index?.entries.find(
-      (entry) => entry.relativePath === this.focusedRelativePath
-    );
-    const focusedRoot = this.focusedRelativePath === '';
     return {
       workspaceId: workspace.workspaceId,
       generation: this.searchWorkspaceGeneration,
       ready: this.projectionReady,
       rootName: workspace.rootName,
-      focusedRelativePath: focusedEntry?.relativePath || '',
-      focusedNodeKind: focusedRoot ? 'directory' : focusedEntry?.nodeKind || null,
-      selectedRelativePath: this.selectedRelativePath
+      currentDirectoryRelativePath: this.currentDirectoryRelativePath
     };
   }
   setFocusedPath(relativePath: string): void {
@@ -223,6 +239,7 @@ class OnlyPreviewShellStore {
   }
   async locateSelectedFile(): Promise<string> {
     if (!this.selectedRelativePath) return '';
+    this.treeSelectedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
     await this.loadSelectedParentListings();
     if (!this.selectedEntry) return '';
@@ -275,24 +292,20 @@ class OnlyPreviewShellStore {
     this.focusedRelativePath = movement.relativePath;
     return movement.relativePath;
   }
-
   handleTreeClick(entry: OnlyPreviewIndexEntry, clickCount: number): void {
     if (clickCount > 1) return;
     void this.activateEntry(entry, clickCount === 0);
   }
-
   handleTreeDoubleClick(entry: OnlyPreviewIndexEntry): void {
-    if (entry.nodeKind !== 'file' || this.settings?.openFilesWithSingleClick) return;
-    void this.activateEntry(entry, true);
+    if (entry.nodeKind === 'file' && this.settings?.openFilesWithSingleClick) return;
+    void this.activateEntry(entry, true, true);
   }
-
   activateFocusedEntry(): void {
     const entry = this.visibleRows.find(
       (candidate) => candidate.entry.relativePath === this.focusedRelativePath
     )?.entry;
-    if (entry) void this.activateEntry(entry, true);
+    if (entry) void this.activateEntry(entry, true, true);
   }
-
   toggleDirectory(relativePath: string): void {
     if (this.expandedPaths.has(relativePath)) {
       this.expandedPaths.delete(relativePath);
@@ -445,6 +458,8 @@ class OnlyPreviewShellStore {
         this.indexLoading = false;
         this.indexProgressState = resetOnlyPreviewSearchProgress();
         this.selectedRelativePath = '';
+        this.treeSelectedRelativePath = null;
+        this.focusedRelativePath = '';
         this.selectedCharacterCount = 0;
         return;
       }
@@ -465,6 +480,7 @@ class OnlyPreviewShellStore {
     this.indexProgressState = resetOnlyPreviewSearchProgress();
     this.selectedCharacterCount = 0;
     this.selectedRelativePath = workspace.selectedRelativePath || '';
+    this.treeSelectedRelativePath = this.selectedRelativePath || null;
     this.focusedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
     await this.initializeIndex();
@@ -492,6 +508,7 @@ class OnlyPreviewShellStore {
       }
       this.workspace = workspace;
       this.selectedRelativePath = workspace.selectedRelativePath || '';
+      this.treeSelectedRelativePath = this.selectedRelativePath || null;
       this.focusedRelativePath = this.selectedRelativePath;
       this.expandSelectedParents();
       await this.loadSelectedParentListings();
@@ -654,17 +671,18 @@ class OnlyPreviewShellStore {
     }
   }
 
-  private async activateEntry(entry: OnlyPreviewIndexEntry, force: boolean): Promise<void> {
+  private async activateEntry(entry: OnlyPreviewIndexEntry, force: boolean, toggleDirectory = false): Promise<void> {
     this.focusedRelativePath = entry.relativePath;
+    this.treeSelectedRelativePath = entry.relativePath;
+    onlyPreviewGlobalSearchStore.syncCurrentDirectory(this.getGlobalSearchContext());
     if (entry.nodeKind === 'directory') {
-      this.toggleDirectory(entry.relativePath);
+      if (toggleDirectory) this.toggleDirectory(entry.relativePath);
       return;
     }
     if (entry.nodeKind !== 'file') return;
     if (!force && !this.settings?.openFilesWithSingleClick) return;
     await this.selectFile(entry.relativePath);
   }
-
   async openGlobalSearchResult(result: OnlyPreviewGlobalSearchResult): Promise<boolean> {
     if (result.section === 'files' && result.nodeKind === 'directory') {
       return await this.revealGlobalSearchDirectory(result.relativePath);
@@ -687,6 +705,7 @@ class OnlyPreviewShellStore {
       applyResult: (result) => void this.commitBrowseProjectionResult(result, context)
     });
     if (!revealed) return false;
+    this.treeSelectedRelativePath = relativePath;
     this.focusedRelativePath = relativePath;
     return true;
   }
@@ -698,6 +717,8 @@ class OnlyPreviewShellStore {
     const generation = ++this.selectionGeneration;
     const searchGeneration = this.searchWorkspaceGeneration;
     this.restoreGeneration += 1;
+    this.treeSelectedRelativePath = relativePath;
+    this.focusedRelativePath = relativePath;
     this.selectedRelativePath = relativePath;
     this.expandSelectedParents();
     try {

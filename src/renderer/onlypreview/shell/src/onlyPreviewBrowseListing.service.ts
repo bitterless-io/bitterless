@@ -22,7 +22,8 @@ const ENTRY_KEYS = [
   'previewHint',
   'mediaType',
   'isText',
-  'directoryToken'
+  'directoryToken',
+  'searchExcluded'
 ] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -66,7 +67,8 @@ const isBrowseEntry = (value: unknown, parentPath: string): value is OnlyPreview
       String(value.previewHint)
     ) ||
     !['text', 'image', 'audio', 'video', 'pdf', 'unknown'].includes(String(value.mediaType)) ||
-    typeof value.isText !== 'boolean'
+    typeof value.isText !== 'boolean' ||
+    typeof value.searchExcluded !== 'boolean'
   ) {
     return false;
   }
@@ -89,7 +91,8 @@ const isBrowseEntry = (value: unknown, parentPath: string): value is OnlyPreview
       value.size === 0 &&
       value.previewHint === 'unsupported' &&
       value.mediaType === 'unknown' &&
-      !value.isText
+      !value.isText &&
+      value.searchExcluded === false
     );
   }
   const expectedMediaType = value.previewHint === 'unsupported' ? 'unknown' : value.previewHint;

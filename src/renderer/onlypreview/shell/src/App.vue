@@ -162,8 +162,9 @@
             class="onlypreview-shell__tree-row"
             :class="{
               'onlypreview-shell__tree-row--selected':
-                row.entry.relativePath === onlyPreviewShellStore.selectedRelativePath,
-              'onlypreview-shell__tree-row--symlink': row.entry.nodeKind === 'symlink'
+                row.entry.relativePath === onlyPreviewShellStore.treeSelectedRelativePath,
+              'onlypreview-shell__tree-row--symlink': row.entry.nodeKind === 'symlink',
+              'onlypreview-shell__tree-row--search-excluded': row.searchExcluded
             }"
             :style="{ '--onlypreview-tree-depth': row.depth }"
             type="button"
@@ -172,7 +173,9 @@
             :tabindex="row.entry.relativePath === treeFocusRelativePath ? 0 : -1"
             :aria-level="row.depth + 1"
             :aria-expanded="row.entry.nodeKind === 'directory' ? row.expanded : undefined"
-            :aria-selected="row.entry.relativePath === onlyPreviewShellStore.selectedRelativePath"
+            :aria-selected="
+              row.entry.relativePath === onlyPreviewShellStore.treeSelectedRelativePath
+            "
             :title="
               row.entry.nodeKind === 'symlink'
                 ? onlyPreviewI18n.project.symlink
@@ -194,12 +197,18 @@
             <IconFolderOpen
               v-if="row.entry.nodeKind === 'directory' && row.expanded"
               class="onlypreview-shell__tree-icon"
+              :class="{
+                'onlypreview-shell__tree-icon--search-excluded-directory': row.searchExcluded
+              }"
               :size="15"
               aria-hidden="true"
             />
             <IconFolder
               v-else-if="row.entry.nodeKind === 'directory'"
               class="onlypreview-shell__tree-icon"
+              :class="{
+                'onlypreview-shell__tree-icon--search-excluded-directory': row.searchExcluded
+              }"
               :size="15"
               aria-hidden="true"
             />
@@ -513,6 +522,9 @@ watch(
   () => onlyPreviewGlobalSearchStore.active,
   (active) => {
     const generation = ++globalSearchFocusGeneration;
+    const centeredProjectPath = active
+      ? null
+      : onlyPreviewGlobalSearchStore.consumeCenteredProjectPath();
     if (active) {
       globalSearchShellOpener =
         onlyPreviewGlobalSearchStore.openerOrigin === 'shell' &&
@@ -528,6 +540,12 @@ watch(
       }
       await restorePreviewBounds();
       if (generation !== globalSearchFocusGeneration) return;
+      if (centeredProjectPath !== null) {
+        globalSearchShellOpener = null;
+        await restoreOnlyPreviewGlobalSearchFocus('discard');
+        await focusTreePath(centeredProjectPath, true);
+        return;
+      }
       if (!onlyPreviewGlobalSearchStore.restoreFocusOnExit) {
         await restoreOnlyPreviewGlobalSearchFocus('discard');
         return;

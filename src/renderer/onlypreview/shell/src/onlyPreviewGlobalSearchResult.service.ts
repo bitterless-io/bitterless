@@ -158,6 +158,11 @@ export const sameGlobalSearchPath = (
   right: OnlyPreviewGlobalSearchResult
 ): boolean => left.section === right.section && left.relativePath === right.relativePath;
 
+export const getOnlyPreviewGlobalSearchDisplayType = (
+  result: OnlyPreviewGlobalSearchResult
+): string =>
+  result.section === 'files' && result.nodeKind === 'directory' ? 'folder' : result.mediaType;
+
 export const splitOnlyPreviewContentMatch = (match: OnlyPreviewSearchContentMatch): {
   before: string;
   highlight: string;

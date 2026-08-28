@@ -36,6 +36,10 @@ import {
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import { isOnlyPreviewSearchRuntimeEventCurrent } from '@preload/onlypreview/search/onlyPreviewSearchRuntimeFence.service';
 import {
+  createOnlyPreviewSearchDiagnostics,
+  type OnlyPreviewSearchDiagnostics
+} from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
+import {
   createFileSearchCoordinator,
   type CreateOnlyPreviewSearchCoordinatorOptions,
   type OnlyPreviewSearchCoordinator
@@ -94,14 +98,21 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
 
   constructor(
     private readonly registration: FileSearchRuntimeRegistration,
-    private readonly createCoordinator: FileSearchCoordinatorFactory = createFileSearchCoordinator
+    private readonly createCoordinator: FileSearchCoordinatorFactory = createFileSearchCoordinator,
+    private readonly diagnostics: OnlyPreviewSearchDiagnostics = createOnlyPreviewSearchDiagnostics()
   ) {}
 
   async initialize(
     params: OnlyPreviewSearchInitializeRequest,
     internalBootstrap?: OnlyPreviewSearchBootstrap
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>> {
-    return await runOperation(async () => {
+    const diagnostic = { tag: this.diagnostics.nextTag('r'), startedAt: this.diagnostics.now() };
+    this.diagnostics.emit('runtime-accepted', {
+      tag: diagnostic.tag,
+      method: 'initialize',
+      generation: params.generation
+    });
+    const result = await runOperation(async () => {
       const request = parseOnlyPreviewSearchInitializeRequest(params);
       this._bindHost(request.hostToken);
       const sessionId = ++this.sessionId;
@@ -144,6 +155,13 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
         throw error;
       }
     });
+    this.diagnostics.emit('runtime-terminal', {
+      tag: diagnostic.tag,
+      method: 'initialize',
+      outcome: result.ok ? 'success' : 'failure',
+      elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+    });
+    return result;
   }
 
   async refresh(
@@ -182,11 +200,24 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
   async search(
     params: OnlyPreviewSearchRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchResponse>> {
-    return await runOperation(async () => {
+    const diagnostic = { tag: this.diagnostics.nextTag('r'), startedAt: this.diagnostics.now() };
+    this.diagnostics.emit('runtime-accepted', {
+      tag: diagnostic.tag,
+      method: 'search',
+      generation: params.generation
+    });
+    const result = await runOperation(async () => {
       const request = parseOnlyPreviewSearchRequest(params);
       const active = this._requireActiveRequest(request);
       return await active.coordinator.search(request);
     });
+    this.diagnostics.emit('runtime-terminal', {
+      tag: diagnostic.tag,
+      method: 'search',
+      outcome: result.ok ? 'success' : 'failure',
+      elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+    });
+    return result;
   }
 
   async preview(
@@ -222,6 +253,7 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
 
   private _createCoordinator(sessionId: number): OnlyPreviewSearchCoordinator {
     return this.createCoordinator({
+      diagnostics: this.diagnostics,
       onBrowseListing: (listing) => {
         const active = this.active;
         if (!isOnlyPreviewSearchRuntimeEventCurrent(active, sessionId, listing)) return;

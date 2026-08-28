@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 import { createOnlyPreviewBrowseIndex } from '../../src/preload/onlypreview/search/core/browse-index.mjs';
+import { compileOrderedGlobRules } from '../../src/preload/onlypreview/search/core/glob-config.mjs';
+import { createTraversalPolicy } from '../../src/preload/onlypreview/search/core/traversal.mjs';
 
 const withTempDirectory = async (callback) => {
   const path = await mkdtemp(join(tmpdir(), 'onlypreview-browse-index-'));
@@ -20,6 +22,12 @@ const write = async (path, content = '') => {
   await writeFile(path, content);
 };
 
+const createBrowse = async (root, { exclude = [], ...options } = {}) =>
+  createOnlyPreviewBrowseIndex(await realpath(root), {
+    ...options,
+    searchPolicy: createTraversalPolicy({ rules: compileOrderedGlobRules(exclude) })
+  });
+
 test('browse listings ignore Project Search exclusions and return every immediate child naturally', async () => {
   await withTempDirectory(async (root) => {
     await write(join(root, 'z10.txt'), 'ten');
@@ -30,10 +38,13 @@ test('browse listings ignore Project Search exclusions and return every immediat
     await write(join(root, 'dist/output.js'), 'browse only');
     await write(join(root, 'output/report.txt'), 'browse only');
     await write(join(root, 'generated/drop.txt'), 'browse only');
+    await write(join(root, 'generated/keep/readme.txt'), 'searchable');
     await write(join(root, 'Folder10/item.txt'), 'ten');
     await write(join(root, 'Folder2/item.txt'), 'two');
 
-    const browse = createOnlyPreviewBrowseIndex(await realpath(root));
+    const browse = await createBrowse(root, {
+      exclude: ['generated/**', '!generated/keep/**']
+    });
     const rootListing = await browse.rootListing({ workspaceId: 'workspace', generation: 7 });
     assert.equal(rootListing.workspaceId, 'workspace');
     assert.equal(rootListing.generation, 7);
@@ -59,6 +70,21 @@ test('browse listings ignore Project Search exclusions and return every immediat
       false,
       'a listing contains only the complete immediate-child set'
     );
+    assert.deepEqual(
+      Object.fromEntries(rootListing.entries.map(({ name, searchExcluded }) => [name, searchExcluded])),
+      {
+        '.git': true,
+        '.hidden': true,
+        dist: true,
+        Folder2: false,
+        Folder10: false,
+        generated: true,
+        node_modules: true,
+        output: true,
+        'z2.txt': false,
+        'z10.txt': false
+      }
+    );
 
     const nodeModules = rootListing.entries.find(({ name }) => name === 'node_modules');
     assert.equal(nodeModules.nodeKind, 'directory');
@@ -73,6 +99,87 @@ test('browse listings ignore Project Search exclusions and return every immediat
       dependencyListing.entries.map(({ name }) => name),
       ['pkg']
     );
+    assert.equal(dependencyListing.entries[0].searchExcluded, true);
+    const packageListing = await browse.list({
+      workspaceId: 'workspace',
+      generation: 7,
+      directoryToken: dependencyListing.entries[0].directoryToken
+    });
+    assert.equal(packageListing.entries[0].relativePath, 'node_modules/pkg/index.js');
+    assert.equal(packageListing.entries[0].searchExcluded, true);
+
+    const hidden = rootListing.entries.find(({ name }) => name === '.hidden');
+    const hiddenListing = await browse.list({
+      workspaceId: 'workspace',
+      generation: 7,
+      directoryToken: hidden.directoryToken
+    });
+    assert.equal(hiddenListing.entries[0].searchExcluded, true);
+
+    const generated = rootListing.entries.find(({ name }) => name === 'generated');
+    const generatedListing = await browse.list({
+      workspaceId: 'workspace',
+      generation: 7,
+      directoryToken: generated.directoryToken
+    });
+    assert.deepEqual(
+      generatedListing.entries.map(({ relativePath, searchExcluded }) => [
+        relativePath,
+        searchExcluded
+      ]),
+      [
+        ['generated/keep', false],
+        ['generated/drop.txt', true]
+      ]
+    );
+    const keepListing = await browse.list({
+      workspaceId: 'workspace',
+      generation: 7,
+      directoryToken: generatedListing.entries[0].directoryToken
+    });
+    assert.equal(keepListing.entries[0].relativePath, 'generated/keep/readme.txt');
+    assert.equal(keepListing.entries[0].searchExcluded, false);
+  });
+});
+
+test('exact configured directory exclusions mark every loaded descendant through capabilities', async () => {
+  await withTempDirectory(async (root) => {
+    await write(join(root, 'excluded/child.txt'), 'browse only');
+    await write(join(root, 'excluded/deep/item.txt'), 'browse only');
+    const browse = await createBrowse(root, { exclude: ['excluded'] });
+
+    const rootListing = await browse.rootListing({ workspaceId: 'workspace', generation: 1 });
+    const excluded = rootListing.entries.find(({ relativePath }) => relativePath === 'excluded');
+    assert.equal(excluded.searchExcluded, true);
+
+    const excludedListing = await browse.list({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: excluded.directoryToken
+    });
+    assert.deepEqual(
+      excludedListing.entries.map(({ relativePath, searchExcluded }) => [
+        relativePath,
+        searchExcluded
+      ]),
+      [
+        ['excluded/deep', true],
+        ['excluded/child.txt', true]
+      ]
+    );
+
+    const deepListing = await browse.list({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: excludedListing.entries[0].directoryToken
+    });
+    assert.deepEqual(
+      deepListing.entries.map(({ relativePath, searchExcluded }) => [
+        relativePath,
+        searchExcluded
+      ]),
+      [['excluded/deep/item.txt', true]]
+    );
   });
 });
 
@@ -84,7 +191,7 @@ test('browse capabilities are opaque, do not recurse through symlinks, and expir
     await write(join(outside, 'escaped.txt'), 'outside');
     await symlink(outside, join(root, 'outside-link'));
 
-    const browse = createOnlyPreviewBrowseIndex(await realpath(root));
+    const browse = await createBrowse(root);
     const rootListing = await browse.rootListing({ workspaceId: 'workspace', generation: 1 });
     const folder = rootListing.entries.find(({ name }) => name === 'folder');
     const outsideLink = rootListing.entries.find(({ name }) => name === 'outside-link');
@@ -92,6 +199,7 @@ test('browse capabilities are opaque, do not recurse through symlinks, and expir
     assert.equal(folder.directoryToken.includes('folder'), false);
     assert.equal(outsideLink.nodeKind, 'symlink');
     assert.equal(outsideLink.directoryToken, null);
+    assert.equal(outsideLink.searchExcluded, false);
     await assert.rejects(
       () =>
         browse.list({
@@ -125,7 +233,7 @@ test('browse rejects a directory replaced by an external symlink before opendir 
     await write(join(outside, 'outside-secret-name.txt'), 'outside');
 
     let replaced = false;
-    const browse = createOnlyPreviewBrowseIndex(await realpath(root), {
+    const browse = await createBrowse(root, {
       raceHook: async ({ point, relativePath }) => {
         if (replaced || point !== 'before-directory-open' || relativePath !== '') return;
         replaced = true;
@@ -166,7 +274,7 @@ test('browse omits a child replaced by an external symlink after lstat without l
     await write(outside, 'outside metadata must stay private');
 
     let replaced = false;
-    const browse = createOnlyPreviewBrowseIndex(await realpath(root), {
+    const browse = await createBrowse(root, {
       raceHook: async ({ point, relativePath }) => {
         if (replaced || point !== 'after-child-lstat' || relativePath !== 'inside.txt') return;
         replaced = true;

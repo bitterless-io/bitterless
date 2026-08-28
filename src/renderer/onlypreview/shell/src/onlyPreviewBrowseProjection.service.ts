@@ -37,10 +37,23 @@ const unchangedResult = (
   index
 });
 
+const toIndexEntry = (entry: OnlyPreviewBrowseEntry): OnlyPreviewIndexEntry => ({
+  relativePath: entry.relativePath,
+  parentRelativePath: entry.parentRelativePath,
+  name: entry.name,
+  nodeKind: entry.nodeKind,
+  size: entry.size,
+  modifiedAt: entry.modifiedAt,
+  previewHint: entry.previewHint,
+  mediaType: entry.mediaType,
+  isText: entry.isText
+});
+
 export class OnlyPreviewBrowseProjectionService {
   private readonly entriesByPath = new Map<string, OnlyPreviewBrowseEntry[]>();
   private readonly directoryTokenByPath = new Map<string, string>();
   private readonly requestRevisionByToken = new Map<string, number>();
+  private readonly excludedPaths = new Set<string>();
   private requestRevision = 0;
   private projection: OnlyPreviewIndex | null = null;
 
@@ -48,10 +61,15 @@ export class OnlyPreviewBrowseProjectionService {
     return this.entriesByPath.has('');
   }
 
+  get searchExcludedPaths(): ReadonlySet<string> {
+    return this.excludedPaths;
+  }
+
   clear(expandedPaths: Set<string>): void {
     this.entriesByPath.clear();
     this.directoryTokenByPath.clear();
     this.requestRevisionByToken.clear();
+    this.excludedPaths.clear();
     expandedPaths.clear();
     this.projection = null;
   }
@@ -167,9 +185,11 @@ export class OnlyPreviewBrowseProjectionService {
 
   private rebuild(workspaceId: string): void {
     const entries: OnlyPreviewIndexEntry[] = [];
+    this.excludedPaths.clear();
     for (const listingEntries of this.entriesByPath.values()) {
-      for (const { directoryToken: _directoryToken, ...entry } of listingEntries) {
-        entries.push(entry);
+      for (const entry of listingEntries) {
+        if (entry.searchExcluded) this.excludedPaths.add(entry.relativePath);
+        entries.push(toIndexEntry(entry));
       }
     }
     this.projection = {

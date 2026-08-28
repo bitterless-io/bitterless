@@ -6,6 +6,11 @@ import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 
 import { createOnlyPreviewSearchEngine } from '../../src/preload/onlypreview/search/core/search-engine.mjs';
+import { FilenameTier } from '../../src/preload/onlypreview/search/core/filename-tier.mjs';
+import {
+  mergeOnlyPreviewTreeEntries,
+  selectOnlyPreviewTreeEntries
+} from '../../src/preload/onlypreview/search/core/watch-reconciler.mjs';
 import { createSearchResultBatcher } from '../../src/preload/onlypreview/search/core/result-batcher.mjs';
 import {
   OnlyPreviewSqliteIndex,
@@ -15,7 +20,59 @@ import { createBackgroundWorkSlicer } from '../../src/preload/onlypreview/search
 import { loadOnlyPreviewWorkspaceConfig } from '../../src/preload/onlypreview/search/core/workspace-config.mjs';
 import { search, withTempDirectory, write } from './onlyPreviewSearchEngineSqliteTest.helper.mjs';
 
-test('SQLite v7 vertical covers all query paths, exact rows, batches, and title-only files', async () => {
+test('large incremental filename and tree merges retain every row without argument overflow', () => {
+  const count = 130_000;
+  const records = Array.from({ length: count }, (_, index) => {
+    const relativePath = `files/${String(index).padStart(6, '0')}.txt`;
+    return {
+      id: index + 1,
+      relativePath,
+      fileName: relativePath.slice(6),
+      normalizedPath: relativePath,
+      normalizedTitle: relativePath.slice(6),
+      mediaType: 'text',
+      contentIndexed: true,
+      inProject: true,
+      size: 1,
+      modifiedMs: 1
+    };
+  });
+  const tier = new FilenameTier();
+  tier.replace(records);
+  const earlyRecord = {
+    ...records[0],
+    id: count + 1,
+    relativePath: '000-first.txt',
+    fileName: '000-first.txt',
+    normalizedPath: '000-first.txt',
+    normalizedTitle: '000-first.txt',
+    size: 2
+  };
+  tier.applyBatch({
+    upserts: [earlyRecord],
+    deletePaths: []
+  });
+  assert.equal(tier.visible().length, count + 1);
+  assert.equal(tier.visible()[0].relativePath, earlyRecord.relativePath);
+  assert.equal(tier.get(earlyRecord.relativePath), tier.visible()[0]);
+  assert.equal(tier.records.size, count + 1);
+
+  const treeEntries = records.map((record) => ({
+    relativePath: record.relativePath,
+    nodeKind: 'file'
+  }));
+  const merged = mergeOnlyPreviewTreeEntries(treeEntries, [
+    { relativePath: '000-first', nodeKind: 'directory' }
+  ]);
+  assert.equal(merged.length, count + 1);
+  assert.equal(merged[0].relativePath, '000-first');
+  assert.equal(merged.filter(({ relativePath }) => relativePath.startsWith('files/')).length, count);
+  const selected = selectOnlyPreviewTreeEntries(treeEntries, new Set(['files/000001.txt']));
+  assert.equal(selected.size, 1);
+  assert.equal(selected.get('files/000001.txt'), treeEntries[1]);
+});
+
+test('SQLite v8 vertical covers all query paths, exact rows, batches, and title-only files', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     const databasePath = join(temp, 'cache', 'search.sqlite');
@@ -62,26 +119,26 @@ test('SQLite v7 vertical covers all query paths, exact rows, batches, and title-
       ['long', 'q'.repeat(70)]
     ]) {
       const response = await search(engine, 1, requestId, query);
-      assert.equal(response.results.length > 0, true, query);
+      assert.equal(response.contents.length > 0, true, query);
       assert.equal(
-        response.results.some(({ contentMatch }) => contentMatch !== null),
+        response.contents.some(({ contentMatch }) => contentMatch !== null),
         true,
         query
       );
     }
 
-    assert.equal((await search(engine, 1, 'folder', 'folder-match')).results.length, 0);
+    const folder = await search(engine, 1, 'folder', 'folder-match');
+    assert.equal(folder.contents.length, 0);
+    assert.deepEqual(folder.files.map(({ relativePath }) => relativePath), ['folder-match']);
     const pdf = await search(engine, 1, 'pdf', 'titleonly');
-    assert.equal(pdf.results[0].mediaType, 'pdf');
-    assert.equal(pdf.results[0].contentMatch, null);
-    assert.equal((await search(engine, 1, 'secret-body', 'TOP_SECRET_CONTENT')).results.length, 0);
+    assert.equal(pdf.files[0].mediaType, 'pdf');
+    assert.equal((await search(engine, 1, 'secret-body', 'TOP_SECRET_CONTENT')).contents.length, 0);
     const sensitiveTitle = await search(engine, 1, 'secret-title', '.env.secret');
-    assert.equal(sensitiveTitle.results[0].mediaType, 'text');
-    assert.equal(sensitiveTitle.results[0].contentMatch, null);
+    assert.equal(sensitiveTitle.files[0].mediaType, 'text');
 
     const limited = await search(engine, 1, 'limited', 'batchhit', 2);
-    assert.equal(limited.results.length, 2);
-    assert.equal(limited.truncated, true);
+    assert.equal(limited.files.length, 2);
+    assert.equal(limited.filesTruncated, true);
 
     let terminal = false;
     let firstBatchBeforeTerminal = false;
@@ -109,13 +166,13 @@ test('SQLite v7 vertical covers all query paths, exact rows, batches, and title-
       batches.every((batch) => batch.length <= 50),
       true
     );
-    assert.equal(batches.flat().length, streamed.results.length);
+    assert.equal(batches.flat().length, streamed.files.length);
     assert.deepEqual(
       batches.flat().map(({ relativePath }) => relativePath),
-      streamed.results.map(({ relativePath }) => relativePath)
+      streamed.files.map(({ relativePath }) => relativePath)
     );
 
-    assert.equal(engine.index.database.prepare('PRAGMA user_version').get().user_version, 7);
+    assert.equal(engine.index.database.prepare('PRAGMA user_version').get().user_version, 8);
     assert.notEqual(engine.index.database.prepare('PRAGMA synchronous').get().synchronous, 0);
     assert.equal(engine.index.database.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
     await engine.shutdown();
@@ -146,10 +203,11 @@ test('reopen reconciles changes and an incomplete build state is never treated a
     });
     await write(join(root, 'mutable.txt'), 'new searchable content');
     await engine.refresh({ workspaceId: 'workspace', generation: 2 });
-    assert.equal((await search(engine, 2, 'changed', 'searchable')).results.length, 1);
+    assert.equal((await search(engine, 2, 'changed', 'searchable')).contents.length, 1);
     await unlink(join(root, 'mutable.txt'));
     await engine.refresh({ workspaceId: 'workspace', generation: 2 });
-    assert.equal((await search(engine, 2, 'deleted', 'mutable')).results.length, 0);
+    const deleted = await search(engine, 2, 'deleted', 'mutable');
+    assert.equal(deleted.files.length + deleted.contents.length, 0);
     await engine.shutdown();
 
     const database = new DatabaseSync(databasePath);
@@ -178,8 +236,9 @@ test('reopen reconciles changes and an incomplete build state is never treated a
       recovered.index.entries.some(({ relativePath }) => relativePath === 'partial.txt'),
       false
     );
-    assert.equal((await search(engine, 3, 'actual', 'actual rebuild')).results.length, 1);
-    assert.equal((await search(engine, 3, 'partial', 'partial')).results.length, 0);
+    assert.equal((await search(engine, 3, 'actual', 'actual rebuild')).contents.length, 1);
+    const partial = await search(engine, 3, 'partial', 'partial');
+    assert.equal(partial.files.length + partial.contents.length, 0);
     await engine.shutdown();
   });
 });
@@ -235,7 +294,7 @@ test('the tolerant extension classifier identity invalidates and rebuilds an old
       ready.index.entries.some(({ relativePath }) => relativePath === 'current.markdown'),
       true
     );
-    assert.equal((await search(engine, 1, 'new-classifier', 'tolerant body')).results.length, 1);
+    assert.equal((await search(engine, 1, 'new-classifier', 'tolerant body')).contents.length, 1);
     await engine.shutdown();
   });
 });
@@ -334,13 +393,19 @@ test('SQLite build honors elapsed slicing even when the batch has only one slow 
   index.close();
 });
 
-test('initial rebuild bulk-finalizes the filename tier once and keeps incremental edits sorted', async () => {
+test('initial rebuild finalizes once and incremental filename batches stay sorted', async () => {
   const index = new OnlyPreviewSqliteIndex(':memory:');
   const originalRebuild = index.filenameTier.rebuild.bind(index.filenameTier);
+  const originalApplyBatch = index.filenameTier.applyBatch.bind(index.filenameTier);
   let rebuildCount = 0;
+  let batchCount = 0;
   index.filenameTier.rebuild = () => {
     rebuildCount += 1;
     originalRebuild();
+  };
+  index.filenameTier.applyBatch = (...args) => {
+    batchCount += 1;
+    return originalApplyBatch(...args);
   };
   const entries = Array.from({ length: 73 }, (_, offset) => {
     const item = 72 - offset;
@@ -372,10 +437,12 @@ test('initial rebuild bulk-finalizes the filename tier once and keeps incrementa
     size: 0,
     modifiedMs: 100
   });
-  assert.equal(rebuildCount, 2);
+  assert.equal(rebuildCount, 1);
+  assert.equal(batchCount, 1);
   assert.equal(index.filenameTier.visible()[0].relativePath, 'aaa-first.bin');
   assert.equal(index.delete('aaa-first.bin'), true);
-  assert.equal(rebuildCount, 3);
+  assert.equal(rebuildCount, 1);
+  assert.equal(batchCount, 2);
   assert.equal(index.filenameTier.get('aaa-first.bin'), undefined);
   index.close();
 });
@@ -387,8 +454,8 @@ test('bulk reconcile finalizes the filename tier once across changed, missing, a
     configHash: 'config',
     engineHash: SEARCH_ENGINE_IDENTITY
   };
-  const initial = Array.from({ length: 60 }, (_, item) => ({
-    relativePath: `existing-${String(item).padStart(2, '0')}.bin`,
+  const initial = Array.from({ length: 240 }, (_, item) => ({
+    relativePath: `existing-${String(item).padStart(3, '0')}.bin`,
     mediaType: 'unknown',
     contentIndexed: false,
     originalContent: '',
@@ -401,6 +468,12 @@ test('bulk reconcile finalizes the filename tier once across changed, missing, a
   index.filenameTier.rebuild = () => {
     rebuildCount += 1;
     originalRebuild();
+  };
+  const runMutation = index.runMutation.bind(index);
+  let transactionCount = 0;
+  index.runMutation = (operation, withinTransaction) => {
+    if (!withinTransaction) transactionCount += 1;
+    return runMutation(operation, withinTransaction);
   };
   const stable = initial.slice(0, 20).map((entry) => ({ ...entry, unchanged: true }));
   const changed = initial.slice(20, 40).map((entry) => ({
@@ -434,11 +507,12 @@ test('bulk reconcile finalizes the filename tier once across changed, missing, a
     visibleRecordCount: 60,
     estimatedBytes
   });
-  assert.equal(index.filenameTier.get('existing-20.bin').modifiedMs, 120);
-  assert.equal(index.filenameTier.get('existing-40.bin'), undefined);
+  assert.equal(index.filenameTier.get('existing-020.bin').modifiedMs, 120);
+  assert.equal(index.filenameTier.get('existing-040.bin'), undefined);
   assert.equal(index.filenameTier.get('missing-00.bin').modifiedMs, 0);
+  assert.equal(transactionCount, 24, '40 upserts and 200 stale deletes use 24 batch transactions');
   assert.equal(outcome.changedFileCount, 40);
-  assert.equal(outcome.deletedFileCount, 20);
+  assert.equal(outcome.deletedFileCount, 200);
   assert.equal(index.statistics().buildState.state, 'ready');
   index.close();
 });

@@ -410,7 +410,29 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(shellStore, /activateEntry\(entry, clickCount === 0\)/);
   assert.match(
     shellStore,
-    /handleTreeDoubleClick[\s\S]*entry\.nodeKind !== 'file'[\s\S]*openFilesWithSingleClick/
+    /handleTreeDoubleClick[\s\S]*entry\.nodeKind === 'file'[\s\S]*openFilesWithSingleClick[\s\S]*activateEntry\(entry, true, true\)/
+  );
+  assert.match(
+    shellStore,
+    /this\.treeSelectedRelativePath = entry\.relativePath[\s\S]*if \(entry\.nodeKind === 'directory'\)[\s\S]*if \(toggleDirectory\) this\.toggleDirectory/
+  );
+  assert.match(
+    shellApp,
+    /tree-row--selected'[\s\S]*onlyPreviewShellStore\.treeSelectedRelativePath[\s\S]*:aria-selected="[\s\S]*row\.entry\.relativePath === onlyPreviewShellStore\.treeSelectedRelativePath/
+  );
+  const globalSearchContext = shellStore.slice(
+    shellStore.indexOf('getGlobalSearchContext()'),
+    shellStore.indexOf('setFocusedPath(')
+  );
+  assert.match(globalSearchContext, /currentDirectoryRelativePath: this\.currentDirectoryRelativePath/);
+  assert.doesNotMatch(globalSearchContext, /focusedRelativePath|selectedRelativePath/);
+  assert.match(
+    shellStore,
+    /this\.workspace = null;[\s\S]*this\.treeSelectedRelativePath = null;[\s\S]*this\.focusedRelativePath = '';/
+  );
+  assert.match(
+    shellStore,
+    /this\.selectedRelativePath = workspace\.selectedRelativePath \|\| '';[\s\S]*this\.treeSelectedRelativePath = this\.selectedRelativePath \|\| null;/
   );
   assert.match(shellStore, /if \(entry\.nodeKind !== 'file'\) return/);
   assert.doesNotMatch(shellApp, /name="onlypreview__search"|ProjectSearchResults/);
@@ -443,5 +465,56 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.doesNotMatch(
     source('src/renderer/onlypreview/preview/src/components/PreviewSurface/PreviewSurface.vue'),
     /PdfPreview|pdfjs|canvas/
+  );
+});
+
+test('file-search SQLite remains unencrypted node:sqlite storage', () => {
+  const sqliteIndex = source('src/preload/onlypreview/search/core/sqlite-index.mjs');
+  const sqliteSchema = source('src/preload/onlypreview/search/core/sqlite-schema.mjs');
+  assert.match(sqliteIndex, /import \{ DatabaseSync \} from 'node:sqlite';/);
+  assert.match(sqliteIndex, /new DatabaseSync\(databasePath\)/);
+  for (const guardedSource of [sqliteIndex, sqliteSchema, source('package.json')]) {
+    assert.doesNotMatch(
+      guardedSource,
+      /sqlcipher|PRAGMA\s+(?:key|cipher(?:_[a-z_]+)?)/iu
+    );
+  }
+});
+
+test('excluded Project rows keep orange status across default, hover, and selected states', () => {
+  const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
+  const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
+
+  assert.match(
+    shellApp,
+    /'onlypreview-shell__tree-row--search-excluded': row\.searchExcluded/
+  );
+  assert.equal(
+    (
+      shellApp.match(
+        /'onlypreview-shell__tree-icon--search-excluded-directory': row\.searchExcluded/g
+      ) ?? []
+    ).length,
+    2
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-row--search-excluded \{[\s\S]*background:\s*#fff4e8/
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-row--search-excluded:hover \{[\s\S]*background:\s*#ffead3/
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-row--search-excluded\.onlypreview-shell__tree-row--selected \{[\s\S]*background:\s*#f9dfc2/
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-icon--search-excluded-directory \{[\s\S]*color:\s*#C2410C/
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-row--selected::after \{[\s\S]*background:\s*var\(--onlypreview-royal\)/
   );
 });

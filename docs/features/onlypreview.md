@@ -346,33 +346,43 @@ authoritative: the Project pane contains only the rooted browse tree, and `Shift
 the right-workspace Files/Contents Global Search. Older Project-filter reveal and merged-result UI
 paragraphs in completed task history are historical, not extension points for the new surface.
 
-The hidden `fileSearch` preload owns two independent indexes with different policy boundaries:
+The hidden `fileSearch` preload owns two policy-separated views:
 
-1. an in-memory directory-name tier containing file and directory metadata for the rooted Project
-   tree and Global Search Files section; it never reads file bodies; and
-2. a persistent SQLite Global Search Contents tier containing eligible file basenames plus content chunks
-   only for eligible files whose stored `mediaType` is text.
+1. a demand-loaded in-memory Browse index containing every rooted Project child, including entries
+   excluded from Global Search; it never reads file bodies; and
+2. a committed Global Search snapshot containing eligible file metadata, persisted eligible
+   directory/symlink metadata, and SQLite content chunks only for eligible text files. Files reads
+   the snapshot's filename/tree tiers; Contents reads its FTS tier.
 
-The SQLite database lives below Bitterless user data and uses schema version 7: `files.in_project`
-persists global-scope eligibility beside the versioned `contentless-full` FTS layout, stable
-content-defined chunks, CJK short-code-point postings, exact original-text verification, and
-per-file transaction-safe upsert/delete. NeDB and the native `simple` extension are not product
-dependencies. Historical prototype evidence includes a roughly 12MiB filename-tier estimate,
-under 17MiB retained heap delta, and about 1.412GB of SQLite disk footprint. Those prototype numbers
-guide budgets only: they do not prove the current product scope UI, local-filter semantics,
-background-renderer XPC relay, or selected-Preview refresh. Disk footprint is not RAM and is never
-summed into runtime memory.
+The SQLite database lives below Bitterless user data and uses schema version 8. It retains schema-7
+`files.in_project`, the versioned `contentless-full` FTS layout, stable content-defined chunks, CJK
+short-code-point postings, exact original-text verification, and per-file transaction-safe
+upsert/delete. Schema 8 additively persists non-file Search tree entries, maximum traversal depth,
+and a tree-ready build marker bound to the same committed content build. A valid schema-7 database
+is migrated in place without dropping files, chunks, or FTS; its missing tree marker intentionally
+permits file/Contents warm results but not synthetic or incomplete folder results until one full
+reconcile commits the tree tier. NeDB and the native `simple` extension are not product
+dependencies. This file-search database is intentionally ordinary, completely unencrypted SQLite
+opened through `node:sqlite`; it receives no SQLCipher key, credential, Keychain material, or Core
+database encryption wrapper. It is a disposable/rebuildable local index and may contain plaintext
+eligible file basenames, searchable text chunks, and relative Search tree metadata. Historical
+prototype evidence includes a roughly 12MiB filename-tier estimate, under 17MiB retained heap
+delta, and about 1.412GB of SQLite disk footprint. Those prototype numbers guide budgets only: they
+do not prove the current product scope UI, local-filter semantics, background-renderer XPC relay,
+or selected-Preview refresh. Disk footprint is not RAM and is never summed into runtime memory.
 
 | Constraint                             | Product value                                                                                                                                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Maximum visible Global Search results  | 250 Files plus 250 Contents rows                                                                                                                          |
 | Global Search traversal depth          | 32; complete demand-loaded directory browsing is independent and has no global depth cap                                                                 |
 | Directory-name tier                    | rooted file + directory metadata; Global Search Files matches eligible names without opening bodies                                                       |
+| Search SQLite encryption               | none; persistent Contents index is completely unencrypted, disposable, and rebuilt from workspace files                                                  |
 | Global Search hidden policy            | every result below any dot-prefixed directory is physically absent; root dotfiles remain eligible unless separately excluded                             |
 | Global Search fixed exclusions         | `.git`, `node_modules`, `dist`, `build`, `out`, `output`, `.next`, `coverage`, `.cache`, `.turbo` at any depth; immutable against `!`                    |
 | Workspace config                       | flat version-1 ordered `exclude` globs in `.bitterless/preview-config.yml`                                                                               |
 | Symlink policy                         | leaf only, never recurse or index target content                                                                                                         |
-| Filename/tree sort                     | directories first, then natural case-insensitive name order                                                                                              |
+| Project tree/directory-preview sort     | directories first, then natural case-insensitive name order                                                                                              |
+| Global Search Files sort                | stable global partition: all matching folders first, then matching files; cap after partition                                                            |
 | Search normalization                   | NFKC plus established case policy, followed by original-text literal verification                                                                        |
 | Watch reconcile                        | 400ms trailing per changed path; overflow/error/missing filename triggers full reconcile                                                                 |
 | Runtime memory                         | strictly above 1GiB advisory; strictly above 2GiB sets `performanceAccepted=false` and `stop=false` without invalidating the recorded artifact or method |
@@ -398,15 +408,29 @@ Global Search carries a strict scope:
 type OnlyPreviewSearchScope = { kind: 'project' } | { kind: 'directory'; relativePath: string };
 ```
 
-`Shift+Cmd/Ctrl+F` defaults to Current directory and captures one stable anchor: focused directory
-(including the synthetic root), focused file parent, selected Preview file parent, then root
-(`relativePath: ''`). The selector switches between that captured directory and Project; result
-selection never changes it. Scope changes share generation/cancellation/throttle fences.
+`Shift+Cmd/Ctrl+F` starts Current directory from the explicit tree selection: a selected directory
+(including the synthetic root), selected file parent, selected Preview file parent, then root
+(`relativePath: ''`). While Global Search remains open, explicit Project-tree selection updates
+that directory live; roving focus and search-result selection cannot change it. Files always
+searches project-wide file and directory metadata. Contents defaults to the live directory and its
+selector switches between that directory and Project. A live directory change cancels and
+reschedules only Current-directory Contents; Project scope records the new directory for later
+without issuing an equivalent query. Scope changes share generation/cancellation/throttle fences.
 Absolute/traversal paths and unknown scope shapes fail the strict contract.
 
 The tree publishes every directory's complete direct-child set before deeper traversal, including
 root-level files, dot-prefixed entries, generated-output directories, and config-excluded entries.
 Those names remain available to rooted browsing even when they are ineligible for Global Search.
+Each emitted browse entry carries one policy-derived `searchExcluded` boolean. The hidden
+`fileSearch` preload computes it while building the listing and carries one ancestor-blocked bit in
+each opaque directory token. A directory excluded without a possible later `!` re-inclusion marks
+every loaded descendant even when the original glob matched only that directory; a traversable
+excluded directory still permits a later explicitly re-included descendant to return to normal.
+This adds no filesystem I/O or Renderer ancestor scan. Excluded files, directories, and excluded
+descendants use a pale-orange Project-row background. Excluded open and closed folder icons use the
+canonical solid accent orange `#C2410C`; file icons remain unchanged. Hover and selected variants
+stay orange while the existing Royal Blue selection rail remains visible. The synthetic root and
+symlinks retain their existing treatments.
 The hidden `fileSearch` preload publishes the complete root listing early in initialization and mints opaque
 directory tokens for expandable rows. Shell requests an expansion with only the current host,
 workspace, generation, and `directoryToken`; it never sends a relative or absolute directory path.
@@ -419,6 +443,17 @@ Both Global Search scopes use the same physical eligibility: a root-level hidden
 eligible unless separately excluded, while a file below any hidden/fixed directory or matched by
 workspace config is absent. Anchoring `In Directory` at such a tree directory therefore returns no
 excluded files and cannot bypass the policy.
+
+Files metadata and Contents SQLite branches start cooperatively. When a reusable committed snapshot
+exists, they first read that snapshot immediately instead of waiting for startup candidate
+reconciliation. Their batches are accepted warm results while the request remains pending. After
+successful promotion, the same request reacquires the fresh committed snapshot, reruns both
+branches, and terminal-replaces all warm rows and tokens. A legacy index without a valid persisted
+tree marker may warm-return ordinary files and Contents but withholds folders; a true first build
+preserves the existing readiness gate. Failure or cancellation does not release snapshot ownership
+until both sibling branches settle. Files matches are stable-partitioned into folders then files
+before their 250-row cap. This uses the same time-sliced metadata pass and SQLite connection; it adds
+no renderer, worker, traversal, XPC call, or Main-process I/O.
 
 The grouped result, opaque `resultToken`, and selected-result preview contracts are exact and live
 in [OnlyPreview Global Search and result preview](../design/onlypreview-global-search.md). The
@@ -453,35 +488,53 @@ During an active initial build or full reconcile, the hidden file-search preload
 `workspaceId`, `generation`, and opaque `buildRevision`; Main shape-validates and relays only the
 attached current generation without doing search I/O. Shell accepts only its current revision,
 rejects regressing or inconsistent counts, clamps the determinate ratio to `0..1`, and clears the
-rail when that build settles, fails, or is superseded. The event contains no path, filename, file
+  rail when that build settles, fails, or is superseded. The event contains no path, filename, file
 content, setting, or absolute filesystem metadata.
+
+The same hidden runtime emits a separate fixed-stage timing timeline under application-log scope
+`[onlypreview-search]`. It distinguishes reusable SQLite open/hydration, count, candidate backup,
+traversal, rebuild/reconcile, promotion, initial-tree-metadata search wait, first Files/Contents
+result, section completion, terminal response, Main XPC duration, and Shell acceptance. Each process
+uses its own monotonic clock; no cross-process timestamp subtraction is presented as a duration.
+Diagnostics reuse existing aggregate counters and add no filesystem/SQLite/body work or protocol
+fields. They never run inside entry, file, chunk, result, batch, or progress loops.
 
 Index progress and Global Search availability are independent. When a complete SQLite index
 already exists, it remains the active read-only query authority while a separate candidate index is
-counted and built. A query never observes partially written candidate rows. Successful completion
-atomically promotes the candidate for later queries; cancellation or failure discards it and leaves
-the active index searchable. The only early-build exception is the complete one-file priority lane:
-a matching manually opened file may be emitted as an early batch while the query remains pending.
-The terminal response still comes from the complete scoped traversal or promoted/active index and
-replaces the batch projection; exact relative-path deduplication prevents a duplicate row. Starting,
-replacing, failing, or completing a build does not cancel an accepted query or clear its accepted
-results.
+counted and built. Each query phase acquires a reader lease that captures one internally consistent
+index plus Search-tree snapshot. Promotion first announces a writer gate, waits for every reader to
+settle, atomically swaps/closes snapshots, and then releases fresh readers; it cannot close an index
+between sibling branches or combine old SQLite with new tree metadata. A query never observes
+partially written candidate rows. Cancellation or candidate failure discards the candidate and
+leaves the active snapshot searchable. The complete one-file priority lane remains an additional
+early source for a matching manually opened file. After successful promotion the request begins a
+new result-token session, reruns against the fresh snapshot, and terminal-replaces the warm batch
+projection; exact relative-path deduplication prevents duplicates. Starting, replacing, failing, or
+completing a build does not cancel an accepted query or clear its accepted results.
 
-On the first build, before any complete active index exists, Current directory performs one complete
-scope-bounded traversal with the same hidden/fixed-directory, workspace-exclude, file
+On the first build, before any complete active index exists, Current directory Contents performs one
+complete scope-bounded traversal with the same hidden/fixed-directory, workspace-exclude, file
 classification, decoding, containment, cancellation, result-ordering, and maximum-result rules as
-the project index. It returns only after that directory scope is completely searched, while the
-background project build continues. It must not query an incomplete candidate and must not use SQL
-`LIKE`: `LIKE` can only inspect rows already written to SQLite and would still turn unindexed files
-into false negatives. First-build Project scope remains pending until the complete candidate is
-promoted and must never publish a false empty result merely because indexing is in progress.
+the project index. It may stream scoped Contents while the background project build continues.
+Project-wide Files waits for that existing build's complete metadata candidate; it never starts a
+second whole-project traversal. Neither section queries an incomplete candidate or uses SQL `LIKE`:
+`LIKE` can only inspect rows already written to SQLite and would still turn unindexed files into
+false negatives. First-build terminal results remain pending until the complete candidate is
+promoted and must never publish a false empty Files result merely because indexing is in progress.
 
 `fs.watch` updates are hints, not authority. After the 400ms trailing edge, the hidden file-search preload
 revalidates the changed relative path once, updates tree metadata regardless of Global Search
-excludes, and upserts or deletes the SQLite file according to current eligibility. Create, update,
-delete, delete/recreate, and exclusion transitions converge at that commit. Rename, directory/type
-changes, lost/ambiguous events, and watch errors request a cooperative full dual reconcile. Manual
-refresh uses the same path; it does not reintroduce a Main directory walk.
+excludes, and upserts or deletes the SQLite file according to current eligibility. Before a bounded
+watch mutation it clears the persisted Search-tree ready marker; only a successful file/tree commit
+restores the marker for the active build. A crash, interruption, or build-marker mismatch therefore
+fails closed to file/Contents-only warm search on the next launch rather than exposing a mixed tree.
+The bounded path completes metadata and depth preflight before reading any body, selects changed
+paths and parents in one retained-tree pass, and reads/commits at most ten bounded bodies per chunk.
+Even the 512-path ceiling therefore avoids a 512MiB retained-body spike and per-file transactions;
+any partial failure leaves tree readiness invalid and forces the next event through full reconcile.
+Create, update, delete, delete/recreate, and exclusion transitions converge at that commit. Rename,
+directory/type changes, lost/ambiguous events, and watch errors request a cooperative full dual
+reconcile. Manual refresh uses the same path; it does not reintroduce a Main directory walk.
 
 The committed trailing update also publishes a bounded host/workspace/relative-path/watch-revision
 signal through the private capability-bound XPC event channel. Main validates the event, binds it to
@@ -923,7 +976,7 @@ routing accepts any regular file and shows its fallback surface for an unsupport
 Shift+Cmd/Ctrl+F:
 
 ┌──────────────────────── GLOBAL SEARCH ─────────────────────────┐
-│ Search filenames and contents…  Scope: [Current directory ▾]  │
+│ Search filenames and contents…  Contents: [Current directory ▾]│
 ├ FILES ─────────────────────────────────────────────────────────┤
 │ FileTree.vue                         src/components            │
 │ photo.png                            assets                    │
@@ -966,11 +1019,14 @@ Shift+Cmd/Ctrl+F:
 - The Project pane has no search/filter input. Its first row is the case-preserving workspace root,
   initially expanded; descendants retain demand-loaded vertical and horizontal tree behavior.
 - `Shift+Cmd/Ctrl+F` opens Global Search in the right workspace without replacing the Project tree.
-  It defaults to the captured Current directory and offers a Project scope. Files and Contents are
-  separate collapsible groups; keyboard or pointer selection updates the bounded bottom result
-  preview. Markdown and static sanitized HTML use lazy adapters, ordinary text stays plain,
-  directories show direct children, and non-text results show file information only. The exact
-  layout, token, preview, and open-vs-select behavior is defined in the Global Search design.
+  Files always searches project-wide names and presents every folder before every file. Contents
+  defaults to the live Current directory and offers Project scope. Explicit Project-tree selection
+  updates that directory even while search is open. Files and Contents are separate collapsible
+  groups; keyboard or pointer
+  selection updates the bounded bottom result preview. Markdown and static sanitized HTML use lazy
+  adapters, ordinary text stays plain, directories show direct children, and non-text results show
+  file information only. The exact layout, token, preview, and open-vs-select behavior is defined in
+  the Global Search design.
 - Global Search indexing, pending, empty, no-match, error, and memory-advisory states use the
   existing quiet Project/status treatment; they do not add cards, indexed totals, verbose limit
   explanations, or a second visual theme.
@@ -1011,14 +1067,14 @@ Shift+Cmd/Ctrl+F:
 | Input                                         | Scope                                        | Behavior                                                                                                               |
 | --------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `Alt+1`                                       | Shell                                        | focus Project tree                                                                                                     |
-| `Shift+Cmd/Ctrl+F`                            | Shell or Preview                             | open Global Search in the right workspace at the captured Current directory and focus its input                        |
-| scope selector                                | Global Search                                | switch the current query between the captured Current directory anchor and Project                                     |
+| `Shift+Cmd/Ctrl+F`                            | Shell or Preview                             | open Global Search in the right workspace at the current explicit directory and focus its input                        |
+| Contents scope selector                       | Global Search                                | switch Contents between the live Current directory and Project; Files remains project-wide                             |
 | `ArrowUp` / `ArrowDown`                       | Global Search                                | move across visible Files and Contents result rows and refresh the bottom preview                                      |
 | click / `Enter`                               | Global Search result                         | select the row and show its bounded preview without changing the main Preview selection                                |
-| double click / `Cmd/Ctrl+Enter`               | Global Search result                         | open a file or reveal a directory in Project, then close Global Search                                                  |
+| double click / `Cmd/Ctrl+Enter`               | Global Search result                         | open a file, or expand/select/center-focus a directory in Project; close only after success                             |
 | `Space`                                       | selected file in tree                        | preview selected file                                                                                                  |
-| single click                                  | tree                                         | preview only when setting is enabled; directories toggle                                                               |
-| double click                                  | tree                                         | preview file or toggle directory                                                                                       |
+| single click                                  | tree                                         | select the row; preview a file only when enabled; update live Current directory without toggling a directory            |
+| double click                                  | tree                                         | preview a file or keep a directory selected while toggling its expansion                                               |
 | crosshair                                     | Project header                               | reveal and focus the currently previewed file in the tree                                                              |
 | right click                                   | Project file/directory row                   | open the type-specific Main-owned native reveal/copy/file-action menu at the pointer                                   |
 | `Cmd/Ctrl+C`                                  | focused Project item, outside text controls  | copy the file or folder as a pasteable native filesystem item                                                          |
@@ -1084,17 +1140,25 @@ format, large-directory resource, locator, and file-association verification in 
 - **Indexing:** retain the last valid directory-name tier and search database, keep browsing
   available, and show only the determinate Project-bottom Index Rail. Hide it as soon as the current
   generation settles.
-- **Search while indexing:** query the last complete active index without exposing candidate rows.
-  A manually opened file may first publish from the bounded complete one-file priority lane. If no
-  complete index exists, finish a same-policy `In Directory` scope scan before returning;
-  `In Project` waits for promotion. The terminal response replaces the early projection, and build
-  progress never clears or cancels accepted search results.
+- **Search while indexing:** query the last complete active snapshot immediately without exposing
+  candidate rows. Warm Files and Contents batches may appear before startup reconcile completes;
+  successful promotion reruns the same request and terminal-replaces rows/tokens from the fresh
+  snapshot. Legacy snapshots without a valid tree marker omit warm folders. A manually opened file
+  may also publish from the bounded complete one-file priority lane. If no complete index exists, a
+  same-policy Current directory scan may stream Contents, while project-wide Files and the terminal
+  response wait for the existing candidate promotion. Build progress never clears or cancels
+  accepted search results.
 - **Index partial:** keep directory browsing complete and expose no visible partial state,
   explanation, count, or warning.
 - **Global Search pending:** retain the last accepted grouped result set until the latest throttled request
   returns; stale or cancelled batches cannot replace it.
-- **Global Search scope:** default to the captured current directory; changing scope cancels or
-  supersedes the active generation and never derives a new directory from a clicked result.
+- **Global Search scope:** Contents defaults to the live explicit Current directory and may switch
+  to Project; Files stays project-wide. Explicit Project-tree selection refreshes directory-scoped
+  Contents, while focus and clicked search results never derive a new directory.
+- **Global Search execution:** Files and Contents advance cooperatively within one leased snapshot;
+  promotion waits for readers and terminal settlement waits for both. Files uses one stable
+  folders-then-files partition before its cap; a directory row displays `folder` from `nodeKind`,
+  never its internal unknown media type.
 - **Global Search no result:** preserve the Files and Contents group labels and show one compact
   localized empty state within each empty group.
 - **Global Search result preview:** keep the previously accepted preview until the latest result-token
@@ -1221,6 +1285,10 @@ them.
 - File operations are read-only and capability-scoped. No broad filesystem API is exposed. Main
   never traverses or reads searchable content; the hidden file-search preload opens only contained
   workspace-relative paths and keeps its persistent database below application user data.
+- The file-search SQLite database is deliberately plaintext. It never requests or inherits the
+  Core SQLite/SQLCipher key, and its database/WAL/SHM files rely only on the user's local OS file
+  permissions. This exception applies only to the rebuildable search index; it does not downgrade
+  encrypted Core/Todo/customer databases.
 - Sensitive credential-like files (`.env`, `.env.*`, `.npmrc`, `.netrc`, `*.pem`, `*.key`) remain
   explicitly previewable through the existing selected-file capability but are title-only in
   Global Search unless a future reviewed contract states otherwise. Their bodies are not added to
@@ -1231,6 +1299,11 @@ them.
   dedicated role and cannot call content, settings, external-open, native-menu, or window-control
   methods. Clipboard access requires an explicit click and is not exposed through preload.
 - No file contents or absolute user paths are written to application logs.
+- OnlyPreview search diagnostics additionally forbid queries, snippets, file/directory names,
+  relative paths, workspace/config identity, database paths, exclusion rules, capabilities/tokens,
+  and raw errors or objects. Only fixed enums/booleans, bounded aggregate counts, generations/build
+  revisions, short local correlation tags, sanitized error codes, and elapsed milliseconds are
+  allowed.
 - Search memory/status logging is aggregate-only. Runtime memory and SQLite disk footprint are
   measured and labelled separately; they are never added together.
 - The one persisted recent-directory absolute path remains private inside Core SQLite. It is never
@@ -1301,6 +1374,9 @@ them.
   leading-plus-trailing behavior, IME composition, scope changes, one-active/one-latest single
   flight, active cancellation, final query/scope exactly once, bounded batches, and stale
   host/workspace/request/build-revision/browse-token/watch fences.
+- Search diagnostics tests use fake monotonic clocks and captured string writers to cover startup
+  phase ordering, reusable-index assessment, build-gate wait, first Files/Contents visibility,
+  terminal/cancel/failure behavior, fixed log-count bounds, and forbidden-field exclusion.
 - Router tests cover macOS early `open-file`, packaged Windows initial/second-instance argv, helper
   exclusions, development explicit arguments, and serialized queue behavior.
 - Recent-directory tests cover schema parsing, ready/failure latching, pre-ready latest-write
@@ -1328,7 +1404,8 @@ them.
   window/content bounds for zero titlebar origin or height gap and requires the top-middle band of
   each native capture to contain a majority of OnlyPreview Royal Blue `#4E5882` pixels.
 - Renderer verification covers stale-result suppression, read-only Monaco options and disposal,
-  synthetic-root/dot row visibility, default Current directory plus Project scope switching,
+  synthetic-root/dot row visibility, explicit tree Current directory, Contents directory/Project
+  scope switching, project-wide Files,
   independent Files/Contents groups, keyboard/pointer selection, bounded lazy result-preview
   adapters, info-only non-text rows, watch-selected Preview reload, complete demand-loaded browsing,
   current-build progress fencing, the 2px no-copy Project-bottom rail,

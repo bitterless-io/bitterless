@@ -20,6 +20,10 @@ await build({
       projectRoot,
       'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchResult.service.ts'
     ),
+    browseListing: join(
+      projectRoot,
+      'src/renderer/onlypreview/shell/src/onlyPreviewBrowseListing.service.ts'
+    ),
     tree: join(projectRoot, 'src/renderer/onlypreview/shell/src/onlyPreviewTree.service.ts')
   },
   outdir: buildRoot,
@@ -35,6 +39,9 @@ export const characterCountGate = await import(
   pathToFileURL(join(buildRoot, 'characterCountGate.mjs')).href
 );
 export const result = await import(pathToFileURL(join(buildRoot, 'result.mjs')).href);
+export const browseListing = await import(
+  pathToFileURL(join(buildRoot, 'browseListing.mjs')).href
+);
 export const tree = await import(pathToFileURL(join(buildRoot, 'tree.mjs')).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));

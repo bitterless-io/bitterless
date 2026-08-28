@@ -171,6 +171,26 @@ design document.
 - [OnlyPreview Global Search and result preview](design/onlypreview-global-search.md) - remove the
   Project-side search field, group global results into Files/Contents, render bounded lazy result
   previews in the right workspace, and make the workspace root the first Project tree row.
+- [OnlyPreview directory selection and Global Search file scope](issues/onlypreview-directory-selection-and-global-file-scope.md) -
+  implemented pending owner verification: single-click Current directory selection, double-click
+  expansion, project-wide file/directory names, directory-scoped Contents, and a deliberately
+  plaintext disposable file-search SQLite index.
+- [OnlyPreview Search-exclusion Project markers](issues/onlypreview-search-exclusion-tree-markers.md) -
+  implemented pending owner verification: pale-orange rows for excluded files, directories, and
+  descendants, with solid accent-orange excluded folder icons and no extra filesystem I/O;
+  [independent review 2](plan/reviews/onlypreview-search-exclusion-markers-039-2.md) passed.
+- [OnlyPreview Global Search concurrency and directory UX](issues/onlypreview-global-search-concurrency-and-directory-ux.md) -
+  implemented pending owner verification: cooperative Files/Contents work, folder-first Files
+  results, live Current directory rebinding, nested folder reveal/focus, and truthful `folder`
+  display type; [independent review 1](plan/reviews/onlypreview-global-search-concurrency-directory-ux-040-1.md)
+  passed.
+- [OnlyPreview first search waits for startup reconciliation](issues/onlypreview-first-search-startup-delay.md) -
+  implemented pending owner verification: the live sample showed a 33.024s initial-tree
+  gate while post-gate Contents/Files take only 0.665s/0.817s. Task 042 serves the last committed
+  snapshot immediately and terminal-replaces it after background reconciliation;
+  [independent review 2](plan/reviews/onlypreview-warm-search-before-reconcile-042-2.md) passed, as
+  did the diagnostic timeline's
+  [independent review 3](plan/reviews/onlypreview-search-startup-diagnostics-041-3.md).
 
 The pre-Draw.io OnlyPreview designs were closed at the documented non-E2E implementation level after the
 [Task 025 completion audit PASS](plan/reviews/onlypreview-design-completion-025-1.md). Their ledger is
@@ -217,6 +237,9 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 - [Translator provider failure detail missing from production logs](issues/translator-provider-error-log-detail-missing.md) -
   implemented; owner verification pending: transport fallback and typed terminal evidence remain
   independently diagnosable without persisting provider text or response bodies.
+- [Translator final input is not dispatched](issues/translator-final-input-not-dispatched.md) -
+  implemented; owner verification pending: a trailing-only debounce and source-revision submission
+  identity prevent the final complete input from being suppressed as a text duplicate.
 - [Settings notification test](issues/settings-notification-test.md) - implemented; owner
   verification pending: a top-level Notification module immediately above Log exposes one
   XPC-backed `notification test` action.

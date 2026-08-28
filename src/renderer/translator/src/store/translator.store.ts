@@ -1,5 +1,5 @@
 import { reactive } from 'vue';
-import { useThrottleFn } from '@vueuse/core';
+import { useDebounceFn } from '@vueuse/core';
 import {
   MODEL_PROVIDER_CODEX_ID,
   type ModelProviderAuthState,
@@ -49,7 +49,7 @@ class TranslatorState {
   copyState: TranslatorCopyState = 'idle';
   private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
   private activeRequestId: string | null = null;
-  private lastSubmittedSource: string | null = null;
+  private lastSubmittedRevision: number | null = null;
   private revision = 0;
   private requestSequence = 0;
   private subscribed = false;
@@ -126,7 +126,7 @@ class TranslatorState {
 
     if (!boundedValue.trim()) {
       this.translation = '';
-      this.lastSubmittedSource = null;
+      this.lastSubmittedRevision = null;
       void this.cancelActiveRequest();
       return;
     }
@@ -157,7 +157,7 @@ class TranslatorState {
     const sourceText = this.sourceText;
     const sourceRevision = this.revision;
     if (!this.ready || !sourceText.trim()) return;
-    if (!options.force && sourceText === this.lastSubmittedSource) return;
+    if (!options.force && sourceRevision === this.lastSubmittedRevision) return;
 
     const previousRequestId = this.activeRequestId;
     if (previousRequestId) {
@@ -172,7 +172,7 @@ class TranslatorState {
 
     const requestId = `${this.clientId}:${++this.requestSequence}`;
     this.activeRequestId = requestId;
-    this.lastSubmittedSource = sourceText;
+    this.lastSubmittedRevision = sourceRevision;
     this.translating = true;
     this.error = null;
 
@@ -245,7 +245,7 @@ class TranslatorState {
       void this.cancelActiveRequest();
     }
     if (!wasReady && this.ready && this.sourceText.trim()) {
-      this.lastSubmittedSource = null;
+      this.lastSubmittedRevision = null;
       void this.translateLatest({ force: true });
     }
   }
@@ -267,13 +267,7 @@ class TranslatorState {
 export const translatorStore = reactive<TranslatorState>(new TranslatorState());
 
 translatorStore.configureScheduler(
-  useThrottleFn(
-    () => {
-      void translatorStore.translateLatest();
-    },
-    1_000,
-    // VueUse 14 uses positional booleans: trailing first, then leading.
-    true,
-    true
-  )
+  useDebounceFn(() => {
+    void translatorStore.translateLatest();
+  }, 1_000)
 );

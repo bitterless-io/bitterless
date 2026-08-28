@@ -20,6 +20,8 @@ import {
   write
 } from './onlyPreviewSearchEngineSqliteTest.helper.mjs';
 
+const resultCount = (response) => response.files.length + response.contents.length;
+
 test('reopen reconciles committed near-end build batches without rereading stable files', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
@@ -101,26 +103,11 @@ test('reopen reconciles committed near-end build batches without rereading stabl
         .get().id,
       stableId
     );
-    assert.equal(
-      (await search(engine, 1, 'stable', 'original committed content 0')).results.length,
-      1
-    );
-    assert.equal(
-      (await search(engine, 1, 'changed', 'changed content recovered exactly')).results.length,
-      1
-    );
-    assert.equal(
-      (await search(engine, 1, 'pending', 'original committed content 11')).results.length,
-      1
-    );
-    assert.equal(
-      (await search(engine, 1, 'new', 'new content recovered exactly')).results.length,
-      1
-    );
-    assert.equal(
-      (await search(engine, 1, 'stale', 'original committed content 8')).results.length,
-      0
-    );
+    assert.equal(resultCount(await search(engine, 1, 'stable', 'original committed content 0')), 1);
+    assert.equal(resultCount(await search(engine, 1, 'changed', 'changed content recovered exactly')), 1);
+    assert.equal(resultCount(await search(engine, 1, 'pending', 'original committed content 11')), 1);
+    assert.equal(resultCount(await search(engine, 1, 'new', 'new content recovered exactly')), 1);
+    assert.equal(resultCount(await search(engine, 1, 'stale', 'original committed content 8')), 0);
     assert.equal(engine.index.statistics().buildState.state, 'ready');
     await engine.shutdown();
   });
@@ -153,7 +140,7 @@ test('committed watch revisions stay relative, monotonic, and cover delete, recr
           paths: ['selected.txt']
         })
     );
-    assert.equal((await search(engine, 3, 'watch-new', 'new value')).results.length, 1);
+    assert.equal(resultCount(await search(engine, 3, 'watch-new', 'new value')), 1);
 
     await unlink(join(root, 'selected.txt'));
     await engine.enqueue(
@@ -163,7 +150,7 @@ test('committed watch revisions stay relative, monotonic, and cover delete, recr
           paths: ['selected.txt']
         })
     );
-    assert.equal((await search(engine, 3, 'watch-deleted', 'selected')).results.length, 0);
+    assert.equal(resultCount(await search(engine, 3, 'watch-deleted', 'selected')), 0);
 
     await write(join(root, 'selected.txt'), 'recreated value');
     await engine.enqueue(
@@ -173,7 +160,7 @@ test('committed watch revisions stay relative, monotonic, and cover delete, recr
           paths: ['selected.txt']
         })
     );
-    assert.equal((await search(engine, 3, 'watch-recreated', 'recreated value')).results.length, 1);
+    assert.equal(resultCount(await search(engine, 3, 'watch-recreated', 'recreated value')), 1);
 
     await engine.enqueue(
       async () =>
@@ -312,20 +299,44 @@ test('refresh builds a private candidate while the complete active index remains
     const refresh = engine.refresh({ workspaceId: 'workspace', generation: 1 });
     await candidateCompletePromise;
 
-    assert.equal((await search(engine, 1, 'active-during-build', 'base query')).results.length, 1);
+    const activeWarm = [];
+    let resolveActiveWarm;
+    const activeWarmResult = new Promise((resolve) => {
+      resolveActiveWarm = resolve;
+    });
+    let activeSettled = false;
+    const activeSearch = engine
+      .search({
+        workspaceId: 'workspace',
+        generation: 1,
+        requestId: 'active-during-build',
+        query: 'base query',
+        maxResults: 500,
+        scope: { kind: 'project' },
+        onResult: (result) => {
+          activeWarm.push(result);
+          resolveActiveWarm();
+        }
+      })
+      .finally(() => {
+        activeSettled = true;
+      });
+    await activeWarmResult;
+    assert.equal(activeWarm.length, 1);
+    assert.equal(activeSettled, false);
+
     assert.equal(
-      (await search(engine, 1, 'candidate-hidden', 'candidate-only searchable value')).results
-        .length,
-      0,
-      'completed candidate rows remain invisible before atomic promotion'
+      engine.index.metadata('candidate-only.txt'),
+      undefined,
+      'candidate rows remain private before atomic promotion'
     );
     assert.deepEqual([...new Set(progress.map(({ phase }) => phase))], ['counting', 'indexing']);
 
     releasePromotion();
     await refresh;
+    assert.equal(resultCount(await activeSearch), 1);
     assert.equal(
-      (await search(engine, 1, 'candidate-promoted', 'candidate-only searchable value')).results
-        .length,
+      resultCount(await search(engine, 1, 'candidate-promoted', 'candidate-only searchable value')),
       1
     );
     await engine.shutdown();

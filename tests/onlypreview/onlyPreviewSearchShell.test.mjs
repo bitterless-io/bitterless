@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  browseListing,
   characterCountGate,
   result,
   source,
@@ -43,15 +44,20 @@ test('Project tree begins with the expanded synthetic workspace root without a l
       })
     ]
   };
-  const rows = tree.buildOnlyPreviewRootedTreeRows(index, 'bitterless', new Set(['', 'docs']));
+  const rows = tree.buildOnlyPreviewRootedTreeRows(
+    index,
+    'bitterless',
+    new Set(['', 'docs']),
+    new Set(['docs', 'docs/guide.md'])
+  );
 
   assert.deepEqual(
-    rows.map((row) => [row.entry.relativePath, row.depth, row.expanded]),
+    rows.map((row) => [row.entry.relativePath, row.depth, row.expanded, row.searchExcluded]),
     [
-      ['', 0, true],
-      ['README.md', 1, false],
-      ['docs', 1, true],
-      ['docs/guide.md', 2, false]
+      ['', 0, true, false],
+      ['README.md', 1, false, false],
+      ['docs', 1, true, true],
+      ['docs/guide.md', 2, false, true]
     ]
   );
   assert.equal(rows[0].entry.name, 'bitterless');
@@ -61,9 +67,57 @@ test('Project tree begins with the expanded synthetic workspace root without a l
   assert.deepEqual(tree.moveOnlyPreviewTreeFocus(rows, '', 'ArrowRight'), {
     relativePath: 'README.md'
   });
+  assert.equal(tree.resolveOnlyPreviewCurrentDirectory(index, 'docs', 'README.md'), 'docs');
+  assert.equal(
+    tree.resolveOnlyPreviewCurrentDirectory(index, 'docs/guide.md', 'README.md'),
+    'docs'
+  );
+  assert.equal(tree.resolveOnlyPreviewCurrentDirectory(index, null, 'README.md'), '');
+  assert.equal(tree.resolveOnlyPreviewCurrentDirectory(index, '', 'docs/guide.md'), '');
+  assert.equal(tree.resolveOnlyPreviewTreeFocusPath(rows, 'README.md', 'docs'), 'README.md');
+  assert.equal(tree.resolveOnlyPreviewTreeFocusPath(rows, 'missing', 'docs'), 'docs');
 
   const treeSource = source('src/renderer/onlypreview/shell/src/onlyPreviewTree.service.ts');
   assert.doesNotMatch(treeSource, /OnlyPreviewTreeFilter|searchQuery|revealRoots/);
+});
+
+test('Renderer browse-listing validation requires the exact exclusion marker contract', () => {
+  const browseEntry = {
+    ...entry({
+      relativePath: 'excluded',
+      parentRelativePath: '',
+      name: 'excluded',
+      nodeKind: 'directory'
+    }),
+    directoryToken: 'directory-capability',
+    searchExcluded: true
+  };
+  const listing = {
+    workspaceId: 'workspace-search-shell',
+    generation: 1,
+    directoryToken: 'root-capability',
+    relativePath: '',
+    entries: [browseEntry]
+  };
+  assert.equal(browseListing.isOnlyPreviewBrowseListing(listing), true);
+  const missingMarker = { ...browseEntry };
+  delete missingMarker.searchExcluded;
+  for (const invalidEntry of [
+    missingMarker,
+    { ...browseEntry, searchExcluded: 'true' },
+    { ...browseEntry, unexpected: true },
+    {
+      ...browseEntry,
+      nodeKind: 'symlink',
+      directoryToken: null,
+      searchExcluded: true
+    }
+  ]) {
+    assert.equal(
+      browseListing.isOnlyPreviewBrowseListing({ ...listing, entries: [invalidEntry] }),
+      false
+    );
+  }
 });
 
 test('Global Search content snippets preserve grapheme offsets', () => {
