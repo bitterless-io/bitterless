@@ -1,6 +1,6 @@
 # OnlyPreview Project index protocol failure is reported as a Preview stream error
 
-Status: in progress
+Status: implemented; owner verification pending
 
 ## Symptom
 
@@ -13,12 +13,12 @@ pipeline even though the failure belongs to Project search indexing.
 The hidden file-search renderer classifies Office and Draw.io files with specialized Preview hints
 while retaining the search index's intentionally narrower media type:
 
-| format | `previewHint` | search `mediaType` |
-| --- | --- | --- |
-| XLSX/XLSM | `sheet` | `unknown` |
-| DOCX | `document` | `unknown` |
-| PPTX | `presentation` | `unknown` |
-| Draw.io | `diagram` | `unknown` |
+| format    | `previewHint`  | search `mediaType` |
+| --------- | -------------- | ------------------ |
+| XLSX/XLSM | `sheet`        | `unknown`          |
+| DOCX      | `document`     | `unknown`          |
+| PPTX      | `presentation` | `unknown`          |
+| Draw.io   | `diagram`      | `unknown`          |
 
 Main's file-search relay still required `mediaType === previewHint`, except for `unsupported`.
 After the richer hints were introduced, a legitimate Project entry therefore failed relay
@@ -51,5 +51,10 @@ stream message attached to that generic code.
 
 ## Resolution
 
-Tracked by
-[onlypreview-project-index-protocol-validation-080](../plan/tasks/onlypreview-project-index-protocol-validation-080.md).
+[Task 080](../plan/tasks/onlypreview-project-index-protocol-validation-080.md) now applies the
+explicit rich-format mapping, reports `INDEX_PROTOCOL_ERROR` with Project-specific wording, and
+wakes a pending call on the first malformed current-generation event. Its bounded retired-request
+registry distinguishes active, cancelled, superseded, terminal, timed-out, and unknown request
+IDs without allowing an old generation to pollute the current one. The final
+[independent review 3](../plan/reviews/onlypreview-project-index-protocol-validation-080-3.md)
+passed with no P1/P2/P3 finding; Ral's live Project initialization check remains.

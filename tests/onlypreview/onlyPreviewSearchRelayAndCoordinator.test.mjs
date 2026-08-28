@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,7 +13,6 @@ const bundlePath = join(buildRoot, 'runtime.mjs');
 const preloadBundlePath = join(buildRoot, 'fileSearch.preload.cjs');
 const coordinatorBundlePath = join(buildRoot, 'fileSearchCoordinator.mjs');
 const shellChainBundlePath = join(buildRoot, 'shellChain.mjs');
-const loadModule = createRequire(import.meta.url);
 
 await build({
   entryPoints: [join(projectRoot, 'tests/onlypreview/searchBootstrap.runtime.entry.ts')],
@@ -70,17 +68,14 @@ await build({
           path: 'shell-xpc',
           namespace: 'shell-chain-test'
         }));
-        buildContext.onLoad(
-          { filter: /^shell-xpc$/, namespace: 'shell-chain-test' },
-          () => ({
-            contents: `
+        buildContext.onLoad({ filter: /^shell-xpc$/, namespace: 'shell-chain-test' }, () => ({
+          contents: `
               export const xpcRenderer = {
                 subscribe: (name, callback) => globalThis.__shellSubscriptions.set(name, callback)
               };
               export const createXpcRendererEmitter = () => globalThis.__shellSearchClient;
             `
-          })
-        );
+        }));
       }
     }
   ]
@@ -159,7 +154,7 @@ const coordinatorRuntime = await import(pathToFileURL(coordinatorBundlePath).hre
 globalThis.window = { onlyPreviewEnv: { hostId: 'host-id', hostToken: 'host-token' } };
 globalThis.__shellSubscriptions = new Map();
 globalThis.__shellSearchClient = {};
-const shellChainRuntime = await import(pathToFileURL(shellChainBundlePath).href);
+await import(pathToFileURL(shellChainBundlePath).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
@@ -195,6 +190,36 @@ const snapshot = {
     runtimeTwoGiBLimitExceeded: false
   }
 };
+const previewClassifications = [
+  ['text', 'text', true, 'md'],
+  ['pdf', 'pdf', false, 'pdf'],
+  ['image', 'image', false, 'png'],
+  ['audio', 'audio', false, 'mp3'],
+  ['video', 'video', false, 'mp4'],
+  ['sheet', 'unknown', false, 'xlsx'],
+  ['document', 'unknown', false, 'docx'],
+  ['presentation', 'unknown', false, 'pptx'],
+  ['diagram', 'unknown', false, 'drawio'],
+  ['unsupported', 'unknown', false, 'bin']
+];
+const classifiedEntries = previewClassifications.map(
+  ([previewHint, mediaType, isText, extension], index) => ({
+    ...entry,
+    relativePath: `docs/classified-${index}.${extension}`,
+    name: `classified-${index}.${extension}`,
+    previewHint,
+    mediaType,
+    isText
+  })
+);
+const classifiedSnapshot = {
+  ...snapshot,
+  index: {
+    ...snapshot.index,
+    entries: classifiedEntries,
+    limit: classifiedEntries.length
+  }
+};
 const browseEntry = {
   ...entry,
   directoryToken: null,
@@ -206,6 +231,14 @@ const browseListing = {
   directoryToken: 'docs-directory-capability',
   relativePath: 'docs',
   entries: [browseEntry]
+};
+const classifiedBrowseListing = {
+  ...browseListing,
+  entries: classifiedEntries.map((classifiedEntry) => ({
+    ...classifiedEntry,
+    directoryToken: null,
+    searchExcluded: false
+  }))
 };
 const fileSearchResult = {
   section: 'files',
@@ -425,10 +458,7 @@ test('file-search relay diagnostics terminal every early initialize/search exit 
   };
   const relay = new runtime.FileSearchRuntimeRelayService(diagnostics);
   const client = new FakeFileSearchClient();
-  await assert.rejects(
-    relay.call('host-token', 'search', {}, 5),
-    /runtime stopped unexpectedly/
-  );
+  await assert.rejects(relay.call('host-token', 'search', {}, 5), /runtime stopped unexpectedly/);
   now = 20;
   relay.attach({
     hostToken: 'host-token',
@@ -438,10 +468,7 @@ test('file-search relay diagnostics terminal every early initialize/search exit 
     client,
     broadcast: () => undefined
   });
-  await assert.rejects(
-    relay.call('wrong-host', 'initialize', {}, 5),
-    /does not belong/
-  );
+  await assert.rejects(relay.call('wrong-host', 'initialize', {}, 5), /does not belong/);
   now = 30;
   const malformed = relay.call('host-token', 'search', {}, 5);
   client.respond('search', { ok: true, value: {} });
@@ -549,7 +576,7 @@ test('file-search XPC event path capability-binds and deeply validates public re
       relay.publish({
         capability: 'b'.repeat(43),
         eventName: 'onlypreview/search-snapshot',
-        value: { snapshot }
+        value: { snapshot: classifiedSnapshot }
       }),
     (error) => error?.code === 'HOST_ROLE_DENIED'
   );
@@ -557,72 +584,28 @@ test('file-search XPC event path capability-binds and deeply validates public re
     relay.publish({
       capability,
       eventName: 'onlypreview/search-snapshot',
-      value: { snapshot }
+      value: { snapshot: classifiedSnapshot }
     }),
     { ok: true }
   );
-  for (const invalid of [
-    { ...snapshot, absolutePath: '/private/workspace' },
-    { ...snapshot, generation: generation - 1 },
-    { ...snapshot, index: { ...snapshot.index, entries: [{ ...entry, unexpected: true }] } },
-    { ...snapshot, memory: { ...snapshot.memory, processRssBytes: Number.POSITIVE_INFINITY } }
-  ]) {
-    relay.publish({
-      capability,
-      eventName: 'onlypreview/search-snapshot',
-      value: { snapshot: invalid }
-    });
-  }
 
-  client.respond('initialize', { ok: true, value: snapshot });
+  client.respond('initialize', { ok: true, value: classifiedSnapshot });
   await initialize;
   const browseRequest = {
     hostToken: 'host-token',
     workspaceId,
     generation,
-    directoryToken: browseListing.directoryToken
+    directoryToken: classifiedBrowseListing.directoryToken
   };
   const browse = relay.call('host-token', 'browseDirectory', browseRequest, 5_000);
-  client.respond('browseDirectory', { ok: true, value: browseListing });
-  assert.deepEqual(await browse, { ok: true, value: browseListing });
-
-  const invalidBrowse = relay.call('host-token', 'browseDirectory', browseRequest, 5_000);
-  client.respond('browseDirectory', {
-    ok: true,
-    value: {
-      ...browseListing,
-      entries: [{ ...browseEntry, searchExcluded: 'false' }]
-    }
-  });
-  await assert.rejects(invalidBrowse, (error) => error?.code === 'PROTOCOL_ERROR');
+  client.respond('browseDirectory', { ok: true, value: classifiedBrowseListing });
+  assert.deepEqual(await browse, { ok: true, value: classifiedBrowseListing });
 
   relay.publish({
     capability,
     eventName: 'onlypreview/browse-listing',
-    value: { listing: browseListing }
+    value: { listing: classifiedBrowseListing }
   });
-  const missingMarker = { ...browseEntry };
-  delete missingMarker.searchExcluded;
-  for (const invalidEntry of [
-    missingMarker,
-    { ...browseEntry, searchExcluded: 'false' },
-    { ...browseEntry, unexpected: true },
-    {
-      ...browseEntry,
-      nodeKind: 'symlink',
-      previewHint: 'unsupported',
-      mediaType: 'unknown',
-      isText: false,
-      size: 0,
-      searchExcluded: true
-    }
-  ]) {
-    relay.publish({
-      capability,
-      eventName: 'onlypreview/browse-listing',
-      value: { listing: { ...browseListing, entries: [invalidEntry] } }
-    });
-  }
   const request = {
     hostToken: 'host-token',
     workspaceId,
@@ -643,19 +626,6 @@ test('file-search XPC event path capability-binds and deeply validates public re
         requestId: request.requestId,
         files: [fileSearchResult],
         contents: [searchResult]
-      }
-    }
-  });
-  relay.publish({
-    capability,
-    eventName: 'onlypreview/search-batch',
-    value: {
-      batch: {
-        workspaceId,
-        generation,
-        requestId: request.requestId,
-        files: [],
-        contents: [{ ...searchResult, relativePath: '/private/readme.md' }]
       }
     }
   });
@@ -713,25 +683,7 @@ test('file-search XPC event path capability-binds and deeply validates public re
       absolutePath: '/private/readme.md'
     }
   });
-  await assert.rejects(malformedPreview, (error) => error?.code === 'PROTOCOL_ERROR');
-  relay.detach();
-});
-
-test('file-search XPC relay rejects malformed responses and enforces timeout', async () => {
-  const { client, relay } = createHarness();
-  const malformed = relay.call(
-    'host-token',
-    'cancel',
-    { hostToken: 'host-token', requestId: 'cancel-invalid' },
-    5_000
-  );
-  client.respond('cancel', { ok: true, value: null });
-  await assert.rejects(malformed, (error) => error?.code === 'PROTOCOL_ERROR');
-
-  await assert.rejects(
-    relay.call('host-token', 'cancel', { hostToken: 'host-token', requestId: 'cancel-timeout' }, 5),
-    /timed out/u
-  );
+  await assert.rejects(malformedPreview, (error) => error?.code === 'INDEX_PROTOCOL_ERROR');
   relay.detach();
 });
 
@@ -796,4 +748,3 @@ test('file-search readiness retries an unregistered XPC target within one bounde
     /stopped during startup/u
   );
 });
-

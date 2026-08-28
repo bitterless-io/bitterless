@@ -182,8 +182,10 @@ design document.
   implemented localized dismissal for Project errors plus 13px/500 Project tree entry names with
   unchanged row geometry and interactions; owner verification remains pending.
 - [OnlyPreview Project index protocol failure is reported as a Preview stream error](issues/onlypreview-project-index-protocol-preview-error.md) -
-  in progress: repair the rich-format `previewHint`/search `mediaType` contract, fail malformed
-  current-generation index events immediately, and preserve the generic Preview protocol message.
+  implemented pending owner verification: the rich-format `previewHint`/search `mediaType`
+  contract is restored, malformed current-generation index events fail immediately with dedicated
+  Project wording, and [independent review 3](plan/reviews/onlypreview-project-index-protocol-validation-080-3.md)
+  passed with no finding.
 - [OnlyPreview Global Search and result preview](design/onlypreview-global-search.md) - remove the
   Project-side search field, place Contents and Files in parallel result columns above one bounded
   lazy file-content Preview, make the workspace root the first Project tree row, fence visible rows

@@ -1,7 +1,7 @@
 ---
 id: onlypreview-project-index-protocol-validation-080
 scope: Repair rich-format Project index entry validation and fail current-generation search protocol violations immediately with truthful UI wording
-status: in-progress
+status: implemented; owner verification pending
 depends-on:
   - onlypreview-office-ooxml-renderers-077
   - onlypreview-drawio-readonly-032
@@ -42,4 +42,20 @@ Project-specific message.
 
 ## Delivery
 
-Pending implementation and independent review.
+- Main now accepts the complete Preview-hint/search-media matrix, including Office and Draw.io
+  hints paired with `unknown`, while retaining exact-key, path, marker, memory, and nested-result
+  validation.
+- File-search protocol violations use the dedicated `INDEX_PROTOCOL_ERROR`; the Shell shows the
+  localized Project search-index response error while the generic Preview stream message remains
+  unchanged.
+- A current-generation malformed event latches one failure, wakes pending calls, and rejects later
+  calls immediately. A fixed 256-entry retired-request registry permits only known cancelled,
+  superseded, terminal, or timed-out late batches; unknown current request IDs fail closed. Both
+  workspace and generation fence late settlement after reinitialization.
+- Protocol tests were split into a dedicated file, restored every prior deep-negative case, and
+  added request lifecycle, memory-cap, mapping, immediate-failure, and cross-generation races.
+- Focused tests passed 26/26. Node typecheck, scoped ESLint/Prettier, and `git diff --check` passed.
+  [Independent review 3](../reviews/onlypreview-project-index-protocol-validation-080-3.md) passed
+  with no P1/P2/P3 finding after reviews 1 and 2 were resolved.
+- Electron, Playwright, packaged smoke, and E2E were not run by request. Ral performs the live
+  Project initialization and error-wording check.

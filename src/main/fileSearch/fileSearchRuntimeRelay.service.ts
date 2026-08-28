@@ -27,21 +27,12 @@ import {
   isOnlyPreviewGlobalSearchPreview,
   isOnlyPreviewGlobalSearchResponse
 } from './fileSearchGlobalResult.validator';
+import {
+  FileSearchRetiredRequestRegistry,
+  type FileSearchPendingCall as PendingCall,
+  type FileSearchPendingExpectation as PendingExpectation
+} from './fileSearchRetiredRequest.registry';
 export type FileSearchRuntimeClient = FileSearchRuntimePrivateApi;
-
-interface PendingCall {
-  expectation: PendingExpectation;
-}
-
-interface PendingExpectation {
-  method: FileSearchRuntimeMethod;
-  workspaceId: string | null;
-  generation: number | null;
-  requestId: string | null;
-  directoryToken: string | null;
-  resultToken: string | null;
-  maxResults: number | null;
-}
 
 interface ActiveRuntime {
   hostToken: string;
@@ -50,6 +41,7 @@ interface ActiveRuntime {
   capability: string;
   client: FileSearchRuntimeClient;
   pending: Set<PendingCall>;
+  retiredSearchRequests: FileSearchRetiredRequestRegistry;
   workspaceId: string | null;
   generation: number | null;
   broadcast(eventName: string, params: unknown): void;
@@ -137,7 +129,7 @@ export class FileSearchRuntimeRelayService {
     const stopped = new Promise<void>((resolve) => {
       resolveStopped = resolve;
     });
-    let resolveProtocolFailure = (_error: OnlyPreviewContractError): void => undefined;
+    let resolveProtocolFailure: (error: OnlyPreviewContractError) => void = () => undefined;
     const protocolFailureSignal = new Promise<OnlyPreviewContractError>((resolve) => {
       resolveProtocolFailure = resolve;
     });
@@ -148,6 +140,7 @@ export class FileSearchRuntimeRelayService {
       capability: params.capability,
       client: params.client,
       pending: new Set(),
+      retiredSearchRequests: new FileSearchRetiredRequestRegistry(),
       workspaceId: null,
       generation: null,
       broadcast: params.broadcast,
@@ -192,6 +185,15 @@ export class FileSearchRuntimeRelayService {
       if (method === 'initialize') {
         active.workspaceId = expectation.workspaceId;
         active.generation = expectation.generation;
+        active.retiredSearchRequests.clear();
+      } else if (method === 'search' && expectation.requestId !== null) {
+        active.retiredSearchRequests.retireSuperseded(
+          active.pending,
+          expectation.workspaceId,
+          expectation.generation,
+          expectation.requestId
+        );
+        active.retiredSearchRequests.forget(expectation.requestId);
       }
       pending = { expectation };
       active.pending.add(pending);
@@ -218,11 +220,28 @@ export class FileSearchRuntimeRelayService {
       if (!this._isResponseResult(result, expectation)) {
         throw this._latchProtocolFailure(active);
       }
+      if (expectation.method === 'cancel' && this._isRecord(result) && result.ok === true) {
+        active.retiredSearchRequests.retireCancelled(
+          active.pending,
+          active.workspaceId,
+          active.generation,
+          expectation.requestId
+        );
+      }
       outcome = 'success';
       return result;
     } finally {
       if (timeout) clearTimeout(timeout);
-      if (active && pending) active.pending.delete(pending);
+      if (active && pending) {
+        active.pending.delete(pending);
+        if (
+          pending.expectation.method === 'search' &&
+          pending.expectation.workspaceId === active.workspaceId &&
+          pending.expectation.generation === active.generation
+        ) {
+          active.retiredSearchRequests.retireSettled(pending.expectation, active.pending);
+        }
+      }
       if (diagnostic && diagnosticMethod) {
         this.diagnostics.emit('xpc-terminal', {
           tag: diagnostic.tag,
@@ -257,12 +276,7 @@ export class FileSearchRuntimeRelayService {
   publish(message: FileSearchRuntimeEventRequest): { ok: true } {
     const active = this.active;
     if (!active) throw runtimeStoppedError();
-    if (
-      !this._isRecord(message) ||
-      !this._hasExactKeys(message, ['capability', 'eventName', 'value'])
-    ) {
-      throw this._latchProtocolFailure(active);
-    }
+    if (!this._isRecord(message)) throw indexProtocolError();
     if (message.capability !== active.capability) {
       throw new OnlyPreviewContractError(
         'HOST_ROLE_DENIED',
@@ -270,6 +284,9 @@ export class FileSearchRuntimeRelayService {
       );
     }
     if (active.protocolFailure) throw active.protocolFailure;
+    if (!this._hasExactKeys(message, ['capability', 'eventName', 'value'])) {
+      throw this._latchProtocolFailure(active);
+    }
     if (typeof message.eventName === 'string') this._handleEvent(active, message);
     return { ok: true };
   }
@@ -400,30 +417,31 @@ export class FileSearchRuntimeRelayService {
     value: Record<string, unknown>
   ): 'broadcast' | 'ignore' | 'invalid' {
     if (!this._isBoundedToken(value.requestId)) return 'invalid';
-    const matchingSearch = [...active.pending.values()].find(
-      ({ expectation }) =>
-        expectation.method === 'search' &&
-        expectation.workspaceId === value.workspaceId &&
-        expectation.generation === value.generation &&
-        expectation.requestId === value.requestId
+    const retiredSearch = active.retiredSearchRequests.find(
+      value.workspaceId as string,
+      value.generation as number,
+      value.requestId
     );
-    if (!matchingSearch) {
+    if (retiredSearch) {
       return isOnlyPreviewGlobalSearchBatch(
         value,
-        {
-          workspaceId: value.workspaceId as string,
-          generation: value.generation as number,
-          requestId: value.requestId
-        },
-        ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS
+        retiredSearch,
+        Math.min(ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS, retiredSearch.maxResults)
       )
         ? 'ignore'
         : 'invalid';
     }
+    const matchingSearch = active.retiredSearchRequests.findPending(
+      active.pending,
+      value.workspaceId as string,
+      value.generation as number,
+      value.requestId
+    );
+    if (!matchingSearch) return 'invalid';
     return isOnlyPreviewGlobalSearchBatch(
       value,
-      matchingSearch.expectation,
-      Math.min(ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS, matchingSearch.expectation.maxResults ?? 0)
+      matchingSearch,
+      Math.min(ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS, matchingSearch.maxResults ?? 0)
     )
       ? 'broadcast'
       : 'invalid';
