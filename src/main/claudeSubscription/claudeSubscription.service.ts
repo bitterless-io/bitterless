@@ -24,6 +24,7 @@ import {
   parseClaudeSubscriptionFlowIdInput,
   parseClaudeSubscriptionRenameAccountInput,
   parseClaudeSubscriptionSetAccountEnabledInput,
+  parseClaudeSubscriptionSetServerPortInput,
   parseClaudeSubscriptionSnapshot,
   parseClaudeSubscriptionStartAuthInput,
   parseClaudeSubscriptionSubmitAuthCodeInput
@@ -447,6 +448,37 @@ export class ClaudeSubscriptionService {
         subscriptionType: status.subscriptionType
       });
       this.#router.markReady(account.id);
+      return await this.#success();
+    } catch (error) {
+      return await this.#failure(mapOperationError(error));
+    } finally {
+      try {
+        await this.#publishSnapshot().catch(() => undefined);
+      } finally {
+        settleLifecycle();
+      }
+    }
+  }
+
+  /**
+   * Persists a new loopback port. The listener is not restarted here: the server
+   * instance is constructed with its port, so the change takes effect on the next
+   * start rather than tearing down a server that may be serving a request.
+   */
+  async setServerPort(value: unknown): Promise<ClaudeSubscriptionActionResult> {
+    let input;
+    try {
+      input = parseClaudeSubscriptionSetServerPortInput(value);
+    } catch {
+      return await this.#failure(operationError('invalid_input', false));
+    }
+    if (!this.#acceptingActions) {
+      return await this.#failure(operationError('runtime_unavailable', true));
+    }
+    const settleLifecycle = this.#beginLifecycleOperation();
+    try {
+      await this.#ensureInitialized();
+      await this.#repository.setServerPort(input.port);
       return await this.#success();
     } catch (error) {
       return await this.#failure(mapOperationError(error));

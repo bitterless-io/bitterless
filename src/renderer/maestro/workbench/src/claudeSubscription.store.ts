@@ -65,6 +65,11 @@ class ClaudeSubscriptionStore {
     )
   }
 
+  /** Takes effect on the next service start; the running listener keeps its port. */
+  async setServerPort(port: number): Promise<boolean> {
+    return await this.runAction('set-port', () => claudeSubscription.setServerPort({ port }))
+  }
+
   async loadAdoptableSlots(): Promise<void> {
     try {
       this.adoptableSlots = await claudeSubscription.listAdoptableSlots()

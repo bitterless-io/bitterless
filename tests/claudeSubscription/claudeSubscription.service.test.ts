@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
   buildClaudeSubscriptionCodexProfile,
   parseClaudeSubscriptionSnapshot,
   type ClaudeSubscriptionActionResult,

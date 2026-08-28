@@ -72,7 +72,13 @@ const createDefaultClaudeSubscriptionService = async (): Promise<ClaudeSubscript
     ? new ClaudeCliAccountAuth({ claudeExecutable, spawnProcess })
     : null;
   const responsesRuntime = new ClaudeResponsesRuntime(router, executor);
-  const server = new ClaudeResponsesServer(router, responsesRuntime);
+  // Initialize first: the server takes its port at construction, and the configured
+  // port is only readable once the settings file has been loaded. A port change
+  // therefore takes effect on the next start, never mid-flight.
+  await repository.initialize().catch(() => undefined);
+  const server = new ClaudeResponsesServer(router, responsesRuntime, {
+    port: repository.serverPort()
+  });
   const browserFactory = new ElectronClaudeAuthBrowserFactory();
 
   const authorization = new ClaudeAuthorizationCoordinator({
@@ -165,6 +171,10 @@ export class ClaudeSubscriptionMainRuntime {
 
   async listAdoptableSlots(): Promise<ClaudeSubscriptionAdoptableSlot[]> {
     return await (await this.#service()).listAdoptableSlots();
+  }
+
+  async setServerPort(value: unknown): Promise<ClaudeSubscriptionActionResult> {
+    return await (await this.#service()).setServerPort(value);
   }
 
   async testAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {

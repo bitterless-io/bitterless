@@ -67,6 +67,10 @@ export class ClaudeSubscriptionHandler extends XpcMainHandler implements ClaudeS
     }
   }
 
+  async setServerPort(value: unknown): Promise<ClaudeSubscriptionActionResult> {
+    return await parseActionBoundary(claudeSubscriptionRuntime.setServerPort(value));
+  }
+
   async testAccount(value: unknown): Promise<ClaudeSubscriptionActionResult> {
     return await parseActionBoundary(claudeSubscriptionRuntime.testAccount(value));
   }
