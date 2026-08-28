@@ -299,6 +299,14 @@ binding them to the attached `hostId`. Visible renderers receive those events on
 existing Main broadcast surface. There is no Main traversal, index-build, query, or watch
 implementation, and a visible renderer cannot call the private runtime without Main's capability.
 
+Index-entry validation preserves the distinction between Preview routing and search media types.
+`text`, `pdf`, `image`, `audio`, and `video` use the same value in both fields; `sheet`, `document`,
+`presentation`, `diagram`, and `unsupported` use search `mediaType: 'unknown'`, and only `text` has
+`isText: true`. A malformed event for the attached workspace's current generation faults the
+file-search runtime immediately with the Project index protocol error and wakes pending calls. A
+well-formed stale workspace/generation event and a late batch for a superseded search remain normal
+ignored races. The generic Preview stream protocol error is not used for Project index failures.
+
 ## Recent Directory Persistence
 
 OnlyPreview remembers the last successfully opened directory in the existing Core SQLite `setting`

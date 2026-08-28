@@ -181,6 +181,9 @@ design document.
 - [OnlyPreview Project error dismissal and tree typography](plan/tasks/onlypreview-project-error-dismiss-tree-typography-079.md) -
   implemented localized dismissal for Project errors plus 13px/500 Project tree entry names with
   unchanged row geometry and interactions; owner verification remains pending.
+- [OnlyPreview Project index protocol failure is reported as a Preview stream error](issues/onlypreview-project-index-protocol-preview-error.md) -
+  in progress: repair the rich-format `previewHint`/search `mediaType` contract, fail malformed
+  current-generation index events immediately, and preserve the generic Preview protocol message.
 - [OnlyPreview Global Search and result preview](design/onlypreview-global-search.md) - remove the
   Project-side search field, place Contents and Files in parallel result columns above one bounded
   lazy file-content Preview, make the workspace root the first Project tree row, fence visible rows

@@ -189,6 +189,7 @@ const en = {
     MEDIA_SOURCE_UNSUPPORTED: 'Chromium does not support this media source or codec.',
     SETTINGS_INVALID: 'One or more settings are invalid.',
     INDEX_FAILED: 'The project index could not be built.',
+    INDEX_PROTOCOL_ERROR: 'The Project search index returned an invalid response.',
     PDF_VIEWER_UNAVAILABLE: 'The built-in PDF viewer did not render this document.',
     OPERATION_FAILED: 'OnlyPreview could not complete this action.',
     PROTOCOL_ERROR: 'The preview data stream could not be opened.'
@@ -374,6 +375,7 @@ const zh: Localized<typeof en> = {
     MEDIA_SOURCE_UNSUPPORTED: 'Chromium 不支持此媒体来源或编码。',
     SETTINGS_INVALID: '一项或多项设置无效。',
     INDEX_FAILED: '无法建立项目索引。',
+    INDEX_PROTOCOL_ERROR: '项目搜索索引返回了无效响应。',
     PDF_VIEWER_UNAVAILABLE: '内置 PDF 阅读器未能渲染此文档。',
     OPERATION_FAILED: 'OnlyPreview 无法完成此操作。',
     PROTOCOL_ERROR: '无法打开预览数据流。'

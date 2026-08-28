@@ -53,6 +53,9 @@ interface ActiveRuntime {
   workspaceId: string | null;
   generation: number | null;
   broadcast(eventName: string, params: unknown): void;
+  protocolFailure: OnlyPreviewContractError | null;
+  protocolFailureSignal: Promise<OnlyPreviewContractError>;
+  resolveProtocolFailure(error: OnlyPreviewContractError): void;
   stopped: Promise<void>;
   resolveStopped(): void;
 }
@@ -60,10 +63,10 @@ interface ActiveRuntime {
 const runtimeStoppedError = (): Error =>
   new Error('OnlyPreview file-search runtime stopped unexpectedly.');
 
-const invalidRuntimeResponseError = (): Error =>
+const indexProtocolError = (): OnlyPreviewContractError =>
   new OnlyPreviewContractError(
-    'PROTOCOL_ERROR',
-    'OnlyPreview file-search runtime returned an invalid response.'
+    'INDEX_PROTOCOL_ERROR',
+    'OnlyPreview Project search index returned an invalid response.'
   );
 
 const MAX_RUNTIME_ERROR_MESSAGE_CODE_UNITS = 4_096;
@@ -83,6 +86,7 @@ const ONLY_PREVIEW_ERROR_CODES = new Set([
   'SIGNATURE_MISMATCH',
   'SETTINGS_INVALID',
   'INDEX_FAILED',
+  'INDEX_PROTOCOL_ERROR',
   'OPERATION_FAILED',
   'PROTOCOL_ERROR'
 ]);
@@ -133,6 +137,10 @@ export class FileSearchRuntimeRelayService {
     const stopped = new Promise<void>((resolve) => {
       resolveStopped = resolve;
     });
+    let resolveProtocolFailure = (_error: OnlyPreviewContractError): void => undefined;
+    const protocolFailureSignal = new Promise<OnlyPreviewContractError>((resolve) => {
+      resolveProtocolFailure = resolve;
+    });
     const active: ActiveRuntime = {
       hostToken: params.hostToken,
       hostId: params.hostId,
@@ -143,6 +151,9 @@ export class FileSearchRuntimeRelayService {
       workspaceId: null,
       generation: null,
       broadcast: params.broadcast,
+      protocolFailure: null,
+      protocolFailureSignal,
+      resolveProtocolFailure,
       stopped,
       resolveStopped
     };
@@ -176,6 +187,7 @@ export class FileSearchRuntimeRelayService {
           'OnlyPreview search request does not belong to the active file-search runtime.'
         );
       }
+      if (active.protocolFailure) throw active.protocolFailure;
       const expectation = this._createPendingExpectation(method, params);
       if (method === 'initialize') {
         active.workspaceId = expectation.workspaceId;
@@ -198,9 +210,14 @@ export class FileSearchRuntimeRelayService {
         }),
         active.stopped.then(() => {
           throw runtimeStoppedError();
+        }),
+        active.protocolFailureSignal.then((error) => {
+          throw error;
         })
       ]);
-      if (!this._isResponseResult(result, expectation)) throw invalidRuntimeResponseError();
+      if (!this._isResponseResult(result, expectation)) {
+        throw this._latchProtocolFailure(active);
+      }
       outcome = 'success';
       return result;
     } finally {
@@ -244,7 +261,7 @@ export class FileSearchRuntimeRelayService {
       !this._isRecord(message) ||
       !this._hasExactKeys(message, ['capability', 'eventName', 'value'])
     ) {
-      throw invalidRuntimeResponseError();
+      throw this._latchProtocolFailure(active);
     }
     if (message.capability !== active.capability) {
       throw new OnlyPreviewContractError(
@@ -252,6 +269,7 @@ export class FileSearchRuntimeRelayService {
         'File-search runtime event capability is invalid.'
       );
     }
+    if (active.protocolFailure) throw active.protocolFailure;
     if (typeof message.eventName === 'string') this._handleEvent(active, message);
     return { ok: true };
   }
@@ -265,20 +283,25 @@ export class FileSearchRuntimeRelayService {
       [ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT]: 'commit'
     } as const;
     const property = eventShape[message.eventName as keyof typeof eventShape];
-    if (!property || !this._isRecord(message.value)) return;
+    if (!property) return;
+    if (!this._isRecord(message.value)) throw this._latchProtocolFailure(active);
     const envelope = message.value;
-    if (!this._hasExactKeys(envelope, [property])) return;
+    if (!this._hasExactKeys(envelope, [property])) throw this._latchProtocolFailure(active);
     const value = envelope[property];
     if (
       !this._isRecord(value) ||
       active.workspaceId === null ||
       active.generation === null ||
       !this._isBoundedToken(value.workspaceId) ||
-      !this._isGeneration(value.generation) ||
-      value.workspaceId !== active.workspaceId ||
-      value.generation !== active.generation
+      !this._isGeneration(value.generation)
     ) {
-      return;
+      throw this._latchProtocolFailure(active);
+    }
+    if (value.workspaceId !== active.workspaceId || value.generation !== active.generation) return;
+    if (property === 'batch') {
+      const disposition = this._searchBatchDisposition(active, value);
+      if (disposition === 'ignore') return;
+      if (disposition === 'invalid') throw this._latchProtocolFailure(active);
     }
     const valid =
       (property === 'snapshot' &&
@@ -286,9 +309,9 @@ export class FileSearchRuntimeRelayService {
       (property === 'listing' &&
         this._isBrowseListing(value, active.workspaceId, active.generation)) ||
       (property === 'progress' && this._isBuildProgress(value)) ||
-      (property === 'batch' && this._isSearchBatch(active, value)) ||
+      property === 'batch' ||
       (property === 'commit' && this._isWatchCommit(value));
-    if (!valid) return;
+    if (!valid) throw this._latchProtocolFailure(active);
     active.broadcast(message.eventName, {
       hostId: active.hostId,
       [property]: value
@@ -372,8 +395,11 @@ export class FileSearchRuntimeRelayService {
     return isOnlyPreviewGlobalSearchResponse(value, expectation);
   }
 
-  private _isSearchBatch(active: ActiveRuntime, value: Record<string, unknown>): boolean {
-    if (!this._isBoundedToken(value.requestId)) return false;
+  private _searchBatchDisposition(
+    active: ActiveRuntime,
+    value: Record<string, unknown>
+  ): 'broadcast' | 'ignore' | 'invalid' {
+    if (!this._isBoundedToken(value.requestId)) return 'invalid';
     const matchingSearch = [...active.pending.values()].find(
       ({ expectation }) =>
         expectation.method === 'search' &&
@@ -381,12 +407,34 @@ export class FileSearchRuntimeRelayService {
         expectation.generation === value.generation &&
         expectation.requestId === value.requestId
     );
-    if (!matchingSearch) return false;
+    if (!matchingSearch) {
+      return isOnlyPreviewGlobalSearchBatch(
+        value,
+        {
+          workspaceId: value.workspaceId as string,
+          generation: value.generation as number,
+          requestId: value.requestId
+        },
+        ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS
+      )
+        ? 'ignore'
+        : 'invalid';
+    }
     return isOnlyPreviewGlobalSearchBatch(
       value,
       matchingSearch.expectation,
       Math.min(ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS, matchingSearch.expectation.maxResults ?? 0)
-    );
+    )
+      ? 'broadcast'
+      : 'invalid';
+  }
+
+  private _latchProtocolFailure(active: ActiveRuntime): OnlyPreviewContractError {
+    if (active.protocolFailure) return active.protocolFailure;
+    const error = indexProtocolError();
+    active.protocolFailure = error;
+    active.resolveProtocolFailure(error);
+    return error;
   }
 
   private _isSearchResultArray(value: unknown, maxLength: number): boolean {
@@ -647,7 +695,14 @@ export class FileSearchRuntimeRelayService {
         (!withDirectoryToken || value.nodeKind !== 'symlink' || value.searchExcluded === false)
       );
     }
-    const expectedMediaType = value.previewHint === 'unsupported' ? 'unknown' : value.previewHint;
+    const expectedMediaType =
+      value.previewHint === 'text' ||
+      value.previewHint === 'pdf' ||
+      value.previewHint === 'image' ||
+      value.previewHint === 'audio' ||
+      value.previewHint === 'video'
+        ? value.previewHint
+        : 'unknown';
     return value.mediaType === expectedMediaType && value.isText === (value.mediaType === 'text');
   }
 
