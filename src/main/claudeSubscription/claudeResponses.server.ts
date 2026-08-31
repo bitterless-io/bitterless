@@ -28,7 +28,8 @@ import {
   buildClaudeBridgePayload,
   claudeSubscriptionModelCatalog,
   parseClaudeResponsesRequest,
-  resolveClaudeSubscriptionModel
+  resolveClaudeSubscriptionModel,
+  resolveClaudeSubscriptionModelId
 } from './claudeResponses.translator';
 
 export class ClaudeResponsesRuntime {
@@ -42,6 +43,9 @@ export class ClaudeResponsesRuntime {
     signal?: AbortSignal
   ): Promise<ClaudeCompletedResponse> {
     const model = resolveClaudeSubscriptionModel(request.model);
+    // Report what actually ran, not what was asked for — see
+    // resolveClaudeSubscriptionModelId for why a mismatch is possible.
+    const reportedModel = resolveClaudeSubscriptionModelId(request.model);
     const payload = buildClaudeBridgePayload(request);
     const excluded = new Set<ClaudeAccountId>();
     let priorUsageFailure: ClaudeUsageLimitError | undefined;
@@ -78,7 +82,7 @@ export class ClaudeResponsesRuntime {
           signal ? { signal } : {}
         );
         return makeClaudeCompletedResponse(
-          request.model,
+          reportedModel,
           result.decision,
           normalizeClaudeUsage(result.rawUsage)
         );

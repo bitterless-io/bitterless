@@ -10,6 +10,7 @@ import {
   writeFile
 } from 'node:fs/promises';
 import path from 'node:path';
+import type { ClaudeSubscriptionCatalogEntry } from '@shared/claudeSubscription/claudeSubscription.contract';
 import {
   buildClaudeSubscriptionCodexModelCatalog,
   CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
@@ -262,7 +263,9 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
    * copied profile can point at a file that actually exists. Rewritten on every
    * copy: the catalog is derived, never edited by hand.
    */
-  async writeCodexModelCatalog(): Promise<string> {
+  async writeCodexModelCatalog(
+    entries: readonly ClaudeSubscriptionCatalogEntry[]
+  ): Promise<string> {
     this.#assertInitialized();
     const catalogPath = path.join(this.#rootDirectory, CODEX_CATALOG_FILE);
     const temporaryPath = path.join(
@@ -271,7 +274,7 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     );
     await writeFile(
       temporaryPath,
-      JSON.stringify(buildClaudeSubscriptionCodexModelCatalog(), null, 2),
+      JSON.stringify(buildClaudeSubscriptionCodexModelCatalog(entries), null, 2),
       { mode: 0o600 }
     );
     await renameFile(temporaryPath, catalogPath);

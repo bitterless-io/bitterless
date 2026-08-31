@@ -40,17 +40,32 @@ const CODEX_EFFORT_DESCRIPTIONS: Record<string, string> = {
  * `supports_reasoning_summaries` or `supports_parallel_tool_calls`, which 0.149
  * tolerates. A single missing field silently discards the whole catalog.
  */
-export const buildClaudeSubscriptionCodexModelCatalog = (): {
-  models: Array<Record<string, unknown>>;
-} => ({
-  models: Object.keys(CLAUDE_SUBSCRIPTION_MODELS).map((slug, index) => ({
-    slug,
-    display_name: `${CLAUDE_SUBSCRIPTION_MODEL_LABELS[slug] ?? slug} (Bitterless)`,
-    description: 'Claude through the Bitterless local subscription pool',
+export interface ClaudeSubscriptionCatalogEntry {
+  slug: string;
+  label: string;
+  /** Only the levels this upstream actually accepts — see the note below. */
+  efforts: readonly string[];
+  description: string;
+}
+
+/**
+ * Builds the catalog from whatever entries the caller says are servable.
+ *
+ * Efforts are per entry, not one shared list: Claude accepts low..max while Codex
+ * stops at xhigh, and `gpt-5.6-sol` accepts only medium..xhigh. Advertising a level
+ * an upstream rejects puts an option in the picker that fails when selected.
+ */
+export const buildClaudeSubscriptionCodexModelCatalog = (
+  entries: readonly ClaudeSubscriptionCatalogEntry[]
+): { models: Array<Record<string, unknown>> } => ({
+  models: entries.map((entry, index) => ({
+    slug: entry.slug,
+    display_name: `${entry.label} (Bitterless)`,
+    description: entry.description,
     shell_type: 'default',
     visibility: 'list',
     supported_in_api: true,
-    supported_reasoning_levels: CLAUDE_SUBSCRIPTION_EFFORTS.map((effort) => ({
+    supported_reasoning_levels: entry.efforts.map((effort) => ({
       effort,
       description: CODEX_EFFORT_DESCRIPTIONS[effort] ?? effort
     })),
@@ -64,6 +79,15 @@ export const buildClaudeSubscriptionCodexModelCatalog = (): {
   }))
 });
 
+/** The Claude half of the catalog; the Codex half comes from the Codex runtime. */
+export const claudeSubscriptionCatalogEntries = (): ClaudeSubscriptionCatalogEntry[] =>
+  Object.keys(CLAUDE_SUBSCRIPTION_MODELS).map((slug) => ({
+    slug,
+    label: CLAUDE_SUBSCRIPTION_MODEL_LABELS[slug] ?? slug,
+    efforts: CLAUDE_SUBSCRIPTION_EFFORTS,
+    description: 'Claude through the Bitterless local subscription pool'
+  }));
+
 /**
  * Built from the live port so a copied snippet always matches the running server.
  *
@@ -71,11 +95,26 @@ export const buildClaudeSubscriptionCodexModelCatalog = (): {
  * scope it into `[model_providers.bitterless_claude]`, where it is silently ignored
  * as an unknown provider field and the picker keeps showing the OpenAI models.
  */
+/**
+ * Built from the live port so a copied snippet always matches the running server.
+ *
+ * Deliberately omits a top-level `model`. Setting one rewrites the default for
+ * **existing** Codex threads too, and a thread created under the OpenAI provider
+ * then asks ChatGPT for a Claude model — which fails with "not supported when
+ * using Codex with a ChatGPT account". The catalog already supplies the default
+ * model for new threads, so the line bought nothing and broke old ones.
+ *
+ * `model_catalog_json` is emitted **before any table header**: TOML would otherwise
+ * scope it into `[model_providers.bitterless_claude]`, where it is silently ignored
+ * as an unknown provider field and the picker keeps showing the OpenAI models.
+ *
+ * Note this switches Codex Desktop **globally** — it has no per-thread provider
+ * (openai/codex#29156). The CLI can keep both by putting this in a Profiles V2
+ * file and using `codex -p <name>`.
+ */
 export const buildClaudeSubscriptionCodexProfile = (port: number, catalogPath?: string): string =>
-  `model = "claude-sonnet"
-model_provider = "bitterless_claude"
-${catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}
-` : ''}
+  `model_provider = "bitterless_claude"
+${catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}\n` : ''}
 [model_providers.bitterless_claude]
 name = "Bitterless Claude Subscription"
 base_url = "http://${CLAUDE_SUBSCRIPTION_HOST}:${port}/v1"

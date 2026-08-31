@@ -5,7 +5,8 @@ import {
   extractClaudeCodexTools,
   parseClaudeResponsesRequest,
   resolveClaudeEffort,
-  resolveClaudeSubscriptionModel
+  resolveClaudeSubscriptionModel,
+  resolveClaudeSubscriptionModelId
 } from '../../src/main/claudeSubscription/claudeResponses.translator';
 import {
   buildClaudeResponseEvents,
@@ -146,10 +147,13 @@ test('validates streaming request fields and exact model mapping', () => {
   assert.equal(resolveClaudeSubscriptionModel('claude-sonnet'), 'sonnet');
   assert.equal(resolveClaudeSubscriptionModel('claude-opus'), 'opus');
   assert.equal(resolveClaudeSubscriptionModel('claude-haiku'), 'haiku');
-  assert.throws(
-    () => resolveClaudeSubscriptionModel('gpt-5'),
-    ClaudeSubscriptionInvalidRequestError
-  );
+  // Codex Desktop switches provider globally, so a thread created before the
+  // switch still sends its OpenAI slug here. Rejecting those made every
+  // pre-existing thread unusable; Sonnet answers instead, and the response
+  // reports the model that actually ran rather than echoing the request.
+  assert.equal(resolveClaudeSubscriptionModel('gpt-5'), 'sonnet');
+  assert.equal(resolveClaudeSubscriptionModelId('gpt-5'), 'claude-sonnet');
+  assert.equal(resolveClaudeSubscriptionModelId('claude-opus'), 'claude-opus');
   assert.throws(
     () => parseClaudeResponsesRequest({ model: 'claude-sonnet', stream: false }),
     /stream=true/u

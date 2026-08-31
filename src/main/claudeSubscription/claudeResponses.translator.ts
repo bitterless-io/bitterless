@@ -5,6 +5,7 @@ import {
   type ClaudeEffort,
   type ClaudeNormalizedCodexTool,
   type ClaudeResponsesRequest,
+  type ClaudeSubscriptionModel,
   type ClaudeSubscriptionJsonObject
 } from '@shared/claudeSubscription/claudeSubscription.contract';
 import { ClaudeSubscriptionInvalidRequestError } from './claudeSubscription.errors';
@@ -222,14 +223,29 @@ export const parseClaudeResponsesRequest = (value: unknown): ClaudeResponsesRequ
   };
 };
 
-export const resolveClaudeSubscriptionModel = (model: string): ClaudeCliModel => {
-  if (!Object.prototype.hasOwnProperty.call(CLAUDE_SUBSCRIPTION_MODELS, model)) {
-    throw new ClaudeSubscriptionInvalidRequestError(
-      'Unsupported model. Use claude-sonnet, claude-opus, or claude-haiku.'
-    );
-  }
-  return CLAUDE_SUBSCRIPTION_MODELS[model as keyof typeof CLAUDE_SUBSCRIPTION_MODELS];
-};
+export const CLAUDE_SUBSCRIPTION_FALLBACK_MODEL = 'claude-sonnet' as const;
+
+/**
+ * Resolves the requested model, falling back to Sonnet for anything unrecognised.
+ *
+ * Codex Desktop switches provider **globally** — it has no per-thread provider
+ * (openai/codex#29156) — so a thread created before the switch keeps an OpenAI
+ * slug like `gpt-5.6-sol` and sends it here. Rejecting those made every
+ * pre-existing thread unusable the moment the provider was enabled. This bridge
+ * only ever serves Claude, so a request naming something else can only have come
+ * from a client pointed at it deliberately; answering is more useful than failing.
+ *
+ * The substitution is **not** silent: `resolveClaudeSubscriptionModelId` reports
+ * the model that actually served the request, so the response says `claude-sonnet`
+ * rather than echoing a model that never ran.
+ */
+export const resolveClaudeSubscriptionModelId = (model: string): ClaudeSubscriptionModel =>
+  Object.prototype.hasOwnProperty.call(CLAUDE_SUBSCRIPTION_MODELS, model)
+    ? (model as ClaudeSubscriptionModel)
+    : CLAUDE_SUBSCRIPTION_FALLBACK_MODEL;
+
+export const resolveClaudeSubscriptionModel = (model: string): ClaudeCliModel =>
+  CLAUDE_SUBSCRIPTION_MODELS[resolveClaudeSubscriptionModelId(model)];
 
 export const buildClaudeBridgePayload = (request: ClaudeResponsesRequest): ClaudeBridgePayload => {
   const { functions, unsupported } = extractClaudeCodexTools(request.tools);

@@ -3,6 +3,7 @@ import type {
   ClaudeBridgePayload,
   ClaudeSubscriptionActionResult,
   ClaudeSubscriptionAdoptableSlot,
+  ClaudeSubscriptionCatalogEntry,
   ClaudeSubscriptionAuthFlowView,
   ClaudeSubscriptionCopyResult,
   ClaudeSubscriptionOperationError,
@@ -12,6 +13,7 @@ import type {
 } from '@shared/claudeSubscription/claudeSubscription.contract';
 import {
   buildClaudeSubscriptionCodexProfile,
+  claudeSubscriptionCatalogEntries,
   CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
   CLAUDE_SUBSCRIPTION_HOST,
   CLAUDE_SUBSCRIPTION_SNAPSHOT_SCHEMA
@@ -29,6 +31,10 @@ import {
   parseClaudeSubscriptionStartAuthInput,
   parseClaudeSubscriptionSubmitAuthCodeInput
 } from '@shared/claudeSubscription/claudeSubscription.schema';
+import {
+  CODEX_RUNTIME_MODELS,
+  CODEX_RUNTIME_MODEL_EFFORTS
+} from '@main/codex/codexRuntime.service';
 import { ClaudeAccountRepository } from './claudeAccount.repository';
 import { ClaudeAccountRouter } from './claudeAccount.router';
 import { ClaudeAuthorizationCoordinator, ClaudeAuthorizationError } from './claudeAuth.coordinator';
@@ -610,7 +616,7 @@ export class ClaudeSubscriptionService {
     try {
       // The catalog file must exist before the snippet references it, otherwise
       // Codex discards the whole catalog and silently keeps its built-in list.
-      const catalogPath = await this.#repository.writeCodexModelCatalog();
+      const catalogPath = await this.#repository.writeCodexModelCatalog(this.#catalogEntries());
       this.#writeClipboard(
         buildClaudeSubscriptionCodexProfile(this.#repository.serverPort(), catalogPath)
       );
@@ -838,6 +844,23 @@ export class ClaudeSubscriptionService {
       },
       authFlow: capture.authFlow
     });
+  }
+
+  /**
+   * Claude entries plus the GPT models the Codex runtime can serve. Effort lists
+   * differ per model — `gpt-5.6-sol` accepts only medium..xhigh — so each entry
+   * carries its own rather than sharing one list.
+   */
+  #catalogEntries(): ClaudeSubscriptionCatalogEntry[] {
+    return [
+      ...claudeSubscriptionCatalogEntries(),
+      ...CODEX_RUNTIME_MODELS.map((slug) => ({
+        slug,
+        label: slug,
+        efforts: CODEX_RUNTIME_MODEL_EFFORTS[slug],
+        description: 'GPT through the Bitterless local Codex subscription'
+      }))
+    ];
   }
 
   #serverPortOrDefault(): number {

@@ -274,13 +274,17 @@ test('returns typed request and no-account errors without account identity', asy
     assert.match(noAccountBody, /no_eligible_account/u);
     assert.doesNotMatch(noAccountBody, /private-account-id|token-a/u);
 
-    const invalidModel = await fetch(`${running.baseUrl}/v1/responses`, {
+    // An unknown model no longer 400s: Codex Desktop switches provider globally,
+    // so threads created before the switch keep sending their OpenAI slug here and
+    // rejecting them made every pre-existing thread unusable. It routes to Sonnet
+    // and the pool answers (429 here only because this fixture has no account).
+    const unknownModel = await fetch(`${running.baseUrl}/v1/responses`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(requestBody({ model: 'gpt-5' }))
     });
-    assert.equal(invalidModel.status, 400);
-    assert.match(await invalidModel.text(), /invalid_request/u);
+    assert.notEqual(unknownModel.status, 400, 'unknown models must not be rejected outright');
+    assert.match(await unknownModel.text(), /no_eligible_account/u);
 
     const nonStreaming = await fetch(`${running.baseUrl}/v1/responses`, {
       method: 'POST',

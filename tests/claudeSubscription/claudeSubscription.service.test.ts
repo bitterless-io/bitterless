@@ -445,17 +445,36 @@ test('stop fences every action, awaits a deferred logout/removal, and start reop
     const catalog = JSON.parse(await readFile(catalogPath, 'utf8')) as {
       models: Array<{ slug: string; supported_reasoning_levels: Array<{ effort: string }> }>;
     };
+    // Both subscriptions are offered through the one provider Desktop allows.
     assert.deepEqual(
       catalog.models.map((model) => model.slug).sort(),
-      ['claude-haiku', 'claude-opus', 'claude-sonnet'],
-      'every pool model is offered to Codex, not just the pinned one'
+      [
+        'claude-haiku',
+        'claude-opus',
+        'claude-sonnet',
+        'gpt-5.5',
+        'gpt-5.6-luna',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra'
+      ],
+      'the catalog covers both upstreams, not just Claude'
     );
+
+    // Effort vocabularies differ per upstream and even per model; advertising a
+    // level the upstream rejects puts a failing option in the picker.
+    const effortsOf = (slug: string): string[] =>
+      catalog.models
+        .find((model) => model.slug === slug)!
+        .supported_reasoning_levels.map((level) => level.effort);
+    assert.deepEqual(effortsOf('claude-opus'), ['low', 'medium', 'high', 'xhigh', 'max']);
+    assert.deepEqual(effortsOf('gpt-5.5'), ['low', 'medium', 'high', 'xhigh']);
+    assert.deepEqual(
+      effortsOf('gpt-5.6-sol'),
+      ['medium', 'high', 'xhigh'],
+      'gpt-5.6-sol does not accept low'
+    );
+
     for (const model of catalog.models) {
-      assert.deepEqual(
-        model.supported_reasoning_levels.map((level) => level.effort),
-        ['low', 'medium', 'high', 'xhigh', 'max'],
-        `${model.slug} must let Codex pick the effort`
-      );
       // 0.137 rejects an entry missing either of these; 0.149 tolerates it. A
       // single missing field discards the entire catalog.
       for (const required of [
