@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { Button, Message, Notification, Spin, Trigger } from '@arco-design/web-vue'
-import { IconBrandWhatsapp, IconLogin2, IconPlayerPlay, IconSparkle2, IconX } from '@tabler/icons-vue'
+import { IconLogin2, IconSparkle2, IconX } from '@tabler/icons-vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import type {
@@ -29,10 +29,6 @@ import './ControlApp.less'
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
 const status = ref('idle')
-const demoOpening = ref(false)
-const demoMenuVisible = ref(false)
-const compactDemoRunning = ref(false)
-const compactDemoRunId = ref(0)
 const controlLoading = ref(true)
 const controlLoadError = ref('')
 const llmSwitching = ref(false)
@@ -42,10 +38,6 @@ const providerPickerVisible = ref(false)
 const modelPickerVisible = ref(false)
 const effortPickerVisible = ref(false)
 const activeSession = computed(() => channelStore.activeSession)
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-const COMPACT_DEMO_CONTEXT_LIMIT_K = 1
-const COMPACT_DEMO_CONTEXT_LABEL = '1K'
-const COMPACT_DEMO_COMPRESSION_REMAINING_PERCENT = 10
 
 interface ControlLlmProviderGroup {
   provider: string
@@ -209,84 +201,6 @@ const closePanel = (): void => {
   xpcRenderer.broadcast('coach/sidebar-close', { ts: Date.now() })
 }
 
-const openDemo = async (): Promise<void> => {
-  if (demoOpening.value) return
-  demoMenuVisible.value = false
-  demoOpening.value = true
-  status.value = 'demo'
-  try {
-    await coach.openDemo()
-  } finally {
-    demoOpening.value = false
-    status.value = 'idle'
-  }
-}
-
-const compactDemoMessage = (turn: number): string =>
-  [
-    `Compact demo real-chat turn ${turn}.`,
-    'This is an intentional real model-token load test for recursive context compaction.',
-    'Do not use browser tools and do not interact with the page. Reply in chat only.',
-    'Produce a detailed, structured English response of about 900-1200 words if possible.',
-    'Use harmless non-sensitive demo content only. Include the marker CompactDemoRealTurn-' + turn + ' in each section.',
-    'Sections to include: Current demo state, Decisions to preserve, Boundary facts for future compaction, Next-turn continuity notes.'
-  ].join('\n')
-
-const stopCompactDemo = async (): Promise<void> => {
-  compactDemoRunning.value = false
-  compactDemoRunId.value += 1
-  const session = activeSession.value
-  if (session?.busy) await messageStore.stop(session.id).catch(() => undefined)
-  if (llmConfig.value) syncLlmContextWindow(llmConfig.value)
-  status.value = llmConfig.value?.ready ? 'idle' : 'login needed'
-}
-
-const startCompactDemo = async (): Promise<void> => {
-  if (compactDemoRunning.value) {
-    await stopCompactDemo()
-    return
-  }
-  if (!llmAvailable.value) {
-    Message.warning('Sign in to the active model first.')
-    return
-  }
-
-  demoMenuVisible.value = false
-  const session = await channelStore.startFreshMaestroSession('Compact demo')
-  if (!session) {
-    Message.warning('Wait for the current Maestro turn to finish first.')
-    return
-  }
-  await nextTick()
-
-  compactDemoRunning.value = true
-  const runId = compactDemoRunId.value + 1
-  compactDemoRunId.value = runId
-  status.value = 'compact demo'
-  messageStore.setContextWindow(COMPACT_DEMO_CONTEXT_LIMIT_K, COMPACT_DEMO_CONTEXT_LABEL, COMPACT_DEMO_COMPRESSION_REMAINING_PERCENT)
-
-  try {
-    let turn = 1
-    while (compactDemoRunning.value && compactDemoRunId.value === runId) {
-      const current = activeSession.value
-      if (!current || current.source !== 'cowork' || current.archivedAt) break
-      const reply = await messageStore.send(current.id, compactDemoMessage(turn))
-      if (!reply || !reply.ok) {
-        Message.warning(reply?.text || 'Compact demo stopped because the model did not return a successful reply.')
-        break
-      }
-      turn += 1
-      await wait(500)
-    }
-  } finally {
-    if (compactDemoRunId.value === runId) {
-      compactDemoRunning.value = false
-      if (llmConfig.value) syncLlmContextWindow(llmConfig.value)
-      status.value = llmConfig.value?.ready ? 'idle' : 'login needed'
-    }
-  }
-}
-
 const triggerInjectedSkill = async (trigger: InjectedSkillTrigger): Promise<void> => {
   const message = trigger.message?.trim()
   if (!message) return
@@ -436,61 +350,9 @@ onMounted(async () => {
             <IconSparkle2 :size="14" />
             <span>Maestro</span>
           </button>
-          <button
-            type="button"
-            class="control-app__channel"
-            :class="{ 'control-app__channel--active': channelStore.activeSource === 'connector' }"
-            :disabled="controlLoading"
-            @click="channelStore.selectSource('connector')"
-          >
-            <IconBrandWhatsapp :size="14" />
-            <span>Connector</span>
-          </button>
         </div>
 
         <div class="control-app__toolbar-actions">
-          <Trigger
-            v-model:popup-visible="demoMenuVisible"
-            trigger="click"
-            position="bottom"
-            :popup-offset="6"
-            :disabled="controlLoading"
-            :unmount-on-close="true"
-            :content-style="{ padding: '0' }"
-          >
-            <button
-              name="control__demo__button"
-              type="button"
-              class="control-app__text-button control-app__demo-button"
-              :disabled="controlLoading || demoOpening"
-              title="Demo"
-            >
-              <IconPlayerPlay :size="14" />
-              <span>{{ demoOpening ? 'Opening' : 'Demo' }}</span>
-            </button>
-            <template #content>
-              <div name="control__demo__menu" class="control-app__popup control-app__popup--demo">
-                <button
-                  name="control__demo__booking"
-                  type="button"
-                  class="control-app__popup-option"
-                  :disabled="demoOpening"
-                  @click="openDemo"
-                >
-                  Booking
-                </button>
-                <button
-                  name="control__demo__compact"
-                  type="button"
-                  class="control-app__popup-option"
-                  :class="{ 'control-app__popup-option--danger': compactDemoRunning }"
-                  @click="startCompactDemo"
-                >
-                  {{ compactDemoRunning ? 'Stop compacting' : 'Compact' }}
-                </button>
-              </div>
-            </template>
-          </Trigger>
           <button
             name="control__header__close"
             type="button"
@@ -515,7 +377,7 @@ onMounted(async () => {
         </div>
       </div>
       <ChatPanel
-        v-else-if="channelStore.activeSource === 'cowork' && activeSession"
+        v-else-if="activeSession"
         :key="activeSession.id"
         :session="activeSession"
         :send-disabled="!llmAvailable || llmLoginLoading"
@@ -651,11 +513,6 @@ onMounted(async () => {
           </div>
         </template>
       </ChatPanel>
-      <div v-else class="control-app__state">
-        <div class="control-app__connector-empty">
-          Connector
-        </div>
-      </div>
     </div>
   </div>
 

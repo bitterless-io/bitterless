@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
-import '@arco-design/web-vue/dist/arco.css'
+import '@arco-design/web-vue/dist/arco.less'
+import '@arco-design/web-vue/es/style/theme/global.less'
 import 'markstream-vue/index.css'
 import '../../common/style.css'
 import { i18n } from '@renderer/common/i18n/i18n.helper'
