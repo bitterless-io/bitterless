@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { SUB2API_CLIENT_EFFORTS } from '../../src/shared/claudeSubscription/claudeSubscription.contract';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -449,10 +450,8 @@ test('stop fences every action, awaits a deferred logout/removal, and start reop
     assert.deepEqual(
       catalog.models.map((model) => model.slug).sort(),
       [
-        'claude-haiku',
         'claude-opus',
         'claude-sonnet',
-        'gpt-5.5',
         'gpt-5.6-luna',
         'gpt-5.6-sol',
         'gpt-5.6-terra'
@@ -460,19 +459,31 @@ test('stop fences every action, awaits a deferred logout/removal, and start reop
       'the catalog covers both upstreams, not just Claude'
     );
 
-    // Effort vocabularies differ per upstream and even per model; advertising a
-    // level the upstream rejects puts a failing option in the picker.
+    // Every entry advertises the same client ladder. The upstreams do not share a
+    // vocabulary — pi has `minimal` and no `ultra`, the Claude CLI has neither — so
+    // the catalogue publishes the client's rungs and each request is shifted onto its
+    // upstream's ladder by rank at dispatch.
     const effortsOf = (slug: string): string[] =>
       catalog.models
         .find((model) => model.slug === slug)!
         .supported_reasoning_levels.map((level) => level.effort);
-    assert.deepEqual(effortsOf('claude-opus'), ['low', 'medium', 'high', 'xhigh', 'max']);
-    assert.deepEqual(effortsOf('gpt-5.5'), ['low', 'medium', 'high', 'xhigh']);
-    assert.deepEqual(
-      effortsOf('gpt-5.6-sol'),
-      ['medium', 'high', 'xhigh'],
-      'gpt-5.6-sol does not accept low'
-    );
+    // Asserted as a rule rather than a copied list: an entry publishes a contiguous
+    // prefix of the client ladder, shortened only where the upstream has no top rung
+    // to back it. Duplicating the list here would only record which revision of it
+    // the test was written against.
+    const clientLadder = [...SUB2API_CLIENT_EFFORTS];
+    for (const slug of ['claude-opus', 'claude-sonnet', 'gpt-5.6-sol']) {
+      const efforts = effortsOf(slug);
+      assert.ok(efforts.length > 0, `${slug} advertises at least one level`);
+      assert.deepEqual(
+        efforts,
+        clientLadder.slice(0, efforts.length),
+        `${slug} advertises a prefix of the client ladder`
+      );
+    }
+    // Only an upstream without a top rung is allowed to be short.
+    assert.deepEqual(effortsOf('claude-opus'), clientLadder);
+    assert.deepEqual(effortsOf('gpt-5.6-sol'), clientLadder);
 
     for (const model of catalog.models) {
       // 0.137 rejects an entry missing either of these; 0.149 tolerates it. A
@@ -699,6 +710,7 @@ test('delayed account reads preserve typed auth-error then null publication orde
       accountId: fixture.identity.id,
       status: 'saving',
       canSubmitCode: false,
+      codeAttempt: 0,
       error: { code: 'claude_authentication', retryable: true }
     });
     await waitUntil(() => listCalls === 1, 'the error publication should begin its account read');

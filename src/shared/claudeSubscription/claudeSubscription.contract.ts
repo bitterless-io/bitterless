@@ -19,7 +19,85 @@ export const CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT =
  * Mirrors `claude --effort` exactly: low, medium, high, xhigh, max. Declaring a
  * level the CLI does not accept would put a broken option in Codex's picker.
  */
-export const CLAUDE_SUBSCRIPTION_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/**
+ * What Codex Desktop's picker actually offers.
+ *
+ * Its schema accepts `none|minimal|low|medium|high|xhigh|max|ultra`, but the UI renders
+ * a shorter list — `enabledReasoningEfforts` defaults to
+ * `[low, medium, high, xhigh, ultra]`, both arrays sitting side by side in the app
+ * bundle. **`max` is excluded from the picker**, so declaring it puts a rung in the
+ * catalog that no one can select.
+ *
+ * Dropping it leaves five client rungs against five upstream rungs — the Claude CLI's
+ * `low..max` and pi's `low..max` — which align by rank with only the top rung renamed:
+ * `ultra` is the upstream's `max`. Everything below is identity.
+ *
+ * This was briefly six rungs including `max`, which shifted four of the five visible
+ * levels down one: `high` ran the upstream's `medium`. The client ladder has to be what
+ * the client shows, not what its schema tolerates.
+ */
+export const SUB2API_CLIENT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'ultra'] as const;
+
+export type Sub2ApiClientEffort = (typeof SUB2API_CLIENT_EFFORTS)[number];
+
+/**
+ * Maps a client rung onto an upstream ladder **by rank, anchored at the top**.
+ *
+ * Used where the upstream's ladder is longer at the *top* than the client's: the Claude
+ * CLI carries a sixth level, `ultracode`, above `max`, while Desktop's picker shows
+ * five. Aligning the tops spends that extra rung on `ultra` and drops the CLI's `low`,
+ * which is the rung least worth reaching.
+ *
+ * Not used for the Codex upstream: pi's extra rung (`minimal`) sits at the *bottom*, so
+ * rank alignment there would push every level down one. That path matches by name.
+ *
+ * A level outside the client ladder — `max`, which Desktop's schema allows but its
+ * picker hides — resolves to the top rather than being rejected.
+ */
+export const shiftClientEffortToUpstream = <T extends string>(
+  effort: string,
+  upstream: readonly T[]
+): T => {
+  if (upstream.length === 0) throw new Error('An upstream effort ladder cannot be empty.');
+  const clientIndex = SUB2API_CLIENT_EFFORTS.indexOf(effort as Sub2ApiClientEffort);
+  const offsetFromTop =
+    clientIndex === -1 ? 0 : SUB2API_CLIENT_EFFORTS.length - 1 - clientIndex;
+  return upstream[Math.max(0, upstream.length - 1 - offsetFromTop)] as T;
+};
+
+/**
+ * The Claude CLI's own ladder.
+ *
+ * `ultracode` is **not** in the CLI's own "Valid values: low, medium, high, xhigh, max"
+ * message, but it is accepted: `--effort ultracode` runs without the *Unknown --effort
+ * value* warning that `ultra` and any other unknown string produce. Verified against
+ * the live CLI on 2026-08-31 by comparing all four.
+ */
+export const CLAUDE_SUBSCRIPTION_EFFORTS = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultracode'
+] as const;
+
+/**
+ * The Claude CLI's own baseline, read from its bundle: `_er = 200000`.
+ *
+ * Not 1M. The CLI does carry a `context-1m-2025-08-07` beta, but `fro()` only returns
+ * a larger window when the model is **`claude-sonnet-4-6`** *and* a server-side
+ * `kelp_forest_sonnet` value is present. Neither `claude-sonnet-5` nor
+ * `claude-opus-5` qualifies, so the beta header is never added for the models this
+ * bridge serves.
+ *
+ * Briefly set to the GPT figures (272000/872000) to unify the two families. That was
+ * reverted once the CLI was actually read: overstating the budget by 36% does not give
+ * Codex more room, it removes the compaction that keeps a transcript inside what
+ * `claude -p` will accept, and the resulting refusal arrives as an opaque 502.
+ */
+export const CLAUDE_SUBSCRIPTION_CONTEXT_WINDOW = 200_000;
+export const CLAUDE_SUBSCRIPTION_MAX_CONTEXT_WINDOW = 200_000;
 
 const CODEX_EFFORT_DESCRIPTIONS: Record<string, string> = {
   low: 'Fastest, least reasoning',
@@ -45,6 +123,12 @@ export interface ClaudeSubscriptionCatalogEntry {
   label: string;
   /** Only the levels this upstream actually accepts — see the note below. */
   efforts: readonly string[];
+  /** Must be one of `efforts`; Codex needs a level to start a thread at. */
+  defaultEffort: string;
+  /** Tokens Codex plans against before compacting. */
+  contextWindow: number;
+  /** The ceiling Codex will stretch to; matches Codex's own `max_context_window`. */
+  maxContextWindow: number;
   description: string;
 }
 
@@ -65,15 +149,47 @@ export const buildClaudeSubscriptionCodexModelCatalog = (
     shell_type: 'default',
     visibility: 'list',
     supported_in_api: true,
+    // Codex's own entries carry this, and without it the picker would not know which
+    // level to open a thread at. Its absence is the difference between a catalogue
+    // Codex reads fully and one it falls back on.
+    default_reasoning_level: entry.defaultEffort,
+    minimal_client_version: '0.144.0',
     supported_reasoning_levels: entry.efforts.map((effort) => ({
       effort,
       description: CODEX_EFFORT_DESCRIPTIONS[effort] ?? effort
     })),
     supports_reasoning_summaries: true,
+    supports_reasoning_summary_parameter: true,
+    default_reasoning_summary: 'none',
     supports_parallel_tool_calls: true,
     priority: index,
     support_verbosity: true,
-    truncation_policy: { mode: 'tokens', limit: 200000 },
+    default_verbosity: 'low',
+    // Codex plans compaction against these. Omitting them left it with no budget to
+    // reason about for a model whose entry replaced the built-in one.
+    //
+    // Per family, from each upstream's own published figure — deliberately not one
+    // shared number. A budget that overstates the upstream removes the compaction that
+    // keeps a transcript inside what the upstream accepts.
+    context_window: entry.contextWindow,
+    max_context_window: entry.maxContextWindow,
+    auto_compact_token_limit: null,
+    input_modalities: ['text'],
+    apply_patch_tool_type: 'freeform',
+    supports_search_tool: false,
+    // `service_tiers` is deliberately absent rather than an empty list. Ral's config
+    // carries `service_tier = "priority"` from his OpenAI-provider days; Bitterless
+    // ignores the field, and an explicit empty list is a claim that this model offers
+    // no tier — which Codex may then validate that setting against. Absent is the
+    // permissive value, and the difference has not been tested.
+    // Bounds a single tool output — not the context; 200000 was a misreading of the
+    // field. Derived from the budget rather than fixed at Codex's 10000: the ratio is
+    // what makes the number correct, so a constant silently becomes wrong the moment a
+    // window changes. Codex uses ~3.7% of 272000; this keeps that proportion.
+    truncation_policy: {
+      mode: 'tokens',
+      limit: Math.max(4_000, Math.round(entry.contextWindow * 0.04))
+    },
     experimental_supported_tools: [],
     base_instructions: 'You are a coding agent.'
   }))
@@ -84,7 +200,15 @@ export const claudeSubscriptionCatalogEntries = (): ClaudeSubscriptionCatalogEnt
   Object.keys(CLAUDE_SUBSCRIPTION_MODELS).map((slug) => ({
     slug,
     label: CLAUDE_SUBSCRIPTION_MODEL_LABELS[slug] ?? slug,
-    efforts: CLAUDE_SUBSCRIPTION_EFFORTS,
+    // `claude --effort` accepts exactly low|medium|high|xhigh|max — the CLI names them
+    // in its own rejection message, and `ultra` is not among them: passing it prints
+    // "Unknown --effort value" and silently falls back to the default.
+    efforts: SUB2API_CLIENT_EFFORTS,
+    defaultEffort: 'high',
+    // Owner decision (2026-08-31): unified with the GPT entries. See the risk note in
+    // buildClaudeSubscriptionCodexModelCatalog.
+    contextWindow: CLAUDE_SUBSCRIPTION_CONTEXT_WINDOW,
+    maxContextWindow: CLAUDE_SUBSCRIPTION_MAX_CONTEXT_WINDOW,
     description: 'Claude through the Bitterless local subscription pool'
   }));
 
@@ -116,7 +240,7 @@ export const buildClaudeSubscriptionCodexProfile = (port: number, catalogPath?: 
   `model_provider = "bitterless_claude"
 ${catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}\n` : ''}
 [model_providers.bitterless_claude]
-name = "Bitterless Claude Subscription"
+name = "Bitterless Sub2API"
 base_url = "http://${CLAUDE_SUBSCRIPTION_HOST}:${port}/v1"
 wire_api = "responses"
 requires_openai_auth = false
@@ -125,21 +249,28 @@ stream_max_retries = 0
 stream_idle_timeout_ms = 900000
 `;
 
+/**
+ * Haiku is not offered: the pool exists for coding turns, where it is the wrong
+ * trade, and every slot it occupies in the picker is one the owner has to skip past.
+ *
+ * The CLI aliases resolve to the 5 generation — `--model sonnet` reports
+ * `claude-sonnet-5` and `--model opus` reports `claude-opus-5`, both verified against
+ * the live CLI — so the labels say so rather than leaving the generation ambiguous.
+ */
 export const CLAUDE_SUBSCRIPTION_MODELS = {
   'claude-sonnet': 'sonnet',
-  'claude-opus': 'opus',
-  'claude-haiku': 'haiku'
+  'claude-opus': 'opus'
 } as const;
 
 export const CLAUDE_SUBSCRIPTION_MODEL_LABELS: Record<string, string> = {
-  'claude-sonnet': 'Claude Sonnet',
-  'claude-opus': 'Claude Opus',
-  'claude-haiku': 'Claude Haiku'
+  'claude-sonnet': 'Claude Sonnet 5',
+  'claude-opus': 'Claude Opus 5'
 };
 
 export type ClaudeSubscriptionModel = keyof typeof CLAUDE_SUBSCRIPTION_MODELS;
 export type ClaudeCliModel = (typeof CLAUDE_SUBSCRIPTION_MODELS)[ClaudeSubscriptionModel];
-export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** Derived from the CLI ladder so the two cannot drift; includes `ultracode`. */
+export type ClaudeEffort = (typeof CLAUDE_SUBSCRIPTION_EFFORTS)[number];
 export type ClaudeAccountId = string;
 export type ClaudeSubscriptionType = 'pro' | 'max' | 'team' | 'enterprise';
 
@@ -153,15 +284,51 @@ export type ClaudeSubscriptionAccountStatus =
   | 'reconnect'
   | 'disabled';
 
+/**
+ * Anthropic's own rate-limit state for an account, as last observed.
+ *
+ * There is **no usage percentage** here because the CLI does not report one: its
+ * `rate_limit_event` carries a window, a status and a reset time, nothing more. A
+ * percentage would have to be invented, so the window is shown instead.
+ */
+export interface ClaudeSubscriptionAccountUsage {
+  /** `allowed`, `allowed_warning`, `rejected`, … — Anthropic's own wording. */
+  status?: string;
+  /** `five_hour`, `weekly`, … — which window the status describes. */
+  window?: string;
+  resetsAt?: number;
+  usingOverage?: boolean;
+  /** Percent of the five-hour window consumed, from the CLI's `/usage` report. */
+  sessionUsedPercent?: number;
+  /** Percent of the weekly window consumed — what the switching policy watches. */
+  weekUsedPercent?: number;
+  sessionResetsAt?: string;
+  weekResetsAt?: string;
+  observedAt: number;
+}
+
+/**
+ * Below this much weekly quota remaining an account is treated as spent and routing
+ * moves to the healthiest sibling on the same platform.
+ *
+ * When **every** account is under it the threshold is ignored rather than failing the
+ * request: the pool then runs the account with the most left until it is genuinely at
+ * zero. Refusing at 5% would strand quota the owner has paid for.
+ */
+export const CLAUDE_SUBSCRIPTION_LOW_QUOTA_PERCENT = 5;
+
 export interface ClaudeSubscriptionAccountView {
   id: ClaudeAccountId;
   label: string;
+  /** `~/.claude<N>` — the directory this account's CLI session lives in. */
+  directory?: string;
   email?: string;
   subscriptionType: ClaudeSubscriptionType;
   enabled: boolean;
   status: ClaudeSubscriptionAccountStatus;
   activeRequests: number;
   cooldownUntil?: number;
+  usage?: ClaudeSubscriptionAccountUsage;
   createdAt: string;
   updatedAt: string;
 }
@@ -185,6 +352,12 @@ export interface ClaudeSubscriptionAuthFlowView {
   accountId: ClaudeAccountId;
   status: ClaudeSubscriptionAuthFlowStatus;
   canSubmitCode: boolean;
+  /**
+   * How many times the CLI has asked for a code. Above 1 the owner needs to know the
+   * ask is a *new* one — either a second factor or the previous code being refused —
+   * because the status text alone is identical to the first ask.
+   */
+  codeAttempt: number;
   error?: {
     code: string;
     retryable: boolean;
@@ -222,6 +395,16 @@ export interface ClaudeSubscriptionOperationError {
   retryable: boolean;
 }
 
+/**
+ * The GPT half of the endpoint. It is a single ChatGPT OAuth credential shared with
+ * Translator, not a pool — Codex sign-in is browser OAuth against a subscription and
+ * Bitterless holds exactly one at a time.
+ */
+export interface ClaudeSubscriptionCodexUpstreamView {
+  connected: boolean;
+  models: string[];
+}
+
 export interface ClaudeSubscriptionSnapshot {
   schema: typeof CLAUDE_SUBSCRIPTION_SNAPSHOT_SCHEMA;
   revision: number;
@@ -230,6 +413,7 @@ export interface ClaudeSubscriptionSnapshot {
   accounts: ClaudeSubscriptionAccountView[];
   server: ClaudeSubscriptionServerView;
   authFlow: ClaudeSubscriptionAuthFlowView | null;
+  codexUpstream: ClaudeSubscriptionCodexUpstreamView;
 }
 
 export type ClaudeSubscriptionActionResult =
@@ -344,7 +528,8 @@ export type ClaudeResponsesRequest = ClaudeSubscriptionJsonObject & {
   input: unknown[] | string;
   tools: unknown[];
   prompt_cache_key?: string;
-  claudeEffort: ClaudeEffort;
+  /** The level the client asked for, in the client's vocabulary — not an upstream's. */
+  claudeEffort: Sub2ApiClientEffort;
 };
 
 export interface ClaudeNormalizedCodexTool {

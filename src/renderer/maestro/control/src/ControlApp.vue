@@ -200,7 +200,7 @@ const loginActiveProvider = async (): Promise<void> => {
 
 const configureLocalProvider = async (): Promise<void> => {
   await coach.setWorkbenchVisible({ visible: true })
-  xpcRenderer.broadcast('coach/workbench-pane', { pane: 'configuration' })
+  xpcRenderer.broadcast('coach/workbench-pane', { pane: 'sub2api' })
 }
 
 // The Home renderer owns sidebar geometry. Ask its layout store to collapse the placeholder;

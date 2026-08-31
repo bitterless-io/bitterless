@@ -311,6 +311,72 @@ test('uses all isolated directories, gates one manual code, verifies, then saves
   }
 });
 
+test('a second CLI code prompt reopens the field and is counted as a new attempt', async () => {
+  const fixture = await createFixture();
+  try {
+    const flow = await fixture.coordinator.start({ label: 'Two Step' });
+    const pty = fixture.ptyFactory.ptys[0]!;
+    pty.emit(`Open ${AUTHORIZATION_URL}\r\n`);
+    pty.emit('\u001b[36mPaste authorization code here if prompted:\u001b[0m ');
+    assert.equal(fixture.coordinator.currentFlow()?.canSubmitCode, true);
+    assert.equal(fixture.coordinator.currentFlow()?.codeAttempt, 1);
+
+    // A terminal redraws its prompt line; that is the same ask, not a new one.
+    pty.emit('\u001b[2K\rPaste authorization code here if prompted: ');
+    assert.equal(fixture.coordinator.currentFlow()?.codeAttempt, 1);
+
+    fixture.coordinator.submitCode(flow.flowId, 'first-code');
+    assert.deepEqual(pty.writes, ['first-code']);
+    assert.equal(fixture.coordinator.currentFlow()?.canSubmitCode, false);
+    assert.throws(() => fixture.coordinator.submitCode(flow.flowId, 'too-soon'));
+
+    // The Claude CLI asks a second time — for a second factor, or because it refused
+    // the first code. Before this fix the coordinator had stopped parsing entirely, so
+    // the field never came back and the panel sat silent until the 10-minute timeout.
+    pty.emit('first-code\r\n');
+    pty.emit('\u001b[36mPaste authorization code here if prompted:\u001b[0m ');
+    assert.equal(fixture.coordinator.currentFlow()?.canSubmitCode, true);
+    assert.equal(
+      fixture.coordinator.currentFlow()?.codeAttempt,
+      2,
+      'the owner must be able to tell a repeat ask from the first one'
+    );
+
+    fixture.coordinator.submitCode(flow.flowId, 'second-code');
+    assert.deepEqual(pty.writes, ['first-code', 'second-code']);
+
+    finishLogin(pty);
+    await waitUntil(() => fixture.coordinator.currentFlow() === null, 'login should settle');
+    const [account] = await fixture.repository.listAccounts();
+    assert.equal(account?.label, 'Two Step');
+    assert.equal(fixture.errors.length, 0);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
+test('a submitted code never re-enters the parser buffer', async () => {
+  const fixture = await createFixture();
+  try {
+    const flow = await fixture.coordinator.start({ label: 'Echo' });
+    const pty = fixture.ptyFactory.ptys[0]!;
+    pty.emit(`Open ${AUTHORIZATION_URL}\r\n`);
+    pty.emit('Paste authorization code here if prompted: ');
+    fixture.coordinator.submitCode(flow.flowId, 'oat01-secret-code');
+    // The PTY echoes the code back. Parsing resumes after a submission, so the echo
+    // must not survive into the buffer the next prompt is matched against.
+    pty.emit('oat01-secret-code\r\n');
+    pty.emit('Paste authorization code here if prompted: ');
+    assert.equal(fixture.coordinator.currentFlow()?.canSubmitCode, true);
+    finishLogin(pty);
+    await waitUntil(() => fixture.coordinator.currentFlow() === null, 'login should settle');
+    const registry = await readFile(path.join(fixture.rootDirectory, 'accounts.json'), 'utf8');
+    assert.doesNotMatch(registry, /oat01-secret-code/u);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
 test('paid-subscription and generic verification failures logout before clearing a new identity', async () => {
   for (const scenario of [
     {

@@ -559,6 +559,8 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     return {
       id: account.id,
       label: account.label,
+      // Derived from the slot, like every other path for this account.
+      directory: this.#expectedIdentity(account.id, account.slot).configDirectory,
       ...(account.email ? { email: account.email } : {}),
       subscriptionType: account.subscriptionType,
       enabled: account.enabled,

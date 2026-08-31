@@ -64,6 +64,8 @@ interface ActiveClaudeAuthorizationFlow {
   status: ClaudeSubscriptionAuthFlowStatus;
   canSubmitCode: boolean;
   codeSubmitted: boolean;
+  /** How many times the CLI has asked for a code. >1 means it asked again. */
+  codeAttempt: number;
   terminal: boolean;
   closingInternally: boolean;
   ioClosed: boolean;
@@ -205,6 +207,7 @@ export class ClaudeAuthorizationCoordinator {
         status: 'starting',
         canSubmitCode: false,
         codeSubmitted: false,
+        codeAttempt: 0,
         terminal: false,
         closingInternally: false,
         ioClosed: false,
@@ -300,11 +303,6 @@ export class ClaudeAuthorizationCoordinator {
         void this.#fail(flow, new ClaudeAuthorizationError('authorization_output_invalid', true));
         return;
       }
-      if (flow.codeSubmitted) {
-        flow.parserOutput = '';
-        flow.pendingAuthorizationTail = '';
-        return;
-      }
       const parsed = parseClaudeAuthorizationOutputChunk(
         flow.pendingAuthorizationTail,
         data.toString('utf8')
@@ -314,8 +312,23 @@ export class ClaudeAuthorizationCoordinator {
       if (!flow.browser) {
         if (parsed.authorizationUrl) this.#openBrowser(flow, parsed.authorizationUrl);
       }
-      if (flow.browser && !flow.codeSubmitted && hasClaudeManualCodePrompt(parserCandidate)) {
-        this.#publish(flow, 'awaiting_code', true);
+      // Parsing must continue after a submission. `codeSubmitted` suppresses only the
+      // *stale* prompt — the buffers are cleared on submit so the one already answered
+      // cannot re-match — while a genuinely new prompt reopens the field. Treating the
+      // flag as a permanent stop left the flow deaf to the CLI's second ask and to its
+      // rejection of a wrong code, so the panel sat silent until the 10-minute timeout.
+      if (flow.browser && hasClaudeManualCodePrompt(parserCandidate)) {
+        // A terminal redraws its prompt line, so the same ask can match repeatedly.
+        // Count an attempt only on a transition: the first ask, or one that follows a
+        // submission. Otherwise a redraw would read as "Claude asked again".
+        if (flow.codeSubmitted || !flow.canSubmitCode) {
+          flow.codeSubmitted = false;
+          flow.codeAttempt += 1;
+          flow.parserOutput = '';
+          flow.pendingAuthorizationTail = '';
+          this.#publish(flow, 'awaiting_code', true);
+        }
+        return;
       }
       flow.parserOutput = parserCandidate.slice(-PARSER_TAIL_CHARACTERS);
     } finally {
@@ -462,7 +475,8 @@ export class ClaudeAuthorizationCoordinator {
       flowId: flow.flowId,
       accountId: flow.identity.id,
       status: flow.status,
-      canSubmitCode: flow.canSubmitCode
+      canSubmitCode: flow.canSubmitCode,
+      codeAttempt: flow.codeAttempt
     };
   }
 

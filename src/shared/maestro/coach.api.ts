@@ -238,7 +238,7 @@ export type WorkbenchPane =
   | 'injections'
   | 'tools'
   | 'models'
-  | 'configuration'
+  | 'sub2api'
   | 'apps'
   | 'connectors'
   | 'settings'

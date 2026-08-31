@@ -44,10 +44,15 @@ const createValidSnapshot = () => ({
     accountId: ACCOUNT_ID,
     status: 'awaiting_code',
     canSubmitCode: true,
+    codeAttempt: 1,
     error: {
       code: 'authorization_output_invalid',
       retryable: true
     }
+  },
+  codexUpstream: {
+    connected: true,
+    models: ['gpt-5.5']
   }
 });
 

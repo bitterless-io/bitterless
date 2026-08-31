@@ -14,6 +14,7 @@ interface LocalClaudePiModel {
   id: string
   name: string
   reasoning: true
+  thinkingLevelMap: Record<string, string>
   input: Array<'text'>
   contextWindow: number
   compressionRemainingPercent: number
@@ -30,9 +31,8 @@ export interface LocalClaudePiProviderConfig {
 }
 
 const LOCAL_MODEL_NAMES: Record<keyof typeof CLAUDE_SUBSCRIPTION_MODELS, string> = {
-  'claude-sonnet': 'Claude Sonnet',
-  'claude-opus': 'Claude Opus',
-  'claude-haiku': 'Claude Haiku',
+  'claude-sonnet': 'Claude Sonnet 5',
+  'claude-opus': 'Claude Opus 5',
 }
 
 /** The port is owner-configurable, so the URL is built per call, never frozen. */
@@ -55,8 +55,14 @@ export const buildLocalClaudePiProviderConfig = (
       id,
       name: LOCAL_MODEL_NAMES[id],
       reasoning: true,
+      // pi's `getSupportedThinkingLevels` admits `xhigh` and `max` only when the model
+      // names them here. Without this the local provider's own effort dropdown stopped
+      // at `high`, silently — pi excluded the top two rungs rather than reporting them.
+      thinkingLevelMap: { xhigh: 'xhigh', max: 'max', minimal: 'low' },
       input: ['text'],
-      contextWindow: 200 * 1024,
+      // 200_000, the CLI's own `_er` baseline — not 200 * 1024, which overstated it by
+      // 4800 tokens. The 1M beta is gated to claude-sonnet-4-6 and never applies here.
+      contextWindow: 200_000,
       compressionRemainingPercent:
         compressionPrefs[modelPresetKey(LOCAL_LLM_PROVIDER, id)] ??
         DEFAULT_COMPRESSION_REMAINING_PERCENT,

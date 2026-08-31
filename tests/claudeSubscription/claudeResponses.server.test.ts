@@ -13,6 +13,17 @@ import {
   ClaudeResponsesRuntime,
   ClaudeResponsesServer
 } from '../../src/main/claudeSubscription/claudeResponses.server';
+import { CodexRuntimeError } from '../../src/main/codex/codexRuntime.service';
+import {
+  CLAUDE_SUBSCRIPTION_EFFORTS,
+  SUB2API_CLIENT_EFFORTS,
+  shiftClientEffortToUpstream
+} from '../../src/shared/claudeSubscription/claudeSubscription.contract';
+import {
+  clampCodexEffort,
+  renderCodexConversation,
+  type CodexResponsesUpstream
+} from '../../src/main/codex/codexResponses.upstream';
 import {
   FakeClaudeAccountSource,
   parseClaudeSse,
@@ -71,12 +82,17 @@ const startServer = async (
   options: {
     source?: FakeClaudeAccountSource;
     executor?: ClaudeExecutor;
+    codex?: CodexResponsesUpstream | null;
     maxBodyBytes?: number;
   } = {}
 ) => {
   const source = options.source ?? new FakeClaudeAccountSource();
   const router = new ClaudeAccountRouter(source);
-  const runtime = new ClaudeResponsesRuntime(router, options.executor ?? finalExecutor);
+  const runtime = new ClaudeResponsesRuntime(
+    router,
+    options.executor ?? finalExecutor,
+    options.codex ?? null
+  );
   const server = new ClaudeResponsesServer(router, runtime, {
     port: 0,
     ...(options.maxBodyBytes ? { maxBodyBytes: options.maxBodyBytes } : {})
@@ -116,7 +132,7 @@ test('binds loopback and serves aggregate health plus the exact model catalog', 
     const models = (await modelsResponse.json()) as { data: Array<{ id: string }> };
     assert.deepEqual(
       models.data.map((model) => model.id),
-      ['claude-sonnet', 'claude-opus', 'claude-haiku']
+      ['claude-sonnet', 'claude-opus']
     );
   } finally {
     await running.server.close();
@@ -161,7 +177,10 @@ test('round-trips flat and namespace function fixtures through HTTP SSE', async 
       const [tool] = execution.payload.available_tools;
       assert.ok(tool);
       observed.push({ decisionName: tool.decision_name, effort: execution.effort });
-      assert.equal(execution.effort, tool.namespace === 'browser' ? 'max' : 'high');
+      // Claude's ladder carries `ultracode` above `max`, one rung more than Desktop's
+      // picker offers, so the client's levels sit one rung higher on the CLI: the
+      // fixture asking for `ultra` runs `ultracode`, and the default `xhigh` runs `max`.
+      assert.equal(execution.effort, tool.namespace === 'browser' ? 'ultracode' : 'xhigh');
       return {
         decision: {
           action: 'tool_call',
@@ -180,14 +199,14 @@ test('round-trips flat and namespace function fixtures through HTTP SSE', async 
         body: await readClaudeFixture<Record<string, unknown>>('codex-tool-request.json'),
         decisionName: 'read_file',
         name: 'read_file',
-        effort: 'high',
+        effort: 'xhigh',
         namespace: undefined
       },
       {
         body: await readClaudeFixture<Record<string, unknown>>('codex-namespace-request.json'),
         decisionName: 'namespace:browser:open',
         name: 'open',
-        effort: 'max',
+        effort: 'ultracode',
         namespace: 'browser'
       }
     ] as const;
@@ -449,4 +468,181 @@ test('server close wins a concurrent startup without leaving a listener', async 
   assert.equal(listenResult.status, 'rejected');
   assert.throws(() => server.address(), /not listening/u);
   await server.close();
+});
+
+
+const codexUpstream = (
+  behaviour: () => Promise<{ decision: { action: 'final'; text: string } }> | never,
+  available = true
+): CodexResponsesUpstream => ({
+  async isAvailable() {
+    return available;
+  },
+  async execute(request) {
+    const result = await behaviour();
+    return { model: request.model, effort: request.effort, decision: result.decision };
+  }
+});
+
+const failingClaudeExecutor: ClaudeExecutor = {
+  async execute() {
+    throw new Error('the Claude pool must not be reached');
+  }
+};
+
+test('a gpt model is served by the Codex upstream and reported as itself', async () => {
+  const running = await startServer({
+    executor: failingClaudeExecutor,
+    codex: codexUpstream(async () => ({ decision: { action: 'final', text: 'from ChatGPT' } }))
+  });
+  try {
+    const response = await fetch(`${running.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestBody({ model: 'gpt-5.5' }))
+    });
+    assert.equal(response.status, 200);
+    const events = parseClaudeSse(await response.text());
+    const completed = events.find((event) => event.event === 'response.completed')?.data as {
+      response: { model: string };
+    };
+    assert.equal(completed.response.model, 'gpt-5.5');
+    assert.match(JSON.stringify(events), /from ChatGPT/u);
+  } finally {
+    await running.server.close();
+  }
+});
+
+test('an unconfigured Codex upstream falls back to Claude and reports the model that ran', async () => {
+  const running = await startServer({
+    codex: codexUpstream(() => {
+      throw new CodexRuntimeError('not-configured');
+    })
+  });
+  try {
+    const response = await fetch(`${running.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestBody({ model: 'gpt-5.6-sol' }))
+    });
+    assert.equal(response.status, 200);
+    const events = parseClaudeSse(await response.text());
+    const completed = events.find((event) => event.event === 'response.completed')?.data as {
+      response: { model: string };
+    };
+    // The thread keeps working, and the response names Claude rather than echoing a
+    // model that never ran.
+    assert.equal(completed.response.model, 'claude-sonnet');
+    assert.match(JSON.stringify(events), /hello from Bitterless/u);
+  } finally {
+    await running.server.close();
+  }
+});
+
+test('a Codex provider error is surfaced instead of being masked by the Claude pool', async () => {
+  const running = await startServer({
+    executor: failingClaudeExecutor,
+    codex: codexUpstream(() => {
+      throw new CodexRuntimeError('provider-error');
+    })
+  });
+  try {
+    const response = await fetch(`${running.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestBody({ model: 'gpt-5.5' }))
+    });
+    // Answering a failed GPT turn from Claude would both misreport the upstream and
+    // spend Claude quota on an error that belongs to the other subscription.
+    assert.equal(response.status, 502);
+  } finally {
+    await running.server.close();
+  }
+});
+
+test('the model catalog lists a family only while its upstream can serve it', async () => {
+  const withCodex = await startServer({
+    codex: codexUpstream(async () => ({ decision: { action: 'final', text: '' } }), true)
+  });
+  try {
+    const models = (await (await fetch(`${withCodex.baseUrl}/v1/models`)).json()) as {
+      data: Array<{ id: string }>;
+    };
+    assert.deepEqual(
+      models.data.map((model) => model.id),
+      ['claude-sonnet', 'claude-opus', 'gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra']
+    );
+  } finally {
+    await withCodex.server.close();
+  }
+
+  const withoutCodex = await startServer({
+    codex: codexUpstream(async () => ({ decision: { action: 'final', text: '' } }), false)
+  });
+  try {
+    const models = (await (await fetch(`${withoutCodex.baseUrl}/v1/models`)).json()) as {
+      data: Array<{ id: string }>;
+    };
+    assert.deepEqual(
+      models.data.map((model) => model.id),
+      ['claude-sonnet', 'claude-opus']
+    );
+  } finally {
+    await withoutCodex.server.close();
+  }
+});
+
+test('the effort table owner-agreed on 2026-08-31 holds for both upstreams', () => {
+  // Owner-agreed mapping. The two columns follow different rules, and each is forced
+  // by the upstream rather than chosen:
+  //
+  //   Claude  — its CLI ladder carries `ultracode` above `max`, one rung more than
+  //             Desktop's picker shows, so the client's levels sit one rung higher.
+  //   GPT     — pi's ladder matches Desktop's names exactly for low..xhigh, so those
+  //             pass straight through; `ultra` takes pi's top because the ChatGPT
+  //             backend rejects the string outright:
+  //             "[reasoning.effort] [invalid_enum_value] Invalid value: 'ultra'."
+  const table = [
+    { client: 'low', claude: 'medium', gpt: 'low' },
+    { client: 'medium', claude: 'high', gpt: 'medium' },
+    { client: 'high', claude: 'xhigh', gpt: 'high' },
+    { client: 'xhigh', claude: 'max', gpt: 'xhigh' },
+    { client: 'ultra', claude: 'ultracode', gpt: 'max' }
+  ] as const;
+
+  assert.deepEqual(
+    [...SUB2API_CLIENT_EFFORTS],
+    table.map((row) => row.client),
+    "the picker's rungs are exactly the table's rows"
+  );
+
+  for (const row of table) {
+    assert.equal(
+      shiftClientEffortToUpstream(row.client, CLAUDE_SUBSCRIPTION_EFFORTS),
+      row.claude,
+      `${row.client} → claude`
+    );
+    for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'] as const) {
+      assert.equal(clampCodexEffort(model, row.client), row.gpt, `${row.client} → ${model}`);
+    }
+  }
+
+  // Desktop hides `max` from its picker but its schema still allows it on the wire;
+  // it resolves to the top rather than being rejected.
+  assert.equal(shiftClientEffortToUpstream('max', CLAUDE_SUBSCRIPTION_EFFORTS), 'ultracode');
+  assert.equal(clampCodexEffort('gpt-5.6-sol', 'max'), 'max');
+});
+
+test('the Codex transcript keeps tool calls paired with their outputs', () => {
+  const rendered = renderCodexConversation([
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'list files' }] },
+    { type: 'function_call', call_id: 'c1', name: 'shell', arguments: '{"command":["ls"]}' },
+    { type: 'function_call_output', call_id: 'c1', output: 'README.md' },
+    { type: 'reasoning', summary: [] }
+  ]);
+  assert.match(rendered, /\[user\]\nlist files/u);
+  assert.match(rendered, /\[assistant calls shell\]\n\{"command":\["ls"\]\}/u);
+  // The output is labelled with the tool it came from, not just its call id.
+  assert.match(rendered, /\[shell result\]\nREADME\.md/u);
+  assert.doesNotMatch(rendered, /reasoning/u);
 });

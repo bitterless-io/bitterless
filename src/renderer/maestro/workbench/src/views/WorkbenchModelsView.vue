@@ -52,7 +52,7 @@ const logout = (): void => {
 }
 
 const configureLocal = (): void => {
-  void router.push({ name: 'configuration' })
+  void router.push({ name: 'sub2api' })
 }
 
 const setCompressionRemaining = (event: Event): void => {

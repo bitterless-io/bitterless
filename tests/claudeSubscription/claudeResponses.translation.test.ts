@@ -81,7 +81,7 @@ test('preserves ordered messages, function calls, and function outputs', () => {
 test('preserves namespace functions and lists unsupported built-ins once', () => {
   const payload = buildClaudeBridgePayload(
     parseClaudeResponsesRequest({
-      model: 'claude-haiku',
+      model: 'claude-opus',
       stream: true,
       input: 'Open the product page.',
       tools: [
@@ -146,7 +146,9 @@ test('rejects malformed supplied function schemas and defaults only omitted para
 test('validates streaming request fields and exact model mapping', () => {
   assert.equal(resolveClaudeSubscriptionModel('claude-sonnet'), 'sonnet');
   assert.equal(resolveClaudeSubscriptionModel('claude-opus'), 'opus');
-  assert.equal(resolveClaudeSubscriptionModel('claude-haiku'), 'haiku');
+  // Haiku is no longer offered, so its slug is an unknown model and takes the
+  // fallback like any other.
+  assert.equal(resolveClaudeSubscriptionModel('claude-haiku'), 'sonnet');
   // Codex Desktop switches provider globally, so a thread created before the
   // switch still sends its OpenAI slug here. Rejecting those made every
   // pre-existing thread unusable; Sonnet answers instead, and the response
@@ -175,16 +177,18 @@ test('validates streaming request fields and exact model mapping', () => {
 
 test('maps every Codex reasoning effort per request and rejects malformed values', () => {
   const mappings = [
+    // Read in the client's own vocabulary; the shift onto an upstream ladder happens
+    // at dispatch, once the upstream is known.
     ['none', 'low'],
     ['minimal', 'low'],
     ['low', 'low'],
     ['medium', 'medium'],
     ['high', 'high'],
     ['xhigh', 'xhigh'],
-    // `max` is its own CLI level (claude --effort accepts low|medium|high|xhigh|max);
-    // mapping it down to xhigh silently served every max request one level weaker.
-    ['max', 'max'],
-    ['ultra', 'max']
+    // Desktop hides `max` from its picker but its schema still allows it; a request
+    // that names it is legal on the wire and resolves to the top rung at dispatch.
+    ['max', 'ultra'],
+    ['ultra', 'ultra']
   ] as const;
   for (const [codex, claude] of mappings) {
     assert.equal(resolveClaudeEffort({ effort: codex }), claude);

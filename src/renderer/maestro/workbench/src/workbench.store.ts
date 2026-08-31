@@ -139,7 +139,7 @@ export const workbenchPanes: WorkbenchPane[] = [
   'injections',
   'tools',
   'models',
-  'configuration',
+  'sub2api',
   'apps',
   'connectors',
   'settings',
@@ -448,7 +448,7 @@ class WorkbenchStoreState {
     })
     xpcRenderer.subscribe('coach/auth', () => void this.refreshLlmConfig())
     xpcRenderer.subscribe(CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT, () => {
-      if (this.activePane === 'models' || this.activePane === 'configuration') {
+      if (this.activePane === 'models' || this.activePane === 'sub2api') {
         void this.refreshLlmConfig()
       }
     })
@@ -509,7 +509,7 @@ class WorkbenchStoreState {
       void this.refreshHostApprovalEvents()
     }
     if (this.initialized && pane === 'injections') void this.refreshInjectedButtons()
-    if (this.initialized && (pane === 'models' || pane === 'configuration')) {
+    if (this.initialized && (pane === 'models' || pane === 'sub2api')) {
       void this.refreshLlmConfig()
     }
   }

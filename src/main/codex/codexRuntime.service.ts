@@ -10,19 +10,73 @@ export const CODEX_RUNTIME_MODELS = [
   'gpt-5.6-sol',
   'gpt-5.6-terra',
 ] as const;
-export const CODEX_RUNTIME_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+/** pi's own ladder (`EXTENDED_THINKING_LEVELS` minus `off`), not the client's. */
+export const CODEX_RUNTIME_EFFORTS = [
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max'
+] as const;
 export const CODEX_RUNTIME_SERVICE_TIERS = ['fast'] as const;
 
 export type CodexRuntimeModel = (typeof CODEX_RUNTIME_MODELS)[number];
 export type CodexRuntimeEffort = (typeof CODEX_RUNTIME_EFFORTS)[number];
 export type CodexRuntimeServiceTier = (typeof CODEX_RUNTIME_SERVICE_TIERS)[number];
 export type CodexRuntimeThinkingLevel = 'off' | CodexRuntimeEffort;
+/**
+ * Per-model levels, read from what Codex 0.151 itself publishes for these models — its
+ * built-in catalogue is embedded in the desktop core. An earlier hand-written guess
+ * had `gpt-5.6-sol` at `medium|high|xhigh`; it is in fact `low..ultra`, so both ends
+ * of that range were wrong.
+ *
+ * `ultra` is deliberately absent even where Codex publishes it: this runtime reaches
+ * the model through pi, whose thinking level stops at `max`. Declaring a level the
+ * transport cannot express puts an option in the picker that fails on selection.
+ */
+/**
+ * The levels pi will actually send, taken from each model's `thinkingLevelMap` in
+ * `pi-ai/dist/providers/openai-codex.models.js`: `getSupportedThinkingLevels` admits
+ * `xhigh` and `max` only when the map names them, so `gpt-5.5` — whose map is
+ * `{ xhigh, minimal }` — has no `max` and stops one rung short of the others.
+ *
+ * Passing a level pi does not know is worse than an error: `clampThinkingLevel` falls
+ * back to `availableLevels[0]`, the *lowest* rung, silently.
+ */
 export const CODEX_RUNTIME_MODEL_EFFORTS = {
-  'gpt-5.5': CODEX_RUNTIME_EFFORTS,
-  'gpt-5.6-luna': CODEX_RUNTIME_EFFORTS,
-  'gpt-5.6-sol': ['medium', 'high', 'xhigh'],
-  'gpt-5.6-terra': CODEX_RUNTIME_EFFORTS,
+  'gpt-5.5': ['minimal', 'low', 'medium', 'high', 'xhigh'],
+  'gpt-5.6-luna': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-5.6-sol': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-5.6-terra': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
 } as const satisfies Record<CodexRuntimeModel, readonly CodexRuntimeEffort[]>;
+
+/**
+ * The **client** rung a new thread opens at. Codex publishes `medium`/`low` on its own
+ * ladder; after the rank shift those sit one rung higher in the client's vocabulary.
+ */
+export const CODEX_RUNTIME_MODEL_DEFAULT_EFFORT = {
+  'gpt-5.5': 'high',
+  'gpt-5.6-luna': 'high',
+  'gpt-5.6-sol': 'medium',
+  'gpt-5.6-terra': 'high'
+} as const satisfies Record<CodexRuntimeModel, string>;
+
+/** Context budgets Codex publishes for these models. */
+export const CODEX_RUNTIME_MODEL_CONTEXT_WINDOW = {
+  'gpt-5.5': 272_000,
+  'gpt-5.6-luna': 272_000,
+  'gpt-5.6-sol': 272_000,
+  'gpt-5.6-terra': 272_000
+} as const satisfies Record<CodexRuntimeModel, number>;
+
+/** Codex stretches 5.6 models past the planning budget; 5.5 does not. */
+export const CODEX_RUNTIME_MODEL_MAX_CONTEXT_WINDOW = {
+  'gpt-5.5': 272_000,
+  'gpt-5.6-luna': 872_000,
+  'gpt-5.6-sol': 872_000,
+  'gpt-5.6-terra': 872_000
+} as const satisfies Record<CodexRuntimeModel, number>;
 export type CodexRuntimeErrorCode =
   | 'cancelled'
   | 'effort-mismatch'
@@ -68,6 +122,20 @@ export interface CodexRuntimePiModel {
   providerId?: string;
   id?: string;
   modelId?: string;
+  /**
+   * pi thinking level → the effort string pi puts on the wire.
+   *
+   * Do not try to reach `ultra` through this. Codex's published catalog lists `ultra`
+   * for `gpt-5.6-sol` and `gpt-5.6-terra`, and overriding this map does put it on the
+   * wire — where the API rejects it outright:
+   *
+   * > `[reasoning.effort] [invalid_enum_value] Invalid value: 'ultra'. Supported
+   * > values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.`
+   *
+   * Verified against the live subscription on 2026-08-31. `max` is this upstream's
+   * ceiling; whatever Desktop does with its own `ultra` rung, it is not this field.
+   */
+  thinkingLevelMap?: Record<string, string>;
 }
 
 export interface CodexRuntimePiModelRegistry {
@@ -163,6 +231,7 @@ export interface CodexRuntimePiModule {
   SessionManager: { inMemory(): unknown };
   SettingsManager: { inMemory(settings: Record<string, unknown>): unknown };
   createExtensionRuntime(): unknown;
+  defineTool?(definition: Record<string, unknown>): unknown;
   createAgentSession(options: Record<string, unknown>): Promise<{ session: CodexRuntimePiSession }>;
 }
 
@@ -360,7 +429,7 @@ export const classifyCodexRuntimeAuthError = (
   return null;
 };
 
-const throwIfAuthRequired = (value: unknown): void => {
+export const throwIfAuthRequired = (value: unknown): void => {
   const reason = classifyCodexRuntimeAuthError(value);
   if (reason) throw new CodexRuntimeAuthRequiredError(reason);
 };
@@ -531,7 +600,7 @@ const summarizePiMessageTransportDiagnostic = (
   );
 };
 
-interface BoundedMessageText {
+export interface BoundedMessageText {
   text: string;
   exceeded: boolean;
 }
@@ -549,7 +618,7 @@ const utf8Prefix = (value: string, maxBytes: number): BoundedMessageText => {
   return { text: characters.join(''), exceeded: true };
 };
 
-const extractMessageText = (
+export const extractMessageText = (
   message: CodexRuntimePiMessage | undefined,
   maxBytes: number
 ): BoundedMessageText => {
@@ -574,7 +643,7 @@ const hasToolContent = (message?: CodexRuntimePiMessage): boolean =>
     ({ type }) => typeof type === 'string' && type.toLowerCase().includes('tool')
   );
 
-const assertTarget = (
+export const assertTarget = (
   model: CodexRuntimePiModel | undefined,
   expectedModel: CodexRuntimeModel
 ): void => {
@@ -674,7 +743,7 @@ const observeProviderResponseStatus = (
   }
 };
 
-const createSterileResourceLoader = (
+export const createSterileResourceLoader = (
   pi: CodexRuntimePiModule,
   systemPrompt: string
 ): CodexRuntimePiResourceLoader => ({
@@ -693,7 +762,7 @@ const createSterileResourceLoader = (
   reload: async () => undefined
 });
 
-interface CodexRuntimePiTargetContext {
+export interface CodexRuntimePiTargetContext {
   authStorage?: unknown;
   modelRuntime?: CodexRuntimePiModelRuntime;
   modelRegistry: CodexRuntimePiModelRegistry;
@@ -706,7 +775,7 @@ const createModernModelRegistry = (
 ): CodexRuntimePiModelRegistry =>
   new (pi.ModelRegistry as CodexRuntimePiModernModelRegistryFactory)(modelRuntime);
 
-const createPiTargetContext = async (
+export const createPiTargetContext = async (
   pi: CodexRuntimePiModule,
   authPath: string,
   modelsPath: string,
@@ -739,7 +808,7 @@ const createPiTargetContext = async (
   };
 };
 
-const waitForAbortable = async <T>(operation: Promise<T>, signal: AbortSignal): Promise<T> => {
+export const waitForAbortable = async <T>(operation: Promise<T>, signal: AbortSignal): Promise<T> => {
   void operation.catch(() => undefined);
   if (signal.aborted) throw new CodexRuntimeError('cancelled');
 
@@ -757,7 +826,7 @@ const waitForAbortable = async <T>(operation: Promise<T>, signal: AbortSignal): 
   }
 };
 
-const waitForSession = async (
+export const waitForSession = async (
   creation: Promise<{ session: CodexRuntimePiSession }>,
   signal: AbortSignal
 ): Promise<CodexRuntimePiSession> => {
@@ -776,7 +845,7 @@ const waitForSession = async (
   }
 };
 
-const waitForPrompt = async (
+export const waitForPrompt = async (
   session: CodexRuntimePiSession,
   prompt: string,
   signal: AbortSignal,

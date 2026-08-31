@@ -16,7 +16,8 @@ import {
   claudeSubscriptionCatalogEntries,
   CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
   CLAUDE_SUBSCRIPTION_HOST,
-  CLAUDE_SUBSCRIPTION_SNAPSHOT_SCHEMA
+  CLAUDE_SUBSCRIPTION_SNAPSHOT_SCHEMA,
+  SUB2API_CLIENT_EFFORTS
 } from '@shared/claudeSubscription/claudeSubscription.contract';
 import {
   parseClaudeSubscriptionAccountIdInput,
@@ -33,6 +34,9 @@ import {
 } from '@shared/claudeSubscription/claudeSubscription.schema';
 import {
   CODEX_RUNTIME_MODELS,
+  CODEX_RUNTIME_MODEL_CONTEXT_WINDOW,
+  CODEX_RUNTIME_MODEL_MAX_CONTEXT_WINDOW,
+  CODEX_RUNTIME_MODEL_DEFAULT_EFFORT,
   CODEX_RUNTIME_MODEL_EFFORTS
 } from '@main/codex/codexRuntime.service';
 import { ClaudeAccountRepository } from './claudeAccount.repository';
@@ -49,6 +53,9 @@ import {
   ClaudeUsageLimitError
 } from './claudeSubscription.errors';
 
+/** How long a Codex credential probe is trusted before it is refreshed. */
+const CODEX_PROBE_TTL_MS = 60_000;
+
 export interface ClaudeSubscriptionServerLifecycle {
   listen(): Promise<unknown>;
   close(): Promise<void>;
@@ -62,6 +69,8 @@ export interface ClaudeSubscriptionServiceOptions {
   authorization: ClaudeAuthorizationCoordinator;
   authCli: ClaudeAccountAuthCli | null;
   browserFactory: ClaudeAuthBrowserFactory;
+  /** The GPT half of the endpoint. Absent in tests and when pi cannot be loaded. */
+  codexUpstream?: { isAvailable(): Promise<boolean> } | null;
   writeClipboard(text: string): void;
   broadcastSnapshot(snapshot: ClaudeSubscriptionSnapshot): void;
   now?: () => number;
@@ -140,6 +149,10 @@ export class ClaudeSubscriptionService {
   #stopPromise: Promise<void> | null = null;
   #serverState: ClaudeSubscriptionServerState = 'stopped';
   #authFlow: ClaudeSubscriptionAuthFlowView | null = null;
+  readonly #codexUpstream: { isAvailable(): Promise<boolean> } | null;
+  #codexConnected = false;
+  #codexProbedAt = 0;
+  #codexProbeInFlight = false;
   #revision = 0;
   #lastObservedAt = -1;
   #acceptingActions = false;
@@ -154,6 +167,7 @@ export class ClaudeSubscriptionService {
     this.#authorization = options.authorization;
     this.#authCli = options.authCli;
     this.#browserFactory = options.browserFactory;
+    this.#codexUpstream = options.codexUpstream ?? null;
     this.#writeClipboard = options.writeClipboard;
     this.#broadcastSnapshot = options.broadcastSnapshot;
     this.#now = options.now ?? Date.now;
@@ -815,14 +829,17 @@ export class ClaudeSubscriptionService {
   async #createSnapshot(
     capture: ClaudeSubscriptionSnapshotCapture
   ): Promise<ClaudeSubscriptionSnapshot> {
+    this.#maybeProbeCodexUpstream();
     const revision = ++this.#revision;
     const observedAt = Math.max(this.#now(), this.#lastObservedAt + 1);
     this.#lastObservedAt = observedAt;
     const accounts = (await this.#repository.listAccounts()).map((account) => {
       const activeRequests = this.#router.activeRequests(account.id);
       const testing = capture.testingAccountIds.has(account.id);
+      const usage = this.#router.rateLimit(account.id);
       return {
         ...account,
+        ...(usage ? { usage } : {}),
         activeRequests,
         status: testing
           ? ('checking' as const)
@@ -842,8 +859,37 @@ export class ClaudeSubscriptionService {
         host: CLAUDE_SUBSCRIPTION_HOST,
         port: this.#repository.serverPort()
       },
-      authFlow: capture.authFlow
+      authFlow: capture.authFlow,
+      codexUpstream: {
+        connected: this.#codexConnected,
+        models: [...CODEX_RUNTIME_MODELS]
+      }
     });
+  }
+
+  /**
+   * Resolving the Codex credential loads pi and reads the auth file, which is far too
+   * slow to sit in snapshot creation — snapshots are published on every account and
+   * routing change. The last known answer is served immediately and a refresh is fired
+   * in the background, so the panel converges instead of stalling.
+   */
+  #maybeProbeCodexUpstream(): void {
+    const upstream = this.#codexUpstream;
+    if (!upstream || this.#codexProbeInFlight) return;
+    if (this.#codexProbedAt !== 0 && this.#now() - this.#codexProbedAt < CODEX_PROBE_TTL_MS) return;
+    this.#codexProbeInFlight = true;
+    void upstream
+      .isAvailable()
+      .catch(() => false)
+      .then((connected) => {
+        this.#codexProbedAt = this.#now();
+        this.#codexProbeInFlight = false;
+        // Republish only on a change: an unconditional publish here would be observed
+        // by the next snapshot, which probes again, which publishes again.
+        if (connected === this.#codexConnected) return;
+        this.#codexConnected = connected;
+        void this.#publishSnapshot().catch(() => undefined);
+      });
   }
 
   /**
@@ -854,10 +900,20 @@ export class ClaudeSubscriptionService {
   #catalogEntries(): ClaudeSubscriptionCatalogEntry[] {
     return [
       ...claudeSubscriptionCatalogEntries(),
-      ...CODEX_RUNTIME_MODELS.map((slug) => ({
-        slug,
-        label: slug,
-        efforts: CODEX_RUNTIME_MODEL_EFFORTS[slug],
+      // Owner decision (2026-08-31): only the 5.6 family is offered. gpt-5.5 stays in
+      // the runtime for Translator and the credential probe, but is not advertised.
+      ...CODEX_RUNTIME_MODELS.filter((slug) => slug !== 'gpt-5.5').map((slug) => ({
+        slug: slug as string,
+        label: slug as string,
+        // Client rungs, not pi's: the shift onto pi's ladder happens per request.
+        // gpt-5.5 has no `max` in pi's `thinkingLevelMap`, and Codex publishes it with
+        // no top rung either, so it advertises one fewer than the rest.
+        efforts: CODEX_RUNTIME_MODEL_EFFORTS[slug].some((level) => level === 'max')
+          ? SUB2API_CLIENT_EFFORTS
+          : SUB2API_CLIENT_EFFORTS.filter((level) => level !== 'ultra'),
+        defaultEffort: CODEX_RUNTIME_MODEL_DEFAULT_EFFORT[slug],
+        contextWindow: CODEX_RUNTIME_MODEL_CONTEXT_WINDOW[slug],
+        maxContextWindow: CODEX_RUNTIME_MODEL_MAX_CONTEXT_WINDOW[slug],
         description: 'GPT through the Bitterless local Codex subscription'
       }))
     ];
@@ -890,7 +946,11 @@ export class ClaudeSubscriptionService {
         // may not be readable yet; the default keeps the shape valid.
         port: this.#serverPortOrDefault()
       },
-      authFlow: null
+      authFlow: null,
+      codexUpstream: {
+        connected: this.#codexConnected,
+        models: [...CODEX_RUNTIME_MODELS]
+      }
     });
   }
 }

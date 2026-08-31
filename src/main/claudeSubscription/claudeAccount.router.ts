@@ -1,7 +1,9 @@
 import type {
   ClaudeAccountId,
+  ClaudeSubscriptionAccountUsage,
   ClaudeSubscriptionRoutingHealth
 } from '@shared/claudeSubscription/claudeSubscription.contract';
+import { CLAUDE_SUBSCRIPTION_LOW_QUOTA_PERCENT } from '@shared/claudeSubscription/claudeSubscription.contract';
 import type {
   ClaudeAccountExecutionContext,
   ClaudeAccountRoutingRecord,
@@ -34,6 +36,7 @@ export class ClaudeAccountRouter {
   readonly #defaultCooldownMs: number;
   readonly #onStateChanged: () => void;
   readonly #active = new Map<ClaudeAccountId, number>();
+  readonly #rateLimits = new Map<ClaudeAccountId, ClaudeSubscriptionAccountUsage>();
   readonly #maintenance = new Map<ClaudeAccountId, number>();
   readonly #sticky = new Map<string, ClaudeAccountId>();
   readonly #cooldowns = new Map<ClaudeAccountId, number>();
@@ -81,12 +84,18 @@ export class ClaudeAccountRouter {
         continue;
       }
 
+      // Quota-aware selection runs before stickiness: an account under the low-quota
+      // threshold is skipped even when a thread is bound to it, because staying on it
+      // only buys one or two more turns before the same switch happens mid-answer.
+      const healthy = this.#withQuotaHeadroom(idle);
       const stickyId = cacheKey ? this.#sticky.get(cacheKey) : undefined;
       // A busy sticky account loses its binding for this request: prompt-cache
       // locality is an optimisation, and serialisation is correctness. The binding
       // survives, so the next request on this key returns to it once free.
-      const stickyAccount = stickyId ? idle.find((account) => account.id === stickyId) : undefined;
-      const selected = stickyAccount ?? this.#selectLeastActive(idle);
+      const stickyAccount = stickyId
+        ? healthy.find((account) => account.id === stickyId)
+        : undefined;
+      const selected = stickyAccount ?? this.#selectByQuota(healthy);
 
       try {
         const context = await this.#source.getExecutionContext(selected.id);
@@ -142,6 +151,20 @@ export class ClaudeAccountRouter {
         throw error;
       }
     }
+  }
+
+  /**
+   * Records Anthropic's own rate-limit state for an account. Emitted on every request,
+   * not just a rejected one, so it is the only continuous signal available — the panel
+   * would otherwise have nothing to show until an account was already exhausted.
+   * Process-local: it describes a live observation, not stored account metadata.
+   */
+  observeRateLimit(accountId: ClaudeAccountId, usage: ClaudeSubscriptionAccountUsage): void {
+    this.#rateLimits.set(accountId, usage);
+  }
+
+  rateLimit(accountId: ClaudeAccountId): ClaudeSubscriptionAccountUsage | undefined {
+    return this.#rateLimits.get(accountId);
   }
 
   activeRequests(accountId: ClaudeAccountId): number {
@@ -223,6 +246,42 @@ export class ClaudeAccountRouter {
       needsLogin,
       activeRequests
     };
+  }
+
+  /**
+   * Weekly quota left, as a percentage. Unknown reads as full: an account that has not
+   * been probed yet must not be treated as exhausted, or a cold start would route
+   * everything to whichever account happened to be measured first.
+   */
+  #remainingPercent(accountId: ClaudeAccountId): number {
+    const used = this.#rateLimits.get(accountId)?.weekUsedPercent;
+    return typeof used === 'number' ? Math.max(0, 100 - used) : 100;
+  }
+
+  /**
+   * Accounts with quota to spare. Falls back to the whole set when none qualify:
+   * refusing at the threshold would strand the remaining few percent the owner paid
+   * for, so the pool runs on fumes rather than stopping early.
+   */
+  #withQuotaHeadroom(
+    accounts: readonly ClaudeAccountRoutingRecord[]
+  ): readonly ClaudeAccountRoutingRecord[] {
+    const healthy = accounts.filter(
+      (account) => this.#remainingPercent(account.id) >= CLAUDE_SUBSCRIPTION_LOW_QUOTA_PERCENT
+    );
+    return healthy.length > 0 ? healthy : accounts;
+  }
+
+  /**
+   * Picks the account with the most weekly quota left, breaking ties by the previous
+   * least-active round-robin so an untouched pool still spreads load.
+   */
+  #selectByQuota(
+    accounts: readonly ClaudeAccountRoutingRecord[]
+  ): ClaudeAccountRoutingRecord {
+    const best = Math.max(...accounts.map((account) => this.#remainingPercent(account.id)));
+    const tied = accounts.filter((account) => this.#remainingPercent(account.id) === best);
+    return this.#selectLeastActive(tied);
   }
 
   #selectLeastActive(accounts: readonly ClaudeAccountRoutingRecord[]): ClaudeAccountRoutingRecord {
