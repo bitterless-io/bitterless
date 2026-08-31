@@ -4,7 +4,7 @@ export const CLAUDE_SUBSCRIPTION_HOST = '127.0.0.1' as const;
  * anything that builds a URL must read it from there rather than from this
  * constant, which is merely where a fresh install starts.
  */
-export const CLAUDE_SUBSCRIPTION_DEFAULT_PORT = 12841;
+export const CLAUDE_SUBSCRIPTION_DEFAULT_PORT = 12842;
 export const CLAUDE_SUBSCRIPTION_MIN_PORT = 1024;
 export const CLAUDE_SUBSCRIPTION_MAX_PORT = 65535;
 export const CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT =

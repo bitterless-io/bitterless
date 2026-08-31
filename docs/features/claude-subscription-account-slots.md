@@ -77,7 +77,7 @@ survive a failed attempt to register it.
 
 ## Configurable port
 
-The endpoint port is owner-configurable, defaulting to **12841**. It is stored in
+The endpoint port is owner-configurable, defaulting to **12842**. It is stored in
 `<userData>/claude-subscription/settings.json` (`{version, port}`), beside the registry rather than
 inside it: it is not account state, and a malformed settings file must not make the accounts
 unreadable. An absent or out-of-range value falls back to the default instead of failing startup.
@@ -124,20 +124,20 @@ accepted — both confirmed against the live CLI on `~/.claude2`.
 
 ## End-to-end verification
 
-Run 2026-08-28 against the production classes — repository, router, `ClaudeCliExecutor`,
+Run 2026-08-31 against the production classes — repository, router, `ClaudeCliExecutor`,
 `ClaudeCliAccountAuth`, `ClaudeResponsesRuntime`, `ClaudeResponsesServer` — assembled outside
 Electron, with a temporary registry so no real `userData` or `~/.claude*` directory was written:
 
 ```
-repository.serverPort() = 12841
+repository.serverPort() = 12842
 adoptable slots  [{"slot":2,"initialized":true},{"slot":3,"initialized":false}, …]
 verify           loggedIn:true, claude.ai, firstParty, team
-listening        http://127.0.0.1:12841
+listening        http://127.0.0.1:12842
 POST /v1/responses → HTTP 200
   events   response.created, output_item.added, content_part.added, output_text.delta,
            output_text.done, content_part.done, output_item.done, response.completed, [DONE]
-  usage    {"input_tokens":2,"output_tokens":79,"total_tokens":81}
-  text     "Anthropic built me."   (4142 ms)
+  usage    {"input_tokens":2,"output_tokens":204,"total_tokens":206}
+  text     "Anthropic built me."   (4421 ms)
 ```
 
 This is the first time the chain has been exercised end to end. What it does **not** cover: the
