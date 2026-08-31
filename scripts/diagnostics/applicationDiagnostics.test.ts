@@ -36,26 +36,47 @@ import {
 const projectRoot = process.cwd();
 const source = (path: string): string => readFileSync(resolve(projectRoot, path), 'utf8');
 
-test('resolves the exact four runtime profile names', () => {
-  assert.deepEqual(resolveRuntimeProfile({ viteMode: 'release', viteEnv: 'prod' }), {
+test('resolves the exact five runtime profile names', () => {
+  assert.deepEqual(
+    resolveRuntimeProfile({ releaseChannel: 'prod', viteMode: 'release', viteEnv: 'prod' }),
+    {
     id: 'production',
+    appId: 'io.bitterless.desktop',
     appName: 'Bitterless',
+    releaseChannel: 'prod',
     viteMode: 'release',
     viteEnv: 'prod'
-  });
+    }
+  );
+  assert.deepEqual(
+    resolveRuntimeProfile({ releaseChannel: 'preview', viteMode: 'release', viteEnv: 'prod' }),
+    {
+      id: 'production-preview',
+      appId: 'io.bitterless.desktop.preview',
+      appName: 'Bitterless_PREVIEW',
+      releaseChannel: 'preview',
+      viteMode: 'release',
+      viteEnv: 'prod'
+    }
+  );
   assert.equal(
-    resolveRuntimeProfile({ viteMode: 'debug', viteEnv: 'prod' }).appName,
+    resolveRuntimeProfile({ releaseChannel: 'prod', viteMode: 'debug', viteEnv: 'prod' }).appName,
     'Bitterless_DEBUG_PROD'
   );
   assert.equal(
-    resolveRuntimeProfile({ viteMode: 'debug', viteEnv: 'dev' }).appName,
+    resolveRuntimeProfile({ releaseChannel: 'dev', viteMode: 'debug', viteEnv: 'dev' }).appName,
     'Bitterless_DEBUG_DEV'
   );
   assert.equal(
-    resolveRuntimeProfile({ viteMode: 'release', viteEnv: 'dev' }).appName,
+    resolveRuntimeProfile({ releaseChannel: 'dev', viteMode: 'release', viteEnv: 'dev' }).appName,
     'Bitterless_DEV'
   );
-  assert.throws(() => resolveRuntimeProfile({ viteMode: 'production', viteEnv: 'prod' }));
+  assert.throws(() =>
+    resolveRuntimeProfile({ releaseChannel: 'prod', viteMode: 'production', viteEnv: 'prod' })
+  );
+  assert.throws(() =>
+    resolveRuntimeProfile({ releaseChannel: 'preview', viteMode: 'debug', viteEnv: 'prod' })
+  );
 });
 
 test('rejects GUI packaging/mode mismatches before the caller can mutate paths', () => {
@@ -161,8 +182,16 @@ test('safeStorage is available only to packaged release runtime', () => {
 });
 
 test('resolves debug logs under active userData and release logs under OS log root', () => {
-  const debug = resolveRuntimeProfile({ viteMode: 'debug', viteEnv: 'prod' });
-  const release = resolveRuntimeProfile({ viteMode: 'release', viteEnv: 'prod' });
+  const debug = resolveRuntimeProfile({
+    releaseChannel: 'prod',
+    viteMode: 'debug',
+    viteEnv: 'prod'
+  });
+  const release = resolveRuntimeProfile({
+    releaseChannel: 'prod',
+    viteMode: 'release',
+    viteEnv: 'prod'
+  });
   assert.equal(
     resolveApplicationLogFile(debug, {
       userData: '/profiles/Bitterless_DEBUG_PROD',
@@ -250,6 +279,7 @@ test('environment diagnostics expose status and safe origins, never configured s
   const entries = buildDiagnosticEnvironmentStatus({
     VITE_ENV: 'prod',
     VITE_MODE: 'debug',
+    VITE_RELEASE_CHANNEL: 'preview',
     VITE_BITTERLESS_CORE_URL: 'https://api.bitterless.io/private/path?access_token=core-secret',
     HTTPS_PROXY: 'http://proxy-user:proxy-secret@127.0.0.1:7890',
     https_proxy: 'http://lower-secret@127.0.0.1:7891',
@@ -258,6 +288,10 @@ test('environment diagnostics expose status and safe origins, never configured s
   });
   assert.equal(entries.find((entry) => entry.key === 'VITE_ENV')?.safeValue, 'prod');
   assert.equal(entries.find((entry) => entry.key === 'VITE_MODE')?.safeValue, 'debug');
+  assert.equal(
+    entries.find((entry) => entry.key === 'VITE_RELEASE_CHANNEL')?.safeValue,
+    'preview'
+  );
   assert.equal(
     entries.find((entry) => entry.key === 'VITE_BITTERLESS_CORE_URL')?.safeValue,
     'https://api.bitterless.io'
@@ -428,6 +462,7 @@ test('electron-log writes sanitized UTC NDJSON through the single Main file pipe
     });
     Object.assign(logger.variables, {
       profile: 'production-debug',
+      channel: 'prod',
       proc: 'main',
       world: 'main'
     });
@@ -481,6 +516,7 @@ test('electron-log writes sanitized UTC NDJSON through the single Main file pipe
       'ts',
       'level',
       'profile',
+      'channel',
       'proc',
       'world',
       'scope',
@@ -489,6 +525,7 @@ test('electron-log writes sanitized UTC NDJSON through the single Main file pipe
     ]);
     assert.match(records[0].ts, /^\d{4}-\d{2}-\d{2}T.*Z$/);
     assert.equal(records[0].profile, 'production-debug');
+    assert.equal(records[0].channel, 'prod');
     assert.equal(records[0].proc, 'main');
     assert.equal(records[0].world, 'main');
     assert.equal(records[0].scope, 'main-auth');

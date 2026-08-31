@@ -7,8 +7,10 @@ import {
   InputNumber,
   Message,
   Modal,
+  TabPane,
   Table,
   TableColumn,
+  Tabs,
 } from '@arco-design/web-vue'
 import {
   IconClipboard,
@@ -21,6 +23,7 @@ import { CLAUDE_SUBSCRIPTION_DEFAULT_PORT } from '@shared/claudeSubscription/cla
 import type { ClaudeSubscriptionAccountView } from '@shared/claudeSubscription/claudeSubscription.contract'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { claudeSubscriptionStore as claude } from '../claudeSubscription.store'
+import { workbenchStore as workbench } from '../workbench.store'
 import './WorkbenchSub2ApiView.less'
 
 const newAccountLabel = ref('')
@@ -51,6 +54,17 @@ const applyPort = async (): Promise<void> => {
 }
 const flow = computed(() => snapshot.value?.authFlow)
 
+const homePrefix = computed(() => {
+  // Derived from an account's own path rather than assumed: the directory is built by
+  // main from the real home, which a test or a relocated profile can move.
+  const sample = snapshot.value?.accounts.find((account) => account.directory)?.directory
+  const match = sample ? /^(.*)\/\.claude\d+$/u.exec(sample) : null
+  return match?.[1] ?? '~'
+})
+
+const statusLabelOf = (account: ClaudeSubscriptionAccountView): string =>
+  copy.value.accountStatus[account.status]
+
 const usageText = (account: ClaudeSubscriptionAccountView): { text: string; tone: string } => {
   // The CLI reports a window, a status and a reset time — never a percentage — so the
   // window is shown rather than a number that would have to be invented.
@@ -75,6 +89,10 @@ interface Sub2ApiAccountRow {
   id: string
   label: string
   platform: 'claude' | 'codex'
+  /** `~/.claude<N>` — the signed-in environment this account is bound to. */
+  directory: string
+  active: boolean
+  activeLabel: string
   plan: string
   usage: string
   usageTone: string
@@ -88,6 +106,16 @@ const accountRows = computed<Sub2ApiAccountRow[]>(() => {
       id: account.id,
       label: account.label,
       platform: 'claude',
+      // Shown because an account can arrive two ways — a fresh sign-in or adopting an
+      // already signed-in ~/.claude<N> — and the directory is what tells them apart.
+      directory: account.directory ? account.directory.replace(homePrefix.value, '~') : '—',
+      // The designated account, not "busy right now". One account per platform carries
+      // every turn; selection follows weekly quota, so this moves on its own when the
+      // active account runs low.
+      active: account.active === true,
+      activeLabel: account.active === true
+        ? `${copy.value.activeNow}${account.activeRequests > 0 ? ` · ${account.activeRequests}` : ''}`
+        : statusLabelOf(account),
       plan: account.subscriptionType.toUpperCase(),
       usage: usage.text,
       usageTone: usage.tone,
@@ -100,6 +128,10 @@ const accountRows = computed<Sub2ApiAccountRow[]>(() => {
     id: '',
     label: copy.value.codexAccounts,
     platform: 'codex',
+    // A browser-OAuth credential, not a slot directory.
+    directory: '—',
+    active: false,
+    activeLabel: codexConnected.value ? copy.value.codexReady : copy.value.codexDisconnected,
     plan: codexConnected.value ? 'ChatGPT' : '—',
     usage: codexConnected.value ? copy.value.codexConnected : copy.value.codexDisconnected,
     usageTone: codexConnected.value
@@ -131,12 +163,31 @@ const removeRow = (accountId: string, label: string): void => {
 }
 const codexConnected = computed(() => snapshot.value?.codexUpstream.connected === true)
 /** Ready when the server is up and at least one upstream can actually serve. */
+/** Turns in flight on the active account. Unlimited, so the live count is the fact. */
+const claudeConcurrency = computed(
+  () => snapshot.value?.accounts.reduce((total, account) => total + account.activeRequests, 0) || 0,
+)
+
 const endpointReady = computed(
   () =>
     snapshot.value?.server.state === 'ready' &&
     ((snapshot.value?.accounts.length || 0) > 0 || codexConnected.value),
 )
 const codexModels = computed(() => snapshot.value?.codexUpstream.models || [])
+const codexAccounts = computed(() => snapshot.value?.codexUpstream.accounts || [])
+const codexLabel = ref('')
+
+/**
+ * Saves the credential the Codex login just wrote under a name.
+ *
+ * Sign-in still produces one credential at a time — that is pi's flow, not a choice
+ * here — so a pool is built by capturing after each sign-in rather than by holding
+ * several logins open at once.
+ */
+const captureCodex = async (): Promise<void> => {
+  const label = codexLabel.value.trim() || `ChatGPT ${codexAccounts.value.length + 1}`
+  if (await claude.captureCodexAccount(label)) codexLabel.value = ''
+}
 
 /** Shown only after a copy: telling the owner to restart Codex before there is
  *  anything to restart for is noise. */
@@ -149,14 +200,46 @@ watch(
   },
 )
 
-const addAccount = async (): Promise<void> => {
-  const label = newAccountLabel.value.trim() || `${copy.value.account} ${(snapshot.value?.accounts.length || 0) + 1}`
-  if (await claude.addAccount(label)) newAccountLabel.value = ''
+const addAccountOpen = ref(false)
+const addAccountTab = ref('adopt')
+const codexLoggingIn = ref(false)
+
+const openAddAccount = async (): Promise<void> => {
+  addAccountOpen.value = true
+  // Refreshed on open: the owner may have signed into a ~/.claude<N> from a terminal
+  // since the panel last looked, and adoption is the one path that needs no login.
+  await claude.loadAdoptableSlots()
 }
 
-const adopt = async (slot: number): Promise<void> => {
+const addClaudeFromModal = async (): Promise<void> => {
+  const label =
+    newAccountLabel.value.trim() || `${copy.value.account} ${(snapshot.value?.accounts.length || 0) + 1}`
+  if (await claude.addAccount(label)) {
+    newAccountLabel.value = ''
+    // Left open: the authorization flow renders in the panel behind it, and closing
+    // here would hide the code prompt the owner has to answer.
+    addAccountOpen.value = false
+  }
+}
+
+const adoptFromModal = async (slot: number): Promise<void> => {
   const label = newAccountLabel.value.trim() || `${copy.value.account} ${slot}`
-  if (await claude.adoptAccount(slot, label)) newAccountLabel.value = ''
+  if (await claude.adoptAccount(slot, label)) {
+    newAccountLabel.value = ''
+    addAccountOpen.value = false
+  }
+}
+
+const connectCodex = async (): Promise<void> => {
+  codexLoggingIn.value = true
+  try {
+    await workbench.loginLlmProvider('openai-codex', 'browser')
+    Message.success(copy.value.addCodexStarted)
+  } catch {
+    Message.error(copy.value.actionFailed)
+  } finally {
+    codexLoggingIn.value = false
+  }
 }
 
 const adoptSlotLabel = (slot: { slot: number; initialized: boolean }): string =>
@@ -249,6 +332,10 @@ onBeforeUnmount(() => {
               <dt>GPT</dt>
               <dd>{{ codexConnected ? codexModels.length : 0 }} {{ copy.models }}</dd>
             </div>
+            <div>
+              <dt>{{ copy.concurrency }}</dt>
+              <dd :title="copy.concurrencyHint">{{ claudeConcurrency }}</dd>
+            </div>
           </dl>
         </article>
 
@@ -292,52 +379,152 @@ onBeforeUnmount(() => {
             <h2>{{ copy.claudeAccounts }}</h2>
             <p>{{ copy.accountDescription }}</p>
           </div>
-          <div class="workbench-sub2api__add">
-            <Input
-              v-model="newAccountLabel"
-              name="sub2api__accounts__new-label"
-              size="small"
-              :placeholder="copy.accountLabelPlaceholder"
-              :disabled="Boolean(flow || claude.actionKey)"
-              @press-enter="addAccount"
-            />
-            <Button
-              type="primary"
-              size="small"
-              name="sub2api__accounts__add"
-              :loading="claude.actionKey === 'authorize:new'"
-              :disabled="Boolean(flow || claude.actionKey)"
-              @click="addAccount"
-            >
-              {{ copy.addAccount }}
-            </Button>
-          </div>
+          <Button
+            type="primary"
+            size="small"
+            name="sub2api__accounts__add"
+            :disabled="Boolean(flow || claude.actionKey)"
+            @click="openAddAccount"
+          >
+            {{ copy.addAccount }}
+          </Button>
         </div>
 
-        <div
-          v-if="claude.adoptableSlots.length"
-          name="sub2api__accounts__adoptable"
-          class="workbench-sub2api__adoptable"
+        <Modal
+          v-model:visible="addAccountOpen"
+          :title="copy.addAccountTitle"
+          :footer="false"
+          width="560px"
         >
-          <strong>{{ copy.adoptTitle }}</strong>
-          <p>{{ copy.adoptHint }}</p>
-          <div
-            v-for="slot in claude.adoptableSlots"
-            :key="slot.slot"
-            class="workbench-sub2api__adoptable__row"
-          >
-            <code>~/.claude{{ slot.slot }}</code>
-            <span>{{ adoptSlotLabel(slot) }}</span>
-            <Button
-              size="mini"
-              :loading="claude.actionKey === `adopt:${slot.slot}`"
-              :disabled="Boolean(flow || claude.actionKey)"
-              @click="adopt(slot.slot)"
-            >
-              {{ copy.adopt }}
-            </Button>
-          </div>
-        </div>
+          <Tabs v-model:active-key="addAccountTab" size="small">
+            <!--
+              Tabs rather than a stacked list: the three are different acts, not
+              variants of one. Adoption reuses a credential that already exists,
+              signing in creates one, and Codex is a different subscription entirely —
+              stacked, the cheapest path (adoption needs no login) sat below the fold.
+            -->
+            <TabPane key="adopt" :title="copy.addAdoptTitle">
+              <div class="workbench-sub2api__add-account">
+                <p class="workbench-sub2api__card__note">{{ copy.addAdoptHint }}</p>
+                <div v-if="claude.adoptableSlots.length" class="workbench-sub2api__adoptable">
+                  <div
+                    v-for="slot in claude.adoptableSlots"
+                    :key="slot.slot"
+                    class="workbench-sub2api__adoptable__row"
+                  >
+                    <code>~/.claude{{ slot.slot }}</code>
+                    <span>{{ adoptSlotLabel(slot) }}</span>
+                    <Button
+                      size="mini"
+                      :loading="claude.actionKey === `adopt:${slot.slot}`"
+                      :disabled="!slot.initialized || Boolean(flow || claude.actionKey)"
+                      @click="adoptFromModal(slot.slot)"
+                    >
+                      {{ copy.adopt }}
+                    </Button>
+                  </div>
+                </div>
+                <p v-else class="workbench-sub2api__card__note">{{ copy.addAdoptEmpty }}</p>
+              </div>
+            </TabPane>
+
+            <TabPane key="claude" :title="copy.addClaudeTitle">
+              <div class="workbench-sub2api__add-account">
+                <p class="workbench-sub2api__card__note">{{ copy.addClaudeHint }}</p>
+                <div class="workbench-sub2api__add">
+                  <Input
+                    v-model="newAccountLabel"
+                    name="sub2api__accounts__new-label"
+                    size="small"
+                    :placeholder="copy.accountLabelPlaceholder"
+                    :disabled="Boolean(flow || claude.actionKey)"
+                    @press-enter="addClaudeFromModal"
+                  />
+                  <Button
+                    type="primary"
+                    size="small"
+                    :loading="claude.actionKey === 'authorize:new'"
+                    :disabled="Boolean(flow || claude.actionKey)"
+                    @click="addClaudeFromModal"
+                  >
+                    {{ copy.addClaudeAction }}
+                  </Button>
+                </div>
+              </div>
+            </TabPane>
+
+            <TabPane key="codex" :title="copy.addCodexTitle">
+              <div class="workbench-sub2api__add-account">
+                <p class="workbench-sub2api__card__note">{{ copy.addCodexHint }}</p>
+                <div class="workbench-sub2api__add-account__codex">
+                  <span
+                    class="workbench-sub2api__local-model__dot"
+                    :class="{ 'workbench-sub2api__local-model__dot--ready': codexConnected }"
+                  />
+                  <span>{{ codexConnected ? copy.codexConnected : copy.codexDisconnected }}</span>
+                  <Button
+                    size="small"
+                    :loading="codexLoggingIn"
+                    :disabled="codexLoggingIn"
+                    @click="connectCodex"
+                  >
+                    {{ codexConnected ? copy.addCodexReconnect : copy.addCodexAction }}
+                  </Button>
+                </div>
+                <div class="workbench-sub2api__add">
+                  <Input
+                    v-model="codexLabel"
+                    size="small"
+                    :placeholder="copy.addCodexLabelPlaceholder"
+                    :disabled="!codexConnected || Boolean(claude.actionKey)"
+                    @press-enter="captureCodex"
+                  />
+                  <Button
+                    type="primary"
+                    size="small"
+                    :loading="claude.actionKey === 'codex:capture'"
+                    :disabled="!codexConnected || Boolean(claude.actionKey)"
+                    @click="captureCodex"
+                  >
+                    {{ copy.addCodexSave }}
+                  </Button>
+                </div>
+                <p class="workbench-sub2api__card__note">{{ copy.addCodexSaveHint }}</p>
+
+                <div v-if="codexAccounts.length" class="workbench-sub2api__adoptable">
+                  <div
+                    v-for="account in codexAccounts"
+                    :key="account.id"
+                    class="workbench-sub2api__adoptable__row"
+                  >
+                    <span
+                      class="workbench-sub2api__local-model__dot"
+                      :class="{ 'workbench-sub2api__local-model__dot--ready': account.active }"
+                    />
+                    <span>{{ account.label }}</span>
+                    <Button
+                      size="mini"
+                      :disabled="account.active || Boolean(claude.actionKey)"
+                      :loading="claude.actionKey === `codex:activate:${account.id}`"
+                      @click="claude.activateCodexAccount(account.id)"
+                    >
+                      {{ account.active ? copy.activeNow : copy.addCodexActivate }}
+                    </Button>
+                    <Button
+                      size="mini"
+                      status="danger"
+                      :disabled="Boolean(claude.actionKey)"
+                      :loading="claude.actionKey === `codex:remove:${account.id}`"
+                      @click="claude.removeCodexAccount(account.id)"
+                    >
+                      <template #icon><IconTrash :size="13" /></template>
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </TabPane>
+          </Tabs>
+        </Modal>
 
         <p name="sub2api__usage-credit-note" class="workbench-sub2api__usage-credit-note">
           {{ copy.usageCreditNote }}
@@ -407,6 +594,21 @@ onBeforeUnmount(() => {
                   @change="(value) => renameRow(record.id, String(value))"
                 />
                 <span v-else>{{ record.label }}</span>
+              </template>
+            </TableColumn>
+            <TableColumn :title="copy.adoptColumn" data-index="directory" :width="150">
+              <template #cell="{ record }">
+                <code class="workbench-sub2api__directory">{{ record.directory }}</code>
+              </template>
+            </TableColumn>
+            <TableColumn :title="copy.activeColumn" data-index="active" :width="130">
+              <template #cell="{ record }">
+                <span
+                  class="workbench-sub2api__active"
+                  :class="{ 'workbench-sub2api__active--on': record.active }"
+                >
+                  {{ record.activeLabel }}
+                </span>
               </template>
             </TableColumn>
             <TableColumn :title="copy.platform" data-index="platform" :width="110">

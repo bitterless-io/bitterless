@@ -161,7 +161,7 @@ default renderer session.
 | Claude subscription account metadata | Main-owned `userData/claude-subscription`; renderer never receives profile paths or credentials. |
 | Local provider route | Fixed loopback `127.0.0.1:8741`; Pi receives no bearer header and no remote URL override. |
 | Window and pane preferences | Legacy-compatible Maestro keys/files. |
-| CLI shim/credential envelope | existing `~/.micromeet` contract, initialized idempotently. |
+| CLI shim/credential envelope | Stable keeps the existing `~/.micromeet` contract. Preview owns `${app.getPath('userData')}/cowork/cli` and never touches the Stable tree. |
 
 The hidden database XPC handler names are namespaced wherever they collide with Bitterless. In
 particular, Maestro's auth-session DAO must not register as Bitterless's existing `SessionDao`.
@@ -175,6 +175,28 @@ icon filenames use `Maestro`. The literals `userData/cowork`, `persist:bitterles
 `cowork_chat_*`, chat source `cowork`, host-tool scope `cowork`, and CLI auth source `cowork` remain
 only as compatibility identifiers. Renaming those values requires an explicit profile/schema
 migration and is outside this source-layout change.
+
+The bundled Micromeet CLI resolves its executable and writable paths by desktop release channel.
+Stable preserves the public external-CLI layout: shim under `~/.micromeet/bin`, encrypted CRMS/Sys
+credentials and their shared random key under `~/.micromeet/credentials`, and legacy session at
+`~/.micromeet/session.json`. Stable continues honoring supplied executable, realm-specific, generic
+credential, and session overrides before falling back to those established global defaults.
+
+Preview instead places its shim, `credentials/crms.json`, `credentials/sys.json`, shared
+`credentials/.credential-key-v2`, and `session.json` below
+`${app.getPath('userData')}/cowork/cli`. It prepends that local `bin` directory to its internal PATH,
+ignores inherited `MICROMEET_CLI_PATH`, uses only its packaged/development bundled executable, and
+never probes, migrates, clears, or otherwise touches `~/.micromeet`. Main and every CLI child receive
+forced `MICROMEET_CLI_PATH`, `MICROMEET_CRMS_CREDENTIAL_FILE`,
+`MICROMEET_SYS_CREDENTIAL_FILE`, `MICROMEET_CREDENTIAL_FILE`, and `MICROMEET_SESSION_FILE` values;
+the generic credential variable is pinned locally as defense against fallback, while exact realm
+paths remain authoritative for login/logout.
+
+Preview installs this environment boundary before any directory, permission, shim, or cleanup I/O.
+An initialization failure propagates, leaves hostile inherited path values overwritten, and does
+not mark the Maestro runtime initialized. A later open may retry the idempotent CLI setup; no window
+boot, device initialization, or shortcut activation begins before it succeeds. Maestro's handler
+modules remain process-level imports and are not repeatedly registered by that retry.
 
 Because the embedded profile is new, it must not retain the standalone application's fixed legacy
 SQLCipher fallback. If an embedded `config.db` exists without its generated key file, startup fails
@@ -246,8 +268,10 @@ be shown only after that fence and the existing operation, Control, and Workbenc
 
 ```text
 ┌──────────────────────── Maestro 36px tab strip ────────────────────────┐
-│ macOS ● ● ●   pinned tab · browser tabs · +       recording status    │
-├──────────────────────── address/actions 48px ──────────────────────────┤
+│ 4px inset                                                             │
+│ macOS ● ● ●   rounded pinned/browser tabs · +      recording status   │
+│ 3px inset + 1px divider                                               │
+├──────────────────────── address/actions 42px ──────────────────────────┤
 │ navigation · address · snapshot? · Control · Workbench · update       │
 ├────────────────────────────────────────────────────────────────────────┤
 │ operation surface                                      │ Maestro Chat │
@@ -255,10 +279,19 @@ be shown only after that fence and the existing operation, Control, and Workbenc
 ```
 
 The top strip keeps Omni Browser's Royal Blue visual treatment at `#4e5882`, with a `#3d4666`
-bottom divider, while using the follow-up compact 36px geometry. Tabs and tab-row wrappers are 28px.
-On macOS the native controls use `trafficLightPosition: { x: 12, y: 10 }` and content clears the same
-78px traffic-light gutter. The address row remains 48px, so total top chrome is 84px. DOM-measured
-placeholders remain the only owner of operation and Control native-view bounds.
+bottom divider, while using the follow-up compact 36px geometry. Its 28px tabs and tab-row wrappers
+sit in a `4px` top / `3px` bottom content inset; the bottom divider supplies the fourth visible
+bottom pixel. Every tab retains a complete border and uses a 6px radius on all four corners. On
+macOS the native controls use `trafficLightPosition: { x: 12, y: 11 }` and content clears the same
+78px traffic-light gutter. The address row is 42px, so total top chrome is 78px. Its navigation
+group and address input share an exact 28px height; the navigation actions are 24px square inside
+the group's 2px padding. DOM-measured placeholders remain the authoritative owner of operation and
+Control native-view bounds after mount, while Main uses the same 78px total for the first frame.
+
+The close action inside each closable tab and the adjacent New-tab action both use the shared
+`IconBtn` primitive with Tabler SVG glyphs. The close control remains `20 × 20px` and the New-tab
+control remains `28 × 28px`; shared flex centering removes font-baseline drift while preserving the
+strip's existing Royal Blue hover contrast, pressed scale, focus visibility, and tab behavior.
 
 ### Per-tab page loading indicator
 
@@ -287,6 +320,17 @@ Control header can broadcast `coach/sidebar-close`; Home subscribes once, persis
 and the Sparkles action remains the reopen path. The chat composer does not duplicate the Skills
 entry; the Settings Workbench toggle remains the visible route to that pane.
 
+The Control header exposes Maestro plus its close action; its obsolete Connector selector and Demo
+menu are absent. This is an entry-only retirement: the fixed Home Connector action still opens the
+Workbench Connector pane, and the Connector runtime plus Main Demo service/XPC contracts remain
+available to their existing non-Control callers.
+
+All Maestro renderer bootstraps that load Arco compile it through the repository's Less theme
+pipeline rather than importing the precompiled Arcoblue CSS. Standard Arco Button states therefore
+inherit the canonical Royal Blue mapping from `theme.ts`: `#4e5882` by default, `#606b9d` on hover,
+and `#323955` while pressed. Danger, warning, success, loading, recording, and disabled semantics
+retain their own colors.
+
 The fixed first tab is a local `home` tab rather than the legacy remote `ai-crms` tab. Its dedicated
 renderer opens Mini Apps by default and presents the existing 56px Home rail with only Mini Apps
 and Connector visible; the local Settings route remains registered without a rail button. A local
@@ -312,8 +356,9 @@ Maestro renderer DevTools policies remain independent.
 
 This focused parity pass deliberately excludes Cowork's forked CRMS renderer, AI-CRMS avatar/profile
 UI, generic mini-app page-type menus, update-progress protocol, and loading/crash tab-state
-expansion. Maestro's localized updater, Demo controls, Control chat, Local provider, and browser
-tabs remain authoritative.
+expansion. Maestro's localized updater, Control chat, Local provider, and browser tabs remain
+authoritative. The former visible Demo controls were retired by the Control-entry follow-up while
+the Main-owned Demo service/XPC contract stayed intact.
 
 ## Verification contract
 

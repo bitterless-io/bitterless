@@ -128,6 +128,7 @@ export const resolveClaudePluginBridgeIdentity = (
         artifactRootRelativePath: 'eyes-on-agents/claude-marketplace'
       });
     case 'production-debug':
+    case 'production-preview':
     case 'test-debug':
     case 'test-release': {
       const marketplaceName = `bitterless-local-${profileId}`;

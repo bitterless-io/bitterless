@@ -18,6 +18,20 @@ design document.
 - [Maestro Cowork MenuBar control parity](issues/maestro-cowork-menubar-controls-outdated.md) -
   implemented; owner verification pending: compact 36px chrome, current controls, and a bundled
   local Home fixed tab.
+- [Maestro MenuBar tab inset](issues/maestro-menubar-tabs-not-inset.md) - implemented; owner
+  verification pending: center four-corner rounded tabs inside the existing 36px strip and move
+  macOS traffic lights down 1px; [review 1](plan/reviews/maestro-menubar-tab-inset-077-1.md) passed.
+- [Maestro tab icon actions](issues/maestro-tab-icon-actions-not-iconbtn.md) - implemented; owner
+  verification pending: render the tab close and New-tab controls through the shared `IconBtn`
+  with centered Tabler SVG glyphs; [review 1](plan/reviews/maestro-tab-iconbtn-controls-078-1.md)
+  passed.
+- [Maestro compact address row](issues/maestro-address-row-too-tall.md) - implemented; owner
+  verification pending: reduce the address row to 42px, align navigation and address at 28px, and
+  keep Main's first-frame native-view offset synchronized at 78px;
+  [review 1](plan/reviews/maestro-address-row-compact-082-1.md) passed.
+- [Maestro Control entries and Arco theme](issues/maestro-control-connector-demo-and-arco-blue.md) -
+  implemented; owner verification pending: retire the empty Control Connector and visible Demo
+  entries while restoring the canonical Royal Blue theme for Maestro Arco Buttons.
 - [Maestro per-tab page loading](issues/maestro-global-page-load-progress.md) - implemented;
   owner verification pending:
   replace the global simulated progress bar with favicon-slot loading icons and a 30-second
@@ -26,6 +40,10 @@ design document.
   owner verification pending: replace the duplicate Chat surface with Mini Apps and Connector on
   the familiar 56px rail, hide its Settings button, use Bitterless artwork for Home/New-tab
   branding, and keep fixed-Home DevTools available in debug runtimes.
+- [Mini Apps card action alignment](issues/miniapp-card-action-alignment.md) - implemented; owner
+  verification pending: keep every fixed-Home card at `320 × 184px`, clamp descriptions to three
+  lines, and pin Open actions to one bottom baseline; [review 1](plan/reviews/miniapp-card-layout-003-1.md)
+  passed.
 - [Maestro Cmd+Q reveals hidden Home](issues/maestro-quit-reveals-hidden-home.md) - implemented;
   owner verification pending: resolve dialog ownership across visible BaseWindows and never parent
   quit confirmation to the hidden legacy Home runtime; [review 1](plan/reviews/maestro-quit-dialog-parent-009-1.md)
@@ -35,9 +53,17 @@ design document.
   HMR, activation, logout, and invalidation; legacy Home is a hidden-only compatibility runtime.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
+- [OnlyPreview Main filesystem I/O](issues/onlypreview-main-filesystem-io.md) - implemented; owner
+  runtime verification pending: potentially large project-content traversal, mutation, open and
+  byte delivery now stay inside trusted renderer preloads while Main retains bounded configuration
+  and operational persistence; [Task 087 review 1](plan/reviews/onlypreview-main-fs-boundary-audit-087-1.md)
+  passed.
 - [OnlyPreview indexing benchmark](features/onlypreview-indexing-benchmark.md) - `tests/indexing/`
   measures open directory -> first Global Search over a deterministic corpus, in process and without
   Electron, and guards the machine-independent invariants under `node --test`.
+- [OnlyPreview XLSX compatibility gaps](issues/onlypreview-xlsx-compatibility-gaps.md) - in progress:
+  replace arbitrary-byte benchmark XLSX fixtures and recover one bounded empty-sheet producer form
+  through a Worker-normalized, single-load OOXML path.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
   registry, hidden encrypted SQLite, and one global INDEX.
 - [BL Trench INDEX layout](features/trench-index-layout.md) - count-free INDEX navigation, Add CA,
@@ -133,6 +159,9 @@ design document.
   macOS bundle icon generation, and bundle-only Dock rendering without a runtime override.
 - [Desktop automatic updates](features/desktop-auto-update.md) - one non-overlapping main-process
   poll, retryable metadata disagreement, and compact Home, Maestro, and Omni update actions.
+- [Desktop release channels](features/desktop-release-channels.md) - Stable and Preview share the
+  production API while keeping package identity, local persistence, artwork, updater feeds, and
+  published artifacts strictly separate.
 
 ## Guides
 
@@ -155,6 +184,12 @@ design document.
   after a restart the row is `unknown` + unread, which promotes it to the unread tier while neither the spinner nor the dot renders for it.
 - [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - restored as a
   keyboard-selected modal whose results reuse the complete normal thread card.
+- [EyesOnAgents search input loses its store receiver](issues/eyes-on-agents-search-input-unbound-store-method.md) -
+  fixed; owner verification pending: receiver-safe component wrappers and mounted Arco interaction
+  coverage prevent the first-keystroke crash and the same Focus Search-button failure.
+- [EyesOnAgents card context menu and Codex archive](issues/eyes-on-agents-card-context-menu-archive.md) -
+  in progress: right-click opens the complete card menu at the pointer with viewport fitting, and
+  Codex cards expose provider-authoritative Archive.
 
 ## Design system
 
@@ -175,6 +210,10 @@ design document.
   implemented unification of XLSX/XLSM, DOCX, and PPTX on pinned, per-format lazy
   `@silurus/ooxml` viewers with bounded worker-mode rendering and complete model-backed
   search/highlight.
+- [OnlyPreview OOXML Viewer runtime failure](issues/onlypreview-ooxml-viewer-runtime-failure.md) -
+  fixed in source; owner verification pending: XLSX/XLSM, DOCX, and PPTX use the sandboxed pinned
+  OOXML Viewer path with preload-owned reads, Find/highlight, and phase-specific diagnostics;
+  [review 1](plan/reviews/onlypreview-ooxml-viewer-runtime-repair-081-1.md) passed.
 - [OnlyPreview unsupported default-app action](plan/tasks/onlypreview-unsupported-default-app-078.md) -
   implemented in-page, capability-scoped recovery for every file-backed metadata failure state
   while Main remains the sole owner of real-path resolution and system opening.
@@ -312,8 +351,9 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
   open: no surface names which ChatGPT account Bitterless is signed into, so a Bitterless-vs-CLI
   account difference is invisible.
 - [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
-  implemented; owner verification pending: default sites now keep stock Electron identity while
-  Google/YouTube use a dedicated session with the verified honest Bitterless UA.
+  implemented; owner verification pending: both profiles now use native Electron/Chromium
+  identity while the Google session remains only an isolated cookie jar; [review 1](plan/reviews/omni-native-browser-identity-006-1.md)
+  passed.
 - [Omni root-axis collapse size mismatch](issues/omni-root-axis-collapse-size-mismatch.md) -
   implemented; owner verification pending: immutable tree edits, lifecycle-event rejection, and one
   serialized Main commit keep `H[V,V]` renderer borders and native bounds on the same geometry.
@@ -342,6 +382,10 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 - [OSS release large-artifact timeout](issues/oss-release-large-artifact-timeout.md) - fixed:
   production `0.0.60` proved multipart ZIP/DMG upload, remote-size verification, semantic release
   ordering, manifest-last publication, and post-upload CDN refresh.
+- [Preview release-channel analysis](plan/analysis/desktop-preview-release-channel.md) and
+  [delivery task](plan/tasks/release-preview-channel-007.md) - completed: production-backed Preview
+  runtime isolation, dedicated artwork, three one-step publishers, and the signed/notarized macOS
+  ARM `0.0.79` release proof without mutating Stable manifests. Intel and Windows remain unpublished.
 - [Todo MCP empty-date rejection and missing Step CRUD](issues/todo-mcp-empty-date-and-step-crud-gap.md) - fixed:
   optional dates are validated before creation, and synchronized SubTodo operations now have a
   public, idempotent Step interface plus versioned agent guidance.

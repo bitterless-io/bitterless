@@ -78,9 +78,29 @@ export const CLAUDE_COMPETING_AUTH_VARIABLES = [
   'AZURE_OPENAI_API_KEY'
 ] as const;
 
+/**
+ * Builds the child environment, optionally giving it a **private config directory**.
+ *
+ * The CLI rewrites `.claude.json` on every run, which is why two children could not
+ * share a directory — on 2026-08-26 that truncated a 50 KB config to a stub, and the
+ * router has serialised per account ever since. Concurrency was therefore capped at
+ * one turn per account.
+ *
+ * It does not have to be. Credentials are resolved from
+ * `CLAUDE_SECURESTORAGE_CONFIG_DIR`, **not** from `CLAUDE_CONFIG_DIR` — verified
+ * 2026-08-31 by pointing the two at different paths and authenticating successfully,
+ * then running three children of one account concurrently and confirming the real
+ * `.claude.json` was byte-identical afterwards. So each child can own a scratch config
+ * directory while they all share one Keychain credential.
+ *
+ * The security invariant is unchanged: the credential path is still derived from the
+ * account identity and never read from the registry. Only the scratch config path is
+ * runtime-generated, and it holds no credential.
+ */
 export const buildClaudeSubscriptionEnvironment = (
   parentEnvironment: NodeJS.ProcessEnv,
-  context: ClaudeAccountExecutionContext
+  context: ClaudeAccountExecutionContext,
+  scratchConfigDirectory?: string
 ): Record<string, string> => {
   const expectedAnthropicDirectory = path.join(context.configDirectory, 'anthropic');
   if (
@@ -102,9 +122,21 @@ export const buildClaudeSubscriptionEnvironment = (
     if (value !== undefined) environment[name] = value;
   }
 
-  environment.CLAUDE_CONFIG_DIR = context.configDirectory;
+  if (scratchConfigDirectory !== undefined) {
+    if (
+      !path.isAbsolute(scratchConfigDirectory) ||
+      scratchConfigDirectory !== scratchConfigDirectory.normalize('NFC') ||
+      scratchConfigDirectory === context.configDirectory
+    ) {
+      throw new ClaudeExecutionError('The scratch Claude config directory is invalid.');
+    }
+  }
+  // Credentials always follow the derived slot; only the config scratchpad moves.
+  environment.CLAUDE_CONFIG_DIR = scratchConfigDirectory ?? context.configDirectory;
   environment.CLAUDE_SECURESTORAGE_CONFIG_DIR = context.secureStorageConfigDirectory;
-  environment.ANTHROPIC_CONFIG_DIR = context.anthropicConfigDirectory;
+  environment.ANTHROPIC_CONFIG_DIR = scratchConfigDirectory
+    ? path.join(scratchConfigDirectory, 'anthropic')
+    : context.anthropicConfigDirectory;
   environment.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
   environment.CLAUDE_CODE_DISABLE_TERMINAL_TITLE = '1';
   environment.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY = '1';

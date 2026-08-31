@@ -1,6 +1,31 @@
 # Embedded views present a self-contradictory browser identity
 
-Status: implemented; owner verification pending — Omni corrected; Maestro unchanged
+Status: implemented; owner verification pending — Omni uses native Chromium identity; Maestro unchanged
+
+## 2026-08-31 correction — remove the global Chrome UA-CH shim
+
+The 2026-07-29 shim created a definite cross-layer contradiction on every Omni browser request:
+the wire claimed a `Google Chrome` brand while page JavaScript continued to report Chromium through
+`navigator.userAgentData`. The historical Cloudflare A/B records disagree about whether that
+contradiction alone causes a challenge, and the 2026-08-31 ChatGPT failure does not identify which
+edge-risk signal rejected the fresh navigation. The shim is therefore not recorded as the proven
+cause of that incident.
+
+The contradiction itself is unnecessary and is now the repair target. Both `persist:omni` and
+`persist:omni-google` must use Electron/Chromium's native UA string, UA client hints, and JavaScript
+identity without request-header mutation, `setUserAgent()`, CDP identity overrides, or page-global
+spoofing. The Google partition remains only as an isolated persistent cookie jar so existing Google
+sessions are not merged into the default partition. Crossing the hostname boundary still recreates
+the affected content view to select the correct session before navigation.
+
+This correction supersedes the 2026-07-29 client-hint amendment below. It does not guarantee that a
+proxy exit accepted by one service will be accepted by ChatGPT, and it does not replace a controlled
+same-exit Chrome-versus-Omni and alternate-exit A/B when the edge block is reproduced.
+
+Known tradeoff: the shim originally moved `web.whatsapp.com` past its server-side “Chrome 100+”
+card in one measurement, so removing it may restore that card. If WhatsApp compatibility remains a
+product requirement, it needs a separate provider-scoped design and verification; it must not
+reintroduce a fabricated brand across both general-purpose Omni partitions.
 
 ## 2026-07-29 change — UA client hints are now created on both Omni browser profiles
 
@@ -146,12 +171,13 @@ release dependency. Native SQLite loading under Electron 40 is re-verified after
 
 ## Current acceptance
 
-- No Omni default-profile view calls `setUserAgent()`, rewrites UA-CH/request headers, or attaches
-  CDP for identity spoofing.
+- No Omni browser view calls `setUserAgent()`, rewrites UA-CH/request headers, injects JavaScript
+  identity values, or attaches CDP for identity spoofing.
 - Google/YouTube top-level URLs select `persist:omni-google` using hostname-boundary matching.
-- Google session and content view expose the same dynamically versioned
-  `Bitterless/<app version> Chrome/<actual Chromium version>` UA before the first request.
+- Both persistent browser sessions expose Electron/Chromium's native network and JavaScript
+  identity; the Google profile differs only by its isolated cookie jar.
 - Moving a cell between default and Google profiles recreates only that cell's remote content
   runtime before loading the new URL.
 - Existing Maestro capture identity behavior is outside this correction.
-- Owner verification is the complete interactive YouTube login inside an Omni browser cell.
+- Owner verification is a fresh ChatGPT navigation plus any needed same-exit and alternate-exit
+  browser A/B; Google/YouTube sign-in remains a separate regression check.

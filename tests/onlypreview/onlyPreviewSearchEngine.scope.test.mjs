@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -66,147 +67,152 @@ test('browsed hidden directories remain valid empty Search scopes outside the Se
     const engine = createOnlyPreviewSearchEngine({
       onBrowseListing: (listing) => browseListings.push(listing)
     });
-    const snapshot = await engine.initialize({
-      workspaceId: 'workspace',
-      generation: 1,
-      rootPath: root,
-      databasePath: join(temp, 'cache', 'search.sqlite')
-    });
-    assert.equal(browseListings.length, 1);
-    const rootListing = browseListings[0];
-    const rootEntry = (name) => rootListing.entries.find((entry) => entry.name === name);
-    assert.equal(rootEntry('.hidden').nodeKind, 'directory');
-    assert.equal(rootEntry('docs').nodeKind, 'directory');
-    const docsListing = await engine.browseDirectory({
-      workspaceId: 'workspace',
-      generation: 1,
-      directoryToken: rootEntry('docs').directoryToken
-    });
-    assert.equal(
-      docsListing.entries.some(
-        ({ relativePath, nodeKind }) => relativePath === 'docs/.hidden' && nodeKind === 'directory'
-      ),
-      true
-    );
-    assert.equal(
-      snapshot.index.entries.some(({ relativePath }) => relativePath === '.hidden'),
-      false
-    );
-    assert.equal(
-      snapshot.index.entries.some(({ relativePath }) => relativePath === 'docs/.hidden'),
-      false
-    );
-
-    const inProject = new Map(
-      engine.index.database
-        .prepare('SELECT relative_path, in_project FROM files ORDER BY relative_path')
-        .all()
-        .map((row) => [row.relative_path, row.in_project])
-    );
-    assert.equal(inProject.get('.root-content.txt'), 1);
-    assert.equal(inProject.has('.hidden/content.txt'), false);
-    assert.equal(inProject.has('docs/.hidden/content.txt'), false);
-    assert.equal(
-      engine.index.database
-        .prepare(
-          "SELECT count(*) AS count FROM sqlite_master WHERE type = 'index' AND name = 'files_project_path'"
-        )
-        .get().count,
-      1
-    );
-
-    const cases = [
-      ['yz', 'sqlite-instr-prefilter'],
-      ['界', 'cjk-postings'],
-      ['searchword', 'fts5-trigram'],
-      [longQuery, 'exact-file-fallback']
-    ];
-    for (const [query, expectedEngine] of cases) {
-      const project = await engine.index.search(query, { scope: { kind: 'project' } });
-      assert.equal(project.engine, expectedEngine);
-      assert.deepEqual(project.results.map(({ relativePath }) => relativePath).sort(), [
-        '.root-content.txt',
-        'other/content.txt',
-        'visible/content.txt'
-      ]);
-
-      const rootDirectory = await engine.index.search(query, {
-        scope: { kind: 'directory', relativePath: '' }
+    try {
+      const snapshot = await engine.initialize({
+        workspaceId: 'workspace',
+        generation: 1,
+        rootPath: root,
+        databasePath: join(temp, 'cache', 'search.sqlite')
       });
-      assert.deepEqual(rootDirectory.results, project.results);
-
-      const visible = await engine.index.search(query, {
-        scope: { kind: 'directory', relativePath: 'visible' }
+      assert.equal(browseListings.length, 1);
+      const rootListing = browseListings[0];
+      const rootEntry = (name) => rootListing.entries.find((entry) => entry.name === name);
+      assert.equal(rootEntry('.hidden').nodeKind, 'directory');
+      assert.equal(rootEntry('docs').nodeKind, 'directory');
+      const docsListing = await engine.browseDirectory({
+        workspaceId: 'workspace',
+        generation: 1,
+        directoryToken: rootEntry('docs').directoryToken
       });
-      assert.deepEqual(
-        visible.results.map(({ relativePath }) => relativePath),
-        ['visible/content.txt']
+      assert.equal(
+        docsListing.entries.some(
+          ({ relativePath, nodeKind }) =>
+            relativePath === 'docs/.hidden' && nodeKind === 'directory'
+        ),
+        true
+      );
+      assert.equal(
+        snapshot.index.entries.some(({ relativePath }) => relativePath === '.hidden'),
+        false
+      );
+      assert.equal(
+        snapshot.index.entries.some(({ relativePath }) => relativePath === 'docs/.hidden'),
+        false
       );
 
-      const rootHidden = await engine.index.search(query, {
-        scope: { kind: 'directory', relativePath: '.hidden' }
+      const inProject = new Map(
+        engine.index.database
+          .prepare('SELECT relative_path, in_project FROM files ORDER BY relative_path')
+          .all()
+          .map((row) => [row.relative_path, row.in_project])
+      );
+      assert.equal(inProject.get('.root-content.txt'), 1);
+      assert.equal(inProject.has('.hidden/content.txt'), false);
+      assert.equal(inProject.has('docs/.hidden/content.txt'), false);
+      assert.equal(
+        engine.index.database
+          .prepare(
+            "SELECT count(*) AS count FROM sqlite_master WHERE type = 'index' AND name = 'files_project_path'"
+          )
+          .get().count,
+        1
+      );
+
+      const cases = [
+        ['yz', 'sqlite-instr-prefilter'],
+        ['界', 'cjk-postings'],
+        ['searchword', 'fts5-trigram'],
+        [longQuery, 'exact-file-fallback']
+      ];
+      for (const [query, expectedEngine] of cases) {
+        const project = await engine.index.search(query, { scope: { kind: 'project' } });
+        assert.equal(project.engine, expectedEngine);
+        assert.deepEqual(project.results.map(({ relativePath }) => relativePath).sort(), [
+          '.root-content.txt',
+          'other/content.txt',
+          'visible/content.txt'
+        ]);
+
+        const rootDirectory = await engine.index.search(query, {
+          scope: { kind: 'directory', relativePath: '' }
+        });
+        assert.deepEqual(rootDirectory.results, project.results);
+
+        const visible = await engine.index.search(query, {
+          scope: { kind: 'directory', relativePath: 'visible' }
+        });
+        assert.deepEqual(
+          visible.results.map(({ relativePath }) => relativePath),
+          ['visible/content.txt']
+        );
+
+        const rootHidden = await engine.index.search(query, {
+          scope: { kind: 'directory', relativePath: '.hidden' }
+        });
+        assert.deepEqual(rootHidden.results, []);
+
+        const nestedHidden = await engine.index.search(query, {
+          scope: { kind: 'directory', relativePath: 'docs/.hidden' }
+        });
+        assert.deepEqual(nestedHidden.results, []);
+      }
+
+      const projectTitles = await search(engine, 1, 'titles', 'scope-hit');
+      assert.deepEqual(
+        projectTitles.files.map(({ relativePath, nodeKind }) => ({ relativePath, nodeKind })),
+        [
+          { relativePath: 'visible/scope-hit-folder', nodeKind: 'directory' },
+          { relativePath: '.title-scope-hit.pdf', nodeKind: 'file' },
+          { relativePath: 'visible/title-scope-hit.pdf', nodeKind: 'file' }
+        ]
+      );
+      const hiddenTitles = await search(engine, 1, 'hidden-titles', 'scope-hit', 500, {
+        kind: 'directory',
+        relativePath: '.hidden'
       });
-      assert.deepEqual(rootHidden.results, []);
+      assert.deepEqual(
+        hiddenTitles.files.map(({ relativePath }) => relativePath),
+        projectTitles.files.map(({ relativePath }) => relativePath)
+      );
+      assert.deepEqual(hiddenTitles.contents, []);
 
-      const nestedHidden = await engine.index.search(query, {
-        scope: { kind: 'directory', relativePath: 'docs/.hidden' }
+      assert.equal((await search(engine, 1, 'japanese', '日本')).contents.length > 0, true);
+      assert.equal((await search(engine, 1, 'korean', '한국')).contents.length > 0, true);
+      assert.deepEqual(
+        (await search(engine, 1, 'chinese-title', '中文')).files.map(
+          ({ relativePath }) => relativePath
+        ),
+        ['visible/中文标题.pdf']
+      );
+      assert.deepEqual(
+        (await search(engine, 1, 'korean-title', '한국제목')).files.map(
+          ({ relativePath }) => relativePath
+        ),
+        ['visible/한국제목.pdf']
+      );
+      const hiddenChineseTitles = await search(engine, 1, 'hidden-chinese-title', '隐藏', 500, {
+        kind: 'directory',
+        relativePath: '.hidden'
       });
-      assert.deepEqual(nestedHidden.results, []);
-    }
-
-    const projectTitles = await search(engine, 1, 'titles', 'scope-hit');
-    assert.deepEqual(projectTitles.results.map(({ relativePath }) => relativePath).sort(), [
-      '.title-scope-hit.pdf',
-      'visible/title-scope-hit.pdf'
-    ]);
-    const hiddenTitles = await search(engine, 1, 'hidden-titles', 'scope-hit', 500, {
-      kind: 'directory',
-      relativePath: '.hidden'
-    });
-    assert.deepEqual(hiddenTitles.results, []);
-    assert.equal(
-      projectTitles.results.some(({ relativePath }) => relativePath === 'visible/scope-hit-folder'),
-      false
-    );
-
-    assert.equal((await search(engine, 1, 'japanese', '日本')).results.length > 0, true);
-    assert.equal((await search(engine, 1, 'korean', '한국')).results.length > 0, true);
-    assert.deepEqual(
-      (await search(engine, 1, 'chinese-title', '中文')).results.map(
-        ({ relativePath }) => relativePath
-      ),
-      ['visible/中文标题.pdf']
-    );
-    assert.deepEqual(
-      (await search(engine, 1, 'korean-title', '한국제목')).results.map(
-        ({ relativePath }) => relativePath
-      ),
-      ['visible/한국제목.pdf']
-    );
-    assert.deepEqual(
-      (
-        await search(engine, 1, 'hidden-chinese-title', '隐藏', 500, {
+      assert.deepEqual(hiddenChineseTitles.files, []);
+      assert.deepEqual(hiddenChineseTitles.contents, []);
+      await assert.rejects(
+        search(engine, 1, 'missing-directory', 'searchword', 500, {
           kind: 'directory',
-          relativePath: '.hidden'
-        })
-      ).results,
-      []
-    );
-    await assert.rejects(
-      search(engine, 1, 'missing-directory', 'searchword', 500, {
-        kind: 'directory',
-        relativePath: 'missing'
-      }),
-      /does not exist/u
-    );
-    await assert.rejects(
-      search(engine, 1, 'backslash-directory', 'searchword', 500, {
-        kind: 'directory',
-        relativePath: 'docs\\.hidden'
-      }),
-      /Invalid search scope/u
-    );
-    await engine.shutdown();
+          relativePath: 'missing'
+        }),
+        /does not exist/u
+      );
+      await assert.rejects(
+        search(engine, 1, 'backslash-directory', 'searchword', 500, {
+          kind: 'directory',
+          relativePath: 'docs\\.hidden'
+        }),
+        /Invalid search scope/u
+      );
+    } finally {
+      await engine.shutdown();
+    }
   });
 });
 
@@ -218,59 +224,131 @@ test('first-build directory search scans its complete eligible scope while proje
     await write(join(root, 'docs/.hidden/excluded.txt'), 'first build scoped needle');
     await write(join(root, 'outside.txt'), 'first build scoped needle');
 
-    const engine = createOnlyPreviewSearchEngine();
+    const directoryEngine = createOnlyPreviewSearchEngine();
+    const projectEngine = createOnlyPreviewSearchEngine();
     let releasePromotion;
+    let promotionReleased = false;
     const promotionGate = new Promise((resolve) => {
       releasePromotion = resolve;
     });
-    let candidateComplete;
-    const candidateCompletePromise = new Promise((resolve) => {
-      candidateComplete = resolve;
+    let resolveCandidatesComplete;
+    const candidatesComplete = new Promise((resolve) => {
+      resolveCandidatesComplete = resolve;
     });
-    const originalPromote = engine.promoteCandidate.bind(engine);
-    engine.promoteCandidate = async (...args) => {
-      candidateComplete();
-      await promotionGate;
-      return await originalPromote(...args);
+    let completedCandidates = 0;
+    const gateCandidatePromotion = (engine) => {
+      const originalPromote = engine.promoteCandidate.bind(engine);
+      engine.promoteCandidate = async (...args) => {
+        completedCandidates += 1;
+        if (completedCandidates === 2) resolveCandidatesComplete();
+        await promotionGate;
+        return await originalPromote(...args);
+      };
     };
-    const initialize = engine.initialize({
-      workspaceId: 'workspace',
-      generation: 1,
-      rootPath: root,
-      databasePath: join(temp, 'cache', 'search.sqlite')
-    });
-    await candidateCompletePromise;
+    gateCandidatePromotion(directoryEngine);
+    gateCandidatePromotion(projectEngine);
+    const releaseCandidatePromotion = () => {
+      if (promotionReleased) return;
+      promotionReleased = true;
+      releasePromotion();
+    };
+    let initializeDirectory;
+    let initializeProject;
+    let scopedSearch;
+    let projectSearch;
+    try {
+      initializeDirectory = directoryEngine.initialize({
+        workspaceId: 'workspace',
+        generation: 1,
+        rootPath: root,
+        databasePath: join(temp, 'cache', 'directory-search.sqlite')
+      });
+      initializeProject = projectEngine.initialize({
+        workspaceId: 'workspace',
+        generation: 1,
+        rootPath: root,
+        databasePath: join(temp, 'cache', 'project-search.sqlite')
+      });
+      await candidatesComplete;
 
-    const scopedBatches = [];
-    const scoped = await engine.search({
-      workspaceId: 'workspace',
-      generation: 1,
-      requestId: 'first-directory',
-      query: 'first build scoped needle',
-      maxResults: 500,
-      scope: { kind: 'directory', relativePath: 'docs' },
-      cancelBuffer: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
-      onResult: (result) => scopedBatches.push(result.relativePath)
-    });
-    assert.deepEqual(
-      scoped.results.map(({ relativePath }) => relativePath),
-      ['docs/deep/complete-scope.txt']
-    );
-    assert.deepEqual(scopedBatches, ['docs/deep/complete-scope.txt']);
+      const scopedBatches = [];
+      let resolveScopedBatch;
+      const scopedBatch = new Promise((resolve) => {
+        resolveScopedBatch = resolve;
+      });
+      let scopedSettled = false;
+      scopedSearch = directoryEngine
+        .search({
+          workspaceId: 'workspace',
+          generation: 1,
+          requestId: 'first-directory',
+          query: 'first build scoped needle',
+          maxResults: 500,
+          scope: { kind: 'directory', relativePath: 'docs' },
+          cancelBuffer: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+          onResult: (result) => {
+            scopedBatches.push(result);
+            if (
+              result.section === 'contents' &&
+              result.relativePath === 'docs/deep/complete-scope.txt'
+            ) {
+              resolveScopedBatch();
+            }
+          }
+        })
+        .finally(() => {
+          scopedSettled = true;
+        });
+      let batchTimeout;
+      await Promise.race([
+        scopedBatch,
+        new Promise((_, reject) => {
+          batchTimeout = setTimeout(
+            () => reject(new Error('Scoped Contents batch was not streamed before promotion.')),
+            2_000
+          );
+        })
+      ]).finally(() => clearTimeout(batchTimeout));
+      assert.deepEqual(
+        scopedBatches.map(({ section, relativePath }) => ({ section, relativePath })),
+        [{ section: 'contents', relativePath: 'docs/deep/complete-scope.txt' }]
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(scopedSettled, false, 'directory terminal must wait for first promotion');
 
-    let projectSettled = false;
-    const project = search(engine, 1, 'first-project', 'first build scoped needle').finally(() => {
-      projectSettled = true;
-    });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(projectSettled, false, 'In Project must wait for first candidate promotion');
-    releasePromotion();
-    await initialize;
-    assert.deepEqual(
-      (await project).results.map(({ relativePath }) => relativePath),
-      ['docs/deep/complete-scope.txt', 'outside.txt']
-    );
-    await engine.shutdown();
+      let projectSettled = false;
+      projectSearch = search(
+        projectEngine,
+        1,
+        'first-project',
+        'first build scoped needle'
+      ).finally(() => {
+        projectSettled = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(projectSettled, false, 'In Project must wait for first candidate promotion');
+      assert.equal(scopedSettled, false, 'directory terminal must still wait for first promotion');
+
+      releaseCandidatePromotion();
+      await Promise.all([initializeDirectory, initializeProject]);
+      const [scoped, project] = await Promise.all([scopedSearch, projectSearch]);
+      assert.deepEqual(scoped.files, []);
+      assert.deepEqual(
+        scoped.contents.map(({ relativePath }) => relativePath),
+        ['docs/deep/complete-scope.txt']
+      );
+      assert.deepEqual(project.files, []);
+      assert.deepEqual(
+        project.contents.map(({ relativePath }) => relativePath),
+        ['docs/deep/complete-scope.txt', 'outside.txt']
+      );
+    } finally {
+      releaseCandidatePromotion();
+      await Promise.allSettled(
+        [initializeDirectory, initializeProject, scopedSearch, projectSearch].filter(Boolean)
+      );
+      await Promise.all([directoryEngine.shutdown(), projectEngine.shutdown()]);
+    }
   });
 });
 

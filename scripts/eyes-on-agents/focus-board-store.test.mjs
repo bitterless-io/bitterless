@@ -143,12 +143,14 @@ test('Focus board store contract', async (context) => {
     let openSnapshot = currentSnapshot;
     const openedThreadIds = [];
     const readStateCalls = [];
+    const defaultOpenThread = async ({ sessionKey: openedSessionKey }) => {
+      openedThreadIds.push(openedSessionKey);
+      return { snapshot: openSnapshot };
+    };
+    let openThread = defaultOpenThread;
     globalThis.__eyesOnAgentsFocusBoardHarness = {
       getSnapshot: async () => currentSnapshot,
-      openThread: async ({ sessionKey: openedSessionKey }) => {
-        openedThreadIds.push(openedSessionKey);
-        return { snapshot: openSnapshot };
-      },
+      openThread: (params) => openThread(params),
       setThreadUnread: async (params) => {
         readStateCalls.push(params);
         const next = createSnapshot(currentSnapshot.threads.map((thread) =>
@@ -169,8 +171,11 @@ test('Focus board store contract', async (context) => {
       store.titleQuery = '';
       store.threadSearchVisible = false;
       store.threadSearchSelectedSessionKey = null;
+      store.openingSessionKeys = new Set();
+      store.actionError = null;
       currentSnapshot = snapshot;
       openSnapshot = snapshot;
+      openThread = defaultOpenThread;
       openedThreadIds.length = 0;
       readStateCalls.length = 0;
     };
@@ -775,15 +780,100 @@ test('Focus board store contract', async (context) => {
       store.setTitleDraft('ops');
       assert.equal(store.titleQuery, 'release', 'the configured throttle still holds the draft');
       await store.openSelectedThreadSearchResult();
-      assert.equal(store.titleQuery, 'ops', 'Enter commits the latest draft synchronously');
       assert.deepEqual(openedThreadIds, [codex.sessionKey]);
-      assert.equal(store.threadSearchSelectedSessionKey, codex.sessionKey);
-      assert.equal(store.threadSearchVisible, true, 'Open keeps the modal available');
+      assert.equal(store.threadSearchVisible, false, 'a successful Enter Open closes Search');
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
       assert.equal(scheduled, 2);
+      assert.deepEqual(searchIds(), []);
+    });
+
+    await context.test('successful card Open closes only the Search lifecycle that started it', async () => {
+      const first = createThread({
+        threadId: 'first-open',
+        title: 'First searchable task',
+      });
+      const second = createThread({
+        threadId: 'second-open',
+        title: 'Second searchable task',
+      });
+      resetStore(createSnapshot([first, second]));
+      store.openThreadSearch();
+      store.setTitleDraft('first');
+
+      let resolveOpen;
+      openThread = ({ sessionKey: openedSessionKey }) => {
+        openedThreadIds.push(openedSessionKey);
+        return new Promise((resolveOpenRequest) => {
+          resolveOpen = resolveOpenRequest;
+        });
+      };
+      const pendingOpen = store.openThread(first.sessionKey);
 
       store.closeThreadSearch();
-      assert.equal(store.threadSearchVisible, false);
-      assert.deepEqual(searchIds(), []);
+      store.openThreadSearch();
+      store.setTitleDraft('second');
+      assert.equal(store.threadSearchSelectedSessionKey, second.sessionKey);
+
+      resolveOpen({ snapshot: openSnapshot });
+      await pendingOpen;
+      assert.equal(store.threadSearchVisible, true, 'an old Open cannot close a new Search');
+      assert.equal(store.titleDraft, 'second');
+      assert.equal(store.titleQuery, 'second');
+      assert.equal(store.threadSearchSelectedSessionKey, second.sessionKey);
+
+      openThread = defaultOpenThread;
+      await store.openThread(second.sessionKey);
+      assert.equal(store.threadSearchVisible, false, 'the current Search closes after its Open');
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+    });
+
+    await context.test('failed or guarded Open preserves Search for retry', async () => {
+      const codex = createThread({
+        threadId: 'failed-open',
+        title: 'Failed searchable task',
+      });
+      const claude = createThread({
+        threadId: 'guarded-open',
+        title: 'Guarded searchable task',
+        provider: 'claude',
+      });
+      resetStore(createSnapshot([codex, claude]));
+      store.openThreadSearch();
+      store.setTitleDraft('failed');
+      openThread = async ({ sessionKey: openedSessionKey }) => {
+        openedThreadIds.push(openedSessionKey);
+        throw new Error('provider Open failed');
+      };
+
+      await assert.rejects(store.openThread(codex.sessionKey), /provider Open failed/);
+      assert.equal(store.threadSearchVisible, true);
+      assert.equal(store.titleDraft, 'failed');
+      assert.equal(store.titleQuery, 'failed');
+      assert.equal(store.threadSearchSelectedSessionKey, codex.sessionKey);
+      assert.equal(store.actionError, 'provider Open failed');
+
+      store.clearTitleQuery();
+      store.setTitleDraft('guarded');
+      await store.openThread(claude.sessionKey);
+      assert.deepEqual(openedThreadIds, [codex.sessionKey], 'an unopenable Claude task is local-only');
+      assert.equal(store.threadSearchVisible, true);
+      assert.equal(store.titleDraft, 'guarded');
+      assert.equal(store.titleQuery, 'guarded');
+      assert.equal(store.threadSearchSelectedSessionKey, claude.sessionKey);
+
+      store.openingSessionKeys = new Set([codex.sessionKey]);
+      store.clearTitleQuery();
+      store.setTitleDraft('failed');
+      await store.openThread(codex.sessionKey);
+      assert.deepEqual(openedThreadIds, [codex.sessionKey], 'an already-opening task is a no-op');
+      assert.equal(store.threadSearchVisible, true);
+      assert.equal(store.titleDraft, 'failed');
+      assert.equal(store.titleQuery, 'failed');
+      assert.equal(store.threadSearchSelectedSessionKey, codex.sessionKey);
     });
   } finally {
     delete globalThis.__eyesOnAgentsFocusBoardHarness;

@@ -98,6 +98,7 @@ class EyesOnAgentsState {
   threadSearchVisible = false;
   threadSearchSelectedSessionKey: EyesOnAgentsSessionKey | null = null;
   private titleQueryScheduler: (() => void) | null = null;
+  private threadSearchLifecycleRevision = 0;
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private activationPromise: Promise<void> | null = null;
@@ -180,6 +181,7 @@ class EyesOnAgentsState {
 
   openThreadSearch(): void {
     if (this.threadSearchVisible) return;
+    this.threadSearchLifecycleRevision += 1;
     this.titleDraft = '';
     this.titleQuery = '';
     this.threadSearchSelectedSessionKey = null;
@@ -187,6 +189,7 @@ class EyesOnAgentsState {
   }
 
   closeThreadSearch(): void {
+    this.threadSearchLifecycleRevision += 1;
     this.threadSearchVisible = false;
     this.titleDraft = '';
     this.titleQuery = '';
@@ -368,11 +371,21 @@ class EyesOnAgentsState {
     const thread = this.threads.find((item) => item.sessionKey === sessionKey);
     if (!thread || (thread.provider === 'claude' && thread.desktopSessionId === null)) return;
     if (this.openingSessionKeys.has(sessionKey)) return;
+    const threadSearchRevision = this.threadSearchVisible
+      ? this.threadSearchLifecycleRevision
+      : null;
     this.openingSessionKeys = new Set(this.openingSessionKeys).add(sessionKey);
     this.actionError = null;
     try {
       const result = await eyesOnAgentsEmitter.openThread({ sessionKey });
       this.applySnapshot(result.snapshot);
+      if (
+        threadSearchRevision !== null
+        && this.threadSearchVisible
+        && this.threadSearchLifecycleRevision === threadSearchRevision
+      ) {
+        this.closeThreadSearch();
+      }
     } catch (error) {
       this.actionError = this.errorMessage(error);
       throw error;

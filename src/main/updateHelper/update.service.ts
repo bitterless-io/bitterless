@@ -4,8 +4,18 @@ import { xpcMain } from 'electron-xpc/main';
 import * as fs from 'fs';
 import * as path from 'path';
 import { compareVersions } from 'compare-versions';
-import type { UpdateInfo, ManifestData, PlatformType, UpdateCheckResult } from './update.type';
+import type {
+  UpdateInfo,
+  ManifestData,
+  PlatformType,
+  ReleaseChannel,
+  UpdateCheckResult
+} from './update.type';
 import { UpdatePollingService } from './updatePolling.service';
+import {
+  assertManifestReleaseChannel,
+  resolveUpdateDirectory
+} from './updateChannel.service';
 
 type UpdaterReleaseNotes =
   | string
@@ -36,6 +46,7 @@ class UpdateService {
   private platform: PlatformType | null;
   private viteEnv: string;
   private viteMode: string;
+  private releaseChannel: ReleaseChannel;
   private disabledForE2E: boolean;
   private isDownloading = false;
   private readyUpdate: UpdateInfo | null = null;
@@ -47,6 +58,7 @@ class UpdateService {
     this.platform = this.disabledForE2E ? null : this.detectPlatform();
     this.viteEnv = import.meta.env.VITE_ENV;
     this.viteMode = import.meta.env.VITE_MODE;
+    this.releaseChannel = import.meta.env.VITE_RELEASE_CHANNEL;
 
     if (!this.disabledForE2E) this.setupAutoUpdater();
 
@@ -79,8 +91,8 @@ class UpdateService {
   }
 
   private getManifestUrl(): string {
-    const baseUrl = 'https://assets.terncloud.com/bitterless/distro';
-    return `${baseUrl}/${this.viteEnv}/${this.platform}/version_info.json`;
+    if (!this.platform) throw new Error('Update platform is unavailable');
+    return `${resolveUpdateDirectory(this.releaseChannel, this.platform)}/version_info.json`;
   }
 
   private setupAutoUpdater(): void {
@@ -129,6 +141,8 @@ class UpdateService {
       }
 
       const manifest = await response.json() as ManifestData;
+      if (!this.platform) throw new Error('Update platform is unavailable');
+      assertManifestReleaseChannel(manifest, this.releaseChannel, this.platform);
       const versionCode = String(manifest.versionCode);
       if (!/^\d+$/.test(versionCode)) {
         throw new Error(`Invalid update manifest versionCode: ${versionCode}`);
@@ -250,6 +264,7 @@ class UpdateService {
     console.log('[UpdateService] Starting update polling (every 60 seconds)...');
     console.log('[UpdateService] Platform:', this.platform);
     console.log('[UpdateService] Environment:', this.viteEnv);
+    console.log('[UpdateService] Release channel:', this.releaseChannel);
     console.log('[UpdateService] Mode:', this.viteMode);
   }
 

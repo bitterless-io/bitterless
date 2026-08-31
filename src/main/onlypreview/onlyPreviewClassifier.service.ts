@@ -1,4 +1,3 @@
-import type { FileHandle } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import {
@@ -11,13 +10,6 @@ import {
   type OnlyPreviewTextContent,
   type OnlyPreviewTextEncoding
 } from '@shared/onlypreview/onlyPreview.types';
-import {
-  onlyPreviewWorkspaceRegistry,
-  type OpenedOnlyPreviewFile,
-  type OnlyPreviewWorkspaceRegistry
-} from './onlyPreviewWorkspace.registry';
-
-const READ_CHUNK_BYTES = 64 * 1024;
 
 const TEXT_EXTENSIONS = new Set([
   '.c',
@@ -226,9 +218,6 @@ export const classifyOnlyPreviewExtension = (relativePath: string): OnlyPreviewK
 const startsWithBytes = (buffer: Uint8Array, expected: readonly number[]): boolean =>
   buffer.length >= expected.length && expected.every((byte, index) => buffer[index] === byte);
 
-const isCompoundFileSignature = (buffer: Uint8Array): boolean =>
-  startsWithBytes(buffer, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
-
 const asciiAt = (buffer: Uint8Array, start: number, length: number): string =>
   String.fromCharCode(...buffer.slice(start, start + length));
 
@@ -292,7 +281,10 @@ const hasPlausibleMediaAtom = (sample: Uint8Array, acceptedTypes: ReadonlySet<st
 
 const QUICKTIME_FIRST_ATOMS = new Set(['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip']);
 
-const matchesSignature = (extension: string, sample: Uint8Array): boolean => {
+export const matchesOnlyPreviewSignature = (
+  extension: string,
+  sample: Uint8Array
+): boolean => {
   if (extension === '.pdf') return asciiAt(sample, 0, 5) === '%PDF-';
   if (extension === '.png')
     return startsWithBytes(sample, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -337,26 +329,13 @@ const matchesSignature = (extension: string, sample: Uint8Array): boolean => {
   return false;
 };
 
-const signatureBytesFor = (extension: string): number => {
+export const getOnlyPreviewSignatureBytes = (extension: string): number => {
   if (extension === '.svg') return 512;
   if (extension === '.avif') return 40;
   return 16;
 };
 
-const readBounded = async (handle: FileHandle, byteLimit: number): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  let offset = 0;
-  while (offset < byteLimit) {
-    const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, byteLimit - offset));
-    const { bytesRead } = await handle.read(chunk, 0, chunk.length, offset);
-    if (bytesRead === 0) break;
-    chunks.push(chunk.subarray(0, bytesRead));
-    offset += bytesRead;
-  }
-  return Buffer.concat(chunks, offset);
-};
-
-const decodeOnlyPreviewText = (
+export const decodeOnlyPreviewText = (
   buffer: Uint8Array
 ): { text: string; encoding: OnlyPreviewTextEncoding } => {
   if (startsWithBytes(buffer, [0xff, 0xfe])) {
@@ -396,7 +375,7 @@ const adapterForClassification = (
   return 'unsupported';
 };
 
-const textAdapterFor = (
+export const getOnlyPreviewTextAdapter = (
   relativePath: string
 ): Extract<OnlyPreviewPreviewAdapterId, 'monaco' | 'markdown-dom'> | null => {
   const extension = extensionOf(relativePath);
@@ -404,14 +383,19 @@ const textAdapterFor = (
   return extension === '.md' ? 'markdown-dom' : 'monaco';
 };
 
-export class OnlyPreviewClassifierService {
-  constructor(private readonly workspaces: OnlyPreviewWorkspaceRegistry) {}
+export interface OnlyPreviewPreparedFileMetadata {
+  workspaceId: string;
+  relativePath: string;
+  size: number;
+  modifiedAt: number;
+}
 
-  async describe(file: OpenedOnlyPreviewFile): Promise<OnlyPreviewDescriptor> {
+export class OnlyPreviewClassifierService {
+  describe(file: OnlyPreviewPreparedFileMetadata, sample?: Uint8Array): OnlyPreviewDescriptor {
     const extension = extensionOf(file.relativePath);
     const kind = classifyOnlyPreviewExtension(file.relativePath);
     const descriptor: OnlyPreviewDescriptor = {
-      workspaceId: file.workspace.workspaceId,
+      workspaceId: file.workspaceId,
       relativePath: file.relativePath,
       name: basename(file.relativePath),
       extension,
@@ -462,20 +446,10 @@ export class OnlyPreviewClassifierService {
       return descriptor;
     }
     if (kind === 'diagram') return descriptor;
+    if (kind === 'sheet' || kind === 'document' || kind === 'presentation') return descriptor;
 
-    const sample = await readBounded(file.fileHandle, signatureBytesFor(extension));
-    await this.workspaces.assertOpenedFileCurrent(file);
-    if (
-      (kind === 'sheet' || kind === 'document' || kind === 'presentation') &&
-      isCompoundFileSignature(sample)
-    ) {
-      descriptor.previewError = {
-        code: 'OOXML_ENCRYPTED',
-        message: 'Password-protected Office files are not supported.'
-      };
-      return descriptor;
-    }
-    if (!matchesSignature(extension, sample)) {
+    if (!sample) return descriptor;
+    if (!matchesOnlyPreviewSignature(extension, sample)) {
       descriptor.previewError = {
         code: 'SIGNATURE_MISMATCH',
         message: 'The file signature does not match its extension.'
@@ -484,11 +458,12 @@ export class OnlyPreviewClassifierService {
     return descriptor;
   }
 
-  async readText(
-    file: OpenedOnlyPreviewFile,
-    adapterId: Extract<OnlyPreviewPreviewAdapterId, 'monaco' | 'markdown-dom'>
-  ): Promise<OnlyPreviewTextContent> {
-    const expectedAdapter = textAdapterFor(file.relativePath);
+  decodeText(
+    file: OnlyPreviewPreparedFileMetadata,
+    adapterId: Extract<OnlyPreviewPreviewAdapterId, 'monaco' | 'markdown-dom'>,
+    buffer: Uint8Array
+  ): OnlyPreviewTextContent {
+    const expectedAdapter = getOnlyPreviewTextAdapter(file.relativePath);
     if (
       expectedAdapter !== adapterId ||
       classifyOnlyPreviewExtension(file.relativePath) !== 'text'
@@ -506,11 +481,15 @@ export class OnlyPreviewClassifierService {
         `Text preview is limited to ${byteLimit} bytes.`
       );
     }
-    const buffer = await readBounded(file.fileHandle, byteLimit);
-    await this.workspaces.assertOpenedFileCurrent(file);
+    if (buffer.byteLength !== file.size) {
+      throw new OnlyPreviewContractError(
+        'PATH_NOT_FOUND',
+        'The selected text file changed while it was being read.'
+      );
+    }
     const decoded = decodeOnlyPreviewText(buffer);
     return {
-      workspaceId: file.workspace.workspaceId,
+      workspaceId: file.workspaceId,
       relativePath: file.relativePath,
       text: decoded.text,
       encoding: decoded.encoding,
@@ -519,6 +498,4 @@ export class OnlyPreviewClassifierService {
   }
 }
 
-export const onlyPreviewClassifierService = new OnlyPreviewClassifierService(
-  onlyPreviewWorkspaceRegistry
-);
+export const onlyPreviewClassifierService = new OnlyPreviewClassifierService();

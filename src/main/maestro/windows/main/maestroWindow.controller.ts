@@ -150,9 +150,9 @@ import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
 
 // Initial geometry used for the very first frame, before the home renderer reports
-// the real placeholder rects (see setViewBounds). The 36px tab strip plus the unchanged
-// 48px address row total 84px; renderer measurements remain authoritative thereafter.
-const TOOLBAR_H = 84
+// the real placeholder rects (see setViewBounds). The 36px tab strip plus the compact
+// 42px address row total 78px; renderer measurements remain authoritative thereafter.
+const TOOLBAR_H = 78
 const SIDEBAR_W = 480
 
 @injectable()

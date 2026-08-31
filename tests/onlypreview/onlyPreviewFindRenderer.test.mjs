@@ -500,7 +500,10 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
   assert.match(windowHelper, /if \(isGlobalSearchShortcut\(input\)\) return 'focus-search'/);
   assert.match(windowHelper, /if \(isCurrentFileFindShortcut\(input\)\) return 'find-in-file'/);
   assert.match(windowHelper, /createView\(host, 'shell'\)/);
-  assert.match(windowHelper, /createView\(host, 'preview', previewRuntimeToken\)/);
+  assert.match(
+    windowHelper,
+    /createView\([\s\S]*host,[\s\S]*'preview',[\s\S]*previewRuntimeToken,[\s\S]*officeBrokerCapability,[\s\S]*previewReadBrokerCapability/
+  );
   assert.match(windowHelper, /createView\(host, 'globalSearch'\)/);
   assert.match(windowHelper, /bindChromeShortcuts: \(webContents\)/);
 });

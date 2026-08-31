@@ -378,7 +378,24 @@ export class PiCodexResponsesUpstream implements CodexResponsesUpstream {
         }
       });
 
-      await waitForPrompt(session, renderCodexConversation(request.payload.conversation), signal, abortSession);
+      // Images ride `PromptOptions.images`, which is the only structured channel pi
+      // offers — `prompt()` itself takes a plain string. PDFs have no equivalent, so a
+      // document reaches the model as its marker text and nothing more; that gap is
+      // pi's, not this bridge's, and is stated in the payload rather than hidden.
+      const images = (request.payload.media ?? [])
+        .filter((block) => block.type === 'image')
+        .map((block) => ({
+          type: 'image' as const,
+          data: block.source.data,
+          mimeType: block.source.media_type
+        }));
+      await waitForPrompt(
+        session,
+        renderCodexConversation(request.payload.conversation),
+        signal,
+        abortSession,
+        images.length > 0 ? { images } : undefined
+      );
     } catch (error) {
       // A captured tool call is the reason the session was aborted, so it is a result,
       // not a failure — the abort must not be reported as one.

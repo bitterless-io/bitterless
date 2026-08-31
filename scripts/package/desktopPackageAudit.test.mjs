@@ -88,6 +88,13 @@ const createSyntheticApplication = async ({
   includeMacIcon = true,
   includeOnlyPreviewAgentSkill = true,
   includeTrenchAgentSkill = true,
+  runtimeProfile = {
+    schemaVersion: 1,
+    profileName: 'release_prod',
+    releaseChannel: 'prod',
+    viteEnv: 'prod',
+    viteMode: 'release',
+  },
 } = {}) => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'bitterless-desktop-package-'));
   temporaryRoots.push(fixtureRoot);
@@ -96,12 +103,7 @@ const createSyntheticApplication = async ({
   writeFixtureFiles(archiveSource, {
     'package.json': '{"name":"synthetic-app"}\n',
     'out/main/app.main.js': 'module.exports = {};\n',
-    'out/.bitterless-runtime-profile.json': JSON.stringify({
-      schemaVersion: 1,
-      profileName: 'release_prod',
-      viteEnv: 'prod',
-      viteMode: 'release',
-    }),
+    'out/.bitterless-runtime-profile.json': JSON.stringify(runtimeProfile),
     ...archiveFiles,
   });
 
@@ -193,12 +195,40 @@ test('synthetic app.asar passes the desktop package audit', async () => {
   await afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 });
 });
 
+test('synthetic Preview package requires the dedicated Preview ICNS', async () => {
+  const runtimeProfile = {
+    schemaVersion: 1,
+    profileName: 'release_preview',
+    releaseChannel: 'preview',
+    viteEnv: 'prod',
+    viteMode: 'release',
+  };
+  const valid = await createSyntheticApplication({
+    runtimeProfile,
+    appFiles: {
+      'Contents/Resources/icon.icns': readFileSync(
+        path.join(projectRoot, 'build/icon-preview.icns'),
+      ),
+    },
+  });
+  const result = auditDesktopPackage(valid.outputPath);
+  assert.equal(result.packagedRuntimeProfile.profileName, 'release_preview');
+  assert.equal(result.packagedRuntimeProfile.releaseChannel, 'preview');
+
+  const stableArtwork = await createSyntheticApplication({ runtimeProfile });
+  assert.throws(
+    () => auditDesktopPackage(stableArtwork.outputPath),
+    /bundle ICNS does not match icon-preview\.icns/,
+  );
+});
+
 test('packaged runtime profile gate rejects debug and missing markers', async () => {
   const debug = await createSyntheticApplication({
     archiveFiles: {
       'out/.bitterless-runtime-profile.json': JSON.stringify({
         schemaVersion: 1,
         profileName: 'debug_dev',
+        releaseChannel: 'dev',
         viteEnv: 'dev',
         viteMode: 'debug',
       }),
@@ -560,6 +590,8 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
   const builder = readProjectFile('electron-builder.tmp.yml');
   assert.match(builder, /^afterPack: scripts\/package\/desktopPackage\.audit\.cjs$/m);
   assert.match(builder, /^\s+- '!tests\/\*\*'$/m);
+  assert.match(builder, /^\s+- '!dist\/\*\*'$/m);
+  assert.match(builder, /^\s+- '!tmp\/\*\*'$/m);
   assert.match(builder, /^\s+- '!output\/\*\*'$/m);
   assert.match(builder, /^\s+- '!node_modules\/@micromeet\/cli\{,\/\*\*\}'$/m);
   assert.match(builder, /^\s+- '!node_modules\/\*\*\/\*\.map'$/m);
@@ -580,6 +612,21 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
     ),
     'Electron Builder must copy the complete Bitterless Trench skill directory',
   );
+});
+
+test('Electron Builder excludes complete release and temporary roots for Preview output', () => {
+  const templateSource = readProjectFile('electron-builder.tmp.yml');
+  const previewSource = templateSource.replace(/^(\s+output:).*$/m, '$1 dist/preview');
+  const configurations = [
+    { label: 'Stable template', config: parseYaml(templateSource), output: 'dist' },
+    { label: 'Preview generated config', config: parseYaml(previewSource), output: 'dist/preview' },
+  ];
+
+  for (const { label, config, output } of configurations) {
+    assert.equal(config.directories?.output, output, `${label} must use the expected output`);
+    assert(config.files?.includes('!dist/**'), `${label} must exclude the complete dist root`);
+    assert(config.files?.includes('!tmp/**'), `${label} must exclude the complete tmp root`);
+  }
 });
 
 test('Electron Builder locale allowlist is exact in the template and optional generated config', () => {
@@ -625,8 +672,8 @@ test('publish audits an existing packaged app before DMG finalization or upload'
   const source = readProjectFile('scripts/publish.js');
   const mainSource = source.slice(source.indexOf('const main = async () =>'));
   const buildIndex = mainSource.indexOf('runBuild(options)');
-  const auditIndex = mainSource.indexOf('auditPackagedApplication(options.platform)');
-  const finalizeIndex = mainSource.indexOf('finalizeMacDmg(options.platform)');
+  const auditIndex = mainSource.indexOf('auditPackagedApplication(options.platform, options.env)');
+  const finalizeIndex = mainSource.indexOf('finalizeMacDmg(options.platform, targetDistDir)');
   const uploadIndex = mainSource.indexOf('await publishRelease({');
 
   assert(buildIndex >= 0);

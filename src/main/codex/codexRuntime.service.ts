@@ -199,7 +199,7 @@ export interface CodexRuntimePiSession {
   thinkingLevel?: string;
   agent?: CodexRuntimePiAgent;
   subscribe(listener: (event: CodexRuntimePiSessionEvent) => void): undefined | (() => void);
-  prompt(message: string): Promise<unknown>;
+  prompt(message: string, options?: Record<string, unknown>): Promise<unknown>;
   abort(): Promise<void>;
   dispose(): void;
 }
@@ -849,7 +849,8 @@ export const waitForPrompt = async (
   session: CodexRuntimePiSession,
   prompt: string,
   signal: AbortSignal,
-  abortSession: () => void
+  abortSession: () => void,
+  options?: Record<string, unknown>
 ): Promise<void> => {
   if (signal.aborted) {
     abortSession();
@@ -876,7 +877,9 @@ export const waitForPrompt = async (
 
   let promptPromise: Promise<unknown>;
   try {
-    promptPromise = Promise.resolve(session.prompt(prompt));
+    promptPromise = Promise.resolve(
+      options ? session.prompt(prompt, options) : session.prompt(prompt)
+    );
   } catch (error) {
     removeAbort();
     throw error;

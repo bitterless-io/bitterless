@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { WebContentsView, type BaseWindow, type Rectangle, type Session } from 'electron';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import type {
@@ -12,7 +12,11 @@ import { installOnlyPreviewSessionProtocol } from '@main/onlypreview/onlyPreview
 export interface OnlyPreviewPreviewRegionRuntime {
   window: BaseWindow;
   host: OnlyPreviewHostCapability;
-  createVuePreviewView: (previewRuntimeToken: string) => WebContentsView;
+  createVuePreviewView: (
+    previewRuntimeToken: string,
+    officeBrokerCapability: string,
+    previewReadBrokerCapability: string
+  ) => WebContentsView;
   loadVuePreviewView: (view: WebContentsView) => Promise<void>;
   bindChromeShortcuts: (webContents: Electron.WebContents) => void;
   onActiveViewAttached?: () => void;
@@ -106,7 +110,20 @@ const TEXT_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'OPERATION_FAILED',
   'PROTOCOL_ERROR'
 ]);
+const OFFICE_READ_ERRORS: readonly OnlyPreviewErrorCode[] = [
+  'HOST_NOT_FOUND',
+  'HOST_ROLE_DENIED',
+  'WORKSPACE_NOT_FOUND',
+  'WORKSPACE_ACCESS_DENIED',
+  'PATH_NOT_FOUND',
+  'PATH_PERMISSION_DENIED',
+  'PATH_OUTSIDE_WORKSPACE',
+  'PATH_NOT_REGULAR_FILE',
+  'PATH_UNSUPPORTED_DEVICE',
+  'PROTOCOL_ERROR'
+];
 const SHEET_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  ...OFFICE_READ_ERRORS,
   'INVALID_INPUT',
   'TEXT_TOO_LARGE',
   'SIGNATURE_MISMATCH',
@@ -114,11 +131,13 @@ const SHEET_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'OOXML_ENCRYPTED',
   'OOXML_ARCHIVE_INVALID',
   'SHEET_PARSE_FAILED',
+  'SHEET_RENDER_FAILED',
   'SHEET_EMPTY',
   'SHEET_RENDER_TIMEOUT',
   'OPERATION_FAILED'
 ]);
 const DOCUMENT_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  ...OFFICE_READ_ERRORS,
   'INVALID_INPUT',
   'TEXT_TOO_LARGE',
   'SIGNATURE_MISMATCH',
@@ -126,12 +145,14 @@ const DOCUMENT_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'OOXML_ENCRYPTED',
   'OOXML_ARCHIVE_INVALID',
   'DOCUMENT_PARSE_FAILED',
+  'DOCUMENT_RENDER_FAILED',
   'DOCUMENT_EMPTY',
   'DOCUMENT_SANITIZE_FAILED',
   'DOCUMENT_RENDER_TIMEOUT',
   'OPERATION_FAILED'
 ]);
 const PRESENTATION_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
+  ...OFFICE_READ_ERRORS,
   'INVALID_INPUT',
   'TEXT_TOO_LARGE',
   'SIGNATURE_MISMATCH',
@@ -139,6 +160,7 @@ const PRESENTATION_RENDER_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'OOXML_ENCRYPTED',
   'OOXML_ARCHIVE_INVALID',
   'PRESENTATION_PARSE_FAILED',
+  'PRESENTATION_RENDER_FAILED',
   'PRESENTATION_EMPTY',
   'PRESENTATION_RENDER_TIMEOUT',
   'OPERATION_FAILED'
@@ -215,6 +237,8 @@ export class OnlyPreviewPreviewViewService {
   private runtime: OnlyPreviewPreviewRegionRuntime | null = null;
   private vuePreviewView: WebContentsView | null = null;
   private vueRuntimeToken: string | null = null;
+  private officeBrokerCapability: string | null = null;
+  private previewReadBrokerCapability: string | null = null;
   private chromePreviewView: WebContentsView | null = null;
   private attachedView: WebContentsView | null = null;
   private chromeProtocolCleanup: (() => void) | null = null;
@@ -248,6 +272,14 @@ export class OnlyPreviewPreviewViewService {
 
   getVueRuntimeToken(): string | null {
     return this.vueRuntimeToken;
+  }
+
+  getOfficeBrokerCapability(): string | null {
+    return this.officeBrokerCapability;
+  }
+
+  getPreviewReadBrokerCapability(): string | null {
+    return this.previewReadBrokerCapability;
   }
 
   getChromePreviewView(): WebContentsView | null {
@@ -298,9 +330,17 @@ export class OnlyPreviewPreviewViewService {
       return this.vuePreviewView;
     }
     const previewRuntimeToken = randomUUID();
-    const view = runtime.createVuePreviewView(previewRuntimeToken);
+    const officeBrokerCapability = randomBytes(32).toString('base64url');
+    const previewReadBrokerCapability = randomBytes(32).toString('base64url');
+    const view = runtime.createVuePreviewView(
+      previewRuntimeToken,
+      officeBrokerCapability,
+      previewReadBrokerCapability
+    );
     this.vuePreviewView = view;
     this.vueRuntimeToken = previewRuntimeToken;
+    this.officeBrokerCapability = officeBrokerCapability;
+    this.previewReadBrokerCapability = previewReadBrokerCapability;
     this.vueViewGeneration += 1;
     this.callbacks.bindFindWebContents('vue', view.webContents, this.vueViewGeneration);
     view.webContents.once('render-process-gone', (_event, details) => {
@@ -326,6 +366,8 @@ export class OnlyPreviewPreviewViewService {
     closeContentView(view);
     this.vuePreviewView = null;
     this.vueRuntimeToken = null;
+    this.officeBrokerCapability = null;
+    this.previewReadBrokerCapability = null;
     this.callbacks.onVueUnavailable(runtime, error, recreate);
   }
 
@@ -337,6 +379,8 @@ export class OnlyPreviewPreviewViewService {
     closeContentView(view);
     this.vuePreviewView = null;
     this.vueRuntimeToken = null;
+    this.officeBrokerCapability = null;
+    this.previewReadBrokerCapability = null;
   }
 
   async stageChromeSelection(

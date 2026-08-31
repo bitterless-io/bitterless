@@ -17,6 +17,7 @@ const { loadCanonicalRigEnvironment } = nodeRequire(
   loadCanonicalRigEnvironment(projectRoot: string): {
     environment: Record<string, string>;
     profileName: string;
+    releaseChannel: 'dev' | 'prod' | 'preview';
     viteEnv: 'dev' | 'prod';
     viteMode: 'debug' | 'release';
   };
@@ -26,7 +27,8 @@ const dotenvResult = dotenvConfig({ path: resolve('.env.rig'), override: true })
 if (dotenvResult.error) throw dotenvResult.error;
 if (
   process.env.VITE_MODE !== canonicalRigEnvironment.viteMode ||
-  process.env.VITE_ENV !== canonicalRigEnvironment.viteEnv
+  process.env.VITE_ENV !== canonicalRigEnvironment.viteEnv ||
+  process.env.VITE_RELEASE_CHANNEL !== canonicalRigEnvironment.releaseChannel
 ) {
   throw new Error('The selected Rig profile was not applied to the Electron build process');
 }
@@ -45,7 +47,10 @@ const bitterlessPreloadBuildDefine = {
   __BITTERLESS_VERSION_CODE__: JSON.stringify(packageMetadata.version_code),
   'import.meta.env.VITE_BITTERLESS_CORE_URL': JSON.stringify(process.env.VITE_BITTERLESS_CORE_URL),
   'import.meta.env.VITE_ENV': JSON.stringify(canonicalRigEnvironment.viteEnv),
-  'import.meta.env.VITE_MODE': JSON.stringify(canonicalRigEnvironment.viteMode)
+  'import.meta.env.VITE_MODE': JSON.stringify(canonicalRigEnvironment.viteMode),
+  'import.meta.env.VITE_RELEASE_CHANNEL': JSON.stringify(
+    canonicalRigEnvironment.releaseChannel
+  )
 };
 
 const maestroBuildDefine = {
@@ -381,6 +386,7 @@ const runtimeProfileBuildMarkerPlugin = {
         {
           schemaVersion: 1,
           profileName: canonicalRigEnvironment.profileName,
+          releaseChannel: canonicalRigEnvironment.releaseChannel,
           viteEnv: canonicalRigEnvironment.viteEnv,
           viteMode: canonicalRigEnvironment.viteMode
         },

@@ -9,7 +9,8 @@ export const withDebugE2ERuntimeEnvironment = (
 ): NodeJS.ProcessEnv => ({
   ...environment,
   VITE_ENV: 'dev',
-  VITE_MODE: 'debug'
+  VITE_MODE: 'debug',
+  VITE_RELEASE_CHANNEL: 'dev'
 });
 
 export const assertDebugE2EBuild = (projectRoot: string): void => {
@@ -28,11 +29,13 @@ export const assertDebugE2EBuild = (projectRoot: string): void => {
     marker === null ||
     Array.isArray(marker) ||
     Object.keys(marker).sort().join(',') !==
-      'profileName,schemaVersion,viteEnv,viteMode' ||
+      'profileName,releaseChannel,schemaVersion,viteEnv,viteMode' ||
     !('schemaVersion' in marker) ||
     marker.schemaVersion !== 1 ||
     !('profileName' in marker) ||
     marker.profileName !== 'debug_dev' ||
+    !('releaseChannel' in marker) ||
+    marker.releaseChannel !== 'dev' ||
     !('viteEnv' in marker) ||
     marker.viteEnv !== 'dev' ||
     !('viteMode' in marker) ||

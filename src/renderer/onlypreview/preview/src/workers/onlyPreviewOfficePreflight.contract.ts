@@ -1,4 +1,5 @@
 import type { OnlyPreviewOoxmlPackageKind } from '../onlyPreviewOoxmlPreflight.type';
+import type { OnlyPreviewXlsxCompatibility } from '../onlyPreviewOoxmlPreflight.type';
 
 export interface OnlyPreviewOfficePreflightIdentity {
   runtimeId: string;
@@ -16,6 +17,8 @@ export type OnlyPreviewOfficePreflightResponse =
   | (OnlyPreviewOfficePreflightIdentity & {
       type: 'ready';
       bytes: ArrayBuffer;
+      totalUncompressedBytes: number;
+      xlsxCompatibility?: OnlyPreviewXlsxCompatibility;
     })
   | (OnlyPreviewOfficePreflightIdentity & {
       type: 'error';

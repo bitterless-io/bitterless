@@ -38,9 +38,8 @@ const CLAUDE_EFFORTS: LlmEffortOption[] = [
 export const LOCAL_LLM_PROVIDER = 'local'
 
 const LOCAL_CLAUDE_MODEL_LABELS: Record<keyof typeof CLAUDE_SUBSCRIPTION_MODELS, { label: string; shortLabel: string }> = {
-  'claude-sonnet': { label: 'Claude Sonnet', shortLabel: 'Sonnet' },
-  'claude-opus': { label: 'Claude Opus', shortLabel: 'Opus' },
-  'claude-haiku': { label: 'Claude Haiku', shortLabel: 'Haiku' }
+  'claude-sonnet': { label: 'Claude Sonnet 5', shortLabel: 'Sonnet 5' },
+  'claude-opus': { label: 'Claude Opus 5', shortLabel: 'Opus 5' }
 }
 
 export const LLM_PROVIDERS: LlmProviderDefinition[] = [

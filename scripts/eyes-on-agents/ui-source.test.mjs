@@ -1079,7 +1079,12 @@ test('Focus header exposes only Search while bulk Read all stays below renderer'
   assert.match(button[0], /aria-haspopup="dialog"/);
   assert.match(button[0], /aria-controls="eyes-on-agents-thread-search-dialog"/);
   assert.match(button[0], /:aria-expanded="eyesOnAgentsStore\.threadSearchVisible"/);
-  assert.match(button[0], /@click="eyesOnAgentsStore\.openThreadSearch"/);
+  assert.match(button[0], /@click="openThreadSearch"/);
+  assert.doesNotMatch(button[0], /@click="eyesOnAgentsStore\./);
+  assert.match(
+    domain,
+    /const openThreadSearch = \(\): void => \{\s*eyesOnAgentsStore\.openThreadSearch\(\);\s*\};/,
+  );
   assert.match(button[0], /<IconSearch :size="14" aria-hidden="true"/);
   assert.match(domain, /const searchTooltip = computed\(\(\) => uaHelper\.isMac/);
   assert.doesNotMatch(domain, /<a-input|readAll|markAllRead|readableFocusThreads/);
@@ -1175,6 +1180,12 @@ test('Cmd/Ctrl+F toggles one card-result search modal contained by EyesOnAgents'
   assert.match(search, /eyesOnAgentsStore\.closeThreadSearch\(\)/);
   assert.match(search, /inputRef\.value\?\.focus\?\.\(\)/);
   assert.match(search, /@clear="handleQueryClear"/);
+  assert.match(search, /@update:model-value="handleTitleInput"/);
+  assert.doesNotMatch(search, /@update:model-value="eyesOnAgentsStore\./);
+  assert.match(
+    search,
+    /const handleTitleInput = \(value: string\): void => \{\s*eyesOnAgentsStore\.setTitleDraft\(value\);\s*\};/,
+  );
   assert.match(search, /handleQueryClear[\s\S]*eyesOnAgentsStore\.clearTitleQuery\(\)/);
   assert.match(search, /role: 'combobox'/);
   assert.match(search, /'aria-activedescendant': selectedOptionId\.value/);

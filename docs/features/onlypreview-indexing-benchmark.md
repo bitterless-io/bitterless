@@ -61,6 +61,11 @@ Deterministic and generated, never a real user directory by default. One seeded 
 tree shape, file sizes, extensions and bodies, so two machines index identical bytes. Corpora are
 cached under `tmp/indexing-bench/corpus/<signature>/` and reused until the signature changes.
 
+Specialized `.xlsx` entries are deterministic minimal OOXML workbooks rather than arbitrary opaque
+bytes, so a generated corpus can also exercise the real Office Preview path. The workbook bytes are
+created once and reused within a corpus run; changing this fixture changes the corpus signature and
+invalidates prior cached fake-byte XLSX files.
+
 Every corpus plants three probes: a unique needle in exactly one file, a common identifier in many
 files, and a CJK needle, so query cost can be read separately from gate cost. `--root <path>` runs
 the same harness against a real directory when a real-world number is wanted; that mode is opt-in

@@ -1,4 +1,5 @@
 import { applyRuntimeProfile } from '@main/environment/runtimeProfile.runtime';
+import { electronApp } from '@electron-toolkit/utils';
 import { app } from 'electron';
 
 // This module must remain the first import in app.main.ts. ESM evaluates this dependency before
@@ -13,7 +14,9 @@ const terminateInvalidRuntimeProfile = (error: unknown): never => {
 
 export const runtimeProfile = (() => {
   try {
-    return applyRuntimeProfile();
+    const profile = applyRuntimeProfile();
+    electronApp.setAppUserModelId(profile.appId);
+    return profile;
   } catch (error) {
     return terminateInvalidRuntimeProfile(error);
   }

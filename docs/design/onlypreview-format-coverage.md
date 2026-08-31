@@ -13,7 +13,10 @@ XLSX/XLSM 为 `implemented; owner verification pending`（已通过独立复核�
 [independent review 3](../plan/reviews/onlypreview-drawio-readonly-032-3.md) 已 **PASS**，等待 Ral
 运行时/视觉验证 ·
 077 已以一个精确 pin、按格式动态加载的 `@silurus/ooxml` adapter 取代 020/021 的旧 renderer，并新增
-PPTX；三种 Office viewer 共享 worker mode、资源闸门和 model-backed Find/highlight ·
+PPTX；081 已将三种 Office viewer 修正为隔离 Vue Preview 内的宿主 2D 绘制，OOXML/WASM 解析仍由包内
+parser Worker 执行，并保留共享资源闸门和 model-backed Find/highlight；
+[independent review 1](../plan/reviews/onlypreview-ooxml-viewer-runtime-repair-081-1.md) 已 **PASS**，等待
+Ral 真实 Office 文件验证 ·
 开题 2026-08-18 · Ral 于 2026-08-20 指定本文
 已定内容为持续交付目标 · 未定且非阻塞的结论仍以 [#pending-questions](#pending-questions--待定项) 为准。**
 
@@ -32,57 +35,60 @@ Performance、历史 `docx-preview` / ExcelJS 与当前 `@silurus/ooxml` 官方�
 
 ## #0 · 总纲：真话优先于覆盖面
 
-| 目标             | 判据                                                                                             | 现状                                                                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| G1 表格          | `.xlsx` / `.xlsm` 打开即见网格、sheet 页签、合并单元格与数字格式                                 | ⚠ 020 `implemented; owner verification pending` → [#2](#2--xlsx--xlsm-已定-2026-08-20-已通过独立复核等待-ral-手测)                     |
-| G2 文档          | `.docx` 打开即见接近 Word 的分页版式，而不是纯文本                                               | ⚠ 021 `implemented; owner verification pending` → [#3](#3--docx-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)                 |
-| G3 图片 / 音视频 | 能解码的直接看/直接播；不能解码的显示明确原因                                                    | ⚠ 022 `implemented; owner verification pending` → [#5](#5--图片与音视频-已定-2026-08-18)                                               |
-| G4 不吹保真      | 每种格式写明保真上限与不做项，界面不假装渲染成功                                                 | ⚠ 020/021/022 已实施各自 bounded/typed truth，均已通过独立复核并等待 Ral 验证 → [#6](#6--保真上限与真话状态-已定-2026-08-18)           |
-| G5 解析隔离      | Main 不做整包缓冲或 Office 解析；preload 不承担计算；OOXML 解析/布局/绘制使用 worker mode             | ⚠ 077 已实施并通过独立复核，等待 Ral 验证 → [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)       |
-| G9 演示文稿      | `.pptx` 打开即见虚拟化 slide list，并可跨未挂载 slide 查找、高亮与前后导航                           | ⚠ 077 已实施并通过独立复核，等待 Ral 验证                                                                                         |
-| G6 文本输入有界  | 文本类后缀先选 adapter，再按大小限制 Preview 与正文索引；限额内允许乱码，不做内容拒绝            | ✅ 023 已实施 → [#8.1](#81--文本候选按后缀与大小准入-已定-2026-08-20-已实施)                                                           |
-| G7 格式路由      | HTML/PDF 进入 `chromePreviewView`；需要代码或组件处理的格式进入 `vuePreviewView`                 | ✅ 024 已实施 → [姊妹文档 #7](onlypreview-preview-merge-find.md#dual-preview-region)                                                   |
-| G8 Draw.io       | `.drawio` 先交付本地只读预览、缩放/分页；不加载远端服务、iframe、图片资源或完整编辑器            | ✅ 032 已实施并通过独立复核，等待 Ral 验证；图元文字搜索后置 → [#9](#9--drawio-已定-2026-08-26-已实施)                               |
+| 目标             | 判据                                                                                                                                                                                                               | 现状                                                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| G1 表格          | `.xlsx` / `.xlsm` 打开即见网格、sheet 页签、合并单元格与数字格式                                                                                                                                                   | ⚠ 020 `implemented; owner verification pending` → [#2](#2--xlsx--xlsm-已定-2026-08-20-已通过独立复核等待-ral-手测)             |
+| G2 文档          | `.docx` 打开即见接近 Word 的分页版式，而不是纯文本                                                                                                                                                                 | ⚠ 021 `implemented; owner verification pending` → [#3](#3--docx-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证)         |
+| G3 图片 / 音视频 | 能解码的直接看/直接播；不能解码的显示明确原因                                                                                                                                                                      | ⚠ 022 `implemented; owner verification pending` → [#5](#5--图片与音视频-已定-2026-08-18)                                       |
+| G4 不吹保真      | 每种格式写明保真上限与不做项，界面不假装渲染成功                                                                                                                                                                   | ⚠ 020/021/022 已实施各自 bounded/typed truth，均已通过独立复核并等待 Ral 验证 → [#6](#6--保真上限与真话状态-已定-2026-08-18)   |
+| G5 读取/解析隔离 | Office 的 containment/stat/realpath/read 全由隐藏 renderer preload 异步执行；Main 只做纯内存 capability/revision 授权；preload 不解析；OOXML/WASM 解析使用包内 parser Worker，2D 绘制留在隔离 Vue Preview renderer | ⚠ 081 已实施并通过独立复核，等待 Ral 验证 → [#1](#1--读取与解析执行边界-已定-2026-08-20-已通过独立复核等待-ral-真实-docx-验证) |
+| G9 演示文稿      | `.pptx` 打开即见虚拟化 slide list，并可跨未挂载 slide 查找、高亮与前后导航                                                                                                                                         | ⚠ 077 已实施并通过独立复核，等待 Ral 验证                                                                                      |
+| G6 文本输入有界  | 文本类后缀先选 adapter，再按大小限制 Preview 与正文索引；限额内允许乱码，不做内容拒绝                                                                                                                              | ✅ 023 已实施 → [#8.1](#81--文本候选按后缀与大小准入-已定-2026-08-20-已实施)                                                   |
+| G7 格式路由      | HTML/PDF 进入 `chromePreviewView`；需要代码或组件处理的格式进入 `vuePreviewView`                                                                                                                                   | ✅ 024 已实施 → [姊妹文档 #7](onlypreview-preview-merge-find.md#dual-preview-region)                                           |
+| G8 Draw.io       | `.drawio` 先交付本地只读预览、缩放/分页；不加载远端服务、iframe、图片资源或完整编辑器                                                                                                                              | ✅ 032 已实施并通过独立复核，等待 Ral 验证；图元文字搜索后置 → [#9](#9--drawio-已定-2026-08-26-已实施)                         |
 
 覆盖面不是唯一目标。**能渲染的高保真渲染，不能渲染的说清楚为什么并给出外部打开**，比半坏的渲染更有用。
 
 ## #1 · 读取与解析执行边界 `已定 2026-08-20` `已通过独立复核，等待 Ral 真实 DOCX 验证`
 
-Ral 2026-08-20：「解析加载最好是异步用 preload 解析加载不要占用主进程 io」。目标正确，执行位置
-修正为：**异步读取沿用 `onlypreview://`，解析不放 preload**。Electron 官方
+Ral 2026-08-20：「解析加载最好是异步用 preload 解析加载不要占用主进程 io」，并于 2026-08-31
+明确「文件读取也通过渲染进程 preload 进行」。当前决定是：**Office 文件由隐藏 renderer 的可信 preload
+异步读取，解析仍不放 preload**。Electron 官方
 [Process Model](https://www.electronjs.org/docs/latest/tutorial/process-model) 明确 preload 运行在所附着的
 renderer process；它不是后台线程。CPU 密集工作应按 Electron
 [Performance](https://www.electronjs.org/docs/latest/tutorial/performance) 建议交给 Web Worker 或独立
 renderer。把 Office 解析引擎塞进 preload 既不能隔离卡顿，又扩大特权代码与文件内容的接触面。
 
 ```text
-Main protocol：校验 token / host / workspace / path → async createReadStream（不整包缓冲、不解析）
+Main：纯内存校验 host / runtime / selection revision / adapter → 一次性 opaque grant（无 Office fs I/O）
         ├─ chromePreviewView navigation
         │    ├─ HTML → document-scoped stream + contained relative JS/CSS/images
         │    └─ PDF  → Chromium 内置 PDF viewer
-        └─ vuePreviewView fetch(assetUrl) → ArrayBuffer
-             ├─ XLSX/XLSM → transferable ArrayBuffer → preflight Worker → lazy XlsxViewer(worker)
-             ├─ DOCX      → transferable ArrayBuffer → preflight Worker → lazy DocxScrollViewer(worker)
-             ├─ PPTX      → transferable ArrayBuffer → preflight Worker → lazy PptxScrollViewer(worker)
+        └─ hidden fileSearch preload：O_NOFOLLOW + identity/containment + async bounded read
+             └─ capability-bound XPC 小帧串行 pull → sandboxed vuePreview preload 组装 exact ArrayBuffer
+             ├─ XLSX/XLSM → transferable ArrayBuffer → preflight Worker → lazy XlsxViewer(host 2D)
+             ├─ DOCX      → transferable ArrayBuffer → preflight Worker → lazy DocxScrollViewer(host 2D)
+             ├─ PPTX      → transferable ArrayBuffer → preflight Worker → lazy PptxScrollViewer(host 2D)
              └─ Draw.io   → disposable XML preflight Worker → local pinned viewer → owned DOM mount
 ```
 
-024 已用 `onlyPreviewAsset.registry.ts#createOnlyPreviewFileResponse()` 把 `FileHandle.createReadStream()`
-接入 bounded `Response`，并新增 `onlyPreviewDocument.registry.ts` 管理 contained HTML document 资源；
-Main 仍负责安全授权与异步流创建，但不执行同步整文件读取、ZIP 展开或 Office 解析。「Main 零 IO」并
-不准确；目标合同是 **Main JS event loop 不被整文件读取或解析阻塞**。XLSX Worker/parser 已由 020
+081 先把 Office 从 `assetUrl`/Main stream 中移除。Main 对 Office 只核验内存中的当前选择、adapter 与
+revision；隐藏 `fileSearch` preload 负责路径 containment、metadata/identity 与 exact file 的异步分块
+读取，visible Vue preload/page 均拿不到路径。HTML/PDF/image/media/Draw.io 等既有 Main `fs` 路径也受
+「Main 不直接做 filesystem I/O」约束，另行审计迁移，不能作为新 Office 代码的先例。XLSX Worker/parser 已由 020
 实施并通过独立复核；DOCX parser 已由 021 实施，当前状态为
 `implemented; owner verification pending`，独立复核已通过，等待 Ral 真实 DOCX 视觉/运行时验证。
 
-| 层               | 改动                                                                                                                                         |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Main classifier  | `.xlsx`/`.xlsm` → `sheet`，`.docx` → `document`，`.pptx` → `presentation`；adapter 分别为 `ooxml-xlsx` / `ooxml-docx` / `ooxml-pptx` |
-| Main 资产注册    | 保持 capability token + 相对路径 + async stream；不得 `readFile()` 整包或调用 Office parser                                                  |
-| preload          | 只启动最小 capability / XPC bridge；不得导入解析引擎、接收整包 bytes 或生成 DOM                                                              |
-| Chrome 直出单元  | `chromePreviewView` 不加载 renderer bundle 或 preload，只导航到 Main containment protocol；仅用于 HTML/PDF                                   |
-| Office 执行单元  | `vuePreviewView` 异步取得 `ArrayBuffer`，先 transfer 给 disposable Worker 预检；通过后只动态加载当前 `@silurus/ooxml` subpath，并用 `mode: 'worker'` 解析/布局/绘制；切文件 destroy viewer、terminate preflight |
-| Draw.io 执行单元 | `vuePreviewView` 把 bytes transfer 给 disposable Worker 做 XML/压缩页预检；通过后才加载本地 viewer 并直接挂入 owned DOM，不用 iframe         |
-| 能力/权限边界    | renderer / worker 都拿不到绝对路径、Node、文件写入；只有不可复用的 asset URL                                                                 |
+| 层               | 改动                                                                                                                                                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Main classifier  | `.xlsx`/`.xlsm` → `sheet`，`.docx` → `document`，`.pptx` → `presentation`；adapter 分别为 `ooxml-xlsx` / `ooxml-docx` / `ooxml-pptx`                                                                                                                                            |
+| Main Office 授权 | 只对内存中的 host/runtime/revision/adapter 签发 one-shot grant；不得调用 `fs` 做 open/stat/realpath/read/stream，也不得解析 Office 内容                                                                                                                                         |
+| hidden preload   | 独立不可猜 capability；无任意路径 API；`O_NOFOLLOW`、regular/containment、前后 identity、25MiB、单 generation、异步分块读取；不得导入解析引擎                                                                                                                                   |
+| Vue preload      | 保持 sandbox；只桥接当前 revision 的 bounded `ArrayBuffer`/typed error，不暴露路径、grant、capability 或 Node API                                                                                                                                                               |
+| Chrome 直出单元  | `chromePreviewView` 不加载 renderer bundle 或 preload，只导航到 Main containment protocol；仅用于 HTML/PDF                                                                                                                                                                      |
+| Office 执行单元  | `vuePreviewView` 异步取得 `ArrayBuffer`，先 transfer 给 disposable Worker 预检；通过后只动态加载当前 `@silurus/ooxml` subpath，并用库的 `mode: 'main'` 在该隔离 renderer 做宿主 2D 绘制；OOXML/WASM 解析仍由包内 parser Worker 执行；切文件 destroy viewer、terminate preflight |
+| Draw.io 执行单元 | `vuePreviewView` 把 bytes transfer 给 disposable Worker 做 XML/压缩页预检；通过后才加载本地 viewer 并直接挂入 owned DOM，不用 iframe                                                                                                                                            |
+| 能力/权限边界    | 页面/worker 拿不到绝对路径、Node、文件写入；hidden preload 只消费 Main 的 exact one-shot grant；Office descriptor 不含 `assetUrl`                                                                                                                                               |
 
 文件大小上限由一个 app-owned、穷举 adapter 配置字典统一决定，默认值为 10MiB；只有经过设计与资源
 验收的格式才能覆盖默认值，例如 Monaco 8MiB、Markdown/HTML 1MiB、Office 25MiB、Draw.io 20MiB、
@@ -106,8 +112,8 @@ type PreviewAssetCapability = {
 protocol 每次请求都用新打开的 handle `fstat` 重验 regular file、canonical containment 和 `maxBytes`；
 响应只交付声明的 bounded Range，不发送 probe byte；bounded transform 与 EOF 时同 handle `fstat`、当前
 canonical path identity/size/mtime 重验共同拒绝读取中增长或替换，而不是把超限尾部交给 renderer。
-selection / workspace revision 变化会撤销 token，并主动终止尚未完成的 response stream；旧 URL 不得在
-下一 revision 复用。这一合同同时适用于 Vue `arrayBuffer()` 与 Chrome navigation，不能只保护前者。
+selection / workspace revision 变化会撤销 token/grant，并主动终止尚未完成的 response stream 或 Office
+read；旧授权不得在下一 revision 复用。Office read 与 Chrome navigation 均必须受此约束。
 
 HTML 的 document-scoped resolver 还要有资源预算：入口 HTML 沿用 1MiB；每个相对 JS/CSS/image/font/
 media 资源最多 25MiB；同一 selection revision 的所有相对资源累计最多 100MiB。每个资源仍独立走上述
@@ -123,14 +129,18 @@ handle / containment / stream hard limit，任何一项超限只令该资源失�
 Web Worker 提供线程隔离与可终止性，**不是独立进程或 OOM 隔离**。077 显式传入硬 archive limits，
 并依赖固定 `@silurus/ooxml@0.83.0` 的内建 decoded-image guards 约束峰值内存；该版本没有公开可传入的
 raster/decode options。生产 build 必须证明三个动态 subpath 的 WASM/worker 资源能从本地协议加载；允许
-`vuePreviewView` `fetch()` 后 transfer `ArrayBuffer`，但不允许退回 Main / preload 解析。
+hidden preload 通过 capability-bound XPC 的串行小帧 pull 协议交付 bytes，Vue preload 才组装 exact
+`ArrayBuffer` 并 transfer 给 Worker；不允许退回 Main / preload 解析。当前 `electron-xpc` 没有
+transferable，因此禁止把整个 25MiB 文件作为一次 XPC result 经过 Main broker。Office 强制单并发、固定
+最大 frame、exact offset/EOF 与最大 25MiB，禁止保留 stale full buffer。
 
 ### 077 当前 Office 覆盖（取代 #2/#3 的 renderer 与 Find 结论）
 
 Task [077](../plan/tasks/onlypreview-office-ooxml-renderers-077.md) 保留 #2/#3 的扩展名、25MiB、签名、
 OOXML preflight 与旧二进制 unsupported 边界，但取代其引擎和查找实现：XLSX/XLSM 使用
-`@silurus/ooxml/xlsx`，DOCX 使用 `/docx`，PPTX 使用 `/pptx`；三个 viewer 都以 worker mode 运行，
-禁用远端字体/超链接，并共享同一个 `office` content adapter。`findText()` 负责完整模型与所有命中
+`@silurus/ooxml/xlsx`，DOCX 使用 `/docx`，PPTX 使用 `/pptx`。Task 081 将三个 viewer 统一为库的
+`mode: 'main'`，即隔离 Vue Preview renderer 中的宿主 2D 绘制；包内 parser Worker 仍负责 OOXML/WASM
+解析。三者禁用远端字体/超链接，并共享同一个 `office` content adapter。`findText()` 负责完整模型与所有命中
 高亮，`findNext()` / `findPrev()` 负责活动命中和跨 sheet/page/slide 导航，`clearFind()` 绑定查询、文件与
 viewer 生命周期。#2/#3 以下保留为 020/021 历史决策与交付证据，不再描述当前 renderer。
 
@@ -138,17 +148,17 @@ viewer 生命周期。#2/#3 以下保留为 020/021 历史决策与交付证据�
 
 决策者裁决：Ral 2026-08-20「XLSX/XLSM：exceljs 解析工作簿，自研只读虚拟表格渲染」。
 
-| 项         | 决定                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 引擎       | **`exceljs`**（仓库已有 `^4.4.0`，Main 侧 Maestro 已在用，浏览器构建可直接读 `ArrayBuffer`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 解析       | disposable Web Worker 内动态加载 ExcelJS，并由 Worker 持有 bounded workbook / search model；renderer 只接收 workbook manifest、当前 sheet 与可视范围需要的数据。虚拟表格只降低 DOM 成本，不能把整本 document parse 说成流式解析                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 渲染       | 自研只读网格：sheet 页签、列宽/行高、合并单元格、水平 left/center/right 与垂直 top/middle/bottom 对齐、数字格式（日期/百分比/货币）、基础字体与填充色；水平 `fill` / `justify` 暂不接受，直到有 bounded 可见语义                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 公式       | 显示 exceljs 读到的缓存结果值；**不重算**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 查找       | sheet adapter 把 query 发给 Worker 内完整的、已接纳的 workbook search model，不受虚拟 viewport 限制；结果携带 sheet / row / column，跨 sheet 切换、滚动并高亮单元格；匹配显示值与公式缓存结果，不匹配公式源码                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 取消       | 文件或 revision 切换时 `worker.terminate()`，并拒收旧 host / revision 结果；不能只丢弃旧 Promise 的回调                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 大表       | byte、ZIP metadata 与实际展开输出是**拒绝解析的硬闸门**；ZIP 上限为 5,000 entry、200MiB declared/actual uncompressed 总量、128MiB 单 entry、200:1 单项与汇总压缩比，并在 ExcelJS 前限制 100,000 merge records / 500,000 expanded merge cells；通过后只接纳前 64 个 sheet、每 sheet 前 100,000 行坐标/512 列坐标、全书 500,000 个非空 cell、单 cell 1,048,576 与全书 16,777,216 个 formatted UTF-16 code units。超长单 cell 完整跳过后继续；全书 text/cell cap 到达后不再接纳后续 cell。只在 model cap 截断时允许「部分预览 / 部分可搜索」，并回传 accepted sheets/cells；展示与搜索共用同一个未截断的 accepted string；搜索覆盖所有已接纳且未挂 DOM 的 cell，不把 bounded model 称作完整 workbook |
-| 不做       | 图表、透视表、条件格式、批注、数据验证、宏、迷你图、图片浮动对象                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 选区字符数 | 网格选区不接入底部字符数（它统计的是文本选区语义）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 项         | 决定                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 引擎       | **`exceljs`**（仓库已有 `^4.4.0`，Main 侧 Maestro 已在用，浏览器构建可直接读 `ArrayBuffer`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 解析       | disposable Web Worker 内动态加载 ExcelJS，并由 Worker 持有 bounded workbook / search model；renderer 只接收 workbook manifest、当前 sheet 与可视范围需要的数据。虚拟表格只降低 DOM 成本，不能把整本 document parse 说成流式解析                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 渲染       | 自研只读网格：sheet 页签、列宽/行高、合并单元格、水平 left/center/right 与垂直 top/middle/bottom 对齐、数字格式（日期/百分比/货币）、基础字体与填充色；水平 `fill` / `justify` 暂不接受，直到有 bounded 可见语义                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 公式       | 显示 exceljs 读到的缓存结果值；**不重算**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 查找       | sheet adapter 把 query 发给 Worker 内完整的、已接纳的 workbook search model，不受虚拟 viewport 限制；结果携带 sheet / row / column，跨 sheet 切换、滚动并高亮单元格；匹配显示值与公式缓存结果，不匹配公式源码                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 取消       | 文件或 revision 切换时 `worker.terminate()`，并拒收旧 host / revision 结果；不能只丢弃旧 Promise 的回调                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 大表       | byte、ZIP metadata 与实际展开输出是**拒绝解析的硬闸门**；ZIP 上限为 5,000 entry、128MiB declared/actual uncompressed 总量、64MiB 单 entry、200:1 单项与汇总压缩比，并在 ExcelJS 前限制 100,000 merge records / 500,000 expanded merge cells；通过后只接纳前 64 个 sheet、每 sheet 前 100,000 行坐标/512 列坐标、全书 500,000 个非空 cell、单 cell 1,048,576 与全书 16,777,216 个 formatted UTF-16 code units。超长单 cell 完整跳过后继续；全书 text/cell cap 到达后不再接纳后续 cell。只在 model cap 截断时允许「部分预览 / 部分可搜索」，并回传 accepted sheets/cells；展示与搜索共用同一个未截断的 accepted string；搜索覆盖所有已接纳且未挂 DOM 的 cell，不把 bounded model 称作完整 workbook |
+| 不做       | 图表、透视表、条件格式、批注、数据验证、宏、迷你图、图片浮动对象                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 选区字符数 | 网格选区不接入底部字符数（它统计的是文本选区语义）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 实现合同进一步冻结如下：
 
@@ -165,7 +175,7 @@ viewer 生命周期。#2/#3 以下保留为 020/021 历史决策与交付证据�
   XLSX/XLSM 必须包含 `[Content_Types].xml`、`_rels/.rels` 与 `xl/workbook.xml`。
 - 对未设置 UTF-8 flag 的名称，预检同时生成 canonical CP437、WHATWG tolerant UTF-8 与 JSZip browser
   decoder namespace key；任一不安全或重复都拒绝，`0x7075` Unicode path override 也不接受。
-- 预检硬顶是 5,000 entries、200MiB declared/actual uncompressed 总量、128MiB 单 entry、200:1 单项与
+- 预检硬顶是 5,000 entries、128MiB declared/actual uncompressed 总量、64MiB 单 entry、200:1 单项与
   汇总压缩比。ExcelJS import 前逐 entry 流式验证 STORE/DEFLATE 的实际展开长度与 CRC32，实际输出超过
   declared size 时立即 cancel；实际单项/汇总 byte 与 ratio 复用同一硬顶。XLSX 还以 strict UTF-8
   流式扫描 `xl/**/*.xml`，在引擎前拒绝超过 100,000 个 merge record 或 merge range 合计展开超过
@@ -347,12 +357,12 @@ viewer loader）；`pdf.js` 不再属于目标 bundle。所有格式组件都由
 
 ### 现状：023 的大小闸门由 035 扩展为未知文件文本兜底
 
-| 步  | 机制       | 实码                                                                                              | 对"视频改名 `.txt`"的效果                                                      |
-| --- | ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 1   | 扩展名路由 | `classifyOnlyPreviewExtension()`：已知专用/显式不支持集合优先，其余普通文件进入文本兜底         | `.txt` → `text`；未知/无后缀/复合后缀 → `text` + `plaintext`                   |
-| 2   | 大小上限   | opened handle 的 metadata 先检查：Monaco 8MiB、Markdown/HTML 1MiB                                 | 500MiB 日志改名 `.txt` → `TEXT_TOO_LARGE`，正文 0 byte，不创建 model           |
+| 步  | 机制       | 实码                                                                                                  | 对"视频改名 `.txt`"的效果                                                       |
+| --- | ---------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | 扩展名路由 | `classifyOnlyPreviewExtension()`：已知专用/显式不支持集合优先，其余普通文件进入文本兜底               | `.txt` → `text`；未知/无后缀/复合后缀 → `text` + `plaintext`                    |
+| 2   | 大小上限   | opened handle 的 metadata 先检查：Monaco 8MiB、Markdown/HTML 1MiB                                     | 500MiB 日志改名 `.txt` → `TEXT_TOO_LARGE`，正文 0 byte，不创建 model            |
 | 3   | 有界读取   | 文本最多精确 `limit` chunk read + tolerant UTF-8 / BOM UTF-16 decode + 读后 identity/size/mtime fence | 限额内 mp4/ZIP 改名或未知后缀可显示乱码；增长/替换丢弃 revision，不返回截断正文 |
-| 4   | 非文本签名 | `matchesSignature()`：PDF/image/audio/video/OOXML 最小签名                                        | 后缀与内容不符 → `SIGNATURE_MISMATCH`，Region 不签发 asset/document capability |
+| 4   | 非文本签名 | `matchesSignature()`：PDF/image/audio/video/OOXML 最小签名                                            | 后缀与内容不符 → `SIGNATURE_MISMATCH`，Region 不签发 asset/document capability  |
 
 1GiB `.vue` 现在直接由 opened-file size 拒绝，正文读取为 0，不解码也不创建 Monaco model；它仍保留
 目录/文件名 metadata。实现不尝试通过采样证明文本内容，只执行
@@ -375,40 +385,40 @@ extension / known filename → candidate adapter
               → renderer ready；允许乱码
 ```
 
-| 内容路径                                   | byte hard limit | 限额内                                                                                         | 超限后仍可用               |
-| ------------------------------------------ | --------------: | ---------------------------------------------------------------------------------------------- | -------------------------- |
-| Monaco 源码 / 普通文本（含已知源码与所有剩余未知/复合/无后缀文件） |            8MiB | 宽容解码；已知扩展用语言映射，其余用 `plaintext`；非法序列可显示为 `U+FFFD`                  | 目录列举与文件名搜索       |
-| Markdown / HTML                            |            1MiB | 按扩展名进入既定 renderer；Markdown 仍经 DOMPurify，HTML 仍受 sandbox / CSP / 无 Node 权限约束 | 同上                       |
-| Global Search 正文索引                     |            1MiB | 文本兜底按宽容解码结果写 SQLite chunks / FTS；小型二进制可能产生垃圾命中，这是已接受代价       | 文件 metadata 与 Files 结果 |
+| 内容路径                                                           | byte hard limit | 限额内                                                                                         | 超限后仍可用                |
+| ------------------------------------------------------------------ | --------------: | ---------------------------------------------------------------------------------------------- | --------------------------- |
+| Monaco 源码 / 普通文本（含已知源码与所有剩余未知/复合/无后缀文件） |            8MiB | 宽容解码；已知扩展用语言映射，其余用 `plaintext`；非法序列可显示为 `U+FFFD`                    | 目录列举与文件名搜索        |
+| Markdown / HTML                                                    |            1MiB | 按扩展名进入既定 renderer；Markdown 仍经 DOMPurify，HTML 仍受 sandbox / CSP / 无 Node 权限约束 | 同上                        |
+| Global Search 正文索引                                             |            1MiB | 文本兜底按宽容解码结果写 SQLite chunks / FTS；小型二进制可能产生垃圾命中，这是已接受代价       | 文件 metadata 与 Files 结果 |
 
 具体结果：
 
-| 输入                  | Preview                                            | 当前文件 Find      | Global Search                         |
-| --------------------- | -------------------------------------------------- | ------------------ | ------------------------------------- |
-| 512KiB ZIP 政名 `.js` | Monaco 显示乱码，不执行                            | 可查找解码后的字符 | 可能索引乱码                          |
+| 输入                   | Preview                                            | 当前文件 Find      | Global Search                         |
+| ---------------------- | -------------------------------------------------- | ------------------ | ------------------------------------- |
+| 512KiB ZIP 政名 `.js`  | Monaco 显示乱码，不执行                            | 可查找解码后的字符 | 可能索引乱码                          |
 | 512KiB ZIP 保留 `.zip` | Monaco `plaintext` 显示乱码，不执行                | 可查找解码后的字符 | 可能索引乱码                          |
-| 2MiB ZIP 政名 `.js`   | 同上                                               | 同上               | 超过 1MiB，只保留 filename / metadata |
-| 1GiB 文件命名 `.vue`  | `TEXT_TOO_LARGE`，正文 0 byte，不创建 Monaco model | unavailable        | 只保留 filename / metadata            |
+| 2MiB ZIP 政名 `.js`    | 同上                                               | 同上               | 超过 1MiB，只保留 filename / metadata |
+| 1GiB 文件命名 `.vue`   | `TEXT_TOO_LARGE`，正文 0 byte，不创建 Monaco model | unavailable        | 只保留 filename / metadata            |
 
 “不产生困扰”不是主观文案，而是以下扰动预算：
 
-| 维度   | 验收边界                                                                                                                              |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| 故障域 | 乱码、解码替代字符和偶发垃圾命中只属于该文件；不得让 Preview host、Global Search、索引 generation 或其他文件进入 failed / pending     |
-| 资源   | Preview 8MiB、Markdown/HTML 与正文索引 1MiB 的硬顶不变；读取、解码、SQLite chunk 数和 Monaco model 生命周期都有界，切文件立即 dispose |
-| 编辑器 | Monaco 开启 large-file optimization，并按大小/单行长度限制 tokenization 与超长行渲染；这些限制只看规模，不重新引入内容嗅探            |
-| UI     | 不为乱码弹 modal、toast 或自动重试；内容区正常显示可得到的字符，文件操作和切换保持可用                                                |
-| 执行   | `.js` / `.mjs` / `.cjs` / `.vue` 等永不执行；Markdown 仍 sanitize；HTML 仍只在既定 sandbox content 中执行，不能获得 Node / Electron / filesystem 能力   |
-| 搜索   | 垃圾字符只有真实匹配 query 时才可形成该文件的结果；不得触发逐次全文 fallback、阻塞索引 promotion 或清空上一版 active index            |
+| 维度   | 验收边界                                                                                                                                              |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 故障域 | 乱码、解码替代字符和偶发垃圾命中只属于该文件；不得让 Preview host、Global Search、索引 generation 或其他文件进入 failed / pending                     |
+| 资源   | Preview 8MiB、Markdown/HTML 与正文索引 1MiB 的硬顶不变；读取、解码、SQLite chunk 数和 Monaco model 生命周期都有界，切文件立即 dispose                 |
+| 编辑器 | Monaco 开启 large-file optimization，并按大小/单行长度限制 tokenization 与超长行渲染；这些限制只看规模，不重新引入内容嗅探                            |
+| UI     | 不为乱码弹 modal、toast 或自动重试；内容区正常显示可得到的字符，文件操作和切换保持可用                                                                |
+| 执行   | `.js` / `.mjs` / `.cjs` / `.vue` 等永不执行；Markdown 仍 sanitize；HTML 仍只在既定 sandbox content 中执行，不能获得 Node / Electron / filesystem 能力 |
+| 搜索   | 垃圾字符只有真实匹配 query 时才可形成该文件的结果；不得触发逐次全文 fallback、阻塞索引 promotion 或清空上一版 active index                            |
 
-| 不变量        | 决定                                                                                                                                                                        |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 不变量        | 决定                                                                                                                                                                          |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 分类          | 扩展名选择 adapter：PDF/图片/媒体/Office/Draw.io 与显式不支持格式优先；其余普通文件一律进入 inert `plaintext` 兜底，不做自动 head sniff                                       |
-| 大小          | 用安全打开 handle 的 `fstat` 先判上限；实际读取最多精确 `limit`，随后重验 identity/size/mtime 防 stat 后增长。禁止先整包 `readFile()` 再量大小                                  |
-| 解码          | 文本路径使用宽容解码，解码失败不改变分类；乱码只进入 inert text / sanitizer / sandbox，不成为 Node、Electron 或 filesystem 权限                                             |
-| 执行          | `.js` / `.mjs` / `.cjs` / `.vue` / `.css` 等源码在 Monaco 只展示，不编译、不执行；`.html` 的脚本执行边界仍以姊妹文档 #7.3 为准                                                                |
+| 大小          | 用安全打开 handle 的 `fstat` 先判上限；实际读取最多精确 `limit`，随后重验 identity/size/mtime 防 stat 后增长。禁止先整包 `readFile()` 再量大小                                |
+| 解码          | 文本路径使用宽容解码，解码失败不改变分类；乱码只进入 inert text / sanitizer / sandbox，不成为 Node、Electron 或 filesystem 权限                                               |
+| 执行          | `.js` / `.mjs` / `.cjs` / `.vue` / `.css` 等源码在 Monaco 只展示，不编译、不执行；`.html` 的脚本执行边界仍以姊妹文档 #7.3 为准                                                |
 | 非文本 parser | PDF、图片、媒体、OOXML 仍保留签名、ZIP preflight 与解析上限；本次裁决只取消文本 adapter 的内容嗅探/拒绝，不能把错误 bytes 交给 Chromium PDF viewer 或 `@silurus/ooxml` viewer |
-| revision      | 读取与结果仍绑定同一 opened handle、host、selection revision；文件变化或读取超过上限时丢弃旧结果                                                                            |
+| revision      | 读取与结果仍绑定同一 opened handle、host、selection revision；文件变化或读取超过上限时丢弃旧结果                                                                              |
 
 以下 exact case-insensitive basename 集合仍提供已知语言提示，但不再决定能否作为文本打开：`Dockerfile`、
 `Containerfile`、`Makefile`、`Rakefile`、`Gemfile`、`Procfile`、`README`、`LICENSE`、`NOTICE`、
@@ -425,15 +435,15 @@ model 释放，以及 Markdown sanitizer / HTML sandbox 不因宽容解码而放
 
 ### 本轮必须补齐的闸门
 
-| id     | 闸门                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 归属任务                                                                                               | 理由                                                                                                                                |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **G1** | OOXML zip 魔数：`.xlsx`/`.xlsm`/`.docx`/`.pptx` 必须以 `50 4B 03 04`（`PK\x03\x04`）开头，否则 `SIGNATURE_MISMATCH` 且不签发 `assetUrl`                                                                                                                                                                                                                                                                                                                 | [077](../plan/tasks/onlypreview-office-ooxml-renderers-077.md)                                 | 伪装文件不得进入 OOXML viewer                                                                                                     |
-| **G2** | 装载前大小硬顶：Office adapter 均为 25MiB；超限 → "超过预览上限"真话态 + 外部打开，**不解析**                                                                                                                                                                                                                                                                                                                                                     | 077                                                                                             | viewer 会把整包读入并展开，没有硬顶等于把渲染进程交给文件大小                                                                    |
-| **G3** | 顺序不可颠倒：**扩展名 → 签名/大小闸门 → OOXML Worker preflight → 才动态 `import()` 当前 subpath**。伪装或超限文件不得触发引擎装载                                                                                                                                                                                                                                                                                                                   | 077                                                                                             | 否则一个改名文件就白拉一个 MiB 级 chunk 并进入解析                                                                                  |
-| **G4** | 引擎加载前在 Worker 校验 ZIP exact closure、entries ≤ 5,000、declared/actual uncompressed sum ≤ 200MiB、single entry ≤128MiB、单项/汇总 ratio ≤200:1；逐 entry bounded stream 验 actual length + CRC32，namespace key 安全唯一，并拒绝 encrypted / multi-disk / Zip64 / duplicate / overlap / traversal / malformed package；三种格式还各自要求 workbook/document/presentation 根 part | 077                                                                                             | 只信 declared metadata 或把 bytes 直接交给 viewer 时，25MiB OOXML 仍可实际展开到 GB 级                                              |
-| **G5** | 渲染侧纵深校验：`fetch` 得到 `ArrayBuffer` 后先核前 4 字节与长度，再交 Worker/引擎。主进程闸门是权威，这一层是防御深度                                                                                                                                                                                                                                                                                                                                | 077、[023](../plan/tasks/onlypreview-preview-guards-023.md)                                     | 单点闸门失效时不至于直接打死渲染进程                                                                                                |
-| **G6** | `SIGNATURE_MISMATCH` 的界面文案明确说"后缀与内容不符"，而不是笼统失败                                                                                                                                                                                                                                                                                                                                                                                  | 023                                                                                                    | 用户需要知道是改名而不是文件坏了                                                                                                    |
-| **G7** | PDF 100MiB 字节上限 + `chromePreviewView` 导航前/开流时闸门                                                                                                                                                                                                                                                                                                                                                                                            | 023/024 已实施                                                                                         | 签发 exact asset URL 前与 response stream/EOF 重验 100MiB 上限，再交 Chromium 内置 PDF viewer                                       |
+| id     | 闸门                                                                                                                                                                                                                                                                                                                                                                                  | 归属任务                                                       | 理由                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **G1** | OOXML zip 魔数：`.xlsx`/`.xlsm`/`.docx`/`.pptx` 必须以 `50 4B 03 04`（`PK\x03\x04`）开头，否则 `SIGNATURE_MISMATCH` 且不签发 `assetUrl`                                                                                                                                                                                                                                               | [077](../plan/tasks/onlypreview-office-ooxml-renderers-077.md) | 伪装文件不得进入 OOXML viewer                                                                 |
+| **G2** | 装载前大小硬顶：Office adapter 均为 25MiB；超限 → "超过预览上限"真话态 + 外部打开，**不解析**                                                                                                                                                                                                                                                                                         | 077                                                            | viewer 会把整包读入并展开，没有硬顶等于把渲染进程交给文件大小                                 |
+| **G3** | 顺序不可颠倒：**扩展名 → 签名/大小闸门 → OOXML Worker preflight → 才动态 `import()` 当前 subpath**。伪装或超限文件不得触发引擎装载                                                                                                                                                                                                                                                    | 077                                                            | 否则一个改名文件就白拉一个 MiB 级 chunk 并进入解析                                            |
+| **G4** | 引擎加载前在 Worker 校验 ZIP exact closure、entries ≤ 5,000、declared/actual uncompressed sum ≤ 128MiB、single entry ≤64MiB、单项/汇总 ratio ≤200:1；逐 entry bounded stream 验 actual length + CRC32，namespace key 安全唯一，并拒绝 encrypted / multi-disk / Zip64 / duplicate / overlap / traversal / malformed package；三种格式还各自要求 workbook/document/presentation 根 part | 077                                                            | 只信 declared metadata 或把 bytes 直接交给 viewer 时，25MiB OOXML 仍可实际展开到 GB 级        |
+| **G5** | 渲染侧纵深校验：`fetch` 得到 `ArrayBuffer` 后先核前 4 字节与长度，再交 Worker/引擎。主进程闸门是权威，这一层是防御深度                                                                                                                                                                                                                                                                | 077、[023](../plan/tasks/onlypreview-preview-guards-023.md)    | 单点闸门失效时不至于直接打死渲染进程                                                          |
+| **G6** | `SIGNATURE_MISMATCH` 的界面文案明确说"后缀与内容不符"，而不是笼统失败                                                                                                                                                                                                                                                                                                                 | 023                                                            | 用户需要知道是改名而不是文件坏了                                                              |
+| **G7** | PDF 100MiB 字节上限 + `chromePreviewView` 导航前/开流时闸门                                                                                                                                                                                                                                                                                                                           | 023/024 已实施                                                 | 签发 exact asset URL 前与 response stream/EOF 重验 100MiB 上限，再交 Chromium 内置 PDF viewer |
 
 G7 是这次顺带查出的既有性能缺口。023/024 已共同收口 PDF 直出、100MiB 与流期增长/替换边界；
 同一 guard 任务也已覆盖图片 100MiB、Office 25MiB、文本 size-first 与音视频 verified-size Range。
@@ -506,13 +516,13 @@ WebContents，而不是重新引入 iframe。
 
 ## #pending-questions · 待定项
 
-| id       | 项                                                     | 所在                                       | 类型   | 阻塞性         | 倾向 / 拍板需要什么输入                                                                                                                     | 状态                                                                                                                                    |
-| -------- | ------------------------------------------------------ | ------------------------------------------ | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **PQ-A** | `.xls` / `.ppt`（97–2003 二进制）是否进入内置 renderer | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 可后置         | **倾向不渲染**：SheetJS 只能解决 `.xls`，`.ppt` 仍无同等级方案；tradeoff 是依赖系统应用。拍板需要 Ral 明确这两种格式是否值得分别增加引擎    | **待定**；原问题中的 `.doc` 已拆入 PQ-D 并拍板，本行继续保留未决的 `.xls` / `.ppt`                                                      |
-| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 已拍板 | —              | 使用 `@silurus/ooxml/pptx` 的虚拟化只读 slide viewer，接受非 PowerPoint 像素/动画级保真                                                | **已定 2026-08-28 · 077 已实施并通过独立复核，等待 Ral 验证**                                                                           |
-| **PQ-C** | HEIC / HEIF / TIFF 是否需要 Main 侧转码后预览？        | [#5](#5--图片与音视频-已定-2026-08-18)     | 待拍板 | 不阻塞 022     | **倾向本轮不做**，先给真话不支持态；HEIC 在 macOS 相册/iPhone 照片里常见，若要做则单列一轮（Main 侧 `sips`/`sharp` 转码 + 缓存 + 失效策略） | 待定                                                                                                                                    |
-| **PQ-D** | 旧 `.doc` 是否进入内置 renderer                        | [#4.1](#41--旧-doc-本轮不做-未实施)        | 待拍板 | 可后置         | 原倾向不渲染；tradeoff 是不能在 Bitterless 内看旧 Word 文件。拍板需要 Ral 选择内置转换或系统应用打开                                        | **本轮不做 · 未实施**（Ral 2026-08-20）：明确 unsupported + 系统应用打开；连带收口 021 的 `.doc` 范围，不再等待旧格式决策               |
-| **PQ-E** | `.drawio` 是否按本地官方只读 viewer 方案进入实现       | [#9](#9--drawio-已定-2026-08-26-已实施)    | 待拍板 | 可后置         | `vuePreviewView` async component + 本地 viewer 直接 DOM mount；不用 iframe、完整 editor或在线服务；首期只读，Find 后置                      | **已定 2026-08-26 · 已实施**：032 已通过独立复核，等待 Ral 运行时/视觉验证；首期拒绝图片资源，图元 Find 继续后置                         |
+| id       | 项                                                     | 所在                                       | 类型   | 阻塞性     | 倾向 / 拍板需要什么输入                                                                                                                     | 状态                                                                                                                      |
+| -------- | ------------------------------------------------------ | ------------------------------------------ | ------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **PQ-A** | `.xls` / `.ppt`（97–2003 二进制）是否进入内置 renderer | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 待拍板 | 可后置     | **倾向不渲染**：SheetJS 只能解决 `.xls`，`.ppt` 仍无同等级方案；tradeoff 是依赖系统应用。拍板需要 Ral 明确这两种格式是否值得分别增加引擎    | **待定**；原问题中的 `.doc` 已拆入 PQ-D 并拍板，本行继续保留未决的 `.xls` / `.ppt`                                        |
+| **PQ-B** | `.pptx` 期望保真度？                                   | [#4](#4--旧二进制格式与幻灯片-待定-未实施) | 已拍板 | —          | 使用 `@silurus/ooxml/pptx` 的虚拟化只读 slide viewer，接受非 PowerPoint 像素/动画级保真                                                     | **已定 2026-08-28 · 077 已实施并通过独立复核，等待 Ral 验证**                                                             |
+| **PQ-C** | HEIC / HEIF / TIFF 是否需要 Main 侧转码后预览？        | [#5](#5--图片与音视频-已定-2026-08-18)     | 待拍板 | 不阻塞 022 | **倾向本轮不做**，先给真话不支持态；HEIC 在 macOS 相册/iPhone 照片里常见，若要做则单列一轮（Main 侧 `sips`/`sharp` 转码 + 缓存 + 失效策略） | 待定                                                                                                                      |
+| **PQ-D** | 旧 `.doc` 是否进入内置 renderer                        | [#4.1](#41--旧-doc-本轮不做-未实施)        | 待拍板 | 可后置     | 原倾向不渲染；tradeoff 是不能在 Bitterless 内看旧 Word 文件。拍板需要 Ral 选择内置转换或系统应用打开                                        | **本轮不做 · 未实施**（Ral 2026-08-20）：明确 unsupported + 系统应用打开；连带收口 021 的 `.doc` 范围，不再等待旧格式决策 |
+| **PQ-E** | `.drawio` 是否按本地官方只读 viewer 方案进入实现       | [#9](#9--drawio-已定-2026-08-26-已实施)    | 待拍板 | 可后置     | `vuePreviewView` async component + 本地 viewer 直接 DOM mount；不用 iframe、完整 editor或在线服务；首期只读，Find 后置                      | **已定 2026-08-26 · 已实施**：032 已通过独立复核，等待 Ral 运行时/视觉验证；首期拒绝图片资源，图元 Find 继续后置          |
 
 收敛记账：账本 5 行 · 已解 3 行 · 待拍板 2 行 · 未解的 `阻塞定案` **0 条**。本轮把原 PQ-A 保留给
 未决的 `.xls` / `.ppt`，并把已解 `.doc` 拆为 PQ-D，阻塞数未增加；`.xlsx` 已由 020 实施并通过独立

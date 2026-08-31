@@ -122,6 +122,41 @@ served one level weaker without any indication. `max` now maps to `max`.
 `--model opus` resolves to **Opus 5** (`modelUsage` reports `claude-opus-5`), and `--effort max` is
 accepted — both confirmed against the live CLI on `~/.claude2`.
 
+## Confirmed: the pool spends subscription quota, not API credit
+
+Read from the code this looked settled — the registry stores only `pro | max | team | enterprise`,
+and the child environment is an allowlist that omits `ANTHROPIC_API_KEY`. But that is an argument,
+not an observation, so it was checked against Anthropic's own report. A real inference through
+`~/.claude2` on 2026-08-31, under the exact production environment:
+
+```
+apiKeySource      "none"
+model             claude-sonnet-5
+rate_limit_event  { status: "allowed",
+                    rateLimitType: "five_hour",
+                    overageStatus: "rejected",
+                    overageDisabledReason: "org_level_disabled",
+                    isUsingOverage: false }
+```
+
+`rate_limit_event` is Anthropic's authoritative quota state, not a local guess. `five_hour` is the
+**subscription** window — pay-as-you-go API usage has no such window — and `isUsingOverage: false`
+says nothing spilled into paid usage.
+
+It also closes the caveat this document and the panel's usage note raise. Extra Usage is not merely
+switched off for the account: `overageDisabledReason: "org_level_disabled"` means the **Micromeet
+org** disables it, so a request cannot fall through to paid usage even after the limit is reached. It
+is refused instead.
+
+One reading trap: the CLI still reports `total_cost_usd` (0.166 for that one-word reply). That is
+list-price arithmetic on the tokens, not a charge — `isUsingOverage: false` is what says whether
+money moved.
+
+**Reproducing this needs `ANTHROPIC_CONFIG_DIR`.** With only `CLAUDE_CONFIG_DIR` and
+`CLAUDE_SECURESTORAGE_CONFIG_DIR` set, `auth status --json` reports `loggedIn: false` for a slot that
+is in fact signed in — the credential is not found and the slot looks logged out. All three
+directories are required together, which is what `buildClaudeSubscriptionEnvironment` already does.
+
 ## End-to-end verification
 
 Run 2026-08-31 against the production classes — repository, router, `ClaudeCliExecutor`,

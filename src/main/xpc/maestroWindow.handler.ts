@@ -133,14 +133,14 @@ class MaestroWindowHandler extends XpcMainHandler {
 
   private initializeRuntime(): void {
     if (this.runtimeInitialized) return
-    this.runtimeInitialized = true
+    ensureMicromeetCliIntegration()
     initMaestroXpc()
     deviceHelper.getDeviceInfo()
-    ensureMicromeetCliIntegration()
     activateShortcuts({
       newTab: () => void maestroWindowHelper.newTab(),
       closeActiveTab: () => void maestroWindowHelper.closeActiveTab()
     })
+    this.runtimeInitialized = true
   }
 
   private async boot(): Promise<void> {

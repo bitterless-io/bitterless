@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { lstat, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type {
@@ -158,12 +158,32 @@ export const buildClaudeExecutionArguments = (
   // not optional: under `--print`, `stream-json` is refused without it.
   // `--include-partial-messages` is deliberately omitted; it more than doubles the
   // output and only adds token deltas nothing here reads.
+  // Structured input, so images and PDFs reach the model as real content blocks.
+  // A text prompt cannot carry them: base64 inside the payload string is just a long
+  // string the model cannot decode, which is what made every attachment invisible.
+  // The CLI refuses `--input-format stream-json` unless the output format matches.
+  '--input-format',
+  'stream-json',
   '--output-format',
   'stream-json',
   '--verbose',
   '--json-schema',
   JSON.stringify(CLAUDE_DECISION_SCHEMA)
 ];
+
+/**
+ * The stdin envelope: one user message whose content is every attachment followed by
+ * the JSON payload. Attachments lead so the text that references them by number is
+ * read after the model has already seen them.
+ */
+export const buildClaudeExecutionStdin = (payload: ClaudeBridgePayload): string => {
+  const { media, ...rest } = payload;
+  const content: unknown[] = [
+    ...(media ?? []),
+    { type: 'text', text: JSON.stringify(rest) }
+  ];
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
+};
 
 export class ClaudeCliExecutor implements ClaudeExecutor {
   readonly #claudeExecutable: string;
@@ -212,11 +232,29 @@ export class ClaudeCliExecutor implements ClaudeExecutor {
       path.join(os.tmpdir(), 'bitterless-claude-subscription-')
     );
     const systemPromptPath = path.join(temporaryDirectory, 'system-prompt.txt');
+    // A private config directory per request. The CLI rewrites `.claude.json` on every
+    // run, so sharing one made two children of an account corrupt each other and the
+    // pool had to serialise — one turn per account. Credentials resolve from
+    // `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which still points at the real slot, so the
+    // scratchpad costs nothing but removes the reason for that limit.
+    const scratchConfigDirectory = path.join(temporaryDirectory, 'config');
     try {
+      await mkdir(path.join(scratchConfigDirectory, 'anthropic'), {
+        recursive: true,
+        mode: 0o700
+      });
+      // Seeded from the account's own config so project trust and settings carry over.
+      // Best-effort: a missing or unreadable file leaves the child with CLI defaults,
+      // which is a worse first turn but never a failed one.
+      await copyFile(
+        path.join(request.context.configDirectory, '.claude.json'),
+        path.join(scratchConfigDirectory, '.claude.json')
+      ).catch(() => undefined);
       await writeFile(systemPromptPath, CLAUDE_SYSTEM_PROMPT, { mode: 0o600, flag: 'wx' });
       const environment = buildClaudeSubscriptionEnvironment(
         this.#parentEnvironment,
-        request.context
+        request.context,
+        scratchConfigDirectory
       );
       await assertClaudeCredentialStorageIsIsolated(request.context);
       let authStatusResult: ClaudeProcessResult;
@@ -253,7 +291,7 @@ export class ClaudeCliExecutor implements ClaudeExecutor {
           ],
           environment,
           cwd: temporaryDirectory,
-          stdin: JSON.stringify(request.payload),
+          stdin: buildClaudeExecutionStdin(request.payload),
           timeoutMs: this.#timeoutMs,
           stdoutLimitBytes: this.#stdoutLimitBytes,
           stderrLimitBytes: this.#stderrLimitBytes,
@@ -651,17 +689,18 @@ const extractResetAt = (
 };
 
 /**
- * Since the schema flattened both variants into one object, a structured-output
- * model may echo the unused variant's fields as empty strings. Those carry no
- * decision and are ignored; a *populated* foreign field means the decision is
- * genuinely ambiguous and is still rejected.
+ * Reads Claude's decision and adapts it, deliberately lenient about anything it does
+ * not need.
+ *
+ * Claude is an LLM provider here, not a component bound to this bridge's internal
+ * schema. This previously rejected any decision carrying a field the schema did not
+ * name, and a real turn was lost to "Claude tool decisions contain unsupported fields"
+ * over extra keys that changed nothing. Adapting the provider's answer to the client's
+ * format is the job; policing its exact key set is not.
+ *
+ * What is still enforced is only what cannot be adapted: an unknown action, a tool the
+ * client never offered, and arguments that are not a JSON object.
  */
-const hasForeignField = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
-  Object.entries(value).some(([key, entry]) => {
-    if (allowed.includes(key)) return false;
-    return entry !== undefined && entry !== null && entry !== '';
-  });
-
 export const validateClaudeDecision = (
   value: unknown,
   availableTools: readonly ClaudeNormalizedCodexTool[]
@@ -672,29 +711,41 @@ export const validateClaudeDecision = (
     if (typeof value.text !== 'string') {
       throw new ClaudeDecisionError('Claude final decisions require text.');
     }
-    if (hasForeignField(value, ['action', 'text'])) {
-      throw new ClaudeDecisionError('Claude final decisions contain unsupported fields.');
-    }
     return { action: 'final', text: value.text };
   }
   if (value.action !== 'tool_call') {
     throw new ClaudeDecisionError('Claude returned an unknown decision action.');
   }
-  const selectedTool =
+  // `name` is what the model reaches for when it forgets the schema's spelling. Both
+  // are accepted, matched against the decision name first and the bare tool name
+  // second — the namespaced form is a bridge invention the model has no reason to
+  // prefer.
+  const requestedName =
     typeof value.tool_name === 'string'
-      ? availableTools.find((tool) => tool.decision_name === value.tool_name)
-      : undefined;
+      ? value.tool_name
+      : typeof value.name === 'string'
+        ? value.name
+        : undefined;
+  const selectedTool = requestedName
+    ? (availableTools.find((tool) => tool.decision_name === requestedName) ??
+      availableTools.find((tool) => tool.name === requestedName))
+    : undefined;
   if (!selectedTool) {
     throw new ClaudeDecisionError('Claude requested an unavailable Codex tool.');
   }
-  if (typeof value.arguments !== 'string') {
-    throw new ClaudeDecisionError('Claude tool arguments must be a JSON string.');
+  // Accepted as a JSON string or as the object itself. The schema asks for a string
+  // and the model frequently returns the object; re-encoding it is the adaptation this
+  // bridge exists to perform, and refusing discarded a decision that was fully usable.
+  const argumentsJson =
+    typeof value.arguments === 'string'
+      ? value.arguments
+      : isObject(value.arguments)
+        ? JSON.stringify(value.arguments)
+        : undefined;
+  if (argumentsJson === undefined) {
+    throw new ClaudeDecisionError('Claude tool arguments must be a JSON object.');
   }
-  if (hasForeignField(value, ['action', 'tool_name', 'arguments'])) {
-    throw new ClaudeDecisionError('Claude tool decisions contain unsupported fields.');
-  }
-
-  const parsedArguments = parseJsonDecision(value.arguments);
+  const parsedArguments = parseJsonDecision(argumentsJson);
   if (!isObject(parsedArguments)) {
     throw new ClaudeDecisionError('Claude tool arguments must encode a JSON object.');
   }
@@ -702,6 +753,6 @@ export const validateClaudeDecision = (
     action: 'tool_call',
     toolName: selectedTool.name,
     ...(selectedTool.namespace ? { toolNamespace: selectedTool.namespace } : {}),
-    argumentsJson: value.arguments
+    argumentsJson
   };
 };

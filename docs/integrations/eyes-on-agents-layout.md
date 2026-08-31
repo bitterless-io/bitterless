@@ -129,14 +129,36 @@ the board. Search never narrows the Focus list behind the modal.
 | shortcut while open | close and clear the modal |
 | typing | update the draft immediately; a leading-plus-trailing 120ms throttle publishes it to the result list |
 | Up / Down | synchronously commit the latest draft, wrap selection, and scroll it into view |
-| Enter | synchronously commit the latest draft and open the selected provider-qualified session; modal stays open |
+| Enter | synchronously commit the latest draft and open the selected provider-qualified session; close Search after success |
 | click | select a result without stealing input focus; existing card controls retain their behavior |
+| double-click or card-menu Open | open that result and close Search after success |
 | Escape, Close, or mask | close and clear query plus selection |
 
 Selection is retained by `sessionKey` through snapshot updates and falls back to the first match if
-that key disappears. The popup is anchored inside `.eyes-on-agents__main`; the input stays fixed and
-only results scroll. The whole modal is viewport-bounded. One restrained Royal Blue ring/surface
-marks the selection without inventing a second card design.
+that key disappears. Successful Open clears the modal state; an unavailable, already-opening, or
+failed Open leaves it unchanged. The popup is anchored inside `.eyes-on-agents__main`; the input
+stays fixed and only results scroll. The whole modal is viewport-bounded. One restrained Royal Blue
+ring/surface marks the selection without inventing a second card design.
+
+## Card menu positioning
+
+The normal `…` button and card right-click render one shared menu component. The click popup stays
+anchored to the button. The context popup uses the pointer as a zero-size anchor with
+`position="bottom"`, `align-point`, viewport auto-fit, and scroll-to-close:
+
+```text
+pointer in left half                     pointer in right half
+┌──────── renderer viewport ────────┐    ┌──────── renderer viewport ────────┐
+│ × ┌ complete menu ─────────────┐  │    │  ┌ complete menu ─────────────┐ × │
+│   │ same actions as `…`        │  │    │  │ same actions as `…`        │   │
+│   └────────────────────────────┘  │    │  └────────────────────────────┘   │
+└───────────────────────────────────┘    └───────────────────────────────────┘
+```
+
+The popup remains teleported to `body`; nesting it under the card, Focus list, or main region would
+allow their intentional `overflow: hidden` to clip it. Opening one card-menu trigger closes the
+other. The `…` button retains visible focus plus `aria-haspopup="menu"` / `aria-expanded`; right-click
+is supplemental and never replaces the button.
 
 ## Header behavior
 

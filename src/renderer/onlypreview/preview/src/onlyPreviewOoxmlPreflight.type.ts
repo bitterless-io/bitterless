@@ -32,6 +32,14 @@ export interface OnlyPreviewOoxmlPreflightResult {
   entries: readonly OnlyPreviewOoxmlEntry[];
   totalCompressedBytes: number;
   totalUncompressedBytes: number;
+  xlsxCompatibility?: OnlyPreviewXlsxCompatibility;
+}
+
+export interface OnlyPreviewXlsxCompatibility {
+  macroEnabled: boolean;
+  worksheetCount: number;
+  missingSheetDataCount: number;
+  requiresSheetDataNormalization: boolean;
 }
 
 export class OnlyPreviewOoxmlPreflightError extends Error {

@@ -153,13 +153,18 @@ test('recent-directory wiring stays Main-owned, value-free, and renderer-contrac
   assert.doesNotMatch(types, /recentDirectory|directoryPath|last_directory/i);
 });
 
-test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no internal lifecycle/path channel', () => {
+test('OnlyPreview XPC prototype exposes the exact renderer allowlist and capability-gates Office chunks', () => {
   assert.deepEqual(classMethodNames('src/main/xpc/onlyPreview.handler.ts', 'OnlyPreviewHandler'), [
     'openOnlyPreviewWindow',
     'chooseFolder',
     'restoreWorkspace',
-    'readText',
     'selectStandaloneFile',
+    'openCurrentOfficeRead',
+    'readCurrentOfficeChunk',
+    'cancelCurrentOfficeRead',
+    'openCurrentPreviewText',
+    'readCurrentPreviewTextChunk',
+    'cancelCurrentPreviewText',
     'updatePreviewBounds',
     'getPreviewPresentation',
     'getVuePreviewPresentation',
@@ -196,7 +201,12 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and no inte
     handler.indexOf('class OnlyPreviewHandler'),
     handler.indexOf('export const onlyPreviewHandler')
   );
-  assert.doesNotMatch(classBody, /absoluteTarget|destroyOnlyPreview|auth|hostQuit|helperPath/i);
+  assert.doesNotMatch(classBody, /absoluteTarget|destroyOnlyPreview|hostQuit|helperPath/i);
+  const contentPreload = source('src/preload/onlypreview/onlypreviewContent.preload.ts');
+  const envType = source('src/preload/onlypreview/onlypreview.preload.type.ts');
+  assert.match(contentPreload, /onlypreview-office-broker-capability/);
+  assert.match(contentPreload, /brokerCapability/);
+  assert.doesNotMatch(envType, /brokerCapability|officeBroker/i);
 });
 
 test('OnlyPreview window commands stay host-capability scoped and Shell-owned', () => {
@@ -274,7 +284,7 @@ test('workspace updates have one authoritative event path and stale search snaps
     selectStandaloneBody,
     /onlyPreviewSelectionCoordinator\.beginSelection\(host\.hostToken, fileRef\)/
   );
-  assert.match(selectStandaloneBody, /await onlyPreviewWorkspaceRegistry\.resolveFile/);
+  assert.match(selectStandaloneBody, /await fileSearchWindowService\.authorizeProjectItem/);
   assert.match(
     selectStandaloneBody,
     /if \(!onlyPreviewSelectionCoordinator\.isCurrent\(host\.hostToken, generation\)\) return;[\s\S]*onlyPreviewWorkspaceRegistry\.select[\s\S]*ONLY_PREVIEW_SELECTION_CHANGED_EVENT[\s\S]*finally[\s\S]*onlyPreviewSelectionCoordinator\.finishSelection\(host\.hostToken, generation\)/
@@ -334,7 +344,7 @@ test('workspace updates have one authoritative event path and stale search snaps
     selectFileBody,
     /catch \(error\)[\s\S]*if \(generation !== this\.selectionGeneration\) return;[\s\S]*await this\.syncSelection\(\)/
   );
-  assert.doesNotMatch(handler, /buildIndex|OnlyPreviewIndexService|onlyPreviewIndexService/);
+  assert.doesNotMatch(handler, /buildIndex/);
 });
 
 test('file-search browse and progress stay capability-scoped while the Project rail stays copy-free', () => {
@@ -493,15 +503,13 @@ test('Project browse exclusion markers stay listing-only and survive the Rendere
   );
   assert.match(treeTypes, /searchExcluded: boolean/);
   assert.match(tree, /searchExcluded: searchExcludedPaths\.has\(entry\.relativePath\)/);
-  assert.match(
-    tree,
-    /depth: 0,[\s\S]*hasChildren: true,[\s\S]*searchExcluded: false/
-  );
+  assert.match(tree, /depth: 0,[\s\S]*hasChildren: true,[\s\S]*searchExcluded: false/);
 });
 
 test('OnlyPreview folder-first chrome, current-file locator, and native file menu stay capability scoped', () => {
   const types = source('src/shared/onlypreview/onlyPreview.types.ts');
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const nativeActions = source('src/main/onlypreview/onlyPreviewProjectNativeAction.service.ts');
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
   const shellStore = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
@@ -515,6 +523,28 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   const onlyPreviewI18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
   const nativeEnglish = source('src/renderer/common/i18n/en.ts');
   const nativeChinese = source('src/renderer/common/i18n/zh.ts');
+  const workspaceRegistry = source('src/main/onlypreview/onlyPreviewWorkspace.registry.ts');
+
+  assert.ok(handler.split(/\r?\n/).length < 800);
+  const bindingBody = handler.slice(
+    handler.indexOf('bindWorkspace: async (hostToken, workspace) =>'),
+    handler.indexOf('onlyPreviewHostRegistry.onRevoke')
+  );
+  assert.ok(
+    bindingBody.indexOf('bindProjectWorkspace') < bindingBody.indexOf('bindOfficeWorkspace')
+  );
+  assert.ok(
+    bindingBody.indexOf('bindOfficeWorkspace') < bindingBody.indexOf('bindProjectAuthority')
+  );
+  assert.match(
+    bindingBody,
+    /revokeProjectWorkspace\(\{[\s\S]*workspaceId: workspace\.workspaceId,[\s\S]*workspaceGeneration: binding\.workspaceGeneration/
+  );
+  assert.match(workspaceRegistry, /projectAuthorityPending: true/);
+  assert.match(
+    workspaceRegistry,
+    /workspace && !workspace\.projectAuthorityPending \? toSnapshot\(workspace\) : null/
+  );
 
   assert.match(
     types,
@@ -574,29 +604,33 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
     /showFileContextMenu\(entry: OnlyPreviewIndexEntry \| string\)[\s\S]*entry\.nodeKind === 'symlink'[\s\S]*onlyPreviewClient\.showFileContextMenu/
   );
   assert.doesNotMatch(shellStore, /clipboard|absolutePath/);
-  const menuBody = handler.slice(
-    handler.indexOf('async showFileContextMenu('),
-    handler.indexOf('async copyProjectItem(')
+  const menuBody = nativeActions.slice(
+    nativeActions.indexOf('async showFileContextMenu('),
+    nativeActions.indexOf('async showProjectRootContextMenu(')
   );
-  const deleteBody = handler.slice(
-    handler.indexOf('const deleteOnlyPreviewFileFromMenu = async ('),
-    handler.indexOf('class OnlyPreviewHandler')
+  const deleteBody = nativeActions.slice(
+    nativeActions.indexOf('private async deleteFileFromMenu('),
+    nativeActions.indexOf('private requireCurrentItem(')
   );
-  const copyBody = handler.slice(
-    handler.indexOf('const copyOnlyPreviewProjectItemFromUi = async ('),
-    handler.indexOf('const deleteOnlyPreviewFileFromMenu = async (')
+  const copyBody = nativeActions.slice(
+    nativeActions.indexOf('async copyProjectItemFromUi('),
+    nativeActions.indexOf('async copyProjectRootFromUi(')
   );
-  const rootMenuBody = handler.slice(
-    handler.indexOf('async showProjectRootContextMenu('),
-    handler.indexOf('async copyProjectRoot(')
+  const rootMenuBody = nativeActions.slice(
+    nativeActions.indexOf('async showProjectRootContextMenu('),
+    nativeActions.indexOf('async copyProjectItemFromUi(')
   );
-  const rootCopyBody = handler.slice(
+  const rootCopyBody = nativeActions.slice(
+    nativeActions.indexOf('async copyProjectRootFromUi('),
+    nativeActions.indexOf('async openExternally(')
+  );
+  const publicRootCopyBody = handler.slice(
     handler.indexOf('async copyProjectRoot('),
     handler.indexOf('async openExternally(')
   );
   assert.match(
     menuBody,
-    /getStandaloneWindow\(params\?\.hostToken\)[\s\S]*await onlyPreviewWorkspaceRegistry\.resolveProjectItem/
+    /getProjectAuthorityItemRef\([\s\S]*fileSearchWindowService\.authorizeProjectItem\([\s\S]*requireCurrentItem\(authority\)/
   );
   assert.match(
     menuBody,
@@ -606,10 +640,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
     menuBody,
     /onlypreview-reveal-in-folder[\s\S]*onlypreview-copy-item[\s\S]*onlypreview-copy-path[\s\S]*onlypreview-copy-relative-path[\s\S]*onlypreview-copy-name/
   );
-  assert.match(
-    menuBody,
-    /item\.nodeKind === 'file' \? labels\.copyFile : labels\.copyFolder/
-  );
+  assert.match(menuBody, /item\.nodeKind === 'file' \? labels\.copyFile : labels\.copyFolder/);
   assert.match(menuBody, /if \(item\.nodeKind === 'file'\)[\s\S]*onlypreview-delete/);
   assert.match(menuBody, /i18nHelper\.getMessages\(\)\.app\.onlyPreviewFileMenu/);
   for (const id of [
@@ -624,29 +655,17 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   ]) {
     assert.match(menuBody, new RegExp(`id: '${id}'`));
   }
-  assert.match(menuBody, /click: \(\) => void this\.selectStandaloneFile\(request\)/);
-  assert.match(menuBody, /click: \(\) => void this\.openExternally\(request\)/);
-  assert.match(menuBody, /click: \(\) => void this\.revealInFolder\(request\)/);
-  assert.match(
-    menuBody,
-    /copyOnlyPreviewProjectItemFromUi\(window, request, 'item'\)/
-  );
-  assert.match(
-    menuBody,
-    /copyOnlyPreviewProjectItemFromUi\(window, request, 'absolute-path'\)/
-  );
-  assert.match(
-    menuBody,
-    /copyOnlyPreviewProjectItemFromUi\(window, request, 'relative-path'\)/
-  );
-  assert.match(
-    menuBody,
-    /copyOnlyPreviewProjectItemFromUi\(window, request, 'name'\)/
-  );
+  assert.match(menuBody, /click: \(\) => actions\.preview\(currentRequest\)/);
+  assert.match(menuBody, /click: \(\) => actions\.openExternally\(currentRequest\)/);
+  assert.match(menuBody, /click: \(\) => actions\.revealInFolder\(currentRequest\)/);
+  assert.match(menuBody, /copyProjectItemFromUi\(window, currentRequest, 'item'\)/);
+  assert.match(menuBody, /copyProjectItemFromUi\(window, currentRequest, 'absolute-path'\)/);
+  assert.match(menuBody, /copyProjectItemFromUi\(window, currentRequest, 'relative-path'\)/);
+  assert.match(menuBody, /copyProjectItemFromUi\(window, currentRequest, 'name'\)/);
   assert.match(menuBody, /accelerator: 'CommandOrControl\+C'/);
   assert.match(menuBody, /accelerator: 'CommandOrControl\+Shift\+C'/);
   assert.match(menuBody, /accelerator: 'CommandOrControl\+Alt\+C'/);
-  assert.match(menuBody, /click: \(\) => void deleteOnlyPreviewFileFromMenu\(window, request\)/);
+  assert.match(menuBody, /click: \(\) => void this\.deleteFileFromMenu\(window, currentRequest\)/);
   assert.match(
     menuBody,
     /onlypreview-reveal-in-folder[\s\S]*type: 'separator'[\s\S]*onlypreview-delete/
@@ -656,59 +675,65 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.doesNotMatch(types, /\bdeleteFile\s*\(/);
   assert.match(
     copyBody,
-    /resolveProjectItem\([\s\S]*onlyPreviewClipboardService\.copyProjectItem\(item, copyKind\)[\s\S]*showOnlyPreviewCopyFailure/
+    /getProjectAuthorityItemRef\([\s\S]*authorizeProjectItem\([\s\S]*requireCurrentItem\(authority\)[\s\S]*onlyPreviewClipboardService\.copyProjectItem\([\s\S]*showCopyFailure/
   );
   const publicCopyBody = handler.slice(
     handler.indexOf('async copyProjectItem('),
     handler.indexOf('async showProjectRootContextMenu(')
   );
   assert.match(publicCopyBody, /parseOnlyPreviewProjectItemCopyRequest\(params\)/);
-  assert.match(publicCopyBody, /await copyOnlyPreviewProjectItemFromUi\(/);
+  assert.match(publicCopyBody, /onlyPreviewProjectNativeActionService\.copyProjectItemFromUi\(/);
   assert.doesNotMatch(publicCopyBody, /return .*Path|realPath/);
   assert.match(
     rootMenuBody,
-    /parseOnlyPreviewProjectRootRequest\(params\)[\s\S]*resolveProjectRoot\([\s\S]*request\.hostToken,[\s\S]*request\.workspaceId[\s\S]*\)/
+    /getProjectAuthorityRootRef\([\s\S]*request\.hostToken,[\s\S]*request\.workspaceId[\s\S]*authorizeProjectRoot\([\s\S]*requireCurrentRoot\(authority\)/
   );
   assert.match(
     rootMenuBody,
     /onlypreview-reveal-project-root[\s\S]*onlypreview-copy-project-root[\s\S]*onlypreview-copy-project-root-path[\s\S]*onlypreview-copy-project-root-relative-path[\s\S]*onlypreview-copy-project-root-name/
   );
   assert.doesNotMatch(rootMenuBody, /onlypreview-delete|deleteOnlyPreviewFileFromMenu/);
-  assert.match(rootCopyBody, /parseOnlyPreviewProjectRootCopyRequest\(params\)/);
-  assert.match(rootCopyBody, /copyOnlyPreviewProjectRootFromUi\(window, request, request\.copyKind\)/);
+  assert.match(publicRootCopyBody, /parseOnlyPreviewProjectRootCopyRequest\(params\)/);
+  assert.match(
+    publicRootCopyBody,
+    /onlyPreviewProjectNativeActionService\.copyProjectRootFromUi\([\s\S]*request\.copyKind/
+  );
+  assert.match(
+    rootCopyBody,
+    /authorizeProjectRoot\([\s\S]*requireCurrentRoot\(authority\)[\s\S]*onlyPreviewClipboardService\.copyProjectItem/
+  );
   assert.match(
     deleteBody,
-    /resolveProjectItem\(request\.hostToken, request\)[\s\S]*file\.nodeKind !== 'file'[\s\S]*dialog\.showMessageBox\(window/
+    /getProjectAuthorityItemRef\([\s\S]*prepareProjectDelete\([\s\S]*dialog\.showMessageBox\(window/
   );
   assert.match(deleteBody, /buttons: \[labels\.deleteCancelButton, labels\.deleteConfirmButton\]/);
   assert.match(deleteBody, /defaultId: 0[\s\S]*cancelId: 0[\s\S]*destructiveId: 1/);
-  assert.match(deleteBody, /if \(confirmation\.response !== 1\) return/);
   assert.match(
     deleteBody,
-    /openFile\(request\.hostToken, request\)[\s\S]*deleteOpenedFile\(opened\)/
+    /if \(confirmation\.response !== 1\)[\s\S]*cancelDelete\(authority, prepared\.grantId\)[\s\S]*return/
   );
+  assert.match(deleteBody, /getProjectAuthorityItemRef\([\s\S]*commitProjectDelete\(/);
   assert.match(
     deleteBody,
-    /deleteOpenedFile\(opened\)[\s\S]*onlyPreviewSelectionCoordinator\.invalidatePendingSelection\(deleted\.host\.hostToken[\s\S]*clearSelection\(deleted\.host\.hostToken[\s\S]*clearWorkspace\([\s\S]*ONLY_PREVIEW_SELECTION_CHANGED_EVENT/
+    /commitProjectDelete\([\s\S]*onlyPreviewSelectionCoordinator\.invalidatePendingSelection\(authority\.host\.hostToken[\s\S]*clearSelection\(authority\.host\.hostToken[\s\S]*clearWorkspace\([\s\S]*ONLY_PREVIEW_SELECTION_CHANGED_EVENT/
   );
-  const preDeleteSuccessBody = deleteBody.slice(0, deleteBody.indexOf('deleteOpenedFile(opened)'));
+  const preDeleteSuccessBody = deleteBody.slice(0, deleteBody.indexOf('commitProjectDelete({'));
   assert.doesNotMatch(preDeleteSuccessBody, /invalidatePendingSelection/);
-  const postDeleteBody = deleteBody.slice(deleteBody.indexOf('deleteOpenedFile(opened)'));
+  const postDeleteBody = deleteBody.slice(deleteBody.indexOf('commitProjectDelete({'));
   assert.doesNotMatch(postDeleteBody, /onlyPreviewSelectionCoordinator\.advance/);
   assert.doesNotMatch(handler, /selectionGenerationByHost/);
   assert.doesNotMatch(deleteBody, /broadcastWorkspace\(/);
-  const registry = source('src/main/onlypreview/onlyPreviewWorkspace.registry.ts');
-  const deleteOpenedBody = registry.slice(
-    registry.indexOf('async deleteOpenedFile('),
-    registry.indexOf('select(hostToken:')
+  const projectAuthority = source('src/preload/fileSearch/fileSearchProjectAuthority.service.ts');
+  const commitDeleteBody = projectAuthority.slice(
+    projectAuthority.indexOf('async commitDelete('),
+    projectAuthority.indexOf('cancelDelete(')
   );
-  assert.match(deleteOpenedBody, /file\.fileHandle\.stat\(\{ bigint: true \}\)/);
-  assert.match(deleteOpenedBody, /file\.fileHandle\.close\(\)/);
-  assert.match(deleteOpenedBody, /lstat\(candidate, \{ bigint: true \}\)/);
-  assert.match(deleteOpenedBody, /pathStat\.isSymbolicLink\(\)/);
-  assert.match(deleteOpenedBody, /candidateRealPath !== file\.realPath/);
-  assert.match(deleteOpenedBody, /await unlink\(candidate\)/);
-  assert.doesNotMatch(deleteOpenedBody, /readFile|\.read\(/);
+  assert.match(commitDeleteBody, /requirePinnedDeleteIdentity\(prepared\)/);
+  assert.match(commitDeleteBody, /isolateDeleteEntry\(prepared\.canonicalPath\)/);
+  assert.match(commitDeleteBody, /requireIsolatedDeleteIdentity\(prepared, isolated, workspace\)/);
+  assert.match(commitDeleteBody, /fileOperations\.unlink\(isolated\.entryPath\)/);
+  assert.doesNotMatch(commitDeleteBody, /readFile|\.read\(/);
+  assert.doesNotMatch(deleteBody, /deleteOpenedFile|onlyPreviewWorkspaceRegistry\.openFile/);
   for (const catalog of [nativeEnglish, nativeChinese]) {
     assert.match(
       catalog,

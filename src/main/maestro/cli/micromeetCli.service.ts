@@ -2,25 +2,45 @@ import { app } from 'electron'
 import { createCipheriv, randomBytes } from 'crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
-import { dirname, join } from 'path'
+import { dirname } from 'path'
 import type { AuthSession } from '@maestro-shared/session.api'
+import {
+  resolveMicromeetCliEnvironment,
+  resolveMicromeetCliExecutablePath,
+  resolveMicromeetCliPaths,
+  runWithMicromeetCliEnvironment,
+  type MicromeetCliEnvironment,
+  type MicromeetCliPaths
+} from '@maestro-main/cli/micromeetCliPath.service'
 
-const MICROMEET_DIR = join(homedir(), '.micromeet')
-const MICROMEET_BIN_DIR = join(MICROMEET_DIR, 'bin')
-const CREDENTIAL_DIR = join(MICROMEET_DIR, 'credentials')
-const CRMS_CREDENTIAL_FILE = join(CREDENTIAL_DIR, 'crms.json')
-const CREDENTIAL_KEY_FILE = join(CREDENTIAL_DIR, '.credential-key-v2')
-const LEGACY_SESSION_FILE = join(MICROMEET_DIR, 'session.json')
+const runtimeMicromeetCliPaths = (): MicromeetCliPaths => {
+  const releaseChannel = import.meta.env.VITE_RELEASE_CHANNEL
+  return resolveMicromeetCliPaths({
+    releaseChannel,
+    appUserDataPath: app.getPath('userData'),
+    homeDirectory: releaseChannel === 'preview' ? undefined : homedir(),
+    platform: process.platform
+  })
+}
 
-const cliFileName = (): string => (process.platform === 'win32' ? 'micromeet.exe' : 'micromeet')
+export const micromeetCliCredentialFile = (): string =>
+  runtimeMicromeetCliPaths().crmsCredentialFile
 
-export const micromeetCliCredentialFile = (): string => CRMS_CREDENTIAL_FILE
+export const bundledMicromeetCliPath = (
+  paths: MicromeetCliPaths = runtimeMicromeetCliPaths()
+): string =>
+  resolveMicromeetCliExecutablePath({
+    paths,
+    inheritedCliPath: process.env.MICROMEET_CLI_PATH,
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    platform: process.platform
+  })
 
-export const bundledMicromeetCliPath = (): string => {
-  const override = process.env.MICROMEET_CLI_PATH?.trim()
-  if (override) return override
-  if (app.isPackaged) return join(process.resourcesPath, 'maestro-tools', cliFileName())
-  return join(app.getAppPath(), 'build', 'maestro-tools', cliFileName())
+export const micromeetCliChildEnvironment = (): MicromeetCliEnvironment => {
+  const paths = runtimeMicromeetCliPaths()
+  return resolveMicromeetCliEnvironment(paths, process.env, bundledMicromeetCliPath(paths))
 }
 
 const ensurePrivateDir = (dir: string): void => {
@@ -30,16 +50,14 @@ const ensurePrivateDir = (dir: string): void => {
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`
 
-const writeShim = (cliPath: string): void => {
-  ensurePrivateDir(MICROMEET_BIN_DIR)
+const writeShim = (cliPath: string, paths: MicromeetCliPaths): void => {
+  ensurePrivateDir(paths.binDir)
   if (process.platform === 'win32') {
-    const shim = join(MICROMEET_BIN_DIR, 'micromeet.cmd')
-    writeFileSync(shim, `@echo off\r\n"${cliPath}" %*\r\n`, { mode: 0o755 })
+    writeFileSync(paths.shimFile, `@echo off\r\n"${cliPath}" %*\r\n`, { mode: 0o755 })
     return
   }
-  const shim = join(MICROMEET_BIN_DIR, 'micromeet')
-  writeFileSync(shim, `#!/bin/sh\nexec ${shellQuote(cliPath)} "$@"\n`, { mode: 0o755 })
-  chmodSync(shim, 0o755)
+  writeFileSync(paths.shimFile, `#!/bin/sh\nexec ${shellQuote(cliPath)} "$@"\n`, { mode: 0o755 })
+  chmodSync(paths.shimFile, 0o755)
 }
 
 const prependPath = (dir: string): void => {
@@ -62,23 +80,23 @@ const jwtEmail = (token: string): string => {
   return normalizeEmail(payload.email || '')
 }
 
-const readCredentialKey = (): Buffer => {
-  const key = readFileSync(CREDENTIAL_KEY_FILE)
+const readCredentialKey = (paths: MicromeetCliPaths): Buffer => {
+  const key = readFileSync(paths.credentialKeyFile)
   if (key.length !== 32) throw new Error('Micromeet CLI credential key file must contain exactly 32 bytes')
-  if (process.platform !== 'win32') chmodSync(CREDENTIAL_KEY_FILE, 0o600)
+  if (process.platform !== 'win32') chmodSync(paths.credentialKeyFile, 0o600)
   return key
 }
 
-const getOrCreateCredentialKey = (): Buffer => {
-  if (existsSync(CREDENTIAL_KEY_FILE)) return readCredentialKey()
+const getOrCreateCredentialKey = (paths: MicromeetCliPaths): Buffer => {
+  if (existsSync(paths.credentialKeyFile)) return readCredentialKey(paths)
   const key = randomBytes(32)
   try {
-    writeFileSync(CREDENTIAL_KEY_FILE, key, { flag: 'wx', mode: 0o600 })
+    writeFileSync(paths.credentialKeyFile, key, { flag: 'wx', mode: 0o600 })
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-    return readCredentialKey()
+    return readCredentialKey(paths)
   }
-  if (process.platform !== 'win32') chmodSync(CREDENTIAL_KEY_FILE, 0o600)
+  if (process.platform !== 'win32') chmodSync(paths.credentialKeyFile, 0o600)
   return key
 }
 
@@ -110,47 +128,50 @@ const encryptCrmsCredential = (session: AuthSession, key: Buffer): Record<string
 }
 
 export const ensureMicromeetCliIntegration = (): void => {
-  try {
-    ensurePrivateDir(MICROMEET_DIR)
-    ensurePrivateDir(CREDENTIAL_DIR)
-    const cliPath = bundledMicromeetCliPath()
+  const paths = runtimeMicromeetCliPaths()
+  const cliPath = bundledMicromeetCliPath(paths)
+  runWithMicromeetCliEnvironment(paths, process.env, cliPath, process.env, () => {
+    ensurePrivateDir(paths.rootDir)
+    ensurePrivateDir(paths.credentialDir)
     const toolsDir = dirname(cliPath)
-    if (existsSync(cliPath) && process.platform !== 'win32') chmodSync(cliPath, 0o755)
-    if (existsSync(cliPath)) writeShim(cliPath)
-    else console.warn('[micromeet cli] bundled CLI not found:', cliPath)
-    prependPath(MICROMEET_BIN_DIR)
-    prependPath(toolsDir)
-    if (!process.env.MICROMEET_CRMS_CREDENTIAL_FILE) {
-      process.env.MICROMEET_CRMS_CREDENTIAL_FILE = CRMS_CREDENTIAL_FILE
+    const cliExists = existsSync(cliPath)
+    if (!cliExists && paths.previewIsolated) {
+      throw new Error(`[micromeet cli] Preview bundled CLI not found: ${cliPath}`)
     }
-    rmSync(LEGACY_SESSION_FILE, { force: true })
+    if (cliExists && process.platform !== 'win32') chmodSync(cliPath, 0o755)
+    if (cliExists) writeShim(cliPath, paths)
+    else console.warn('[micromeet cli] bundled CLI not found:', cliPath)
+    prependPath(toolsDir)
+    prependPath(paths.binDir)
+    rmSync(paths.legacySessionFile, { force: true })
     console.log('[micromeet cli] initialized', {
       cliPath,
-      shimDir: MICROMEET_BIN_DIR,
-      credentialFile: CRMS_CREDENTIAL_FILE,
-      cliExists: existsSync(cliPath)
+      shimDir: paths.binDir,
+      crmsCredentialFile: paths.crmsCredentialFile,
+      sysCredentialFile: paths.sysCredentialFile,
+      sessionFile: paths.legacySessionFile,
+      cliExists
     })
-  } catch (err) {
-    console.warn('[micromeet cli] init failed:', err)
-  }
+  })
 }
 
 export const writeMicromeetCliCredential = (session: AuthSession | null): boolean => {
-  const tempFile = `${CRMS_CREDENTIAL_FILE}.tmp-${process.pid}`
+  const paths = runtimeMicromeetCliPaths()
+  const tempFile = `${paths.crmsCredentialFile}.tmp-${process.pid}`
   try {
-    ensurePrivateDir(MICROMEET_DIR)
-    ensurePrivateDir(CREDENTIAL_DIR)
-    rmSync(LEGACY_SESSION_FILE, { force: true })
+    ensurePrivateDir(paths.rootDir)
+    ensurePrivateDir(paths.credentialDir)
+    rmSync(paths.legacySessionFile, { force: true })
     if (!session?.jwt_token) {
-      rmSync(CRMS_CREDENTIAL_FILE, { force: true })
+      rmSync(paths.crmsCredentialFile, { force: true })
       console.log('[micromeet cli] CRMS credential cleared')
       return true
     }
-    const envelope = encryptCrmsCredential(session, getOrCreateCredentialKey())
+    const envelope = encryptCrmsCredential(session, getOrCreateCredentialKey(paths))
     writeFileSync(tempFile, `${JSON.stringify(envelope, null, 2)}\n`, { mode: 0o600 })
     if (process.platform !== 'win32') chmodSync(tempFile, 0o600)
-    renameSync(tempFile, CRMS_CREDENTIAL_FILE)
-    if (process.platform !== 'win32') chmodSync(CRMS_CREDENTIAL_FILE, 0o600)
+    renameSync(tempFile, paths.crmsCredentialFile)
+    if (process.platform !== 'win32') chmodSync(paths.crmsCredentialFile, 0o600)
     console.log('[micromeet cli] encrypted CRMS credential synced')
     return true
   } catch (err) {

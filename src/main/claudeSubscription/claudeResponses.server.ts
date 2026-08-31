@@ -11,6 +11,7 @@ import { redactClaudeSubscriptionSecrets } from '@shared/claudeSubscription/clau
 import { ClaudeAccountRouter } from './claudeAccount.router';
 import type { ClaudeExecutor } from './claudeCli.executor';
 import {
+  ClaudeAllAccountsExhaustedError,
   ClaudeExecutionError,
   ClaudeNoEligibleAccountError,
   ClaudeRequestAbortedError,
@@ -58,6 +59,22 @@ export class ClaudeResponsesRuntime {
     this.#log = log;
   }
 
+  async #describePool(): Promise<Record<string, string | number>> {
+    try {
+      const health = await this.router.health();
+      return {
+        total: health.total,
+        enabled: health.enabled,
+        eligible: health.eligible,
+        busy: health.busy,
+        cooling: health.cooling,
+        needsLogin: health.needsLogin
+      };
+    } catch {
+      return { pool: 'unreadable' };
+    }
+  }
+
   async availability(): Promise<Sub2ApiUpstreamAvailability> {
     const [claude, codex] = await Promise.all([
       this.router
@@ -75,7 +92,18 @@ export class ClaudeResponsesRuntime {
     requestId = ''
   ): Promise<ClaudeCompletedResponse> {
     const payload = buildClaudeBridgePayload(request);
-    const target = resolveSub2ApiTarget(request);
+    let target = resolveSub2ApiTarget(request);
+    // Both upstreams read images, but only Claude reads PDFs: pi's `PromptOptions`
+    // offers `images` and no document channel, so a PDF sent to the Codex upstream
+    // arrives as its marker text and nothing else — the model would answer about a
+    // document it never saw. A request carrying one is served by the upstream that can
+    // actually read it, and the response reports the model that ran.
+    if (
+      target.upstream === 'codex' &&
+      (payload.media ?? []).some((block) => block.type === 'document')
+    ) {
+      target = claudeUpstreamTarget(request);
+    }
     this.#log({
       level: 'info',
       event: 'dispatch',
@@ -155,6 +183,8 @@ export class ClaudeResponsesRuntime {
     const reportedModel = target.modelId;
     const excluded = new Set<ClaudeAccountId>();
     let priorUsageFailure: ClaudeUsageLimitError | undefined;
+    let exhaustedByQuota = 0;
+    let earliestReset = Number.POSITIVE_INFINITY;
     let priorAuthenticationFailure: Error | undefined;
 
     // Every iteration either returns, rethrows a non-routing error, or adds exactly
@@ -169,7 +199,21 @@ export class ClaudeResponsesRuntime {
         lease = await this.router.lease(request.prompt_cache_key, excluded);
       } catch (error) {
         if (error instanceof ClaudeNoEligibleAccountError) {
-          if (priorUsageFailure) throw priorUsageFailure;
+          // Why the pool was unusable, not just that it was. "No eligible account" has
+          // several causes needing different actions from the owner, and the message
+          // alone cannot tell a logged-out account from a cooling one.
+          this.#log({
+            level: 'warn',
+            event: 'no-eligible-account',
+            fields: { id: requestId, ...(await this.#describePool()) }
+          });
+
+          if (priorUsageFailure) {
+            throw new ClaudeAllAccountsExhaustedError(
+              Math.max(1, exhaustedByQuota),
+              earliestReset === Number.POSITIVE_INFINITY ? undefined : earliestReset
+            );
+          }
           if (priorAuthenticationFailure) throw priorAuthenticationFailure;
         }
         throw error;
@@ -237,6 +281,8 @@ export class ClaudeResponsesRuntime {
         excluded.add(lease.accountId);
         if (error instanceof ClaudeUsageLimitError) {
           priorUsageFailure = error;
+          exhaustedByQuota += 1;
+          if (error.resetAt !== undefined) earliestReset = Math.min(earliestReset, error.resetAt);
           try {
             await this.router.markCooldown(lease.accountId, error.resetAt);
           } catch {
@@ -255,7 +301,15 @@ export class ClaudeResponsesRuntime {
       }
     }
 
-    if (priorUsageFailure) throw priorUsageFailure;
+    // Every account was tried and every one was out of quota. Reporting the last
+    // account's own limit error here would read as "switch and continue", which is
+    // exactly what has just been exhausted — there is nothing left to switch to.
+    if (priorUsageFailure) {
+      throw new ClaudeAllAccountsExhaustedError(
+        Math.max(1, exhaustedByQuota),
+        earliestReset === Number.POSITIVE_INFINITY ? undefined : earliestReset
+      );
+    }
     if (priorAuthenticationFailure) throw priorAuthenticationFailure;
     throw new ClaudeNoEligibleAccountError();
   }
@@ -557,9 +611,22 @@ const describeResponsesRequestBody = (body: unknown): Record<string, string | nu
   const input = value.input;
   const tools = Array.isArray(value.tools) ? value.tools : [];
   const toolTypes = new Set<string>();
+  // Names, not just a count. Which tools a client offers is what decides what it can
+  // do — whether an orchestration tool is present at all is invisible in a tally, and
+  // that is exactly the question a count cannot answer.
+  const toolNames: string[] = [];
   for (const tool of tools) {
-    if (typeof tool === 'object' && tool !== null && typeof (tool as { type?: unknown }).type === 'string') {
-      toolTypes.add((tool as { type: string }).type);
+    if (typeof tool !== 'object' || tool === null) continue;
+    const entry = tool as { type?: unknown; name?: unknown; tools?: unknown };
+    if (typeof entry.type === 'string') toolTypes.add(entry.type);
+    if (typeof entry.name === 'string') toolNames.push(entry.name);
+    if (Array.isArray(entry.tools)) {
+      for (const child of entry.tools) {
+        const name = (child as { name?: unknown })?.name;
+        if (typeof name === 'string') {
+          toolNames.push(`${typeof entry.name === 'string' ? entry.name : '?'}:${name}`);
+        }
+      }
     }
   }
   const reasoning = value.reasoning;
@@ -573,6 +640,7 @@ const describeResponsesRequestBody = (body: unknown): Record<string, string | nu
     instructionsBytes:
       typeof value.instructions === 'string' ? Buffer.byteLength(value.instructions, 'utf8') : 0,
     inputItems: Array.isArray(input) ? input.length : typeof input === 'string' ? 1 : 0,
+    toolNames: toolNames.length > 0 ? toolNames.join(',') : '(none)',
     tools: tools.length,
     toolTypes: [...toolTypes].join(',') || '(none)',
     extraKeys: Object.keys(value)

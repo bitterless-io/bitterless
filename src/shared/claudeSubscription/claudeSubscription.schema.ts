@@ -65,6 +65,7 @@ export const claudeSubscriptionAccountViewSchema = z
     enabled: z.boolean(),
     status: claudeSubscriptionAccountStatusSchema,
     activeRequests: z.number().int().nonnegative(),
+    active: z.boolean().optional(),
     cooldownUntil: z.number().int().nonnegative().optional(),
     usage: z
       .object({
@@ -116,7 +117,17 @@ export const claudeSubscriptionSnapshotSchema = z
     codexUpstream: z
       .object({
         connected: z.boolean(),
-        models: z.array(z.string().min(1))
+        models: z.array(z.string().min(1)),
+        accounts: z.array(
+          z
+            .object({
+              id: z.string().min(1).max(64),
+              label: z.string().min(1).max(64),
+              active: z.boolean(),
+              createdAt: z.string().min(1).max(64)
+            })
+            .strict()
+        )
       })
       .strict()
   })

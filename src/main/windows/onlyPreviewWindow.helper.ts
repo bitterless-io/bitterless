@@ -32,8 +32,7 @@ import { onlyPreviewGlobalSearchWindowService } from '@main/onlypreview/views/on
 import {
   configureOnlyPreviewNavigationFence,
   getOnlyPreviewRendererArguments,
-  getOnlyPreviewRendererTarget,
-  type OnlyPreviewRendererMode
+  getOnlyPreviewRendererTarget
 } from '@main/onlypreview/views/onlyPreviewRendererTarget.service';
 import {
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
@@ -633,8 +632,18 @@ export class OnlyPreviewWindowHelper {
     onlyPreviewPreviewRegionService.start({
       window,
       host,
-      createVuePreviewView: (previewRuntimeToken) =>
-        this.createView(host, 'preview', previewRuntimeToken),
+      createVuePreviewView: (
+        previewRuntimeToken,
+        officeBrokerCapability,
+        previewReadBrokerCapability
+      ) =>
+        this.createView(
+          host,
+          'preview',
+          previewRuntimeToken,
+          officeBrokerCapability,
+          previewReadBrokerCapability
+        ),
       loadVuePreviewView: async (view) => await this.loadView(view, 'preview'),
       bindChromeShortcuts: (webContents) => {
         this.bindNativeShortcuts(webContents, host, 'chrome');
@@ -711,7 +720,9 @@ export class OnlyPreviewWindowHelper {
   private createView(
     host: OnlyPreviewHostCapability,
     mode: 'shell' | 'preview' | 'globalSearch',
-    previewRuntimeToken?: string
+    previewRuntimeToken?: string,
+    officeBrokerCapability?: string,
+    previewReadBrokerCapability?: string
   ): WebContentsView {
     const target = getOnlyPreviewRendererTarget(mode, __dirname);
     const view = new WebContentsView({
@@ -724,7 +735,13 @@ export class OnlyPreviewWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        additionalArguments: getOnlyPreviewRendererArguments(host, mode, previewRuntimeToken)
+        additionalArguments: getOnlyPreviewRendererArguments(
+          host,
+          mode,
+          previewRuntimeToken,
+          officeBrokerCapability,
+          previewReadBrokerCapability
+        )
       }
     });
     if (mode === 'globalSearch') view.setBackgroundColor('#00000000');

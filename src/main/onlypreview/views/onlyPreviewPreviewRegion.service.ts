@@ -1,5 +1,7 @@
 import type { Rectangle, WebContentsView } from 'electron';
 import { xpcMain } from 'electron-xpc/main';
+import { randomUUID } from 'node:crypto';
+import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import {
   cloneOnlyPreviewDescriptor,
   OnlyPreviewContractError,
@@ -8,7 +10,6 @@ import {
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
-  getOnlyPreviewFileSizeLimit,
   type OnlyPreviewDescriptor,
   type OnlyPreviewErrorCode,
   type OnlyPreviewFileRef,
@@ -17,13 +18,15 @@ import {
   type OnlyPreviewFindResult,
   type OnlyPreviewFindSnapshot,
   type OnlyPreviewPreviewPresentation,
-  type OnlyPreviewPreviewSurface,
-  type OnlyPreviewTextContent,
-  type OnlyPreviewTextReadRequest
+  type OnlyPreviewPreviewSurface
 } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewSearchWatchCommit } from '@shared/onlypreview/onlyPreviewSearch.type';
+import {
+  getOnlyPreviewOfficePackageKind,
+  type OnlyPreviewOfficePackageKind
+} from '@shared/onlypreview/onlyPreviewOfficeReadRuntime.types';
+import type { OnlyPreviewPreviewReadPreparedSelection } from '@shared/onlypreview/onlyPreviewPreviewReadRuntime.types';
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
-import { onlyPreviewClassifierService } from '@main/onlypreview/onlyPreviewClassifier.service';
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
 import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/onlypreview/onlyPreviewWorkspace.registry';
@@ -46,9 +49,18 @@ import {
   presentationAllowsRendererError,
   type OnlyPreviewPreviewRegionRuntime
 } from './onlyPreviewPreviewView.service';
+import { OnlyPreviewPreviewReadBrokerService } from './onlyPreviewPreviewReadBroker.service';
+import { issueOnlyPreviewSelectionDelivery } from './onlyPreviewSelectionDelivery.service';
 
 export class OnlyPreviewPreviewRegionService {
   private readonly findService = new OnlyPreviewFindService();
+  private readonly readBroker = new OnlyPreviewPreviewReadBrokerService({
+    requireCurrentVueRevision: (hostToken, selectionRevision, previewRuntimeToken) =>
+      this.requireCurrentVueRevision(hostToken, selectionRevision, previewRuntimeToken),
+    requireVueRuntime: (hostToken, previewRuntimeToken) =>
+      this.requireVueRuntime(hostToken, previewRuntimeToken),
+    getPresentation: () => this.presentation
+  });
   private readonly viewService = new OnlyPreviewPreviewViewService({
     getActiveSurface: () => this.activePreviewSurface,
     canAttachVue: () => this.vueResetAcknowledgedRevision === this.selectionRevision,
@@ -101,15 +113,6 @@ export class OnlyPreviewPreviewRegionService {
   private readyFindCoverage: OnlyPreviewFindCoverage | null = null;
   private activePreviewSurface: OnlyPreviewPreviewSurface | null = 'vue';
   private vueResetAcknowledgedRevision: number | null = null;
-  private activeFileIdentity: {
-    workspaceId: string;
-    relativePath: string;
-    realPath: string;
-    size: number;
-    deviceId: bigint;
-    inode: bigint;
-    modifiedTimeNanoseconds: bigint;
-  } | null = null;
   private presentation: OnlyPreviewPreviewPresentation = createEmptyOnlyPreviewPresentation('', 0);
 
   start(runtime: OnlyPreviewPreviewRegionRuntime): void {
@@ -129,6 +132,10 @@ export class OnlyPreviewPreviewRegionService {
     return this.viewService.getVuePreviewView();
   }
 
+  getReadBroker(): OnlyPreviewPreviewReadBrokerService {
+    return this.readBroker;
+  }
+
   getBounds(): Rectangle | null {
     return this.viewService.getBounds();
   }
@@ -142,101 +149,62 @@ export class OnlyPreviewPreviewRegionService {
     const runtime = this.requireRuntime(hostToken);
     const fileRef = parseOnlyPreviewFileRef(value);
     const revision = this.beginTransition(fileRef);
-    let opened: Awaited<ReturnType<typeof onlyPreviewWorkspaceRegistry.openFile>> | null = null;
+    let prepared: OnlyPreviewPreviewReadPreparedSelection | null = null;
     let descriptor: OnlyPreviewDescriptor | null = null;
     try {
-      opened = await onlyPreviewWorkspaceRegistry.openFile(runtime.host.hostToken, fileRef);
-      if (!this.isCurrent(runtime, revision)) return;
-      descriptor = await onlyPreviewClassifierService.describe(opened);
-      if (!this.isCurrent(runtime, revision)) {
+      const officeKind = getOnlyPreviewOfficePackageKind(fileRef.relativePath);
+      if (officeKind) {
+        await this.presentOffice(runtime, fileRef, revision, officeKind);
         return;
       }
-      await onlyPreviewWorkspaceRegistry.assertOpenedFileCurrent(opened);
-      if (!this.isCurrent(runtime, revision)) return;
+      const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(
+        runtime.host.hostToken,
+        fileRef
+      );
+      prepared = await fileSearchWindowService.preparePreviewRead({
+        grantId: randomUUID(),
+        selectionRevision: revision,
+        workspaceId: authority.workspaceId,
+        workspaceGeneration: authority.workspaceGeneration,
+        relativePath: authority.relativePath
+      });
+      if (!this.isCurrent(runtime, revision)) {
+        await this.cancelPreparedPreview(prepared);
+        return;
+      }
+      descriptor = prepared.descriptor;
       const adapter = getOnlyPreviewDescriptorAdapter(descriptor);
-      let navigationUrl: string | null = null;
-      let assetIssued = false;
-      if (adapter.adapterId === 'html-page') {
-        navigationUrl = await onlyPreviewDocumentRegistry.issue(opened, revision);
-        if (!this.isCurrent(runtime, revision)) {
-          onlyPreviewDocumentRegistry.revokeSelection(runtime.host.hostToken, revision);
-          return;
+      let brokerCapability: string | null = null;
+      if (adapter.surface === 'vue') {
+        this.viewService.ensureVuePreviewView();
+        if (adapter.adapterId === 'monaco' || adapter.adapterId === 'markdown-dom') {
+          brokerCapability = this.viewService.getPreviewReadBrokerCapability();
+          if (!brokerCapability) {
+            throw new OnlyPreviewContractError(
+              'OPERATION_FAILED',
+              'Preview Read runtime is unavailable.'
+            );
+          }
         }
-        descriptor = { ...descriptor, assetUrl: navigationUrl };
-      } else if (adapter.adapterId === 'chromium-pdf') {
-        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
-        navigationUrl = onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
-          selectionRevision: revision,
-          maxBytes: Math.min(opened.size, maxBytes ?? opened.size),
-          delivery: 'network'
-        });
-        assetIssued = true;
-        descriptor = { ...descriptor, assetUrl: navigationUrl };
-      } else if (
-        adapter.adapterId === 'ooxml-xlsx' ||
-        adapter.adapterId === 'ooxml-docx' ||
-        adapter.adapterId === 'ooxml-pptx'
-      ) {
-        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
-        descriptor = {
-          ...descriptor,
-          assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
-            selectionRevision: revision,
-            maxBytes: Math.min(opened.size, maxBytes ?? opened.size)
-          })
-        };
-        assetIssued = true;
-      } else if (adapter.adapterId === 'drawio-viewer') {
-        const maxBytes = getOnlyPreviewFileSizeLimit(adapter.adapterId);
-        descriptor = {
-          ...descriptor,
-          assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
-            selectionRevision: revision,
-            maxBytes: Math.min(opened.size, maxBytes ?? opened.size)
-          })
-        };
-        assetIssued = true;
-      } else if (
-        adapter.adapterId === 'image' ||
-        adapter.adapterId === 'audio' ||
-        adapter.adapterId === 'video'
-      ) {
-        const adapterLimit = getOnlyPreviewFileSizeLimit(adapter.adapterId);
-        const maxBytes = Math.min(opened.size, adapterLimit ?? opened.size);
-        descriptor = {
-          ...descriptor,
-          assetUrl: onlyPreviewAssetRegistry.issue(opened, descriptor.mimeType, {
-            selectionRevision: revision,
-            maxBytes,
-            lifetime:
-              adapter.adapterId === 'audio' || adapter.adapterId === 'video' ? 'selection' : 'ttl'
-          })
-        };
-        assetIssued = true;
       }
-
-      if (assetIssued && !this.isCurrent(runtime, revision)) {
-        onlyPreviewAssetRegistry.revokeSelection(runtime.host.hostToken, revision);
-        return;
-      }
-
-      await onlyPreviewWorkspaceRegistry.assertOpenedFileCurrent(opened);
+      const delivery = issueOnlyPreviewSelectionDelivery({
+        hostToken: runtime.host.hostToken,
+        selectionRevision: revision,
+        prepared,
+        adapter
+      });
+      descriptor = delivery.descriptor;
       if (!this.isCurrent(runtime, revision)) {
-        if (assetIssued) {
+        if (adapter.adapterId === 'html-page') {
+          onlyPreviewDocumentRegistry.revokeSelection(runtime.host.hostToken, revision);
+        } else if (delivery.assetIssued) {
           onlyPreviewAssetRegistry.revokeSelection(runtime.host.hostToken, revision);
         }
+        await this.cancelPreparedPreview(prepared);
         return;
       }
-
-      this.activeFileIdentity = {
-        workspaceId: opened.workspace.workspaceId,
-        relativePath: opened.relativePath,
-        realPath: opened.realPath,
-        size: opened.size,
-        deviceId: opened.deviceId,
-        inode: opened.inode,
-        modifiedTimeNanoseconds: opened.modifiedTimeNanoseconds
-      };
+      this.readBroker.setPreviewAuthority(brokerCapability, prepared);
+      prepared = null;
 
       descriptor = cloneOnlyPreviewDescriptor(descriptor);
       this.activePreviewSurface = adapter.surface;
@@ -255,20 +223,20 @@ export class OnlyPreviewPreviewRegionService {
       this.publishPresentation();
       this.viewService.armDocumentWatchdogIfEligible();
 
-      if (adapter.surface === 'chrome' && navigationUrl) {
+      if (adapter.surface === 'chrome' && delivery.navigationUrl) {
         await this.viewService.stageChromeSelection(
           runtime,
           revision,
-          navigationUrl,
+          delivery.navigationUrl,
           adapter.adapterId === 'chromium-pdf'
         );
       } else {
         this.viewService.attachActiveView();
       }
     } catch (error) {
+      if (prepared) await this.cancelPreparedPreview(prepared);
       if (!this.isCurrent(runtime, revision)) return;
       this.revokeCurrentAuthority();
-      this.activeFileIdentity = null;
       this.viewService.detachActiveView();
       this.viewService.destroyChromePreviewView();
       this.activePreviewSurface = 'vue';
@@ -286,8 +254,6 @@ export class OnlyPreviewPreviewRegionService {
       };
       this.publishPresentation();
       this.viewService.attachActiveView();
-    } finally {
-      await opened?.fileHandle.close().catch(() => undefined);
     }
   }
 
@@ -367,57 +333,6 @@ export class OnlyPreviewPreviewRegionService {
     return this.viewService.focusActiveContent();
   }
 
-  async readText(
-    hostToken: string,
-    request: Omit<OnlyPreviewTextReadRequest, 'hostToken'>
-  ): Promise<OnlyPreviewTextContent> {
-    const runtime = this.requireRuntime(hostToken);
-    this.requireCurrentVueRevision(
-      hostToken,
-      request.selectionRevision,
-      request.previewRuntimeToken
-    );
-    const fileRef = this.presentation.fileRef;
-    if (
-      !fileRef ||
-      fileRef.workspaceId !== request.workspaceId ||
-      fileRef.relativePath !== request.relativePath ||
-      this.presentation.adapterId !== request.adapterId ||
-      this.presentation.descriptor?.kind !== 'text' ||
-      this.presentation.status !== 'loading'
-    ) {
-      throw new OnlyPreviewContractError(
-        'INVALID_INPUT',
-        'Preview text request does not match the current selection.'
-      );
-    }
-
-    const opened = await onlyPreviewWorkspaceRegistry.openFile(runtime.host.hostToken, fileRef);
-    try {
-      if (!this.isCurrent(runtime, request.selectionRevision) || !this.matchesActiveFile(opened)) {
-        throw new OnlyPreviewContractError(
-          'PATH_NOT_FOUND',
-          'The selected file changed before its text could be read.'
-        );
-      }
-      const result = await onlyPreviewClassifierService.readText(opened, request.adapterId);
-      this.requireCurrentVueRevision(
-        hostToken,
-        request.selectionRevision,
-        request.previewRuntimeToken
-      );
-      if (!this.matchesActiveFile(opened)) {
-        throw new OnlyPreviewContractError(
-          'PATH_NOT_FOUND',
-          'The selected file changed while its text was being read.'
-        );
-      }
-      return result;
-    } finally {
-      await opened.fileHandle.close().catch(() => undefined);
-    }
-  }
-
   reportVueReset(hostToken: string, selectionRevision: number, previewRuntimeToken: string): void {
     this.requireCurrentVueRevision(hostToken, selectionRevision, previewRuntimeToken, false);
     this.vueResetAcknowledgedRevision = selectionRevision;
@@ -457,8 +372,18 @@ export class OnlyPreviewPreviewRegionService {
     }
     this.readyFindCoverage = findCoverage ?? { kind: 'complete' };
     this.viewService.clearDocumentWatchdog();
+    if (this.readBroker.hasOfficeSelection(selectionRevision)) {
+      this.readBroker.revokeOfficeReadAuthority();
+    }
     if (onlyPreviewAdapterUsesOneShotAsset(this.presentation.adapterId)) {
       onlyPreviewAssetRegistry.revokeSelection(hostToken, selectionRevision);
+    }
+    if (
+      this.presentation.surface === 'vue' &&
+      this.presentation.adapterId !== 'audio' &&
+      this.presentation.adapterId !== 'video'
+    ) {
+      this.readBroker.revokePreviewReadAuthority();
     }
     const descriptor = this.presentation.descriptor
       ? { ...this.presentation.descriptor }
@@ -508,6 +433,7 @@ export class OnlyPreviewPreviewRegionService {
     }
     this.findService.beginTransition();
     this.viewService.clearDocumentWatchdog();
+    this.readBroker.revokeAll();
     onlyPreviewAssetRegistry.revokeSelection(hostToken, selectionRevision);
     const descriptor = this.presentation.descriptor
       ? { ...this.presentation.descriptor }
@@ -543,7 +469,6 @@ export class OnlyPreviewPreviewRegionService {
     this.revokeCurrentAuthority();
     this.viewService.destroy();
     this.vueResetAcknowledgedRevision = null;
-    this.activeFileIdentity = null;
     this.runtime = null;
     this.activePreviewSurface = null;
     if (runtime) {
@@ -580,7 +505,6 @@ export class OnlyPreviewPreviewRegionService {
     this.viewService.clearPendingChromeSelection();
     this.activePreviewSurface = null;
     this.vueResetAcknowledgedRevision = null;
-    this.activeFileIdentity = null;
     this.presentation = {
       ...createEmptyOnlyPreviewPresentation(runtime.host.hostId, this.selectionRevision),
       workspaceId: fileRef?.workspaceId ?? null,
@@ -596,6 +520,70 @@ export class OnlyPreviewPreviewRegionService {
     if (!hostToken) return;
     onlyPreviewDocumentRegistry.revokeSelection(hostToken);
     onlyPreviewAssetRegistry.revokeSelection(hostToken);
+    this.readBroker.revokeAll();
+  }
+
+  private async cancelPreparedPreview(
+    prepared: OnlyPreviewPreviewReadPreparedSelection
+  ): Promise<void> {
+    await fileSearchWindowService
+      .cancelPreviewRead({
+        grantId: prepared.grantId,
+        selectionRevision: prepared.selectionRevision
+      })
+      .catch(() => undefined);
+  }
+
+  private async presentOffice(
+    runtime: OnlyPreviewPreviewRegionRuntime,
+    fileRef: OnlyPreviewFileRef,
+    revision: number,
+    kind: OnlyPreviewOfficePackageKind
+  ): Promise<void> {
+    await this.readBroker.waitForOfficeCancellation();
+    this.viewService.ensureVuePreviewView();
+    const runtimeId = this.viewService.getVueRuntimeToken();
+    const brokerCapability = this.viewService.getOfficeBrokerCapability();
+    if (!runtimeId || !brokerCapability) {
+      throw new OnlyPreviewContractError(
+        'OPERATION_FAILED',
+        'Office preview runtime is unavailable.'
+      );
+    }
+    const prepared = await this.readBroker.prepareOfficeSelection({
+      hostToken: runtime.host.hostToken,
+      fileRef,
+      selectionRevision: revision,
+      runtimeId,
+      kind
+    });
+    if (!this.isCurrent(runtime, revision)) {
+      await this.readBroker.cancelPreparedOffice(prepared.grantId, runtimeId, revision);
+      return;
+    }
+    this.readBroker.setOfficeAuthority({
+      brokerCapability,
+      grantId: prepared.grantId,
+      runtimeId,
+      selectionRevision: revision,
+      kind
+    });
+    this.activePreviewSurface = 'vue';
+    this.presentation = {
+      hostId: runtime.host.hostId,
+      workspaceId: fileRef.workspaceId,
+      selectionRevision: revision,
+      surface: 'vue',
+      adapterId: prepared.adapterId,
+      status: 'loading',
+      fileRef,
+      descriptor: prepared.descriptor,
+      error: null,
+      selectedTextAvailable: onlyPreviewAdapterProvidesSelectedText(prepared.adapterId)
+    };
+    this.publishPresentation();
+    this.viewService.armDocumentWatchdogIfEligible();
+    this.viewService.attachActiveView();
   }
 
   private handleVueUnavailable(
@@ -766,21 +754,6 @@ export class OnlyPreviewPreviewRegionService {
     return this.runtime === runtime && this.selectionRevision === revision;
   }
 
-  private matchesActiveFile(
-    file: Awaited<ReturnType<typeof onlyPreviewWorkspaceRegistry.openFile>>
-  ): boolean {
-    const identity = this.activeFileIdentity;
-    return Boolean(
-      identity &&
-      file.workspace.workspaceId === identity.workspaceId &&
-      file.relativePath === identity.relativePath &&
-      file.realPath === identity.realPath &&
-      file.size === identity.size &&
-      file.deviceId === identity.deviceId &&
-      file.inode === identity.inode &&
-      file.modifiedTimeNanoseconds === identity.modifiedTimeNanoseconds
-    );
-  }
 }
 
 export const onlyPreviewPreviewRegionService = new OnlyPreviewPreviewRegionService();

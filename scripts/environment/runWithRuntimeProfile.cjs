@@ -44,7 +44,8 @@ try {
 const childEnvironment = {
   ...process.env,
   VITE_ENV: selected.viteEnv,
-  VITE_MODE: selected.viteMode
+  VITE_MODE: selected.viteMode,
+  VITE_RELEASE_CHANNEL: selected.releaseChannel
 };
 
 let childExecutable = command;

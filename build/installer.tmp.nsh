@@ -7,11 +7,9 @@
         nsExec::ExecToLog 'taskkill /F /IM "EXECUTABLE_NAME.exe" /T'
         Sleep 1500
     ${EndIf}
-    WriteRegStr SHCTX "Software\Classes\*\shell\OnlyPreview" "" "Open in Bitterless"
-    WriteRegStr SHCTX "Software\Classes\*\shell\OnlyPreview" "Icon" "$INSTDIR\EXECUTABLE_NAME.exe"
-    WriteRegStr SHCTX "Software\Classes\*\shell\OnlyPreview\command" "" '"$INSTDIR\EXECUTABLE_NAME.exe" "%1"'
+ONLY_PREVIEW_INSTALL
 !macroend
 
 !macro customUnInstall
-    DeleteRegKey SHCTX "Software\Classes\*\shell\OnlyPreview"
+ONLY_PREVIEW_UNINSTALL
 !macroend

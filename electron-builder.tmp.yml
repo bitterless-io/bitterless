@@ -2,6 +2,7 @@ appId: io.bitterless.app
 productName: Bitterless
 directories:
   buildResources: build
+  output: dist
 electronLanguages:
   - zh_CN
   - zh_TW
@@ -16,6 +17,8 @@ files:
   - '!src/*'
   - '!scripts/*'
   - '!tests/**'
+  - '!dist/**'
+  - '!tmp/**'
   - '!output/**'
   - '!out/playwright/**'
   - '!doc/*'
@@ -61,6 +64,7 @@ extraResources:
     to: sounds
 win:
   executableName: ${name}
+  icon: build/icon.ico
 fileAssociations:
   - ext:
       - txt
@@ -139,7 +143,7 @@ fileAssociations:
     role: Viewer
     rank: Alternate
 nsis:
-  artifactName: ${productName}VITE_ENV_PART-${version}-setup.${ext}
+  artifactName: ARTIFACT_STEM-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -166,7 +170,7 @@ mac:
         LSItemContentTypes:
           - public.data
 dmg:
-  artifactName: ${productName}VITE_ENV_PART-${version}.${ext}
+  artifactName: ARTIFACT_STEM-${version}.${ext}
 npmRebuild: false
 publish:
   provider: generic

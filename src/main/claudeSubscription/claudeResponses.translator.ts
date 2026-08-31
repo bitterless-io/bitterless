@@ -1,13 +1,13 @@
 import {
-  CLAUDE_SUBSCRIPTION_EFFORTS,
   SUB2API_CLIENT_EFFORTS,
-  shiftClientEffortToUpstream,
+  resolveClaudeCliEffort,
   CLAUDE_SUBSCRIPTION_MODELS,
   type ClaudeBridgePayload,
   type ClaudeCliModel,
   type ClaudeEffort,
   type ClaudeNormalizedCodexTool,
   type ClaudeResponsesRequest,
+  type ClaudeMediaBlock,
   type ClaudeSubscriptionModel,
   type Sub2ApiClientEffort,
   type ClaudeSubscriptionJsonObject
@@ -163,14 +163,85 @@ export const resolveClaudeEffort = (reasoning: unknown): Sub2ApiClientEffort => 
   throw new ClaudeSubscriptionInvalidRequestError('Responses reasoning effort is unsupported.');
 };
 
-const normalizeContentPart = (part: unknown): unknown => {
-  if (!isObject(part)) return part;
-  if (part.type !== 'input_image' && part.type !== 'output_image') return part;
-  return {
-    type: part.type,
-    ...(typeof part.detail === 'string' ? { detail: part.detail } : {}),
-    note: 'Image bytes are not forwarded by Bitterless. Codex must use its own image-inspection tool.'
+const DATA_URL = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/iu;
+const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Reads an attachment into Anthropic's block shape, or returns null.
+ *
+ * Codex sends images and files as `data:` URLs on the item. They used to be thrown
+ * away here with a note telling the model to use its own tool, which was a fiction —
+ * the model got nothing and answered as if the image did not exist.
+ */
+const readMediaBlock = (part: ClaudeSubscriptionJsonObject): ClaudeMediaBlock | null => {
+  const url =
+    typeof part.image_url === 'string'
+      ? part.image_url
+      : typeof part.file_url === 'string'
+        ? part.file_url
+        : typeof part.file_data === 'string'
+          ? part.file_data
+          : undefined;
+  if (!url) return null;
+  const match = DATA_URL.exec(url.trim());
+  if (!match) return null;
+  const mediaType = match[1]?.toLowerCase();
+  const data = match[2]?.replace(/\s+/gu, '');
+  if (!mediaType || !data) return null;
+  // Base64 is 4 characters per 3 bytes; bounding it here keeps one oversized paste
+  // from being handed to a child process as a multi-megabyte argument.
+  if ((data.length * 3) / 4 > MAX_MEDIA_BYTES) return null;
+  if (mediaType === 'application/pdf') {
+    return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } };
+  }
+  if (SUPPORTED_IMAGE_TYPES.includes(mediaType)) {
+    return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
+  }
+  return null;
+};
+
+const isMediaPart = (part: ClaudeSubscriptionJsonObject): boolean =>
+  part.type === 'input_image' ||
+  part.type === 'output_image' ||
+  part.type === 'input_file' ||
+  part.type === 'input_document';
+
+/**
+ * Pulls attachments out of the transcript and leaves a numbered marker behind.
+ *
+ * The bytes cannot stay inline: the payload is serialised into one JSON string that
+ * becomes the prompt's text block, and base64 there is unreadable to the model. The
+ * marker keeps position — "the image referred to in this message" — while the block
+ * itself travels alongside as real content.
+ */
+export const extractClaudeMedia = (
+  conversation: unknown[]
+): { conversation: unknown[]; media: ClaudeMediaBlock[] } => {
+  const media: ClaudeMediaBlock[] = [];
+  const convertPart = (part: unknown): unknown => {
+    if (!isObject(part) || !isMediaPart(part)) return part;
+    const block = readMediaBlock(part);
+    if (!block) {
+      return {
+        type: part.type,
+        note: 'Attachment could not be decoded and was not forwarded.'
+      };
+    }
+    media.push(block);
+    return {
+      type: part.type,
+      attachment: media.length,
+      note: `Attachment #${media.length} is supplied as ${block.type} content with this message.`
+    };
   };
+  const converted = conversation.map((item) => {
+    if (!isObject(item)) return item;
+    if (isMediaPart(item)) return convertPart(item);
+    if (item.type !== 'message' || !Array.isArray(item.content)) return item;
+    return { ...item, content: item.content.map(convertPart) };
+  });
+  return { conversation: converted, media };
 };
 
 export const normalizeClaudeConversation = (input: unknown[] | string): unknown[] => {
@@ -183,14 +254,7 @@ export const normalizeClaudeConversation = (input: unknown[] | string): unknown[
       }
     ];
   }
-  return input.map((item) => {
-    if (!isObject(item)) return item;
-    if (item.type === 'input_image' || item.type === 'output_image') {
-      return normalizeContentPart(item);
-    }
-    if (item.type !== 'message' || !Array.isArray(item.content)) return item;
-    return { ...item, content: item.content.map(normalizeContentPart) };
-  });
+  return input;
 };
 
 export const parseClaudeResponsesRequest = (value: unknown): ClaudeResponsesRequest => {
@@ -266,9 +330,11 @@ export const resolveClaudeSubscriptionModel = (model: string): ClaudeCliModel =>
 
 export const buildClaudeBridgePayload = (request: ClaudeResponsesRequest): ClaudeBridgePayload => {
   const { functions, unsupported } = extractClaudeCodexTools(request.tools);
+  const { conversation, media } = extractClaudeMedia(normalizeClaudeConversation(request.input));
   return {
     codex_instructions: request.instructions,
-    conversation: normalizeClaudeConversation(request.input),
+    conversation,
+    ...(media.length > 0 ? { media } : {}),
     available_tools: functions,
     unsupported_codex_tool_types: unsupported,
     response_rule:
@@ -303,7 +369,7 @@ export const claudeUpstreamTarget = (
     cliModel: CLAUDE_SUBSCRIPTION_MODELS[modelId],
     // The CLI ladder has one rung fewer than the client's, so its two lowest client
     // rungs share `low`. Collapsing at the bottom keeps `ultra` on the CLI's `max`.
-    effort: shiftClientEffortToUpstream(request.claudeEffort, CLAUDE_SUBSCRIPTION_EFFORTS)
+    effort: resolveClaudeCliEffort(request.claudeEffort)
   };
 };
 

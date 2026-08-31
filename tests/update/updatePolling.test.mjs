@@ -76,6 +76,9 @@ const loadTypeScriptModule = (path, dependencies, options = {}) => {
   return loadedModule.exports;
 };
 
+const loadUpdateChannelModule = () =>
+  loadTypeScriptModule('src/main/updateHelper/updateChannel.service.ts', {});
+
 const createRendererXpc = (snapshotRequest) => {
   const calls = [];
   const subscribers = new Map();
@@ -336,6 +339,7 @@ test('Main normalizes downloaded notes and keeps a cloned snapshot before broadc
         'electron-updater': { autoUpdater },
         electron: { app: {} },
         'electron-xpc/main': { xpcMain },
+        './updateChannel.service': loadUpdateChannelModule(),
         './updatePolling.service': { UpdatePollingService: TestUpdatePollingService }
       },
       { replaceImportMetaEnv: true, logger: createLogger().logger }

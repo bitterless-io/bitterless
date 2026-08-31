@@ -15,49 +15,21 @@ import {
   withFakeTimeouts
 } from './onlyPreviewPreviewRegionTest.helper.mjs';
 
-test('Vue text reads require the exact runtime, revision, file ref, and adapter and reject late bodies', async () => {
+test('Vue Preview View exposes no legacy whole-text read and delegates text bytes to Preview Read', () => {
   const { service } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  state.describe = async () => descriptorFor('notes/readme.md', 'text');
-  await service.present(host.hostToken, fileRef('notes/readme.md'));
-  const vue = acknowledgeCurrentVue(service);
-  const current = service.snapshot(host.hostToken);
-  const request = {
-    previewRuntimeToken: vue.previewRuntimeToken,
-    selectionRevision: current.selectionRevision,
-    ...current.fileRef,
-    adapterId: 'markdown-dom'
-  };
+  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+  const viewService = source('src/main/onlypreview/views/onlyPreviewPreviewView.service.ts');
+  const readBroker = source('src/main/onlypreview/views/onlyPreviewPreviewReadBroker.service.ts');
 
-  assert.equal((await service.readText(host.hostToken, request)).text, 'markdown-dom');
-  assert.equal(state.textReadCalls.length, 1);
-  for (const forged of [
-    { ...request, previewRuntimeToken: 'forged-runtime-token' },
-    { ...request, selectionRevision: request.selectionRevision + 1 },
-    { ...request, relativePath: 'other.md' },
-    { ...request, adapterId: 'monaco' }
-  ]) {
-    await assert.rejects(
-      service.readText(host.hostToken, forged),
-      (error) => error.code === 'INVALID_INPUT' || error.code === 'HOST_ROLE_DENIED'
-    );
-  }
-  assert.equal(state.textReadCalls.length, 1);
-
-  const pending = deferred();
-  state.readText = async () => await pending.promise;
-  const staleRead = service.readText(host.hostToken, request);
-  await tick();
-  state.describe = async () => descriptorFor('next.md', 'text');
-  await service.present(host.hostToken, fileRef('next.md'));
-  pending.resolve({
-    workspaceId: 'workspace-id',
-    relativePath: 'notes/readme.md',
-    text: 'stale',
-    encoding: 'utf-8',
-    size: 5
-  });
-  await assert.rejects(staleRead, (error) => error.code === 'INVALID_INPUT');
+  assert.equal(typeof service.readText, 'undefined');
+  assert.doesNotMatch(viewService, /\breadText\s*\(/);
+  assert.doesNotMatch(region, /onlyPreviewClassifierService\.readText/);
+  assert.match(region, /this\.viewService\.getPreviewReadBrokerCapability\(\)/);
+  assert.match(region, /this\.readBroker\.setPreviewAuthority\(brokerCapability, prepared\)/);
+  assert.match(readBroker, /async openCurrentPreviewText\(/);
+  assert.match(readBroker, /fileSearchWindowService\.openPreviewRead\(\{/);
+  assert.match(readBroker, /async readCurrentPreviewTextChunk\(/);
+  assert.match(readBroker, /fileSearchWindowService\.readNextPreviewChunk\(\{/);
 });
 
 test('Chrome setup failure revokes authority and falls back to a truthful Vue error', async () => {

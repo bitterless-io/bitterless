@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { mkdtempSync, openSync, closeSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -32,15 +32,6 @@ const runtime = await import(pathToFileURL(bundlePath).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
-const withTempDirectory = async (callback) => {
-  const root = mkdtempSync(join(tmpdir(), 'onlypreview-preview-guards-'));
-  try {
-    return await callback(root);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-};
-
 const createRegistries = () => {
   const hosts = new runtime.OnlyPreviewHostRegistry();
   const workspaces = new runtime.OnlyPreviewWorkspaceRegistry(hosts);
@@ -52,31 +43,32 @@ const expectOnlyPreviewError = (code) => (error) =>
   error instanceof runtime.OnlyPreviewContractError && error.code === code;
 
 const createMetadataFile = ({ relativePath, size, bytes = Buffer.alloc(0) }) => {
-  let bodyReadCount = 0;
+  let sampleReadCount = 0;
   return {
     file: {
-      host: { hostToken: 'host-token' },
-      workspace: { workspaceId: 'workspace-id', rootRealPath: '/workspace' },
+      workspaceId: 'workspace-id',
       relativePath,
-      realPath: `/workspace/${relativePath}`,
       size,
-      modifiedAt: 1,
-      modifiedTimeNanoseconds: 1n,
-      deviceId: 1n,
-      inode: 2n,
-      fileHandle: {
-        read: async (target, offset, length, position) => {
-          bodyReadCount += 1;
-          const available = Math.max(0, Math.min(length, bytes.length - position));
-          if (available > 0) bytes.copy(target, offset, position, position + available);
-          return { bytesRead: available, buffer: target };
-        },
-        close: async () => undefined
-      }
+      modifiedAt: 1
     },
-    bodyReadCount: () => bodyReadCount
+    bytes,
+    readSample: () => {
+      sampleReadCount += 1;
+      return new Uint8Array(bytes);
+    },
+    sampleReadCount: () => sampleReadCount
   };
 };
+
+const createPreparedSelection = (descriptor, selectionRevision = 1) => ({
+  grantId: `preview-grant-${selectionRevision}`,
+  selectionRevision,
+  workspaceId: descriptor.workspaceId,
+  workspaceGeneration: 1,
+  relativePath: descriptor.relativePath,
+  runtimeInstanceId: 'hidden-preview-runtime',
+  descriptor
+});
 
 test('extension-first routing preserves known adapters and defaults remaining files to plaintext', async () => {
   const textExtensions = [
@@ -188,29 +180,28 @@ test('extension-first routing preserves known adapters and defaults remaining fi
   assert.equal(runtime.classifyOnlyPreviewExtension('module.CJS'), 'text');
   assert.equal(classifySearchMediaType('module.CJS'), 'text');
 
-  const workspaces = { assertOpenedFileCurrent: async () => undefined };
-  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  const service = new runtime.OnlyPreviewClassifierService();
   const unknown = createMetadataFile({
     relativePath: 'plain.unknown',
-    size: 12,
+    size: Buffer.byteLength('readable text'),
     bytes: Buffer.from('readable text')
   });
-  const unknownDescriptor = await service.describe(unknown.file);
+  const unknownDescriptor = service.describe(unknown.file);
   assert.equal(unknownDescriptor.kind, 'text');
   assert.equal(unknownDescriptor.language, 'plaintext');
   assert.equal(unknownDescriptor.mimeType, 'text/plain; charset=utf-8');
   assert.equal('displayPath' in unknownDescriptor, false);
   assert.doesNotMatch(JSON.stringify(unknownDescriptor), /\/workspace\//u);
-  assert.equal(unknown.bodyReadCount(), 0);
-  assert.equal((await service.readText(unknown.file, 'monaco')).text, 'readable text');
+  assert.equal(unknown.sampleReadCount(), 0);
+  assert.equal(service.decodeText(unknown.file, 'monaco', unknown.bytes).text, 'readable text');
 
   const renamedZip = createMetadataFile({
     relativePath: 'archive.js',
     size: 7,
     bytes: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0x00])
   });
-  assert.equal((await service.describe(renamedZip.file)).kind, 'text');
-  assert.equal(renamedZip.bodyReadCount(), 0);
+  assert.equal(service.describe(renamedZip.file).kind, 'text');
+  assert.equal(renamedZip.sampleReadCount(), 0);
 });
 
 test('media catalogs are exact and recognized unsupported formats never issue decoder work', async () => {
@@ -225,8 +216,7 @@ test('media catalogs are exact and recognized unsupported formats never issue de
     }
   }
 
-  const workspaces = { assertOpenedFileCurrent: async () => undefined };
-  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  const service = new runtime.OnlyPreviewClassifierService();
   for (const [category, extensions] of [
     ['image-format', ['.heic', '.heif', '.tif', '.tiff', '.raw']],
     ['video-container', ['.mkv', '.avi', '.wmv', '.flv']]
@@ -237,11 +227,11 @@ test('media catalogs are exact and recognized unsupported formats never issue de
         size: 16,
         bytes: Buffer.alloc(16, 0xff)
       });
-      const descriptor = await service.describe(candidate.file);
+      const descriptor = service.describe(candidate.file);
       assert.equal(descriptor.kind, 'unsupported', extension);
       assert.equal(descriptor.unsupportedCategory, category, extension);
       assert.equal(descriptor.assetUrl, undefined, extension);
-      assert.equal(candidate.bodyReadCount(), 0, extension);
+      assert.equal(candidate.sampleReadCount(), 0, extension);
     }
   }
 
@@ -251,23 +241,22 @@ test('media catalogs are exact and recognized unsupported formats never issue de
       size: 4,
       bytes: Buffer.alloc(4)
     });
-    assert.equal((await service.describe(legacyOfficeFile.file)).kind, 'unsupported', relativePath);
-    assert.equal(legacyOfficeFile.bodyReadCount(), 0, relativePath);
+    assert.equal(service.describe(legacyOfficeFile.file).kind, 'unsupported', relativePath);
+    assert.equal(legacyOfficeFile.sampleReadCount(), 0, relativePath);
   }
 
   for (const relativePath of ['fixture.heicx', 'fixture.raw2', 'fixture.mkvs', 'fixture.bin']) {
     const candidate = createMetadataFile({ relativePath, size: 4, bytes: Buffer.alloc(4) });
-    const descriptor = await service.describe(candidate.file);
+    const descriptor = service.describe(candidate.file);
     assert.equal(descriptor.kind, 'text', relativePath);
     assert.equal(descriptor.language, 'plaintext', relativePath);
     assert.equal(descriptor.unsupportedCategory, undefined, relativePath);
-    assert.equal(candidate.bodyReadCount(), 0, relativePath);
+    assert.equal(candidate.sampleReadCount(), 0, relativePath);
   }
 });
 
 test('reviewed SVG, AAC, and QuickTime signatures stay broad enough without accepting malformed atoms', async () => {
-  const workspaces = { assertOpenedFileCurrent: async () => undefined };
-  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  const service = new runtime.OnlyPreviewClassifierService();
   const fixtures = [
     [
       'commented.svg',
@@ -285,7 +274,11 @@ test('reviewed SVG, AAC, and QuickTime signatures stay broad enough without acce
   ];
   for (const [relativePath, bytes] of fixtures) {
     const candidate = createMetadataFile({ relativePath, size: bytes.length, bytes });
-    assert.equal((await service.describe(candidate.file)).previewError, undefined, relativePath);
+    assert.equal(
+      service.describe(candidate.file, candidate.readSample()).previewError,
+      undefined,
+      relativePath
+    );
   }
 
   const malformedAtom = Buffer.alloc(16);
@@ -296,7 +289,10 @@ test('reviewed SVG, AAC, and QuickTime signatures stay broad enough without acce
     size: malformedAtom.length,
     bytes: malformedAtom
   });
-  assert.equal((await service.describe(malformed.file)).previewError?.code, 'SIGNATURE_MISMATCH');
+  assert.equal(
+    service.describe(malformed.file, malformed.readSample()).previewError?.code,
+    'SIGNATURE_MISMATCH'
+  );
 
   const truncatedPng = createMetadataFile({
     relativePath: 'truncated.png',
@@ -304,15 +300,14 @@ test('reviewed SVG, AAC, and QuickTime signatures stay broad enough without acce
     bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
   });
   assert.equal(
-    (await service.describe(truncatedPng.file)).previewError,
+    service.describe(truncatedPng.file, truncatedPng.readSample()).previewError,
     undefined,
     'a valid header is admitted for the renderer decoder to classify the truncated payload'
   );
 });
 
 test('empty supported image and media are classified before signature reads', async () => {
-  const workspaces = { assertOpenedFileCurrent: async () => undefined };
-  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  const service = new runtime.OnlyPreviewClassifierService();
   for (const [relativePath, errorCode] of [
     ['empty.png', 'IMAGE_EMPTY'],
     ['empty.mp3', 'MEDIA_EMPTY'],
@@ -320,15 +315,14 @@ test('empty supported image and media are classified before signature reads', as
     ['empty.drawio', 'DIAGRAM_EMPTY']
   ]) {
     const candidate = createMetadataFile({ relativePath, size: 0 });
-    const descriptor = await service.describe(candidate.file);
+    const descriptor = service.describe(candidate.file);
     assert.equal(descriptor.previewError?.code, errorCode, relativePath);
-    assert.equal(candidate.bodyReadCount(), 0, relativePath);
+    assert.equal(candidate.sampleReadCount(), 0, relativePath);
   }
 });
 
 test('size-first metadata gates read zero body bytes at adapter limit plus one', async () => {
-  const workspaces = { assertOpenedFileCurrent: async () => undefined };
-  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+  const service = new runtime.OnlyPreviewClassifierService();
   for (const fixture of [
     ['huge.vue', 1024 ** 3],
     ['huge.unknown', runtime.ONLY_PREVIEW_MAX_TEXT_BYTES + 1],
@@ -342,17 +336,17 @@ test('size-first metadata gates read zero body bytes at adapter limit plus one',
     ['diagram.drawio', runtime.ONLY_PREVIEW_MAX_DIAGRAM_BYTES + 1]
   ]) {
     const candidate = createMetadataFile({ relativePath: fixture[0], size: fixture[1] });
-    const descriptor = await service.describe(candidate.file);
+    const descriptor = service.describe(candidate.file);
     assert.equal(descriptor.previewError?.code, 'TEXT_TOO_LARGE', fixture[0]);
-    assert.equal(candidate.bodyReadCount(), 0, fixture[0]);
+    assert.equal(candidate.sampleReadCount(), 0, fixture[0]);
   }
 
   const markdownSource = createMetadataFile({
     relativePath: 'notes.markdown',
     size: runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES + 1
   });
-  assert.equal((await service.describe(markdownSource.file)).previewError, undefined);
-  assert.equal(markdownSource.bodyReadCount(), 0);
+  assert.equal(service.describe(markdownSource.file).previewError, undefined);
+  assert.equal(markdownSource.sampleReadCount(), 0);
 
   assert.equal(runtime.ONLY_PREVIEW_DEFAULT_FILE_SIZE_LIMIT_BYTES, 10 * 1024 * 1024);
   assert.equal(runtime.getOnlyPreviewFileSizeLimit('unsupported'), 10 * 1024 * 1024);
@@ -361,8 +355,8 @@ test('size-first metadata gates read zero body bytes at adapter limit plus one',
     relativePath: 'large.drawio',
     size: 11 * 1024 * 1024
   });
-  assert.equal((await service.describe(largeDiagram.file)).previewError, undefined);
-  assert.equal(largeDiagram.bodyReadCount(), 0);
+  assert.equal(service.describe(largeDiagram.file).previewError, undefined);
+  assert.equal(largeDiagram.sampleReadCount(), 0);
 });
 
 test('unknown search text uses the 1 MiB size-first admission gate without body sniffing', async () => {
@@ -439,85 +433,85 @@ test('unknown search text uses the 1 MiB size-first admission gate without body 
 });
 
 test('bounded text reads accept exact caps and decode malformed UTF/NUL and odd UTF-16 tails', async () => {
-  await withTempDirectory(async (root) => {
-    const { hosts, workspaces } = createRegistries();
-    const service = new runtime.OnlyPreviewClassifierService(workspaces);
-    const host = hosts.issue('standalone', 'content');
-    const workspace = await workspaces.createForTarget(host.hostToken, root);
-    const read = async (relativePath, adapterId) => {
-      const file = await workspaces.openFile(host.hostToken, {
-        workspaceId: workspace.workspaceId,
-        relativePath
-      });
-      try {
-        return await service.readText(file, adapterId);
-      } finally {
-        await file.fileHandle.close().catch(() => undefined);
-      }
-    };
-
-    writeFileSync(join(root, 'garbage.js'), Buffer.from([0x50, 0x4b, 0x00, 0xff, 0xc3, 0x28]));
-    const garbage = await read('garbage.js', 'monaco');
-    assert.equal(garbage.text.includes('\0'), true);
-    assert.match(garbage.text, /\uFFFD/u);
-
-    writeFileSync(join(root, 'odd-le.txt'), Buffer.from([0xff, 0xfe, 0x68, 0x00, 0x69]));
-    assert.equal((await read('odd-le.txt', 'monaco')).text, 'h\uFFFD');
-    writeFileSync(join(root, 'odd-be.txt'), Buffer.from([0xfe, 0xff, 0x00, 0x68, 0x00]));
-    assert.equal((await read('odd-be.txt', 'monaco')).text, 'h\uFFFD');
-
-    writeFileSync(
-      join(root, 'exact.md'),
-      Buffer.alloc(runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES, 0x61)
-    );
-    assert.equal(
-      (await read('exact.md', 'markdown-dom')).size,
-      runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES
-    );
-    const plusOnePath = join(root, 'plus-one.md');
-    const descriptor = openSync(plusOnePath, 'w');
-    closeSync(descriptor);
-    truncateSync(plusOnePath, runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES + 1);
-    await assert.rejects(
-      read('plus-one.md', 'markdown-dom'),
-      expectOnlyPreviewError('TEXT_TOO_LARGE')
+  const service = new runtime.OnlyPreviewClassifierService();
+  const decode = (relativePath, adapterId, bytes, size = bytes.byteLength) =>
+    service.decodeText(
+      { workspaceId: 'workspace-id', relativePath, size, modifiedAt: 1 },
+      adapterId,
+      bytes
     );
 
-    writeFileSync(
-      join(root, 'exact.markdown'),
-      Buffer.alloc(runtime.ONLY_PREVIEW_MAX_TEXT_BYTES, 0x61)
-    );
-    assert.equal(
-      (await read('exact.markdown', 'monaco')).size,
-      runtime.ONLY_PREVIEW_MAX_TEXT_BYTES
-    );
-    const plusOneMonacoPath = join(root, 'plus-one.markdown');
-    const plusOneMonaco = openSync(plusOneMonacoPath, 'w');
-    closeSync(plusOneMonaco);
-    truncateSync(plusOneMonacoPath, runtime.ONLY_PREVIEW_MAX_TEXT_BYTES + 1);
-    await assert.rejects(
-      read('plus-one.markdown', 'monaco'),
-      expectOnlyPreviewError('TEXT_TOO_LARGE')
-    );
-  });
+  const garbage = decode('garbage.js', 'monaco', Buffer.from([0x50, 0x4b, 0x00, 0xff, 0xc3, 0x28]));
+  assert.equal(garbage.text.includes('\0'), true);
+  assert.match(garbage.text, /\uFFFD/u);
+
+  assert.equal(
+    decode('odd-le.txt', 'monaco', Buffer.from([0xff, 0xfe, 0x68, 0x00, 0x69])).text,
+    'h\uFFFD'
+  );
+  assert.equal(
+    decode('odd-be.txt', 'monaco', Buffer.from([0xfe, 0xff, 0x00, 0x68, 0x00])).text,
+    'h\uFFFD'
+  );
+
+  const exactMarkdown = Buffer.alloc(runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES, 0x61);
+  assert.equal(
+    decode('exact.md', 'markdown-dom', exactMarkdown).size,
+    runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES
+  );
+  assert.throws(
+    () =>
+      decode(
+        'plus-one.md',
+        'markdown-dom',
+        Buffer.alloc(0),
+        runtime.ONLY_PREVIEW_MAX_MARKDOWN_BYTES + 1
+      ),
+    expectOnlyPreviewError('TEXT_TOO_LARGE')
+  );
+
+  const exactMonaco = Buffer.alloc(runtime.ONLY_PREVIEW_MAX_TEXT_BYTES, 0x61);
+  assert.equal(
+    decode('exact.markdown', 'monaco', exactMonaco).size,
+    runtime.ONLY_PREVIEW_MAX_TEXT_BYTES
+  );
+  assert.throws(
+    () =>
+      decode(
+        'plus-one.markdown',
+        'monaco',
+        Buffer.alloc(0),
+        runtime.ONLY_PREVIEW_MAX_TEXT_BYTES + 1
+      ),
+    expectOnlyPreviewError('TEXT_TOO_LARGE')
+  );
 });
 
-test('non-text signatures stay mandatory and asset capabilities require exact revision and finite max', async () => {
-  const workspaces = { assertOpenedFileCurrent: async () => undefined };
-  const service = new runtime.OnlyPreviewClassifierService(workspaces);
+test('native signatures stay mandatory, Office admission stays preload-only, and asset grants stay bounded', async () => {
+  const service = new runtime.OnlyPreviewClassifierService();
   for (const [relativePath, bytes, expectedKind] of [
     ['fake.pdf', Buffer.from('not pdf'), 'pdf'],
     ['fake.png', Buffer.from('not png'), 'image'],
-    ['fake.mp4', Buffer.from('not video'), 'video'],
+    ['fake.mp4', Buffer.from('not video'), 'video']
+  ]) {
+    const candidate = createMetadataFile({ relativePath, size: bytes.length, bytes });
+    const descriptor = service.describe(candidate.file, candidate.readSample());
+    assert.equal(descriptor.kind, expectedKind);
+    assert.equal(descriptor.previewError?.code, 'SIGNATURE_MISMATCH');
+    assert.equal(candidate.sampleReadCount(), 1);
+    assert.equal(descriptor.assetUrl, undefined);
+  }
+
+  for (const [relativePath, bytes, expectedKind] of [
     ['fake.xlsx', Buffer.from('not zip'), 'sheet'],
     ['fake.docx', Buffer.from('not zip'), 'document'],
     ['fake.pptx', Buffer.from('not zip'), 'presentation']
   ]) {
     const candidate = createMetadataFile({ relativePath, size: bytes.length, bytes });
-    const descriptor = await service.describe(candidate.file);
+    const descriptor = service.describe(candidate.file);
     assert.equal(descriptor.kind, expectedKind);
-    assert.equal(descriptor.previewError?.code, 'SIGNATURE_MISMATCH');
-    assert.ok(candidate.bodyReadCount() > 0);
+    assert.equal(descriptor.previewError, undefined);
+    assert.equal(candidate.sampleReadCount(), 0);
     assert.equal(descriptor.assetUrl, undefined);
   }
 
@@ -550,71 +544,61 @@ test('non-text signatures stay mandatory and asset capabilities require exact re
     ['exact.drawio', runtime.ONLY_PREVIEW_MAX_DIAGRAM_BYTES, Buffer.alloc(0), 'diagram']
   ]) {
     const candidate = createMetadataFile({ relativePath, size, bytes });
-    const descriptor = await service.describe(candidate.file);
+    const descriptor = service.describe(
+      candidate.file,
+      expectedKind === 'pdf' || expectedKind === 'image' ? candidate.readSample() : undefined
+    );
     assert.equal(descriptor.kind, expectedKind, relativePath);
     assert.equal(descriptor.previewError, undefined, relativePath);
   }
 
-  await withTempDirectory(async (root) => {
-    writeFileSync(join(root, 'stable.mp4'), Buffer.from('0123456789'));
-    const { hosts, workspaces: registry, assets } = createRegistries();
-    const host = hosts.issue('standalone', 'content');
-    const workspace = await registry.createForTarget(host.hostToken, root);
-    const file = await registry.openFile(host.hostToken, {
-      workspaceId: workspace.workspaceId,
-      relativePath: 'stable.mp4'
-    });
-    try {
-      assert.throws(
-        () => assets.issue(file, 'video/mp4', { maxBytes: file.size }),
-        expectOnlyPreviewError('INVALID_INPUT')
-      );
-      assert.throws(
-        () =>
-          assets.issue(file, 'video/mp4', {
-            selectionRevision: 1,
-            maxBytes: Number.POSITIVE_INFINITY
-          }),
-        expectOnlyPreviewError('INVALID_INPUT')
-      );
-      assert.match(
-        assets.issue(file, 'video/mp4', { selectionRevision: 1, maxBytes: file.size }),
-        /^bitterless-preview:\/\/asset\//u
-      );
-    } finally {
-      await file.fileHandle.close().catch(() => undefined);
-    }
+  const { hosts, assets } = createRegistries();
+  const host = hosts.issue('standalone', 'content');
+  const stableMedia = createMetadataFile({
+    relativePath: 'stable.mp4',
+    size: 10,
+    bytes: Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70])
   });
+  const stableDescriptor = service.describe(stableMedia.file, stableMedia.readSample());
+  const stableSelection = createPreparedSelection(stableDescriptor);
+  assert.throws(
+    () => assets.issue(host.hostToken, stableSelection, 'video/mp4', { maxBytes: 10 }),
+    expectOnlyPreviewError('INVALID_INPUT')
+  );
+  assert.throws(
+    () =>
+      assets.issue(host.hostToken, stableSelection, 'video/mp4', {
+        selectionRevision: 1,
+        maxBytes: Number.POSITIVE_INFINITY
+      }),
+    expectOnlyPreviewError('INVALID_INPUT')
+  );
+  assert.match(
+    assets.issue(host.hostToken, stableSelection, 'video/mp4', {
+      selectionRevision: 1,
+      maxBytes: stableDescriptor.size
+    }),
+    /^bitterless-preview:\/\/asset\//u
+  );
 });
 
 test('large stable media retains exact-size range delivery without a preview cap', async () => {
-  await withTempDirectory(async (root) => {
-    const mediaPath = join(root, 'large.mp4');
-    writeFileSync(mediaPath, Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]));
-    const mediaSize = runtime.ONLY_PREVIEW_MAX_PDF_BYTES + 1024;
-    truncateSync(mediaPath, mediaSize);
-    const { hosts, workspaces, assets } = createRegistries();
-    const host = hosts.issue('standalone', 'content');
-    const workspace = await workspaces.createForTarget(host.hostToken, root);
-    const opened = await workspaces.openFile(host.hostToken, {
-      workspaceId: workspace.workspaceId,
-      relativePath: 'large.mp4'
-    });
-    const service = new runtime.OnlyPreviewClassifierService(workspaces);
-    try {
-      assert.equal((await service.describe(opened)).previewError, undefined);
-      const url = assets.issue(opened, 'video/mp4', {
-        selectionRevision: 1,
-        maxBytes: opened.size
-      });
-      await opened.fileHandle.close();
-      const response = await assets.respond(
-        new Request(url, { headers: { Range: `bytes=${mediaSize - 2}-${mediaSize - 1}` } })
-      );
-      assert.equal(response.status, 206);
-      assert.equal((await response.arrayBuffer()).byteLength, 2);
-    } finally {
-      await opened.fileHandle.close().catch(() => undefined);
-    }
+  const mediaSize = runtime.ONLY_PREVIEW_MAX_PDF_BYTES + 1024;
+  const candidate = createMetadataFile({
+    relativePath: 'large.mp4',
+    size: mediaSize,
+    bytes: Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70])
   });
+  const service = new runtime.OnlyPreviewClassifierService();
+  const descriptor = service.describe(candidate.file, candidate.readSample());
+  assert.equal(descriptor.previewError, undefined);
+
+  const { hosts, assets } = createRegistries();
+  const host = hosts.issue('standalone', 'content');
+  const url = assets.issue(host.hostToken, createPreparedSelection(descriptor), 'video/mp4', {
+    selectionRevision: 1,
+    maxBytes: descriptor.size,
+    lifetime: 'selection'
+  });
+  assert.match(url, /^bitterless-preview:\/\/asset\//u);
 });

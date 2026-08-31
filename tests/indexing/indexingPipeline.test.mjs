@@ -1,9 +1,19 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import ExcelJS from 'exceljs';
 
-import { UNIQUE_NEEDLE, createIndexingCorpus, dirtyCorpusFiles } from './corpus.mjs';
+import {
+  UNIQUE_NEEDLE,
+  CORPUS_REVISION,
+  buildIndexingXlsxFixture,
+  createIndexingCorpus,
+  dirtyCorpusFiles
+} from './corpus.mjs';
 import { createBenchWorkspace, runOpenDirectoryProbe } from './indexingBench.harness.mjs';
 
 // Wall clock is reported by the benchmark CLI and never asserted here: only facts that hold on any
@@ -35,6 +45,55 @@ const probeCorpus = async (label) => {
       })
   };
 };
+
+test('the deterministic benchmark XLSX is built once and reused as valid OOXML', async () => {
+  const fixtureModuleUrl = new URL('./corpus.mjs', import.meta.url).href;
+  const fixtureHashScript = `
+    import { createHash } from 'node:crypto';
+    import { buildIndexingXlsxFixture } from ${JSON.stringify(fixtureModuleUrl)};
+    const bytes = await buildIndexingXlsxFixture();
+    process.stdout.write(createHash('sha256').update(bytes).digest('hex'));
+  `;
+  const timezoneHashes = ['UTC', 'Asia/Shanghai', 'America/Los_Angeles'].map((timezone) => {
+    const child = spawnSync(
+      process.execPath,
+      ['--input-type=module', '--eval', fixtureHashScript],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: { ...process.env, TZ: timezone }
+      }
+    );
+    assert.equal(child.status, 0, child.stderr);
+    assert.match(child.stdout, /^[a-f0-9]{64}$/u);
+    return child.stdout;
+  });
+  assert.equal(new Set(timezoneHashes).size, 1, 'XLSX fixture bytes must not depend on timezone');
+
+  const [firstFixture, secondFixture] = await Promise.all([
+    buildIndexingXlsxFixture(),
+    buildIndexingXlsxFixture()
+  ]);
+  assert.deepEqual(firstFixture, secondFixture);
+  assert.deepEqual([...firstFixture.subarray(0, 4)], [0x50, 0x4b, 0x03, 0x04]);
+
+  const corpus = await createIndexingCorpus('tiny');
+  assert.equal(CORPUS_REVISION, 4);
+  assert.equal(corpus.xlsxFixtureBuildCount, 1);
+  const xlsxPaths = (await readdir(corpus.rootPath, { recursive: true })).filter((path) =>
+    path.endsWith('.xlsx')
+  );
+  assert.ok(xlsxPaths.length > 1, 'the tiny corpus must exercise XLSX fixture reuse');
+  const xlsxBodies = await Promise.all(
+    xlsxPaths.map(async (path) => await readFile(join(corpus.rootPath, path)))
+  );
+  for (const body of xlsxBodies) assert.deepEqual(body, firstFixture);
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(firstFixture);
+  assert.equal(workbook.worksheets.length, 1);
+  assert.equal(workbook.worksheets[0].getCell('A1').value, 'OnlyPreview indexing benchmark');
+});
 
 test('opening a directory the first time emits every build phase in order', async () => {
   const { corpus, run } = await probeCorpus('guard-cold');

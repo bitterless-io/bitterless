@@ -21,7 +21,6 @@ import type {
   OnlyPreviewProjectItemCopyRequest,
   OnlyPreviewProjectRootCopyRequest,
   OnlyPreviewProjectRootRequest,
-  OnlyPreviewTextReadRequest,
   OnlyPreviewSettings
 } from './onlyPreview.types';
 
@@ -548,16 +547,6 @@ export const parseOnlyPreviewFindResultRequest = (value: unknown): OnlyPreviewFi
   };
 };
 
-export const parseOnlyPreviewTextReadRequest = (value: unknown): OnlyPreviewTextReadRequest => {
-  const request = parseOnlyPreviewPreviewRevisionRequest(value);
-  const fileRef = parseOnlyPreviewFileRef(value);
-  const record = expectRecord(value, 'Preview text request');
-  if (record.adapterId !== 'monaco' && record.adapterId !== 'markdown-dom') {
-    throw new OnlyPreviewContractError('INVALID_INPUT', 'Preview text adapter is invalid.');
-  }
-  return { ...request, ...fileRef, adapterId: record.adapterId };
-};
-
 export const parseOnlyPreviewPreviewErrorRequest = (
   value: unknown
 ): OnlyPreviewPreviewErrorRequest => {
@@ -580,13 +569,16 @@ export const parseOnlyPreviewPreviewErrorRequest = (
     'OOXML_ENCRYPTED',
     'OOXML_ARCHIVE_INVALID',
     'SHEET_PARSE_FAILED',
+    'SHEET_RENDER_FAILED',
     'SHEET_EMPTY',
     'SHEET_RENDER_TIMEOUT',
     'DOCUMENT_PARSE_FAILED',
+    'DOCUMENT_RENDER_FAILED',
     'DOCUMENT_EMPTY',
     'DOCUMENT_SANITIZE_FAILED',
     'DOCUMENT_RENDER_TIMEOUT',
     'PRESENTATION_PARSE_FAILED',
+    'PRESENTATION_RENDER_FAILED',
     'PRESENTATION_EMPTY',
     'PRESENTATION_RENDER_TIMEOUT',
     'DIAGRAM_PARSE_FAILED',

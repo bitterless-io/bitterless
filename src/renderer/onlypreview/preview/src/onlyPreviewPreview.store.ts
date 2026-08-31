@@ -23,6 +23,8 @@ import {
 } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
+import { onlyPreviewOfficeRead } from '../../common/contextBridge/onlyPreviewOfficeRead.bridge';
+import { onlyPreviewPreviewRead } from '../../common/contextBridge/onlyPreviewPreviewRead.bridge';
 import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { OnlyPreviewCharacterCountSourceGate } from '../../common/onlyPreviewCharacterCountGate.service';
 import {
@@ -484,13 +486,7 @@ class OnlyPreviewPreviewStore {
       }
       if (presentation.adapterId === 'monaco' || presentation.adapterId === 'markdown-dom') {
         const textContent = unwrapOnlyPreviewResult(
-          await onlyPreviewClient.readText({
-            hostToken,
-            previewRuntimeToken,
-            selectionRevision: revision,
-            ...fileRef,
-            adapterId: presentation.adapterId
-          })
+          await onlyPreviewPreviewRead.readCurrentText({ selectionRevision: revision })
         );
         if (!this.isCurrent(generation, revision)) return;
         if (
@@ -508,14 +504,13 @@ class OnlyPreviewPreviewStore {
         presentation.adapterId === 'ooxml-docx' ||
         presentation.adapterId === 'ooxml-pptx'
       ) {
-        const assetUrl = presentation.descriptor?.assetUrl;
         const expectedKind =
           presentation.adapterId === 'ooxml-xlsx'
             ? 'sheet'
             : presentation.adapterId === 'ooxml-docx'
               ? 'document'
               : 'presentation';
-        if (presentation.descriptor?.kind !== expectedKind || !assetUrl) {
+        if (presentation.descriptor?.kind !== expectedKind) {
           throw new OnlyPreviewContractError(
             'INVALID_INPUT',
             'Office preview is missing its revision-bound asset.'
@@ -531,8 +526,22 @@ class OnlyPreviewPreviewStore {
                 : presentation.adapterId === 'ooxml-docx'
                   ? 'docx'
                   : 'pptx',
-            assetUrl,
+            sourceExtension: presentation.descriptor.extension,
             expectedSize: presentation.descriptor.size,
+            readBytes: async () => {
+              const content = unwrapOnlyPreviewResult(
+                await onlyPreviewOfficeRead.readCurrentOfficeBytes({
+                  selectionRevision: revision
+                })
+              );
+              if (content.selectionRevision !== revision) {
+                throw new OnlyPreviewContractError(
+                  'INVALID_INPUT',
+                  'Office read response belongs to a stale selection.'
+                );
+              }
+              return content.bytes;
+            },
             onRuntimeError: (errorCode) => this.reportSurfaceError(String(revision), errorCode)
           })
         );

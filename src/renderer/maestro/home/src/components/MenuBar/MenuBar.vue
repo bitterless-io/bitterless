@@ -4,20 +4,22 @@ import {
   IconArrowLeft,
   IconArrowRight,
   IconRefresh,
-  IconPlus,
   IconCommon
 } from '@arco-design/web-vue/es/icon'
 import {
   IconCameraSpark,
   IconCircleFilled,
   IconLoader2,
+  IconPlus,
   IconSettings,
   IconSettingsFilled,
   IconSparkles,
-  IconSparklesFilled
+  IconSparklesFilled,
+  IconX
 } from '@tabler/icons-vue'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import type { TabInfo } from '@maestro-shared/coach.api'
+import IconBtn from '../../../../../common/components/IconBtn/IconBtn.vue'
 import { menuBarStore } from './menuBar.store'
 import { tabStore } from './tab.store'
 import { updateStore } from '../../store/update.store'
@@ -66,9 +68,9 @@ function tabIconSrc(tab: TabInfo): string {
   return ''
 }
 
-// Chrome-style "close several in a row": when a × is clicked, freeze every tab's width to its
+// Chrome-style "close several in a row": when a close control is clicked, freeze every tab's width to its
 // current (uniform) value so closing a middle tab just shifts the rest left by exactly one tab
-// — landing the next tab's × right under the cursor. Cleared on mouseleave, when widths reflow.
+// — landing the next tab's close control right under the cursor. Cleared on mouseleave, when widths reflow.
 const lockedTabWidth = ref<number | null>(null)
 function onCloseClick(e: MouseEvent, id: string): void {
   const tabEl = (e.currentTarget as HTMLElement).parentElement
@@ -99,12 +101,12 @@ function fixedTabClass(tab: TabInfo): string {
 </script>
 
 <template>
-  <!-- 84px top chrome = an Omni-derived 36px tab strip + the existing 48px address bar. The renderer-driven
+  <!-- 78px top chrome = an Omni-derived 36px tab strip + the compact 42px address bar. The renderer-driven
        layout measures the body placeholders below this, so the native operation/
-       control views sit at y=84 automatically. -->
+       control views sit at y=78 automatically. -->
   <div class="maestro-menu-bar">
     <!-- Tab strip (36px). One chip per open operation-view tab; new tabs appear when a
-         page opens a new window. Click to switch, × to close. On macOS the left gutter
+         page opens a new window. Click to switch, use the icon action to close. On macOS the left gutter
          clears the native traffic lights (hiddenInset). -->
     <div
       class="maestro-menu-bar__tabs"
@@ -153,22 +155,21 @@ function fixedTabClass(tab: TabInfo): string {
             <span class="maestro-menu-bar__tab-label" :class="{ 'maestro-menu-bar__tab-label--pinned': tab.pinned }">{{
               tabLabel(tab)
             }}</span>
-            <!-- Close × (closable tabs only). Absolutely positioned so it never widens the tab
+            <!-- Close action (closable tabs only). Absolutely positioned so it never widens the tab
                  — a compressed tab keeps showing its favicon. Visible on hover, or always on
                  the active tab. The pinned local Home tab is non-closable, so it has none. -->
-            <button
+            <IconBtn
               v-if="!tab.pinned && tabStore.tabs.length > 1"
               class="maestro-menu-bar__tab-close"
               :class="{ 'maestro-menu-bar__tab-close--active': tab.active }"
               draggable="false"
               :title="i18nHelper.menuBar.maestro.closeTab"
               :aria-label="i18nHelper.menuBar.maestro.closeTab"
-              type="button"
               @click.stop="onCloseClick($event, tab.id)"
               @dragstart.stop.prevent
             >
-              ×
-            </button>
+              <IconX :size="14" stroke="2" aria-hidden="true" />
+            </IconBtn>
           </div>
           <!-- Divider after the pinned group, before the first closable browsing tab. -->
           <div
@@ -182,15 +183,14 @@ function fixedTabClass(tab: TabInfo): string {
       <!-- New-tab button — circular, vertically centered to the tab row, always visible.
            Opens a blank operation view (empty, editable address bar) ready for a URL. -->
       <div class="maestro-menu-bar__new-tab-wrap">
-        <button
+        <IconBtn
           class="maestro-menu-bar__new-tab"
           :title="i18nHelper.menuBar.maestro.newTab"
           :aria-label="i18nHelper.menuBar.maestro.newTab"
-          type="button"
           @click="tabStore.newTab()"
         >
-          <IconPlus />
-        </button>
+          <IconPlus :size="16" stroke="2" aria-hidden="true" />
+        </IconBtn>
       </div>
       <!-- Agent-owned recording status. The fixed slot remains in the draggable tab strip so
            recording state cannot move the new-tab button. It is deliberately not interactive. -->
@@ -209,7 +209,7 @@ function fixedTabClass(tab: TabInfo): string {
       </div>
     </div>
 
-    <!-- Address bar (48px). -->
+    <!-- Address bar (42px). -->
     <header
       class="maestro-menu-bar__address-row"
     >

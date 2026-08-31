@@ -1,20 +1,18 @@
-import type { ReadStream } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { realpath, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, posix, relative, sep } from 'node:path';
+import { posix } from 'node:path';
+import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import {
   normalizeOnlyPreviewRelativePath,
   OnlyPreviewContractError
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES,
-  ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES,
   ONLY_PREVIEW_MAX_HTML_BYTES,
   ONLY_PREVIEW_SCHEME
 } from '@shared/onlypreview/onlyPreview.types';
-import { createOnlyPreviewFileResponse } from './onlyPreviewAsset.registry';
+import type { OnlyPreviewPreviewReadPreparedSelection } from '@shared/onlypreview/onlyPreviewPreviewReadRuntime.types';
+import { createOnlyPreviewReadResponse } from './onlyPreviewAsset.registry';
 import { onlyPreviewHostRegistry, type OnlyPreviewHostRegistry } from './onlyPreviewHost.registry';
-import type { OpenedOnlyPreviewFile } from './onlyPreviewWorkspace.registry';
 import {
   onlyPreviewWorkspaceRegistry,
   type OnlyPreviewWorkspaceRegistry
@@ -85,31 +83,11 @@ interface DocumentTokenRecord {
   token: string;
   hostToken: string;
   workspaceId: string;
+  grantId: string;
   selectionRevision: number;
-  entryRelativePath: string;
-  entryDirectoryRelativePath: string;
-  entryDirectoryRealPath: string;
-  entryDirectoryDeviceId: bigint;
-  entryDirectoryInode: bigint;
   entryRequestPath: string;
-  expectedEntrySize: number;
-  expectedEntryDeviceId: bigint;
-  expectedEntryInode: bigint;
-  expectedEntryModifiedTimeNanoseconds: bigint;
-  expectedEntryRealPath: string;
-  resourceIdentities: Map<
-    string,
-    {
-      size: number;
-      deviceId: bigint;
-      inode: bigint;
-      modifiedTimeNanoseconds: bigint;
-      realPath: string;
-    }
-  >;
-  acceptedResponseBytes: number;
   createdAt: number;
-  activeStreams: Set<ReadStream>;
+  activeSessions: Set<string>;
 }
 
 const encodeDocumentPath = (relativePath: string): string =>
@@ -161,27 +139,32 @@ const parseDocumentRequest = (
 const mimeTypeFor = (relativePath: string): string =>
   MIME_BY_EXTENSION[posix.extname(relativePath).toLowerCase()] ?? 'application/octet-stream';
 
-const isContainedRealPath = (root: string, candidate: string): boolean => {
-  const child = relative(root, candidate);
-  return child === '' || (!child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child));
-};
-
 export class OnlyPreviewDocumentRegistry {
   private readonly documents = new Map<string, DocumentTokenRecord>();
 
   constructor(
     private readonly hosts: OnlyPreviewHostRegistry,
-    private readonly workspaces: OnlyPreviewWorkspaceRegistry
+    workspaces: OnlyPreviewWorkspaceRegistry
   ) {
     hosts.onRevoke((host) => this.revokeHost(host.hostToken));
     workspaces.onRevoke((workspace) => this.revokeWorkspace(workspace.workspaceId));
   }
 
-  async issue(file: OpenedOnlyPreviewFile, selectionRevision: number): Promise<string> {
-    if (!Number.isSafeInteger(selectionRevision) || selectionRevision < 1) {
+  issue(
+    hostToken: string,
+    selection: OnlyPreviewPreviewReadPreparedSelection,
+    selectionRevision: number
+  ): string {
+    this.hosts.require(hostToken, ['content']);
+    if (
+      !Number.isSafeInteger(selectionRevision) ||
+      selectionRevision < 1 ||
+      selection.selectionRevision !== selectionRevision ||
+      (selection.descriptor.extension !== '.html' && selection.descriptor.extension !== '.htm')
+    ) {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'Document revision is invalid.');
     }
-    if (file.size > ONLY_PREVIEW_MAX_HTML_BYTES) {
+    if (selection.descriptor.size > ONLY_PREVIEW_MAX_HTML_BYTES) {
       throw new OnlyPreviewContractError('PROTOCOL_ERROR', 'HTML preview is limited to 1 MiB.');
     }
     while (this.documents.size >= MAX_DOCUMENT_TOKENS) {
@@ -189,44 +172,17 @@ export class OnlyPreviewDocumentRegistry {
       if (!oldest) break;
       this.revokeToken(oldest);
     }
-
     const token = randomBytes(32).toString('hex');
-    const entryDirectoryRelativePath = posix.dirname(file.relativePath);
-    const normalizedDirectory =
-      entryDirectoryRelativePath === '.' ? '' : entryDirectoryRelativePath;
-    const entryRequestPath = posix.basename(file.relativePath);
-    const entryDirectoryRealPath = await realpath(dirname(file.realPath));
-    const entryDirectoryStat = await stat(entryDirectoryRealPath, { bigint: true });
-    if (
-      !entryDirectoryStat.isDirectory() ||
-      entryDirectoryRealPath !== dirname(file.realPath) ||
-      !isContainedRealPath(file.workspace.rootRealPath, entryDirectoryRealPath)
-    ) {
-      throw new OnlyPreviewContractError(
-        'PATH_OUTSIDE_WORKSPACE',
-        'The HTML entry directory is no longer available.'
-      );
-    }
+    const entryRequestPath = posix.basename(selection.relativePath);
     this.documents.set(token, {
       token,
-      hostToken: file.host.hostToken,
-      workspaceId: file.workspace.workspaceId,
+      hostToken,
+      workspaceId: selection.workspaceId,
+      grantId: selection.grantId,
       selectionRevision,
-      entryRelativePath: file.relativePath,
-      entryDirectoryRelativePath: normalizedDirectory,
-      entryDirectoryRealPath,
-      entryDirectoryDeviceId: entryDirectoryStat.dev,
-      entryDirectoryInode: entryDirectoryStat.ino,
       entryRequestPath,
-      expectedEntrySize: file.size,
-      expectedEntryDeviceId: file.deviceId,
-      expectedEntryInode: file.inode,
-      expectedEntryModifiedTimeNanoseconds: file.modifiedTimeNanoseconds,
-      expectedEntryRealPath: file.realPath,
-      resourceIdentities: new Map(),
-      acceptedResponseBytes: 0,
       createdAt: Date.now(),
-      activeStreams: new Set()
+      activeSessions: new Set()
     });
     return `${ONLY_PREVIEW_SCHEME}://document/${token}/${encodeDocumentPath(entryRequestPath)}`;
   }
@@ -239,162 +195,39 @@ export class OnlyPreviewDocumentRegistry {
       if (document) this.revokeToken(document.token);
       return new Response(null, { status: 404 });
     }
-    if (!(await this.matchesEntryDirectory(document))) {
-      this.revokeToken(document.token);
-      return new Response(null, { status: 409 });
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
     }
-    const requestingEntry = parsed.relativePath === document.entryRequestPath;
-    if (!requestingEntry && !(await this.matchesEntryIdentity(document))) {
-      this.revokeToken(document.token);
-      return new Response(null, { status: 409 });
-    }
-
-    const workspaceRelativePath = document.entryDirectoryRelativePath
-      ? `${document.entryDirectoryRelativePath}/${parsed.relativePath}`
-      : parsed.relativePath;
-    let opened: Awaited<ReturnType<OnlyPreviewWorkspaceRegistry['openFile']>> | null = null;
     try {
-      opened = await this.workspaces.openFile(document.hostToken, {
-        workspaceId: document.workspaceId,
-        relativePath: normalizeOnlyPreviewRelativePath(workspaceRelativePath)
+      const resource = await fileSearchWindowService.inspectPreviewDocumentResource({
+        grantId: document.grantId,
+        selectionRevision: document.selectionRevision,
+        requestPath: parsed.relativePath
       });
       if (this.documents.get(document.token) !== document || !this.isLive(document)) {
-        await opened.fileHandle.close().catch(() => undefined);
         return new Response(null, { status: 404 });
       }
-      if (!(await this.matchesEntryDirectory(document))) {
-        await opened.fileHandle.close().catch(() => undefined);
-        this.revokeToken(document.token);
-        return new Response(null, { status: 409 });
-      }
-      if (!requestingEntry && !(await this.matchesEntryIdentity(document))) {
-        await opened.fileHandle.close().catch(() => undefined);
-        this.revokeToken(document.token);
-        return new Response(null, { status: 409 });
-      }
-      if (!isContainedRealPath(document.entryDirectoryRealPath, opened.realPath)) {
-        await opened.fileHandle.close().catch(() => undefined);
-        return new Response(null, { status: 404 });
-      }
-
-      const isEntry = opened.relativePath === document.entryRelativePath;
-      if (parsed.relativePath === document.entryRequestPath && !isEntry) {
-        await opened.fileHandle.close().catch(() => undefined);
-        return new Response(null, { status: 409 });
-      }
-      if (isEntry) {
-        if (
-          opened.size !== document.expectedEntrySize ||
-          opened.deviceId !== document.expectedEntryDeviceId ||
-          opened.inode !== document.expectedEntryInode ||
-          opened.modifiedTimeNanoseconds !== document.expectedEntryModifiedTimeNanoseconds ||
-          opened.realPath !== document.expectedEntryRealPath
-        ) {
-          await opened.fileHandle.close().catch(() => undefined);
-          this.revokeToken(document.token);
-          return new Response(null, { status: 409 });
-        }
-      } else {
-        const identity = document.resourceIdentities.get(opened.relativePath);
-        if (
-          identity &&
-          (opened.size !== identity.size ||
-            opened.deviceId !== identity.deviceId ||
-            opened.inode !== identity.inode ||
-            opened.modifiedTimeNanoseconds !== identity.modifiedTimeNanoseconds ||
-            opened.realPath !== identity.realPath)
-        ) {
-          await opened.fileHandle.close().catch(() => undefined);
-          return new Response(null, { status: 409 });
-        }
-        if (!identity) {
-          document.resourceIdentities.set(opened.relativePath, {
-            size: opened.size,
-            deviceId: opened.deviceId,
-            inode: opened.inode,
-            modifiedTimeNanoseconds: opened.modifiedTimeNanoseconds,
-            realPath: opened.realPath
-          });
-        }
-      }
-      const expectedIdentity = isEntry
-        ? {
-            size: document.expectedEntrySize,
-            deviceId: document.expectedEntryDeviceId,
-            inode: document.expectedEntryInode,
-            modifiedTimeNanoseconds: document.expectedEntryModifiedTimeNanoseconds,
-            realPath: document.expectedEntryRealPath
-          }
-        : document.resourceIdentities.get(opened.relativePath)!;
-      const byteLimit = isEntry
-        ? ONLY_PREVIEW_MAX_HTML_BYTES
-        : ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES;
-      if (opened.size > byteLimit) {
-        await opened.fileHandle.close().catch(() => undefined);
-        return new Response(null, { status: 413 });
-      }
-
-      return await createOnlyPreviewFileResponse({
+      const byteLimit =
+        parsed.relativePath === document.entryRequestPath
+          ? ONLY_PREVIEW_MAX_HTML_BYTES
+          : ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES;
+      return await createOnlyPreviewReadResponse({
         request,
-        fileHandle: opened.fileHandle,
-        fileSize: opened.size,
-        mimeType: mimeTypeFor(opened.relativePath),
+        grantId: document.grantId,
+        selectionRevision: document.selectionRevision,
+        source: { kind: 'document', requestPath: parsed.relativePath },
+        fileSize: resource.size,
+        mimeType: mimeTypeFor(parsed.relativePath),
         maxBytes: byteLimit,
         responseHeaders: DOCUMENT_SECURITY_HEADERS,
-        beforeStream: (acceptedBytes) => {
-          if (this.documents.get(document.token) !== document || !this.isLive(document)) {
-            return false;
-          }
-          if (
-            acceptedBytes < 0 ||
-            document.acceptedResponseBytes + acceptedBytes > ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES
-          ) {
-            return false;
-          }
-          document.acceptedResponseBytes += acceptedBytes;
-          return true;
-        },
-        verifyAfterStream: async () => {
-          const streamedStat = await opened.fileHandle.stat({ bigint: true });
-          if (
-            streamedStat.size !== BigInt(expectedIdentity.size) ||
-            streamedStat.dev !== expectedIdentity.deviceId ||
-            streamedStat.ino !== expectedIdentity.inode ||
-            streamedStat.mtimeNs !== expectedIdentity.modifiedTimeNanoseconds ||
-            this.documents.get(document.token) !== document ||
-            !this.isLive(document)
-          ) {
-            return false;
-          }
-          const current = await this.workspaces.openFile(document.hostToken, {
-            workspaceId: document.workspaceId,
-            relativePath: opened.relativePath
-          });
-          try {
-            return (
-              current.realPath === opened.realPath &&
-              current.realPath === expectedIdentity.realPath &&
-              (await this.matchesEntryDirectory(document)) &&
-              (isEntry || (await this.matchesEntryIdentity(document))) &&
-              isContainedRealPath(document.entryDirectoryRealPath, current.realPath) &&
-              current.size === expectedIdentity.size &&
-              current.deviceId === expectedIdentity.deviceId &&
-              current.inode === expectedIdentity.inode &&
-              current.modifiedTimeNanoseconds === expectedIdentity.modifiedTimeNanoseconds &&
-              this.documents.get(document.token) === document &&
-              this.isLive(document)
-            );
-          } finally {
-            await current.fileHandle.close().catch(() => undefined);
-          }
-        },
-        onStream: (stream) => {
-          document.activeStreams.add(stream);
-          stream.once('close', () => document.activeStreams.delete(stream));
-        }
+        onSession: (sessionId) => document.activeSessions.add(sessionId),
+        onSessionClosed: (sessionId) => document.activeSessions.delete(sessionId),
+        isSessionLive: (sessionId) =>
+          this.documents.get(document.token) === document &&
+          document.activeSessions.has(sessionId) &&
+          this.isLive(document)
       });
     } catch {
-      await opened?.fileHandle.close().catch(() => undefined);
       return new Response(null, { status: 404 });
     }
   }
@@ -407,44 +240,6 @@ export class OnlyPreviewDocumentRegistry {
       ) {
         this.revokeToken(token);
       }
-    }
-  }
-
-  private async matchesEntryDirectory(document: DocumentTokenRecord): Promise<boolean> {
-    try {
-      const currentRealPath = await realpath(document.entryDirectoryRealPath);
-      if (currentRealPath !== document.entryDirectoryRealPath) return false;
-      const currentStat = await stat(currentRealPath, { bigint: true });
-      return (
-        currentStat.isDirectory() &&
-        currentStat.dev === document.entryDirectoryDeviceId &&
-        currentStat.ino === document.entryDirectoryInode
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  private async matchesEntryIdentity(document: DocumentTokenRecord): Promise<boolean> {
-    let entry: Awaited<ReturnType<OnlyPreviewWorkspaceRegistry['openFile']>> | null = null;
-    try {
-      entry = await this.workspaces.openFile(document.hostToken, {
-        workspaceId: document.workspaceId,
-        relativePath: document.entryRelativePath
-      });
-      return (
-        entry.realPath === document.expectedEntryRealPath &&
-        entry.size === document.expectedEntrySize &&
-        entry.deviceId === document.expectedEntryDeviceId &&
-        entry.inode === document.expectedEntryInode &&
-        entry.modifiedTimeNanoseconds === document.expectedEntryModifiedTimeNanoseconds &&
-        this.documents.get(document.token) === document &&
-        this.isLive(document)
-      );
-    } catch {
-      return false;
-    } finally {
-      await entry?.fileHandle.close().catch(() => undefined);
     }
   }
 
@@ -473,8 +268,16 @@ export class OnlyPreviewDocumentRegistry {
     const document = this.documents.get(token);
     if (!document) return;
     this.documents.delete(token);
-    for (const stream of document.activeStreams) stream.destroy();
-    document.activeStreams.clear();
+    for (const sessionId of document.activeSessions) {
+      void fileSearchWindowService
+        .cancelPreviewRead({
+          grantId: document.grantId,
+          selectionRevision: document.selectionRevision,
+          sessionId
+        })
+        .catch(() => undefined);
+    }
+    document.activeSessions.clear();
   }
 }
 

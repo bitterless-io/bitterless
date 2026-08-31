@@ -384,11 +384,14 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
     [...supportedExtensions].sort(),
     'explicit OS associations must match every extension supported by OnlyPreview'
   );
-  const installer = source('build/installer.tmp.nsh');
-  assert.match(installer, /Software\\Classes\\\*\\shell\\OnlyPreview/);
-  assert.match(installer, /Open in Bitterless/);
-  assert.match(installer, /customUnInstall/);
-  assert.match(installer, /DeleteRegKey/);
+  const installerTemplate = source('build/installer.tmp.nsh');
+  const installerGenerator = source('scripts/before.js');
+  assert.match(installerTemplate, /^ONLY_PREVIEW_INSTALL$/m);
+  assert.match(installerTemplate, /^ONLY_PREVIEW_UNINSTALL$/m);
+  assert.match(installerTemplate, /customUnInstall/);
+  assert.match(installerGenerator, /Software\\\\Classes\\\\\*\\\\shell\\\\OnlyPreview/);
+  assert.match(installerGenerator, /Open in Bitterless/);
+  assert.match(installerGenerator, /DeleteRegKey/);
 });
 
 test('renderers keep empty state distinct from index failure and PDF/Monaco runtime contracts explicit', () => {
@@ -532,7 +535,7 @@ test('excluded Project rows keep orange status across default, hover, and select
   );
   assert.match(
     shellStyle,
-    /\.onlypreview-shell__tree-icon--search-excluded-directory \{[\s\S]*color:\s*#C2410C/
+    /\.onlypreview-shell__tree-icon--search-excluded-directory \{[\s\S]*color:\s*#c2410c/i
   );
   assert.match(
     shellStyle,

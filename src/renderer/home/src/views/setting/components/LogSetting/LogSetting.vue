@@ -9,6 +9,8 @@
           {{ logSettingStore.snapshot.runtime.viteMode }}
           ·
           {{ logSettingStore.snapshot.runtime.viteEnv }}
+          ·
+          {{ logSettingStore.snapshot.runtime.releaseChannel }}
         </div>
       </div>
       <a-button size="mini" :loading="logSettingStore.loading" @click="logSettingStore.init()">

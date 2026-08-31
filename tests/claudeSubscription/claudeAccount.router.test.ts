@@ -8,6 +8,7 @@ import type {
   ClaudeExecutor
 } from '../../src/main/claudeSubscription/claudeCli.executor';
 import {
+  ClaudeAllAccountsExhaustedError,
   ClaudeAuthenticationError,
   ClaudeDecisionError,
   ClaudeNoEligibleAccountError,
@@ -278,7 +279,16 @@ test('runtime never retries malformed, cancelled, timeout-like, or generic failu
 // The CLI rewrites .claude.json in its CLAUDE_CONFIG_DIR on every run, so two
 // children sharing a directory corrupt it. See
 // docs/issues/claude-subscription-concurrent-requests-share-one-config-dir.md.
-test('one account never serves two requests at once', async () => {
+test('one account serves every concurrent turn, with no ceiling', async () => {
+  // This asserted one turn per account until 2026-08-31, because the CLI rewrites
+  // `.claude.json` on every run and two children in one directory corrupted it. Each
+  // request now runs in its own scratch config directory while credentials still
+  // resolve from the account's real slot, so the reason is gone.
+  //
+  // Owner decision: one account is active at a time and carries everything, with no
+  // cap. Concentrating on one is what makes the quota rule legible — one account's
+  // weekly usage is drawn down and watched, rather than every account drifting toward
+  // the threshold together.
   const source = new FakeClaudeAccountSource(['account-a']);
   let inFlight = 0;
   let peakInFlight = 0;
@@ -286,9 +296,7 @@ test('one account never serves two requests at once', async () => {
   const executor = new FunctionExecutor(async () => {
     inFlight += 1;
     peakInFlight = Math.max(peakInFlight, inFlight);
-    // Hold the first call open long enough that a truly concurrent second call
-    // would overlap it; without serialisation `peakInFlight` reaches 2 here.
-    if (executor.calls === 1) await release.promise;
+    if (executor.calls <= 5) await release.promise;
     inFlight -= 1;
     return {
       decision: { action: 'final', text: 'ok' },
@@ -297,15 +305,13 @@ test('one account never serves two requests at once', async () => {
   });
   const runtime = new ClaudeResponsesRuntime(new ClaudeAccountRouter(source), executor);
 
-  const first = runtime.execute(request());
-  const second = runtime.execute(request());
+  const pending = Array.from({ length: 5 }, () => runtime.execute(request()));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(inFlight, 1, 'the second request must be queued, not running');
+  assert.equal(inFlight, 5, 'all five turns run on the one account');
 
   release.resolve();
-  await Promise.all([first, second]);
-  assert.equal(executor.calls, 2);
-  assert.equal(peakInFlight, 1, 'the two requests never overlapped');
+  await Promise.all(pending);
+  assert.equal(peakInFlight, 5, 'nothing queued behind anything else');
 });
 
 test('two accounts still serve two requests in parallel', async () => {
@@ -349,7 +355,16 @@ test('runtime tries every eligible account before failing', async () => {
     throw new ClaudeUsageLimitError('limited');
   });
   const runtime = new ClaudeResponsesRuntime(new ClaudeAccountRouter(source), executor);
-  await assert.rejects(runtime.execute(request()), ClaudeUsageLimitError);
+  // Not `ClaudeUsageLimitError`: one account hitting its limit is handled by switching
+  // and the caller never sees it. Once the pool is spent there is nothing to switch to,
+  // and reporting the last account's own limit read as the ordinary, self-resolving
+  // case. The exhausted error names how many accounts are out and when the first
+  // resets, which is the only thing the owner can act on.
+  await assert.rejects(runtime.execute(request()), (error: unknown) => {
+    assert.ok(error instanceof ClaudeAllAccountsExhaustedError);
+    assert.match(error.message, /All 3 Claude subscription accounts are out of quota/u);
+    return true;
+  });
   assert.equal(executor.calls, 3, 'every account is attempted once');
   assert.equal(source.cooldownMarks.length, 3);
   assert.deepEqual(

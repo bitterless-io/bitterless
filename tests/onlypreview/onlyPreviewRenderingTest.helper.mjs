@@ -31,6 +31,16 @@ const rendererStoreHarnessPlugin = {
         ? { path: 'onlypreview-env', namespace: 'onlypreview-renderer-harness' }
         : null
     );
+    buildContext.onResolve({ filter: /onlyPreviewOfficeRead\.bridge$/ }, ({ importer }) =>
+      importer.endsWith('onlyPreviewPreview.store.ts')
+        ? { path: 'onlypreview-office-read', namespace: 'onlypreview-renderer-harness' }
+        : null
+    );
+    buildContext.onResolve({ filter: /onlyPreviewPreviewRead\.bridge$/ }, ({ importer }) =>
+      importer.endsWith('onlyPreviewPreview.store.ts')
+        ? { path: 'onlypreview-preview-read', namespace: 'onlypreview-renderer-harness' }
+        : null
+    );
     buildContext.onResolve({ filter: /onlyPreviewOfficeSession\.service$/ }, ({ importer }) =>
       importer.endsWith('onlyPreviewPreview.store.ts')
         ? { path: 'onlypreview-office', namespace: 'onlypreview-renderer-harness' }
@@ -98,6 +108,36 @@ const rendererStoreHarnessPlugin = {
                   harness().officeDisposals += 1;
                 }
               }
+            `
+        };
+      }
+      if (path === 'onlypreview-office-read') {
+        return {
+          loader: 'js',
+          contents: `
+              const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
+              export const onlyPreviewOfficeRead = {
+                readCurrentOfficeBytes: async (request) => {
+                  harness().officeReads.push(request);
+                  return harness().officeReadResult || {
+                    ok: true,
+                    value: {
+                      selectionRevision: request.selectionRevision,
+                      bytes: new ArrayBuffer(4096)
+                    }
+                  };
+                }
+              };
+            `
+        };
+      }
+      if (path === 'onlypreview-preview-read') {
+        return {
+          loader: 'js',
+          contents: `
+              export const onlyPreviewPreviewRead = {
+                readCurrentText: async () => ({ ok: false, error: { code: 'OPERATION_FAILED', message: 'not configured' } })
+              };
             `
         };
       }
@@ -312,6 +352,8 @@ export const createRendererStoreHarness = (presentation) => ({
   openExternallyPromise: null,
   openExternallyResult: null,
   officeSessions: [],
+  officeReads: [],
+  officeReadResult: null,
   officeMounts: [],
   officeClears: 0,
   officeDisposals: 0,

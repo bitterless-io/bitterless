@@ -15,9 +15,8 @@ import {
 } from '../../src/main/claudeSubscription/claudeResponses.server';
 import { CodexRuntimeError } from '../../src/main/codex/codexRuntime.service';
 import {
-  CLAUDE_SUBSCRIPTION_EFFORTS,
-  SUB2API_CLIENT_EFFORTS,
-  shiftClientEffortToUpstream
+  resolveClaudeCliEffort,
+  SUB2API_CLIENT_EFFORTS
 } from '../../src/shared/claudeSubscription/claudeSubscription.contract';
 import {
   clampCodexEffort,
@@ -618,7 +617,10 @@ test('the effort table owner-agreed on 2026-08-31 holds for both upstreams', () 
 
   for (const row of table) {
     assert.equal(
-      shiftClientEffortToUpstream(row.client, CLAUDE_SUBSCRIPTION_EFFORTS),
+      // Claude needs its own resolver, not the generic one: its rungs share names with
+      // the client's (`low`, `high`, …) yet must land one rung higher, so a name match
+      // would pin `low` to `low`. GPT is the opposite — its names must pass through.
+      resolveClaudeCliEffort(row.client),
       row.claude,
       `${row.client} → claude`
     );
@@ -629,8 +631,102 @@ test('the effort table owner-agreed on 2026-08-31 holds for both upstreams', () 
 
   // Desktop hides `max` from its picker but its schema still allows it on the wire;
   // it resolves to the top rather than being rejected.
-  assert.equal(shiftClientEffortToUpstream('max', CLAUDE_SUBSCRIPTION_EFFORTS), 'ultracode');
+  assert.equal(resolveClaudeCliEffort('max'), 'ultracode');
   assert.equal(clampCodexEffort('gpt-5.6-sol', 'max'), 'max');
+});
+
+test('a PDF is served by Claude even when a gpt model was requested', async () => {
+  const claudeSaw: string[] = [];
+  const running = await startServer({
+    executor: {
+      async execute(execution) {
+        claudeSaw.push(...(execution.payload.media ?? []).map((block) => block.type));
+        return {
+          decision: { action: 'final', text: 'read the document' },
+          rawUsage: {}
+        };
+      }
+    },
+    codex: codexUpstream(() => {
+      throw new Error('a PDF must not reach the Codex upstream: pi has no document channel');
+    })
+  });
+  try {
+    const response = await fetch(`${running.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.6-luna',
+        stream: true,
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'What does this say?' },
+              { type: 'input_file', file_url: 'data:application/pdf;base64,JVBERi0xLjQK' }
+            ]
+          }
+        ]
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(claudeSaw, ['document'], 'the document reached the upstream that can read it');
+    const events = parseClaudeSse(await response.text());
+    const completed = events.find((event) => event.event === 'response.completed')?.data as {
+      response: { model: string };
+    };
+    // The substitution is visible: the response names the model that actually ran.
+    assert.equal(completed.response.model, 'claude-sonnet');
+  } finally {
+    await running.server.close();
+  }
+});
+
+test('an image stays on the requested gpt model, which can read it', async () => {
+  let codexSawImage = false;
+  const running = await startServer({
+    executor: failingClaudeExecutor,
+    codex: {
+      async isAvailable() {
+        return true;
+      },
+      async execute(request) {
+        codexSawImage = (request.payload.media ?? []).some((block) => block.type === 'image');
+        return {
+          model: request.model,
+          effort: request.effort,
+          decision: { action: 'final', text: 'red' }
+        };
+      }
+    }
+  });
+  try {
+    const response = await fetch(`${running.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.6-luna',
+        stream: true,
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'What colour?' },
+              { type: 'input_image', image_url: 'data:image/png;base64,aGVsbG8=' }
+            ]
+          }
+        ]
+      })
+    });
+    assert.equal(response.status, 200);
+    // Verified against both live subscriptions on 2026-08-31: Claude answered
+    // "Crimson red" and gpt-5.6-luna answered "Red" for the same PNG. Only PDFs差.
+    assert.equal(codexSawImage, true, 'the image reached the Codex upstream');
+  } finally {
+    await running.server.close();
+  }
 });
 
 test('the Codex transcript keeps tool calls paired with their outputs', () => {

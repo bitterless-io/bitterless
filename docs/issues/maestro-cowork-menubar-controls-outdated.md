@@ -86,3 +86,11 @@ visual correction reduces that strip and its tab geometry by 8px.
 Implementation task: [maestro-cowork-menubar-parity-006](../plan/tasks/maestro-cowork-menubar-parity-006.md).
 Independent reviews: [initial blocked review](../plan/reviews/maestro-cowork-menubar-parity-006-1.md),
 [final approved review](../plan/reviews/maestro-cowork-menubar-parity-006-2.md).
+
+Follow-up: [task 076](../plan/tasks/maestro-control-entry-royalblue-076.md) retires the visible
+Control-side Connector and Demo entries while preserving the fixed Home/Workbench Connector path
+and the Main-owned Demo service contract.
+
+Follow-up: [task 077](../plan/tasks/maestro-menubar-tab-inset-077.md) preserves the compact
+36/28/48/84px geometry while superseding bottom-attached, top-only rounded tabs with centered
+four-corner tabs and applying Ral's requested traffic-light optical shift from `y: 10` to `y: 11`.

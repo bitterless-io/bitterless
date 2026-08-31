@@ -3,11 +3,13 @@
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import AdmZip from 'adm-zip';
 
 const BENCH_ROOT = resolve(import.meta.dirname, '../../tmp/indexing-bench');
 
 export const CORPUS_CACHE_ROOT = join(BENCH_ROOT, 'corpus');
 export const CORPUS_WORK_ROOT = join(BENCH_ROOT, 'work');
+export const CORPUS_REVISION = 4;
 
 export const UNIQUE_NEEDLE = 'zqxjvk-unique-benchmark-needle';
 export const COMMON_NEEDLE = 'handleWorkspaceRequest';
@@ -70,6 +72,56 @@ const buildTextBody = (random, targetBytes, cjk) => {
   return `${parts.join('\n')}\n`;
 };
 
+// Write the DOS timestamp value directly: Date conversion is timezone-sensitive in AdmZip.
+// 2000-01-01 08:00 preserves the revision-4 fixture already generated in this workspace.
+const FIXED_ZIP_DOS_TIMESTAMP = 0x28214000;
+const MINIMAL_XLSX_PARTS = Object.freeze({
+  '[Content_Types].xml':
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    '</Types>',
+  '_rels/.rels':
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    '</Relationships>',
+  'xl/workbook.xml':
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+  'xl/_rels/workbook.xml.rels':
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    '</Relationships>',
+  'xl/styles.xml':
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font/></fonts><fills count="1"><fill/></fills>' +
+    '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>' +
+    '<cellXfs count="1"><xf xfId="0"/></cellXfs></styleSheet>',
+  'xl/worksheets/sheet1.xml':
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>OnlyPreview indexing benchmark</t></is></c></row></sheetData>' +
+    '</worksheet>'
+});
+
+export const buildIndexingXlsxFixture = async () => {
+  const archive = new AdmZip();
+  for (const [name, content] of Object.entries(MINIMAL_XLSX_PARTS)) {
+    const entry = archive.addFile(name, Buffer.from(content));
+    entry.header.timeval = FIXED_ZIP_DOS_TIMESTAMP;
+  }
+  return archive.toBuffer();
+};
+
 // Calibrated against this repository's own src/ tree: 1269 files, 12.0MB, 9.4KB average.
 const targetTextBytes = (random) => {
   const roll = random();
@@ -126,7 +178,7 @@ const excludedNoise = (random) => {
 
 const corpusSignature = (options) =>
   createHash('sha256')
-    .update(JSON.stringify({ ...options, revision: 3 }))
+    .update(JSON.stringify({ ...options, revision: CORPUS_REVISION }))
     .digest('hex')
     .slice(0, 16);
 
@@ -163,6 +215,13 @@ export const createIndexingCorpus = async (scaleOrOptions = 'small') => {
   const { directories, planned } = planFiles(random, options);
   const noise = excludedNoise(random);
   const uniqueIndex = Math.floor(planned.length * 0.61);
+  let xlsxFixtureBuildCount = 0;
+  const xlsxBytes = planned.some(({ relativePath }) => relativePath.endsWith('.xlsx'))
+    ? await (async () => {
+        xlsxFixtureBuildCount += 1;
+        return await buildIndexingXlsxFixture();
+      })()
+    : null;
   await mkdir(rootPath, { recursive: true });
   await Promise.all(
     directories
@@ -177,7 +236,13 @@ export const createIndexingCorpus = async (scaleOrOptions = 'small') => {
   for (const [index, file] of planned.entries()) {
     const absolutePath = join(rootPath, file.relativePath);
     if (file.opaque) {
-      entries.push({ absolutePath, body: Buffer.alloc(file.bytes, index % 251) });
+      entries.push({
+        absolutePath,
+        body:
+          file.relativePath.endsWith('.xlsx') && xlsxBytes
+            ? xlsxBytes
+            : Buffer.alloc(file.bytes, index % 251)
+      });
       continue;
     }
     let body = buildTextBody(random, file.bytes, file.cjk);
@@ -208,6 +273,7 @@ export const createIndexingCorpus = async (scaleOrOptions = 'small') => {
     cjkFileCount,
     textBytes,
     excludedFileCount: noise.length,
+    xlsxFixtureBuildCount,
     uniqueNeedlePath: planned[uniqueIndex].relativePath,
     dirtyCandidates
   };

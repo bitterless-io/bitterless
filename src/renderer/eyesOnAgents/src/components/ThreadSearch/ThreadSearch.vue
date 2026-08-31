@@ -31,7 +31,7 @@
           :model-value="eyesOnAgentsStore.titleDraft"
           :placeholder="i18nHelper.eyesOnAgents.search.placeholder"
           :input-attrs="inputAttributes"
-          @update:model-value="eyesOnAgentsStore.setTitleDraft"
+          @update:model-value="handleTitleInput"
           @clear="handleQueryClear"
           @keydown="handleKeydown"
         >
@@ -131,6 +131,10 @@ const scrollSelectedResultIntoView = async (): Promise<void> => {
 
 const closeThreadSearch = (): void => {
   eyesOnAgentsStore.closeThreadSearch();
+};
+
+const handleTitleInput = (value: string): void => {
+  eyesOnAgentsStore.setTitleDraft(value);
 };
 
 const handleModalOpen = (): void => {

@@ -5,6 +5,8 @@ export type ClaudeSubscriptionErrorCode =
   | 'subscription_required'
   | 'no_eligible_account'
   | 'claude_usage_limit'
+  | 'claude_all_accounts_exhausted'
+  | 'claude_accounts_busy'
   | 'claude_authentication'
   | 'claude_decision'
   | 'claude_execution'
@@ -40,6 +42,46 @@ export class ClaudeNoEligibleAccountError extends ClaudeSubscriptionError {
     options?: ErrorOptions
   ) {
     super('no_eligible_account', 429, message, options);
+  }
+}
+
+/**
+ * Every account in the pool is spent, not just the one that was tried.
+ *
+ * Distinct from `ClaudeUsageLimitError` because the two need different actions from
+ * the reader: one account hitting its limit is handled by switching, and the client
+ * never needs to know. Nothing left to switch to is the owner's problem, and saying
+ * "usage limit" there reads as the ordinary case that resolves itself.
+ */
+export class ClaudeAllAccountsExhaustedError extends ClaudeSubscriptionError {
+  readonly resetAt: number | undefined;
+
+  constructor(accountCount: number, resetAt?: number) {
+    super(
+      'claude_all_accounts_exhausted',
+      429,
+      resetAt
+        ? `All ${accountCount} Claude subscription accounts are out of quota. The earliest resets at ${new Date(resetAt).toISOString()}.`
+        : `All ${accountCount} Claude subscription accounts are out of quota.`
+    );
+    this.resetAt = resetAt;
+  }
+}
+
+/**
+ * Every account is mid-request and none freed up in time.
+ *
+ * Distinct from exhaustion: the quota is fine, the pool is simply too small for the
+ * concurrency being asked of it. 503 rather than 429 because retrying immediately is
+ * reasonable, and the remedy is another account rather than waiting for a reset.
+ */
+export class ClaudeAccountsBusyError extends ClaudeSubscriptionError {
+  constructor() {
+    super(
+      'claude_accounts_busy',
+      503,
+      'Every Claude subscription account is serving another request. Concurrency equals the number of accounts — add one to run more sessions at once.'
+    );
   }
 }
 

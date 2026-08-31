@@ -59,10 +59,14 @@ export const shiftClientEffortToUpstream = <T extends string>(
   upstream: readonly T[]
 ): T => {
   if (upstream.length === 0) throw new Error('An upstream effort ladder cannot be empty.');
-  const clientIndex = SUB2API_CLIENT_EFFORTS.indexOf(effort as Sub2ApiClientEffort);
-  const offsetFromTop =
-    clientIndex === -1 ? 0 : SUB2API_CLIENT_EFFORTS.length - 1 - clientIndex;
-  return upstream[Math.max(0, upstream.length - 1 - offsetFromTop)] as T;
+  // Matched by name, not by rank. pi pads the bottom of some ladders with `minimal`
+  // and only on some models, so a positional mapping made `xhigh` mean `high` on
+  // `gpt-5.5` while meaning `xhigh` on `gpt-5.6-luna` — the same picker rung running
+  // different levels depending on the model.
+  const named = upstream.find((level) => level === effort);
+  // `ultra` has no upstream by that name, and neither does `max`, which Desktop's
+  // schema allows while its picker hides it. Both mean this upstream's ceiling.
+  return named ?? (upstream[upstream.length - 1] as T);
 };
 
 /**
@@ -96,6 +100,40 @@ export const CLAUDE_SUBSCRIPTION_EFFORTS = [
  * Codex more room, it removes the compaction that keeps a transcript inside what
  * `claude -p` will accept, and the resulting refusal arrives as an opaque 502.
  */
+/**
+ * Client rung → Claude CLI level, per owner decision 2026-08-31.
+ *
+ * Claude is mapped one rung **up**, not by name: the client's five visible rungs sit on
+ * the CLI's top five, so `xhigh` in the picker runs `max` and `ultra` runs `ultracode`.
+ * The CLI's own `low` is deliberately unreachable — the owner would rather spend the
+ * ladder on the strong end than keep a rung nobody selects.
+ *
+ * `ultracode` is real despite the CLI's own rejection message omitting it: `--effort
+ * bogus` and `--effort ultra` both warn and fall back to the default, while `--effort
+ * ultracode` is accepted silently. The message is stale; the validator is authoritative.
+ * Caveat: the CLI's settings text calls ultracode "xhigh effort plus standing
+ * dynamic-workflow orchestration", so it may be a different mode rather than strictly
+ * more reasoning than `max`.
+ *
+ * GPT is *not* shifted this way — pi's names line up with the client's, so it matches by
+ * name and only `ultra` resolves to that upstream's maximum. Two upstreams, two rules,
+ * because their ladders genuinely differ.
+ */
+export const CLAUDE_CLIENT_EFFORT_MAP = {
+  low: 'medium',
+  medium: 'high',
+  high: 'xhigh',
+  xhigh: 'max',
+  ultra: 'ultracode'
+} as const satisfies Record<Sub2ApiClientEffort, ClaudeEffort>;
+
+export const resolveClaudeCliEffort = (effort: string): ClaudeEffort =>
+  Object.prototype.hasOwnProperty.call(CLAUDE_CLIENT_EFFORT_MAP, effort)
+    ? CLAUDE_CLIENT_EFFORT_MAP[effort as Sub2ApiClientEffort]
+    : // `max` reaches here: Desktop's schema allows it while its picker hides it, and
+      // the owner's table puts the picker's top rung on the CLI's top rung.
+      'ultracode';
+
 export const CLAUDE_SUBSCRIPTION_CONTEXT_WINDOW = 200_000;
 export const CLAUDE_SUBSCRIPTION_MAX_CONTEXT_WINDOW = 200_000;
 
@@ -144,7 +182,9 @@ export const buildClaudeSubscriptionCodexModelCatalog = (
 ): { models: Array<Record<string, unknown>> } => ({
   models: entries.map((entry, index) => ({
     slug: entry.slug,
-    display_name: `${entry.label} (Bitterless)`,
+    // No "(Bitterless)" suffix. Every model in this catalogue comes from here, so the
+    // tag distinguished nothing and cost a third of the width of every picker row.
+    display_name: entry.label,
     description: entry.description,
     shell_type: 'default',
     visibility: 'list',
@@ -174,7 +214,9 @@ export const buildClaudeSubscriptionCodexModelCatalog = (
     context_window: entry.contextWindow,
     max_context_window: entry.maxContextWindow,
     auto_compact_token_limit: null,
-    input_modalities: ['text'],
+    // Desktop refuses to attach a file when this says text-only; the refusal it shows
+    // ("This model does not support image inputs") is its own check on this field.
+    input_modalities: ['text', 'image'],
     apply_patch_tool_type: 'freeform',
     supports_search_tool: false,
     // `service_tiers` is deliberately absent rather than an empty list. Ral's config
@@ -196,6 +238,33 @@ export const buildClaudeSubscriptionCodexModelCatalog = (
 });
 
 /** The Claude half of the catalog; the Codex half comes from the Codex runtime. */
+/**
+ * Picker order, owner-chosen 2026-08-31: the two families are interleaved rather than
+ * grouped, so the strongest model of each sits at the top instead of one vendor's whole
+ * list burying the other's.
+ *
+ * `priority` in the generated catalogue is the index into this list. A slug missing
+ * here sorts after everything named, so adding a model degrades to "appears last"
+ * rather than "disappears".
+ */
+export const SUB2API_MODEL_ORDER = [
+  'claude-opus',
+  'gpt-5.6-sol',
+  'claude-sonnet',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna'
+] as const;
+
+export const sortSub2ApiCatalogEntries = (
+  entries: readonly ClaudeSubscriptionCatalogEntry[]
+): ClaudeSubscriptionCatalogEntry[] => {
+  const rank = (slug: string): number => {
+    const index = (SUB2API_MODEL_ORDER as readonly string[]).indexOf(slug);
+    return index === -1 ? SUB2API_MODEL_ORDER.length : index;
+  };
+  return [...entries].sort((a, b) => rank(a.slug) - rank(b.slug) || a.slug.localeCompare(b.slug));
+};
+
 export const claudeSubscriptionCatalogEntries = (): ClaudeSubscriptionCatalogEntry[] =>
   Object.keys(CLAUDE_SUBSCRIPTION_MODELS).map((slug) => ({
     slug,
@@ -204,7 +273,10 @@ export const claudeSubscriptionCatalogEntries = (): ClaudeSubscriptionCatalogEnt
     // in its own rejection message, and `ultra` is not among them: passing it prints
     // "Unknown --effort value" and silently falls back to the default.
     efforts: SUB2API_CLIENT_EFFORTS,
-    defaultEffort: 'high',
+    // Owner decision (2026-08-31): a new Claude thread opens at `xhigh`, which the
+    // mapping runs as the CLI's `max`. Set here rather than only in config.toml so a
+    // freshly copied profile opens the same way instead of falling back to `high`.
+    defaultEffort: 'xhigh',
     // Owner decision (2026-08-31): unified with the GPT entries. See the risk note in
     // buildClaudeSubscriptionCodexModelCatalog.
     contextWindow: CLAUDE_SUBSCRIPTION_CONTEXT_WINDOW,
@@ -236,18 +308,65 @@ export const claudeSubscriptionCatalogEntries = (): ClaudeSubscriptionCatalogEnt
  * (openai/codex#29156). The CLI can keep both by putting this in a Profiles V2
  * file and using `codex -p <name>`.
  */
-export const buildClaudeSubscriptionCodexProfile = (port: number, catalogPath?: string): string =>
-  `model_provider = "bitterless_claude"
-${catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}\n` : ''}
+export const buildClaudeSubscriptionCodexProfile = (port: number, catalogPath?: string): string => {
+  const endpoint = `http://${CLAUDE_SUBSCRIPTION_HOST}:${port}/v1`;
+  return `# Bitterless Sub2API — point an OpenAI-compatible agent at your local subscriptions.
+#
+# WHAT THIS IS
+#   Bitterless runs a loopback endpoint that serves BOTH subscriptions behind one
+#   OpenAI-compatible Responses API:
+#     ${endpoint}
+#   Claude models are answered by the Claude CLI account pool; gpt-* models by the
+#   ChatGPT session Bitterless already signs into. Nothing leaves this machine except
+#   the upstream calls those subscriptions would make anyway.
+#
+# FOR AN AGENT DOING THIS FOR ME
+#   1. Open ~/.codex/config.toml (create it if absent).
+#   2. Set these two TOP-LEVEL keys, ABOVE every [table] header. TOML scopes a key to
+#      the table above it, so putting them lower silently files them under the wrong
+#      table and Codex keeps its built-in model list with no error shown:
+#         model_provider = "bitterless_claude"${
+    catalogPath ? `
+#         model_catalog_json = ${JSON.stringify(catalogPath)}` : ''
+  }
+#   3. Append the [model_providers.bitterless_claude] block below, replacing any
+#      existing block with that exact name. Leave every other provider alone.
+#   4. Do NOT add a top-level \`model = "..."\` line. It rewrites the model of threads
+#      that already exist, and they then fail against a provider that never had it.
+#   5. RESTART CODEX. A running instance keeps the old provider and the old model
+#      list in memory; nothing here takes effect until it is restarted.
+#
+# TROUBLESHOOTING
+#   - Picker still shows only OpenAI models → the two keys are not above the first
+#     [table] header, or Codex was not restarted.
+#   - "502 Bad Gateway" from ${CLAUDE_SUBSCRIPTION_HOST} → a proxy is capturing loopback
+#     traffic. In Clash-style rules, put the 127.0.0.0/8 DIRECT rule ABOVE every
+#     PROCESS-NAME rule; first match wins, and a process rule listed earlier sends this
+#     local request out to a remote node that cannot reach your own machine.
+#   - Endpoint unreachable → Bitterless is not running, or its port differs from the
+#     one above. The Sub2API panel shows the live port.
+
+model_provider = "bitterless_claude"
+${catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}
+` : ''}
 [model_providers.bitterless_claude]
 name = "Bitterless Sub2API"
-base_url = "http://${CLAUDE_SUBSCRIPTION_HOST}:${port}/v1"
+base_url = "${endpoint}"
 wire_api = "responses"
 requires_openai_auth = false
-request_max_retries = 0
-stream_max_retries = 0
+# Retries are asymmetric on purpose.
+#   request_max_retries — the endpoint is on loopback, so its common failure is
+#     "Bitterless is not running", which fails instantly. Ten cheap attempts ride out a
+#     restart; zero turned every restart into a hard error the client could not recover
+#     from.
+#   stream_max_retries — retries a stream that already broke, which re-runs the whole
+#     turn. A Claude turn here can take minutes, so this stays small: enough to survive
+#     a blip, not enough to spend half an hour repeating one answer.
+request_max_retries = 10
+stream_max_retries = 2
 stream_idle_timeout_ms = 900000
 `;
+};
 
 /**
  * Haiku is not offered: the pool exists for coding turns, where it is the wrong
@@ -317,6 +436,18 @@ export interface ClaudeSubscriptionAccountUsage {
  */
 export const CLAUDE_SUBSCRIPTION_LOW_QUOTA_PERCENT = 5;
 
+/**
+ * Concurrent turns one account may serve.
+ *
+ * Each request runs in its own scratch config directory, so the `.claude.json` race
+ * that once forced one turn per account is gone. This is a chosen ceiling: every turn
+ * is a real `claude` child costing a process and CPU, and they all draw on one
+ * subscription's rate limit, so past a point more children make each turn slower and
+ * spend quota faster rather than serving more sessions.
+ */
+export const CLAUDE_SUBSCRIPTION_MAX_CONCURRENT_PER_ACCOUNT = 4;
+
+
 export interface ClaudeSubscriptionAccountView {
   id: ClaudeAccountId;
   label: string;
@@ -327,6 +458,11 @@ export interface ClaudeSubscriptionAccountView {
   enabled: boolean;
   status: ClaudeSubscriptionAccountStatus;
   activeRequests: number;
+  /**
+   * The one account currently carrying every Claude turn. Selection is by weekly quota
+   * remaining, so this moves on its own when the active account runs low.
+   */
+  active?: boolean;
   cooldownUntil?: number;
   usage?: ClaudeSubscriptionAccountUsage;
   createdAt: string;
@@ -384,6 +520,8 @@ export const CLAUDE_SUBSCRIPTION_OPERATION_ERROR_CODES = [
   'claude_usage_limit',
   'claude_execution',
   'profile_copy_failed',
+  /** A named ChatGPT capture could not be saved, activated, or removed. */
+  'codex_account_failed',
   'runtime_unavailable'
 ] as const;
 
@@ -400,9 +538,22 @@ export interface ClaudeSubscriptionOperationError {
  * Translator, not a pool — Codex sign-in is browser OAuth against a subscription and
  * Bitterless holds exactly one at a time.
  */
+export interface ClaudeSubscriptionCodexAccountView {
+  id: string;
+  label: string;
+  active: boolean;
+  createdAt: string;
+}
+
 export interface ClaudeSubscriptionCodexUpstreamView {
   connected: boolean;
   models: string[];
+  /**
+   * Named captures of the ChatGPT credential. Sign-in itself still produces one
+   * credential at a time; these are copies taken after each sign-in, and the active
+   * one is what the endpoint reads.
+   */
+  accounts: ClaudeSubscriptionCodexAccountView[];
 }
 
 export interface ClaudeSubscriptionSnapshot {
@@ -507,6 +658,10 @@ export interface ClaudeSubscriptionApi {
   testAccount(input: ClaudeSubscriptionAccountIdInput): Promise<ClaudeSubscriptionActionResult>;
   removeAccount(input: ClaudeSubscriptionAccountIdInput): Promise<ClaudeSubscriptionActionResult>;
   copyCodexProfile(): Promise<ClaudeSubscriptionCopyResult>;
+  /** Saves the credential the Codex login just wrote, under a name. */
+  captureCodexAccount(input: { label: string }): Promise<ClaudeSubscriptionActionResult>;
+  activateCodexAccount(input: { accountId: string }): Promise<ClaudeSubscriptionActionResult>;
+  removeCodexAccount(input: { accountId: string }): Promise<ClaudeSubscriptionActionResult>;
 }
 
 export interface ClaudeSubscriptionRoutingHealth {
@@ -540,12 +695,32 @@ export interface ClaudeNormalizedCodexTool {
   parameters: ClaudeSubscriptionJsonObject;
 }
 
+/**
+ * An image or PDF pulled out of the transcript, in Anthropic's own block shape.
+ *
+ * These travel beside the JSON payload rather than inside it: the CLI takes them as
+ * real content blocks through `--input-format stream-json`, which is the only way the
+ * model actually sees them. Embedding base64 in the payload text would just be a very
+ * long string it cannot decode.
+ */
+export type ClaudeMediaBlock =
+  | {
+      type: 'image';
+      source: { type: 'base64'; media_type: string; data: string };
+    }
+  | {
+      type: 'document';
+      source: { type: 'base64'; media_type: 'application/pdf'; data: string };
+    };
+
 export interface ClaudeBridgePayload {
   codex_instructions: string;
   conversation: unknown[];
   available_tools: ClaudeNormalizedCodexTool[];
   unsupported_codex_tool_types: string[];
   response_rule: string;
+  /** Extracted from `conversation`; referenced there by index. */
+  media?: ClaudeMediaBlock[];
 }
 
 export type ClaudeDecision =

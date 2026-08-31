@@ -12,3 +12,11 @@ export const clipboard = {
     throw new Error('clipboard.writeText must be injected in OnlyPreview unit-test bundles');
   }
 };
+
+export const app = { isPackaged: false };
+export const session = {};
+export const ipcMain = {};
+export class BrowserWindow {}
+export class MessageChannelMain {}
+export const utilityProcess = {};
+export const webContents = {};

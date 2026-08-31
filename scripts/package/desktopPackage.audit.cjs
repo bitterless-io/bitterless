@@ -132,14 +132,21 @@ const inspectPackagedRuntimeProfile = (asarPath, archiveEntries) => {
   }
   const keys = Object.keys(marker ?? {}).sort();
   if (
-    keys.join(',') !== 'profileName,schemaVersion,viteEnv,viteMode'
+    keys.join(',') !== 'profileName,releaseChannel,schemaVersion,viteEnv,viteMode'
     || marker.schemaVersion !== 1
-    || !['release_dev', 'release_prod'].includes(marker.profileName)
+    || !['release_dev', 'release_preview', 'release_prod'].includes(marker.profileName)
     || marker.viteMode !== 'release'
     || !['dev', 'prod'].includes(marker.viteEnv)
-    || !marker.profileName.endsWith(`_${marker.viteEnv}`)
+    || !['dev', 'preview', 'prod'].includes(marker.releaseChannel)
+    || (
+      marker.profileName === 'release_preview'
+        ? marker.viteEnv !== 'prod' || marker.releaseChannel !== 'preview'
+        : marker.profileName !== `release_${marker.viteEnv}` || marker.releaseChannel !== marker.viteEnv
+    )
   ) {
-    throw new Error('packaged runtime profile marker must be an exact release_dev/release_prod profile');
+    throw new Error(
+      'packaged runtime profile marker must be an exact release_dev/release_preview/release_prod profile'
+    );
   }
   return marker;
 };
@@ -176,6 +183,16 @@ const inspectIcnsFile = (filePath) => {
 const inspectApplicationIcons = (resourcesPath) => {
   const bundleIcnsPath = inspectIcnsFile(path.join(resourcesPath, 'icon.icns'));
   return { bundleIcnsPath };
+};
+
+const assertApplicationIconMatchesChannel = (applicationIconPaths, releaseChannel) => {
+  const sourceName = releaseChannel === 'preview' ? 'icon-preview.icns' : 'icon.icns';
+  const sourcePath = path.resolve(__dirname, '..', '..', 'build', sourceName);
+  const packagedIcon = readRealFile(applicationIconPaths.bundleIcnsPath, 'bundle ICNS');
+  const sourceIcon = readRealFile(sourcePath, `${releaseChannel} source ICNS`);
+  if (!packagedIcon.equals(sourceIcon)) {
+    throw new Error(`bundle ICNS does not match ${sourceName}`);
+  }
 };
 
 const inspectOnlyPreviewAgentSkill = (resourcesPath) => {
@@ -579,6 +596,10 @@ const auditDesktopPackage = (inputPath, options = {}) => {
   if (applicationTarget?.platform === 'darwin') {
     try {
       applicationIconPaths = inspectApplicationIcons(resourcesPath);
+      assertApplicationIconMatchesChannel(
+        applicationIconPaths,
+        packagedRuntimeProfile?.releaseChannel
+      );
       console.log('[desktop-package-audit] macOS bundle ICNS verified');
     } catch (error) {
       failures.push(`application icon gate failed: ${error.message}`);
@@ -691,6 +712,7 @@ module.exports.findApplicationTarget = findApplicationTarget;
 module.exports.getExternalPackageRoot = getExternalPackageRoot;
 module.exports.getPathSize = getPathSize;
 module.exports.inspectApplicationIcons = inspectApplicationIcons;
+module.exports.assertApplicationIconMatchesChannel = assertApplicationIconMatchesChannel;
 module.exports.inspectBinary = inspectBinary;
 module.exports.inspectOnlyPreviewAgentSkill = inspectOnlyPreviewAgentSkill;
 module.exports.inspectPackagedRuntimeProfile = inspectPackagedRuntimeProfile;

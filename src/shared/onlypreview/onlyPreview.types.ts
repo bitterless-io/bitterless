@@ -120,13 +120,16 @@ export type OnlyPreviewErrorCode =
   | 'OOXML_ENCRYPTED'
   | 'OOXML_ARCHIVE_INVALID'
   | 'SHEET_PARSE_FAILED'
+  | 'SHEET_RENDER_FAILED'
   | 'SHEET_EMPTY'
   | 'SHEET_RENDER_TIMEOUT'
   | 'DOCUMENT_PARSE_FAILED'
+  | 'DOCUMENT_RENDER_FAILED'
   | 'DOCUMENT_EMPTY'
   | 'DOCUMENT_SANITIZE_FAILED'
   | 'DOCUMENT_RENDER_TIMEOUT'
   | 'PRESENTATION_PARSE_FAILED'
+  | 'PRESENTATION_RENDER_FAILED'
   | 'PRESENTATION_EMPTY'
   | 'PRESENTATION_RENDER_TIMEOUT'
   | 'DIAGRAM_PARSE_FAILED'
@@ -306,8 +309,7 @@ export const ONLY_PREVIEW_MAX_HTML_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDE
 export const ONLY_PREVIEW_MAX_PDF_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['chromium-pdf'];
 export const ONLY_PREVIEW_MAX_IMAGE_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES.image;
 export const ONLY_PREVIEW_MAX_SHEET_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-xlsx'];
-export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES =
-  ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-docx'];
+export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-docx'];
 export const ONLY_PREVIEW_MAX_PRESENTATION_BYTES =
   ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-pptx'];
 export const ONLY_PREVIEW_MAX_DIAGRAM_BYTES =
@@ -390,11 +392,6 @@ export interface OnlyPreviewFindResultRequest extends OnlyPreviewPreviewRuntimeR
   result: OnlyPreviewFindResult;
 }
 
-export interface OnlyPreviewTextReadRequest
-  extends OnlyPreviewPreviewRevisionRequest, OnlyPreviewFileRef {
-  adapterId: 'monaco' | 'markdown-dom';
-}
-
 export interface OnlyPreviewPreviewErrorRequest extends OnlyPreviewPreviewRevisionRequest {
   errorCode: OnlyPreviewErrorCode;
 }
@@ -439,7 +436,6 @@ export interface OnlyPreviewApi {
   restoreWorkspace(
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
-  readText(params: OnlyPreviewTextReadRequest): Promise<OnlyPreviewResult<OnlyPreviewTextContent>>;
   selectStandaloneFile(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;

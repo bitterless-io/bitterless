@@ -1,13 +1,17 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import sharp from 'sharp';
 import { parse as parseYaml } from 'yaml';
+import previewIconGenerator from './previewIcon.generate.cjs';
 
 const projectRoot = fileURLToPath(new URL('../..', import.meta.url));
+const { PREVIEW_BADGE } = previewIconGenerator;
+const STABLE_ICON_SHA256 = '230b1a3c7db260c80139e987a8cd992217387129be039d1358634eda9abfec39';
 
 const readProjectFile = (relativePath) => readFileSync(resolve(projectRoot, relativePath));
 
@@ -66,22 +70,22 @@ const assertSameImage = (actual, expected, label) => {
   assert(actual.data.equals(expected.data), `${label} pixels differ from build/icon.png`);
 };
 
-test('builder configs use the canonical macOS ICNS without a runtime PNG', () => {
-  const builderConfigs = ['electron-builder.tmp.yml'];
-  if (existsSync(resolve(projectRoot, 'electron-builder.yml'))) {
-    builderConfigs.push('electron-builder.yml');
-  }
-  for (const relativePath of builderConfigs) {
-    const config = parseYaml(readProjectText(relativePath));
-    assert.equal(config.mac?.icon, 'build/icon.icns', `${relativePath} must name the ICNS`);
-    assert.equal(
-      config.extraResources?.some(
-        (resource) => resource?.from === 'build/icon.png' || resource?.to === 'app.png'
-      ),
-      false,
-      `${relativePath} must not package a runtime Dock PNG`
-    );
-  }
+test('builder template keeps Stable icons and generator selects exact channel icons', () => {
+  const template = parseYaml(readProjectText('electron-builder.tmp.yml'));
+  assert.equal(template.mac?.icon, 'build/icon.icns');
+  assert.equal(template.win?.icon, 'build/icon.ico');
+  assert.equal(
+    template.extraResources?.some(
+      (resource) => resource?.from === 'build/icon.png' || resource?.to === 'app.png'
+    ),
+    false,
+    'builder template must not package a runtime Dock PNG'
+  );
+
+  const generator = readProjectText('scripts/before.js');
+  assert.match(generator, /const iconStem = isPreview \? 'icon-preview' : 'icon'/);
+  assert.match(generator, /build\/\$\{iconStem\}\.icns/);
+  assert.match(generator, /build\/\$\{iconStem\}\.ico/);
 });
 
 test('main leaves the macOS Dock icon to the bundle ICNS', () => {
@@ -102,20 +106,66 @@ test('signed package builds run the icon source gate before Electron Builder', (
   assert(builder > iconGate, 'Electron Builder must run after the icon source gate');
 });
 
-test('derived ICNS and ICO contain the current canonical PNG artwork', async () => {
+test('Stable and Preview PNG sources are exact, isolated artwork', async () => {
   const canonical = readProjectFile('build/icon.png');
+  assert.equal(createHash('sha256').update(canonical).digest('hex'), STABLE_ICON_SHA256);
   const canonicalMetadata = await sharp(canonical).metadata();
   assert.equal(canonicalMetadata.format, 'png');
   assert.equal(canonicalMetadata.width, 1024);
   assert.equal(canonicalMetadata.height, 1024);
 
-  const icnsEntries = parseIcns(readProjectFile('build/icon.icns'));
-  const icns1024 = icnsEntries.get('ic10');
-  assert(icns1024, 'ICNS is missing its 1024px representation');
-  assertSameImage(await rawImage(icns1024), await rawImage(canonical), 'ICNS 1024px artwork');
+  const preview = readProjectFile('build/icon-preview.png');
+  const previewMetadata = await sharp(preview).metadata();
+  assert.equal(previewMetadata.format, 'png');
+  assert.equal(previewMetadata.width, 1024);
+  assert.equal(previewMetadata.height, 1024);
 
-  const icoEntries = parseIco(readProjectFile('build/icon.ico'));
-  const ico256 = icoEntries.find((entry) => entry.width === 256 && entry.height === 256);
-  assert(ico256, 'ICO is missing its 256px representation');
-  assertSameImage(await rawImage(ico256.data), await rawImage(canonical, 256), 'ICO 256px artwork');
+  const canonicalRaw = await rawImage(canonical);
+  const previewRaw = await rawImage(preview);
+  let changedInsideBadge = false;
+  for (let y = 0; y < canonicalRaw.info.height; y += 1) {
+    for (let x = 0; x < canonicalRaw.info.width; x += 1) {
+      const insideBadge =
+        x >= PREVIEW_BADGE.x &&
+        x < PREVIEW_BADGE.x + PREVIEW_BADGE.width &&
+        y >= PREVIEW_BADGE.y &&
+        y < PREVIEW_BADGE.y + PREVIEW_BADGE.height;
+      const offset = (y * canonicalRaw.info.width + x) * canonicalRaw.info.channels;
+      const stablePixel = canonicalRaw.data.subarray(offset, offset + canonicalRaw.info.channels);
+      const previewPixel = previewRaw.data.subarray(offset, offset + previewRaw.info.channels);
+      if (stablePixel[3] === 0) {
+        assert.equal(previewPixel[3], 0, `Preview badge changed transparent footprint at ${x},${y}`);
+      }
+      if (insideBadge) {
+        if (!stablePixel.equals(previewPixel)) changedInsideBadge = true;
+      } else {
+        assert(stablePixel.equals(previewPixel), `Preview changed Stable artwork at ${x},${y}`);
+      }
+    }
+  }
+  assert.equal(changedInsideBadge, true, 'Preview badge did not change its reserved safe area');
+});
+
+test('derived ICNS and ICO contain their exact channel PNG artwork', async () => {
+  for (const stem of ['icon', 'icon-preview']) {
+    const canonical = readProjectFile(`build/${stem}.png`);
+
+    const icnsEntries = parseIcns(readProjectFile(`build/${stem}.icns`));
+    const icns1024 = icnsEntries.get('ic10');
+    assert(icns1024, `${stem}.icns is missing its 1024px representation`);
+    assertSameImage(
+      await rawImage(icns1024),
+      await rawImage(canonical),
+      `${stem}.icns 1024px artwork`
+    );
+
+    const icoEntries = parseIco(readProjectFile(`build/${stem}.ico`));
+    const ico256 = icoEntries.find((entry) => entry.width === 256 && entry.height === 256);
+    assert(ico256, `${stem}.ico is missing its 256px representation`);
+    assertSameImage(
+      await rawImage(ico256.data),
+      await rawImage(canonical, 256),
+      `${stem}.ico 256px artwork`
+    );
+  }
 });

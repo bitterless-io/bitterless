@@ -10,7 +10,11 @@ const mode = process.argv[2] ?? 'final';
  * is the lowest slot. This used to match the account UUID inside the path; slots
  * carry no UUID.
  */
-const isFirstSlot = () => process.env.CLAUDE_CONFIG_DIR?.endsWith('.claude2') === true;
+// Read from the *credential* directory, not the config one. Since 2026-08-31 each
+// request gets a scratch `CLAUDE_CONFIG_DIR` so one account can serve several turns at
+// once; `CLAUDE_SECURESTORAGE_CONFIG_DIR` is what still identifies the account.
+const isFirstSlot = () =>
+  process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR?.endsWith('.claude2') === true;
 
 const readStdin = async () => {
   const chunks = [];
@@ -112,11 +116,18 @@ if (isAuthLogout) {
     const isolated =
       systemPromptIndex > 0 &&
       (statSync(systemPromptPath).mode & 0o777) === 0o600 &&
-      process.env.CLAUDE_CONFIG_DIR === '/tmp/bitterless-claude-account-a/profile' &&
+      // The config directory is now a per-request scratchpad, so it is asserted by
+      // shape rather than by exact path: it must be somewhere else, and it must not be
+      // the account's own directory — that separation is what lets one account serve
+      // several turns at once without them corrupting each other's `.claude.json`.
+      typeof process.env.CLAUDE_CONFIG_DIR === 'string' &&
+      process.env.CLAUDE_CONFIG_DIR !== '/tmp/bitterless-claude-account-a/profile' &&
+      // Credentials must still resolve from the real slot. This is the security
+      // boundary; only the scratchpad moved.
       process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR ===
         '/tmp/bitterless-claude-account-a/profile' &&
       process.env.ANTHROPIC_CONFIG_DIR ===
-        '/tmp/bitterless-claude-account-a/profile/anthropic' &&
+        `${process.env.CLAUDE_CONFIG_DIR}/anthropic` &&
       forbidden.every((name) => process.env[name] === undefined) &&
       !process.argv.some((value) => value.includes('oauth-token')) &&
       settingSourcesIndex > 0 &&

@@ -375,7 +375,12 @@ only `{ threadId }`. EyesOnAgents uses those protocol facts as follows:
 - Archived rows remain in SQLite but are excluded from renderer snapshots. Domain assignment,
   Project metadata, completion/open markers, and unread history are preserved across archive and
   unarchive.
-- EyesOnAgents does not expose its own archive control and does not read archived transcripts.
+- A Codex card may request provider-authoritative archive through App Server `thread/archive`.
+  Bitterless persists `archived` and broadcasts only after that request succeeds, so the card
+  disappears immediately and other Monitor renderers converge. Provider failure leaves the row
+  visible and surfaces the existing action error. The later archive notification and active plus
+  archived inventory Sync remain idempotent repair paths. EyesOnAgents does not read archived
+  transcripts.
 
 Protocol basis: the official
 [Codex App Server reference](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
@@ -389,6 +394,10 @@ suppresses residual JSONL, Agent View, and late Hook resurrection until Claude D
 tombstone and publishes newer unique live metadata. A CLI-only Claude row remains internal and has
 unknown archive state; file absence, JSONL deletion, process exit, and Agent View omission never
 imply archive or delete.
+
+Monitor therefore exposes Archive only for Codex. It does not write Claude Desktop metadata, create
+a deletion tombstone, or locally mark a Claude row archived: all three would misrepresent provider
+state and a later Desktop inventory pass could reverse the result.
 
 ## Domain model
 
@@ -501,7 +510,8 @@ state. Query text, provider-qualified selection, and result visibility remain in
 and no search-specific XPC, SQLite, App Server request, or polling loop exists. The Focus board
 remains complete behind the modal. Results directly reuse `ThreadCard`; Up/Down wrap selection and
 Enter commits the newest draft before using the established `openThread(sessionKey)` path. Opening
-keeps the modal available for another lookup.
+successfully closes and clears Search; a failed or guarded Open preserves the query and selection
+for retry.
 
 ## Runtime state
 
