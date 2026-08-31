@@ -153,6 +153,8 @@ mac:
   icon: build/icon.icns
   binaries:
     - Contents/Resources/maestro-tools/micromeet
+    - Contents/Resources/maestro-tools/anydoc/anydoc.node
+    - Contents/Resources/maestro-tools/ouch
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false

@@ -477,6 +477,38 @@ test('ordinary XLSX never starts the compatibility Worker', async () => {
   session.dispose();
 });
 
+test('an XLSM source without a compatibility marker still mounts the OOXML viewer', async () => {
+  const { container, events, session } = createHarness('xlsx', {
+    sourceExtension: '.xlsm'
+  });
+  await session.mount(container);
+  assert.equal(events.compatibilityWorkerRequests.length, 0);
+  assert.equal(events.viewerConstructions.length, 1);
+  assert.equal(events.loads.length, 1);
+  session.dispose();
+});
+
+test('malformed initial preflight error codes map to each Office format parse failure', async () => {
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  try {
+    for (const [kind, expectedCode] of [
+      ['xlsx', 'SHEET_PARSE_FAILED'],
+      ['docx', 'DOCUMENT_PARSE_FAILED'],
+      ['pptx', 'PRESENTATION_PARSE_FAILED']
+    ]) {
+      const { container, events, session } = createHarness(kind, {
+        preflightResponses: [{ type: 'error', errorCode: 'UNTRUSTED_PREFLIGHT_CODE' }]
+      });
+      await assert.rejects(session.mount(container), (error) => error?.code === expectedCode);
+      assert.equal(events.viewerConstructions.length, 0);
+      session.dispose();
+    }
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test('macro and multi-sheet missing-sheetData workbooks fail closed without normalization', async () => {
   for (const compatibility of [
     { ...missingSheetDataCompatibility, macroEnabled: true },

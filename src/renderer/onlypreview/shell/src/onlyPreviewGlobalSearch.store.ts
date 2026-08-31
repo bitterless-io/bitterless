@@ -24,6 +24,10 @@ import {
   sameGlobalSearchPath,
   sameGlobalSearchResult
 } from './onlyPreviewGlobalSearchResult.service';
+import {
+  createOnlyPreviewGlobalSearchPreviewScheduler,
+  type OnlyPreviewGlobalSearchPreviewScheduler
+} from './onlyPreviewGlobalSearchPreviewScheduler.service';
 import type { OnlyPreviewGlobalSearchFocusOrigin } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewGlobalSearchWorkspaceContext } from '@shared/onlypreview/onlyPreview.types';
 import {
@@ -35,6 +39,14 @@ export type OnlyPreviewGlobalSearchContext = OnlyPreviewGlobalSearchWorkspaceCon
 
 type OpenResult = (result: OnlyPreviewGlobalSearchResult) => Promise<boolean>;
 type CloseSearch = (mode: 'opener' | 'project' | 'preview' | 'discard') => Promise<void>;
+
+interface OnlyPreviewGlobalSearchPreviewCandidate {
+  result: OnlyPreviewGlobalSearchResult;
+  previewRevision: number;
+  workspaceId: string;
+  generation: number;
+  requestId: string;
+}
 
 const errorMessage = (error: unknown): string =>
   error instanceof OnlyPreviewContractError
@@ -76,6 +88,7 @@ class OnlyPreviewGlobalSearchStore {
   preview: OnlyPreviewGlobalSearchPreview | null = null;
   previewPending = false;
   previewError = '';
+  previewComponentRevision = 0;
   previewPercent = 38;
   focusRevision = 0;
   openerOrigin: OnlyPreviewGlobalSearchFocusOrigin = 'shell';
@@ -90,6 +103,8 @@ class OnlyPreviewGlobalSearchStore {
   private openResult: OpenResult | null = null;
   private closeSearch: CloseSearch | null = null;
   private scheduleSearch: (() => void) | null = null;
+  private previewScheduler: OnlyPreviewGlobalSearchPreviewScheduler<OnlyPreviewGlobalSearchPreviewCandidate> | null =
+    null;
   private centeredProjectPathOnExit: string | null = null;
   private diagnostics = createOnlyPreviewSearchDiagnostics();
   private diagnosticSearch: {
@@ -140,6 +155,13 @@ class OnlyPreviewGlobalSearchStore {
 
   configureScheduler(schedule: () => void): void {
     this.scheduleSearch = schedule;
+  }
+
+  configurePreviewScheduler(
+    scheduler: OnlyPreviewGlobalSearchPreviewScheduler<OnlyPreviewGlobalSearchPreviewCandidate>
+  ): void {
+    this.previewScheduler?.cancel();
+    this.previewScheduler = scheduler;
   }
 
   configureDiagnostics(diagnostics: OnlyPreviewSearchDiagnostics): void {
@@ -292,11 +314,30 @@ class OnlyPreviewGlobalSearchStore {
     ) {
       return;
     }
+    this.cancelAcceptedOfficeRead();
     this.selectedResult = result;
     this.preview = null;
     this.previewError = '';
     this.previewRevision += 1;
-    if (result) void this.fetchPreview(result, this.previewRevision);
+    this.previewComponentRevision = this.previewRevision;
+    this.previewPending = Boolean(result);
+    if (!result) {
+      this.previewScheduler?.cancel();
+      return;
+    }
+    const context = this.resolveContext?.() ?? null;
+    const requestId = this.requestId;
+    if (!context || !requestId) {
+      this.previewPending = false;
+      return;
+    }
+    this.previewScheduler?.schedule({
+      result,
+      previewRevision: this.previewRevision,
+      workspaceId: context.workspaceId,
+      generation: context.generation,
+      requestId
+    });
   }
 
   async openSelected(): Promise<void> {
@@ -385,6 +426,10 @@ class OnlyPreviewGlobalSearchStore {
     }
   }
 
+  dispatchPreview(candidate: OnlyPreviewGlobalSearchPreviewCandidate): void {
+    void this.fetchPreview(candidate);
+  }
+
   resumeForAvailableRuntime(): void {
     if (
       this.active &&
@@ -401,40 +446,42 @@ class OnlyPreviewGlobalSearchStore {
     this.exit(false);
   }
 
-  private async fetchPreview(
-    result: OnlyPreviewGlobalSearchResult,
-    previewRevision: number
-  ): Promise<void> {
+  private async fetchPreview(candidate: OnlyPreviewGlobalSearchPreviewCandidate): Promise<void> {
+    const { result, workspaceId, generation, requestId } = candidate;
     const hostToken = onlyPreviewEnv.hostToken;
-    const context = this.resolveContext?.() ?? null;
-    const requestId = this.requestId;
-    if (!hostToken || !context || !requestId) return;
-    this.previewPending = true;
+    if (!hostToken || !this.isPreviewCurrent(candidate)) return;
     try {
       const preview = unwrapOnlyPreviewResult(
         await onlyPreviewSearchClient.preview({
           hostToken,
-          workspaceId: context.workspaceId,
-          generation: context.generation,
+          workspaceId,
+          generation,
           requestId,
           resultToken: result.resultToken
         })
       );
-      if (
-        previewRevision === this.previewRevision &&
-        this.requestId === requestId &&
-        this.selectedResult &&
-        sameGlobalSearchResult(this.selectedResult, result)
-      ) {
-        this.preview = preview;
+      if (!this.isPreviewCurrent(candidate)) {
+        this.cancelOfficeRead(preview);
+        return;
       }
+      this.preview = preview;
     } catch (error) {
-      if (previewRevision === this.previewRevision && this.requestId === requestId) {
-        this.previewError = errorMessage(error);
-      }
+      if (this.isPreviewCurrent(candidate)) this.previewError = errorMessage(error);
     } finally {
-      if (previewRevision === this.previewRevision) this.previewPending = false;
+      if (this.isPreviewCurrent(candidate)) this.previewPending = false;
     }
+  }
+
+  private isPreviewCurrent(candidate: OnlyPreviewGlobalSearchPreviewCandidate): boolean {
+    const context = this.resolveContext?.() ?? null;
+    return (
+      this.active &&
+      candidate.previewRevision === this.previewRevision &&
+      candidate.workspaceId === context?.workspaceId &&
+      candidate.generation === context?.generation &&
+      candidate.requestId === this.requestId &&
+      Boolean(this.selectedResult && sameGlobalSearchResult(this.selectedResult, candidate.result))
+    );
   }
 
   private acceptBatch(batch: OnlyPreviewSearchBatchEvent['batch']): void {
@@ -510,9 +557,8 @@ class OnlyPreviewGlobalSearchStore {
   private cancelRequest(clearPending = true): void {
     const requestId = this.requestId;
     if (requestId) this.emitDiagnosticTerminal('cancelled');
+    this.cancelPreviewLifecycle();
     this.requestId = null;
-    this.previewRevision += 1;
-    this.previewPending = false;
     if (clearPending) this.pending = false;
     const hostToken = onlyPreviewEnv.hostToken;
     if (requestId && hostToken) {
@@ -546,6 +592,7 @@ class OnlyPreviewGlobalSearchStore {
   }
 
   private clearResults(): void {
+    this.cancelPreviewLifecycle();
     this.files = [];
     this.contents = [];
     this.filesTruncated = false;
@@ -556,6 +603,35 @@ class OnlyPreviewGlobalSearchStore {
     this.previewError = '';
     this.previewPending = false;
     this.pending = false;
+  }
+
+  private cancelPreviewLifecycle(): void {
+    this.previewScheduler?.cancel();
+    this.cancelAcceptedOfficeRead();
+    this.previewRevision += 1;
+    this.previewComponentRevision = this.previewRevision;
+    this.preview = null;
+    this.previewError = '';
+    this.previewPending = false;
+  }
+
+  private cancelAcceptedOfficeRead(): void {
+    this.cancelOfficeRead(this.preview);
+  }
+
+  private cancelOfficeRead(preview: OnlyPreviewGlobalSearchPreview | null): void {
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken || preview?.kind !== 'office') return;
+    void onlyPreviewSearchClient
+      .cancelOfficeRead({
+        hostToken,
+        workspaceId: preview.workspaceId,
+        generation: preview.generation,
+        requestId: preview.requestId,
+        resultToken: preview.resultToken,
+        readGrant: preview.readGrant
+      })
+      .catch(() => undefined);
   }
 
   private restartForSearchIdentityChange(dispatchImmediately: boolean): void {
@@ -589,4 +665,10 @@ export const createOnlyPreviewGlobalSearchScheduler = (run: () => void): (() => 
 
 onlyPreviewGlobalSearchStore.configureScheduler(
   createOnlyPreviewGlobalSearchScheduler(() => void onlyPreviewGlobalSearchStore.dispatchLatest())
+);
+
+onlyPreviewGlobalSearchStore.configurePreviewScheduler(
+  createOnlyPreviewGlobalSearchPreviewScheduler((candidate) =>
+    onlyPreviewGlobalSearchStore.dispatchPreview(candidate)
+  )
 );

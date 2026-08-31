@@ -7,6 +7,8 @@ export interface FileSearchPendingExpectation {
   requestId: string | null;
   directoryToken: string | null;
   resultToken: string | null;
+  readGrant: string | null;
+  offset: number | null;
   maxResults: number | null;
 }
 

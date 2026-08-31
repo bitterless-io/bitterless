@@ -375,6 +375,198 @@ test('a queued replacement search revokes the active result session immediately'
   await coordinator.shutdown();
 });
 
+test('Global Search Office lane is grant-bound, chunked, one-shot, and independently cancelled', async () => {
+  const calls = [];
+  let preparedGrant = null;
+  let handleOpen = false;
+  let readFailure = null;
+  const officeReader = {
+    bindWorkspace: async (boundWorkspaceId, rootPath) => {
+      calls.push(['bind', boundWorkspaceId, rootPath]);
+    },
+    prepare: async (grant) => {
+      preparedGrant = grant;
+      calls.push(['prepare', grant.kind, grant.selectionRevision]);
+      return {
+        grantId: grant.grantId,
+        runtimeId: grant.runtimeId,
+        selectionRevision: grant.selectionRevision,
+        kind: grant.kind,
+        size: 4,
+        modifiedAt: 12
+      };
+    },
+    open: async (grantId, runtimeId, selectionRevision) => {
+      assert.equal(grantId, preparedGrant.grantId);
+      assert.equal(runtimeId, preparedGrant.runtimeId);
+      assert.equal(selectionRevision, preparedGrant.selectionRevision);
+      calls.push(['open', selectionRevision]);
+      handleOpen = true;
+      return { grantId, runtimeId, selectionRevision, totalBytes: 4 };
+    },
+    readNext: async (grantId, runtimeId, selectionRevision, offset) => {
+      assert.equal(grantId, preparedGrant.grantId);
+      assert.equal(runtimeId, preparedGrant.runtimeId);
+      assert.equal(selectionRevision, preparedGrant.selectionRevision);
+      calls.push(['read', selectionRevision, offset]);
+      if (offset !== 0) throw new Error('Office read offset is invalid.');
+      if (readFailure) throw readFailure;
+      handleOpen = false;
+      return {
+        grantId,
+        runtimeId,
+        selectionRevision,
+        offset,
+        bytes: new Uint8Array([1, 2, 3, 4]).buffer,
+        eof: true
+      };
+    },
+    cancel: async (grantId, runtimeId, selectionRevision) => {
+      calls.push(['cancel', grantId, runtimeId, selectionRevision]);
+      handleOpen = false;
+    },
+    dispose: async () => calls.push(['dispose'])
+  };
+  const files = {
+    'xlsx-token': ['book.xlsm', 'xlsx'],
+    'docx-token': ['manual.docx', 'docx'],
+    'pptx-token': ['slides.pptx', 'pptx'],
+    'info-token': ['manual.pdf', null]
+  };
+  const coordinator = coordinatorRuntime.createFileSearchCoordinator({
+    createOfficeReader: () => officeReader,
+    createEngine: (options) => ({
+      initialize: async ({
+        workspaceId: initializedWorkspaceId,
+        generation: initializedGeneration
+      }) => ({
+        ...snapshot,
+        workspaceId: initializedWorkspaceId,
+        generation: initializedGeneration
+      }),
+      preview: async (previewRequest) => {
+        const [relativePath, kind] = files[previewRequest.resultToken];
+        const info = { kind: 'info', size: 4, modifiedAt: 12 };
+        if (!kind) return { ...info, name: relativePath, previewHint: 'pdf', mediaType: 'pdf' };
+        return await options.prepareOfficePreview({
+          authority: {
+            nodeKind: 'file',
+            relativePath,
+            name: relativePath,
+            size: 4,
+            modifiedAt: 12
+          },
+          preview: info,
+          ...previewRequest
+        });
+      },
+      revokeSearch: () => undefined,
+      shutdown: async () => undefined,
+      hasActiveSearchIndex: () => true
+    })
+  });
+  await coordinator.initialize({
+    workspaceId,
+    generation,
+    rootPath: '/workspace',
+    databasePath: '/search.sqlite'
+  });
+
+  const baseRequest = {
+    hostToken: 'host-token',
+    workspaceId,
+    generation,
+    requestId: 'office-request'
+  };
+  const xlsx = await coordinator.preview({
+    ...baseRequest,
+    resultToken: 'xlsx-token'
+  });
+  assert.equal(xlsx.kind, 'office');
+  assert.equal(xlsx.adapter, 'xlsx');
+  assert.equal(xlsx.sourceExtension, '.xlsm');
+  assert.equal('relativePath' in xlsx, false);
+  assert.equal('bytes' in xlsx, false);
+  const xlsxRead = { ...baseRequest, resultToken: 'xlsx-token', readGrant: xlsx.readGrant };
+  assert.equal((await coordinator.openOfficeRead(xlsxRead)).totalBytes, 4);
+  await assert.rejects(() => coordinator.openOfficeRead(xlsxRead), /unavailable/u);
+  const xlsxChunk = await coordinator.readOfficeChunk({ ...xlsxRead, offset: 0 });
+  assert.deepEqual([...new Uint8Array(xlsxChunk.bytes)], [1, 2, 3, 4]);
+  assert.equal(xlsxChunk.eof, true);
+
+  const docx = await coordinator.preview({ ...baseRequest, resultToken: 'docx-token' });
+  assert.equal(docx.kind, 'office');
+  assert.equal(docx.adapter, 'docx');
+  const docxRead = { ...baseRequest, resultToken: 'docx-token', readGrant: docx.readGrant };
+  await coordinator.openOfficeRead(docxRead);
+  const docxRevision = preparedGrant.selectionRevision;
+  const docxCancelCount = calls.filter(
+    (call) => call[0] === 'cancel' && call[3] === docxRevision
+  ).length;
+  await assert.rejects(
+    () => coordinator.readOfficeChunk({ ...docxRead, offset: 1 }),
+    /offset is invalid/u
+  );
+  assert.equal(handleOpen, false);
+  assert.equal(
+    calls.filter((call) => call[0] === 'cancel' && call[3] === docxRevision).length,
+    docxCancelCount + 1
+  );
+  await assert.rejects(
+    () => coordinator.readOfficeChunk({ ...docxRead, offset: 0 }),
+    /unavailable/u
+  );
+  await assert.rejects(() => coordinator.openOfficeRead(docxRead), /unavailable/u);
+
+  const pptx = await coordinator.preview({ ...baseRequest, resultToken: 'pptx-token' });
+  assert.equal(pptx.kind, 'office');
+  assert.equal(pptx.adapter, 'pptx');
+  const pptxRead = { ...baseRequest, resultToken: 'pptx-token', readGrant: pptx.readGrant };
+  await coordinator.openOfficeRead(pptxRead);
+  const pptxRevision = preparedGrant.selectionRevision;
+  const pptxCancelCount = calls.filter(
+    (call) => call[0] === 'cancel' && call[3] === pptxRevision
+  ).length;
+  readFailure = new Error('Simulated Office read I/O failure.');
+  await assert.rejects(
+    () => coordinator.readOfficeChunk({ ...pptxRead, offset: 0 }),
+    /simulated Office read I\/O failure/iu
+  );
+  readFailure = null;
+  assert.equal(handleOpen, false);
+  assert.equal(
+    calls.filter((call) => call[0] === 'cancel' && call[3] === pptxRevision).length,
+    pptxCancelCount + 1
+  );
+  await assert.rejects(
+    () => coordinator.readOfficeChunk({ ...pptxRead, offset: 0 }),
+    /unavailable/u
+  );
+  await assert.rejects(() => coordinator.openOfficeRead(pptxRead), /unavailable/u);
+
+  await coordinator.preview({ ...baseRequest, resultToken: 'pptx-token' });
+  const activePptx = calls.findLast((call) => call[0] === 'prepare');
+  await coordinator.preview({ ...baseRequest, resultToken: 'info-token' });
+  assert.equal(
+    calls.some((call) => call[0] === 'cancel' && call[3] === activePptx[2]),
+    true
+  );
+  await assert.rejects(
+    () =>
+      coordinator.openOfficeRead({
+        ...baseRequest,
+        resultToken: 'pptx-token',
+        readGrant: 'forged-grant'
+      }),
+    /unavailable/u
+  );
+  await coordinator.shutdown();
+  assert.equal(
+    calls.some((call) => call[0] === 'dispose'),
+    true
+  );
+});
+
 class FakeFileSearchClient {
   calls = [];
   pending = [];
@@ -406,6 +598,18 @@ class FakeFileSearchClient {
 
   preview(params) {
     return this.defer('preview', params);
+  }
+
+  openOfficeRead(params) {
+    return this.defer('openOfficeRead', params);
+  }
+
+  readOfficeChunk(params) {
+    return this.defer('readOfficeChunk', params);
+  }
+
+  cancelOfficeRead(params) {
+    return this.defer('cancelOfficeRead', params);
   }
 
   cancel(params) {
@@ -669,6 +873,47 @@ test('file-search XPC event path capability-binds and deeply validates public re
     }
   });
   assert.equal((await preview).ok, true);
+
+  const officeReadRequest = {
+    ...previewRequest,
+    readGrant: 'office-read-grant'
+  };
+  const openOffice = relay.call('host-token', 'openOfficeRead', officeReadRequest, 5_000);
+  client.respond('openOfficeRead', {
+    ok: true,
+    value: {
+      workspaceId,
+      generation,
+      requestId: request.requestId,
+      resultToken: fileSearchResult.resultToken,
+      readGrant: officeReadRequest.readGrant,
+      totalBytes: 4
+    }
+  });
+  assert.equal((await openOffice).ok, true);
+  const readOffice = relay.call(
+    'host-token',
+    'readOfficeChunk',
+    { ...officeReadRequest, offset: 0 },
+    5_000
+  );
+  client.respond('readOfficeChunk', {
+    ok: true,
+    value: {
+      workspaceId,
+      generation,
+      requestId: request.requestId,
+      resultToken: fileSearchResult.resultToken,
+      readGrant: officeReadRequest.readGrant,
+      offset: 0,
+      bytes: new Uint8Array([1, 2, 3, 4]).buffer,
+      eof: true
+    }
+  });
+  assert.equal((await readOffice).ok, true);
+  const cancelOffice = relay.call('host-token', 'cancelOfficeRead', officeReadRequest, 5_000);
+  client.respond('cancelOfficeRead', { ok: true, value: undefined });
+  assert.equal((await cancelOffice).ok, true);
 
   const malformedPreview = relay.call('host-token', 'preview', previewRequest, 5_000);
   client.respond('preview', {

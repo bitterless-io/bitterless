@@ -1,7 +1,7 @@
 ---
 id: maestro-turn-steering-renderer-074
 scope: Maestro Control renderer input unlock, global busy gate scoping, and steering queue feedback
-status: pending
+status: superseded by maestro-cowork-chat-core-089
 depends-on: [maestro-turn-steering-073]
 verify:
   - The composer textarea, send button, and voice control stay usable while a turn is streaming
@@ -19,6 +19,10 @@ verify:
 ---
 
 # Maestro renderer 侧 steering —— 放开输入区 · 全局闸定界 · 排队留痕
+
+> Superseded: current Cowork steering is integrated with its Turn/status/task model. Implement
+> [`maestro-cowork-chat-core-089`](maestro-cowork-chat-core-089.md) instead of extending the obsolete
+> Maestro `busy` renderer state.
 
 ## Objective
 

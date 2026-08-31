@@ -733,11 +733,12 @@ runtime/UI path; packaged release startup remains untested.
   replacement, failure, timeout, or unmount. The library exposes no app-configurable raster/decode
   options, so Bitterless does not claim to pass them.
   For `.xlsx` only, Task 088 adds one narrow producer-compatibility path inside the original archive
-  preflight: while worksheet XML is already streamed, exactly one non-macro worksheet with zero
-  `sheetData` marks the in-memory preview copy for one disposable ExcelJS normalization Worker;
-  multi-sheet cases and more than one `sheetData` remain invalid. The exceptional rewrite has a
-  tighter 4 MiB archive / 8 MiB inflated ceiling, and normalized output is capped at 4 MiB before
-  archive preflight runs again and the single
+  preflight: while worksheet XML is already streamed, a trusted descriptor extension of `.xlsx`
+  plus exactly one non-macro worksheet with zero `sheetData` marks the in-memory preview copy for
+  one disposable ExcelJS normalization Worker. `.xlsm`, macro-bearing, multi-sheet, and
+  multiple-`sheetData` cases remain invalid. The exceptional rewrite has a tighter 4 MiB archive /
+  8 MiB inflated ceiling, and normalized output is capped at 4 MiB before archive preflight runs
+  again and the single
   `@silurus/ooxml/xlsx` Viewer is constructed. This pre-Viewer gate is required because the pinned
   package paints that worksheet parser error instead of rejecting `load()`. The original file is
   untouched, Main performs no content I/O, and arbitrary/encrypted/limited/XLSM failures never enter
@@ -1174,9 +1175,12 @@ format, large-directory resource, locator, and file-association verification in 
   never its internal unknown media type.
 - **Global Search no result:** preserve the Files and Contents group labels and show one compact
   localized empty state within each empty group.
-- **Global Search result preview:** keep the previously accepted preview until the latest result-token
-  request settles. Invalid/stale tokens fail closed. Unsupported/non-text files show filename,
-  relative directory, media type, size, and icon without reading their bodies.
+- **Global Search result preview:** selecting a new result immediately clears and disposes the prior
+  payload so old content is never presented under a new row. A 120ms fixed-window
+  leading-plus-trailing scheduler renders the first selection promptly and only the final selection
+  during rapid navigation. Invalid/stale tokens fail closed. XLSX/XLSM, DOCX, and PPTX use one
+  Search-dedicated bounded Office lane and lazy OOXML Viewer; other unsupported/non-text files show
+  filename, relative directory, media type, size, and icon without reading their bodies.
 - **Index memory advisory:** runtime strictly above 1GiB may show/log one aggregate optimization
   advisory; strictly above 2GiB sets `performanceAccepted=false` and keeps `stop=false` for the next
   iteration without invalidating the benchmark artifact or method. Neither value includes the

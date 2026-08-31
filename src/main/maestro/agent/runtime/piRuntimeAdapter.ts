@@ -7,7 +7,39 @@ import type {
   AgentRuntimeSessionOptions,
   AgentToolParamSpec
 } from './agentRuntime.types'
+import type { CodexDebugEvent } from '@maestro-shared/coach.api'
 import { sanitizeRuntimeError } from './errorSanitizer'
+import { decideStreamingBehavior, type SteeringMode } from '../steering/steeringPolicy'
+
+const STEERING_MODE: SteeringMode = 'one-at-a-time'
+
+interface PiSteeringModeSurface {
+  setSteeringMode?: (mode: SteeringMode) => void
+  readonly steeringMode?: SteeringMode
+}
+
+export const applySteeringMode = (
+  session: PiSteeringModeSurface,
+  debug?: (event: { phase: string; level: 'info' | 'warn'; message: string; detail?: unknown }) => void
+): void => {
+  let applied = false
+  try {
+    if (typeof session.setSteeringMode === 'function') {
+      session.setSteeringMode(STEERING_MODE)
+      applied = true
+    }
+  } catch {
+    applied = false
+  }
+  debug?.({
+    phase: 'pi-steering-mode',
+    level: applied ? 'info' : 'warn',
+    message: applied
+      ? `pi steeringMode explicitly set to ${STEERING_MODE} (now: ${session.steeringMode ?? 'unknown'}).`
+      : `pi has no setSteeringMode(); using the SDK default (${session.steeringMode ?? 'unknown'}).`,
+    detail: { requested: STEERING_MODE, actual: session.steeringMode, applied }
+  })
+}
 
 // pi-coding-agent is ESM-only and the coach main bundles as CJS, so pi is loaded
 // lazily via dynamic import() (a CJS module may import() an ESM one at runtime).
@@ -154,12 +186,27 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       message: `pi session ready (${options.target.providerId}/${options.target.modelId}, ${customTools.length} tools).`,
       ts: Date.now()
     })
-    return new PiRuntimeSession(session as PiSession)
+    const piSession = session as PiSession & PiSteeringModeSurface
+    applySteeringMode(piSession, (event) =>
+      options.onDebug?.({ scope: options.scope, ts: Date.now(), ...event })
+    )
+    return new PiRuntimeSession(piSession, (event) =>
+      options.onDebug?.({ scope: options.scope, ts: Date.now(), ...event })
+    )
   }
 }
 
-class PiRuntimeSession implements AgentRuntimeSession {
-  constructor(private readonly session: PiSession) {}
+export class PiRuntimeSession implements AgentRuntimeSession {
+  private aborting = false
+
+  constructor(
+    private readonly session: PiSession,
+    private readonly debug?: (event: Omit<CodexDebugEvent, 'ts' | 'scope'>) => void
+  ) {}
+
+  get isStreaming(): boolean {
+    return this.session.isStreaming === true
+  }
 
   subscribe(listener: (event: AgentRuntimeEvent) => void): undefined | (() => void) {
     return this.session.subscribe((event) => {
@@ -168,14 +215,34 @@ class PiRuntimeSession implements AgentRuntimeSession {
   }
 
   async prompt(message: AgentRuntimePrompt): Promise<unknown> {
+    const decision = decideStreamingBehavior({
+      streaming: this.session.isStreaming === true,
+      compacting: this.session.isCompacting === true,
+      pendingSteeringCount: this.session.getSteeringMessages?.().length ?? 0,
+      steeringMode: this.session.steeringMode ?? STEERING_MODE,
+      aborting: this.aborting
+    })
+    if (decision.rule !== 0) {
+      this.debug?.({
+        phase: 'steering-decision',
+        level: 'info',
+        message: `steering rule #${decision.rule} → ${decision.behavior} (${decision.reason}).`,
+        detail: { rule: decision.rule, behavior: decision.behavior, reason: decision.reason }
+      })
+    }
     // The current pi SDK native media option expects inline base64 payloads. Coach keeps
     // attachments as path/url refs instead, so pi receives the textual @path note until
     // an adapter surface can consume refs without copying bytes.
-    return await this.session.prompt(message.text)
+    return await this.session.prompt(message.text, { streamingBehavior: decision.behavior })
   }
 
   async abort(): Promise<void> {
-    await this.session.abort()
+    this.aborting = true
+    try {
+      await this.session.abort()
+    } finally {
+      this.aborting = false
+    }
   }
 }
 
@@ -213,8 +280,13 @@ interface PiSessionEvent {
 
 interface PiSession {
   subscribe: (listener: (event: PiSessionEvent) => void) => undefined | (() => void)
-  prompt: (message: string) => Promise<unknown>
+  prompt: (message: string, options?: { streamingBehavior?: 'steer' | 'followUp' }) => Promise<unknown>
   abort: () => Promise<void>
+  readonly isStreaming?: boolean
+  readonly isCompacting?: boolean
+  readonly steeringMode?: SteeringMode
+  getSteeringMessages?: () => readonly string[]
+  setSteeringMode?: (mode: SteeringMode) => void
 }
 
 const normalizePiEvent = (event: PiSessionEvent): AgentRuntimeEvent[] => {

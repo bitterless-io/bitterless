@@ -1,5 +1,5 @@
 import { clipboard, dialog, shell } from 'electron'
-import type { BrowserWindow, MessageBoxOptions } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
 import { randomUUID } from 'crypto'
 import { basename, extname, join, resolve, sep } from 'path'
@@ -7,7 +7,7 @@ import { mkdirSync, statSync, writeFileSync } from 'fs'
 import { fetch } from 'undici'
 import { injectable } from 'inversify'
 import { CommonService } from '@maestro-shared/iocHelper/ioc.helper'
-import { BaseAgent, type PiToolSpec } from '@maestro-main/agent/BaseAgent'
+import { BaseAgent, STEER_NOT_STREAMING, type PiToolSpec } from '@maestro-main/agent/BaseAgent'
 import { MaestroAgent } from '@maestro-main/agent/MaestroAgent'
 import { CoachAgent } from '@maestro-main/agent/CoachAgent'
 import { DelegateAgent } from '@maestro-main/agent/DelegateAgent'
@@ -63,7 +63,13 @@ import {
 } from '@maestro-main/agent/runtime/agentPrompt'
 import type { CaptureRecordSource } from '@maestro-main/capture/captureRecordSource'
 import { cleanupTempFile } from '@maestro-main/files/tempCleanup.service'
+import {
+  MAX_ARCHIVE_ATTACHMENT_BYTES,
+  isArchivePath
+} from '@maestro-main/files/archive.service'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import { buildUnknownConfirmPayload } from '@maestro-main/drive/confirmPayload'
+import { taskRegistry } from '@maestro-main/tasks/taskRegistry.service'
 import { maestroAuthPath, maestroModelsPath } from '@maestro-main/llm/llmPaths'
 import { providerLabel, type LlmStoredTarget } from '@maestro-main/llm/llmModels'
 import { uploadFileThroughAiCrmsCore } from '@maestro-main/networking/api/aiCrmsCoreFileUpload.api'
@@ -95,6 +101,7 @@ import type {
   TabInfo,
   WorkspaceRef
 } from '@maestro-shared/coach.api'
+import { MODEL_RETRY_CHANNEL, type ModelRetryProgress } from '@maestro-shared/coach.api'
 import type { AuthSession, SessionApi } from '@maestro-shared/session.api'
 import {
   HOST_APPROVAL_HISTORY_KEY,
@@ -106,6 +113,39 @@ import type { TraceEvent } from '@maestro-shared/trace.types'
 
 const configStore = createXpcMainEmitter<ConfigApi>('ConfigDao')
 const aiCrmsSession = createXpcMainEmitter<SessionApi>('MaestroSessionDao')
+
+const MODEL_RETRY_MAX = 5
+const MODEL_RETRY_GAP_MS = 3_000
+
+const isTransientModelError = (raw: string): boolean => {
+  const text = String(raw || '').toLowerCase()
+  if (!text) return false
+  if (
+    /not signed in|auth file|missing provider|no provider credentials|credential|unauthorized|forbidden|invalid[_ -]?api[_ -]?key/.test(
+      text
+    )
+  ) {
+    return false
+  }
+  if (/\b(400|401|403|404|422)\b/.test(text)) return false
+  if (
+    /insufficient[_ -]?quota|quota (?:exceeded|exhausted)|exceeded your (?:current )?quota|check your plan and billing|usage limit reached|(?:out of|exhausted your) credits|no credits (?:left|remaining)/.test(
+      text
+    )
+  ) {
+    return false
+  }
+  return (
+    /server_error|internal error|internal server|bad gateway|service unavailable|gateway timeout/.test(
+      text
+    ) ||
+    /\b(500|502|503|504|429)\b/.test(text) ||
+    /timed? ?out|timeout|econnreset|econnrefused|enotfound|socket hang up|network|fetch failed|stream (?:closed|error)/.test(
+      text
+    ) ||
+    /you can retry/.test(text)
+  )
+}
 
 interface MaestroAgentRuntimeServices {
   registry: SkillRegistryService
@@ -156,6 +196,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   private readonly delegateAgents = new Map<string, DelegateAgent>()
   private readonly hydratedMaestroAgentSessions = new Set<string>()
   private readonly attachedPaths = new Map<string, Set<string>>()
+  /** Generation per chat session. Stop increments it so retry gaps cannot launch a ghost prompt. */
+  private readonly agentAbortEpochs = new Map<string, number>()
+  /** Logical Turn owner spans setup and retry gaps, where BaseAgent itself can temporarily be idle. */
+  private readonly agentTurnOwners = new Map<string, symbol>()
 
   lastAgentRun: {
     skill?: SkillSummary
@@ -512,16 +556,31 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
       try {
         const stats = statSync(abs)
+        if (stats.isDirectory()) {
+          allow.add(abs)
+          results.push({ ok: true, name, path: abs, isDirectory: true })
+          continue
+        }
         if (!stats.isFile()) {
           results.push({ ok: false, name, path: abs, error: 'not-a-file' })
           continue
         }
-        if (stats.size > MAX_ATTACHMENT_BYTES) {
+        const limit = isArchivePath(abs)
+          ? MAX_ARCHIVE_ATTACHMENT_BYTES
+          : MAX_ATTACHMENT_BYTES
+        if (stats.size > limit) {
+          const asGb = limit >= 1024 * 1024 * 1024
+          const shown = asGb
+            ? `${(stats.size / 1024 / 1024 / 1024).toFixed(1)} GB`
+            : `${(stats.size / 1024 / 1024).toFixed(1)} MB`
+          const cap = asGb
+            ? `${(limit / 1024 / 1024 / 1024).toFixed(0)} GB`
+            : `${(limit / 1024 / 1024).toFixed(0)} MB`
           results.push({
             ok: false,
             name,
             path: abs,
-            error: `too-large (${(stats.size / 1024 / 1024).toFixed(1)} MB)`
+            error: `too-large (${shown}; limit ${cap})`
           })
           continue
         }
@@ -559,7 +618,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
     }
     const key = this.agentSessionKey(params?.sessionId)
-    const safeKey = key.replace(/[^a-zA-Z0-9._-]/g, '_') || 'default'
+    const sanitizedKey = key.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 96)
+    const safeKey =
+      sanitizedKey && sanitizedKey !== '.' && sanitizedKey !== '..'
+        ? sanitizedKey
+        : 'default'
     const dir = join(maestroDataRoot(), 'attachments', safeKey)
     mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -806,10 +869,21 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         error: 'empty-message'
       }
     }
+    const sessionKey = this.agentSessionKey(params.sessionId)
+    const abortEpoch = this.agentAbortEpochs.get(sessionKey) ?? 0
+    const activeOwner = this.agentTurnOwners.get(sessionKey)
+    const turnOwner = activeOwner ?? Symbol(sessionKey)
+    if (!activeOwner) this.agentTurnOwners.set(sessionKey, turnOwner)
     let reply: AgentReply
     try {
       await this._state.ensurePersistedCaptureRecordsLoaded()
-      reply = await this.routeAgentMessage(message, params.sessionId, params.context)
+      reply = await this.routeAgentMessage(
+        message,
+        params.sessionId,
+        params.context,
+        abortEpoch,
+        Boolean(activeOwner)
+      )
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
       reply = {
@@ -819,20 +893,26 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         error
       }
     }
-    broadcastCodexDebug({
-      scope: 'agent',
-      phase: 'agent-reply',
-      level: reply.ok ? 'info' : 'warn',
-      message: 'agent reply returned to renderer.',
-      detail: {
-        sessionId: this.agentSessionKey(params.sessionId),
-        ok: reply.ok,
-        textChars: reply.text?.length || 0,
-        error: reply.error
-      },
-      ts: Date.now()
-    })
-    return reply
+    try {
+      broadcastCodexDebug({
+        scope: 'agent',
+        phase: 'agent-reply',
+        level: reply.ok ? 'info' : 'warn',
+        message: 'agent reply returned to renderer.',
+        detail: {
+          sessionId: sessionKey,
+          ok: reply.ok,
+          textChars: reply.text?.length || 0,
+          error: reply.error
+        },
+        ts: Date.now()
+      })
+      return reply
+    } finally {
+      if (!activeOwner && this.agentTurnOwners.get(sessionKey) === turnOwner) {
+        this.agentTurnOwners.delete(sessionKey)
+      }
+    }
   }
 
   async compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply> {
@@ -892,7 +972,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   async abortAgent(params?: { sessionId?: string }): Promise<void> {
-    this.hydratedMaestroAgentSessions.delete(this.agentSessionKey(params?.sessionId))
+    const sessionKey = this.agentSessionKey(params?.sessionId)
+    this.agentAbortEpochs.set(sessionKey, (this.agentAbortEpochs.get(sessionKey) ?? 0) + 1)
+    this.agentTurnOwners.delete(sessionKey)
+    this.hydratedMaestroAgentSessions.delete(sessionKey)
+    taskRegistry.cancelTransient('active turn stopped')
     await this.getExistingMaestroAgent(params?.sessionId)?.abort()
   }
 
@@ -1016,19 +1100,35 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const allow = this.attachedPaths.get(sessionKey)
     const media: AgentRuntimeMediaRef[] = []
     const skipped: string[] = []
+    const directories: string[] = []
+    const archives: string[] = []
     for (const path of paths) {
-      if (media.length >= MAX_AGENT_MEDIA_REFS) {
-        skipped.push(`${basename(path)} (too many media refs)`)
-        continue
-      }
       if (!allow?.has(path)) {
         skipped.push(`${basename(path)} (not registered)`)
+        continue
+      }
+      let stats: ReturnType<typeof statSync>
+      try {
+        stats = statSync(path)
+      } catch {
+        skipped.push(`${basename(path)} (unreadable)`)
+        continue
+      }
+      if (stats.isDirectory()) {
+        directories.push(path)
+        continue
+      }
+      if (isArchivePath(path)) {
+        archives.push(path)
+        continue
+      }
+      if (media.length >= MAX_AGENT_MEDIA_REFS) {
+        skipped.push(`${basename(path)} (too many media refs)`)
         continue
       }
       const mimeType = agentMediaMimeForPath(path)
       const isImage = Boolean(AGENT_IMAGE_MIME_BY_EXT[extname(path).toLowerCase()])
       try {
-        const stats = statSync(path)
         if (!stats.isFile()) {
           skipped.push(`${basename(path)} (not a file)`)
           continue
@@ -1093,6 +1193,18 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         'Attached media transport warnings:\n' + warnings.map((item) => `- ${item}`).join('\n')
       )
     }
+    if (directories.length) {
+      parts.push(
+        'Attached directories (folders, not files — nothing was uploaded; use list_workspace_files to see what is inside, then read_file on the entries you need):\n' +
+          directories.map((item) => `- ${item}`).join('\n')
+      )
+    }
+    if (archives.length) {
+      parts.push(
+        'Attached archives (not uploaded and not readable directly; use list_archive or extract_archive):\n' +
+          archives.map((item) => `- ${item}`).join('\n')
+      )
+    }
     if (skipped.length) {
       parts.push('Attached media skipped:\n' + skipped.map((item) => `- ${item}`).join('\n'))
     }
@@ -1111,17 +1223,23 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   private async routeAgentMessage(
     message: string,
     sessionId?: string,
-    context?: AgentConversationContext
+    context?: AgentConversationContext,
+    abortEpoch?: number,
+    steeringOnly = false
   ): Promise<AgentReply> {
     await this.loadHostToolPolicies()
     const sessionKey = this.agentSessionKey(sessionId)
     this._state.syncWorkspaceFromContext(sessionKey, context?.workspace)
     const includeConversationMemory = !this.hydratedMaestroAgentSessions.has(sessionKey)
     const mediaInput = await this.buildAgentMediaInput(sessionKey, context?.attachedPaths)
+    const isCancelled = (): boolean =>
+      abortEpoch !== undefined && (this.agentAbortEpochs.get(sessionKey) ?? 0) !== abortEpoch
     return await this.handleAgentTurn(message, this.getMaestroAgent(sessionId), context, {
       includeConversationMemory,
       mediaInput,
-      onAgentSessionUsed: () => this.hydratedMaestroAgentSessions.add(sessionKey)
+      onAgentSessionUsed: () => this.hydratedMaestroAgentSessions.add(sessionKey),
+      isCancelled,
+      steeringOnly
     })
   }
 
@@ -1137,8 +1255,39 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         note: string
       }
       onAgentSessionUsed?: () => void
+      isCancelled?: () => boolean
+      steeringOnly?: boolean
     }
   ): Promise<AgentReply> {
+    const cancelledReply = (): AgentReply => ({
+      ok: false,
+      text: 'Stopped.',
+      ts: Date.now(),
+      error: 'aborted'
+    })
+    if (options?.isCancelled?.()) return cancelledReply()
+    const steered = await agent.steerActiveTurn(message)
+    if (options?.isCancelled?.()) return cancelledReply()
+    if (steered.outcome === 'delivered') {
+      return { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
+    }
+    if (steered.outcome === 'failed') {
+      return {
+        ok: false,
+        text: steered.error || 'Could not deliver the message into the active turn.',
+        ts: Date.now(),
+        error: 'steer-failed'
+      }
+    }
+    if (options?.steeringOnly) {
+      return {
+        ok: false,
+        text: STEER_NOT_STREAMING,
+        ts: Date.now(),
+        error: 'steer-failed'
+      }
+    }
+
     const services = this._state.ensureServices()
     const recordings = services.registry.listSkillsForDomain(this._state.currentUrl)
     const skillBriefs: AgentSkillBrief[] = recordings.map((skill) => {
@@ -1173,27 +1322,69 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.lastAgentArtifacts = []
     this.tabsOpenedThisTurn = []
     const turnMedia = options?.mediaInput || { note: '' }
-    const result = await agent.prompt(
-      buildAgentTurnPrompt({
-        message,
-        context,
-        includeConversationMemory: Boolean(options?.includeConversationMemory),
-        nowIso: new Date().toISOString(),
-        currentUrl: this._state.currentUrl,
-        briefs: skillBriefs
-      }) + turnMedia.note,
-      undefined,
-      {
-        freshSession: false,
-        media: turnMedia.media,
-        images: turnMedia.images
-      }
-    )
+    const runPrompt = async (): Promise<Awaited<ReturnType<BaseAgent['prompt']>>> =>
+      await agent.prompt(
+        buildAgentTurnPrompt({
+          message,
+          context,
+          includeConversationMemory: Boolean(options?.includeConversationMemory),
+          nowIso: new Date().toISOString(),
+          currentUrl: this._state.currentUrl,
+          briefs: skillBriefs
+        }) + turnMedia.note,
+        undefined,
+        {
+          freshSession: false,
+          media: turnMedia.media,
+          images: turnMedia.images
+        }
+      )
+
+    if (options?.isCancelled?.()) return cancelledReply()
+    let result = await runPrompt()
+    if (options?.isCancelled?.()) return cancelledReply()
+    let retriedAttempts = 0
+    for (let attempt = 2; attempt <= MODEL_RETRY_MAX; attempt += 1) {
+      const error = result.errorMessage || (result.ok ? '' : result.error || '')
+      if (!error || !isTransientModelError(error)) break
+      broadcastCodexDebug({
+        scope: 'agent',
+        phase: 'model-retry',
+        level: 'warn',
+        message: `retried: ${attempt}/${MODEL_RETRY_MAX}`,
+        detail: {
+          attempt,
+          max: MODEL_RETRY_MAX,
+          gapMs: MODEL_RETRY_GAP_MS,
+          error: error.slice(0, 400)
+        },
+        ts: Date.now()
+      })
+      xpcMain.broadcast(MODEL_RETRY_CHANNEL, {
+        attempt,
+        max: MODEL_RETRY_MAX
+      } satisfies ModelRetryProgress)
+      retriedAttempts = attempt
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, MODEL_RETRY_GAP_MS))
+      if (options?.isCancelled?.()) return cancelledReply()
+      result = await runPrompt()
+      if (options?.isCancelled?.()) return cancelledReply()
+    }
+    if (retriedAttempts > 0 && !result.errorMessage && result.ok) {
+      xpcMain.broadcast(MODEL_RETRY_CHANNEL, {
+        attempt: 0,
+        max: MODEL_RETRY_MAX,
+        recovered: true
+      } satisfies ModelRetryProgress)
+    }
     if (result.ok) options?.onAgentSessionUsed?.()
     const { skill, skills, replay } = this.lastAgentRun
     const files = this.lastAgentArtifacts.slice()
     if (!result.ok) {
       const error = result.error || 'Agent failed.'
+      const retryExhausted = retriedAttempts && isTransientModelError(error)
+        ? { attempt: retriedAttempts, max: MODEL_RETRY_MAX }
+        : undefined
       return {
         ok: false,
         text: describeAgentPromptError(this.activeLlmProvider, this.activeLlmModel, error),
@@ -1202,7 +1393,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         skills,
         replay,
         files,
-        error: 'agent-failed'
+        error: 'agent-failed',
+        retryExhausted
       }
     }
     if (replay) {
@@ -1214,19 +1406,29 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         skills,
         replay,
         files,
-        error: replay.ok ? undefined : 'replay-failed'
+        error: replay.ok ? undefined : 'replay-failed',
+        authoredByModel: Boolean(result.text)
       }
     }
     const backend = `${providerLabel(this.activeLlmProvider)} (${this.activeLlmModel})`
     if (result.errorMessage) {
+      const retryExhausted = retriedAttempts && isTransientModelError(result.errorMessage)
+        ? { attempt: retriedAttempts, max: MODEL_RETRY_MAX }
+        : undefined
       return {
         ok: false,
-        text: describeModelError(this.activeLlmProvider, this.activeLlmModel, result.errorMessage),
+        text: describeModelError(
+          this.activeLlmProvider,
+          this.activeLlmModel,
+          result.errorMessage,
+          Boolean(retryExhausted)
+        ),
         ts: Date.now(),
         skill,
         skills,
         files,
-        error: 'model-error'
+        error: 'model-error',
+        retryExhausted
       }
     }
     if (result.text) {
@@ -1474,19 +1676,17 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       },
       ts: Date.now()
     })
-    const options: MessageBoxOptions = {
-      type: 'question',
-      buttons: ['Allow once', 'Deny'],
-      defaultId: 0,
-      cancelId: 1,
-      title: 'Approve Agent Tool Call',
-      message: `Allow the agent to run ${request.toolName}?`,
-      detail
-    }
-    const result = this._state.browserWindow
-      ? await dialog.showMessageBox(this._state.browserWindow, options)
-      : await dialog.showMessageBox(options)
-    const allowed = result.response === 0
+    const allowed = await taskRegistry.askOperator({
+      name: 'tool-approval',
+      title: `Allow the agent to run ${request.toolName}?`,
+      detail,
+      confirmLabel: 'Allow once',
+      cancelLabel: 'Deny',
+      payload: buildUnknownConfirmPayload({
+        summary: `${request.scope} · ${request.toolName}`,
+        body: { args: argsSummary }
+      })
+    })
     await this.resolveHostApprovalEvent(eventId, allowed ? 'approved' : 'denied')
     broadcastAgentActivity(
       'tool',
@@ -1545,7 +1745,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 }
 
-const describeModelError = (provider: string, model: string, errorMessage: string): string => {
+const describeModelError = (
+  provider: string,
+  model: string,
+  errorMessage: string,
+  retried = false
+): string => {
   const head = `${providerLabel(provider)} (${model}) rejected the request: ${errorMessage}`
   if (/blocked|cloudflare|html error page|unreachable/i.test(errorMessage)) {
     return (
@@ -1554,10 +1759,10 @@ const describeModelError = (provider: string, model: string, errorMessage: strin
       'OpenAI (Codex is geo-restricted in some regions), then retry.'
     )
   }
-  return (
-    head +
-    '\n\nRetry once the provider is available, or check that the app is signed in to this provider.'
-  )
+  return retried
+    ? head
+    : head +
+        '\n\nRetry once the provider is available, or check that the app is signed in to this provider.'
 }
 
 const describeAgentPromptError = (

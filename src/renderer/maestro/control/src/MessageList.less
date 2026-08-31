@@ -4,7 +4,7 @@
   flex: 1;
   overflow: hidden;
   border-radius: 12px;
-  background: rgb(248, 250, 252);
+  background: #ffffff;
 }
 
 .message-list__scroll {
@@ -16,3 +16,22 @@
 .message-list__scroll > * + * {
   margin-top: 12px;
 }
+
+.message-list__scroll-bottom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(50 57 85 / 12%);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4e5882;
+  box-shadow: 0 5px 14px rgb(50 57 85 / 16%);
+  transition: color 0.15s ease, transform 0.12s ease;
+}
+.message-list__scroll-bottom:hover { color: #323955; }
+.message-list__scroll-bottom:active { transform: scale(0.95); }

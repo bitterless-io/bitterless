@@ -10,6 +10,9 @@ design document.
   live updates for every first-party renderer, and correct locale before recreated windows mount.
 - [Maestro sub-application](features/maestro.md) - the Bitterless Mini App migrated from the
   Micromeet Cowork runtime.
+- [Maestro Control chat behind Cowork](issues/maestro-control-chat-behind-cowork.md) - in progress:
+  migrate the current Turn/status/task and attachment/file-reading chat vertical slices from Cowork
+  `67b056b` while preserving Maestro providers, i18n, replay, local Home, and Royal Blue/BEM UI.
 - [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
   services with unchanged XPC and runtime behavior.
 - [Maestro startup host flash and MenuBar](issues/maestro-startup-host-flash-and-menubar.md) -
@@ -61,9 +64,19 @@ design document.
 - [OnlyPreview indexing benchmark](features/onlypreview-indexing-benchmark.md) - `tests/indexing/`
   measures open directory -> first Global Search over a deterministic corpus, in process and without
   Electron, and guards the machine-independent invariants under `node --test`.
-- [OnlyPreview XLSX compatibility gaps](issues/onlypreview-xlsx-compatibility-gaps.md) - in progress:
-  replace arbitrary-byte benchmark XLSX fixtures and recover one bounded empty-sheet producer form
-  through a Worker-normalized, single-load OOXML path.
+- [OnlyPreview XLSX compatibility gaps](issues/onlypreview-xlsx-compatibility-gaps.md) - fixed in
+  source; owner verification pending: replace arbitrary-byte benchmark XLSX fixtures and recover
+  one bounded empty-sheet producer form through a Worker-normalized, single-load OOXML path;
+  [review 1](plan/reviews/onlypreview-xlsx-compatibility-repair-088-1.md) passed.
+- [OnlyPreview Project selection is too muted](issues/onlypreview-project-selection-blue-too-muted.md) -
+  implemented; owner verification pending: replace the ordinary Project tree's grey-blue selected
+  surface with a clearer light blue while preserving hover, focus, and Search-excluded orange
+  semantics; [review 1](plan/reviews/onlypreview-project-selection-blue-091-1.md) passed.
+- [OnlyPreview Global Search Office preview switching](issues/onlypreview-global-search-office-preview-switching.md) -
+  implemented; owner verification pending: render XLSX/XLSM, DOCX, and PPTX in the bottom Search
+  pane through an independent bounded preload lane, coalesce rapid selection to one latest-only
+  Viewer session, and fail closed on stale/read-error resources;
+  [review 1](plan/reviews/onlypreview-global-search-office-preview-092-1.md) passed.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
   registry, hidden encrypted SQLite, and one global INDEX.
 - [BL Trench INDEX layout](features/trench-index-layout.md) - count-free INDEX navigation, Add CA,

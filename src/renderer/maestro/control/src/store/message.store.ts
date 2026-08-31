@@ -1,5 +1,8 @@
 import { markRaw, nextTick, reactive } from 'vue'
+import { inject, injectable } from 'inversify'
 import { countTokens } from 'gpt-tokenizer'
+import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
+import { MODEL_RETRY_CHANNEL } from '@maestro-shared/coach.api'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import type {
   AgentActivityStep,
@@ -10,9 +13,11 @@ import type {
   AgentStreamDelta,
   AgentThinkingState,
   CoachXpcContract,
+  ModelRetryProgress,
   WorkspaceRef
 } from '@maestro-shared/coach.api'
 import type { MaestroChatApi, MaestroChatMessage, MaestroChatSession } from '@maestro-shared/maestroChat.api'
+import type { MaestroTask, MaestroTaskPart } from '@maestro-shared/task.api'
 import type {
   ChatAttachment,
   ChatContextUsage,
@@ -23,6 +28,7 @@ import type {
   MessageSessionSummary,
   MessageSource
 } from './message.type'
+import { TurnService, type SendResult } from './turn.service'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const maestroChat = createXpcRendererEmitter<MaestroChatApi>('MaestroChatDao')
@@ -42,7 +48,6 @@ const COMPACTING_CONTENT = 'Compacting...'
 const COMPACTED_CONTENT = 'Compacting complete.'
 const COMPACT_SUMMARY_MAX_CONTEXT_SHARE = 0.45
 const COMPACT_SUMMARY_HARD_MAX_CHARS = 500_000
-const CHAT_TURN_TIMEOUT_MS = 11 * 60_000
 // Auto-scroll "stick to bottom" threshold. While streaming we keep pinning the list to the bottom,
 // but once the user scrolls up more than this many px from the bottom we stop — until they scroll
 // back down near the bottom, or send a new message. ~120px ≈ a couple of lines of breathing room.
@@ -99,14 +104,37 @@ const clipChars = (text: string, limit: number): string => {
   return value.slice(0, Math.max(0, limit - 14)).trimEnd() + '\n...[truncated]'
 }
 
+const ARCHIVE_PATH = /\.(?:zip|7z|rar|tar|tgz|gz|xz|bz2|bz3|zst|lz4|lzma|lz|sz|br)$/i
+
 const messageTextForPrompt = (message: ChatMessage): string => {
   if (message.type === 'files') {
-    // @path references (Claude Code / Codex / opencode convention); text/doc files are
-    // read via read_file, while image paths are handed to a capable runtime adapter.
-    const refs = (message.files || []).map((file) => (file.path ? `@${file.path}` : file.name))
-    return refs.length
-      ? `Attached files (documents can be read with read_file; images are path refs for a vision-capable adapter):\n${refs.join('\n')}`
-      : 'Attached files: (none)'
+    const files = (message.files || []).filter(
+      (file) => !file.isDirectory && !ARCHIVE_PATH.test(file.path || file.name)
+    )
+    const archives = (message.files || []).filter(
+      (file) => !file.isDirectory && ARCHIVE_PATH.test(file.path || file.name)
+    )
+    const directories = (message.files || []).filter((file) => file.isDirectory)
+    const blocks: string[] = []
+    if (files.length) {
+      blocks.push(
+        'Attached files (documents can be read with read_file; images are path refs for a vision-capable adapter):\n' +
+          files.map((file) => (file.path ? `@${file.path}` : file.name)).join('\n')
+      )
+    }
+    if (directories.length) {
+      blocks.push(
+        'Attached folders (directories — list with list_workspace_files or search_files, then use read_file on an individual entry):\n' +
+          directories.map((file) => (file.path ? `@${file.path}` : file.name)).join('\n')
+      )
+    }
+    if (archives.length) {
+      blocks.push(
+        'Attached archives (inspect with list_archive or unpack with extract_archive; do not use read_file directly):\n' +
+          archives.map((file) => (file.path ? `@${file.path}` : file.name)).join('\n')
+      )
+    }
+    return blocks.length ? blocks.join('\n\n') : 'Attached files: (none)'
   }
   return message.content || ''
 }
@@ -133,44 +161,31 @@ const plainFiles = (files?: ChatFile[]): ChatFile[] | undefined =>
     path: file.path,
     kind: file.kind,
     action: file.action,
-    size: file.size
+    size: file.size,
+    isDirectory: file.isDirectory
   }))
 
 const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const withTimeout = async <T>(promise: Promise<T>, ms: number, message: string, onTimeout?: () => Promise<void>): Promise<T> => {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let timedOut = false
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          timedOut = true
-          reject(new Error(message))
-        }, ms)
-      })
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-    if (timedOut && onTimeout) await onTimeout().catch(() => undefined)
+
+@injectable()
+export class MessageStoreState {
+  constructor(
+    @inject(Symbol.for(TurnService.name))
+    public readonly turnService: TurnService
+  ) {
+    this.turnService.setState(this)
   }
-}
 
-const summarizeTitle = (text: string): string => {
-  const firstLine = text.trim().split('\n')[0]?.trim() || 'Maestro'
-  return firstLine.length > 36 ? firstLine.slice(0, 36) + '…' : firstLine
-}
-
-class MessageStoreState {
   private scrollNearRaf = 0
   private streamFlushRaf = 0
   private streamBuffers = markRaw(new Map<string, string>())
+  private taskBindings = markRaw(new Map<string, { sessionId: string; messageId: string }>())
+  private confirmMessages = markRaw(new Map<string, string>())
 
   sessions: MessageSession[] = []
   historySessions: MessageSessionSummary[] = []
   defaultWorkspace: WorkspaceRef | undefined = undefined
-  globalBusySessionId = ''
   contextLimitK = DEFAULT_CONTEXT_LIMIT_K
   contextLimitLabel = DEFAULT_CONTEXT_LIMIT_LABEL
   compressionRemainingPercent = DEFAULT_COMPRESSION_REMAINING_PERCENT
@@ -184,6 +199,14 @@ class MessageStoreState {
   async init(): Promise<void> {
     if (this.initialized) return
     this.initialized = true
+    xpcRenderer.subscribe(MODEL_RETRY_CHANNEL, (payload) => {
+      const progress = payload?.params as ModelRetryProgress | undefined
+      const session = this.turnService.activeSession()
+      if (!progress || !session?.turn) return
+      session.turn.retry = progress.recovered
+        ? undefined
+        : { attempt: progress.attempt, max: progress.max }
+    })
     xpcRenderer.subscribe('coach/workspace-changed', (payload) => {
       const params = payload.params as { sessionId?: string; workspace?: WorkspaceRef | null }
       void this.applyWorkspaceBroadcast(params)
@@ -253,7 +276,7 @@ class MessageStoreState {
 
   async compactAllIfNeeded(): Promise<void> {
     for (const session of this.sessions) {
-      if (session.archivedAt || session.busy) {
+      if (session.archivedAt || session.turn) {
         this.updateSessionContextUsage(session)
         continue
       }
@@ -261,107 +284,17 @@ class MessageStoreState {
     }
   }
 
-  async send(sessionId: string, message: string, files?: ChatAttachment[]): Promise<AgentReply | null> {
-    const session = this.getSession(sessionId)
-    const text = message.trim()
-    if (!session || session.archivedAt || !text || session.busy || this.globalBusySessionId) return null
-    await this.refreshWorkspace(session.id)
-
-    const turnId = uid()
-    session.busy = true
-    session.aborting = false
-    session.activeTurnId = turnId
-    session.updatedAt = Date.now()
-    this.globalBusySessionId = session.id
-
-    // Register attachments with main by ABSOLUTE PATH (never bytes); the agent reads them
-    // via the read_file tool. Keep name + path on the message (path → @ref in the prompt).
-    const stagedFiles: { name: string; path: string }[] = []
-    if (files && files.length) {
-      const registered = await coach.attachFiles({ sessionId: session.id, paths: files.map((file) => file.path) }).catch(() => null)
-      for (const entry of registered || []) {
-        if (entry.ok && entry.path) stagedFiles.push({ name: entry.name || entry.path, path: entry.path })
-      }
-    }
-    if (stagedFiles.length) {
-      const fileMessage = this.withTokenCount({
-        id: uid(),
-        source: 'cowork',
-        role: 'human',
-        type: 'files',
-        content: '',
-        files: stagedFiles,
-        streaming: false,
-        ts: Date.now()
-      })
-      session.messages.push(fileMessage)
-    }
-
-    const humanMessage = this.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
-    session.messages.push(humanMessage)
-    if (session.title === 'Maestro') session.title = summarizeTitle(text)
-    this.updateSessionContextUsage(session)
-    await this.compactSessionIfNeeded(session, { protectMessageIds: new Set([humanMessage.id]) })
-
-    const assistant: ChatMessage = this.withTokenCount({ id: uid(), source: 'cowork', role: 'ai', content: '', streaming: true, ts: Date.now() })
-    session.messages.push(assistant)
-    this.updateSessionContextUsage(session)
-    // New turn: always re-pin to the bottom, even if the user had scrolled up while idle.
-    this.stickToBottom = true
-    this.scrollToBottom(true)
-    void this.persistSession(session)
-
-    let reply: AgentReply
-    try {
-      reply = await withTimeout(
-        this.dispatch(session, text, humanMessage.id, stagedFiles.map((file) => file.path)),
-        CHAT_TURN_TIMEOUT_MS,
-        `Maestro did not finish after ${Math.round(CHAT_TURN_TIMEOUT_MS / 60_000)} minutes. I stopped this turn so the chat does not keep spinning. Check the AI login/provider state and try again.`,
-        async () => {
-          await coach.abortAgent({ sessionId: session.id }).catch(() => undefined)
-        }
-      )
-    } catch (err) {
-      reply = { ok: false, text: String(err), ts: Date.now(), error: String(err) }
-    }
-
-    if (session.activeTurnId !== turnId) return reply
-
-    const wasAborted = session.aborting
-    const fallback = wasAborted ? 'Stopped.' : reply.ok ? 'Done.' : 'Failed.'
-    assistant.error = wasAborted ? false : !reply.ok
-    assistant.promptExcluded = wasAborted
-    assistant.files = reply.files?.map((file) => ({ ...file, kind: 'artifact' }))
-    assistant.skill = reply.skill
-    assistant.skills = reply.skills?.length ? reply.skills : reply.skill ? [reply.skill] : undefined
-    assistant.replay = reply.replay
-    this.finishAssistant(assistant, reply.text?.trim() || fallback)
-    session.busy = false
-    session.aborting = false
-    session.activeTurnId = undefined
-    session.updatedAt = Date.now()
-    await this.compactSessionIfNeeded(session)
-    this.globalBusySessionId = ''
-    await this.persistSession(session)
-    return reply
+  async send(sessionId: string, message: string, files?: ChatAttachment[]): Promise<SendResult | null> {
+    return await this.turnService.send(sessionId, message, files)
   }
 
   async stop(sessionId: string): Promise<void> {
-    const session = this.getSession(sessionId)
-    if (!session || session.archivedAt || !session.busy || session.aborting) return
-    const turnId = session.activeTurnId
-    session.aborting = true
-    try {
-      await Promise.race([coach.abortAgent({ sessionId: session.id }), delay(900)])
-    } catch {
-      /* best effort */
-    }
-    this.forceStopTurn(session, turnId)
+    await this.turnService.stop(sessionId)
   }
 
   async archive(sessionId: string): Promise<boolean> {
     const session = this.getSession(sessionId)
-    if (!session || session.busy || session.archivedAt) return false
+    if (!session || session.turn || session.archivedAt) return false
     if (!this.shouldPersistSession(session)) {
       this.sessions = this.sessions.filter((item) => item.id !== session.id)
       await maestroChat.deleteSession({ id: session.id }).catch(() => ({ ok: false }))
@@ -379,7 +312,7 @@ class MessageStoreState {
   // and reachable via the history drawer. (Real archive is a later feature.)
   async discardIfEmpty(sessionId: string): Promise<void> {
     const session = this.getSession(sessionId)
-    if (!session || session.busy || this.shouldPersistSession(session)) return
+    if (!session || session.turn || this.shouldPersistSession(session)) return
     this.sessions = this.sessions.filter((item) => item.id !== session.id)
     await maestroChat.deleteSession({ id: session.id }).catch(() => ({ ok: false }))
     await this.refreshHistory()
@@ -462,33 +395,117 @@ class MessageStoreState {
     this.historySessions = list
   }
 
+  applyTaskSnapshot(tasks: MaestroTask[]): void {
+    for (const task of tasks) {
+      const confirmSession =
+        (task.sessionId ? this.getSession(task.sessionId) : undefined) ||
+        this.turnService.activeSession()
+      if (confirmSession) this.syncTaskConfirm(confirmSession, task)
+      if (task.transient) continue
+
+      const bound = this.taskBindings.get(task.id) || this.registerTaskBinding(task)
+      if (!bound) continue
+      const session = this.getSession(bound.sessionId)
+      const message = session?.messages.find((item) => item.id === bound.messageId)
+      if (!message || !session) continue
+      if (!message.tasks) message.tasks = []
+      const index = message.tasks.findIndex((item) => item.taskId === task.id)
+      const current = index < 0 ? undefined : message.tasks[index]
+      if (
+        current &&
+        current.state.time.update === task.state.time.update &&
+        current.state.stalled === task.state.stalled
+      ) {
+        continue
+      }
+      this.turnService.touchForTask(bound.sessionId)
+      const part: MaestroTaskPart = {
+        type: 'task',
+        taskId: task.id,
+        callId: task.callId,
+        name: task.name,
+        kind: task.kind,
+        state: task.state
+      }
+      if (index < 0) {
+        message.tasks.push(part)
+        this.scheduleScrollToBottomIfNear()
+      } else {
+        message.tasks[index] = part
+      }
+      if (task.state.status === 'completed' || task.state.status === 'error') {
+        void this.persistSession(session)
+      }
+    }
+  }
+
+  private syncTaskConfirm(session: MessageSession, task: MaestroTask): void {
+    const pending = task.state.pendingConfirm
+    const emitted = this.confirmMessages.get(task.id)
+    if (pending) {
+      if (emitted === pending.id) return
+      const message = this.withTokenCount({
+        id: uid(),
+        source: 'cowork',
+        role: 'ai',
+        type: 'confirm',
+        content: '',
+        streaming: false,
+        promptExcluded: true,
+        ts: Date.now(),
+        confirm: {
+          taskId: task.id,
+          confirmId: pending.id,
+          title: pending.title,
+          detail: pending.detail,
+          confirmLabel: pending.confirmLabel,
+          cancelLabel: pending.cancelLabel,
+          payload: pending.payload
+        }
+      })
+      this.turnService.appendTimelineEntry(session, message)
+      this.confirmMessages.set(task.id, pending.id)
+      this.stickToBottom = true
+      this.scrollToBottom(true)
+      void this.persistSession(session)
+      return
+    }
+    if (!emitted) return
+    this.confirmMessages.delete(task.id)
+    const message = session.messages.find(
+      (item) => item.confirm?.taskId === task.id && item.confirm?.confirmId === emitted
+    )
+    if (message?.confirm && !message.confirm.answer) {
+      message.confirm.answer = 'elsewhere'
+      this.turnService.touchForTask(session.id)
+      void this.persistSession(session)
+    }
+  }
+
+  async answerConfirm(message: ChatMessage, confirm: boolean): Promise<{ ok: boolean }> {
+    const card = message.confirm
+    if (!card || card.answer) return { ok: false }
+    const session = this.sessions.find((item) => item.messages.includes(message))
+    card.answer = confirm ? 'confirm' : 'cancel'
+    if (session) this.turnService.touchForTask(session.id)
+    const result = await coach
+      .respondTaskConfirm({ taskId: card.taskId, confirmId: card.confirmId, confirm })
+      .catch(() => ({ ok: false }))
+    if (!result.ok) card.answer = 'elsewhere'
+    if (session) await this.persistSession(session)
+    return result
+  }
+
   pushActivity(step: AgentActivityStep): void {
-    if (step.phase === 'think') return
-    const session = this.sessions.find((item) => item.id === this.globalBusySessionId)
-    if (!session) return
-    const last = session.messages[session.messages.length - 1]
-    if (!last || last.role !== 'ai' || !last.streaming) return
-    if (!last.activity) last.activity = []
-    last.activity.push(step)
-    this.scheduleScrollToBottomIfNear()
+    this.turnService.pushActivity(step)
   }
 
   pushThinking(payload: AgentThinkingState): void {
-    const session = this.getSession(payload.sessionId) || this.getSession(this.globalBusySessionId)
-    if (!session) return
-    const last = session.messages[session.messages.length - 1]
-    if (!last || last.role !== 'ai' || !last.streaming) return
-    last.thinking = payload.active
-    if (payload.active) this.scheduleScrollToBottomIfNear()
+    this.turnService.pushThinking(payload)
   }
 
   pushStream(payload: AgentStreamDelta): void {
-    const session = this.getSession(payload.sessionId) || this.getSession(this.globalBusySessionId)
-    if (!session || !payload.delta) return
-    const last = session.messages[session.messages.length - 1]
-    if (!last || last.role !== 'ai' || !last.streaming) return
-    this.streamBuffers.set(session.id, (this.streamBuffers.get(session.id) || '') + payload.delta)
-    this.scheduleStreamFlush()
+    this.turnService.pushStream(payload)
   }
 
   // Pin the list to the bottom. `force` scrolls unconditionally (mount / user-sent message); without
@@ -526,15 +543,13 @@ class MessageStoreState {
       messages: [],
       detail: { ...emptyDetail(), workspace: this.cloneWorkspace(this.defaultWorkspace) },
       contextUsage: emptyUsage(),
-      busy: false,
-      aborting: false,
       createdAt: now,
       updatedAt: now
     }
     return session
   }
 
-  private async dispatch(session: MessageSession, message: string, currentHumanMessageId?: string, attachedPaths?: string[]): Promise<AgentReply> {
+  async dispatch(session: MessageSession, message: string, currentHumanMessageId?: string, attachedPaths?: string[]): Promise<AgentReply> {
     return await coach.sendAgentMessage({
       sessionId: session.id,
       message,
@@ -546,7 +561,7 @@ class MessageStoreState {
     return this.withTokenCount({ id: 'welcome-' + uid(), source: 'cowork', role: 'ai', content: session.welcome, streaming: false, ts: Date.now() })
   }
 
-  private finishAssistant(msg: ChatMessage, full: string): void {
+  finishAssistant(msg: ChatMessage, full: string): void {
     const session = this.sessions.find((item) => item.messages.includes(msg))
     if (session) this.flushStreamBuffer(session.id)
     if (full && msg.content.trim() !== full.trim()) msg.content = full
@@ -561,27 +576,11 @@ class MessageStoreState {
     return workspace ? { ...workspace } : undefined
   }
 
-  private forceStopTurn(session: MessageSession, turnId?: string): void {
-    if (turnId && session.activeTurnId !== turnId) return
-    this.flushStreamBuffer(session.id)
-    const last = session.messages[session.messages.length - 1]
-    if (last?.role === 'ai' && last.streaming) {
-      last.promptExcluded = true
-      this.finishAssistant(last, last.content.trim() || 'Stopped.')
-    }
-    session.busy = false
-    session.aborting = false
-    session.activeTurnId = undefined
-    session.updatedAt = Date.now()
-    if (this.globalBusySessionId === session.id) this.globalBusySessionId = ''
-    void this.persistSession(session)
-  }
-
   private shouldPersistSession(session: MessageSession): boolean {
     return session.source === 'cowork' && session.messages.length >= 2
   }
 
-  private async compactSessionIfNeeded(session: MessageSession, options?: { protectMessageIds?: Set<string> }): Promise<boolean> {
+  async compactSessionIfNeeded(session: MessageSession, options?: { protectMessageIds?: Set<string> }): Promise<boolean> {
     this.updateSessionContextUsage(session)
     if (!session.contextUsage.compressionTriggered) return false
 
@@ -777,7 +776,7 @@ class MessageStoreState {
     }
   }
 
-  private withTokenCount<T extends ChatMessage>(message: T): T {
+  withTokenCount<T extends ChatMessage>(message: T): T {
     if (message.promptExcluded) {
       message.tokenCount = 0
       return message
@@ -786,7 +785,7 @@ class MessageStoreState {
     return message
   }
 
-  private updateSessionContextUsage(session: MessageSession): void {
+  updateSessionContextUsage(session: MessageSession): void {
     const compressedTokens = session.detail.compressedContext ? safeTokenCount(session.detail.compressedContext) : 0
     const messageTokens = session.messages.reduce((sum, message) => {
       if (message.compressed || message.promptExcluded) return sum
@@ -839,6 +838,8 @@ class MessageStoreState {
         streaming: message.streaming,
         error: message.error,
         activity: plainActivity(message.activity),
+        tasks: message.tasks?.length ? jsonSafe(message.tasks) : undefined,
+        confirm: message.confirm ? jsonSafe(message.confirm) : undefined,
         compressed: message.compressed,
         promptExcluded: message.promptExcluded,
         compactSummary: message.compactSummary,
@@ -873,6 +874,8 @@ class MessageStoreState {
           streaming: false,
           error: message.error,
           activity: message.activity,
+          tasks: message.tasks,
+          confirm: message.confirm ? { ...message.confirm, answer: message.confirm.answer || 'elsewhere' } : undefined,
           compressed: message.compressed,
           promptExcluded: message.promptExcluded,
           compactSummary: message.compactSummary,
@@ -883,8 +886,6 @@ class MessageStoreState {
       ),
       detail: stored.detail || emptyDetail(),
       contextUsage: emptyUsage(),
-      busy: false,
-      aborting: false,
       createdAt: stored.createdAt,
       updatedAt: stored.updatedAt,
       archivedAt: stored.archivedAt
@@ -893,7 +894,7 @@ class MessageStoreState {
     return session
   }
 
-  private scheduleScrollToBottomIfNear(): void {
+  scheduleScrollToBottomIfNear(): void {
     if (this.scrollNearRaf) return
     this.scrollNearRaf = requestAnimationFrame(() => {
       this.scrollNearRaf = 0
@@ -915,7 +916,7 @@ class MessageStoreState {
     for (const [sessionId, delta] of entries) this.appendStreamDelta(sessionId, delta)
   }
 
-  private flushStreamBuffer(sessionId: string): void {
+  flushStreamBuffer(sessionId: string): void {
     const delta = this.streamBuffers.get(sessionId)
     if (!delta) return
     this.streamBuffers.delete(sessionId)
@@ -925,12 +926,112 @@ class MessageStoreState {
   private appendStreamDelta(sessionId: string, delta: string): void {
     const session = this.getSession(sessionId)
     if (!session || !delta) return
-    const last = session.messages[session.messages.length - 1]
-    if (!last || last.role !== 'ai' || !last.streaming) return
-    last.thinking = false
-    last.content += delta
+    const sink = this.turnService.sink(session)
+    if (!sink) return
+    sink.thinking = false
+    sink.content += delta
     this.scheduleScrollToBottomIfNear()
   }
+
+  messageById(session: MessageSession, id: string): ChatMessage | undefined {
+    return session.messages.find((message) => message.id === id)
+  }
+
+  lastStreamingMessage(session: MessageSession): ChatMessage | undefined {
+    for (let i = session.messages.length - 1; i >= 0; i -= 1) {
+      const message = session.messages[i]
+      if (message.role === 'ai' && message.streaming) return message
+    }
+    return undefined
+  }
+
+  bufferStreamDelta(sessionId: string, delta: string): void {
+    this.streamBuffers.set(sessionId, (this.streamBuffers.get(sessionId) || '') + delta)
+    this.scheduleStreamFlush()
+  }
+
+  private registerTaskBinding(task: MaestroTask): { sessionId: string; messageId: string } | null {
+    const bound = this.turnService.bindTask(task)
+    if (!bound) return null
+    const session = this.getSession(bound.sessionId)
+    if (!session) return null
+    const message = this.turnService.appendTimelineEntry(
+      session,
+      this.withTokenCount({
+        id: uid(),
+        source: 'cowork',
+        role: 'ai',
+        type: 'task',
+        content: '',
+        streaming: false,
+        promptExcluded: true,
+        ts: Date.now()
+      })
+    )
+    const binding = { sessionId: session.id, messageId: message.id }
+    this.taskBindings.set(task.id, binding)
+    this.scheduleScrollToBottomIfNear()
+    return binding
+  }
+
+  async stageAttachments(
+    session: MessageSession,
+    files?: ChatAttachment[]
+  ): Promise<(ChatFile & { path: string })[]> {
+    if (!files?.length) return []
+    const registered = await coach
+      .attachFiles({ sessionId: session.id, paths: files.map((file) => file.path) })
+      .catch(() => null)
+    const staged: (ChatFile & { path: string })[] = []
+    const failed: string[] = []
+    if (!registered) {
+      failed.push(...files.map((file) => file.name || file.path))
+    } else {
+      // Main returns one result per input, in input order. Pairing by path is incorrect because
+      // Main resolves/normalizes paths before returning them.
+      for (let index = 0; index < files.length; index += 1) {
+        const entry = registered[index]
+        const file = files[index]
+        if (entry?.ok && entry.path) {
+          staged.push({
+            name: entry.name || entry.path,
+            path: entry.path,
+            kind: 'attachment',
+            size: entry.size,
+            isDirectory: entry.isDirectory
+          })
+          continue
+        }
+        const reason = entry?.error
+          ? ` (${entry.error})`
+          : registered.length !== files.length
+            ? ' (no result returned)'
+            : ''
+        failed.push(`${file.name || file.path}${reason}`)
+      }
+    }
+    if (failed.length) {
+      this.turnService.appendTimelineEntry(
+        session,
+        this.withTokenCount({
+          id: uid(),
+          source: 'cowork',
+          role: 'ai',
+          content:
+            `Could not attach ${failed.length} file(s) — they were NOT sent to the agent:\n` +
+            failed.map((name) => `· ${name}`).join('\n'),
+          streaming: false,
+          error: true,
+          promptExcluded: true,
+          ts: Date.now()
+        })
+      )
+    }
+    return staged
+  }
+
 }
 
-export const messageStore = reactive<MessageStoreState>(new MessageStoreState())
+export const messageStore = reactive<MessageStoreState>(
+  iocHelper.bind({ controller: MessageStoreState, services: [TurnService] }) as MessageStoreState
+)

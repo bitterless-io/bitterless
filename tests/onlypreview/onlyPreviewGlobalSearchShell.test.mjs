@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,6 +13,7 @@ const subscriptions = new Map();
 const searchCalls = [];
 const previewCalls = [];
 const cancelCalls = [];
+const officeCancelCalls = [];
 const runtime = {
   search: async (request) => {
     searchCalls.push(request);
@@ -20,6 +22,10 @@ const runtime = {
   preview: async (request) => {
     previewCalls.push(request);
     return await globalThis.__globalPreviewResponder(request);
+  },
+  cancelOfficeRead: async (request) => {
+    officeCancelCalls.push(request);
+    return { ok: true, value: undefined };
   },
   cancel: async (request) => {
     cancelCalls.push(request);
@@ -44,6 +50,10 @@ await build({
     store: join(
       projectRoot,
       'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearch.store.ts'
+    ),
+    previewScheduler: join(
+      projectRoot,
+      'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchPreviewScheduler.service.ts'
     ),
     shellStore: join(projectRoot, 'src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts')
   },
@@ -114,6 +124,9 @@ await build({
 const { onlyPreviewGlobalSearchStore: store } = await import(
   pathToFileURL(join(buildRoot, 'store.mjs')).href
 );
+const { createOnlyPreviewGlobalSearchPreviewScheduler } = await import(
+  pathToFileURL(join(buildRoot, 'previewScheduler.mjs')).href
+);
 const { OnlyPreviewShellStore } = await import(
   pathToFileURL(join(buildRoot, 'shellStore.mjs')).href
 );
@@ -137,10 +150,45 @@ after(() => {
 
 const deferred = () => {
   let resolvePromise;
-  const promise = new Promise((resolveValue) => {
+  let rejectPromise;
+  const promise = new Promise((resolveValue, rejectValue) => {
     resolvePromise = resolveValue;
+    rejectPromise = rejectValue;
   });
-  return { promise, resolve: resolvePromise };
+  return { promise, reject: rejectPromise, resolve: resolvePromise };
+};
+
+const tick = () => new Promise((resolveTick) => setImmediate(resolveTick));
+
+const createPreviewClock = () => {
+  let now = 0;
+  let sequence = 0;
+  const timers = new Map();
+  return {
+    clock: {
+      setTimeout(callback, delayMs) {
+        const id = ++sequence;
+        timers.set(id, { at: now + delayMs, callback });
+        return id;
+      },
+      clearTimeout(id) {
+        timers.delete(id);
+      }
+    },
+    advance(delayMs) {
+      const target = now + delayMs;
+      while (true) {
+        const next = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= target)
+          .sort((left, right) => left[1].at - right[1].at || left[0] - right[0])[0];
+        if (!next) break;
+        timers.delete(next[0]);
+        now = next[1].at;
+        next[1].callback();
+      }
+      now = target;
+    }
+  };
 };
 
 const createDiagnosticRecorder = () => {
@@ -169,6 +217,13 @@ const fileResult = (resultToken) => ({
   nodeKind: 'file',
   previewHint: 'text',
   mediaType: 'text'
+});
+
+const fileResultAt = (resultToken, relativePath) => ({
+  ...fileResult(resultToken),
+  name: relativePath.slice(relativePath.lastIndexOf('/') + 1),
+  relativePath,
+  parentRelativePath: relativePath.slice(0, relativePath.lastIndexOf('/'))
 });
 
 const contentResult = {
@@ -286,6 +341,7 @@ test('terminal token replacement refetches preview and fences the revoked early 
   await dispatch;
   await Promise.resolve();
   assert.equal(store.selectedResult.resultToken, 'terminal-result-token');
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 130));
   assert.equal(previewCalls.at(-1).resultToken, 'terminal-result-token');
   assert.equal(store.preview.text, '# authoritative');
 
@@ -876,4 +932,240 @@ test('body-gutter dismiss and empty-query Escape share the opener close path', a
   assert.deepEqual(closeModes, ['opener', 'opener']);
   assert.equal(store.active, false);
   assert.equal(store.restoreFocusOnExit, false);
+});
+
+const previewValue = (name, text) => ({
+  ok: true,
+  value: { kind: 'text', adapter: 'plain', name, text, truncated: false }
+});
+
+test('Store A to B to C dispatches only C trailing and stale A settlement cannot clear C pending', async () => {
+  const clock = createPreviewClock();
+  const oldA = deferred();
+  const currentC = deferred();
+  const resultA = fileResultAt('rapid-a', 'docs/a.txt');
+  const resultB = fileResultAt('rapid-b', 'docs/b.txt');
+  const resultC = fileResultAt('rapid-c', 'docs/c.txt');
+  const context = {
+    workspaceId: 'workspace-rapid-abc',
+    generation: 21,
+    ready: true,
+    rootName: 'bitterless',
+    currentDirectoryRelativePath: 'docs'
+  };
+  globalThis.__globalSearchResponder = async (request) => ({
+    ok: true,
+    value: {
+      workspaceId: context.workspaceId,
+      generation: context.generation,
+      requestId: request.requestId,
+      files: [resultA, resultB, resultC],
+      contents: [],
+      filesTruncated: false,
+      contentsTruncated: false
+    }
+  });
+  globalThis.__globalPreviewResponder = async ({ resultToken }) => {
+    if (resultToken === resultA.resultToken) return await oldA.promise;
+    if (resultToken === resultC.resultToken) return await currentC.promise;
+    assert.fail('intermediate B preview must never dispatch');
+  };
+
+  store.resetForWorkspace();
+  store.configure(() => context, async () => true);
+  store.configureScheduler(() => undefined);
+  store.configurePreviewScheduler(
+    createOnlyPreviewGlobalSearchPreviewScheduler(
+      (candidate) => store.dispatchPreview(candidate),
+      120,
+      clock.clock
+    )
+  );
+  store.enter();
+  store.setQuery('rapid');
+  const firstCall = previewCalls.length;
+  await store.dispatchLatest();
+  await tick();
+  assert.deepEqual(
+    previewCalls.slice(firstCall).map(({ resultToken }) => resultToken),
+    ['rapid-a']
+  );
+
+  store.selectResult(resultB);
+  store.selectResult(resultC);
+  assert.equal(store.previewPending, true);
+  assert.equal(store.preview, null);
+  clock.advance(120);
+  await tick();
+  assert.deepEqual(
+    previewCalls.slice(firstCall).map(({ resultToken }) => resultToken),
+    ['rapid-a', 'rapid-c']
+  );
+
+  oldA.resolve(previewValue('a.txt', 'stale A'));
+  await tick();
+  assert.equal(store.preview, null);
+  assert.equal(store.previewError, '');
+  assert.equal(store.previewPending, true, 'stale A finally must not clear current C pending');
+
+  currentC.resolve(previewValue('c.txt', 'current C'));
+  await tick();
+  assert.equal(store.preview.text, 'current C');
+  assert.equal(store.previewPending, false);
+});
+
+test('Store A to B to A uses the new epoch and stale A error/finally cannot clear new A pending', async () => {
+  const clock = createPreviewClock();
+  const oldA = deferred();
+  const newA = deferred();
+  const resultA = fileResultAt('aba-a', 'docs/a-again.txt');
+  const resultB = fileResultAt('aba-b', 'docs/b-skipped.txt');
+  const context = {
+    workspaceId: 'workspace-rapid-aba',
+    generation: 22,
+    ready: true,
+    rootName: 'bitterless',
+    currentDirectoryRelativePath: 'docs'
+  };
+  let aCalls = 0;
+  globalThis.__globalSearchResponder = async (request) => ({
+    ok: true,
+    value: {
+      workspaceId: context.workspaceId,
+      generation: context.generation,
+      requestId: request.requestId,
+      files: [resultA, resultB],
+      contents: [],
+      filesTruncated: false,
+      contentsTruncated: false
+    }
+  });
+  globalThis.__globalPreviewResponder = async ({ resultToken }) => {
+    if (resultToken === resultB.resultToken) assert.fail('intermediate B must not dispatch');
+    aCalls += 1;
+    return await (aCalls === 1 ? oldA.promise : newA.promise);
+  };
+
+  store.resetForWorkspace();
+  store.configure(() => context, async () => true);
+  store.configureScheduler(() => undefined);
+  store.configurePreviewScheduler(
+    createOnlyPreviewGlobalSearchPreviewScheduler(
+      (candidate) => store.dispatchPreview(candidate),
+      120,
+      clock.clock
+    )
+  );
+  store.enter();
+  store.setQuery('aba');
+  const firstCall = previewCalls.length;
+  await store.dispatchLatest();
+  await tick();
+  store.selectResult(resultB);
+  store.selectResult(resultA);
+  clock.advance(120);
+  await tick();
+  assert.deepEqual(
+    previewCalls.slice(firstCall).map(({ resultToken }) => resultToken),
+    ['aba-a', 'aba-a']
+  );
+
+  oldA.reject(new Error('stale A failed'));
+  await tick();
+  assert.equal(store.preview, null);
+  assert.equal(store.previewError, '');
+  assert.equal(store.previewPending, true, 'stale A finally must not clear new A pending');
+
+  newA.resolve(previewValue('a-again.txt', 'new A'));
+  await tick();
+  assert.equal(store.preview.text, 'new A');
+  assert.equal(store.previewPending, false);
+});
+
+test('query, scope, workspace, exit, and shutdown each cancel a queued trailing preview', async () => {
+  const scenarios = [
+    {
+      name: 'query',
+      act: ({ store: activeStore }) => activeStore.setQuery('replacement-query')
+    },
+    {
+      name: 'scope',
+      act: ({ store: activeStore }) => activeStore.setScopeKind('project')
+    },
+    {
+      name: 'workspace',
+      act: ({ setContext }) =>
+        setContext({
+          workspaceId: 'replacement-workspace',
+          generation: 1,
+          ready: true,
+          rootName: 'replacement',
+          currentDirectoryRelativePath: ''
+        })
+    },
+    { name: 'exit', act: ({ store: activeStore }) => activeStore.exit(false) },
+    { name: 'shutdown', act: ({ store: activeStore }) => activeStore.shutdown() }
+  ];
+
+  for (const scenario of scenarios) {
+    const clock = createPreviewClock();
+    const resultA = fileResultAt(`${scenario.name}-a`, `docs/${scenario.name}-a.txt`);
+    const resultB = fileResultAt(`${scenario.name}-b`, `docs/${scenario.name}-b.txt`);
+    let context = {
+      workspaceId: `workspace-cancel-${scenario.name}`,
+      generation: 31,
+      ready: true,
+      rootName: 'bitterless',
+      currentDirectoryRelativePath: 'docs'
+    };
+    let searchCount = 0;
+    globalThis.__globalSearchResponder = async (request) => {
+      searchCount += 1;
+      return {
+        ok: true,
+        value: {
+          workspaceId: context.workspaceId,
+          generation: context.generation,
+          requestId: request.requestId,
+          files: searchCount === 1 ? [resultA, resultB] : [],
+          contents: [],
+          filesTruncated: false,
+          contentsTruncated: false
+        }
+      };
+    };
+    globalThis.__globalPreviewResponder = async ({ resultToken }) =>
+      previewValue(`${resultToken}.txt`, resultToken);
+
+    store.resetForWorkspace();
+    store.configure(() => context, async () => true);
+    store.configureScheduler(() => undefined);
+    store.configurePreviewScheduler(
+      createOnlyPreviewGlobalSearchPreviewScheduler(
+        (candidate) => store.dispatchPreview(candidate),
+        120,
+        clock.clock
+      )
+    );
+    store.setContext(context);
+    store.enter();
+    store.setQuery(`cancel-${scenario.name}`);
+    const firstCall = previewCalls.length;
+    await store.dispatchLatest();
+    await tick();
+    store.selectResult(resultB);
+    const setContext = (nextContext) => {
+      context = nextContext;
+      store.setContext(nextContext);
+    };
+    scenario.act({ setContext, store });
+    await tick();
+    clock.advance(240);
+    await tick();
+    assert.equal(
+      previewCalls.slice(firstCall).some(({ resultToken }) => resultToken === resultB.resultToken),
+      false,
+      `${scenario.name} must cancel its queued trailing preview`
+    );
+  }
 });

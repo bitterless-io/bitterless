@@ -39,6 +39,8 @@ import { onlyPreviewPreviewReadRuntimeHandlerName } from '@shared/onlypreview/on
 import { onlyPreviewFailure, onlyPreviewSuccess } from '@shared/onlypreview/onlyPreview.contract';
 import type {
   OnlyPreviewBrowseDirectoryRequest,
+  OnlyPreviewGlobalSearchOfficeReadChunkRequest,
+  OnlyPreviewGlobalSearchOfficeReadRequest,
   OnlyPreviewGlobalSearchPreviewRequest,
   OnlyPreviewSearchCancelRequest,
   OnlyPreviewSearchInitializeRequest,
@@ -253,6 +255,25 @@ export class FileSearchRuntime extends XpcPreloadHandler implements FileSearchRu
   async preview(params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchPreviewRequest>) {
     const value = requireRuntimeRequest<OnlyPreviewGlobalSearchPreviewRequest>(params);
     return await runtime.preview(value.request);
+  }
+
+  async openOfficeRead(params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadRequest>) {
+    const value = requireRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadRequest>(params);
+    return await runtime.openOfficeRead(value.request);
+  }
+
+  async readOfficeChunk(
+    params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadChunkRequest>
+  ) {
+    const value = requireRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadChunkRequest>(params);
+    return await runtime.readOfficeChunk(value.request);
+  }
+
+  async cancelOfficeRead(
+    params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadRequest>
+  ) {
+    const value = requireRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadRequest>(params);
+    return await runtime.cancelOfficeRead(value.request);
   }
 
   async cancel(params: FileSearchRuntimeRequest<OnlyPreviewSearchCancelRequest>) {

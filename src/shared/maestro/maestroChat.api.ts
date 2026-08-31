@@ -1,9 +1,21 @@
 import type { AgentActivityStep, ReplayResult, SkillSummary, WorkspaceRef } from './coach.api'
+import type { MaestroTaskConfirm, MaestroTaskPart } from './task.api'
 
 export type MaestroChatRole = 'human' | 'ai'
 // Persisted rows use the original source value; changing it requires a database migration.
 export type MaestroChatSource = 'cowork'
-export type MaestroChatMessageType = 'text' | 'files' | 'compact'
+export type MaestroChatMessageType = 'text' | 'files' | 'compact' | 'task' | 'confirm'
+
+export interface MaestroChatConfirm {
+  taskId: string
+  confirmId: string
+  title: string
+  detail?: string
+  confirmLabel: string
+  cancelLabel: string
+  answer?: 'confirm' | 'cancel' | 'elsewhere'
+  payload?: MaestroTaskConfirm['payload']
+}
 
 export interface MaestroChatFile {
   name: string
@@ -11,6 +23,8 @@ export interface MaestroChatFile {
   kind?: 'attachment' | 'artifact'
   action?: 'created' | 'updated'
   size?: number
+  /** Directory attachment. Older persisted rows simply omit this optional field. */
+  isDirectory?: boolean
 }
 
 export interface MaestroChatMessage {
@@ -26,6 +40,8 @@ export interface MaestroChatMessage {
   streaming: boolean
   error?: boolean
   activity?: AgentActivityStep[]
+  tasks?: MaestroTaskPart[]
+  confirm?: MaestroChatConfirm
   compressed?: boolean
   promptExcluded?: boolean
   compactSummary?: string

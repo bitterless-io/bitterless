@@ -4,6 +4,10 @@ import type {
   OnlyPreviewKind,
   OnlyPreviewResult
 } from './onlyPreview.types';
+import type {
+  OnlyPreviewOfficePackageKind,
+  OnlyPreviewOfficeReadChunkRuntimeResult
+} from './onlyPreviewOfficeReadRuntime.types';
 
 export const ONLY_PREVIEW_SEARCH_MAX_RESULTS = 500;
 export const ONLY_PREVIEW_GLOBAL_SEARCH_SECTION_MAX_RESULTS = 250;
@@ -214,6 +218,34 @@ export interface OnlyPreviewGlobalSearchPreviewRequest {
   resultToken: string;
 }
 
+export interface OnlyPreviewGlobalSearchOfficeReadRequest extends OnlyPreviewGlobalSearchPreviewRequest {
+  readGrant: string;
+}
+
+export interface OnlyPreviewGlobalSearchOfficeReadChunkRequest extends OnlyPreviewGlobalSearchOfficeReadRequest {
+  offset: number;
+}
+
+export interface OnlyPreviewGlobalSearchOfficeReadOpenResult {
+  workspaceId: string;
+  generation: number;
+  requestId: string;
+  resultToken: string;
+  readGrant: string;
+  totalBytes: number;
+}
+
+export interface OnlyPreviewGlobalSearchOfficeReadChunkResult extends Omit<
+  OnlyPreviewOfficeReadChunkRuntimeResult,
+  'grantId' | 'runtimeId' | 'selectionRevision'
+> {
+  workspaceId: string;
+  generation: number;
+  requestId: string;
+  resultToken: string;
+  readGrant: string;
+}
+
 export type OnlyPreviewGlobalSearchPreview =
   | {
       kind: 'text';
@@ -227,6 +259,19 @@ export type OnlyPreviewGlobalSearchPreview =
       name: string;
       entries: OnlyPreviewDirectoryPreviewEntry[];
       truncated: boolean;
+    }
+  | {
+      kind: 'office';
+      adapter: OnlyPreviewOfficePackageKind;
+      name: string;
+      sourceExtension: '.xlsx' | '.xlsm' | '.docx' | '.pptx';
+      size: number;
+      modifiedAt: number;
+      workspaceId: string;
+      generation: number;
+      requestId: string;
+      resultToken: string;
+      readGrant: string;
     }
   | {
       kind: 'info';
@@ -256,6 +301,15 @@ export interface OnlyPreviewSearchRuntimeHandler {
   preview(
     params: OnlyPreviewGlobalSearchPreviewRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchPreview>>;
+  openOfficeRead(
+    params: OnlyPreviewGlobalSearchOfficeReadRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadOpenResult>>;
+  readOfficeChunk(
+    params: OnlyPreviewGlobalSearchOfficeReadChunkRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadChunkResult>>;
+  cancelOfficeRead(
+    params: OnlyPreviewGlobalSearchOfficeReadRequest
+  ): Promise<OnlyPreviewResult<void>>;
   cancel(params: OnlyPreviewSearchCancelRequest): Promise<OnlyPreviewResult<void>>;
   shutdown(params: OnlyPreviewSearchShutdownRequest): Promise<OnlyPreviewResult<void>>;
 }

@@ -90,6 +90,7 @@ export class OnlyPreviewSearchEngine {
     onProgress,
     onSnapshot,
     onWatchCommit,
+    prepareOfficePreview,
     readWorkspaceFile = readSingleWorkspaceFile,
     diagnostics = createOnlyPreviewSearchDiagnostics()
   } = {}) {
@@ -97,6 +98,7 @@ export class OnlyPreviewSearchEngine {
     this.onProgress = onProgress;
     this.onSnapshot = onSnapshot;
     this.onWatchCommit = onWatchCommit;
+    this.prepareOfficePreview = prepareOfficePreview;
     this.diagnostics = diagnostics;
     this.selectedFilePriority = createOnlyPreviewSelectedFilePriorityLane({
       readWorkspaceFile,
@@ -677,12 +679,24 @@ export class OnlyPreviewSearchEngine {
       requestId,
       resultToken
     });
-    return await previewOnlyPreviewGlobalSearchResult({
+    const preview = await previewOnlyPreviewGlobalSearchResult({
       authority,
       rootPath: this.rootPath,
       searchPolicy: authority.searchPolicy ?? this.activeSearchPolicy ?? this.searchPolicy,
       isCancelled
     });
+    if (preview.kind !== 'info' || typeof this.prepareOfficePreview !== 'function') return preview;
+    return (
+      (await this.prepareOfficePreview({
+        authority,
+        preview,
+        workspaceId,
+        generation,
+        requestId,
+        resultToken,
+        isCancelled
+      })) ?? preview
+    );
   }
 
   async applyWatchChangesInternal(change) {

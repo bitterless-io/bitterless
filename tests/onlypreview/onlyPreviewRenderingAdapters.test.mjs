@@ -232,6 +232,7 @@ test('all Office formats create the matching lazy OOXML session and report compl
       presentation.selectionRevision
     );
     assert.equal(harness.officeSessions[0].options.kind, sessionKind);
+    assert.equal(harness.officeSessions[0].options.sourceExtension, extension);
     assert.equal(Object.hasOwn(harness.officeSessions[0].options, 'assetUrl'), false);
     assert.equal(harness.officeSessions[0].options.expectedSize, 4096);
     assert.equal((await harness.officeSessions[0].options.readBytes()).byteLength, 4096);

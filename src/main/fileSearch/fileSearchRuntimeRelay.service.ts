@@ -24,6 +24,8 @@ import {
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import {
   isOnlyPreviewGlobalSearchBatch,
+  isOnlyPreviewGlobalSearchOfficeReadChunkResult,
+  isOnlyPreviewGlobalSearchOfficeReadOpenResult,
   isOnlyPreviewGlobalSearchPreview,
   isOnlyPreviewGlobalSearchResponse
 } from './fileSearchGlobalResult.validator';
@@ -347,6 +349,11 @@ export class FileSearchRuntimeRelayService {
       requestId: this._isBoundedToken(record.requestId) ? record.requestId : null,
       directoryToken: this._isBoundedToken(record.directoryToken) ? record.directoryToken : null,
       resultToken: this._isBoundedToken(record.resultToken) ? record.resultToken : null,
+      readGrant: this._isBoundedToken(record.readGrant) ? record.readGrant : null,
+      offset:
+        Number.isSafeInteger(record.offset) && (record.offset as number) >= 0
+          ? (record.offset as number)
+          : null,
       maxResults:
         Number.isSafeInteger(record.maxResults) &&
         (record.maxResults as number) >= 0 &&
@@ -363,6 +370,7 @@ export class FileSearchRuntimeRelayService {
     if (
       expectation.method === 'prioritizeFile' ||
       expectation.method === 'cancel' ||
+      expectation.method === 'cancelOfficeRead' ||
       expectation.method === 'shutdown'
     ) {
       return value.value === undefined;
@@ -383,7 +391,25 @@ export class FileSearchRuntimeRelayService {
       );
     }
     if (expectation.method === 'preview') {
-      return expectation.resultToken !== null && isOnlyPreviewGlobalSearchPreview(value.value);
+      return (
+        expectation.resultToken !== null &&
+        isOnlyPreviewGlobalSearchPreview(value.value, expectation)
+      );
+    }
+    if (expectation.method === 'openOfficeRead') {
+      return (
+        expectation.resultToken !== null &&
+        expectation.readGrant !== null &&
+        isOnlyPreviewGlobalSearchOfficeReadOpenResult(value.value, expectation)
+      );
+    }
+    if (expectation.method === 'readOfficeChunk') {
+      return (
+        expectation.resultToken !== null &&
+        expectation.readGrant !== null &&
+        expectation.offset !== null &&
+        isOnlyPreviewGlobalSearchOfficeReadChunkResult(value.value, expectation)
+      );
     }
     return (
       expectation.requestId !== null &&

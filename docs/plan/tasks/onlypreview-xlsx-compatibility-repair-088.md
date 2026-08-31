@@ -1,7 +1,7 @@
 ---
 id: onlypreview-xlsx-compatibility-repair-088
 scope: Repair invalid benchmark XLSX fixtures and normalize one producer-compatible empty-sheet OOXML form before the single Viewer load
-status: in-progress
+status: implemented; owner verification pending
 depends-on:
   - onlypreview-ooxml-viewer-runtime-repair-081
 verify: focused corpus and Office session tests, directed typechecks/lint/build; no Electron/Playwright/E2E
@@ -38,10 +38,10 @@ worksheet omits `sheetData` render without replacing the bounded `@silurus/ooxml
   archive preflight, lazy `@silurus/ooxml/xlsx`, model-backed Find/highlight, generation fencing,
   and no potentially large Main filesystem I/O.
 - While the original archive preflight already streams each XLSX worksheet XML, count `sheetData`
-  by local name. Only a non-macro workbook with exactly one worksheet and exactly one missing
-  `sheetData` is a producer-compatibility candidate; multi-sheet cases and more than one
-  `sheetData` are invalid. Return the marker and total-uncompressed count with the transferred
-  accepted buffer instead of relying on `XlsxViewer.load()`:
+  by local name. Only a trusted descriptor extension of `.xlsx`, one worksheet and exactly one
+  missing `sheetData` form a producer-compatibility candidate; `.xlsm`, macro-bearing, multi-sheet,
+  and multiple-`sheetData` cases are invalid. Return the marker and total-uncompressed count with
+  the transferred accepted buffer instead of relying on `XlsxViewer.load()`:
   the pinned renderer stores this parser failure on the worksheet model and paints an error canvas,
   so neither a rejected load nor `onError` is available.
 - For a marked workbook, transfer the accepted buffer to a disposable normalization Worker,
@@ -75,4 +75,18 @@ worksheet omits `sheetData` render without replacing the bounded `@silurus/ooxml
 
 ## Delivery
 
-Implementation and verification pending.
+- Benchmark `.xlsx` entries now reuse one canonical six-part OOXML package. Raw DOS timestamps make
+  the package byte-identical across UTC, Asia/Shanghai, and America/Los_Angeles, and corpus revision
+  4 prevents reuse of the old arbitrary-byte fixtures.
+- The Office preflight streams worksheet markup and macro ContentType evidence. Exact `.xlsx`
+  descriptor identity, single-sheet shape and 4 MiB / 8 MiB compatibility limits gate one
+  disposable ExcelJS Worker; normalized output is capped at 4 MiB and passes full preflight again.
+- Only one final `@silurus/ooxml/xlsx` Viewer loads, so existing complete Find/highlight behavior is
+  unchanged. Main gains no content I/O and the source file is never modified.
+- Independent [review 1](../reviews/onlypreview-xlsx-compatibility-repair-088-1.md) passed with no
+  blocking P1/P2. Final focused suites passed 68/68 plus indexing 7/7; ESLint, Prettier,
+  `typecheck:node`, `git diff --check`, and `yarn build` passed. `typecheck:web` remains blocked only
+  by 71 existing unrelated errors and contains no Task 088 path.
+- The reported reimbursement workbook passed the production Worker normalization and second
+  preflight, then opened as `Sheet1` in `@silurus/ooxml/node`. Electron, Playwright, packaged smoke,
+  and E2E were not run by request; Ral owns live visual verification.

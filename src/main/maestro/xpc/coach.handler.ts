@@ -1,6 +1,8 @@
 import { XpcMainHandler } from 'electron-xpc/main'
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller'
 import { updateService } from '@maestro-main/update/update.service'
+import { taskRegistry } from '@maestro-main/tasks/taskRegistry.service'
+import type { MaestroTask } from '@maestro-shared/task.api'
 import type {
   AgentConversationContext,
   AgentCompactReply,
@@ -370,6 +372,24 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async showFileInFolder(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }> {
     return await maestroWindowHelper.showFileInFolder(params)
+  }
+
+  async fileThumbnail(params: { path: string }): Promise<{
+    ok: boolean
+    dataUrl?: string
+    width?: number
+    height?: number
+    error?: string
+  }> {
+    return await maestroWindowHelper.fileThumbnail(params)
+  }
+
+  async listTasks(): Promise<MaestroTask[]> {
+    return taskRegistry.list()
+  }
+
+  async respondTaskConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): Promise<{ ok: boolean }> {
+    return taskRegistry.resolveConfirm(params)
   }
 
   async trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult> {

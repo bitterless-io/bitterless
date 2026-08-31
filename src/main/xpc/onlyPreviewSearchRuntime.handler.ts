@@ -6,6 +6,8 @@ import {
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
   parseOnlyPreviewBrowseDirectoryRequest,
+  parseOnlyPreviewGlobalSearchOfficeReadChunkRequest,
+  parseOnlyPreviewGlobalSearchOfficeReadRequest,
   parseOnlyPreviewGlobalSearchPreviewRequest,
   parseOnlyPreviewSearchCancelRequest,
   parseOnlyPreviewSearchInitializeRequest,
@@ -18,6 +20,10 @@ import type { OnlyPreviewSearchBootstrap } from '@shared/onlypreview/onlyPreview
 import type {
   OnlyPreviewBrowseDirectoryRequest,
   OnlyPreviewBrowseListing,
+  OnlyPreviewGlobalSearchOfficeReadChunkRequest,
+  OnlyPreviewGlobalSearchOfficeReadChunkResult,
+  OnlyPreviewGlobalSearchOfficeReadOpenResult,
+  OnlyPreviewGlobalSearchOfficeReadRequest,
   OnlyPreviewGlobalSearchPreview,
   OnlyPreviewGlobalSearchPreviewRequest,
   OnlyPreviewSearchCancelRequest,
@@ -37,6 +43,8 @@ const SEARCH_TIMEOUT_MS = 60_000;
 const CANCEL_TIMEOUT_MS = 5_000;
 const PRIORITY_TIMEOUT_MS = 60_000;
 const PREVIEW_TIMEOUT_MS = 30_000;
+const OFFICE_CONTROL_TIMEOUT_MS = 10_000;
+const OFFICE_CHUNK_TIMEOUT_MS = 5_000;
 
 const failedRuntimeResult = (error: unknown): OnlyPreviewResult<never> =>
   onlyPreviewFailure(
@@ -130,6 +138,54 @@ export class OnlyPreviewSearchRuntimeHandler
     }
   }
 
+  async openOfficeRead(
+    params: OnlyPreviewGlobalSearchOfficeReadRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadOpenResult>> {
+    try {
+      const request = parseOnlyPreviewGlobalSearchOfficeReadRequest(params);
+      return await this._call(
+        request.hostToken,
+        'openOfficeRead',
+        request,
+        OFFICE_CONTROL_TIMEOUT_MS
+      );
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
+  }
+
+  async readOfficeChunk(
+    params: OnlyPreviewGlobalSearchOfficeReadChunkRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadChunkResult>> {
+    try {
+      const request = parseOnlyPreviewGlobalSearchOfficeReadChunkRequest(params);
+      return await this._call(
+        request.hostToken,
+        'readOfficeChunk',
+        request,
+        OFFICE_CHUNK_TIMEOUT_MS
+      );
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
+  }
+
+  async cancelOfficeRead(
+    params: OnlyPreviewGlobalSearchOfficeReadRequest
+  ): Promise<OnlyPreviewResult<void>> {
+    try {
+      const request = parseOnlyPreviewGlobalSearchOfficeReadRequest(params);
+      return await this._call(
+        request.hostToken,
+        'cancelOfficeRead',
+        request,
+        OFFICE_CONTROL_TIMEOUT_MS
+      );
+    } catch (error) {
+      return failedRuntimeResult(error);
+    }
+  }
+
   async cancel(params: OnlyPreviewSearchCancelRequest): Promise<OnlyPreviewResult<void>> {
     try {
       const request = parseOnlyPreviewSearchCancelRequest(params);
@@ -157,6 +213,9 @@ export class OnlyPreviewSearchRuntimeHandler
       | 'browseDirectory'
       | 'search'
       | 'preview'
+      | 'openOfficeRead'
+      | 'readOfficeChunk'
+      | 'cancelOfficeRead'
       | 'cancel'
       | 'shutdown',
     params: unknown,

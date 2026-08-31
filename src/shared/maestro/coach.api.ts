@@ -2,6 +2,7 @@ import type { CaptureMode, TraceEvent } from './trace.types'
 import type { SavedTab } from './tabs.api'
 import type { CaptureRule } from './captureFilter.api'
 import type { InjectBtnEntry } from './injectBtn.api'
+import type { MaestroTask } from './task.api'
 
 export const DEFAULT_COACH_START_URL = 'https://example.com'
 export const MAESTRO_HOME_READY_TOKEN_QUERY = 'maestroReadyToken'
@@ -94,6 +95,8 @@ export interface CoachXpcContract {
   abortAgent(params?: { sessionId?: string }): Promise<void>
   abortTrainer(params?: { sessionId?: string }): Promise<void>
   abortDelegate(params?: { sessionId?: string }): Promise<void>
+  listTasks(): Promise<MaestroTask[]>
+  respondTaskConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): Promise<{ ok: boolean }>
   // Ingest the CURRENT, non-deleted records (each carrying its source event + the
   // operator `spec`) plus the overall workflow description into a skill. The renderer
   // is the source of truth here — NOT the main process's raw trace buffer.
@@ -121,6 +124,13 @@ export interface CoachXpcContract {
   getFileStatuses(params: { paths: string[] }): Promise<FileStatusResult[]>
   openFile(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }>
   showFileInFolder(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }>
+  fileThumbnail(params: { path: string }): Promise<{
+    ok: boolean
+    dataUrl?: string
+    width?: number
+    height?: number
+    error?: string
+  }>
   deleteSkill(params: { skillId: string }): Promise<DeleteSkillResult>
   replaySkill(params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   getLlmConfig(): Promise<LlmConfig>
@@ -840,6 +850,7 @@ export interface AttachFileResult {
   name?: string
   path?: string
   size?: number
+  isDirectory?: boolean
   error?: string
 }
 
@@ -981,6 +992,17 @@ export interface AgentReply {
   replay?: ReplayResult
   files?: AgentFileArtifact[]
   error?: string
+  retryExhausted?: { attempt: number; max: number }
+  authoredByModel?: boolean
+  mergedIntoTurn?: boolean
+}
+
+export const MODEL_RETRY_CHANNEL = 'coach/model-retry'
+
+export interface ModelRetryProgress {
+  attempt: number
+  max: number
+  recovered?: boolean
 }
 
 export interface WorkspaceRef {
@@ -1008,6 +1030,7 @@ export interface FileStatusResult {
   path: string
   exists: boolean
   isFile: boolean
+  isDirectory: boolean
   size?: number
   error?: string
 }

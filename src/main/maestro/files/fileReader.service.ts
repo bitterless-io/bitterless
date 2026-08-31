@@ -1,27 +1,20 @@
-import { readFile, stat } from 'fs/promises'
-import { extname } from 'path'
+import { open, readFile, stat } from 'fs/promises'
+import { basename, extname } from 'path'
+import { AnydocError, anydocToMarkdown } from '@maestro-main/files/anydoc.service'
+import { isArchivePath } from '@maestro-main/files/archive.service'
 
-// Parses a local file into AI-friendly TEXT for the agent's read_file tool.
-// Conventions mirror mature coding agents (Claude Code / Codex / opencode):
-//   - text/code → 1-based line numbers (cat -n style) with offset/limit paging,
-//   - PDF → page-delimited extracted text,
-//   - Excel → one markdown table per sheet,
-//   - docx → raw paragraph text,
-// and every cap appends an explicit truncation marker so the model knows it did
-// not see everything. Parsers (unpdf / exceljs / mammoth) are pure-JS and bundled.
+// Text/code stays pageable and line-numbered. Other supported documents are converted to
+// Markdown by the staged anydoc CLI child process.
 
-const MAX_BYTES = 25 * 1024 * 1024 // refuse files larger than this
-const MAX_OUTPUT_CHARS = 120_000 // bound the tokens a single read can inject
-const DEFAULT_TEXT_LINES = 2000 // text page size when no limit is given (Read-tool parity)
-const MAX_PDF_PAGES = 100
-const MAX_SHEETS = 20
-const MAX_ROWS_PER_SHEET = 2000
-const MAX_COLS = 60
+const MAX_BYTES = 25 * 1024 * 1024
+const MAX_OUTPUT_CHARS = 120_000
+const SNIFF_BYTES = 8192
+const DEFAULT_TEXT_LINES = 2000
 
 export interface ReadFileOptions {
-  /** 1-based first line for text files (default 1). Ignored for pdf/excel/docx. */
+  /** 1-based first line for text files (default 1). Ignored for documents. */
   offset?: number
-  /** Max lines for text files (default 2000). Ignored for pdf/excel/docx. */
+  /** Max lines for text files (default 2000). Ignored for documents. */
   limit?: number
 }
 
@@ -35,8 +28,6 @@ export class FileReadError extends Error {
   }
 }
 
-// Read-as-plain-text extensions (UTF-8). HTML/markdown ride through as-is — an LLM
-// reads tags fine, and stripping risks losing structure.
 const TEXT_EXTS = new Set([
   'txt', 'text', 'log', 'md', 'markdown', 'mdx', 'rst',
   'csv', 'tsv', 'json', 'json5', 'jsonc', 'ndjson',
@@ -49,14 +40,26 @@ const TEXT_EXTS = new Set([
   'gradle', 'dockerfile', 'makefile', 'gitignore', 'editorconfig'
 ])
 
-export const SUPPORTED_EXTS: string[] = [
-  'pdf', 'xlsx', 'xlsm', 'docx', ...Array.from(TEXT_EXTS)
-]
+const DOCUMENT_EXTS = new Set([
+  'doc', 'docx', 'docm',
+  'ppt', 'pps', 'pot', 'pptx', 'pptm', 'ppsx', 'ppsm',
+  'xls', 'xlsx', 'xlsm', 'xlsb',
+  'odt', 'ods', 'odp',
+  'rtf',
+  'epub',
+  'pdf'
+])
+
+export const SUPPORTED_EXTS: string[] = [...Array.from(DOCUMENT_EXTS), ...Array.from(TEXT_EXTS)]
+
+export const SUPPORTED_FORMATS_TEXT =
+  'Word (.doc/.docx/.docm), PowerPoint (.ppt/.pps/.pot/.pptx/.pptm/.ppsx/.ppsm), ' +
+  'Excel (.xls/.xlsx/.xlsm/.xlsb), OpenDocument (.odt/.ods/.odp), RTF, EPUB, PDF, ' +
+  'and text/code/csv/json/markdown/html'
 
 const extOf = (path: string): string => {
   const ext = extname(path).replace(/^\./, '').toLowerCase()
   if (ext) return ext
-  // Extension-less, well-known filenames (Dockerfile, Makefile) → treat as text.
   const base = path.split(/[\\/]/).pop()?.toLowerCase() || ''
   if (base === 'dockerfile' || base === 'makefile') return base
   return ''
@@ -67,8 +70,6 @@ const clampChars = (text: string): string =>
     ? text
     : text.slice(0, MAX_OUTPUT_CHARS) + `\n\n…[truncated: output exceeded ${MAX_OUTPUT_CHARS} characters]`
 
-// 1-based line numbers, tab-separated, paged by offset/limit — the format coding
-// agents are tuned to (lets the model cite/anchor by line).
 const formatText = (content: string, options?: ReadFileOptions): string => {
   const lines = content.split(/\r?\n/)
   const total = lines.length
@@ -79,89 +80,119 @@ const formatText = (content: string, options?: ReadFileOptions): string => {
   const width = String(end).length
   const body = lines
     .slice(start - 1, end)
-    .map((line, i) => `${String(start + i).padStart(width, ' ')}\t${line}`)
+    .map((line, index) => `${String(start + index).padStart(width, ' ')}\t${line}`)
     .join('\n')
-  const more = end < total ? `\n\n…[truncated: showing lines ${start}-${end} of ${total}; pass offset/limit for more]` : ''
+  const more = end < total
+    ? `\n\n…[truncated: showing lines ${start}-${end} of ${total}; pass offset/limit for more]`
+    : ''
   return clampChars(body + more)
 }
 
-const parsePdf = async (buffer: Buffer): Promise<string> => {
-  // unpdf is ESM-only; the main bundle is CJS, so load it lazily via import()
-  // (same pattern BaseAgent uses for pi-coding-agent). Keeps it off the cold path.
-  const { extractText, getDocumentProxy } = await import('unpdf')
-  const pdf = await getDocumentProxy(new Uint8Array(buffer))
-  const { totalPages, text } = await extractText(pdf, { mergePages: false })
-  const pages = text.slice(0, MAX_PDF_PAGES)
-  const parts = pages.map((page, i) => `----- Page ${i + 1}/${totalPages} -----\n${(page || '').trim()}`)
-  if (totalPages > MAX_PDF_PAGES) parts.push(`…[truncated: ${totalPages - MAX_PDF_PAGES} more pages not shown]`)
-  return clampChars(parts.join('\n\n'))
+const readHead = async (path: string, length: number): Promise<Buffer | null> => {
+  const handle = await open(path, 'r').catch(() => null)
+  if (!handle) return null
+  try {
+    const buffer = Buffer.alloc(length)
+    const { bytesRead } = await handle.read(buffer, 0, length, 0)
+    return buffer.subarray(0, bytesRead)
+  } catch {
+    return null
+  } finally {
+    await handle.close().catch(() => {})
+  }
 }
 
-const escapeCell = (text: string): string => text.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim()
-
-const parseExcel = async (buffer: Buffer): Promise<string> => {
-  const { Workbook } = await import('exceljs')
-  const wb = new Workbook()
-  // Cast across the @types/node Buffer skew between this file and exceljs's bundled types.
-  await wb.xlsx.load(buffer as unknown as Parameters<typeof wb.xlsx.load>[0])
-  const out: string[] = []
-  let sheetCount = 0
-  wb.eachSheet((ws) => {
-    if (sheetCount >= MAX_SHEETS) return
-    sheetCount += 1
-    const rowCount = Math.min(ws.rowCount, MAX_ROWS_PER_SHEET)
-    const colCount = Math.min(ws.columnCount, MAX_COLS)
-    out.push(`## Sheet: ${ws.name} (${ws.rowCount} rows × ${ws.columnCount} cols)`)
-    if (rowCount === 0 || colCount === 0) {
-      out.push('(empty)')
-      return
-    }
-    const renderRow = (r: number): string => {
-      const cells: string[] = []
-      for (let c = 1; c <= colCount; c += 1) cells.push(escapeCell(String(ws.getRow(r).getCell(c).text ?? '')))
-      return `| ${cells.join(' | ')} |`
-    }
-    out.push(renderRow(1)) // row 1 as header
-    out.push(`| ${Array.from({ length: colCount }, () => '---').join(' | ')} |`)
-    for (let r = 2; r <= rowCount; r += 1) out.push(renderRow(r))
-    if (ws.rowCount > MAX_ROWS_PER_SHEET) out.push(`…[truncated: ${ws.rowCount - MAX_ROWS_PER_SHEET} more rows]`)
-    if (ws.columnCount > MAX_COLS) out.push(`…[truncated: ${ws.columnCount - MAX_COLS} more columns]`)
-  })
-  if (wb.worksheets.length > MAX_SHEETS) out.push(`…[truncated: ${wb.worksheets.length - MAX_SHEETS} more sheets]`)
-  return clampChars(out.join('\n'))
+const looksLikeText = (buffer: Buffer): boolean => {
+  const sample = buffer.subarray(0, SNIFF_BYTES)
+  if (sample.length === 0 || sample.includes(0)) return false
+  const text = sample.toString('utf8')
+  if (text.includes('\uFFFD')) return false
+  let printable = 0
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0
+    if (code === 9 || code === 10 || code === 13 || code >= 32) printable += 1
+  }
+  return printable / text.length > 0.9
 }
 
-const parseDocx = async (buffer: Buffer): Promise<string> => {
-  const mammoth = (await import('mammoth')).default
-  const { value } = await mammoth.extractRawText({ buffer } as unknown as Parameters<typeof mammoth.extractRawText>[0])
-  return clampChars(value || '')
+const describeAnydocFailure = (error: unknown, ext: string): string => {
+  if (!(error instanceof AnydocError)) {
+    return `Failed to parse .${ext} file: ${error instanceof Error ? error.message : String(error)}`
+  }
+  if (error.code === 'needsOcr') {
+    return `This .${ext} has no usable text layer and needs OCR before its text can be extracted.`
+  }
+  if (error.code === 'timeout' || error.code === 'unavailable') {
+    return `${error.message} You can retry once; if it fails again the file is likely the cause.`
+  }
+  if (error.code === 'usage') {
+    return `The bundled document converter rejected this .${ext} invocation.`
+  }
+  return `Failed to parse .${ext} file: ${error.message}`
 }
 
-/**
- * Read & parse a local file into text for the agent. Throws FileReadError on
- * size/type/parse problems — the caller (read_file tool) turns that into a text
- * error for the model rather than throwing the turn.
- */
-export const readFileForAgent = async (absPath: string, options?: ReadFileOptions): Promise<string> => {
+export const readFileForAgent = async (
+  absPath: string,
+  options?: ReadFileOptions
+): Promise<string> => {
   const stats = await stat(absPath).catch(() => null)
-  if (!stats || !stats.isFile()) throw new FileReadError(`File not found: ${absPath}`, 'not-found')
+  if (!stats || !stats.isFile()) {
+    throw new FileReadError(`File not found: ${absPath}`, 'not-found')
+  }
+
+  // Route archives before the context-sized file gate. They never enter the
+  // prompt and have a separate attachment ceiling.
+  if (isArchivePath(absPath)) {
+    throw new FileReadError(
+      `"${basename(absPath)}" is an archive, so there is no text to read directly. Use list_archive to see what is inside, ` +
+        'then extract_archive to unpack it into the workspace and read the files that come out.',
+      'unsupported'
+    )
+  }
   if (stats.size > MAX_BYTES) {
-    throw new FileReadError(`File is ${(stats.size / 1024 / 1024).toFixed(1)} MB; the limit is ${MAX_BYTES / 1024 / 1024} MB.`, 'too-large')
+    throw new FileReadError(
+      `File is ${(stats.size / 1024 / 1024).toFixed(1)} MB; the limit is ${MAX_BYTES / 1024 / 1024} MB.`,
+      'too-large'
+    )
   }
   if (stats.size === 0) throw new FileReadError('File is empty.', 'empty')
 
   const ext = extOf(absPath)
-  try {
-    if (ext === 'pdf') return await parsePdf(await readFile(absPath))
-    if (ext === 'xlsx' || ext === 'xlsm') return await parseExcel(await readFile(absPath))
-    if (ext === 'docx') return await parseDocx(await readFile(absPath))
-    if (TEXT_EXTS.has(ext)) return formatText(await readFile(absPath, 'utf8'), options)
-  } catch (err) {
-    if (err instanceof FileReadError) throw err
-    throw new FileReadError(`Failed to parse .${ext || '?'} file: ${err instanceof Error ? err.message : String(err)}`, 'parse-failed')
+  if (DOCUMENT_EXTS.has(ext)) {
+    try {
+      const { text } = await anydocToMarkdown(absPath, { maxChars: MAX_OUTPUT_CHARS })
+      if (!text.trim()) {
+        throw new FileReadError(
+          `Parsed .${ext} but it contained no extractable text.`,
+          'empty'
+        )
+      }
+      return text
+    } catch (err) {
+      if (err instanceof FileReadError) throw err
+      throw new FileReadError(
+        describeAnydocFailure(err, ext),
+        'parse-failed'
+      )
+    }
   }
+
+  if (TEXT_EXTS.has(ext)) {
+    try {
+      return formatText(await readFile(absPath, 'utf8'), options)
+    } catch (err) {
+      throw new FileReadError(
+        `Failed to read .${ext} as UTF-8 text: ${err instanceof Error ? err.message : String(err)}`,
+        'parse-failed'
+      )
+    }
+  }
+
+  const head = await readHead(absPath, SNIFF_BYTES)
+  if (head && looksLikeText(head)) return formatText(await readFile(absPath, 'utf8'), options)
+
   throw new FileReadError(
-    `Unsupported file type ".${ext || '?'}". Supported: PDF, Excel (xlsx/xlsm), Word (docx), and text/code/csv/json/markdown/html.`,
+    `Unsupported file type ".${ext || '?'}". Supported: ${SUPPORTED_FORMATS_TEXT}.`,
     'unsupported'
   )
 }

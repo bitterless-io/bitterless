@@ -16,8 +16,8 @@ test('result preview uses lazy Vue Preview-style file surfaces and inert HTML', 
     'src/renderer/onlypreview/shell/src/components/GlobalSearchPreview/RichSearchPreview.vue'
   );
 
-  assert.equal((host.match(/defineAsyncComponent\(/g) || []).length, 5);
-  for (const variant of ['plain', 'markdown', 'html-static', 'directory', 'info']) {
+  assert.equal((host.match(/defineAsyncComponent\(/g) || []).length, 6);
+  for (const variant of ['plain', 'markdown', 'html-static', 'directory', 'office', 'info']) {
     assert.match(host, new RegExp(`['"]?${variant.replace('-', '\\-')}['"]?`));
   }
   assert.doesNotMatch(host + rich + style, /ContextSearchPreview|globalSearchContextPreview/);

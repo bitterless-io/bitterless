@@ -4,7 +4,9 @@ Status: Current delivery contract
 
 Upstream baseline: `projects/micromeet-cowork` commit
 `689832d39e4b78f2717d5beedbe1c1c3f8db7f71` (2026-07-14).
-Current MenuBar/control and fixed-local-tab parity reference: Cowork `dev/next` commit `19b0621`.
+Current MenuBar/fixed-local-tab parity reference: Cowork `dev/next` commit `19b0621`.
+Current Control-chat parity source: Cowork `dev/next` commit
+`67b056bc08ac345d223a69fb3f954613f3e588d3` (2026-08-31).
 
 ## Purpose
 
@@ -101,13 +103,15 @@ the legacy Cowork `cowork-main` entry is imported once when the unified Maestro 
 
 ### Maestro chat and agents
 
-- Persistent session/history management, streamed replies, thinking/activity state, abort, context
-  compaction, Markdown, skill/replay cards, and generated file artifacts.
+- Persistent session/history management, per-session Turn lifecycle, streamed replies, in-turn
+  steering, retry/status feedback, inactivity watchdog, abort, context compaction, Markdown,
+  skill/replay cards, chronological task/confirmation entries, and generated file artifacts.
 - AI-CRMS and OpenAI Codex provider/model/effort/compression selection with existing login flows.
   GPT-5.5 remains selectable and a stored GPT-5.5 target is preserved alongside GPT-5.6 Luna, Sol,
   and Terra; the new-install Codex default may remain GPT-5.6 Luna.
-- Attach/drop/paste for supported text, image, PDF, Excel/CSV/TSV, and Word inputs; workspace-scoped
-  file search/read/write; artifact open/reveal state.
+- Unified attachment cards and attach/drop/paste for supported files and directories, bounded image
+  thumbnails, archive operations, bundled-CLI document conversion, workspace-scoped file
+  search/read/write, and artifact open/reveal state.
 - Voice recording and AI-CRMS transcription within the upstream five-minute limit.
 - Maestro, Coach, and Delegate agent runtimes with host tool policy and approval history.
 
@@ -131,6 +135,9 @@ Current upstream limitations are parity, not migration defects:
 - Connectors retain their existing management UI and runtime behavior; a unified connector inbox is
   still outside this migration.
 - Voice scribe audio over five minutes remains unsupported.
+- Cowork's five-segment context-compaction replacement remains deferred in Maestro until its own
+  real-session acceptance and projection contract are complete; this chat parity delivery preserves
+  Maestro's current compaction behavior.
 
 ## Host substitutions
 

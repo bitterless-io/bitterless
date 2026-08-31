@@ -1,5 +1,4 @@
-import { dialog } from 'electron'
-import type { BrowserWindow, MessageBoxOptions } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { injectable } from 'inversify'
 import {
   interceptionRuleSummary,
@@ -27,6 +26,8 @@ import { readApiProfile } from '@maestro-main/skills/apiProfile.service'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import type { SkillRegistryService } from '@maestro-main/skills/skillRegistry.service'
 import type { OperationTab } from '@maestro-main/windows/main/maestroBrowserView.service'
+import { taskRegistry } from '@maestro-main/tasks/taskRegistry.service'
+import { buildUnknownConfirmPayload } from '@maestro-main/drive/confirmPayload'
 import { CommonService } from '@maestro-shared/iocHelper/ioc.helper'
 import type {
   AgentActivityStep,
@@ -516,7 +517,10 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         },
         onApiBeforeFetch: async (call) => {
           const decision = classifySkillApiCall(recipe, call)
-          await this.handleSkillApiSafety(decision, call.url)
+          await this.handleSkillApiSafety(decision, call.url, {
+            query: call.query,
+            body: call.body
+          })
           return decision
         }
       })
@@ -609,7 +613,8 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
 
   private async handleSkillApiSafety(
     decision: SkillApiSafetyDecision,
-    url: string
+    url: string,
+    request?: { query?: Record<string, unknown> | null; body?: unknown }
   ): Promise<void> {
     if (decision.safety === 'safe') return
     const label = `${decision.method} ${apiActivityPath(url, this._state.currentUrl)}`
@@ -642,7 +647,12 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     const allowed = await this.confirmApiRequest({
       method: decision.method,
       url,
-      reason: decision.reason
+      reason: decision.reason,
+      payload: buildUnknownConfirmPayload({
+        summary: `${decision.method} ${apiActivityPath(url, this._state.currentUrl)}`,
+        query: request?.query,
+        body: request?.body
+      })
     })
     if (!allowed) {
       this._state.broadcastActivity('api-call', `denied ${label}`, false)
@@ -656,6 +666,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     method: string
     url: string
     reason: string
+    payload?: Parameters<typeof taskRegistry.askOperator>[0]['payload']
   }): Promise<boolean> {
     const path = apiActivityPath(params.url, this._state.currentUrl)
     const eventId = await this._state.pushHostApprovalEvent({
@@ -666,19 +677,14 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       path,
       reason: params.reason
     })
-    const options: MessageBoxOptions = {
-      type: 'question',
-      buttons: ['Run request', 'Cancel'],
-      defaultId: 1,
-      cancelId: 1,
-      title: 'Confirm API request',
-      message: `Allow ${params.method} request?`,
-      detail: `${params.reason}\n\n${params.method} ${apiActivityPath(params.url, this._state.currentUrl)}`
-    }
-    const result = this._state.browserWindow
-      ? await dialog.showMessageBox(this._state.browserWindow, options)
-      : await dialog.showMessageBox(options)
-    const allowed = result.response === 0
+    const allowed = await taskRegistry.askOperator({
+      name: 'api-approval',
+      title: `Allow ${params.method} request?`,
+      detail: `${params.reason}\n\n${params.method} ${path}`,
+      confirmLabel: 'Run request',
+      cancelLabel: 'Cancel',
+      payload: params.payload
+    })
     await this._state.resolveHostApprovalEvent(
       eventId,
       allowed ? 'approved' : 'denied'
@@ -743,7 +749,12 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         const allowed = await this.confirmApiRequest({
           method: normalizeHttpMethod(command.method),
           url: command.url,
-          reason: 'browser_exec mutating API request'
+          reason: 'browser_exec mutating API request',
+          payload: buildUnknownConfirmPayload({
+            summary: `${normalizeHttpMethod(command.method)} ${apiActivityPath(command.url, this._state.currentUrl)}`,
+            query: command.query,
+            body: command.body
+          })
         })
         if (!allowed) {
           this._state.broadcastActivity(

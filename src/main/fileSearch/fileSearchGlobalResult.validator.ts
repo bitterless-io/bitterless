@@ -3,12 +3,19 @@ import {
   ONLY_PREVIEW_GLOBAL_SEARCH_PREVIEW_MAX_TEXT_BYTES,
   ONLY_PREVIEW_GLOBAL_SEARCH_SECTION_MAX_RESULTS
 } from '@shared/onlypreview/onlyPreviewSearch.type';
+import {
+  ONLY_PREVIEW_OFFICE_READ_CHUNK_BYTES,
+  ONLY_PREVIEW_OFFICE_READ_MAX_BYTES
+} from '@shared/onlypreview/onlyPreviewOfficeReadRuntime.types';
 
 interface SearchExpectation {
   workspaceId: string | null;
   generation: number | null;
   requestId: string | null;
   maxResults?: number | null;
+  resultToken?: string | null;
+  readGrant?: string | null;
+  offset?: number | null;
 }
 
 const MEDIA_TYPES = new Set(['text', 'image', 'audio', 'video', 'pdf', 'unknown']);
@@ -240,7 +247,10 @@ const browseEntry = (value: unknown): boolean => {
   return value.directoryToken === null;
 };
 
-export const isOnlyPreviewGlobalSearchPreview = (value: unknown): boolean => {
+export const isOnlyPreviewGlobalSearchPreview = (
+  value: unknown,
+  expectation?: SearchExpectation
+): boolean => {
   if (!isRecord(value) || !boundedString(value.name, 4_096)) return false;
   if (value.kind === 'text') {
     return (
@@ -262,6 +272,46 @@ export const isOnlyPreviewGlobalSearchPreview = (value: unknown): boolean => {
       typeof value.truncated === 'boolean'
     );
   }
+  if (value.kind === 'office') {
+    const adapterExtensions = {
+      xlsx: new Set(['.xlsx', '.xlsm']),
+      docx: new Set(['.docx']),
+      pptx: new Set(['.pptx'])
+    } as const;
+    return (
+      exactKeys(value, [
+        'adapter',
+        'generation',
+        'kind',
+        'modifiedAt',
+        'name',
+        'readGrant',
+        'requestId',
+        'resultToken',
+        'size',
+        'sourceExtension',
+        'workspaceId'
+      ]) &&
+      (value.adapter === 'xlsx' || value.adapter === 'docx' || value.adapter === 'pptx') &&
+      adapterExtensions[value.adapter].has(value.sourceExtension as never) &&
+      boundedToken(value.workspaceId) &&
+      Number.isSafeInteger(value.generation) &&
+      (value.generation as number) >= 0 &&
+      boundedToken(value.requestId) &&
+      boundedToken(value.resultToken) &&
+      boundedToken(value.readGrant) &&
+      Number.isSafeInteger(value.size) &&
+      (value.size as number) >= 0 &&
+      (value.size as number) <= ONLY_PREVIEW_OFFICE_READ_MAX_BYTES &&
+      Number.isSafeInteger(value.modifiedAt) &&
+      (value.modifiedAt as number) >= 0 &&
+      (!expectation ||
+        (value.workspaceId === expectation.workspaceId &&
+          value.generation === expectation.generation &&
+          value.requestId === expectation.requestId &&
+          value.resultToken === expectation.resultToken))
+    );
+  }
   return (
     value.kind === 'info' &&
     exactKeys(value, ['kind', 'mediaType', 'modifiedAt', 'name', 'previewHint', 'size']) &&
@@ -273,3 +323,53 @@ export const isOnlyPreviewGlobalSearchPreview = (value: unknown): boolean => {
     (value.modifiedAt as number) >= 0
   );
 };
+
+const officeReadEnvelope = (
+  value: Record<string, unknown>,
+  expectation: SearchExpectation
+): boolean =>
+  value.workspaceId === expectation.workspaceId &&
+  value.generation === expectation.generation &&
+  value.requestId === expectation.requestId &&
+  value.resultToken === expectation.resultToken &&
+  value.readGrant === expectation.readGrant;
+
+export const isOnlyPreviewGlobalSearchOfficeReadOpenResult = (
+  value: unknown,
+  expectation: SearchExpectation
+): boolean =>
+  isRecord(value) &&
+  exactKeys(value, [
+    'generation',
+    'readGrant',
+    'requestId',
+    'resultToken',
+    'totalBytes',
+    'workspaceId'
+  ]) &&
+  officeReadEnvelope(value, expectation) &&
+  Number.isSafeInteger(value.totalBytes) &&
+  (value.totalBytes as number) >= 0 &&
+  (value.totalBytes as number) <= ONLY_PREVIEW_OFFICE_READ_MAX_BYTES;
+
+export const isOnlyPreviewGlobalSearchOfficeReadChunkResult = (
+  value: unknown,
+  expectation: SearchExpectation
+): boolean =>
+  isRecord(value) &&
+  exactKeys(value, [
+    'bytes',
+    'eof',
+    'generation',
+    'offset',
+    'readGrant',
+    'requestId',
+    'resultToken',
+    'workspaceId'
+  ]) &&
+  officeReadEnvelope(value, expectation) &&
+  value.offset === expectation.offset &&
+  value.bytes instanceof ArrayBuffer &&
+  value.bytes.byteLength <= ONLY_PREVIEW_OFFICE_READ_CHUNK_BYTES &&
+  typeof value.eof === 'boolean' &&
+  (value.eof || value.bytes.byteLength > 0);

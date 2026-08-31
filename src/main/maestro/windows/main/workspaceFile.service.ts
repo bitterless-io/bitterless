@@ -8,6 +8,12 @@ import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync, type Dire
 import { readdir, readFile as readFileAsync, stat as statAsync } from 'fs/promises'
 import { injectable } from 'inversify'
 import { readFileForAgent, FileReadError } from '@maestro-main/files/fileReader.service'
+import {
+  ArchiveError,
+  createArchive,
+  extractArchive,
+  listArchive
+} from '@maestro-main/files/archive.service'
 import { writeArtifactFromJson } from '@maestro-main/files/artifactWriter.service'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
 import type { AgentFileArtifact, FileStatusResult, WorkspaceRef, WorkspaceRefResult } from '@maestro-shared/coach.api'
@@ -109,6 +115,20 @@ const READ_SEARCH_MAX_DIRS = 4000
 const READ_SEARCH_BUDGET_MS = 20_000
 
 const workspaceNameForPath = (path: string): string => basename(path) || path
+
+export const mdDirLink = (absPath: string): string => {
+  // Markdown destinations cannot contain raw spaces, and Windows backslashes may be percent-encoded
+  // by the renderer before the local-path click guard sees them. Forward slashes remain valid on
+  // Windows and keep the target recognizable as an absolute local path.
+  const target = absPath
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
+    .replace(/^([A-Za-z])%3A\//, '$1:/')
+  const label = basename(absPath).replace(/([\\[\]])/g, '\\$1')
+  return `[${label}](${target})`
+}
 
 const fileExtension = (path: string): string => {
   const name = basename(path)
@@ -217,6 +237,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
           path: abs,
           exists: true,
           isFile: stats.isFile(),
+          isDirectory: stats.isDirectory(),
           size: stats.size
         }
       } catch {
@@ -224,6 +245,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
           path: abs,
           exists: false,
           isFile: false,
+          isDirectory: false,
           error: 'not-found'
         }
       }
@@ -354,7 +376,10 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     return { ok: true, root, realRoot, path: target, rel: relative(root, target) || '.' }
   }
 
-  private resolveReadPath(sessionKey: string, pathArg: string): { path: string; root: string } {
+  private resolveReadPath(
+    sessionKey: string,
+    pathArg: string
+  ): { path: string; root: string; insideWorkspace: boolean } {
     let cleaned = String(pathArg || '').trim().replace(/^@/, '')
     if (cleaned === '~') cleaned = homedir()
     else if (cleaned.startsWith('~/') || cleaned.startsWith('~\\')) {
@@ -364,8 +389,16 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     const workspaceRoot = workspace ? resolve(workspace.path) : ''
     const base = workspaceRoot || homedir()
     const path = !cleaned ? base : isAbsolute(cleaned) ? resolve(cleaned) : resolve(base, cleaned)
-    const root = workspaceRoot && isInsideRoot(workspaceRoot, path) ? workspaceRoot : path
-    return { path, root }
+    const insideWorkspace = Boolean(workspaceRoot && isInsideRoot(workspaceRoot, path))
+    const root = insideWorkspace ? workspaceRoot : path
+    return { path, root, insideWorkspace }
+  }
+
+  private agentEntryPath(
+    resolved: { root: string; insideWorkspace: boolean },
+    abs: string
+  ): string {
+    return resolved.insideWorkspace ? relative(resolved.root, abs) || basename(abs) : abs
   }
 
   private broadcastWorkspaceChanged(sessionId: string, workspace?: WorkspaceRef): void {
@@ -393,6 +426,9 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     const target = this.resolveReadPath(sessionKey, trimmed).path
     try {
       const stats = statSync(target)
+      if (stats.isDirectory()) {
+        return `ERROR: "${pathArg}" is a folder, not a file. Use list_workspace_files with path "${target}" to see what is inside (or search_files to find something in it), then read_file the individual files it reports.`
+      }
       if (!stats.isFile()) return `ERROR: "${pathArg}" is not a file.`
       return await readFileForAgent(target, options)
     } catch (err) {
@@ -402,6 +438,140 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       }
       return `ERROR: could not read "${trimmed}": ${err instanceof Error ? err.message : String(err)}`
     }
+  }
+
+  private sessionFallbackWorkspace(sessionKey: string): string {
+    const sanitized = String(sessionKey || 'default')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 96)
+    const safe = sanitized && sanitized !== '.' && sanitized !== '..' ? sanitized : 'default'
+    return join(maestroDataRoot(), 'chat_workspaces', safe)
+  }
+
+  // Archives and open_workspace_folder get a lazy per-chat fallback. The
+  // ordinary write_file/create_artifact tools still require the workspace the
+  // user explicitly selected.
+  private resolveWritablePath(sessionKey: string, pathArg: string): WorkspacePathResolution {
+    const direct = this.resolveWorkspacePath(sessionKey, pathArg)
+    if (direct.ok || direct.error !== 'no-workspace') return direct
+
+    const root = this.sessionFallbackWorkspace(sessionKey)
+    mkdirSync(root, { recursive: true })
+    const realRoot = realpathSync(root)
+    const rel = String(pathArg || '').trim().replace(/^@/, '')
+    const target = rel ? resolve(root, rel) : root
+    if (!isInsideRoot(root, target)) {
+      return { ok: false, root, realRoot, error: 'path-escapes-workspace' }
+    }
+    try {
+      const realExisting = realpathSync(nearestExistingAncestor(target))
+      if (!isInsideRoot(realRoot, realExisting)) {
+        return { ok: false, root, realRoot, error: 'path-escapes-workspace' }
+      }
+    } catch {
+      return { ok: false, root, realRoot, error: 'workspace-path-unavailable' }
+    }
+    return {
+      ok: true,
+      root,
+      realRoot,
+      path: target,
+      rel: relative(root, target) || '.'
+    }
+  }
+
+  async toolListArchive(
+    sessionKey: string,
+    pathArg: string,
+    password?: string
+  ): Promise<string> {
+    const trimmed = String(pathArg || '').trim().replace(/^@/, '')
+    if (!trimmed) return 'ERROR: list_archive needs a "path".'
+    const target = this.resolveReadPath(sessionKey, trimmed).path
+    try {
+      if (!existsSync(target) || !statSync(target).isFile()) {
+        return `ERROR: "${pathArg}" is not a file.`
+      }
+      return await listArchive(target, password)
+    } catch (err) {
+      return this.describeArchiveError(err, trimmed)
+    }
+  }
+
+  async toolExtractArchive(
+    sessionKey: string,
+    pathArg: string,
+    destArg?: string,
+    password?: string
+  ): Promise<string> {
+    const trimmed = String(pathArg || '').trim().replace(/^@/, '')
+    if (!trimmed) return 'ERROR: extract_archive needs a "path".'
+    const target = this.resolveReadPath(sessionKey, trimmed).path
+    const destRel = String(destArg || '').trim() || basename(target).replace(/\.[^.]+$/, '')
+    const dest = this.resolveWritablePath(sessionKey, destRel)
+    if (!dest.ok || !dest.path) return `ERROR: ${dest.error || 'workspace unavailable'}`
+    if (!isInsideRoot(dest.root, dest.path)) {
+      return 'ERROR: the destination is outside the workspace.'
+    }
+    try {
+      if (!existsSync(target) || !statSync(target).isFile()) {
+        return `ERROR: "${pathArg}" is not a file.`
+      }
+      mkdirSync(dest.path, { recursive: true })
+      const out = await extractArchive(target, dest.path, password)
+      return `${out}\n\nUnpacked into ${mdDirLink(dest.path)}. Use list_workspace_files to see what landed.`
+    } catch (err) {
+      return this.describeArchiveError(err, trimmed)
+    }
+  }
+
+  async toolCreateArchive(
+    sessionKey: string,
+    archiveArg: string,
+    inputsArg: string,
+    password?: string
+  ): Promise<string> {
+    const archiveRel = String(archiveArg || '').trim()
+    if (!archiveRel) {
+      return 'ERROR: create_archive needs an "archive" path (its extension picks the format, e.g. out.zip / out.tar.gz).'
+    }
+    const archive = this.resolveWritablePath(sessionKey, archiveRel)
+    if (!archive.ok || !archive.path) {
+      return `ERROR: ${archive.error || 'workspace unavailable'}`
+    }
+    if (!isInsideRoot(archive.root, dirname(archive.path))) {
+      return 'ERROR: the archive path is outside the workspace.'
+    }
+    const inputs = String(inputsArg || '')
+      .split(/[\n,]/)
+      .map((part) => part.trim().replace(/^@/, ''))
+      .filter(Boolean)
+      .map((part) => this.resolveReadPath(sessionKey, part).path)
+    if (!inputs.length) {
+      return 'ERROR: create_archive needs "inputs" — one or more paths, comma- or newline-separated.'
+    }
+    const missing = inputs.filter((path) => !existsSync(path))
+    if (missing.length) return `ERROR: these inputs do not exist: ${missing.join(', ')}`
+    try {
+      mkdirSync(dirname(archive.path), { recursive: true })
+      const out = await createArchive(archive.path, inputs, { password })
+      return `${out}\n\nWrote ${mdDirLink(archive.path)}.`
+    } catch (err) {
+      return this.describeArchiveError(err, archiveRel)
+    }
+  }
+
+  private describeArchiveError(err: unknown, what: string): string {
+    if (err instanceof ArchiveError) {
+      if (err.code === 'refused' || err.code === 'unavailable' || err.code === 'timeout') {
+        return `ERROR: ${err.message}`
+      }
+      return `ERROR: could not process "${what}": ${err.message}\nIf it is encrypted, pass "password".`
+    }
+    if (isPermissionError(err)) {
+      return `ERROR: no permission to read "${what}".${FOLDER_AUTH_HINT}`
+    }
+    return `ERROR: could not process "${what}": ${err instanceof Error ? err.message : String(err)}`
   }
 
   async toolListWorkspaceFiles(
@@ -419,7 +589,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
         .slice(0, maxEntries)
         .map((entry) => ({
           name: entry.name,
-          path: relative(resolved.root, join(resolved.path, entry.name)) || entry.name,
+          path: this.agentEntryPath(resolved, join(resolved.path, entry.name)),
           type: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : 'other'
         }))
       return JSON.stringify({ ok: true, root: resolved.root, dir: resolved.path, entries }, null, 2)
@@ -494,6 +664,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
         }
         const abs = join(dir, entry.name)
         const rel = relative(resolved.root, abs)
+        const agentPath = this.agentEntryPath(resolved, abs)
         if (entry.isDirectory()) {
           if (depth < READ_SEARCH_MAX_DEPTH && !WORKSPACE_SKIP_DIRS.has(entry.name)) {
             await visit(abs, depth + 1)
@@ -502,7 +673,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
         }
         if (!entry.isFile()) continue
         if (workspaceTextMatches(`${entry.name}\n${rel}`, terms)) {
-          pushHit({ path: rel, name: entry.name, kind: 'name' })
+          pushHit({ path: agentPath, name: entry.name, kind: 'name' })
           if (hits.length >= maxResults) break
         }
         const extension = fileExtension(entry.name)
@@ -514,7 +685,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
           const index = lines.findIndex((line) => workspaceTextMatches(line, terms))
           if (index >= 0) {
             pushHit({
-              path: rel,
+              path: agentPath,
               name: entry.name,
               kind: 'content',
               line: index + 1,
@@ -607,6 +778,32 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       null,
       2
     )
+  }
+
+  async toolOpenWorkspaceFolder(sessionKey: string, pathArg?: string): Promise<string> {
+    const rel = String(pathArg || '').trim().replace(/^@/, '')
+    const resolved = this.resolveWritablePath(sessionKey, rel)
+    if (!resolved.ok || !resolved.path) {
+      return `ERROR: ${resolved.error || 'workspace unavailable'}`
+    }
+    const target = resolved.path
+    if (!existsSync(target)) {
+      return `ERROR: "${rel || '.'}" does not exist inside the workspace (${resolved.root}).`
+    }
+    try {
+      if (statSync(target).isDirectory()) {
+        const error = await shell.openPath(target)
+        if (error) return `ERROR: could not open "${target}": ${error}`
+        return `Opened ${mdDirLink(target)} in the file manager.`
+      }
+      shell.showItemInFolder(target)
+      return `Revealed ${mdDirLink(target)} in the file manager.`
+    } catch (err) {
+      if (isPermissionError(err)) {
+        return `ERROR: no permission to open "${target}".${FOLDER_AUTH_HINT}`
+      }
+      return `ERROR: could not open "${target}": ${err instanceof Error ? err.message : String(err)}`
+    }
   }
 
   async toolWorkspaceContext(sessionKey: string, actionArg: string): Promise<string> {

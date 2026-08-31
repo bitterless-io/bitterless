@@ -22,8 +22,12 @@ import { AUTH_BROADCAST } from '@maestro-shared/session.api'
 import type { AuthBroadcast } from '@maestro-shared/session.api'
 import { CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT } from '@shared/claudeSubscription/claudeSubscription.contract'
 import ChatPanel from './ChatPanel.vue'
+import ResponseStatus from './ResponseStatus.vue'
+import ChatConfirmSheet from './task/ChatConfirmSheet.vue'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
+import { isRejection } from './store/turn.service'
+import { taskStore } from './store/task.store'
 import './ControlApp.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -38,6 +42,7 @@ const providerPickerVisible = ref(false)
 const modelPickerVisible = ref(false)
 const effortPickerVisible = ref(false)
 const activeSession = computed(() => channelStore.activeSession)
+const llmLocked = computed(() => llmSwitching.value || Boolean(messageStore.turnService.activeTurn()))
 
 interface ControlLlmProviderGroup {
   provider: string
@@ -127,7 +132,7 @@ const onSwitchLlmTarget = async (
   target: { provider: string; model: string; effort: LlmEffort },
   closePicker: 'provider' | 'model' | false = false
 ): Promise<void> => {
-  if (!target || llmSwitching.value) return
+  if (!target || llmLocked.value) return
   llmSwitching.value = true
   status.value = 'switching model'
   try {
@@ -160,7 +165,7 @@ const onSwitchLlmModel = async (model: LlmTarget): Promise<void> => {
 
 const onSwitchLlmEffort = async (value: unknown): Promise<void> => {
   const cfg = llmConfig.value
-  if (!cfg || llmSwitching.value) return
+  if (!cfg || llmLocked.value) return
   const effort = toLlmEffort(value)
   if (effort === cfg.effort) return
   llmSwitching.value = true
@@ -207,12 +212,14 @@ const triggerInjectedSkill = async (trigger: InjectedSkillTrigger): Promise<void
   channelStore.selectSource('cowork')
   await nextTick()
   const session = activeSession.value || (await channelStore.startFreshMaestroSession('Maestro'))
-  if (!session || session.busy || session.archivedAt) {
+  if (!session || session.turn || session.archivedAt) {
     Message.warning('Maestro is busy. Try the injected skill again after the current turn finishes.')
     return
   }
-  const reply = await messageStore.send(session.id, message)
-  if (!reply?.ok) Message.warning(reply?.text || `Could not run ${trigger.skillTitle}`)
+  const reply = await messageStore.turnService.send(session.id, message)
+  if (!reply || isRejection(reply) || !reply.ok) {
+    Message.warning((reply && !isRejection(reply) && reply.text) || `Could not run ${trigger.skillTitle}`)
+  }
 }
 
 const onChatReply = (reply: AgentReply): void => {
@@ -269,6 +276,7 @@ const loadControlConfig = async (): Promise<void> => {
 }
 
 onMounted(async () => {
+  void taskStore.init()
   xpcRenderer.subscribe('coach/codex-log', (payload) => {
     logCodexDebug(payload.params as CodexDebugEvent)
   })
@@ -384,6 +392,8 @@ onMounted(async () => {
         @sent="onChatReply"
       >
         <template #before-composer>
+          <ChatConfirmSheet :session="activeSession" />
+          <ResponseStatus :session="activeSession" />
           <div
             v-if="needsLlmLogin"
             name="control__llm__login_card"
@@ -410,7 +420,7 @@ onMounted(async () => {
               trigger="click"
               position="top"
               :popup-offset="6"
-              :disabled="llmSwitching"
+              :disabled="llmLocked"
               :unmount-on-close="true"
               :content-style="{ padding: '0' }"
             >
@@ -418,7 +428,7 @@ onMounted(async () => {
                 name="control__llm__provider_button"
                 type="button"
                 class="control-app__text-button"
-                :disabled="llmSwitching"
+                :disabled="llmLocked"
                 :title="`Provider: ${activeProviderLabel}`"
               >
                 {{ activeProviderLabel }}
@@ -432,7 +442,7 @@ onMounted(async () => {
                     type="button"
                     class="control-app__popup-option control-app__popup-option--split"
                     :class="{ 'control-app__popup-option--active': group.provider === llmConfig.provider }"
-                    :disabled="llmSwitching"
+                    :disabled="llmLocked"
                     @click="onSwitchLlmProvider(group.provider)"
                   >
                     <span class="control-app__option-label">{{ group.label }}</span>
@@ -445,7 +455,7 @@ onMounted(async () => {
               trigger="click"
               position="top"
               :popup-offset="6"
-              :disabled="llmSwitching"
+              :disabled="llmLocked"
               :unmount-on-close="true"
               :content-style="{ padding: '0' }"
             >
@@ -453,7 +463,7 @@ onMounted(async () => {
                 name="control__llm__model_button"
                 type="button"
                 class="control-app__text-button"
-                :disabled="llmSwitching"
+                :disabled="llmLocked"
                 :title="controlLlmTitle"
               >
                 {{ activeModelLabel }}
@@ -467,7 +477,7 @@ onMounted(async () => {
                     type="button"
                     class="control-app__popup-option control-app__popup-option--split"
                     :class="{ 'control-app__popup-option--active': model.model === llmConfig.model }"
-                    :disabled="llmSwitching"
+                    :disabled="llmLocked"
                     @click="onSwitchLlmModel(model)"
                   >
                     <span class="control-app__option-label">{{ model.shortLabel || model.label }}</span>
@@ -481,7 +491,7 @@ onMounted(async () => {
               trigger="click"
               position="top"
               :popup-offset="6"
-              :disabled="llmSwitching || llmEffortDisabled"
+              :disabled="llmLocked || llmEffortDisabled"
               :unmount-on-close="true"
               :content-style="{ padding: '0' }"
             >
@@ -489,7 +499,7 @@ onMounted(async () => {
                 name="control__llm__effort_button"
                 type="button"
                 class="control-app__text-button control-app__text-button--effort"
-                :disabled="llmSwitching || llmEffortDisabled"
+                :disabled="llmLocked || llmEffortDisabled"
                 :title="`Effort: ${activeLlmEffortLabel}`"
               >
                 {{ activeLlmEffortLabel || llmEffortValue }}
@@ -502,7 +512,7 @@ onMounted(async () => {
                     type="button"
                     class="control-app__popup-option"
                     :class="{ 'control-app__popup-option--active': effort.id === llmEffortValue }"
-                    :disabled="llmSwitching"
+                    :disabled="llmLocked"
                     @click="onSwitchLlmEffort(effort.id)"
                   >
                     {{ effort.label }}

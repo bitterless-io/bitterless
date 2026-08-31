@@ -144,6 +144,11 @@ OOXML preflight 与旧二进制 unsupported 边界，但取代其引擎和查找
 高亮，`findNext()` / `findPrev()` 负责活动命中和跨 sheet/page/slide 导航，`clearFind()` 绑定查询、文件与
 viewer 生命周期。#2/#3 以下保留为 020/021 历史决策与交付证据，不再描述当前 renderer。
 
+Task 092 将同一套按格式 lazy 的 OOXML session 扩展到独立 Global Search renderer 的底部预览，
+但不复用主 Preview 的 broker、read authority、Viewer 实例或 current-file Find adapter。Search 由隐藏
+fileSearch preload 的独立单活 lane 读取、Main 串行中继最多 512KiB 的 frame、Search renderer 组装最多
+25MiB，并以 120ms fixed-window leading/latest-trailing 调度在快速选择时只保留最终 Viewer。
+
 ## #2 · `.xlsx` / `.xlsm` `历史 020，renderer 已被 077 取代`
 
 决策者裁决：Ral 2026-08-20「XLSX/XLSM：exceljs 解析工作簿，自研只读虚拟表格渲染」。

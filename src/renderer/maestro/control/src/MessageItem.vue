@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
-import { Spin, Trigger } from '@arco-design/web-vue'
+import { Trigger } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import { IconActivity, IconDotsVertical, IconExternalLink, IconFolderOpen, IconSparkles } from '@tabler/icons-vue'
 import type { AgentActivityStep, CoachXpcContract, FileStatusResult, ReplayResult } from '@maestro-shared/coach.api'
 import type { ChatFile, ChatMessage } from './store/message.type'
-import { fileIcon } from './fileIcon'
+import AttachmentCard from './AttachmentCard.vue'
+import ChatConfirm from './task/ChatConfirm.vue'
+import TaskPart from './task/TaskPart.vue'
 import './MessageItem.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -40,9 +42,12 @@ const compactActivitySteps = (activity: AgentActivityStep[]): AgentActivityStep[
 }
 
 const activityFeed = computed(() => compactActivitySteps(props.message.activity || []))
-const visibleActivity = computed(() => activityFeed.value.slice(-12))
+const visibleActivity = computed(() => activityFeed.value.slice(-3))
 const hiddenActivityCount = computed(() => Math.max(0, activityFeed.value.length - visibleActivity.value.length))
 const artifactFiles = computed(() => (props.message.role === 'ai' ? (props.message.files || []).filter((file) => file.path) : []))
+const taskParts = computed(() => (props.message.role === 'ai' ? props.message.tasks || [] : []))
+const isTaskRow = computed(() => props.message.type === 'task')
+const isConfirmRow = computed(() => props.message.type === 'confirm')
 const artifactPathKey = computed(() => artifactFiles.value.map((file) => file.path || '').filter(Boolean).join('\n'))
 const messageSkills = computed(() => {
   if (props.message.skills?.length) return props.message.skills
@@ -71,16 +76,17 @@ const replayAuth = (replay?: ReplayResult): string => {
     .join(', ')
 }
 
-const showThinking = computed(() => props.message.role === 'ai' && props.message.streaming && Boolean(props.message.thinking))
-const showInitialLoading = computed(() => props.message.role === 'ai' && props.message.streaming && !props.message.content && !showThinking.value)
-
-// While streaming with no content yet, show the bubble for waiting, real thinking,
-// or internal tool calls. Finished messages always render their bubble.
 const showBubble = computed(() => {
   const m = props.message
+  if (isTaskRow.value || isConfirmRow.value) return false
   if (m.role !== 'ai') return true
-  if (!m.streaming) return true
-  return Boolean(m.content) || showInitialLoading.value || showThinking.value || visibleActivity.value.length > 0 || artifactFiles.value.length > 0
+  return (
+    Boolean(m.content) ||
+    visibleActivity.value.length > 0 ||
+    artifactFiles.value.length > 0 ||
+    messageSkills.value.length > 0 ||
+    Boolean(m.replay)
+  )
 })
 
 const messageBubbleClass = (message: ChatMessage): string => {
@@ -90,14 +96,6 @@ const messageBubbleClass = (message: ChatMessage): string => {
   return 'message-item__bubble--assistant'
 }
 
-const fileMeta = (file: ChatFile): string => {
-  const action = file.action === 'updated' ? 'updated' : 'created'
-  if (!file.size) return action
-  if (file.size >= 1024 * 1024) return `${action} · ${(file.size / 1024 / 1024).toFixed(1)} MB`
-  if (file.size >= 1024) return `${action} · ${Math.round(file.size / 1024)} KB`
-  return `${action} · ${file.size} B`
-}
-
 const filePathLabel = (file: ChatFile): string => file.path || file.name
 const fileStatus = (file: ChatFile): FileStatusResult | undefined => (file.path ? fileStatuses.value[file.path] : undefined)
 const fileExists = (file: ChatFile): boolean => fileStatus(file)?.exists !== false
@@ -105,7 +103,7 @@ const fileExists = (file: ChatFile): boolean => fileStatus(file)?.exists !== fal
 const markMissing = (path: string): void => {
   fileStatuses.value = {
     ...fileStatuses.value,
-    [path]: { path, exists: false, isFile: false, error: 'not-found' }
+    [path]: { path, exists: false, isFile: false, isDirectory: false, error: 'not-found' }
   }
 }
 
@@ -125,6 +123,25 @@ const openFile = async (path?: string): Promise<void> => {
   if (!result?.ok) markMissing(path)
 }
 
+// Absolute local links emitted by file tools reveal their target in Finder/Explorer. Network links
+// remain normal Markdown links; the chat renderer must never navigate itself to a local path.
+const LOCAL_PATH = /^(?:file:\/\/)?(?:\/|[A-Za-z]:[\\/])/
+const onMarkdownClick = (event: MouseEvent): void => {
+  const anchor = (event.target as HTMLElement | null)?.closest?.('a')
+  if (!anchor) return
+  const href = anchor.getAttribute('href') || ''
+  if (!LOCAL_PATH.test(href)) return
+  event.preventDefault()
+  event.stopPropagation()
+  let path = href.replace(/^file:\/\//, '')
+  try {
+    path = decodeURIComponent(path)
+  } catch {
+    // Leave malformed percent encoding unchanged; Main still validates the path.
+  }
+  void showFileInFolder(path)
+}
+
 const showFileInFolder = async (path?: string): Promise<void> => {
   if (!path) return
   const result = await coach.showFileInFolder({ path }).catch(() => null)
@@ -141,9 +158,19 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
 
 <template>
   <div name="messageItem" class="message-item" :class="messageAlignClass(props.message)">
-    <div class="message-item__content" :class="{ 'message-item__content--human': isMaestroHuman(props.message) }">
+    <div
+      class="message-item__content"
+      :class="{
+        'message-item__content--human': isMaestroHuman(props.message),
+        'message-item__content--timeline': isTaskRow || isConfirmRow
+      }"
+    >
+      <div v-if="isTaskRow" name="messageItem__tasks" class="message-item__tasks">
+        <TaskPart v-for="part in taskParts" :key="part.taskId" :part="part" />
+      </div>
+      <ChatConfirm v-else-if="isConfirmRow" :message="props.message" />
       <div
-        v-if="showBubble"
+        v-else-if="showBubble"
         name="messageItem__bubble"
         class="message-item__bubble"
         :class="messageBubbleClass(props.message)"
@@ -176,14 +203,18 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
               <span class="message-activity__label">{{ a.label }}</span>
             </li>
           </ul>
-          <MarkdownRender
+          <div
             v-if="props.message.content"
             class="message-item__markdown"
-            :content="props.message.content"
-            :is-dark="false"
-            :max-live-nodes="props.message.streaming ? 0 : undefined"
-            :code-block-props="{ lightTheme: 'github-light' }"
-          />
+            @click="onMarkdownClick"
+          >
+            <MarkdownRender
+              :content="props.message.content"
+              :is-dark="false"
+              :max-live-nodes="props.message.streaming ? 0 : undefined"
+              :code-block-props="{ lightTheme: 'github-light' }"
+            />
+          </div>
           <div v-if="messageSkills.length" name="messageItem__skills" class="message-skills">
             <div
               v-for="skill in messageSkills"
@@ -242,24 +273,18 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
             class="message-artifacts"
           >
             <div class="message-artifacts__title">Files</div>
-            <div class="message-artifacts__list">
+            <div name="messageItem__attachments" class="message-artifacts__list">
               <div
                 v-for="(f, i) in artifactFiles"
                 :key="f.path || i"
                 class="message-artifacts__file"
-                :class="{ 'message-artifacts__file--missing': !fileExists(f) }"
               >
-                <component :is="fileIcon(f.name)" :size="16" stroke="1.8" class="message-artifacts__icon" />
-                <div class="message-artifacts__body">
-                  <div class="message-artifacts__heading">
-                    <span class="message-artifacts__name" :title="f.name">{{ f.name }}</span>
-                    <span class="message-artifacts__meta">{{ fileMeta(f) }}</span>
-                    <span v-if="!fileExists(f)" class="message-artifacts__missing">missing</span>
-                  </div>
-                  <div class="message-artifacts__path" :title="filePathLabel(f)">
-                    {{ filePathLabel(f) }}
-                  </div>
-                </div>
+                <AttachmentCard
+                  :name="f.name"
+                  :path="filePathLabel(f)"
+                  :is-directory="f.isDirectory"
+                  :missing="!fileExists(f)"
+                />
                 <Trigger trigger="click" position="bottom" :popup-offset="6" :unmount-on-close="true" :content-style="{ padding: '0' }">
                   <button
                     type="button"
@@ -295,33 +320,16 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
               </div>
             </div>
           </div>
-          <div
-            v-if="showInitialLoading"
-            name="messageItem__waiting"
-            class="message-item__waiting"
-            title="Waiting for response"
-          >
-            <Spin :loading="true" :size="12" />
-          </div>
-          <div
-            v-if="showThinking"
-            name="messageItem__thinking"
-            class="message-item__thinking"
-          >
-            <span class="message-item__thinking-text">Thinking...</span>
-          </div>
         </template>
         <template v-else>
           <div v-if="props.message.type === 'files'" name="messageItem__files" class="message-files">
-            <span
+            <AttachmentCard
               v-for="(f, i) in props.message.files || []"
-              :key="i"
-              :title="f.path || f.name"
-              class="message-files__item"
-            >
-              <component :is="fileIcon(f.name)" :size="15" stroke="1.8" class="message-files__icon" />
-              <span class="message-files__name">{{ f.name }}</span>
-            </span>
+              :key="f.path || i"
+              :name="f.name"
+              :path="f.path || ''"
+              :is-directory="f.isDirectory"
+            />
           </div>
           <div v-else name="messageItem__text" class="message-item__text">{{ props.message.content }}</div>
         </template>

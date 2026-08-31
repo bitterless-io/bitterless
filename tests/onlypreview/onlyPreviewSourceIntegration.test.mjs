@@ -505,7 +505,7 @@ test('file-search SQLite remains unencrypted node:sqlite storage', () => {
   }
 });
 
-test('excluded Project rows keep orange status across default, hover, and selected states', () => {
+test('selected Project rows keep their blue surface while excluded rows remain orange', () => {
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
   const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
 
@@ -523,22 +523,44 @@ test('excluded Project rows keep orange status across default, hover, and select
   );
   assert.match(
     shellStyle,
-    /\.onlypreview-shell__tree-row--search-excluded \{[\s\S]*background:\s*#fff4e8/
+    /\.onlypreview-shell__tree-row--selected \{[^}]*background:\s*#d6e4ff[^}]*color:\s*#303858/
   );
   assert.match(
     shellStyle,
-    /\.onlypreview-shell__tree-row--search-excluded:hover \{[\s\S]*background:\s*#ffead3/
+    /\.onlypreview-shell__tree-row--selected:hover \{[^}]*background:\s*#d6e4ff/
   );
   assert.match(
     shellStyle,
-    /\.onlypreview-shell__tree-row--search-excluded\.onlypreview-shell__tree-row--selected \{[\s\S]*background:\s*#f9dfc2/
+    /\.onlypreview-shell__tree-row:focus-visible,[^}]*outline:\s*2px solid var\(--onlypreview-focus\)/
   );
   assert.match(
     shellStyle,
-    /\.onlypreview-shell__tree-icon--search-excluded-directory \{[\s\S]*color:\s*#c2410c/i
+    /\.onlypreview-shell__tree-row--search-excluded \{[^}]*background:\s*#fff4e8/
   );
   assert.match(
     shellStyle,
-    /\.onlypreview-shell__tree-row--selected::after \{[\s\S]*background:\s*var\(--onlypreview-royal\)/
+    /\.onlypreview-shell__tree-row--search-excluded:hover \{[^}]*background:\s*#ffead3/
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-row--search-excluded\.onlypreview-shell__tree-row--selected \{[^}]*background:\s*#f9dfc2[^}]*color:\s*#303858/
+  );
+  assert.ok(
+    shellStyle.indexOf(
+      '.onlypreview-shell__tree-row--search-excluded.onlypreview-shell__tree-row--selected'
+    ) > shellStyle.indexOf('.onlypreview-shell__tree-row--selected:hover')
+  );
+  assert.ok(
+    shellStyle.indexOf(
+      '.onlypreview-shell__tree-row--search-excluded.onlypreview-shell__tree-row--selected'
+    ) > shellStyle.indexOf('.onlypreview-shell__tree-row--search-excluded:hover')
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-icon--search-excluded-directory \{[^}]*color:\s*#c2410c/i
+  );
+  assert.match(
+    shellStyle,
+    /\.onlypreview-shell__tree-row--selected::after \{[^}]*background:\s*var\(--onlypreview-royal\)/
   );
 });

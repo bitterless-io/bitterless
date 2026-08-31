@@ -61,6 +61,8 @@ const CREATE_MAESTRO_CHAT_MESSAGE = `
     skills_json TEXT NOT NULL DEFAULT '[]',
     replay_json TEXT NOT NULL DEFAULT '',
     activity_json TEXT NOT NULL DEFAULT '[]',
+    tasks_json TEXT NOT NULL DEFAULT '[]',
+    confirm_json TEXT NOT NULL DEFAULT '',
     streaming INTEGER NOT NULL DEFAULT 0,
     error INTEGER NOT NULL DEFAULT 0,
     compressed INTEGER NOT NULL DEFAULT 0,
@@ -196,6 +198,23 @@ export const maestroSqliteMigrations: readonly SqliteMigration[] = [
     versionCode: '260705083000',
     runner: (db) => {
       db.exec(CREATE_INJECT_BTNS)
+    },
+  },
+  {
+    versionCode: '260831200000',
+    runner: (db) => {
+      addMaestroColumnIfMissing(
+        db,
+        'cowork_chat_message',
+        'tasks_json',
+        "TEXT NOT NULL DEFAULT '[]'",
+      )
+      addMaestroColumnIfMissing(
+        db,
+        'cowork_chat_message',
+        'confirm_json',
+        "TEXT NOT NULL DEFAULT ''",
+      )
     },
   },
 ]
