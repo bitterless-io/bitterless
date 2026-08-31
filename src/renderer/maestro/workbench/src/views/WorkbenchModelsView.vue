@@ -109,7 +109,7 @@ onMounted(() => {
           type="button"
           class="workbench-models__providers__row"
           :class="{ 'workbench-models__providers__row--active': group.active }"
-          :disabled="store.llmSaving || store.llmLoading"
+          :disabled="store.llmTargetLocked || store.llmLoading"
           @click="store.setLlmProvider(group.provider)"
         >
           <span class="workbench-models__providers__identity">
@@ -164,7 +164,7 @@ onMounted(() => {
                 v-else-if="!activeGroup.ready && store.activeLlmLoginMethods.length > 1"
                 name="models__detail__login__dropdown"
                 trigger="click"
-                :disabled="store.llmSaving || store.llmLoading"
+                :disabled="store.llmTargetLocked || store.llmLoading"
               >
                 <Button name="models__detail__login__button" size="small" type="primary" :loading="store.llmSaving">
                   <template #icon><IconLogin2 :size="15" /></template>
@@ -229,7 +229,7 @@ onMounted(() => {
                 name="models__detail__effort__select"
                 :model-value="effortValue"
                 size="small"
-                :disabled="store.llmSaving || store.llmLoading || effortDisabled"
+                :disabled="store.llmTargetLocked || store.llmLoading || effortDisabled"
                 @change="(value) => store.setLlmEffort(toEffort(value))"
               >
                 <Option v-for="effort in store.activeLlmEfforts" :key="effort.id" :value="effort.id">

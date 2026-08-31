@@ -7,7 +7,11 @@ import type {
   AgentConversationContext,
   AgentCompactReply,
   AgentCompactRequest,
+  AgentMessageRequest,
   AgentReply,
+  AgentTurnClaimRequest,
+  AgentTurnClaimResult,
+  AgentTurnRecoverySnapshot,
   AudioScribeRequest,
   AudioScribeResult,
   AttachFileResult,
@@ -274,7 +278,19 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.replayBrowserRequest(params)
   }
 
-  async sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply> {
+  async claimAgentTurn(params: AgentTurnClaimRequest): Promise<AgentTurnClaimResult> {
+    return maestroWindowHelper.claimAgentTurn(params)
+  }
+
+  async getActiveAgentTurn(): Promise<AgentTurnRecoverySnapshot> {
+    return maestroWindowHelper.getActiveAgentTurn()
+  }
+
+  async ackAgentTurnFinished(params: { sessionId: string; turnId: string }): Promise<void> {
+    maestroWindowHelper.ackAgentTurnFinished(params)
+  }
+
+  async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
     return await maestroWindowHelper.sendAgentMessage(params)
   }
 
@@ -298,7 +314,7 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.resetDelegateConversation(params)
   }
 
-  async abortAgent(params?: { sessionId?: string }): Promise<void> {
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
     await maestroWindowHelper.abortAgent(params)
   }
 

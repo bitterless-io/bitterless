@@ -6,6 +6,7 @@ import { Button, Drawer, Message, Modal, Tooltip } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import type { AgentReply } from '@maestro-shared/coach.api'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import MessageList from './MessageList.vue'
 import { channelStore } from './store/channel.store'
@@ -284,9 +285,9 @@ async function send(): Promise<void> {
   if (!message || props.sendDisabled || props.session.turn?.aborting) return
   if (messageStore.turnService.busyElsewhere(props.session.id)) {
     Modal.warning({
-      title: 'Maestro is busy',
-      content: "Another session is still running. Wait for that turn to finish.",
-      okText: 'Got it'
+      title: i18nHelper.maestroControl.chat.busyTitle,
+      content: i18nHelper.maestroControl.chat.busyContent,
+      okText: i18nHelper.maestroControl.chat.gotIt
     })
     return
   }
@@ -308,9 +309,9 @@ async function send(): Promise<void> {
     resizeComposer()
   }
   Modal.warning({
-    title: 'Message not sent',
-    content: 'Maestro could not start this message. Your text has been restored.',
-    okText: 'Got it'
+    title: i18nHelper.maestroControl.chat.messageNotSentTitle,
+    content: i18nHelper.maestroControl.chat.messageNotSentContent,
+    okText: i18nHelper.maestroControl.chat.gotIt
   })
 }
 
@@ -549,8 +550,8 @@ function setHistoryContainer(el: HTMLElement | null): void {
           <IconBtn
             class="chat-panel__attachment-remove"
             :disabled="turnLocked"
-            title="Remove"
-            :aria-label="`Remove ${f.name}`"
+            :title="i18nHelper.maestroControl.chat.removeAttachment"
+            :aria-label="i18nHelper.maestroControl.chat.removeAttachmentNamed.replace('{name}', f.name)"
             @click="removeFile(i)"
           >
             <IconX class="chat-panel__button-icon" :size="10" stroke="2.4" />
@@ -562,7 +563,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
           ref="composerRef"
           v-model="input"
           :disabled="Boolean(session.archivedAt)"
-          :placeholder="session.archivedAt ? 'Archived conversation' : session.placeholder"
+          :placeholder="session.archivedAt ? i18nHelper.maestroControl.chat.archivedConversation : session.placeholder"
           rows="1"
           class="chat-panel__textarea"
           :class="{ 'chat-panel__textarea--recording': voiceRecording }"
@@ -691,21 +692,21 @@ function setHistoryContainer(el: HTMLElement | null): void {
             status="danger"
             size="small"
             :disabled="session.turn?.aborting"
-            :title="session.turn?.aborting ? 'Stopping' : 'Stop'"
-            :aria-label="session.turn?.aborting ? 'Stopping' : 'Stop'"
+            :title="session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
+            :aria-label="session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
             @click="stop"
           >
             <template #icon>
               <IconPlayerStop class="chat-panel__button-icon" :size="15" stroke="1.8" />
             </template>
-            Stop
+            {{ i18nHelper.maestroControl.chat.stop }}
           </Button>
           <IconBtn
             name="maestro__composer__send"
             class="chat-panel__send-button"
             :disabled="!input.trim() || Boolean(session.archivedAt) || sendDisabled || Boolean(session.turn?.aborting)"
-            :title="session.turn ? 'Send into this turn' : 'Send'"
-            aria-label="Send"
+            :title="session.turn ? i18nHelper.maestroControl.chat.sendIntoTurn : i18nHelper.maestroControl.chat.send"
+            :aria-label="i18nHelper.maestroControl.chat.send"
             @click="send"
           >
             <IconSend2 class="chat-panel__button-icon" :size="15" stroke="1.8" />

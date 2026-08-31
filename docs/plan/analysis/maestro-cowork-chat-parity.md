@@ -118,3 +118,15 @@ surfaces. No new gradients, display type, ornamental animation, or Tailwind util
 This request is a code migration and inspection handoff. Codex performs source inspection,
 task-scoped diff checks, and independent review. Electron/Playwright/E2E, application launch,
 typecheck, lint, build, and network probes are not run; Ral owns the E2E pass after the code handoff.
+
+## Delivery status
+
+Both planned slices are implemented and await Ral's runtime/E2E acceptance:
+
+- [089 core task](../tasks/maestro-cowork-chat-core-089.md) ·
+  [independent review](../reviews/maestro-cowork-chat-core-089-1.md)
+- [090 files task](../tasks/maestro-cowork-chat-files-090.md) ·
+  [independent review](../reviews/maestro-cowork-chat-files-090-1.md)
+
+Both reviews concluded with no unresolved P0-P2 findings under the agreed source-only verification
+boundary.

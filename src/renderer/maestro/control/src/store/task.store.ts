@@ -13,11 +13,16 @@ class TaskStoreState {
   async init(): Promise<void> {
     if (this.initialized) return
     this.initialized = true
+    let receivedBroadcast = false
     xpcRenderer.subscribe('coach/tasks', (payload) => {
+      receivedBroadcast = true
       this.apply(payload.params as MaestroTaskSnapshot | undefined)
     })
     try {
-      this.apply({ tasks: await coach.listTasks(), ts: Date.now() })
+      const tasks = await coach.listTasks()
+      // A newer broadcast may have arrived while listTasks was in flight. Never replace it with the
+      // older query result; the broadcast already applied the authoritative snapshot.
+      if (!receivedBroadcast) this.apply({ tasks, ts: Date.now() })
     } catch {
       /* Main may not be ready yet; the next snapshot broadcast self-heals the store. */
     }

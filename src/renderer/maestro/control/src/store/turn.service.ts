@@ -1,7 +1,15 @@
 import { injectable } from 'inversify'
 import { CommonService } from '@maestro-shared/iocHelper/ioc.helper'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
-import type { AgentActivityStep, AgentReply, AgentStreamDelta, AgentThinkingState, CoachXpcContract } from '@maestro-shared/coach.api'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
+import type {
+  AgentActivityStep,
+  AgentReply,
+  AgentStreamDelta,
+  AgentThinkingState,
+  AgentTurnUpdate,
+  CoachXpcContract
+} from '@maestro-shared/coach.api'
 import type { MaestroTask } from '@maestro-shared/task.api'
 import type { ChatAttachment, ChatMessage, MessageSession, Turn } from './message.type'
 import type { MessageStoreState } from './message.store'
@@ -15,20 +23,24 @@ const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const CHAT_TURN_TIMEOUT_MS = 11 * 60_000
 
 /**
- * 并发上限。**这是工程策略,不是模型限制** —— main 侧 Maestro agent 按会话维护独立运行时,
- * 早就是按会话的,每个会话独立工具集与 abort。拦在这里是因为还有三条全局通道没准备好:
+ * 并发上限。**这是工程策略,不是模型限制** —— Main 现在也原子持有同一个全局 root Turn 槽,
+ * renderer 这一层保留同步 UX 闸门。即使将来放开模型并发,仍有两类全局状态需要先拆开:
  *
- *  1. `broadcastAgentActivity`(main `agentBroadcast.ts`)payload 不带 sessionId,归属只能猜;
- *  2. `coach/tasks` 是全局快照,`bindTask` 同样靠"当前活跃回合"猜;
- *  3. CDP / 浏览器工具驱动当前操作 tab,两个回合同时钻会互相踩。
+ *  1. `coach/tasks` 是全局快照,`bindTask` 同样靠"当前活跃回合"猜;
+ *  2. CDP / 浏览器工具驱动当前操作 tab,两个回合同时钻会互相踩。
  *
- * 放开并发 = 改这一行 + 补那三条通道,**不需要改状态结构**(那是 `session.turn` 的意义)。
+ * 放开并发 = 改 renderer + Main 两道 gate,再补上述归属,**不需要改状态结构**。
  */
 const MAX_CONCURRENT_TURNS = 1
 
 const uid = (): string => Math.random().toString(36).slice(2) + Date.now().toString(36)
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-
+const interpolateChatCopy = (
+  template: string,
+  values: Record<string, string | number>
+): string =>
+  template.replace(/\{([A-Za-z0-9_]+)\}/g, (placeholder, key: string) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : placeholder
+  )
 const summarizeTitle = (text: string): string => {
   const firstLine = text.trim().split('\n')[0]?.trim() || 'Maestro'
   return firstLine.length > 36 ? firstLine.slice(0, 36) + '…' : firstLine
@@ -73,6 +85,11 @@ export type SendResult = AgentReply | TurnRejection
 export const isRejection = (result: SendResult | null): result is TurnRejection =>
   Boolean(result) && (result as TurnRejection).ok === false && 'reason' in (result as TurnRejection)
 
+interface RootDispatchWaiter {
+  promise: Promise<boolean>
+  resolve: (ready: boolean) => void
+}
+
 /**
  * 回合的生命周期(docs/plan/tasks/maestro-cowork-chat-core-089.md)。
  *
@@ -88,6 +105,8 @@ export const isRejection = (result: SendResult | null): result is TurnRejection 
  */
 @injectable()
 export class TurnService extends CommonService<MessageStoreState> {
+  private readonly rootDispatchWaiters = new Map<string, RootDispatchWaiter>()
+
   /** 当前活跃的回合所属会话。`MAX_CONCURRENT_TURNS = 1` 时至多一个。 */
   activeSession(): MessageSession | undefined {
     return this._state.sessions.find((session) => session.turn)
@@ -146,6 +165,13 @@ export class TurnService extends CommonService<MessageStoreState> {
     const turn = session.turn
     if (!turn?.assistantMessageId) return
     const sink = this.sink(session)
+    // RAF-buffered deltas still target assistantMessageId. Flush while that anchor is live; clearing
+    // it first drops the tail that arrived in the same frame as a task/confirmation boundary.
+    this._state.flushStreamBuffer(session.id)
+    if (sink) {
+      turn.lastAssistantMessageId = sink.id
+      turn.sealedAssistantSegments += 1
+    }
     turn.assistantMessageId = undefined
     turn.activity = []
     turn.thinking = false
@@ -215,9 +241,14 @@ export class TurnService extends CommonService<MessageStoreState> {
    * `role:'human' + type:'text'` 的收割规则天然涵盖它)。投递失败时那条消息会被标成
    * `promptExcluded`:它从来没到过模型,留在 ② 用户原话链里就是让链谎报上下文。
    */
-  private async sendSteering(session: MessageSession, text: string): Promise<AgentReply> {
+  private async sendSteering(session: MessageSession, text: string): Promise<SendResult> {
     const store = this._state
     const turn = session.turn!
+    const pendingRoot = this.rootDispatchWaiters.get(turn.id)
+    if (pendingRoot) {
+      const ready = await pendingRoot.promise
+      if (!ready || session.turn !== turn) return { ok: false, reason: 'not-sendable' }
+    }
     const humanMessage = this.appendTimelineEntry(
       session,
       store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
@@ -231,7 +262,7 @@ export class TurnService extends CommonService<MessageStoreState> {
 
     let reply: AgentReply
     try {
-      reply = await store.dispatch(session, text, humanMessage.id)
+      reply = await store.dispatch(session, text, humanMessage.id, undefined, 'steering', turn.id)
     } catch (err) {
       reply = { ok: false, text: String(err), ts: Date.now(), error: String(err) }
     }
@@ -259,7 +290,9 @@ export class TurnService extends CommonService<MessageStoreState> {
     // 「哪条运行时支持 steering」的表,而那正是契约交给 main 的判断(「renderer 只管发」)。
     // 那张表会在新增运行时、改 provider id 的那天静默过期 —— 而它错的方向是**把 pi 也锁回去**,
     // 一声不响地把整个 feature 关掉。失败回执走的是同一条已有通道,永远不会过期。
-    const detail = (reply.error === 'steer-failed' ? reply.text : reply.error || reply.text) || 'unknown error'
+    const detail =
+      (reply.error === 'steer-failed' ? reply.text : reply.error || reply.text) ||
+      i18nHelper.maestroControl.chat.unknownError
     humanMessage.promptExcluded = true
     store.withTokenCount(humanMessage)
     this.appendTimelineEntry(
@@ -268,7 +301,7 @@ export class TurnService extends CommonService<MessageStoreState> {
         id: uid(),
         source: 'cowork',
         role: 'ai',
-        content: `⚠ This message was **not** added to the active turn, so the model did not receive it (${detail}). This provider may not support in-turn steering. Send it again after the current turn finishes.`,
+        content: interpolateChatCopy(i18nHelper.maestroControl.chat.steeringFailed, { detail }),
         streaming: false,
         error: true,
         promptExcluded: true,
@@ -302,15 +335,25 @@ export class TurnService extends CommonService<MessageStoreState> {
     // 在干什么由底部状态条表达,时间线上不留一条空占位 —— 那条占位正是「播报排在回复上方」的病根。
     const turn: Turn = {
       id: uid(),
+      generation: 0,
       rootText: text,
       phase: 'accepted',
       startedAt: Date.now(),
       lastActivityAt: Date.now(),
       activity: [],
       thinking: false,
+      sealedAssistantSegments: 0,
+      hasStreamedText: false,
+      streamCoverageComplete: true,
       aborting: false
     }
     session.turn = turn
+    let resolveRootDispatch: (ready: boolean) => void = () => undefined
+    const rootDispatchPromise = new Promise<boolean>((resolve) => {
+      resolveRootDispatch = resolve
+    })
+    const rootDispatchWaiter = { promise: rootDispatchPromise, resolve: resolveRootDispatch }
+    this.rootDispatchWaiters.set(turn.id, rootDispatchWaiter)
     session.retryable = undefined
     session.updatedAt = Date.now()
     store.updateSessionContextUsage(session)
@@ -320,7 +363,26 @@ export class TurnService extends CommonService<MessageStoreState> {
     let stagedFiles: Awaited<ReturnType<MessageStoreState['stageAttachments']>> = []
     let humanMessage: ChatMessage | undefined
     let reply: AgentReply
+    let claimed = false
+    let dispatched = false
     try {
+      // Main owns the global root gate. This is deliberately the first await after the renderer
+      // reserves its local Turn; every later message carries explicit steering intent + turnId.
+      const claim = await coach.claimAgentTurn({
+        sessionId: session.id,
+        operationTabId: session.operationTabId,
+        turnId: turn.id,
+        rootText: turn.rootText,
+        startedAt: turn.startedAt
+      })
+      if (!claim.ok) {
+        if (session.turn?.id === turn.id) session.turn = undefined
+        return { ok: false, reason: claim.reason || 'busy-elsewhere' }
+      }
+      claimed = true
+      turn.generation = claim.turn.generation
+      if (session.turn?.id !== turn.id) return { ok: false, reason: 'not-sendable' }
+
       await store.refreshWorkspace(session.id)
       if (session.turn?.id !== turn.id) return { ok: false, reason: 'not-sendable' }
 
@@ -353,8 +415,17 @@ export class TurnService extends CommonService<MessageStoreState> {
       await store.compactSessionIfNeeded(session, { protectMessageIds: new Set([humanMessage.id]) })
       if (session.turn?.id !== turn.id) return { ok: false, reason: 'not-sendable' }
 
+      dispatched = true
+      this.settleRootDispatch(turn.id, true)
       reply = await withInactivityTimeout(
-        store.dispatch(session, text, humanMessage.id, stagedFiles.map((file) => file.path)),
+        store.dispatch(
+          session,
+          text,
+          humanMessage.id,
+          stagedFiles.map((file) => file.path),
+          'root',
+          turn.id
+        ),
         CHAT_TURN_TIMEOUT_MS,
         // Waiting for an in-app decision is an explicit paused state, not a hung provider. Once the
         // card is answered, message.store touches the Turn so the silence clock resumes from zero.
@@ -362,13 +433,23 @@ export class TurnService extends CommonService<MessageStoreState> {
           session.messages.some((item) => item.type === 'confirm' && item.confirm && !item.confirm.answer)
             ? Date.now()
             : session.turn?.lastActivityAt ?? turn.lastActivityAt,
-        `Maestro produced no output for ${Math.round(CHAT_TURN_TIMEOUT_MS / 60_000)} minutes — I stopped this turn so the chat does not keep spinning (a hung provider looks the same from outside). Check the AI login/provider state and try again.`,
+        interpolateChatCopy(i18nHelper.maestroControl.chat.inactivityTimeout, {
+          minutes: Math.round(CHAT_TURN_TIMEOUT_MS / 60_000)
+        }),
         async () => {
-          await coach.abortAgent({ sessionId: session.id }).catch(() => undefined)
+          await coach.abortAgent({ sessionId: session.id, turnId: turn.id }).catch(() => undefined)
         }
       )
     } catch (err) {
-      if (session.turn?.id !== turn.id) return { ok: false, reason: 'not-sendable' }
+      const error = String(err)
+      if (session.turn?.id !== turn.id) {
+        // Main may finish/abort the exact Turn while the root XPC is rejecting (for example the
+        // inactivity timeout). Once the user's root is already in the transcript, report the
+        // terminal reply instead of returning a renderer rejection that restores it to the composer.
+        return turn.rootHumanMessageId
+          ? { ok: false, text: error, ts: Date.now(), error }
+          : { ok: false, reason: 'not-sendable' }
+      }
       // Pre-dispatch setup can fail too. Keep the accepted user request in the transcript instead of
       // clearing their composer and leaving only an unexplained error bubble.
       if (!humanMessage) {
@@ -380,43 +461,96 @@ export class TurnService extends CommonService<MessageStoreState> {
         if (session.title === 'Maestro') session.title = summarizeTitle(text)
         store.updateSessionContextUsage(session)
       }
-      reply = { ok: false, text: String(err), ts: Date.now(), error: String(err) }
+      reply = { ok: false, text: error, ts: Date.now(), error }
+    } finally {
+      if (!dispatched) this.settleRootDispatch(turn.id, false)
+      // Every successful Main reservation must either reach root dispatch or be explicitly released.
+      // This also covers early returns after workspace/attachment/compaction awaits; abort is exact
+      // turnId scoped and therefore harmless if Stop already released it.
+      if (claimed && !dispatched) {
+        await coach.abortAgent({ sessionId: session.id, turnId: turn.id }).catch(() => undefined)
+      }
     }
 
-    // 回合已被别处收尾(stop / 新回合顶掉)→ 不要二次收尾。
-    if (session.turn?.id !== turn.id) return reply
+    await this.finishReply(session, turn, reply)
+    return reply
+  }
 
+  /** Main's completion broadcast is authoritative, including after this renderer was reloaded. */
+  async finishFromMain(
+    session: MessageSession,
+    turnId: string,
+    reply: AgentReply | undefined,
+    reason: NonNullable<AgentTurnUpdate['finished']>['reason']
+  ): Promise<void> {
+    const turn = session.turn
+    if (!turn || turn.id !== turnId) return
+    if (reason !== 'completed' || !reply) {
+      this.forceStop(session, turnId)
+      return
+    }
+    await this.finishReply(session, turn, reply)
+  }
+
+  private async finishReply(session: MessageSession, turn: Turn, reply: AgentReply): Promise<void> {
+    if (session.turn !== turn) return
+    const store = this._state
+    // Drain the RAF tail before choosing the final segment. A reply text is the whole logical Turn,
+    // while the timeline may already contain sealed segments; never copy that whole payload into
+    // the current tail segment (which would repeat every earlier paragraph).
+    store.flushStreamBuffer(session.id)
+    const openAssistant = this.sink(session)
+    const sealedAssistant = turn.lastAssistantMessageId
+      ? store.messageById(session, turn.lastAssistantMessageId)
+      : undefined
     // 收尾时才可能第一次建气泡:一轮只发工具调用、没有任何文字的回合(钻探就是),到这里才有正文。
-    const assistant = this.ensureSink(session)
-    if (!assistant) return reply
-    const wasAborted = Boolean(session.turn?.aborting)
-    const fallback = wasAborted ? 'Stopped.' : reply.ok ? 'Done.' : 'Failed.'
+    const assistant = openAssistant ?? sealedAssistant ?? this.ensureSink(session)
+    if (!assistant || session.turn !== turn) return
+    const wasAborted = turn.aborting
+    const fallback = wasAborted
+      ? i18nHelper.maestroControl.chat.stopped
+      : reply.ok
+        ? i18nHelper.maestroControl.chat.done
+        : i18nHelper.maestroControl.chat.failed
     assistant.error = wasAborted ? false : !reply.ok
     assistant.promptExcluded = wasAborted
     assistant.files = reply.files?.map((file) => ({ ...file, kind: 'artifact' }))
     assistant.skill = reply.skill
     assistant.skills = reply.skills?.length ? reply.skills : reply.skill ? [reply.skill] : undefined
     assistant.replay = reply.replay
-    // 失败回合的**正文**要自己说明失败,不能只换个红背景。实测:`ok:false / replay-failed` 的一轮,
-    // 气泡是红的、正文却写着「钻探已完成」—— 样式说失败、文字说成功,人只信文字
-    // (drill-agent-claims-complete-on-forced-finalize.md 根因 ②)。
+    // `reply.text` is the whole logical Turn. Use it only when the runtime emitted no text_delta at
+    // all; otherwise putting it into the final segment repeats every sealed paragraph before it.
     const replyText = reply.text?.trim()
-    // 免责声明**只加在模型自己写的正文前面**(reply.authoredByModel)。
-    //
-    // 原来是「失败 + 有正文」就加,于是 model-error 那类回合也戴上了它 —— 而那些回合的正文
-    // 本来就是 describeModelError 生成的错误说明,前面再来一句「以下是中断前产出的内容」,
-    // 是在给一段**根本不存在**的模型产出做担保(Ral 2026-08-18 指出这句不该显示)。
-    // 真正需要它的只有 replay-failed:模型一边失败一边写「钻探已完成」,那时样式说失败、
-    // 文字说成功,而人只信文字(drill-agent-claims-complete-on-forced-finalize 根因 ②)。
+    let segmentText = assistant.content.trim()
+    if (!turn.streamCoverageComplete && replyText) {
+      // A rebuilt renderer may have missed an arbitrary prefix of stream events. Main's terminal
+      // reply is authoritative in that case: collapse persisted partial text into the final segment
+      // so recovery is complete without showing the same suffix twice.
+      for (const segment of session.messages) {
+        if (
+          segment !== assistant &&
+          segment.role === 'ai' &&
+          (segment.type === undefined || segment.type === 'text') &&
+          !segment.id.startsWith('welcome-') &&
+          segment.ts >= turn.startedAt &&
+          segment.content
+        ) {
+          segment.content = ''
+          store.withTokenCount(segment)
+        }
+      }
+      assistant.content = replyText
+      segmentText = replyText
+    }
+    const safeReplyText = segmentText || (!turn.hasStreamedText ? replyText : '')
     const body =
-      !wasAborted && !reply.ok && replyText && reply.authoredByModel
-        ? `⚠ The following text was written **before the interruption** (${reply.error || 'unknown error'}). It may be incomplete, and its conclusions do not mean the task actually finished.\n\n${replyText}`
-        : replyText || fallback
+      !wasAborted && !reply.ok && safeReplyText && reply.authoredByModel
+        ? interpolateChatCopy(i18nHelper.maestroControl.chat.interruptedReply, {
+            error: reply.error || i18nHelper.maestroControl.chat.unknownError,
+            text: safeReplyText
+          })
+        : safeReplyText || fallback
     store.finishAssistant(assistant, body)
-    // 临时错误 + 自动重试用满 → 状态条给一个 try again(Ral 2026-08-18)。
-    // 鉴权/额度/非法请求不置位:那种「重试」是邀请人做一件注定失败的事。
-    // 次数直接用 reply 带过来的那一份(主进程数的),**不从 turn.retry 捞** ——
-    // 那个进度广播只打给「当前活跃会话」,回合跑一半切了会话就没记上,捞出来是空。
     session.retryable =
       !wasAborted && !reply.ok && reply.retryExhausted && turn.rootHumanMessageId
         ? {
@@ -425,11 +559,13 @@ export class TurnService extends CommonService<MessageStoreState> {
             rootHumanMessageId: turn.rootHumanMessageId
           }
         : undefined
+    // Clear ownership synchronously before either persistence await. A completion broadcast and the
+    // root XPC response may arrive back-to-back; the second finalizer must become a no-op.
     session.turn = undefined
+    store.setActiveAgentTurnSnapshot(null, turn.id)
     session.updatedAt = Date.now()
     await store.compactSessionIfNeeded(session)
     await store.persistSession(session)
-    return reply
   }
 
   async stop(sessionId: string): Promise<void> {
@@ -438,7 +574,7 @@ export class TurnService extends CommonService<MessageStoreState> {
     if (!session || session.archivedAt || !turn || turn.aborting) return
     turn.aborting = true
     try {
-      await Promise.race([coach.abortAgent({ sessionId: session.id }), delay(900)])
+      await coach.abortAgent({ sessionId: session.id, turnId: turn.id })
     } catch {
       /* best effort */
     }
@@ -449,11 +585,13 @@ export class TurnService extends CommonService<MessageStoreState> {
   forceStop(session: MessageSession, turnId?: string): void {
     const turn = session.turn
     if (!turn || (turnId && turn.id !== turnId)) return
+    this.settleRootDispatch(turn.id, false)
     this._state.flushStreamBuffer(session.id)
     // Stop during workspace/attachment setup, before the root request entered the transcript: release
     // the reserved Turn silently. send() returns a rejection and the composer restores the user's text.
     if (!turn.rootHumanMessageId) {
       session.turn = undefined
+      this._state.setActiveAgentTurnSnapshot(null, turn.id)
       session.updatedAt = Date.now()
       void this._state.persistSession(session)
       return
@@ -464,9 +602,13 @@ export class TurnService extends CommonService<MessageStoreState> {
     const last = this.sink(session) ?? this._state.lastStreamingMessage(session) ?? this.ensureSink(session)
     if (last) {
       last.promptExcluded = true
-      this._state.finishAssistant(last, last.content.trim() || 'Stopped.')
+      this._state.finishAssistant(
+        last,
+        last.content.trim() || i18nHelper.maestroControl.chat.stopped
+      )
     }
     session.turn = undefined
+    this._state.setActiveAgentTurnSnapshot(null, turn.id)
     session.updatedAt = Date.now()
     void this._state.persistSession(session)
   }
@@ -481,8 +623,8 @@ export class TurnService extends CommonService<MessageStoreState> {
    */
   pushActivity(step: AgentActivityStep): void {
     if (step.phase === 'think') return
-    const session = this.activeSession()
-    if (!session?.turn) return
+    const session = this.sessionForAgentPayload(step)
+    if (!session) return
     this.touch(session)
     // 工具行**也建落点**,不只文字。否则两条播报之间的几十次工具调用只在状态条露一行,
     // 时间线上什么都看不到 —— 而这正是「不能继续感知工具调用」那条抱怨(Ral 2026-08-14)。
@@ -494,8 +636,8 @@ export class TurnService extends CommonService<MessageStoreState> {
 
   /** thinking 同理:它描述的是**这一轮**,不是某条消息 —— 底部状态条读它。 */
   pushThinking(payload: AgentThinkingState): void {
-    const session = this._state.getSession(payload.sessionId) || this.activeSession()
-    if (!session?.turn) return
+    const session = this.sessionForAgentPayload(payload)
+    if (!session) return
     this.touch(session)
     if (payload.active) session.turn.phase = 'thinking'
     session.turn.thinking = payload.active
@@ -505,12 +647,15 @@ export class TurnService extends CommonService<MessageStoreState> {
   }
 
   pushStream(payload: AgentStreamDelta): void {
-    const session = this._state.getSession(payload.sessionId) || this.activeSession()
+    const session = this.sessionForAgentPayload(payload)
     if (!session || !payload.delta) return
     this.touch(session)
     // **第一个字符才建气泡** —— 这就是懒建的触发点。这是阶段转移,不是回合的开始。
     if (!this.ensureSink(session)) return
-    if (session.turn) session.turn.phase = 'streaming'
+    if (session.turn) {
+      session.turn.phase = 'streaming'
+      session.turn.hasStreamedText = true
+    }
     this._state.bufferStreamDelta(session.id, payload.delta)
   }
 
@@ -544,5 +689,32 @@ export class TurnService extends CommonService<MessageStoreState> {
 
   private touch(session: MessageSession): void {
     if (session.turn) session.turn.lastActivityAt = Date.now()
+  }
+
+  private sessionForAgentPayload(payload: {
+    sessionId?: string
+    turnId?: string
+    generation?: number
+  }): MessageSession | undefined {
+    if (!payload.sessionId || !payload.turnId || typeof payload.generation !== 'number') return undefined
+    const session = this._state.getSession(payload.sessionId)
+    const turn = session?.turn
+    if (
+      !session ||
+      !turn ||
+      turn.id !== payload.turnId ||
+      turn.generation !== payload.generation ||
+      turn.aborting
+    ) {
+      return undefined
+    }
+    return session
+  }
+
+  private settleRootDispatch(turnId: string, ready: boolean): void {
+    const waiter = this.rootDispatchWaiters.get(turnId)
+    if (!waiter) return
+    this.rootDispatchWaiters.delete(turnId)
+    waiter.resolve(ready)
   }
 }

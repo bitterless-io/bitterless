@@ -6,6 +6,7 @@ import {
   IconClock,
   IconCornerDownRight
 } from '@tabler/icons-vue'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { isTaskLive, type MaestroTask } from '@maestro-shared/task.api'
 import type { MessageSession } from './store/message.type'
 import { isRejection } from './store/turn.service'
@@ -30,6 +31,10 @@ const confirming = computed(() => live.value.find((task) => task.state.pendingCo
 const waiting = computed(() => live.value.find((task) => task.state.waitingFor))
 
 const taskLabel = (task: MaestroTask): string => task.state.title || task.name
+const retryProgress = (attempt: number, max: number): string =>
+  i18nHelper.maestroControl.responseStatus.retryProgress
+    .replace('{attempt}', String(attempt))
+    .replace('{max}', String(max))
 const compactNumber = (value: number): string =>
   value >= 1_000_000
     ? `${(value / 1_000_000).toFixed(1)}M`
@@ -48,21 +53,31 @@ const taskMeta = (task: MaestroTask): string => {
   const parts: string[] = []
   if (progress?.total) parts.push(`${progress.done ?? 0}/${progress.total}`)
   if (progress?.subject) parts.push(progress.subject)
-  if (progress?.tokens) parts.push(`${compactNumber(progress.tokens)} tokens`)
+  if (progress?.tokens) {
+    parts.push(
+      i18nHelper.maestroControl.responseStatus.tokens.replace(
+        '{count}',
+        compactNumber(progress.tokens)
+      )
+    )
+  }
   parts.push(elapsed(task.state.time.start))
   return parts.join(' · ')
 }
 
 const status = computed<StatusView | null>(() => {
   const retry = turn.value?.retry
-  if (retry) return { tone: 'wait', text: `retried: ${retry.attempt}/${retry.max}` }
+  if (retry) return { tone: 'wait', text: retryProgress(retry.attempt, retry.max) }
 
   const confirm = confirming.value
   if (confirm) {
     return {
       tone: 'wait',
-      text: `Waiting for your decision · ${confirm.state.pendingConfirm?.title || taskLabel(confirm)}`,
-      meta: 'Use the action panel below',
+      text: i18nHelper.maestroControl.responseStatus.waitingDecision.replace(
+        '{title}',
+        confirm.state.pendingConfirm?.title || taskLabel(confirm)
+      ),
+      meta: i18nHelper.maestroControl.responseStatus.actionPanelBelow,
       subject: confirm
     }
   }
@@ -71,7 +86,9 @@ const status = computed<StatusView | null>(() => {
   if (held) {
     return {
       tone: 'run',
-      text: `${taskLabel(held)} · waiting for ${held.state.waitingFor}`,
+      text: i18nHelper.maestroControl.responseStatus.waitingFor
+        .replace('{task}', taskLabel(held))
+        .replace('{target}', held.state.waitingFor || ''),
       meta: taskMeta(held),
       subject: held,
       background: !turn.value
@@ -91,13 +108,24 @@ const status = computed<StatusView | null>(() => {
 
   const active = turn.value
   if (!active) return null
-  if (active.aborting) return { tone: 'wait', text: 'Stopping…' }
-  if (active.thinking) return { tone: 'run', text: 'Thinking…', meta: elapsed(active.startedAt) }
+  if (active.aborting) {
+    return { tone: 'wait', text: i18nHelper.maestroControl.responseStatus.stopping }
+  }
+  if (active.thinking) {
+    return {
+      tone: 'run',
+      text: i18nHelper.maestroControl.responseStatus.thinking,
+      meta: elapsed(active.startedAt)
+    }
+  }
   const latest = active.activity[active.activity.length - 1]
   if (latest) return { tone: 'run', text: latest.label, meta: elapsed(active.startedAt) }
   return {
     tone: 'run',
-    text: active.phase === 'streaming' ? 'Responding…' : 'Sent · waiting for a response…',
+    text:
+      active.phase === 'streaming'
+        ? i18nHelper.maestroControl.responseStatus.responding
+        : i18nHelper.maestroControl.responseStatus.sentWaiting,
     meta: elapsed(active.startedAt)
   }
 })
@@ -107,14 +135,17 @@ const canRetry = computed(() =>
 )
 const retriedLabel = computed(() => {
   const retry = props.session.retryable
-  return retry ? `retried: ${retry.attempt}/${retry.max}` : ''
+  return retry ? retryProgress(retry.attempt, retry.max) : ''
 })
 const steeringLabel = computed(() => {
   const steering = props.session.turn?.steering
   if (!steering) return ''
   return steering.pending
-    ? 'Adding your message to this turn…'
-    : `Added to this turn · ${steering.count}`
+    ? i18nHelper.maestroControl.responseStatus.addingToTurn
+    : i18nHelper.maestroControl.responseStatus.addedToTurn.replace(
+        '{count}',
+        String(steering.count)
+      )
 })
 
 const retryAgain = async (): Promise<void> => {
@@ -130,7 +161,12 @@ const retryAgain = async (): Promise<void> => {
 
 const roster = computed(() => live.value.filter((task) => task !== status.value?.subject))
 const rosterOpen = ref(false)
-const rosterLabel = computed(() => `${roster.value.length} other running task${roster.value.length === 1 ? '' : 's'}`)
+const rosterLabel = computed(() =>
+  (roster.value.length === 1
+    ? i18nHelper.maestroControl.responseStatus.otherRunningTask
+    : i18nHelper.maestroControl.responseStatus.otherRunningTasks
+  ).replace('{count}', String(roster.value.length))
+)
 const rootEl = ref<HTMLElement | null>(null)
 
 const onDocumentPointer = (event: MouseEvent): void => {
@@ -194,7 +230,7 @@ onUnmounted(() => {
       <IconAlertTriangle :size="13" stroke="1.9" />
       <span class="response-status__retry-count">{{ retriedLabel }}</span>
       <button type="button" class="response-status__retry-button" @click="retryAgain">
-        Try again
+        {{ i18nHelper.maestroControl.responseStatus.tryAgain }}
       </button>
     </div>
 
@@ -216,7 +252,9 @@ onUnmounted(() => {
         <span class="response-status__text" :class="`response-status__text--${status.tone}`" :title="status.text">
           {{ status.text }}
         </span>
-        <span v-if="status.background" class="response-status__background">background</span>
+        <span v-if="status.background" class="response-status__background">
+          {{ i18nHelper.maestroControl.responseStatus.background }}
+        </span>
         <span v-if="status.meta" class="response-status__meta">{{ status.meta }}</span>
       </div>
       <button

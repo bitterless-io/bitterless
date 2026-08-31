@@ -64,11 +64,19 @@ export type TurnEndReason = 'completed' | 'stopped' | 'idle-timeout' | 'turn-tim
 
 export interface Turn {
   id: string
+  /** Main-process generation claimed for this exact Turn; live broadcasts must match it. */
+  generation: number
   /** Stable root request for this Turn. Steering messages never replace this retry anchor. */
   rootText: string
   rootHumanMessageId?: string
   phase: TurnPhase
   assistantMessageId?: string
+  /** Most recently sealed segment, used for metadata-only final replies without duplicating text. */
+  lastAssistantMessageId?: string
+  sealedAssistantSegments: number
+  hasStreamedText: boolean
+  /** False after renderer reconstruction: persisted/live deltas may cover only part of Main's reply. */
+  streamCoverageComplete: boolean
   activity: AgentActivityStep[]
   thinking: boolean
   startedAt: number

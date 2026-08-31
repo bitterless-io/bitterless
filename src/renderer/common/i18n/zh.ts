@@ -358,6 +358,81 @@ export const zh: typeof en = {
       log: '日志'
     }
   },
+  maestroControl: {
+    chat: {
+      busyTitle: 'Maestro 正在处理其他会话',
+      busyContent: '另一个会话仍在运行，请等待该轮完成。',
+      gotIt: '知道了',
+      messageNotSentTitle: '消息未发送',
+      messageNotSentContent: 'Maestro 无法启动该消息，已恢复你输入的文字。',
+      archivedConversation: '已归档的会话',
+      removeAttachment: '移除',
+      removeAttachmentNamed: '移除 {name}',
+      stop: '停止',
+      stopping: '正在停止',
+      send: '发送',
+      sendIntoTurn: '发送到当前轮次',
+      steeringFailed: '⚠ 这条消息**未能**加入当前轮次，因此模型没有收到它（{detail}）。当前服务商可能不支持在轮次中追加消息。请在当前轮次结束后重新发送。',
+      inactivityTimeout: 'Maestro 已有 {minutes} 分钟没有任何输出。为避免聊天一直处于处理中，我已停止当前轮次（从外部无法区分服务商响应缓慢和完全挂起）。请检查 AI 登录或服务商状态后重试。',
+      stopped: '已停止。',
+      done: '已完成。',
+      failed: '失败。',
+      interruptedReply: '⚠ 以下内容写于任务**中断之前**（{error}），可能不完整，其中的结论也不代表任务已经完成。\n\n{text}',
+      unknownError: '未知错误'
+    },
+    responseStatus: {
+      retryProgress: '已重试：{attempt}/{max}',
+      waitingDecision: '等待你的决定 · {title}',
+      actionPanelBelow: '请使用下方操作面板',
+      waitingFor: '{task} · 正在等待 {target}',
+      stopping: '正在停止…',
+      thinking: '正在思考…',
+      responding: '正在回复…',
+      sentWaiting: '已发送 · 正在等待回复…',
+      tokens: '{count} tokens',
+      addingToTurn: '正在将你的消息加入当前轮次…',
+      addedToTurn: '已加入当前轮次 · {count}',
+      otherRunningTask: '{count} 个其他运行中的任务',
+      otherRunningTasks: '{count} 个其他运行中的任务',
+      tryAgain: '重试',
+      background: '后台'
+    },
+    confirm: {
+      answeredElsewhere: '该问题已在其他位置回答或已撤回。',
+      answered: '已回答',
+      waitingForYou: '等待你处理',
+      selected: '已选择“{label}”',
+      answerInActionPanel: '↓ 请在下方操作面板中回答',
+      waitingDecision: '等待你的决定',
+      moreQueued: '还有 {count} 项等待处理',
+      agentDescription: 'Agent 描述',
+      field: '{count} 个字段',
+      fields: '{count} 个字段',
+      unsourcedCount: '{count} 个无来源',
+      unknownCount: '{count} 个来源未知',
+      provenance: {
+        grounded: '有来源',
+        unsourced: '无来源',
+        unknown: '来源未知'
+      }
+    },
+    task: {
+      showTaskOutput: '显示任务输出',
+      builtIn: '内置',
+      waitingDecision: '等待你的决定：{title}',
+      earlierLineDropped: '… 已省略前面 {count} 行',
+      earlierLinesDropped: '… 已省略前面 {count} 行',
+      couldNotShowPath: '无法显示该路径。',
+      showInFolder: '在文件夹中显示：{path}',
+      status: {
+        failed: '失败',
+        stalled: '已停滞',
+        pending: '等待中',
+        running: '运行中',
+        completed: '已完成'
+      }
+    }
+  },
   maestroSub2Api: {
     addCodexSave: '保存为账号',
     addCodexSaveHint: '登录一次只产生一份凭证。先保存成一个账号,再用另一个 ChatGPT 账号登录并保存 —— 端点用的是处于激活状态的那份。',

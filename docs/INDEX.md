@@ -10,9 +10,11 @@ design document.
   live updates for every first-party renderer, and correct locale before recreated windows mount.
 - [Maestro sub-application](features/maestro.md) - the Bitterless Mini App migrated from the
   Micromeet Cowork runtime.
-- [Maestro Control chat behind Cowork](issues/maestro-control-chat-behind-cowork.md) - in progress:
-  migrate the current Turn/status/task and attachment/file-reading chat vertical slices from Cowork
-  `67b056b` while preserving Maestro providers, i18n, replay, local Home, and Royal Blue/BEM UI.
+- [Maestro Control chat behind Cowork](issues/maestro-control-chat-behind-cowork.md) - implemented;
+  owner verification pending: migrated the current Turn/status/task and attachment/file-reading
+  chat vertical slices from Cowork `67b056b` while preserving Maestro providers, i18n, replay,
+  local Home, and Royal Blue/BEM UI; core [review 1](plan/reviews/maestro-cowork-chat-core-089-1.md)
+  and files [review 1](plan/reviews/maestro-cowork-chat-files-090-1.md) passed.
 - [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
   services with unchanged XPC and runtime behavior.
 - [Maestro startup host flash and MenuBar](issues/maestro-startup-host-flash-and-menubar.md) -

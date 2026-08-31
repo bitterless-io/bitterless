@@ -371,7 +371,7 @@ export const buildAgentTurnPrompt = (params: {
         `Selected workspace: ${workspace.path}`,
         'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, open_workspace_folder, list_archive, extract_archive, create_archive.',
         'You may create/update files and generated artifacts inside this workspace. Do not delete, rename, move, or target the workspace directory itself.',
-        'Folders are listed/searched before individual files are read. Archives are listed or extracted rather than passed to read_file; password-protected archive creation is refused.',
+        'Folders are listed/searched before individual files are read. Archives are listed or extracted into a new or empty folder rather than passed to read_file; extraction refuses links/special entries and password-protected archive creation is refused.',
         'If a workspace tool reports workspace-not-found / workspace-not-directory, the app clears the stale reference; ask the user to choose the new location.'
       ].join('\n')
     : [

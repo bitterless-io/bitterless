@@ -3,6 +3,10 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconChevronRight } from '@tabler/icons-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
+import {
+  getAppliedRendererLanguage,
+  i18nHelper
+} from '@renderer/common/i18n/i18n.helper'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import {
   stallHint,
@@ -48,12 +52,15 @@ const statusTone = (value: TaskView): 'error' | 'stalled' | 'running' | 'complet
   if (value.state.status === 'running' || value.state.status === 'pending') return 'running'
   return 'completed'
 }
-const statusLabel = (value: TaskView): string =>
-  value.state.status === 'error'
-    ? 'failed'
-    : value.state.stalled
-      ? 'stalled'
-      : value.state.status
+const statusLabel = (value: TaskView): string => {
+  const status: keyof typeof i18nHelper.maestroControl.task.status =
+    value.state.status === 'error'
+      ? 'failed'
+      : value.state.stalled
+        ? 'stalled'
+        : value.state.status
+  return i18nHelper.maestroControl.task.status[status]
+}
 const percent = (value: TaskView): number => {
   const progress = value.state.progress
   if (!progress) return 0
@@ -78,10 +85,22 @@ const outputTail = (value: TaskView): string =>
     .slice(-60)
     .map((line) => (line.level === 'info' ? '' : `[${line.level}] `) + line.text)
     .join('\n')
+const waitingDecisionLabel = (title: string): string =>
+  i18nHelper.maestroControl.task.waitingDecision.replace('{title}', title)
+const stallLabel = (name: string): string => stallHint(name)[getAppliedRendererLanguage()]
+const droppedLinesLabel = (count: number): string =>
+  (count === 1
+    ? i18nHelper.maestroControl.task.earlierLineDropped
+    : i18nHelper.maestroControl.task.earlierLinesDropped
+  ).replace('{count}', String(count))
+const showInFolderLabel = (path: string): string =>
+  i18nHelper.maestroControl.task.showInFolder.replace('{path}', path)
 
 const reveal = async (path: string): Promise<void> => {
   const result = await coach.showFileInFolder({ path }).catch(() => null)
-  if (!result?.ok) Message.warning(result?.error || 'Could not show this path.')
+  if (!result?.ok) {
+    Message.warning(result?.error || i18nHelper.maestroControl.task.couldNotShowPath)
+  }
 }
 
 let clock: ReturnType<typeof setInterval> | undefined
@@ -107,13 +126,15 @@ onUnmounted(stopClock)
       type="button"
       class="task-part__head"
       :disabled="!hasDetail"
-      :title="hasDetail ? 'Show task output' : ''"
+      :title="hasDetail ? i18nHelper.maestroControl.task.showTaskOutput : ''"
       @click="expanded = !expanded"
     >
       <span class="task-part__rail" :class="{ 'task-part__rail--pulse': pulsing }"></span>
       <span class="task-part__name">{{ task.name }}</span>
       <span class="task-part__status">{{ statusLabel(task) }}</span>
-      <span v-if="task.kind === 'builtin'" class="task-part__kind">built-in</span>
+      <span v-if="task.kind === 'builtin'" class="task-part__kind">
+        {{ i18nHelper.maestroControl.task.builtIn }}
+      </span>
       <span v-if="task.state.progress?.total" class="task-part__progress-count">
         {{ task.state.progress.done ?? 0 }}/{{ task.state.progress.total }}
       </span>
@@ -134,15 +155,15 @@ onUnmounted(stopClock)
     </div>
 
     <div v-if="task.state.pendingConfirm" class="task-part__confirm-hint">
-      Waiting for your decision: {{ task.state.pendingConfirm.title }}
+      {{ waitingDecisionLabel(task.state.pendingConfirm.title) }}
     </div>
     <div v-if="task.state.stalled && !task.state.pendingConfirm" class="task-part__stall">
-      {{ stallHint(task.name).en }}
+      {{ stallLabel(task.name) }}
     </div>
 
     <div v-if="expanded && hasDetail" class="task-part__detail">
       <div v-if="task.state.droppedLines" class="task-part__dropped">
-        … {{ task.state.droppedLines }} earlier line{{ task.state.droppedLines === 1 ? '' : 's' }} dropped
+        {{ droppedLinesLabel(task.state.droppedLines) }}
       </div>
       <pre v-if="task.state.output.length" class="task-part__output">{{ outputTail(task) }}</pre>
       <div v-if="task.state.result" class="task-part__result">{{ task.state.result }}</div>
@@ -153,7 +174,7 @@ onUnmounted(stopClock)
           :key="artifact.path"
           type="button"
           class="task-part__artifact"
-          :title="`Show in folder: ${artifact.path}`"
+          :title="showInFolderLabel(artifact.path)"
           @click="reveal(artifact.path)"
         >
           {{ artifact.label }}: {{ artifact.path }}

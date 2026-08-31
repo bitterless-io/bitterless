@@ -42,7 +42,12 @@ const providerPickerVisible = ref(false)
 const modelPickerVisible = ref(false)
 const effortPickerVisible = ref(false)
 const activeSession = computed(() => channelStore.activeSession)
-const llmLocked = computed(() => llmSwitching.value || Boolean(messageStore.turnService.activeTurn()))
+const llmLocked = computed(
+  () =>
+    llmSwitching.value ||
+    Boolean(messageStore.turnService.activeTurn()) ||
+    Boolean(messageStore.activeAgentTurnSnapshot)
+)
 
 interface ControlLlmProviderGroup {
   provider: string
@@ -276,7 +281,6 @@ const loadControlConfig = async (): Promise<void> => {
 }
 
 onMounted(async () => {
-  void taskStore.init()
   xpcRenderer.subscribe('coach/codex-log', (payload) => {
     logCodexDebug(payload.params as CodexDebugEvent)
   })
@@ -340,6 +344,9 @@ onMounted(async () => {
   })
 
   await loadControlConfig()
+  // Task snapshots can contain pending confirmations from before a renderer reload. Bind/load the
+  // chat session first so replay is idempotent and lands in its original session.
+  if (channelStore.activeSession) await taskStore.init()
 })
 </script>
 

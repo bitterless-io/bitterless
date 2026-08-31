@@ -11,6 +11,8 @@ const STAGE_DIR = path.join(ROOT, 'build', 'maestro-tools', 'anydoc')
 const CACHE_DIR = path.join(ROOT, 'prebuilt')
 const PLATFORMS = ['mac_arm', 'mac_intel', 'linux_arm', 'linux_x64', 'win64']
 const PACKAGE_NAME = '@firecrawl/anydoc'
+const PACKAGE_TARBALL_SHA512 =
+  'rfJxa5L+nhoqR5yodcRZoGDLaSfxMTpBuhVj1gSacfW4ZGjBt4cjfErXwaKjPYrpWRTPIBye2sh36UhqgOP1Og=='
 const STAGED_FILES = ['anydoc.js', 'anydoc.node', 'cli.js', 'index.js', 'package.json']
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const VERSION = pkg.anydoc_version
@@ -84,6 +86,16 @@ const download = (url, destination) => {
 const fileSha256 = (filePath) =>
   createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 
+const verifyPackageTarball = (filePath) => {
+  const actual = createHash('sha512').update(fs.readFileSync(filePath)).digest('base64')
+  if (actual !== PACKAGE_TARBALL_SHA512) {
+    fs.rmSync(filePath, { force: true })
+    throw new Error(
+      `checksum mismatch for ${PACKAGE_NAME}@${VERSION}: expected sha512-${PACKAGE_TARBALL_SHA512}, received sha512-${actual}`
+    )
+  }
+}
+
 const verifyNative = (filePath, target) => {
   const actual = fileSha256(filePath)
   if (actual !== target.sha256) {
@@ -103,6 +115,7 @@ const cachePackageTarball = (force) => {
     console.log(`[prepare-maestro-anydoc] downloading ${PACKAGE_NAME} ${VERSION}`)
     download(url, tarball)
   }
+  verifyPackageTarball(tarball)
   return tarball
 }
 

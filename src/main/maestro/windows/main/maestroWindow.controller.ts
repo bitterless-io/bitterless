@@ -27,7 +27,6 @@ import {
   type MaestroAgentServiceState
 } from '@maestro-main/agent/maestroAgent.service'
 import {
-  broadcastAgentActivity,
   broadcastCodexDebug
 } from '@maestro-main/agent/runtime/agentBroadcast'
 import { BookingDemoService } from '@maestro-main/demo/bookingDemo.service'
@@ -86,7 +85,11 @@ import type {
   AgentCompactReply,
   AgentCompactRequest,
   AgentFileArtifact,
+  AgentMessageRequest,
   AgentReply,
+  AgentTurnClaimRequest,
+  AgentTurnClaimResult,
+  AgentTurnRecoverySnapshot,
   AudioScribeRequest,
   AudioScribeResult,
   AttachFileResult,
@@ -869,7 +872,19 @@ class MaestroWindowController
     return await this.skillService.replaySkill(params)
   }
 
-  async sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply> {
+  claimAgentTurn(params: AgentTurnClaimRequest): AgentTurnClaimResult {
+    return this.agentService.claimAgentTurn(params)
+  }
+
+  getActiveAgentTurn(): AgentTurnRecoverySnapshot {
+    return this.agentService.getActiveAgentTurn()
+  }
+
+  ackAgentTurnFinished(params: { sessionId: string; turnId: string }): void {
+    this.agentService.ackAgentTurnFinished(params)
+  }
+
+  async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
     return await this.agentService.sendAgentMessage(params)
   }
 
@@ -890,7 +905,7 @@ class MaestroWindowController
   // Stop a chat channel's in-flight turn (the Stop button): aborts the live pi session so the
   // pending turn resolves with any partial output, then BaseAgent drops that session so aborted
   // output is not carried into later model context. No-op when idle / not yet created.
-  async abortAgent(params?: { sessionId?: string }): Promise<void> {
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
     await this.agentService.abortAgent(params)
   }
 
@@ -915,6 +930,10 @@ class MaestroWindowController
 
   getLlmRuntimeTarget(): LlmStoredTarget {
     return this.agentService.getLlmRuntimeTarget()
+  }
+
+  hasActiveAgentTurn(): boolean {
+    return this.agentService.hasActiveAgentTurn()
   }
 
   resetLlmTurnState(): void {
@@ -1323,7 +1342,7 @@ class MaestroWindowController
 
   // Broadcast a live agent step so the Agent chat can render the observe→act loop.
   broadcastActivity(phase: AgentActivityStep['phase'], label: string, ok = true): void {
-    broadcastAgentActivity(phase, label, ok)
+    this.agentService.broadcastActiveAgentActivity(phase, label, ok)
   }
 
   broadcastApiActivity(

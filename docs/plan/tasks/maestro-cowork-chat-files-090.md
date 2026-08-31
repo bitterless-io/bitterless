@@ -1,7 +1,7 @@
 ---
 id: maestro-cowork-chat-files-090
 scope: Maestro unified attachment cards, directories, thumbnails, archives, and bundled-CLI document reading
-status: pending
+status: implemented; owner verification pending
 depends-on: [maestro-cowork-chat-core-089]
 verify: source inspection, task-scoped diff check, independent review; no tests/typecheck/lint/build/Electron/E2E/network
 ---
@@ -71,3 +71,23 @@ in place, using Maestro names, data paths, packaging, and visual contracts.
 - Run task-scoped `git diff --check` and an independent source review for P1/P2 defects.
 - Do not run tests, typecheck, lint, build, Electron, Playwright/E2E, application launch, or network
   probes. Ral performs E2E after handoff.
+
+## Delivery
+
+- Migrated the unified attachment card, directory attachment/status/persistence path, bounded
+  thumbnails, archive tools, workspace file operations, safe activity labels, and local Markdown
+  file-link handling through the Maestro renderer/shared/Main call chain.
+- Replaced the original in-process anydoc direction with a version-pinned `0.2.4` CLI bundle that
+  follows the existing `rg` lifecycle: build-time download and integrity verification, one
+  platform-native binding, exact five-file staging, signed Resources delivery, and runtime
+  Electron-as-Node execution without downloads, WASM, or UtilityProcess.
+- Hardened archive extraction with a workspace-local staging directory, root-identity and full-tree
+  `lstat`/`realpath` audit, link/special-entry rejection, new-or-empty destination installation,
+  bounded child output, and cleanup only after the child process closes. Passwords use Ouch's
+  documented `OUCH_PASSWORD` environment contract and never enter argv.
+- Replaced the obsolete document fixture runner with a source-only anydoc CLI contract check; it no
+  longer instantiates Electron Main from plain Node or asserts legacy `exceljs`/`unpdf` output.
+- [Independent review 1](../reviews/maestro-cowork-chat-files-090-1.md) passed after the first-round
+  archive, activity-label, static-check, and Windows file-URI findings were repaired.
+- Per Ral's instruction, tests, typecheck, lint, build, Electron/Playwright E2E, application launch,
+  staging scripts, and network runtime checks were not run. Ral owns runtime/E2E acceptance.

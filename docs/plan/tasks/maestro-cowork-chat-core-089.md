@@ -1,7 +1,7 @@
 ---
 id: maestro-cowork-chat-core-089
 scope: Maestro Turn, steering/retry, response status, task timeline, and confirmation parity with Cowork 67b056b
-status: pending
+status: implemented; owner verification pending
 depends-on: []
 verify: source inspection, task-scoped diff check, independent review; no tests/typecheck/lint/build/Electron/E2E/network
 ---
@@ -70,3 +70,24 @@ Turn/status/task model and must land as one call chain.
 - Run task-scoped `git diff --check` and an independent source review for P1/P2 defects.
 - Do not run tests, typecheck, lint, build, Electron, Playwright/E2E, application launch, or network
   probes. Ral performs E2E after handoff.
+
+## Delivery
+
+- Migrated the per-session Turn, lazy/sealed assistant segments, in-turn steering, response status,
+  retry state, chronological task/confirmation entries, and the pinned confirmation action sheet
+  through the Maestro renderer/shared/Main/runtime call chain.
+- Made Main the atomic owner of the single active root Turn. Root and steering requests carry an
+  exact Turn id and generation; stream, thinking, activity, retry, abort, completion, renderer
+  recovery, and completion acknowledgement use the same identity.
+- Added bounded Stop behavior and generation fencing so late runtime callbacks cannot clear or
+  append to a newer Turn. Automatic whole-turn retry stops after a tool call to avoid repeating
+  side effects.
+- Preserved Maestro's provider controls, Local/Claude behavior, current compaction, Home, replay,
+  Royal Blue/Arco/BEM styling, and compatibility identifiers. Active Turn model changes are locked
+  in Control, Workbench, and Main.
+- Restored persisted task/confirmation bindings before task-snapshot replay and localized all
+  migrated response, task, confirmation, steering, timeout, stop, and failure copy.
+- [Independent review 1](../reviews/maestro-cowork-chat-core-089-1.md) passed after all first-pass
+  lifecycle/recovery findings and the final i18n finding were repaired.
+- Per Ral's instruction, tests, typecheck, lint, build, Electron/Playwright E2E, application launch,
+  scripts, and network runtime checks were not run. Ral owns runtime/E2E acceptance.

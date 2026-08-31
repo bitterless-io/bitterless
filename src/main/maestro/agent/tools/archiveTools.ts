@@ -50,7 +50,7 @@ export const buildArchiveTools = (
   {
     name: 'extract_archive',
     description:
-      `Unpack an archive into the workspace, then use read_file on extracted files. With no selected workspace, Maestro uses a per-chat default. Supports ${FORMATS}. ${PASSWORD_NOTE}`,
+      `Unpack an archive into a new or empty workspace folder, then use read_file on extracted files. With no selected workspace, Maestro uses a per-chat default. Links and special filesystem entries are refused. Supports ${FORMATS}. ${PASSWORD_NOTE}`,
     params: [
       {
         name: 'path',
@@ -60,7 +60,7 @@ export const buildArchiveTools = (
       {
         name: 'dest',
         required: false,
-        description: 'Workspace-relative destination; defaults to a folder named after the archive.'
+        description: 'New or empty workspace-relative destination; defaults to a folder named after the archive.'
       },
       { name: 'password', required: false, description: 'Password for an encrypted archive.' }
     ],

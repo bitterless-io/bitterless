@@ -1,6 +1,6 @@
 # Maestro Control chat is behind current Cowork
 
-Status: in progress
+Status: implemented; owner verification pending
 
 ## Observed behavior
 
@@ -41,3 +41,15 @@ Implementation tasks:
 
 - [maestro-cowork-chat-core-089](../plan/tasks/maestro-cowork-chat-core-089.md)
 - [maestro-cowork-chat-files-090](../plan/tasks/maestro-cowork-chat-files-090.md)
+
+## Resolution
+
+Both vertical slices are implemented. The core review and file/archive/anydoc review report no
+unresolved P0-P2 findings:
+
+- [core review 1](../plan/reviews/maestro-cowork-chat-core-089-1.md)
+- [files review 1](../plan/reviews/maestro-cowork-chat-files-090-1.md)
+
+Static source and diff inspection is complete. Tests, typecheck, lint, build, Electron/Playwright
+E2E, application launch, staging scripts, and runtime/network checks were intentionally not run;
+Ral owns runtime and visual acceptance.

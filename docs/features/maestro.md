@@ -106,6 +106,10 @@ the legacy Cowork `cowork-main` entry is imported once when the unified Maestro 
 - Persistent session/history management, per-session Turn lifecycle, streamed replies, in-turn
   steering, retry/status feedback, inactivity watchdog, abort, context compaction, Markdown,
   skill/replay cards, chronological task/confirmation entries, and generated file artifacts.
+- The Cowork `67b056b` chat-core and file vertical slices are implemented under
+  [tasks 089](../plan/tasks/maestro-cowork-chat-core-089.md) and
+  [090](../plan/tasks/maestro-cowork-chat-files-090.md); both independent reviews report no
+  unresolved P0-P2 findings, with runtime/E2E acceptance owned by Ral.
 - AI-CRMS and OpenAI Codex provider/model/effort/compression selection with existing login flows.
   GPT-5.5 remains selectable and a stored GPT-5.5 target is preserved alongside GPT-5.6 Luna, Sol,
   and Terra; the new-install Codex default may remain GPT-5.6 Luna.

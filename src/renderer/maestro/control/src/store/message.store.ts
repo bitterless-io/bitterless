@@ -2,7 +2,7 @@ import { markRaw, nextTick, reactive } from 'vue'
 import { inject, injectable } from 'inversify'
 import { countTokens } from 'gpt-tokenizer'
 import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
-import { MODEL_RETRY_CHANNEL } from '@maestro-shared/coach.api'
+import { AGENT_TURN_CHANNEL, MODEL_RETRY_CHANNEL } from '@maestro-shared/coach.api'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import type {
   AgentActivityStep,
@@ -12,6 +12,10 @@ import type {
   AgentReply,
   AgentStreamDelta,
   AgentThinkingState,
+  AgentTurnFinished,
+  AgentTurnRecoverySnapshot,
+  AgentTurnSnapshot,
+  AgentTurnUpdate,
   CoachXpcContract,
   ModelRetryProgress,
   WorkspaceRef
@@ -182,6 +186,10 @@ export class MessageStoreState {
   private streamBuffers = markRaw(new Map<string, string>())
   private taskBindings = markRaw(new Map<string, { sessionId: string; messageId: string }>())
   private confirmMessages = markRaw(new Map<string, string>())
+  private latestTasks = markRaw([] as MaestroTask[])
+  private agentTurnRevision = 0
+  private pendingAgentTurnFinishes = markRaw(new Map<string, AgentTurnFinished>())
+  private agentTurnFinishReplays = markRaw(new Map<string, Promise<void>>())
 
   sessions: MessageSession[] = []
   historySessions: MessageSessionSummary[] = []
@@ -190,6 +198,7 @@ export class MessageStoreState {
   contextLimitLabel = DEFAULT_CONTEXT_LIMIT_LABEL
   compressionRemainingPercent = DEFAULT_COMPRESSION_REMAINING_PERCENT
   initialized = false
+  activeAgentTurnSnapshot: AgentTurnSnapshot | null = null
   // While true, streaming/agent updates keep the message list pinned to the bottom. Flipped off when
   // the user scrolls up past STICK_TO_BOTTOM_THRESHOLD_PX (see onListScroll), back on when they
   // return near the bottom or send a new message. This is the bool that gates the auto-scroll.
@@ -201,16 +210,29 @@ export class MessageStoreState {
     this.initialized = true
     xpcRenderer.subscribe(MODEL_RETRY_CHANNEL, (payload) => {
       const progress = payload?.params as ModelRetryProgress | undefined
-      const session = this.turnService.activeSession()
-      if (!progress || !session?.turn) return
+      const session = progress ? this.getSession(progress.sessionId) : undefined
+      if (
+        !progress ||
+        !session?.turn ||
+        session.turn.id !== progress.turnId ||
+        session.turn.generation !== progress.generation ||
+        session.turn.aborting
+      ) {
+        return
+      }
       session.turn.retry = progress.recovered
         ? undefined
         : { attempt: progress.attempt, max: progress.max }
+    })
+    xpcRenderer.subscribe(AGENT_TURN_CHANNEL, (payload) => {
+      this.applyAgentTurnUpdate(payload.params as AgentTurnUpdate)
     })
     xpcRenderer.subscribe('coach/workspace-changed', (payload) => {
       const params = payload.params as { sessionId?: string; workspace?: WorkspaceRef | null }
       void this.applyWorkspaceBroadcast(params)
     })
+    const recovery = await coach.getActiveAgentTurn().catch(() => null)
+    if (recovery) this.applyAgentTurnRecovery(recovery)
     await this.refreshDefaultWorkspace()
     await this.refreshHistory()
   }
@@ -220,6 +242,8 @@ export class MessageStoreState {
     session.messages.push(this.welcomeMessage(session))
     this.updateSessionContextUsage(session)
     this.sessions.push(session)
+    this.restoreActiveTurn(session)
+    this.replayTaskSnapshot()
     return session
   }
 
@@ -230,8 +254,65 @@ export class MessageStoreState {
       .sort((a, b) => b.updatedAt - a.updatedAt)[0]
     if (existing) return existing
 
+    const activeSnapshot = this.activeAgentTurnSnapshot
+    if (
+      activeSnapshot &&
+      (!activeSnapshot.operationTabId || activeSnapshot.operationTabId === operationTabId)
+    ) {
+      const active = await this.loadPersistedSession(activeSnapshot.sessionId)
+      if (active?.operationTabId === operationTabId && !active.archivedAt) return active
+      if (!active) return this.createRecoveredTurnSession(activeSnapshot, operationTabId)
+    }
+
+    const missedFinish = [...this.pendingAgentTurnFinishes.values()]
+      .filter(
+        (finished) =>
+          !finished.turn.operationTabId || finished.turn.operationTabId === operationTabId
+      )
+      .sort((a, b) => b.turn.startedAt - a.turn.startedAt)[0]
+    if (missedFinish) {
+      const persisted = await this.loadPersistedSession(missedFinish.turn.sessionId)
+      if (persisted?.operationTabId === operationTabId && !persisted.archivedAt) return persisted
+      if (!persisted) {
+        const recovered = this.createRecoveredTurnSession(missedFinish.turn, operationTabId)
+        await this.replayFinishedAgentTurns(recovered)
+        return recovered
+      }
+    }
+
     const summary = this.historySessions.find((item) => item.operationTabId === operationTabId && !item.archivedAt)
     return summary ? await this.loadPersistedSession(summary.id) : undefined
+  }
+
+  private createRecoveredTurnSession(
+    snapshot: AgentTurnSnapshot,
+    operationTabId: string
+  ): MessageSession {
+    const session = this.createEmptySession({
+      title: snapshot.rootText.trim().split('\n')[0]?.slice(0, 36) || 'Maestro',
+      intent: 'chat',
+      operationTabId
+    })
+    session.id = snapshot.sessionId
+    session.createdAt = snapshot.startedAt
+    session.updatedAt = Date.now()
+    session.messages.push(this.welcomeMessage(session))
+    if (snapshot.state !== 'reserved') {
+      session.messages.push(
+        this.withTokenCount({
+          id: uid(),
+          source: 'cowork',
+          role: 'human',
+          content: snapshot.rootText,
+          streaming: false,
+          ts: snapshot.startedAt
+        })
+      )
+    }
+    this.sessions.push(session)
+    this.restoreTurnFromSnapshot(session, snapshot)
+    this.updateSessionContextUsage(session)
+    return session
   }
 
   async loadPersistedSession(sessionId: string): Promise<MessageSession | undefined> {
@@ -242,12 +323,207 @@ export class MessageStoreState {
     if (!stored) return undefined
     const session = this.fromStoredSession(stored)
     this.sessions.push(session)
+    this.restorePersistedBindings(session)
+    await this.replayFinishedAgentTurns(session)
+    this.restoreActiveTurn(session)
+    this.replayTaskSnapshot()
     await this.refreshWorkspace(session.id)
     return session
   }
 
   getSession(id: string): MessageSession | undefined {
     return this.sessions.find((session) => session.id === id)
+  }
+
+  setActiveAgentTurnSnapshot(snapshot: AgentTurnSnapshot | null, expectedTurnId?: string): void {
+    if (
+      expectedTurnId &&
+      this.activeAgentTurnSnapshot &&
+      this.activeAgentTurnSnapshot.turnId !== expectedTurnId
+    ) {
+      return
+    }
+    this.activeAgentTurnSnapshot = snapshot
+    if (!snapshot) return
+    const session = this.getSession(snapshot.sessionId)
+    if (session) this.restoreActiveTurn(session)
+  }
+
+  private applyAgentTurnUpdate(update: AgentTurnUpdate): void {
+    if (update.finished) this.queueAgentTurnFinish(update.finished)
+    // A getActiveAgentTurn() response can race a newer broadcast. Revisions are Main-monotonic, so
+    // stale snapshots may contribute replayable finishes but must never overwrite current ownership.
+    if (update.revision < this.agentTurnRevision) {
+      this.replayLoadedAgentTurnFinishes()
+      return
+    }
+    this.agentTurnRevision = update.revision
+    this.activeAgentTurnSnapshot = update.turn
+    if (update.turn) {
+      const session = this.getSession(update.turn.sessionId)
+      if (session) this.restoreActiveTurn(session)
+    }
+    this.replayLoadedAgentTurnFinishes()
+  }
+
+  private applyAgentTurnRecovery(recovery: AgentTurnRecoverySnapshot): void {
+    for (const finished of recovery.finished) this.queueAgentTurnFinish(finished)
+    if (recovery.revision >= this.agentTurnRevision) {
+      this.agentTurnRevision = recovery.revision
+      this.activeAgentTurnSnapshot = recovery.turn
+    }
+    this.replayLoadedAgentTurnFinishes()
+  }
+
+  private queueAgentTurnFinish(finished: AgentTurnFinished): void {
+    this.pendingAgentTurnFinishes.set(
+      this.agentTurnKey(finished.turn.sessionId, finished.turn.turnId),
+      finished
+    )
+  }
+
+  private replayLoadedAgentTurnFinishes(): void {
+    for (const session of this.sessions) void this.replayFinishedAgentTurns(session)
+  }
+
+  private replayFinishedAgentTurns(session: MessageSession): Promise<void> {
+    const existing = this.agentTurnFinishReplays.get(session.id)
+    if (existing) return existing
+    const replay = this.runFinishedAgentTurnReplay(session)
+    this.agentTurnFinishReplays.set(session.id, replay)
+    const cleanup = (): void => {
+      if (this.agentTurnFinishReplays.get(session.id) === replay) {
+        this.agentTurnFinishReplays.delete(session.id)
+      }
+    }
+    void replay.then(cleanup, cleanup)
+    return replay
+  }
+
+  private async runFinishedAgentTurnReplay(session: MessageSession): Promise<void> {
+    while (true) {
+      const pending = [...this.pendingAgentTurnFinishes.values()]
+        .filter((finished) => finished.turn.sessionId === session.id)
+        .sort((a, b) => a.turn.startedAt - b.turn.startedAt)
+      if (!pending.length) return
+      const finished = session.turn
+        ? pending.find((candidate) => candidate.turn.turnId === session.turn?.id)
+        : pending[0]
+      // A different active generation owns this session. Its finish broadcast will clear it and
+      // trigger another pass; never replace that live Turn with an older replay.
+      if (!finished) return
+      if (!session.turn) this.restoreTurnFromSnapshot(session, finished.turn)
+      try {
+        await this.turnService.finishFromMain(
+          session,
+          finished.turn.turnId,
+          finished.reply,
+          finished.reason
+        )
+      } catch {
+        // Keep the unacknowledged Main record for the next renderer/session replay.
+        return
+      }
+      if (session.turn?.id === finished.turn.turnId) return
+      this.pendingAgentTurnFinishes.delete(
+        this.agentTurnKey(finished.turn.sessionId, finished.turn.turnId)
+      )
+      await coach
+        .ackAgentTurnFinished({
+          sessionId: finished.turn.sessionId,
+          turnId: finished.turn.turnId
+        })
+        .catch(() => undefined)
+    }
+  }
+
+  private restoreActiveTurn(session: MessageSession): void {
+    const snapshot = this.activeAgentTurnSnapshot
+    if (!snapshot || snapshot.sessionId !== session.id) return
+    if (session.turn?.id === snapshot.turnId) {
+      session.turn.generation = snapshot.generation
+      session.turn.aborting = snapshot.state === 'aborting'
+      return
+    }
+    if (session.turn) return
+    this.restoreTurnFromSnapshot(session, snapshot)
+  }
+
+  private restoreTurnFromSnapshot(session: MessageSession, snapshot: AgentTurnSnapshot): void {
+    const root = session.messages.find(
+      (message) =>
+        message.role === 'human' &&
+        message.type !== 'files' &&
+        message.ts >= snapshot.startedAt - 1_000 &&
+        message.content.trim() === snapshot.rootText
+    )
+    const nextHuman = root
+      ? session.messages.find(
+          (message) =>
+            message.role === 'human' &&
+            message.type !== 'files' &&
+            message.id !== root.id &&
+            message.ts > root.ts
+        )
+      : undefined
+    const segments = session.messages.filter(
+      (message) =>
+        message.role === 'ai' &&
+        (message.type === undefined || message.type === 'text') &&
+        !message.id.startsWith('welcome-') &&
+        message.ts >= snapshot.startedAt &&
+        (!nextHuman || message.ts < nextHuman.ts)
+    )
+    session.turn = {
+      id: snapshot.turnId,
+      generation: snapshot.generation,
+      rootText: snapshot.rootText,
+      rootHumanMessageId: root?.id,
+      phase: segments.some((message) => message.content.trim()) ? 'streaming' : 'accepted',
+      lastAssistantMessageId: segments[segments.length - 1]?.id,
+      sealedAssistantSegments: segments.length,
+      hasStreamedText: segments.some((message) => message.content.trim()),
+      streamCoverageComplete: false,
+      activity: [],
+      thinking: false,
+      startedAt: snapshot.startedAt,
+      lastActivityAt: Date.now(),
+      aborting: snapshot.state === 'aborting'
+    }
+  }
+
+  private agentTurnKey(sessionId: string, turnId: string): string {
+    return `${sessionId}\u0000${turnId}`
+  }
+
+  private restorePersistedBindings(session: MessageSession): void {
+    for (const message of session.messages) {
+      if (message.type === 'task') {
+        for (const task of message.tasks || []) {
+          if (!this.taskBindings.has(task.taskId)) {
+            this.taskBindings.set(task.taskId, { sessionId: session.id, messageId: message.id })
+          }
+        }
+      }
+    }
+    // Persisted unanswered cards remain live until the authoritative task snapshot says otherwise.
+    // Rebuild the dedupe map before replay; if legacy data contains more than one unanswered card,
+    // keep only the newest actionable and close the older duplicate locally.
+    const restored = new Set<string>()
+    for (const message of session.messages.slice().reverse()) {
+      const confirm = message.confirm
+      if (!confirm || confirm.answer) continue
+      if (restored.has(confirm.taskId) || this.confirmMessages.has(confirm.taskId)) {
+        confirm.answer = 'elsewhere'
+        continue
+      }
+      restored.add(confirm.taskId)
+      this.confirmMessages.set(confirm.taskId, confirm.confirmId)
+    }
+  }
+
+  private replayTaskSnapshot(): void {
+    if (this.latestTasks.length) this.applyTaskSnapshot(this.latestTasks, false)
   }
 
   setContextWindow(limitK: number, label: string, compressionRemainingPercent = DEFAULT_COMPRESSION_REMAINING_PERCENT): void {
@@ -395,7 +671,8 @@ export class MessageStoreState {
     this.historySessions = list
   }
 
-  applyTaskSnapshot(tasks: MaestroTask[]): void {
+  applyTaskSnapshot(tasks: MaestroTask[], remember = true): void {
+    if (remember) this.latestTasks = markRaw(tasks.slice())
     for (const task of tasks) {
       const confirmSession =
         (task.sessionId ? this.getSession(task.sessionId) : undefined) ||
@@ -444,6 +721,12 @@ export class MessageStoreState {
     const emitted = this.confirmMessages.get(task.id)
     if (pending) {
       if (emitted === pending.id) return
+      if (emitted) {
+        const previous = session.messages.find(
+          (item) => item.confirm?.taskId === task.id && item.confirm?.confirmId === emitted
+        )
+        if (previous?.confirm && !previous.confirm.answer) previous.confirm.answer = 'elsewhere'
+      }
       const message = this.withTokenCount({
         id: uid(),
         source: 'cowork',
@@ -549,9 +832,18 @@ export class MessageStoreState {
     return session
   }
 
-  async dispatch(session: MessageSession, message: string, currentHumanMessageId?: string, attachedPaths?: string[]): Promise<AgentReply> {
+  async dispatch(
+    session: MessageSession,
+    message: string,
+    currentHumanMessageId: string | undefined,
+    attachedPaths: string[] | undefined,
+    intent: 'root' | 'steering',
+    turnId: string
+  ): Promise<AgentReply> {
     return await coach.sendAgentMessage({
       sessionId: session.id,
+      turnId,
+      intent,
       message,
       context: this.buildAgentContext(session, currentHumanMessageId, attachedPaths)
     })
@@ -564,7 +856,6 @@ export class MessageStoreState {
   finishAssistant(msg: ChatMessage, full: string): void {
     const session = this.sessions.find((item) => item.messages.includes(msg))
     if (session) this.flushStreamBuffer(session.id)
-    if (full && msg.content.trim() !== full.trim()) msg.content = full
     if (!msg.content.trim()) msg.content = full
     msg.thinking = false
     msg.streaming = false
@@ -875,7 +1166,7 @@ export class MessageStoreState {
           error: message.error,
           activity: message.activity,
           tasks: message.tasks,
-          confirm: message.confirm ? { ...message.confirm, answer: message.confirm.answer || 'elsewhere' } : undefined,
+          confirm: message.confirm ? { ...message.confirm } : undefined,
           compressed: message.compressed,
           promptExcluded: message.promptExcluded,
           compactSummary: message.compactSummary,

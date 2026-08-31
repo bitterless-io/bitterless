@@ -125,20 +125,40 @@ const openFile = async (path?: string): Promise<void> => {
 
 // Absolute local links emitted by file tools reveal their target in Finder/Explorer. Network links
 // remain normal Markdown links; the chat renderer must never navigate itself to a local path.
-const LOCAL_PATH = /^(?:file:\/\/)?(?:\/|[A-Za-z]:[\\/])/
+const RAW_LOCAL_PATH = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/
+const localPathFromHref = (href: string): string | null => {
+  if (/^file:/i.test(href)) {
+    try {
+      const parsed = new URL(href)
+      if (parsed.protocol !== 'file:') return null
+      let path = decodeURIComponent(parsed.pathname)
+      if (parsed.hostname && parsed.hostname.toLowerCase() !== 'localhost') {
+        path = `//${parsed.hostname}${path}`
+      } else if (/^\/[A-Za-z]:[\\/]/.test(path)) {
+        // WHATWG file URLs keep a leading slash before a Windows drive letter.
+        path = path.slice(1)
+      }
+      return path || null
+    } catch {
+      return null
+    }
+  }
+  if (!RAW_LOCAL_PATH.test(href)) return null
+  try {
+    return decodeURIComponent(href)
+  } catch {
+    return null
+  }
+}
+
 const onMarkdownClick = (event: MouseEvent): void => {
   const anchor = (event.target as HTMLElement | null)?.closest?.('a')
   if (!anchor) return
   const href = anchor.getAttribute('href') || ''
-  if (!LOCAL_PATH.test(href)) return
+  const path = localPathFromHref(href)
+  if (!path) return
   event.preventDefault()
   event.stopPropagation()
-  let path = href.replace(/^file:\/\//, '')
-  try {
-    path = decodeURIComponent(path)
-  } catch {
-    // Leave malformed percent encoding unchanged; Main still validates the path.
-  }
   void showFileInFolder(path)
 }
 

@@ -364,6 +364,81 @@ export const en = {
       log: 'Log'
     }
   },
+  maestroControl: {
+    chat: {
+      busyTitle: 'Maestro is busy',
+      busyContent: 'Another session is still running. Wait for that turn to finish.',
+      gotIt: 'Got it',
+      messageNotSentTitle: 'Message not sent',
+      messageNotSentContent: 'Maestro could not start this message. Your text has been restored.',
+      archivedConversation: 'Archived conversation',
+      removeAttachment: 'Remove',
+      removeAttachmentNamed: 'Remove {name}',
+      stop: 'Stop',
+      stopping: 'Stopping',
+      send: 'Send',
+      sendIntoTurn: 'Send into this turn',
+      steeringFailed: '⚠ This message was **not** added to the active turn, so the model did not receive it ({detail}). This provider may not support in-turn steering. Send it again after the current turn finishes.',
+      inactivityTimeout: 'Maestro produced no output for {minutes} minutes — I stopped this turn so the chat does not keep spinning (a hung provider looks the same from outside). Check the AI login/provider state and try again.',
+      stopped: 'Stopped.',
+      done: 'Done.',
+      failed: 'Failed.',
+      interruptedReply: '⚠ The following text was written **before the interruption** ({error}). It may be incomplete, and its conclusions do not mean the task actually finished.\n\n{text}',
+      unknownError: 'unknown error'
+    },
+    responseStatus: {
+      retryProgress: 'retried: {attempt}/{max}',
+      waitingDecision: 'Waiting for your decision · {title}',
+      actionPanelBelow: 'Use the action panel below',
+      waitingFor: '{task} · waiting for {target}',
+      stopping: 'Stopping…',
+      thinking: 'Thinking…',
+      responding: 'Responding…',
+      sentWaiting: 'Sent · waiting for a response…',
+      tokens: '{count} tokens',
+      addingToTurn: 'Adding your message to this turn…',
+      addedToTurn: 'Added to this turn · {count}',
+      otherRunningTask: '{count} other running task',
+      otherRunningTasks: '{count} other running tasks',
+      tryAgain: 'Try again',
+      background: 'background'
+    },
+    confirm: {
+      answeredElsewhere: 'This question was answered elsewhere or withdrawn.',
+      answered: 'answered',
+      waitingForYou: 'waiting for you',
+      selected: 'Selected “{label}”',
+      answerInActionPanel: '↓ Answer in the action panel below',
+      waitingDecision: 'Waiting for your decision',
+      moreQueued: '{count} more queued',
+      agentDescription: 'Agent description',
+      field: '{count} field',
+      fields: '{count} fields',
+      unsourcedCount: '{count} unsourced',
+      unknownCount: '{count} unknown',
+      provenance: {
+        grounded: 'grounded',
+        unsourced: 'unsourced',
+        unknown: 'unknown'
+      }
+    },
+    task: {
+      showTaskOutput: 'Show task output',
+      builtIn: 'built-in',
+      waitingDecision: 'Waiting for your decision: {title}',
+      earlierLineDropped: '… {count} earlier line dropped',
+      earlierLinesDropped: '… {count} earlier lines dropped',
+      couldNotShowPath: 'Could not show this path.',
+      showInFolder: 'Show in folder: {path}',
+      status: {
+        failed: 'failed',
+        stalled: 'stalled',
+        pending: 'pending',
+        running: 'running',
+        completed: 'completed'
+      }
+    }
+  },
   maestroSub2Api: {
     addCodexSave: 'Save as account',
     addCodexSaveHint: 'Sign in produces one credential at a time. Save it under a name, then sign in as someone else and save that too — the active one is what the endpoint uses.',

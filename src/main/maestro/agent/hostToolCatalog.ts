@@ -350,7 +350,7 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     risk: 'write',
     summary: 'Unpack an archive into the selected or per-chat default workspace.',
     useWhen: 'The files needed for the task are inside an archive.',
-    safety: 'Source may be OS-gated anywhere; output is confined to the workspace.'
+    safety: 'Source may be OS-gated anywhere; output is staged, link-audited, and installed only into a new or empty workspace folder.'
   },
   {
     name: 'create_archive',

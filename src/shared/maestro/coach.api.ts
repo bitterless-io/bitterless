@@ -80,7 +80,10 @@ export interface CoachXpcContract {
   clearCaptureRecordEdits(): Promise<{ ok: boolean }>
   exportRecording(params: { startedAt: number; records: IngestRecord[]; format?: CaptureExportFormat }): Promise<ExportRecordingResult>
   replayBrowserRequest(params: BrowserRequestReplayRequest): Promise<BrowserRequestReplayResult>
-  sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply>
+  claimAgentTurn(params: AgentTurnClaimRequest): Promise<AgentTurnClaimResult>
+  getActiveAgentTurn(): Promise<AgentTurnRecoverySnapshot>
+  ackAgentTurnFinished(params: { sessionId: string; turnId: string }): Promise<void>
+  sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply>
   compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply>
   // `files` (md only, parsed to text in the renderer) are folded into the trainer turn as
   // reference/source material; they also render as a separate `type:'files'` user bubble.
@@ -92,7 +95,7 @@ export interface CoachXpcContract {
   // Stop the in-flight turn for a chat channel (the Stop button): aborts the live pi session so
   // the pending turn resolves. The agent session is then dropped so aborted output is not carried
   // into later model context.
-  abortAgent(params?: { sessionId?: string }): Promise<void>
+  abortAgent(params: { sessionId: string; turnId: string }): Promise<void>
   abortTrainer(params?: { sessionId?: string }): Promise<void>
   abortDelegate(params?: { sessionId?: string }): Promise<void>
   listTasks(): Promise<MaestroTask[]>
@@ -912,16 +915,23 @@ export interface AgentActivityStep {
   label: string
   ok: boolean
   ts: number
+  sessionId?: string
+  turnId?: string
+  generation?: number
 }
 
 export interface AgentStreamDelta {
   sessionId: string
+  turnId?: string
+  generation?: number
   delta: string
   ts: number
 }
 
 export interface AgentThinkingState {
   sessionId: string
+  turnId?: string
+  generation?: number
   active: boolean
   ts: number
 }
@@ -962,6 +972,40 @@ export interface AgentConversationContext {
   workspace?: WorkspaceRef
 }
 
+export type AgentMessageIntent = 'root' | 'steering'
+
+export interface AgentTurnSnapshot {
+  sessionId: string
+  operationTabId?: string
+  turnId: string
+  generation: number
+  rootText: string
+  startedAt: number
+  state: 'reserved' | 'running' | 'aborting'
+}
+
+export interface AgentTurnClaimRequest {
+  sessionId: string
+  operationTabId?: string
+  turnId: string
+  rootText: string
+  startedAt: number
+}
+
+export interface AgentTurnClaimResult {
+  ok: boolean
+  turn: AgentTurnSnapshot
+  reason?: 'busy-here' | 'busy-elsewhere'
+}
+
+export interface AgentMessageRequest {
+  message: string
+  sessionId: string
+  turnId: string
+  intent: AgentMessageIntent
+  context?: AgentConversationContext
+}
+
 export interface AgentCompactMessage {
   role: 'human' | 'ai'
   content: string
@@ -998,11 +1042,34 @@ export interface AgentReply {
 }
 
 export const MODEL_RETRY_CHANNEL = 'coach/model-retry'
+export const AGENT_TURN_CHANNEL = 'coach/agent-turn'
 
 export interface ModelRetryProgress {
+  sessionId: string
+  turnId: string
+  generation: number
   attempt: number
   max: number
   recovered?: boolean
+}
+
+export interface AgentTurnUpdate {
+  revision: number
+  turn: AgentTurnSnapshot | null
+  finished?: AgentTurnFinished
+}
+
+export interface AgentTurnFinished {
+  turn: AgentTurnSnapshot
+  reason: 'completed' | 'stopped' | 'reservation-expired'
+  reply?: AgentReply
+}
+
+/** Active owner plus unacknowledged finishes, replayable after a renderer reload. */
+export interface AgentTurnRecoverySnapshot {
+  revision: number
+  turn: AgentTurnSnapshot | null
+  finished: AgentTurnFinished[]
 }
 
 export interface WorkspaceRef {

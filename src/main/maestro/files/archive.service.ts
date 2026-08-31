@@ -2,8 +2,11 @@
  * Archive extract/create for the Maestro agent, backed by the bundled `ouch` binary.
  *
  * Passwords are passed only through the child process environment. They must never be appended to
- * argv, which is visible to other local processes. ouch 0.8.2 also ignores passwords while creating
- * archives, so password-protected creation is refused instead of producing misleading plaintext.
+ * argv, which is visible to other local processes. ouch added OUCH_PASSWORD in 0.8.1 and its 0.8.2
+ * release includes the traversal/link-escape fixes from that release:
+ * https://github.com/ouch-org/ouch/blob/0.8.2/CHANGELOG.md
+ * ouch 0.8.2 still ignores passwords while creating archives, so password-protected creation is
+ * refused instead of producing misleading plaintext.
  */
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -111,6 +114,8 @@ const runOuch = async (
     let outTruncated = false
     let errTruncated = false
     let settled = false
+    let timedOut = false
+    let forceKillTimer: NodeJS.Timeout | undefined
 
     const fail = (error: ArchiveError): void => {
       if (settled) return
@@ -118,13 +123,9 @@ const runOuch = async (
       reject(error)
     }
     const timer = setTimeout(() => {
+      timedOut = true
       child.kill()
-      fail(
-        new ArchiveError(
-          `The archive operation took longer than ${TIMEOUT_MS / 1000}s and was stopped.`,
-          'timeout'
-        )
-      )
+      forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 2_000)
     }, TIMEOUT_MS)
 
     child.stdout?.setEncoding('utf8')
@@ -141,12 +142,25 @@ const runOuch = async (
     })
     child.on('error', (error) => {
       clearTimeout(timer)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
       fail(new ArchiveError(`Could not run the archive tool: ${error.message}`, 'unavailable'))
     })
     child.on('close', (code) => {
       clearTimeout(timer)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
       if (settled) return
       settled = true
+      // Wait for process close before rejecting a timeout so the caller cannot remove the staging
+      // directory while ouch is still writing into it.
+      if (timedOut) {
+        reject(
+          new ArchiveError(
+            `The archive operation took longer than ${TIMEOUT_MS / 1000}s and was stopped.`,
+            'timeout'
+          )
+        )
+        return
+      }
       // ouch writes informational messages to stderr, so stderr alone is not a failure signal.
       if (code === 0) {
         const combined = [out.trim(), err.trim()].filter(Boolean).join('\n')

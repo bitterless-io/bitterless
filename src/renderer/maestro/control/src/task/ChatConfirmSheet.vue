@@ -8,6 +8,7 @@ import {
   IconCircleCheck,
   IconHelpCircle
 } from '@tabler/icons-vue'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { messageStore } from '../store/message.store'
 import type { ChatMessage, MessageSession } from '../store/message.type'
 import './ChatConfirmSheet.less'
@@ -30,6 +31,21 @@ const unknown = computed(
   () => card.value?.payload?.fields.filter((field) => field.provenance === 'unknown').length || 0
 )
 const fieldCount = computed(() => card.value?.payload?.fields.length || 0)
+const queuedLabel = computed(() =>
+  i18nHelper.maestroControl.confirm.moreQueued.replace('{count}', String(queued.value))
+)
+const fieldCountLabel = computed(() =>
+  (fieldCount.value === 1
+    ? i18nHelper.maestroControl.confirm.field
+    : i18nHelper.maestroControl.confirm.fields
+  ).replace('{count}', String(fieldCount.value))
+)
+const unsourcedLabel = computed(() =>
+  i18nHelper.maestroControl.confirm.unsourcedCount.replace('{count}', String(unsourced.value))
+)
+const unknownLabel = computed(() =>
+  i18nHelper.maestroControl.confirm.unknownCount.replace('{count}', String(unknown.value))
+)
 
 watch(
   () => card.value?.confirmId,
@@ -44,23 +60,25 @@ const answer = async (confirm: boolean): Promise<void> => {
   if (!message || answering.value) return
   answering.value = true
   const result = await messageStore.answerConfirm(message, confirm)
-  if (!result.ok) Message.warning('This question was answered elsewhere or withdrawn.')
+  if (!result.ok) Message.warning(i18nHelper.maestroControl.confirm.answeredElsewhere)
   answering.value = false
 }
 
-const markers = {
-  grounded: { icon: IconCircleCheck, label: 'grounded' },
-  unsourced: { icon: IconAlertCircle, label: 'unsourced' },
-  unknown: { icon: IconHelpCircle, label: 'unknown' }
+const markerIcons = {
+  grounded: IconCircleCheck,
+  unsourced: IconAlertCircle,
+  unknown: IconHelpCircle
 } as const
+const markerLabel = (provenance: keyof typeof markerIcons): string =>
+  i18nHelper.maestroControl.confirm.provenance[provenance]
 </script>
 
 <template>
   <div v-if="card" name="maestro__chat_confirm_sheet" class="chat-confirm-sheet">
     <div class="chat-confirm-sheet__head">
       <IconAlertTriangle :size="14" stroke="1.9" />
-      <span>Waiting for your decision</span>
-      <span v-if="queued" class="chat-confirm-sheet__queue">{{ queued }} more queued</span>
+      <span>{{ i18nHelper.maestroControl.confirm.waitingDecision }}</span>
+      <span v-if="queued" class="chat-confirm-sheet__queue">{{ queuedLabel }}</span>
     </div>
     <div class="chat-confirm-sheet__title">{{ card.title }}</div>
     <div v-if="card.detail" class="chat-confirm-sheet__detail">{{ card.detail }}</div>
@@ -71,10 +89,12 @@ const markers = {
         <span class="chat-confirm-sheet__payload-copy">
           <span class="chat-confirm-sheet__intent">{{ card.payload.intent || card.payload.summary }}</span>
           <span class="chat-confirm-sheet__risk">
-            <template v-if="card.payload.intent">Agent description · </template>
-            {{ fieldCount }} field{{ fieldCount === 1 ? '' : 's' }}
-            <template v-if="unsourced"> · {{ unsourced }} unsourced</template>
-            <template v-if="unknown"> · {{ unknown }} unknown</template>
+            <template v-if="card.payload.intent">
+              {{ i18nHelper.maestroControl.confirm.agentDescription }} ·
+            </template>
+            {{ fieldCountLabel }}
+            <template v-if="unsourced"> · {{ unsourcedLabel }}</template>
+            <template v-if="unknown"> · {{ unknownLabel }}</template>
           </span>
         </span>
       </button>
@@ -84,8 +104,8 @@ const markers = {
           <span class="chat-confirm-sheet__field-path">{{ field.path }}</span>
           <span class="chat-confirm-sheet__field-value">{{ field.value }}</span>
           <span class="chat-confirm-sheet__field-source" :class="`chat-confirm-sheet__field-source--${field.provenance}`">
-            <component :is="markers[field.provenance].icon" :size="12" stroke="2" />
-            {{ markers[field.provenance].label }}
+            <component :is="markerIcons[field.provenance]" :size="12" stroke="2" />
+            {{ markerLabel(field.provenance) }}
           </span>
           <span v-if="field.source" class="chat-confirm-sheet__field-note" :title="field.source">{{ field.source }}</span>
         </div>
