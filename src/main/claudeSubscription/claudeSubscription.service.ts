@@ -608,7 +608,12 @@ export class ClaudeSubscriptionService {
       });
     }
     try {
-      this.#writeClipboard(buildClaudeSubscriptionCodexProfile(this.#repository.serverPort()));
+      // The catalog file must exist before the snippet references it, otherwise
+      // Codex discards the whole catalog and silently keeps its built-in list.
+      const catalogPath = await this.#repository.writeCodexModelCatalog();
+      this.#writeClipboard(
+        buildClaudeSubscriptionCodexProfile(this.#repository.serverPort(), catalogPath)
+      );
       return parseClaudeSubscriptionCopyResult({ ok: true });
     } catch {
       return parseClaudeSubscriptionCopyResult({

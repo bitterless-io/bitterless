@@ -138,7 +138,10 @@ export const resolveClaudeEffort = (reasoning: unknown): ClaudeEffort => {
   if (effort === 'none' || effort === 'minimal' || effort === 'low') return 'low';
   if (effort === 'medium') return 'medium';
   if (effort === 'high') return 'high';
-  if (effort === 'xhigh' || effort === 'max' || effort === 'ultra') return 'xhigh';
+  if (effort === 'xhigh') return 'xhigh';
+  // `max` is a real CLI level, not a synonym for xhigh — collapsing it silently
+  // capped every request one level below what the caller asked for.
+  if (effort === 'max' || effort === 'ultra') return 'max';
   throw new ClaudeSubscriptionInvalidRequestError('Responses reasoning effort is unsupported.');
 };
 

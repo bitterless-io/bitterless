@@ -15,10 +15,67 @@ export const CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT =
  * A hard-coded snippet silently pointed Codex at the wrong port once the port
  * became configurable.
  */
-export const buildClaudeSubscriptionCodexProfile = (port: number): string =>
+/**
+ * Mirrors `claude --effort` exactly: low, medium, high, xhigh, max. Declaring a
+ * level the CLI does not accept would put a broken option in Codex's picker.
+ */
+export const CLAUDE_SUBSCRIPTION_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+const CODEX_EFFORT_DESCRIPTIONS: Record<string, string> = {
+  low: 'Fastest, least reasoning',
+  medium: 'Balanced',
+  high: 'More reasoning',
+  xhigh: 'Very high reasoning',
+  max: 'Maximum reasoning'
+};
+
+/**
+ * Codex populates its model picker from `model_catalog_json`, not from the
+ * provider's `/v1/models` — a provider block alone leaves the built-in OpenAI list
+ * in place (verified against `codex debug models`). Publishing a catalog is
+ * therefore the only way to let Codex choose the model and effort itself.
+ *
+ * The field set is the intersection that both codex-cli 0.137 and the desktop's
+ * bundled 0.149 accept: 0.137 rejects an entry missing
+ * `supports_reasoning_summaries` or `supports_parallel_tool_calls`, which 0.149
+ * tolerates. A single missing field silently discards the whole catalog.
+ */
+export const buildClaudeSubscriptionCodexModelCatalog = (): {
+  models: Array<Record<string, unknown>>;
+} => ({
+  models: Object.keys(CLAUDE_SUBSCRIPTION_MODELS).map((slug, index) => ({
+    slug,
+    display_name: `${CLAUDE_SUBSCRIPTION_MODEL_LABELS[slug] ?? slug} (Bitterless)`,
+    description: 'Claude through the Bitterless local subscription pool',
+    shell_type: 'default',
+    visibility: 'list',
+    supported_in_api: true,
+    supported_reasoning_levels: CLAUDE_SUBSCRIPTION_EFFORTS.map((effort) => ({
+      effort,
+      description: CODEX_EFFORT_DESCRIPTIONS[effort] ?? effort
+    })),
+    supports_reasoning_summaries: true,
+    supports_parallel_tool_calls: true,
+    priority: index,
+    support_verbosity: true,
+    truncation_policy: { mode: 'tokens', limit: 200000 },
+    experimental_supported_tools: [],
+    base_instructions: 'You are a coding agent.'
+  }))
+});
+
+/**
+ * Built from the live port so a copied snippet always matches the running server.
+ *
+ * `model_catalog_json` is emitted **before any table header**: TOML would otherwise
+ * scope it into `[model_providers.bitterless_claude]`, where it is silently ignored
+ * as an unknown provider field and the picker keeps showing the OpenAI models.
+ */
+export const buildClaudeSubscriptionCodexProfile = (port: number, catalogPath?: string): string =>
   `model = "claude-sonnet"
 model_provider = "bitterless_claude"
-
+${catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}
+` : ''}
 [model_providers.bitterless_claude]
 name = "Bitterless Claude Subscription"
 base_url = "http://${CLAUDE_SUBSCRIPTION_HOST}:${port}/v1"
@@ -35,9 +92,15 @@ export const CLAUDE_SUBSCRIPTION_MODELS = {
   'claude-haiku': 'haiku'
 } as const;
 
+export const CLAUDE_SUBSCRIPTION_MODEL_LABELS: Record<string, string> = {
+  'claude-sonnet': 'Claude Sonnet',
+  'claude-opus': 'Claude Opus',
+  'claude-haiku': 'Claude Haiku'
+};
+
 export type ClaudeSubscriptionModel = keyof typeof CLAUDE_SUBSCRIPTION_MODELS;
 export type ClaudeCliModel = (typeof CLAUDE_SUBSCRIPTION_MODELS)[ClaudeSubscriptionModel];
-export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh';
+export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ClaudeAccountId = string;
 export type ClaudeSubscriptionType = 'pro' | 'max' | 'team' | 'enterprise';
 

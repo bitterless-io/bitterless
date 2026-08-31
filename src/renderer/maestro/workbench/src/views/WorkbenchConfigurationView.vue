@@ -391,18 +391,23 @@ onBeforeUnmount(() => {
           <span :class="{ 'workbench-configuration__local-model__dot--ready': localReady }" class="workbench-configuration__local-model__dot" />
           {{ localReady ? copy.routeReady : copy.routeUnavailable }}
         </div>
-        <label>
+        <!--
+          Deliberately a div, not a label: a <label> re-dispatches its click to the
+          control it labels, so Arco's Select opened and immediately closed again on
+          every click. The <span> is a caption, not a form label.
+        -->
+        <div name="configuration__local-model__model" class="workbench-configuration__local-model__field">
           <span>{{ copy.model }}</span>
           <Select :model-value="localModelValue" size="small" :disabled="workbench.llmSaving" @change="(value) => setLocalModel(String(value))">
             <Option v-for="model in localModels" :key="model.model" :value="model.model">{{ model.label }}</Option>
           </Select>
-        </label>
-        <label>
+        </div>
+        <div name="configuration__local-model__effort" class="workbench-configuration__local-model__field">
           <span>{{ copy.effort }}</span>
           <Select :model-value="localEffortValue" size="small" :disabled="workbench.llmSaving" @change="setLocalEffort">
             <Option v-for="effort in localEfforts" :key="effort.id" :value="effort.id">{{ effort.label }}</Option>
           </Select>
-        </label>
+        </div>
         <Button type="primary" long :loading="claude.actionKey === 'copy-profile'" @click="copyProfile">
           <template #icon><IconClipboard :size="15" /></template>
           {{ copy.copyCodexProfile }}

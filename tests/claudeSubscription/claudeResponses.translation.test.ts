@@ -177,8 +177,10 @@ test('maps every Codex reasoning effort per request and rejects malformed values
     ['medium', 'medium'],
     ['high', 'high'],
     ['xhigh', 'xhigh'],
-    ['max', 'xhigh'],
-    ['ultra', 'xhigh']
+    // `max` is its own CLI level (claude --effort accepts low|medium|high|xhigh|max);
+    // mapping it down to xhigh silently served every max request one level weaker.
+    ['max', 'max'],
+    ['ultra', 'max']
   ] as const;
   for (const [codex, claude] of mappings) {
     assert.equal(resolveClaudeEffort({ effort: codex }), claude);

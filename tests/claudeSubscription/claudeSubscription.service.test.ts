@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -425,7 +425,48 @@ test('stop fences every action, awaits a deferred logout/removal, and start reop
     assert.equal((await fixture.service.testAccount({ accountId: second.id })).ok, true);
     assert.equal(fixture.executor.calls.length, 1);
     assert.deepEqual(await fixture.service.copyCodexProfile(), { ok: true });
-    assert.deepEqual(fixture.clipboardWrites, [buildClaudeSubscriptionCodexProfile(CLAUDE_SUBSCRIPTION_DEFAULT_PORT)]);
+    // Codex reads its model list from `model_catalog_json`, never from the
+    // provider's /v1/models, so the copied snippet has to carry a path to a
+    // catalog that exists. The key must also precede the first table header, or
+    // TOML scopes it into the provider block and Codex ignores it.
+    const copied = String(fixture.clipboardWrites[0] ?? '');
+    assert.ok(
+      copied.indexOf('model_catalog_json') < copied.indexOf('[model_providers.'),
+      'model_catalog_json must appear before any table header'
+    );
+    const catalogMatch = /^model_catalog_json = "(.+)"$/mu.exec(copied);
+    assert.ok(catalogMatch, 'the snippet must reference a catalog file');
+    const catalogPath = catalogMatch[1]!;
+    assert.equal(
+      copied,
+      buildClaudeSubscriptionCodexProfile(CLAUDE_SUBSCRIPTION_DEFAULT_PORT, catalogPath)
+    );
+
+    const catalog = JSON.parse(await readFile(catalogPath, 'utf8')) as {
+      models: Array<{ slug: string; supported_reasoning_levels: Array<{ effort: string }> }>;
+    };
+    assert.deepEqual(
+      catalog.models.map((model) => model.slug).sort(),
+      ['claude-haiku', 'claude-opus', 'claude-sonnet'],
+      'every pool model is offered to Codex, not just the pinned one'
+    );
+    for (const model of catalog.models) {
+      assert.deepEqual(
+        model.supported_reasoning_levels.map((level) => level.effort),
+        ['low', 'medium', 'high', 'xhigh', 'max'],
+        `${model.slug} must let Codex pick the effort`
+      );
+      // 0.137 rejects an entry missing either of these; 0.149 tolerates it. A
+      // single missing field discards the entire catalog.
+      for (const required of [
+        'supports_reasoning_summaries',
+        'supports_parallel_tool_calls',
+        'visibility',
+        'truncation_policy'
+      ]) {
+        assert.ok(required in model, `${model.slug} is missing ${required}`);
+      }
+    }
   } finally {
     logoutGate.resolve();
     await cleanup(fixture);

@@ -161,7 +161,7 @@ test('round-trips flat and namespace function fixtures through HTTP SSE', async 
       const [tool] = execution.payload.available_tools;
       assert.ok(tool);
       observed.push({ decisionName: tool.decision_name, effort: execution.effort });
-      assert.equal(execution.effort, tool.namespace === 'browser' ? 'xhigh' : 'high');
+      assert.equal(execution.effort, tool.namespace === 'browser' ? 'max' : 'high');
       return {
         decision: {
           action: 'tool_call',
@@ -187,7 +187,7 @@ test('round-trips flat and namespace function fixtures through HTTP SSE', async 
         body: await readClaudeFixture<Record<string, unknown>>('codex-namespace-request.json'),
         decisionName: 'namespace:browser:open',
         name: 'open',
-        effort: 'xhigh',
+        effort: 'max',
         namespace: 'browser'
       }
     ] as const;

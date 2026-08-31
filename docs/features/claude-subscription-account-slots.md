@@ -89,6 +89,39 @@ tearing down a listener that may be mid-request. Two consequences follow, and bo
   rather than being a constant. A hard-coded snippet would quietly point Codex at the wrong port.
 - `localClaudeProvider` builds its base URL per call instead of exporting a frozen constant.
 
+## Letting Codex choose the model and effort
+
+Codex does **not** read the provider's `/v1/models`; its picker is populated from
+`model_catalog_json` in `~/.codex/config.toml` (verified against `codex debug models`: a provider
+block alone leaves the built-in OpenAI list in place). Pinning one model in Bitterless was therefore
+not a design choice so much as the absence of a catalog.
+
+`copyCodexProfile` now writes `<userData>/claude-subscription/codex-model-catalog.json` and
+references it from the copied snippet, so Codex offers all three models and every effort:
+
+| | |
+|---|---|
+| Models | `claude-sonnet` · `claude-opus` · `claude-haiku` |
+| Efforts | `low` · `medium` · `high` · `xhigh` · `max` |
+
+Two constraints are encoded rather than discovered again later:
+
+- `model_catalog_json` is emitted **before any table header**. TOML would otherwise scope it into
+  `[model_providers.bitterless_claude]`, where it is ignored as an unknown provider field and the
+  picker silently keeps the OpenAI models.
+- Each entry carries `supports_reasoning_summaries` and `supports_parallel_tool_calls`. codex-cli
+  0.137 rejects an entry without them while the desktop's bundled 0.149 tolerates it, and a single
+  missing field discards the **entire** catalog.
+
+### `max` is a real level, not a synonym
+
+`claude --effort` accepts `low|medium|high|xhigh|max` (verified 2026-08-31). The translator
+previously folded `max` and `ultra` into `xhigh`, so every request asking for the top level was
+served one level weaker without any indication. `max` now maps to `max`.
+
+`--model opus` resolves to **Opus 5** (`modelUsage` reports `claude-opus-5`), and `--effort max` is
+accepted — both confirmed against the live CLI on `~/.claude2`.
+
 ## End-to-end verification
 
 Run 2026-08-28 against the production classes — repository, router, `ClaudeCliExecutor`,
