@@ -158,3 +158,85 @@ test('a watch reload revision rejects old counts and accepts only the newly read
   assert.equal(gate.acceptReady('watch-revision'), true);
   assert.equal(gate.canAcceptCount(9), true);
 });
+
+test('a deleted selection is inherited by the next, previous, ancestor, then root row', () => {
+  const index = {
+    workspaceId: 'workspace-deleted-selection',
+    truncated: false,
+    limit: 5,
+    entries: [
+      entry({
+        relativePath: 'README.md',
+        parentRelativePath: '',
+        name: 'README.md',
+        nodeKind: 'file'
+      }),
+      entry({ relativePath: 'docs', parentRelativePath: '', name: 'docs', nodeKind: 'directory' }),
+      entry({
+        relativePath: 'docs/a.md',
+        parentRelativePath: 'docs',
+        name: 'a.md',
+        nodeKind: 'file'
+      }),
+      entry({
+        relativePath: 'docs/b.md',
+        parentRelativePath: 'docs',
+        name: 'b.md',
+        nodeKind: 'file'
+      }),
+      entry({ relativePath: 'src', parentRelativePath: '', name: 'src', nodeKind: 'directory' })
+    ]
+  };
+  const rows = tree.buildOnlyPreviewRootedTreeRows(index, 'bitterless', new Set(['', 'docs']));
+  assert.deepEqual(
+    rows.map((row) => row.entry.relativePath),
+    ['', 'README.md', 'docs', 'docs/a.md', 'docs/b.md', 'src']
+  );
+  const survivorsWithout = (...removed) => {
+    const gone = new Set(removed);
+    const paths = new Set(
+      index.entries
+        .map(({ relativePath }) => relativePath)
+        .filter(
+          (relativePath) =>
+            ![...gone].some(
+              (path) => relativePath === path || relativePath.startsWith(`${path}/`)
+            )
+        )
+    );
+    return (candidate) => paths.has(candidate);
+  };
+
+  assert.equal(
+    tree.resolveOnlyPreviewDeletedSelection(rows, 'docs/a.md', survivorsWithout('docs/a.md')),
+    'docs/b.md'
+  );
+  assert.equal(
+    tree.resolveOnlyPreviewDeletedSelection(rows, 'docs/b.md', survivorsWithout('docs/b.md')),
+    'src'
+  );
+  assert.equal(
+    tree.resolveOnlyPreviewDeletedSelection(rows, 'docs', survivorsWithout('docs')),
+    'src'
+  );
+  assert.equal(
+    tree.resolveOnlyPreviewDeletedSelection(rows, 'src', survivorsWithout('src')),
+    'docs/b.md'
+  );
+  assert.equal(
+    tree.resolveOnlyPreviewDeletedSelection(
+      rows,
+      'docs/b.md',
+      survivorsWithout('README.md', 'docs/b.md', 'src')
+    ),
+    'docs/a.md'
+  );
+  assert.equal(
+    tree.resolveOnlyPreviewDeletedSelection(
+      rows,
+      'docs/b.md',
+      survivorsWithout('README.md', 'docs', 'src')
+    ),
+    ''
+  );
+});

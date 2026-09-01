@@ -569,12 +569,28 @@ reconcile. Manual refresh uses the same path; it does not reintroduce a Main dir
 
 The committed trailing update also publishes a bounded host/workspace/relative-path/watch-revision
 signal through the private capability-bound XPC event channel. Main validates the event, binds it to
-the attached host, and routes a matching selected-file change through the Main Preview Region. The
-Region advances its selection revision, revokes the old surface authority and streams, then
-reclassifies and mounts only the newly selected revision. Delete/rename renders the typed missing
-state; a later recreation carries a newer revision and reloads. Full reconcile and manual refresh
-use the same selection-safe transition. Main still performs no file watch, search traversal, index
-query, or Preview polling; it only owns the selected-file presentation transition.
+the attached host, and routes a matching selected-file change through the Main Preview Region. A
+commit that does not reach the selected path is ignored, and a commit that does — including every
+`full` commit, which carries no paths — first reads the selected item's current Project authority
+metadata once. The Region rebuilds only when that item is missing, is no longer a regular file, or
+its `size`/`modifiedAt` left the presented descriptor; an unchanged selected file keeps its mounted
+surface, selection revision, and find state. When it does rebuild, the Region advances its selection
+revision, revokes the old surface authority and streams, then reclassifies and mounts only the newly
+selected revision. Delete/rename renders the typed missing state; a later recreation carries a newer
+revision and reloads. Full reconcile and manual refresh use the same selection-safe transition. Main
+still performs no file watch, search traversal, index build, query, or Preview polling; it only owns
+the selected-file presentation transition.
+
+A reconcile never invalidates the Project tree. Browse directory tokens are per-path capabilities:
+a search-policy change re-derives each issued capability's `ancestorBlocked` in place instead of
+rotating tokens, so a full rebuild or a manual refresh republishes the root **and every directory
+already listed for that workspace**, parents before children, under the tokens the Shell already
+holds. The Shell replaces those directories' entries in place, so any file or index change leaves
+the tree's selection, expanded directories, and scroll position exactly where they were. The one
+tree movement a change may cause is deletion of the selected item: the Shell hands the selection to
+the next surviving visible row that is not a descendant of the deleted path, otherwise the previous
+such row, otherwise the closest surviving ancestor, otherwise the workspace root, and centres that
+row without taking keyboard focus.
 
 ### Product Overmind acceptance evidence
 
@@ -928,7 +944,10 @@ The Guide intentionally has one short surface only:
 
 - eyebrow `LOCAL MCP`;
 - title `Copy the skill to your agent`;
-- the existing test-instance warning when the current server is not `bitterless`;
+- the existing test-instance warning when the current server is not `bitterless`; the exact Preview
+  alias `bitterless-preview` replaces its generic warning copy with one localized sentence that
+  names the current MCP mount and complete bundled skill directory, then explains that copying a
+  later Production Guide overwrites the same-named skill and uses production `bitterless`;
 - one `Complete setup instructions` copy card with `Copy these instructions to your agent. They
 include the skill and MCP setup.`
 
@@ -938,7 +957,8 @@ ensures the current MCP helper, derives its server/config, resolves the fixed de
 directory, and verifies every required skill file is a readable regular non-symlink file. The Guide
 renderer receives only the server name, expected skill version, and one complete English
 instruction. That text contains the current MCP config, complete skill directory, Codex/Claude
-install destinations, production-versus-DEBUG warning, and new-session guidance. Clipboard access
+install destinations, production-versus-DEBUG warning, later-edition supersession guidance, and
+new-session guidance. Clipboard access
 occurs only after the user clicks the copy card; success/failure/restart-required feedback is
 localized. The Guide's renderer-side XPC client is an exact
 `Pick<OnlyPreviewApi, 'getAgentSkillGuideInfo'>`; the separate Home launch endpoint is not reachable
@@ -1293,8 +1313,13 @@ format, large-directory resource, locator, and file-association verification in 
   remains explicitly previewable and filename-searchable where its scope permits, but its body is
   title-only and never enters the content index.
 - **Selected file changed:** after the final 400ms-trailing committed watch revision, automatically
-  rerender that file if it is still selected; stale reads and prior selections/workspaces cannot
-  install, and delete/recreate progresses through typed missing then the newer content.
+  rerender that file if it is still selected *and* its own authority `size`/`modifiedAt` moved;
+  stale reads and prior selections/workspaces cannot install, and delete/recreate progresses through
+  typed missing then the newer content. A commit that leaves the selected file untouched — including
+  a full reconcile triggered by an unrelated delete, rename, or temp-file save — never rebuilds it.
+- **Selected item deleted:** the Preview stops rendering the removed content and reports its typed
+  missing state, while the Project tree moves its selection to the row that took the deleted row's
+  place and centres it; expansion and every other row stay untouched.
 - **Unavailable recent directory:** a missing, invalid, non-directory, or unreadable stored
   candidate is CAS-cleared to `null` and returns the empty state without exposing its path.
 - **SQLite unavailable:** recent-directory restore returns `null`; explicit folder and OS file

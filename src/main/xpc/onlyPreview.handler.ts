@@ -82,6 +82,9 @@ const runOperation = async <T>(
   }
 };
 
+const readBroker = (): ReturnType<typeof onlyPreviewPreviewRegionService.getReadBroker> =>
+  onlyPreviewPreviewRegionService.getReadBroker();
+
 const broadcastWorkspace = (hostId: string): void => {
   xpcMain.broadcast(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, { hostId });
 };
@@ -271,87 +274,75 @@ class OnlyPreviewHandler
 
   async openCurrentOfficeRead(request: OnlyPreviewOfficeReadBrokerRequest) {
     return await runOperation('openCurrentOfficeRead', async () => {
-      return await onlyPreviewPreviewRegionService
-        .getReadBroker()
-        .openCurrentOfficeRead(
-          request.hostToken,
-          request.brokerCapability,
-          request.previewRuntimeToken,
-          request.selectionRevision
-        );
+      return await readBroker().openCurrentOfficeRead(
+        request.hostToken,
+        request.brokerCapability,
+        request.previewRuntimeToken,
+        request.selectionRevision
+      );
     });
   }
 
   async readCurrentOfficeChunk(request: OnlyPreviewOfficeReadChunkBrokerRequest) {
     return await runOperation('readCurrentOfficeChunk', async () => {
-      return await onlyPreviewPreviewRegionService
-        .getReadBroker()
-        .readCurrentOfficeChunk(
-          request.hostToken,
-          request.brokerCapability,
-          request.previewRuntimeToken,
-          request.selectionRevision,
-          request.grantId,
-          request.offset
-        );
+      return await readBroker().readCurrentOfficeChunk(
+        request.hostToken,
+        request.brokerCapability,
+        request.previewRuntimeToken,
+        request.selectionRevision,
+        request.grantId,
+        request.offset
+      );
     });
   }
 
   async cancelCurrentOfficeRead(request: OnlyPreviewOfficeReadCancelBrokerRequest) {
     return await runOperation('cancelCurrentOfficeRead', async () => {
-      await onlyPreviewPreviewRegionService
-        .getReadBroker()
-        .cancelCurrentOfficeRead(
-          request.hostToken,
-          request.brokerCapability,
-          request.previewRuntimeToken,
-          request.selectionRevision,
-          request.grantId
-        );
+      await readBroker().cancelCurrentOfficeRead(
+        request.hostToken,
+        request.brokerCapability,
+        request.previewRuntimeToken,
+        request.selectionRevision,
+        request.grantId
+      );
     });
   }
 
   async openCurrentPreviewText(request: OnlyPreviewPreviewTextBrokerRequest) {
     return await runOperation('openCurrentPreviewText', async () => {
-      return await onlyPreviewPreviewRegionService
-        .getReadBroker()
-        .openCurrentPreviewText(
-          request.hostToken,
-          request.brokerCapability,
-          request.previewRuntimeToken,
-          request.selectionRevision
-        );
+      return await readBroker().openCurrentPreviewText(
+        request.hostToken,
+        request.brokerCapability,
+        request.previewRuntimeToken,
+        request.selectionRevision
+      );
     });
   }
 
   async readCurrentPreviewTextChunk(request: OnlyPreviewPreviewTextChunkBrokerRequest) {
     return await runOperation('readCurrentPreviewTextChunk', async () => {
-      return await onlyPreviewPreviewRegionService
-        .getReadBroker()
-        .readCurrentPreviewTextChunk(
-          request.hostToken,
-          request.brokerCapability,
-          request.previewRuntimeToken,
-          request.selectionRevision,
-          request.grantId,
-          request.sessionId,
-          request.offset
-        );
+      return await readBroker().readCurrentPreviewTextChunk(
+        request.hostToken,
+        request.brokerCapability,
+        request.previewRuntimeToken,
+        request.selectionRevision,
+        request.grantId,
+        request.sessionId,
+        request.offset
+      );
     });
   }
 
   async cancelCurrentPreviewText(request: OnlyPreviewPreviewTextCancelBrokerRequest) {
     return await runOperation('cancelCurrentPreviewText', async () => {
-      await onlyPreviewPreviewRegionService
-        .getReadBroker()
-        .cancelCurrentPreviewText(
-          request.hostToken,
-          request.brokerCapability,
-          request.previewRuntimeToken,
-          request.selectionRevision,
-          request.grantId,
-          request.sessionId
-        );
+      await readBroker().cancelCurrentPreviewText(
+        request.hostToken,
+        request.brokerCapability,
+        request.previewRuntimeToken,
+        request.selectionRevision,
+        request.grantId,
+        request.sessionId
+      );
     });
   }
 

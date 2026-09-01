@@ -178,7 +178,7 @@ test('Preview uses production APIs with isolated package, data, builder, and ins
   assert.match(before, /pkg\.name = `\$\{baseName\}_PREVIEW`/);
   assert.match(before, /`\$\{baseName\} Preview`/);
   assert.match(before, /io\.bitterless\.desktop\.preview/);
-  assert.match(before, /isPreview \? 'dist\/preview' : 'dist'/);
+  assert.match(before, /isPreview \? 'dist\/preview' : \(isDev \? 'dist\/dev' : 'dist'\)/);
   assert.match(before, /isPreview \? 'icon-preview' : 'icon'/);
   assert.match(before, /Preview does not own the Stable OnlyPreview shell registration/);
   assert.match(before, /Preview must not remove the Stable OnlyPreview shell registration/);
@@ -217,6 +217,79 @@ test('Preview uses production APIs with isolated package, data, builder, and ins
         appMain.indexOf('const startCoreSqliteRenderer'),
     'setAppUserModelId must run through the first-import bootstrap before startCoreSqliteRenderer'
   );
+});
+
+test('before.js isolates Development release output from Stable artifacts', () => {
+  const definitions = runtimeProfileConfig.readProfileDefinitions(projectRoot);
+  const tempRoot = mkdtempSync(join(tmpdir(), 'bitterless-dev-before-'));
+  try {
+    for (const directory of ['build', 'scripts', 'scripts/environment']) {
+      mkdirSync(join(tempRoot, directory), { recursive: true });
+    }
+    for (const relativePath of [
+      'env.rig.json5',
+      'electron-builder.tmp.yml',
+      'scripts/before.js',
+      'scripts/environment/runtimeProfile.config.cjs',
+      'build/installer.tmp.nsh'
+    ]) {
+      writeFileSync(join(tempRoot, relativePath), source(relativePath));
+    }
+    writeFileSync(
+      join(tempRoot, 'package.json'),
+      `${JSON.stringify(
+        {
+          _name: 'Bitterless',
+          _version: '0.0.83',
+          name: 'Bitterless',
+          version: '0.0.83',
+          version_code: '260901131822'
+        },
+        null,
+        2
+      )}\n`
+    );
+    writeFileSync(
+      join(tempRoot, '.env.rig'),
+      [
+        'MODE = release_dev',
+        'VITE_ENV = dev',
+        'VITE_MODE = release',
+        'VITE_RELEASE_CHANNEL = dev',
+        'VITE_MAIN_TITLE = BitterLess DEV',
+        `VITE_BITTERLESS_CORE_URL = ${definitions.release_dev.VITE_BITTERLESS_CORE_URL}`,
+        ''
+      ].join('\n')
+    );
+    const result = spawnSync(process.execPath, ['scripts/before.js'], {
+      cwd: tempRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        NODE_PATH: join(projectRoot, 'node_modules'),
+        VITE_ENV: 'dev',
+        VITE_MODE: 'release',
+        VITE_RELEASE_CHANNEL: 'dev'
+      }
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const pkg = JSON.parse(readFileSync(join(tempRoot, 'package.json'), 'utf8'));
+    assert.equal(pkg.name, 'Bitterless_DEV');
+    const builder = readFileSync(join(tempRoot, 'electron-builder.yml'), 'utf8');
+    assert.match(builder, /^appId: io\.bitterless\.desktop_dev$/m);
+    assert.match(builder, /^productName: Bitterless_DEV$/m);
+    assert.match(builder, /^  output: dist\/dev$/m);
+    assert.match(builder, /^  executableName: Bitterless_DEV$/m);
+    const versionInfo = JSON.parse(
+      readFileSync(join(tempRoot, 'dist', 'dev', 'version_info.json'), 'utf8')
+    );
+    assert.equal(versionInfo.channel, 'dev');
+    assert.equal(versionInfo.version, '0.0.83');
+    assert.equal(versionInfo.versionCode, '260901131822');
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test('before.js generates an exact Preview package without touching Stable shell integration', () => {

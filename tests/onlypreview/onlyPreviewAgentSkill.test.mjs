@@ -220,6 +220,8 @@ test('Guide info exposes three fields and one complete English production or DEB
   assert.match(production.instruction, /~\/\.codex\/skills\/bitterless-preview/);
   assert.match(production.instruction, /~\/\.claude\/skills\/bitterless-preview/);
   assert.match(production.instruction, /start a new agent session/i);
+  assert.match(production.instruction, /copy that edition's current Guide again/i);
+  assert.match(production.instruction, /overwrites same-named skill files/i);
   assert.match(production.instruction, /production Bitterless instance/);
   assert.doesNotMatch(production.instruction, /[\u3400-\u9fff]/);
 
@@ -310,6 +312,19 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
     (guideApp.match(/class="onlypreview-guide__copy-card"/g) ?? []).length,
     1
   );
+  assert.match(
+    guideApp,
+    /serverName === 'bitterless-preview'[\s\S]*previewChannelMountGuide[\s\S]*testInstanceWarning/
+  );
+  const guideI18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
+  assert.match(
+    guideI18n,
+    /Preview channel:[\s\S]*bitterless-preview[\s\S]*installing Production[\s\S]*production bitterless/
+  );
+  assert.match(
+    guideI18n,
+    /Preview 渠道：[\s\S]*bitterless-preview[\s\S]*后续安装正式版[\s\S]*生产 bitterless/
+  );
   assert.match(guideApp, /Complete setup instructions|onlyPreviewI18n\.guide\.completeSetup/);
   assert.doesNotMatch(guideApp, /a-modal|summary|Detailed instructions|helper path|configJson|skillPath|badge|acknowledge/i);
   assert.equal((guideStore.match(/navigator\.clipboard\.writeText/g) ?? []).length, 1);
@@ -329,7 +344,7 @@ test('Guide is included in renderer, logging, i18n, and complete resource invent
   const vite = source('electron.vite.config.ts');
   assert.match(
     vite,
-    /for \(const mode of \['shell', 'preview', 'settings', 'guide'\]\)/
+    /for \(const mode of \['shell', 'preview', 'globalSearch', 'settings', 'guide'\]\)/
   );
   assert.match(vite, /'onlypreview\/guide': resolve\('src\/renderer\/onlypreview\/guide\/index\.html'\)/);
   assert.match(

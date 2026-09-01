@@ -25,6 +25,7 @@ const {
   assertLocalReleaseMatchesDist,
   artifactNameMatchesVersion,
   createVersionInfoForUpload,
+  releaseChannelConfigs,
   validateUpdaterArtifacts,
 } = require('../release/releaseChannel.cjs')
 const {
@@ -94,13 +95,29 @@ test('Preview publish aliases build and publish current local source without Git
   }
 })
 
+test('Stable publish aliases rebuild the selected production artifact before upload', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const expected = {
+    'publish:mac_arm': 'mac_arm',
+    'publish:mac_intel': 'mac_intel',
+    'publish:win': 'win64',
+  }
+  for (const [script, platform] of Object.entries(expected)) {
+    assert.equal(
+      pkg.scripts[script],
+      `node scripts/publish.js --env prod --platform ${platform} --build`,
+    )
+  }
+})
+
 test('fast mac ARM publish uses local source and locked dependencies before patch, build, and publish', () => {
   const pkg = JSON.parse(read('package.json'))
   assert.equal(
     pkg.scripts['fast_publish:mac_arm'],
-    'yarn install --frozen-lockfile && node scripts/patch.js && node scripts/publish.js --env prod --platform mac_arm --preflight-only && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm',
+    'yarn install --frozen-lockfile && node scripts/patch.js && DEBUG=electron-osx-sign yarn publish:mac_arm',
   )
   assert.doesNotMatch(pkg.scripts['fast_publish:mac_arm'], /git_pull\.js/)
+  assert.match(pkg.scripts['publish:mac_arm'], /--env prod --platform mac_arm --build$/)
 })
 
 test('desktop runtime pins Electron 40 and SQLite 12.11 without the Electron 43 ABI override', () => {
@@ -229,6 +246,26 @@ test('publisher requires package and dist to describe the exact same release', (
       'preview',
     ),
     /expected channel preview/,
+  )
+})
+
+test('local release artifacts use distinct Stable, Development, and Preview directories', () => {
+  const projectRoot = join(import.meta.dirname, '..', '..')
+  assert.equal(releaseChannelConfigs.prod.distDir, join(projectRoot, 'dist'))
+  assert.equal(releaseChannelConfigs.dev.distDir, join(projectRoot, 'dist', 'dev'))
+  assert.equal(releaseChannelConfigs.preview.distDir, join(projectRoot, 'dist', 'preview'))
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(releaseChannelConfigs).map(([channel, config]) => [
+        channel,
+        config.outputDirectory,
+      ]),
+    ),
+    {
+      dev: 'dist/dev',
+      preview: 'dist/preview',
+      prod: 'dist',
+    },
   )
 })
 

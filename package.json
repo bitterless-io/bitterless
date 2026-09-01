@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.83",
+  "_version": "0.0.84",
   "anydoc_version": "0.2.4",
   "bun_version": "1.3.14",
   "fd_version": "10.5.0",
@@ -146,9 +146,9 @@
     "notarize:file": "node scripts/notarize.js --file",
     "notarize:mac_arm": "node scripts/notarize.js --dist dist/mac-arm64",
     "notarize:mac_x64": "node scripts/notarize.js --dist dist/mac",
-    "publish:mac_arm": "node scripts/publish.js --env prod --platform mac_arm",
-    "publish:mac_intel": "node scripts/publish.js --env prod --platform mac_intel",
-    "publish:win": "node scripts/publish.js --env prod --platform win64",
+    "publish:mac_arm": "node scripts/publish.js --env prod --platform mac_arm --build",
+    "publish:mac_intel": "node scripts/publish.js --env prod --platform mac_intel --build",
+    "publish:win": "node scripts/publish.js --env prod --platform win64 --build",
     "publish_preview": "yarn publish_preview:mac_arm",
     "publish_preview:mac_arm": "yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_arm --bump --build",
     "publish_preview:mac_intel": "yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_intel --bump --build",
@@ -161,7 +161,7 @@
     "release_dev:win": "node scripts/publish.js --env dev --platform win64 --build",
     "patch": "node scripts/patch.js",
     "deliver": "node scripts/patch.js && git add . && git commit -m 'nm' && node scripts/git_push.js",
-    "fast_publish:mac_arm": "yarn install --frozen-lockfile && node scripts/patch.js && node scripts/publish.js --env prod --platform mac_arm --preflight-only && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm",
+    "fast_publish:mac_arm": "yarn install --frozen-lockfile && node scripts/patch.js && DEBUG=electron-osx-sign yarn publish:mac_arm",
     "fast_publish:mac_intel": "node scripts/git_pull.js && yarn build:mac_intel && yarn publish:mac_intel",
     "fast_publish:win": "node scripts/fast_publish_win.js",
     "deliver:win": "node scripts/deliver_win.js",
@@ -291,6 +291,6 @@
     "rig_dev/*"
   ],
   "name": "Bitterless_DEBUG_DEV",
-  "version": "0.0.83",
-  "version_code": "260901131822"
+  "version": "0.0.84",
+  "version_code": "260901164356"
 }

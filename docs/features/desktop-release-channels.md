@@ -49,20 +49,30 @@ before the flat manifest so website and updater readers never observe a half-pub
 
 All channel outputs live below the generated-release root `dist`. Electron Builder must exclude that
 entire root plus the transient root `tmp` from application files even when the current output is a
-nested directory such as `dist/preview`; no existing DMG, ZIP, blockmap, updater metadata, unpacked
-package, temporary file, initialized `external_tools` inventory, or legacy `prebuilt` download cache
-may be embedded in `app.asar`.
+nested directory such as `dist/dev` or `dist/preview`; no existing DMG, ZIP, blockmap, updater
+metadata, unpacked package, temporary file, initialized `external_tools` inventory, or legacy
+`prebuilt` download cache may be embedded in `app.asar`.
+
+The local artifact lanes are also channel-isolated: Stable owns `dist/`, Development release owns
+`dist/dev/`, and Preview owns `dist/preview/`. `before.js`, Electron Builder, package audit,
+artifact discovery, and publication must resolve the same selected lane. A Development build must
+never replace Stable's `version_info.json` or make Stable publication observe `channel: dev`.
 
 ## Operator commands
 
 ```text
+yarn publish:mac_arm
+yarn publish:mac_intel
+yarn publish:win
 yarn publish_preview:mac_arm
 yarn publish_preview:mac_intel
 yarn publish_preview:win
 ```
 
-These are one-step build-and-publish commands for the current local source. They do not pull or
-restore Git state. Platform aliases must not silently publish a previously built Stable artifact.
+These are one-step build-and-publish commands for the current local source. Stable aliases select a
+production build before inspecting `dist/`; Preview aliases select a Preview build before inspecting
+`dist/preview/`. They do not pull or restore Git state. Platform aliases must not silently publish a
+previously built artifact from any channel.
 
 ## Verification boundary
 

@@ -11,7 +11,7 @@
         role="alert"
       >
         <strong>{{ testInstanceTitle }}</strong>
-        <span>{{ onlyPreviewI18n.guide.testInstanceWarning }}</span>
+        <span>{{ testInstanceGuide }}</span>
       </div>
 
       <section
@@ -78,6 +78,12 @@ const testInstanceTitle = computed(() =>
   interpolateOnlyPreview(onlyPreviewI18n.guide.testInstanceTitle, {
     serverName: onlyPreviewGuideStore.info?.serverName || ''
   })
+);
+
+const testInstanceGuide = computed(() =>
+  onlyPreviewGuideStore.info?.serverName === 'bitterless-preview'
+    ? onlyPreviewI18n.guide.previewChannelMountGuide
+    : onlyPreviewI18n.guide.testInstanceWarning
 );
 
 const feedbackMessage = computed(() =>

@@ -267,6 +267,13 @@ const createState = () => ({
     size: adapterId.length
   }),
   assertOpenedFileCurrent: async () => undefined,
+  authorizeProjectItem: async ({ relativePath }) => ({
+    relativePath,
+    nodeKind: 'file',
+    size: 3,
+    modifiedAt: 1
+  }),
+  projectAuthorizations: [],
   textReadCalls: [],
   assetIssues: [],
   assetRevocations: 0,
@@ -308,6 +315,11 @@ const workspaceRegistry = {
     workspaceGeneration: fileRef.workspaceId === 'external-workspace-id' ? 1 : 17,
     relativePath: fileRef.relativePath,
     rootPath: fileRef.workspaceId === 'external-workspace-id' ? '/external/private' : '/workspace'
+  }),
+  getProjectAuthorityItemRef: (_hostToken, fileRef) => ({
+    workspaceId: fileRef.workspaceId,
+    workspaceGeneration: 23,
+    relativePath: fileRef.relativePath
   }),
   getOfficeReadBootstrap: (_hostToken, fileRef) => ({
     workspaceId: fileRef.workspaceId,
@@ -525,6 +537,23 @@ class FakePreviewReadBrokerService {
   }
 }
 
+const selectedFileIdentityModule = loadTypeScriptModule(
+  'src/main/onlypreview/views/onlyPreviewSelectedFileIdentity.service.ts',
+  {
+    '@main/fileSearch/fileSearchWindow.service': {
+      fileSearchWindowService: {
+        authorizeProjectItem: async (request) => {
+          state.projectAuthorizations.push(request);
+          return await state.authorizeProjectItem(request);
+        }
+      }
+    },
+    '@main/onlypreview/onlyPreviewWorkspace.registry': {
+      onlyPreviewWorkspaceRegistry: workspaceRegistry
+    },
+    '@shared/onlypreview/onlyPreview.types': {}
+  }
+);
 const regionModule = loadTypeScriptModule(
   'src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts',
   {
@@ -657,6 +686,7 @@ const regionModule = loadTypeScriptModule(
     './onlyPreviewPreviewReadBroker.service': {
       OnlyPreviewPreviewReadBrokerService: FakePreviewReadBrokerService
     },
+    './onlyPreviewSelectedFileIdentity.service': selectedFileIdentityModule,
     './onlyPreviewSelectionDelivery.service': {
       issueOnlyPreviewSelectionDelivery: ({ hostToken, selectionRevision, prepared, adapter }) => {
         let descriptor = prepared.descriptor;

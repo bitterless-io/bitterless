@@ -48,6 +48,7 @@ import {
   settleOnlyPreviewSearchProgress,
   type OnlyPreviewSearchProgressState
 } from './onlyPreviewSearchProgress.service';
+import { resolveOnlyPreviewProjectionCommit } from './onlyPreviewProjectionCommit.service';
 import { subscribeOnlyPreviewShellEvents } from './onlyPreviewShellEvents.service';
 import { onlyPreviewFindStore } from './onlyPreviewFind.store';
 import {
@@ -580,12 +581,9 @@ export class OnlyPreviewShellStore {
     if (!context) return false;
     const result = this.browseProjection.applyListing(listing, context, this.expandedPaths);
     this.commitBrowseProjectionResult(result, context);
-    if (listing.relativePath === '' && this.selectedRelativePath) {
-      void this.loadSelectedParentListings();
-    }
-    if (listing.relativePath === '') {
-      this.reportGlobalSearchContext();
-    }
+    if (listing.relativePath !== '') return result.loaded;
+    if (this.selectedRelativePath) void this.loadSelectedParentListings();
+    this.reportGlobalSearchContext();
     return result.loaded;
   }
 
@@ -626,21 +624,28 @@ export class OnlyPreviewShellStore {
     result: OnlyPreviewBrowseProjectionResult,
     context: OnlyPreviewBrowseProjectionContext
   ): boolean {
-    if (
-      result.error &&
-      context.workspaceId === this.workspace?.workspaceId &&
-      context.generation === this.searchWorkspaceGeneration
-    ) {
-      this.errorMessage = errorMessage(result.error);
-    }
+    const commit = resolveOnlyPreviewProjectionCommit({ result, index: this.index,
+      current: context.workspaceId === this.workspace?.workspaceId &&
+        context.generation === this.searchWorkspaceGeneration,
+      treeSelectedRelativePath: this.treeSelectedRelativePath, readRows: () => this.visibleRows });
+    if (commit.errorMessage) this.errorMessage = commit.errorMessage;
     if (!result.changed) return result.loaded;
     this.index = result.index;
     if (result.rootReplaced) {
       this.expandedPaths.add('');
       this.expandSelectedParents();
     }
-    this.reportGlobalSearchContext();
+    if (commit.inheritedSelection === null) this.reportGlobalSearchContext();
+    else this.centerTreeRow(commit.inheritedSelection);
     return result.loaded;
+  }
+
+  private centerTreeRow(relativePath: string): void {
+    this.treeSelectedRelativePath = relativePath;
+    this.focusedRelativePath = relativePath;
+    this.centerProjectRelativePath = relativePath;
+    this.centerProjectRevision += 1;
+    this.reportGlobalSearchContext();
   }
 
   private clearBrowseProjection(): void {
@@ -681,13 +686,7 @@ export class OnlyPreviewShellStore {
       applyResult: (result) => {
         if (browseContext) this.commitBrowseProjectionResult(result, browseContext);
       },
-      onRevealed: (relativePath) => {
-        this.treeSelectedRelativePath = relativePath;
-        this.focusedRelativePath = relativePath;
-        this.centerProjectRelativePath = relativePath;
-        this.centerProjectRevision += 1;
-        this.reportGlobalSearchContext();
-      }
+      onRevealed: (relativePath) => this.centerTreeRow(relativePath)
     });
   }
 

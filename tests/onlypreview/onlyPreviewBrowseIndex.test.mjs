@@ -302,3 +302,68 @@ test('browse omits a child replaced by an external symlink after lstat without l
     }
   });
 });
+
+test('a search-policy change keeps every issued capability and re-derives its exclusion state', async () => {
+  await withTempDirectory(async (root) => {
+    await write(join(root, 'generated/deep/item.txt'), 'browse only');
+    await write(join(root, 'src/main.ts'), 'source');
+
+    const browse = await createBrowse(root);
+    const rootListing = await browse.rootListing({ workspaceId: 'workspace', generation: 1 });
+    const rootToken = rootListing.directoryToken;
+    const generated = rootListing.entries.find(({ relativePath }) => relativePath === 'generated');
+    assert.equal(generated.searchExcluded, false);
+    const generatedListing = await browse.list({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: generated.directoryToken
+    });
+    const deep = generatedListing.entries.find(
+      ({ relativePath }) => relativePath === 'generated/deep'
+    );
+    assert.equal(deep.searchExcluded, false);
+    assert.deepEqual(browse.listedDirectoryPaths().sort(), ['', 'generated']);
+
+    browse.setSearchPolicy(
+      createTraversalPolicy({ rules: compileOrderedGlobRules(['generated/**']) })
+    );
+
+    // The same tokens still list, so a reconcile never invalidates the Shell's Project tree.
+    const nextRootListing = await browse.rootListing({ workspaceId: 'workspace', generation: 1 });
+    assert.equal(nextRootListing.directoryToken, rootToken);
+    assert.equal(
+      nextRootListing.entries.find(({ relativePath }) => relativePath === 'generated')
+        .directoryToken,
+      generated.directoryToken
+    );
+    assert.equal(
+      nextRootListing.entries.find(({ relativePath }) => relativePath === 'generated')
+        .searchExcluded,
+      true
+    );
+    const reListedGenerated = await browse.list({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: generated.directoryToken
+    });
+    assert.deepEqual(
+      reListedGenerated.entries.map(({ relativePath, searchExcluded }) => [
+        relativePath,
+        searchExcluded
+      ]),
+      [['generated/deep', true]]
+    );
+    const reListedDeep = await browse.list({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: deep.directoryToken
+    });
+    assert.deepEqual(
+      reListedDeep.entries.map(({ relativePath, searchExcluded }) => [
+        relativePath,
+        searchExcluded
+      ]),
+      [['generated/deep/item.txt', true]]
+    );
+  });
+});

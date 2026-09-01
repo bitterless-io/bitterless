@@ -670,7 +670,9 @@ test('failed config refresh restores the active browse policy and replaces candi
     assert.equal(browseListings.length, 2);
     const candidateRoot = browseListings[0];
     const restoredRoot = browseListings[1];
-    assert.notEqual(candidateRoot.directoryToken, restoredRoot.directoryToken);
+    // The capability is bound to the path, not to a policy snapshot, so both the candidate and the
+    // restored listing reach the Shell under the same token and only their markers differ.
+    assert.equal(candidateRoot.directoryToken, restoredRoot.directoryToken);
     assert.equal(
       candidateRoot.entries.find(({ relativePath }) => relativePath === 'configured')
         .searchExcluded,

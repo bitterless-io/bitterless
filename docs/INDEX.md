@@ -127,6 +127,15 @@ design document.
   fixed; owner verification pending: name every Main API operation and record its sanitized cause in
   a dedicated per-profile `onlypreview/onlypreview.log`, so a generic
   `OnlyPreview could not complete this action.` is triageable instead of evidence-free.
+- [OnlyPreview Preview-channel skill mounting is not obvious](issues/onlypreview-preview-channel-skill-mount-guide.md) -
+  implemented; owner verification pending: the existing Guide identifies the `bitterless-preview`
+  MCP alias and bundled complete skill in one localized sentence, then makes a later Production
+  Guide the direct overwrite path back to production `bitterless`.
+- [OnlyPreview loses Project position and rerenders an unchanged Preview on a file update](issues/onlypreview-watch-update-resets-project-and-preview.md) -
+  implemented; owner verification pending: browse capabilities survive a reconcile and every open
+  directory is republished, so the tree keeps its selection/expansion/scroll; the Preview rebuilds
+  only when the selected file's own metadata moved, and a deleted selection hands the tree row to
+  its neighbour.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
   registry, hidden encrypted SQLite, and one global INDEX.
 - [BL Trench INDEX layout](features/trench-index-layout.md) - count-free INDEX navigation, Add CA,
@@ -228,11 +237,21 @@ design document.
 - [Desktop release channels](features/desktop-release-channels.md) - Stable and Preview share the
   production API while keeping package identity, local persistence, artwork, updater feeds, and
   published artifacts strictly separate.
+- [Development package metadata blocks Stable publication](issues/stable-publish-dev-dist-contamination.md) -
+  implemented; owner release verification pending: Development release artifacts now use
+  `dist/dev/` and can no longer replace Stable's `dist/version_info.json` with `channel: dev`.
 - [Preview publication missing release-version helper](issues/preview-publish-version-log-helper-missing.md) -
   implemented; owner publication completion pending: restored the valid-existing-remote preflight
   branch without a task-owned bump or release mutation; a later operator retry advanced to
   `0.0.81 / 260901100557` and entered the build; [review 1](plan/reviews/release-preview-version-log-008-1.md)
   passed.
+- [Stable and Preview can publish the same release identity](issues/cross-channel-release-version-identity-collision.md) -
+  proposed; one operator-workflow decision pending: the shared `_version` / `version_code` counter is
+  bumped by every Preview publisher and by no Stable publisher, so an unbumped Stable release can
+  reuse a Preview identity, and a per-platform bump stops one release from covering all platforms.
+- [Packaged app-update.yml points at a placeholder host](issues/packaged-update-feed-url-placeholder.md) -
+  proposed: every package ships `url: https://example.com/auto-updates`, and updates work only
+  because the runtime calls `setFeedURL()` from the verified manifest before every check.
 
 ## Guides
 

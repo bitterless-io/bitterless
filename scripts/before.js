@@ -62,7 +62,7 @@ const appId = isPreview
   ? 'io.bitterless.desktop.preview'
   : (viteEnv === 'dev' ? 'io.bitterless.desktop_dev' : 'io.bitterless.desktop');
 const artifactStem = isPreview ? `${baseName}-Preview` : productName;
-const outputDirectory = isPreview ? 'dist/preview' : 'dist';
+const outputDirectory = isPreview ? 'dist/preview' : (isDev ? 'dist/dev' : 'dist');
 const iconStem = isPreview ? 'icon-preview' : 'icon';
 
 let builderContent = fs.readFileSync(builderTmpPath, 'utf-8');

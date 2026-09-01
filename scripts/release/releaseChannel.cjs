@@ -13,7 +13,8 @@ const releaseChannelConfigs = Object.freeze({
   dev: Object.freeze({
     appId: 'io.bitterless.desktop_dev',
     appName: 'Bitterless_DEV',
-    distDir: stableDistDir,
+    distDir: path.join(stableDistDir, 'dev'),
+    outputDirectory: 'dist/dev',
     icon: 'build/icon.icns',
     productName: 'Bitterless_DEV',
     profileName: 'release_dev'
@@ -22,6 +23,7 @@ const releaseChannelConfigs = Object.freeze({
     appId: 'io.bitterless.desktop.preview',
     appName: 'Bitterless_PREVIEW',
     distDir: path.join(stableDistDir, 'preview'),
+    outputDirectory: 'dist/preview',
     icon: 'build/icon-preview.icns',
     productName: 'Bitterless Preview',
     profileName: 'release_preview'
@@ -30,6 +32,7 @@ const releaseChannelConfigs = Object.freeze({
     appId: 'io.bitterless.desktop',
     appName: 'Bitterless',
     distDir: stableDistDir,
+    outputDirectory: 'dist',
     icon: 'build/icon.icns',
     productName: 'Bitterless',
     profileName: 'release_prod'
@@ -314,7 +317,7 @@ const assertBuildIdentity = (
     throw new Error('Generated electron-builder.yml is missing; rebuild before publishing');
   }
   const builder = yaml.load(fs.readFileSync(builderPath, 'utf8'));
-  const expectedOutput = releaseChannel === 'preview' ? 'dist/preview' : 'dist';
+  const expectedOutput = channelConfig.outputDirectory;
   const expectedWindowsIcon = channelConfig.icon.replace(/\.icns$/, '.ico');
   if (
     builder?.appId !== channelConfig.appId ||

@@ -53,6 +53,7 @@ import {
   type OnlyPreviewPreviewRegionRuntime
 } from './onlyPreviewPreviewView.service';
 import { OnlyPreviewPreviewReadBrokerService } from './onlyPreviewPreviewReadBroker.service';
+import { onlyPreviewSelectedFileChanged } from './onlyPreviewSelectedFileIdentity.service';
 import { issueOnlyPreviewSelectionDelivery } from './onlyPreviewSelectionDelivery.service';
 
 export class OnlyPreviewPreviewRegionService {
@@ -287,6 +288,8 @@ export class OnlyPreviewPreviewRegionService {
     ) {
       return;
     }
+    const changed = await onlyPreviewSelectedFileChanged(runtime.host.hostToken, this.presentation);
+    if (!changed || this.presentation.fileRef !== fileRef) return;
     await this.present(runtime.host.hostToken, fileRef);
   }
 

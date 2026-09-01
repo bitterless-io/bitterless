@@ -146,6 +146,8 @@ const en = {
     restartRequired:
       'The setup contract is unavailable or out of date. Restart Bitterless and reopen this Guide.',
     testInstanceTitle: 'Test instance: {serverName}',
+    previewChannelMountGuide:
+      'Preview channel: mount this MCP as bitterless-preview and install the complete bundled bitterless-preview skill directory; after installing Production, copy its new Guide to replace the skill and use production bitterless.',
     testInstanceWarning:
       'This MCP configuration is for development verification only. Do not register it as the production bitterless server.'
   },
@@ -339,6 +341,8 @@ const zh: Localized<typeof en> = {
     restartRequiredTitle: '重启 Bitterless',
     restartRequired: '设置契约不可用或已过期。请重启 Bitterless 后重新打开此窗口。',
     testInstanceTitle: '测试实例：{serverName}',
+    previewChannelMountGuide:
+      'Preview 渠道：将当前 MCP 以 bitterless-preview 挂载并安装内置的完整 bitterless-preview 技能目录；后续安装正式版时，复制正式版的新 Guide 即可覆盖技能并改用生产 bitterless。',
     testInstanceWarning: '此 MCP 配置仅用于开发验证。不要将它注册为生产 bitterless 服务。'
   },
   errors: {
