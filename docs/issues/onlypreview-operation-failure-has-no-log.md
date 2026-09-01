@@ -61,9 +61,11 @@ observable while every user-triggered OnlyPreview action is not.
   `<logRoot>/onlypreview/onlypreview.log`, with the same profile isolation, UTC NDJSON format,
   shared sanitizer, and 5 MB rotation as `main.log`. Debug profiles place it under
   `<userData>/logs/onlypreview/`.
-- Each failure record carries a fixed short `operation` token, the resolved OnlyPreview error
-  `code`, and a sanitized `cause` chain (`name` / `code` / `message`) — never a path, workspace
-  identity, document content, capability token, or raw error object.
+- Each failure record carries a fixed short `operation` token, the resolved OnlyPreview
+  `errorCode`, and a sanitized `cause` chain (`name` / `errorCode` / `message`) — never a path,
+  workspace identity, document content, capability token, or raw error object. The fields are
+  bounded at 23 characters and are not named `code`, because the shared sanitizer replaces both a
+  24-character token run and any `code=<value>` pair with `***`.
 - One matching `error` line is mirrored into `main.log` under scope `onlypreview` so the failure is
   visible where triage starts, with the detail in the dedicated file.
 - The Preview channel and the Stable channel write to distinct log roots. That already holds because

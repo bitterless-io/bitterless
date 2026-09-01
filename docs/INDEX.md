@@ -123,6 +123,10 @@ design document.
   implemented; owner verification pending: restore the renderer-local Project directory width,
   throttle drag persistence, and flush the final value on pointer and real page teardown;
   [review 1](plan/reviews/onlypreview-project-width-persistence-102-1.md) passed.
+- [OnlyPreview action failures leave no diagnostic record](issues/onlypreview-operation-failure-has-no-log.md) -
+  fixed; owner verification pending: name every Main API operation and record its sanitized cause in
+  a dedicated per-profile `onlypreview/onlypreview.log`, so a generic
+  `OnlyPreview could not complete this action.` is triageable instead of evidence-free.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
   registry, hidden encrypted SQLite, and one global INDEX.
 - [BL Trench INDEX layout](features/trench-index-layout.md) - count-free INDEX navigation, Add CA,
@@ -151,6 +155,9 @@ design document.
 - [Todo Domain board layout](features/todo-layout.md) - menu-bar Domain creation, wrapping
   300–480px Focus/Domain columns capped at 80vh, and a detail panel that overlays with panel-width
   horizontal reveal instead of squeezing the board.
+- [Preview reports a missing sign-in as a local data runtime failure](issues/preview-channel-todo-reports-runtime-failure.md) -
+  fixed; owner verification pending: an install with no eligible customer session now asks for a
+  sign-in instead of blaming local SQLite, on the board, its write path, and the home placeholder.
 - [EyesOnAgents Focus-only board](features/eyes-on-agents-focus-board.md) - one full-width Focus
   column listing every visible thread, retired Domain and Project UI, and a keyboard-first search modal.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
